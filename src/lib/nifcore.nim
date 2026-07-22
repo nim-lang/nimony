@@ -882,6 +882,13 @@ proc growRawUninit*(b: var TokenBuf; count: int): pointer =
   b.len = count
   b.data
 
+proc subtreeWidth*(c: Cursor): int =
+  ## Total tokens occupied by the value at `c` (head + body).
+  if c.kind == TagLit:
+    int(tokenWidth(c).uint64 + c.cursorJump)
+  else:
+    tokenWidth(c)
+
 proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
   ## Replace the sealed subtree at `pos` with the sealed subtree `by`.
   if dest.owner != nil: prepareMutation(dest)
@@ -1223,13 +1230,6 @@ proc peekPastEnd*(n: Cursor): Cursor =
   result.rem = high(int)
 
 # ── Subtree copy ─────────────────────────────────────────────────────────
-
-proc subtreeWidth*(c: Cursor): int =
-  ## Total tokens occupied by the value at `c` (head + body).
-  if c.kind == TagLit:
-    int(tokenWidth(c).uint64 + c.cursorJump)
-  else:
-    tokenWidth(c)
 
 proc reinternLineInfo(dest: var TokenBuf; c: Cursor): NifLineInfo =
   ## Map the source head's trailing line info into `dest`'s pools — the filename

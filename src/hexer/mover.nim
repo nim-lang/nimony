@@ -222,7 +222,10 @@ proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex
     case cf[i].kind
     of OpenTagKind:
       inc nested
-      when defined(virtualParRi):
+      when defined(useNifcore):
+        # nifcore: every TagLit's close is implicit; no MaxJump sentinel.
+        closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
+      elif defined(virtualParRi):
         if jump(cf[i]) != MaxJump:
           closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
     else:

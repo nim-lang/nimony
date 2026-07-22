@@ -134,7 +134,8 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
         KvX, ToClosureX, NoExpr: break
-  result = n.exprKind in ConstructingExprs or n.kind in {IntLit, FloatLit, StringLit, CharLit}
+  result = n.exprKind in ConstructingExprs or n.isIntLit or n.isFloatLit or
+           n.isStringLit or n.isCharLit
 
 proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
   var n = n
@@ -197,7 +198,7 @@ proc containsSym(n: Cursor; d: SymId): bool =
   case n.kind
   of Symbol:
     result = n.symId == d
-  of ParLe:
+  of OpenTagKind:
     result = false
     n.loopInto:
       if containsSym(n, d): return true
@@ -221,23 +222,23 @@ when not defined(nimony):
 
 proc trSons(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
-  assert n.kind == ParLe
+  assert n.isTagLit
   takeInto c.dest, n:
     while n.hasMore:
       tr(c, n, e)
 
 proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
-  if n.kind == Symbol:
+  if n.isSymbol:
     result = n.symId == c.resultSym
 
 proc isSimpleExpression(n: var Cursor): bool =
   ## expressions that can be returned safely
   case n.kind
-  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, DotToken, Ident:
+  of Symbol, UIntLit, StrLitKind, IntLit, FloatLit, CharLit, DotToken, Ident:
     result = true
     inc n
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of FalseX, TrueX, InfX, NeginfX, NanX, NilX, SufX:
       result = true
@@ -276,7 +277,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         EnvpX, ToClosureX, KvX, NoExpr:
       result = false
       skip n
-  of ParRi, SymbolDef, UnknownToken, EofToken:
+  else: # SymbolDef + suffix kinds; classic: also a physical ParRi
     result = false
     inc n
 
@@ -294,11 +295,11 @@ proc trReturn(c: var Context; n: var Cursor) =
     n.into:
       c.dest.addParLe StmtsS, info
       c.dest.addParLe AsgnS, info
-      c.dest.add symToken(c.resultSym, info)
+      c.dest.addSymUse(c.resultSym, info)
       tr c, n, WantOwner
       c.dest.addParRi() # end of AsgnS
       c.dest.addParLe(RetS, info)
-      c.dest.add symToken(c.resultSym, info)
+      c.dest.addSymUse(c.resultSym, info)
       c.dest.addParRi() # end of RetS
       c.dest.addParRi() # end of StmtsS
 
@@ -382,7 +383,7 @@ proc callDup(c: var Context; arg: var Cursor)
   else:
     let info = arg.info
     let hookProc = getHook(c.lifter[], attachedDup, typ, info)
-    if hookProc != NoSymId and arg.kind != StringLit:
+    if hookProc != NoSymId and not arg.isStringLit:
       copyIntoKind c.dest, CallS, info:
         copyIntoSymUse c.dest, hookProc, info
         tr c, arg, WillBeOwned
@@ -630,22 +631,22 @@ proc derefsBoxedRef(c: var Context; ptrOperand: Cursor): bool =
   ## read through the deref has to hop through the object payload (`d`) rather
   ## than name the field on the ref cell itself.
   var typ = getType(c.typeCache, ptrOperand, {SkipAliases})
-  if typ.kind == ParLe and typ.typeKind == SinkT:
+  if typ.isTagLit and typ.typeKind == SinkT:
     inc typ
   result = not cursorIsNil(typ) and typ.typeKind == RefT
 
 proc addDataFieldHop(c: var Context; info: PackedLineInfo) =
   ## Emit the `d 0` that follows an already-emitted `(deref refptr)` to reach the
   ## object payload of a boxed `ref` cell.
-  c.dest.add symToken(pool.syms.getOrIncl(DataField), info)
+  c.dest.addSymUse(pool.syms.getOrIncl(DataField), info)
   c.dest.addIntLit(0, info) # inheritance
 
 proc trOnlyEssentials(c: var Context; n: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
   case n.kind
-  of Symbol, UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
+  of Symbol, UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownTokenKind, EofTokenKind, DotToken, Ident:
     takeToken c.dest, n
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of DestroyX:
       trExplicitDestroy c, n
@@ -747,11 +748,11 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
       # all other expression kinds: copy the head and recurse into the children
       copyInto c.dest, n:
         while n.hasMore: trOnlyEssentials c, n
-  of ParRi:
+  else:
     raiseAssert "BUG: unexpected ParRi in duplifier.trOnlyEssentials"
 
 proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
-  c.dest.add n
+  c.dest.addParLe(n.tag, n.info)
   let oldResultSym = c.resultSym
   let oldFlags = c.flags
   c.resultSym = NoSymId
@@ -931,11 +932,11 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
     copyIntoKind c.dest, ElifU, info:
       copyIntoKind c.dest, EqX, info:
         copyIntoKind c.dest, PointerT, info: discard
-        c.dest.add symToken(ow.s, info)
+        c.dest.addSymUse(ow.s, info)
         copyIntoKind c.dest, NilX, info: discard
       copyIntoKind c.dest, StmtsS, info:
         copyIntoKind c.dest, RaiseS, info:
-          c.dest.add symToken(pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix), info)
+          c.dest.addSymUse(pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix), info)
 
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
@@ -955,9 +956,9 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
   copyIntoKind c.dest, CastX, info:
     c.dest.addSubtree refType
     copyIntoKind c.dest, CallX, info:
-      c.dest.add symToken(pool.syms.getOrIncl("allocFixed.0." & SystemModuleSuffix), info)
+      c.dest.addSymUse(pool.syms.getOrIncl("allocFixed.0." & SystemModuleSuffix), info)
       copyIntoKind c.dest, SizeofX, info:
-        c.dest.add symToken(typeSym, info)
+        c.dest.addSymUse(typeSym, info)
   c.dest.addParRi() # finish temp declaration
 
   # map to OOM if the proc can raise an error:
@@ -966,16 +967,16 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
 
   copyIntoKind c.dest, AsgnS, info:
     copyIntoKind c.dest, DerefX, info:
-      c.dest.add symToken(ow.s, info)
+      c.dest.addSymUse(ow.s, info)
     copyIntoKind c.dest, OconstrX, info:
-      c.dest.add symToken(typeSym, info)
+      c.dest.addSymUse(typeSym, info)
       copyIntoKind c.dest, KvU, info:
         let rcField = pool.syms.getOrIncl(RcField)
-        c.dest.add symToken(rcField, info)
+        c.dest.addSymUse(rcField, info)
         c.dest.addIntLit(0, info)
       copyIntoKind c.dest, KvU, info:
         let dataField = pool.syms.getOrIncl(DataField)
-        c.dest.add symToken(dataField, info)
+        c.dest.addSymUse(dataField, info)
         if kind == NewobjX:
           copyIntoKind c.dest, OconstrX, info:
             c.dest.addSubtree baseType
@@ -1012,7 +1013,7 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor)
   c.dest.addParRi() # finish the StmtListExpr
 
 proc trLocationNonOwner(c: var Context; n: var Cursor) =
-  if n.kind == ParLe and n.exprKind == DotX:
+  if n.isTagLit and n.exprKind == DotX:
     takeInto c.dest, n:
       tr c, n, WantNonOwner
       while n.hasMore:
@@ -1135,7 +1136,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
     let m = "not the last usage of: " & asNimCode(arg)
     c.dest.buildTree nifstreams.ErrT, info:
       c.dest.addSubtree n
-      c.dest.add strToken(pool.strings.getOrIncl(m), info)
+      c.dest.addStrLit(pool.strings.getOrIncl(m), info)
     skip n, SkipFull
 
 proc trDeref(c: var Context; n: var Cursor; e: Expects)
@@ -1157,7 +1158,7 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
   let wrapDup = needsDup and dupHook != NoSymId
   if wrapDup:
     c.dest.addParLe CallS, info
-    c.dest.add symToken(dupHook, info)
+    c.dest.addSymUse(dupHook, info)
   n.into:
     let isRef = derefsBoxedRef(c, n)
     if isRef:
@@ -1174,9 +1175,10 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
 proc trCoroFor(c: var Context; n: var Cursor)
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
-  if n.kind == Symbol:
+  if n.isSymbol:
     trLocation c, n, e
-  elif n.kind in {Ident, SymbolDef, IntLit, UIntLit, CharLit, StringLit, FloatLit, DotToken} or isDeclarative(n):
+  elif n.isIdent or n.isSymbolDef or n.isIntLit or n.isUIntLit or n.isCharLit or
+      n.isStringLit or n.isFloatLit or n.isDotToken or isDeclarative(n):
     takeTree c.dest, n
   else:
     case n.exprKind
@@ -1317,7 +1319,7 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
   ## past it.
   result = 0
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     let sk = symKind n
     if isRoutine(sk):
       var probe = n
@@ -1336,8 +1338,8 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
       let info = n.info
       n.into:
         skip n
-        while n.kind == DotToken: inc n
-        if n.kind == StringLit:
+        while n.isDotToken: inc n
+        if n.isStringLit:
           try:
             r.error infoToStr(info), pool.strings[n.litId]
           except:
@@ -1353,9 +1355,10 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
           result += checkForErrorRoutine(r, fn.symId, n.info)
       n.loopInto:
         result += checkForMoveTypesImpl(n, r)
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
   else:
+    when not defined(useNifcore):
+      if n.kind == ParRi:
+        return # cannot happen: subtree ends are consumed by the bounded scope
     inc n
 
 proc checkForMoveTypes(c: var Context; n: Cursor): int =

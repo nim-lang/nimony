@@ -107,11 +107,6 @@ proc typebits*(n: NifToken): int {.inline.} =
   ## nifcore keeps small ints inline, so the value is the signed operand.
   if n.kind == IntLit: int(n.soperand) else: 0
 
-proc addStrLit*(dest: var TokenBuf; s: StrId; info: PackedLineInfo) =
-  nifcore.addStrLit(dest, pool.strings[s]); emitInfo(dest, info)
-proc addStrLit*(dest: var TokenBuf; s: string; info: PackedLineInfo) =
-  nifcore.addStrLit(dest, s); emitInfo(dest, info)
-
 # ── Line info bridge (PackedLineInfo <-> nifcore NifLineInfo) ─────────────
 
 proc toPacked(li: NifLineInfo): PackedLineInfo =
@@ -125,6 +120,11 @@ proc emitInfo(dest: var TokenBuf; info: PackedLineInfo) =
   if info.isValid:
     let u = unpack(lineMan, info)
     appendLineInfo(dest, u.file, u.line, u.col)
+
+proc addStrLit*(dest: var TokenBuf; s: StrId; info: PackedLineInfo) =
+  nifcore.addStrLit(dest, pool.strings[s]); emitInfo(dest, info)
+proc addStrLit*(dest: var TokenBuf; s: string; info: PackedLineInfo) =
+  nifcore.addStrLit(dest, s); emitInfo(dest, info)
 
 # ── End-of-scope / node predicates ───────────────────────────────────────
 #
@@ -235,6 +235,9 @@ proc withLineInfo*(n: NifToken; info: PackedLineInfo): NifToken {.inline.} = n
   ## Classic stamped `info` into the token; nifcore keeps line info in a separate
   ## suffix, so an in-place token rewrite cannot carry it — returned unchanged.
 
+proc span*(c: Cursor): int {.inline.} = subtreeWidth(c)
+proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
+
 proc widenSealed*(dest: var TokenBuf; enclosing: int; growth: int) =
   ## After an insert/replace grew a *sealed* scope's contents, widen its jump.
   ## Handles only the in-field (non-overflow) case; asserts otherwise.
@@ -294,9 +297,6 @@ proc floatId*(c: Cursor): FloatId {.inline.} = FloatId(floatVal(c))
 
 # ── Structural navigation ────────────────────────────────────────────────
 
-proc span*(c: Cursor): int {.inline.} = subtreeWidth(c)
-proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
-
 # ── TokenBuf building: openTag/closeTag bridge with line info ─────────────
 
 proc addParLe*(dest: var TokenBuf; tag: TagId; info = NoLineInfo) =
@@ -338,10 +338,10 @@ proc addIdent*(dest: var TokenBuf; s: StrId; info: PackedLineInfo) =
   nifcore.addIdent(dest, pool.strings[s]); emitInfo(dest, info)
 proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
   nifcore.addIdent(dest, s); emitInfo(dest, info)
-proc addIntLit*(dest: var TokenBuf; id: IntId; info: PackedLineInfo) =
-  addIntLit(dest, pool.integers[id], info)
 proc addIntLit*(dest: var TokenBuf; v: int64; info: PackedLineInfo) =
   nifcore.addIntLit(dest, v); emitInfo(dest, info)
+proc addIntLit*(dest: var TokenBuf; id: IntId; info: PackedLineInfo) =
+  addIntLit(dest, pool.integers[id], info)
 proc addUIntLit*(dest: var TokenBuf; v: uint64; info: PackedLineInfo) =
   nifcore.addUIntLit(dest, v); emitInfo(dest, info)
 proc addFloatLit*(dest: var TokenBuf; v: float64; info: PackedLineInfo) =

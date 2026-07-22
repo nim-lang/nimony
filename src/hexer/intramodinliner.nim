@@ -104,9 +104,9 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int]) =
   if n.stmtKind == StmtsS:
     n.into:
       while n.hasMore:
-        if n.kind == ParLe and n.stmtKind == ProcS:
+        if n.isTagLit and n.stmtKind == ProcS:
           let nameCur = n.firstSon            # the (proc :sym …) name child
-          if nameCur.kind == SymbolDef:
+          if nameCur.isSymbolDef:
             bodies[nameCur.symId] = cursorToPosition(buf, n)
         skip n
   endRead(buf)
@@ -206,15 +206,15 @@ proc scoreArg(a: Cursor): int =
   ## body is likely to expose more optimisation (constant folding,
   ## branch elimination, etc.).
   case a.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit: return 100
+  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind: return 100
   of Symbol: return 50  # treat sym refs as immutable bindings
-  of ParLe:
+  of OpenTagKind:
     case a.exprKind
     of TrueC, FalseC, NilC, InfC, NeginfC, NanC: return 100
     of NegC:
       var inner = a
       inc inner
-      if inner.kind in {IntLit, UIntLit, FloatLit}: return 100
+      if inner.isIntLit or inner.isUIntLit or inner.isFloatLit: return 100
       return 0
     of DotC, AtC, PatC: return 30  # simple field / index read
     else: return 0                  # complex expression
@@ -259,14 +259,14 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
 
 proc collectParamSyms(params: Cursor): seq[SymId] =
   result = @[]
-  if params.kind != ParLe: return @[]
+  if not params.isTagLit: return @[]
   var p = params
   p.into:
     while p.hasMore:
       if p.substructureKind == ParamU:
         var q = p
         inc q
-        if q.kind == SymbolDef:
+        if q.isSymbolDef:
           result.add q.symId
       skip p
 
@@ -291,21 +291,22 @@ proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
     if params.hasKey(n.symId):
       weights[params.getOrQuit(n.symId)] += inherited
     inc n
-  of ParLe:
+  of OpenTagKind:
     let w = max(inherited, weightOfUse(n))
     n.into:
       while n.hasMore:
         walkInlineWeights(n, params, weights, w)
-  of ParRi:
-    discard
   else:
+    when not defined(useNifcore):
+      if n.kind == ParRi:
+        return # mirrors the classic `of ParRi: discard` arm
     inc n
 
 proc subtreeTokenCount(n: Cursor; limit: int): int =
   ## Number of tokens the subtree occupies (the physical span; elided
   ## closes do not count). `limit` is only relevant for the comparison the
   ## callers do, the count is exact.
-  if n.kind != ParLe:
+  if not n.isTagLit:
     return 1
   result = span(n)
 
@@ -317,11 +318,11 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   result.weights = newSeq[int](params.len)
 
   var hasInline = false
-  if pd.pragmas.kind == ParLe:
+  if pd.pragmas.isTagLit:
     var pr = pd.pragmas
     pr.into:                            # scan all pragmas (no early break: the
       while pr.hasMore:                 # `into` epilogue needs the scope drained)
-        if pr.kind == ParLe and pr.pragmaKind == InlineP:
+        if pr.isTagLit and pr.pragmaKind == InlineP:
           hasInline = true
         skip pr
   if not hasInline:
@@ -331,7 +332,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   var lookup = initTable[SymId, int]()
   for i, s in params:
     lookup[s] = i
-  if lookup.len > 0 and pd.body.kind == ParLe:
+  if lookup.len > 0 and pd.body.isTagLit:
     var body = pd.body
     walkInlineWeights(body, lookup, result.weights, 0)
 
@@ -341,9 +342,9 @@ proc analyzeModule*(buf: var TokenBuf): ModuleAnalysis =
   if n.stmtKind == StmtsS:
     n.into:
       while n.hasMore:
-        if n.kind == ParLe and n.stmtKind == ProcS:
+        if n.isTagLit and n.stmtKind == ProcS:
           let nameCur = n.firstSon
-          if nameCur.kind == SymbolDef:
+          if nameCur.isSymbolDef:
             let info = computeInlineInfo(n)
             if info.threshold == 0:
               result.inlineInfo[nameCur.symId] = info
@@ -355,14 +356,14 @@ proc collectParams(params: Cursor; outSyms: var seq[SymId];
                    outTypes: var seq[Cursor]) =
   outSyms.setLen 0
   outTypes.setLen 0
-  if params.kind != ParLe: return
+  if not params.isTagLit: return
   var p = params
   p.into:
     while p.hasMore:
       if p.substructureKind == ParamU:
         var inner = p
         inc inner                      # past `param` tag
-        if inner.kind != SymbolDef:
+        if not inner.isSymbolDef:
           skip p
           continue
         outSyms.add inner.symId
@@ -383,8 +384,8 @@ proc isSubstitutableArg(c: Cursor): bool =
   ## NOT included: the inliner cannot prove the caller's variable is unmodified
   ## during the body without alias info.)
   case c.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit: true
-  of ParLe: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
+  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind: true
+  of OpenTagKind: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
   else: false
 
 proc slotRootOf(c: Cursor): SymId =
@@ -400,7 +401,7 @@ proc slotRootOf(c: Cursor): SymId =
   while true:
     case n.kind
     of Symbol: return n.symId
-    of ParLe:
+    of OpenTagKind:
       case n.exprKind
       of DerefC, PatC: return SymId(0)       # through-pointer: pointee, not the slot
       of DotC, AtC: inc n                     # field / index: base is the first child
@@ -416,7 +417,7 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
   ## be replaced by their argument value. Writes and address-of that go
   ## *through* the pointer (`(*p).f = …`, `addr (*p)`) leave the slot's value
   ## and address intact, so `slotRootOf` deliberately ignores them.
-  if c.kind != ParLe: return
+  if not c.isTagLit: return
   if c.stmtKind in {AsgnS, StoreS}:
     var dst = c.firstSon
     if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
@@ -449,7 +450,7 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
     if bnd.rename.hasKey(body.symId):
       dest.addSymDef bnd.rename.getOrQuit(body.symId), body.info
     else:
-      dest.add body
+      dest.addSubtree body
     inc body
   of Symbol:
     if bnd.subst.hasKey(body.symId):
@@ -458,18 +459,18 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
     elif bnd.rename.hasKey(body.symId):
       dest.addSymUse bnd.rename.getOrQuit(body.symId), body.info
     else:
-      dest.add body
+      dest.addSubtree body
     inc body
-  of ParLe:
+  of OpenTagKind:
     # `into` bounds `body` to this scope so the child loop terminates at the
     # real-or-virtual `)`; `addParRi` emits a fresh closer (the source `)` is
     # elided under `-d:virtualParRi`).
     if body.substructureKind == KvU:
       # `(kv field value [depth])` — field name slot is verbatim.
-      dest.add body
+      dest.addParLe(body.tag, body.info)
       into body:                            # past `kv` tag
         if body.hasMore:
-          dest.add body                     # field name — no rename
+          dest.addSubtree body              # field name — no rename
           inc body
         while body.hasMore:
           emitRenamed(dest, body, bnd)
@@ -478,26 +479,27 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
     if body.exprKind == DotC:
       # `(dot obj field [depth])` — field slot (the 2nd child) is
       # verbatim; obj and the optional depth are renameable.
-      dest.add body
+      dest.addParLe(body.tag, body.info)
       into body:                            # past `dot` tag
         if body.hasMore:
           emitRenamed(dest, body, bnd)   # obj
         if body.hasMore:
-          dest.add body                     # field — no rename
+          dest.addSubtree body              # field — no rename
           inc body
         while body.hasMore:
           emitRenamed(dest, body, bnd)   # depth, etc.
       dest.addParRi()
       return
-    dest.add body
+    dest.addParLe(body.tag, body.info)
     into body:
       while body.hasMore:
         emitRenamed(dest, body, bnd)
     dest.addParRi()
-  of ParRi:
-    discard
   else:
-    dest.add body
+    when not defined(useNifcore):
+      if body.kind == ParRi:
+        return # mirrors the classic `of ParRi: discard` arm
+    dest.addSubtree body
     inc body
 
 proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
@@ -516,7 +518,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
     if bnd.rename.hasKey(body.symId):
       dest.addSymDef bnd.rename.getOrQuit(body.symId), body.info
     else:
-      dest.add body
+      dest.addSubtree body
     inc body
   of Symbol:
     if bnd.subst.hasKey(body.symId):
@@ -525,15 +527,15 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
     elif bnd.rename.hasKey(body.symId):
       dest.addSymUse bnd.rename.getOrQuit(body.symId), body.info
     else:
-      dest.add body
+      dest.addSubtree body
     inc body
-  of ParLe:
+  of OpenTagKind:
     # See `emitRenamed`: `into` bounds the scope (the closing `)` may be
     # virtual under `-d:virtualParRi`), `addParRi` emits a fresh closer.
     if body.stmtKind == RetS:
       let info = body.info
       into body:                            # enter (ret …)
-        if body.hasMore and body.kind != DotToken and targetSym != SymId(0):
+        if body.hasMore and not body.isDotToken and targetSym != SymId(0):
           dest.addParLe TagId(AsgnS), info
           dest.addSymUse targetSym, info
           emitRenamed(dest, body, bnd)  # the returned expression
@@ -549,36 +551,37 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       # avoid collisions with body-locals that share the field name.
       # Inner subtrees still get the ret-rewrite treatment in case the
       # value side hides a `(ret …)`.
-      dest.add body
+      dest.addParLe(body.tag, body.info)
       into body:
         if body.hasMore:
-          dest.add body                     # field name — verbatim
+          dest.addSubtree body              # field name — verbatim
           inc body
         while body.hasMore:
           emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
       dest.addParRi()
       return
     if body.exprKind == DotC:
-      dest.add body
+      dest.addParLe(body.tag, body.info)
       into body:
         if body.hasMore:
           emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
         if body.hasMore:
-          dest.add body                     # field — verbatim
+          dest.addSubtree body              # field — verbatim
           inc body
         while body.hasMore:
           emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
       dest.addParRi()
       return
-    dest.add body
+    dest.addParLe(body.tag, body.info)
     into body:
       while body.hasMore:
         emitRenamedWithRet(dest, body, bnd, targetSym, returnLabel)
     dest.addParRi()
-  of ParRi:
-    discard
   else:
-    dest.add body
+    when not defined(useNifcore):
+      if body.kind == ParRi:
+        return # mirrors the classic `of ParRi: discard` arm
+    dest.addSubtree body
     inc body
 
 proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
@@ -589,18 +592,18 @@ proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
   ## the label). A tail `stmts`/`scope` recurses so ITS last statement inherits
   ## the tail position; anything else is handled by the general `(ret)`-rewriter
   ## (interior returns still jump). Mirrors the arkham value-core's tail handling.
-  if body.kind == ParLe and body.stmtKind == RetS:
+  if body.isTagLit and body.stmtKind == RetS:
     let rinfo = body.info
     into body:
-      if body.hasMore and body.kind != DotToken and targetSym != SymId(0):
+      if body.hasMore and not body.isDotToken and targetSym != SymId(0):
         dest.addParLe TagId(AsgnS), rinfo
         dest.addSymUse targetSym, rinfo
         emitRenamed(dest, body, bnd)         # the returned expression
         dest.addParRi()
       else:
         while body.hasMore: skip body        # void return: discard the value
-  elif body.kind == ParLe and body.stmtKind in {StmtsS, ScopeS}:
-    dest.add body                            # copy the (stmts/(scope opener
+  elif body.isTagLit and body.stmtKind in {StmtsS, ScopeS}:
+    dest.addParLe(body.tag, body.info)       # copy the (stmts/(scope opener
     into body:
       while body.hasMore:
         var nx = body; skip nx
@@ -625,7 +628,7 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   ## preserving uniform handling of any interior `(ret X)` points. The label is
   ## still emitted unconditionally (it costs zero machine bytes) so interior
   ## returns' jumps always resolve.
-  if body.kind != ParLe or body.stmtKind != StmtsS:
+  if not body.isTagLit or body.stmtKind != StmtsS:
     emitRenamed(dest, body, bnd)
     return
   let info = body.info
@@ -676,7 +679,7 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
     if isSubstitutableArg(arg) or
-       (arg.kind == Symbol and isLocalName(pool.syms[arg.symId])):
+       (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
@@ -691,7 +694,7 @@ proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
         if not rename.hasKey(n.symId):
           rename[n.symId] = c.freshSym(n.symId)
         inc n
-      of ParLe:
+      of OpenTagKind:
         seedRenameWalk(c, n, rename)
       else:
         inc n
@@ -701,7 +704,7 @@ proc seedRenameFromBody(c: var InlinerCtx; body: Cursor;
   ## Walk every token in the body and mint a fresh sym for each
   ## SymbolDef found, so local var declarations don't collide between
   ## inline copies in the same scope.
-  if body.kind != ParLe: return
+  if not body.isTagLit: return
   var n = body
   seedRenameWalk(c, n, rename)
 
@@ -710,12 +713,12 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## the splice into `dest`, advance `n` past the call, and return the
   ## number of top-level subtrees emitted (one `(scope …)` here).
   ## Otherwise leave `n` and `dest` untouched and return 0.
-  if n.kind != ParLe or n.stmtKind != CallS: return 0
+  if not n.isTagLit or n.stmtKind != CallS: return 0
 
   let entry = n
   var probe = n
   inc probe                                # past `call` tag
-  if probe.kind != Symbol: return 0
+  if not probe.isSymbol: return 0
   let calleeSym = probe.symId
   if calleeSym in c.inProgress: return 0     # cycle guard
   if c.maxDepth > 0 and c.inProgress.len >= c.maxDepth: return 0
@@ -795,11 +798,11 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   ## Advances `n` past the original `(var …)` and returns the number of
   ## top-level subtrees emitted (2 here). Otherwise leaves `n` and `dest`
   ## untouched and returns 0.
-  if n.kind != ParLe or n.stmtKind != VarS: return 0
+  if not n.isTagLit or n.stmtKind != VarS: return 0
   let entry = n
   var probe = n
   inc probe                                # past `var` tag
-  if probe.kind != SymbolDef: return 0
+  if not probe.isSymbolDef: return 0
   let tmpSym = probe.symId
   # Local syms only — global vars with call initializers are out of
   # scope for this splice (their lifetime / module placement differs).
@@ -809,12 +812,12 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   skip probe                               # past pragmas slot
   let typeCursor = probe
   skip probe                               # past type slot
-  if probe.kind != ParLe or probe.stmtKind != CallS: return 0
+  if not probe.isTagLit or probe.stmtKind != CallS: return 0
   let valueCursor = probe
 
   var callProbe = valueCursor
   inc callProbe                            # past `call` tag
-  if callProbe.kind != Symbol: return 0
+  if not callProbe.isSymbol: return 0
   let calleeSym = callProbe.symId
   if calleeSym in c.inProgress: return 0     # cycle guard
   if c.maxDepth > 0 and c.inProgress.len >= c.maxDepth: return 0
@@ -895,10 +898,10 @@ proc countSymUses(n: Cursor; sym: SymId): int =
   ## Count `Symbol` (use, not `SymbolDef`) occurrences of `sym` within the
   ## single subtree rooted at `n` (which may be a leaf token).
   result = 0
-  if n.kind == Symbol:
+  if n.isSymbol:
     if n.symId == sym: result = 1
     return
-  if n.kind != ParLe:
+  if not n.isTagLit:
     return
   var it = n
   it.into:
@@ -907,7 +910,7 @@ proc countSymUses(n: Cursor; sym: SymId): int =
       of Symbol:
         if it.symId == sym: inc result
         inc it
-      of ParLe:
+      of OpenTagKind:
         result += countSymUses(it, sym)
         skip it
       else:
@@ -927,7 +930,7 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
   ## `X`, so splicing `X` where `R` would have been read is sound.
   var b = body
   # Peel single-child stmts/scope wrappers to reach the real statement list.
-  while b.kind == ParLe and b.stmtKind in {StmtsS, ScopeS}:
+  while b.isTagLit and b.stmtKind in {StmtsS, ScopeS}:
     var cnt = 0
     var only = default(Cursor)
     var inner = b
@@ -942,7 +945,7 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
       break
   # Gather the (up to 3) statements of the reached list.
   var stmts: seq[Cursor] = @[]
-  if b.kind == ParLe and b.stmtKind in {StmtsS, ScopeS}:
+  if b.isTagLit and b.stmtKind in {StmtsS, ScopeS}:
     var it = b
     it.into:
       while it.hasMore:
@@ -954,9 +957,9 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
 
   proc retSym(s: Cursor; outR: var SymId): bool =
     # `(ret R)` returning a plain symbol → R.
-    if s.kind != ParLe or s.stmtKind != RetS: return false
+    if not s.isTagLit or s.stmtKind != RetS: return false
     let v = s.firstSon
-    if v.kind == Symbol:
+    if v.isSymbol:
       outR = v.symId
       return true
     return false
@@ -965,9 +968,9 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
   of 1:
     # (ret X) with X a value expression (not a bare `(ret sym)` handled below).
     let s = stmts[0]
-    if s.kind == ParLe and s.stmtKind == RetS:
+    if s.isTagLit and s.stmtKind == RetS:
       let v = s.firstSon
-      if v.kind != DotToken and v.kind != Symbol:
+      if not v.isDotToken and not v.isSymbol:
         outVal = v
         return true
     return false
@@ -976,14 +979,14 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
     var R = SymId(0)
     if not retSym(stmts[1], R): return false
     let vdecl = stmts[0]
-    if vdecl.kind != ParLe or vdecl.stmtKind != VarS: return false
+    if not vdecl.isTagLit or vdecl.stmtKind != VarS: return false
     var p = vdecl
     inc p                                  # past `var`
-    if p.kind != SymbolDef or p.symId != R: return false
+    if not p.isSymbolDef or p.symId != R: return false
     inc p                                  # past name
     skip p                                 # past pragmas
     skip p                                 # past type
-    if p.kind == DotToken: return false    # no initializer here
+    if p.isDotToken: return false    # no initializer here
     if countSymUses(p, R) != 0: return false
     outVal = p
     return true
@@ -992,21 +995,21 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
     var R = SymId(0)
     if not retSym(stmts[2], R): return false
     let vdecl = stmts[0]
-    if vdecl.kind != ParLe or vdecl.stmtKind != VarS: return false
+    if not vdecl.isTagLit or vdecl.stmtKind != VarS: return false
     var p = vdecl
     inc p
-    if p.kind != SymbolDef or p.symId != R: return false
+    if not p.isSymbolDef or p.symId != R: return false
     inc p                                  # past name
     skip p                                 # past pragmas
     skip p                                 # past type
     # The result var must have NO initializer — otherwise `X` is not the sole
     # value of `R` and a side-effecting initializer would be dropped.
-    if p.kind != DotToken: return false
+    if not p.isDotToken: return false
     let asgn = stmts[1]
-    if asgn.kind != ParLe or asgn.stmtKind != AsgnS: return false
+    if not asgn.isTagLit or asgn.stmtKind != AsgnS: return false
     var a = asgn
     inc a                                  # past `asgn`
-    if a.kind != Symbol or a.symId != R: return false
+    if not a.isSymbol or a.symId != R: return false
     skip a                                 # past LHS (R)
     if countSymUses(a, R) != 0: return false
     outVal = a
@@ -1036,33 +1039,33 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   ## evaluated unconditionally, exactly where the temp was), so no purity or
   ## dataflow analysis is needed. Returns the number of top-level subtrees
   ## emitted (1: the rewritten `if`) or 0 (leaving `n`/`dest` untouched).
-  if n.kind != ParLe or n.stmtKind != VarS: return 0
+  if not n.isTagLit or n.stmtKind != VarS: return 0
   let entry = n
 
   # --- parse `(var :tmp <pragmas> <type> (call f arg…))` ---
   var probe = n
   inc probe                                # past `var` tag
-  if probe.kind != SymbolDef: return 0
+  if not probe.isSymbolDef: return 0
   let tmpSym = probe.symId
   if not isLocalName(pool.syms[tmpSym]): return 0
   inc probe                                # past name
   skip probe                               # past pragmas
   skip probe                               # past type
-  if probe.kind != ParLe or probe.stmtKind != CallS: return 0
+  if not probe.isTagLit or probe.stmtKind != CallS: return 0
   let valueCursor = probe
   var callProbe = valueCursor
   inc callProbe                            # past `call` tag
-  if callProbe.kind != Symbol: return 0
+  if not callProbe.isSymbol: return 0
   let cSym = callProbe.symId
 
   # --- peek the next sibling: must be `(if (elif tmp …) …)` guarding on tmp ---
   var nextCur = entry
   skip nextCur                             # past the whole var decl
-  if nextCur.kind != ParLe or nextCur.stmtKind != IfS: return 0
+  if not nextCur.isTagLit or nextCur.stmtKind != IfS: return 0
   let firstElif = nextCur.firstSon
-  if firstElif.kind != ParLe or firstElif.substructureKind != ElifU: return 0
+  if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
   let condCur = firstElif.firstSon
-  if condCur.kind != Symbol or condCur.symId != tmpSym: return 0
+  if not condCur.isSymbol or condCur.symId != tmpSym: return 0
   # `tmp` must be used *only* here — otherwise dropping its def is unsound.
   if countSymUses(nextCur, tmpSym) != 1: return 0
 
@@ -1108,10 +1111,10 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
 
   # --- emit the rewritten `if`, splicing X into the first elif's condition ---
   var ifOpener = nextCur
-  dest.add ifOpener                        # copy `(if` opener
+  dest.addParLe(ifOpener.tag, ifOpener.info)  # copy `(if` opener
   ifOpener.into:
     var elifn = ifOpener
-    dest.add elifn                         # copy `(elif` opener
+    dest.addParLe(elifn.tag, elifn.info)   # copy `(elif` opener
     elifn.into:
       emitRenamed(dest, retVal, bnd)       # X' replaces the tmp condition
       skip elifn                           # drop the original tmp condition
@@ -1143,7 +1146,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
   ## naturally skipped (their `InlineInfo` defaults to threshold 100, so
   ## `shouldInlineCall` declines).
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     let sk = n.stmtKind
     case sk
     of StmtsS, ScopeS:
@@ -1152,14 +1155,14 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
       # scope has no `ParRi` token, so a raw `while n.hasMore` over an
       # unbounded `rem` would walk into siblings. Emit a fresh closer with
       # `addParRi` (the source `)` may be elided).
-      dest.add n
+      dest.addParLe(n.tag, n.info)
       into n:
         while n.hasMore:
-          if n.kind == ParLe and n.stmtKind == CallS:
+          if n.isTagLit and n.stmtKind == CallS:
             var probe = n
             inc probe
             let calleeSym =
-              if probe.kind == Symbol: probe.symId else: SymId(0)
+              if probe.isSymbol: probe.symId else: SymId(0)
             var spliced = createTokenBuf(32)
             let nEmitted = trySplice(c, spliced, n)
             if nEmitted > 0:
@@ -1172,7 +1175,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
               if calleeSym != SymId(0):
                 c.inProgress.excl calleeSym
               continue
-          if n.kind == ParLe and n.stmtKind == VarS:
+          if n.isTagLit and n.stmtKind == VarS:
             # `(var :tmp T (call …))` immediately guarding an `if` — fold the
             # inlined condition straight into the guard so no boolean temp is
             # materialised (see `trySpliceCond`). Peeks the following sibling.
@@ -1197,13 +1200,13 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
         var probe = n
         inc probe
         var calleeSym = SymId(0)
-        if probe.kind == SymbolDef:
+        if probe.isSymbolDef:
           inc probe          # name
           skip probe         # pragmas
           skip probe         # type
-          if probe.kind == ParLe and probe.stmtKind == CallS:
+          if probe.isTagLit and probe.stmtKind == CallS:
             inc probe
-            if probe.kind == Symbol:
+            if probe.isSymbol:
               calleeSym = probe.symId
         if calleeSym != SymId(0):
           var spliced = createTokenBuf(32)
@@ -1216,33 +1219,34 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             endRead(inner)
             c.inProgress.excl calleeSym
             return
-      dest.add n
+      dest.addParLe(n.tag, n.info)
       into n:
         while n.hasMore:
           trIntra(c, dest, n)
       dest.addParRi()
     else:
-      dest.add n
+      dest.addParLe(n.tag, n.info)
       into n:
         while n.hasMore:
           trIntra(c, dest, n)
       dest.addParRi()
-  of ParRi:
-    raiseAssert "ParRi should not be encountered here"
   else:
+    when not defined(useNifcore):
+      if n.kind == ParRi:
+        raiseAssert "ParRi should not be encountered here"
     dest.takeToken n
 
 proc emitPragmasWithInlineInfo(dest: var TokenBuf; pragmas: Cursor; info: InlineInfo) =
   var p = pragmas
-  if p.kind != ParLe:
+  if not p.isTagLit:
     dest.addSubtree p
     return
 
-  dest.add p
+  dest.addParLe(p.tag, p.info)
   p.into:
     while p.hasMore:
-      if p.kind == ParLe and p.pragmaKind == InlineP:
-        dest.add p
+      if p.isTagLit and p.pragmaKind == InlineP:
+        dest.addParLe(p.tag, p.info)
         p.into:
           dest.addIntLit info.threshold, p.endInfo
           for w in info.weights:
@@ -1257,7 +1261,7 @@ proc emitPragmasWithInlineInfo(dest: var TokenBuf; pragmas: Cursor; info: Inline
 proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
                            infos: Table[SymId, InlineInfo]) =
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     if n.stmtKind == ProcS:
       let tag = n.tagId
       let info = n.info
@@ -1274,14 +1278,15 @@ proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
       dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.add n.load()
+      dest.addParLe(n.tag, n.info)
       n.into:
         while n.hasMore:
           annotateInlinePragmas(dest, n, infos)
       dest.addParRi()
-  of ParRi:
-    raiseAssert "ParRi should not be encountered here"
   else:
+    when not defined(useNifcore):
+      if n.kind == ParRi:
+        raiseAssert "ParRi should not be encountered here"
     dest.takeToken n
 
 proc annotateInlinePragmas(buf: var TokenBuf; infos: Table[SymId, InlineInfo]) =

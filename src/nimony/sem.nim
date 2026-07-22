@@ -281,50 +281,108 @@ proc declareResult*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo)
 # -------------------- generics ---------------------------------
 
 
-proc instToString(buf: TokenBuf; start: int): string =
-  # canonicalized string of invocation
-  # could directly build hash too but this is easier to debug
-  var b = nifbuilder.open((buf.len - start) * 20, compact = true)
-  when defined(virtualParRi):
-    # elided closes are reconstructed from the sealed jumps so the output —
-    # and hence the instance-hash suffixes — stays identical to classic mode
-    var closeAt: seq[int] = @[]
-  for n in start ..< buf.len:
-    when defined(virtualParRi):
-      while closeAt.len > 0 and closeAt[^1] == n:
-        b.endTree()
-        discard closeAt.pop()
-    let k = buf[n].kind
-    case k
-    of DotToken: b.addEmpty()
-    of Ident: b.addIdent(pool.strings[buf[n].litId])
+when defined(useNifcore):
+  proc instToStringRec(b: var Builder; n: var Cursor) =
+    ## Cursor-based canonical rendering: line-info suffixes are skipped by the
+    ## cursor advance, so the text — and hence the instance-hash suffixes —
+    ## matches the classic token walk.
+    case n.kind
+    of DotToken:
+      b.addEmpty()
+      inc n
+    of Ident:
+      b.addIdent(pool.strings[n.litId])
+      inc n
     of Symbol:
       # for nested instantiations i.e. `Foo[Bar[int]]`
-      let s = pool.syms[buf[n].symId]
+      let s = pool.syms[n.symId]
       if isInstantiation(s):
         b.addSymbol(removeModule(s))
       else:
         b.addSymbol(s)
-    of IntLit: b.addIntLit(pool.integers[buf[n].intId])
-    of UIntLit: b.addUIntLit(pool.uintegers[buf[n].uintId])
-    of FloatLit: b.addFloatLit(pool.floats[buf[n].floatId])
-    of SymbolDef: b.addSymbolDef(pool.syms[buf[n].symId])
-    of CharLit: b.addCharLit char(buf[n].uoperand)
-    of StrLitKind: b.addStrLit(pool.strings[buf[n].litId])
-    of UnknownTokenKind: b.addIdent "<unknown token>"
-    of EofTokenKind: b.addIntLit buf[n].soperand
+      inc n
+    of IntLit:
+      b.addIntLit(pool.integers[n.intId])
+      inc n
+    of UIntLit:
+      b.addUIntLit(pool.uintegers[n.uintId])
+      inc n
+    of FloatLit:
+      b.addFloatLit(pool.floats[n.floatId])
+      inc n
+    of SymbolDef:
+      b.addSymbolDef(pool.syms[n.symId])
+      inc n
+    of CharLit:
+      b.addCharLit char(n.uoperand)
+      inc n
+    of StrLitKind:
+      b.addStrLit(pool.strings[n.litId])
+      inc n
     of OpenTagKind:
-      b.addTree(pool.tags[buf[n].tagId])
-      when defined(virtualParRi):
-        let j = jump(buf[n])
-        if j != MaxJump:
-          closeAt.add n + int(j) + 1
-    else: b.endTree() # a real close (ParRi; overflow scope) in virtualParRi mode
-  when defined(virtualParRi):
-    while closeAt.len > 0:
+      b.addTree(pool.tags[n.tagId])
+      n.into:
+        while n.hasMore:
+          instToStringRec(b, n)
       b.endTree()
-      discard closeAt.pop()
-  result = b.extract()
+    else:
+      # suffix kinds never appear as a cursor head
+      b.addIdent "<unknown token>"
+      inc n
+
+  proc instToString(buf: TokenBuf; start: int): string =
+    # canonicalized string of invocation
+    # could directly build hash too but this is easier to debug
+    var b = nifbuilder.open((buf.len - start) * 20, compact = true)
+    var n = readonlyCursorAt(buf, start)
+    while n.hasMore:
+      instToStringRec(b, n)
+    result = b.extract()
+else:
+  proc instToString(buf: TokenBuf; start: int): string =
+    # canonicalized string of invocation
+    # could directly build hash too but this is easier to debug
+    var b = nifbuilder.open((buf.len - start) * 20, compact = true)
+    when defined(virtualParRi):
+      # elided closes are reconstructed from the sealed jumps so the output —
+      # and hence the instance-hash suffixes — stays identical to classic mode
+      var closeAt: seq[int] = @[]
+    for n in start ..< buf.len:
+      when defined(virtualParRi):
+        while closeAt.len > 0 and closeAt[^1] == n:
+          b.endTree()
+          discard closeAt.pop()
+      let k = buf[n].kind
+      case k
+      of DotToken: b.addEmpty()
+      of Ident: b.addIdent(pool.strings[buf[n].litId])
+      of Symbol:
+        # for nested instantiations i.e. `Foo[Bar[int]]`
+        let s = pool.syms[buf[n].symId]
+        if isInstantiation(s):
+          b.addSymbol(removeModule(s))
+        else:
+          b.addSymbol(s)
+      of IntLit: b.addIntLit(pool.integers[buf[n].intId])
+      of UIntLit: b.addUIntLit(pool.uintegers[buf[n].uintId])
+      of FloatLit: b.addFloatLit(pool.floats[buf[n].floatId])
+      of SymbolDef: b.addSymbolDef(pool.syms[buf[n].symId])
+      of CharLit: b.addCharLit char(buf[n].uoperand)
+      of StrLitKind: b.addStrLit(pool.strings[buf[n].litId])
+      of UnknownTokenKind: b.addIdent "<unknown token>"
+      of EofTokenKind: b.addIntLit buf[n].soperand
+      of OpenTagKind:
+        b.addTree(pool.tags[buf[n].tagId])
+        when defined(virtualParRi):
+          let j = jump(buf[n])
+          if j != MaxJump:
+            closeAt.add n + int(j) + 1
+      else: b.endTree() # a real close (ParRi; overflow scope) in virtualParRi mode
+    when defined(virtualParRi):
+      while closeAt.len > 0:
+        b.endTree()
+        discard closeAt.pop()
+    result = b.extract()
 
 proc instToSuffix(buf: TokenBuf, start: int): string =
   result = uhashBase36(instToString(buf, start))
@@ -533,7 +591,7 @@ proc fetchSym*(c: var SemContext; s: SymId): Sym =
 
 proc semStmtsExpr(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool) =
   let before = dest.len
-  dest.addSubtree it.n
+  dest.addParLe(it.n.tag, it.n.info)
   it.n.into:
     while it.n.hasMore:
       if not isLastSon(it.n):

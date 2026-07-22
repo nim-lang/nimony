@@ -372,7 +372,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
       checkForDangerousLocations c, n
 
   case n.kind
-  of Symbol, DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
+  of Symbol, UnknownTokenKind, EofTokenKind, DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
     inc n
   of OpenTagKind:
     if isDeclarative(n):

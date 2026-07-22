@@ -173,7 +173,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   var i = 0
   for s in c.typeCache.currentScopeLocals:
     if i == 0:
-      dest.add tagToken("kill", info)
+      dest.addParLe("kill", info)
     dest.addSymUse s, info
     inc i
   if i > 0:
@@ -215,7 +215,7 @@ proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (
   for i in countdown(c.current.guards.len - 1, 0):
     let g = addr c.current.guards[i]
     if g.active:
-      dest.add tagToken("ite", info)
+      dest.addParLe("ite", info)
       dest.copyIntoKind NotX, info:
         dest.addSymUse g.cond, info
       result = (i, g.cond)
@@ -246,7 +246,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
-  dest.add tagToken("mflag", NoLineInfo)
+  dest.addParLe("mflag", NoLineInfo)
   dest.addSymDef s, NoLineInfo
   dest.addParRi()
   let boolTyp = c.typeCache.builtins.boolType
@@ -410,7 +410,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
     else: NoRaise,
     info: info
   )
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   let callStart = n
   n = sub(n) # skip `(call)`
   trExpr c, dest, n # handle `fn`
@@ -437,9 +437,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc n
     else:
       dest.takeToken n
-  of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+  of UnknownTokenKind, EofTokenKind, DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of CallKinds:
       bug "call must have been bound to a location"
@@ -457,10 +457,10 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
             discard trCall(c, dest, n)
           else:
             trExpr c, dest, n
-  of ParRi: bug "Unmatched ParRi"
+  else: bug "Unmatched ParRi" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 proc emitReturnGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
-  dest.add tagToken("jtrue", info)
+  dest.addParLe("jtrue", info)
   # we also need to break out of everything:
   for i in countdown(c.current.guards.len - 1, 0):
     let cond = c.current.guards[i].cond
@@ -473,7 +473,7 @@ proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # we make `unknown` part of the `call` for now. This will be cleaned up
   # in the `versionizer` pass!
   for path in callInfo.mutates:
-    dest.add tagToken("unknown", callInfo.info)
+    dest.addParLe("unknown", callInfo.info)
     dest.add path
     dest.addParRi() # unknown
   if callInfo.isNoReturn:
@@ -491,7 +491,7 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
 proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo;
                  skipInnermostHandler = false) =
   let before = dest.len
-  dest.add tagToken("jtrue", info)
+  dest.addParLe("jtrue", info)
   var produced = 0
   var skippedHandler = not skipInnermostHandler
   # Break out of everything up to and INCLUDING the innermost try guard.
@@ -537,7 +537,7 @@ proc trStmtCall(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cu
       dest.add target
 
     # Manually emit ite to control whether we close it (for optimization)
-    dest.add tagToken("ite", info)
+    dest.addParLe("ite", info)
     dest.addSymUse s, info # XXX write that later as `e != Success`
     dest.copyIntoKind StmtsS, info: # then-branch
       raiseGuards(c, dest, info)
@@ -561,7 +561,7 @@ proc replayLocalHeader(c: var Context; dest: var TokenBuf; n: Cursor) =
 proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   let beforeHead = dest.len
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   let localStart = n
   n = sub(n)
 
@@ -617,7 +617,7 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
     c.current.tupleVars.incl(symId)
 
     # Manually emit ite to control whether we close it (for optimization)
-    dest.add tagToken("ite", info)
+    dest.addParLe("ite", info)
     dest.addParLe EtupatV, info # condition
     dest.addSymUse symId, info # XXX write that later as `e != Success`
     dest.addIntLit 0, info
@@ -632,7 +632,7 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
   # we translate `(asgn X Y)` to `(store Y X)` as it's easier to analyze,
   # it reflects the actual evaluation order.
   let info = n.info
-  dest.add tagToken("store", info)
+  dest.addParLe("store", info)
   let asgnStart = n
   n = sub(n)
   if n.isSymbol:
@@ -652,7 +652,7 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
         discard
       of TupleRaise:
         # result now holds (ErrorCode, T); check the error code and propagate.
-        dest.add tagToken("ite", info)
+        dest.addParLe("ite", info)
         dest.addParLe EtupatV, info
         dest.addSymUse symId, info
         dest.addIntLit 0, info
@@ -691,7 +691,7 @@ proc countSons(dest: var TokenBuf; d: int): int =
 proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   # Precondition: xelim already produced a single elif-else construct here
   let info = n.info
-  dest.add tagToken("ite", info)
+  dest.addParLe("ite", info)
   let ifStart = n
   n = sub(n)
   assert n.substructureKind == ElifU
@@ -775,7 +775,7 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
 
   assert entries > 0, "break resolved to zero guard entries"
   b.leavesWith = c.current.guards.len-1
-  dest.add tagToken("jtrue", n.endInfo)
+  dest.addParLe("jtrue", n.endInfo)
   for i in 1..entries:
     let guardIdx = c.current.guards.len - i
     assert guardIdx >= 0, "guard index underflow in break"
@@ -897,7 +897,7 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
   removeGuard c, s
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  dest.add tagToken("loop", n.info)
+  dest.addParLe("loop", n.info)
   let whileStart = n
   n = sub(n)
 
@@ -990,7 +990,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # loop variable is bound from the iterator at the start of the body.
   let info = n.info
   let forStmt = asForStmt(n) # peek at structure before advancing
-  dest.add tagToken("loop", info)
+  dest.addParLe("loop", info)
   let forStart = n
   n = sub(n)
 
@@ -1101,9 +1101,9 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
     n = sub(n)
     # Emit ite (or itec for first branch to mark case origin)
     if iteCount == 0:
-      dest.add tagToken("itec", info)
+      dest.addParLe("itec", info)
     else:
-      dest.add tagToken("ite", info)
+      dest.addParLe("ite", info)
     inc iteCount
 
     # Emit condition
@@ -1404,7 +1404,7 @@ proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
   var n = pass.n
   #echo "after xelim: ", toString(n, false)
   assert n.stmtKind == StmtsS, $n.kind
-  pass.dest.add n
+  pass.dest.addParLe(n.tag, n.info)
   inc n
   # Add a top-level return guard so that noreturn calls at module level
   # have a mflag to set via jtrue, enabling the mflag-based init tracking:

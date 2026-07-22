@@ -370,7 +370,7 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
     if not nullary.hasMore:
       # sink T/lent T call
       var typeBuf = createTokenBuf(16)
-      typeBuf.addSubtree destType
+      typeBuf.addParLe(destType.tag, destType.info)
       typeBuf.addSubtree cs.args[0].n
       typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)

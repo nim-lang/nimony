@@ -121,7 +121,7 @@ proc markEscapeElem(a: var ProcAnalysis; e: int) =
 
 proc collectParamSyms(params: Cursor): seq[SymId] =
   result = @[]
-  if params.kind != ParLe: return
+  if not params.isTagLit: return
   var p = params
   p.into:
     while p.hasMore:
@@ -143,7 +143,7 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
       result.add a.paramLookup.getOrQuit(n.symId)
     elif a.localRoots.hasKey(n.symId):
       result = a.localRoots.getOrQuit(n.symId)
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of DotC, DerefC, PatC, AtC, AddrC:
       result = exprRoots(a, n.firstSon)
@@ -272,7 +272,7 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
       markReadElem(a, a.paramLookup.getOrQuit(n.symId))
     inc n
     return
-  if n.kind != ParLe:
+  if not n.isTagLit:
     inc n
     return
   case n.stmtKind
@@ -319,7 +319,7 @@ proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   result.slotW = newSeq[bool](paramSyms.len + 1)
   result.escapes = newSeq[bool](paramSyms.len + 1)
   for i, s in paramSyms: result.paramLookup[s] = i
-  if d.body.kind == ParLe:
+  if d.body.isTagLit:
     var body = d.body
     walkStmt(result, body)
   else:
@@ -404,11 +404,11 @@ proc collectProcAnalyses(buf: var TokenBuf): Table[SymId, ProcAnalysis] =
   if n.stmtKind == StmtsS:
     n.into:
       while n.hasMore:
-        if n.kind == ParLe and n.stmtKind == ProcS:
+        if n.isTagLit and n.stmtKind == ProcS:
           let p = n
           var d = n
           inc d
-          if d.kind == SymbolDef:
+          if d.isSymbolDef:
             result[d.symId] = computeProcAnalysis(p)
         skip n
   endRead(buf)
@@ -465,7 +465,7 @@ proc readSummary(n: var Cursor; outSummary: var FunctionSummary): bool =
             sawResult = true
             inc n
         else: inc n
-      elif n.kind == ParLe and n.substructureKind == ParamU:
+      elif n.isTagLit and n.substructureKind == ParamU:
         readParamSummary(n, outSummary)
       else:
         skip n
@@ -473,11 +473,11 @@ proc readSummary(n: var Cursor; outSummary: var FunctionSummary): bool =
     outSummary.resultCls = uint32(outSummary.params.len)
 
 proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool =
-  if pragmas.kind != ParLe: return false
+  if not pragmas.isTagLit: return false
   var p = pragmas
   p.into:
     while p.hasMore:
-      if p.kind == ParLe and p.pragmaKind == SmryP:
+      if p.isTagLit and p.pragmaKind == SmryP:
         return readSummary(p, outSummary)
       skip p
   result = false
@@ -488,10 +488,10 @@ proc collectFunctionSummaries*(buf: var TokenBuf): FunctionSummaryTable =
   if n.stmtKind == StmtsS:
     n.into:
       while n.hasMore:
-        if n.kind == ParLe and n.stmtKind == ProcS:
+        if n.isTagLit and n.stmtKind == ProcS:
           let d = takeProcDecl(n)
           var summary = FunctionSummary()
-          if d.name.kind == SymbolDef and readSummaryPragma(d.pragmas, summary):
+          if d.name.isSymbolDef and readSummaryPragma(d.pragmas, summary):
             result[d.name.symId] = summary
         else:
           skip n
@@ -521,16 +521,16 @@ proc addSummaryPragma(dest: var TokenBuf; summary: FunctionSummary; info: Packed
 proc writePragmasWithSummary(dest: var TokenBuf; pragmas: Cursor;
                              summary: FunctionSummary; info: PackedLineInfo) =
   var p = pragmas
-  if p.kind == DotToken:
+  if p.isDotToken:
     dest.addParLe(TagId(PragmasU), info)
     addSummaryPragma(dest, summary, info)
     dest.addParRi()
-  elif p.kind == ParLe:
-    dest.add p
+  elif p.isTagLit:
+    dest.addParLe(p.tag, p.info)
     var hadSummary = false
     p.into:
       while p.hasMore:
-        if p.kind == ParLe and p.pragmaKind == SmryP:
+        if p.isTagLit and p.pragmaKind == SmryP:
           addSummaryPragma(dest, summary, p.info)
           skip p
           hadSummary = true
@@ -545,7 +545,7 @@ proc writePragmasWithSummary(dest: var TokenBuf; pragmas: Cursor;
 proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
                        summaries: FunctionSummaryTable) =
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     if n.stmtKind == ProcS:
       let tag = n.tagId
       let info = n.info
@@ -554,7 +554,7 @@ proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
       dest.addSubtree d.name
       dest.addSubtree d.params
       dest.addSubtree d.returnType
-      if d.name.kind == SymbolDef and summaries.hasKey(d.name.symId):
+      if d.name.isSymbolDef and summaries.hasKey(d.name.symId):
         writePragmasWithSummary(dest, d.pragmas,
                                 summaries.getOrQuit(d.name.symId), info)
       else:
@@ -562,14 +562,15 @@ proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
       dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.add n.load()
+      dest.addParLe(n.tag, n.info)
       n.into:
         while n.hasMore:
           annotateSummaries(dest, n, summaries)
       dest.addParRi()
-  of ParRi:
-    assert false, "ParRi should not be encountered here"
   else:
+    when not defined(useNifcore):
+      if n.kind == ParRi:
+        assert false, "ParRi should not be encountered here"
     dest.takeToken n
 
 proc annotateFunctionSummaries*(buf: var TokenBuf) =

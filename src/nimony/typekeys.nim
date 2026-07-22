@@ -138,6 +138,12 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   of Ident:
     b.addIdent(pool.strings[c.litId])
     inc c
+  of UnknownTokenKind:
+    b.addIdent "!unknown!"
+    inc c
+  of EofTokenKind:
+    b.addIdent "!eof!"
+    inc c
   else:
     # ParRi/close (classic) or a stray suffix (nifcore); unreachable in a
     # well-formed walk since children are visited via `hasMore`.

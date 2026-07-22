@@ -16,6 +16,22 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls]
 
+
+when defined(useNifcore):
+  # nifcore has no ParLe/ParRi token kinds. The journal's section delimiters
+  # are raw marker tokens that are never cursor-walked: a jump-0 TagLit opens
+  # a section, a DotToken closes it (only Symbol entries appear in between).
+  const SectionOpen = TagLit
+  const SectionClose = DotToken
+  proc sectionOpenToken(): NifToken {.inline.} =
+    tagLitToken(cast[TagId](uint32(ord(StmtsS))))
+  proc sectionCloseToken(): NifToken {.inline.} = dotToken()
+else:
+  const SectionOpen = ParLe
+  const SectionClose = ParRi
+  proc sectionOpenToken(): PackedToken {.inline.} = parLeToken(StmtsS, NoLineInfo)
+  proc sectionCloseToken(): PackedToken {.inline.} = parRiToken(NoLineInfo)
+
 type
   VersionTab* = object
     history: TokenBuf
@@ -39,10 +55,10 @@ proc openSection*(v: var VersionTab) =
   # `history` is a marker journal that `combineJoin` scans BACKWARDS by
   # index; the parens are raw section delimiters, not a tree — bypass
   # sealing/ParRi elision so the closing markers stay physical.
-  v.history.addRaw parLeToken(StmtsS, NoLineInfo)
+  v.history.addRaw sectionOpenToken()
 
 proc closeSection*(v: var VersionTab) =
-  v.history.addRaw parRiToken(NoLineInfo)
+  v.history.addRaw sectionCloseToken()
 
 type
   JoinVar* = object
@@ -56,19 +72,19 @@ type
 proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
   # we know the else branch as at the end of our `v`:
   assert v.history.len >= 1
-  assert v.history[v.history.len - 1].kind == ParRi
+  assert v.history[v.history.len - 1].kind == SectionClose
   var i = v.history.len - 2
   result = initTable[SymId, JoinVar]()
   # traverse `else`, `then` branches. Or for loops just their body.
   var nested = ord(mode == IfJoin)
   while i >= 0:
     case v.history[i].kind
-    of ParLe:
+    of SectionOpen:
       dec i
       dec nested
       if nested == 0: break
-    of ParRi:
-      # When traversing backwards, ParRi means entering a nested section
+    of SectionClose:
+      # When traversing backwards, a close marker means entering a nested section
       inc nested
     of Symbol:
       let s = v.history[i].symId

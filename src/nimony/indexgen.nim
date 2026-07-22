@@ -39,7 +39,7 @@ proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): 
     for suffix, syms in exports:
       # open NIF file to get the path of source file of the module from the line info.
       let modPath = mp.dir / (suffix & mp.ext)
-      var fileId: FileId
+      var fileId: lineinfos.FileId
       when defined(useNifcore):
         var r = rd.open(modPath)
         var mbuf = createTokenBuf()

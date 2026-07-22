@@ -26,7 +26,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLi
   let s = "`desugar." & $c.counter
   inc c.counter
   result = pool.syms.getOrIncl(s)
-  dest.add tagToken("var", info)
+  dest.addParLe("var", info)
   dest.addSymDef result, info
   dest.addDotToken() # export, pragmas
   dest.addDotToken()
@@ -41,9 +41,9 @@ proc needsTemp(n: Cursor): bool =
   # removed) to see the NJ IR that trips the checker.
   result = false
   case n.kind
-  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     result = false
-  of ParLe:
+  of OpenTagKind:
     var n = n
     case n.exprKind
     of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
@@ -157,7 +157,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var pragmas = default(Cursor)
     let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
     if isConcrete and n.stmtKind == StmtsS:
-      dest.add n # (stmts)
+      dest.addParLe(n.tag, n.info) # (stmts)
       trRequires(c, dest, pragmas)
       trProcBody(c, dest, n)
       dest.addParRi()
@@ -166,12 +166,12 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc addUIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
-  buf.add tagToken("u", info)
+  buf.addParLe("u", info)
   buf.addIntLit(bits, info)
   buf.addParRi()
 
 proc addIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
-  buf.add tagToken("i", info)
+  buf.addParLe("i", info)
   buf.addIntLit(bits, info)
   buf.addParRi()
 
@@ -180,7 +180,7 @@ proc addSetType(buf: var TokenBuf; size: int; info: PackedLineInfo) =
   of 1, 2, 4, 8:
     buf.addUIntType(size * 8, info)
   else:
-    buf.add tagToken("array", info)
+    buf.addParLe("array", info)
     buf.addUIntType(8, info)
     buf.addIntLit(size, info)
     buf.addParRi()
@@ -202,7 +202,7 @@ proc liftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: 
   dest.addSubtree n
   dest.addParRi()
   c.tempUseBufStack.add createTokenBuf(4)
-  c.tempUseBufStack[^1].add symToken(tmp, n.info)
+  c.tempUseBufStack[^1].addSymUse(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
 
 proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: PackedLineInfo): Cursor =
@@ -216,7 +216,7 @@ proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; in
   dest.addParRi()
   c.tempUseBufStack.add createTokenBuf(4)
   copyIntoKind c.tempUseBufStack[^1], DerefX, n.info:
-    c.tempUseBufStack[^1].add symToken(tmp, n.info)
+    c.tempUseBufStack[^1].addSymUse(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
 
 template addTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; typ: Cursor; info: PackedLineInfo; body: typed) {.untyped.} =
@@ -289,7 +289,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let a: Cursor
   let b: Cursor
   if useTemp:
-    dest.add parLeToken(ExprX, info)
+    dest.addParLe(ExprX, info)
     # lift both so (n, (n = 123; n)) works
     a = liftTemp(c, dest, aOrig, typ, info)
     b = liftTemp(c, dest, bOrig, if kind == InsetX: c.typeCache.builtins.uintType else: typ, info)
@@ -358,11 +358,14 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     case kind
     of LtsetX, LesetX:
-      dest.add parLeToken(ExprX, info)
-      let resValue = [parLeToken(TrueX, info), parRiToken(info)]
-      let res = liftTemp(c, dest, fromBuffer(resValue), c.typeCache.builtins.boolType, info)
-      let iValue = [intToken(pool.integers.getOrIncl(0), info)]
-      let i = liftTemp(c, dest, fromBuffer(iValue), c.typeCache.builtins.intType, info)
+      dest.addParLe(ExprX, info)
+      var resValueBuf = createTokenBuf(2)
+      resValueBuf.addParLe(TrueX, info)
+      resValueBuf.addParRi()
+      let res = liftTemp(c, dest, beginRead(resValueBuf), c.typeCache.builtins.boolType, info)
+      var iValueBuf = createTokenBuf(2)
+      iValueBuf.addIntLit(0, info)
+      let i = liftTemp(c, dest, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
       forRangeExclusive c, dest, i, size, info:
         copyIntoKind dest, AsgnS, info:
           dest.addSubtree res
@@ -392,7 +395,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
                 dest.addSubtree res
                 addIntTypedOp dest, NeqX, -1, info:
                   copyIntoKind dest, CallX, info:
-                    dest.add symToken(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
+                    dest.addSymUse(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
                     dest.arrayToPointer(a, info)
                     dest.arrayToPointer(b, info)
                     dest.addIntLit(size, info)
@@ -402,17 +405,19 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of EqsetX:
       addIntTypedOp dest, EqX, -1, info:
         copyIntoKind dest, CallX, info:
-          dest.add symToken(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
+          dest.addSymUse(pool.syms.getOrIncl("cmpMem.0." & SystemModuleSuffix), info)
           dest.arrayToPointer(a, info)
           dest.arrayToPointer(b, info)
           dest.addIntLit(size, info)
         dest.addIntLit(0, info)
     of MulsetX, PlussetX, MinussetX, XorsetX:
-      dest.add parLeToken(ExprX, info)
-      let resValue = [dotToken(info)]
-      let res = liftTemp(c, dest, fromBuffer(resValue), cType, info)
-      let iValue = [intToken(pool.integers.getOrIncl(0), info)]
-      let i = liftTemp(c, dest, fromBuffer(iValue), c.typeCache.builtins.intType, info)
+      dest.addParLe(ExprX, info)
+      var resValueBuf = createTokenBuf(2)
+      resValueBuf.addDotToken(info)
+      let res = liftTemp(c, dest, beginRead(resValueBuf), cType, info)
+      var iValueBuf = createTokenBuf(2)
+      iValueBuf.addIntLit(0, info)
+      let i = liftTemp(c, dest, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
       forRangeExclusive c, dest, i, size, info:
         copyIntoKind dest, AsgnS, info:
           copyIntoKind dest, ArratX, info:
@@ -482,20 +487,20 @@ proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case size
   of 1, 2:
     copyIntoKind dest, CallX, info:
-      dest.add symToken(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
+      dest.addSymUse(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
       addUIntTypedOp dest, CastX, 32, info:
         dest.addSubtree a
   of 4:
     copyIntoKind dest, CallX, info:
-      dest.add symToken(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
+      dest.addSymUse(pool.syms.getOrIncl("countBits32.0." & SystemModuleSuffix), info)
       dest.addSubtree a
   of 8:
     copyIntoKind dest, CallX, info:
-      dest.add symToken(pool.syms.getOrIncl("countBits64.0." & SystemModuleSuffix), info)
+      dest.addSymUse(pool.syms.getOrIncl("countBits64.0." & SystemModuleSuffix), info)
       dest.addSubtree a
   else:
     copyIntoKind dest, CallX, info:
-      dest.add symToken(pool.syms.getOrIncl("cardSet.0." & SystemModuleSuffix), info)
+      dest.addSymUse(pool.syms.getOrIncl("cardSet.0." & SystemModuleSuffix), info)
       dest.arrayToPointer(a, info)
       dest.addIntLit(size, info)
 
@@ -533,7 +538,7 @@ proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: PackedLineInfo)
 
 proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add parLeToken(ExprX, info)
+  dest.addParLe(ExprX, info)
   let constrStart = n # tag
   n = sub(n)
   let typ = n
@@ -547,13 +552,13 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   addSetType typBuf, size, info
   let cType = beginRead(typBuf)
   let big = size > 8
-  let resValue =
-    if big: [dotToken(info)]
-    else: [uintToken(pool.uintegers.getOrIncl(0), info)]
-  let res = liftTemp(c, dest, fromBuffer(resValue), cType, info)
+  var resValueBuf = createTokenBuf(2)
+  if big: resValueBuf.addDotToken(info)
+  else: resValueBuf.addUIntLit(0, info)
+  let res = liftTemp(c, dest, beginRead(resValueBuf), cType, info)
   if big:
     copyIntoKind dest, CallX, info:
-      dest.add symToken(pool.syms.getOrIncl("zeroMem.0." & SystemModuleSuffix), info)
+      dest.addSymUse(pool.syms.getOrIncl("zeroMem.0." & SystemModuleSuffix), info)
       dest.arrayToPointer(res, info)
       dest.addIntLit(size, info)
   while n.hasMore:
@@ -663,7 +668,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let a: Cursor
   let b: Cursor
   if useTemp:
-    dest.add parLeToken(StmtsS, info)
+    dest.addParLe(StmtsS, info)
     # lift both so (n, (n = 123; n)) works
     a = liftTempAddr(c, dest, aOrig, typ, info)
     b = liftTemp(c, dest, bOrig, typ.firstSon, info)
@@ -780,13 +785,13 @@ proc emitLenSum(dest: var TokenBuf; lenSym: SymId;
   ## left-associated, as a single `int` expression.
   if lo == hi:
     copyIntoKind dest, CallX, info:
-      dest.add symToken(lenSym, info)
+      dest.addSymUse(lenSym, info)
       dest.addSubtree leafCursors[lo]
   else:
     addIntTypedOp dest, AddX, -1, info:
       emitLenSum(dest, lenSym, leafCursors, lo, hi-1, info)
       copyIntoKind dest, CallX, info:
-        dest.add symToken(lenSym, info)
+        dest.addSymUse(lenSym, info)
         dest.addSubtree leafCursors[hi]
 
 proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -809,7 +814,7 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let stringType = c.typeCache.builtins.stringType
   let oldBufStackLen = c.tempUseBufStack.len
 
-  dest.add parLeToken(ExprX, info)
+  dest.addParLe(ExprX, info)
 
   var leafCursors = newSeqOfCap[Cursor](leafStarts.len)
   for st in leafStarts:
@@ -831,21 +836,21 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   let tmp = declareTemp(c, dest, stringType, info)
   copyIntoKind dest, CallX, info:
-    dest.add symToken(newStrSym, info)
+    dest.addSymUse(newStrSym, info)
     emitLenSum(dest, lenSym, leafCursors, 0, leafCursors.len-1, info)
   dest.addParRi()  # close (var :tmp . . string ...)
 
   for lc in leafCursors:
     copyIntoKind dest, CallS, info:
-      dest.add symToken(addSym, info)
+      dest.addSymUse(addSym, info)
       # `add.2`'s first parameter is `var string`, so the call site must
       # take the address of `tmp` — `derefs` (in sem) won't see this
       # rewrite, so the wrap has to happen here.
       copyIntoKind dest, HaddrX, info:
-        dest.add symToken(tmp, info)
+        dest.addSymUse(tmp, info)
       dest.addSubtree lc
 
-  dest.add symToken(tmp, info)
+  dest.addSymUse(tmp, info)
   dest.addParRi()  # close (expr ...)
 
   c.tempUseBufStack.shrink(oldBufStackLen)
@@ -853,7 +858,7 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   var scopes: seq[Cursor] = @[]
   scopes.add n; n = sub(n)
   while n.exprKind == ExprX:
@@ -902,7 +907,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParLe AsgnS, info
     tr c, dest, lhsLocal
     dest.addParLe TupatX, info
-    dest.add symToken(tmp, info)
+    dest.addSymUse(tmp, info)
     dest.addIntLit(i, info)
     dest.addParRi() # close tupat
     dest.addParRi() # close asgn
@@ -920,7 +925,7 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## inliner can splice; emitted late in `nifcgen` the call stays buried in
   ## the `(at …)` index expression and never gets inlined.
   let info = n.info
-  dest.add parLeToken(ArratX, info)
+  dest.addParLe(ArratX, info)
   n.into:
     tr(c, dest, n)  # array operand
     # `isUnsigned` is decided from the index's type, exactly as nifcgen did.
@@ -970,9 +975,9 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
-  of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of DotToken, UnknownTokenKind, EofTokenKind, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree dest, n
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of NoExpr:
       case n.stmtKind
@@ -1053,14 +1058,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
     of ArratX:
       trArrAt(c, dest, n)
     of DdotX:
-      dest.add tagToken("dot", n.info)
-      dest.add tagToken("deref", n.info)
+      dest.addParLe("dot", n.info)
+      dest.addParLe("deref", n.info)
       n.into: # skip tag
         tr c, dest, n
         dest.addParRi() # deref
         tr c, dest, n
         tr c, dest, n # inheritance depth
-        if n.kind == StringLit:
+        if n.isStringLit:
           # drop optional access-token marker; no visibility in NIFC.
           skip n
         dest.addParRi(n.endInfo)
@@ -1091,7 +1096,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
         EnvpX, KvX, ToClosureX:
       trSons(c, dest, n)
-  of ParRi:
+  else:
     bug "unexpected ')' inside"
 
 proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
@@ -1104,7 +1109,7 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   # is elided), so the old "close, shrink away, re-close" dance is
   # impossible.
   assert n.stmtKind == StmtsS
-  pass.dest.add n
+  pass.dest.addParLe(n.tag, n.info)
   n.into:
     while n.hasMore:
       tr c, pass.dest, n, isTopScope = true

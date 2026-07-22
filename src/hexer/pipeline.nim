@@ -29,7 +29,7 @@ when defined(verifyArc):
 
 proc publishHooks*(n: var Cursor) =
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     case n.stmtKind
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       let decl = asRoutine(n)
@@ -40,9 +40,10 @@ proc publishHooks*(n: var Cursor) =
     else:
       n.into:
         while n.hasMore: publishHooks(n)
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in publishHooks"
   else:
+    when not defined(useNifcore):
+      if n.kind == ParRi:
+        raiseAssert "BUG: unexpected ParRi in publishHooks"
     inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =

@@ -244,6 +244,17 @@ template copyKeepLineInfoAt*(dest: var TokenBuf; pos: int; src: untyped) =
   else:
     copyKeepLineInfo(dest[pos], src)
 
+when not defined(useNifcore):
+  proc parLeToken*[T: enum](kind: T; info = NoLineInfo): PackedToken =
+    ## Classic-only: build a standalone open token from a kind enum (for the
+    ## few fragment/insert idioms not expressible as `dest.addParLe`). nifcore
+    ## has no standalone open token — those sites must migrate to openTag/insert.
+    parLeToken(cast[TagId](uint32(ord(kind))), info)
+
+  proc tagToken*(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
+    ## Classic-only standalone open token from a tag name (see `parLeToken`).
+    parLeToken(pool.tags.getOrIncl(tag), info)
+
 proc retagAt*[T: enum](dest: var TokenBuf; pos: int; kind: T; info = NoLineInfo) =
   ## Rewrite the tag of an already-emitted open token at `pos`, preserving its
   ## sealed jump/body (the classic `dest[pos] = parLeToken(kind, info)` idiom).
@@ -257,17 +268,6 @@ proc retagAt*[T: enum](dest: var TokenBuf; pos: int; kind: T; info = NoLineInfo)
 proc addParLe*(dest: var TokenBuf; tag: string; info = NoLineInfo) {.inline.} =
   ## Open a tag by name (replaces the classic `dest.add tagToken(tag)`).
   dest.addParLe(pool.tags.getOrIncl(tag), info)
-
-when not defined(useNifcore):
-  proc parLeToken*[T: enum](kind: T; info = NoLineInfo): PackedToken =
-    ## Classic-only: build a standalone open token from a kind enum (for the
-    ## few fragment/insert idioms not expressible as `dest.addParLe`). nifcore
-    ## has no standalone open token — those sites must migrate to openTag/insert.
-    parLeToken(cast[TagId](uint32(ord(kind))), info)
-
-  proc tagToken*(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
-    ## Classic-only standalone open token from a tag name (see `parLeToken`).
-    parLeToken(pool.tags.getOrIncl(tag), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
                        info: PackedLineInfo; body: untyped) =

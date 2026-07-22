@@ -76,16 +76,16 @@ template toLengName(sym: SymId): SymId = sym
 
 proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     let stmtKind = n.stmtKind
     case stmtKind
     of TypeS:
       # types are fundamentally different from procs when it comes to generic instantiations:
       # We need to ensure **consistency** for types, but for procs we need to ensure **uniqueness**.
-      let head = n.load()
-      dest.add head
+      let headTag = n.tag
+      dest.addParLe(headTag, n.info)
       n.into:
-        if n.kind == SymbolDef:
+        if n.isSymbolDef:
           let def = n.symId
           let t = translate(resolved, def)
           dest.addSymDef t.toLengName, n.info
@@ -99,12 +99,13 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       dest.addParRi()
 
     of ProcS, VarS, ConstS, GvarS, TvarS:
-      let head = n.load()
+      let headTag = n.tag
+      let headInfo = n.info
       n.into:
-        if n.kind == SymbolDef:
+        if n.isSymbolDef:
           let def = n.symId
           if isLocalName(pool.syms[def]):
-            dest.add head
+            dest.addParLe(headTag, headInfo)
             dest.addSymDef def.toLengName, n.info
             inc n # skip symbol def
             while n.hasMore:
@@ -114,9 +115,9 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             let t = translate(resolved, def)
             if t != def:
               # we are a loser and need to add an `extern` declaration:
-              dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
+              dest.addParLe(pool.tags.getOrIncl("imp"), headInfo)
 
-              dest.add head
+              dest.addParLe(headTag, headInfo)
               dest.addSymDef t.toLengName, n.info
               inc n # skip symbol def
               var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
@@ -129,7 +130,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
               dest.addParRi()
               dest.addParRi() # also close the "imp" declaration
             else:
-              dest.add head
+              dest.addParLe(headTag, headInfo)
               dest.addSymDef def.toLengName, n.info
               inc n # skip symbol def
               while n.hasMore:
@@ -141,12 +142,12 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             while n.hasMore: skip n
         else:
           # let errors propagate:
-          dest.add head
+          dest.addParLe(headTag, headInfo)
           while n.hasMore:
             tr dest, n, alive, resolved
           dest.addParRi()
     else:
-      dest.add n.load()
+      dest.addParLe(n.tag, n.info)
       n.into:
         while n.hasMore:
           tr dest, n, alive, resolved
@@ -159,9 +160,10 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
     let t = translate(resolved, n.symId)
     dest.addSymDef t.toLengName, n.info
     inc n
-  of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+  else: # atoms and suffix kinds; classic: a physical ParRi cannot appear here
+    when not defined(useNifcore):
+      if n.kind == ParRi: raiseAssert "ParRi should not be encountered here"
     dest.takeToken n
-  of ParRi: raiseAssert "ParRi should not be encountered here"
 
 proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; outdir: string) =
   var buf = parseFromFile(file)
@@ -247,14 +249,14 @@ proc readLiveFile*(infile: string): LiveSet =
   let modTagId = pool.tags.getOrIncl(modTag)
   n.into:                                       # (stmts ...)
     while n.hasMore:
-      if n.kind != ParLe:
+      if not n.isTagLit:
         raiseAssert infile & ": expected ParLe"
       if n.tag == resolveTagId:
         n.into:                                 # (resolved ...)
           while n.hasMore:
-            if n.kind == ParLe and n.substructureKind == KvU:
+            if n.isTagLit and n.substructureKind == KvU:
               n.into:                           # (kv ...)
-                if n.kind != StringLit:
+                if not n.isStringLit:
                   raiseAssert infile & ": kv key must be StringLit"
                 let key = pool.strings[n.litId]
                 skip n
@@ -269,10 +271,10 @@ proc readLiveFile*(infile: string): LiveSet =
       elif n.tag == liveTagId:
         n.into:                                 # (live ...)
           while n.hasMore:
-            if n.kind != ParLe or n.tag != modTagId:
+            if not n.isTagLit or n.tag != modTagId:
               raiseAssert infile & ": expected (mod …)"
             n.into:                             # (mod ...)
-              if n.kind != StringLit:
+              if not n.isStringLit:
                 raiseAssert infile & ": (mod) name must be StringLit"
               let modName = pool.strings[n.litId]
               skip n

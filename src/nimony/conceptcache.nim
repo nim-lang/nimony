@@ -166,13 +166,13 @@ proc hashTypeCursor(n: Cursor): Hash =
   case n.kind
   of Symbol:
     h = h !& Hash(n.symId.int)
-  of ParLe:
+  of OpenTagKind:
     h = h !& Hash(n.tagId.int)
     var child = sub(n)
     while hasMore(child):
       h = h !& hashTypeCursor(child)
       skip child
-  of Ident, StringLit:
+  of Ident, StrLitKind:
     h = h !& Hash(n.litId.int)
   of IntLit, InlineInt:
     h = h !& Hash(n.intId.int)
@@ -196,7 +196,7 @@ proc routineImplCacheKey(conceptSym, reqSym: SymId; a: Cursor): RoutineImplCache
   RoutineImplCacheKey(conceptSym: conceptSym, reqSym: reqSym, typeKey: conceptTypeKey(a))
 
 proc isOpenTypevar*(a: Cursor): bool =
-  if a.kind == Symbol:
+  if a.isSymbol:
     let res = tryLoadSym(a.symId)
     if res.status == LacksNothing and res.decl.symKind == TypevarY:
       return true
@@ -206,7 +206,7 @@ proc hasOpenTypevarDeep(a: Cursor): bool =
   case a.kind
   of Symbol:
     isOpenTypevar(a)
-  of ParLe:
+  of OpenTagKind:
     var child = sub(a)
     while hasMore(child):
       if hasOpenTypevarDeep(child):
@@ -223,7 +223,7 @@ proc conceptRequirementSym*(routine: Cursor): SymId =
   var prc = routine
   if prc.symKind in RoutineKinds:
     inc prc
-    if prc.kind == SymbolDef:
+    if prc.isSymbolDef:
       return prc.symId
   SymId(0)
 
@@ -318,7 +318,7 @@ proc lruPutCandidates(table: var Table[CandidatesCacheKey, seq[SymId]];
     table.del oldKey
 
 proc isConceptTypeArg(a: Cursor): bool {.inline.} =
-  a.kind == Symbol and isConceptSym(a.symId)
+  a.isSymbol and isConceptSym(a.symId)
 
 proc cacheCapacity(cache: ConceptCacheImpl): int =
   if cache.capacity > 0: cache.capacity else: DefaultConceptCacheCapacity

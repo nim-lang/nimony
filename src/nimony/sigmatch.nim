@@ -1060,7 +1060,7 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
       m.error(ConstraintMismatch, f, a)
   elif f.kind == a.kind:
     case f.kind
-    of DotToken, Ident, SymbolDef,
+    of UnknownTokenKind, EofTokenKind, DotToken, Ident, SymbolDef,
         StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
       if f.uoperand != a.uoperand:
         m.error(InvalidMatch, fOrig, aOrig)

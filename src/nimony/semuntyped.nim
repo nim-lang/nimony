@@ -48,7 +48,7 @@ proc semBindStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toBind: v
       of Ident:
         c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
-        dest.addSubtree syms
+        dest.addParLe(syms.tag, syms.info)
       else:
         if syms.exprKind in {OchoiceX, CchoiceX}:
           syms.into:
@@ -145,7 +145,7 @@ proc getIdentReplaceParams(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
     takeToken dest, n
   of OpenTagKind:
     if n.exprKind == QuotedX:
-      dest.addSubtree n
+      dest.addParLe(n.tag, n.info)
       result = false
       n.into QuotedX:
         while n.hasMore:
@@ -509,7 +509,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
           semTemplBody c, dest, n
           closeScope c
       of CaseS:
-        dest.addSubtree n
+        dest.addParLe(n.tag, n.info)
         openScope c
         n.into CaseS:
           semTemplBody c, dest, n

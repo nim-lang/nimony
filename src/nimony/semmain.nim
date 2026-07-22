@@ -188,7 +188,7 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
-  dest.addSubtree n
+  dest.addParLe(n.tag, n.info)
   n.into:
     while n.hasMore:
       semStmt c, dest, n, false

@@ -177,7 +177,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.hasClosures = true
     if n.kind == Symbol:
       # if a closure proc is called, we don't want to see it as "escaping".
-      dest.add n
+      dest.addSubtree n
       inc n
     while n.hasMore:
       tr(c, dest, n)
@@ -220,8 +220,8 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of DotToken, UnknownTokenKind, EofTokenKind, Ident, SymbolDef,
+     IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree dest, n
   of Symbol:
     let loc = c.typeCache.getLocalInfo(n.symId)
@@ -265,7 +265,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     else:
       takeTree dest, n
-  of ParLe:
+  of OpenTagKind:
     case n.stmtKind
     of LocalDecls:
       trLocal c, dest, n
@@ -347,8 +347,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
         EnvpX, KvX, NoExpr:
         trSons(c, dest, n)
-  of ParRi:
-    bug "unexpected ')' inside"
+  else:
+    bug "unexpected ')' inside" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 when false:
   proc paramsWithClosurePragma(typ: Cursor): bool =
@@ -491,7 +491,7 @@ proc isClosureCoroFor(c: var Context; n: Cursor): bool =
   if typ.typeKind == TupleT:
     var t = typ
     inc t  # past tuple tag
-    if t.kind == ParLe and t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
+    if t.isTagLit and t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
       return true
   return false
 
@@ -939,9 +939,9 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var addTmpVar = false
   if wantsEnv:
     if isStatic:
-      dest.add callNode
+      dest.addParLe(callNode.tag, callNode.info)
       # do not produce a tuple:
-      dest.add n
+      dest.addSubtree n
       inc n
     else:
       if n.kind == Symbol:
@@ -973,12 +973,12 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse tmp, info
           dest.addIntLit 1, info
         dest.addParPair NilX, info
-      dest.add callNode
+      dest.addParLe(callNode.tag, callNode.info)
       copyIntoKind dest, TupatX, info:
         dest.addSymUse tmp, info
         dest.addIntLit 0, info
   else:
-    dest.add callNode
+    dest.addParLe(callNode.tag, callNode.info)
     if isStatic:
       takeToken dest, n
   let firstArg = n
@@ -1006,7 +1006,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if needNilCheck:
     dest.addParRi() # end of ElifU
     copyIntoKind dest, ElseU, info:
-      dest.add callNode
+      dest.addParLe(callNode.tag, callNode.info)
       copyIntoKind dest, CastX, info:
         c.toNonClosureProcType dest, typ
         copyIntoKind dest, TupatX, info:
@@ -1057,7 +1057,7 @@ proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; orig
       dest.addRootRef info
     dest.copyIntoKind CastX, info:
       c.toProcType(dest, origTyp)
-      if n.kind == ParLe:
+      if n.isTagLit:
         treSons c, dest, n
       else:
         dest.takeToken n
@@ -1150,10 +1150,10 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
       else:
         takeTree dest, n
-  of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of DotToken, UnknownTokenKind, EofTokenKind, Ident, SymbolDef,
+     IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree dest, n
-  of ParLe:
+  of OpenTagKind:
     case n.stmtKind
     of LocalDecls:
       treLocal c, dest, n
@@ -1253,8 +1253,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
           treKv(c, dest, n)
         else:
           treSons(c, dest, n)
-  of ParRi:
-    bug "unexpected ')' inside"
+  else:
+    bug "unexpected ')' inside" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 proc genObjectTypes(c: var Context; dest: var TokenBuf) =
   var objectTypes = initTable[SymId, seq[EnvField]]()
@@ -1310,7 +1310,7 @@ proc elimLambdas*(pass: var Pass) =
     pass.dest = createTokenBuf(cap)
     var n2 = beginRead(oldDest)
     assert n2.stmtKind == StmtsS
-    pass.dest.add n2 # stmts opener
+    pass.dest.addParLe(n2.tag, n2.info)  # stmts opener
     n2.into:
       genObjectTypes(c, pass.dest)
       # Walk statements into a side buffer so we can prepend any

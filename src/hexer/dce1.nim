@@ -24,12 +24,12 @@ type
 
 proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     case n.stmtKind
     of ProcS, TypeS, VarS, ConstS, GvarS, TvarS:
       n.into:
         var newOwner = owner
-        if n.kind == SymbolDef:
+        if n.isSymbolDef:
           let symName = pool.syms[n.symId]
           if isInstantiation(symName):
             a.offers.incl(n.symId)
@@ -44,7 +44,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         var hasExportc = false
         n.into:
           while n.hasMore:
-            if n.kind == ParLe and n.pragmaKind == ExportcP:
+            if n.isTagLit and n.pragmaKind == ExportcP:
               hasExportc = true
             tr n, a, owner
         if hasExportc and owner != SymId(0):
@@ -66,8 +66,8 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         if not a.uses.hasKey(owner): a.uses[owner] = initHashSet[SymId]()
         a.uses.getOrQuit(owner).incl(n.symId)
     inc n
-  of SymbolDef, UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit: inc n
-  of ParRi: raiseAssert "ParRi should not be encountered here"
+  of SymbolDef, UnknownTokenKind, EofTokenKind, DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit: inc n
+  else: raiseAssert "ParRi should not be encountered here" # classic ParRi only
 
 const
   depName = "uses"
@@ -104,7 +104,7 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
     let rootTag = pool.tags.getOrIncl(rootName)
     n.into:                                     # (stmts ...)
       while n.hasMore:
-        if n.kind != ParLe:
+        if not n.isTagLit:
           raiseAssert infile & ": expected ParLe"
         if n.tag == rootTag:
           n.into:                               # (roots ...)

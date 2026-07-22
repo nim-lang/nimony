@@ -27,7 +27,7 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
       buf.addIdent(fieldName, n.info)
       buf.addParRi()
     else:
-      buf.addSubtree n
+      buf.addParLe(n.tag, n.info)
   of OpenTagKind:
     buf.addParLe(n.tag, n.info)
     n.into:
@@ -73,7 +73,7 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; nam
       buf.addIntLit(intId, n.info)
       buf.addParRi()
     else:
-      buf.addSubtree n
+      buf.addParLe(n.tag, n.info)
   of OpenTagKind:
     buf.addParLe(n.tag, n.info)
     n.into:

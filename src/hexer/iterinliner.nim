@@ -19,7 +19,7 @@ proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
         info: PackedLineInfo; kind: StmtKind; needsAddr: bool) =
   assert typ.hasMore
   dest.addParLe kind, info
-  dest.add symdefToken(destSym, info)
+  dest.addSymDef(destSym, info)
   dest.addDotToken()
   dest.addDotToken()
   takeTree(dest, typ)
@@ -32,7 +32,7 @@ proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
 
 proc createTupleAccess(left: TokenBuf; i: int; info: PackedLineInfo): TokenBuf =
   result = createTokenBuf()
-  result.add parLeToken(TupatX, info)
+  result.addParLe(TupatX, info)
   result.add left
   result.addIntLit(i, info)
   result.addParRi()
@@ -78,9 +78,9 @@ proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBu
   result = createTokenBuf()
   if needsDeref:
     result.copyIntoKind HderefX, info:
-      result.add symToken(s, info)
+      result.addSymUse(s, info)
   else:
-    result.add symToken(s, info)
+    result.addSymUse(s, info)
 
 proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars: Cursor, yieldType: Cursor): Table[SymId, SymId] =
   result = initTable[SymId, SymId]()
@@ -90,7 +90,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
   if forVars.len == 1:
     connectSingleExprToLoopVar(e, dest, c, forVars[0], result)
   else:
-    if c.kind == ParLe and c.exprKind == TupX:
+    if c.isTagLit and c.exprKind == TupX:
       c.into:
         var i = 0
         while c.hasMore:
@@ -102,7 +102,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
       var typ = yieldType.skipModifier()
       let needsDeref = yieldType.typeKind in {LentT, MutT}
       assert typ.typeKind == TupleT
-      if c.kind == Symbol:
+      if c.isSymbol:
         tmpId = c.symId
         info = c.info
         inc c
@@ -132,7 +132,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
           # Modifier-wrapped element types lower to a pointer, so the access
           # path needs an `hderef` around `tmp[i]` before indexing into the
           # inner tuple.
-          let hasModifier = typ.kind == ParLe and typ.typeKind in TypeModifiers
+          let hasModifier = typ.isTagLit and typ.typeKind in TypeModifiers
           var leftTupleAccess = createTupleAccess(left, i, info)
           var modStart = default(Cursor)
           if hasModifier:
@@ -166,20 +166,20 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
 
 proc transformBreakStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   takeInto dest, c:
-    if c.kind == DotToken and e.breaks.len > 0 and e.breaks[^1] != SymId(0):
+    if c.isDotToken and e.breaks.len > 0 and e.breaks[^1] != SymId(0):
       let lab = e.breaks[^1]
-      dest.add symToken(lab, c.info)
+      dest.addSymUse(lab, c.info)
     else:
-      assert c.kind in {DotToken, Symbol}
-      dest.add c
+      assert c.isDotToken or c.isSymbol
+      dest.addSubtree c
     inc c
 
 proc transformContinueStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   if e.continues.len > 0 and e.continues[^1] != SymId(0):
-    dest.add tagToken("break", c.info)
+    dest.addParLe("break", c.info)
     c.into:
       let lab = e.continues[^1]
-      dest.add symToken(lab, c.info)
+      dest.addSymUse(lab, c.info)
       inc c # dotToken
       dest.addParRi(c.endInfo)
   else:
@@ -198,8 +198,8 @@ proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, Sy
   ## `transformForStmt`, so that nested for-stmts inside are inlined fresh
   ## (with distinct labels) on every yield expansion of the outer iterator.
   case c.kind
-  of ParLe:
-    dest.add c
+  of OpenTagKind:
+    dest.addParLe(c.tag, c.info)
     c.into:
       while c.hasMore:
         copyWithMapping(dest, c, mapping)
@@ -207,12 +207,12 @@ proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, Sy
   of Symbol:
     let s = c.symId
     if mapping.hasKey(s):
-      dest.add symToken(mapping.getOrQuit(s), c.info)
+      dest.addSymUse(mapping.getOrQuit(s), c.info)
     else:
-      dest.add c
+      dest.addSubtree c
     inc c
   else:
-    dest.add c
+    dest.addSubtree c
     inc c
 
 proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping: var Table[SymId, SymId]; fromForloop = false) =
@@ -220,11 +220,11 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
   of Symbol:
     let s = c.symId
     if mapping.hasKey(s):
-      dest.add symToken(mapping.getOrQuit(s), c.info)
+      dest.addSymUse(mapping.getOrQuit(s), c.info)
     else:
-      dest.add c
+      dest.addSubtree c
     inc c
-  of ParLe:
+  of OpenTagKind:
     case c.stmtKind
     of BreakS:
       transformBreakStmt(e, dest, c)
@@ -255,7 +255,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
       discard e.continues.pop()
     of BlockS:
       takeInto dest, c:
-        if c.kind == SymbolDef:
+        if c.isSymbolDef:
           e.breaks.add c.symId
         else:
           e.breaks.add SymId(0)
@@ -268,7 +268,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
           while c.hasMore:
             inlineLoopBody(e, dest, c, mapping)
       else:
-        dest.add c
+        dest.addParLe(c.tag, c.info)
         c.into:
           while c.hasMore:
             inlineLoopBody(e, dest, c, mapping)
@@ -278,7 +278,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
         let oldName = c.symId
         let freshLocal = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         mapping[oldName] = freshLocal
-        dest.add symdefToken(freshLocal, c.info) # name
+        dest.addSymDef(freshLocal, c.info) # name
 
         inc c
         # export marker:
@@ -319,25 +319,25 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
 proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
       c: var Cursor; forStmt: ForStmt; yieldType: Cursor) =
   case c.kind
-  of ParLe:
+  of OpenTagKind:
     case c.stmtKind
     of StmtsS:
-      dest.add c
+      dest.addParLe(c.tag, c.info)
       c.into:
         while c.hasMore:
           inlineIteratorBody(e, dest, c, forStmt, yieldType)
       dest.addParRi()
     of YldS:
-      dest.add tagToken($BlockS, c.info)
+      dest.addParLe($BlockS, c.info)
       dest.addDotToken()
-      dest.add tagToken("stmts", c.info)
+      dest.addParLe("stmts", c.info)
 
       let loopBodyHasContinueStmt = hasContinueStmt(forStmt.body)
       if loopBodyHasContinueStmt:
         let lab = pool.syms.getOrIncl("continueLabel." & $getTmpId(e))
-        dest.add tagToken($BlockS, c.info)
-        dest.add symdefToken(lab, c.info)
-        dest.add tagToken("stmts", c.info)
+        dest.addParLe($BlockS, c.info)
+        dest.addSymDef(lab, c.info)
+        dest.addParLe("stmts", c.info)
         e.continues.add lab
 
       c.into: # skips yield
@@ -371,9 +371,9 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
 proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations: var Table[SymId, SymId]) =
   case c.kind
   of DotToken:
-    dest.add c
+    dest.addSubtree c
     inc c
-  of ParLe:
+  of OpenTagKind:
     case c.stmtKind
     of VarS, LetS, CursorS, PatternvarS:
       takeInto dest, c:
@@ -381,7 +381,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         let newName = pool.syms.getOrIncl("`lf." & $e.instId)
         inc e.instId
         relations[oldName] = newName
-        dest.add symdefToken(newName, c.info)
+        dest.addSymDef(newName, c.info)
         inc c
         while c.hasMore:
           replaceSymbol(e, dest, c, relations)
@@ -419,9 +419,9 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
   of Symbol:
     let s = c.symId
     if relations.hasKey(s):
-      dest.add symToken(relations.getOrQuit(s), c.info)
+      dest.addSymUse(relations.getOrQuit(s), c.info)
     else:
-      dest.add c
+      dest.addSubtree c
     inc c
   else:
     takeTree(dest, c)
@@ -433,22 +433,22 @@ proc rewriteYieldsAndCopy(e: var EContext; dest: var TokenBuf;
   ## Nested proc/iter/template/macro/type decls are passed through verbatim
   ## (they have their own yield contexts, if any).
   case c.kind
-  of ParLe:
+  of OpenTagKind:
     let sk = c.stmtKind
     if sk == YldS:
       let info = c.info
-      let head = c.load()
+      let headTag = c.tag
       c.into: # past yld tag
-        if c.kind == DotToken:
+        if c.isDotToken:
           # bare yield (void return) — leave as-is
-          dest.add head
+          dest.addParLe(headTag, info)
           dest.takeToken c # the dot token
         else:
           # (yld v) ⇒ (asgn resultSym v) ; (yld .)
           dest.copyIntoKind AsgnS, info:
             dest.addSymUse resultSym, info
             dest.takeTree c # v
-          dest.add head
+          dest.addParLe(headTag, info)
           dest.addDotToken()
         dest.addParRi(c.endInfo) # close original yld
     elif sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
@@ -471,14 +471,14 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
   let synthResultSym = pool.syms.getOrIncl(
     "`coroResult." & $getTmpId(e) & "." & e.main)
 
-  dest.add c # IteratorS tag
+  dest.addParLe(c.tag, c.info) # IteratorS tag
   let iterStart = c
   c = sub(c)
   for _ in 0..<BodyPos:
     dest.takeTree c
 
   # Now at body. Either DotToken (forward decl) or a (stmts ...).
-  if c.kind == DotToken:
+  if c.isDotToken:
     dest.takeToken c
     dest.addParRi(c.endInfo)
     c = iterStart; skip c
@@ -489,7 +489,7 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
     c = iterStart; skip c
     return
 
-  dest.add c # body's StmtsS opening
+  dest.addParLe(c.tag, c.info) # body's StmtsS opening
   c.into:
 
     let info = c.info
@@ -562,7 +562,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     # iter writes through.
     var symProbe = iterCur
     inc symProbe # past Call tag
-    if symProbe.kind != Symbol:
+    if not symProbe.isSymbol:
       error e, "closure iterator call must target a symbol, got: ", iterCur
     let iterSym = symProbe.symId
     let res = tryLoadSym(iterSym)
@@ -581,7 +581,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     dest.addDotToken() # no initializer — iter writes through slot
     dest.addParRi() # close let
 
-  dest.add tagToken("corofor", info)
+  dest.addParLe("corofor", info)
   # Emit the iter call verbatim, but append `(haddr forLoopVarSym)` as a
   # trailing arg so cps.nim can recover the result-slot pointer without
   # having to peel the var-decl. Intermediate passes (xelim/destroyer/
@@ -590,7 +590,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var callCur = forStmt.iter
   if callCur.exprKind == HderefX:
     inc callCur # peel hderef for var/lent-returning iters
-  dest.add callCur # (call tag
+  dest.addParLe(callCur.tag, callCur.info) # (call tag
   callCur = sub(callCur) # drained below; the close is synthesized
   dest.takeTree callCur # iter sym
   while callCur.hasMore:
@@ -600,9 +600,9 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   dest.addParRi() # close iter call
 
   # body: (block :coroInner.N (stmts [unpack-binds] <user-body>))
-  dest.add tagToken($BlockS, info)
-  dest.add symdefToken(innerLab, info)
-  dest.add tagToken("stmts", info)
+  dest.addParLe($BlockS, info)
+  dest.addSymDef(innerLab, info)
+  dest.addParLe("stmts", info)
 
   if forVars.len > 1:
     # For each user for-var: (let :userSym T (tupat hidden i)). Using a fresh
@@ -760,9 +760,9 @@ proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   let forStmt = asForStmt(c)
 
   let lab = pool.syms.getOrIncl("forStmtLabel." & $getTmpId(e))
-  dest.add tagToken($BlockS, c.info)
-  dest.add symdefToken(lab, c.info)
-  dest.add tagToken("stmts", c.info)
+  dest.addParLe($BlockS, c.info)
+  dest.addSymDef(lab, c.info)
+  dest.addParLe("stmts", c.info)
 
   e.breaks.add lab
 
@@ -779,9 +779,9 @@ proc transformLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   let loopBodyHasContinueStmt = hasContinueStmt(c)
   if loopBodyHasContinueStmt:
     let lab = pool.syms.getOrIncl("continueLabel." & $getTmpId(e))
-    dest.add tagToken($BlockS, c.info)
-    dest.add symdefToken(lab, c.info)
-    dest.add tagToken("stmts", c.info)
+    dest.addParLe($BlockS, c.info)
+    dest.addSymDef(lab, c.info)
+    dest.addParLe("stmts", c.info)
     e.continues.add lab
 
   transformStmt(e, dest, c)
@@ -793,9 +793,9 @@ proc transformLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor) =
 
 proc transformWhileStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   let lab = pool.syms.getOrIncl("whileStmtLabel." & $getTmpId(e))
-  dest.add tagToken($BlockS, c.info)
-  dest.add symdefToken(lab, c.info)
-  dest.add tagToken("stmts", c.info)
+  dest.addParLe($BlockS, c.info)
+  dest.addSymDef(lab, c.info)
+  dest.addParLe("stmts", c.info)
 
   e.breaks.add lab
   takeInto dest, c:
@@ -810,9 +810,9 @@ proc transformWhileStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   case c.kind
   of DotToken:
-    dest.add c
+    dest.addSubtree c
     inc c
-  of ParLe:
+  of OpenTagKind:
     case c.stmtKind
     of StmtsS:
       takeInto dest, c:
@@ -876,7 +876,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       if hasCursorPragma:
         # `setTag` keeps an already-sealed jump intact; `parLeToken` would
         # reset it
-        dest[before].setTag cast[TagId](CursorS)
+        setTagAt(dest, before, cast[TagId](CursorS))
     of GvarS, GletS, TvarS, TletS, ConstS:
       takeInto dest, c:
         for i in 0..<LocalValuePos:
@@ -890,14 +890,14 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       transformContinueStmt(e, dest, c)
     of BlockS:
       takeInto dest, c:
-        if c.kind == SymbolDef:
+        if c.isSymbolDef:
           e.breaks.add c.symId
           dest.takeToken(c)
         else:
           let info = c.info
           skip c
           let s = pool.syms.getOrIncl("`lab." & $getTmpId(e))
-          dest.add symdefToken(s, info)
+          dest.addSymDef(s, info)
           e.breaks.add s
         transformStmt(e, dest, c)
         discard e.breaks.pop

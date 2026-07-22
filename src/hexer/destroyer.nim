@@ -123,24 +123,24 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
   case n.kind
   of Symbol:
     let repl = newVars.getOrDefault(n.symId, n.symId)
-    dest.add symToken(repl, n.info)
+    dest.addSymUse(repl, n.info)
     inc n
-  of ParLe:
+  of OpenTagKind:
     let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
     copyInto dest, n:
-      if isLocalDecl and n.kind == SymbolDef:
+      if isLocalDecl and n.isSymbolDef:
         let repl = pool.syms.getOrIncl("`ffv." & $idgen)
         newVars[n.symId] = repl
-        dest.add symdefToken(repl, n.info)
+        dest.addSymDef(repl, n.info)
         inc idgen
         inc n
       while n.hasMore:
         freshVars(n, newVars, idgen, dest)
-  of UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
-    dest.add n
+  of UIntLit, StrLitKind, IntLit, FloatLit, CharLit, SymbolDef, UnknownTokenKind, EofTokenKind, DotToken, Ident:
+    dest.addSubtree n
     inc n
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in destroyer.createFreshVars"
+  else:
+    raiseAssert "BUG: unexpected ParRi in destroyer.createFreshVars" # classic ParRi only
 
 proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
   var n = n
@@ -253,7 +253,7 @@ proc trRaise(c: var Context; n: var Cursor) =
 
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
-  c.dest.add n
+  c.dest.addParLe(n.tag, n.info)
   var r = takeLocal(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -278,7 +278,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
     leaveScope(c, addr(c.currentScope), kind)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
-  if params.kind != ParLe: return
+  if not params.isTagLit: return
   var p = params
   p = sub(p)  # throwaway copy; bounds the walk under vpr
   while p.hasMore:
@@ -289,7 +289,7 @@ proc registerSinkParameters(c: var Context; params: Cursor) =
         c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trProcDecl(c: var Context; n: var Cursor) =
-  c.dest.add n
+  c.dest.addParLe(n.tag, n.info)
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -456,14 +456,14 @@ proc tr(c: var Context; n: var Cursor) =
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
         BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
-      if n.kind == ParLe:
-        c.dest.add n
+      if n.isTagLit:
+        c.dest.addParLe(n.tag, n.info)
         n.into:
           while n.hasMore:
             tr(c, n)
         c.dest.addParRi()
       else:
-        c.dest.add n
+        c.dest.addSubtree n
         inc n
 
 proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
@@ -472,7 +472,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
     dest: move(pass.dest))
   assert n.stmtKind == StmtsS
-  c.dest.add n
+  c.dest.addParLe(n.tag, n.info)
   n.into:
     while n.hasMore:
       tr(c, n)

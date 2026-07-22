@@ -1058,7 +1058,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   # can have the dangerous `Expr` node which is the whole
   # reason for xelim's existence.
   case n.kind
-  of DotToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
+  of DotToken, UnknownTokenKind, EofTokenKind, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree tar.t, n
   of OpenTagKind:
     case n.exprKind

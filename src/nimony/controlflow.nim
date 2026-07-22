@@ -630,7 +630,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StrLitKind, CharLit,
-     Ident, DotToken:
+     Ident, DotToken, EofTokenKind, UnknownTokenKind:
     c.addSource(tar, n)
     inc n
   of OpenTagKind:

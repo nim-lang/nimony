@@ -906,7 +906,7 @@ proc semIs*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # instantiation can substitute formals and re-run `semIs`. Defer whenever
     # `inGeneric > 0` too: in template bodies operands can still be `untyped`,
     # which would make `containsGenericParams` false and wrongly fold to `false`.
-    dest.addSubtree orig
+    dest.addParLe(orig.tag, orig.info)
     dest.addSubtree lhsExpr
     dest.addSubtree rhsExpr
     dest.addParRi()

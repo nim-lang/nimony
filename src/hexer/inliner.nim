@@ -60,7 +60,7 @@ when not defined(nimony):
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   c.typeCache.openScope()
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   let declStart = n
   n = sub(n)
   var r = asRoutine(decl, SkipExclBody)
@@ -156,14 +156,12 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
       if toReplace.sym != NoSymId:
         addVarReplacement(dest, toReplace, info)
       else:
-        dest.add n
+        dest.addSubtree n
     inc n
-  of Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-    dest.add n
+  of Ident, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, UnknownTokenKind, DotToken, EofTokenKind:
+    dest.addSubtree n
     inc n
-  of ParRi:
-    bug "unhandled ')' in inliner.nim"
-  of ParLe:
+  of OpenTagKind:
     case n.stmtKind
     of RetS:
       let retVal = n.firstSon
@@ -186,8 +184,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
 
       copyIntoKind dest, BreakS, info:
         dest.addSymUse c.returnLabel, info
-      assert n.kind == ParRi
-      inc n
+      consumeParRi n
     of ResultS:
       if c.target.kind == TargetIsNone:
         # we need the result declaration. But it is inlined, so
@@ -196,8 +193,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
           while n.hasMore:
             inlineRoutineBody(c, dest, n)
         dest.addParRi()
-        assert n.kind == ParRi
-        inc n
+        consumeParRi n
       else:
         # discard the result declaration!
         discard
@@ -209,6 +205,8 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
         copyInto dest, n:
           while n.hasMore:
             inlineRoutineBody(c, dest, n)
+  else:
+    bug "unhandled ')' in inliner.nim" # classic: a physical ParRi
 
 proc mapParamToLocal(c: var InlineContext; dest: var TokenBuf; args: var Cursor; params: var Cursor) =
   # assign parameters: This also ensures that side effects are executed,
@@ -314,9 +312,9 @@ proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLitKind, UnknownTokenKind, DotToken, EofTokenKind:
     takeToken dest, n
-  of ParLe:
+  of OpenTagKind:
     case n.stmtKind
     of AsgnS:
       trAsgn c, dest, n
@@ -349,8 +347,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore: tr c, dest, n
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in inliner.tr"
+  else:
+    raiseAssert "BUG: unexpected ParRi in inliner.tr" # classic ParRi only
 
 proc inlineCalls*(n: Cursor; thisModuleSuffix: string; ptrSize: int): TokenBuf =
   var c = createInliner(thisModuleSuffix, ptrSize)

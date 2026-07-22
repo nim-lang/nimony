@@ -315,7 +315,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # ---------------------------------------------------------------------
 
 proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if n.kind == ParLe:
+  if n.isTagLit:
     let nk = n.typeKind
     let isPassiveProc = nk == ProctypeT and procHasPragma(n, PassiveP)
     # An itertype is a coroutine-shaped value type. `.closure` iter values
@@ -334,14 +334,14 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addParLe TupleT, info
       var ptStart = default(Cursor)
       if isPassiveProc:
-        dest.add n                      # proctype tag (passive proc)
+        dest.addParLe(n.tag, n.info)  # proctype tag (passive proc)
         ptStart = n; n = sub(n)
       else:
         # itertype → wrapper proctype (both `.closure` and `.passive`)
         dest.addParLe ProctypeT, info
         ptStart = n; n = sub(n)          # consume original itertype tag
       dest.takeTree n         # nilability tag
-      dest.add n              # params tag
+      dest.addParLe(n.tag, n.info)  # params tag
       n.into:
         while n.hasMore:
           trProctype(c, dest, n)

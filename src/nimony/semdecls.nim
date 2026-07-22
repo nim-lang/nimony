@@ -196,7 +196,7 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
       kind = StaticTypevarY
   let declStart = dest.len
   let entryCursor = n  # saved for the signature-phase rollback below
-  dest.addSubtree n
+  dest.addParLe(n.tag, n.info)
   var delayed = default(DelayedSym)
   var crucial = default(CrucialPragma)
   n.into:
@@ -591,7 +591,7 @@ proc semBorrow(c: var SemContext; dest: var TokenBuf; fn: StrId; beforeParams: i
   var it = Item(n: n, typ: c.types.autoType)
   var resId = SymId(0)
   let bodyStart = dest.len
-  dest.addSubtree it.n # `(stmts`
+  dest.addParLe(it.n.tag, it.n.info)  # `(stmts`
   it.n.into:
     resId = declareResult(c, dest, it.n.info)
     semProcBody c, dest, it
@@ -895,7 +895,7 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
   c.openScope() # open body scope
   var resId = SymId(0)
   let bodyStart = dest.len
-  dest.addSubtree it.n
+  dest.addParLe(it.n.tag, it.n.info)
   it.n.into:
     # The body may already carry an explicit `(result ...)` declaration from a
     # module that was not compiled in untyped mode. In that case we must not
@@ -937,7 +937,7 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
   elif kind == MacroY:
     # Macro without untyped/typed params — sem normally so nested macro
     # calls expand at user-sem time (see project_macro_plugins.md).
-    dest.addSubtree it.n
+    dest.addParLe(it.n.tag, it.n.info)
     it.n.into:
       if it.n.stmtKind != ResultS:
         resId = declareResult(c, dest, it.n.info)
@@ -952,7 +952,7 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
     addParams(ctx, dest, beforeParams)
     semTemplBody ctx, dest, it.n
   else:
-    dest.addSubtree it.n
+    dest.addParLe(it.n.tag, it.n.info)
     it.n.into:
       # Don't declare `result` again if the body already carries an explicit
       # `(result ...)` decl — happens when the proc body has already been
@@ -997,7 +997,7 @@ proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
 proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind; pass: PassKind; newName = NoSymId) =
   let info = it.n.info
   let declStart = dest.len
-  dest.addSubtree it.n
+  dest.addParLe(it.n.tag, it.n.info)
   it.n.into:
     let beforeName = dest.len
 

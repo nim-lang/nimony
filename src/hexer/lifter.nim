@@ -972,7 +972,18 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
       errBuf.addParRi()
       c.dest.insert(errBuf, pragmasPos)
     else:
-      c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+      when defined(useNifcore):
+        # nifcore cannot splice raw open/close tokens; build a sealed
+        # `(error)` fragment, insert it, and widen the enclosing jumps
+        # (nifcore's `insert` is raw and does not adjust them).
+        var errFrag = createTokenBuf(2)
+        errFrag.addParLe(ErrorP, c.calledErrorHook)
+        errFrag.addParRi()
+        let errGrowth = errFrag.len
+        c.dest.insert cursorAt(errFrag, 0), pragmasPos
+        widenEnclosingSealed(c.dest, pragmasPos, errGrowth)
+      else:
+        c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
     # The insert lands inside two already-sealed scopes; widen their jumps
     # (no-op in classic mode):
     let growth = c.dest.len - before
