@@ -109,7 +109,7 @@ proc mapSymbol(c: var Context; paramMap: Table[SymId, int]; call: Cursor; symId:
   let pos = paramMap.getOrDefault(symId)
   if pos > 0:
     let arg = call.argAt(pos)
-    if arg.kind == Symbol:
+    if arg.isSymbol:
       result = getVarId(c, arg.symId)
 
 proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
@@ -117,13 +117,13 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
   var a = InvalidVarId
   var b = InvalidVarId
   var cnst = createXint(0'i32)
-  if r.kind == Symbol:
+  if r.isSymbol:
     a = mapSymbol(c, paramMap, call, r.symId)
     inc r
-  if r.kind == Symbol:
+  if r.isSymbol:
     b = mapSymbol(c, paramMap, call, r.symId)
     inc r
-  elif r.kind == IntLit:
+  elif r.isIntLit:
     b = VarId(0)
     cnst = createXint(pool.integers[r.intId])
     inc r
@@ -134,10 +134,10 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
   elif (let op = r.exprKind; op in {AddX, SubX}):
     r.peekInto:
       skip r # type
-      if r.kind == Symbol:
+      if r.isSymbol:
         b = mapSymbol(c, paramMap, call, r.symId)
         inc r
-        if r.kind == IntLit:
+        if r.isIntLit:
           cnst = createXint(pool.integers[r.intId])
         elif r.kind == UIntLit:
           cnst = createXint(pool.uintegers[r.uintId])
@@ -260,7 +260,7 @@ proc analysableRoot(c: var Context; n: Cursor): SymId =
       skip n # skip intlit
     else:
       break
-  if n.kind == Symbol:
+  if n.isSymbol:
     result = n.symId
     let x = getLocalInfo(c.typeCache, result)
     if x.kind == GvarY:
@@ -315,7 +315,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
     while n.hasMore:
       assert n.substructureKind == KvU
       n.into:
-        assert n.kind == Symbol
+        assert n.isSymbol
         let expected = lookupField(c.typeCache, objType, n.symId)
         assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
         skip n # field name
@@ -407,7 +407,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
     if pk == OutT:
       var arg = n
       if arg.exprKind == HaddrX: inc arg
-      if arg.kind == Symbol:
+      if arg.isSymbol:
         # is now initialized:
         c.writesTo.add arg.symId
     elif pk == VarargsT:
@@ -479,11 +479,11 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   if pc.exprKind in {AddX, SubX}:
     pc.into:
       skip pc # type
-      if pc.kind == Symbol:
+      if pc.isSymbol:
         let symId2 = pc.symId
         fact.b = getVarId(c, symId2)
         inc pc
-        if pc.kind == IntLit:
+        if pc.isIntLit:
           fact.c = fact.c + createXint(pool.integers[pc.intId])
           result = true
           inc pc
@@ -496,12 +496,12 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
       else:
         analyseExpr c, pc
         analyseExpr c, pc
-  elif pc.kind == Symbol:
+  elif pc.isSymbol:
     let symId2 = pc.symId
     fact.b = getVarId(c, symId2)
     result = true
     inc pc
-  elif pc.kind == IntLit:
+  elif pc.isIntLit:
     fact.b = VarId(0)
     fact.c = fact.c + createXint(pool.integers[pc.intId])
     result = true
@@ -543,7 +543,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     analyseExpr c, pc
     return result
 
-  if r.kind == IntLit:
+  if r.isIntLit:
     result.a = VarId(0)
     result.c = -createXint(pool.integers[r.intId])
     inc r
@@ -551,7 +551,7 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     result.a = VarId(0)
     result.c = -createXint(pool.uintegers[r.uintId])
     inc r
-  elif r.kind == Symbol:
+  elif r.isSymbol:
     result.a = getVarId(c, r.symId)
     inc r
   elif r.exprKind == NilX:
@@ -606,7 +606,7 @@ proc isNonNilExpr(n: Cursor): bool =
     skip inner # skip type part
     result = isNonNilExpr(inner)
   else:
-    if n.kind == StringLit:
+    if n.isStringLit:
       result = true
     else:
       result = false
@@ -618,7 +618,7 @@ proc cannotBeNil(c: var Context; n: Cursor): bool {.inline.} =
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   pc.into: # skip asgn instruction
     let expected = getType(c.typeCache, pc)
-    if pc.kind == Symbol:
+    if pc.isSymbol:
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
       if x.kind in {LetY, GletY, TletY}:
@@ -759,7 +759,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             skip pc # pragmas
             c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
             skip pc # type
-            if pc.kind != DotToken or skipInitCheck:
+            if not pc.isDotToken or skipInitCheck:
               c.directlyInitialized.incl name
             analyseExpr c, pc
         of NoStmt:
@@ -895,7 +895,7 @@ proc traverseBody(c: var Context; n: var Cursor) =
     traverseProc(c, n)
   elif sk in {MacroS, TemplateS, TypeS, CommentS, PragmasS}:
     skip n
-  elif n.kind == ParLe:
+  elif n.isTagLit:
     n.loopInto:
       traverseBody(c, n)
   else:

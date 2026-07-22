@@ -48,12 +48,12 @@ proc trParams(c: var Context; params: Cursor) =
   n = sub(n) # skips (params; peek only, never left
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
-    if r.name.kind == SymbolDef:
+    if r.name.isSymbolDef:
       c.vt.newValueFor r.name.symId # register parameter as known location
 
 proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
-    assert n.kind == SymbolDef
+    assert n.isSymbolDef
     let s = n.symId
     dest.takeToken n
     # Do versioning for cfvars!
@@ -250,7 +250,7 @@ proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
   takeInto dest, n:
     while n.hasMore:
-      assert n.kind == Symbol
+      assert n.isSymbol
       let s = n.symId
       killVar c.vt, s
       dest.takeToken n
@@ -258,7 +258,7 @@ proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     while n.hasMore:
-      assert n.kind == Symbol
+      assert n.isSymbol
       let s = n.symId
       dest.takeToken n
       # Do versioning for cfvars!

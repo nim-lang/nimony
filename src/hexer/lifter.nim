@@ -143,7 +143,7 @@ proc siblingHookErrorInfo(c: var LiftingCtx; typ: TypeCursor;
   ## Returns the sibling `=copy`/`=dup` hook's `name.info` if it is marked
   ## `.error` for the (nominal) type `typ`. Otherwise `NoLineInfo`.
   result = NoLineInfo
-  if typ.kind notin {Symbol, SymbolDef}:
+  if not (typ.isSymbol or typ.isSymbolDef):
     return
   let siblingSym = lookupHookSym(c, siblingOp, typ.symId)
   if not isErrorHook(siblingSym):
@@ -317,7 +317,7 @@ proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
   result.add c.thisModuleSuffix
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
-  if t.kind in {Symbol, SymbolDef}:
+  if (t.isSymbol or t.isSymbolDef):
     result = loadHook(c, op, t.symId)
     if result != SymId(0):
       return result
@@ -409,7 +409,7 @@ proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): T
         copyTree result, tup
     else:
       copyTree result, tup
-    result.add intToken(pool.integers.getOrIncl(idx), c.info)
+    result.addIntLit(idx, c.info)
 
 proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
@@ -527,7 +527,7 @@ proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf; paramPos = 0): Token
   let nd = needsDeref(c, x, paramPos)
   copyIntoKind result, BaseobjX, c.info:
     copyTree result, typ
-    result.add intToken(pool.integers.getOrIncl(+1), c.info)
+    result.addIntLit(+1, c.info)
     if nd:
       result.addParLe HderefX, c.info
     copyTree result, x
@@ -612,21 +612,21 @@ proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId; paramPos =
 proc indexVarLowerThanArrayLen(c: var LiftingCtx; indexVar: SymId; arrayLen: xint) =
   copyIntoKind c.dest, LtX, c.info:
     copyIntoKind c.dest, IntT, c.info:
-      c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
+      c.dest.addIntLit(-1, c.info)
     copyIntoSymUse c.dest, indexVar, c.info
     var err = false
     let alen = asSigned(arrayLen, err)
     if not err:
-      c.dest.add intToken(pool.integers.getOrIncl(alen), c.info)
+      c.dest.addIntLit(alen, c.info)
     else:
       err = false
       let ualen = asUnsigned(arrayLen, err)
       assert(not err)
-      c.dest.add uintToken(pool.uintegers.getOrIncl(ualen), c.info)
+      c.dest.addUIntLit(ualen, c.info)
 
 proc addIntType(c: var LiftingCtx) =
   copyIntoKind c.dest, IntT, c.info:
-    c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
+    c.dest.addIntLit(-1, c.info)
 
 proc incIndexVar(c: var LiftingCtx; indexVar: SymId) =
   copyIntoKind c.dest, AsgnS, c.info:
@@ -634,14 +634,14 @@ proc incIndexVar(c: var LiftingCtx; indexVar: SymId) =
     copyIntoKind c.dest, AddX, c.info:
       addIntType c
       copyIntoSymUse c.dest, indexVar, c.info
-      c.dest.add intToken(pool.integers.getOrIncl(+1), c.info)
+      c.dest.addIntLit(+1, c.info)
 
 proc declareIndexVar(c: var LiftingCtx; indexVar: SymId) =
   copyIntoKind c.dest, VarY, c.info:
     addSymDef c.dest, indexVar, c.info
     c.dest.addEmpty2 c.info # not exported, no pragmas
     addIntType c
-    c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
+    c.dest.addIntLit(0, c.info)
 
 proc unravelArray(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
@@ -938,7 +938,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
         if c.dest.len == beforeUnravel:
           var t = typ
-          if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId):
+          if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId):
             discard "empty hooks are valid for RTTI'ed types"
           else:
             assert false, "empty hook created for " & toString(typ, false)
@@ -956,12 +956,23 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   if c.routineKind == MethodY:
     # `setTag`, not a `parLeToken` overwrite: the decl is sealed by now and
     # its jump must be preserved
-    setTag(c.dest[procStart], TagId(MethodS))
-    c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
+    when defined(useNifcore):
+      var mtok = c.dest[procStart]
+      setTag(mtok, TagId(MethodS))
+      c.dest[procStart] = mtok
+    else:
+      setTag(c.dest[procStart], TagId(MethodS))
+      c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
 
   if c.calledErrorHook != NoLineInfo:
     let before = c.dest.len
-    c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+    when defined(useNifcore):
+      var errBuf = createTokenBuf(2)
+      errBuf.addParLe(cast[TagId](uint32(ord(ErrorP))), c.calledErrorHook)
+      errBuf.addParRi()
+      c.dest.insert(errBuf, pragmasPos)
+    else:
+      c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
     # The insert lands inside two already-sealed scopes; widen their jumps
     # (no-op in classic mode):
     let growth = c.dest.len - before
@@ -979,7 +990,7 @@ proc genMissingHooks*(c: var LiftingCtx) =
       c.calledErrorHook = NoLineInfo
       # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
       let t = reqs[i].typ
-      if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:
+      if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:
         c.routineKind = MethodY
       else:
         c.routineKind = ProcY
@@ -999,7 +1010,7 @@ proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLi
   c.info = info
   let t = if typ.typeKind == SinkT: typ.firstSon else: typ
   # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
-  if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and op in {attachedDestroy, attachedTrace}:
+  if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId) and op in {attachedDestroy, attachedTrace}:
     c.routineKind = MethodY
   else:
     c.routineKind = ProcY

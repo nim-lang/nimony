@@ -34,7 +34,7 @@ when false:
       let pb = takeLocal(b, SkipFinalParRi)
       if not sameTrees(pa.typ, pb.typ):
         return false
-    if a.kind == ParRi and b.kind == ParRi:
+    if not a.hasMore and not b.hasMore:
       inc a
       inc b
       # check return types
@@ -116,18 +116,18 @@ proc loadVTable*(typ: SymId): seq[semdata.MethodIndexEntry] =
   # For non-types, pragmas cursor will be invalid and we'll return early
   let typeDecl = asTypeDecl(res.decl)
   var pragmas = typeDecl.pragmas
-  if pragmas.kind == ParLe:
+  if pragmas.isTagLit:
     pragmas.into:  # (pragmas …)
       while pragmas.hasMore:
-        if pragmas.kind == ParLe and pragmas.pragmaKind == MethodsP:
+        if pragmas.isTagLit and pragmas.pragmaKind == MethodsP:
           pragmas.into:  # (methods …)
             while pragmas.hasMore:
-              if pragmas.kind == ParLe and pragmas.substructureKind == KvU:
+              if pragmas.isTagLit and pragmas.substructureKind == KvU:
                 pragmas.into KvU:
-                  if pragmas.hasMore and pragmas.kind == StringLit:
+                  if pragmas.hasMore and pragmas.isStringLit:
                     let signature = pragmas.litId
                     inc pragmas, AnyExpr
-                    if pragmas.hasMore and pragmas.kind == Symbol:
+                    if pragmas.hasMore and pragmas.isSymbol:
                       let methodSym = pragmas.symId
                       result.add semdata.MethodIndexEntry(fn: methodSym, signature: signature)
                       inc pragmas, AnyExpr

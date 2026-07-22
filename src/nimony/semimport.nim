@@ -140,13 +140,13 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
   let info = x.info
   while x.hasMore:
     var isCyclic = false
-    if x.kind == ParLe and x.exprKind == PragmaxX:
+    if x.isTagLit and x.exprKind == PragmaxX:
       var y = x
       inc y, SkipTag
       skip y, AnyExpr  # filename expr
       if y.substructureKind == PragmasU:
         inc y, SkipTag
-        if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+        if y.isIdent and pool.strings[y.litId] == "cyclic":
           isCyclic = true
 
     if isCyclic:
@@ -196,13 +196,13 @@ proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilenam
     onConceptImportsChanged(c)
 
 template maybeCyclic(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
-  if x.kind == ParLe and x.exprKind == PragmaxX:
+  if x.isTagLit and x.exprKind == PragmaxX:
     var y = x
     inc y
     skip y
     if y.substructureKind == PragmasU:
       inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+      if y.isIdent and pool.strings[y.litId] == "cyclic":
         cyclicImport(c, dest, x)
         return
 
@@ -264,7 +264,7 @@ proc semFromImport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     filenameVal(x, files, hasError, allowAs = true)
     if not hasError:
       while x.hasMore:
-        if x.kind == ParLe and x.exprKind == NilX:
+        if x.isTagLit and x.exprKind == NilX:
           # from a import nil
           skip x, AnyExpr
         else:
@@ -278,11 +278,11 @@ proc semFromImport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc findModuleSymbol*(n: Cursor): SymId =
   result = SymId(0)
-  if n.kind == Symbol:
+  if n.isSymbol:
     let res = tryLoadSym(n.symId)
     if res.status == LacksNothing and symKind(res.decl) == ModuleY:
       result = n.symId
-  elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
+  elif n.isTagLit and exprKind(n) in {OchoiceX, CchoiceX}:
     # if any sym in choice is module sym, count it as a module reference
     # this emulates behavior that was caused by sym order shenanigans before, could be removed
     var n = n
@@ -356,7 +356,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
     registerExportName(c, moduleSym, pool.strings.getOrIncl(basename))
     # Enum types carry their fields as separately-named symbols. Exporting only
     # the type name leaves the field names filtered out at the import site
-    # (e.g. `export NifKind` wouldn't bring `ParLe`/`DotToken` into scope).
+    # (e.g. `export NifKind` wouldn't bring `OpenTagKind`/`DotToken` into scope).
     # Walk the enum body and enroll each field basename in the same filter.
     if res.status == LacksNothing and res.decl.symKind == TypeY:
       let decl = asTypeDecl(res.decl)
@@ -373,7 +373,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
           while enumBody.hasMore:
             if enumBody.substructureKind == EfldU:
               let local = asLocal(enumBody)
-              if local.name.kind == SymbolDef:
+              if local.name.isSymbolDef:
                 var fname = pool.syms[local.name.symId]
                 extractBasename(fname)
                 registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
@@ -394,14 +394,14 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
         c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
         doExport(c, dest, syms.symId, info)
-      of ParLe:
+      of OpenTagKind:
         case syms.exprKind
         of ErrX:
           dest.add symBuf
         of OchoiceX, CchoiceX:
           syms.into:
             while syms.hasMore:
-              assert syms.kind == Symbol
+              assert syms.isSymbol
               doExport(c, dest, syms.symId, info)
               inc syms, AnyExpr
         else:
@@ -461,14 +461,14 @@ proc semExportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
         c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
         doExportExcept(c, dest, moduleSym, syms.symId, info)
-      of ParLe:
+      of OpenTagKind:
         case syms.exprKind
         of ErrX:
           dest.add symBuf
         of OchoiceX, CchoiceX:
           syms.into:
             while syms.hasMore:
-              assert syms.kind == Symbol
+              assert syms.isSymbol
               doExportExcept(c, dest, moduleSym, syms.symId, info)
               inc syms, AnyExpr
         else:

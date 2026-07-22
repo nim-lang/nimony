@@ -32,7 +32,7 @@ type
 proc isComplex(n: Cursor; goal: Goal): bool =
   var n = n
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, PatternvarS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
       result = true
     elif n.exprKind == ExprX:
@@ -140,19 +140,19 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
   ## cannot see that correlation through the hoist, so the tag tells it to treat
   ## the slot as initialised — used only on the Final-IR (analysis) path, so
   ## codegen still gets the plain zero-initialised slot.
-  if n.kind != ParLe or n.exprKind != ExprX:
+  if n.kind != OpenTagKind or n.exprKind != ExprX:
     transformed.takeTree n
     return
-  transformed.add n                    # `(expr`
+  transformed.addParLe(n.tag, n.info)                    # `(expr`
   n.into:
     while n.hasMore:
-      if n.kind != ParLe or n.stmtKind != StmtsS:
+      if n.kind != OpenTagKind or n.stmtKind != StmtsS:
         transformed.takeTree n         # not the leading stmts — pass through
         continue
-      transformed.add n                # `(stmts`
+      transformed.addParLe(n.tag, n.info)                # `(stmts`
       n.into:
         while n.hasMore:
-          if n.kind != ParLe or n.stmtKind notin {LetS, VarS, CursorS}:
+          if n.kind != OpenTagKind or n.stmtKind notin {LetS, VarS, CursorS}:
             transformed.takeTree n
             continue
           let info = n.info
@@ -160,13 +160,13 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
           let sym = local.name.symId
           let symInfo = local.name.info
           outerDest.addParLe(VarS, info)
-          outerDest.add symdefToken(sym, symInfo)
+          outerDest.addSymDef(sym, symInfo)
           outerDest.addSubtree local.exported
           if markNoinit:
             outerDest.addParLe(PragmasS, info)
             outerDest.addParLe(NoinitP, info)
             outerDest.addParRi()
-            if local.pragmas.kind == ParLe:  # keep any original pragmas too
+            if local.pragmas.kind == OpenTagKind:  # keep any original pragmas too
               var p = local.pragmas
               p = sub(p) # peek only, never left
               while p.hasMore:
@@ -180,7 +180,7 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
           outerDest.addParRi()
           if local.val.kind != DotToken:
             transformed.addParLe(AsgnS, info)
-            transformed.add symToken(sym, symInfo)
+            transformed.addSymUse(sym, symInfo)
             transformed.addSubtree local.val
             transformed.addParRi()
         transformed.addParRi(n.endInfo)  # closing `)` of stmts
@@ -256,7 +256,7 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     tar.m = IsAppend
   else:
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
-  tar.t.add n
+  tar.t.addParLe(n.tag, n.info)
   n.into:
     while n.hasMore:
       trExpr c, dest, n, tar
@@ -278,7 +278,7 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   ## non-owning view that goes out of scope without cleanup, which is
   ## exactly what xelim needs here. Surfaced 2026-05-01 by self-host
   ## debugging — see `bug_self_host_nifconfig_destroy.md`.
-  if n.kind != ParLe or n.exprKind notin CallKinds:
+  if n.kind != OpenTagKind or n.exprKind notin CallKinds:
     trExpr c, dest, n, tar
     return
 
@@ -323,7 +323,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     assert tar.m == IsAppend
 
   let kind = n.exprKind
-  tar.t.add n
+  tar.t.addParLe(n.tag, n.info)
   n.into:
 
     case kind
@@ -333,8 +333,8 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
       if n.hasMore:
         tar.t.takeTree n  # T
       while n.hasMore:
-        if n.kind == ParLe and n.substructureKind == KvU:
-          tar.t.add n  # `(kv`
+        if n.isTagLit and n.substructureKind == KvU:
+          tar.t.addParLe(n.tag, n.info)  # `(kv`
           n.into:
             if n.hasMore:
               tar.t.takeTree n  # field key
@@ -429,7 +429,7 @@ proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: Packed
     inc c.counter
 
     result = CfVar(v: pool.syms.getOrIncl(s))
-    dest.add tagToken("mflag", info)
+    dest.addParLe("mflag", info)
     dest.addSymDef result.v, info
     dest.addParRi()
 
@@ -439,7 +439,7 @@ proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: Packed
     result = CfVar(v: tar.t[0].symId)
 
 proc useCfVar(dest: var TokenBuf; cf: CfVar; info: PackedLineInfo) =
-  dest.add tagToken("jtrue", info)
+  dest.addParLe("jtrue", info)
   dest.addSymUse cf.v, info
   dest.addParRi()
 
@@ -504,7 +504,7 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
 proc condNodeSafe(n: Cursor): bool =
   var n = n
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     if n.exprKind in CallKinds: return false
     if n.exprKind == ExprX:
       # A single-son `(expr val)` is a transparent wrapper — e.g. the `!=`
@@ -532,7 +532,7 @@ proc condPassthroughSafe(n: Cursor): bool =
   ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf must
   ## instead keep the bool-temp lowering here, because short-circuit evaluation
   ## requires the call to be hoisted *into* the branch, which Cx does not do.
-  if n.kind != ParLe: return false
+  if n.kind != OpenTagKind: return false
   result = condNodeSafe(n)
 
 proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
@@ -541,7 +541,7 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
   ## expand to exactly `(expr (not (== x y)))` etc.; keeping that wrapper leaves
   ## the finalir condition compiler and the contract/nil analysis staring at a
   ## statement-expression instead of the pure `not (== …)` leaf they understand.
-  if n.kind == ParLe and n.exprKind == ExprX:
+  if n.kind == OpenTagKind and n.exprKind == ExprX:
     var probe = n
     probe = sub(probe) # peek only, never left
     skip probe
@@ -549,8 +549,8 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
       n.into:                         # drop `(expr` and the matching `)`
         takeStrippingTrivialExpr(dest, n)
       return
-  if n.kind == ParLe:
-    dest.add n                        # `(tag`
+  if n.kind == OpenTagKind:
+    dest.addParLe(n.tag, n.info)                        # `(tag`
     n.into:
       while n.hasMore:
         takeStrippingTrivialExpr(dest, n)
@@ -628,7 +628,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         n.into:
           trCond c, dest, n, t0, c.goal == TowardsNjvl
 
-          dest.add head
+          dest.addParLe(head.tag, head.info)
           inc toClose
           inc ifs
 
@@ -768,7 +768,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n.into:
     var tar = Target(m: IsEmpty)
     trExpr c, dest, n, tar # iterator call
-    dest.add head
+    dest.addParLe(head.tag, info)
     dest.addTarget tar
     takeTree dest, n # for loop variables
     trStmt c, dest, n
@@ -778,9 +778,10 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## The iter call is consumed entirely by cps.nim's trCoroFor (it is
   ## rewritten to a wrapper call with extra args). Don't extract its result
   ## into a temp here — keep it verbatim so cps sees its original shape.
+  let info = n.info
   let head = n.load()
   n.into:
-    dest.add head
+    dest.addParLe(head.tag, info)
     takeTree dest, n # iter call, verbatim
     trStmt c, dest, n # body
     dest.addParRi(n.endInfo)
@@ -861,7 +862,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let head = n
     n.into:
       trExpr c, dest, n, tar
-      dest.add head
+      dest.addParLe(head.tag, head.info)
       dest.addTarget tar
       dest.addParRi()
 
@@ -869,7 +870,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let head = n
     n.into:
       if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
-        if n.kind == DotToken:
+        if n.isDotToken:
           dest.takeToken n
         else:
           let typ = getType(c, n)
@@ -889,7 +890,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         var tar = Target(m: IsEmpty)
         trExpr c, dest, n, tar
-        dest.add head
+        dest.addParLe(head.tag, head.info)
         dest.addTarget tar
         dest.addParRi()
 
@@ -1057,9 +1058,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   # can have the dangerous `Expr` node which is the whole
   # reason for xelim's existence.
   case n.kind
-  of DotToken, UnknownToken, EofToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of DotToken, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     takeTree tar.t, n
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of ExprX:
       n.into:
@@ -1119,7 +1120,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
          NoStmt:
         trExprLoop c, dest, n, tar
-  of ParRi:
+  else:
     bug "unexpected ')' inside"
 
 proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
@@ -1133,7 +1134,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
-  pass.dest.add n
+  pass.dest.addParLe(n.tag, n.info)
   n.into:
     while n.hasMore:
       trStmt c, pass.dest, n

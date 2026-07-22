@@ -11,6 +11,9 @@
 import std/[syncio, os, osproc, tables, hashes, assertions]
 
 import ".." / lib / [nifstreams, nifcursors, lineinfos, bitabs, nifindexes, symparser]
+when defined(useNifcore):
+  import ".." / lib / nifreader
+  from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
 import nimony_model, decls, programs
 
@@ -42,7 +45,7 @@ proc spliceBodyWithoutResult(dest: var TokenBuf; body: Cursor) =
   var n = body
   assert n.stmtKind == StmtsS, "macro body should be a stmts block"
   copyInto dest, n:
-    if n.hasMore and n.kind == ParLe and n.stmtKind == ResultS:
+    if n.hasMore and n.isTagLit and n.stmtKind == ResultS:
       # Skip the leading result declaration.
       skip n
     while n.hasMore:
@@ -50,31 +53,30 @@ proc spliceBodyWithoutResult(dest: var TokenBuf; body: Cursor) =
 
 proc rewriteSymsToIdentsImpl(newBuf: var TokenBuf; n: var Cursor) =
   ## Rewrites the single tree/token at `n` into `newBuf` and advances past it.
+  if not n.hasMore: return
   case n.kind
   of Symbol, SymbolDef:
     var name = pool.syms[n.symId]
     extractBasename name
-    newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
+    newBuf.addIdent(pool.strings.getOrIncl(name), n.info)
     inc n
-  of ParLe:
+  of OpenTagKind:
     let ek = n.exprKind
     var firstChild = n
     inc firstChild
-    if (ek == OchoiceX or ek == CchoiceX) and firstChild.kind == Symbol:
+    if (ek == OchoiceX or ek == CchoiceX) and firstChild.isSymbol:
       # unwrap the choice to a single ident:
       n.into:
         var name = pool.syms[n.symId]
         extractBasename name
-        newBuf.add identToken(pool.strings.getOrIncl(name), n.info)
+        newBuf.addIdent(pool.strings.getOrIncl(name), n.info)
         while n.hasMore: skip n
     else:
-      newBuf.add n
+      newBuf.addParLe(n.tag, n.info)
       n.into:
         while n.hasMore:
           rewriteSymsToIdentsImpl(newBuf, n)
         newBuf.addParRi(n.endInfo)
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
   else:
     newBuf.takeToken n
 
@@ -133,7 +135,7 @@ proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
           # Slot 2: pragmas
           dest.takeTree n
           # Slot 3: type — rewrite (untyped) / (typed) → NimNode
-          let isMetatype = n.kind == ParLe and
+          let isMetatype = n.isTagLit and
             (n.typeKind == UntypedT or n.typeKind == TypedT)
           if isMetatype:
             dest.addIdent "NimNode", info
@@ -157,7 +159,7 @@ proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
     # the body can call NimNode methods on them without losing the call-site
     # "don't sem-check the arg" semantics (which the user's macro signature
     # already provides via the untyped/typed metatype).
-    if r.params.kind == DotToken:
+    if r.params.isDotToken:
       dest.copyInto(pool.tags.getOrIncl("params"), info):
         discard
     else:
@@ -222,7 +224,7 @@ proc emitMainProc(dest: var TokenBuf; implName: string; paramCount: int;
 proc countParams(macroDecl: Cursor): int =
   result = 0
   let r = asRoutine(macroDecl, SkipInclBody)
-  if r.params.kind == DotToken or r.params.substructureKind != ParamsU:
+  if r.params.isDotToken or r.params.substructureKind != ParamsU:
     return 0
   var p = r.params
   p.loopInto:
@@ -299,7 +301,10 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   deps.addParLe StmtsS, info
   deps.addParRi()
   try:
-    writeFile(deps, depsFile)
+    when defined(useNifcore):
+      writeFile(depsFile, toString(deps, true))
+    else:
+      writeFile(deps, depsFile)
   except:
     echo "Macro plugin: failed to write ", depsFile
     return ""
@@ -371,9 +376,14 @@ proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
     echo output
     return false
 
-  var s = nifstreams.open(outputPath)
-  try:
-    parse s, dest, lineinfos.NoLineInfo
-  finally:
-    close s
+  when defined(useNifcore):
+    var r = nifreader.open(outputPath)
+    parse(r, dest)
+    r.close()
+  else:
+    var s = nifstreams.open(outputPath)
+    try:
+      parse s, dest, lineinfos.NoLineInfo
+    finally:
+      close s
   return true

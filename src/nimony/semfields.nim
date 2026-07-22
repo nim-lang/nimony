@@ -13,32 +13,32 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
     let s = n.litId
     if s == iter.nameVar:
       if fieldSym == SymId(0):
-        buf.add strToken(fieldName, n.info)
+        buf.addStrLit(fieldName, n.info)
       else:
         buf.addStrLit pool.syms[fieldSym]
     elif s == iter.fieldVar1:
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj1
-      buf.add identToken(fieldName, n.info)
+      buf.addIdent(fieldName, n.info)
       buf.addParRi()
     elif s == iter.fieldVar2:
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj2
-      buf.add identToken(fieldName, n.info)
+      buf.addIdent(fieldName, n.info)
       buf.addParRi()
     else:
-      buf.add n
-  of ParLe:
-    buf.add n
+      buf.addSubtree n
+  of OpenTagKind:
+    buf.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:
         expandNamedFieldBody(buf, iter, fieldName, fieldSym, n)
         skip n
       buf.addParRi(n.endInfo)
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
   else:
-    buf.add n
+    # classic: a real ParRi cannot happen (subtree ends are consumed by the
+    # bounded scope); nifcore has no ParRi kind at all.
+    buf.addSubtree n
 
 proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym: SymId; body: Cursor) =
   # use `if true` to open a new scope without interfering with `break`:
@@ -61,30 +61,30 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; nam
     # substitute direct idents for now, symbols would work the same way
     let s = n.litId
     if s == iter.nameVar:
-      buf.add strToken(name, n.info)
+      buf.addStrLit(name, n.info)
     elif s == iter.fieldVar1:
       buf.addParLe(TupatX, n.info)
       buf.addSubtree iter.obj1
-      buf.add intToken(intId, n.info)
+      buf.addIntLit(intId, n.info)
       buf.addParRi()
     elif s == iter.fieldVar2:
       buf.addParLe(TupatX, n.info)
       buf.addSubtree iter.obj2
-      buf.add intToken(intId, n.info)
+      buf.addIntLit(intId, n.info)
       buf.addParRi()
     else:
-      buf.add n
-  of ParLe:
-    buf.add n
+      buf.addSubtree n
+  of OpenTagKind:
+    buf.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:
         expandTupleFieldBody(buf, iter, intId, name, n)
         skip n
       buf.addParRi(n.endInfo)
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
   else:
-    buf.add n
+    # classic: a real ParRi cannot happen (subtree ends are consumed by the
+    # bounded scope); nifcore has no ParRi kind at all.
+    buf.addSubtree n
 
 proc buildTupleFieldIter(buf: var TokenBuf; iter: FieldsIter; i: int; name: StrId; body: Cursor) =
   # use `if true` to open a new scope without interfering with `break`:
@@ -165,7 +165,7 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
     if objType.typeKind in {RefT, PtrT}: inc objType
     discard skipInvoke(objType)
     var objDecl = default(TypeDecl)
-    if objType.kind == Symbol:
+    if objType.isSymbol:
       objDecl = getTypeSection(objType.symId)
       if objDecl.kind == TypeY:
         objType = objDecl.objBody
@@ -218,13 +218,13 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
           # field name is enough:
           buildNamedFieldIter(iterBuf, iter, getIdent(field.name), fieldSym, body)
       objType = obj.parentType
-      if objType.kind == DotToken:
+      if objType.isDotToken:
         break
       else:
         if objType.typeKind in {RefT, PtrT}: inc objType
         discard skipInvoke(objType)
         var parentDecl = default(TypeDecl)
-        if objType.kind == Symbol:
+        if objType.isSymbol:
           parentDecl = getTypeSection(objType.symId)
           if parentDecl.kind == TypeY:
             objType = parentDecl.objBody
@@ -234,7 +234,7 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
           error "invalid parent object type", objType
 
   iterBuf.addParLe(BreakS, body.info)
-  iterBuf.add dotToken(body.info)
+  iterBuf.addDotToken(body.info)
   iterBuf.addParRi()
   iterBuf.addParRi() # (stmts)
   iterBuf.addParRi() # (while)

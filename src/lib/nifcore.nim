@@ -104,7 +104,9 @@ const
   JumpBits*    = 32'u32 - JumpShift                 # 19
   InlineJumpCap* = (1'u32 shl JumpBits) - 1'u32     # 524287
 
-template kind*(n: NifToken): NifKind = NifKind(uint32(n) and KindMask)
+proc kind*(n: NifToken): NifKind {.inline.} = NifKind(uint32(n) and KindMask)
+  ## A `proc` (not a `template`) so downstream `export … except kind` can drop
+  ## it — nimony's `except` cannot filter a name that has a template overload.
 template uoperand*(n: NifToken): uint32 = uint32(n) shr KindBits
 template soperand*(n: NifToken): int32 =
   ## Sign-extended 28-bit payload (for inline signed values).
@@ -880,6 +882,44 @@ proc growRawUninit*(b: var TokenBuf; count: int): pointer =
   b.len = count
   b.data
 
+proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
+  ## Replace the sealed subtree at `pos` with the sealed subtree `by`.
+  if dest.owner != nil: prepareMutation(dest)
+  var at = Cursor(p: cast[ptr NifToken](cast[uint](dest.data) +
+                    uint(pos) * sizeof(NifToken).uint), rem: dest.len - pos)
+  let actualLen = min(subtreeWidth(at), dest.len - pos)
+  let byLen = subtreeWidth(by)
+  let oldLen = dest.len
+  let delta = byLen - actualLen
+  if delta != 0:
+    for k in 0 ..< dest.openTags.len:
+      if dest.openTags[k] >= pos + actualLen: dest.openTags[k] += delta
+  if delta > 0:
+    discard growRawUninit(dest, oldLen + delta)
+    for i in countdown(oldLen - 1, pos + actualLen):
+      dest.data[i + delta] = dest.data[i]
+  elif delta < 0:
+    for i in pos + actualLen ..< oldLen:
+      dest.data[i + delta] = dest.data[i]
+    dest.len = oldLen + delta
+  for i in 0 ..< byLen:
+    dest.data[pos + i] = cast[ptr NifToken](cast[uint](by.p) +
+                           uint(i) * sizeof(NifToken).uint)[]
+
+proc insert*(dest: var TokenBuf; src: TokenBuf; pos: int) =
+  ## Splice `src`'s tokens into `dest` at index `pos` (raw). Enclosing sealed
+  ## scopes' jumps are NOT adjusted — the caller must `widenSealed` them.
+  assert pos >= 0 and pos <= dest.len
+  let n = src.len
+  if n == 0: return
+  let oldLen = dest.len
+  if dest.owner != nil: prepareMutation(dest)
+  discard growRawUninit(dest, oldLen + n)
+  for i in countdown(oldLen - 1, pos):
+    dest.data[i + n] = dest.data[i]
+  for i in 0 ..< n:
+    dest.data[pos + i] = src.data[i]
+
 # ── Builder API (interns, emits suffix on overflow) ──────────────────────
 
 proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32;
@@ -1034,6 +1074,14 @@ proc openTag*(b: var TokenBuf; t: TagId) {.inline.} =
   b.data[b.len] = tagLitToken(t, 0)
   inc b.len
 
+proc reopenLastTree*(b: var TokenBuf; pos: int) =
+  ## Reopen the finished tree headed by the TagLit at `pos` so more children can
+  ## be appended; close it again with `closeTag` (which recomputes the jump over
+  ## the old + new children). The tree's subtree must be the last content of `b`.
+  if b.owner != nil: prepareMutation(b)
+  assert b.data[pos].kind == TagLit, "reopenLastTree: no TagLit at pos"
+  b.openTags.add pos
+
 proc closeTag*(b: var TokenBuf) =
   ## Seal the most recently opened tag.
   if b.owner != nil: prepareMutation(b)
@@ -1119,10 +1167,60 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor =
                   p: addr b.data[i],
                   rem: b.len - i)
 
+proc cursorTailAt*(b: var TokenBuf; i: int): Cursor =
+  ## Like `cursorAt` but accepts `i == b.len` (a sealed tree's implicit close
+  ## can leave the next position at end-of-buffer). Then `rem == 0` and the
+  ## cursor reports a virtual close — only `kind`-style probes are valid.
+  assert i >= 0 and i <= b.len
+  ensureOwner(b)
+  inc b.owner.rc
+  result = Cursor(owner: b.owner,
+                  p: cast[ptr NifToken](cast[uint](b.data) +
+                       uint(i) * sizeof(NifToken).uint),
+                  rem: b.len - i)
+
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   ## Token index of `c` within `b` (inverse of `cursorAt`). Stable key for
   ## per-expression tables (e.g. a register allocator's location map).
   (cast[int](c.p) - cast[int](b.data)) div sizeof(NifToken)
+
+proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor =
+  ## Like `cursorAt` but does not require `var b` (the buffer must already be
+  ## owned — i.e. previously `beginRead`/`cursorAt`'d — or the cursor is
+  ## ownerless and valid only while `b` outlives it).
+  assert i >= 0 and i < b.len
+  result = Cursor(p: cast[ptr NifToken](unsafeAddr b.data[i]), rem: b.len - i)
+  if b.owner != nil:
+    inc b.owner.rc
+    result.owner = b.owner
+
+proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
+  ## Advance `c` by `diff` tokens, keeping the bounded `rem` correct (used by CF
+  ## goto navigation). `diff` must not exceed `rem`.
+  result = Cursor(p: cast[ptr NifToken](cast[uint](c.p) +
+                    diff.uint * sizeof(NifToken).uint),
+                  rem: c.rem - diff)
+  if c.owner != nil:
+    inc c.owner.rc
+    result.owner = c.owner
+
+proc hasCurrentToken*(c: Cursor): bool {.inline.} =
+  ## True if `c` points at a readable token (pointer + bound check). Prefer
+  ## `hasMore` in regular traversal; this survives malformed input.
+  c.p != nil and c.rem > 0
+
+proc unsafeDec*(c: var Cursor) {.inline.} =
+  ## Move one token backwards (no bounds check). Only valid on a cursor known
+  ## to sit past a real token; used by backward scans over a raw buffer.
+  c.p = cast[ptr NifToken](cast[uint](c.p) - sizeof(NifToken).uint)
+  inc c.rem
+
+proc peekPastEnd*(n: Cursor): Cursor =
+  ## A loosely-bounded cursor at the token following the fully-consumed bounded
+  ## scope `n` (`rem == 0`; the close is implicit). Read-only peek at a sibling
+  ## the caller KNOWS exists.
+  result = n
+  result.rem = high(int)
 
 # ── Subtree copy ─────────────────────────────────────────────────────────
 

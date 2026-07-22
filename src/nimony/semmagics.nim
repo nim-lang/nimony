@@ -48,7 +48,7 @@ proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context 
 proc getDottedIdent(n: var Cursor): string
 
 proc getDottedIdentAux(n: var Cursor): string =
-  if n.kind == ParLe and n.exprKind == DotX:
+  if n.isTagLit and n.exprKind == DotX:
     n.into:
       result = getDottedIdent(n)
       let s = takeIdent(n)
@@ -66,7 +66,7 @@ proc getDottedIdentAux(n: var Cursor): string =
       result = pool.strings[s]
 
 proc getDottedIdent(n: var Cursor): string =
-  if n.kind == ParLe and n.tagId == nifstreams.ErrT:
+  if n.isTagLit and n.tagId == nifstreams.ErrT:
     n.peekInto:
       result = getDottedIdentAux(n)
   else:
@@ -99,7 +99,7 @@ proc semDeclared*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     info = it.n.info
     orig = it.n
     # XXX maybe always type the argument and check for Symbol/errored Ident instead
-    let isError = it.n.kind == ParLe and it.n.tagId == nifstreams.ErrT
+    let isError = it.n.isTagLit and it.n.tagId == nifstreams.ErrT
     if isError:
       # does not consider module quoted symbols for now
       it.n.peekInto:
@@ -122,7 +122,7 @@ proc hasError(dest: TokenBuf): bool =
   var i = 0
   result = false
   while i < dest.len:
-    if dest[i].kind == ParLe and dest[i].tagId == errTag:
+    if dest[i].kind == OpenTagKind and dest[i].tagId == errTag:
       result = true
       break
     else:
@@ -244,14 +244,14 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # Second arg: the name string literal.
     info = it.n.info
     orig = it.n
-    if it.n.kind != StringLit:
+    if it.n.kind != StrLitKind:
       c.buildErr dest, info,
         "bindSym expects a string literal as the name, got: " & asNimCode(orig), orig
       while it.n.hasMore: skip it.n
       failed = true
     else:
       nameStr = pool.strings[it.n.litId]
-      skip it.n                           # consume the StringLit
+      skip it.n                           # consume the StrLitKind
 
       # Optional third arg: rule (default brClosed).
       if it.n.hasMore:
@@ -270,11 +270,11 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   var resolved: seq[SymId] = @[]
   var choice = beginRead(choiceBuf)
-  if choice.kind == Symbol:
+  if choice.isSymbol:
     resolved.add choice.symId
-  elif choice.kind == ParLe:
+  elif choice.isTagLit:
     choice.peekInto:
-      while choice.hasMore and choice.kind == Symbol:
+      while choice.hasMore and choice.isSymbol:
         resolved.add choice.symId
         inc choice
   endRead(choiceBuf)
@@ -325,7 +325,7 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.n.into:                              # enter (bindSym
     info = it.n.info
     orig = it.n
-    if it.n.kind != StringLit:
+    if it.n.kind != StrLitKind:
       c.buildErr dest, info,
         "bindSym expects a string literal, got: " & asNimCode(orig), orig
       skip it.n
@@ -333,7 +333,7 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       failed = true
     else:
       nameStr = pool.strings[it.n.litId]
-      skip it.n                           # consume the StringLit
+      skip it.n                           # consume the StrLitKind
 
       # Optional second arg: rule (default brClosed).
       if it.n.hasMore:
@@ -355,11 +355,11 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # writes either a single Symbol token or `(ochoice sym1 sym2 …)`.
   var resolved: seq[SymId] = @[]
   var choice = beginRead(choiceBuf)
-  if choice.kind == Symbol:
+  if choice.isSymbol:
     resolved.add choice.symId
-  elif choice.kind == ParLe:
+  elif choice.isTagLit:
     choice.peekInto:
-      while choice.hasMore and choice.kind == Symbol:
+      while choice.hasMore and choice.isSymbol:
         resolved.add choice.symId
         inc choice
   endRead(choiceBuf)
@@ -434,8 +434,8 @@ proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       let dollorName = "dollar`." & typeName
       let dollorSymId = pool.syms.getOrIncl(dollorName)
       shrink dest, beforeExpr
-      dest.add parLeToken(CallX, info)
-      dest.add symToken(dollorSymId, info)
+      dest.addParLe(CallX, info)
+      dest.addSymUse(dollorSymId, info)
     dest.add exprTokenBuf
   let expected = it.typ
   it.typ = c.types.stringType
@@ -460,14 +460,14 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
       if edecl.kind == AnumT:
         skip field, AnyType
       let first = asLocal(field)
-      dest.add symToken(first.name.symId, info)
+      dest.addSymUse(first.name.symId, info)
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
-  of ParLe:
+  of OpenTagKind:
     case typ.typeKind
     of IntT:
       var bitsCursor = typ
@@ -480,8 +480,8 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
         of 16: low(int16).int64
         of 32: low(int32).int64
         else: low(int64)
-      dest.add intToken(pool.integers.getOrIncl(value), info)
-      dest.add strToken(pool.strings.getOrIncl("i" & $bits), info)
+      dest.addIntLit(value, info)
+      dest.addStrLit("i" & $bits, info)
       dest.addParRi()
     of UIntT:
       var bitsCursor = typ
@@ -489,11 +489,11 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
       let bits = typebits(c.g.config, bitsCursor.load)
       dest.addParLe(SufX, info)
       let value = 0'u64
-      dest.add uintToken(pool.uintegers.getOrIncl(value), info)
-      dest.add strToken(pool.strings.getOrIncl("u" & $bits), info)
+      dest.addUIntLit(value, info)
+      dest.addStrLit("u" & $bits, info)
       dest.addParRi()
     of CharT:
-      dest.add charToken('\0', info)
+      dest.addCharLit('\0', info)
     of RangetypeT:
       var first = typ
       inc first
@@ -547,14 +547,14 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
           lastField = field
           skip field
       let last = asLocal(lastField)
-      dest.add symToken(last.name.symId, info)
+      dest.addSymUse(last.name.symId, info)
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
-  of ParLe:
+  of OpenTagKind:
     case typ.typeKind
     of IntT:
       var bitsCursor = typ
@@ -567,8 +567,8 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
         of 16: high(int16).int64
         of 32: high(int32).int64
         else: high(int64)
-      dest.add intToken(pool.integers.getOrIncl(value), info)
-      dest.add strToken(pool.strings.getOrIncl("i" & $bits), info)
+      dest.addIntLit(value, info)
+      dest.addStrLit("i" & $bits, info)
       dest.addParRi()
     of UIntT:
       var bitsCursor = typ
@@ -581,11 +581,11 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pa
         of 16: high(uint16).uint64
         of 32: high(uint32).uint64
         else: high(uint64)
-      dest.add uintToken(pool.uintegers.getOrIncl(value), info)
-      dest.add strToken(pool.strings.getOrIncl("u" & $bits), info)
+      dest.addUIntLit(value, info)
+      dest.addStrLit("u" & $bits, info)
       dest.addParRi()
     of CharT:
-      dest.add charToken(high(char), info)
+      dest.addCharLit(high(char), info)
     of RangetypeT:
       var last = typ
       inc last
@@ -825,7 +825,7 @@ proc semInstanceof*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semLocalTypeImpl c, dest, it.n, InLocalDecl
     if c.routine.inGeneric == 0:
       let t = cursorAt(dest, beforeType)
-      if t.kind == Symbol and arg.typ.kind == Symbol:
+      if t.isSymbol and arg.typ.isSymbol:
         let xtyp = arg.typ.symId
         let targetSym = t.symId
         ok = NoSubtype
@@ -906,7 +906,7 @@ proc semIs*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # instantiation can substitute formals and re-run `semIs`. Defer whenever
     # `inGeneric > 0` too: in template bodies operands can still be `untyped`,
     # which would make `containsGenericParams` false and wrongly fold to `false`.
-    dest.add orig
+    dest.addSubtree orig
     dest.addSubtree lhsExpr
     dest.addSubtree rhsExpr
     dest.addParRi()

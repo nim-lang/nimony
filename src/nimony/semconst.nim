@@ -56,7 +56,7 @@ proc semConstBoolExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; all
   if not isConstBoolValue(value):
     if allowUnresolved:
       discard
-    elif value.kind == ParLe and value.tagId == nifstreams.ErrT:
+    elif value.isTagLit and value.tagId == nifstreams.ErrT:
       dest.shrink start
       dest.add valueBuf
     else:
@@ -81,7 +81,7 @@ proc semConstStrExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   expectUnique dest
   let value = cursorAt(valueBuf, 0)
   if not isConstStringValue(value):
-    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
+    if value.isTagLit and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, it.n.info, "expected constant string value but got: " & asNimCode(value)
@@ -116,7 +116,7 @@ proc semConstIntExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; phas
   expectUnique dest
   let value = cursorAt(valueBuf, 0)
   if not isConstIntValue(value):
-    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
+    if value.isTagLit and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       dest.shrink start
@@ -144,11 +144,11 @@ proc addXint*(c: var SemContext; dest: var TokenBuf; x: xint; info: PackedLineIn
   var err = false
   let val = asSigned(x, err)
   if not err:
-    dest.add intToken(pool.integers.getOrIncl(val), info)
+    dest.addIntLit(val, info)
   else:
     let val = asUnsigned(x, err)
     if not err:
-      dest.add uintToken(pool.uintegers.getOrIncl(val), info)
+      dest.addUIntLit(val, info)
     else:
       c.buildErr dest, info, "enum value not a constant expression"
 
@@ -167,7 +167,7 @@ proc evalConstIntExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
   if result.isNaN:
-    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
+    if value.isTagLit and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant integer value but got: " & asNimCode(value)
@@ -178,7 +178,7 @@ proc evalConstStrExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
   let value = beginRead(valueBuf)
   result = getConstStringValue(value)
   if result == StrId(0):
-    if value.kind == ParLe and value.tagId == nifstreams.ErrT:
+    if value.isTagLit and value.tagId == nifstreams.ErrT:
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant string value but got: " & asNimCode(value)

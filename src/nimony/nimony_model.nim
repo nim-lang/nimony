@@ -16,7 +16,7 @@ template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 template tagEnum*(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
 
 proc stmtKind*(c: PackedToken): NimonyStmt {.inline.} =
-  if c.kind == ParLe and rawTagIsNimonyStmt(tagEnum(c)):
+  if c.isTagLit and rawTagIsNimonyStmt(tagEnum(c)):
     result = cast[NimonyStmt](tagEnum(c))
   else:
     result = NoStmt
@@ -24,19 +24,19 @@ proc stmtKind*(c: PackedToken): NimonyStmt {.inline.} =
 proc stmtKind*(c: Cursor): NimonyStmt {.inline.} =
   # Routed through `c.kind` so a bounded cursor at its scope's end (virtual
   # ParRi under `-d:virtualParRi`) yields the none-value instead of asserting.
-  if c.kind == ParLe:
+  if c.isTagLit:
     result = stmtKind(c.load())
   else:
     result = NoStmt
 
 proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     let e = tagEnum(c)
     if rawTagIsNimonyPragma(e):
       result = cast[NimonyPragma](e)
     else:
       result = NoPragma
-  elif c.kind == Ident:
+  elif c.isIdent:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
     if tagId.int >= 0 and tagId.int <= high(TagEnum).int and rawTagIsNimonyPragma(cast[TagEnum](tagId)):
       result = cast[NimonyPragma](tagId)
@@ -46,35 +46,35 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
     result = NoPragma
 
 proc substructureKind*(c: PackedToken): NimonyOther {.inline.} =
-  if c.kind == ParLe and rawTagIsNimonyOther(tagEnum(c)):
+  if c.isTagLit and rawTagIsNimonyOther(tagEnum(c)):
     result = cast[NimonyOther](tag(c))
   else:
     result = NoSub
 
 proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     result = substructureKind(c.load())
   else:
     result = NoSub
 
 proc typeKind*(c: Cursor): NimonyType {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsNimonyType(tagEnum(c)):
       result = cast[NimonyType](tagEnum(c))
     else:
       result = NoType
-  elif c.kind == DotToken:
+  elif c.isDotToken:
     result = VoidT
   else:
     result = NoType
 
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsCallConv(tagEnum(c)):
       result = cast[CallConv](tag(c))
     else:
       result = NoCallConv
-  elif c.kind == Ident:
+  elif c.isIdent:
     let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
     if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
@@ -84,7 +84,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
     result = NoCallConv
 
 proc exprKind*(c: PackedToken): NimonyExpr {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsNimonyExpr(tagEnum(c)):
       result = cast[NimonyExpr](tagEnum(c))
     else:
@@ -93,13 +93,13 @@ proc exprKind*(c: PackedToken): NimonyExpr {.inline.} =
     result = NoExpr
 
 proc exprKind*(c: Cursor): NimonyExpr {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     result = exprKind(c.load())
   else:
     result = NoExpr
 
 proc symKind*(c: Cursor): NimonySym {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsNimonySym(tagEnum(c)):
       result = cast[NimonySym](tagEnum(c))
     else:
@@ -108,7 +108,7 @@ proc symKind*(c: Cursor): NimonySym {.inline.} =
     result = NoSym
 
 proc cfKind*(c: Cursor): ControlFlowKind {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsControlFlowKind(tagEnum(c)):
       result = cast[ControlFlowKind](tagEnum(c))
     else:
@@ -208,42 +208,87 @@ const
   TypeclassKinds* = {ConceptT, TypekindT, OrdinalT, OrT, AndT, NotT}
   RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT, ItertypeT}
 
-proc addParLe*[T: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|ControlFlowKind|CallConv|PragmaKind](
-    dest: var TokenBuf; kind: T; info = NoLineInfo) =
-  dest.add parLeToken(cast[TagId](kind), info)
+proc addParLe*[T: enum](dest: var TokenBuf; kind: T; info = NoLineInfo) =
+  ## Open a tag from a kind enum (TypeKind/StmtKind/… all share TagEnum
+  ## ordinals). A plain `enum` constraint so `ord` type-checks (a union
+  ## constraint does not admit `ord`/`uint32` under nimony's Nim-2 generics).
+  dest.addParLe(cast[TagId](uint32(ord(kind))), info)
 
-proc addParPair*[T: TypeKind|PragmaKind|ExprKind|StmtKind|SubstructureKind|CallConv](
-    dest: var TokenBuf; kind: T; info = NoLineInfo) =
-  dest.add parLeToken(cast[TagId](kind), info)
+proc addParPair*[T: enum](dest: var TokenBuf; kind: T; info = NoLineInfo) =
+  dest.addParLe(cast[TagId](uint32(ord(kind))), info)
   dest.addParRi()
 
-proc parLeToken*[T: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind](
-    kind: T; info = NoLineInfo): PackedToken =
-  parLeToken(cast[TagId](kind), info)
+template setTagAt*(dest: var TokenBuf; pos: int; tag: TagId) =
+  ## In-place retag of the token at `pos` (nifcore's `dest[pos]` yields a value,
+  ## so it must be read, mutated, and written back).
+  when defined(useNifcore):
+    var t = dest[pos]
+    setTag(t, tag)
+    dest[pos] = t
+  else:
+    setTag(dest[pos], tag)
 
-proc tagToken*(tag: string; info: PackedLineInfo): PackedToken {.inline.} =
-  parLeToken(pool.tags.getOrIncl(tag), info)
+template setSymIdAt*(dest: var TokenBuf; pos: int; sym: SymId) =
+  when defined(useNifcore):
+    var t = dest[pos]
+    setSymId(t, sym)
+    dest[pos] = t
+  else:
+    setSymId(dest[pos], sym)
+
+template copyKeepLineInfoAt*(dest: var TokenBuf; pos: int; src: untyped) =
+  when defined(useNifcore):
+    var t = dest[pos]
+    copyKeepLineInfo(t, src)
+    dest[pos] = t
+  else:
+    copyKeepLineInfo(dest[pos], src)
+
+proc retagAt*[T: enum](dest: var TokenBuf; pos: int; kind: T; info = NoLineInfo) =
+  ## Rewrite the tag of an already-emitted open token at `pos`, preserving its
+  ## sealed jump/body (the classic `dest[pos] = parLeToken(kind, info)` idiom).
+  when defined(useNifcore):
+    var t = dest[pos]
+    setTag(t, cast[TagId](uint32(ord(kind))))
+    dest[pos] = t
+  else:
+    dest[pos] = parLeToken(kind, info)
+
+proc addParLe*(dest: var TokenBuf; tag: string; info = NoLineInfo) {.inline.} =
+  ## Open a tag by name (replaces the classic `dest.add tagToken(tag)`).
+  dest.addParLe(pool.tags.getOrIncl(tag), info)
+
+when not defined(useNifcore):
+  proc parLeToken*[T: enum](kind: T; info = NoLineInfo): PackedToken =
+    ## Classic-only: build a standalone open token from a kind enum (for the
+    ## few fragment/insert idioms not expressible as `dest.addParLe`). nifcore
+    ## has no standalone open token — those sites must migrate to openTag/insert.
+    parLeToken(cast[TagId](uint32(ord(kind))), info)
+
+  proc tagToken*(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
+    ## Classic-only standalone open token from a tag name (see `parLeToken`).
+    parLeToken(pool.tags.getOrIncl(tag), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
                        info: PackedLineInfo; body: untyped) =
-  dest.add parLeToken(kind, info)
+  dest.addParLe(kind, info)
   body
   dest.addParRi()
 
 template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: PackedLineInfo; body: untyped) =
-  dest.add parLeToken(kinds[0], info)
-  dest.add parLeToken(kinds[1], info)
+  dest.addParLe(kinds[0], info)
+  dest.addParLe(kinds[1], info)
   body
   dest.addParRi()
   dest.addParRi()
 
 proc skipParRi(n: var Cursor) =
-  assert n.kind == ParRi, "expected ')'"
+  assert not n.hasMore, "expected ')'"
   consumeParRi n
 
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
-  assert n.kind == ParLe
-  dest.add n
+  assert n.isTagLit
+  dest.addParLe(n.tag, n.info)
   n.into:
     body
   dest.addParRi()
@@ -254,16 +299,16 @@ template takeInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   ## pair. Downstream sem phases read close infos (e.g. `addReturnResult`),
   ## so rewrites of `takeParRi` must use this, not `copyInto`. Under
   ## `-d:virtualParRi` an elided close yields NoLineInfo.
-  assert n.kind == ParLe
-  dest.add n
+  assert n.isTagLit
+  dest.addParLe(n.tag, n.info)
   n.into:
     body
     dest.addParRi(n.endInfo)
 
-proc isAtom*(n: Cursor): bool {.inline.} = n.kind < ParLe
+proc isAtom*(n: Cursor): bool {.inline.} = n.hasMore and not n.isTagLit
 
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
-  dest.add symToken(s, info)
+  dest.addSymUse(s, info)
 
 proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
   dest.add src
@@ -272,142 +317,119 @@ proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline.} =
   dest.addSubtree src
 
 proc addEmpty*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
-  dest.add dotToken(info)
+  dest.addDotToken(info)
 
 proc addEmpty2*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
-  dest.add dotToken(info)
-  dest.add dotToken(info)
+  dest.addDotToken(info)
+  dest.addDotToken(info)
 
 proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
-  dest.add dotToken(info)
-  dest.add dotToken(info)
-  dest.add dotToken(info)
+  dest.addDotToken(info)
+  dest.addDotToken(info)
+  dest.addDotToken(info)
 
 proc symNameId(s: SymId): StrId =
   var name = pool.syms[s]
   extractBasename name
   pool.strings.getOrIncl(name)
 
-proc sameTrees*(a, b: Cursor): bool =
-  result = false
-  var a = a
-  var b = b
-  when defined(virtualParRi):
-    # span-counted walk: equal trees occupy equal physical spans and their
-    # sealed jumps agree, so a token-wise comparison stays sound; real
-    # ParRis (overflow scopes) then sit at matching positions too
-    var togo = span(a)
-    if togo != span(b): return false
-    while true:
-      if a.kind != b.kind: return false
-      case a.kind
-      of ParLe:
-        if a.tagId != b.tagId: return false
-      of Symbol, SymbolDef:
-        if a.symId != b.symId: return false
-      of IntLit:
-        if a.intId != b.intId: return false
-      of UIntLit:
-        if a.uintId != b.uintId: return false
-      of FloatLit:
-        if a.floatId != b.floatId: return false
-      of StringLit, Ident:
-        if a.litId != b.litId: return false
-      of CharLit, UnknownToken:
-        if a.uoperand != b.uoperand: return false
-      of ParRi, DotToken, EofToken: discard "nothing else to compare"
-      dec togo
-      if togo == 0: return true
-      inc a
-      inc b
-  else:
-    var nested = 0
-    let isAtom = a.kind != ParLe
-    while true:
-      if a.kind != b.kind: return false
-      case a.kind
-      of ParLe:
-        if a.tagId != b.tagId: return false
-        inc nested
-      of ParRi:
-        dec nested
-        if nested == 0: return true
-      of Symbol, SymbolDef:
-        if a.symId != b.symId: return false
-      of IntLit:
-        if a.intId != b.intId: return false
-      of UIntLit:
-        if a.uintId != b.uintId: return false
-      of FloatLit:
-        if a.floatId != b.floatId: return false
-      of StringLit, Ident:
-        if a.litId != b.litId: return false
-      of CharLit, UnknownToken:
-        if a.uoperand != b.uoperand: return false
-      of DotToken, EofToken: discard "nothing else to compare"
-      if isAtom: return true
-      inc a
-      inc b
-    return false
+when defined(useNifcore):
+  proc sameTreesNC(a, b: Cursor): bool =
+    ## Structural equality on nifcore cursors, ignoring sparse line-info
+    ## suffixes (they are not iterated as children).
+    if a.hasMore != b.hasMore: return false
+    if not a.hasMore: return true
+    let ka = a.load.kind
+    if ka != b.load.kind: return false
+    case ka
+    of TagLit:
+      if cursorTagId(a) != cursorTagId(b): return false
+      var ca = childCursor(a)
+      var cb = childCursor(b)
+      while ca.hasMore and cb.hasMore:
+        if not sameTreesNC(ca, cb): return false
+        skip ca
+        skip cb
+      result = ca.hasMore == cb.hasMore
+    of Symbol, SymbolDef: result = symId(a) == symId(b)
+    of IntLit:            result = intVal(a) == intVal(b)
+    of UIntLit:           result = uintVal(a) == uintVal(b)
+    of FloatLit:          result = floatVal(a) == floatVal(b)
+    of StrLit, Ident:     result = strId(a) == strId(b)
+    of CharLit:           result = charLit(a) == charLit(b)
+    of DotToken:          result = true
+    of ExtendedSuffix, LineInfoLit: result = true
 
-proc sameTreesButIgnoreSymIds*(a, b: Cursor): bool =
-  ## Like `sameTrees` but maps symbols back to their base identifier names.
-  ## Used for forward declaration matching and concept requirement comparison.
-  result = false
-  var a = a
-  var b = b
-  when defined(virtualParRi):
-    # see `sameTrees` for why a span-counted token walk is sound here
-    var togo = span(a)
-    if togo != span(b): return false
-    while true:
-      # Handle symbol/ident comparison specially
-      let aIsName = a.kind in {Symbol, SymbolDef, Ident}
-      let bIsName = b.kind in {Symbol, SymbolDef, Ident}
-      if aIsName and bIsName:
-        let aName = if a.kind == Ident: a.litId else: symNameId(a.symId)
-        let bName = if b.kind == Ident: b.litId else: symNameId(b.symId)
-        if aName != bName: return false
-      elif aIsName or bIsName:
-        return false  # one is name, other is not
-      elif a.kind != b.kind:
-        return false
-      else:
+  proc sameTreesIgnoreSymIdsNC(a, b: Cursor): bool =
+    let aName = a.hasMore and a.load.kind in {nifcore.Symbol, nifcore.SymbolDef, nifcore.Ident}
+    let bName = b.hasMore and b.load.kind in {nifcore.Symbol, nifcore.SymbolDef, nifcore.Ident}
+    if aName or bName:
+      if not (aName and bName): return false
+      let an = if a.load.kind == nifcore.Ident: a.litId else: symNameId(a.symId)
+      let bn = if b.load.kind == nifcore.Ident: b.litId else: symNameId(b.symId)
+      return an == bn
+    if a.hasMore != b.hasMore: return false
+    if not a.hasMore: return true
+    let ka = a.load.kind
+    if ka != b.load.kind: return false
+    case ka
+    of TagLit:
+      if cursorTagId(a) != cursorTagId(b): return false
+      var ca = childCursor(a)
+      var cb = childCursor(b)
+      while ca.hasMore and cb.hasMore:
+        if not sameTreesIgnoreSymIdsNC(ca, cb): return false
+        skip ca
+        skip cb
+      result = ca.hasMore == cb.hasMore
+    of IntLit:            result = intVal(a) == intVal(b)
+    of UIntLit:           result = uintVal(a) == uintVal(b)
+    of FloatLit:          result = floatVal(a) == floatVal(b)
+    of StrLit:            result = strId(a) == strId(b)
+    of CharLit:           result = charLit(a) == charLit(b)
+    of DotToken:          result = true
+    of Symbol, SymbolDef, Ident, ExtendedSuffix, LineInfoLit: result = true
+
+proc sameTrees*(a, b: Cursor): bool =
+  when defined(useNifcore):
+    return sameTreesNC(a, b)
+  else:
+    result = false
+    var a = a
+    var b = b
+    when defined(virtualParRi):
+      # span-counted walk: equal trees occupy equal physical spans and their
+      # sealed jumps agree, so a token-wise comparison stays sound; real
+      # ParRis (overflow scopes) then sit at matching positions too
+      var togo = span(a)
+      if togo != span(b): return false
+      while true:
+        if a.kind != b.kind: return false
         case a.kind
         of ParLe:
           if a.tagId != b.tagId: return false
+        of Symbol, SymbolDef:
+          if a.symId != b.symId: return false
         of IntLit:
           if a.intId != b.intId: return false
         of UIntLit:
           if a.uintId != b.uintId: return false
         of FloatLit:
           if a.floatId != b.floatId: return false
-        of StringLit:
+        of StringLit, Ident:
           if a.litId != b.litId: return false
         of CharLit, UnknownToken:
           if a.uoperand != b.uoperand: return false
-        of ParRi, DotToken, EofToken: discard
-        of Symbol, SymbolDef, Ident: discard  # handled above
-      dec togo
-      if togo == 0: return true
-      inc a
-      inc b
-  else:
-    var nested = 0
-    let isAtom = a.kind != ParLe
-    while true:
-      # Handle symbol/ident comparison specially
-      let aIsName = a.kind in {Symbol, SymbolDef, Ident}
-      let bIsName = b.kind in {Symbol, SymbolDef, Ident}
-      if aIsName and bIsName:
-        let aName = if a.kind == Ident: a.litId else: symNameId(a.symId)
-        let bName = if b.kind == Ident: b.litId else: symNameId(b.symId)
-        if aName != bName: return false
-      elif aIsName or bIsName:
-        return false  # one is name, other is not
-      elif a.kind != b.kind:
-        return false
-      else:
+        of ParRi, DotToken, EofToken: discard "nothing else to compare"
+        dec togo
+        if togo == 0: return true
+        inc a
+        inc b
+    else:
+      var nested = 0
+      let isAtom = a.kind != ParLe
+      while true:
+        if a.kind != b.kind: return false
         case a.kind
         of ParLe:
           if a.tagId != b.tagId: return false
@@ -415,22 +437,108 @@ proc sameTreesButIgnoreSymIds*(a, b: Cursor): bool =
         of ParRi:
           dec nested
           if nested == 0: return true
+        of Symbol, SymbolDef:
+          if a.symId != b.symId: return false
         of IntLit:
           if a.intId != b.intId: return false
         of UIntLit:
           if a.uintId != b.uintId: return false
         of FloatLit:
           if a.floatId != b.floatId: return false
-        of StringLit:
+        of StringLit, Ident:
           if a.litId != b.litId: return false
         of CharLit, UnknownToken:
           if a.uoperand != b.uoperand: return false
-        of DotToken, EofToken: discard
-        of Symbol, SymbolDef, Ident: discard  # handled above
-      if isAtom: return true
-      inc a
-      inc b
-    return false
+        of DotToken, EofToken: discard "nothing else to compare"
+        if isAtom: return true
+        inc a
+        inc b
+      return false
+
+proc sameTreesButIgnoreSymIds*(a, b: Cursor): bool =
+  ## Like `sameTrees` but maps symbols back to their base identifier names.
+  ## Used for forward declaration matching and concept requirement comparison.
+  when defined(useNifcore):
+    return sameTreesIgnoreSymIdsNC(a, b)
+  else:
+    result = false
+    var a = a
+    var b = b
+    when defined(virtualParRi):
+      # see `sameTrees` for why a span-counted token walk is sound here
+      var togo = span(a)
+      if togo != span(b): return false
+      while true:
+        # Handle symbol/ident comparison specially
+        let aIsName = a.kind in {Symbol, SymbolDef, Ident}
+        let bIsName = b.kind in {Symbol, SymbolDef, Ident}
+        if aIsName and bIsName:
+          let aName = if a.kind == Ident: a.litId else: symNameId(a.symId)
+          let bName = if b.kind == Ident: b.litId else: symNameId(b.symId)
+          if aName != bName: return false
+        elif aIsName or bIsName:
+          return false  # one is name, other is not
+        elif a.kind != b.kind:
+          return false
+        else:
+          case a.kind
+          of ParLe:
+            if a.tagId != b.tagId: return false
+          of IntLit:
+            if a.intId != b.intId: return false
+          of UIntLit:
+            if a.uintId != b.uintId: return false
+          of FloatLit:
+            if a.floatId != b.floatId: return false
+          of StringLit:
+            if a.litId != b.litId: return false
+          of CharLit, UnknownToken:
+            if a.uoperand != b.uoperand: return false
+          of ParRi, DotToken, EofToken: discard
+          of Symbol, SymbolDef, Ident: discard  # handled above
+        dec togo
+        if togo == 0: return true
+        inc a
+        inc b
+    else:
+      var nested = 0
+      let isAtom = a.kind != ParLe
+      while true:
+        # Handle symbol/ident comparison specially
+        let aIsName = a.kind in {Symbol, SymbolDef, Ident}
+        let bIsName = b.kind in {Symbol, SymbolDef, Ident}
+        if aIsName and bIsName:
+          let aName = if a.kind == Ident: a.litId else: symNameId(a.symId)
+          let bName = if b.kind == Ident: b.litId else: symNameId(b.symId)
+          if aName != bName: return false
+        elif aIsName or bIsName:
+          return false  # one is name, other is not
+        elif a.kind != b.kind:
+          return false
+        else:
+          case a.kind
+          of ParLe:
+            if a.tagId != b.tagId: return false
+            inc nested
+          of ParRi:
+            dec nested
+            if nested == 0: return true
+          of IntLit:
+            if a.intId != b.intId: return false
+          of UIntLit:
+            if a.uintId != b.uintId: return false
+          of FloatLit:
+            if a.floatId != b.floatId: return false
+          of StringLit:
+            if a.litId != b.litId: return false
+          of CharLit, UnknownToken:
+            if a.uoperand != b.uoperand: return false
+          of DotToken, EofToken: discard
+          of Symbol, SymbolDef, Ident: discard  # handled above
+        if isAtom: return true
+        inc a
+        inc b
+      return false
 
 proc isDeclarative*(n: Cursor): bool =
   case n.stmtKind
@@ -465,7 +573,7 @@ const
 
 proc extractPragma*(n: Cursor; kind: PragmaKind): Cursor =
   var n = n
-  if n.kind != DotToken:
+  if not n.isDotToken:
     n.into:  # (pragmas …)
       while n.hasMore:
         if pragmaKind(n) == kind:
@@ -479,13 +587,13 @@ proc hasPragma*(n: Cursor; kind: PragmaKind): bool =
 
 proc hasPragmaOfValue*(n: Cursor; kind: PragmaKind; val: string): bool =
   let p = extractPragma(n, kind)
-  result = not cursorIsNil(p) and p.kind == StringLit and pool.strings[p.litId] == val
+  result = not cursorIsNil(p) and p.isStringLit and pool.strings[p.litId] == val
 
 const
   TypeModifiers* = {MutT, OutT, LentT, SinkT, StaticT}
 
 proc removeModifier*(a: var Cursor) =
-  if a.kind == ParLe and a.typeKind in TypeModifiers:
+  if a.isTagLit and a.typeKind in TypeModifiers:
     inc a
 
 proc skipModifier*(a: Cursor): Cursor =
@@ -544,7 +652,7 @@ proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
 
 proc isNilAnnotation*(n: Cursor): bool {.inline.} =
   ## Returns true if `n` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation.
-  n.kind == ParLe and n.substructureKind in {NotnilU, NilU, UncheckedU}
+  n.isTagLit and n.substructureKind in {NotnilU, NilU, UncheckedU}
 
 proc skipNilAnnotation*(n: var Cursor) {.inline.} =
   ## Skip a trailing nil annotation `(notnil)`, `(nil)`, or `(unchecked)`

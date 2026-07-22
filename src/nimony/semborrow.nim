@@ -29,33 +29,33 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
   skip modifiers first.]#
   var n = signature
   result = createTokenBuf(10)
-  result.add parLeToken(StmtsS, info)
-  result.add parLeToken(CallS, info)
-  result.add identToken(fn, info)
+  result.addParLe(StmtsS, info)
+  result.addParLe(CallS, info)
+  result.addIdent(fn, info)
   var distinctParams = 0
   n.into ParamsU:
     while n.hasMore:
       let param = asLocal(n)
-      if param.kind == ParamY and param.name.kind == SymbolDef:
+      if param.kind == ParamY and param.name.isSymbolDef:
         var isDistinct = false
         let destType = skipDistinct(param.typ, isDistinct)
         if isDistinct:
-          result.add parLeToken(DconvX, info)
+          result.addParLe(DconvX, info)
           result.copyTree destType
-          result.add symToken(param.name.symId, info)
+          result.addSymUse(param.name.symId, info)
           result.addParRi(info)
           inc distinctParams
         else:
-          result.add symToken(param.name.symId, info)
+          result.addSymUse(param.name.symId, info)
       skip n
-  if n.kind == DotToken:
+  if n.isDotToken:
     discard "fine: no return type"
   else:
     var isDistinct = false
     discard skipDistinct(n, isDistinct)
     if isDistinct:
       var finalConv = createTokenBuf(4)
-      finalConv.add parLeToken(DconvX, info)
+      finalConv.addParLe(DconvX, info)
       finalConv.copyTree n
       result.insert finalConv, 1
       result.addParRi(info)

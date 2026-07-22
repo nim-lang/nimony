@@ -51,7 +51,7 @@ proc compatOpenArrayInstance(c: var SemContext; elemType: Cursor;
   ## hand back the same instance Symbol.
   var invokeBuf = createTokenBuf(8)
   invokeBuf.addParLe(InvokeT, info)
-  invokeBuf.add symToken(pool.syms.getOrIncl(OpenArrayHeadName), info)
+  invokeBuf.addSymUse(pool.syms.getOrIncl(OpenArrayHeadName), info)
   invokeBuf.addSubtree elemType
   invokeBuf.addParRi()
   var scratch = createTokenBuf(16)
@@ -97,7 +97,7 @@ proc compatVarargsHasHint(paramType: Cursor): bool =
   if paramType.typeKind == VarargsT:
     var c = paramType
     loopInto c:
-      if c.kind == StringLit: result = true
+      if c.isStringLit: result = true
       skip c
 
 proc compatToOpenArrayTypevars(): (SymId, SymId) =
@@ -111,12 +111,12 @@ proc compatToOpenArrayTypevars(): (SymId, SymId) =
     var tv = routine.typevars
     if tv.substructureKind == TypevarsU:
       tv = sub(tv)
-      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
+      if tv.hasMore and tv.isTagLit and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[0] = inner.symId
         skip tv
-      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
+      if tv.hasMore and tv.isTagLit and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[1] = inner.symId
@@ -154,7 +154,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       let inst = compatOpenArrayInstance(c, elemCursor, info)
       endRead(rebuilt)
       let hintStr =
-        if inst.kind == Symbol: pool.syms[inst.symId]
+        if inst.isSymbol: pool.syms[inst.symId]
         else: ""
       rebuilt.addStrLit hintStr, info
       rebuilt.addParRi()
@@ -242,7 +242,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     let inst = c.requestRoutineInstance(origin, typeArgs, inferred, info)
 
     m.args.addParLe(HcallX, info)
-    m.args.add symToken(inst.targetSym, info)
+    m.args.addSymUse(inst.targetSym, info)
     m.args.addParLe(AconstrX, info)
     m.args.addParLe(ArrayT, info)
     m.args.addSubtree elemTypeC

@@ -87,7 +87,7 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
                 deps.addStrLit i.path.toAbsolutePath
                 deps.buildTree PragmasS, NoLineInfo:
                   deps.buildTree KvU, NoLineInfo:
-                    deps.addIdent "plugin"
+                    deps.addIdent(pool.strings.getOrIncl("plugin"), NoLineInfo)
                     deps.addStrLit i.fromPlugin
     if c.toBuild.len != 0:
       deps.buildTree TagId(BuildIdx), NoLineInfo:
@@ -115,10 +115,10 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
   if c.matchedForwardDecls.len == 0: return
   var i = 0
   while i < dest.len:
-    if dest[i].kind == ParLe and i + 1 < dest.len and
+    if readonlyCursorAt(dest, i).kind == OpenTagKind and i + 1 < dest.len and
         dest[i + 1].kind == SymbolDef and
         dest[i + 1].symId in c.matchedForwardDecls:
-      let info = dest[i].info
+      let info = readonlyCursorAt(dest, i).info
       # Overwrite exactly the decl's subtree. `span` is jump-based under
       # `-d:virtualParRi` (the subtree's ParRis are elided, so a raw
       # nesting counter would run to the end of the buffer) and
@@ -149,7 +149,7 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
       if i.fromPlugin.len == 0:
         let abs = i.path.toAbsolutePath
         importBuf.buildTree KvU, NoLineInfo:
-          importBuf.addIdent moduleSuffix(abs, c.g.config.paths)
+          importBuf.addIdent(pool.strings.getOrIncl(moduleSuffix(abs, c.g.config.paths)), NoLineInfo)
           # Slash-normalise: paths in the .nif must use `/` regardless of OS
           # so the file is byte-identical across Windows / Linux / macOS, and
           # downstream consumers (dagon) compare prefixes uniformly.
@@ -163,7 +163,7 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
       if dest[i].kind == ParLe and pool.tags[nifstreams.tag(dest[i])] == "aconstr":
         for k in max(0,i-3) .. min(dest.len-1, i+12):
           let tk = dest[k]
-          if tk.kind == ParLe:
+          if tk.isTagLit:
             echo "  [", k, "] ParLe ", pool.tags[nifstreams.tag(tk)], " jump=", jump(tk)
           elif tk.kind in {Symbol, SymbolDef}:
             echo "  [", k, "] ", tk.kind, " ", pool.syms[nifstreams.symId(tk)]
@@ -171,7 +171,7 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
             echo "  [", k, "] ", tk.kind
         break
   onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
-  let root = dest[0].info
+  let root = readonlyCursorAt(dest, 0).info
   onRaiseQuit createIndex(outfile, root, true,
     IndexSections(
       converters: move c.converterIndexMap,
@@ -188,7 +188,7 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
-  dest.add n
+  dest.addSubtree n
   n.into:
     while n.hasMore:
       semStmt c, dest, n, false
@@ -249,7 +249,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   var typevars = decl.typevars
   assert classifyType(c, typevars) == InvokeT
   typevars = sub(typevars) # peek only, never left
-  assert typevars.kind == Symbol
+  assert typevars.isSymbol
 
   let symId = typevars.symId
 
@@ -340,7 +340,7 @@ proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Curso
   var typevars = decl.typevars
   assert classifyType(c, typevars) == InvokeT
   inc typevars
-  assert typevars.kind == Symbol
+  assert typevars.isSymbol
 
   let base = typevars.symId
 
@@ -482,7 +482,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       endRead(dest)
 
   if c.expanded.len > 0:
-    dest.addParLe CommentS, c.expanded[0].info
+    dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
     dest.add c.expanded
     dest.addParRi()
 
@@ -575,7 +575,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
 proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   ## Post-processing after phase3: generics, contracts, derefs.
   if c.expanded.len > 0:
-    dest.addParLe CommentS, c.expanded[0].info
+    dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
     dest.add c.expanded
     dest.addParRi()
 

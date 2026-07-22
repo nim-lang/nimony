@@ -69,7 +69,7 @@ type
     callFirstArgs: Table[SymId, TokenBuf] ## first argument of a local's init call (for for-loop borrow tracking)
 
 proc addParLe*(dest: var TokenBuf; kind: NjvlKind; info = NoLineInfo) =
-  dest.add parLeToken(cast[TagId](kind), info)
+  dest.addParLe(cast[TagId](kind), info)
 
 proc openScope(c: var Context) =
   c.typeCache.openScope()
@@ -79,7 +79,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   var i = 0
   for s in c.typeCache.currentScopeLocals:
     if i == 0:
-      dest.add tagToken("kill", info)
+      dest.addParLe("kill", info)
     dest.addSymUse s, info
     inc i
   if i > 0:
@@ -147,9 +147,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
     dest.takeToken n
-  of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+  of DotToken, Ident, SymbolDef, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
     dest.takeToken n
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of CallKinds:
       bug "call must have been bound to a location"
@@ -158,7 +158,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeInto dest, n:
         while n.hasMore:
-          if n.kind == ParLe and n.exprKind in CallKinds:
+          if n.isTagLit and n.exprKind in CallKinds:
             # A call surviving to the Final IR in an operand position is an
             # lvalue location (xelim lifts every value-producing call), e.g. the
             # `s[i]` argument of a location-taking builtin like `=wasMoved`.
@@ -167,7 +167,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
             discard trCall(c, dest, n)
           else:
             trExpr c, dest, n
-  of ParRi: bug "Unmatched ParRi"
+  else: bug "Unmatched ParRi"
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   let info = n.info
@@ -188,7 +188,7 @@ proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # `unknown` marks that a `(haddr …)` argument's pointee may have been mutated.
   # This is cleaned up by the later alias/versionizer pass.
   for path in callInfo.mutates:
-    dest.add tagToken("unknown", callInfo.info)
+    dest.addParLe("unknown", callInfo.info)
     dest.add path
     dest.addParRi() # unknown
 
@@ -212,7 +212,7 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   let localStart = n
   n = sub(n)
 
@@ -227,7 +227,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeTree dest, n # type
 
   # Record first argument of call inits for borrow tracking (used by trFor):
-  if n.kind == ParLe and n.exprKind in CallKinds:
+  if n.isTagLit and n.exprKind in CallKinds:
     var tmp = n
     inc tmp # skip call tag
     skip tmp # skip callee
@@ -248,7 +248,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe StoreV, info
   let asgnStart = n
   n = sub(n)
-  if n.kind == Symbol:
+  if n.isSymbol:
     let symId = n.symId
     inc n # skip the destination symbol
     if n.exprKind in CallKinds:
@@ -277,7 +277,7 @@ proc condIsComplex(n: Cursor): bool =
   ## short-circuit `and`/`or`. A plain leaf (incl. a lone `not`) stays a single
   ## `ite` whose condition the tracker negates directly.
   var n = n
-  if n.kind != ParLe: return false
+  if not n.isTagLit: return false
   if n.exprKind in {AndX, OrX}: return true
   linearScan n:
     if n.exprKind in {AndX, OrX}: return true
@@ -421,7 +421,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   # Touch the selector type so typenav stays consistent across the switch.
   discard c.typeCache.getType(n.firstSon)
-  dest.add tagToken("case", info)
+  dest.addParLe("case", info)
   let caseStart = n
   n = sub(n)
   trExpr c, dest, n          # selector
@@ -441,11 +441,11 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let breakStart = n
   n = sub(n)
   var target = -1
-  if n.kind == ParRi or n.kind == DotToken:
-    if n.kind == DotToken: inc n
+  if not n.hasMore or n.isDotToken:
+    if n.isDotToken: inc n
     # unnamed break: innermost enclosing loop *or* block
     target = c.current.exits.len - 1
-  elif n.kind == Symbol:
+  elif n.isSymbol:
     let name = n.symId
     inc n
     for i in countdown(c.current.exits.len - 1, 0):
@@ -470,13 +470,13 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let retStart = n
   n = sub(n)
-  dest.add tagToken("ret", info)
-  if n.kind == ParRi:
+  dest.addParLe("ret", info)
+  if not n.hasMore:
     dest.addDotToken()
-  elif n.kind == DotToken:
+  elif n.isDotToken:
     dest.addDotToken()
     inc n
-  elif n.kind == Symbol and n.symId == c.current.resultSym:
+  elif n.isSymbol and n.symId == c.current.resultSym:
     dest.addSymUse n.symId, info
     inc n
   else:
@@ -490,10 +490,10 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let raiseStart = n
   n = sub(n)
-  dest.add tagToken("raise", info)
-  if n.kind == ParRi:
+  dest.addParLe("raise", info)
+  if not n.hasMore:
     dest.addDotToken()
-  elif n.kind == DotToken:
+  elif n.isDotToken:
     dest.addDotToken()
     inc n
   else:
@@ -507,7 +507,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let blockStart = n # `block`
   n = sub(n)
-  let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
+  let blockName = if n.isSymbolDef: n.symId else: NoSymId
   inc n # name or empty
   let exitL = freshLabel(c, "´blk.")
   c.current.exits.add Exit(name: exitL, blockName: blockName, isLoop: false)
@@ -602,20 +602,20 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
 
   var firstArgBuf = createTokenBuf(0)
   var iterCall = forStmt.iter
-  if iterCall.kind == ParLe and iterCall.exprKind in CallKinds:
+  if iterCall.isTagLit and iterCall.exprKind in CallKinds:
     iterCall = sub(iterCall) # peek only, never left
     skip iterCall
     if iterCall.hasMore:
       firstArgBuf = createTokenBuf(8)
       firstArgBuf.addSubtree iterCall
-  elif iterCall.kind == ParLe and iterCall.exprKind in {HderefX, HaddrX}:
+  elif iterCall.isTagLit and iterCall.exprKind in {HderefX, HaddrX}:
     inc iterCall
-    if iterCall.kind == Symbol:
+    if iterCall.isSymbol:
       let tempSym = iterCall.symId
       if tempSym in c.callFirstArgs:
         firstArgBuf = createTokenBuf(8)
         firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
-  elif iterCall.kind == Symbol:
+  elif iterCall.isSymbol:
     let tempSym = iterCall.symId
     if tempSym in c.callFirstArgs:
       firstArgBuf = createTokenBuf(8)
@@ -644,7 +644,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # `try`/`except`/`fin` are kept as regions: a `fin` must run on *every* exit
   # crossing it, so it cannot be lowered to a `jmp` (doc/final_ir.md).
   let info = n.info
-  dest.add tagToken("try", info)
+  dest.addParLe("try", info)
   let tryStart = n
   n = sub(n)
   trScopedBody c, dest, n # try body
@@ -759,7 +759,7 @@ proc toFinalIr*(pass: var Pass) =
   pass.prepareForNext("finalir")
   var n = pass.n
   assert n.stmtKind == StmtsS, $n.kind
-  pass.dest.add n
+  pass.dest.addParLe(n.tag, n.info)
   c.openScope()
   n.into:
     while n.hasMore:

@@ -22,7 +22,7 @@ const
 when false:
   proc addSubtreeAndSyms(result: var TokenBuf; c: Cursor; stack: var seq[SymId]) =
     assert c.hasMore, "cursor at end?"
-    if c.kind != ParLe:
+    if not c.isTagLit:
       # atom:
       result.add c.load
     else:
@@ -30,12 +30,12 @@ when false:
       var nested = 0
       while true:
         let item = c.load
-        result.add item
-        if item.kind == ParRi:
+        result.addSubtree item
+        if not item.hasMore:
           dec nested
           if nested == 0: break
-        elif item.kind == ParLe: inc nested
-        elif item.kind == Symbol: stack.add item.symId
+        elif item.isTagLit: inc nested
+        elif item.isSymbol: stack.add item.symId
         inc c
 
 type
@@ -61,9 +61,9 @@ type
 
 proc collectSyms(n: var Cursor; stack: var seq[SymId]) =
   ## Collects every `Symbol` in the subtree at `n`, advancing `n` past it.
-  if n.kind != ParLe:
+  if not n.isTagLit:
     # atom:
-    if n.kind == Symbol: stack.add n.symId
+    if n.isSymbol: stack.add n.symId
     inc n
   else:
     n.loopInto:
@@ -98,14 +98,14 @@ proc emitTreeAsIdents(buf: var TokenBuf; n: var Cursor; thisMod: string) =
   of Symbol:
     emitSymAsIdent(buf, n.symId, n.info, thisMod)
     inc n
-  of ParLe:
-    buf.add n
+  of OpenTagKind:
+    buf.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:
         emitTreeAsIdents(buf, n, thisMod)
     buf.addParRi()
   else:
-    buf.add n
+    buf.addSubtree n
     inc n
 
 proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
@@ -125,7 +125,7 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
   ## to re-export them just for the const-eval machinery.
   let typevars = instantiationTypevars(sym)
   if not cursorIsNil(typevars):
-    buf.add parLeToken(AtX, info)
+    buf.addParLe(AtX, info)
     var tv = typevars
     tv.into: # past `invok` tag
       # Origin sym → recurse (it may also be instantiated, e.g. nested generics).
@@ -144,11 +144,11 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
     let res = tryLoadSym(sym)
     if res.status == LacksNothing and res.decl.symKind == TypeY:
       # Foreign type — keep as Symbol so visibility is bypassed.
-      buf.add symToken(sym, info)
+      buf.addSymUse(sym, info)
       return
   var basename = symStr
   extractBasename basename
-  buf.add identToken(pool.strings.getOrIncl(basename), info)
+  buf.addIdent(pool.strings.getOrIncl(basename), info)
 
 proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) =
   case n.kind
@@ -160,26 +160,24 @@ proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) 
     # so the sub-compile creates fresh decls via re-semchecking.
     var basename = pool.syms[n.symId]
     extractBasename basename
-    newDest.add identToken(pool.strings.getOrIncl(basename), n.info)
+    newDest.addIdent(pool.strings.getOrIncl(basename), n.info)
     inc n
-  of ParLe:
+  of OpenTagKind:
     if n.exprKind in {OchoiceX, CchoiceX}:
       # eliminate the choice: keep only its first alternative, rewritten
       n.peekInto:
-        if n.kind == Symbol:
+        if n.isSymbol:
           emitSymAsIdent(newDest, n.symId, n.info, thisMod)
         else:
           rewriteTreeToIdents(newDest, n, thisMod)
     else:
-      newDest.add n
+      newDest.addParLe(n.tag, n.info)
       n.into:
         while n.hasMore:
           rewriteTreeToIdents(newDest, n, thisMod)
       newDest.addParRi()
-  of ParRi:
-    bug "unpaired ')'"
   else:
-    newDest.add n
+    newDest.addSubtree n
     inc n
 
 proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
@@ -249,7 +247,7 @@ proc genParRiCall(c: var SynthesizeSerializerCtx) =
     c.dest.addSymUse pool.syms.getOrIncl("writeNifParRi.0." & writeNifModuleSuffix), c.info
 
 proc accessObjField(c: var SynthesizeSerializerCtx; obj: TokenBuf; name: Cursor; needsDeref: bool; depth = 0): TokenBuf =
-  assert name.kind == SymbolDef
+  assert name.isSymbolDef
   let nameSym = name.symId
   result = createTokenBuf(4)
   copyIntoKind(result, DotX, c.info):
@@ -270,7 +268,7 @@ proc accessTupField(c: var SynthesizeSerializerCtx; tup: TokenBuf; idx: int): To
   result = createTokenBuf(4)
   copyIntoKind(result, TupatX, c.info):
     copyTree result, tup
-    result.add intToken(pool.integers.getOrIncl(idx), c.info)
+    result.addIntLit(idx, c.info)
   freeze result
 
 proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
@@ -354,7 +352,7 @@ proc unravelObj(c: var SynthesizeSerializerCtx; orig: Cursor; param: TokenBuf; d
   assert n.typeKind == ObjectT
   n = sub(n) # bound the field walk; `n` is a copy
   # recurse for the inherited object type, if any:
-  if n.kind != DotToken:
+  if not n.isDotToken:
     var parent = n
     if parent.typeKind in {RefT, PtrT}:
       inc parent
@@ -393,21 +391,21 @@ proc accessArrayAt(c: var SynthesizeSerializerCtx; arr: TokenBuf; indexVar: SymI
 proc indexVarLowerThanArrayLen(c: var SynthesizeSerializerCtx; indexVar: SymId; arrayLen: xint) =
   copyIntoKind c.dest, LtX, c.info:
     copyIntoKind c.dest, IntT, c.info:
-      c.dest.add intToken(pool.integers.getOrIncl(c.bits), c.info)
+      c.dest.addIntLit(c.bits, c.info)
     copyIntoSymUse c.dest, indexVar, c.info
     var err = false
     let alen = asSigned(arrayLen, err)
     if not err:
-      c.dest.add intToken(pool.integers.getOrIncl(alen), c.info)
+      c.dest.addIntLit(alen, c.info)
     else:
       err = false
       let ualen = asUnsigned(arrayLen, err)
       assert(not err)
-      c.dest.add uintToken(pool.uintegers.getOrIncl(ualen), c.info)
+      c.dest.addUIntLit(ualen, c.info)
 
 proc addIntType(c: var SynthesizeSerializerCtx) =
   copyIntoKind c.dest, IntT, c.info:
-    c.dest.add intToken(pool.integers.getOrIncl(c.bits), c.info)
+    c.dest.addIntLit(c.bits, c.info)
 
 proc incIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, AsgnS, c.info:
@@ -415,14 +413,14 @@ proc incIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
     copyIntoKind c.dest, AddX, c.info:
       addIntType c
       copyIntoSymUse c.dest, indexVar, c.info
-      c.dest.add intToken(pool.integers.getOrIncl(+1), c.info)
+      c.dest.addIntLit(+1, c.info)
 
 proc declareIndexVar(c: var SynthesizeSerializerCtx; indexVar: SymId) =
   copyIntoKind c.dest, VarY, c.info:
     addSymDef c.dest, indexVar, c.info
     c.dest.addEmpty2 c.info # not exported, no pragmas
     addIntType c
-    c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
+    c.dest.addIntLit(0, c.info)
 
 proc unravelArray(c: var SynthesizeSerializerCtx;
                   orig: Cursor; param: TokenBuf) =
@@ -609,7 +607,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
     typ = toTypeImpl(beginRead(instBuf))
   case typ.typeKind
   of ObjectT:
-    if orig.kind == Symbol and hasRtti(orig.symId):
+    if orig.isSymbol and hasRtti(orig.symId):
       c.routineKind = MethodY
     unravelObj c, typ, param, 0
   of TupleT:
@@ -653,8 +651,13 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
   c.dest.addParRi() # close ProcS declaration
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
-    setTag(c.dest[procStart], TagId(MethodS)) # keeps the sealed jump
-    c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
+    when defined(useNifcore):
+      var mtok = c.dest[procStart]
+      setTag(mtok, TagId(MethodS))
+      c.dest[procStart] = mtok
+    else:
+      setTag(c.dest[procStart], TagId(MethodS)) # keeps the sealed jump
+      c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
 
 proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
   # remember that genProcDecl does mutate c.requests so be robust against that:
@@ -665,11 +668,11 @@ proc genMissingProcs*(c: var SynthesizeSerializerCtx) =
       genProcDecl(c, reqs[i].sym, reqs[i].typ)
 
 proc collectSymDefsAux(n: var Cursor; defs: var HashSet[SymId]) =
-  if n.kind == ParLe:
+  if n.isTagLit:
     n.loopInto:
       collectSymDefsAux(n, defs)
   else:
-    if n.kind == SymbolDef: defs.incl n.symId
+    if n.isSymbolDef: defs.incl n.symId
     inc n
 
 proc collectSymDefs(n: Cursor; defs: var HashSet[SymId]) =

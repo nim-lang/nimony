@@ -18,11 +18,18 @@ import ".." / models / [nifindex_tags]
 
 include ".." / lib / compat2
 
+when defined(useNifcore):
+  import ".." / lib / nifreader
+  from ".." / lib / nifcoreparse import parse
+
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
 
   NifModule* = ref object
-    stream: Stream
+    when defined(useNifcore):
+      reader: Reader
+    else:
+      stream: Stream
     index*: NifIndex
     public*: Table[string, NifIndexEntry]
     private*: Table[string, NifIndexEntry]
@@ -165,10 +172,16 @@ iterator symIds*(t: ToplevelEntries): SymId =
 # -------------- end ToplevelEntries methods --------------
 
 proc newNifModule(infile: string): NifModule =
-  result = NifModule(stream: nifstreams.open(infile),
-                     public: initTable[string, NifIndexEntry](),
-                     private: initTable[string, NifIndexEntry]())
-  discard processDirectives(result.stream.r)
+  when defined(useNifcore):
+    result = NifModule(reader: nifreader.open(infile),
+                       public: initTable[string, NifIndexEntry](),
+                       private: initTable[string, NifIndexEntry]())
+    discard nifreader.processDirectives(result.reader)
+  else:
+    result = NifModule(stream: nifstreams.open(infile),
+                       public: initTable[string, NifIndexEntry](),
+                       private: initTable[string, NifIndexEntry]())
+    discard processDirectives(result.stream.r)
 
 proc addEmbeddedIndex(public, private: var Table[string, NifIndexEntry];
                       embedded: Table[string, NifIndexEntry]) =
@@ -182,7 +195,11 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
   ## Load a module's content into owningBuf and return a cursor to it.
   ## Also registers the module in prog.mods.
   let m = newNifModule(infile)
-  owningBuf = fromStream(m.stream)
+  when defined(useNifcore):
+    owningBuf = createTokenBuf()
+    parse(m.reader, owningBuf)
+  else:
+    owningBuf = fromStream(m.stream)
   result = beginRead(owningBuf)
   let suffix = moduleSuffix(infile, paths)
   prog.mods[suffix] = m
@@ -190,7 +207,11 @@ proc loadModuleContent*(infile: string; owningBuf: var TokenBuf; paths: openArra
 proc loadModule*(infile: string; owningBuf: var TokenBuf; suffix: string): Cursor =
   ## Load a module's content and register it under the given suffix.
   let m = newNifModule(infile)
-  owningBuf = fromStream(m.stream)
+  when defined(useNifcore):
+    owningBuf = createTokenBuf()
+    parse(m.reader, owningBuf)
+  else:
+    owningBuf = fromStream(m.stream)
   result = beginRead(owningBuf)
   prog.mods[suffix] = m
 
@@ -224,7 +245,9 @@ proc load*(suffix: string): NifModule =
     let infile = suffixToNif suffix
     result = newNifModule(infile)
     result.index = default(NifIndex)
-    let embedded = readEmbeddedIndex(result.stream)
+    let embedded =
+      when defined(useNifcore): readEmbeddedIndex(result.reader)
+      else: readEmbeddedIndex(result.stream)
     if embedded.len > 0:
       addEmbeddedIndex(result.public, result.private, embedded)
     let indexName = infile.changeModuleExt(semIndexExt())
@@ -328,9 +351,13 @@ proc tryLoadSym*(s: SymId): LoadResult =
       if indexEntry.offset == 0:
         result = LoadResult(status: LacksOffset)
       else:
-        m.stream.r.jumpTo indexEntry.offset
         var buf = createTokenBuf(30)
-        nifcursors.parse(m.stream, buf, indexEntry.info)
+        when defined(useNifcore):
+          m.reader.jumpTo indexEntry.offset
+          parse(m.reader, buf)
+        else:
+          m.stream.r.jumpTo indexEntry.offset
+          nifcursors.parse(m.stream, buf, indexEntry.info)
         let decl = cursorAt(buf, 0)
         prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
@@ -376,7 +403,7 @@ proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
       if n.tagId == hooktag:
         var c = n
         inc c
-        if c.kind == Symbol:
+        if c.isSymbol:
           result = c.symId
           break
 
@@ -384,7 +411,7 @@ proc tryLoadAllHooks*(typ: SymId): HooksPerType =
   template setRes(hookCursor: Cursor; op: AttachedOp) =
     var c = hookCursor
     inc c
-    if c.kind == Symbol:
+    if c.isSymbol:
       result.a[op] = c.symId
 
   result = HooksPerType(a: default(array[AttachedOp, SymId]))
@@ -466,56 +493,56 @@ proc publishStringType*() =
     let moreId  = pool.syms.getOrIncl(StringMoreField)
     let longStrSymId = pool.syms.getOrIncl(LongStringName)
     str.copyIntoUnchecked "type", NoLineInfo:
-      str.add symdefToken(symId, NoLineInfo)
-      str.add identToken(exportMarker, NoLineInfo)
+      str.addSymDef(symId, NoLineInfo)
+      str.addIdent(exportMarker, NoLineInfo)
       str.addDotToken() # pragmas
       str.addDotToken() # generic parameters
       str.copyIntoUnchecked "object", NoLineInfo:
         str.addDotToken() # inherits from nothing
         str.copyIntoUnchecked "fld", NoLineInfo:
-          str.add symdefToken(bytesId, NoLineInfo)
+          str.addSymDef(bytesId, NoLineInfo)
           str.addDotToken() # export marker
           str.addDotToken() # pragmas
           # type is `uint`
           str.copyIntoUnchecked "u", NoLineInfo:
-            str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
+            str.addIntLit(-1, NoLineInfo)
           str.addDotToken() # default value
 
         str.copyIntoUnchecked "fld", NoLineInfo:
-          str.add symdefToken(moreId, NoLineInfo)
+          str.addSymDef(moreId, NoLineInfo)
           str.addDotToken() # export marker
           str.addDotToken() # pragmas
           # type is `ptr LongString`
           str.copyIntoUnchecked "ptr", NoLineInfo:
-            str.add symToken(longStrSymId, NoLineInfo)
+            str.addSymUse(longStrSymId, NoLineInfo)
           str.addDotToken() # default value
   else:
     let aId = pool.syms.getOrIncl(StringAField)
     let iId = pool.syms.getOrIncl(StringIField)
     str.copyIntoUnchecked "type", NoLineInfo:
-      str.add symdefToken(symId, NoLineInfo)
-      str.add identToken(exportMarker, NoLineInfo)
+      str.addSymDef(symId, NoLineInfo)
+      str.addIdent(exportMarker, NoLineInfo)
       str.addDotToken() # pragmas
       str.addDotToken() # generic parameters
       str.copyIntoUnchecked "object", NoLineInfo:
         str.addDotToken() # inherits from nothing
         str.copyIntoUnchecked "fld", NoLineInfo:
-          str.add symdefToken(aId, NoLineInfo)
+          str.addSymDef(aId, NoLineInfo)
           str.addDotToken() # export marker
           str.addDotToken() # pragmas
           # type is `ptr UncheckedArray[char]`
           str.copyIntoUnchecked "ptr", NoLineInfo:
             str.copyIntoUnchecked "uarray", NoLineInfo:
               str.copyIntoUnchecked "c", NoLineInfo:
-                str.add intToken(pool.integers.getOrIncl(8), NoLineInfo)
+                str.addIntLit(8, NoLineInfo)
           str.addDotToken() # default value
 
         str.copyIntoUnchecked "fld", NoLineInfo:
-          str.add symdefToken(iId, NoLineInfo)
+          str.addSymDef(iId, NoLineInfo)
           str.addDotToken() # export marker
           str.addDotToken() # pragmas
           str.copyIntoUnchecked "i", NoLineInfo:
-            str.add intToken(pool.integers.getOrIncl(-1), NoLineInfo)
+            str.addIntLit(-1, NoLineInfo)
           str.addDotToken() # default value
   publish symId, str, SemcheckBodies
 
@@ -533,14 +560,20 @@ proc setupProgram*(infile, outfile: string; owningBuf: var TokenBuf; hasIndex=fa
 
   if hasIndex:
     m.index = default(NifIndex)
-    let embedded = readEmbeddedIndex(m.stream)
+    let embedded =
+      when defined(useNifcore): readEmbeddedIndex(m.reader)
+      else: readEmbeddedIndex(m.stream)
     if embedded.len > 0:
       addEmbeddedIndex(m.public, m.private, embedded)
     let indexName = infile.changeModuleExt".s.idx.nif"
     m.index = readIndex(indexName)
 
   #echo "INPUT IS ", toString(m.buf)
-  owningBuf = fromStream(m.stream)
+  when defined(useNifcore):
+    owningBuf = createTokenBuf()
+    parse(m.reader, owningBuf)
+  else:
+    owningBuf = fromStream(m.stream)
 
   result = beginRead(owningBuf)
   prog.mods[prog.main.name] = m
@@ -553,14 +586,14 @@ proc setupProgramForTesting*(dir, file, ext: string) =
   publishStringType()
 
 proc takeParRi*(dest: var TokenBuf; n: var Cursor) =
-  if n.kind == ParRi:
-    dest.add n
+  if not n.hasMore:
+    dest.addParRi(n.endInfo)
     consumeParRi n
   else:
     bug "expected ')', but got: ", n
 
 proc skipParRi*(n: var Cursor) =
-  if n.kind == ParRi:
+  if not n.hasMore:
     consumeParRi n
   else:
     bug "expected ')', but got: ", n

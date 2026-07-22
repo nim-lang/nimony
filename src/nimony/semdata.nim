@@ -247,7 +247,50 @@ type
       ## symbol keeps the same name as if it had never been resolved early.
       ## Persists phase 2 → phase 3; cleared per module at phase-2 start.
 
-proc typeToCanon*(buf: TokenBuf; start: int): string =
+when defined(useNifcore):
+  proc typeToCanonAux(result: var string; c: var Cursor) =
+    ## Cursor walk (ignores nifcore's sparse line-info suffixes, which must not
+    ## enter the type-identity key). Byte-format matches the classic raw walk.
+    if c.isTagLit:
+      result.add '('
+      result.addInt c.tagId.int
+      c.into:
+        while c.hasMore: typeToCanonAux(result, c)
+      result.add ')'
+    elif c.isIdent or c.isStringLit:
+      result.add ' '
+      result.addInt c.litId.int
+    elif c.isDotToken:
+      result.add '.'
+    elif c.isSymbolDef:
+      result.add " !symdef"
+    elif c.isSymbol:
+      let s = pool.syms[c.symId]
+      if isInstantiation(s):
+        result.add " s\""
+        result.add removeModule(s)
+        result.add '"'
+      else:
+        result.add " s"
+        result.addInt c.symId.int
+    elif c.isCharLit:
+      result.add " c"; result.addInt c.uoperand.int
+    elif c.isIntLit:
+      result.add " i"; result.addInt c.intId.int
+    elif c.isUIntLit:
+      result.add " u"; result.addInt c.uintId.int
+    elif c.isFloatLit:
+      result.add " f"; result.addInt c.floatId.int
+    if not c.isTagLit: skip c
+
+  proc typeToCanon*(buf: TokenBuf; start: int): string =
+    result = ""
+    var c = cursorAt(cast[ptr TokenBuf](unsafeAddr buf)[], start)
+    while c.hasMore:
+      typeToCanonAux(result, c)
+
+else:
+ proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""
   for i in start..<buf.len:
     case buf[i].kind

@@ -322,7 +322,7 @@ proc gcomma(g: var SrcGen) =
   putWithSpace(g, tkComma, ",")
 
 proc mayAddExportMarker(g: var SrcGen, n: var Cursor) =
-  if n.kind == Ident and pool.strings[n.litId] == "x" and
+  if n.isIdent and pool.strings[n.litId] == "x" and
       renderNoPostfix notin g.flags:
     put(g, tkPostfixOpr, "*")
   skip n
@@ -350,7 +350,7 @@ proc gpragmas(g: var SrcGen, n: var Cursor) =
 proc gblock(g: var SrcGen, n: var Cursor) =
   var c: Context = initContext()
   n.into:
-    if n.kind != DotToken:
+    if not n.isDotToken:
       putWithSpace(g, tkBlock, "block")
       gsub(g, n)
     else:
@@ -483,7 +483,7 @@ proc takeTypeVars(g: var SrcGen, n: var Cursor) =
         var name = typevar.name
         gsub(g, name)
         var typ = typevar.typ
-        if typ.kind != DotToken:
+        if not typ.isDotToken:
           putWithSpace(g, tkColon, ":")
           if isStatic:
             put(g, tkSymbol, "static")
@@ -514,7 +514,7 @@ proc gproc(g: var SrcGen, n: var Cursor) =
   put(g, tkParLe, "(")
 
   var params = decl.params
-  if params.kind != DotToken:
+  if not params.isDotToken:
     params.into:
       var afterFirst = false
       while params.hasMore:
@@ -534,7 +534,7 @@ proc gproc(g: var SrcGen, n: var Cursor) =
 
   if renderNoBody notin g.flags:
     var retType = decl.retType
-    if retType.kind != DotToken:
+    if not retType.isDotToken:
       putWithSpace(g, tkColon, ":")
       gtype(g, retType, c)
 
@@ -542,7 +542,7 @@ proc gproc(g: var SrcGen, n: var Cursor) =
     if renderNoPragmas notin g.flags:
       gsub(g, pragmas)
 
-    if decl.body.kind != DotToken:
+    if not decl.body.isDotToken:
       put(g, tkSpaces, Space)
       putWithSpace(g, tkEquals, "=")
 
@@ -559,7 +559,7 @@ proc bracketKind(g: SrcGen, n: Cursor): BracketKind =
       var firstSon = n
       inc firstSon
       result = bracketKind(g, firstSon)
-    elif n.kind == Symbol:
+    elif n.isSymbol:
       var name = pool.syms[n.symId]
       extractBasename(name)
 
@@ -713,7 +713,7 @@ proc gconceptParents(g: var SrcGen, n: var Cursor) =
           first = false
         gtype(g, n, initContext())
     skip n
-  elif n.kind == DotToken:
+  elif n.isDotToken:
     skip n
   else:
     gtype(g, n, initContext())
@@ -723,7 +723,7 @@ proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
   inc n
   skip n
   skip n
-  if n.kind != DotToken:
+  if not n.isDotToken:
     putWithSpace(g, tkOf, "of")
     gconceptParents(g, n)
   else:
@@ -738,8 +738,9 @@ proc gconcept(g: var SrcGen, n: var Cursor, c: Context) =
     skip n
 
 proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
+  if not n.hasMore: return
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     case n.typeKind
     of IT:
       takeNumberType(g, n, "int")
@@ -816,13 +817,13 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
         if n.hasMore:
           put(g, tkBracketLe, "[")
           gtype(g, n, c)
-          if n.hasMore and n.kind != StringLit:
+          if n.hasMore and not n.isStringLit:
             # optional converter (the trailing StringLit, if any, is the
             # openArray mangle hint planted by `semcompat` — skip silently)
             put(g, tkComma, ",")
             put(g, tkSpaces, Space)
             gsub(g, n, c)
-          if n.kind == StringLit:
+          if n.isStringLit:
             inc n
           put(g, tkBracketRi, "]")
 
@@ -1039,11 +1040,11 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
               var typ = decl.typ
               gsub(g, name, c)
 
-              if typ.kind != DotToken:
+              if not typ.isDotToken:
                 putWithSpace(g, tkColon, ":")
                 gtype(g, typ, c)
 
-              if value.kind != DotToken:
+              if not value.isDotToken:
                 put(g, tkSpaces, Space)
                 putWithSpace(g, tkEquals, "=")
                 gsub(g, value, c)
@@ -1055,12 +1056,12 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
           skip n
 
         # return type
-        if n.kind != DotToken:
+        if not n.isDotToken:
           putWithSpace(g, tkColon, ":")
           gtype(g, n, c)
         else:
           inc n
-        if n.kind != DotToken:
+        if not n.isDotToken:
           # pragmas
           gsub(g, n, c)
         else:
@@ -1145,7 +1146,7 @@ proc gtypedef(g: var SrcGen, n: var Cursor, c: Context) =
   gsub(g, pragmas, c)
 
   var body = decl.body
-  if body.kind != DotToken:
+  if not body.isDotToken:
     put(g, tkSpaces, Space)
     putWithSpace(g, tkEquals, "=")
     gtype(g, body, c)
@@ -1163,7 +1164,7 @@ proc gtry(g: var SrcGen, n: var Cursor) =
     while n.substructureKind == ExceptU:
       optNL(g)
       n.into:
-        if n.kind != DotToken:
+        if not n.isDotToken:
           putWithSpace(g, tkExcept, "except")
           gsub(g, n, c)
           raiseAssert "todo"
@@ -1238,16 +1239,17 @@ proc isUseSpace(n: Cursor): bool =
   if n.hasMore:
     let secondSon = n
     skip n
-    if n.kind == ParRi:
-      assert firstSon.kind == Ident and secondSon.kind == Ident
+    if not n.hasMore:
+      assert firstSon.isIdent and secondSon.isIdent
       # handle `=destroy`, `'big' and handle setters, e.g. `foo=`
       if (pool.strings[firstSon.litId] in ["=", "'"] and isAlpha(secondSon)) or
           (pool.strings[secondSon.litId] == "=" and isAlpha(firstSon)):
         result = false
 
 proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false) =
+  if not n.hasMore: return
   case n.kind
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of NoExpr:
       case n.stmtKind
@@ -1278,11 +1280,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         var exportMarker = decl.exported
         mayAddExportMarker(g, exportMarker)
 
-        if typ.kind != DotToken:
+        if not typ.isDotToken:
           putWithSpace(g, tkColon, ":")
           gtype(g, typ, c)
 
-        if value.kind != DotToken:
+        if not value.isDotToken:
           put(g, tkSpaces, Space)
           putWithSpace(g, tkEquals, "=")
           gsub(g, value, c)
@@ -1938,7 +1940,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
   of FloatLit:
     put(g, tkFloatLit, $pool.floats[n.floatId])
     inc n
-  of StringLit:
+  of StrLitKind:
     put(g, tkStrLit, toString(n, false))
     inc n
   of CharLit:
@@ -1962,11 +1964,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     inc n
   of DotToken:
     inc n
-  of ParRi:
-    discard "for illformed tokens"
   else:
+    # a scope end / illformed token; the `if not n.hasMore: return` at the top
+    # already caught the (virtual or real) close in both builds.
     inc n
-    raiseAssert "unreachable"
 
 proc gsub(g: var SrcGen; n: var Cursor, fromStmtList = false, isTopLevel = false) =
   var c: Context = initContext()

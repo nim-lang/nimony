@@ -36,14 +36,15 @@ proc isStaticValue*(n: Cursor): bool =
   ## A canonical compile-time value as bound to a `staticTypevar`: a primitive
   ## literal, a const/enum-field/value-typevar symbol, or a typed aggregate
   ## constructor (array/set/tuple/object) whose elements are themselves static.
+  if not n.hasMore: return false
   case n.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLitKind:
     result = true
   of Symbol:
     let res = tryLoadSym(n.symId)
     result = res.status == LacksNothing and
       res.decl.symKind in {ConstY, EfldY, StaticTypevarY}
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of FalseX, TrueX:
       result = true
@@ -81,12 +82,13 @@ proc staticValueType*(a: Cursor): Cursor =
   ## The type of a static value: a symbol's declared type or an aggregate
   ## constructor's leading type node.
   result = default(Cursor)
+  if not a.hasMore: return
   case a.kind
   of Symbol:
     let res = tryLoadSym(a.symId)
     if res.status == LacksNothing and isLocal(res.decl.symKind):
       result = asLocal(res.decl).typ
-  of ParLe:
+  of OpenTagKind:
     case a.exprKind
     of AconstrX, SetconstrX, TupconstrX, OconstrX:
       var typ = a
@@ -103,7 +105,7 @@ proc staticOpenArrayElemType*(t: Cursor): Cursor =
   result = default(Cursor)
   var t = t
   var depth = 0
-  while t.kind == Symbol and depth < 20:
+  while t.isSymbol and depth < 20:
     let res = tryLoadSym(t.symId)
     if res.status != LacksNothing or res.decl.symKind != TypeY:
       return default(Cursor)
@@ -111,14 +113,14 @@ proc staticOpenArrayElemType*(t: Cursor): Cursor =
     if decl.typevars.typeKind == InvokeT:
       t = decl.typevars
       break
-    elif decl.body.kind == Symbol:
+    elif decl.body.isSymbol:
       t = decl.body
     else:
       return default(Cursor)
     inc depth
   if t.typeKind == InvokeT:
     inc t
-    if t.kind == Symbol and pool.syms[t.symId] == OpenArrayHeadName:
+    if t.isSymbol and pool.syms[t.symId] == OpenArrayHeadName:
       inc t
       result = t
   elif t.typeKind == VarargsT:
@@ -134,7 +136,7 @@ proc staticValueTypeMatches*(elemType, valueType: Cursor): bool =
     return false
   if sameTrees(elemType, valueType):
     return true
-  if elemType.kind == Symbol and valueType.kind == Symbol:
+  if elemType.isSymbol and valueType.isSymbol:
     return sameStaticSymbol(elemType.symId, valueType.symId)
   if elemType.typeKind == VarargsT and valueType.typeKind == ArrayT:
     var elem = elemType

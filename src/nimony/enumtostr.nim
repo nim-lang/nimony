@@ -13,15 +13,15 @@ include ".." / lib / compat2
 import decls, nimony_model, semdata, sembasics, symtabs, programs
 
 proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var Cursor; symId, enumSymId: SymId) =
-  dest.add tagToken("case", enumDecl.info)
-  dest.add symToken(symId, enumDecl.info)
+  dest.addParLe("case", enumDecl.info)
+  dest.addSymUse(symId, enumDecl.info)
   enumDecl.into: # enum
     skip enumDecl # skips base type
     while enumDecl.hasMore:
       let enumDeclInfo = enumDecl.info
-      dest.add tagToken("of", enumDeclInfo)
+      dest.addParLe("of", enumDeclInfo)
 
-      dest.add tagToken("ranges", enumDeclInfo)
+      dest.addParLe("ranges", enumDeclInfo)
 
       var symId: SymId
       var symInfo: PackedLineInfo
@@ -39,16 +39,16 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
           fieldValue = enumDecl
           skip enumDecl # skips string value
 
-      while enumDecl.hasMore and enumDecl.kind == ParLe and enumDecl.tagId == nifstreams.ErrT:
+      while enumDecl.hasMore and enumDecl.isTagLit and enumDecl.tagId == nifstreams.ErrT:
         skip enumDecl
 
-      dest.add symToken(symId, symInfo)
+      dest.addSymUse(symId, symInfo)
       dest.addParRi() # ranges
 
-      dest.add tagToken("stmts", enumDeclInfo)
-      dest.add tagToken("ret", enumDeclInfo)
-      if fieldValue.kind == StringLit:
-        dest.add strToken(fieldValue.litId, enumDeclInfo)
+      dest.addParLe("stmts", enumDeclInfo)
+      dest.addParLe("ret", enumDeclInfo)
+      if fieldValue.isStringLit:
+        dest.addStrLit(fieldValue.litId, enumDeclInfo)
       else:
         # handle errors
         dest.addSubtree fieldValue
@@ -67,14 +67,14 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   let dollorName = "dollar`." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
-  dest.add tagToken("proc", enumSymInfo)
-  dest.add symdefToken(dollorSymId, enumSymInfo)
+  dest.addParLe("proc", enumSymInfo)
+  dest.addSymDef(dollorSymId, enumSymInfo)
 
   # TODO: defaults to (nodecl)
   # TODO: static for local functions
   if c.currentScope.kind == ToplevelScope:
     let exportIdent = pool.strings.getOrIncl("x")
-    dest.add identToken(exportIdent, enumSymInfo)
+    dest.addIdent(exportIdent, enumSymInfo)
   else:
     dest.addDotToken() # exportIdent
   dest.addDotToken()
@@ -83,12 +83,12 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   var paramName = "e"
   c.makeLocalSym(paramName)
   let paramSymId = pool.syms.getOrIncl(paramName)
-  dest.add tagToken("params", enumSymInfo)
-  dest.add tagToken("param", enumSymInfo)
-  dest.add symdefToken(paramSymId, enumSymInfo)
+  dest.addParLe("params", enumSymInfo)
+  dest.addParLe("param", enumSymInfo)
+  dest.addSymDef(paramSymId, enumSymInfo)
   dest.addDotToken()
   dest.addDotToken()
-  dest.add symToken(enumSymId, enumSymInfo)
+  dest.addSymUse(enumSymId, enumSymInfo)
   dest.addDotToken()
   dest.addParRi() # param
   dest.addParRi() # params
@@ -98,7 +98,7 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   dest.addDotToken()
   dest.addDotToken()
 
-  dest.add tagToken("stmts", enumSymInfo)
+  dest.addParLe("stmts", enumSymInfo)
   var body = decl.body
   genEnumToStrProcCase(c, dest, body, paramSymId, enumSymId)
   dest.addParRi() # stmts

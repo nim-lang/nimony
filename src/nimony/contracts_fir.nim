@@ -117,7 +117,7 @@ proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
     hintedMsg.add " [pass --verbose for the NJ IR]"
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
-    c.errors.add strToken(pool.strings.getOrIncl(hintedMsg), info)
+    c.errors.addStrLit(hintedMsg, info)
 
 proc contractViolation(c: var NjvlContext; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -136,9 +136,9 @@ proc extractSymId(n: Cursor): SymId {.inline.} =
   var n = n
   if n.exprKind in {HaddrX, HderefX}: inc n
 
-  if n.kind == Symbol:
+  if n.isSymbol:
     result = n.symId
-  elif n.kind == ParLe and n.tagEnum == VTagId:
+  elif n.isTagLit and n.tagEnum == VTagId:
     result = n.firstSon.symId
   else:
     result = NoSymId
@@ -167,7 +167,7 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
-  if n.kind == ParLe:
+  if n.isTagLit:
     let ek = n.exprKind
     if ek in {DotX, DdotX}:
       if ek == DdotX and result.mode != HasAddr:
@@ -176,7 +176,7 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
       inc r
       extractBorrowPath(c, r, result, followInlineVars)
       skip r # skip object subtree
-      if r.kind == Symbol:
+      if r.isSymbol:
         result.path.add r.symId
     elif ek == AddrX:
       result.mode = HasAddr
@@ -223,9 +223,9 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
       extractBorrowPath(c, r, result, followInlineVars)
     elif n.njvlKind == VV:
       extractBorrowPath(c, n.firstSon, result, followInlineVars)
-  elif n.kind in {IntLit, UIntLit, CharLit, FloatLit, StringLit}:
+  elif (n.isIntLit or n.isUIntLit or n.isCharLit or n.isFloatLit or n.isStringLit):
     result.mode = IsBorrowableFromConst
-  elif n.kind == Symbol:
+  elif n.isSymbol:
     let s = n.symId
     if (followInlineVars or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT}) and s in c.inlineVars:
       extractBorrowPath(c, c.inlineVars.getOrQuit(s), result, followInlineVars)
@@ -292,7 +292,7 @@ proc staticRangeBounds(typ: Cursor; lo, hi: var xint): bool =
   ## for non-range or non-static ranges (which the caller leaves untouched).
   var t = typ
   var guard = 0
-  while t.kind == Symbol and guard < 8:
+  while t.isSymbol and guard < 8:
     let s = tryLoadSym(t.symId)
     if s.status != LacksNothing or s.decl.symKind != TypeY: return false
     t = asTypeDecl(s.decl).body
@@ -387,7 +387,7 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
       let symId2 = skipSymbol(pc)
       if symId2 != NoSymId:
         fact.b = getVarId(c, symId2)
-        if pc.kind == IntLit:
+        if pc.isIntLit:
           fact.c = fact.c + createXint(pool.integers[pc.intId])
           result = true
           inc pc
@@ -403,7 +403,7 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
   elif (let symId2 = skipSymbol(pc); symId2 != NoSymId):
     fact.b = getVarId(c, symId2)
     result = true
-  elif pc.kind == IntLit:
+  elif pc.isIntLit:
     fact.b = VarId(0)
     fact.c = fact.c + createXint(pool.integers[pc.intId])
     result = true
@@ -474,7 +474,7 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
       traverseExpr c, pc
     return result
 
-  if r.kind == IntLit:
+  if r.isIntLit:
     result.a = VarId(0)
     result.c = -createXint(pool.integers[r.intId])
     inc r
@@ -600,7 +600,7 @@ proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
     # suffixed literal, e.g. (suf "abc" "R") — still a literal value
     result = true
   else:
-    if n.kind == StringLit:
+    if n.isStringLit:
       result = true
     else:
       let s = extractSymId(n)
@@ -632,7 +632,7 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
         if n.exprKind == TupconstrX:
           inc n
           skip n # skip type
-          if n.kind == Symbol and pool.syms[n.symId] == ("Success.0." & SystemModuleSuffix):
+          if n.isSymbol and pool.syms[n.symId] == ("Success.0." & SystemModuleSuffix):
             inc n
         if n.exprKind == NewobjX and c.procCanRaise:
           discard "fine, nil value is mapped to OOM by the compiler"
@@ -711,7 +711,7 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
   if rid != NoSymId:
     b = mapSymbol(c, paramMap, call, rid)
     inc r
-  elif r.kind == IntLit:
+  elif r.isIntLit:
     b = VarId(0)
     cnst = createXint(pool.integers[r.intId])
     inc r
@@ -726,7 +726,7 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
     if cid != NoSymId:
       b = mapSymbol(c, paramMap, call, cid)
       inc r
-      if r.kind == IntLit:
+      if r.isIntLit:
         cnst = createXint(pool.integers[r.intId])
       elif r.kind == UIntLit:
         cnst = createXint(pool.uintegers[r.uintId])
@@ -808,7 +808,7 @@ proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
     while n.hasMore:
       assert n.substructureKind == KvU
       n.into:
-        assert n.kind == Symbol
+        assert n.isSymbol
         let expected = lookupField(c.typeCache, objType, n.symId)
         assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
         skip n # field name
@@ -857,11 +857,9 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
     # (e.g., `proc(x: int)` within `seq[proc(x: int)]` in `@[]`). The NJVL
     # converter passes them through; simply skip them here.
     inc pc
-  of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
+  of DotToken, Ident, StrLitKind, CharLit, IntLit, UIntLit, FloatLit:
     inc pc
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
-  of ParLe:
+  of OpenTagKind:
     case pc.exprKind
     of CallKinds:
       analyseCall c, pc
@@ -908,6 +906,8 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
     else:
       pc.loopInto:
         traverseExpr c, pc
+  else:
+    inc pc  # ParRi/close (classic) or stray suffix (nifcore)
 
 proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
   var mutPaths: seq[BorrowInfo] = @[]
@@ -1145,7 +1145,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
     var negated = f
     negateFact(negated)
     c.facts.add negated
-  if n.kind == DotToken:
+  if n.isDotToken:
     inc n
   else:
     traverseStmt c, n
@@ -1181,7 +1181,7 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
     c.activeBorrows.setLen(savedBorrows)
   # The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it) is
   # *this* loop's exit. Record it so `traverseLabel` uses `bindLoopExit`.
-  if n.kind == ParLe and n.njvlKind == LabV:
+  if n.isTagLit and n.njvlKind == LabV:
     var peek = n
     inc peek
     c.loopExitLabels.incl peek.symId
@@ -1210,11 +1210,11 @@ proc traverseRet(c: var NjvlContext; n: var Cursor) =
   ## with a non-`result` operand *provides* the result directly (the NJVL path
   ## rewrote this to `result = value`), so it initializes `result` on this exit.
   n.into:
-    if n.kind == DotToken:
+    if n.isDotToken:
       inc n
     else:
       let providesResult = c.resultSym != NoSymId and
-        not (n.kind == Symbol and n.symId == c.resultSym)
+        not (n.isSymbol and n.symId == c.resultSym)
       traverseExpr c, n
       if providesResult:
         markInit(c, c.resultSym)
@@ -1223,7 +1223,7 @@ proc traverseRet(c: var NjvlContext; n: var Cursor) =
 proc traverseRaise(c: var NjvlContext; n: var Cursor) =
   ## `(raise .X)` — primitive raise, bound by the nearest enclosing `except`.
   n.into:
-    if n.kind == DotToken:
+    if n.isDotToken:
       inc n # bare re-raise
     else:
       traverseExpr c, n
@@ -1246,13 +1246,13 @@ proc addCaseFacts(c: var NjvlContext; selSym: SymId; ranges: Cursor) =
   r = first
   if r.substructureKind == RangeU:
     inc r
-    if r.kind == IntLit:
+    if r.isIntLit:
       var lo = query(a, VarId(0), createXint(pool.integers[r.intId]))
       c.facts.add lo.geXplusC # sel >= lo
     skip r
-    if r.kind == IntLit:
+    if r.isIntLit:
       c.facts.add query(a, VarId(0), createXint(pool.integers[r.intId])) # sel <= hi
-  elif r.kind == IntLit:
+  elif r.isIntLit:
     var f = query(a, VarId(0), createXint(pool.integers[r.intId]))
     c.facts.add f            # sel <= v
     c.facts.add f.geXplusC   # sel >= v
@@ -1383,7 +1383,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   c.typeCache.registerLocal(name, kind, n)
   let localType = n
   skip n # type
-  if n.kind != DotToken or skipInitCheck:
+  if not n.isDotToken or skipInitCheck:
     markInit(c, name)
   if kind == ResultY:
     c.resultSym = name
@@ -1392,7 +1392,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   # Detect borrow: (haddr X) as init expression starts a borrow.
   # Validate that the path is borrowable (no deref in the middle, no calls).
   # Explicit `addr` in the path is an escape hatch ("unchecked").
-  if n.kind == ParLe and n.exprKind == HaddrX:
+  if n.isTagLit and n.exprKind == HaddrX:
     var inner = n
     inc inner # skip haddr tag
     var path = extractPath(c, inner)
@@ -1402,9 +1402,9 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
-  if n.kind != DotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
+  if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
-  if n.kind != DotToken:
+  if not n.isDotToken:
     checkRangeAssign c, localType, n
   traverseExpr c, n
   n = localStart; skip n
@@ -1493,7 +1493,7 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
     elif i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
     elif i == ParamsPos:
-      if n.kind == ParLe:
+      if n.isTagLit:
         var p = n
         p = sub(p) # peek only, never left
         while p.hasMore:

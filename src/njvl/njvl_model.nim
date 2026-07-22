@@ -16,7 +16,7 @@ template tagEnum(c: Cursor): TagEnum = cast[TagEnum](tag(c))
 template tagEnum(c: PackedToken): TagEnum = cast[TagEnum](tag(c))
 
 proc njvlKind*(c: PackedToken): NjvlKind {.inline.} =
-  if c.kind == ParLe and rawTagIsNjvlKind(tagEnum(c)):
+  if c.isTagLit and rawTagIsNjvlKind(tagEnum(c)):
     result = cast[NjvlKind](tagEnum(c))
   else:
     result = NoVTag
@@ -24,12 +24,12 @@ proc njvlKind*(c: PackedToken): NjvlKind {.inline.} =
 proc njvlKind*(c: Cursor): NjvlKind {.inline.} =
   result = njvlKind(c.load())
 
-proc parLeToken*(kind: NjvlKind; info = NoLineInfo): PackedToken =
-  parLeToken(cast[TagId](kind), info)
+proc addParLe*(dest: var TokenBuf; kind: NjvlKind; info = NoLineInfo) =
+  dest.addParLe(cast[TagId](uint32(ord(kind))), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: NjvlKind;
                        info: PackedLineInfo; body: untyped) =
-  dest.add parLeToken(kind, info)
+  dest.addParLe(kind, info)
   body
   dest.addParRi()
 

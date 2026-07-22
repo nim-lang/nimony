@@ -113,33 +113,40 @@ proc infoToStr*(info: PackedLineInfo): string =
     result = pool.files[rawInfo.file].shortenDir()
     result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
 
+proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var int) =
+  ## Recursive cursor walk (build-agnostic): an `(err …)` node is
+  ## `(err <origExpr|.> <instantiation-dots…> <stringMsg>)`; the err's own head
+  ## carries the source line info.
+  if n.isTagLit:
+    if n.tagId == errTag:
+      inc count
+      let info = n.info
+      let doReport = not r.reportedErrSources.containsOrIncl(info)
+      n.peekInto:
+        # original expression, optional:
+        if n.isDotToken: inc n
+        else: skip n
+        # instantiation contexts:
+        while n.isDotToken:
+          if doReport:
+            r.trace infoToStr(n.info), "instantiation from here"
+          inc n
+        # error message:
+        if n.isStringLit:
+          if doReport:
+            r.error infoToStr(info), pool.strings[n.litId]
+          inc n
+    else:
+      n.into:
+        while n.hasMore:
+          reportErrorsRec(r, n, errTag, count)
+  else:
+    skip n
+
 proc reportErrors*(dest: var TokenBuf): int =
   let errTag = pool.tags.getOrIncl("err")
-  var i = 0
   var r = Reporter(verbosity: 2, noColors: not useColors())
   result = 0
-  while i < dest.len:
-    if dest[i].kind == ParLe and dest[i].tagId == errTag:
-      inc result
-      let info = dest[i].info
-      let doReport = not r.reportedErrSources.containsOrIncl(info)
-      inc i
-      # original expression, optional:
-      if dest[i].kind == DotToken:
-        inc i
-      else:
-        let x = cursorAt(dest, i)
-        inc i, span(x)
-        endRead(dest)
-      # instantiation contexts:
-      while dest[i].kind == DotToken:
-        if doReport:
-          r.trace infoToStr(dest[i].info), "instantiation from here"
-        inc i
-      # error message:
-      assert dest[i].kind == StringLit
-      if doReport:
-        r.error infoToStr(info), pool.strings[dest[i].litId]
-      inc i
-    else:
-      inc i
+  var n = beginRead(dest)
+  while n.hasMore:
+    reportErrorsRec(r, n, errTag, result)

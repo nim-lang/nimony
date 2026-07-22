@@ -27,7 +27,7 @@ include ".." / lib / compat2
 import nimony_model, decls, programs, semdata, sembasics, asthelpers, symtabs
 
 proc semBindStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toBind: var HashSet[SymId]) =
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   n.into:  # (bind …)
     while n.hasMore:
       # If 'a' is an overloaded symbol, we used to use the first symbol
@@ -48,19 +48,19 @@ proc semBindStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toBind: v
       of Ident:
         c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
-        dest.add syms
+        dest.addSubtree syms
       else:
         if syms.exprKind in {OchoiceX, CchoiceX}:
           syms.into:
             while syms.hasMore:
-              dest.add syms
+              dest.addSubtree syms
               inc syms, AnyExpr
         else:
           bug("unreachable")
   dest.addParRi()
 
 proc semMixinStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toMixin: var HashSet[StrId]) =
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   n.into:  # (mixin …)
     while n.hasMore:
       # Capture the identifier's info up front: `takeIdent` consumes it, so
@@ -132,8 +132,8 @@ proc getIdentReplaceParams(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
     var symsBuf = createTokenBuf(4)
     discard buildSymChoice(c.c[], symsBuf, n.litId, n.info, InnerMost)
     var sym = cursorAt(symsBuf, 0)
-    if sym.kind == Symbol and isTemplParam(c, sym.symId):
-      dest.add sym
+    if sym.isSymbol and isTemplParam(c, sym.symId):
+      dest.addSubtree sym
       result = true
     else:
       takeToken dest, n
@@ -143,9 +143,9 @@ proc getIdentReplaceParams(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
   of SymbolDef:
     result = false
     takeToken dest, n
-  of ParLe:
+  of OpenTagKind:
     if n.exprKind == QuotedX:
-      dest.add n
+      dest.addSubtree n
       result = false
       n.into QuotedX:
         while n.hasMore:
@@ -180,7 +180,7 @@ proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: Sy
   if c.mode == UntypedTemplate:
     # locals default to 'gensym', fields default to 'inject';
     # `dirty` templates treat every non-param decl as inject:
-    if (pragmas.kind != DotToken and symBinding(pragmas) == spInject) or
+    if (not pragmas.isDotToken and symBinding(pragmas) == spInject) or
         k in {FldY, GfldY} or (c.dirty and k != ParamY):
       # even if injected, don't produce a sym choice here:
       #n = semTemplBody(c, n)
@@ -199,7 +199,7 @@ proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: Sy
       var newName = cursorAt(newNameBuf, 0)
       if not hasParam:
         let info = newName.info
-        if newName.kind != Symbol and not (newName.kind == Ident and pool.strings[newName.litId] == "_"):
+        if newName.kind != Symbol and not (newName.isIdent and pool.strings[newName.litId] == "_"):
           var ident = pool.strings[takeIdent(newName)]
           var symName = ident
           # Templates need cross-module-unique sym names; `makeLocalSym`
@@ -212,7 +212,7 @@ proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: Sy
           let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
           c.c[].addSym(dest, delayed)
           newNameBuf = createTokenBuf(1)
-          newNameBuf.add symdefToken(s.name, info)
+          newNameBuf.addSymDef(s.name, info)
           dest.replace(cursorAt(newNameBuf, 0), nameStart)
           if k == ParamY and c.inTemplateHeader > 0:
             c.params.incl s.name
@@ -232,7 +232,7 @@ proc addBareDecl(c: var UntypedCtx; dest: var TokenBuf, n: Cursor, k: SymKind, n
     var newName = cursorAt(newNameBuf, 0)
     if not hasParam:
       let info = newName.info
-      if newName.kind != Symbol and not (newName.kind == Ident and pool.strings[newName.litId] == "_"):
+      if newName.kind != Symbol and not (newName.isIdent and pool.strings[newName.litId] == "_"):
         var ident = pool.strings[takeIdent(newName)]
         # See addDecl above: templates need cross-module-unique sym names.
         makeTemplateSym(c.c[], ident)
@@ -241,7 +241,7 @@ proc addBareDecl(c: var UntypedCtx; dest: var TokenBuf, n: Cursor, k: SymKind, n
         let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
         c.c[].addSym(dest, delayed)
         newNameBuf = createTokenBuf(1)
-        newNameBuf.add symdefToken(s.name, info)
+        newNameBuf.addSymDef(s.name, info)
         dest.replace(cursorAt(newNameBuf, 0), nameStart)
         c.gensyms.incl s.name
         publish c.c[], dest, delayed.s.name, declStart
@@ -259,19 +259,19 @@ proc semTemplSymbol(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; firstS
     dest.shrink start
     if isField and firstSym in c.gensyms:
       # change to identifier
-      dest.add n
+      dest.addSubtree n
     else:
-      dest.add symToken(firstSym, n.info)
+      dest.addSymUse(firstSym, n.info)
   else:
     if isField:
       var withoutGensyms = createTokenBuf(16)
       var choice = dest.cursorAt(start)
-      withoutGensyms.add choice # add tag
+      withoutGensyms.addParLe(choice.tag, choice.info) # add tag
       choice.into:
         while choice.hasMore:
           let sym = choice.symId
           if sym notin c.gensyms:
-            withoutGensyms.add choice
+            withoutGensyms.addSubtree choice
           inc choice, AnyExpr
       withoutGensyms.addParRi()
       dest.endRead()
@@ -281,7 +281,7 @@ proc semTemplSymbol(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; firstS
 proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor)
 
 proc semTemplBodySons(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
-  dest.add n
+  dest.addParLe(n.tag, n.info)
   n.into:
     while n.hasMore:
       semTemplBody c, dest, n
@@ -366,11 +366,11 @@ proc semTemplLocal(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymK
     addDecl(c, dest, local.name, local.pragmas, k, nameStart, declStart)
     takeTree dest, n # exported
     semTemplPragmas c, dest, n # pragmas
-    if k == ConstY and n.kind == DotToken:
+    if k == ConstY and n.isDotToken:
       # const without explicit type: emit (auto) so the type slot is non-empty
       # in the stored generic/template body; the actual type is inferred
       # at instantiation time when semLocal processes the (auto) placeholder.
-      dest.add parLeToken(AutoT, n.info)
+      dest.addParLe(AutoT, n.info)
       dest.addParRi()
       inc n
     else:
@@ -398,7 +398,7 @@ proc semTemplRoutineDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k
     inc c.inNestedRoutine
     inc c.inTemplateHeader
     if n.substructureKind == ParamsU:
-      dest.add n
+      dest.addParLe(n.tag, n.info)
       n.into ParamsU:
         while n.hasMore:
           semTemplLocal(c, dest, n, ParamY)
@@ -420,32 +420,37 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   of Ident:
     if isInjected(c, n.litId):
       # skUnknown case for generics
-      dest.add n
+      dest.addSubtree n
       inc n
       return
     let start = dest.len
     let count = buildSymChoice(c.c[], dest, n.litId, n.info, FindOverloads)
     if count != 0:
       var firstSymN = cursorAt(dest, start)
-      if firstSymN.kind == ParLe: inc firstSymN
-      assert firstSymN.kind == Symbol
+      if firstSymN.isTagLit: inc firstSymN
+      assert firstSymN.isSymbol
       let firstSym = firstSymN.symId
       endRead(dest)
       if firstSym in c.params:
         assert count == 1
         dest.shrink start
-        dest.add symToken(firstSym, n.info)
+        dest.addSymUse(firstSym, n.info)
       elif c.mode == UntypedForwardGeneric:
         # leave as ident if not typevar
         dest.shrink start
-        dest.add n
+        dest.addSubtree n
       elif contains(c.toBind, firstSym):
         if count == 1:
           dest.shrink start
-          dest.add symToken(firstSym, n.info)
+          dest.addSymUse(firstSym, n.info)
         else:
-          assert dest[start].kind == ParLe
-          setTag(dest[start], TagId(CchoiceX)) # keeps the sealed jump
+          assert dest[start].kind == OpenTagKind
+          when defined(useNifcore):
+            var ctok = dest[start]
+            setTag(ctok, TagId(CchoiceX))
+            dest[start] = ctok
+          else:
+            setTag(dest[start], TagId(CchoiceX)) # keeps the sealed jump
       elif contains(c.toMixin, n.litId):
         if count == 1:
           dest.shrink start
@@ -454,14 +459,11 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         # template tmp[T](x: var seq[T]) =
         # var yz: T
         dest.shrink start
-        dest.add symToken(firstSym, n.info)
+        dest.addSymUse(firstSym, n.info)
       else:
         semTemplSymbol(c, dest, n, firstSym, count, start)
     inc n
-  of Symbol, IntLit, UIntLit, CharLit, StringLit, FloatLit,
-      DotToken, UnknownToken, EofToken, ParRi, SymbolDef: # ?
-    takeToken dest, n
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of NoExpr:
       case n.stmtKind
@@ -469,7 +471,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         semBindStmt c.c[], dest, n, c.toBind
       of MixinS:
         if c.inNestedRoutine > 0:
-          dest.add n
+          dest.addParLe(n.tag, n.info)
           n.into MixinS:
             while n.hasMore:
               semTemplBody c, dest, n
@@ -477,12 +479,12 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         else:
           semMixinStmt c.c[], dest, n, c.toMixin
       of IfS:
-        dest.add n
+        dest.addParLe(n.tag, n.info)
         n.into IfS:
           while n.hasMore:
             case n.substructureKind
             of ElifU:
-              dest.add n
+              dest.addParLe(n.tag, n.info)
               n.into ElifU:
                 openScope c
                 semTemplBody c, dest, n
@@ -490,7 +492,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
                 closeScope c
               dest.addParRi()
             of ElseU:
-              dest.add n
+              dest.addParLe(n.tag, n.info)
               n.into ElseU:
                 openScope c
                 semTemplBody c, dest, n
@@ -507,14 +509,14 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
           semTemplBody c, dest, n
           closeScope c
       of CaseS:
-        dest.add n
+        dest.addSubtree n
         openScope c
         n.into CaseS:
           semTemplBody c, dest, n
           while n.hasMore:
             case n.substructureKind
             of OfU:
-              dest.add n
+              dest.addParLe(n.tag, n.info)
               n.into OfU:
                 semTemplBody c, dest, n
                 openScope c
@@ -522,7 +524,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
                 closeScope c
               dest.addParRi()
             of ElifU:
-              dest.add n
+              dest.addParLe(n.tag, n.info)
               n.into ElifU:
                 openScope c
                 semTemplBody c, dest, n
@@ -530,7 +532,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
                 closeScope c
               dest.addParRi()
             of ElseU:
-              dest.add n
+              dest.addParLe(n.tag, n.info)
               n.into ElseU:
                 openScope c
                 semTemplBody c, dest, n
@@ -559,7 +561,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         let declStart = dest.len
         copyInto dest, n:
           openScope c
-          if n.kind == DotToken:
+          if n.isDotToken:
             takeToken dest, n
           else:
             let nameStart = dest.len
@@ -609,7 +611,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
       if isDeclared(c.c[], ident):
         # consider identifier
         var identBuf = createTokenBuf(4)
-        identBuf.add identToken(ident, n.info)
+        identBuf.addIdent(ident, n.info)
         var identRead = beginRead(identBuf)
         let start = dest.len
         semTemplBody c, dest, identRead
@@ -623,3 +625,7 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         semTemplBodySons c, dest, n
     else:
       semTemplBodySons c, dest, n
+  else:
+    # atoms (Symbol/IntLit/…/SymbolDef) plus, in the classic model, a real
+    # ParRi scope-close: copy the token verbatim.
+    takeToken dest, n

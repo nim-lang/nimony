@@ -61,72 +61,75 @@ type
     keepReturns: bool
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
-  # for debugging purposes
-  # first iteration: compute all necessary labels:
-  var jumpTargets = initIntSet()
-  let last = if last < 0: c.len-1 else: min(last, c.len-1)
-  for i in start..last:
-    if c[i].kind == GotoInstr:
-      jumpTargets.incl(i+c[i].getInt28)
-  # second iteration: generate string representation:
-  var i = start
-  var b = nifbuilder.open(1000)
-  # Under `-d:virtualParRi` the matching ParRi of a sealed ParLe is elided
-  # from the buffer, so the raw index walk below never sees it. Track the
-  # last-content index of every open sealed scope and inject `endTree()`
-  # once we've walked past it. Overflow scopes (jump == MaxJump) keep a
-  # physical ParRi and are still closed by the `of ParRi` branch.
-  when defined(virtualParRi):
-    var closeStack: seq[int] = @[]
-  while i <= last:
-    if i in jumpTargets:
-      b.addTree "lab"
-      b.addSymbolDef("L" & $i)
-      b.endTree()
-    case c[i].kind
-    of GotoInstr:
-      b.addTree "goto"
-      let diff = c[i].getInt28()
-      if diff != 0:
-        b.addIdent "L" & $(i+diff)
-      else:
-        b.addIdent "L<BUG HERE>" & $i
-      b.endTree()
-    of Symbol:
-      b.addSymbol pool.syms[c[i].symId]
-    of SymbolDef:
-      b.addSymbolDef pool.syms[c[i].symId]
-    of EofToken:
-      b.addRaw "\n<unexptected EOF>\n"
-    of DotToken: b.addEmpty
-    of Ident: b.addIdent pool.strings[c[i].litId]
-    of StringLit: b.addStrLit pool.strings[c[i].litId]
-    of CharLit: b.addCharLit c[i].charLit
-    of IntLit: b.addIntLit pool.integers[c[i].intId]
-    of UIntLit: b.addUIntLit pool.uintegers[c[i].uintId]
-    of FloatLit: b.addFloatLit pool.floats[c[i].floatId]
-    of ParLe:
-      b.addTree pool.tags[c[i].tagId]
-      when defined(virtualParRi):
-        if jump(c[i]) != MaxJump:
-          closeStack.add(i + span(readonlyCursorAt(c, i)) - 1)
-    of ParRi: b.endTree()
+  when defined(useNifcore):
+    result = "<codeListing: not available under nifcore>"
+  else:
+    # for debugging purposes
+    # first iteration: compute all necessary labels:
+    var jumpTargets = initIntSet()
+    let last = if last < 0: c.len-1 else: min(last, c.len-1)
+    for i in start..last:
+      if c[i].kind == GotoInstr:
+        jumpTargets.incl(i+c[i].getInt28)
+    # second iteration: generate string representation:
+    var i = start
+    var b = nifbuilder.open(1000)
+    # Under `-d:virtualParRi` the matching ParRi of a sealed OpenTagKind is elided
+    # from the buffer, so the raw index walk below never sees it. Track the
+    # last-content index of every open sealed scope and inject `endTree()`
+    # once we've walked past it. Overflow scopes (jump == MaxJump) keep a
+    # physical ParRi and are still closed by the `of ParRi` branch.
     when defined(virtualParRi):
-      while closeStack.len > 0 and closeStack[^1] == i:
+      var closeStack: seq[int] = @[]
+    while i <= last:
+      if i in jumpTargets:
+        b.addTree "lab"
+        b.addSymbolDef("L" & $i)
         b.endTree()
-        discard closeStack.pop()
-    inc i
-  if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
-  result = b.extract()
+      case c[i].kind
+      of GotoInstr:
+        b.addTree "goto"
+        let diff = c[i].getInt28()
+        if diff != 0:
+          b.addIdent "L" & $(i+diff)
+        else:
+          b.addIdent "L<BUG HERE>" & $i
+        b.endTree()
+      of Symbol:
+        b.addSymbol pool.syms[c[i].symId]
+      of SymbolDef:
+        b.addSymbolDef pool.syms[c[i].symId]
+      of EofTokenKind:
+        b.addRaw "\n<unexptected EOF>\n"
+      of DotToken: b.addEmpty
+      of Ident: b.addIdent pool.strings[c[i].litId]
+      of StrLitKind: b.addStrLit pool.strings[c[i].litId]
+      of CharLit: b.addCharLit c[i].charLit
+      of IntLit: b.addIntLit pool.integers[c[i].intId]
+      of UIntLit: b.addUIntLit pool.uintegers[c[i].uintId]
+      of FloatLit: b.addFloatLit pool.floats[c[i].floatId]
+      of OpenTagKind:
+        b.addTree pool.tags[c[i].tagId]
+        when defined(virtualParRi):
+          if jump(c[i]) != MaxJump:
+            closeStack.add(i + span(readonlyCursorAt(c, i)) - 1)
+      of ParRi: b.endTree()
+      when defined(virtualParRi):
+        while closeStack.len > 0 and closeStack[^1] == i:
+          b.endTree()
+          discard closeStack.pop()
+      inc i
+    if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
+    result = b.extract()
 
-# ── source-position side-channel ──────────────────────────────────────────
-# The mover needs to map every CF token back to the source token it came from.
-# Rather than stamp a payload into the token `info` field (nifcore tokens may
-# carry no line info), we thread a parallel `seq[int32]` of source positions
-# through the `Target`/`dest` buffers. Only actual source-token copies get a
-# real position (see `addSource`); everything synthesized is `-1`. The arrays
-# are kept in sync lazily: `padSrc` fills the gap with `-1` up to the buffer's
-# current length just before a precise append and once at the very end.
+  # ── source-position side-channel ──────────────────────────────────────────
+  # The mover needs to map every CF token back to the source token it came from.
+  # Rather than stamp a payload into the token `info` field (nifcore tokens may
+  # carry no line info), we thread a parallel `seq[int32]` of source positions
+  # through the `Target`/`dest` buffers. Only actual source-token copies get a
+  # real position (see `addSource`); everything synthesized is `-1`. The arrays
+  # are kept in sync lazily: `padSrc` fills the gap with `-1` up to the buffer's
+  # current length just before a precise append and once at the very end.
 
 proc padSrcSeq(src: var seq[int32]; upTo: int) =
   while src.len < upTo: src.add(-1'i32)
@@ -153,7 +156,12 @@ proc patch(c: var ControlFlow; p: Label) =
   let diff = c.dest.len - p.int
   assert diff != 0
   assert c.dest[p.int].kind == GotoInstr
-  c.dest[p.int].patchInt28Token int32(diff)
+  when defined(useNifcore):
+    var tok = c.dest[p.int]
+    tok.patchInt28Token int32(diff)
+    c.dest[p.int] = tok
+  else:
+    c.dest[p.int].patchInt28Token int32(diff)
 
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target)
 proc trStmt(c: var ControlFlow; n: var Cursor)
@@ -173,11 +181,11 @@ proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
   ## Copy a single *source* token into `tar`, recording its source position.
   ## The only three call sites that funnel source tokens into the CF pipeline.
   padSrc(tar)
-  tar.t.add n
+  tar.t.add load(n)
   tar.src.add srcPosOf(c, n)
 
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
-  assert typ.kind != DotToken
+  assert not typ.isDotToken
   result = pool.syms.getOrIncl("`cf." & $c.nextVar)
   inc c.nextVar
   c.dest.addParLe kind, info
@@ -489,7 +497,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
   n.into:
     let selectorType = c.typeCache.getType(n)
     let isExhaustive = isOrdinalType(selectorType, allowEnumWithHoles=true)
-    let simpleSelector = n.kind == Symbol
+    let simpleSelector = n.isSymbol
     var selector: SymId
     if simpleSelector:
       selector = n.symId
@@ -573,10 +581,10 @@ proc trBlock(c: var ControlFlow; n: var Cursor; tar: var Target) =
   let thisBlock = BlockOrLoop(kind: IsBlock, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
   n.into:
-    if n.kind == SymbolDef:
+    if n.isSymbolDef:
       thisBlock.sym = n.symId
       inc n
-    elif n.kind == DotToken:
+    elif n.isDotToken:
       inc n
     else:
       bug "invalid block statement"
@@ -621,13 +629,11 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
 
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   case n.kind
-  of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
-     Ident, DotToken, EofToken, UnknownToken:
+  of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StrLitKind, CharLit,
+     Ident, DotToken:
     c.addSource(tar, n)
     inc n
-  of ParRi:
-    bug "unreachable"
-  of ParLe:
+  of OpenTagKind:
     case n.exprKind
     of AndX:
       trAndValue c, n, tar
@@ -682,6 +688,8 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
          AsmS, DeferS, NoStmt:
         trExprLoop c, n, tar
+  else:
+    bug "unreachable"
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
@@ -747,7 +755,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
       c.dest.addParLe(RetS, info)
       c.flush aa
       c.dest.addParRi()
-    elif (n.kind == Symbol and n.symId == c.resultSym) or (n.kind == DotToken):
+    elif (n.isSymbol and n.symId == c.resultSym) or (n.isDotToken):
       discard "do not generate `result = result`"
       inc n
     else:
@@ -764,7 +772,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
 proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   n.into:
-    if n.kind == DotToken:
+    if n.isDotToken:
       while it != nil and it.kind notin {IsLoop, IsBlock}:
         if it.kind == IsRoutine:
           # we cannot cross routine boundaries!
@@ -775,7 +783,7 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
       else:
         bug "break outside of loop"
       inc n
-    elif n.kind == Symbol:
+    elif n.isSymbol:
       let lab = n.symId
       while it != nil and it.sym != lab:
         if it.kind == IsRoutine:
@@ -793,7 +801,7 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
 proc trContinue(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   n.into:
-    if n.kind == DotToken:
+    if n.isDotToken:
       if it != nil:
         it.contInstrs.add c.jmpForw(n.info)
       else:
@@ -874,7 +882,7 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
 
 proc isComplexLhs(n: Cursor): bool =
   var n = n
-  if n.kind == ParLe and n.exprKind in CallKinds+{PatX, ArratX}:
+  if n.isTagLit and n.exprKind in CallKinds+{PatX, ArratX}:
     return true
   n.linearScan:
     if n.exprKind in CallKinds+{PatX, ArratX}:
@@ -1003,7 +1011,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
       while n.hasMore:
         trStmt c, n
   of ScopeS, StaticstmtS:
-    c.dest.add n
+    c.dest.addParLe(n.tag, n.info)
     c.typeCache.openScope()
     n.into:
       while n.hasMore:
@@ -1071,7 +1079,7 @@ proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): To
     trProc c, n
   else:
     assert sk == StmtsS
-    c.dest.add n
+    c.dest.addParLe(n.tag, n.info)
     n.into:
       while n.hasMore:
         trStmt c, n

@@ -163,7 +163,7 @@ type
 
 proc addParLe*(dest: var TokenBuf; kind: NjvlKind;
                info = NoLineInfo) =
-  dest.add parLeToken(cast[TagId](kind), info)
+  dest.addParLe(cast[TagId](kind), info)
 
 proc openScope(c: var Context) =
   c.typeCache.openScope()
@@ -311,7 +311,7 @@ proc trResultExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   case c.current.mode
   of VoidRaise:
-    if n.kind == DotToken:
+    if n.isDotToken:
       inc n
       dest.addSymUse pool.syms.getOrIncl(SuccessName), info
     else:
@@ -325,7 +325,7 @@ proc trResultExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse pool.syms.getOrIncl(SuccessName), info
       trExpr c, dest, n
   of NoRaise:
-    if n.kind == DotToken:
+    if n.isDotToken:
       inc n
     else:
       trExpr c, dest, n
@@ -448,7 +448,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeInto dest, n:
         while n.hasMore:
-          if n.kind == ParLe and n.exprKind in CallKinds:
+          if n.isTagLit and n.exprKind in CallKinds:
             # A call surviving to nj in an operand position is an lvalue
             # location (xelim lifts every value-producing call), e.g. the
             # `s[i]` argument of a location-taking builtin like `wasMoved`.
@@ -579,7 +579,7 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   takeTree dest, n # type
 
   # Record first argument of call inits for borrow tracking (used by trFor):
-  if n.kind == ParLe and n.exprKind in CallKinds:
+  if n.isTagLit and n.exprKind in CallKinds:
     var tmp = n
     inc tmp # skip call tag
     skip tmp # skip callee
@@ -635,7 +635,7 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
   dest.add tagToken("store", info)
   let asgnStart = n
   n = sub(n)
-  if n.kind == Symbol:
+  if n.isSymbol:
     let symId = n.symId
     inc n # skip `result`:
     if n.exprKind in CallKinds:
@@ -681,7 +681,7 @@ proc trAsgn(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor
 proc countSons(dest: var TokenBuf; d: int): int =
   var n = cursorAt(dest, d)
   result = 0
-  assert n.kind == ParLe
+  assert n.isTagLit
   n.into:
     while n.hasMore:
       skip n
@@ -760,12 +760,12 @@ proc trBreak(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   var entries = 0 # only care about the inner most
   let breakStart = n
   n = sub(n)
-  if n.kind == ParRi:
+  if not n.hasMore:
     entries = 1
-  elif n.kind == DotToken:
+  elif n.isDotToken:
     inc n
     inc entries
-  elif n.kind == Symbol:
+  elif n.isSymbol:
     for i in countdown(c.current.guards.len - 1, 0):
       inc entries
       if c.current.guards[i].blockName == n.symId: break
@@ -803,7 +803,7 @@ proc trBlock(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Curs
   declareCfVar c, dest, guard
   let blockStart = n # "block"
   n = sub(n)
-  let blockName = if n.kind == SymbolDef: n.symId else: NoSymId
+  let blockName = if n.isSymbolDef: n.symId else: NoSymId
   inc n # name or empty
   openScope c
   let s = addGuard(c, Guard(cond: guard, active: false, blockName: blockName))
@@ -838,7 +838,7 @@ proc findBreakSplitPoint(n: Cursor): int =
           p = sub(p)     # into the `stmts`
           if p.stmtKind == BreakS:
             skip p
-            if p.kind == ParRi:     # the break is the sole statement
+            if not p.hasMore:     # the break is the sole statement
               return result
 
     inc result
@@ -961,20 +961,20 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): T
   # So we trace back through hderef/temporaries to find the original call's first arg.
   var firstArgBuf = createTokenBuf(0)
   var iterCall = forStmt.iter
-  if iterCall.kind == ParLe and iterCall.exprKind in CallKinds:
+  if iterCall.isTagLit and iterCall.exprKind in CallKinds:
     iterCall = sub(iterCall) # peek only, never left
     skip iterCall
     if iterCall.hasMore:
       firstArgBuf = createTokenBuf(8)
       firstArgBuf.addSubtree iterCall
-  elif iterCall.kind == ParLe and iterCall.exprKind in {HderefX, HaddrX}:
+  elif iterCall.isTagLit and iterCall.exprKind in {HderefX, HaddrX}:
     inc iterCall
-    if iterCall.kind == Symbol:
+    if iterCall.isSymbol:
       let tempSym = iterCall.symId
       if tempSym in c.callFirstArgs:
         firstArgBuf = createTokenBuf(8)
         firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
-  elif iterCall.kind == Symbol:
+  elif iterCall.isSymbol:
     let tempSym = iterCall.symId
     if tempSym in c.callFirstArgs:
       firstArgBuf = createTokenBuf(8)
@@ -1060,7 +1060,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let isExhaustive = isOrdinalType(selectorType, allowEnumWithHoles=true)
 
   var selector: SymId
-  if n.kind == Symbol:
+  if n.isSymbol:
     selector = n.symId
     inc n
   else:
@@ -1207,7 +1207,7 @@ proc trTry(c: var Context; outerB: BasicBlock; dest: var TokenBuf; n: var Cursor
             copyIntoKind dest, StoreV, info:
               useErrorTracker(c, dest, tracker, info)
               dest.addSymUse excVar, info
-            assert n.kind == DotToken
+            assert n.isDotToken
             inc n # skip value (should be dot)
 
         # The except handler executes only when `guard=true` (established by the outer
@@ -1259,11 +1259,11 @@ proc trRet(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor)
   let info = n.info
   n.into:
     if n.hasMore:
-      if n.kind == DotToken:
+      if n.isDotToken:
         inc n
       else:
         assert c.current.resultSym != NoSymId, "could not find `result` symbol"
-        if n.kind == Symbol and n.symId == c.current.resultSym:
+        if n.isSymbol and n.symId == c.current.resultSym:
           inc n
         else:
           dest.copyIntoKind StoreV, info:
@@ -1281,7 +1281,7 @@ proc trRaise(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
   var isReraise = false
   n.into:
     if n.hasMore:
-      if n.kind == DotToken:
+      if n.isDotToken:
         # bare `(raise .)`: propagate the current `errorTracker` value past the
         # immediately-enclosing handler. Don't store anything new.
         isReraise = true
