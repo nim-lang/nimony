@@ -197,7 +197,7 @@ proc getErrorMsg*(m: Match): string =
     "expression is not a mutable lvalue, cannot be passed to " &
       typeToString(m.error.expected) & " parameter"
   of UnhandledTypeBug:
-    "BUG: unhandled type: " & pool.tags[m.error.expected.tagId]
+    "BUG: unhandled type: " & pool.tags[m.error.expected.cursorTagId]
   of MismatchBug:
     "BUG: expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of MissingExplicitGenericParameter:
@@ -340,7 +340,7 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
       inc aTag
     f.into:
       assert f.isTagLit
-      result = aTag.isTagLit and f.tagId == aTag.tagId
+      result = aTag.isTagLit and f.cursorTagId == aTag.cursorTagId
       skip f # the empty `(tag)` child
   of OrdinalT:
     case a.typeKind
@@ -538,14 +538,14 @@ proc foldStaticArg(m: var Match; elemType, a: Cursor): Cursor =
   var ec = initEvalContext(m.context, noExecute = true)
   var cur = a
   let folded = eval(ec, cur)
-  if folded.isTagLit and folded.tagId == nifpools.ErrT:
+  if folded.isTagLit and folded.cursorTagId == nifpools.ErrT:
     return
   # `folded` lives in a temporary buffer; consume it immediately by re-typing
   # it into a fresh buffer before any other evaluation runs.
   var buf = createTokenBuf(16)
   annotateConstantType(buf, elemType, folded)
   let typed = cursorAt(buf, 0)
-  if typed.isTagLit and typed.tagId == nifpools.ErrT:
+  if typed.isTagLit and typed.cursorTagId == nifpools.ErrT:
     return
   result = typeToCursor(m.context[], buf, 0)
 
@@ -691,7 +691,7 @@ proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
     return true
   c = cRet
   a = aRet
-  if c.isTagLit and a.isTagLit and c.tagId == a.tagId:
+  if c.isTagLit and a.isTagLit and c.cursorTagId == a.cursorTagId:
     let kind = c.typeKind
     inc c
     inc a
@@ -1140,7 +1140,7 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
         # Compare tag ids, not raw operands — under `-d:virtualParRi` the
         # operand carries the sealed jump, which differs whenever the two
         # subtrees have different token counts (e.g. typevar vs. concrete).
-        if f.tagId != a.tagId:
+        if f.cursorTagId != a.cursorTagId:
           m.error(InvalidMatch, fOrig, aOrig)
         else:
           let fStart = f
@@ -1443,7 +1443,7 @@ proc tryMatchEnumChoice*(choice: Cursor; enumTypeSym: SymId): SymId =
   ## Try to find a unique enum field in the OchoiceX that matches the given enum type.
   result = SymId(0)
   var matchCount = 0
-  var a = choice.firstSon
+  var a = choice.childCursor
   while a.hasMore:
     if a.isSymbol:
       let res = tryLoadSym(a.symId)
@@ -1478,7 +1478,7 @@ proc tryMatchProcChoice*(context: ptr SemContext; choice, f: Cursor): SymId =
   ## type is expected (nim-lang/nimony#1973).
   result = SymId(0)
   var matchCount = 0
-  var a = choice.firstSon
+  var a = choice.childCursor
   while a.hasMore:
     if a.isSymbol:
       var buf = createTokenBuf(16)
@@ -1537,7 +1537,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       discard "perfect match"
     else:
       var impl = typeImpl(fs)
-      if impl.isTagLit and impl.tagId == nifpools.ErrT:
+      if impl.isTagLit and impl.cursorTagId == nifpools.ErrT:
         m.error InvalidMatch, f, a
       else:
         if impl.typeKind == DistinctT:
@@ -1613,7 +1613,7 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
     ex.isIntLit and sameTrees(a, m.context.types.intType)
   let isFloatLit = f.typeKind != CharT and
     ex.kind == FloatLit and sameTrees(a, m.context.types.floatType)
-  let sameKind = a.isTagLit and f.tag == a.tag
+  let sameKind = a.isTagLit and f.cursorTagId == a.cursorTagId
   if sameKind or isIntLit or isFloatLit:
     inc a
   else:
@@ -2143,7 +2143,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
       if containsGenericParams(f): # maybe restrict to params of this routine
         # element type needs to be instantiated:
         m.refineArgType = true
-      m.args.addParLe(arg.n.tag, arg.n.info) # copy tag
+      m.args.addParLe(arg.n.cursorTagId, arg.n.info) # copy tag
       m.args.takeTree f
       m.args.addParRi()
   else:
@@ -2157,7 +2157,7 @@ proc matchEmptyContainer(m: var Match; f: var Cursor; arg: CallArg) =
         # keep the call to `@` but give the array constructor the element type:
         var call = arg.n
         m.args.takeInto call: # the call
-          m.args.takeToken call # the `@` symbol
+          m.args.takeTree call # the `@` symbol
           assert call.exprKind == AconstrX
           m.args.takeInto call: # the array constructor
             # build our own array type:

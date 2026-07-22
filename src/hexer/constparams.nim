@@ -154,7 +154,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # the in-flight exception by signalling `Failure` to the caller; the caller
   # consults the threadvar `exc` for the actual value. Outside a raises proc
   # there is no error channel, so we degrade to a bare `(ret .)`.
-  if n.firstSon.kind == DotToken:
+  if n.childCursor.kind == DotToken:
     let info = n.info
     skip n # the whole bare `(raise .)`
     if c.canRaise:
@@ -166,20 +166,20 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, RetS, info:
         dest.addDotToken()
     return
-  let localIsVoid = isVoidType(getType(c.typeCache, n.firstSon))
+  let localIsVoid = isVoidType(getType(c.typeCache, n.childCursor))
   if c.exceptVars.len > 0:
     # also bind the value to a potential `T as e` variable:
     let info = n.info
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse c.exceptVars[^1], info
       if isSpecial and not localIsVoid:
-        let x = n.firstSon
+        let x = n.childCursor
         assert x.kind == Symbol
         copyIntoKind dest, TupatX, info:
           dest.addSymUse x.symId, info
           dest.addIntLit 0, info
       else:
-        dest.addSubtree n.firstSon
+        dest.addSubtree n.childCursor
 
   copyInto dest, n:
     produceRaiseTuple c, dest, c.retType, n.info
@@ -212,7 +212,7 @@ proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.nextRaiseIsSpecial = true
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTuple: bool) =
-  var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n.childCursor))
   assert fnType.tagEnum == ParamsTagId
   var pragmas = fnType
   skip pragmas
@@ -224,7 +224,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
   if needsTuple:
     needsTuple = produceSuccessTuple(c, dest, retType, n.info)
 
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into: # skip `(call)`
     tr c, dest, n # handle `fn`
 
@@ -323,7 +323,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr c, dest, n
@@ -352,7 +352,7 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.addParLe(ExprX, info)
   dest.addParLe(StmtsS, info)
-  let typ = n.firstSon
+  let typ = n.childCursor
 
   let target = pool.syms.getOrIncl("`constRefTemp." & $c.tmpCounter)
   inc c.tmpCounter
@@ -375,7 +375,7 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # We only deal with the data flow here.
-  var nn = n.firstSon
+  var nn = n.childCursor
   skip nn # stmts
   let oldLen = c.exceptVars.len
   if nn.substructureKind == ExceptU:
@@ -389,7 +389,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addSubtree nn
         inc nn
 
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     tr c, dest, n
     c.exceptVars.shrink oldLen
@@ -408,7 +408,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  var nn = n.firstSon
+  var nn = n.childCursor
   if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(nn.symId)):
     let isResultSym = nn.symId == c.resultSym
     skip nn
@@ -465,7 +465,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSubtree n
     inc n
   of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
-    takeToken dest, n
+    takeTree dest, n
   of TagLit:
     let ek = n.exprKind
     case ek

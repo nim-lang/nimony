@@ -306,7 +306,7 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
-  let fn = n.firstSon
+  let fn = n.childCursor
   if not forceStaticCall and fn.kind == Symbol and isMethod(c, fn.symId):
     takeInto dest, n: # `(call)`
       trMethodCall c, dest, n
@@ -592,7 +592,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr c, dest, n
@@ -602,7 +602,7 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
-    takeToken dest, n
+    takeTree dest, n
   of TagLit:
     case n.exprKind
     of CallKinds - {ProccallX}:
@@ -839,7 +839,7 @@ proc transformVTables*(pass: var Pass; needsXelim: var bool) =
   processMethods c
 
   assert n.stmtKind == StmtsS
-  pass.dest.addParLe(n.tag, n.info)
+  pass.dest.addParLe(n.cursorTagId, n.info)
   inc n
 
   emitVTables c, pass.dest

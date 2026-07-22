@@ -90,7 +90,7 @@ proc declTempOuter(c: var Context, prefix: string; value = "false"): string =
 proc compileErr(c: var Context; it: string; n: var Cursor): string =
   inc n
   if n.kind == StringLit:
-    result = "error( " & c.args & ", " & escape(pool.strings[n.litId]) & ")"
+    result = "error( " & c.args & ", " & escape(pool.strings[n.strId]) & ")"
     inc n
   else:
     result = ""
@@ -119,7 +119,7 @@ proc compileOr(c: var Context; it: string; n: var Cursor): string =
       else: declTemp(c, "st", "getStack(" & c.args0 & ")")
   
   while true:
-    if n.kind == ParLe and pool.tags[n.tagId] == "ERR":
+    if n.kind == ParLe and pool.tags[n.cursorTagId] == "ERR":
       ind c
       c.outp.add compileErr(c, it, n)
       break
@@ -236,7 +236,7 @@ proc compileKeywArgs(c: var Context; it, tag, resultVar: string; n: var Cursor) 
       var errmsg = ""
       if e.kind == DotToken:
         errmsg = "in rule " & c.currentRule & ": <empty node> expected"
-      elif e.kind == ParLe and pool.tags[e.tagId] in [
+      elif e.kind == ParLe and pool.tags[e.cursorTagId] in [
         "ZERO_OR_MANY", "ONE_OR_MANY", "OR", "ZERO_OR_ONE",
         "SCOPE", "ENTER", "QUERY", "COND", "DO", "LET",
         "MATCH"]: errmsg = "invalid " & c.currentRule
@@ -259,7 +259,7 @@ proc compileKeywArgs(c: var Context; it, tag, resultVar: string; n: var Cursor) 
   c.outp.add " = matchParRi(" & c.args & ")"
 
 proc compileKeyw(c: var Context; it: string, n: var Cursor): string =
-  let tag = pool.tags[n.tagId]
+  let tag = pool.tags[n.cursorTagId]
 
   c.foundTags[tag] = 1
   if c.specTags.len > 0 and not c.specTags.hasKey(tag):
@@ -291,11 +291,11 @@ proc compileKeyw(c: var Context; it: string, n: var Cursor): string =
 
 proc compilePopVar(c: var Context; it: string; n: var Cursor): string =
   ind c
-  c.outp.add "emit(" & c.args0 & ", " & normalizedPopVar(pool.strings[n.litId]) & ")"
+  c.outp.add "emit(" & c.args0 & ", " & normalizedPopVar(pool.strings[n.strId]) & ")"
   result = "true"
 
 proc compileRuleInvocation(c: var Context; it: string; n: var Cursor): string =
-  let ruleName = pool.strings[n.litId]
+  let ruleName = pool.strings[n.strId]
   if not c.seenRules.contains(ruleName):
     if not c.used.containsOrIncl(ruleName):
       c.forw.add "proc " & c.procPrefix & ruleName & c.signature(ruleName) & "\n"
@@ -323,7 +323,7 @@ proc compileSymbolDef(c: var Context; it: string, n: var Cursor): string =
 
 proc compileEmit(c: var Context; it: string, n: var Cursor): string =
   assert n.kind == StringLit
-  let s = pool.strings[n.litId]
+  let s = pool.strings[n.strId]
   ind c
   c.outp.add "emit(" & c.args & ", " & escape(s) & ")"
   result = "true"
@@ -338,25 +338,25 @@ proc compileAtom(c: var Context; it: string, n: var Cursor): string =
   if n.kind == DotToken:
     result = "matchEmpty(" & c.args & ")"
   elif n.kind == Ident:
-    if pool.strings[n.litId] == "SYMBOL":
+    if pool.strings[n.strId] == "SYMBOL":
       result = "lookupSym(" & c.args & ")"
-    elif pool.strings[n.litId] == "SYMBOLDEF":
+    elif pool.strings[n.strId] == "SYMBOLDEF":
       result = compileSymbolDef(c, it, n)
-    elif pool.strings[n.litId] == "IDENT":
+    elif pool.strings[n.strId] == "IDENT":
       result = "matchIdent(" & c.args & ")"
-    elif pool.strings[n.litId] == "STRINGLITERAL":
+    elif pool.strings[n.strId] == "STRINGLITERAL":
       result = "matchStringLit(" & c.args & ")"
-    elif pool.strings[n.litId] == "CHARLITERAL":
+    elif pool.strings[n.strId] == "CHARLITERAL":
       result = "matchCharLit(" & c.args & ")"
-    elif pool.strings[n.litId] == "INTLIT":
+    elif pool.strings[n.strId] == "INTLIT":
       result = "matchIntLit(" & c.args & ")"
-    elif pool.strings[n.litId] == "UINTLIT":
+    elif pool.strings[n.strId] == "UINTLIT":
       result = "matchUIntLit(" & c.args & ")"
-    elif pool.strings[n.litId] == "FLOATLIT":
+    elif pool.strings[n.strId] == "FLOATLIT":
       result = "matchFloatLit(" & c.args & ")"
-    elif pool.strings[n.litId] == "ANY":
+    elif pool.strings[n.strId] == "ANY":
       result = "matchAny(" & c.args & ")"
-    elif pool.strings[n.litId] in c.popVars.getOrDefault(c.currentRule) or pool.strings[n.litId] in c.localPopVars:
+    elif pool.strings[n.strId] in c.popVars.getOrDefault(c.currentRule) or pool.strings[n.strId] in c.localPopVars:
       result = compilePopVar(c, it, n)
     else:
       result = compileRuleInvocation(c, it, n)
@@ -369,7 +369,7 @@ proc compileAtom(c: var Context; it: string, n: var Cursor): string =
 proc compileIdent(c: var Context; it: string, n: var Cursor): string =
   inc n
   if n.kind == StringLit:
-    result = "matchIdent(" & c.args & ", " & escape(pool.strings[n.litId]) & ")"
+    result = "matchIdent(" & c.args & ", " & escape(pool.strings[n.strId]) & ")"
     inc n
   else:
     result = ""
@@ -380,7 +380,7 @@ proc compileQuery(c: var Context; it, prefix: string, n: var Cursor): string =
   result = ""
   while n.kind in {StringLit, Ident}:
     if result.len > 0: result.add " or "
-    result.add prefix & pool.strings[n.litId] & "(" & c.args & ")"
+    result.add prefix & pool.strings[n.strId] & "(" & c.args & ")"
     inc n
 
   if n.hasMore:
@@ -392,7 +392,7 @@ proc compileDo(c: var Context; it: string, n: var Cursor): string =
 
   if n.kind in {StringLit, Ident}:
     ind c
-    c.outp.add pool.strings[n.litId] & "(" & c.args0
+    c.outp.add pool.strings[n.strId] & "(" & c.args0
     inc n
   else:
     error c, "string literal after DO expected"
@@ -400,7 +400,7 @@ proc compileDo(c: var Context; it: string, n: var Cursor): string =
   var counter = 1
   while n.kind in {StringLit, Ident}:
     if counter > 0: c.outp.add ", "
-    let s = pool.strings[n.litId]
+    let s = pool.strings[n.strId]
     if n.kind == Ident:
       let asNimIdent = c.bindings.getOrDefault(s)
       if asNimIdent.len > 0:
@@ -450,7 +450,7 @@ proc compileEnter(c: var Context; it: string, n: var Cursor): string =
 
   var op = ""
   if n.kind == StringLit:
-    op = pool.strings[n.litId]
+    op = pool.strings[n.strId]
     inc n
   else:
     result = ""
@@ -476,7 +476,7 @@ proc compileFlipFlop(c: var Context; it, mode: string, n: var Cursor): string =
 
   var op = ""
   if n.kind == StringLit:
-    op = pool.strings[n.litId]
+    op = pool.strings[n.strId]
     inc n
   else:
     error c, "string literal after FLIP|FLOP expected"
@@ -519,7 +519,7 @@ proc compileLet(c: var Context; it: string, n: var Cursor): string =
 
   var key = ""
   if n.kind == SymbolDef:
-    key = pool.strings[n.litId]
+    key = pool.strings[n.strId]
     inc n
   else:
     result = ""
@@ -596,7 +596,7 @@ proc compilePop(c: var Context; it: string, n: var Cursor): string =
 proc compileExpr(c: var Context; it: string, n: var Cursor): string =
   if n.kind == ParLe:
     c.localPopCounts.add 0
-    let op = pool.tags[n.tagId]
+    let op = pool.tags[n.cursorTagId]
     case op
     of "OR":
       result = compileOr(c, it, n)
@@ -662,13 +662,13 @@ proc compileRule(c: var Context; it: string, n: var Cursor) =
   c.flipVar = ""
 
   while n.kind == Ident:
-    if pool.strings[n.litId] == "LATEDECL":
+    if pool.strings[n.strId] == "LATEDECL":
       c.ruleFlags.incl LateDecl
       inc n
-    elif pool.strings[n.litId] == "OVERLOADABLE":
+    elif pool.strings[n.strId] == "OVERLOADABLE":
       c.ruleFlags.incl Overloadable
       inc n
-    elif pool.strings[n.litId] == "COLLECT":
+    elif pool.strings[n.strId] == "COLLECT":
       c.ruleFlags.incl Collect
       inc n
     else:
@@ -733,18 +733,18 @@ proc compileRule(c: var Context; it: string, n: var Cursor) =
 
 proc compile(c: var Context, n: Cursor) =
   var n = n
-  if n.kind == ParLe and pool.tags[n.tagId] == "GENERATOR":
+  if n.kind == ParLe and pool.tags[n.cursorTagId] == "GENERATOR":
     c.kind = Generator
     c.procPrefix = "gen"
 
   inc n
-  c.startRule = pool.strings[n.litId]
+  c.startRule = pool.strings[n.strId]
   inc n # skip ident
 
   while true:
-    if n.kind == ParLe and pool.tags[n.tagId] == "RULE":
+    if n.kind == ParLe and pool.tags[n.cursorTagId] == "RULE":
       compileRule(c, (if c.kind == Generator: "" else: "it"), n)
-    elif n.kind == ParLe and pool.tags[n.tagId] == "COM":
+    elif n.kind == ParLe and pool.tags[n.cursorTagId] == "COM":
       skip n
     else:
       break
@@ -863,7 +863,7 @@ proc scanRule(c: var ScanContext, n: var Cursor) =
   c.ruleInvocations[c.currentRule] = initHashSet[string]()
   inc n
   while n.kind == Ident:
-    case pool.strings[n.litId]
+    case pool.strings[n.strId]
     of "LATEDECL", "OVERLOADABLE", "COLLECT":
       inc n
     else: break
@@ -875,14 +875,14 @@ proc scanRule(c: var ScanContext, n: var Cursor) =
   while nesting > 0:
     if n.kind == ParLe:
       popCounts.add 0
-      if pool.tags[n.tagId] == "POP":
+      if pool.tags[n.cursorTagId] == "POP":
         c.scanPop(popVars, popCounts, n)
         inc n
         continue # skip ')' by next iteration so not increase nesting
       else: inc nesting
-    elif n.kind == Ident and pool.strings[n.litId] notin atoms:
-      mgetOrPut(c.popVars, pool.strings[n.litId]).incl popVars.toHashSet
-      mgetOrPut(c.invocations, c.currentRule).incl pool.strings[n.litId]
+    elif n.kind == Ident and pool.strings[n.strId] notin atoms:
+      mgetOrPut(c.popVars, pool.strings[n.strId]).incl popVars.toHashSet
+      mgetOrPut(c.invocations, c.currentRule).incl pool.strings[n.strId]
     if n.kind == ParRi:
       popVars.shrink(popVars.len - popCounts.pop())
       dec nesting
@@ -892,7 +892,7 @@ proc scan(c: var ScanContext; n: Cursor) =
   # This pass is necessary to determine the arguments of the rules
   # (they differ from the standard ones if POP Var was used and then the rule was called). 
   var n = n
-  if n.kind == ParLe and (pool.tags[n.tagId] == "GRAMMAR" or pool.tags[n.tagId] == "GENERATOR"):
+  if n.kind == ParLe and (pool.tags[n.cursorTagId] == "GRAMMAR" or pool.tags[n.cursorTagId] == "GENERATOR"):
     inc n
     if n.kind == Ident:
       inc n
@@ -900,15 +900,15 @@ proc scan(c: var ScanContext; n: Cursor) =
       error c, "GRAMMAR takes an IDENT that is the name of the starting rule"
 
     while true:
-      if n.kind == ParLe and pool.tags[n.tagId] == "RULE":
+      if n.kind == ParLe and pool.tags[n.cursorTagId] == "RULE":
         c.scanRule(n)
-      elif n.kind == ParLe and pool.tags[n.tagId] == "COM":
+      elif n.kind == ParLe and pool.tags[n.cursorTagId] == "COM":
         skip n
       if n.kind == ParRi:
         break
   else:
     if n.kind == ParLe:
-      error c, "GRAMMAR expected but got " & pool.tags[n.tagId]
+      error c, "GRAMMAR expected but got " & pool.tags[n.cursorTagId]
     else:
       error c, "GRAMMAR expected but got " & $n
   

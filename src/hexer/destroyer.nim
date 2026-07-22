@@ -219,7 +219,7 @@ proc leaveAnonBlock(c: var Context) =
     bug "do not know which block to leave"
 
 proc trBreak(c: var Context; n: var Cursor) =
-  let lab = n.firstSon
+  let lab = n.childCursor
   if lab.kind == Symbol:
     leaveNamedBlock(c, lab.symId)
   else:
@@ -253,7 +253,7 @@ proc trRaise(c: var Context; n: var Cursor) =
 
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
-  c.dest.addParLe(n.tag, n.info)
+  c.dest.addParLe(n.cursorTagId, n.info)
   var r = takeLocal(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -284,12 +284,12 @@ proc registerSinkParameters(c: var Context; params: Cursor) =
   while p.hasMore:
     let r = takeLocal(p, SkipFinalParRi)
     if r.typ.typeKind == SinkT:
-      let destructor = getDestructor(c.lifter[], r.typ.firstSon, p.endInfo)
+      let destructor = getDestructor(c.lifter[], r.typ.childCursor, p.endInfo)
       if destructor != NoSymId:
         c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trProcDecl(c: var Context; n: var Cursor) =
-  c.dest.addParLe(n.tag, n.info)
+  c.dest.addParLe(n.cursorTagId, n.info)
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -336,7 +336,7 @@ proc trWhile(c: var Context; n: var Cursor) =
     trNestedScope c, n, WhileOrBlock
 
 proc trBlock(c: var Context; n: var Cursor) =
-  let label = n.firstSon
+  let label = n.childCursor
   let labelId = if label.kind == SymbolDef: label.symId else: c.anonBlock
   var oldScope = move c.currentScope
   c.currentScope = createNestedScope(WhileOrBlock, oldScope, n.info, labelId)
@@ -389,7 +389,7 @@ proc trTry(c: var Context; n: var Cursor) =
     hasExcept = true
     skip nn
   copyInto(c.dest, n):
-    let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
+    let fin = if nn.substructureKind == FinU: nn.childCursor else: default(Cursor)
     # Body kind depends on whether an `except` arm exists:
     #   - has except: raise from the body is caught by that except, so the
     #     finally runs naturally afterward (no duplication) and there's no
@@ -457,7 +457,7 @@ proc tr(c: var Context; n: var Cursor) =
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
         BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
       if n.isTagLit:
-        c.dest.addParLe(n.tag, n.info)
+        c.dest.addParLe(n.cursorTagId, n.info)
         n.into:
           while n.hasMore:
             tr(c, n)
@@ -472,7 +472,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
     dest: move(pass.dest))
   assert n.stmtKind == StmtsS
-  c.dest.addParLe(n.tag, n.info)
+  c.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr(c, n)

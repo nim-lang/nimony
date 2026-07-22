@@ -157,7 +157,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var pragmas = default(Cursor)
     let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
     if isConcrete and n.stmtKind == StmtsS:
-      dest.addParLe(n.tag, n.info) # (stmts)
+      dest.addParLe(n.cursorTagId, n.info) # (stmts)
       trRequires(c, dest, pragmas)
       trProcBody(c, dest, n)
       dest.addParRi()
@@ -671,7 +671,7 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParLe(StmtsS, info)
     # lift both so (n, (n = 123; n)) works
     a = liftTempAddr(c, dest, aOrig, typ, info)
-    b = liftTemp(c, dest, bOrig, typ.firstSon, info)
+    b = liftTemp(c, dest, bOrig, typ.childCursor, info)
   else:
     a = aOrig
     b = bOrig
@@ -858,7 +858,7 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   var scopes: seq[Cursor] = @[]
   scopes.add n; n = sub(n)
   while n.exprKind == ExprX:
@@ -1109,7 +1109,7 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   # is elided), so the old "close, shrink away, re-close" dance is
   # impossible.
   assert n.stmtKind == StmtsS
-  pass.dest.addParLe(n.tag, n.info)
+  pass.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr c, pass.dest, n, isTopScope = true

@@ -282,7 +282,7 @@ proc isSimpleExpression(n: var Cursor): bool =
     inc n
 
 proc trReturn(c: var Context; n: var Cursor) =
-  let retVal = n.firstSon
+  let retVal = n.childCursor
   var exp = retVal
   if isResultUsage(c, retVal):
     takeTree c.dest, n
@@ -305,7 +305,7 @@ proc trReturn(c: var Context; n: var Cursor) =
 
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
-  if le.kind == Symbol or (le.exprKind in {DerefX, HderefX} and le.firstSon.kind == Symbol):
+  if le.kind == Symbol or (le.exprKind in {DerefX, HderefX} and le.childCursor.kind == Symbol):
     # simple enough:
     takeTree result, le
   else:
@@ -645,7 +645,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
     {.ensuresNif: addedAny(c.dest).} =
   case n.kind
   of Symbol, UIntLit, StrLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
-    takeToken c.dest, n
+    takeTree c.dest, n
   of TagLit:
     case n.exprKind
     of DestroyX:
@@ -752,7 +752,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
     raiseAssert "BUG: unexpected ParRi in duplifier.trOnlyEssentials"
 
 proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
-  c.dest.addParLe(n.tag, n.info)
+  c.dest.addParLe(n.cursorTagId, n.info)
   let oldResultSym = c.resultSym
   let oldFlags = c.flags
   c.resultSym = NoSymId
@@ -885,7 +885,7 @@ proc isCursorField(fieldKey: Cursor): bool =
 
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
-  let typ = n.firstSon
+  let typ = n.childCursor
   if hasDestructor(c, typ) and e == WantNonOwner:
     ow = bindToTemp(c, typ, n.info)
   copyInto c.dest, n:
@@ -948,7 +948,7 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
 
   var ow = bindToTemp(c, refType, info, if e == WantNonOwner: VarS else: CursorS)
 
-  let baseType = refType.firstSon
+  let baseType = refType.childCursor
   var refTypeCopy = refType
   let typeKey = takeMangle(refTypeCopy, Frontend, c.lifter.bits)
   let typeSym = pool.syms.getOrIncl(genericTypeName(typeKey, c.moduleSuffix))
@@ -1057,7 +1057,7 @@ proc trValue(c: var Context; n: Cursor; e: Expects) =
 
 proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   let kind = n.symKind
-  c.dest.addParLe(n.tag, n.info)
+  c.dest.addParLe(n.cursorTagId, n.info)
   let r = takeLocal(n, SkipFinalParRi)
   if k == ResultS and r.name.isSymbolDef:
     c.resultSym = r.name.symId
@@ -1104,7 +1104,7 @@ proc trStmtListExpr(c: var Context; n: var Cursor; e: Expects)
 proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
   let typ = getType(c.typeCache, n)
-  let arg = n.firstSon
+  let arg = n.childCursor
   let info = n.info
   # `ensureMove(hderef (call subscript x i))` reads an lvalue through a
   # `var V`-returning accessor. With the old `derefConstructs=true` check
@@ -1341,7 +1341,7 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
         while n.isDotToken: inc n
         if n.isStringLit:
           try:
-            r.error infoToStr(info), pool.strings[n.litId]
+            r.error infoToStr(info), pool.strings[n.strId]
           except:
             quit 1
           inc result
@@ -1350,7 +1350,7 @@ proc checkForMoveTypesImpl(n: var Cursor; r: var Reporter): int =
           result += checkForMoveTypesImpl(n, r)
     else:
       if ek in CallKinds:
-        let fn = n.firstSon
+        let fn = n.childCursor
         if fn.isSymbol:
           result += checkForErrorRoutine(r, fn.symId, n.info)
       n.loopInto:
@@ -1373,7 +1373,6 @@ proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
 
   var ndest = beginRead(c.dest)
   let errorCount = checkForMoveTypes(c, ndest)
-  endRead(c.dest)
   c.typeCache.closeScope()
 
   if errorCount > 0:

@@ -152,24 +152,24 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
   ## recursively for known sections.
   var c = c
   if c.isTagLit:
-    case pool.tags[c.tag]
+    case pool.tags[c.cursorTagId]
     of "defines":
       c.into:
         while c.hasMore:
           if c.isStringLit:
-            result.defines.addUnique pool.strings[c.litId]
+            result.defines.addUnique pool.strings[c.strId]
           skip c
     of "paths":
       c.into:
         while c.hasMore:
           if c.isStringLit:
-            result.paths.add pool.strings[c.litId]
+            result.paths.add pool.strings[c.strId]
           skip c
     of "nimblepaths":
       c.into:
         while c.hasMore:
           if c.isStringLit:
-            result.nimblePaths.add pool.strings[c.litId]
+            result.nimblePaths.add pool.strings[c.strId]
           skip c
     of "intbits":
       c.into:

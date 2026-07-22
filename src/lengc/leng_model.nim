@@ -25,7 +25,7 @@ proc skipParRi*(n: var Cursor) =
       writeStackTrace()
     quit "expected ')', but got: " & $n.kind
 
-template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
+template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](cursorTagId(c))
 
 proc stmtKind*(c: Cursor): LengStmt {.inline.} =
   if c.isTagLit and rawTagIsLengStmt(tagEnum(c)):
@@ -41,7 +41,7 @@ proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
     else:
       result = NoPragma
   elif c.kind == Ident:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
     if rawTagIsLengPragma(cast[TagEnum](tagId)):
       result = cast[LengPragma](tagId)
     else:
@@ -51,14 +51,14 @@ proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
 
 proc substructureKind*(c: Cursor): LengOther {.inline.} =
   if c.isTagLit and rawTagIsLengOther(tagEnum(c)):
-    result = cast[LengOther](tag(c))
+    result = cast[LengOther](cursorTagId(c))
   else:
     result = NoSub
 
 proc typeKind*(c: Cursor): LengType {.inline.} =
   if c.isTagLit:
     if rawTagIsLengType(tagEnum(c)):
-      result = cast[LengType](tag(c))
+      result = cast[LengType](cursorTagId(c))
     else:
       result = NoType
   elif c.kind == DotToken:
@@ -68,18 +68,18 @@ proc typeKind*(c: Cursor): LengType {.inline.} =
 
 proc typeQual*(c: Cursor): LengTypeQualifier {.inline.} =
   if c.isTagLit and rawTagIsLengTypeQualifier(tagEnum(c)):
-    result = cast[LengTypeQualifier](tag(c))
+    result = cast[LengTypeQualifier](cursorTagId(c))
   else:
     result = NoQualifier
 
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
   if c.isTagLit:
     if rawTagIsCallConv(tagEnum(c)):
-      result = cast[CallConv](tag(c))
+      result = cast[CallConv](cursorTagId(c))
     else:
       result = NoCallConv
   elif c.kind == Ident:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
     if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
     else:
@@ -90,7 +90,7 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
 proc exprKind*(c: Cursor): LengExpr {.inline.} =
   if c.isTagLit:
     if rawTagIsLengExpr(tagEnum(c)):
-      result = cast[LengExpr](tag(c))
+      result = cast[LengExpr](cursorTagId(c))
     else:
       result = NoExpr
   else:
@@ -114,7 +114,7 @@ proc tracebackTypeC*(n: Cursor): Cursor =
 
 # Read helpers:
 
-template elementType*(n: Cursor): Cursor = n.firstSon
+template elementType*(n: Cursor): Cursor = n.childCursor
 
 type
   TypeDecl* = object

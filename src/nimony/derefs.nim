@@ -82,8 +82,8 @@ type
       # rewrite bare `raise` into `exc = err; raise _e` so the original error code
       # is preserved when propagating past the handler.
 
-proc takeToken(c: var Context; n: var Cursor) {.inline.} =
-  c.dest.takeToken n
+proc takeTree(c: var Context; n: var Cursor) {.inline.} =
+  c.dest.takeTree n
 
 proc endsWithOpenHderef(dest: TokenBuf): bool =
   ## True when the buffer's last value is a freshly opened `(hderef` head.
@@ -92,7 +92,7 @@ proc endsWithOpenHderef(dest: TokenBuf): bool =
   result = false
   if dest.len > 0:
     let t = dest[lastValueStart(dest)]
-    result = t.kind == TagLit and t.tag == TagId(HderefTagId)
+    result = t.kind == TagLit and t.tagId == TagId(HderefTagId)
 
 proc rootOf(n: Cursor; allowIndirection = false): SymId =
   var n = n
@@ -172,7 +172,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects)
 
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
   if not n.isTagLit:
-    takeToken c, n
+    takeTree c, n
   else:
     takeInto c.dest, n:
       while n.hasMore:
@@ -418,7 +418,7 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
 proc trProcPragmas(c: var Context; n: var Cursor) =
   # we also need to traverse the `requires` pragmas!
   if n.isDotToken:
-    takeToken c, n
+    takeTree c, n
   else:
     takeInto c.dest, n: # pragmas
       while n.hasMore:
@@ -615,7 +615,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       skip n
       return
 
-  c.dest.addParLe(head.tag, n.info) # (call)
+  c.dest.addParLe(head.tagId, n.info) # (call)
   tr c, n, WantT # `fn` part of the call
 
   var needHderef = false
@@ -703,7 +703,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
 
 proc trSonsLocation(c: var Context; n: var Cursor; e: Expects) =
   if not n.isTagLit:
-    takeToken c, n
+    takeTree c, n
   elif n.exprKind in {DotX, DdotX}:
     takeInto c.dest, n:
       tr c, n, e
@@ -727,7 +727,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSonsLocation c, n, WantT
     else:
-      if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
+      if (k in {MutT, LentT} and not isViewType(typ.childCursor)) or k == OutT:
         if endsWithOpenHderef(c.dest):
           trSonsLocation c, n, WantT
         else:
@@ -740,7 +740,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
     if e == WantVarTResult:
       c.dest.addParLe(HaddrX, n.info)
       if n.isSymbol:
-        takeToken c, n
+        takeTree c, n
       else:
         trSonsLocation c, n, WantT
       c.dest.addParRi()
@@ -923,7 +923,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
   ## error codes `exc` is nil and every arm falls through to the else, where
   ## we re-raise so the original `errorTracker` value is preserved.
   let info = n.info
-  c.dest.addParLe(n.tag, n.info)
+  c.dest.addParLe(n.cursorTagId, n.info)
   n.into:  # take '(try' tag
 
     # Allow raises inside the try body — there is at least one except arm:
@@ -1105,7 +1105,7 @@ proc trRaise(c: var Context; n: var Cursor) =
       return
     # No active handler — pass through unchanged.
     takeInto c.dest, n:  # `(raise`
-      takeToken c, n  # `.`
+      takeTree c, n  # `.`
     return
 
   let opType = getType(c.typeCache, lookahead, {SkipAliases})
@@ -1169,7 +1169,7 @@ proc trFor(c: var Context; n: var Cursor) =
     (unpackflat
      (let :p.0 . .
       (mut string.0.sysvq0asl) .)) ]#
-  var nn = n.firstSon
+  var nn = n.childCursor
   skip nn # iterator
   case substructureKind(nn)
   of UnpackflatU, UnpacktupU:
@@ -1203,7 +1203,7 @@ proc trType(c: var Context; n: var Cursor) =
   ## For types with custom hooks (from sem), use those.
   ## For non-generic nominal types (objects/distincts), generate hooks via lifter.
   let info = n.info
-  c.dest.addParLe(n.tag, n.info)
+  c.dest.addParLe(n.cursorTagId, n.info)
   n.into: # (type
     var s = SymId(0)
     if n.isSymbolDef:
@@ -1240,7 +1240,7 @@ proc trType(c: var Context; n: var Cursor) =
         c.dest.addParLe PragmasU, info
         inc n
       else:
-        c.dest.addParLe(n.tag, n.info) # existing pragma tag
+        c.dest.addParLe(n.cursorTagId, n.info) # existing pragma tag
         n.into:
           while n.hasMore:
             c.dest.takeTree n # existing individual pragmas
@@ -1255,7 +1255,7 @@ proc trType(c: var Context; n: var Cursor) =
         c.dest.addParLe PragmasU, info
         inc n
       else:
-        c.dest.addParLe(n.tag, n.info) # existing pragma tag
+        c.dest.addParLe(n.cursorTagId, n.info) # existing pragma tag
         n.into:
           while n.hasMore:
             c.dest.takeTree n # existing individual pragmas
@@ -1312,7 +1312,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       cannotPassToVar c.dest, n.info, n
       inc n
     else:
-      takeToken c, n
+      takeTree c, n
   of TagLit:
     case n.exprKind
     of CallKinds:
@@ -1422,7 +1422,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
   else:
     # atoms (UnknownToken/EofToken/DotToken/Ident/SymbolDef) plus, in the
     # classic model, a real ParRi scope-close: copy the token verbatim.
-    takeToken c, n
+    takeTree c, n
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
@@ -1437,7 +1437,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
-  c.dest.addParLe(n2.tag, n2.info)
+  c.dest.addParLe(n2.cursorTagId, n2.info)
   n2 = sub(n2)
   while n2.hasMore:
     # clean up dots that sem might have introduced for moving inner generic instances:

@@ -79,7 +79,7 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
   if a.kind != b.kind: return false
   case a.kind
   of TagLit:
-    if a.tagId != b.tagId: return false
+    if a.cursorTagId != b.cursorTagId: return false
     if a.exprKind in {PatX, ArratX}:
       # compare the accessed object only, not the array indexes:
       inc a
@@ -104,7 +104,7 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
   of FloatLit:
     result = a.floatVal == b.floatVal
   of StrLit, Ident:
-    result = a.litId == b.litId
+    result = a.strId == b.strId
   of CharLit:
     result = a.uoperand == b.uoperand
   of DotToken:
@@ -222,7 +222,7 @@ proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex
     of TagLit:
       inc nested
       # nifcore: every TagLit's close is implicit; no MaxJump sentinel.
-      closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
+      closeStack.add(i + subtreeWidth(readonlyCursorAt(cf, i)) - 1)
     else:
       discard # nifcore: no physical ParRi token; closes are tracked below
     let s = srcMap[i]
@@ -414,8 +414,6 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf;
     # source-position → position index so `findStart` runs in O(1) per query.
     var srcMap: seq[int32] = @[]
     mover.cf = toControlflowWithMap(beginRead buf, srcMap)
-    freeze mover.cf
-    endRead buf
     mover.index = buildFindStartIndex(mover.cf, srcMap)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0

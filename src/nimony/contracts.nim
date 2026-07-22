@@ -225,19 +225,19 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   result = false
   case t.typeKind
   of PtrT, RefT:
-    var e = t.firstSon
+    var e = t.childCursor
     skip e # base type
     if e.hasMore and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
-    let e = t.firstSon
+    let e = t.childCursor
     # no base type
     if e.hasMore and e.substructureKind == mark:
       result = true
   of ProctypeT:
     # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
     # nilability marker is at slot 0.
-    let e = t.firstSon
+    let e = t.childCursor
     if e.substructureKind == mark:
       result = true
   else:
@@ -327,7 +327,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
 
 proc analyseArrayConstr(c: var Context; n: var Cursor) =
   n.into:
-    let expected = n.firstSon # element type of the array
+    let expected = n.childCursor # element type of the array
     skip n # type
     while n.hasMore:
       checkNilMatch c, n, expected
@@ -335,7 +335,7 @@ proc analyseArrayConstr(c: var Context; n: var Cursor) =
 
 proc analyseTupConstr(c: var Context; n: var Cursor) =
   n.into:
-    var expected = n.firstSon # type of the first field
+    var expected = n.childCursor # type of the first field
     skip n # type
     while n.hasMore:
       assert expected.hasMore
@@ -842,7 +842,6 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
 proc checkContracts(c: var Context; n: Cursor) =
   c.cf = toControlflow(n)
   c.facts = createFacts()
-  freeze c.cf
   #echo "CF IS ", codeListing(c.cf)
 
   c.startInstr = readonlyCursorAt(c.cf, 0)

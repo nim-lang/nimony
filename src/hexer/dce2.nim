@@ -82,7 +82,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
     of TypeS:
       # types are fundamentally different from procs when it comes to generic instantiations:
       # We need to ensure **consistency** for types, but for procs we need to ensure **uniqueness**.
-      let headTag = n.tag
+      let headTag = n.cursorTagId
       dest.addParLe(headTag, n.info)
       n.into:
         if n.isSymbolDef:
@@ -99,7 +99,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       dest.addParRi()
 
     of ProcS, VarS, ConstS, GvarS, TvarS:
-      let headTag = n.tag
+      let headTag = n.cursorTagId
       let headInfo = n.info
       n.into:
         if n.isSymbolDef:
@@ -147,7 +147,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             tr dest, n, alive, resolved
           dest.addParRi()
     else:
-      dest.addParLe(n.tag, n.info)
+      dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           tr dest, n, alive, resolved
@@ -161,14 +161,13 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
     dest.addSymDef t.toLengName, n.info
     inc n
   else: # atoms and suffix kinds; classic: a physical ParRi cannot appear here
-    dest.takeToken n
+    dest.takeTree n
 
 proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; outdir: string) =
   var buf = parseFromFile(file)
   var n = beginRead(buf)
   var dest = createTokenBuf(buf.len)
   tr dest, n, live, resolved
-  endRead(buf)
   let outPath =
     if outdir.len > 0:
       outdir / splitModulePath(file).name & ".c.nif"
@@ -249,14 +248,14 @@ proc readLiveFile*(infile: string): LiveSet =
     while n.hasMore:
       if not n.isTagLit:
         raiseAssert infile & ": expected ParLe"
-      if n.tag == resolveTagId:
+      if n.cursorTagId == resolveTagId:
         n.into:                                 # (resolved ...)
           while n.hasMore:
             if n.isTagLit and n.substructureKind == KvU:
               n.into:                           # (kv ...)
                 if not n.isStringLit:
                   raiseAssert infile & ": kv key must be StringLit"
-                let key = pool.strings[n.litId]
+                let key = pool.strings[n.strId]
                 skip n
                 if n.kind != Symbol:
                   raiseAssert infile & ": kv value must be Symbol"
@@ -266,15 +265,15 @@ proc readLiveFile*(infile: string): LiveSet =
                   raiseAssert infile & ": expected ')' closing kv"
             else:
               raiseAssert infile & ": expected (kv …)"
-      elif n.tag == liveTagId:
+      elif n.cursorTagId == liveTagId:
         n.into:                                 # (live ...)
           while n.hasMore:
-            if not n.isTagLit or n.tag != modTagId:
+            if not n.isTagLit or n.cursorTagId != modTagId:
               raiseAssert infile & ": expected (mod …)"
             n.into:                             # (mod ...)
               if not n.isStringLit:
                 raiseAssert infile & ": (mod) name must be StringLit"
-              let modName = pool.strings[n.litId]
+              let modName = pool.strings[n.strId]
               skip n
               var syms = initHashSet[SymId]()
               while n.hasMore:

@@ -22,6 +22,15 @@ export nifpools
 
 from nifreader import Reader, ExpandedToken, decodeStr
 
+# ── Classic names the Nim compiler side still uses ───────────────────────
+
+type
+  PackedToken* = NifToken           ## ast2nif still says PackedToken
+
+proc litId*(n: NifToken): StrId {.inline.} = strId(n)
+proc litId*(c: Cursor): StrId {.inline.} = strId(c)
+proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
+
 # ── Classic interned float literals (ast2nif) ────────────────────────────
 
 type

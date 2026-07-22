@@ -63,7 +63,7 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
 
 proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
   if n.isStringLit:
-    result = n.litId
+    result = n.strId
     inc n
   elif n.isSymbol:
     var inlineValue = getInitValue(c.typeCache, n.symId)
@@ -77,7 +77,7 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
     of SufX:
       n.into:
         assert n.isStringLit
-        result = n.litId
+        result = n.strId
         while n.hasMore: skip n
     of HconvX, ConvX:
       n.into:
@@ -127,8 +127,8 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         assert nb.substructureKind == RangesU
         nb.into:                              # (ranges ...)
           while nb.hasMore:
-            let litId = getSimpleStringLit(c, nb)
-            pairs.add (pool.strings[litId], labl)
+            let strId = getSimpleStringLit(c, nb)
+            pairs.add (pool.strings[strId], labl)
         skip nb # skip action for now
     else:
       skip nb

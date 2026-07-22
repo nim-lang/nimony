@@ -55,7 +55,7 @@ proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     assert n.isSymbolDef
     let s = n.symId
-    dest.takeToken n
+    dest.takeTree n
     # Do versioning for cfvars!
     newValueFor c.vt, s
 
@@ -116,7 +116,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
     inc n
   of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
+    dest.takeTree n
   of TagLit:
     case n.exprKind
     of CallKinds:
@@ -164,7 +164,7 @@ proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.addParLe(n.tag, n.info) # "ite" or "itec"
+  dest.addParLe(n.cursorTagId, n.info) # "ite" or "itec"
   let iteStart = n
   n = sub(n)
   trExpr c, dest, n
@@ -213,7 +213,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openSection c.vt
 
-  dest.addParLe(n.tag, n.info) # "loop"
+  dest.addParLe(n.cursorTagId, n.info) # "loop"
   let loopStart = n
   n = sub(n)
 
@@ -221,7 +221,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trStmt c, dest, n # pre condition
   trExpr c, dest, n # condition
   assert n.stmtKind == StmtsS
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   let bodyStart = n
   n = sub(n)
   while n.hasMore:
@@ -253,14 +253,14 @@ proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
       assert n.isSymbol
       let s = n.symId
       killVar c.vt, s
-      dest.takeToken n
+      dest.takeTree n
 
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     while n.hasMore:
       assert n.isSymbol
       let s = n.symId
-      dest.takeToken n
+      dest.takeTree n
       # Do versioning for cfvars!
       newValueFor c.vt, s
 
@@ -317,13 +317,12 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var elimJumps = ensureMove(pass.dest)
   var n = beginRead(elimJumps)
   assert n.stmtKind == StmtsS, $n.kind
-  result.addParLe(n.tag, n.info)
+  result.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()
-  endRead elimJumps
 
 when isMainModule:
   from std/os import paramStr, paramCount

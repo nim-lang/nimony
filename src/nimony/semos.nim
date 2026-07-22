@@ -147,13 +147,13 @@ proc moduleNameFromPath*(path: string): string =
 proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs: bool) =
   case n.kind
   of StrLit:
-    let s = pool.strings[n.litId]
+    let s = pool.strings[n.strId]
     # string literal could contain a path or .nim extension:
     let name = moduleNameFromPath(s)
     res.add ImportedFilename(path: s, name: name)
     inc n
   of Ident:
-    let s = pool.strings[n.litId]
+    let s = pool.strings[n.strId]
     res.add ImportedFilename(path: s, name: s)
     inc n
   of Symbol:
@@ -257,11 +257,11 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
           inc n
           if n.substructureKind == KvU:
             inc n
-            if n.isIdent and pool.strings[n.litId] == "plugin":
+            if n.isIdent and pool.strings[n.strId] == "plugin":
               inc n
               if n.isStringLit:
                 for i in start ..< res.len:
-                  res[i].plugin = pool.strings[n.litId]
+                  res[i].plugin = pool.strings[n.strId]
                   success = true
                 inc n
                 if not n.hasMore: inc n

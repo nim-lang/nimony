@@ -482,7 +482,7 @@ proc isSumOfProducts*(n: TypeCursor): bool =
 proc multiplyMinterms(buf: var TokenBuf; a, b: var TypeCursor) =
   if a.typeKind == AndT:
     # flatten:
-    buf.addParLe(a.tag, a.info)
+    buf.addParLe(a.cursorTagId, a.info)
     a.into:
       while a.hasMore:
         takeTree buf, a
@@ -495,7 +495,7 @@ proc multiplyMinterms(buf: var TokenBuf; a, b: var TypeCursor) =
     buf.addParRi()
   else:
     if b.typeKind == AndT:
-      buf.addParLe(b.tag, b.info)
+      buf.addParLe(b.cursorTagId, b.info)
       b.into:
         takeTree buf, a
         while b.hasMore:
@@ -562,7 +562,7 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
       reorderSumOfProducts(buf, n, negative)
       while n.hasMore:
         # move both operands to `buf2` then fold into `buf`:
-        for tok in sumStart ..< buf.len: buf2.addRaw buf[tok]
+        for tok in sumStart ..< buf.len: buf2.add buf[tok]
         buf.shrink sumStart
         let bStart = buf2.len
         reorderSumOfProducts(buf2, n, negative)
@@ -581,8 +581,6 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
           break
         else:
           multiplySums(buf, a, b)
-        endRead(buf2)
-        endRead(buf2)
         buf2.shrink 0
   of OrT:
     # flatten:
@@ -598,7 +596,6 @@ proc reorderSumOfProducts*(buf: var TokenBuf; n: var TypeCursor; negative = fals
               takeTree buf, n2
         else:
           buf.addSubtree n2
-        endRead(buf2)
         buf2.shrink 0
     buf.addParRi()
   else:

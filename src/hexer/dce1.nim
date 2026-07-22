@@ -106,7 +106,7 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
       while n.hasMore:
         if not n.isTagLit:
           raiseAssert infile & ": expected ParLe"
-        if n.tag == rootTag:
+        if n.cursorTagId == rootTag:
           n.into:                               # (roots ...)
             while n.hasMore:
               if n.kind == Symbol:
@@ -114,7 +114,7 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
                 skip n
               else:
                 raiseAssert infile & ": expected Symbol"
-        elif n.tag == depTag:
+        elif n.cursorTagId == depTag:
           n.into:                               # (uses ...)
             let key = n.symId
             result.uses[key] = initHashSet[SymId]()
@@ -125,7 +125,7 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
                 skip n
               else:
                 raiseAssert infile & ": expected Symbol"
-        elif n.tag == offerTag:
+        elif n.cursorTagId == offerTag:
           n.into:                               # (offers ...)
             while n.hasMore:
               if n.kind == Symbol:
@@ -141,4 +141,3 @@ proc writeDceOutput*(buf: var TokenBuf; outfile, dottedSuffix: string) =
   ## avoiding the file read + parse step.
   let n = beginRead(buf)
   prepDce(outfile, n, dottedSuffix)
-  endRead(buf)

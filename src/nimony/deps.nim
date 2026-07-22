@@ -339,12 +339,12 @@ proc evalDepCond(config: NifConfig; n: Cursor): bool =
       inc n
       if not n.isIdent:
         return true
-      let head = pool.strings[n.litId]
+      let head = pool.strings[n.strId]
       inc n
       case head
       of "defined":
         if n.isIdent:
-          result = config.isDefined(pool.strings[n.litId])
+          result = config.isDefined(pool.strings[n.strId])
         elif n.isSymbol:
           var name = pool.syms[n.symId]
           extractBasename(name)
@@ -386,7 +386,7 @@ proc evalDepCond(config: NifConfig; n: Cursor): bool =
     else:
       result = true  # unknown shape — assume true
   elif n.isIdent:
-    case pool.strings[n.litId]
+    case pool.strings[n.strId]
     of "true": result = true
     of "false": result = false
     else: result = true  # bare identifier we cannot evaluate — assume true
@@ -429,7 +429,7 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
         skip y
         if y.substructureKind == PragmasU:
           inc y
-          if y.isIdent and pool.strings[y.litId] == "cyclic":
+          if y.isIdent and pool.strings[y.strId] == "cyclic":
             isCyclic = true
 
       var files: seq[ImportedFilename] = @[]
@@ -486,17 +486,17 @@ proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
       skip it
       x.into TupX:
         assert x.isStringLit
-        let typ = pool.strings[x.litId]
+        let typ = pool.strings[x.strId]
         inc x
         assert x.isStringLit
-        let path = pool.strings[x.litId]
+        let path = pool.strings[x.strId]
         inc x
         assert x.isStringLit
-        let args = pool.strings[x.litId]
+        let args = pool.strings[x.strId]
         inc x
         var linkFlags = ""        # optional 4th field (`.build` per-file link flags)
         if x.isStringLit:
-          linkFlags = pool.strings[x.litId]
+          linkFlags = pool.strings[x.strId]
           inc x
         while x.hasMore: skip x
         if typ in ["C", "ObjC", "Cpp", "ObjCpp"]:
@@ -523,14 +523,14 @@ proc processBundle(c: var DepContext; it: var Cursor) =
       skip it
       x.into TupX:
         assert x.isStringLit
-        let builder = pool.strings[x.litId]
+        let builder = pool.strings[x.strId]
         inc x
         assert x.isStringLit
-        let path = pool.strings[x.litId]
+        let path = pool.strings[x.strId]
         inc x
         var args = ""
         if x.isStringLit:
-          args = pool.strings[x.litId]
+          args = pool.strings[x.strId]
           inc x
         while x.hasMore: skip x
         c.bundles.add Bundle(builder: builder, toolSrc: path,
@@ -549,11 +549,11 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     discard "ignore `export` statement"
     skip n
   of NoStmt:
-    if n.tagId == TagId(BuildIdx):
+    if n.cursorTagId == TagId(BuildIdx):
       processBuild c, n, current
-    elif n.tagId == TagId(BundleIdx):
+    elif n.cursorTagId == TagId(BundleIdx):
       processBundle c, n
-    elif n.tagId == TagId(PassLP):
+    elif n.cursorTagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
           assert n.isStringLit
@@ -561,14 +561,14 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
           # `-framework Foundation`). nifmake quotes each StringLit as ONE argv
           # token, so split into whitespace-separated flags here — otherwise the
           # linker sees `-framework Foundation` as a single unknown argument.
-          for flag in splitWhitespace(pool.strings[n.litId]):
+          for flag in splitWhitespace(pool.strings[n.strId]):
             c.passL.add flag
           inc n
-    elif n.tagId == TagId(PassCP):
+    elif n.cursorTagId == TagId(PassCP):
       n.into:  # (passC …)
         while n.hasMore:
           assert n.isStringLit
-          for flag in splitWhitespace(pool.strings[n.litId]):
+          for flag in splitWhitespace(pool.strings[n.strId]):
             c.passC.add flag
           inc n
     else:
@@ -579,7 +579,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
 
 proc processDeps(c: var DepContext; n: Cursor; current: Node) =
   var n = n
-  if n.isTagLit and pool.tags[n.tagId] == "stmts":
+  if n.isTagLit and pool.tags[n.cursorTagId] == "stmts":
     n.into:
       while n.hasMore:
         processDep c, n, current

@@ -143,13 +143,13 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
   if n.kind != TagLit or n.exprKind != ExprX:
     transformed.takeTree n
     return
-  transformed.addParLe(n.tag, n.info)                    # `(expr`
+  transformed.addParLe(n.cursorTagId, n.info)                    # `(expr`
   n.into:
     while n.hasMore:
       if n.kind != TagLit or n.stmtKind != StmtsS:
         transformed.takeTree n         # not the leading stmts — pass through
         continue
-      transformed.addParLe(n.tag, n.info)                # `(stmts`
+      transformed.addParLe(n.cursorTagId, n.info)                # `(stmts`
       n.into:
         while n.hasMore:
           if n.kind != TagLit or n.stmtKind notin {LetS, VarS, CursorS}:
@@ -256,7 +256,7 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     tar.m = IsAppend
   else:
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
-  tar.t.addParLe(n.tag, n.info)
+  tar.t.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       trExpr c, dest, n, tar
@@ -323,7 +323,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     assert tar.m == IsAppend
 
   let kind = n.exprKind
-  tar.t.addParLe(n.tag, n.info)
+  tar.t.addParLe(n.cursorTagId, n.info)
   n.into:
 
     case kind
@@ -334,7 +334,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
         tar.t.takeTree n  # T
       while n.hasMore:
         if n.isTagLit and n.substructureKind == KvU:
-          tar.t.addParLe(n.tag, n.info)  # `(kv`
+          tar.t.addParLe(n.cursorTagId, n.info)  # `(kv`
           n.into:
             if n.hasMore:
               tar.t.takeTree n  # field key
@@ -550,13 +550,13 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
         takeStrippingTrivialExpr(dest, n)
       return
   if n.kind == TagLit:
-    dest.addParLe(n.tag, n.info)                        # `(tag`
+    dest.addParLe(n.cursorTagId, n.info)                        # `(tag`
     n.into:
       while n.hasMore:
         takeStrippingTrivialExpr(dest, n)
       dest.addParRi(n.endInfo)        # `)`
   else:
-    dest.takeToken n
+    dest.takeTree n
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
@@ -628,7 +628,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
         n.into:
           trCond c, dest, n, t0, c.goal == TowardsNjvl
 
-          dest.addParLe(head.tag, head.info)
+          dest.addParLe(head.cursorTagId, head.info)
           inc toClose
           inc ifs
 
@@ -768,7 +768,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n.into:
     var tar = Target(m: IsEmpty)
     trExpr c, dest, n, tar # iterator call
-    dest.addParLe(head.tag, info)
+    dest.addParLe(head.tagId, info)
     dest.addTarget tar
     takeTree dest, n # for loop variables
     trStmt c, dest, n
@@ -781,7 +781,7 @@ proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let head = n.load()
   n.into:
-    dest.addParLe(head.tag, info)
+    dest.addParLe(head.tagId, info)
     takeTree dest, n # iter call, verbatim
     trStmt c, dest, n # body
     dest.addParRi(n.endInfo)
@@ -862,7 +862,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let head = n
     n.into:
       trExpr c, dest, n, tar
-      dest.addParLe(head.tag, head.info)
+      dest.addParLe(head.cursorTagId, head.info)
       dest.addTarget tar
       dest.addParRi()
 
@@ -871,7 +871,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     n.into:
       if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
         if n.isDotToken:
-          dest.takeToken n
+          dest.takeTree n
         else:
           let typ = getType(c, n)
           var tar = Target(m: IsBound)
@@ -890,7 +890,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         var tar = Target(m: IsEmpty)
         trExpr c, dest, n, tar
-        dest.addParLe(head.tag, head.info)
+        dest.addParLe(head.cursorTagId, head.info)
         dest.addTarget tar
         dest.addParRi()
 
@@ -917,7 +917,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # as the value of a let/var binding.
     var lhsIsResult = false
     if c.goal in {TowardsNjvl, TowardsFinalIr}:
-      let peek = n.firstSon
+      let peek = n.childCursor
       lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
@@ -1134,7 +1134,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
-  pass.dest.addParLe(n.tag, n.info)
+  pass.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       trStmt c, pass.dest, n

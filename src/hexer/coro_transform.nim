@@ -464,7 +464,7 @@ proc isClosureIter*(s: SymId): bool =
 proc getNextState*(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
-    if pool.tags[buf[pos].tag] == "lab":
+    if pool.tags[buf[pos].tagId] == "lab":
       return int(pool.integers[readonlyCursorAt(buf, pos+1).intId])
     inc pos
   return -1
@@ -797,7 +797,7 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # ---------------------------------------------------------------------
 
 proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let fn = n.firstSon
+  let fn = n.childCursor
   let typ = c.typeCache.getType(fn, {SkipAliases})
   if procHasPragma(typ, PassiveP):
     var retType = getType(c.typeCache, n)
@@ -831,7 +831,7 @@ proc trLocalValue*(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Curso
       coroTr c, dest, n
 
 proc trAsgn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var rhs = n.firstSon
+  var rhs = n.childCursor
   skip rhs
   if c.hooks.isPassiveCall(c, rhs):
     var lhsTransformed = createTokenBuf(6)
@@ -844,7 +844,7 @@ proc trAsgn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       coroTr c, dest, n
 
 proc trLocal*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let sym = n.firstSon.symId
+  let sym = n.childCursor.symId
   let kind = n.symKind
   let info = n.info
 
@@ -997,7 +997,7 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
   # this.res[] = x
   # var tmpCaller = this.caller; deallocFrame(this); return/raise tmpCaller
-  let headTag = n.tag
+  let headTag = n.cursorTagId
   let info = n.info
   returnValue(c, dest, n, info)
   if c.currentProc.isClosureIter:
@@ -1028,8 +1028,8 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
-  if n.isTagLit and pool.tags[n.tag] == "lab":
-    currentState = int(pool.integers[n.firstSon.intId])
+  if n.isTagLit and pool.tags[n.cursorTagId] == "lab":
+    currentState = int(pool.integers[n.childCursor.intId])
 
   let sk = n.stmtKind
   let nk = n.njvlKind
@@ -1247,7 +1247,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of TagLit:
         case n.stmtKind
         of LocalDecls - {ResultS}:
-          let sym = n.firstSon.symId
+          let sym = n.childCursor.symId
           let kind = n.symKind
           var addLabel = false
           takeInto dest, n:
@@ -1273,13 +1273,13 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
             DeferS, NoStmt:
-          dest.addParLe(n.tag, n.info)
+          dest.addParLe(n.cursorTagId, n.info)
           n.into:
             while n.hasMore:
               trGoto c, dest, n
           dest.addParRi()
       else:
-        dest.takeToken n
+        dest.takeTree n
 
 proc toGoto*(c: var Context; n: Cursor): TokenBuf =
   result = createTokenBuf(300)
@@ -1328,7 +1328,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
   escapingLocals(c, n)
 
   assert n.stmtKind == StmtsS
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     dest.add init
     declareContinuationResult c, dest, NoLineInfo
@@ -1411,7 +1411,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
     dest.addParLe ProcS, info
     inc n
   else:
-    dest.takeToken n
+    dest.takeTree n
   skip n         # skip original name
   dest.addSymDef newSym, info
   dest.takeTree n # exported
@@ -1618,7 +1618,7 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
   let info = readonlyCursorAt(dest, paramsBegin).info
   var retType = createTokenBuf(4)
   # balanced span: raw copy keeps its seals
-  for i in paramsEnd..<dest.len: retType.addRaw dest[i]
+  for i in paramsEnd..<dest.len: retType.add dest[i]
 
   dest.shrink paramsBegin
   let thisParam = pool.syms.getOrIncl(EnvParamName)
@@ -1731,7 +1731,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
   var paramsEnd = -1
   var paramsBegin = -1
   var origParams = default(Cursor)
-  dest.addParLe(n.tag, n.info) # ProcS etc.
+  dest.addParLe(n.cursorTagId, n.info) # ProcS etc.
   let procScopeStart = n
   n = sub(n)
   let procStart = dest.len - 1
@@ -2031,7 +2031,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if n.typeKind == ProctypeT:
             c.hooks.trProctype(c, dest, n)
           else:
-            case pool.tags[n.tagId]
+            case pool.tags[n.cursorTagId]
             of "jmp":
               n.into:
                 gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)

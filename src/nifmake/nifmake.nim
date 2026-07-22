@@ -120,7 +120,7 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
       result.add quoteShell(n.strVal)
       inc n
     elif n.isTagLit:
-      let tag = pool.tags[n.tag]
+      let tag = pool.tags[n.cursorTagId]
       if tag == "args":
         # Add explicit arguments from the .nif file
         for i in 0..<args.len:
@@ -548,7 +548,7 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
         tokens.addStrLit n.strVal
         inc n
       elif n.isTagLit:
-        let tag = pool.tags[n.tag]
+        let tag = pool.tags[n.cursorTagId]
         if tag == "argsext":
           n.into:
             if n.hasMore and n.kind == StrLit:
@@ -567,7 +567,6 @@ proc parseCommandDefinition(n: var Cursor; dag: var Dag) =
     # No terminator token needed: `expandCommand`'s cursor is bounded by
     # the buffer, so `hasMore` ends the loop.
     let cmdIdx = registerCommand(dag, cmdName, argsext)
-    freeze tokens
     dag.commands[cmdIdx].tokens = tokens
   else:
     quit "expected symbol definition in `cmd` definition"
@@ -590,7 +589,7 @@ proc parseDoRule(n: var Cursor; dag: var Dag) =
   # Parse imports and results
   while n.hasMore:
     if n.isTagLit:
-      let tag = pool.tags[n.tag]
+      let tag = pool.tags[n.cursorTagId]
       n.into:
         if tag == "input":
           if n.hasMore and n.kind == StrLit:
@@ -623,14 +622,13 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
 
   var buf = parseFromFile(filename)
   var n = beginRead(buf)
-  defer: endRead(buf)
 
   # Parse (.nif27)(stmts ...)
   if n.isTagLit:
     n.into:  # enter the (stmts ...) wrapper
       while n.hasMore:
         if n.isTagLit:
-          case pool.tags[n.tag]
+          case pool.tags[n.cursorTagId]
           of "cmd":
             n.into:
               parseCommandDefinition(n, result)
@@ -638,7 +636,7 @@ proc parseNifFile(filename: string; baseDir: sink string): Dag =
             n.into:
               parseDoRule(n, result)
           else:
-            quit "unknown statement: " & pool.tags[n.tag]
+            quit "unknown statement: " & pool.tags[n.cursorTagId]
         else:
           quit "expected statement in .nif file, but found: " & $n.kind
 

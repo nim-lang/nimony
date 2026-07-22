@@ -118,7 +118,7 @@ proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var i
   ## `(err <origExpr|.> <instantiation-dots…> <stringMsg>)`; the err's own head
   ## carries the source line info.
   if n.isTagLit:
-    if n.tagId == errTag:
+    if n.cursorTagId == errTag:
       inc count
       let info = n.info
       let doReport = not r.reportedErrSources.containsOrIncl(info)
@@ -134,7 +134,7 @@ proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var i
         # error message:
         if n.isStringLit:
           if doReport:
-            r.error infoToStr(info), pool.strings[n.litId]
+            r.error infoToStr(info), pool.strings[n.strId]
           inc n
     else:
       n.into:

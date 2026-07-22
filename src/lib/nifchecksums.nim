@@ -28,7 +28,7 @@ proc updateAtom(dest: var Sha1State; n: Cursor) =
   elif n.isSymbol:
     update(dest, " "); update(dest, pool.syms[n.symId])
   elif n.isIdent:
-    update(dest, " "); update(dest, pool.strings[n.litId])
+    update(dest, " "); update(dest, pool.strings[n.strId])
   elif n.isIntLit:
     update(dest, " "); update(dest, $pool.integers[n.intId])
   elif n.isUIntLit:
@@ -36,7 +36,7 @@ proc updateAtom(dest: var Sha1State; n: Cursor) =
   elif n.isFloatLit:
     update(dest, " "); update(dest, $n.floatVal)
   elif n.isStringLit:
-    update(dest, " "); update(dest, pool.strings[n.litId])
+    update(dest, " "); update(dest, pool.strings[n.strId])
   elif n.isCharLit:
     update(dest, " "); update(dest, $n.uoperand)
   elif n.isDotToken:
@@ -48,8 +48,8 @@ proc updateLoop*(dest: var Sha1State; n: var Cursor; inlineT: TagId; foundInline
   ## whether or not its token physically exists.
   if n.isTagLit:
     update(dest, "(")
-    update(dest, pool.tags[n.tagId])
-    if n.tagId == inlineT: foundInline = true
+    update(dest, pool.tags[n.cursorTagId])
+    if n.cursorTagId == inlineT: foundInline = true
     n.into:
       while n.hasMore:
         updateLoop(dest, n, inlineT, foundInline)

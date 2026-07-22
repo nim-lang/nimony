@@ -146,7 +146,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
       skip y, AnyExpr  # filename expr
       if y.substructureKind == PragmasU:
         inc y, SkipTag
-        if y.isIdent and pool.strings[y.litId] == "cyclic":
+        if y.isIdent and pool.strings[y.strId] == "cyclic":
           isCyclic = true
 
     if isCyclic:
@@ -202,7 +202,7 @@ template maybeCyclic(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
     skip y
     if y.substructureKind == PragmasU:
       inc y
-      if y.isIdent and pool.strings[y.litId] == "cyclic":
+      if y.isIdent and pool.strings[y.strId] == "cyclic":
         cyclicImport(c, dest, x)
         return
 
@@ -391,7 +391,7 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       var syms = beginRead(symBuf)
       case syms.kind
       of Ident:
-        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.strId]
       of Symbol:
         doExport(c, dest, syms.symId, info)
       of TagLit:
@@ -445,7 +445,6 @@ proc semExportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semExpr c, dest, m, {AllowModuleSym} # get module sym
     x = m.n
     let moduleSym = findModuleSymbol(cursorAt(dest, moduleSymStart))
-    endRead(dest)
     dest.shrink moduleSymStart
     if moduleSym == SymId(0):
       c.buildErr dest, info, "expected module for `export except`"
@@ -458,7 +457,7 @@ proc semExportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       var syms = beginRead(symBuf)
       case syms.kind
       of Ident:
-        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.strId]
       of Symbol:
         doExportExcept(c, dest, moduleSym, syms.symId, info)
       of TagLit:

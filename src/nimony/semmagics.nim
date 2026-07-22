@@ -66,7 +66,7 @@ proc getDottedIdentAux(n: var Cursor): string =
       result = pool.strings[s]
 
 proc getDottedIdent(n: var Cursor): string =
-  if n.isTagLit and n.tagId == nifpools.ErrT:
+  if n.isTagLit and n.cursorTagId == nifpools.ErrT:
     n.peekInto:
       result = getDottedIdentAux(n)
   else:
@@ -99,7 +99,7 @@ proc semDeclared*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     info = it.n.info
     orig = it.n
     # XXX maybe always type the argument and check for Symbol/errored Ident instead
-    let isError = it.n.isTagLit and it.n.tagId == nifpools.ErrT
+    let isError = it.n.isTagLit and it.n.cursorTagId == nifpools.ErrT
     if isError:
       # does not consider module quoted symbols for now
       it.n.peekInto:
@@ -196,7 +196,7 @@ proc readBindSymRule(arg: Cursor): string =
   ## treats as `brClosed`.
   case arg.kind
   of Ident:
-    result = pool.strings[arg.litId]
+    result = pool.strings[arg.strId]
   of Symbol:
     var s = pool.syms[arg.symId]
     extractBasename s
@@ -250,7 +250,7 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       while it.n.hasMore: skip it.n
       failed = true
     else:
-      nameStr = pool.strings[it.n.litId]
+      nameStr = pool.strings[it.n.strId]
       skip it.n                           # consume the StrLit
 
       # Optional third arg: rule (default brClosed).
@@ -277,7 +277,6 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       while choice.hasMore and choice.isSymbol:
         resolved.add choice.symId
         inc choice
-  endRead(choiceBuf)
   if resolved.len == 0:
     c.buildErr dest, info, "bindSym: cannot resolve '" & nameStr & "' to a symbol", orig
     return
@@ -332,7 +331,7 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       while it.n.hasMore: skip it.n
       failed = true
     else:
-      nameStr = pool.strings[it.n.litId]
+      nameStr = pool.strings[it.n.strId]
       skip it.n                           # consume the StrLit
 
       # Optional second arg: rule (default brClosed).
@@ -362,7 +361,6 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       while choice.hasMore and choice.isSymbol:
         resolved.add choice.symId
         inc choice
-  endRead(choiceBuf)
   if resolved.len == 0:
     c.buildErr dest, info, "bindSym: cannot resolve '" & nameStr & "' to a symbol", orig
     return
@@ -735,10 +733,9 @@ proc semAddr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # `UarrayT`-typed value (it's a size-unknown internal type), so this
     # arm doesn't widen the addr-of-literal surface for hand-written code.
     if isAddressable(a) or arg.typ.typeKind in {MutT, LentT, UarrayT}:
-      endRead dest
+      discard
     else:
       let asStr = asNimCode(a)
-      endRead dest
       dest.shrink beforeArg
       c.buildErr dest, info, "invalid expression for `addr` operation: " & asStr
 
@@ -848,13 +845,11 @@ proc semInstanceof*(c: var SemContext; dest: var TokenBuf; it: var Item) =
               break
           if not hasRtti(xtyp):
             ok = LacksRtti
-      dest.endRead()
   case ok
   of MaybeSubtype, AlwaysSubtype:
     discard
   of NoSubtype, LacksRtti:
     let tstr = asNimCode(cursorAt(dest, beforeType))
-    dest.endRead()
     dest.shrink beforeExpr
     if ok == NoSubtype:
       c.buildErr dest, info, "type of " & asNimCode(arg.n) & " is never a subtype of " & tstr
@@ -906,7 +901,7 @@ proc semIs*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # instantiation can substitute formals and re-run `semIs`. Defer whenever
     # `inGeneric > 0` too: in template bodies operands can still be `untyped`,
     # which would make `containsGenericParams` false and wrongly fold to `false`.
-    dest.addParLe(orig.tag, orig.info)
+    dest.addParLe(orig.cursorTagId, orig.info)
     dest.addSubtree lhsExpr
     dest.addSubtree rhsExpr
     dest.addParRi()

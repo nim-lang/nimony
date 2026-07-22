@@ -14,9 +14,9 @@ export nimony_tags, callconv_tags
 template tagEnum*(c: Cursor): TagEnum =
   ## Safe on any cursor position: atoms and scope ends yield `InvalidTagId`
   ## (same contract as nifcdecl.tagEnumOf).
-  (if c.isTagLit: cast[TagEnum](tag(c)) else: InvalidTagId)
+  (if c.isTagLit: cast[TagEnum](cursorTagId(c)) else: InvalidTagId)
 
-template tagEnum*(c: NifToken): TagEnum = cast[TagEnum](tag(c))
+template tagEnum*(c: NifToken): TagEnum = cast[TagEnum](tagId(c))
 
 proc stmtKind*(c: NifToken): NimonyStmt {.inline.} =
   if c.isTagLit and rawTagIsNimonyStmt(tagEnum(c)):
@@ -40,7 +40,7 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
     else:
       result = NoPragma
   elif c.isIdent:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
     if tagId.int >= 0 and tagId.int <= high(TagEnum).int and rawTagIsNimonyPragma(cast[TagEnum](tagId)):
       result = cast[NimonyPragma](tagId)
     else:
@@ -50,7 +50,7 @@ proc pragmaKind*(c: Cursor): NimonyPragma {.inline.} =
 
 proc substructureKind*(c: NifToken): NimonyOther {.inline.} =
   if c.isTagLit and rawTagIsNimonyOther(tagEnum(c)):
-    result = cast[NimonyOther](tag(c))
+    result = cast[NimonyOther](tagId(c))
   else:
     result = NoSub
 
@@ -74,11 +74,11 @@ proc typeKind*(c: Cursor): NimonyType {.inline.} =
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
   if c.isTagLit:
     if rawTagIsCallConv(tagEnum(c)):
-      result = cast[CallConv](tag(c))
+      result = cast[CallConv](cursorTagId(c))
     else:
       result = NoCallConv
   elif c.isIdent:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    let tagId = pool.tags.getOrIncl(pool.strings[c.strId])
     if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
     else:
@@ -231,10 +231,6 @@ template setSymIdAt*(dest: var TokenBuf; pos: int; sym: SymId) =
   var t = dest[pos]
   setSymId(t, sym)
   dest[pos] = t
-template copyKeepLineInfoAt*(dest: var TokenBuf; pos: int; src: untyped) =
-  var t = dest[pos]
-  copyKeepLineInfo(t, src)
-  dest[pos] = t
 proc lastValueStart*(b: TokenBuf): int =
   ## Index of the head of the last complete value in `b`: skips the trailing
   ## suffix tokens (line info / extended bits) that follow the value's head.
@@ -271,19 +267,19 @@ proc skipParRi(n: var Cursor) =
 
 template copyInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   assert n.isTagLit
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     body
   dest.addParRi()
 
 template takeInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
   ## Like `copyInto`, but the emitted closing `)` keeps the input close's
-  ## line info — the exact behavior of the classic `takeToken`/`takeParRi`
+  ## line info — the exact behavior of the classic `takeTree`/`takeParRi`
   ## pair. Downstream sem phases read close infos (e.g. `addReturnResult`),
   ## so rewrites of `takeParRi` must use this, not `copyInto`. Under
   ## `-d:virtualParRi` an elided close yields NoLineInfo.
   assert n.isTagLit
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     body
     dest.addParRi(n.endInfo)
@@ -347,8 +343,8 @@ proc sameTreesIgnoreSymIdsNC(a, b: Cursor): bool =
   let bName = b.hasMore and b.load.kind in {nifcore.Symbol, nifcore.SymbolDef, nifcore.Ident}
   if aName or bName:
     if not (aName and bName): return false
-    let an = if a.load.kind == nifcore.Ident: a.litId else: symNameId(a.symId)
-    let bn = if b.load.kind == nifcore.Ident: b.litId else: symNameId(b.symId)
+    let an = if a.load.kind == nifcore.Ident: a.strId else: symNameId(a.symId)
+    let bn = if b.load.kind == nifcore.Ident: b.strId else: symNameId(b.symId)
     return an == bn
   if a.hasMore != b.hasMore: return false
   if not a.hasMore: return true
@@ -426,7 +422,7 @@ proc hasPragma*(n: Cursor; kind: PragmaKind): bool =
 
 proc hasPragmaOfValue*(n: Cursor; kind: PragmaKind; val: string): bool =
   let p = extractPragma(n, kind)
-  result = not cursorIsNil(p) and p.isStringLit and pool.strings[p.litId] == val
+  result = not cursorIsNil(p) and p.isStringLit and pool.strings[p.strId] == val
 
 const
   TypeModifiers* = {MutT, OutT, LentT, SinkT, StaticT}

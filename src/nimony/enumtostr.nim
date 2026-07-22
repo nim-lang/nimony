@@ -39,7 +39,7 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
           fieldValue = enumDecl
           skip enumDecl # skips string value
 
-      while enumDecl.hasMore and enumDecl.isTagLit and enumDecl.tagId == nifpools.ErrT:
+      while enumDecl.hasMore and enumDecl.isTagLit and enumDecl.cursorTagId == nifpools.ErrT:
         skip enumDecl
 
       dest.addSymUse(symId, symInfo)
@@ -48,7 +48,7 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
       dest.addParLe("stmts", enumDeclInfo)
       dest.addParLe("ret", enumDeclInfo)
       if fieldValue.isStringLit:
-        dest.addStrLit(fieldValue.litId, enumDeclInfo)
+        dest.addStrLit(fieldValue.strId, enumDeclInfo)
       else:
         # handle errors
         dest.addSubtree fieldValue

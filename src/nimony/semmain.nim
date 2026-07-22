@@ -123,7 +123,7 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
       # `-d:virtualParRi` (the subtree's ParRis are elided, so a raw
       # nesting counter would run to the end of the buffer) and
       # ParRi-walk based in classic mode.
-      let declSpan = span(readonlyCursorAt(dest, i))
+      let declSpan = subtreeWidth(readonlyCursorAt(dest, i))
       for k in i ..< i + declSpan:
         dest[k] = dotToken(info)
       i += declSpan
@@ -189,7 +189,7 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       semStmt c, dest, n, false
@@ -202,7 +202,6 @@ proc getModuleLineInfo(buf: var TokenBuf): PackedLineInfo =
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
   result = n.info
-  endRead(buf)
 
 # `ensurePhase` / `loadSymWithPhase` now live in programs.nim / templates.nim
 # respectively, so the on-demand consumers (semcall's template promotion, and
@@ -215,7 +214,6 @@ proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) 
   n.into:
     while n.hasMore:
       semStmt c, dest, n, false
-  endRead(buf)
 
 proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =
   ## Phase 1: Register toplevel symbols.
@@ -389,10 +387,9 @@ proc fromGeneric(dest: var TokenBuf; i: int): SymId =
   skip n, SkipExport # skip exported
   skip n # pattern
   if n.typeKind == InvokeT:
-    result = n.firstSon.symId
+    result = n.childCursor.symId
   else:
     result = NoSymId
-  endRead(dest)
 
 proc findOrigin(dest: var TokenBuf; origin: SymId): int =
   var i = 0
@@ -428,12 +425,11 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
           var n = procDecl
           skip n
           let procLen = cursorToPosition(dest,n) - (i-1)
-          endRead(dest)
 
           # Extract the procedure declaration
           var procBuf = createTokenBuf(procLen)
           for j in (i-1)..<(i-1+procLen):
-            procBuf.addRaw dest[j]
+            procBuf.add dest[j]
             dest[j] = dotToken(NoLineInfo) # invalidate
 
           let before = dest.len

@@ -131,7 +131,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
   if typeStart >= dest.len: return
   let typeCursor = cursorAt(dest, typeStart)
   if typeCursor.typeKind != VarargsT or compatVarargsHasHint(typeCursor):
-    endRead(dest)
+    discard
   else:
     let info = typeCursor.info
     var elem = typeCursor
@@ -147,12 +147,10 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       var inner = typeCursor
       loopInto inner:
         takeTree rebuilt, inner
-      endRead(dest)
 
       var elemCursor = cursorAt(rebuilt, 0)
       inc elemCursor    # past `(varargs` to the element type
       let inst = compatOpenArrayInstance(c, elemCursor, info)
-      endRead(rebuilt)
       let hintStr =
         if inst.isSymbol: pool.syms[inst.symId]
         else: ""
@@ -162,7 +160,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       dest.replace beginRead(rebuilt), typeStart
     else:
       # bare `(varargs)` — nothing to instantiate
-      endRead(dest)
+      discard
 
 proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
   ## True if the tail at `start` starts with an
@@ -197,7 +195,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     # following the varargs slot and must end up after the bundle.
     var trailing = createTokenBuf(max(8, m.args.len - endPos))
     for i in endPos ..< m.args.len:
-      trailing.addRaw m.args[i]
+      trailing.add m.args[i]
     # Move the flat varargs args out of `m.args` into a `(stmts …)` scratch
     # wrapper so an iterator over them terminates at the closing `)` rather
     # than walking off the end. (Without the wrapper, `hasMore` — which only
@@ -208,7 +206,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     for i in start ..< endPos:
       # balanced span: raw copy keeps its seals and leaves the pending
       # StmtsS as the only open tag for the close below
-      flat.addRaw m.args[i]
+      flat.add m.args[i]
     flat.addParRi()
     m.args.shrink start
 

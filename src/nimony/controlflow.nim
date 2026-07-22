@@ -122,7 +122,7 @@ proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
   if n.isTagLit:
     # register the head so the matching `addParRi` can seal it (a raw
     # token copy would leave a stale jump and nothing to close)
-    tar.t.addParLe(n.tag, n.info)
+    tar.t.addParLe(n.cursorTagId, n.info)
   else:
     tar.t.add load(n)
   tar.src.add srcPosOf(c, n)
@@ -843,7 +843,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   var aa = Target(m: IsEmpty)
   var bb = Target(m: IsEmpty)
-  let headTag = n.tag
+  let headTag = n.cursorTagId
   var typ = default(Cursor)
 
   n.into:
@@ -902,13 +902,12 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
         inc kR
     padSrcSeq(stmtsSrc, stmts.len)
 
-    endRead c.dest
     c.dest.shrink asgnBegin
     c.destSrc.setLen asgnBegin
     c.dest.add stmts
     for s in stmtsSrc: c.destSrc.add s
   else:
-    endRead c.dest
+    discard
 
 proc addRet(c: var ControlFlow) =
   c.dest.addParLe(RetS, NoLineInfo)
@@ -955,7 +954,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
       while n.hasMore:
         trStmt c, n
   of ScopeS, StaticstmtS:
-    c.dest.addParLe(n.tag, n.info)
+    c.dest.addParLe(n.cursorTagId, n.info)
     c.typeCache.openScope()
     n.into:
       while n.hasMore:
@@ -997,7 +996,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
     var tar = Target(m: IsAppend)
-    let headTag = n.tag
+    let headTag = n.cursorTagId
     let headInfo = n.info
     n.into:
       while n.hasMore:
@@ -1024,7 +1023,7 @@ proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): To
     trProc c, n
   else:
     assert sk == StmtsS
-    c.dest.addParLe(n.tag, n.info)
+    c.dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         trStmt c, n
@@ -1078,7 +1077,7 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
         if diff > 0:
           # Don't automatically continue to the next instruction after a goto
           continue
-    elif cast[TagEnum](c[pos].tag) == IteTagId:
+    elif cast[TagEnum](c[pos].tagId) == IteTagId:
       # For if-then-else, process the condition and both branches
       var p = pos + 1
       # Skip the condition, marking it as reachable. A goto is a DotToken

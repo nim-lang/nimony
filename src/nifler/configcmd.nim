@@ -219,11 +219,11 @@ proc sourcesChangedImpl(configFile: string; c: Cursor): bool =
   let modtime = getLastModificationTime(configFile)
   result = false
   while c.hasMore:
-    if c.isTagLit and pool.tags[c.tag] == "sources":
+    if c.isTagLit and pool.tags[c.cursorTagId] == "sources":
       var dep = childCursor(c)
       while dep.hasMore:
         if dep.isStringLit:
-          let path = pool.strings[dep.litId]
+          let path = pool.strings[dep.strId]
           if not fileExists(path):
             return true
           if getLastModificationTime(path) >= modtime:

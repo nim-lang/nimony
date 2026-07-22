@@ -89,7 +89,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.takeTree arg
           dest.addParRi()
     else:
-      dest.addParLe(body.tag, body.info)
+      dest.addParLe(body.cursorTagId, body.info)
       body.into:
         while body.hasMore:
           expandTemplateImpl c, dest, e, body
@@ -111,7 +111,7 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
           var path = StrId(0)
           var pathInfo = p.endInfo # the pragma may be degenerate/empty
           if p.isStringLit:
-            path = p.litId
+            path = p.strId
             pathInfo = p.info
           if path != StrId(0):
             var b = createTokenBuf(30)
@@ -167,7 +167,7 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   if oldHead.symKind != TemplateY: return false
 
   var newBuf = createTokenBuf(prog.mem[sym].buffer.len + 16)
-  newBuf.addParLe(oldHead.tag, oldHead.info)          # `(template`
+  newBuf.addParLe(oldHead.cursorTagId, oldHead.info)          # `(template`
   oldHead.into:
     newBuf.takeTree oldHead     # name (SymbolDef)
     newBuf.takeTree oldHead     # exported marker

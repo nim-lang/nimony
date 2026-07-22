@@ -154,7 +154,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
 
   case n.typeKind
   of IntT, UIntT, FloatT:
-    let bits = typebits(n.firstSon.load)
+    let bits = typebits(n.childCursor.load)
     let s = int(if bits != -1: bits div 8 else: ptrSize)
     update c, s, s
   of CharT, BoolT:
@@ -162,7 +162,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
-    getSize c, cache, n.firstSon, ptrSize
+    getSize c, cache, n.childCursor, ptrSize
   of EnumT, HoleyEnumT, AnumT:
     let b = enumBounds(n)
     if b.lo < 0:
@@ -203,7 +203,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
 
   of ArrayT:
     var elem = createSizeofValue(c.strict)
-    getSize(elem, cache, n.firstSon, ptrSize)
+    getSize(elem, cache, n.childCursor, ptrSize)
     let al1 = asSigned(getArrayLen(n), c.overflow)
     var arr = createSizeofValue(c.strict)
     if elem.overflow or elem.size <= 0 or al1 >= high(int) div elem.size:
@@ -215,7 +215,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     combine c, arr
 
   of SetT:
-    let size0 = bitsetSizeInBytes(n.firstSon)
+    let size0 = bitsetSizeInBytes(n.childCursor)
     let size1 = int asSigned(size0, c.overflow)
     update c, size1, 1
   of TupleT:
@@ -232,7 +232,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
   of RangetypeT:
-    getSize c, cache, n.firstSon, ptrSize
+    getSize c, cache, n.childCursor, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT,
      AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT:

@@ -140,7 +140,7 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
     if inType:
       if isType:
         return ckT
-      let tagStr = pool.tags[c.tag]
+      let tagStr = pool.tags[c.cursorTagId]
       for t in typeCtxTagsLiteral:
         if t == tagStr: return ckT
     if isExpr and isStmt:
@@ -164,7 +164,7 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
 
 proc tagName(c: Cursor): string =
   if c.isTagLit:
-    result = pool.tags[c.tag]
+    result = pool.tags[c.cursorTagId]
   else:
     result = ""
 
@@ -422,7 +422,6 @@ proc validate*(buf: var TokenBuf; phase: Phase;
     ctx.addViolation info, "",
       "trailing content after root subtree: " &
       "the pass would silently drop these tokens"
-  endRead(buf)
   result = move ctx.violations
 
 proc reportViolations*(phaseName: string; vs: openArray[Violation]): bool =

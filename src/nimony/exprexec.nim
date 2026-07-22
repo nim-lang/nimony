@@ -99,7 +99,7 @@ proc emitTreeAsIdents(buf: var TokenBuf; n: var Cursor; thisMod: string) =
     emitSymAsIdent(buf, n.symId, n.info, thisMod)
     inc n
   of TagLit:
-    buf.addParLe(n.tag, n.info)
+    buf.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         emitTreeAsIdents(buf, n, thisMod)
@@ -171,7 +171,7 @@ proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) 
         else:
           rewriteTreeToIdents(newDest, n, thisMod)
     else:
-      newDest.addParLe(n.tag, n.info)
+      newDest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           rewriteTreeToIdents(newDest, n, thisMod)
@@ -190,7 +190,6 @@ proc rewriteSymsToIdents*(c: var SynthesizeSerializerCtx) =
   var newDest = createTokenBuf(c.dest.len)
   var n = beginRead(c.dest)
   rewriteTreeToIdents(newDest, n, c.thisModuleSuffix)
-  endRead(c.dest)
   c.dest = ensureMove newDest
 
 proc generateName(c: var SynthesizeSerializerCtx; key: string): string =
@@ -262,14 +261,12 @@ proc accessObjField(c: var SynthesizeSerializerCtx; obj: TokenBuf; name: Cursor;
     # field visibility so private fields can be read by the synthesized
     # serializer that runs in a separate sub-compile module.
     result.addStrLit "x", c.info
-  freeze result
 
 proc accessTupField(c: var SynthesizeSerializerCtx; tup: TokenBuf; idx: int): TokenBuf =
   result = createTokenBuf(4)
   copyIntoKind(result, TupatX, c.info):
     copyTree result, tup
     result.addIntLit(idx, c.info)
-  freeze result
 
 proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: TokenBuf; needsDeref: bool; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
@@ -386,7 +383,6 @@ proc accessArrayAt(c: var SynthesizeSerializerCtx; arr: TokenBuf; indexVar: SymI
   copyIntoKind result, ArratX, c.info:
     copyTree result, arr
     copyIntoSymUse result, indexVar, c.info
-  freeze result
 
 proc indexVarLowerThanArrayLen(c: var SynthesizeSerializerCtx; indexVar: SymId; arrayLen: xint) =
   copyIntoKind c.dest, LtX, c.info:
@@ -488,7 +484,6 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
         elemAccess.addIdent "[]", c.info
         copyTree elemAccess, param
         copyIntoSymUse elemAccess, indexVar, c.info
-      freeze elemAccess
       entryPoint(c, baseType, readonlyCursorAt(elemAccess, 0))
       incIndexVar c, indexVar
 
@@ -497,7 +492,7 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
 
 proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) =
   assert orig.typeKind == SetT
-  let baseType = orig.firstSon
+  let baseType = orig.childCursor
   let maxValue = bitsetSizeInBytes(orig) * createXint(8'i64)
   genStringCall(c, "writeNifParLe", "setconstr")
   genStringCall(c, "writeNifRaw", toString(orig, false))
@@ -506,7 +501,6 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
   declareIndexVar c, indexVar
   var indexVarAsBuf = createTokenBuf(1)
   indexVarAsBuf.addSymUse indexVar, c.info
-  freeze indexVarAsBuf
 
   copyIntoKind c.dest, WhileS, c.info:
     indexVarLowerThanArrayLen c, indexVar, maxValue
@@ -564,7 +558,7 @@ proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
     genStringCall(c, "writeNifParLe", "conv")
     # we simply generate the type as a raw string:
     genStringCall(c, "writeNifRaw", toString(orig, false))
-    entryPoint(c, typ.firstSon, arg)
+    entryPoint(c, typ.childCursor, arg)
     genParRiCall c
   of IT:
     primitiveCall(c, "writeNifInt", arg)
@@ -630,7 +624,6 @@ proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
   let paramA = pool.syms.getOrIncl(ParamSymName)
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
-  freeze paramTreeA
 
   let procStart = c.dest.len
   var headerBuf = move c.dest
@@ -714,7 +707,6 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
           c.dest.addSubtree res.decl
           var d = cursorAt(c.dest, before)
           collectSyms(d, stack)
-          endRead(c.dest)
       elif owner.len > 0:
         c.usedModules.incl(s.g.config.nifcachePath / owner)
 

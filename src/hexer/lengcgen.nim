@@ -24,7 +24,7 @@ import  ".." / lib / [stringtrees]
 proc skipExportMarker(c: var EContext; n: var Cursor) =
   if n.isDotToken:
     inc n
-  elif n.isIdent and pool.strings[n.litId] == "x":
+  elif n.isIdent and pool.strings[n.strId] == "x":
     inc n
   elif n.isTagLit:
     # can now also be `(tag)` or `(tag <bits>)`:
@@ -200,7 +200,7 @@ proc genTupleField(c: var EContext; dest: var TokenBuf; typ: var Cursor; counter
   dest.addParRi() # "fld"
 
 proc trEnumField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
-  dest.addParLe(n.tag, n.info) # efld
+  dest.addParLe(n.cursorTagId, n.info) # efld
   n.into:
 
     expectSymdef(c, n)
@@ -292,7 +292,7 @@ proc trTupleBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi(n.endInfo)
 
 proc trArrayBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     trType c, dest, n
     if n.typeKind == RangetypeT:
@@ -550,7 +550,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       if cursorIsNil(hint):
         takeTree dest, n
       else:
-        let hintSym = pool.syms.getOrIncl(pool.strings[hint.litId])
+        let hintSym = pool.syms.getOrIncl(pool.strings[hint.strId])
         dest.addSymUse(hintSym, info)
         skip n
     of MutT, LentT:
@@ -622,7 +622,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       if isUnion:
         dest.addParLe("union", n.info)
       else:
-        dest.addParLe(n.tag, n.info)
+        dest.addParLe(n.cursorTagId, n.info)
       n.into:
         if isUnion:
           # Union types don't inherit any types.
@@ -714,7 +714,6 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
     trLocal(c, dest, paramCursor, ParamY, TraverseSig)
-    endRead(paramBuf)
     skip n
   else:
     trLocal(c, dest, n, ParamY, TraverseSig)
@@ -724,7 +723,7 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addSubtree n
     inc n
   elif n.isTagLit and n.substructureKind == ParamsU:
-    dest.addParLe(n.tag, n.info)
+    dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         if n.symKind != ParamY:
@@ -756,7 +755,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
   result = default(CollectedPragmas)
   if n.isDotToken:
     inc n
-  elif n.isTagLit and pool.tags[n.tag] == $PragmasS:
+  elif n.isTagLit and pool.tags[n.cursorTagId] == $PragmasS:
     n.into:
       while n.hasMore:
         if n.isTagLit:
@@ -765,7 +764,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           of NoPragma:
             let cc = n.callConvKind
             if cc == NoCallConv:
-              if hookKind(n.tagId) != NoHook:
+              if hookKind(n.cursorTagId) != NoHook:
                 skip n
               elif isNilAnnotation(n):
                 skip n
@@ -783,7 +782,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           of ImportcP, ImportcppP, ExportcP:
             n.into:
               expectStrLit c, n
-              result.extern = n.litId
+              result.extern = n.strId
               result.flags.incl pk
               inc n
           of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
@@ -799,12 +798,12 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
           of HeaderP:
             n.into:
               expectStrLit c, n
-              result.header = n.litId
+              result.header = n.strId
               inc n
           of DynlibP:
             n.into:
               expectStrLit c, n
-              result.dynlib = n.litId
+              result.dynlib = n.strId
               result.flags.incl DynlibP
               inc n
           of AlignP:
@@ -832,7 +831,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
 
 proc trProcBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if n.stmtKind == StmtsS:
-    dest.addParLe(n.tag, n.info)
+    dest.addParLe(n.cursorTagId, n.info)
     n.into:
       var prevStmt = NoStmt
       while n.hasMore:
@@ -1191,7 +1190,7 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: PackedLi
 proc genStringLit(c: var EContext; dest: var TokenBuf; n: Cursor) =
   assert n.isStringLit
   let info = n.info
-  let s {.cursor.} = pool.strings[n.litId]
+  let s {.cursor.} = pool.strings[n.strId]
   genStringLit(c, dest, s, info)
 
 proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
@@ -1201,7 +1200,7 @@ proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     trExpr c, dest, n
     n = exprStart; skip n
   else:
-    dest.addParLe(exprStart.tag, exprStart.info)
+    dest.addParLe(exprStart.cursorTagId, exprStart.info)
     while n.hasMore:
       if not isLastSon(n):
         trStmt c, dest, n
@@ -1253,7 +1252,7 @@ proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     if lit.isStringLit:
       # evaluate the conversion at compile time:
       dest.shrink beforeConv
-      dest.addStrLit pool.strings[lit.litId]
+      dest.addStrLit pool.strings[lit.strId]
       skip n # the literal, or its whole suffix wrapper
       n = convStart; skip n
     else:
@@ -1338,7 +1337,7 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       var indexDest = createTokenBuf(dest.len - beforeIndex)
       # balanced span: raw copy keeps its seals
       for i in beforeIndex..<dest.len:
-        indexDest.addRaw dest[i]
+        indexDest.add dest[i]
       dest.shrink beforeIndex
       let indexB = n
       skip n
@@ -1613,7 +1612,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       if arg.isStringLit:
         # no suffix for string literal in nifc
         n.into:
-          if pool.strings[suf.litId] == "C":
+          if pool.strings[suf.strId] == "C":
             # cstring literal, add string lit directly:
             dest.addSubtree n
             inc n
@@ -1656,13 +1655,13 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       error c, "BUG: not eliminated: ", n
       #skip n
     of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
-      dest.addParLe(n.tag, n.info)
+      dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           trExpr c, dest, n
       dest.addParRi()
     of SizeofX, AlignofX, OffsetofX:
-      dest.addParLe(n.tag, n.info)
+      dest.addParLe(n.cursorTagId, n.info)
       n.into:
         trType c, dest, n
         while n.hasMore:
@@ -1943,7 +1942,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
   of TagLit:
     case n.stmtKind
     of NoStmt:
-      if n.tagId == TagId(KeepovfTagId):
+      if n.cursorTagId == TagId(KeepovfTagId):
         trKeepovf c, dest, n
       else:
         error c, "unknown statement: ", n
@@ -2014,7 +2013,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         inc n
         n = discardStart; skip n
       else:
-        dest.addParLe(discardToken.tag, discardToken.info)
+        dest.addParLe(discardToken.cursorTagId, discardToken.info)
         trExpr c, dest, n
         takeParRi dest, n, discardStart
     of BreakS: trBreak c, dest, n
@@ -2040,7 +2039,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
           if n.isTagLit and n.substructureKind == KvU:
             n.into:                             # (kv …)
               if n.isIdent:
-                c.importedModuleSuffixes.add pool.strings[n.litId]
+                c.importedModuleSuffixes.add pool.strings[n.strId]
               while n.hasMore: skip n
           else:
             skip n

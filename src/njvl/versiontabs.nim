@@ -36,7 +36,7 @@ proc createVersionTab*(): VersionTab =
 proc newValueFor*(v: var VersionTab, symId: SymId) =
   # raw pool-ref token (never inline): `combineJoin` reads `symId` back by
   # raw index, which an inline-encoded short symbol would corrupt
-  v.history.addRaw symToken(symId)
+  v.history.add symToken(symId)
   v.currentVersion.mgetOrPut(symId, -1) += 1
 
 proc getVersion*(v: VersionTab, symId: SymId): int =
@@ -50,10 +50,10 @@ proc openSection*(v: var VersionTab) =
   # `history` is a marker journal that `combineJoin` scans BACKWARDS by
   # index; the parens are raw section delimiters, not a tree — bypass
   # sealing/ParRi elision so the closing markers stay physical.
-  v.history.addRaw sectionOpenToken()
+  v.history.add sectionOpenToken()
 
 proc closeSection*(v: var VersionTab) =
-  v.history.addRaw sectionCloseToken()
+  v.history.add sectionCloseToken()
 
 type
   JoinVar* = object

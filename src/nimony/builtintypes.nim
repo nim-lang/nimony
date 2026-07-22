@@ -146,7 +146,6 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   let continuationPos = result.mem.len
   result.mem.addSymUse(pool.syms.getOrIncl(ContinuationName), NoLineInfo)
 
-  result.mem.freeze()
 
   result.autoType = result.mem.cursorAt(autoPos)
   result.stringType = result.mem.cursorAt(stringPos)

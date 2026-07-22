@@ -71,13 +71,13 @@ proc rewriteSymsToIdentsImpl(newBuf: var TokenBuf; n: var Cursor) =
         newBuf.addIdent(pool.strings.getOrIncl(name), n.info)
         while n.hasMore: skip n
     else:
-      newBuf.addParLe(n.tag, n.info)
+      newBuf.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           rewriteSymsToIdentsImpl(newBuf, n)
         newBuf.addParRi(n.endInfo)
   else:
-    newBuf.takeToken n
+    newBuf.takeTree n
 
 proc rewriteSymsToIdents(buf: var TokenBuf) =
   ## Convert every Symbol / SymbolDef in `buf` to an Ident bearing the symbol's
@@ -87,7 +87,6 @@ proc rewriteSymsToIdents(buf: var TokenBuf) =
   var newBuf = createTokenBuf(buf.len)
   var n = beginRead(buf)
   rewriteSymsToIdentsImpl(newBuf, n)
-  endRead(buf)
   buf = ensureMove newBuf
 
 # ----------------------------------------------------------------------------

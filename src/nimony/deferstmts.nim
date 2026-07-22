@@ -32,7 +32,7 @@ proc wrapDeferScope(dest: var TokenBuf; beforeBody: int;
   ## = innermost try; defers[^1] = first-declared = outermost) — the exact
   ## nesting the classic insert path produced.
   var bodyBuf = createTokenBuf(dest.len - beforeBody + 4)
-  for i in beforeBody ..< dest.len: bodyBuf.addRaw dest[i]
+  for i in beforeBody ..< dest.len: bodyBuf.add dest[i]
   dest.shrink beforeBody
   let m = defers.len
   for k in countdown(m-1, 0):        # open trys outer -> inner
@@ -57,7 +57,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let blockInfo = n.info
   c.scopeStack.add beforeBody
   if n.stmtKind in {ScopeS, StmtsS}:
-    dest.addParLe(n.tag, n.info)
+    dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         trStmt c, dest, n
@@ -81,7 +81,7 @@ proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trStmt c, deferBody, n
   c.actionStack.add ActionItem(id: mine, action: ensureMove deferBody)
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if c.retSym != NoSymId and not (n.firstSon.isSymbol and n.firstSon.symId == c.retSym):
+  if c.retSym != NoSymId and not (n.childCursor.isSymbol and n.childCursor.symId == c.retSym):
     # transform to `result = <expr>; return result`, see bug #1440
     let info = n.info
     n.into: # consume the whole `(ret …)`; leaving its close unconsumed would
@@ -102,7 +102,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if not n.hasMore: return
   case n.kind
   of Symbol, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
+    dest.takeTree n
   of TagLit:
     case n.stmtKind
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, TemplateS, MacroS, TypeS:
@@ -165,7 +165,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyInto dest, n:
         assert n.isSymbolDef
         c.retSym = n.symId
-        dest.takeToken n
+        dest.takeTree n
         while n.hasMore:
           trStmt c, dest, n
     of CallS, CmdS, GvarS, TvarS, VarS, ConstS, GletS, TletS, LetS, CursorS,
@@ -178,7 +178,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trStmt c, dest, n
   else:
-    dest.takeToken n
+    dest.takeTree n
 
 proc transformDefer*(dest: var TokenBuf; procBody: int) =
   ## Transforms a defer statement into a try-finally block.
@@ -190,14 +190,14 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
   var buf = createTokenBuf(50)
   # The scope id is an index into `buf` (where `trStmt`/`trDefer` build), NOT into
   # `dest`. It must be the position of the first body statement — i.e. right after
-  # the `(stmts` opener `buf.takeToken` copies below — mirroring `trBlock`'s
+  # the `(stmts` opener `buf.takeTree` copies below — mirroring `trBlock`'s
   # `beforeBody = dest.len+1`. Seeding it with the `dest`-absolute `procBody`
   # corrupted the tree whenever enough tokens preceded a top-level `defer` (the
   # bad insert position only landed correctly while it happened to exceed `buf`'s
   # length and clamp to an append).
   let beforeBody = buf.len + 1
   c.scopeStack.add beforeBody
-  buf.addParLe(n.tag, n.info)
+  buf.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       trStmt c, buf, n
@@ -209,7 +209,6 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
     wrapDeferScope(buf, beforeBody, defers, topInfo)
   buf.addParRi()
 
-  dest.endRead
   dest.shrink procBody
   var bc = beginRead(buf)
   while bc.hasMore:

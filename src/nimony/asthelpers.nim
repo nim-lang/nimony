@@ -5,7 +5,7 @@ import ".." / lib / symparser
 
 proc takeUnquotedAtom(r: var string; c: var Cursor) =
   ## Append one leaf token's text (build-agnostic).
-  if c.isIdent or c.isStringLit: r.add pool.strings[c.litId]
+  if c.isIdent or c.isStringLit: r.add pool.strings[c.strId]
   elif c.isIntLit: r.addInt pool.integers[c.intId]
   elif c.isCharLit: r.add char(c.uoperand)
   elif c.isUIntLit: r.add $pool.uintegers[c.uintId]
@@ -26,7 +26,7 @@ proc takeUnquoted*(c: var Cursor): StrId =
 
 proc takeIdent*(n: var Cursor): StrId =
   if n.isIdent:
-    result = n.litId
+    result = n.strId
     inc n
   elif n.isSymbol or n.isSymbolDef:
     let sym = pool.syms[n.symId]

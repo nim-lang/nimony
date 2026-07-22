@@ -139,7 +139,7 @@ proc extractSymId(n: Cursor): SymId {.inline.} =
   if n.isSymbol:
     result = n.symId
   elif n.isTagLit and n.tagEnum == VTagId:
-    result = n.firstSon.symId
+    result = n.childCursor.symId
   else:
     result = NoSymId
 
@@ -222,7 +222,7 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
       inc r
       extractBorrowPath(c, r, result, followInlineVars)
     elif n.njvlKind == VV:
-      extractBorrowPath(c, n.firstSon, result, followInlineVars)
+      extractBorrowPath(c, n.childCursor, result, followInlineVars)
   elif (n.isIntLit or n.isUIntLit or n.isCharLit or n.isFloatLit or n.isStringLit):
     result.mode = IsBorrowableFromConst
   elif n.isSymbol:
@@ -530,19 +530,19 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   result = false
   case t.typeKind
   of PtrT, RefT:
-    var e = t.firstSon
+    var e = t.childCursor
     skip e # base type
     if e.hasMore and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
-    let e = t.firstSon
+    let e = t.childCursor
     # no base type
     if e.hasMore and e.substructureKind == mark:
       result = true
   of ProctypeT:
     # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
     # nilability marker is at slot 0.
-    let e = t.firstSon
+    let e = t.childCursor
     if e.substructureKind == mark:
       result = true
   else:
@@ -820,7 +820,7 @@ proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
 
 proc analyseArrayConstr(c: var NjvlContext; n: var Cursor) =
   n.into:
-    let expected = n.firstSon # element type of the array
+    let expected = n.childCursor # element type of the array
     skip n # type
     while n.hasMore:
       checkNilMatch c, n, expected
@@ -828,7 +828,7 @@ proc analyseArrayConstr(c: var NjvlContext; n: var Cursor) =
 
 proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
   n.into:
-    var expected = n.firstSon # type of the first field
+    var expected = n.childCursor # type of the first field
     skip n # type
     while n.hasMore:
       assert expected.hasMore
@@ -918,7 +918,7 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
     # Validate borrowable path for haddr arguments (call-scoped borrows)
     var inner = n
     if isMut:
-      inner = n.firstSon
+      inner = n.childCursor
       let m = extractPath(c, inner)
       if m.mode == NotBorrowable:
         buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
@@ -1688,7 +1688,6 @@ proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string): TokenBuf =
   var n = beginRead(input)
   var buf = createTokenBuf(input.len)
   buf.addSubtree n
-  endRead input
   var pass = initPass(move buf, moduleSuffix, "xelim_finalir", 0)
   toFinalIr(pass)
   result = ensureMove pass.dest
@@ -1711,7 +1710,6 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose
 
   var fin = beginRead(finalBuf)
   traverseToplevel c, fin
-  endRead finalBuf
 
   c.typeCache.closeScope()
   result = ensureMove c.errors

@@ -146,9 +146,9 @@ proc trScopedBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol:
-    dest.takeToken n
+    dest.takeTree n
   of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
+    dest.takeTree n
   of TagLit:
     case n.exprKind
     of CallKinds:
@@ -212,7 +212,7 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   let localStart = n
   n = sub(n)
 
@@ -420,7 +420,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # and are copied verbatim.
   let info = n.info
   # Touch the selector type so typenav stays consistent across the switch.
-  discard c.typeCache.getType(n.firstSon)
+  discard c.typeCache.getType(n.childCursor)
   dest.addParLe("case", info)
   let caseStart = n
   n = sub(n)
@@ -570,7 +570,6 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     n = whileStart; skip n # close `while`
     var ww = beginRead(w)
     trLoopFromBody c, dest, ww, empty
-    endRead w
 
 proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
   var vars = vars
@@ -699,7 +698,7 @@ proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var s = NoSymId
   takeInto dest, n: # MflagV/VflagV
     s = n.symId
-    dest.takeToken n # SymDef
+    dest.takeTree n # SymDef
   let boolTyp = c.typeCache.builtins.boolType
   c.typeCache.registerLocal(s, VarY, boolTyp)
 
@@ -759,7 +758,7 @@ proc toFinalIr*(pass: var Pass) =
   pass.prepareForNext("finalir")
   var n = pass.n
   assert n.stmtKind == StmtsS, $n.kind
-  pass.dest.addParLe(n.tag, n.info)
+  pass.dest.addParLe(n.cursorTagId, n.info)
   c.openScope()
   n.into:
     while n.hasMore:

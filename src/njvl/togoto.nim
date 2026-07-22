@@ -241,7 +241,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if label[0] != NoSymId:
       emitJump(c, dest, labelFromCfvar(label), info)
   of IteV, ItecV:
-    var cond = n.firstSon
+    var cond = n.childCursor
     let (branch, targetLabel) = pickBranch(c, cond)
     case branch
     of ThenBranch:
@@ -271,7 +271,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeTree n # keep the join information
       skipParRi n
     of UnknownBranch:
-      dest.takeToken n
+      dest.takeTree n
       dest.takeTree n # condition is an expression so we don't have to traverse it
       trStmt c, dest, n
       trStmt c, dest, n
@@ -286,7 +286,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     case n.kind
     of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit, DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident:
-      dest.takeToken n
+      dest.takeTree n
     of TagLit:
       takeInto dest, n:
         while n.hasMore:

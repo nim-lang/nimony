@@ -101,7 +101,6 @@ proc indexFromNif*(infile: string) =
       else:
         skip n
 
-  endRead buf
 
   var exportBuf = buildIndexExports(exports, infile)
 

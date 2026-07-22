@@ -222,7 +222,7 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     # buffer) and needs the base type's `=destroy`/`=dup`. Without this the
     # `else` branch below treated every named distinct as trivial, so the
     # duplifier moved instead of copied — a use-after-free for resource types.
-    result = isTrivial(c, r.body.firstSon)
+    result = isTrivial(c, r.body.childCursor)
   else:
     result = true
 
@@ -252,7 +252,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   of LentT:
     result = true # lent types are borrowed; no hooks needed
   of SinkT, ArrayT:
-    result = isTrivial(c, typ.firstSon)
+    result = isTrivial(c, typ.childCursor)
   of ObjectT:
     result = isTrivialObjectBody(c, typ)
   of TupleT:
@@ -732,7 +732,7 @@ proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
 
 proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   assert n.typeKind == RefT
-  let baseType = n.firstSon
+  let baseType = n.childCursor
   case c.op
   of attachedDestroy:
     emitRefDestructor c, paramA, baseType
@@ -809,7 +809,7 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     # in `string`'s custom `=destroy`/`=dup` and not in any reachable field —
     # actually calls that hook. The plain field-recursion produced an empty
     # body for such types and silently moved the buffer.
-    unravel(c, typ.firstSon, paramA, paramB)
+    unravel(c, typ.childCursor, paramA, paramB)
   of TupleT:
     unravelTuple c, typ, paramA, paramB
   of ArrayT:
@@ -827,7 +827,7 @@ proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
     # `n.into` bounds the child walk: `typ` is a cursor into an enclosing
     # decl, so an unbounded `hasMore` loop would run past the type's
     # (elided) close and copy the decl's remaining children too.
-    c.dest.addParLe(n.tag, n.info)
+    c.dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         if isNilAnnotation(n):
@@ -870,7 +870,7 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
 proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   var buf = createTokenBuf(100)
   # verbatim copy of a (possibly still-open) span: keep seals, no open-tag churn
-  for i in procStart ..< dest.len: buf.addRaw dest[i]
+  for i in procStart ..< dest.len: buf.add dest[i]
   programs.publish(sym, buf)
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
@@ -1014,7 +1014,7 @@ proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLi
   c.op = op
   c.calledErrorHook = NoLineInfo
   c.info = info
-  let t = if typ.typeKind == SinkT: typ.firstSon else: typ
+  let t = if typ.typeKind == SinkT: typ.childCursor else: typ
   # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
   if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId) and op in {attachedDestroy, attachedTrace}:
     c.routineKind = MethodY

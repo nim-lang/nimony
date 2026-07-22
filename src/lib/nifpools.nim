@@ -74,8 +74,6 @@ nifcore.fallbackTags = globalTags
 # ── Type aliases ─────────────────────────────────────────────────────────
 
 type
-  PackedToken* = NifToken           ## compat shim: only the Nim compiler side
-                                    ## (ast2nif) still says PackedToken
   IntId*   = distinct int64         ## value carriers (nifcore stores inline)
   UIntId*  = distinct uint64
 
@@ -191,7 +189,7 @@ proc getInt28*(n: NifToken): int32 {.inline.} = n.soperand
 proc getInt28*(c: Cursor): int32 {.inline.} = load(c).soperand
 
 proc symId*(n: NifToken): SymId {.inline.} = SymId(nifcore.uoperand(n) shr 1)
-proc litId*(n: NifToken): StrId {.inline.} = StrId(nifcore.uoperand(n) shr 1)
+proc strId*(n: NifToken): StrId {.inline.} = StrId(nifcore.uoperand(n) shr 1)
 proc intId*(n: NifToken): IntId {.inline.} = IntId(n.soperand)
 proc uintId*(n: NifToken): UIntId {.inline.} = UIntId(nifcore.uoperand(n))
 proc charLit*(n: NifToken): char {.inline.} = char(nifcore.uoperand(n) and 0xFF)
@@ -218,10 +216,6 @@ proc strToken*(s: StrId; info: PackedLineInfo): NifToken {.inline.} = strLitToke
 proc setSymId*(dest: var NifToken; sym: SymId) {.inline.} =
   ## Rewrite a Symbol/SymbolDef token's id in place (kind preserved).
   dest = (if dest.kind == SymbolDef: symdefToken(sym) else: symToken(sym))
-proc copyKeepLineInfo*(dest: var NifToken; src: NifToken) {.inline.} = dest = src
-  ## nifcore keeps line info in a separate suffix, so there is nothing to keep.
-proc replaceWithOpenTag*(dest: var TokenBuf; tag: NifToken; pos: int) {.inline.} =
-  dest[pos] = tag
 
 # Standalone atom builders with a line-info argument (dropped: nifcore keeps
 # line info in a separate suffix that a bare token cannot carry).
@@ -240,18 +234,11 @@ template buildTree*[T: enum](dest: var TokenBuf; tag: T; info: PackedLineInfo; b
   body
   addParRi(dest)
 
-proc withLineInfo*(n: NifToken; info: PackedLineInfo): NifToken {.inline.} = n
-  ## Classic stamped `info` into the token; nifcore keeps line info in a separate
-  ## suffix, so an in-place token rewrite cannot carry it — returned unchanged.
-
 proc info*(n: NifToken): PackedLineInfo {.inline.} = NoLineInfo
   ## Classic tokens carried their line info inline; a bare 4-byte nifcore token
   ## cannot. Reading it back yields `NoLineInfo` — matching the constructors
   ## above, which drop the passed info for the same reason. Callers that need
   ## real positions must use the buffer-level `add*` builders or cursors.
-
-proc span*(c: Cursor): int {.inline.} = subtreeWidth(c)
-proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
 
 proc widenSealed*(dest: var TokenBuf; enclosing: int; growth: int) =
   ## After an insert/replace grew a *sealed* scope's contents, widen its jump.
@@ -270,7 +257,7 @@ proc widenEnclosingSealed*(dest: var TokenBuf; pos, growth: int) =
   while i < pos:
     let c = readonlyCursorAt(dest, i)
     if c.kind == TagLit:
-      let total = span(c)          # head + suffix + body
+      let total = subtreeWidth(c)  # head + suffix + body
       if i + total > pos:          # this scope encloses the insertion point
         widenSealed(dest, i, growth)
         i += tokenWidth(c)         # descend into the body
@@ -295,16 +282,7 @@ proc isUIntLit*(n: NifToken): bool {.inline.} = n.kind == UIntLit
 proc isFloatLit*(n: NifToken): bool {.inline.} = n.kind == FloatLit
 proc isCharLit*(n: NifToken): bool {.inline.} = n.kind == CharLit
 
-proc tag*(n: NifToken): TagId {.inline.} =
-  ## Tag of a raw head token (classic nifstreams had `tag(PackedToken)`).
-  TagId((uint32(n) shr TagShift) and TagMask)
-
 # ── Cursor atom accessors (renames) ──────────────────────────────────────
-
-proc tag*(c: Cursor): TagId {.inline.} = cursorTagId(c)
-proc tagId*(c: Cursor): TagId {.inline.} = cursorTagId(c)
-proc litId*(c: Cursor): StrId {.inline.} = strId(c)
-proc jump*(c: Cursor): uint64 {.inline.} = cursorJump(c)
 
 proc intId*(c: Cursor): IntId {.inline.} = IntId(intVal(c))
 proc uintId*(c: Cursor): UIntId {.inline.} = UIntId(uintVal(c))
@@ -333,7 +311,7 @@ proc addUnstructured*(dest: var TokenBuf; c: Cursor) =
 
 proc insert*(dest: var TokenBuf; src: Cursor; pos: int) =
   ## Insert the single subtree at `src` into `dest` at token position `pos`.
-  var tmp = createTokenBuf(span(src) + 2)
+  var tmp = createTokenBuf(subtreeWidth(src) + 2)
   tmp.addSubtree src
   dest.insert tmp, pos
   ## nifcore has no close-token info; the arg is accepted for compatibility.
@@ -409,10 +387,6 @@ proc toString*(b: TokenBuf; produceLineInfo = false): string {.inline.} =
   ## reads); safe to alias an immutable buffer. Accepts both `var` and immutable.
   nifcoreparse.toString(cast[ptr TokenBuf](unsafeAddr b)[], includeLineInfo = produceLineInfo)
 
-proc addRaw*(b: var TokenBuf; t: NifToken) {.inline.} = nifcore.add(b, t)
-  ## Append a token verbatim (classic distinguished raw appends from sealing
-  ## ones; nifcore's `add` never re-seals, so it IS the raw append).
-
 template linearScan*(n: var Cursor; body: untyped) =
   ## Pre-order visit of every tag (`TagLit`) node strictly inside `n`'s subtree,
   ## `n` positioned at each; `body` may `break` (leaving `n` at the match) and
@@ -425,11 +399,6 @@ template linearScan*(n: var Cursor; body: untyped) =
         body
       inc n
 
-proc endRead*(b: var TokenBuf) {.inline.} = discard
-  ## Classic released a buffer read-lock here; nifcore cursors are refcounted
-  ## owners, so ending a read on the *buffer* is a no-op (only `endRead(Cursor)`
-  ## exists in nifcore, and it is re-exported for cursor readers).
-
 template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
   addParLe(dest, tag, info)
   body
@@ -440,19 +409,9 @@ template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInf
   body
   closeTag(dest)
 
-proc freeze*(b: var TokenBuf) {.inline.} = discard  ## CursorOwner refcounts; no-op
-proc thaw*(b: var TokenBuf) {.inline.} = discard
-
 # ── Subtree / token moves ────────────────────────────────────────────────
 
 proc takeTree*(dest: var TokenBuf; n: var Cursor) =
-  dest.addSubtree n
-  skip n
-
-proc takeToken*(dest: var TokenBuf; n: var Cursor) =
-  # A lone TagLit head has no nifcore analogue (subtrees are atomic here); no
-  # current caller does this, but assert to catch a regression.
-  assert load(n).kind != TagLit
   dest.addSubtree n
   skip n
 

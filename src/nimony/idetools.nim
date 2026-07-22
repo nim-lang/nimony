@@ -204,7 +204,6 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
   block locateBlock:
     var loc = beginRead(buf)
     discard locateSymImpl(loc, buf, sym, toTrack, name.len, 0, offset, parentOffset)
-    endRead(buf)
   if offset < 0:
     quit "symbol not found"
 

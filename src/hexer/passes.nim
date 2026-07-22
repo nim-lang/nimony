@@ -84,7 +84,6 @@ proc prepareForNext*(pass: var Pass; nextPassName: string) =
       logPassTiming(pass.moduleSuffix, pass.passName, pass.passStart)
 
   # End reading from old buffer
-  endRead(pass.buf)
 
   # Swap: previous output becomes next input
   swap(pass.buf, pass.dest)

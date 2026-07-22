@@ -125,7 +125,7 @@ proc loadVTable*(typ: SymId): seq[semdata.MethodIndexEntry] =
               if pragmas.isTagLit and pragmas.substructureKind == KvU:
                 pragmas.into KvU:
                   if pragmas.hasMore and pragmas.isStringLit:
-                    let signature = pragmas.litId
+                    let signature = pragmas.strId
                     inc pragmas, AnyExpr
                     if pragmas.hasMore and pragmas.isSymbol:
                       let methodSym = pragmas.symId

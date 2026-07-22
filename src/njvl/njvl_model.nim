@@ -11,9 +11,9 @@ include ".." / lib / compat2
 import ".." / models / [tags, njvl_tags]
 export njvl_tags
 
-template tagEnum(c: Cursor): TagEnum = cast[TagEnum](tag(c))
+template tagEnum(c: Cursor): TagEnum = cast[TagEnum](cursorTagId(c))
 
-template tagEnum(c: NifToken): TagEnum = cast[TagEnum](tag(c))
+template tagEnum(c: NifToken): TagEnum = cast[TagEnum](tagId(c))
 
 proc njvlKind*(c: NifToken): NjvlKind {.inline.} =
   if c.isTagLit and rawTagIsNjvlKind(tagEnum(c)):

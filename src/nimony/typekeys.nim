@@ -20,7 +20,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   ## Mangles the single tree/token at `c` and advances past it.
   case c.kind
   of TagLit:
-    let tag {.cursor.} = pool.tags[c.tagId]
+    let tag {.cursor.} = pool.tags[c.cursorTagId]
     if c.substructureKind in {FldU, GfldU}:
       c.into:
         skip c, SkipName # name
@@ -118,7 +118,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       b.addSymbolDef(s)
     inc c
   of StrLit:
-    b.addStrLit(pool.strings[c.litId])
+    b.addStrLit(pool.strings[c.strId])
     inc c
   of IntLit:
     b.addIntLit(pool.integers[c.intId])
@@ -136,7 +136,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
     b.addCharLit(char c.uoperand)
     inc c
   of Ident:
-    b.addIdent(pool.strings[c.litId])
+    b.addIdent(pool.strings[c.strId])
     inc c
   of UnknownToken:
     b.addIdent "!unknown!"

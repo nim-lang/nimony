@@ -181,7 +181,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
         if prag.pragmaKind == SemanticsP:
           inc prag
           if prag.isIdent or prag.isStringLit:
-            op = pool.strings[prag.litId]
+            op = pool.strings[prag.strId]
             break
         skip pragmas
   var args = n
@@ -194,7 +194,7 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       if a.kind != StrLit or b.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
-      let val = pool.strings[a.litId] & pool.strings[b.litId]
+      let val = pool.strings[a.strId] & pool.strings[b.strId]
       result = stringValue(c, val, n.info)
     of "string.==":
       let a = eval(c, args)
@@ -202,14 +202,14 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       if a.kind != StrLit or b.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
-      let val = pool.strings[a.litId] == pool.strings[b.litId]
+      let val = pool.strings[a.strId] == pool.strings[b.strId]
       result = boolValue(c, val)
     of "string.len":
       let a = eval(c, args)
       if a.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
-      let val = pool.strings[a.litId].len
+      let val = pool.strings[a.strId].len
       result = intValue(c, val, n.info)
     else:
       if c.c == nil or c.c.executeExpr == nil or c.noExecute:
@@ -668,13 +668,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   result = default(Cursor)
   template propagateError(r: Cursor): Cursor =
     let val = r
-    if val.isTagLit and val.tagId == nifpools.ErrT:
+    if val.isTagLit and val.cursorTagId == nifpools.ErrT:
       return val
     else:
       val
   case n.kind
   of Ident:
-    error "cannot evaluate undeclared ident: " & pool.strings[n.litId], n.info
+    error "cannot evaluate undeclared ident: " & pool.strings[n.strId], n.info
     inc n
   of Symbol:
     let symId = n.symId
@@ -939,7 +939,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
               var fieldSym = SymId(0)
               if n.isSymbol:
                 fieldSym = n.symId
-              buf.takeToken n # field sym/ident
+              buf.takeTree n # field sym/ident
               var fieldType = default(Cursor)
               var fieldExported = false
               if findObjectField(objBody, fieldSym, fieldType, fieldExported):
@@ -949,7 +949,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
               buf.addSubtree v
               if n.hasMore:
                 # optional inheritance level
-                buf.takeToken n
+                buf.takeTree n
           else:
             cannotEval n
             return
@@ -969,7 +969,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = evalCall(c, n)
       skip n
     of SizeofX:
-      let s = c.c.semGetSize(c.c[], n.firstSon)
+      let s = c.c.semGetSize(c.c[], n.childCursor)
       var err = false
       let value = asSigned(s, err)
       if err:
@@ -984,7 +984,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of CardX:
       result = evalCardSet(c, n)
     else:
-      if n.tagId == nifpools.ErrT:
+      if n.cursorTagId == nifpools.ErrT:
         result = n
         skip n
       elif (n.stmtKind == BlockS or n.stmtKind == StmtsS) and
@@ -1019,7 +1019,7 @@ proc evalExpr*(c: var SemContext, n: var Cursor;
   ec.expectedType = expectedType
   ec.keepEnumFields = keepEnumFields
   let val = eval(ec, n)
-  result = createTokenBuf(val.span)
+  result = createTokenBuf(val.subtreeWidth)
   result.addSubtree val
 
 proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
@@ -1033,7 +1033,7 @@ proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
 
 proc getConstStringValue*(val: Cursor): StrId =
   if val.isStringLit:
-    result = val.litId
+    result = val.strId
   else:
     result = StrId(0)
 
@@ -1147,7 +1147,7 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   return false
 
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
-  if n.isTagLit and n.tagId == nifpools.ErrT:
+  if n.isTagLit and n.cursorTagId == nifpools.ErrT:
     buf.addSubtree n
     return
   let orig = typ
@@ -1363,7 +1363,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           while vals.hasMore:
             err = true
             if vals.substructureKind == KvU:
-              buf.addParLe(vals.tag, vals.info)
+              buf.addParLe(vals.cursorTagId, vals.info)
               vals.peekInto:
                 if vals.isSymbol:
                   let fieldSym = vals.symId
@@ -1437,7 +1437,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
   var baseType = toTypeImpl baseType
   case baseType.typeKind
   of IntT, UIntT:
-    let bits = int pool.integers[baseType.firstSon.intId]
+    let bits = int pool.integers[baseType.childCursor.intId]
     # - 3 because we do `div 8` as a byte has 8 bits:
     result = createXint(1'i64) shl (bits - 3)
   of CharT:
@@ -1459,7 +1459,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
       var bt = baseType
       inc bt  # skip EnumT/HoleyEnumT/AnumT tag
       if bt.typeKind in {IntT, UIntT}:
-        let baseBits = int pool.integers[bt.firstSon.intId]
+        let baseBits = int pool.integers[bt.childCursor.intId]
         let baseBytes = baseBits div 8
         if baseBytes > 0 and result < createXint(baseBytes):
           # IntT with negative field values is the compiler's default
@@ -1480,7 +1480,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     if err: result = createNaN()
     else: result = createXint div8Roundup(m)
   of DistinctT:
-    result = bitsetSizeInBytes(baseType.firstSon)
+    result = bitsetSizeInBytes(baseType.childCursor)
   else:
     result = createNaN()
 
@@ -1500,7 +1500,7 @@ proc getArrayIndexLen*(index: Cursor): xint =
   of EnumT:
     result = countEnumValues(index)
   of IntT, UIntT:
-    let bits = int pool.integers[index.firstSon.intId]
+    let bits = int pool.integers[index.childCursor.intId]
     result = createXint(1'i64) shl bits
   of CharT:
     result = createXint 256'i64
@@ -1528,7 +1528,7 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
   ## returns @[] if it could not be evaluated.
   assert n.exprKind == SetconstrX
   assert typ.typeKind == SetT
-  let size = bitsetSizeInBytes(typ.firstSon)
+  let size = bitsetSizeInBytes(typ.childCursor)
   var err = false
   let s = asSigned(size, err)
   if err:

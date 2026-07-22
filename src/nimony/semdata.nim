@@ -252,14 +252,14 @@ proc typeToCanonAux(result: var string; c: var Cursor) =
   ## enter the type-identity key). Byte-format matches the classic raw walk.
   if c.isTagLit:
     result.add '('
-    result.addInt c.tagId.int
+    result.addInt c.cursorTagId.int
     c.into:
       while c.hasMore: typeToCanonAux(result, c)
     result.add ')'
   else:
     if c.isIdent or c.isStringLit:
       result.add ' '
-      result.addInt c.litId.int
+      result.addInt c.strId.int
     elif c.isDotToken:
       result.add '.'
     elif c.isSymbolDef:
@@ -295,7 +295,7 @@ proc typeToCursor*(c: var SemContext; buf: TokenBuf; start: int): TypeCursor =
   else:
     var newBuf = createTokenBuf(buf.len - start)
     for i in start..<buf.len:
-      newBuf.addRaw buf[i]
+      newBuf.add buf[i]
     # make resilient against crashes:
     #if newBuf.len == 0: newBuf.add dotToken(NoLineInfo)
     result = cursorAt(newBuf, 0)

@@ -378,7 +378,7 @@ proc tryLoadHook*(op: AttachedOp; typ: SymId): SymId =
     let typedef = asTypeDecl(d.decl)
     var n = typedef.pragmas
     n.linearScan:
-      if n.tagId == hooktag:
+      if n.cursorTagId == hooktag:
         var c = n
         inc c
         if c.isSymbol:
@@ -398,7 +398,7 @@ proc tryLoadAllHooks*(typ: SymId): HooksPerType =
     let typedef = asTypeDecl(d.decl)
     var n = typedef.pragmas
     n.linearScan:
-      case hookKind(n.tagId)
+      case hookKind(n.cursorTagId)
       of NoHook: discard
       of WasmovedH: setRes(n, attachedWasMoved)
       of DestroyH: setRes(n, attachedDestroy)
@@ -439,7 +439,7 @@ proc publish*(s: SymId; dest: TokenBuf; start: int; phase = SemcheckBodies) =
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
     # the span is an already-balanced subtree; raw copy keeps its seals
-    buf.addRaw dest[i]
+    buf.add dest[i]
   publish s, buf, phase
 
 proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
@@ -450,9 +450,9 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   # the span is the routine's open tag followed by complete signature
   # subtrees; open the tag properly so the final close seals it, and copy
   # the sealed children (incl. the head's own line-info suffix) raw
-  buf.openTag readonlyCursorAt(dest, start).tag
+  buf.openTag readonlyCursorAt(dest, start).cursorTagId
   for i in start+1 ..< dest.len:
-    buf.addRaw dest[i]
+    buf.add dest[i]
   buf.addDotToken() # body is empty for a signature
   buf.addParRi()
   when defined(debugPublish):

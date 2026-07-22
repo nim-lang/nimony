@@ -125,7 +125,6 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
   var dest = createTokenBuf(buf.len + buf.len div 8)
   var n = beginRead(buf)
   trIntra(ctx, dest, n)
-  endRead(buf)
   result = dest.len != originalLen
   buf = ensureMove(dest)
 

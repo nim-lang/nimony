@@ -10,7 +10,7 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
   case n.kind
   of Ident:
     # substitute direct idents for now, symbols would work the same way
-    let s = n.litId
+    let s = n.strId
     if s == iter.nameVar:
       if fieldSym == SymId(0):
         buf.addStrLit(fieldName, n.info)
@@ -27,9 +27,9 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
       buf.addIdent(fieldName, n.info)
       buf.addParRi()
     else:
-      buf.addParLe(n.tag, n.info)
+      buf.addParLe(n.cursorTagId, n.info)
   of TagLit:
-    buf.addParLe(n.tag, n.info)
+    buf.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         expandNamedFieldBody(buf, iter, fieldName, fieldSym, n)
@@ -59,7 +59,7 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; nam
   case n.kind
   of Ident:
     # substitute direct idents for now, symbols would work the same way
-    let s = n.litId
+    let s = n.strId
     if s == iter.nameVar:
       buf.addStrLit(name, n.info)
     elif s == iter.fieldVar1:
@@ -73,9 +73,9 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intId: IntId; nam
       buf.addIntLit(intId, n.info)
       buf.addParRi()
     else:
-      buf.addParLe(n.tag, n.info)
+      buf.addParLe(n.cursorTagId, n.info)
   of TagLit:
-    buf.addParLe(n.tag, n.info)
+    buf.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         expandTupleFieldBody(buf, iter, intId, name, n)

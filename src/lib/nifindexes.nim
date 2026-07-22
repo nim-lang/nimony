@@ -50,7 +50,7 @@ proc processDeclForChecksum(dest: var Sha1State; n: var Cursor) =
   let inlineT = TagId(InlineIdx)
   if n.isTagLit:
     var foundInline = false
-    let k = entryKind(n.tagId)
+    let k = entryKind(n.cursorTagId)
     case k
     of LetIdx, VarIdx, CursorIdx, ConstIdx, TypeIdx, GletIdx, TletIdx, GvarIdx, TvarIdx:
       n.into: # tag
@@ -186,7 +186,7 @@ type
 
 proc symOrIdentOrDot(n: var Cursor): string =
   if n.isSymbol: result = pool.syms[n.symId]
-  elif n.isIdent: result = pool.strings[n.litId]
+  elif n.isIdent: result = pool.strings[n.strId]
   elif n.isDotToken: result = "."
   else: result = ""
   skip n
@@ -195,7 +195,7 @@ proc readSymbolSectionC(n: var Cursor; tab: var seq[(string, string)]) =
   ## Cursor walk of a `(converter (kv key value) …)` section.
   n.into:
     while n.hasMore:
-      if n.isTagLit and n.tagId == TagId(KvIdx):
+      if n.isTagLit and n.cursorTagId == TagId(KvIdx):
         n.into:
           let key = symOrIdentOrDot(n)
           let value = symOrIdentOrDot(n)
@@ -210,25 +210,25 @@ proc readIndex*(indexName: string): NifIndex =
   r.close()
   result = default(NifIndex)
   var n = beginRead(buf)
-  if not (n.isTagLit and n.tagId == TagId(IndexIdx)):
+  if not (n.isTagLit and n.cursorTagId == TagId(IndexIdx)):
     assert false, "expected 'index' tag"
     return
   n.into:
     while n.hasMore:
       if n.isTagLit:
-        let t = n.tagId
+        let t = n.cursorTagId
         if t == TagId(ConverterIdx):
           readSymbolSectionC(n, result.converters)
         elif t == TagId(ExportIdx) or t == TagId(FromexportIdx) or
              t == TagId(ExportexceptIdx):
-          let kind = cast[NifIndexKind](n.tag)
+          let kind = cast[NifIndexKind](n.cursorTagId)
           n.into:
             assert n.isStringLit
-            let path = pool.strings[n.litId]
+            let path = pool.strings[n.strId]
             skip n
             var names: seq[StrId] = @[]
             while n.hasMore:
-              if n.isIdent: names.add n.litId
+              if n.isIdent: names.add n.strId
               skip n
             result.exports.add (path, kind, names)
         else:

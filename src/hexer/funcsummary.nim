@@ -146,7 +146,7 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
   of TagLit:
     case n.exprKind
     of DotC, DerefC, PatC, AtC, AddrC:
-      result = exprRoots(a, n.firstSon)
+      result = exprRoots(a, n.childCursor)
     of ConvC, CastC:
       var r = n
       inc r
@@ -292,7 +292,7 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
       walkStmt(a, n)
   else:
     if n.exprKind == AddrC:
-      let escRoots = exprRoots(a, n.firstSon)
+      let escRoots = exprRoots(a, n.childCursor)
       for r in escRoots: markEscapeElem(a, r)
     n.loopInto:
       walkStmt(a, n)
@@ -411,7 +411,6 @@ proc collectProcAnalyses(buf: var TokenBuf): Table[SymId, ProcAnalysis] =
           if d.isSymbolDef:
             result[d.symId] = computeProcAnalysis(p)
         skip n
-  endRead(buf)
 
 # ---- serialization --------------------------------------------------------
 
@@ -435,7 +434,7 @@ proc readParamSummary(n: var Cursor; outSummary: var FunctionSummary) =
       outSummary.params[idx].cls = cls
       while n.hasMore:
         if n.kind == Ident:
-          case pool.strings[n.litId]
+          case pool.strings[n.strId]
           of "reads": outSummary.params[idx].reads = true
           of "writes": outSummary.params[idx].writes = true
           of "slot": outSummary.params[idx].slotWritten = true
@@ -452,7 +451,7 @@ proc readSummary(n: var Cursor; outSummary: var FunctionSummary): bool =
   n.into:
     while n.hasMore:
       if n.kind == Ident:
-        case pool.strings[n.litId]
+        case pool.strings[n.strId]
         of "writeGlobal": outSummary.writesGlobal = true; inc n
         of "readGlobal": outSummary.readsGlobal = true; inc n
         of "callsUnknown": outSummary.callsUnknown = true; inc n
@@ -495,7 +494,6 @@ proc collectFunctionSummaries*(buf: var TokenBuf): FunctionSummaryTable =
             result[d.name.symId] = summary
         else:
           skip n
-  endRead(buf)
 
 proc addSummaryPragma(dest: var TokenBuf; summary: FunctionSummary; info: PackedLineInfo) =
   dest.addParLe(TagId(SmryP), info)
@@ -526,7 +524,7 @@ proc writePragmasWithSummary(dest: var TokenBuf; pragmas: Cursor;
     addSummaryPragma(dest, summary, info)
     dest.addParRi()
   elif p.isTagLit:
-    dest.addParLe(p.tag, p.info)
+    dest.addParLe(p.cursorTagId, p.info)
     var hadSummary = false
     p.into:
       while p.hasMore:
@@ -547,7 +545,7 @@ proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
   case n.kind
   of TagLit:
     if n.stmtKind == ProcS:
-      let tag = n.tagId
+      let tag = n.cursorTagId
       let info = n.info
       let d = takeProcDecl(n)
       dest.addParLe(tag, info)
@@ -562,13 +560,13 @@ proc annotateSummaries(dest: var TokenBuf; n: var Cursor;
       dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.addParLe(n.tag, n.info)
+      dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           annotateSummaries(dest, n, summaries)
       dest.addParRi()
   else:
-    dest.takeToken n
+    dest.takeTree n
 
 proc annotateFunctionSummaries*(buf: var TokenBuf) =
   var analyses = collectProcAnalyses(buf)
@@ -577,5 +575,4 @@ proc annotateFunctionSummaries*(buf: var TokenBuf) =
   var n = beginRead(buf)
   var dest = createTokenBuf(buf.len + buf.len div 16)
   annotateSummaries(dest, n, summaries)
-  endRead(buf)
   buf = ensureMove(dest)

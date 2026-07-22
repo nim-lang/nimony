@@ -235,11 +235,11 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
   var n = orig
   var hasErr = false
   if n.isTagLit:
-    if n.tagId == nifpools.ErrT:
+    if n.cursorTagId == nifpools.ErrT:
       hasErr = true
     else:
       n.linearScan:
-        if n.tagId == nifpools.ErrT:
+        if n.cursorTagId == nifpools.ErrT:
           hasErr = true
           break
   let info = if hasErr: n.info else: info
@@ -325,7 +325,6 @@ proc declToCursor*(c: var SemContext; dest: var TokenBuf; s: Sym): LoadResult =
     # copy their bodies here.
     let decl = cursorAt(dest, s.pos - 1)
     buf.addSubtree decl
-    endRead(dest)
     result = LoadResult(status: LacksNothing, decl: cursorAt(buf, 0))
     programs.publish s.name, buf, c.phase
   else:
@@ -463,7 +462,7 @@ proc declareOverloadableSym*(c: var SemContext; dest: var TokenBuf; it: var Item
     if not c.freshSyms.missingOrExcl(it.n.symId):
       status = OkExistingFresh
     result = (it.n.symId, status)
-    dest.takeToken it.n
+    dest.takeTree it.n
   else:
     let lit = takeIdent(it.n)
     if lit == StrId(0):
@@ -484,7 +483,7 @@ proc markSymInProgress*(c: var SemContext; s: SymId)  # forward decl
 proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind): DelayedSym =
   let info = n.info
   if n.isIdent:
-    let lit = n.litId
+    let lit = n.strId
     if kind in {LetY, VarY, GletY, GvarY, TletY, TvarY} and
         c.currentScope.kind == ToplevelScope and
         c.onDemandResolved.hasKey(lit):
@@ -514,7 +513,7 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
 
     let s = Sym(kind: kind, name: n.symId, pos: dest.len)
     result = DelayedSym(status: status, lit: symToIdent(s.name), s: s, info: info)
-    dest.takeToken n
+    dest.takeTree n
     # Mark toplevel declarations as InProgress for cycle detection
     if kind in {TypeY, ProcY, FuncY, IteratorY, ConverterY, MethodY, TemplateY, MacroY}:
       markSymInProgress(c, s.name)
@@ -561,13 +560,13 @@ proc publish*(c: var SemContext; dest: var TokenBuf; s: SymId; start: int) =
   assert s != SymId(0)
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
-    buf.addRaw dest[i]
+    buf.add dest[i]
   programs.publish s, buf, c.phase
 
 # -------------------------------------------------------------------------------------------------
 
 proc wantDot*(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   if n.isDotToken:
-    dest.takeToken n
+    dest.takeTree n
   else:
     buildErr c, dest, n.info, "expected '.'"

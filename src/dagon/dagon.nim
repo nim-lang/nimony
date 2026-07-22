@@ -584,7 +584,6 @@ proc renderModule(input, htmlOut, docIdxOut: string; format: HtmlOutFormat;
         emitTag(b, "ul"):
           renderDecls(b, idx, ctx, n)
 
-  endRead(buf)
   writeFile(htmlOut, finalize(b))
   writeDocIdx(docIdxOut, currentModule, moduleName, src, ctx.currentRelpath, idx)
 
@@ -616,7 +615,6 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
   if not fileExists(path): return
   var buf = parseFromFile(path)
   var n = beginRead(buf)
-  if not n.isTagLit: endRead(buf); return
   var modid = ""
   var modname = ""
   var modRelpath = ""
@@ -625,7 +623,7 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
     if not n.isTagLit:
       inc n
     else:
-      let tag = pool.tags[n.tag]
+      let tag = pool.tags[n.cursorTagId]
       n.into:
         case tag
         of "module":
@@ -642,7 +640,6 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
           entries.add e
         else: discard
         while n.hasMore: skip n
-  endRead(buf)
   if entries.len > beforeEntries:
     modules.add (modid, modname, modRelpath)
 

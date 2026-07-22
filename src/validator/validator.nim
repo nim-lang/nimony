@@ -13,7 +13,7 @@
 ## preservation) plus obligation tracking for cursor/buffer variables:
 ##
 ## - Every `n: var Cursor` parameter creates a must-skip obligation
-## - Every `skip n` without corresponding `takeTree`/`takeToken` is flagged
+## - Every `skip n` without corresponding `takeTree`/`takeTree` is flagged
 ## - Field access like `c.dest` is resolved via type declarations in the same module
 ## - Hardcoded known types: Cursor, TokenBuf (no need for full type resolution)
 ##
@@ -139,7 +139,7 @@ proc extractTypeName(n: Cursor): string =
   if c.kind == Ident:
     return c.strVal
   if c.isTagLit:
-    let tag = pool.tags[c.tag]
+    let tag = pool.tags[c.cursorTagId]
     if tag in ["mut", "ref", "ptr", "lent", "sink"]:
       let inner = childCursor(c)
       if inner.hasMore and inner.kind == Ident:
@@ -148,7 +148,7 @@ proc extractTypeName(n: Cursor): string =
 
 proc scanField(n: var Cursor): FieldInfo =
   ## Analyze one (fld name export pragmas type value) node.
-  validate n.isTagLit and pool.tags[n.tag] == "fld"
+  validate n.isTagLit and pool.tags[n.cursorTagId] == "fld"
   result = FieldInfo()
   n.into:
     if n.hasMore and n.kind == Ident:
@@ -171,7 +171,7 @@ proc scanObjectFields(n: var Cursor): seq[FieldInfo] =
   n.into:
     skip n # base type
     while n.hasMore:
-      if n.isTagLit and pool.tags[n.tag] == "fld":
+      if n.isTagLit and pool.tags[n.cursorTagId] == "fld":
         let field = scanField(n)
         if field.name.len > 0 and field.trackedKind != tkOther:
           result.add field
@@ -181,7 +181,7 @@ proc scanObjectFields(n: var Cursor): seq[FieldInfo] =
 proc scanTypeDecl(n: var Cursor; reg: var TypeRegistry) =
   ## Scan one (type name export pragmas genparams body) node.
   ## If it's an object type with tracked fields, register it.
-  validate n.isTagLit and pool.tags[n.tag] == "type"
+  validate n.isTagLit and pool.tags[n.cursorTagId] == "type"
   n.into:
     if n.hasMore and n.kind == Ident:
       let typeName = n.strVal
@@ -189,7 +189,7 @@ proc scanTypeDecl(n: var Cursor; reg: var TypeRegistry) =
       skip n # export
       skip n # pragmas
       skip n # generic params
-      if n.isTagLit and pool.tags[n.tag] == "object":
+      if n.isTagLit and pool.tags[n.cursorTagId] == "object":
         let fields = scanObjectFields(n)
         if fields.len > 0:
           reg.addType(typeName, fields)
@@ -204,11 +204,10 @@ proc buildTypeRegistry(buf: var TokenBuf): TypeRegistry =
   validate n.isTagLit, "module must start with a (stmts ...) tag"
   n.into:
     while n.hasMore:
-      if n.isTagLit and pool.tags[n.tag] == "type":
+      if n.isTagLit and pool.tags[n.cursorTagId] == "type":
         scanTypeDecl(n, result)
       else:
         skip n
-  endRead buf
 
 # ---------------------------------------------------------------------------
 # Extract proc parameter types for the symbol table
@@ -216,7 +215,7 @@ proc buildTypeRegistry(buf: var TokenBuf): TypeRegistry =
 
 proc scanParam(n: var Cursor; st: var SymbolTable) =
   ## Scan one (param name export pragmas type default) node.
-  validate n.isTagLit and pool.tags[n.tag] == "param"
+  validate n.isTagLit and pool.tags[n.cursorTagId] == "param"
   n.into:
     if n.hasMore and n.kind == Ident:
       let paramName = n.strVal
@@ -224,7 +223,7 @@ proc scanParam(n: var Cursor; st: var SymbolTable) =
       skip n # export
       skip n # pragmas
       let typeName = extractTypeName(n)
-      let isMut = n.isTagLit and pool.tags[n.tag] == "mut"
+      let isMut = n.isTagLit and pool.tags[n.cursorTagId] == "mut"
       if typeName.len > 0:
         st.addVar(paramName, typeName, isMut)
     # skip remaining children
@@ -237,10 +236,10 @@ proc buildProcSymbolTable(paramsNode: Cursor; reg: TypeRegistry): SymbolTable =
   result = initSymbolTable()
   var n = paramsNode
   if not n.isTagLit: return
-  if pool.tags[n.tag] != "params": return
+  if pool.tags[n.cursorTagId] != "params": return
   n.into:
     while n.hasMore:
-      if n.isTagLit and pool.tags[n.tag] == "param":
+      if n.isTagLit and pool.tags[n.cursorTagId] == "param":
         scanParam(n, result)
       else:
         skip n
@@ -344,7 +343,7 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
       return
     if c.hasMore: skip c  # skip info
     while c.hasMore:
-      if c.isTagLit and pool.tags[c.tag] == "stmts":
+      if c.isTagLit and pool.tags[c.cursorTagId] == "stmts":
         bodyPos = c
         break
       skip c
@@ -363,7 +362,7 @@ proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
       return
     if c.hasMore: skip c  # skip info
     while c.hasMore:
-      if c.isTagLit and pool.tags[c.tag] == "stmts":
+      if c.isTagLit and pool.tags[c.cursorTagId] == "stmts":
         bodyPos = c
         break
       skip c
@@ -410,7 +409,7 @@ proc scanForCopyIntoKind(ctx: var CheckContext; buf: var TokenBuf) =
   var n = beginRead(buf)
   assert n.isTagLit
   n.linearScan:
-    let tag = pool.tags[n.tag]
+    let tag = pool.tags[n.cursorTagId]
     if tag in CallTags:
       if extractCalleeName(n) in ["copyIntoKind", "buildTree", "withTree"]:
         checkCopyIntoKind(ctx, n, n.info)
@@ -429,7 +428,7 @@ proc scanForNonExhaustiveCases(ctx: var CheckContext; buf: var TokenBuf) =
   var n = beginRead(buf)
   assert n.isTagLit
   n.linearScan:
-    let tag = pool.tags[n.tag]
+    let tag = pool.tags[n.cursorTagId]
     if tag == "case":
       # Extract discriminator: (case (dot n stmtKind) ...)
       var peek = childCursor(n)
@@ -440,7 +439,7 @@ proc scanForNonExhaustiveCases(ctx: var CheckContext; buf: var TokenBuf) =
         # Scan children for an `else` branch
         if peek.hasMore: skip peek  # skip discriminator
         while peek.hasMore:
-          if peek.isTagLit and pool.tags[peek.tag] == "else":
+          if peek.isTagLit and pool.tags[peek.cursorTagId] == "else":
             addViolation(ctx, n.info, "case " & discr,
               "`else` branch not allowed; enumerate all values for exhaustive checking")
             break
@@ -458,7 +457,7 @@ proc scanCallsForCursorArg(bc: Cursor; cursorParams: seq[Cursor];
   var bc = bc
   if not bc.isTagLit: return
   bc.linearScan:
-    let tag = pool.tags[bc.tag]
+    let tag = pool.tags[bc.cursorTagId]
     if tag in CallTags:
       var peek = childCursor(bc)
       # Skip the callee name/dot-expr
@@ -506,7 +505,7 @@ const
   CursorAdvanceProcs* = ["skip", "inc"]
 
   ## Advance cursor AND emit to buffer — balanced, no debt.
-  BalancedProcs = ["takeTree", "takeToken", "takeParRi", "skipParRi",
+  BalancedProcs = ["takeTree", "takeParRi", "skipParRi",
     # Replacer API:
     "keep", "replace"]
 
@@ -550,7 +549,7 @@ proc procHasBufferAccess(st: SymbolTable; reg: TypeRegistry; paramsPos: Cursor):
   if not pc.isTagLit: return false
   pc = childCursor(pc)
   while pc.hasMore:
-    if pc.isTagLit and pool.tags[pc.tag] == "param":
+    if pc.isTagLit and pool.tags[pc.cursorTagId] == "param":
       var p = childCursor(pc)
       if p.hasMore: skip p # name
       if p.hasMore: skip p # export
@@ -565,10 +564,10 @@ proc collectCursorParamLvs(paramsNode: Cursor; st: SymbolTable): seq[Cursor] =
   ## Re-scan the params node to collect Cursor lvalues for each `var Cursor` parameter.
   result = @[]
   var n = paramsNode
-  if not n.isTagLit or pool.tags[n.tag] != "params": return
+  if not n.isTagLit or pool.tags[n.cursorTagId] != "params": return
   n = childCursor(n)
   while n.hasMore:
-    if n.isTagLit and pool.tags[n.tag] == "param":
+    if n.isTagLit and pool.tags[n.cursorTagId] == "param":
       let p = childCursor(n)
       if p.hasMore and p.kind == Ident:
         let info = st.getVar(p.strVal)
@@ -611,7 +610,7 @@ proc classifyExpr(st: SymbolTable; reg: TypeRegistry; n: Cursor): TrackedKind =
     if v.typeName.len > 0 and typeHasBufferField(reg, v.typeName):
       return tkTokenBuf
     return v.trackedKind
-  if n.isTagLit and pool.tags[n.tag] == "dot":
+  if n.isTagLit and pool.tags[n.cursorTagId] == "dot":
     var c = childCursor(n)
     if c.hasMore and c.kind == Ident:
       let receiver = c.strVal
@@ -638,7 +637,7 @@ proc hasBufferArg(st: SymbolTable; reg: TypeRegistry; callNode: Cursor): bool =
   if not callNode.isTagLit: return false
   var c = childCursor(callNode)
   # Check if the callee is a dot-call whose receiver is a buffer
-  if c.isTagLit and pool.tags[c.tag] == "dot":
+  if c.isTagLit and pool.tags[c.cursorTagId] == "dot":
     # The receiver is the first child of the dot
     let dotExpr = childCursor(c)
     if classifyExpr(st, reg, dotExpr) == tkTokenBuf:
@@ -678,7 +677,7 @@ proc hasIntentArg(n: Cursor): bool =
     if c.kind == Ident:
       # Either a known SkipIntent/TagClass name or a tag enum value (loose).
       return true
-    if c.isTagLit and pool.tags[c.tag] == "dot":
+    if c.isTagLit and pool.tags[c.cursorTagId] == "dot":
       # A qualified reference like `NimonyStmt.IfS`.
       return true
     skip c
@@ -721,7 +720,7 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
   result = 0
   var n = n
   if not n.isTagLit: return
-  let tag = pool.tags[n.tag]
+  let tag = pool.tags[n.cursorTagId]
 
   if tag == "stmts":
     # Sequential: balances add up
@@ -736,7 +735,7 @@ proc blockBalance(ctx: var CheckContext; st: SymbolTable; reg: TypeRegistry;
       skip n # discriminator
     while n.hasMore:
       if n.isTagLit:
-        let branchTag = pool.tags[n.tag]
+        let branchTag = pool.tags[n.cursorTagId]
         if branchTag in ["elif", "else", "of"]:
           var inner = childCursor(n)
           if branchTag == "elif":
@@ -781,7 +780,7 @@ proc scanUnsafeCursorOpsIn(ctx: var CheckContext; reg: TypeRegistry;
   ## skip/inc on that cursor are the call's responsibility.
   if not n.isTagLit: return
   var delegatedHere = delegated
-  let tag = pool.tags[n.tag]
+  let tag = pool.tags[n.cursorTagId]
   if tag in CallTags and not delegated:
     let callName = extractCalleeName(n)
     if callName in CursorAdvanceProcs and not hasIntentArg(n):
@@ -798,7 +797,7 @@ proc scanUnsafeCursorOpsIn(ctx: var CheckContext; reg: TypeRegistry;
               break flagFirst
           skip peek
     elif callName notin CursorAdvanceProcs and
-         callName notin ["takeTree", "takeToken", "takeParRi",
+         callName notin ["takeTree", "takeParRi",
                          "skipParRi", "copyInto", "copyTree"]:
       # Check if this call takes a cursor param as argument — if so,
       # inner ops are delegated to it
@@ -813,7 +812,7 @@ proc scanUnsafeCursorOpsIn(ctx: var CheckContext; reg: TypeRegistry;
 proc scanUnsafeCursorOps(ctx: var CheckContext; reg: TypeRegistry; procs: openArray[ProcMeta]) =
   ## In emitter procs (cursor + buffer access), flag every bare `skip n` and
   ## `inc n` on a cursor variable. These should be replaced by:
-  ##   - `takeToken dest, n` (for inc that copies)
+  ##   - `takeTree dest, n` (for inc that copies)
   ##   - `skipUnsafe n, "reason"` (for skip that drops)
   ##   - `skipParRi n` (for structural close)
   ##
@@ -833,17 +832,17 @@ proc extractLvalue(n: Cursor): Cursor =
   ## Extract an lvalue from the cursor position: bare Ident or (dot ...) expression.
   ## Returns nil Cursor if not an analyzable lvalue.
   if n.hasMore and n.kind == Ident: return n
-  if n.isTagLit and pool.tags[n.tag] == "dot": return n
+  if n.isTagLit and pool.tags[n.cursorTagId] == "dot": return n
   default(Cursor)
 
 proc extractWhileHasMoreVar(n: Cursor): Cursor =
   ## If `n` is at `(while CURSOR.hasMore BODY)`, return `CURSOR`.
   ## CURSOR can be a bare ident (`n`) or a nested dot (`it.n`).
   var c = n
-  if not c.isTagLit or pool.tags[c.tag] != "while":
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "while":
     return default(Cursor)
   c = childCursor(c) # at the condition
-  if not c.isTagLit or pool.tags[c.tag] != "dot":
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "dot":
     return default(Cursor)
   c = childCursor(c) # at the receiver
   let varLv = extractLvalue(c)
@@ -872,7 +871,7 @@ const TrustedCursorAdvanceProcs = @CursorAdvanceProcs & @BalancedProcs &
 proc callAdvancesCursor(n: Cursor; lv: Cursor;
                         varCursorCallees: HashSet[string]): bool =
   if not n.isTagLit: return false
-  let tag = pool.tags[n.tag]
+  let tag = pool.tags[n.cursorTagId]
   if tag notin CallTags: return false
   var c = childCursor(n)
   var callName = ""
@@ -899,7 +898,7 @@ proc stmtsMustAdvanceCursor(stmtsNode: Cursor; lv: Cursor;
   ## Sequential block: must-advance if at least one statement in sequence
   ## is guaranteed to advance the cursor.
   var c = stmtsNode
-  if not c.isTagLit or pool.tags[c.tag] != "stmts": return false
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "stmts": return false
   c = childCursor(c)
   while c.hasMore:
     if stmtMustAdvanceCursor(c, lv, varCursorCallees):
@@ -912,20 +911,20 @@ proc branchBodyMustAdvance(branchNode: Cursor; lv: Cursor;
   ## branchNode is `(elif ...)`, `(else ...)`, `(of ...)`.
   var b = branchNode
   if not b.isTagLit: return false
-  let k = pool.tags[b.tag]
+  let k = pool.tags[b.cursorTagId]
   b = childCursor(b)
   if k == "elif":
     if b.hasMore: skip b # condition
   elif k == "of":
     if b.hasMore: skip b # ranges
-  if b.isTagLit and pool.tags[b.tag] == "stmts":
+  if b.isTagLit and pool.tags[b.cursorTagId] == "stmts":
     return stmtsMustAdvanceCursor(b, lv, varCursorCallees)
   false
 
 proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
                            varCursorCallees: HashSet[string]): bool =
   if not n.isTagLit: return false
-  let tag = pool.tags[n.tag]
+  let tag = pool.tags[n.cursorTagId]
   if tag in CallTags:
     return callAdvancesCursor(n, lv, varCursorCallees)
   elif tag == "if":
@@ -935,7 +934,7 @@ proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
     var sawBranch = false
     while c.hasMore:
       if c.isTagLit:
-        let bk = pool.tags[c.tag]
+        let bk = pool.tags[c.cursorTagId]
         if bk in ["elif", "else"]:
           sawBranch = true
           if bk == "else": hasElse = true
@@ -951,7 +950,7 @@ proc stmtMustAdvanceCursor(n: Cursor; lv: Cursor;
     var sawBranch = false
     while c.hasMore:
       if c.isTagLit:
-        let bk = pool.tags[c.tag]
+        let bk = pool.tags[c.cursorTagId]
         if bk in ["of", "else"]:
           sawBranch = true
           if bk == "else": hasElse = true
@@ -968,10 +967,10 @@ proc whileBodyMustAdvanceCursor(whileNode: Cursor; lv: Cursor;
                                 varCursorCallees: HashSet[string]): bool =
   ## For cursor-bounded loops, require body-level guaranteed progress.
   var c = whileNode
-  if not c.isTagLit or pool.tags[c.tag] != "while": return false
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "while": return false
   c = childCursor(c)
   if c.hasMore: skip c # condition
-  if c.isTagLit and pool.tags[c.tag] == "stmts":
+  if c.isTagLit and pool.tags[c.cursorTagId] == "stmts":
     return stmtsMustAdvanceCursor(c, lv, varCursorCallees)
   false
 
@@ -984,7 +983,7 @@ proc scanWhileRecurse(ctx: var CheckContext; n: Cursor;
   if not n.isTagLit: return
   n = childCursor(n)
   while n.hasMore:
-    if n.isTagLit and pool.tags[n.tag] == "stmts":
+    if n.isTagLit and pool.tags[n.cursorTagId] == "stmts":
       scanWhileInStmts(ctx, n, varCursorCallees)
     elif n.isTagLit:
       scanWhileRecurse(ctx, n, varCursorCallees)
@@ -1000,7 +999,7 @@ proc scanWhileInStmts(ctx: var CheckContext; stmtsNode: Cursor;
   child = childCursor(child)
   while child.hasMore:
     if child.isTagLit:
-      let childTag = pool.tags[child.tag]
+      let childTag = pool.tags[child.cursorTagId]
       if childTag == "while":
         let varLv = extractWhileHasMoreVar(child)
         if not cursorIsNil(varLv):
@@ -1040,7 +1039,6 @@ proc scanWhileTermination(ctx: var CheckContext; procs: openArray[ProcMeta];
   let varCursorCallees = buildVarCursorCalleeSet(procs)
   var n = beginRead(buf)
   scanWhileRecurse(ctx, n, varCursorCallees)
-  endRead buf
 
 # ---------------------------------------------------------------------------
 # Step 6: While helpers
@@ -1055,7 +1053,7 @@ proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
   if c.hasMore: skip c # condition
   if not c.isTagLit: return false
   c.linearScan:
-    let tag = pool.tags[c.tag]
+    let tag = pool.tags[c.cursorTagId]
     if tag in CallTags:
       let callName = extractCalleeName(c)
       if callName in acceptedCalls:
@@ -1070,11 +1068,11 @@ proc whileBodyHasProgressCall(whileNode: Cursor; lv: Cursor;
 proc extractAndCounterVar(cond: Cursor): Cursor =
   ## Extract `x` from `(infix and (infix > x 0) ...)`.
   var c = cond
-  if not c.isTagLit or pool.tags[c.tag] != "infix": return default(Cursor)
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "infix": return default(Cursor)
   c = childCursor(c)
   if not c.hasMore or c.kind != Ident or c.strVal != "and": return default(Cursor)
   skip c # operator
-  if not c.isTagLit or pool.tags[c.tag] != "infix": return default(Cursor)
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "infix": return default(Cursor)
   var cmp = childCursor(c)
   if not cmp.hasMore or cmp.kind != Ident or cmp.strVal != ">": return default(Cursor)
   skip cmp # operator
@@ -1094,13 +1092,13 @@ proc extractAndCounterVar(cond: Cursor): Cursor =
 proc extractWhileCounterVar(n: Cursor): Cursor =
   ## If `n` is at `(while (infix and (infix > x 0) ...) BODY)`, return `x`.
   var c = n
-  if not c.isTagLit or pool.tags[c.tag] != "while": return default(Cursor)
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "while": return default(Cursor)
   c = childCursor(c)
   result = extractAndCounterVar(c)
 
 proc isWhileTrueLoop(n: Cursor): bool =
   var c = n
-  if not c.isTagLit or pool.tags[c.tag] != "while": return false
+  if not c.isTagLit or pool.tags[c.cursorTagId] != "while": return false
   c = childCursor(c)
   (c.isTagLit and c.exprKind == TrueX) or
     (c.hasMore and c.kind == Ident and c.strVal == "true")
@@ -1119,13 +1117,13 @@ proc whileBodyLooksLikeNestedScanner(whileNode: Cursor): bool =
   var decVars = initHashSet[string]()
 
   c.linearScan:
-    let tag = pool.tags[c.tag]
+    let tag = pool.tags[c.cursorTagId]
     if tag in ["break", "breakstmt"]:
       hasBreak = true
     elif tag in CallTags:
       let callName = extractCalleeName(c)
 
-      if callName in ["inc", "skip", "tr", "trSons", "trStmt", "trExpr", "takeTree", "takeToken"]:
+      if callName in ["inc", "skip", "tr", "trSons", "trStmt", "trExpr", "takeTree"]:
         hasProgress = true
 
       if callName in ["inc", "dec"]:

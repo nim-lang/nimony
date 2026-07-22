@@ -143,14 +143,14 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     # any case / underscore variant (Nim's `cmpIgnoreStyle` rule). The
     # downstream case branches still emit the canonical form into `dest`, so
     # the lowering pipeline never sees the user-written spelling.
-    pk = pragmaKindByStyle(n.litId)
+    pk = pragmaKindByStyle(n.strId)
   case pk
   of NoPragma:
     if kind.isRoutine and (let cc = callConvKind(n); cc != NoCallConv):
       dest.addParLe(cc, n.info)
       toPragmaArgs()
       dest.addParRi()
-    elif n.isTagLit and kind == TypeY and (let hk = hookKind(n.tagId); hk != NoHook):
+    elif n.isTagLit and kind == TypeY and (let hk = hookKind(n.cursorTagId); hk != NoHook):
       dest.takeTree n
       hasParRi = false
     else:
@@ -162,7 +162,6 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         var read = beginRead(pragBuf[])
         while read.hasMore:
           semPragma c, dest, read, crucial, kind
-        endRead(pragBuf[])
       elif name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
         # Pragma that resolves to a `template X {.pragma.}` declaration. Unlike
         # Nim (which drops `sfCustomPragma`), preserve it as `(pragma <sym>)`
@@ -184,13 +183,13 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     dest.addParLe(MagicP, n.info)
     toPragmaArgs()
     if hasParRi and n.hasMore and n.kind in {StrLit, Ident}:
-      let (magicWord, bits) = magicToTag(pool.strings[n.litId], c.g.config.bits)
+      let (magicWord, bits) = magicToTag(pool.strings[n.strId], c.g.config.bits)
       if magicWord == "":
         buildErr c, dest, n.info, "unknown `magic`"
       else:
         crucial.magic = magicWord
         crucial.bits = bits
-      takeToken dest, n
+      takeTree dest, n
     elif n.hasMore and n.exprKind == ErrX:
       dest.addSubtree n
     else:
@@ -220,13 +219,13 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addParRi()
       return
     if pk in {ImportcP, ImportcppP, ExportcP} and dest[strPos].kind == StrLit:
-      crucial.externName = pool.strings[readonlyCursorAt(dest, strPos).litId]
+      crucial.externName = pool.strings[readonlyCursorAt(dest, strPos).strId]
     # Header pragma extra
     if pk == HeaderP:
       let idx = dest.len - 1
       let tok = dest[idx]
       if tok.isStringLit:
-        let raw = pool.strings[tok.litId]
+        let raw = pool.strings[tok.strId]
         let name = resolveHeaderPath(raw, info.getFile(), c.g.config)
         if name != raw:
           dest[idx] = strToken(pool.strings.getOrIncl(name), NoLineInfo)
@@ -246,7 +245,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     var alreadyErr = false
     if hasParRi:
       if n.hasMore and n.isStringLit:
-        path = n.litId
+        path = n.strId
         pathInfo = n.info
         inc n
       elif n.hasMore and n.exprKind == ErrX:
@@ -451,7 +450,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     dest.addParLe(pk, n.info)
     toPragmaArgs()
     if hasParRi and n.hasMore and n.kind in {StrLit, Ident}:
-      takeToken dest, n
+      takeTree dest, n
     else:
       buildErr c, dest, n.info, "`semantics` pragma takes a string literal"
     dest.addParRi()
@@ -570,7 +569,7 @@ proc readPragmaStrings(c: var SemContext; dest: var TokenBuf; it: var Item): seq
       buildErr c, dest, it.n.info, "expected `string` but got: " & asNimCode(it.n)
       skip it.n
     else:
-      result.add pool.strings[it.n.litId]
+      result.add pool.strings[it.n.strId]
       inc it.n
 
 proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
@@ -784,7 +783,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     var pathInfo = it.n.endInfo
     var errMsg = ""
     if it.n.hasMore and it.n.isStringLit:
-      path = it.n.litId
+      path = it.n.strId
       pathInfo = it.n.info
       inc it.n
     else:
@@ -846,7 +845,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while it.n.hasMore: skip it.n
     else:
       dest.addParLe PragmasS, it.n.info
-      dest.takeToken it.n
+      dest.takeTree it.n
       while it.n.hasMore:
         dest.takeTree it.n
       dest.addParRi
@@ -859,7 +858,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       inc it.n
     else:
       dest.addParLe PragmasS, it.n.info
-      dest.takeToken it.n
+      dest.takeTree it.n
       dest.addParRi
   of PassLP:
     toPragmaArgs()

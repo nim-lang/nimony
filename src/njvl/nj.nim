@@ -394,7 +394,7 @@ type
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   let info = n.info
-  var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n.childCursor))
   if not isParamsTag(fnType):
     bug "njvl trCall: callee type not params at " & infoToStr(info)
   var pragmas = fnType
@@ -410,7 +410,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
     else: NoRaise,
     info: info
   )
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   let callStart = n
   n = sub(n) # skip `(call)`
   trExpr c, dest, n # handle `fn`
@@ -436,9 +436,9 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addIntLit 1, info
       inc n
     else:
-      dest.takeToken n
+      dest.takeTree n
   of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
+    dest.takeTree n
   of TagLit:
     case n.exprKind
     of CallKinds:
@@ -524,7 +524,6 @@ proc trStmtCall(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cu
     # we need to bind the call to a temporary!
     var target = createTokenBuf(10)
     target.copyTree cursorAt(dest, before)
-    endRead dest
     dest.shrink before
 
     let s = pool.syms.getOrIncl("`g." & $c.current.tmpCounter)
@@ -561,7 +560,7 @@ proc replayLocalHeader(c: var Context; dest: var TokenBuf; n: Cursor) =
 proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
   let beforeHead = dest.len
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   let localStart = n
   n = sub(n)
 
@@ -607,7 +606,6 @@ proc trLocal(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: var Curso
     callIsOver(c, dest, callInfo)
     var decl = createTokenBuf(10)
     decl.copyTree cursorAt(dest, beforeHead)
-    endRead dest
     dest.shrink beforeHead
     replayLocalHeader(c, dest, beginRead(decl))
 
@@ -686,7 +684,6 @@ proc countSons(dest: var TokenBuf; d: int): int =
     while n.hasMore:
       skip n
       inc result
-  endRead(dest)
 
 proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cursor) =
   # Precondition: xelim already produced a single elif-else construct here
@@ -923,7 +920,6 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
             w.addParPair BreakS, info
     var ww = beginRead(w)
     trWhileTrue c, dest, ww
-    endRead w
     dest.addParRi() # close "loop"
 
 proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
@@ -1298,7 +1294,7 @@ proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var s = NoSymId
   takeInto dest, n: # CfVarV
     s = n.symId
-    dest.takeToken n # SymDef
+    dest.takeTree n # SymDef
   let boolTyp = c.typeCache.builtins.boolType
   c.typeCache.registerLocal(s, VarY, boolTyp)
 
@@ -1321,7 +1317,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   of StmtsS, ScopeS:
     # Flatten nested stmts when the output already has a (stmts open.
     if not b.hasParLe and g[0] < 0:
-      dest.addParLe(n.tag, n.info)
+      dest.addParLe(n.cursorTagId, n.info)
       b.hasParLe = true
       takeThisParRi = true
     let stmtsStart = n
@@ -1404,7 +1400,7 @@ proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
   var n = pass.n
   #echo "after xelim: ", toString(n, false)
   assert n.stmtKind == StmtsS, $n.kind
-  pass.dest.addParLe(n.tag, n.info)
+  pass.dest.addParLe(n.cursorTagId, n.info)
   inc n
   # Add a top-level return guard so that noreturn calls at module level
   # have a mflag to set via jtrue, enabling the mflag-based init tracking:

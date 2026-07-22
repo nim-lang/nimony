@@ -322,7 +322,7 @@ proc gcomma(g: var SrcGen) =
   putWithSpace(g, tkComma, ",")
 
 proc mayAddExportMarker(g: var SrcGen, n: var Cursor) =
-  if n.isIdent and pool.strings[n.litId] == "x" and
+  if n.isIdent and pool.strings[n.strId] == "x" and
       renderNoPostfix notin g.flags:
     put(g, tkPostfixOpr, "*")
   skip n
@@ -339,7 +339,7 @@ proc gpragmas(g: var SrcGen, n: var Cursor) =
       else:
         afterFirst = true
 
-      put(g, tkSymbol, pool.tags[n.tagId])
+      put(g, tkSymbol, pool.tags[n.cursorTagId])
       n.into:
         if n.hasMore:
           putWithSpace(g, tkColon, ":")
@@ -556,9 +556,9 @@ proc gproc(g: var SrcGen, n: var Cursor) =
 proc bracketKind(g: SrcGen, n: Cursor): BracketKind =
   if renderIds notin g.flags:
     if n.exprKind in {OchoiceX, CchoiceX}:
-      var firstSon = n
-      inc firstSon
-      result = bracketKind(g, firstSon)
+      var childCursor = n
+      inc childCursor
+      result = bracketKind(g, childCursor)
     elif n.isSymbol:
       var name = pool.syms[n.symId]
       extractBasename(name)
@@ -667,7 +667,7 @@ proc gsufx(g: var SrcGen, n: var Cursor) =
     var value = n
     skip n
 
-    case pool.strings[n.litId]
+    case pool.strings[n.strId]
     of "i": put(g, tkIntLit, $pool.integers[value.intId])
     of "i8": put(g, tkIntLit, $pool.integers[value.intId] & "'i8")
     of "i16": put(g, tkIntLit, $pool.integers[value.intId] & "'i16")
@@ -1230,23 +1230,23 @@ proc gpragmaBlock(g: var SrcGen, n: var Cursor) =
 
 proc isUseSpace(n: Cursor): bool =
   template isAlpha(s: Cursor): bool =
-    pool.strings[s.litId][0] in {'a'..'z', 'A'..'Z'}
+    pool.strings[s.strId][0] in {'a'..'z', 'A'..'Z'}
 
   result = true
   var n = n
 
   assert n.hasMore
-  let firstSon = n
+  let childCursor = n
   skip n
 
   if n.hasMore:
     let secondSon = n
     skip n
     if not n.hasMore:
-      assert firstSon.isIdent and secondSon.isIdent
+      assert childCursor.isIdent and secondSon.isIdent
       # handle `=destroy`, `'big' and handle setters, e.g. `foo=`
-      if (pool.strings[firstSon.litId] in ["=", "'"] and isAlpha(secondSon)) or
-          (pool.strings[secondSon.litId] == "=" and isAlpha(firstSon)):
+      if (pool.strings[childCursor.strId] in ["=", "'"] and isAlpha(secondSon)) or
+          (pool.strings[secondSon.strId] == "=" and isAlpha(childCursor)):
         result = false
 
 proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopLevel = false) =
@@ -1963,7 +1963,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     put(g, tkSymbol, name, n.symId, isDef = true)
     inc n
   of Ident:
-    put(g, tkSymbol, pool.strings[n.litId])
+    put(g, tkSymbol, pool.strings[n.strId])
     inc n
   of DotToken:
     inc n
@@ -1995,7 +1995,7 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var n2 = n
   var file0 = FileId 0
 
-  var togo = span(n2)  # tokens incl. suffixes; consume `tokenWidth` per step
+  var togo = subtreeWidth(n2)  # tokens incl. suffixes; consume `tokenWidth` per step
   while togo > 0:
     if n2.info.isValid:
       let currentFile = getFileId(pool.man, n2.info)

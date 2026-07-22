@@ -88,7 +88,6 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
     var hookReader = beginRead(c.liftingCtx[].dest)
     #echo "HOOKS: ", toString(hookReader)
     publishHooks hookReader
-    endRead(c.liftingCtx[].dest)
 
   pass.dest.add move(c.liftingCtx[].dest)
   pass.dest.addParRi()

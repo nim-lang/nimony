@@ -77,7 +77,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           # ^ export marker position has a `(`? If so, it is a magic!
           let callHeadAt = lastValueStart(dest)
           let info = readonlyCursorAt(dest, callHeadAt).info
-          copyKeepLineInfoAt(dest, callHeadAt, n.load) # overwrite the `(call` node with the magic itself
+          dest[callHeadAt] = n.load # overwrite the `(call` node with the magic itself
           n = sub(n) # bound the magic-body walk
           if n.isIntLit:
             if pool.integers[n.intId] == TypedMagic:
@@ -348,7 +348,7 @@ proc closeArgsScope(c: var SemContext; cs: var CallState; merge = true) =
 
 proc untypedCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   closeArgsScope c, cs, merge = false
-  dest.addParLe(cs.callNode.tag, cs.callNodeInfo)
+  dest.addParLe(cs.callNode.tagId, cs.callNodeInfo)
   dest.addSubtree cs.fn.n
   for a in cs.args:
     # XXX call semTemplBody for orig instead?
@@ -371,7 +371,7 @@ proc semConvFromCall(c: var SemContext; dest: var TokenBuf; it: var Item; cs: Ca
     if not nullary.hasMore:
       # sink T/lent T call
       var typeBuf = createTokenBuf(16)
-      typeBuf.addParLe(destType.tag, destType.info)
+      typeBuf.addParLe(destType.cursorTagId, destType.info)
       typeBuf.addSubtree cs.args[0].n
       typeBuf.addParRi()
       var item = Item(n: beginRead(typeBuf), typ: it.typ)
@@ -456,13 +456,13 @@ proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
 proc buildCallSource(buf: var TokenBuf; cs: CallState) =
   case cs.source
   of RegularCall:
-    buf.addParLe(cs.callNode.tag, cs.callNodeInfo)
+    buf.addParLe(cs.callNode.tagId, cs.callNodeInfo)
     buf.addSubtree cs.fn.n
     for a in cs.args:
       buf.addSubtree a.n
   of MethodCall:
     assert cs.args.len >= 1
-    buf.addParLe(cs.callNode.tag, cs.callNodeInfo)
+    buf.addParLe(cs.callNode.tagId, cs.callNodeInfo)
     buf.addParLe(DotX, cs.callNodeInfo)
     buf.addSubtree cs.args[0].n
     buf.addParRi()
@@ -567,18 +567,18 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
         let start = dest.len
         var callStart = default(Cursor)
         if isCall:
-          dest.addParLe(arg.tag, arg.info)
+          dest.addParLe(arg.cursorTagId, arg.info)
           callStart = arg
           arg = sub(arg)
           takeTree dest, arg
         let isDoubleCall = arg.exprKind in CallKinds # `@` call inside `toOpenArray` call case
         var innerCallStart = default(Cursor)
         if isDoubleCall:
-          dest.addParLe(arg.tag, arg.info)
+          dest.addParLe(arg.cursorTagId, arg.info)
           innerCallStart = arg
           arg = sub(arg)
           takeTree dest, arg
-        dest.addParLe(arg.tag, arg.info)
+        dest.addParLe(arg.cursorTagId, arg.info)
         let aconstrStart = arg
         arg = sub(arg)
         if containsGenericParams(arg):
@@ -598,7 +598,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
           var callBuf = createTokenBuf(dest.len - start)
           # balanced span: raw copy keeps its seals
           for tok in start ..< dest.len:
-            callBuf.addRaw dest[tok]
+            callBuf.add dest[tok]
           dest.shrink start
           var call = Item(n: beginRead(callBuf), typ: c.types.autoType)
           semCall c, dest, call, {}
@@ -609,12 +609,12 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
         while true:
           case arg.exprKind
           of HconvX:
-            dest.addParLe(arg.tag, arg.info)
+            dest.addParLe(arg.cursorTagId, arg.info)
             wrapperScopes.add arg
             arg = sub(arg)
             dest.takeTree arg # skip type
           of BaseobjX:
-            dest.addParLe(arg.tag, arg.info)
+            dest.addParLe(arg.cursorTagId, arg.info)
             wrapperScopes.add arg
             arg = sub(arg)
             # genericConverter is reused for object conversions to generic types
@@ -625,19 +625,19 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
               takeTree dest, arg
             dest.takeTree arg # skip intlit
           of HderefX, HaddrX:
-            dest.addParLe(arg.tag, arg.info)
+            dest.addParLe(arg.cursorTagId, arg.info)
             wrapperScopes.add arg
             arg = sub(arg)
           else:
             break
         if arg.exprKind == HcallX:
           let convInfo = arg.info
-          dest.addParLe(arg.tag, arg.info)
+          dest.addParLe(arg.cursorTagId, arg.info)
           wrapperScopes.add arg
           arg = sub(arg)
           if arg.isSymbol:
             let sym = arg.symId
-            takeToken dest, arg
+            takeTree dest, arg
             let res = tryLoadSym(sym)
             if res.status == LacksNothing and res.decl.symKind == ConverterY:
               let routine = asRoutine(res.decl)
@@ -744,11 +744,11 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
       let isCall = argToInst.exprKind in CallKinds
       var callStart = default(Cursor)
       if isCall:
-        instArgBuf.addParLe(argToInst.tag, argToInst.info)
+        instArgBuf.addParLe(argToInst.cursorTagId, argToInst.info)
         callStart = argToInst
         argToInst = sub(argToInst)
         takeTree instArgBuf, argToInst # call symbol
-      instArgBuf.addParLe(argToInst.tag, argToInst.info) # array constructor tag
+      instArgBuf.addParLe(argToInst.cursorTagId, argToInst.info) # array constructor tag
       let aconstrStart = argToInst
       argToInst = sub(argToInst)
       instArgBuf.addSubtree instantiateType(c, argToInst, inputMatch.inferred)
@@ -1018,7 +1018,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       cs.args = csArgsOrig
 
   if idx >= 0:
-    dest.addParLe(cs.callNode.tag, cs.callNodeInfo)
+    dest.addParLe(cs.callNode.tagId, cs.callNodeInfo)
     let finalFn = m[idx].fn
     # only merge symbols defined in args to scope if we did not match a macro/template:
     closeArgsScope c, cs, merge = finalFn.kind notin {MacroY, TemplateY}
@@ -1065,7 +1065,6 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # semcheck produced magic expression
       var magicExprBuf = createTokenBuf(dest.len - cs.beforeCall)
       magicExprBuf.addUnstructured cursorAt(dest, cs.beforeCall)
-      endRead(dest)
       dest.shrink cs.beforeCall
       var magicExpr = Item(n: cursorAt(magicExprBuf, 0), typ: it.typ)
       semExpr c, dest, magicExpr, cs.flags
@@ -1108,7 +1107,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           # head+1 may be a line-info suffix; locate the callee positionally
           # and account for its real width (a Symbol may carry suffixes too)
           let calleePos = cs.beforeCall + tokenWidth(readonlyCursorAt(dest, cs.beforeCall))
-          let growth = invokeBuf.len - span(readonlyCursorAt(dest, calleePos))
+          let growth = invokeBuf.len - subtreeWidth(readonlyCursorAt(dest, calleePos))
           replace dest, beginRead(invokeBuf), calleePos
           # the call tree is already sealed; `replace` cannot widen it itself:
           widenSealed dest, cs.beforeCall, growth
@@ -1174,7 +1173,6 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
 proc getFnIdent(c: var SemContext; dest: var TokenBuf): StrId =
   var n = beginRead(dest)
   result = takeIdent(n)
-  endRead(dest)
 
 proc findMagicInSyms(syms: Cursor): ExprKind =
   ## Looks for a magic in a bare symbol or anywhere in a symchoice tree.
@@ -1340,7 +1338,6 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     # transform call early before semchecking arguments
     let syms = beginRead(dest)
     let magic = findMagicInSyms(syms)
-    endRead(dest)
     if magic != NoExpr:
       swap dest, cs.dest
       unoverloadableMagicCall(c, dest, it, cs, magic)
@@ -1359,7 +1356,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     var namedStart = default(Cursor)
     if named:
       cs.hasNamedArgs = true
-      dest.addParLe(arg.n.tag, arg.n.info)
+      dest.addParLe(arg.n.cursorTagId, arg.n.info)
       namedStart = arg.n
       arg.n = sub(arg.n)
       takeTree dest, arg.n

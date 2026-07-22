@@ -72,7 +72,6 @@ proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left
   var tup = beginRead(tupBuf)
   var localTyp = local.typ
   createDecl(e, dest, symId, localTyp, tup, info, LetS, needsAddr)
-  endRead(tupBuf)
 
 proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
   result = createTokenBuf()
@@ -199,7 +198,7 @@ proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, Sy
   ## (with distinct labels) on every yield expansion of the outer iterator.
   case c.kind
   of TagLit:
-    dest.addParLe(c.tag, c.info)
+    dest.addParLe(c.cursorTagId, c.info)
     c.into:
       while c.hasMore:
         copyWithMapping(dest, c, mapping)
@@ -244,7 +243,6 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
       swap dest, forStmtBuf
       var forCursor = beginRead(forStmtBuf)
       transformForStmt(e, dest, forCursor)
-      endRead(forStmtBuf)
     of WhileS:
       takeInto dest, c:
         inlineLoopBody(e, dest, c, mapping)
@@ -259,7 +257,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
           e.breaks.add c.symId
         else:
           e.breaks.add SymId(0)
-        dest.takeToken(c)
+        dest.takeTree(c)
         inlineLoopBody(e, dest, c, mapping)
       discard e.breaks.pop
     of StmtsS:
@@ -268,7 +266,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
           while c.hasMore:
             inlineLoopBody(e, dest, c, mapping)
       else:
-        dest.addParLe(c.tag, c.info)
+        dest.addParLe(c.cursorTagId, c.info)
         c.into:
           while c.hasMore:
             inlineLoopBody(e, dest, c, mapping)
@@ -322,7 +320,7 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
   of TagLit:
     case c.stmtKind
     of StmtsS:
-      dest.addParLe(c.tag, c.info)
+      dest.addParLe(c.cursorTagId, c.info)
       c.into:
         while c.hasMore:
           inlineIteratorBody(e, dest, c, forStmt, yieldType)
@@ -437,12 +435,12 @@ proc rewriteYieldsAndCopy(e: var EContext; dest: var TokenBuf;
     let sk = c.stmtKind
     if sk == YldS:
       let info = c.info
-      let headTag = c.tag
+      let headTag = c.cursorTagId
       c.into: # past yld tag
         if c.isDotToken:
           # bare yield (void return) — leave as-is
           dest.addParLe(headTag, info)
-          dest.takeToken c # the dot token
+          dest.takeTree c # the dot token
         else:
           # (yld v) ⇒ (asgn resultSym v) ; (yld .)
           dest.copyIntoKind AsgnS, info:
@@ -459,7 +457,7 @@ proc rewriteYieldsAndCopy(e: var EContext; dest: var TokenBuf;
         while c.hasMore:
           rewriteYieldsAndCopy(e, dest, c, resultSym)
   else:
-    dest.takeToken c
+    dest.takeTree c
 
 proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
                         c: var Cursor; retType: Cursor) =
@@ -471,7 +469,7 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
   let synthResultSym = pool.syms.getOrIncl(
     "`coroResult." & $getTmpId(e) & "." & e.main)
 
-  dest.addParLe(c.tag, c.info) # IteratorS tag
+  dest.addParLe(c.cursorTagId, c.info) # IteratorS tag
   let iterStart = c
   c = sub(c)
   for _ in 0..<BodyPos:
@@ -479,7 +477,7 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
 
   # Now at body. Either DotToken (forward decl) or a (stmts ...).
   if c.isDotToken:
-    dest.takeToken c
+    dest.takeTree c
     dest.addParRi(c.endInfo)
     c = iterStart; skip c
     return
@@ -489,7 +487,7 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
     c = iterStart; skip c
     return
 
-  dest.addParLe(c.tag, c.info) # body's StmtsS opening
+  dest.addParLe(c.cursorTagId, c.info) # body's StmtsS opening
   c.into:
 
     let info = c.info
@@ -590,7 +588,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var callCur = forStmt.iter
   if callCur.exprKind == HderefX:
     inc callCur # peel hderef for var/lent-returning iters
-  dest.addParLe(callCur.tag, callCur.info) # (call tag
+  dest.addParLe(callCur.cursorTagId, callCur.info) # (call tag
   callCur = sub(callCur) # drained below; the close is synthesized
   dest.takeTree callCur # iter sym
   while callCur.hasMore:
@@ -683,12 +681,10 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     swap(dest, bodyBuf)
     var body = cursorAt(preBodyBuf, 0)
     transformStmt(e, dest, body)
-    endRead(preBodyBuf)
     swap(dest, bodyBuf)
 
     var transformedBody = beginRead(bodyBuf)
     inlineIteratorBody(e, dest, transformedBody, forStmt, routine.retType)
-    endRead(bodyBuf)
   else:
     # No global iter decl by this name — sem must have accepted the call
     # because the target is a local of `itertype` (a first-class iter
@@ -892,7 +888,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       takeInto dest, c:
         if c.isSymbolDef:
           e.breaks.add c.symId
-          dest.takeToken(c)
+          dest.takeTree(c)
         else:
           let info = c.info
           skip c

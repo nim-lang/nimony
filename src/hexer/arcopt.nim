@@ -307,7 +307,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
           analyse(c, blockBody, n)
           mergeBasicBlockInfo(b, blockBody)
     of BreakS:
-      let label = n.firstSon
+      let label = n.childCursor
       breakStmt(b, label)
       skip n
     of RetS, RaiseS:
@@ -344,7 +344,7 @@ proc opt(c: Con; n: var Cursor; dest: var TokenBuf) =
         while n.hasMore:
           opt(c, n, dest)
   else:
-    dest.takeToken n
+    dest.takeTree n
 
 proc optimizeArc*(pass: var Pass) =
   var c = Con(
@@ -380,7 +380,7 @@ proc runArcoptBody(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =
 proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits: int) =
   case n.kind
   of TagLit:
-    let tag = n.tagId
+    let tag = n.cursorTagId
     let info = n.info
     if n.stmtKind == ProcS:
       let d = takeProcDecl(n)
@@ -400,18 +400,17 @@ proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits
         dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.addParLe(n.tag, n.info)
+      dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           runArcoptTree(dest, n, moduleSuffix, bits)
       dest.addParRi()
   else:
-    dest.takeToken n
+    dest.takeTree n
 
 proc runArcopt*(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =
   ## Direct entry point for already generated NIFC buffers.
   var n = beginRead(buf)
   var dest = createTokenBuf(buf.len)
   runArcoptTree(dest, n, moduleSuffix, bits)
-  endRead(buf)
   buf = ensureMove(dest)

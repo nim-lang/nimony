@@ -60,7 +60,7 @@ when not defined(nimony):
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   c.typeCache.openScope()
-  dest.addParLe(n.tag, n.info)
+  dest.addParLe(n.cursorTagId, n.info)
   let declStart = n
   n = sub(n)
   var r = asRoutine(decl, SkipExclBody)
@@ -90,7 +90,7 @@ proc shouldInlineRoutine(pragmas: Cursor): bool =
 proc shouldInlineCall(c: var Context; n: Cursor; routine: var Routine): bool =
   result = false
   if n.exprKind in CallKinds and c.thisRoutine != NoSymId:
-    let callee = n.firstSon
+    let callee = n.childCursor
     if callee.kind == Symbol:
       let s = tryLoadSym(callee.symId)
       if s.status == LacksNothing:
@@ -164,7 +164,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
   of TagLit:
     case n.stmtKind
     of RetS:
-      let retVal = n.firstSon
+      let retVal = n.childCursor
       if retVal.kind != DotToken and not (retVal.kind == Symbol and c.resultSym == retVal.symId):
         # generate assignment: `dest = result`
         copyIntoKind dest, AsgnS, info:
@@ -197,7 +197,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
       else:
         # discard the result declaration!
         discard
-      c.resultSym = n.firstSon.symId
+      c.resultSym = n.childCursor.symId
     else:
       if isDeclarative(n):
         takeTree dest, n
@@ -275,7 +275,7 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; rout
     dest.addParRi()
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let le = n.firstSon
+  let le = n.childCursor
   var ri = le
   skip ri
   var routine = default(Routine)
@@ -313,7 +313,7 @@ proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
-    takeToken dest, n
+    takeTree dest, n
   of TagLit:
     case n.stmtKind
     of AsgnS:

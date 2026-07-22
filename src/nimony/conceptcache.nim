@@ -167,13 +167,13 @@ proc hashTypeCursor(n: Cursor): Hash =
   of Symbol:
     h = h !& Hash(n.symId.int)
   of TagLit:
-    h = h !& Hash(n.tagId.int)
+    h = h !& Hash(n.cursorTagId.int)
     var child = sub(n)
     while hasMore(child):
       h = h !& hashTypeCursor(child)
       skip child
   of Ident, StrLit:
-    h = h !& Hash(n.litId.int)
+    h = h !& Hash(n.strId.int)
   of IntLit, InlineInt:
     h = h !& Hash(n.intId.int)
   of FloatLit:
