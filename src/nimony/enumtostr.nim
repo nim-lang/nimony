@@ -67,7 +67,7 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   let dollorName = "dollar`." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
-  dest.add tagToken("proc", enumSymInfo)
+  dest.add tagToken("func", enumSymInfo)
   dest.add symdefToken(dollorSymId, enumSymInfo)
 
   # TODO: defaults to (nodecl)
@@ -103,4 +103,4 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   genEnumToStrProcCase(c, dest, body, paramSymId, enumSymId)
   dest.addParRi() # stmts
 
-  dest.addParRi() # proc
+  dest.addParRi() # func

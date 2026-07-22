@@ -15,7 +15,7 @@
     (true).
     (bool)
     (tup 1 "true"))))
- (proc@5 :dollar`.bool.0. x . .
+ (func@5 :dollar`.bool.0. x . .
   (params
    (param :e.0 . .
     (bool).))string.0.sysvq0asl . .
