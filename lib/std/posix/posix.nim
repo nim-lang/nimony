@@ -458,6 +458,17 @@ when defined(posix):
   type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
 
   when defined(nimNativeIo):
+    # GCC 14+ treats POSIX functions like `execve` as builtins with a known
+    # prototype (`int execve(const char*, char* const*, char* const*)`) and emits
+    # `-Wbuiltin-declaration-mismatch` against our header-free binding, whose only
+    # difference is pointer qualifiers (`char**` vs `char* const*`) — identical at
+    # the ABI level. Nothing in the C standard turns a POSIX declaration into a
+    # builtin, so this is GCC overreach; silence it here rather than smuggle
+    # `const`-qualified casts through every call site (nim-lang/nimony#2148).
+    # Guarded to GCC: clang has no such warning and would instead spam
+    # `-Wunknown-warning-option` for the flag it does not recognize.
+    when defined(gcc):
+      {.passC: "-Wno-builtin-declaration-mismatch".}
     proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
     proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
     proc fork*(): Pid {.importc: "fork", sideEffect.}
