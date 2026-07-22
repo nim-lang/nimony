@@ -30,6 +30,12 @@ type
                              # need it yields a "cannot evaluate" result. Used
                              # by callers such as overload resolution that must
                              # stay in-process and cheap.
+    keepEnumFields*: bool    # when true an enum constant folds to its field
+                             # symbol (the canonical typed value) instead of
+                             # collapsing to its bare ordinal, which would drop
+                             # the enum type. Used when folding a `static` enum
+                             # argument so a `const` alias canonicalizes to the
+                             # same value as the literal field it names.
 
 proc isConstBoolValue*(n: Cursor): bool =
   n.exprKind in {TrueX, FalseX}
@@ -663,6 +669,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   of Symbol:
     let symId = n.symId
     let info = n.info
+    let symCursor = n
     inc n
     let sym = tryLoadSym(symId)
     if sym.status == LacksNothing:
@@ -671,6 +678,10 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       of ConstY:
         return eval(c, local.val)
       of EfldY:
+        if c.keepEnumFields:
+          # keep the field symbol: it is the canonical typed value of its enum
+          # type, so folding stops here instead of losing the type to `inc`.
+          return symCursor
         inc local.val # takes the first counter field
         return eval(c, local.val)
       else: discard
@@ -990,9 +1001,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     cannotEval n
 
 proc evalExpr*(c: var SemContext, n: var Cursor;
-               expectedType: TypeCursor = default(Cursor)): TokenBuf =
+               expectedType: TypeCursor = default(Cursor);
+               keepEnumFields = false): TokenBuf =
+  ## When `keepEnumFields` is set, an enum constant folds to its field symbol
+  ## rather than its bare ordinal, preserving the enum type.
   var ec = initEvalContext(addr c)
   ec.expectedType = expectedType
+  ec.keepEnumFields = keepEnumFields
   let val = eval(ec, n)
   result = createTokenBuf(val.span)
   result.addSubtree val
