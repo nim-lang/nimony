@@ -50,11 +50,11 @@ proc createMasterTagPool(): TagPool =
   ## Seeded so each tag's `TagId` equals its master `TagEnum` ordinal
   ## (same pattern as nifcdecl.createLengTagPool).
   result = newTagPool()
-  for e in TagEnum:
-    if e == InvalidTagId: continue
-    let id = result.registerTag(TagData[e][0])
-    assert uint32(id) == uint32(TagData[e][1]),
-      "tag pool misalignment for " & TagData[e][0]
+  for e in low(TagEnum)..high(TagEnum):
+    if e != InvalidTagId:
+      let id = result.registerTag(TagData[e][0])
+      assert uint32(id) == uint32(e),
+        "tag pool misalignment for " & TagData[e][0]
 
 var globalTags*: TagPool = createMasterTagPool()
 var lineMan*: LineInfoManager

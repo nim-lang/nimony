@@ -85,6 +85,15 @@ type
 proc takeToken(c: var Context; n: var Cursor) {.inline.} =
   c.dest.takeToken n
 
+proc endsWithOpenHderef(dest: TokenBuf): bool =
+  ## True when the buffer's last value is a freshly opened `(hderef` head.
+  ## The head may be followed by line-info suffix tokens, so a raw
+  ## `dest[dest.len-1].tag` read would compare suffix payload bits.
+  result = false
+  if dest.len > 0:
+    let t = dest[lastValueStart(dest)]
+    result = t.kind == TagLit and t.tag == TagId(HderefTagId)
+
 proc rootOf(n: Cursor; allowIndirection = false): SymId =
   var n = n
   while true:
@@ -635,7 +644,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     finishCallArgs()
 
   swap c.dest, callBuf
-  if needHderef and c.dest[c.dest.len-1].tag != TagId(HderefTagId):
+  if needHderef and not endsWithOpenHderef(c.dest):
     c.dest.addParLe(HderefX, info)
     c.dest.add callBuf
     c.dest.addParRi()
@@ -719,7 +728,7 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
         trSonsLocation c, n, WantT
     else:
       if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
-        if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
+        if endsWithOpenHderef(c.dest):
           trSonsLocation c, n, WantT
         else:
           c.dest.addParLe(HderefX, n.info)
