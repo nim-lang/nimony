@@ -1,7 +1,5 @@
 # included in sem.nim
 
-import sigconcepts
-
 proc fetchCallableType(c: var SemContext; dest: var TokenBuf; n: Cursor; s: Sym): TypeCursor =
   if s.kind == NoSym:
     let s = getIdent(n)
