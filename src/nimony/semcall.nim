@@ -1239,7 +1239,10 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     cs.fn.n = sub(cs.fn.n)
     var lhsBuf = createTokenBuf(4)
     var lhs = Item(n: cs.fn.n, typ: c.types.autoType)
-    semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared} # don't consider all overloads
+    # `AllowOverloads` so an explicit generic instantiation `foo[...]` sees the
+    # overload set; the module symbol sharing the name is filtered out of the
+    # sym choice (nim-lang/nimony#2130):
+    semExpr c, lhsBuf, lhs, {KeepMagics, AllowUndeclared, AllowOverloads}
     cs.fn.n = lhs.n
     lhs.n = cursorAt(lhsBuf, 0)
     var maybeRoutine = lhs.n

@@ -49,6 +49,14 @@ proc bug*(msg: string) {.noreturn.} =
 proc isRoutine*(t: SymKind): bool {.inline.} =
   t in {ProcY, FuncY, IteratorY, MacroY, TemplateY, ConverterY, MethodY}
 
+proc isValidFnHead*(t: SymKind): bool {.inline.} =
+  ## A caller `fn` expression can resolve to any symbol except a module:
+  ## routines, but also a `TypeY`/`TypevarY` (a type conversion like `int(x)`
+  ## or `T(1)`) or a proc-typed value. Only modules are never callable, so
+  ## they must stay out of overload sym choices where a same-named proc exists
+  ## (nim-lang/nimony#2130).
+  t != ModuleY
+
 proc isLocal*(t: SymKind): bool {.inline.} =
   t in {LetY, VarY, ResultY, ConstY, ParamY, TypevarY, StaticTypevarY, CursorY, PatternvarY, FldY, GfldY, EfldY, GletY, TletY, GvarY, TvarY}
 
