@@ -3462,14 +3462,34 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     dest.addParLe(Delay0X, info)
     dest.addParRi()
     it.n = delayStart; skip it.n
-  elif it.n.exprKind in CallKinds:
-    # delay(call) form: produce (delay fn args)
+  elif it.n.exprKind in CallKinds and (var probe = it.n; skip probe; not probe.hasMore):
+    # delay(call): the call is delay's sole child, the shape before flattening.
     dest.addParLe(DelayX, info)
     it.n.into:                         # descend past inner call's tag
       while it.n.hasMore:
         takeTree dest, it.n            # copy fn and args verbatim (already semchecked)
     dest.addParRi()
     it.n = delayStart; skip it.n       # skip outer delay's )
+  elif it.n.hasMore:
+    # (delay fn args), the flattened shape: a generic body re-semmed on
+    # instantiation. Re-sem it as a call so a generic callee is instantiated,
+    # then flatten again; copied verbatim the callee stays uninstantiated and
+    # hexer emits no coro frame for it.
+    var callBuf = createTokenBuf(16)
+    callBuf.addParLe(CallX, info)
+    while it.n.hasMore:
+      takeTree callBuf, it.n           # fn + args → (call fn args)
+    callBuf.addParRi()
+    it.n = delayStart; skip it.n       # skip delay's )
+    var call = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
+    var callDest = createTokenBuf(16)
+    semExpr c, callDest, call          # instantiates a generic callee
+    dest.addParLe(DelayX, info)
+    var semmed = cursorAt(callDest, 0)
+    semmed.into:                       # strip the (call …) wrapper
+      while semmed.hasMore:
+        takeTree dest, semmed
+    dest.addParRi()
   else:
     buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
     skip it.n
@@ -3493,7 +3513,10 @@ proc semSuspend(c: var SemContext; dest: var TokenBuf; it: var Item) =
     buildErr c, dest, it.n.info, "`suspend` takes no argument"
     skip it.n
     it.n = suspendStart; skip it.n
-  it.typ = c.types.continuationType
+  # `suspend` is declared void. The first pass never comes through here
+  # (SuspendX is not in MagicCallNeedsSemcheck); instantiation re-sem does, and
+  # a Continuation-typed result would fail the discard check.
+  it.typ = c.types.voidType
   commonType c, dest, it, beforeExpr, expected
 
 type ArrayConstrContext = object
