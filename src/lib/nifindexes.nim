@@ -177,7 +177,9 @@ type
     Hidden, Exported
   NifIndexEntry* = object
     offset*: int
-    info*: PackedLineInfo
+    parentInfo*: NifLineInfo ## absolute info of the decl's write-time parent
+                             ## node; seeds `parse` on an index-jumped load so
+                             ## file-less relative infos resolve correctly
     vis*: IndexVisibility
 
   NifIndex* = object
@@ -238,9 +240,13 @@ proc readIndex*(indexName: string): NifIndex =
 
 proc readEmbeddedIndex*(r: var Reader): Table[string, NifIndexEntry] =
   ## Reader-based twin of the classic streaming version (mirrors
-  ## `foreignmodules.readEmbeddedIndex`, but keeps visibility). Line info is
-  ## not recovered from the raw index tokens — `addEmbeddedIndex` only needs
-  ## the visibility and offset, so `info` is left `NoLineInfo`.
+  ## `foreignmodules.readEmbeddedIndex`, but keeps visibility). Each entry's
+  ## line-info suffix records the indexed decl's PARENT absolute info (written
+  ## relative to the `.index` head's root anchor when the file matches, see
+  ## `emitValueIndexed`); resolve it here so an index-jumped `parse` can seed
+  ## its parent stack with it — a decl whose file switch sits on an ancestor
+  ## node (e.g. code from an `include` file) would otherwise resolve file-less
+  ## relative infos to the module's own file.
   result = initTable[string, NifIndexEntry]()
   let indexPos = indexStartsAt(r)
   if indexPos <= 0: return
@@ -250,10 +256,22 @@ proc readEmbeddedIndex*(r: var Reader): Table[string, NifIndexEntry] =
   var t = default(ExpandedToken)
   next(r, t)                                   # `(.index`
   if t.tk == ParLe and t.data == ".index":
+    var root = NoNifLineInfo
+    if t.filename.len != 0:
+      root = NifLineInfo(file: pool.filenames.getOrIncl(decodeFilename(t)),
+                         line: t.pos.line, col: t.pos.col)
     next(r, t)
     while t.tk != EofToken and t.tk != ParRi:
       if t.tk == ParLe:
         let vis = if t.data == "x": Exported else: Hidden
+        var parentInfo = NoNifLineInfo
+        if t.filename.len != 0:
+          parentInfo = NifLineInfo(file: pool.filenames.getOrIncl(decodeFilename(t)),
+                                   line: t.pos.line, col: t.pos.col)
+        elif root.file.isValid:
+          parentInfo = NifLineInfo(file: root.file,
+                                   line: root.line + t.pos.line,
+                                   col: root.col + t.pos.col)
         next(r, t)                             # the symbol
         var key = ""
         if t.tk == Symbol: key = decodeStr(r, t)
@@ -261,7 +279,7 @@ proc readEmbeddedIndex*(r: var Reader): Table[string, NifIndexEntry] =
         if t.tk == IntLit:
           let off = int(decodeInt t) + previousOffset
           if key.len > 0:
-            result[key] = NifIndexEntry(offset: off, info: NoLineInfo, vis: vis)
+            result[key] = NifIndexEntry(offset: off, parentInfo: parentInfo, vis: vis)
           previousOffset = off
         next(r, t)                             # closing `)`
         if t.tk == ParRi: next(r, t)

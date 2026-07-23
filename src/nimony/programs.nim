@@ -340,7 +340,9 @@ proc tryLoadSym*(s: SymId): LoadResult =
       else:
         var buf = createTokenBuf(30)
         m.reader.jumpTo indexEntry.offset
-        parse(m.reader, buf, parentSeed = m.rootInfo, denseLineInfo = true)
+        let seed = if indexEntry.parentInfo.file.isValid: indexEntry.parentInfo
+                   else: m.rootInfo
+        parse(m.reader, buf, parentSeed = seed, denseLineInfo = true)
         let decl = cursorAt(buf, 0)
         prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
