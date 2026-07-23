@@ -26,9 +26,31 @@ type
     raisesType*: TypeCursor  # Type from .raises pragma (e.g., ErrorCode, MyError)
     resId*: SymId
     parent*: SemRoutine
+    genericParams*: seq[SymId]
+      ## Type variables declared on this routine's generic parameter list.
 
 proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =
   result = SemRoutine(kind: kind, parent: parent, resId: SymId(0))
+
+proc inGenericDefinitionContext*(r: SemRoutine): bool =
+  ## True when semchecking a generic body before instantiation, including
+  ## nested procs and closures declared within an outer generic routine.
+  result = false
+  var it = r
+  while it != nil:
+    if it.inGeneric > 0:
+      return true
+    it = it.parent
+
+proc inLexicalGenericContext*(r: SemRoutine): bool =
+  ## True when semchecking inside a generic or generic-instance body, including
+  ## nested procs and closures declared within an outer generic routine.
+  result = false
+  var it = r
+  while it != nil:
+    if it.inGeneric > 0 or it.inInst > 0:
+      return true
+    it = it.parent
 
 const
   MaxNestedTemplates* = 100
@@ -246,6 +268,56 @@ type
       ## it as OkExistingFresh) so the body phase does not redeclare it and the
       ## symbol keeps the same name as if it had never been resolved early.
       ## Persists phase 2 → phase 3; cleared per module at phase-2 start.
+
+proc findConstrainedTypevar*(c: SemContext; tv: SymId): SymId =
+  ## When a nested routine references a parser-fresh typevar without a
+  ## constraint, recover the enclosing generic parameter with the same name.
+  result = SymId(0)
+  var name = pool.syms[tv]
+  extractBasename(name)
+  let key = pool.strings.getOrIncl(name)
+  if key == StrId(0):
+    return
+  var routine = c.routine
+  while routine != nil:
+    for param in routine.genericParams:
+      if param == tv:
+        continue
+      var pname = pool.syms[param]
+      extractBasename(pname)
+      if pool.strings.getOrIncl(pname) != key:
+        continue
+      let res = tryLoadSym(param)
+      if res.status == LacksNothing:
+        let local = asTypevar(res.decl)
+        if local.typ.kind != DotToken:
+          return param
+    routine = routine.parent
+  var scope = c.currentScope
+  while scope != nil:
+    if scope.tab.hasKey(key):
+      for s in scope.tab[key]:
+        if s.kind == TypevarY and s.name != tv:
+          let res = tryLoadSym(s.name)
+          if res.status == LacksNothing:
+            let local = asTypevar(res.decl)
+            if local.typ.kind != DotToken:
+              return s.name
+    scope = scope.up
+
+proc resolveNestedTypevar*(c: SemContext; symId: SymId): SymId =
+  ## Map parser-fresh nested typevars to the outer constrained generic param.
+  result = symId
+  if not inLexicalGenericContext(c.routine):
+    return
+  let res = tryLoadSym(symId)
+  if res.status == LacksNothing and res.decl.symKind == TypevarY:
+    let local = asTypevar(res.decl)
+    if local.typ.kind != DotToken:
+      return
+  let outer = findConstrainedTypevar(c, symId)
+  if outer != SymId(0):
+    result = outer
 
 proc typeToCanon*(buf: TokenBuf; start: int): string =
   result = ""

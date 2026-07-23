@@ -250,13 +250,16 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
     if first: result = @[]
 
 proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
-  let res = tryLoadSym(typevar)
+  let tv = resolveNestedTypevar(c, typevar)
+  let res = tryLoadSym(tv)
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
-  if local.kind == TypevarY and local.typ.kind != DotToken:
-    for cand in conceptMethodsForConstraint(fn, local.typ):
-      if not conceptMethodAlreadyListed(cands, cand.typ):
-        cands.addUnique cand
+  if local.kind == TypevarY:
+    let constraint = local.typ
+    if constraint.kind != DotToken:
+      for cand in conceptMethodsForConstraint(fn, constraint):
+        if not conceptMethodAlreadyListed(cands, cand.typ):
+          cands.addUnique cand
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false
@@ -309,7 +312,7 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
             cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
         c.cachedTypeboundOps[(s, fn)] = ops
   elif decl.kind == TypevarY:
-    maybeAddConceptMethods c, fn, s, cands
+    maybeAddConceptMethods c, fn, resolveNestedTypevar(c, s), cands
 
 type
   CallState = object
@@ -652,7 +655,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
                 if convMatch.err:
                   # adding type args errored
                   buildErr c, dest, convInfo, getErrorMsg(convMatch)
-                elif c.routine.inGeneric == 0:
+                elif not inGenericDefinitionContext(c.routine):
                   let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
                   dest[dest.len-1].setSymId inst.targetSym
                 else:
@@ -1075,7 +1078,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # of scope right after resolveOverloads returns.
       var matched = ensureMove(m[idx])
       let returnType: Cursor
-      if isMagic == NonMagicCall and c.routine.inGeneric == 0 and
+      if isMagic == NonMagicCall and not inGenericDefinitionContext(c.routine) and
           isGeneric(getProcDecl(finalFn.sym)):
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
         # `addFn` emits the callee in different shapes — usually a

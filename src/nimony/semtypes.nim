@@ -90,7 +90,7 @@ proc semObjectType(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let beforeType = dest.len
       semLocalTypeImpl c, dest, n, InLocalDecl
       let inheritsFrom = cursorAt(dest, beforeType)
-      if c.routine.inGeneric == 0 and not isInheritable(inheritsFrom, true):
+      if not inGenericDefinitionContext(c.routine) and not isInheritable(inheritsFrom, true):
         endRead(dest)
         dest.shrink beforeType
         c.buildErr dest, n.info, "cannot inherit from type: " & asNimCode(inheritsFrom)
@@ -947,12 +947,19 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   case n.kind
   of Ident:
     let start = dest.len
-    let s = semIdent(c, dest, n, {})
+    var s = semIdent(c, dest, n, {})
+    if s.kind == TypevarY:
+      let resolved = resolveNestedTypevar(c, s.name)
+      if resolved != s.name:
+        dest.shrink start
+        dest.add symToken(resolved, info)
+        s = fetchSym(c, resolved)
     semTypeSym c, dest, s, info, start, context
   of Symbol:
     let start = dest.len
-    let s = fetchSym(c, n.symId)
-    dest.add n
+    let symId = resolveNestedTypevar(c, n.symId)
+    let s = fetchSym(c, symId)
+    dest.add symToken(symId, info)
     inc n
     semTypeSym c, dest, s, info, start, context
   of ParLe:

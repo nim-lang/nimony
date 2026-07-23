@@ -344,6 +344,26 @@ type
     params: ptr Table[SymId, Cursor]
     instSuffix: string
 
+proc typevarBasename(s: SymId): StrId =
+  var name = pool.syms[s]
+  extractBasename(name)
+  result = pool.strings.getOrIncl(name)
+
+proc findOuterTypevarInSubs(s: SymId; sc: SubsContext): SymId =
+  ## Map parser-fresh nested typevars to an enclosing generic parameter with
+  ## the same name that carries the instantiation binding.
+  result = SymId(0)
+  let key = typevarBasename(s)
+  if key == StrId(0):
+    return
+  for tv, binding in sc.params[]:
+    if tv == s:
+      continue
+    if binding == default(Cursor):
+      continue
+    if typevarBasename(tv) == key:
+      return tv
+
 proc addFreshSyms(c: var SemContext, sc: var SubsContext) =
   for _, newVar in sc.newVars:
     c.freshSyms.incl newVar
@@ -359,7 +379,11 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
     dest.add n
   of Symbol:
     let s = n.symId
-    let arg = sc.params[].getOrDefault(s)
+    var arg = sc.params[].getOrDefault(s)
+    if arg == default(Cursor):
+      let outer = findOuterTypevarInSubs(s, sc)
+      if outer != SymId(0):
+        arg = sc.params[].getOrDefault(outer)
     if arg != default(Cursor):
       dest.addSubtree arg
     else:
@@ -2076,7 +2100,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       let condStart = dest.len
       var phase = SemcheckBodies
       swap c.phase, phase
-      semConstBoolExpr c, dest, it.n, allowUnresolved = c.routine.inGeneric > 0
+      semConstBoolExpr c, dest, it.n, allowUnresolved = inGenericDefinitionContext(c.routine)
       swap c.phase, phase
       let condValue = cursorAt(dest, condStart).exprKind
       endRead(dest)
@@ -4530,7 +4554,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   if matches == 0:
     dest.shrink exprStart
     result = false
-  elif matches == 1 and c.routine.inGeneric == 0 and instLastMatch:
+  elif matches == 1 and not inGenericDefinitionContext(c.routine) and instLastMatch:
     # can instantiate single match
     dest.shrink exprStart
     let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, lastMatch.inferred, info)
