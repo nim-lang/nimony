@@ -396,7 +396,6 @@ proc slotRootOf(c: Cursor): SymId =
   ## it lets a param that is only ever *written through* still count as
   ## value-stable (its pointer value never changes), so its argument can be
   ## substituted instead of copied.
-  result = SymId(0)
   var n = c
   while true:
     case n.kind
