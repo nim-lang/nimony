@@ -177,6 +177,8 @@ type
     Hidden, Exported
   NifIndexEntry* = object
     offset*: int
+    info*: PackedLineInfo    ## kept for the frozen Nim-compiler side
+                             ## (ast2nif's position index); unused here
     parentInfo*: NifLineInfo ## absolute info of the decl's write-time parent
                              ## node; seeds `parse` on an index-jumped load so
                              ## file-less relative infos resolve correctly
