@@ -19,7 +19,7 @@ import ".." / models / [nifindex_tags]
 include ".." / lib / compat2
 
 import ".." / lib / nifreader
-from ".." / lib / nifcoreparse import parse
+from ".." / lib / nifcoreparse import parse, peekRootInfo
 
 type
   Iface* = OrderedTable[StrId, seq[SymId]] # eg. "foo" -> @["foo.1.mod", "foo.3.mod"]
@@ -29,6 +29,10 @@ type
     index*: NifIndex
     public*: Table[string, NifIndexEntry]
     private*: Table[string, NifIndexEntry]
+    rootInfo: NifLineInfo   ## the toplevel `(stmts)` head's absolute info;
+                            ## seeds index-jumped decl parses so their
+                            ## relative line infos resolve (file would be
+                            ## unknown mid-file otherwise)
 
   SemPhase* = enum
     SemcheckTopLevelSyms,
@@ -172,6 +176,7 @@ proc newNifModule(infile: string): NifModule =
                      public: initTable[string, NifIndexEntry](),
                      private: initTable[string, NifIndexEntry]())
   discard nifreader.processDirectives(result.reader)
+  result.rootInfo = peekRootInfo(result.reader, pool)
 proc addEmbeddedIndex(public, private: var Table[string, NifIndexEntry];
                       embedded: Table[string, NifIndexEntry]) =
   for k, v in embedded:
@@ -335,7 +340,7 @@ proc tryLoadSym*(s: SymId): LoadResult =
       else:
         var buf = createTokenBuf(30)
         m.reader.jumpTo indexEntry.offset
-        parse(m.reader, buf, denseLineInfo = true)
+        parse(m.reader, buf, parentSeed = m.rootInfo, denseLineInfo = true)
         let decl = cursorAt(buf, 0)
         prog.mem[s] = ToplevelEntry(buffer: ensureMove(buf), phase: SemcheckBodies)
         result = LoadResult(status: LacksNothing, decl: decl)
