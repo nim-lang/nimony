@@ -247,6 +247,10 @@ proc isAbsolute*(path: string): bool {.noSideEffect, raises: [].} =
     result = path[0] == '/'
   elif defined(nodejs):
     {.emit: [result," = require(\"path\").isAbsolute(",path.cstring,");"].}
+  elif defined(standalone):
+    # freestanding (wasm32): no real filesystem — paths are host-virtual and
+    # posix-shaped by convention
+    result = path[0] == '/'
   else:
     raiseAssert "unreachable" # if ever hits here, adapt as needed
 

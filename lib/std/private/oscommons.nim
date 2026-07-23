@@ -194,3 +194,16 @@ when supportedSystem:
         FILE_SHARE_DELETE or FILE_SHARE_READ or FILE_SHARE_WRITE,
         nil, OPEN_EXISTING, flags, cast[Handle](0)
         )
+
+when not supportedSystem:
+  # Freestanding targets (wasm32 standalone): no filesystem. Existence
+  # queries answer honestly (nothing exists); the mutating verb traps.
+  # Compile-clean-trap-loudly, per the wasm bring-up convention.
+  proc fileExists*(filename: string): bool {.tags: [ReadDirEffect], sideEffect.} =
+    false
+  proc dirExists*(dir: string): bool {.tags: [ReadDirEffect], sideEffect.} =
+    false
+  proc symlinkExists*(link: string): bool {.tags: [ReadDirEffect], sideEffect.} =
+    false
+  proc tryMoveFSObject*(source, dest: string, isDir: bool): bool {.raises.} =
+    raiseAssert "no filesystem on a freestanding target"
