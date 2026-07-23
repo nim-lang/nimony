@@ -28,6 +28,14 @@ when defined(nimNativeIo) and (defined(amd64) or defined(osx)):
     SockAddr* {.pure.} = object ## struct sockaddr
       sa_family*: TSa_Family         ## Address family.
       sa_data*: array[0..255, char] ## Socket address (variable-length data).
+
+    Sockaddr_storage* = object
+    Sockaddr_in* = object
+      sin_family*: cushort
+      sin_port*: cushort
+      sin_addr*: InAddr
+    InAddr* = object
+      s_addr*: uint32
     
     Tmsghdr* {.pure} = object  ## struct msghdr
       msg_name*: pointer     ## Optional address.
@@ -53,6 +61,15 @@ else:
     
     SockLen* {.importc: "socklen_t", header: "<sys/socket.h>".} = cuint
     TSa_Family* {.importc: "sa_family_t", header: "<sys/socket.h>".} = uint8
+
+    Sockaddr_storage* {.importc: "struct sockaddr_storage",
+                        header: "<sys/socket.h>".} = object
+    Sockaddr_in* {.importc: "struct sockaddr_in", header: "<netinet/in.h>".} = object
+      sin_family*: cushort
+      sin_port*: cushort
+      sin_addr*: InAddr
+    InAddr* {.importc: "struct in_addr", header: "<netinet/in.h>".} = object
+      s_addr*: uint32
 
     SockAddr* {.importc: "struct sockaddr", header: "<sys/socket.h>",
                 pure, final.} = object ## struct sockaddr

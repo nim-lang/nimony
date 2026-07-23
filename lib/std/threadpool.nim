@@ -38,7 +38,7 @@ type
     head, tail, count: int
     data: array[StripeSize, Task]
 
-  Pool = ref object of RootObj
+  Pool* = ref object of RootObj
     stripes: array[StripeCount, Stripe]
     workers: array[WorkerCount, RawThread]
     stopFlag: bool # accessed atomically
