@@ -955,16 +955,8 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
         resId = declareResult(c, dest, it.n.info)
       semProcBody c, dest, it
       dest.addParRi(it.n.endInfo)
-  elif inGenericDefinitionContext(c.routine) and (untypedIsActive(c, crucial) or c.routine.inGeneric == 0):
-    # Untyped deferral for nested routines/templates inside a generic body.
-    let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
-    let dirty = kind == TemplateY and DirtyP in crucial.flags
-    var ctx = createUntypedContext(addr c, mode, dirty)
-    addParams(ctx, dest, beforeGenericParams)
-    addParams(ctx, dest, beforeParams)
-    semTemplBody ctx, dest, it.n
-  elif inLexicalGenericContext(c.routine) and c.routine.inGeneric == 0:
-    # Nested procs/closures inside a generic instance (inInst on an ancestor).
+  elif untypedIsActive(c, crucial) and c.routine.inGeneric > 0: # includes templates
+    # should eventually be default for compat mode
     let mode = if kind == TemplateY: UntypedTemplate else: UntypedGeneric
     let dirty = kind == TemplateY and DirtyP in crucial.flags
     var ctx = createUntypedContext(addr c, mode, dirty)
