@@ -10,20 +10,44 @@
 
 {.feature: "lenientnils".}
 
-import std / [atomics, rawthreads, assertions, ticketlocks]
+import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks]
 
 when defined(linux):
   const hasEpoll = true
   const hasKqueue = false
+  when not defined(nimony):
+    const hasIouring* = true
+  else:
+    const hasIouring* = false
 elif defined(macosx) or defined(freebsd) or defined(netbsd) or
      defined(openbsd) or defined(dragonfly):
   const hasEpoll = false
   const hasKqueue = true
+  const hasIouring* = false
 else:
   const hasEpoll = false
   const hasKqueue = false
+  const hasIouring* = false
 
 const hasIoPoll* = hasEpoll or hasKqueue
+
+when hasIouring:
+  from std/posix/io_uring import Queue, submit, copyCqes, Cqe, newQueue,
+    getSqe, read, write, accept, setUserData
+  from std/posix/posix import SockAddr, SockLen
+
+  type
+    UrCqeCallback* = proc (userData: uint64; res: int32): void {.nimcall.}
+
+  var
+    gRing: Queue
+    # XXX: each thread better have its own gRing
+    gRingLock*: TicketLock
+    gRingAvail*: bool
+    gPendingSqes*: int
+    gUrCqeCb*: UrCqeCallback
+
+  proc getQueuePtr*(): ptr Queue {.inline.} = cast[ptr Queue](gRing)
 
 when not hasIoPoll:
   when defined(windows):
@@ -137,6 +161,42 @@ type
     fd*: cint
     cb*: proc (self: ptr IoHandler; events: uint32) {.nimcall.}
 
+# --- IoRequest (backend-agnostic I/O request) ---
+
+type
+  IoOpKind* = enum opIoRead, opIoWrite, opIoAccept
+
+  IoRequest* = object
+    case kind*: IoOpKind
+    of opIoRead:
+      readFd*: cint
+      readBuf*: pointer
+      readLen*: int
+      readUserData*: uint64
+    of opIoWrite:
+      writeFd*: cint
+      writeBuf*: pointer
+      writeLen*: int
+      writeUserData*: uint64
+    of opIoAccept:
+      acceptFd*: cint
+      acceptAddrBuf*: pointer
+      acceptAddrLen*: pointer
+      acceptUserData*: uint64
+
+const IoReqQueueSize = 256  ## Power of 2.
+
+type
+  IoReqQueue = object
+    L: SysLock
+    notFull: SysCond
+    head, tail, count: int
+    data: array[IoReqQueueSize, IoRequest]
+
+var ioReqQueue: IoReqQueue
+var armFdCallback*: proc (fd: cint) {.nimcall.}
+var gPollCb*: proc (slotIdx: int; events: uint32) {.nimcall.}
+
 var
   stripes: array[StripeCount, Stripe]
   workers {.noinit.}: array[WorkerCount, RawThread]
@@ -227,7 +287,7 @@ proc poolHelp*(): bool {.inline.} =
 proc ioFd*(): cint {.inline.} = gIoFd
   ## The shared I/O poller file descriptor (epoll fd or kqueue fd).
 
-proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
+proc registerFd*(fd: cint; slotIdx: int; events: uint32) =
   ## Register fd with the shared I/O instance.
   ## Oneshot semantics: exactly one worker handles each fired event.
   when hasEpoll:
@@ -235,7 +295,7 @@ proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     if (events and EvRead) != 0: mask = mask or EPOLLIN
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
-    ev.data.p = handler
+    ev.data.p = cast[pointer](uint(slotIdx))
     discard epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev)
   elif hasKqueue:
     var kevs = default array[2, KEvent]
@@ -244,25 +304,25 @@ proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
       kevs[n].ident = fd.csize_t
       kevs[n].filter = EVFILT_READ
       kevs[n].flags = EV_ADD or EV_ONESHOT
-      kevs[n].udata = handler
+      kevs[n].udata = cast[pointer](uint(slotIdx))
       inc n
     if (events and EvWrite) != 0:
       kevs[n].ident = fd.csize_t
       kevs[n].filter = EVFILT_WRITE
       kevs[n].flags = EV_ADD or EV_ONESHOT
-      kevs[n].udata = handler
+      kevs[n].udata = cast[pointer](uint(slotIdx))
       inc n
     if n > 0:
       discard kevent(gIoFd, addr kevs[0], n.cint, nil, 0, nil)
 
-proc rearmFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
+proc rearmFd*(fd: cint; slotIdx: int; events: uint32) =
   ## Re-arm a oneshot fd after it has fired.
   when hasEpoll:
     var mask = EPOLLONESHOT
     if (events and EvRead) != 0: mask = mask or EPOLLIN
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
-    ev.data.p = handler
+    ev.data.p = cast[pointer](uint(slotIdx))
     discard epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev)
   elif hasKqueue:
     var kevs = default array[2, KEvent]
@@ -271,13 +331,13 @@ proc rearmFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
       kevs[n].ident = fd.csize_t
       kevs[n].filter = EVFILT_READ
       kevs[n].flags = EV_ADD or EV_ONESHOT or EV_ENABLE
-      kevs[n].udata = handler
+      kevs[n].udata = cast[pointer](uint(slotIdx))
       inc n
     if (events and EvWrite) != 0:
       kevs[n].ident = fd.csize_t
       kevs[n].filter = EVFILT_WRITE
       kevs[n].flags = EV_ADD or EV_ONESHOT or EV_ENABLE
-      kevs[n].udata = handler
+      kevs[n].udata = cast[pointer](uint(slotIdx))
       inc n
     if n > 0:
       discard kevent(gIoFd, addr kevs[0], n.cint, nil, 0, nil)
@@ -295,6 +355,98 @@ proc unregisterFd*(fd: cint) =
     kevs[1].flags = EV_DELETE
     discard kevent(gIoFd, addr kevs[0], 2, nil, 0, nil)
 
+# --- io_uring helpers ---
+
+when hasIouring:
+  proc submitUrSqes*() =
+    if gRingAvail and gPendingSqes > 0:
+      gRingLock.acquire()
+      try:
+        let q = getQueuePtr()
+        discard submit(q[], 0)
+      except:
+        discard
+      gPendingSqes = 0
+      gRingLock.release()
+
+  proc drainUrCqes*() =
+    if gRingAvail and gUrCqeCb != nil:
+      gRingLock.acquire()
+      var cqes: seq[Cqe]
+      try:
+        let q = getQueuePtr()
+        cqes = q[].copyCqes(waitNr = 0'u)
+      except:
+        cqes = newSeq[Cqe]()
+      gRingLock.release()
+      for cqe in cqes:
+        gUrCqeCb(cqe.userData, cqe.res)
+
+# --- IoRequest queue ---
+
+proc initIoReqQueue*() =
+  initSysLock(ioReqQueue.L)
+  initSysCond(ioReqQueue.notFull)
+
+proc enqueueIoRequest*(req: IoRequest) =
+  ## Caller thread. Blocks if the io_uring request queue is full.
+  acquireSys(ioReqQueue.L)
+  while ioReqQueue.count >= IoReqQueueSize:
+    waitSysCond(ioReqQueue.notFull, ioReqQueue.L)
+  ioReqQueue.data[ioReqQueue.tail] = req
+  ioReqQueue.tail = (ioReqQueue.tail + 1) and (IoReqQueueSize - 1)
+  inc ioReqQueue.count
+  releaseSys(ioReqQueue.L)
+
+proc drainIoRequests*(): bool =
+  ## Worker thread. Dequeue io_uring requests and fill SQEs.
+  ## For epoll/kqueue backends, calls armFdCallback instead.
+  ## Returns true if any requests were processed.
+  var buf {.noinit.}: array[32, IoRequest]
+  var n = 0
+  acquireSys(ioReqQueue.L)
+  n = min(ioReqQueue.count, 32)
+  for i in 0 ..< n:
+    buf[i] = ioReqQueue.data[ioReqQueue.head]
+    ioReqQueue.head = (ioReqQueue.head + 1) and (IoReqQueueSize - 1)
+  dec ioReqQueue.count, n
+  if ioReqQueue.count < IoReqQueueSize:
+    signalSysCond(ioReqQueue.notFull)
+  releaseSys(ioReqQueue.L)
+
+  for i in 0 ..< n:
+    let req = buf[i]
+    when hasIouring:
+      if gRingAvail:
+        gRingLock.acquire()
+        let q = getQueuePtr()
+        let sqe = q[].getSqe()
+        if sqe != nil:
+          case req.kind
+          of opIoRead:
+            discard sqe.read(req.readFd, req.readBuf, req.readLen, 0)
+            discard sqe.setUserData(req.readUserData)
+          of opIoWrite:
+            discard sqe.write(req.writeFd, req.writeBuf, req.writeLen, 0)
+            discard sqe.setUserData(req.writeUserData)
+          of opIoAccept:
+            discard accept(sqe, req.acceptFd,
+              cast[ptr SockAddr](req.acceptAddrBuf),
+              cast[ptr SockLen](req.acceptAddrLen), 0)
+            discard sqe.setUserData(req.acceptUserData)
+          inc gPendingSqes
+        gRingLock.release()
+        continue
+    # Fallback: arm fd for epoll/kqueue
+    if armFdCallback != nil:
+      let fd = case req.kind
+        of opIoRead: req.readFd
+        of opIoWrite: req.writeFd
+        of opIoAccept: req.acceptFd
+      armFdCallback(fd)
+
+  result = n > 0
+
 # --- I/O polling ---
 
 proc poolPollIo*(timeoutMs: cint): bool =
@@ -305,13 +457,17 @@ proc poolPollIo*(timeoutMs: cint): bool =
   ## caller) — used both by the worker loop and by `parWait` so a thread blocked
   ## on a join can still advance the I/O its parked chunks are waiting on.
   result = false
+  when hasIouring:
+    discard drainIoRequests()
+    submitUrSqes()
+    drainUrCqes()
   when hasEpoll:
     var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
     let n = epoll_wait(gIoFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs)
     for i in 0 ..< n:
-      let h = cast[ptr IoHandler](ioEvents[i].data.p)
-      if h != nil:
-        h.cb(h, ioEvents[i].events)
+      let slotIdx = int(cast[uint](ioEvents[i].data.p))
+      if gPollCb != nil:
+        gPollCb(slotIdx, ioEvents[i].events)
     result = n > 0
   elif hasKqueue:
     var ioEvents {.noinit.}: array[MaxIoEvents, KEvent]
@@ -320,13 +476,13 @@ proc poolPollIo*(timeoutMs: cint): bool =
       ts.tv_nsec = 1_000_000  # 1 ms (we only ever pass 0 or 1)
     let n = kevent(gIoFd, nil, 0, addr ioEvents[0], MaxIoEvents.cint, addr ts)
     for i in 0 ..< n:
-      let h = cast[ptr IoHandler](ioEvents[i].udata)
-      if h != nil:
-        let evMask = case ioEvents[i].filter
-          of EVFILT_READ: EvRead
-          of EVFILT_WRITE: EvWrite
-          else: 0u32
-        h.cb(h, evMask)
+      let slotIdx = int(cast[uint](ioEvents[i].udata))
+      let evMask = case ioEvents[i].filter
+        of EVFILT_READ: EvRead
+        of EVFILT_WRITE: EvWrite
+        else: 0u32
+      if gPollCb != nil:
+        gPollCb(slotIdx, evMask)
     result = n > 0
   else:
     if timeoutMs > 0:
@@ -353,7 +509,14 @@ proc initPool*() =
   when hasEpoll:
     gIoFd = epoll_create1(0)
     assert gIoFd >= 0, "epoll_create1 failed"
-  elif hasKqueue:
+  when hasIouring:
+    initIoReqQueue()
+    try:
+      gRing = newQueue(4098)
+      gRingAvail = true
+    except:
+      gRingAvail = false
+  when hasKqueue:
     gIoFd = kqueue()
     assert gIoFd >= 0, "kqueue failed"
   for i in 0 ..< WorkerCount:

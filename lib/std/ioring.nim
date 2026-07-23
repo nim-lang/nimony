@@ -18,6 +18,12 @@
 import std / [atomics, threadpool, assertions, ticketlocks]
 export threadpool.initPool, threadpool.shutdownPool, threadpool.poolStopped
 
+when defined(linux) and hasIouring:
+  import std/posix/io_uring
+  from std/posix/posix import SockAddr
+when defined(posix):
+  from std/posix/posix import SockAddr
+
 when defined(windows):
   import windows/winlean
 else:
@@ -42,7 +48,6 @@ when defined(posix):
     SockLen* = cuint
     Sockaddr_storage* {.importc: "struct sockaddr_storage",
                         header: "<sys/socket.h>".} = object
-    SockAddr* {.importc: "struct sockaddr", header: "<sys/socket.h>".} = object
     Sockaddr_in* {.importc: "struct sockaddr_in", header: "<netinet/in.h>".} = object
       sin_family*: cushort
       sin_port*: cushort
@@ -69,8 +74,8 @@ when defined(posix):
   proc htons(x: uint16): uint16 {.importc, header: "<arpa/inet.h>".}
 
 const
-  MaxFds* = 8192  ## fd-indexed slot table size.
-  CqSize = 4096                 ## Completion queue capacity; must be power of 2.
+  MaxOps* = 8192  ## Max concurrent operations (slot table size).
+  CqSize = 4096   ## Completion queue capacity; must be power of 2.
 
 type
   IoOp* = enum
@@ -84,30 +89,42 @@ type
     fd*: cint           ## The fd the request was submitted for.
     result*: int        ## Bytes read/written, new client fd (accept), or -errno.
 
-  FdSlot = object
-    handler: IoHandler  # must be first field -- tpool casts ptr IoHandler back
-    readId: SeqNum
-    readOp: IoOp
-    readBuf: pointer
-    readLen: int
-    readCont: Continuation  ## Continuation to resume on read completion.
-    readRes: nil ptr int    ## Optional: completion result written here before resume.
-    hasRead: bool
-    writeId: SeqNum
-    writeBuf: pointer
-    writeLen: int
-    writeCont: Continuation ## Continuation to resume on write completion.
-    writeRes: nil ptr int   ## Optional: completion result written here before resume.
-    hasWrite: bool
-    registered: bool    # whether fd is in the poller (for epoll ADD vs MOD)
+  OpContext = object
+    inUse: bool
+    kind: IoOp
+    fd: cint
+    seqnum: SeqNum
+    buf: pointer
+    len: int
+    cont: Continuation
+    res: nil ptr int
+    acceptAddr: Sockaddr_storage
+    acceptLen: SockLen
+
+  SlabArena = object
+    slots: array[MaxOps, OpContext]
+    freelist: seq[int]
 
 var
-  gNextSeq: uint32  # accessed atomically
-  fdSlots: array[MaxFds, FdSlot]
-
+  gNextSeq: uint32
+  gArena: SlabArena
+  fdPendingCount: array[MaxOps, int32]
   cqLock: TicketLock
   cq: array[CqSize, IoCompletion]
   cqHead, cqTail, cqCount: int
+
+# --- slab allocator ---
+
+proc allocSlot(): int =
+  result = gArena.freelist.pop()
+  gArena.slots[result].inUse = true
+
+proc freeSlot(idx: int) =
+  gArena.slots[idx].inUse = false
+  gArena.slots[idx].cont = Continuation(fn: nil, env: nil)
+  gArena.slots[idx].res = nil
+  gArena.slots[idx].buf = nil
+  gArena.freelist.add(idx)
 
 # --- completion delivery ---
 
@@ -121,144 +138,184 @@ proc pushCompletion(c: IoCompletion) =
 
 proc deliver(c: IoCompletion; cont: Continuation) {.inline.} =
   if cont.fn != nil:
-    # Resume the suspended passive proc by submitting its continuation back to
-    # the threadpool. Spread by fd so resumes don't all funnel into stripe 0
-    # (the default hint) — that serialises drains and starves the other workers.
     submit(cont, int(c.fd))
   else:
     pushCompletion(c)
 
-# --- IoHandler callback (runs on worker threads) ---
+# --- event dispatch (epoll/kqueue path) ---
 
-proc onFdReady(self: ptr IoHandler; events: uint32) {.nimcall.} =
-  let slot = cast[ptr FdSlot](self)
-  let fd = slot.handler.fd
+proc findAndRearm(fd: cint) =
+  var evMask: uint32 = 0
+  var repIdx: int = 0
+  var found = false
+  for i in 0..<MaxOps:
+    if gArena.slots[i].inUse and gArena.slots[i].fd == fd:
+      if not found:
+        repIdx = i
+        found = true
+      case gArena.slots[i].kind
+      of opRead, opAccept: evMask = evMask or EvRead
+      of opWrite: evMask = evMask or EvWrite
+  if found:
+    rearmFd(fd, repIdx, evMask)
+
+proc processCompletion(idx: int; res: int) =
+  let slot = addr gArena.slots[idx]
+  var c = IoCompletion(id: slot.seqnum, op: slot.kind, fd: slot.fd)
+  c.result = res
+  if c.result < 0: c.result = -1
+
+  let rp = slot.res
+  if rp != nil:
+    rp[] = c.result
+
+  let cont = slot.cont
+  slot.cont = Continuation(fn: nil, env: nil)
+
+  freeSlot(idx)
+  dec fdPendingCount[slot.fd]
+
+  deliver(c, cont)
+
+proc onEvent(slotIdx: int; events: uint32) {.nimcall.} =
+  let fd = gArena.slots[slotIdx].fd
 
   when defined(posix):
-    # Complete read/accept if readable
-    if (events and EvRead) != 0 and slot.hasRead:
-      var c = IoCompletion(id: slot.readId, op: slot.readOp, fd: fd)
-      case slot.readOp
+    for i in 0..<MaxOps:
+      if not gArena.slots[i].inUse or gArena.slots[i].fd != fd:
+        continue
+      case gArena.slots[i].kind
       of opRead:
-        c.result = posixRead(fd, slot.readBuf, slot.readLen.csize_t)
-        if c.result < 0:
-          c.result = -1
+        if (events and EvRead) != 0:
+          let r = posixRead(fd, gArena.slots[i].buf, gArena.slots[i].len.csize_t)
+          processCompletion(i, r)
+      of opWrite:
+        if (events and EvWrite) != 0:
+          let r = posixWrite(fd, gArena.slots[i].buf, gArena.slots[i].len.csize_t)
+          processCompletion(i, r)
       of opAccept:
-        var clientAddr = default(Sockaddr_storage)
-        var addrLen = SockLen(sizeof(clientAddr))
-        let clientFd = accept(fd, cast[ptr SockAddr](addr clientAddr), addr addrLen)
-        c.result = clientFd
-      of opWrite: discard
-      # Continuation-resume path otherwise drops c.result; thread it back via
-      # the caller's result pointer so the resumed passive proc sees the count.
-      let rrp = slot.readRes
-      if rrp != nil:
-        rrp[] = c.result
-      slot.readRes = nil
-      let cont = slot.readCont
-      slot.hasRead = false
-      slot.readCont = Continuation(fn: nil, env: nil)
-      deliver(c, cont)
+        if (events and EvRead) != 0:
+          let clientFd = accept(fd, cast[ptr SockAddr](addr gArena.slots[i].acceptAddr),
+                                addr gArena.slots[i].acceptLen)
+          processCompletion(i, clientFd)
 
-    # Complete write if writable
-    if (events and EvWrite) != 0 and slot.hasWrite:
-      var c = IoCompletion(id: slot.writeId, op: opWrite, fd: fd)
-      c.result = posixWrite(fd, slot.writeBuf, slot.writeLen.csize_t)
-      if c.result < 0:
-        c.result = -1
-      let wrp = slot.writeRes
-      if wrp != nil:
-        wrp[] = c.result
-      slot.writeRes = nil
-      let cont = slot.writeCont
-      slot.hasWrite = false
-      slot.writeCont = Continuation(fn: nil, env: nil)
-      deliver(c, cont)
+  if fdPendingCount[fd] > 0:
+    findAndRearm(fd)
 
-  # Re-arm if any requests still pending
-  var evMask: uint32 = 0
-  if slot.hasRead:  evMask = evMask or EvRead
-  if slot.hasWrite: evMask = evMask or EvWrite
-  if evMask != 0:
-    rearmFd(fd, addr slot.handler, evMask)
+when defined(linux) and hasIouring:
+  proc handleUrCqe(userData: uint64; res: int32) {.nimcall.} =
+    let idx = int(userData shr 1)
+    let slot = addr gArena.slots[idx]
+    assert slot.inUse
+
+    var c = IoCompletion(id: slot.seqnum, op: slot.kind, fd: slot.fd)
+    c.result = res
+    if c.result < 0: c.result = -1
+
+    let rp = slot.res
+    if rp != nil:
+      rp[] = c.result
+
+    let cont = slot.cont
+    slot.cont = Continuation(fn: nil, env: nil)
+
+    freeSlot(idx)
+    deliver(c, cont)
 
 # --- submission API ---
 
 proc nextSeqNum(): SeqNum =
   SeqNum(atomicFetchAdd(gNextSeq, 1'u32, moRelaxed))
 
-proc armSlot(fd: cint) =
-  let slot = addr fdSlots[fd]
-  var evMask: uint32 = 0
-  if slot.hasRead:  evMask = evMask or EvRead
-  if slot.hasWrite: evMask = evMask or EvWrite
-  if evMask == 0: return
-  if slot.registered:
-    rearmFd(fd, addr slot.handler, evMask)
-  else:
-    registerFd(fd, addr slot.handler, evMask)
-    slot.registered = true
+proc tryIoUring(slotIdx: int; fd: cint; kind: IoOp; buf: nil pointer; len: int): bool =
+  when defined(linux) and hasIouring:
+    if gRingAvail:
+      gRingLock.acquire()
+      let q = getQueuePtr()
+      let sqe = q[].getSqe()
+      if sqe != nil:
+        case kind
+        of opRead:
+          discard sqe.read(fd, buf, len, 0)
+          discard sqe.setUserData(uint64(slotIdx shl 1) or 0'u)
+        of opWrite:
+          discard sqe.write(fd, buf, len, 0)
+          discard sqe.setUserData(uint64(slotIdx shl 1) or 1'u)
+        of opAccept:
+          let s = addr gArena.slots[slotIdx]
+          s.acceptAddr = default(Sockaddr_storage)
+          s.acceptLen = SockLen(sizeof(s.acceptAddr))
+          discard accept(sqe, fd, cast[ptr SockAddr](addr s.acceptAddr),
+                         addr s.acceptLen, 0)
+          discard sqe.setUserData(uint64(slotIdx shl 1) or 0'u)
+        inc gPendingSqes
+        gRingLock.release()
+        return true
+      gRingLock.release()
+  return false
 
 proc submitRead*(fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
-  ## Submit a read request. If `cont` has a non-nil fn, the continuation
-  ## is resumed on a worker thread when the read completes. Otherwise
-  ## the completion goes to the shared CQ. If `resPtr` is non-nil the byte
-  ## count is written there before the continuation is resumed.
   result = nextSeqNum()
-  let slot = addr fdSlots[fd]
-  slot.handler.fd = fd
-  slot.handler.cb = onFdReady
-  slot.readId = result
-  slot.readOp = opRead
-  slot.readBuf = buf
-  slot.readLen = len
-  slot.readCont = cont
-  slot.readRes = resPtr
-  slot.hasRead = true
-  armSlot(fd)
+  let idx = allocSlot()
+  var slot = addr gArena.slots[idx]
+  slot.kind = opRead
+  slot.fd = fd
+  slot.seqnum = result
+  slot.buf = buf
+  slot.len = len
+  slot.cont = cont
+  slot.res = resPtr
+
+  if not tryIoUring(idx, fd, opRead, buf, len):
+    if fdPendingCount[fd] == 0:
+      registerFd(fd, idx, EvRead)
+    inc fdPendingCount[fd]
 
 proc submitWrite*(fd: cint; buf: pointer; len: int;
                   cont = Continuation(fn: nil, env: nil);
                   resPtr: nil ptr int = nil): SeqNum =
-  ## Submit a write request. If `cont` has a non-nil fn, the continuation
-  ## is resumed when the write completes. Otherwise completion goes to CQ.
-  ## If `resPtr` is non-nil the byte count is written there before resume.
   result = nextSeqNum()
-  let slot = addr fdSlots[fd]
-  slot.handler.fd = fd
-  slot.handler.cb = onFdReady
-  slot.writeId = result
-  slot.writeBuf = buf
-  slot.writeLen = len
-  slot.writeCont = cont
-  slot.writeRes = resPtr
-  slot.hasWrite = true
-  armSlot(fd)
+  let idx = allocSlot()
+  var slot = addr gArena.slots[idx]
+  slot.kind = opWrite
+  slot.fd = fd
+  slot.seqnum = result
+  slot.buf = buf
+  slot.len = len
+  slot.cont = cont
+  slot.res = resPtr
+
+  if not tryIoUring(idx, fd, opWrite, buf, len):
+    if fdPendingCount[fd] == 0:
+      registerFd(fd, idx, EvWrite)
+    inc fdPendingCount[fd]
 
 proc submitAccept*(listenFd: cint;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
-  ## Submit an accept request. Completion's `result` is the new client fd.
-  ## If `resPtr` is non-nil the new client fd is written there before resume.
   result = nextSeqNum()
-  let slot = addr fdSlots[listenFd]
-  slot.handler.fd = listenFd
-  slot.handler.cb = onFdReady
-  slot.readId = result
-  slot.readOp = opAccept
-  slot.readBuf = nil
-  slot.readLen = 0
-  slot.readCont = cont
-  slot.readRes = resPtr
-  slot.hasRead = true
-  armSlot(listenFd)
+  let idx = allocSlot()
+  var slot = addr gArena.slots[idx]
+  slot.kind = opAccept
+  slot.fd = listenFd
+  slot.seqnum = result
+  slot.cont = cont
+  slot.res = resPtr
 
-# --- completion harvesting (CQ path) ---
+  if not tryIoUring(idx, listenFd, opAccept, nil, 0):
+    if fdPendingCount[listenFd] == 0:
+      registerFd(listenFd, idx, EvRead)
+    inc fdPendingCount[listenFd]
+
+# --- completion harvesting ---
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =
-  ## Non-blocking drain of the completion queue. Returns count.
+  when defined(linux) and hasIouring:
+    submitUrSqes()
+    drainUrCqes()
+
   result = 0
   cqLock.acquire()
   while result < comps.len and cqCount > 0:
@@ -269,11 +326,11 @@ proc pollCompletions*(comps: var openArray[IoCompletion]): int =
   cqLock.release()
 
 proc waitCompletions*(comps: var openArray[IoCompletion]): int =
-  ## Block until at least one completion is ready.
   result = 0
   while true:
     result = pollCompletions(comps)
     if result > 0: return
+    discard poolPollIo(0)
     when defined(windows):
       sleep(0'u32)
     else:
@@ -283,21 +340,24 @@ proc waitCompletions*(comps: var openArray[IoCompletion]): int =
 
 proc initIoRing*() =
   atomicStore(gNextSeq, 1'u32, moRelaxed)
+  gArena.freelist = newSeq[int]()
+  for i in 0..<MaxOps:
+    gArena.freelist.add(i)
+  gPollCb = onEvent
+  when defined(linux) and hasIouring:
+    gUrCqeCb = handleUrCqe
 
 # --- convenience ---
 
 proc closeFd*(fd: cint) =
-  ## Close fd, unregister from poller, clear slot.
-  let slot = addr fdSlots[fd]
-  if slot.registered:
-    unregisterFd(fd)
-    slot.registered = false
-  slot.hasRead = false
-  slot.hasWrite = false
-  slot.readCont = Continuation(fn: nil, env: nil)
-  slot.writeCont = Continuation(fn: nil, env: nil)
-  slot.readRes = nil
-  slot.writeRes = nil
+  unregisterFd(fd)
+  for i in 0..<MaxOps:
+    if gArena.slots[i].inUse and gArena.slots[i].fd == fd:
+      gArena.slots[i].cont = Continuation(fn: nil, env: nil)
+      gArena.slots[i].res = nil
+      freeSlot(i)
+      dec fdPendingCount[fd]
+  fdPendingCount[fd] = 0
   when defined(posix):
     discard posixClose(fd)
 
@@ -307,7 +367,6 @@ proc setNonBlocking*(fd: cint) =
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)
 
 proc listenTcp*(port: uint16; backlog = 128): cint =
-  ## Create a non-blocking TCP listen socket. Returns the fd.
   when defined(posix):
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     assert fd >= 0, "socket() failed"
