@@ -2,7 +2,7 @@ import std/assertions
 
 type
   Iterable* = concept
-    iterator items(self: Self): auto
+    iterator items(self: Self)
 
   Mag* = concept
     func abs(x: Self): Self
@@ -12,11 +12,11 @@ type
 proc abs*(x: float64): float64 =
   if x < 0.0: -x else: x
 
-iterator items*(a: openArray[float64]): float64 =
+iterator items*[T](a: openArray[T]): T =
   for x in a:
     yield x
 
-proc reduce*[C: Iterable; T](source: C, combine: proc(acc, value: T): T {.closure.}): T =
+proc reduce*[C: Iterable; T](source: C, combine: proc(acc, value: T): T {.closure.}): T {.noinit.} =
   var started = false
   for value in items(source):
     if not started:
@@ -25,7 +25,7 @@ proc reduce*[C: Iterable; T](source: C, combine: proc(acc, value: T): T {.closur
     else:
       result = combine(result, value)
 
-func maxNorm*[T: RealS](data: openArray[T]): T =
+proc maxNorm*[T: RealS](data: openArray[T]): T =
   reduce(data) do (acc, value: T) -> T:
     if acc > abs(value): acc else: abs(value)
 

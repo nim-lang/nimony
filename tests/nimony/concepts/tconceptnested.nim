@@ -12,13 +12,9 @@ proc abs*(x: float64): float64 =
   if x < 0.0: -x else: x
 
 proc reduce*[T](data: openArray[T], combine: proc(acc, value: T): T {.closure.}): T =
-  var started = false
-  for value in data:
-    if not started:
-      result = value
-      started = true
-    else:
-      result = combine(result, value)
+  result = data[0]
+  for i in 1 ..< data.len:
+    result = combine(result, data[i])
 
 func testDirect*[T: Magnitude](x: T): T =
   abs(x)
@@ -33,7 +29,7 @@ func testDo*[T: Magnitude](x: T): T =
     (proc (v: T): T =
       abs(v))(x)
 
-func testReduce*[T: Magnitude](data: openArray[T]): T =
+proc testReduce*[T: Magnitude](data: openArray[T]): T =
   reduce(data) do (acc, value: T) -> T:
     let v = abs(value)
     if acc > v: acc else: v

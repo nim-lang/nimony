@@ -4768,6 +4768,23 @@ proc semDconv(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = destType
   commonType c, dest, it, beforeExpr, expected
 
+proc semToClosure(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(toClosure X)` is inserted by sigmatch when a non-closure routine is
+  ## passed to a `{.closure.}` proc type. Lambdalifting lowers it later; the
+  ## frontend only semchecks the inner expression and preserves the tag.
+  let before = dest.len
+  let expected = it.typ
+  var inner = Item(n: default(Cursor), typ: c.types.autoType)
+  takeInto dest, it.n:
+    inner.n = it.n
+    semExpr c, dest, inner
+    it.n = inner.n
+  it.typ = expected
+  if classifyType(c, expected) notin {AutoT, VoidT, NoType, ErrT}:
+    commonType c, dest, it, before, expected
+  elif inner.typ.typeKind in RoutineTypes:
+    it.typ = inner.typ
+
 proc whichPass(c: SemContext): PassKind =
   result = if c.phase == SemcheckSignatures: checkSignatures else: checkBody
 
@@ -5302,7 +5319,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           takeTree dest, it.n
         it.typ = valIt.typ
     of ToClosureX:
-      bug "frontend should not encounter `toClosure`"
+      semToClosure c, dest, it
 
   of ParRi, EofToken, SymbolDef, UnknownToken, DotToken:
     buildErr c, dest, it.n.info, "expression expected"
