@@ -899,7 +899,9 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         # Slot 0 of `(proctype <NilTag> ...)` is the nilability marker. Set
         # it directly — it's either a placeholder dot inserted by
         # `semLocalTypeImpl` or a marker we now overwrite with `annotation`.
-        let nilTagPos = before + 1 # TagLit `(proctype` is at `before`
+        # The head (and the placeholder dot) may carry line-info suffix
+        # tokens, so step by tokenWidth, not by 1.
+        let nilTagPos = before + tokenWidth(readonlyCursorAt(dest, before))
         if dest[nilTagPos].kind == DotToken:
           # replace dot with `(annotation)`. The tail is re-appended with
           # `addRaw` — it is an already-sealed span whose (elided) closes
@@ -909,7 +911,10 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
           var tail = newSeq[NifToken]()
           for k in (nilTagPos+1) ..< dest.len: tail.add dest[k]
           dest.shrink nilTagPos
-          dest.addParPair annotation, info
+          # no info on the pair: an info would append a suffix token and grow
+          # the sealed span; the dot's own suffix (if any) is in `tail` and
+          # re-attaches to the pair, keeping the original position info.
+          dest.addParPair annotation
           for t in tail: dest.add t
         elif dest[nilTagPos].kind == TagLit and
              dest[nilTagPos].substructureKind in {NotnilU, UncheckedU, NilU}:

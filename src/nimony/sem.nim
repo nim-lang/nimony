@@ -4524,9 +4524,8 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   var argRead = it.n
   while argRead.hasMore:
     semLocalTypeImpl c, dest, argRead, AllowValues
-  # keep a physical ParRi sentinel after the args: `matchTypevars` uses it
-  # to detect the end of the fragment
-  dest.addParRi(argRead.endInfo)
+  # no end sentinel needed: `matchTypevars` walks the flat fragment
+  # hasMore-bounded (a classic physical ParRi would assert in closeTag)
   argRead = atStart; skip argRead # close of the (at ...) scope entered by the caller
   swap dest, argBuf
   # XXX investigate this further, seems odd and prevents us from eliminating the swaps:

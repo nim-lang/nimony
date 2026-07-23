@@ -27,7 +27,7 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
       buf.addIdent(fieldName, n.info)
       buf.addParRi()
     else:
-      buf.addParLe(n.cursorTagId, n.info)
+      buf.addIdent(s, n.info)
   of TagLit:
     buf.addParLe(n.cursorTagId, n.info)
     n.into:
@@ -73,7 +73,7 @@ proc expandTupleFieldBody(buf: var TokenBuf; iter: FieldsIter; intVal: int64; na
       buf.addIntLit(intVal, n.info)
       buf.addParRi()
     else:
-      buf.addParLe(n.cursorTagId, n.info)
+      buf.addIdent(s, n.info)
   of TagLit:
     buf.addParLe(n.cursorTagId, n.info)
     n.into:

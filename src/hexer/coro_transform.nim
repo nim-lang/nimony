@@ -464,8 +464,10 @@ proc isClosureIter*(s: SymId): bool =
 proc getNextState*(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
-    if globalTags.tags[buf[pos].tagId] == "lab":
-      return int(readonlyCursorAt(buf, pos+1).intVal)
+    # raw linear scan: only TagLit tokens carry a tagId (suffix/literal bits
+    # alias it), and the head may carry a line-info suffix before its child
+    if buf[pos].kind == TagLit and globalTags.tags[buf[pos].tagId] == "lab":
+      return int(readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos))).intVal)
     inc pos
   return -1
 
@@ -1409,9 +1411,10 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
   let srcKind = symKind(n)
   if srcKind == IteratorY:
     dest.addParLe ProcS, info
-    inc n
   else:
-    dest.takeTree n
+    # copy the decl head only (classic `takeToken`), then descend
+    dest.addParLe(n.cursorTagId, n.info)
+  inc n
   skip n         # skip original name
   dest.addSymDef newSym, info
   dest.takeTree n # exported
@@ -1731,10 +1734,11 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
   var paramsEnd = -1
   var paramsBegin = -1
   var origParams = default(Cursor)
+  let procStart = dest.len # position of the head (addParLe may also emit a
+                           # line-info suffix, so `dest.len - 1` would be off)
   dest.addParLe(n.cursorTagId, n.info) # ProcS etc.
   let procScopeStart = n
   n = sub(n)
-  let procStart = dest.len - 1
   var isConcrete = true # assume it is concrete
   let sym = n.symId
   c.procStack.add(sym)
