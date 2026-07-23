@@ -536,20 +536,31 @@ proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; 
   it.n = cursorAt(buf, start)
 
 proc fetchSym*(c: var SemContext; s: SymId): Sym =
-  # yyy find a better solution
+  ## Resolve `s` to a scoped or imported symbol. Nifler assigns distinct
+  ## symIds per occurrence of the same generic parameter name; when the exact
+  ## id is missing from scope, fall back to the innermost typevar/staticTypevar
+  ## with the same basename (see nested generic closures).
   var name = pool.syms[s]
   extractBasename name
   let identifier = pool.strings.getOrIncl(name)
   var it {.cursor.} = c.currentScope
+  var typevarCandidate = Sym(kind: NoSym, name: SymId(0), pos: InvalidPos)
   while it != nil:
     for sym in it.tab.getOrDefault(identifier):
       if sym.name == s:
         return sym
+    if typevarCandidate.kind == NoSym:
+      for sym in it.tab.getOrDefault(identifier):
+        if sym.kind in {TypevarY, StaticTypevarY}:
+          typevarCandidate = sym
+          break
     it = it.up
 
   let res = tryLoadSym(s)
   if res.status == LacksNothing:
     result = Sym(kind: symKind(res.decl), name: s, pos: ImportedPos)
+  elif typevarCandidate.kind != NoSym:
+    result = typevarCandidate
   else:
     result = Sym(kind: NoSym, name: s, pos: InvalidPos)
 

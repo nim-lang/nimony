@@ -947,19 +947,12 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   case n.kind
   of Ident:
     let start = dest.len
-    var s = semIdent(c, dest, n, {})
-    if s.kind == TypevarY:
-      let resolved = resolveNestedTypevar(c, s.name)
-      if resolved != s.name:
-        dest.shrink start
-        dest.add symToken(resolved, info)
-        s = fetchSym(c, resolved)
+    let s = semIdent(c, dest, n, {})
     semTypeSym c, dest, s, info, start, context
   of Symbol:
     let start = dest.len
-    let symId = resolveNestedTypevar(c, n.symId)
-    let s = fetchSym(c, symId)
-    dest.add symToken(symId, info)
+    let s = fetchSym(c, n.symId)
+    dest.add symToken(s.name, info)
     inc n
     semTypeSym c, dest, s, info, start, context
   of ParLe:

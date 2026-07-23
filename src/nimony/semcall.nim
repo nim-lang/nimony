@@ -250,16 +250,13 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
     if first: result = @[]
 
 proc maybeAddConceptMethods(c: var SemContext; fn: StrId; typevar: SymId; cands: var FnCandidates) =
-  let tv = resolveNestedTypevar(c, typevar)
-  let res = tryLoadSym(tv)
+  let res = tryLoadSym(typevar)
   assert res.status == LacksNothing
   let local = asLocal(res.decl)
-  if local.kind == TypevarY:
-    let constraint = local.typ
-    if constraint.kind != DotToken:
-      for cand in conceptMethodsForConstraint(fn, constraint):
-        if not conceptMethodAlreadyListed(cands, cand.typ):
-          cands.addUnique cand
+  if local.kind == TypevarY and local.typ.kind != DotToken:
+    for cand in conceptMethodsForConstraint(fn, local.typ):
+      if not conceptMethodAlreadyListed(cands, cand.typ):
+        cands.addUnique cand
 
 proc hasAttachedParam(params: Cursor; typ: SymId): bool =
   result = false
@@ -312,7 +309,7 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
             cands.addUnique FnCandidate(kind: routine.kind, sym: topLevelSym, typ: routine.params)
         c.cachedTypeboundOps[(s, fn)] = ops
   elif decl.kind == TypevarY:
-    maybeAddConceptMethods c, fn, resolveNestedTypevar(c, s), cands
+    maybeAddConceptMethods c, fn, s, cands
 
 type
   CallState = object

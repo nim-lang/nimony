@@ -527,14 +527,7 @@ proc semEnumField(c: var SemContext; dest: var TokenBuf; n: var Cursor; state: v
 
 proc semGenericParam(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == TypevarU:
-    let before = dest.len
     semLocal c, dest, n, TypevarY
-    var cur = cursorAt(dest, before)
-    if cur.symKind == TypevarY:
-      inc cur
-      assert cur.kind == SymbolDef
-      c.routine.genericParams.add cur.symId
-    endRead(dest)
   elif n.substructureKind == StaticTypevarU:
     # re-semming an already desugared value generic parameter
     semLocal c, dest, n, StaticTypevarY
@@ -551,22 +544,6 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
         semGenericParam c, dest, n
   elif n.typeKind == InvokeT:
     inc c.routine.inInst
-    var inv = n
-    let invStart = inv
-    inv = sub(inv)
-    let origin = inv.symId
-    let origRes = tryLoadSym(origin)
-    if origRes.status == LacksNothing and isRoutine(origRes.decl.symKind):
-      var tv = asRoutine(origRes.decl).typevars
-      if tv.substructureKind == TypevarsU:
-        tv = sub(tv)
-        while tv.hasMore:
-          if isTypevarLike(tv.symKind):
-            var tvs = tv
-            inc tvs
-            c.routine.genericParams.add tvs.symId
-          skip tv
-    n = invStart
     takeTree dest, n
   else:
     buildErr c, dest, n.info, "expected '.' or 'typevars'"
@@ -1031,8 +1008,6 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       buildErr c, dest, it.n.info, "TR pattern not implemented"
       skip it.n
     c.routine = createSemRoutine(kind, c.routine)
-    if c.routine.parent != nil and c.routine.parent.genericParams.len > 0:
-      c.routine.genericParams = c.routine.parent.genericParams
     # 'break' and 'continue' are valid in a template regardless of whether we
     # really have a loop or not:
     if kind == TemplateY:
