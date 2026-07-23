@@ -85,6 +85,7 @@ type
     ConceptL = (ord(ConceptTagId), "concept")  ## `concept` type: two reserved slots, optional parent concepts (`.` / sym / `(and ...)`), a `Self` typevar `D`, and the concept body statements `S*` (body may be empty when parents are present)
     DistinctL = (ord(DistinctTagId), "distinct")  ## `distinct` type
     ItertypeL = (ord(ItertypeTagId), "itertype")  ## Nimony iterator type — first-class closure-iterator value at the type level. Shape mirrors `(proctype ...)`: slot 0 carries the nilability tag (`.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`); remaining slots are params, return type, pragmas.
+    PluginL = (ord(PluginTagId), "plugin")  ## `plugin` pragma; Nifler uses it only for `*.p.dep.nif` files.
     QuotedL = (ord(QuotedTagId), "quoted")  ## name in backticks
     TupL = (ord(TupTagId), "tup")  ## untyped tuple constructor
     TabconstrL = (ord(TabconstrTagId), "tabconstr")  ## table constructor

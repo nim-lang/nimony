@@ -156,6 +156,7 @@ type
     isSystem: bool
     plugin: string
     cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
+    depPlugins: HashSet[string] ## Set of plugins `files` uses except import plugins
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -568,6 +569,14 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
           assert n.kind == StringLit
           for flag in splitWhitespace(pool.strings[n.litId]):
             c.passC.add flag
+          inc n
+    elif n.tagId == TagId(PluginP):
+      n.into: # (pluginL …)
+        while n.hasMore:
+          assert n.kind == StringLit
+          let p = pool.strings[n.litId]
+          let p2 = resolveFile(c.config.paths, current.files[current.active].nimFile, p)
+          current.depPlugins.incl p2
           inc n
     else:
       skip n
@@ -1465,6 +1474,19 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # Input: cached config file
     b.withTree "input":
       b.addStrLit c.config.cachedConfigFile()
+    # Input: plugins excepts import plugins
+    for p in v.depPlugins:
+      b.withTree "input":
+        b.addStrLit p
+    # Input: plugins used in imported modules
+    # When the plugin used in an imported module is changed, `*.s.idx.nif` file of the imported module might not be updated.
+    # (see `createIndex` proc in `lib/nifindexes.nim`)
+    # But if this module uses exported types or templates with the plugin in the imported module, it need to be recompiled.
+    for i in v.deps:
+      for p in c.nodes[i].depPlugins:
+        b.withTree "input":
+          b.addStrLit p
+
     # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
     b.withTree "output":
