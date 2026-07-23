@@ -624,7 +624,6 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
           c.buildErr dest, argInfo, constraintMismatchMsg(m, constraint, argSnap), argSnap
           ok = false
           addArg = false
-        endRead(argBuf)
     if addArg:
       dest.add argBuf
   let usedTypevarsFinal = c.usedTypevars

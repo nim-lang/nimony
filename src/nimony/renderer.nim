@@ -125,28 +125,26 @@ proc initSrcGen(renderFlags: RenderFlags): SrcGen =
                    )
 
 proc isErrNode*(n: Cursor): bool =
-  n.kind == ParLe and (n.typeKind == ErrT or n.exprKind == ErrX)
+  n.isTagLit and (n.typeKind == ErrT or n.exprKind == ErrX)
 
 proc errPayload*(n: Cursor): Cursor =
   ## First child of `(err …)`: the wrapped expression, or `.` if none was recorded.
-  result = n
-  assert isErrNode(result)
-  inc result
+  assert isErrNode(n)
+  result = sub(n)
 
 proc errMsgFromCursor*(n: Cursor): string =
   ## Extract the human-readable message from an `(err …)` node. Mirrors the
   ## walk in `reportErrors` so diagnostics and the reporter stay in sync.
-  var c = n
-  assert isErrNode(c)
-  c = sub(c)
-  if c.kind == DotToken:
+  assert isErrNode(n)
+  var c = sub(n)
+  if c.isDotToken:
     inc c
   else:
     skip c
-  while c.kind == DotToken:
+  while c.isDotToken:
     inc c
-  assert c.kind == StringLit
-  result = pool.strings[c.litId]
+  assert c.isStringLit
+  result = pool.strings[c.strId]
 
 proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string
 
@@ -2065,7 +2063,7 @@ proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string =
     if renderIr in renderFlags:
       return toString(typ, false)
     let payload = errPayload(typ)
-    if payload.kind == DotToken:
+    if payload.isDotToken:
       return "<type error>"
     if isErrNode(payload):
       return typeToString(payload, renderFlags)

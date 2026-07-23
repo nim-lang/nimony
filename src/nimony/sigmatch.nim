@@ -95,7 +95,7 @@ proc errArgForConstraintCheck(a: Cursor): Cursor =
   result = a
   if isErrNode(result):
     let payload = errPayload(result)
-    if payload.kind == DotToken:
+    if payload.isDotToken:
       return result
     if isErrNode(payload):
       return errArgForConstraintCheck(payload)
