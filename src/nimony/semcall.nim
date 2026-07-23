@@ -977,7 +977,15 @@ proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor,
     convMatch = ensureMove(match)
 
 proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; finalFn: SymId) =
-  if finalFn in c.compiledMacros:
+  # A macro's plugin binary is compiled when its DECLARATION is semchecked
+  # (semdecls: `kind == MacroY and pass == checkBody`), which registers it in
+  # `c.compiledMacros`. A macro IMPORTED from another module has its
+  # declaration semchecked in the *defining* module's run, not here, so it is
+  # absent from this run's `compiledMacros` — but the dependency build already
+  # compiled its plugin into the shared nifcache. Accept that on-disk plugin so
+  # imported macros (e.g. an importable `{.async.}`) expand too.
+  if finalFn in c.compiledMacros or
+     macroPluginExists(c.g.config.nifcachePath, finalFn):
     # Serialize arguments to NIF. Prefer `arg.orig` (raw, pre-sem AST) so
     # macros that walk their bodies aren't tripped by sem-attached `(err
     # …)` diagnostics or other sem rewrites the user never wrote.

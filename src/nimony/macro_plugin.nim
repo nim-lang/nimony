@@ -8,7 +8,9 @@
 ## `nimony s` (which picks up `.p.nif` input — same machinery `executeExpr`
 ## uses for CTFE), and exec the resulting binary at every call site.
 
-import std/[syncio, os, osproc, tables, hashes, assertions]
+import std/[syncio, os, osproc, tables, hashes, assertions, strutils]
+import std/[dirs, paths]
+include ".." / lib / compat2
 
 import ".." / lib / [nifpools, bitabs, nifindexes, symparser]
 import ".." / lib / nifreader
@@ -270,6 +272,31 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
   when defined(windows):
     result.add ".exe"
 
+proc hostifyPluginArgs(args: string): string =
+  ## A macro plugin is always a HOST-native executable (it is exec'd at compile
+  ## time), so it must be built with the host word size. Strip any `--bits:NN`
+  ## the outer compile carries — e.g. the JS test harness forces `--bits:32` to
+  ## short-circuit its own native link, but forwarding that to the plugin build
+  ## makes its C backend fail a pointer-size static assert. All other args
+  ## (notably `--cc`, for nifmake signature matching) are preserved.
+  result = args
+  var i = result.find("--bits:")
+  while i >= 0:
+    var j = i + "--bits:".len
+    while j < result.len and result[j] notin {' ', '\t'}: inc j
+    var start = i
+    if start > 0 and result[start-1] == ' ': dec start   # swallow the leading space too
+    result = result[0 ..< start] & result[j .. ^1]
+    i = result.find("--bits:")
+
+proc macroPluginExists*(nifcachePath: string; macroSym: SymId): bool =
+  ## True when a compiled plugin binary for `macroSym` already sits in the
+  ## shared nifcache. Used to recognise a macro IMPORTED from another module:
+  ## its declaration is never re-semchecked in the importer (so it is absent
+  ## from `SemContext.compiledMacros`), but the dependency build compiled its
+  ## plugin into the same nifcache we read here.
+  fileExists(getMacroPluginPath(nifcachePath, macroSym))
+
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
                          info: NifLineInfo;
                          commandLineArgs: string): string =
@@ -278,7 +305,24 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   ## entry point — same one CTFE uses in `semos.runEval`).
   let exePath = getMacroPluginPath(nifcachePath, macroSym)
   let pluginBaseName = "macro_" & $macroSym.int
-  let progfile = nifcachePath / pluginBaseName.addFileExt(".p.nif")
+
+  # A macro plugin is a HOST-native executable, so it must be built with a
+  # host-consistent toolchain config (host word size, host stdlib layouts). The
+  # outer compile's nifcache may target a DIFFERENT word size — the JS backend
+  # compiles at `--bits:32` so its Leng IR matches the JS runtime — and the
+  # plugin's `nimony s` sub-compile reuses whatever stdlib artifacts already sit
+  # in the nifcache it is pointed at. Sharing the outer nifcache would hand the
+  # 64-bit plugin a 32-bit stdlib (mismatched type sizes) → a plugin that builds
+  # but SEGFAULTS at run. So give the plugin its OWN nifcache subdir, built fresh
+  # at host bits (see `hostifyPluginArgs`). The `macro_*` prefix keeps it out of
+  # any target-side artifact collection.
+  let pluginCache = nifcachePath / pluginBaseName & ".host"
+  try:
+    createDir path(pluginCache)
+  except:
+    echo "Macro plugin: failed to create ", pluginCache
+    return ""
+  let progfile = pluginCache / pluginBaseName.addFileExt(".p.nif")
 
   var buf = buildPluginNif(macroDecl, macroSym, info)
   try:
@@ -290,7 +334,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # `nimony s` opens `<progfile>.p.deps.nif` unconditionally — write an empty
   # `(stmts)` (the plugin module has no external NIF dependencies of its own,
   # only stdlib imports which Nimony discovers via its normal search path).
-  let depsFile = nifcachePath / pluginBaseName & ".p.deps.nif"
+  let depsFile = pluginCache / pluginBaseName & ".p.deps.nif"
   var deps = createTokenBuf(4)
   deps.addParLe StmtsS, info
   deps.addParRi()
@@ -302,6 +346,31 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
 
   let nimonyExe = getAppDir() / "nimony"
   let srcLibPath = getAppDir().parentDir() / "src" / "lib"
+
+  # Pre-populate the isolated plugin cache with a HOST-bits stdlib. `nimony s`
+  # only READS its imports' `.s.nif` — it does not build them — so in a fresh
+  # per-plugin cache we must first materialise the stdlib the plugin imports.
+  # The plugin scaffold imports exactly `std/[syncio, macros]` (see
+  # `emitImportStdMacros`); seeding those pulls in the whole host-bits stdlib
+  # closure the plugin needs (incl. the NimNode/NIF-reader machinery). The
+  # native link of this seed may fail (harmless — we only need the `.s.nif`/
+  # `.c.nif`), and `nimony c` is incremental so repeat calls are cheap.
+  let seedFile = pluginCache / "macro_seed.nim"
+  try:
+    writeFile(seedFile, "import std/[syncio, macros]\n")
+  except:
+    echo "Macro plugin: failed to write ", seedFile
+    return ""
+  let seedCmd = quoteShell(nimonyExe) & hostifyPluginArgs(commandLineArgs) &
+                " --path:" & quoteShell(srcLibPath) &
+                " --nimcache:" & quoteShell(pluginCache) &
+                " c " & quoteShell(seedFile)
+  try:
+    discard execCmdEx(seedCmd)   # ignore exit: a failed native link still leaves the .s.nif/.c.nif
+  except:
+    echo "Macro plugin: failed to seed host stdlib: ", seedCmd
+    return ""
+
   # Forward `--nimcache:` so the sub-compile reads the `.p.deps.nif` from the
   # same per-worker directory we wrote it to. Without this, `nimony s` falls
   # back to its default `nimcache/` and can't find the deps file under
@@ -314,9 +383,9 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # and tries to overwrite it — which on Windows fails because the outer
   # nimsem (currently paused waiting on this exec) still has it mmap'd.
   # Same rationale as `semos.runProgram` / `semos.prepareEval`.
-  let cmd = quoteShell(nimonyExe) & commandLineArgs &
+  let cmd = quoteShell(nimonyExe) & hostifyPluginArgs(commandLineArgs) &
             " --path:" & quoteShell(srcLibPath) &
-            " --nimcache:" & quoteShell(nifcachePath) &
+            " --nimcache:" & quoteShell(pluginCache) &
             " -o:" & quoteShell(exePath) &
             " s " & quoteShell(progfile)
 
