@@ -221,7 +221,7 @@
 | `(borrow)` | NimonyPragma | `borrow` pragma |
 | `(noSideEffect)` | NimonyPragma | `noSideEffect` pragma |
 | `(nodestroy)` | NimonyPragma | `nodestroy` pragma |
-| `(plugin X)` | NimonyPragma | `plugin` pragma |
+| `(plugin X)` | NimonyPragma, NiflerKind | `plugin` pragma; Nifler uses it only for `*.p.dep.nif` files. |
 | `(bycopy)` | NimonyPragma | `bycopy` pragma |
 | `(byref)` | NimonyPragma | `byref` pragma |
 | `(noinit)` | NimonyPragma | `noinit` pragma |

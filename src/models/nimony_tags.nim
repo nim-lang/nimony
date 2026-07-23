@@ -319,7 +319,7 @@ type
     BorrowP = (ord(BorrowTagId), "borrow")  ## `borrow` pragma
     NoSideEffectP = (ord(NoSideEffectTagId), "noSideEffect")  ## `noSideEffect` pragma
     NodestroyP = (ord(NodestroyTagId), "nodestroy")  ## `nodestroy` pragma
-    PluginP = (ord(PluginTagId), "plugin")  ## `plugin` pragma
+    PluginP = (ord(PluginTagId), "plugin")  ## `plugin` pragma; Nifler uses it only for `*.p.dep.nif` files.
     BycopyP = (ord(BycopyTagId), "bycopy")  ## `bycopy` pragma
     ByrefP = (ord(ByrefTagId), "byref")  ## `byref` pragma
     NoinitP = (ord(NoinitTagId), "noinit")  ## `noinit` pragma

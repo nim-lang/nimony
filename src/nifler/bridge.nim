@@ -9,7 +9,7 @@
 when defined(nifBench):
   import std / monotimes
 
-import std / [assertions, syncio, os]
+import std / [assertions, syncio, os, sets]
 
 import compiler / [ast, options, pathutils, renderer, lineinfos, syntaxes, llstream, idents, msgs]
 
@@ -122,6 +122,7 @@ type
       ## so the dep analyzer can evaluate them and skip dead branches.
       ## `negated` entries (an `else` branch carries the negation of every
       ## prior elif condition) are wrapped in `(prefix not ...)` at emission.
+    depPlugins: HashSet[string] ## Set of plugins except import plugins
 
 proc absLineInfo(i: TLineInfo; c: var TranslationContext) =
   var fp = toFullPath(c.conf, i.fileIndex)
@@ -831,6 +832,17 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     for i in 1..<n.len:
       toNif(n[i], n, c)
     c.b.endTree()
+  of nkPragma:
+    c.b.withTree(nodeKindTranslation(n.kind)):
+      relLineInfo(n, parent, c)
+      attachDocComment(n, c)
+      for i in 0..<n.len:
+        toNif(n[i], n, c)
+        if c.depsEnabled and
+           n[i].kind == nkExprColonExpr and n[i].len >= 2 and
+           n[i][0].kind == nkIdent and n[i][0].ident.s == "plugin" and
+           n[i][1].kind == nkStrLit:
+          c.depPlugins.incl n[i][1].strVal
   else:
     c.b.addTree(nodeKindTranslation(n.kind))
     relLineInfo(n, parent, c)
@@ -864,6 +876,9 @@ proc close*(c: var TranslationContext; depsOnly = false) =
   else:
     c.b.close()
   if c.depsEnabled:
+    c.deps.withTree(PluginL):
+      for p in c.depPlugins:
+        c.deps.addStrLit p
     c.deps.endTree()
     c.deps.close()
 
