@@ -652,7 +652,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
                 if convMatch.err:
                   # adding type args errored
                   buildErr c, dest, convInfo, getErrorMsg(convMatch)
-                elif c.routine.inGeneric == 0:
+                elif not inGenericDefinitionContext(c.routine):
                   let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
                   dest[dest.len-1].setSymId inst.targetSym
                 else:
@@ -1075,7 +1075,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # of scope right after resolveOverloads returns.
       var matched = ensureMove(m[idx])
       let returnType: Cursor
-      if isMagic == NonMagicCall and c.routine.inGeneric == 0 and
+      if isMagic == NonMagicCall and not inGenericDefinitionContext(c.routine) and
           isGeneric(getProcDecl(finalFn.sym)):
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
         # `addFn` emits the callee in different shapes — usually a

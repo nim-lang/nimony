@@ -823,7 +823,7 @@ proc semInstanceof*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     # handle types
     beforeType = dest.len
     semLocalTypeImpl c, dest, it.n, InLocalDecl
-    if c.routine.inGeneric == 0:
+    if not inGenericDefinitionContext(c.routine):
       let t = cursorAt(dest, beforeType)
       if t.kind == Symbol and arg.typ.kind == Symbol:
         let xtyp = arg.typ.symId

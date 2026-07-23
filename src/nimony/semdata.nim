@@ -30,6 +30,16 @@ type
 proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =
   result = SemRoutine(kind: kind, parent: parent, resId: SymId(0))
 
+proc inGenericDefinitionContext*(r: SemRoutine): bool =
+  ## True when semchecking a generic body before instantiation, including
+  ## nested procs and closures declared within an outer generic routine.
+  result = false
+  var it = r
+  while it != nil:
+    if it.inGeneric > 0:
+      return true
+    it = it.parent
+
 const
   MaxNestedTemplates* = 100
 

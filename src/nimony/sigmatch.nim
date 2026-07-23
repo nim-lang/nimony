@@ -71,6 +71,7 @@ type
     hasError: bool # mark that error message was set
     skippedMod: TypeKind
     argInfo: PackedLineInfo
+    argExpr: Cursor ## expression currently being matched (for closure conversion)
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
     returnType*: Cursor
@@ -1261,7 +1262,7 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error ClosureMismatch, f, a
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
-  if not m.err and fcc.usesClosure and not acc.usesClosure:
+  if not m.err and fcc.usesClosure and not acc.usesClosure and m.argExpr.exprKind != ToClosureX:
     m.args.addParLe ToClosureX, m.argInfo
     inc m.opened
     inc m.convCosts
@@ -2179,6 +2180,7 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
 
 proc singleArgCore(m: var Match; f: var Cursor; arg: CallArg) =
   let fOrig = f
+  m.argExpr = arg.n
   singleArgImpl(m, f, arg)
   if not m.err:
     m.useArg arg, fOrig # since it was a match, copy it
