@@ -1,37 +1,33 @@
 ## nifpools — nifcore plus the process-global literal/tag pools and the
 ## PackedLineInfo bridge that nimsem/hexer are architected around. This is the
 ## module the frontend imports (usually via nifprelude); lengc-style code that
-## manages its own pools imports nifcore/nifcoreparse directly.
+## manages its own pools imports nifcore/nifcoreparse directly. The Nim
+## compiler's IC modules use the classic surface in nifstreams.nim instead.
 ##
-## It also still carries the tail of the old nifcursors/nifstreams compat
-## surface (renames/shims being dissolved at their call sites — anything below
-## marked "compat shim" is scheduled for deletion, not new API).
+## Two model bridges do the real work:
 ##
-## Three model bridges do the real work; everything else is a rename:
+##  1. Global pool.  The frontend is architected around ONE global `pool`
+##     (every intern table) + `globalTags` + `lineMan`; nifcore scopes pools
+##     per-TokenBuf. We bridge by threading the globals through every
+##     `createTokenBuf`, so ids are comparable across buffers. nifcore's
+##     `Pool.strings/syms/filenames` are plain `BiTable[_,string]`s, so
+##     `pool.syms.getOrIncl` / `pool.strings[id]` are direct field access.
 ##
-##  1. Global pool.  nifstreams exposes ONE global `var pool: Literals` holding
-##     every intern table + tags + the line-info manager (~1000 `pool.X` sites).
-##     nifcore scopes pools per-TokenBuf. We emulate the global by threading a
-##     single `globalPool`/`globalTags` through every `createTokenBuf`, and
-##     expose `pool.strings/syms/files/tags/man/integers/…` as views onto them.
-##     nifcore's `Pool.strings/syms/filenames` are the SAME `BiTable[_,string]`
-##     type nifstreams used, so `pool.syms.getOrIncl` / `pool.strings[id]` work
-##     unchanged.
-##
-##  2. Line info.  nifstreams stamps a packed `PackedLineInfo` on every token;
+##  2. Line info.  The frontend stamps a packed `PackedLineInfo` per token;
 ##     nifcore keeps a sparse `LineInfoLit` suffix decoded to a `NifLineInfo`
 ##     struct. We keep `PackedLineInfo` = the real `lineinfos` type (no alias,
 ##     no collision with direct `lineinfos` importers) and pack/unpack across
 ##     the boundary via the shared `lineMan`. `.info` is ~99% pass-through, so
 ##     the round-trip is invisible to callers.
 ##
-##  3. Inline literals.  Classic nifstreams interned int/uint/float into pools;
-##     nifcore stores them inline and code reads `intVal`/`uintVal`/`floatVal`
-##     directly (the classic id/proxy surface lives on in nifstreams.nim for
-##     the Nim compiler side only).
+## Inline literals need no bridge: nifcore stores int/uint/float inline and
+## code reads `intVal`/`uintVal`/`floatVal` directly.
 ##
-## Tier-3 GAPs a shim can't honestly cover are `{.error.}` stubs (raw ParLe/ParRi
-## token values, the streaming text reader) — real per-site migrations.
+## The rest of the module is real API on top of nifcore: info-carrying
+## builders (`addParLe`/`buildTree`/`copyInto`/`add*Lit`), safe node
+## predicates (`isTagLit` & friends), raw-token accessors for the CF listing
+## (`int28Token`/`getInt28`, `symId`/`strId`/`tagId` on `NifToken`), skip
+## intents for the pass validator, and parse/render entry points.
 
 import std / assertions
 import nifcore
@@ -415,14 +411,3 @@ proc consumeParRi*(c: var Cursor) {.inline.} =
 proc uoperand*(c: Cursor): uint32 {.inline.} = nifcore.uoperand(c.load)
 proc soperand*(c: Cursor): int32 {.inline.} = nifcore.soperand(c.load)
 
-# ═════════════════════════════════════════════════════════════════════════
-# Tier 3 GAPs — real per-site migration (doc/nifcore_shim.md).
-# ═════════════════════════════════════════════════════════════════════════
-
-proc parLeToken*(tag: TagId; info = NoLineInfo): NifToken {.error:
-  "nifcore ParLe must be sealed: replace `dest.add parLeToken(t, i)` with `dest.addParLe(t, i)`".}
-proc parRiToken*(info = NoLineInfo): NifToken {.error:
-  "nifcore ParRi is implicit: replace `dest.add parRiToken()` with `dest.addParRi()`".}
-
-# GAP: streaming text reader — Stream, open/openFromBuffer, close, next, parse,
-# parents/parent. nifcore reads via nifcoreparse.nim (separate handoff).
