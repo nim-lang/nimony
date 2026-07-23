@@ -80,11 +80,16 @@ proc initIoRing*(): IoRing =
   result.slots.init()
   result.nextSeq = 1
 
-  when hasEpoll:
-    import ./ioring/backends/epoll
-    result.backend = initEpollBackend(cast[int](addr result.slots))
+  when hasIoPoll:
+    import ./ioring/core/backends
+    when hasEpoll:
+      import ./ioring/backends/epoll
+      result.backend = initEpollBackend(cast[int](addr result.slots))
+    elif hasKqueue:
+      import ./ioring/backends/kqueue
+      result.backend = initKqueueBackend(cast[int](addr result.slots))
   else:
-    {.error: "Only epoll backend is currently implemented".}
+    {.error: "No I/O backend available for this platform".}
 
   result.backend.completeFn = completeCb
   result.backend.completeEnv = cast[int](result)
