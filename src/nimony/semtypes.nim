@@ -542,6 +542,14 @@ proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       c.buildErr dest, info, "argument for a `static` generic parameter must be a constant expression"
       result = false
 
+proc clearMissingConstraints(m: var Match) =
+  m.missingConstraints.clear()
+
+proc constraintMismatchMsg(m: var Match; constraint, arg: Cursor): string =
+  result = typeExprToString(arg) & " does not match constraint " & typeToString(constraint)
+  for key, _ in m.missingConstraints:
+    result.add "\nmissing: " & key
+
 proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let typeStart = dest.len
   let info = n.info
@@ -609,11 +617,14 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       semLocalTypeImpl c, argBuf, n, AllowValues
       if haveParam and constraint.kind != DotToken:
         var arg = beginRead(argBuf)
+        let argSnap = cursorAt(argBuf, 0)
         var constraintMatch = constraint
+        clearMissingConstraints(m)
         if not matchesConstraint(m, constraintMatch, arg):
-          c.buildErr dest, argInfo, constraintMismatchMsg(m, constraint, arg)
+          c.buildErr dest, argInfo, constraintMismatchMsg(m, constraint, argSnap), argSnap
           ok = false
           addArg = false
+        endRead(argBuf)
     if addArg:
       dest.add argBuf
   let usedTypevarsFinal = c.usedTypevars

@@ -1,1 +1,3 @@
-tests/nimony/concepts/tconceptconstraintbad.nim(15, 12) Error: type Partial does not match constraint: NeedsOps; missing required procs: proc -(a: Self, b: Self), proc +(a: Self, b: Self)
+tests/nimony/concepts/tconceptconstraintbad.nim(15, 12) Error: Partial does not match constraint NeedsOps
+missing: proc -(a: Self, b: Self)
+missing: proc +(a: Self, b: Self)
