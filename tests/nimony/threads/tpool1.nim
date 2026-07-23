@@ -23,19 +23,19 @@ proc main =
   atomicStore(counter, 0, moRelaxed)
   atomicStore(done, 0, moRelaxed)
 
-  initPool()
+  var pool = createPool()
 
   for i in 0 ..< NumTasks:
     let frame = cast[ptr IncFrame](alloc(sizeof(IncFrame)))
     frame.amount = 1
     let cont = Continuation(fn: incStep, env: cast[ptr CoroutineBase](frame))
-    submit(cont, hint = i)
+    pool.submit(cont, hint = i)
 
   # Spin until all tasks complete.
   while atomicLoad(done, moRelaxed) < NumTasks:
     discard
 
-  shutdownPool()
+  pool.shutdown()
 
   let total = atomicLoad(counter, moRelaxed)
   if total == NumTasks:
