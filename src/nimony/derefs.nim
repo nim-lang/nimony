@@ -296,8 +296,8 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
       result = false
-  elif n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
-       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}:
+  elif n.hasMore and (n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
+       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}):
     result = true
   else:
     result = false

@@ -123,9 +123,15 @@ proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var i
       let info = n.info
       let doReport = not r.reportedErrSources.containsOrIncl(info)
       n.peekInto:
-        # original expression, optional:
-        if n.isDotToken: inc n
-        else: skip n
+        # original expression, optional; remember it — it may contain nested
+        # `(err …)` nodes of its own (classic's linear token scan reported
+        # those too), reported after this outer one to keep the classic order:
+        var payload = default(Cursor)
+        if n.isDotToken:
+          inc n
+        else:
+          payload = n
+          skip n
         # instantiation contexts:
         while n.isDotToken:
           if doReport:
@@ -136,6 +142,12 @@ proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var i
           if doReport:
             r.error infoToStr(info), pool.strings[n.strId]
           inc n
+        if not cursorIsNil(payload):
+          reportErrorsRec(r, payload, errTag, count)
+        # an `(err …)` produced by wrapping a whole decl (e.g. attachConverter)
+        # carries the decl's children after the message; walk them too:
+        while n.hasMore:
+          reportErrorsRec(r, n, errTag, count)
     else:
       n.into:
         while n.hasMore:
