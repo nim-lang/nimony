@@ -124,6 +124,32 @@ proc initSrcGen(renderFlags: RenderFlags): SrcGen =
                    pendingWhitespace: -1, inside: {},
                    )
 
+proc isErrNode*(n: Cursor): bool =
+  n.kind == ParLe and (n.typeKind == ErrT or n.exprKind == ErrX)
+
+proc errPayload*(n: Cursor): Cursor =
+  ## First child of `(err …)`: the wrapped expression, or `.` if none was recorded.
+  result = n
+  assert isErrNode(result)
+  inc result
+
+proc errMsgFromCursor*(n: Cursor): string =
+  ## Extract the human-readable message from an `(err …)` node. Mirrors the
+  ## walk in `reportErrors` so diagnostics and the reporter stay in sync.
+  var c = n
+  assert isErrNode(c)
+  c = sub(c)
+  if c.kind == DotToken:
+    inc c
+  else:
+    skip c
+  while c.kind == DotToken:
+    inc c
+  assert c.kind == StringLit
+  result = pool.strings[c.litId]
+
+proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string
+
 proc addTok(g: var SrcGen, kind: TokType, s: string; sym: SymId = SymId(0);
             isDef = false) =
   g.tokens.add RenderTok(kind: kind, length: int16(s.len), sym: sym, isDef: isDef)
@@ -998,7 +1024,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       put(g, tkBracketRi, "]")
 
     of ErrT:
-      put(g, tkStrLit, toString(n, false))
+      put(g, tkStrLit, typeToString(n, g.flags))
       skip n
 
     of RoutineTypes:
@@ -1862,7 +1888,10 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
       skip n
 
     of ErrX:
-      put(g, tkStrLit, toString(n, false))
+      if renderIr in g.flags:
+        put(g, tkStrLit, toString(n, false))
+      else:
+        put(g, tkStrLit, errMsgFromCursor(n))
       skip n
 
     of QuotedX:
@@ -1987,7 +2016,8 @@ proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): s
     gsub(g, n, isTopLevel = true)
   result = g.buf
   if result.len == 0:
-    result = toString(orig, false)
+    result = if isErrNode(orig): typeToString(orig, g.flags)
+             else: toString(orig, false)
 
 proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var m0: PackedLineInfo = NoLineInfo
@@ -2030,7 +2060,21 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
     result = renderTree(n, renderFlags = renderFlags)
 
 proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string =
-  result = renderTree(n, renderFlags = renderFlags, renderType = true)
+  var typ = n
+  if isErrNode(typ):
+    if renderIr in renderFlags:
+      return toString(typ, false)
+    let payload = errPayload(typ)
+    if payload.kind == DotToken:
+      return "<type error>"
+    if isErrNode(payload):
+      return typeToString(payload, renderFlags)
+    typ = payload
+  result = renderTree(typ, renderFlags = renderFlags, renderType = true)
+
+proc typeExprToString*(n: Cursor): string {.inline.} =
+  ## Like `typeToString`, but always unwraps `(err …)` to the wrapped type.
+  typeToString(n)
 
 proc typeToSrcGen*(n: Cursor; renderFlags: RenderFlags = {}): SrcGen =
   ## Render a type expression and return both rendered buffer and token stream.

@@ -1,1 +1,3 @@
-tests/nimony/concepts/tconceptcacheparent.nim(19, 12) Error: type X does not match constraint: C; missing required procs: proc bar(x: Self), proc foo(x: Self)
+tests/nimony/concepts/tconceptcacheparent.nim(19, 12) Error: X does not match constraint C
+missing: proc bar(x: Self)
+missing: proc foo(x: Self)

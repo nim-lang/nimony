@@ -37,7 +37,6 @@ type
 
   ConceptBodyResult* = object
     satisfied*: bool
-    missing*: seq[SymId]
 
   ConceptRoutineImplResult* = object
     found*: bool
@@ -241,13 +240,6 @@ proc getConceptMetadata*(c: ptr SemContext; conceptSym: SymId; body: Cursor): Co
       return cache.metadata.getOrDefault(conceptSym)
   collectConceptMetadata(body)
 
-proc loadConceptRequirement*(reqSym: SymId): Cursor =
-  let res = tryLoadSym(reqSym)
-  if res.status == LacksNothing:
-    res.decl
-  else:
-    default(Cursor)
-
 proc lruTouchBody(order: var seq[BodyCacheKey]; key: BodyCacheKey) =
   for i, k in order:
     if k == key:
@@ -351,39 +343,12 @@ proc tryRoutineImplFromCache*(c: ptr SemContext; conceptSym, reqSym: SymId; a: C
   lruTouchRoutine(cache.routineImplCacheOrder, key)
   (true, cache.routineImplCache.getOrDefault(key))
 
-proc bodyResultFromMissing*(missing: openArray[Cursor]): ConceptBodyResult =
-  result = ConceptBodyResult(satisfied: missing.len == 0)
-  for routine in missing:
-    let rs = conceptRequirementSym(routine)
-    if rs != SymId(0):
-      result.missing.add rs
-
 proc storeBodyCheck*(c: ptr SemContext; conceptSym: SymId; a: Cursor; res: sink ConceptBodyResult) =
   if c == nil or conceptSym == SymId(0) or not isCacheableConcreteType(a) or isConceptTypeArg(a):
     return
   let cache = ensureConceptCache(c)
   let key = bodyCacheKey(conceptSym, a)
   lruPutBody(cache.bodyCache, cache.bodyCacheOrder, cacheCapacity(cache), key, res)
-
-proc tryMissingFromBodyCache*(c: ptr SemContext; conceptSym: SymId; a: Cursor;
-                              missing: var seq[Cursor]): bool =
-  if c == nil or conceptSym == SymId(0) or not isCacheableConcreteType(a) or isConceptTypeArg(a):
-    return false
-  let cache = ensureConceptCache(c)
-  let key = bodyCacheKey(conceptSym, a)
-  if not cache.bodyCache.hasKey(key):
-    return false
-  lruTouchBody(cache.bodyCacheOrder, key)
-  let cached = cache.bodyCache.getOrDefault(key)
-  if not cached.satisfied and cached.missing.len == 0:
-    return false
-  if cached.satisfied:
-    missing = @[]
-  else:
-    missing = @[]
-    for reqSym in cached.missing:
-      missing.add loadConceptRequirement(reqSym)
-  true
 
 proc storeCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId;
                       res: sink seq[SymId]) =

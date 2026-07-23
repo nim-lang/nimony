@@ -1,1 +1,2 @@
-tests/nimony/concepts/tconceptfuncprocbad.nim(17, 12) Error: type BadType does not match constraint: NeedsFuncEq; missing required proc: func ==(x: Self, y: Self)
+tests/nimony/concepts/tconceptfuncprocbad.nim(17, 12) Error: BadType does not match constraint NeedsFuncEq
+missing: func ==(x: Self, y: Self)
