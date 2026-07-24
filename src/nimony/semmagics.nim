@@ -863,14 +863,19 @@ proc semInstanceof*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 proc semInternalTypeName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
   let info = it.n.info
+  var typeName = ""
+  var isGeneric = false
   copyInto dest, it.n:
     let typ = semLocalType(c, dest, it.n)
     if containsGenericParams(typ):
-      discard
+      isGeneric = true
     else:
-      let typeName = pool.syms[typ.symId]
-      dest.shrink beforeExpr
-      dest.addStrLit typeName, info
+      typeName = pool.syms[typ.symId]
+  if not isGeneric:
+    # only after `copyInto` closed its tag: shrinking away an OPEN tag would
+    # leave the close unmatched (nifcore's closeTag asserts)
+    dest.shrink beforeExpr
+    dest.addStrLit typeName, info
   let expected = it.typ
   it.typ = c.types.stringType
   commonType c, dest, it, beforeExpr, expected

@@ -4559,6 +4559,8 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   else:
     # multiple matches, leave as subscript of symchoice
     dest.add argBuf
+    dest.addParRi() # close the `(at` (classic argBuf ended in a sentinel ParRi
+                    # that doubled as this close)
     it.n = argRead
     result = true
 
