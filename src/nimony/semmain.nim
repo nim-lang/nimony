@@ -392,10 +392,16 @@ proc fromGeneric(dest: var TokenBuf; i: int): SymId =
     result = NoSymId
 
 proc findOrigin(dest: var TokenBuf; origin: SymId): int =
+  ## Position of the decl HEAD whose name is `origin` — the insert point.
+  ## Not `SymbolDef pos - 1`: the head may carry a line-info suffix token
+  ## and inserting between them would split head and suffix.
   var i = 0
   while i < dest.len:
-    if dest[i].kind == SymbolDef and readonlyCursorAt(dest, i).symId == origin:
-      return i-1 # before name
+    if dest[i].stmtKind in {ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS}:
+      let namePos = i + tokenWidth(readonlyCursorAt(dest, i))
+      if namePos < dest.len and dest[namePos].kind == SymbolDef and
+         readonlyCursorAt(dest, namePos).symId == origin:
+        return i
     inc i
   return -1
 
@@ -413,22 +419,24 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
   var i = 0
   while i < dest.len:
     if dest[i].stmtKind in {ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS}:
-      inc i
-      if dest[i].kind == SymbolDef:
+      let headPos = i
+      # the head may carry a line-info suffix; the name is tokenWidth away
+      i += tokenWidth(readonlyCursorAt(dest, i))
+      if i < dest.len and dest[i].kind == SymbolDef:
         let origin = fromGeneric(dest, i)
         if origin != NoSymId and origin in c.genericInnerProcs:
           # move to right below the position of the origin
           let originPos = findOrigin(dest, origin)
           assert originPos > 0
 
-          let procDecl = cursorAt(dest, i-1)
+          let procDecl = cursorAt(dest, headPos)
           var n = procDecl
           skip n
-          let procLen = cursorToPosition(dest,n) - (i-1)
+          let procLen = cursorToPosition(dest,n) - headPos
 
           # Extract the procedure declaration
           var procBuf = createTokenBuf(procLen)
-          for j in (i-1)..<(i-1+procLen):
+          for j in headPos ..< headPos+procLen:
             procBuf.add dest[j]
             dest[j] = dotToken() # invalidate
 
