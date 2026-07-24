@@ -150,6 +150,10 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
     var r = nifreader.open(infile)
     var buf = createTokenBuf()
     nifcoreparse.parse(r, buf)
+    # Close eagerly: the reader mmaps `infile`, and a leaked mapping keeps the
+    # file locked on Windows — a later rewrite of the same file (e.g. repeated
+    # `runEval` const folds writing the same tco<hash>.p.nif) then fails.
+    nifreader.close(r)
     var checksum = newSha1State()
     processForChecksum(checksum, buf)
     let final = SecureHash checksum.finalize()

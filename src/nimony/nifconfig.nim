@@ -191,6 +191,7 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
   var r = nifreader.open(configFile)
   var buf = createTokenBuf()
   nifcoreparse.parse(r, buf)   # reads directives + the tree into `buf`
+  nifreader.close(r)
   var c = beginRead(buf)
   parseConfig(c, result)
 proc getOptionsAsOneString*(config: NifConfig): string =
