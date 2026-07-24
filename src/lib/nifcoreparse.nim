@@ -152,6 +152,7 @@ proc parseFromFile*(filename: string; sizeHint = 100;
   discard rd.processDirectives(r)
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
   parse(r, result, denseLineInfo = denseLineInfo)
+  rd.close(r)   # the reader mmaps the file; a leak keeps it locked on Windows
 
 proc parseFromFile*(filename: string; unusedName: var string;
                     sizeHint = 100; sharedPool: Pool = nil;
@@ -162,6 +163,7 @@ proc parseFromFile*(filename: string; unusedName: var string;
   unusedName = r.firstUnusedName
   result = createTokenBuf(sizeHint, sharedPool, sharedTags)
   parse(r, result, denseLineInfo = denseLineInfo)
+  rd.close(r)
 
 # ── toString ─────────────────────────────────────────────────────────────
 
