@@ -22,6 +22,259 @@ proc signaturesMatch(forwardDecl: Cursor; implDecl: Cursor): bool =
     return false
   return true
 
+proc typevarSymId(tv: Cursor): SymId =
+  ## The declared name symbol of a `(typevar ...)` / `(statictypevar ...)` node.
+  result = NoSymId
+  var c = tv
+  c.into:
+    if c.kind in {SymbolDef, Symbol}:
+      result = c.symId
+    while c.hasMore: skip c
+
+proc typevarTypeSlot(tv: Cursor): Cursor =
+  ## Constraint-type slot of a generic parameter.
+  var c = tv
+  c.into:
+    skip c, SkipName
+    skip c, SkipExport
+    skip c, SkipPragmas
+    result = c
+    while c.hasMore: skip c
+
+proc typevarDefaultSlot(tv: Cursor): Cursor =
+  ## Default-value slot of a generic parameter.
+  var c = tv
+  c.into:
+    skip c, SkipName
+    skip c, SkipExport
+    skip c, SkipPragmas
+    skip c, SkipType
+    result = c
+    while c.hasMore: skip c
+
+proc collectTypevarSyms(typevars: Cursor): seq[SymId] =
+  result = @[]
+  if typevars.substructureKind != TypevarsU: return
+  var c = typevars
+  c.into:
+    while c.hasMore:
+      if c.substructureKind in {TypevarU, StaticTypevarU}:
+        result.add typevarSymId(c)
+      skip c
+
+proc initTypevarMap(syms: seq[SymId]): Table[SymId, int] =
+  result = initTable[SymId, int]()
+  for i, s in syms:
+    result[s] = i
+
+proc typevarIndex(sym: SymId; m: Table[SymId, int]): int =
+  m.getOrDefault(sym, -1)
+
+proc sameSymForRedef(a, b: Cursor; mapA, mapB: Table[SymId, int];
+                     looseNonTypevar: bool): bool =
+  assert a.kind in {Symbol, SymbolDef} and b.kind in {Symbol, SymbolDef}
+  let ai = typevarIndex(a.symId, mapA)
+  let bi = typevarIndex(b.symId, mapB)
+  if ai >= 0 or bi >= 0:
+    ai >= 0 and bi >= 0 and ai == bi
+  elif looseNonTypevar:
+    symToIdent(a.symId) == symToIdent(b.symId)
+  else:
+    a.symId == b.symId
+
+proc sameTreesModuloTypevars(a, b: Cursor; mapA, mapB: Table[SymId, int];
+                             looseNonTypevar = false): bool =
+  ## Compare two type trees, treating paired generic params as equal by index
+  ## rather than by their symbol ids. Non-typevar symbols are compared exactly
+  ## unless `looseNonTypevar` is set (for constraint/default slots).
+  var a = a
+  var b = b
+  when defined(virtualParRi):
+    var togo = span(a)
+    if togo != span(b): return false
+    while true:
+      let aIsName = a.kind in {Symbol, SymbolDef, Ident}
+      let bIsName = b.kind in {Symbol, SymbolDef, Ident}
+      if aIsName and bIsName:
+        if a.kind == Ident and b.kind == Ident:
+          if a.litId != b.litId: return false
+        elif a.kind == Ident or b.kind == Ident:
+          return false
+        elif not sameSymForRedef(a, b, mapA, mapB, looseNonTypevar):
+          return false
+      elif aIsName or bIsName:
+        return false
+      elif a.kind != b.kind:
+        return false
+      else:
+        case a.kind
+        of ParLe:
+          if a.tagId != b.tagId: return false
+        of IntLit:
+          if a.intId != b.intId: return false
+        of UIntLit:
+          if a.uintId != b.uintId: return false
+        of FloatLit:
+          if a.floatId != b.floatId: return false
+        of StringLit:
+          if a.litId != b.litId: return false
+        of CharLit, UnknownToken:
+          if a.uoperand != b.uoperand: return false
+        of ParRi, DotToken, EofToken: discard
+        of Symbol, SymbolDef, Ident: discard
+      dec togo
+      if togo == 0: return true
+      inc a
+      inc b
+  else:
+    var nested = 0
+    let isAtom = a.kind != ParLe
+    while true:
+      let aIsName = a.kind in {Symbol, SymbolDef, Ident}
+      let bIsName = b.kind in {Symbol, SymbolDef, Ident}
+      if aIsName and bIsName:
+        if a.kind == Ident and b.kind == Ident:
+          if a.litId != b.litId: return false
+        elif a.kind == Ident or b.kind == Ident:
+          return false
+        elif not sameSymForRedef(a, b, mapA, mapB, looseNonTypevar):
+          return false
+      elif aIsName or bIsName:
+        return false
+      elif a.kind != b.kind:
+        return false
+      else:
+        case a.kind
+        of ParLe:
+          if a.tagId != b.tagId: return false
+          inc nested
+        of ParRi:
+          dec nested
+          if nested == 0: return true
+        of IntLit:
+          if a.intId != b.intId: return false
+        of UIntLit:
+          if a.uintId != b.uintId: return false
+        of FloatLit:
+          if a.floatId != b.floatId: return false
+        of StringLit:
+          if a.litId != b.litId: return false
+        of CharLit, UnknownToken:
+          if a.uoperand != b.uoperand: return false
+        of DotToken, EofToken: discard
+        of Symbol, SymbolDef, Ident: discard
+      if isAtom: return true
+      inc a
+      inc b
+    return false
+
+proc sameTypevarsForRedef(a, b: Cursor;
+                          mapA, mapB: var Table[SymId, int]): bool =
+  ## Compare generic heads positionally: typevar names are irrelevant, but
+  ## constraints and defaults must match modulo the paired typevar mapping.
+  mapA = initTable[SymId, int]()
+  mapB = initTable[SymId, int]()
+  if a.kind == DotToken and b.kind == DotToken:
+    return true
+  if a.substructureKind != TypevarsU or b.substructureKind != TypevarsU:
+    return sameTrees(a, b)
+  let symsA = collectTypevarSyms(a)
+  let symsB = collectTypevarSyms(b)
+  if symsA.len != symsB.len: return false
+  mapA = initTypevarMap(symsA)
+  mapB = initTypevarMap(symsB)
+  var aa = a
+  var bb = b
+  var ok = true
+  aa.into:
+    bb.into:
+      block comparison:
+        while aa.hasMore:
+          if not bb.hasMore:
+            ok = false
+            break comparison
+          if aa.substructureKind != bb.substructureKind:
+            ok = false
+            break comparison
+          if aa.substructureKind notin {TypevarU, StaticTypevarU}:
+            ok = false
+            break comparison
+          if not sameTreesModuloTypevars(typevarTypeSlot(aa), typevarTypeSlot(bb),
+                                       mapA, mapB, looseNonTypevar = true):
+            ok = false
+            break comparison
+          if not sameTreesModuloTypevars(typevarDefaultSlot(aa), typevarDefaultSlot(bb),
+                                       mapA, mapB):
+            ok = false
+            break comparison
+          skip aa
+          skip bb
+        if ok and bb.hasMore:
+          ok = false
+      while aa.hasMore: skip aa
+      while bb.hasMore: skip bb
+  ok
+
+proc paramTypeForRedef(p: Cursor): Cursor =
+  ## Cursor to the type subtree of a `(param ...)` node; valid until `p`'s
+  ## buffer is mutated.
+  var c = p
+  c.into:
+    skip c, SkipName
+    skip c, SkipExport
+    skip c, SkipPragmas
+    result = c
+    while c.hasMore: skip c
+
+proc sameParamTypesForRedef(a, b: Cursor; mapA, mapB: Table[SymId, int]): bool =
+  ## Compare parameter types exactly; parameter names are irrelevant for
+  ## redefinition checking.
+  if a.substructureKind != ParamsU or b.substructureKind != ParamsU:
+    return sameTreesModuloTypevars(a, b, mapA, mapB)
+  var a = a
+  var b = b
+  var ok = true
+  a.into:
+    b.into:
+      block comparison:
+        while a.hasMore:
+          if not b.hasMore:
+            ok = false
+            break comparison
+          if a.substructureKind != ParamU or b.substructureKind != ParamU:
+            ok = false
+            break comparison
+          if not sameTreesModuloTypevars(paramTypeForRedef(a), paramTypeForRedef(b),
+                                         mapA, mapB):
+            ok = false
+            break comparison
+          skip a
+          skip b
+        if ok and b.hasMore:
+          ok = false
+      while a.hasMore: skip a
+      while b.hasMore: skip b
+  ok
+
+proc routineSigsMatch(a, b: Cursor): bool =
+  ## Detect proc redefinitions: generic params match positionally (names
+  ## irrelevant, constraints matter); parameter and result types match
+  ## exactly except for generic param symbols, so distinct instantiations
+  ## stay valid overloads.
+  if a.kind != ParLe or b.kind != ParLe:
+    return false
+  let ra = asRoutine(a)
+  let rb = asRoutine(b)
+  var mapA = initTable[SymId, int]()
+  var mapB = initTable[SymId, int]()
+  if not sameTypevarsForRedef(ra.typevars, rb.typevars, mapA, mapB):
+    return false
+  if not sameParamTypesForRedef(ra.params, rb.params, mapA, mapB):
+    return false
+  if not sameTreesModuloTypevars(ra.retType, rb.retType, mapA, mapB):
+    return false
+  true
+
 proc addForwardDecl*(c: var SemContext; symId: SymId) =
   ## Register a forward declaration candidate.
   let lit = symToIdent(symId)
@@ -41,6 +294,33 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
       if signaturesMatch(res.decl, implDecl):
         result = fwdSym
         return
+
+proc checkRoutineRedefinition(c: var SemContext; symId: SymId; kind: SymKind): string =
+  ## Reject a routine declaration whose signature matches an existing overload,
+  ## mirroring Nim's `searchForProc` / `wrongRedefinition` (see procfind.nim).
+  ## Forward declarations with empty bodies are exempt.
+  ## Call only after `publishSignature` so the current decl is in `prog.mem`.
+  result = ""
+  let newLoaded = tryLoadSym(symId)
+  if newLoaded.status != LacksNothing: return
+  let newDecl = newLoaded.decl
+  let lit = symToIdent(symId)
+  var scope = c.currentScope.up
+  let ignoreStyle = IgnoreStyleFeature in c.features
+  while scope != nil:
+    for k in stylesOfScope(scope, lit, ignoreStyle):
+      for sym in scope.tab.getOrDefault(k):
+        if sym.name == symId or sym.kind != kind: continue
+        let loaded = tryLoadSym(sym.name)
+        if loaded.status != LacksNothing: continue
+        if not routineSigsMatch(loaded.decl, newDecl):
+          continue
+        let otherIsForward = asRoutine(loaded.decl, SkipInclBody).body.kind == DotToken
+        if otherIsForward: continue
+        result = "redefinition of '" & pool.strings[lit] &
+          "'; previous declaration here: " & infoToStr(loaded.decl.info)
+        return
+    scope = scope.up
 
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
                            lastSonInfo: var PackedLineInfo; beforeLastSon: var int) =
@@ -1064,7 +1344,16 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
           semBodyCheckBody(c, dest, it, kind, crucial, symId,
                            beforeGenericParams, beforeParams, hookName, info)
         of checkSignatures:
-          dest.takeTree it.n
+          let redefMsg = checkRoutineRedefinition(c, symId, kind)
+          if redefMsg.len > 0:
+            dest.addParLe(StmtsS, info)
+            dest.buildTree ErrT, info:
+              dest.add dotToken(info)
+              dest.add strToken(pool.strings.getOrIncl(redefMsg), info)
+            dest.addParRi()
+            skip it.n
+          else:
+            dest.takeTree it.n
           c.closeScope() # close parameter scope
         of checkConceptProc:
           c.closeScope() # close parameter scope
