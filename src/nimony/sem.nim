@@ -3012,7 +3012,7 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
 
   # Run plugin, then re-sem the output into dest
   var pluginOutput = createTokenBuf(30)
-  runPlugin(c, pluginOutput, pp.info, pool.strings[pp.strId], b.toString)
+  runPlugin(c, pluginOutput, pp.info, pool.strings[pp.strId], b)
   var expandedItem = Item(n: cursorAt(pluginOutput, 0), typ: c.types.autoType)
   semExpr c, dest, expandedItem
   producesNoReturn c, dest, info, it.typ

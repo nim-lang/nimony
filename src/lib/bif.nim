@@ -209,7 +209,6 @@ proc magic(): array[MagicLen, char] =
 proc readBytes(f: File; p: pointer; n: int): int = onRaiseQuit f.readBuffer(p, n)
 proc getPos(f: File): int64 = onRaiseQuit getFilePos(f)
 proc setPos(f: File; pos: int64) = onRaiseQuit setFilePos(f, pos)
-proc setPosEnd(f: File) = onRaiseQuit setFilePos(f, 0, fspEnd)
 
 proc writeExact(f: File; p: pointer; n: int) =
   let written = onRaiseQuit f.writeBuffer(p, n)
@@ -240,10 +239,6 @@ proc isBifFile*(filename: string): bool =
 
 # `indexOffset` is the one fixed-width field: a placeholder that gets patched in
 # place, so it must always occupy exactly 8 bytes (a varint would resize on patch).
-proc writeU64(f: File; x: uint64) =
-  var v = x
-  writeExact(f, addr v, 8)
-
 proc readU64(f: File): uint64 =
   result = 0'u64
   readExact(f, addr result, 8)
@@ -256,11 +251,6 @@ proc varintLen(b0: byte): int =
   elif b0 <= 248: 2
   else: int(b0) - 246
 
-proc writeVarint(f: File; x: uint64) =
-  var buf = default(array[maxVarIntLen, byte])
-  let n = writeVu64(buf, x)
-  writeExact(f, addr buf[0], n)
-
 proc readVarint(f: File): uint64 =
   var buf = default(array[maxVarIntLen, byte])
   readExact(f, addr buf[0], 1)
@@ -269,11 +259,6 @@ proc readVarint(f: File): uint64 =
     readExact(f, addr buf[1], n - 1)
   result = 0'u64
   discard readVu64(buf, result)
-
-proc writeStr(f: File; s: string) =
-  writeVarint(f, uint64 s.len)
-  if s.len > 0:
-    writeExact(f, cast[pointer](readRawData(s)), s.len)
 
 proc readStr(f: File): string =
   let n = int readVarint(f)
@@ -292,58 +277,89 @@ proc tokenPad(pos: int): int =
   (a - (pos and (a - 1))) and (a - 1)
 
 # ── store ─────────────────────────────────────────────────────────────────
+# The writer renders into a string: `storeToString` is the single source of
+# truth for the byte layout, and the file writers dump its result in one
+# `writeBuffer`. In-memory rendering exists because some callers need the
+# bytes *before* a filename is known — the compiler checksums a plugin input
+# to derive its content-addressed cache filename.
 
-proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
-  ## Write `b` (token stream + pools + symbol index) to an already-open binary
-  ## file. The pools are written whole, in id order. If `b` shares a pool with
-  ## other buffers, the *entire* shared pool is written (still correct — ids stay
-  ## dense and load reproduces them — but larger than this module needs). For a
-  ## compact, self-contained cache file, build the buffer against its own private
-  ## pool. `dottedSuffix` is the self-module suffix used to decide which symbols
-  ## are global (it gets the same compression as the text writer).
+proc appendRaw(s: var string; p: pointer; n: int) =
+  if n > 0:
+    let old = s.len
+    copyMem(cast[pointer](beginStore(s, old + n, old)), p, n)
+    endStore(s)
+
+proc appendU64(s: var string; x: uint64) =
+  var v = x
+  appendRaw(s, addr v, 8)
+
+proc appendVarint(s: var string; x: uint64) =
+  var buf = default(array[maxVarIntLen, byte])
+  let n = writeVu64(buf, x)
+  appendRaw(s, addr buf[0], n)
+
+proc appendStr(s: var string; v: string) =
+  appendVarint(s, uint64 v.len)
+  if v.len > 0:
+    appendRaw(s, cast[pointer](readRawData(v)), v.len)
+
+proc storeToString*(b: var TokenBuf; dottedSuffix = ""): string =
+  ## Render `b` (token stream + pools + symbol index) in the exact `.bif`
+  ## on-disk byte layout. The pools are written whole, in id order. If `b`
+  ## shares a pool with other buffers, the *entire* shared pool is written
+  ## (still correct — ids stay dense and load reproduces them — but larger
+  ## than this module needs). For a compact, self-contained result — and for
+  ## DETERMINISTIC bytes, which content-addressed callers require — build the
+  ## buffer against its own private pool. `dottedSuffix` is the self-module
+  ## suffix used to decide which symbols are global (it gets the same
+  ## compression as the text writer).
   # The index is built in a single forward traversal of the token stream and is
   # always emitted — see the module doc.
   let index = buildIndex(b, dottedSuffix)
+  result = ""
   var m = magic()
-  writeExact(f, addr m[0], MagicLen)
-  # Reserve the `indexOffset` slot. We can only fill it once tokens and pools are
-  # written, so write a placeholder now and patch it at the end — the binary
-  # equivalent of `addHeader27`'s `(.indexat …)` reservation + `patchIndexAt`.
-  let indexAtPos = getPos(f)
-  writeU64(f, 0'u64)                   # fixed 8-byte placeholder for indexOffset
-  writeVarint(f, uint64 b.len)
-  writeVarint(f, uint64 b.tags.tags.len)
-  writeVarint(f, uint64 b.pool.strings.len)
-  writeVarint(f, uint64 b.pool.syms.len)
-  writeVarint(f, uint64 b.pool.filenames.len)
+  appendRaw(result, addr m[0], MagicLen)
+  # Reserve the `indexOffset` slot. We can only fill it once tokens and pools
+  # are written, so append a placeholder now and patch it at the end — the
+  # binary equivalent of `addHeader27`'s `(.indexat …)` reservation +
+  # `patchIndexAt`. It is the one fixed-width (8-byte) field, so the in-place
+  # patch overwrites exactly it.
+  appendU64(result, 0'u64)
+  appendVarint(result, uint64 b.len)
+  appendVarint(result, uint64 b.tags.tags.len)
+  appendVarint(result, uint64 b.pool.strings.len)
+  appendVarint(result, uint64 b.pool.syms.len)
+  appendVarint(result, uint64 b.pool.filenames.len)
   # Pad to NifToken alignment so the mmap loader can borrow the token block in
   # place (see `tokenPad`).
-  let pad = tokenPad(int getPos(f))
-  if pad > 0:
-    var zeros = default(array[8, byte])
-    writeExact(f, addr zeros[0], pad)
+  for _ in 1 .. tokenPad(result.len):
+    result.add '\0'
   # token stream: one contiguous block.
-  let bytes = b.len * sizeof(NifToken)
-  if bytes > 0:
-    writeExact(f, b.rawTokenPtr, bytes)
+  if b.len > 0:
+    appendRaw(result, b.rawTokenPtr, b.len * sizeof(NifToken))
   # pools, each in id order (ids are 1-based, dense up to len).
-  for i in 1 .. b.tags.tags.len:      writeStr(f, b.tags.tags[TagId(i)])
-  for i in 1 .. b.pool.strings.len:   writeStr(f, b.pool.strings[StrId(i)])
-  for i in 1 .. b.pool.syms.len:      writeStr(f, b.pool.syms[SymId(i)])
-  for i in 1 .. b.pool.filenames.len: writeStr(f, b.pool.filenames[FileId(i)])
+  for i in 1 .. b.tags.tags.len:      appendStr(result, b.tags.tags[TagId(i)])
+  for i in 1 .. b.pool.strings.len:   appendStr(result, b.pool.strings[StrId(i)])
+  for i in 1 .. b.pool.syms.len:      appendStr(result, b.pool.syms[SymId(i)])
+  for i in 1 .. b.pool.filenames.len: appendStr(result, b.pool.filenames[FileId(i)])
   # symbol index — self-contained at the offset we now know. `pos` is a token
   # index (always >= 0) and `vis` a 0/1 enum, so plain varints suffice.
-  let indexOffset = getPos(f)
-  writeVarint(f, uint64 index.len)
+  let indexOffset = result.len
+  appendVarint(result, uint64 index.len)
   for e in index:
-    writeVarint(f, uint64 e.sym)
-    writeVarint(f, uint64 e.pos)
-    writeVarint(f, uint64 ord(e.vis))
-  # Patch the fixed-width header slot to point at the index, then leave the
-  # cursor at EOF. The slot is 8 bytes wide, so this overwrites exactly it.
-  setPos(f, indexAtPos)
-  writeU64(f, uint64 indexOffset)
-  setPosEnd(f)
+    appendVarint(result, uint64 e.sym)
+    appendVarint(result, uint64 e.pos)
+    appendVarint(result, uint64 ord(e.vis))
+  # Patch the fixed-width header slot to point at the index.
+  var io = uint64 indexOffset
+  copyMem(cast[pointer](beginStore(result, result.len, MagicLen)), addr io, 8)
+  endStore(result)
+
+proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
+  ## Write `b` (token stream + pools + symbol index) to an already-open binary
+  ## file. See `storeToString` for the layout and the private-pool advice.
+  let s = storeToString(b, dottedSuffix)
+  writeExact(f, cast[pointer](readRawData(s)), s.len)
 
 proc store*(b: var TokenBuf; filename: string; dottedSuffix = "") =
   ## Write `b` to `filename` in binary `.bif` form (with its symbol index).

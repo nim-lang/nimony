@@ -125,7 +125,7 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
             while a.hasMore:
               b.takeTree a
             b.addParRi()
-            runPlugin(c, dest, pathInfo, pool.strings[path], b.toString)
+            runPlugin(c, dest, pathInfo, pool.strings[path], b)
             result = true
           while p.hasMore: skip p
         if result: return

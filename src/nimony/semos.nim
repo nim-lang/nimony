@@ -15,6 +15,10 @@ include ".." / lib / compat2
 import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
 import ".." / lib / nifreader as rd
 from ".." / lib / nifcoreparse import parse
+# qualified-only: the private-pool plugin-input copy must not fight the
+# global-pool overloads nifprelude puts in scope
+from ".." / lib / nifcore import nil
+from ".." / lib / bif import storeToString, UnusedNameTag
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -380,9 +384,24 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
 
 const pluginTempBase = "tmp"
 
-proc addUnusedName(input, name: string): string =
-  result = "(.unusedname " & name & ")\n"
-  result.add input
+proc bifPluginInput(input: var TokenBuf; firstName: string): string =
+  ## Serializes a plugin input as in-memory `.bif` bytes: a private-pool copy
+  ## of `input` behind a leading `(unusedname firstName)` tree — the binary
+  ## carrier of what the text protocol's `.unusedname` directive transported
+  ## (bif has no directive channel; `plugins.loadPluginTree` peels the tree
+  ## off). The private pool matters twice over: the cache filename is a
+  ## checksum of these bytes and the global pool's ids depend on compile
+  ## history, and storing a global-pool buffer would write that whole pool.
+  var buf = nifcore.createTokenBuf(input.len + 4)
+  nifcore.openTag(buf, registerTag(buf.tags, UnusedNameTag))
+  nifcore.addSymUse(buf, firstName)
+  nifcore.closeTag(buf)
+  var n = beginRead(input)
+  while n.hasMore:
+    nifcore.addSubtree(buf, n)
+    skip n
+  endRead(n)
+  result = storeToString(buf)
 
 proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
                               nextName: string) =
@@ -403,14 +422,18 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
     c.locals[pluginTempBase] = nextDisamb - 1
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
-                pluginName: string; input: string; additionalInput = "") =
-  ## Runs a plugin with a NIF `.unusedname` hint and registers every generated
-  ## local symbol as fresh for subsequent semantic checking.
+                pluginName: string; input: var TokenBuf;
+                additionalInput: var TokenBuf) =
+  ## Runs a plugin with a gensym hint and registers every generated local
+  ## symbol as fresh for subsequent semantic checking. The inputs are written
+  ## as binary `.bif` behind the unchanged `.in.nif`/`.types.nif` names — the
+  ## plugin-side loader sniffs the header (and still accepts text, so
+  ## hand-written inputs keep working). Inspect one with `niftools bif2nif`.
   let firstDisamb = c.locals.getOrDefault(pluginTempBase, -1) + 1
   let firstName = pluginTempBase & "." & $firstDisamb
-  let pluginInput = addUnusedName(input, firstName)
+  let pluginInput = bifPluginInput(input, firstName)
   let pluginAdditionalInput =
-    if additionalInput.len > 0: addUnusedName(additionalInput, firstName)
+    if additionalInput.len > 0: bifPluginInput(additionalInput, firstName)
     else: ""
 
   let p = splitFile(pluginName)
@@ -457,6 +480,13 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
   parse(r, dest, parentSeed = seed, denseLineInfo = true)
   rd.close(r)
   registerGeneratedSymbols(c, firstDisamb, nextName)
+
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+                pluginName: string; input: var TokenBuf) =
+  ## Single-input form (template/for-loop/module plugins; type plugins pass
+  ## their triggering type definitions as `additionalInput`).
+  var noAdditional = nifcore.createTokenBuf(1)
+  runPlugin(c, dest, info, pluginName, input, noAdditional)
 
 proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
                 commandLineArgs: string;
