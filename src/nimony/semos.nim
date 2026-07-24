@@ -446,7 +446,15 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
   var nextName = ""
   var r = rd.open(outputFile)
   nextName = rd.firstUnusedName(r)
-  parse(r, dest)
+  # seed the parse with the invocation site's absolute info: plugin output
+  # copies the (file-less, relative) infos of its input, so without an anchor
+  # they resolve to NoFile and diagnostics print as `???`
+  var seed = NoNifLineInfo
+  if info.isValid:
+    let u = unpack(lineMan, info)
+    if u.file.isValid:
+      seed = NifLineInfo(file: u.file, line: u.line, col: u.col)
+  parse(r, dest, parentSeed = seed, denseLineInfo = true)
   rd.close(r)
   registerGeneratedSymbols(c, firstDisamb, nextName)
 

@@ -233,6 +233,9 @@ proc fromNifToken(r: var Reader; t: ExpandedToken): NimNode =
   of CharLit:
     result = newNimNode(nnkCharLit)
     result.intValField = BiggestInt(decodeChar(t))
+  of TagLit, ExtendedSuffix, LineInfoLit:
+    # in-memory-only kinds; the reader's lexical token stream never yields them
+    result = nil
   of ParLe:
     let tag = $t.data
     # Special cases for keywords that are leaf nodes

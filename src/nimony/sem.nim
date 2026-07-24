@@ -2936,9 +2936,11 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   ## macros. This lets plugins do type- and effect-aware transformations.
   result = false
   if dest.len <= beforeCall + 1 or
-     dest[beforeCall].exprKind notin CallKinds or
-     dest[beforeCall + 1].kind != Symbol: return
-  let res = declToCursor(c, dest, fetchSym(c, childCursor(readonlyCursorAt(dest, beforeCall)).symId))
+     dest[beforeCall].exprKind notin CallKinds: return
+  # not `dest[beforeCall + 1]`: the call head may carry a line-info suffix
+  let fn = childCursor(readonlyCursorAt(dest, beforeCall))
+  if not fn.isSymbol: return
+  let res = declToCursor(c, dest, fetchSym(c, fn.symId))
   if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
   let routine = asRoutine(res.decl, SkipExclBody)
   let pp = extractPragma(routine.pragmas, PluginP)

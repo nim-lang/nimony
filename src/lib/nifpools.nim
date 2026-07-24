@@ -329,10 +329,12 @@ proc parseFromBuffer*(input: string; thisModule: sink string; sizeHint = 100): T
   nifcoreparse.parseFromBuffer(input, thisModule, sizeHint,
                                sharedPool = pool, sharedTags = globalTags,
                                denseLineInfo = true)
-proc toString*(c: Cursor; produceLineInfo = false): string {.inline.} =
-  ## Classic `toString(Cursor, produceLineInfo)`; nifcore's is keyword-arg based.
+proc toString*(c: Cursor; produceLineInfo = true): string {.inline.} =
+  ## Classic `toString(Cursor, produceLineInfo)`; nifcore's is keyword-arg
+  ## based. The default matches classic nifcursors (`true`) — plugin inputs
+  ## and written NIF files rely on it.
   nifcoreparse.toString(c, includeLineInfo = produceLineInfo)
-proc toString*(b: TokenBuf; produceLineInfo = false): string {.inline.} =
+proc toString*(b: TokenBuf; produceLineInfo = true): string {.inline.} =
   ## Read-only render (the nifcore renderer wants `var` for its cursor, but only
   ## reads); safe to alias an immutable buffer. Accepts both `var` and immutable.
   nifcoreparse.toString(cast[ptr TokenBuf](unsafeAddr b)[], includeLineInfo = produceLineInfo)
