@@ -21,8 +21,25 @@ proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
     if t.col > i.col + tokenLen: return false
   return true
 
-proc foundSymbol(tok: NifToken; mode: TrackMode) =
-  discard "idetools --track over a raw NifToken needs the cursor-based rewrite"
+proc foundSymbol(n: Cursor; mode: TrackMode) =
+  # format that is compatible with nimsuggest's in the hope it helps:
+  let info = unpack(lineMan, n.info)
+  if info.file.isValid:
+    if (n.isSymbol and mode == TrackUsages) or (n.isSymbolDef and mode == TrackDef):
+      var r = (if n.isSymbol: "use\t" else: "def\t")
+      r.add "\t" # unknown symbol kind
+      r.add pool.syms[n.symId]
+      r.add "\t"
+      # unknown signature:
+      r.add "\t"
+      # filename:
+      r.add "\t"
+      r.add pool.filenames[info.file]
+      r.add "\t"
+      r.addInt info.line
+      r.add "\t"
+      r.addInt info.col
+      stdout.writeLine(r)
 type
   SearchKind = enum skOther, skField, skDot
 
@@ -166,9 +183,6 @@ proc tr(c: var IdeContext, n: var Cursor) =
         else:
           inc n
 
-proc getParent(n: Cursor): Cursor =
-  ## Walk cursor backwards until reaching the start of the parent of n
-  result = n  # backward paren-counting has no nifcore analogue (no ParRi token)
 proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLineInfo;
                    tokenLen: int; parentPos: int; symOffset, parentOffset: var int): bool =
   ## Positions of the tracked symbol token and its innermost parent TagLit
@@ -246,7 +260,50 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
         (usage.containingType.cursorIsNil or usage.containingType.symId != expectedContainingType.symId):
       continue
 
-    foundSymbol(usage.n.load, c.trackMode)
+    foundSymbol(usage.n, c.trackMode)
 
 proc usages*(files: openArray[string]; config: NifConfig) =
-  quit "idetools --track is not yet supported on nifcore (needs a cursor-based rewrite of the streaming/offset walk)"
+  # This is comparable to a linking step: we scan the module's semmed NIF to
+  # see what symbol is meant by the `file,line,col` tracking information.
+  let requestedInfo = lineinfos.pack(lineMan, pool.filenames.getOrIncl(config.toTrack.filename),
+                                     config.toTrack.line, config.toTrack.col)
+  # first pass: search for the symbol at `file,line,col`:
+  var isLocalSym = false
+  var symId = SymId 0
+
+  let moduleName = moduleSuffix(config.toTrack.filename, config.paths)
+  let nifFile = config.nifcachePath / moduleName & ".s.nif"
+
+  var buf = parseFromFile(nifFile)
+  block search:
+    var n = beginRead(buf)
+    while n.hasMore:
+      if n.isSymbol or n.isSymbolDef:
+        # performance critical! May run over every symbol in the project!
+        let name = pool.syms[n.symId]
+        var tokenLen = 0
+        var dots = 0
+        for i in 0 ..< name.len:
+          if name[i] == '.':
+            inc dots
+          if dots == 0: inc tokenLen
+        if lineInfoMatch(n.info, requestedInfo, tokenLen):
+          isLocalSym = dots < 2
+          symId = n.symId
+          break search
+      inc n
+
+  if symId == SymId 0:
+    quit "symbol not found"
+  elif isLocalSym:
+    # Set path so files are found when resolving symbols
+    prog.main.dir = nifFile.splitPath.head
+    findLocal(nifFile, symId, requestedInfo, config.toTrack.mode)
+  else:
+    for file in files:
+      var fbuf = parseFromFile(file)
+      var n = beginRead(fbuf)
+      while n.hasMore:
+        if (n.isSymbol or n.isSymbolDef) and n.symId == symId:
+          foundSymbol(n, config.toTrack.mode)
+        inc n
