@@ -15,6 +15,15 @@
 
 import llvmirmodel
 
+proc floatBinOpName(binOp: string): string =
+  case binOp
+  of "add": "fadd"
+  of "sub": "fsub"
+  of "mul": "fmul"
+  of "sdiv", "udiv": "fdiv"
+  of "srem", "urem": "frem"
+  else: binOp
+
 const OrderingStr*: array[LLAtomicOrdering, string] = [
   "unordered", "monotonic", "acquire", "release", "acq_rel", "seq_cst"]
 
@@ -59,6 +68,40 @@ proc serialize*(typ: LLType): string =
   result = ""
   serialize(typ, result)
 
+proc appendParamList*(params: openArray[LLType]; isVarargs: bool;
+    result: var string) =
+  ## Append a parameter-type list `(t1, t2, ...)` — the shared spelling behind
+  ## `declare` lines and varargs call annotations.
+  result.add "("
+  for i, p in params:
+    if i > 0: result.add ", "
+    serialize(p, result)
+  if isVarargs:
+    if params.len > 0: result.add ", "
+    result.add "..."
+  result.add ")"
+
+proc serializeNamedTypeDef*(nt: LLNamedType; result: var string) =
+  ## Render `%Name = type <body>` (or `= type opaque` for forward refs). The
+  ## only place that spells named-type-definition syntax.
+  result.add "%" & nt.name & " = type "
+  if nt.body == nil:
+    result.add "opaque"
+  elif nt.body.kind == llFunc:
+    # function-pointer type definition: `ret (params)*`
+    serialize(nt.body.funcRetType, result)
+    result.add " ("
+    for i, p in nt.body.funcParamTypes:
+      if i > 0: result.add ", "
+      serialize(p, result)
+    result.add ")*"
+  else:
+    var bodyStr = ""
+    serialize(nt.body, bodyStr)
+    if nt.packed: result.add "<" & bodyStr & ">"
+    else: result.add bodyStr
+  result.add "\n"
+
 proc serializeUnqualified*(v: LLValue; result: var string) =
   ## Append the bare value text WITHOUT its type prefix.
   case v.kind
@@ -90,12 +133,13 @@ proc serialize*(i: LLInstr; result: var string) =
   ## Append a single instruction WITHOUT leading indentation or trailing
   ## newline. The caller adds those.
   case i.kind
-  of llAdd, llSub, llMul, llSDiv, llUDiv, llSRem, llURem,
-     llShl, llAShr, llLShr, llAnd, llOr, llXor:
+  of llBinOp:
     resultPrefix(i, result)
-    result.add i.binOp
-    if i.binNuw: result.add " nuw"
-    if i.binNsw: result.add " nsw"
+    let isFloat = i.binLhs.typ != nil and i.binLhs.typ.kind == llFloat
+    result.add (if isFloat: floatBinOpName(i.binOp) else: i.binOp)
+    if not isFloat:
+      if i.binNuw: result.add " nuw"
+      if i.binNsw: result.add " nsw"
     result.add " "
     operand(i.binLhs, result)
     result.add ", "
@@ -166,21 +210,30 @@ proc serialize*(i: LLInstr; result: var string) =
       result.add "%" & i.result.regName & " = "
     result.add "call "
     serialize(i.callRetType, result)
-    if i.callFuncType.len > 0:
-      result.add " " & i.callFuncType
-    result.add " " & i.callCallee & "("
+    if i.callCallee.typ != nil and i.callCallee.typ.kind == llFunc and
+       i.callCallee.typ.funcIsVarargs:
+      result.add " "
+      appendParamList(i.callCallee.typ.funcParamTypes,
+                    i.callCallee.typ.funcIsVarargs, result)
+    result.add " "
+    serializeUnqualified(i.callCallee, result)
+    result.add "("
     for j, a in i.callArgs:
       if j > 0: result.add ", "
       operand(a, result)
     result.add ")"
   of llExtractValue:
     resultPrefix(i, result)
-    result.add "extractvalue " & i.evAggType & " "
+    result.add "extractvalue "
+    serialize(i.evAggType, result)
+    result.add " "
     serializeUnqualified(i.evAggregate, result)
     result.add ", " & $i.evIndex
   of llInsertValue:
     resultPrefix(i, result)
-    result.add "insertvalue " & i.ivAggType & " "
+    result.add "insertvalue "
+    serialize(i.ivAggType, result)
+    result.add " "
     serializeUnqualified(i.ivAggregate, result)
     result.add ", "
     operand(i.ivElement, result)
@@ -202,6 +255,10 @@ proc serialize*(i: LLInstr; result: var string) =
     operand(i.selTrue, result)
     result.add ", "
     operand(i.selFalse, result)
+  of llFneg:
+    resultPrefix(i, result)
+    result.add "fneg "
+    operand(i.fnegVal, result)
   of llRet:
     result.add "ret"
     if i.retVal.kind == llvNone:
@@ -216,16 +273,19 @@ proc serialize*(i: LLInstr; result: var string) =
     serializeUnqualified(i.condBrCond, result)
     result.add ", label %" & i.condBrTrue & ", label %" & i.condBrFalse
   of llSwitch:
-    result.add "switch " & i.switchValType & " "
+    result.add "switch "
+    serialize(i.switchValType, result)
+    result.add " "
     serializeUnqualified(i.switchVal, result)
     result.add ", label %" & i.switchDefault
-    if i.switchCases.len > 0:
-      result.add " [\n"
-      for (cv, label) in i.switchCases:
-        result.add "    " & i.switchValType & " "
-        serializeUnqualified(cv, result)
-        result.add ", label %" & label & "\n"
-      result.add "  ]"
+    result.add " [\n"
+    for (cv, label) in i.switchCases:
+      result.add "    "
+      serialize(i.switchValType, result)
+      result.add " "
+      serializeUnqualified(cv, result)
+      result.add ", label %" & label & "\n"
+    result.add "  ]"
   of llUnreachable:
     result.add "unreachable"
   of llAtomicrmw:
@@ -326,36 +386,56 @@ proc serialize*(g: LLGlobal; result: var string) =
   if g.align > 0: result.add ", align " & $g.align
   if g.dbgLoc.len > 0: result.add g.dbgLoc
 
-proc serialize*(m: LLModule; triple: string; result: var string) =
-  result.add "; LLVM IR generated by Lengc\n"
+proc serializeExtern*(e: LLExternDecl; result: var string) =
+  ## Append a `declare` line. Builtins whose attributes (nocapture/immarg/...)
+  ## don't fit the structured form carry a verbatim `raw` line.
+  if e.raw.len > 0:
+    result.add e.raw
+  else:
+    result.add "declare "
+    serialize(e.retType, result)
+    result.add " @" & e.name
+    appendParamList(e.params, e.isVarargs, result)
+
+proc serializeModule*(llmod: LLModule): string =
+  ## Render the whole `.ll` module — the single owner of top-level structure
+  ## (header, target, section ordering, metadata emission). Codegen builds the
+  ## `LLModule` and hands it here.
+  result = "; LLVM IR generated by Lengc\n"
   result.add "target datalayout = \"e-m:o-i64:64-i128:128-n32:64-S128\"\n"
-  if triple.len > 0:
-    result.add "target triple = \"" & triple & "\"\n"
+  when defined(macos):
+    result.add "target triple = \"arm64-apple-macosx\"\n"
   else:
     result.add "; target triple should be set for your platform\n"
   result.add "\n"
 
-  for td in m.typeDefs:
-    result.add td
-  if m.typeDefs.len > 0: result.add "\n"
+  for td in llmod.typeDefs:
+    serializeNamedTypeDef(td, result)
+  if llmod.typeDefs.len > 0: result.add "\n"
 
-  for e in m.externs:
-    result.add e.declaration & "\n"
-  if m.externs.len > 0: result.add "\n"
+  for e in llmod.externs:
+    serializeExtern(e, result)
+    result.add "\n"
+  if llmod.externs.len > 0: result.add "\n"
 
-  for g in m.globals:
+  for g in llmod.globals:
     serialize(g, result)
     result.add "\n"
-  if m.globals.len > 0: result.add "\n"
+  if llmod.globals.len > 0: result.add "\n"
 
-  # error and overflow flags are added by the caller before serializing,
-  # but to keep this self-contained we emit placeholders that the integrator
-  # overwrites. The integrator splices them in directly.
-
-  for f in m.funcs:
-    serialize(f, result)
+  for fn in llmod.funcs:
+    serialize(fn, result)
     result.add "\n\n"
 
-  if m.hasInitBody:
-    serialize(m.initFunc, result)
+  if llmod.hasInitBody:
+    serialize(llmod.initFunc, result)
     result.add "\n"
+    result.add "@llvm.global_ctors = appending global [1 x { i32, ptr, ptr }] [{ i32, ptr, ptr } { i32 65535, ptr @lengc_init, ptr null }]\n"
+
+  if llmod.metadata.len > 0:
+    result.add "\n"
+    result.add "!llvm.dbg.cu = !{!" & $llmod.cuId & "}\n"
+    result.add "!llvm.module.flags = !{!" & $llmod.dwarfVerId & ", !" &
+        $llmod.diVerId & "}\n"
+    for i, md in llmod.metadata:
+      result.add "!" & $i & " = " & md & "\n"

@@ -145,49 +145,44 @@ proc setTargetOS*(config: var NifConfig; symbol: string): bool =
     result = true
 
 proc parseConfig(c: Cursor; result: var NifConfig) =
+  ## Interprets the single tree at `c`; unknown tags are searched
+  ## recursively for known sections.
   var c = c
-  var nested = 0
-  while true:
-    case c.kind
-    of ParLe:
-      inc nested
-      case pool.tags[c.tag]
-      of "defines":
-        inc c
+  if c.kind == ParLe:
+    case pool.tags[c.tag]
+    of "defines":
+      c.into:
         while c.hasMore:
           if c.kind == StringLit:
             result.defines.addUnique pool.strings[c.litId]
-          inc c
-      of "paths":
-        inc c
+          skip c
+    of "paths":
+      c.into:
         while c.hasMore:
           if c.kind == StringLit:
             result.paths.add pool.strings[c.litId]
-          inc c
-      of "nimblepaths":
-        inc c
+          skip c
+    of "nimblepaths":
+      c.into:
         while c.hasMore:
           if c.kind == StringLit:
             result.nimblePaths.add pool.strings[c.litId]
-          inc c
-      of "intbits":
-        inc c
+          skip c
+    of "intbits":
+      c.into:
         if c.kind == IntLit:
           result.bits = int pool.integers[c.intId]
-          inc c
-      of "compat":
-        inc c
+        while c.hasMore: skip c
+    of "compat":
+      c.into:
         if c.kind == IntLit:
           result.compat = bool(pool.integers[c.intId])
-          inc c
-      else:
-        inc c
-    of ParRi:
-      dec nested
-      if nested == 0: break
-      inc c
+        while c.hasMore: skip c
     else:
-      inc c
+      c.into:
+        while c.hasMore:
+          parseConfig(c, result)
+          skip c
 
 proc parseNifConfig*(configFile: string; result: var NifConfig) =
   var f = nifstreams.open(configFile)

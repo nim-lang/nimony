@@ -30,6 +30,12 @@ type
                              # need it yields a "cannot evaluate" result. Used
                              # by callers such as overload resolution that must
                              # stay in-process and cheap.
+    keepEnumFields*: bool    # when true an enum constant folds to its field
+                             # symbol (the canonical typed value) instead of
+                             # collapsing to its bare ordinal, which would drop
+                             # the enum type. Used when folding a `static` enum
+                             # argument so a `const` alias canonicalizes to the
+                             # same value as the literal field it names.
 
 proc isConstBoolValue*(n: Cursor): bool =
   n.exprKind in {TrueX, FalseX}
@@ -159,83 +165,85 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
   var op = ""
   var pragmas = routine.pragmas
   if pragmas.substructureKind == PragmasU:
-    inc pragmas
-    while pragmas.hasMore:
-      var prag = pragmas
-      if prag.pragmaKind == SemanticsP:
-        inc prag
-        if prag.kind in {Ident, StringLit}:
-          op = pool.strings[prag.litId]
-          break
-      skip pragmas
+    pragmas.peekInto:
+      while pragmas.hasMore:
+        var prag = pragmas
+        if prag.pragmaKind == SemanticsP:
+          inc prag
+          if prag.kind in {Ident, StringLit}:
+            op = pool.strings[prag.litId]
+            break
+        skip pragmas
   var args = n
-  inc args
-  skip args
-  case op
-  of "string.&":
-    let a = eval(c, args)
-    let b = eval(c, args)
-    if a.kind != StringLit or b.kind != StringLit or args.hasMore:
-      cannotEval(n)
-      return
-    let val = pool.strings[a.litId] & pool.strings[b.litId]
-    result = stringValue(c, val, n.info)
-  of "string.==":
-    let a = eval(c, args)
-    let b = eval(c, args)
-    if a.kind != StringLit or b.kind != StringLit or args.hasMore:
-      cannotEval(n)
-      return
-    let val = pool.strings[a.litId] == pool.strings[b.litId]
-    result = boolValue(c, val)
-  of "string.len":
-    let a = eval(c, args)
-    if a.kind != StringLit or args.hasMore:
-      cannotEval(n)
-      return
-    let val = pool.strings[a.litId].len
-    result = intValue(c, val, n.info)
-  else:
-    if c.c == nil or c.c.executeExpr == nil or c.noExecute:
-      cannotEval(n)
-      return
-    # Forward args to `executeExpr` verbatim. Running `eval` here would strip
-    # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
-    # would then fail to match the callee's formal parameter types.
-    # `executeExpr` re-runs the full nimony pipeline and can resolve constants
-    # itself via `rewriteSymsToIdents`.
-    var evaluatedCall = createTokenBuf(16)
-    evaluatedCall.addParLe CallS, n.info
-    evaluatedCall.addSymUse routine.name.symId, n.info
-    while args.hasMore:
-      evaluatedCall.takeTree args
-    evaluatedCall.addParRi()
-
-    var resultBuf = createTokenBuf(12)
-    assert c.c.executeExpr != nil
-    # Prefer the routine's concrete return type so nested calls inside a
-    # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
-    # with the outer const's type. Keep `expectedType` for generic return
-    # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
-    var retType = skipModifier(routine.retType)
-    if retType.typeKind == AutoT or containsGenericParams(retType):
-      if not cursorIsNil(c.expectedType):
-        retType = skipModifier(c.expectedType)
-    let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
-                                   retType, resultBuf, n.info)
-    if errorMsg.len == 0:
-      result = cursorAt(resultBuf, 0)
+  args.peekInto:
+    skip args # the callee
+    case op
+    of "string.&":
+      let a = eval(c, args)
+      let b = eval(c, args)
+      if a.kind != StringLit or b.kind != StringLit or args.hasMore:
+        cannotEval(n)
+        return
+      let val = pool.strings[a.litId] & pool.strings[b.litId]
+      result = stringValue(c, val, n.info)
+    of "string.==":
+      let a = eval(c, args)
+      let b = eval(c, args)
+      if a.kind != StringLit or b.kind != StringLit or args.hasMore:
+        cannotEval(n)
+        return
+      let val = pool.strings[a.litId] == pool.strings[b.litId]
+      result = boolValue(c, val)
+    of "string.len":
+      let a = eval(c, args)
+      if a.kind != StringLit or args.hasMore:
+        cannotEval(n)
+        return
+      let val = pool.strings[a.litId].len
+      result = intValue(c, val, n.info)
     else:
-      result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
+      if c.c == nil or c.c.executeExpr == nil or c.noExecute:
+        cannotEval(n)
+        return
+      # Forward args to `executeExpr` verbatim. Running `eval` here would strip
+      # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
+      # would then fail to match the callee's formal parameter types.
+      # `executeExpr` re-runs the full nimony pipeline and can resolve constants
+      # itself via `rewriteSymsToIdents`.
+      var evaluatedCall = createTokenBuf(16)
+      evaluatedCall.addParLe CallS, n.info
+      evaluatedCall.addSymUse routine.name.symId, n.info
+      while args.hasMore:
+        evaluatedCall.takeTree args
+      evaluatedCall.addParRi()
+
+      var resultBuf = createTokenBuf(12)
+      assert c.c.executeExpr != nil
+      # Prefer the routine's concrete return type so nested calls inside a
+      # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
+      # with the outer const's type. Keep `expectedType` for generic return
+      # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
+      var retType = skipModifier(routine.retType)
+      if retType.typeKind == AutoT or containsGenericParams(retType):
+        if not cursorIsNil(c.expectedType):
+          retType = skipModifier(c.expectedType)
+      let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
+                                     retType, resultBuf, n.info)
+      if errorMsg.len == 0:
+        result = cursorAt(resultBuf, 0)
+      else:
+        result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
 
 template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
-  inc n # tag
-  let isSigned = n.typeKind == IntT
-  skip n, SkipType # type
-  let a = getConstOrdinalValue propagateError eval(c, n)
-  let b = getConstOrdinalValue propagateError eval(c, n)
-  skipParRi n
+  var isSigned = false
+  var a = createNaN()
+  var b = createNaN()
+  n.into:
+    isSigned = n.typeKind == IntT
+    skip n, SkipType # type
+    a = getConstOrdinalValue propagateError eval(c, n)
+    b = getConstOrdinalValue propagateError eval(c, n)
   if not isNaN(a) and not isNaN(b):
     let rx = opr(a, b)
     var err = false
@@ -256,11 +264,12 @@ template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
 
 template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
-  inc n # tag
-  skip n, SkipType # type
-  let a = propagateError eval(c, n)
-  let b = propagateError eval(c, n)
-  skipParRi n
+  var a = default(Cursor)
+  var b = default(Cursor)
+  n.into:
+    skip n, SkipType # type
+    a = propagateError eval(c, n)
+    b = propagateError eval(c, n)
   if a.kind == FloatLit and b.kind == FloatLit:
     let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
     result = floatValue(c, rf, orig.info)
@@ -269,27 +278,25 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
 
 template evalCmpOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
-  inc n # tag
-  let t = n
-  skip n, SkipType # type
-  if t.typeKind == FloatT:
-    let a = propagateError eval(c, n)
-    let b = propagateError eval(c, n)
-    skipParRi n
-    if a.kind == FloatLit and b.kind == FloatLit:
-      let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
-      result = boolValue(c, rf)
+  n.into:
+    let t = n
+    skip n, SkipType # type
+    if t.typeKind == FloatT:
+      let a = propagateError eval(c, n)
+      let b = propagateError eval(c, n)
+      if a.kind == FloatLit and b.kind == FloatLit:
+        let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+        result = boolValue(c, rf)
+      else:
+        cannotEval orig
     else:
-      cannotEval orig
-  else:
-    let a = getConstOrdinalValue propagateError eval(c, n)
-    let b = getConstOrdinalValue propagateError eval(c, n)
-    skipParRi n
-    if not isNaN(a) and not isNaN(b):
-      let rx = opr(a, b)
-      result = boolValue(c, rx)
-    else:
-      cannotEval orig
+      let a = getConstOrdinalValue propagateError eval(c, n)
+      let b = getConstOrdinalValue propagateError eval(c, n)
+      if not isNaN(a) and not isNaN(b):
+        let rx = opr(a, b)
+        result = boolValue(c, rx)
+      else:
+        cannotEval orig
 
 template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   var t = n
@@ -301,11 +308,12 @@ template evalBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
 
 template evalOrdUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
-  inc n # tag
-  let isSigned = n.typeKind == IntT
-  skip n, SkipType # type
-  let a = getConstOrdinalValue propagateError eval(c, n)
-  skipParRi n
+  var isSigned = false
+  var a = createNaN()
+  n.into:
+    isSigned = n.typeKind == IntT
+    skip n, SkipType # type
+    a = getConstOrdinalValue propagateError eval(c, n)
   if not isNaN(a):
     let rx = opr(a)
     var err = false
@@ -326,10 +334,10 @@ template evalOrdUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} 
 
 template evalFloatUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
-  inc n # tag
-  skip n, SkipType # type
-  let a = propagateError eval(c, n)
-  skipParRi n
+  var a = default(Cursor)
+  n.into:
+    skip n, SkipType # type
+    a = propagateError eval(c, n)
   if a.kind == FloatLit:
     let rf = opr(pool.floats[a.floatId])
     result = floatValue(c, rf, orig.info)
@@ -346,20 +354,21 @@ template evalUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
 
 template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
-  inc n # tag
-  let isSigned = n.typeKind == IntT
+  var isSigned = false
   var bits = c0.c.g.config.bits
-  case n.typeKind
-  of IntT, UIntT:
-    inc n
-    bits = typebits(n.load)
-    while n.hasMore: skip n
-    consumeParRi n
-  else:
-    error "expected int or uint type for shift operation, got: " & typeToString(n), n.info
-  let a = getConstOrdinalValue propagateError eval(c0, n)
-  let b = getConstOrdinalValue propagateError eval(c0, n)
-  skipParRi n
+  var a = createNaN()
+  var b = createNaN()
+  n.into:
+    isSigned = n.typeKind == IntT
+    case n.typeKind
+    of IntT, UIntT:
+      n.into:
+        bits = typebits(n.load)
+        while n.hasMore: skip n
+    else:
+      error "expected int or uint type for shift operation, got: " & typeToString(n), n.info
+    a = getConstOrdinalValue propagateError eval(c0, n)
+    b = getConstOrdinalValue propagateError eval(c0, n)
   if not isNaN(a) and not isNaN(b):
     var err = false
     var operand = asSigned(b, err)
@@ -383,19 +392,19 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
 
 template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
   let orig = n
-  inc n # tag
-  let isSigned = n.typeKind == IntT
+  var isSigned = false
   var bits = c0.c.g.config.bits
-  case n.typeKind
-  of IntT, UIntT:
-    inc n
-    bits = typebits(n.load)
-    while n.hasMore: skip n
-    consumeParRi n
-  else:
-    error "expected int or uint type for shl, got: " & typeToString(n), n.info
-  let a = getConstOrdinalValue propagateError eval(c, n)
-  skipParRi n
+  var a = createNaN()
+  n.into:
+    isSigned = n.typeKind == IntT
+    case n.typeKind
+    of IntT, UIntT:
+      n.into:
+        bits = typebits(n.load)
+        while n.hasMore: skip n
+    else:
+      error "expected int or uint type for shl, got: " & typeToString(n), n.info
+    a = getConstOrdinalValue propagateError eval(c, n)
   if not isNaN(a):
     var err = false
     let rx = mask(not a, bits, isSigned)
@@ -465,35 +474,37 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8]
 proc evalOrdinal(c: ptr SemContext, n: Cursor): xint
 
 proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
-  inc n # tag
-  assert n.typeKind == SetT
-  skip n # skip type
-  var a = eval(c, n)
-  var b = evalOrdinal(nil, n)
-  skip n # skips b
-  skipParRi n # skip last parRi
+  var a = default(Cursor)
+  var b = createNaN()
+  n.into:
+    assert n.typeKind == SetT
+    skip n # skip type
+    a = eval(c, n)
+    b = evalOrdinal(nil, n)
+    skip n # skips b
   assert a.exprKind == SetconstrX, "got " & toString(a)
-  inc a # skip set tag
-  skip a # skip set type
 
   var isInSet = false
-  while a.hasMore:
-    if a.substructureKind == RangeU:
-      inc a
-      let xa = evalOrdinal(nil, a)
-      skip a
-      let xb = evalOrdinal(nil, a)
-      skip a
-      if b >= xa and b <= xb:
-        isInSet = true
-        break
-      skipParRi(a)
-    else:
-      let xa = evalOrdinal(nil, a)
-      if xa == b:
-        isInSet = true
-        break
-      skip a
+  a.peekInto:
+    skip a # skip set type
+    while a.hasMore:
+      if a.substructureKind == RangeU:
+        var xa = createNaN()
+        var xb = createNaN()
+        a.into:
+          xa = evalOrdinal(nil, a)
+          skip a
+          xb = evalOrdinal(nil, a)
+          skip a
+        if b >= xa and b <= xb:
+          isInSet = true
+          break
+      else:
+        let xa = evalOrdinal(nil, a)
+        if xa == b:
+          isInSet = true
+          break
+        skip a
 
   result = boolValue(c, isInSet)
 
@@ -518,11 +529,11 @@ proc bitSetCard(x: seq[uint8]): BiggestInt =
 
 proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
   let info = n.info
-  inc n # tag
-  assert n.typeKind == SetT
-  skip n # skip type
-  var a = eval(c, n)
-  skipParRi n # skip last parRi
+  var a = default(Cursor)
+  n.into:
+    assert n.typeKind == SetT
+    skip n # skip type
+    a = eval(c, n)
 
   assert a.exprKind == SetconstrX, "got " & toString(a)
   var typeA = a
@@ -533,14 +544,16 @@ proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
 
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   let info = n.info
-  inc n # tag
-  assert n.typeKind == SetT
-  var elementTyp = n
-  inc elementTyp
-  skip n # skip type
-  var a = eval(c, n)
-  var b = eval(c, n)
-  skipParRi n # skip last parRi
+  var elementTyp = default(Cursor)
+  var a = default(Cursor)
+  var b = default(Cursor)
+  n.into:
+    assert n.typeKind == SetT
+    elementTyp = n
+    inc elementTyp
+    skip n # skip type
+    a = eval(c, n)
+    b = eval(c, n)
   assert a.exprKind == SetconstrX, "got " & toString(a)
   assert b.exprKind == SetconstrX, "got " & toString(b)
   var typeA = a
@@ -656,6 +669,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   of Symbol:
     let symId = n.symId
     let info = n.info
+    let symCursor = n
     inc n
     let sym = tryLoadSym(symId)
     if sym.status == LacksNothing:
@@ -664,6 +678,10 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       of ConstY:
         return eval(c, local.val)
       of EfldY:
+        if c.keepEnumFields:
+          # keep the field symbol: it is the canonical typed value of its enum
+          # type, so folding stops here instead of losing the type to `inc`.
+          return symCursor
         inc local.val # takes the first counter field
         return eval(c, local.val)
       else: discard
@@ -678,66 +696,60 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = n
       skip n
     of AndX:
-      inc n
-      let a = propagateError eval(c, n)
-      if a.exprKind == FalseX:
-        while n.hasMore: skip n
-        consumeParRi n
-        return a
-      elif a.exprKind != TrueX:
-        error "expected bool for operand of `and` but got: " & asNimCode(a), n.info
-        return
-      let b = propagateError eval(c, n)
-      if not isConstBoolValue(b):
-        error "expected bool for operand of `and` but got: " & asNimCode(b), n.info
-        return
-      else:
-        skipParRi n
-        return b
+      n.peekInto:
+        let a = propagateError eval(c, n)
+        if a.exprKind == FalseX:
+          result = a
+        elif a.exprKind != TrueX:
+          error "expected bool for operand of `and` but got: " & asNimCode(a), n.info
+          return
+        else:
+          let b = propagateError eval(c, n)
+          if not isConstBoolValue(b):
+            error "expected bool for operand of `and` but got: " & asNimCode(b), n.info
+            return
+          result = b
+      return result
     of OrX:
-      inc n
-      let a = propagateError eval(c, n)
-      if a.exprKind == TrueX:
-        while n.hasMore: skip n
-        consumeParRi n
-        return a
-      elif a.exprKind != FalseX:
-        error "expected bool for operand of `or` but got: " & asNimCode(a), n.info
-        return
-      let b = propagateError eval(c, n)
-      if not isConstBoolValue(b):
-        error "expected bool for operand of `or` but got: " & asNimCode(b), n.info
-        return
-      else:
-        skipParRi n
-        return b
+      n.peekInto:
+        let a = propagateError eval(c, n)
+        if a.exprKind == TrueX:
+          result = a
+        elif a.exprKind != FalseX:
+          error "expected bool for operand of `or` but got: " & asNimCode(a), n.info
+          return
+        else:
+          let b = propagateError eval(c, n)
+          if not isConstBoolValue(b):
+            error "expected bool for operand of `or` but got: " & asNimCode(b), n.info
+            return
+          result = b
+      return result
     of NotX:
-      inc n
-      let a = propagateError eval(c, n)
-      if a.exprKind == TrueX:
-        skipParRi n
-        return c.getFalseValue()
-      elif a.exprKind == FalseX:
-        skipParRi n
-        return c.getTrueValue()
-      else:
-        error "expected bool for operand of `not` but got: " & asNimCode(a), n.info
-        return
+      n.into:
+        let a = propagateError eval(c, n)
+        if a.exprKind == TrueX:
+          result = c.getFalseValue()
+        elif a.exprKind == FalseX:
+          result = c.getTrueValue()
+        else:
+          error "expected bool for operand of `not` but got: " & asNimCode(a), n.info
+          return
+      return result
     of SufX:
       # we only need raw value
-      inc n
-      result = n
-      while n.hasMore: skip n
-      consumeParRi n
+      n.peekInto:
+        result = n
     of ConvX, HconvX:
       let nOrig = n
-      inc n
       var isDistinct = false
-      var typ = skipDistinct(n, isDistinct)
-      let targetType = toTypeImpl(typ)
-      skip n
-      let val = propagateError eval(c, n)
-      skipParRi n
+      var targetType = default(Cursor)
+      var val = default(Cursor)
+      n.into:
+        var typ = skipDistinct(n, isDistinct)
+        targetType = toTypeImpl(typ)
+        skip n
+        val = propagateError eval(c, n)
       if isDistinct:
         result = val
         return
@@ -786,37 +798,37 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         cannotEval nOrig
     of CastX:
       let nOrig = n
-      inc n
-      let typ = n
-      skip n
-      let val = propagateError eval(c, n)
-      skipParRi n
+      var typ = default(Cursor)
+      var val = default(Cursor)
+      n.into:
+        typ = n
+        skip n
+        val = propagateError eval(c, n)
       result = evalCast(c, typ, val, nOrig)
     of DconvX:
-      inc n # tag
-      skip n, SkipType # type
-      result = eval(c, n)
-      skipParRi n
+      n.into:
+        skip n, SkipType # type
+        result = eval(c, n)
     of ExprX:
       let orig = n
-      inc n # tag
       var foldable = true
-      while n.stmtKind == StmtsS:
-        var inner = n
-        inc inner
-        if inner.kind == ParRi:   # empty `(stmts)` → skip it
-          skip n
+      n.peekInto:
+        while n.hasMore and n.stmtKind == StmtsS:
+          var inner = n
+          var innerIsEmpty = false
+          inner.peekInto:
+            innerIsEmpty = not inner.hasMore
+          if innerIsEmpty:   # empty `(stmts)` → skip it
+            skip n
+          else:
+            foldable = false
+            break
+        if foldable and n.hasMore:
+          result = propagateError eval(c, n)   # the trailing value
+          if n.hasMore:
+            foldable = false
         else:
           foldable = false
-          break
-      if foldable and n.kind != ParRi:
-        result = propagateError eval(c, n)   # the trailing value
-        if n.kind == ParRi:
-          inc n
-        else:
-          foldable = false
-      else:
-        foldable = false
       if not foldable:
         cannotEval orig
     of NegX:
@@ -863,8 +875,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of LtX:
       evalCmpOp(c, n, `<`)
     of IsmainmoduleX:
-      inc n
-      skipParRi n
+      skip n
       if c.c == nil:
         cannotEval n
       else:
@@ -873,70 +884,65 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of AconstrX, SetconstrX, TupconstrX,
         BracketX, CurlyX, TupX:
       var buf = createTokenBuf(16)
-      buf.add n
-      inc n
-      if exprKind in {AconstrX, SetconstrX, TupconstrX}:
-        # add type
-        takeTree buf, n
-      while n.hasMore:
-        if (exprKind == SetconstrX and n.substructureKind == RangeU) or
-           (exprKind == AconstrX and n.substructureKind == KvU):
-          buf.takeToken n
-          var a = propagateError eval(c, n)
-          buf.addSubtree a
-          var b = propagateError eval(c, n)
-          buf.addSubtree b
-          buf.takeToken n
-        elif exprKind == TupconstrX:
-          let isKv = n.substructureKind == KvU
-          if isKv:
-            inc n # tag
-            skip n # key
-          let elem = propagateError eval(c, n)
-          buf.addSubtree elem
-          if isKv:
-            inc n
-        else:
-          let elem = propagateError eval(c, n)
-          buf.addSubtree elem
-      takeParRi buf, n
+      copyInto buf, n:
+        if exprKind in {AconstrX, SetconstrX, TupconstrX}:
+          # add type
+          takeTree buf, n
+        while n.hasMore:
+          if (exprKind == SetconstrX and n.substructureKind == RangeU) or
+             (exprKind == AconstrX and n.substructureKind == KvU):
+            copyInto buf, n:
+              var a = propagateError eval(c, n)
+              buf.addSubtree a
+              var b = propagateError eval(c, n)
+              buf.addSubtree b
+          elif exprKind == TupconstrX:
+            let isKv = n.substructureKind == KvU
+            if isKv:
+              n.into:
+                skip n # key
+                let elem = propagateError eval(c, n)
+                buf.addSubtree elem
+            else:
+              let elem = propagateError eval(c, n)
+              buf.addSubtree elem
+          else:
+            let elem = propagateError eval(c, n)
+            buf.addSubtree elem
       result = cursorAt(buf, 0)
     of OconstrX:
       # an already-evaluated object literal: re-emit verbatim, evaluating
       # each field's value. This path is taken on second sem passes that
       # see the value produced by `annotateConstantType`.
       var buf = createTokenBuf(16)
-      buf.add n
-      inc n
-      var objBody = skipModifier(n)
-      if objBody.kind == Symbol:
-        let res = tryLoadSym(objBody.symId)
-        if res.status == LacksNothing:
-          objBody = asTypeDecl(res.decl).body
-      takeTree buf, n # type
-      let savedExpected = c.expectedType
-      while n.hasMore:
-        if n.substructureKind == KvU:
-          buf.takeToken n # kv
-          var fieldSym = SymId(0)
-          if n.kind == Symbol:
-            fieldSym = n.symId
-          buf.takeToken n # field sym/ident
-          var fieldType = default(Cursor)
-          var fieldExported = false
-          if findObjectField(objBody, fieldSym, fieldType, fieldExported):
-            c.expectedType = fieldType
-          let v = propagateError eval(c, n)
-          c.expectedType = savedExpected
-          buf.addSubtree v
-          if n.hasMore:
-            # optional inheritance level
-            buf.takeToken n
-          buf.takeToken n # closing parRi of kv
-        else:
-          cannotEval n
-          return
-      takeParRi buf, n
+      copyInto buf, n:
+        var objBody = skipModifier(n)
+        if objBody.kind == Symbol:
+          let res = tryLoadSym(objBody.symId)
+          if res.status == LacksNothing:
+            objBody = asTypeDecl(res.decl).body
+        takeTree buf, n # type
+        let savedExpected = c.expectedType
+        while n.hasMore:
+          if n.substructureKind == KvU:
+            copyInto buf, n:
+              var fieldSym = SymId(0)
+              if n.kind == Symbol:
+                fieldSym = n.symId
+              buf.takeToken n # field sym/ident
+              var fieldType = default(Cursor)
+              var fieldExported = false
+              if findObjectField(objBody, fieldSym, fieldType, fieldExported):
+                c.expectedType = fieldType
+              let v = propagateError eval(c, n)
+              c.expectedType = savedExpected
+              buf.addSubtree v
+              if n.hasMore:
+                # optional inheritance level
+                buf.takeToken n
+          else:
+            cannotEval n
+            return
       result = cursorAt(buf, 0)
     of AddrX:
       # Pass-through: `addr X` folds to itself, preserving the inner
@@ -995,9 +1001,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     cannotEval n
 
 proc evalExpr*(c: var SemContext, n: var Cursor;
-               expectedType: TypeCursor = default(Cursor)): TokenBuf =
+               expectedType: TypeCursor = default(Cursor);
+               keepEnumFields = false): TokenBuf =
+  ## When `keepEnumFields` is set, an enum constant folds to its field symbol
+  ## rather than its bare ordinal, preserving the enum type.
   var ec = initEvalContext(addr c)
   ec.expectedType = expectedType
+  ec.keepEnumFields = keepEnumFields
   let val = eval(ec, n)
   result = createTokenBuf(val.span)
   result.addSubtree val
@@ -1112,7 +1122,7 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   ## entries in `prog.mem`, so `tryLoadSym(fieldSym)` cannot resolve them.
   var n = objType
   if n.typeKind != ObjectT: return false
-  inc n # tag
+  n = sub(n) # bound the walk to the object body; `n` is a copy
   skip n # parent type
   var iter = initObjFieldIter()
   while nextField(iter, n):
@@ -1244,11 +1254,11 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           buf.add parLeToken(AconstrX, aconstr.info)
           buf.addSubtree typSlot
           var vals = aconstr
-          inc vals # past aconstr tag
-          skip vals # past uarray type slot
-          while vals.hasMore:
-            annotateConstantType(buf, elemType, vals)
-            skip vals
+          vals.into:
+            skip vals # past uarray type slot
+            while vals.hasMore:
+              annotateConstantType(buf, elemType, vals)
+              skip vals
           buf.addParRi() # close aconstr
           buf.addParRi() # close addr
         else:
@@ -1273,18 +1283,18 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.add parLeToken(TupconstrX, n.info)
         buf.addSubtree typ
         var vals = n
-        inc vals
-        if exprKind == TupconstrX:
-          skip vals # skip type
-        inc typ # tag
-        while vals.hasMore:
-          if typ.kind == ParRi:
-            err = true
-            break
-          annotateConstantType(buf, getTupleFieldType(typ), vals)
-          skip typ
-          skip vals
-        if typ.hasMore: err = true
+        vals.peekInto:
+          if exprKind == TupconstrX:
+            skip vals # skip type
+          typ.peekInto:
+            while vals.hasMore:
+              if not typ.hasMore:
+                err = true
+                break
+              annotateConstantType(buf, getTupleFieldType(typ), vals)
+              skip typ
+              skip vals
+            if typ.hasMore: err = true
         if err:
           buf.shrink start
         else:
@@ -1295,13 +1305,13 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.add parLeToken(AconstrX, n.info)
         buf.addSubtree typ
         var vals = n
-        inc vals
-        if exprKind == AconstrX:
-          skip vals # skip type
         inc typ # tag, get to element type
-        while vals.hasMore:
-          annotateConstantType(buf, typ, vals)
-          skip vals
+        vals.peekInto:
+          if exprKind == AconstrX:
+            skip vals # skip type
+          while vals.hasMore:
+            annotateConstantType(buf, typ, vals)
+            skip vals
         buf.addParRi()
       else: err = true
     of CurlyX, SetconstrX:
@@ -1309,22 +1319,20 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.add parLeToken(SetconstrX, n.info)
         buf.addSubtree typ
         var vals = n
-        inc vals
-        if exprKind == SetconstrX:
-          skip vals # skip type
         inc typ # tag, get to element type
-        while vals.hasMore:
-          if vals.substructureKind == RangeU:
-            buf.add vals
-            inc vals
-            annotateConstantType(buf, typ, vals)
-            skip vals
-            annotateConstantType(buf, typ, vals)
-            skip vals
-            takeParRi buf, vals
-          else:
-            annotateConstantType(buf, typ, vals)
-            skip vals
+        vals.peekInto:
+          if exprKind == SetconstrX:
+            skip vals # skip type
+          while vals.hasMore:
+            if vals.substructureKind == RangeU:
+              copyInto buf, vals:
+                annotateConstantType(buf, typ, vals)
+                skip vals
+                annotateConstantType(buf, typ, vals)
+                skip vals
+            else:
+              annotateConstantType(buf, typ, vals)
+              skip vals
         buf.addParRi()
       else: err = true
     of OconstrX:
@@ -1337,28 +1345,29 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         buf.add parLeToken(OconstrX, n.info)
         buf.addSubtree symType
         var vals = n
-        inc vals
-        skip vals # skip type
-        while vals.hasMore:
-          err = true
-          if vals.substructureKind == KvU:
-            buf.add vals
-            inc vals
-            if vals.kind == Symbol:
-              let fieldSym = vals.symId
-              var fieldType = default(Cursor)
-              var fieldExported = false
-              if findObjectField(typ, fieldSym, fieldType, fieldExported):
-                err = false
-                buf.add vals
-                inc vals
-                annotateConstantType(buf, fieldType, vals)
-                skip vals
-                if vals.hasMore:
-                  # optional inheritance
-                  takeTree buf, vals
-                takeParRi buf, vals
-          if err: break
+        vals.peekInto:
+          skip vals # skip type
+          while vals.hasMore:
+            err = true
+            if vals.substructureKind == KvU:
+              buf.add vals
+              vals.peekInto:
+                if vals.kind == Symbol:
+                  let fieldSym = vals.symId
+                  var fieldType = default(Cursor)
+                  var fieldExported = false
+                  if findObjectField(typ, fieldSym, fieldType, fieldExported):
+                    err = false
+                    buf.add vals
+                    inc vals
+                    annotateConstantType(buf, fieldType, vals)
+                    skip vals
+                    if vals.hasMore:
+                      # optional inheritance
+                      takeTree buf, vals
+              if not err:
+                buf.addParRi()
+            if err: break
         if err:
           buf.shrink start
         else:
@@ -1392,18 +1401,18 @@ proc enumBounds*(n: Cursor): Bounds =
   assert n.typeKind in {EnumT, HoleyEnumT, AnumT}
   var n = n
   let kind = n.typeKind
-  inc n # EnumT
-  skip n # Basetype
-  if kind == AnumT:
-    skip n # owner object type sym (or dot)
   result = Bounds(lo: createNaN(), hi: createNaN())
-  while n.hasMore:
-    let enumField = takeLocal(n, SkipFinalParRi)
-    var val = enumField.val
-    inc val # skip tuple tag
-    let x = evalOrdinal(nil, val)
-    if isNaN(result.lo) or x < result.lo: result.lo = x
-    if isNaN(result.hi) or x > result.hi: result.hi = x
+  n.into:
+    skip n # Basetype
+    if kind == AnumT:
+      skip n # owner object type sym (or dot)
+    while n.hasMore:
+      let enumField = takeLocal(n, SkipFinalParRi)
+      var val = enumField.val
+      inc val # skip tuple tag
+      let x = evalOrdinal(nil, val)
+      if isNaN(result.lo) or x < result.lo: result.lo = x
+      if isNaN(result.hi) or x > result.hi: result.hi = x
 
 proc div8Roundup(a: int64): int64 =
   if (a and 7) == 0:
@@ -1513,32 +1522,33 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
     return @[]
   result = newSeq[uint8](s)
   var n = n
-  inc n # skip set tag
-  skip n # skip set type
-  while n.hasMore:
-    if n.substructureKind == RangeU:
-      inc n
-      let xa = evalOrdinal(nil, n)
-      skip n
-      let xb = evalOrdinal(nil, n)
-      skip n
-      if n.kind == ParRi: inc n
-      if not xa.isNaN and not xb.isNaN:
-        var i = asUnsigned(xa, err)
-        let zb = asUnsigned(xb, err)
-        while i <= zb:
+  n.into:
+    skip n # skip set type
+    while n.hasMore:
+      if n.substructureKind == RangeU:
+        var xa = createNaN()
+        var xb = createNaN()
+        n.into:
+          xa = evalOrdinal(nil, n)
+          skip n
+          xb = evalOrdinal(nil, n)
+          skip n
+        if not xa.isNaN and not xb.isNaN:
+          var i = asUnsigned(xa, err)
+          let zb = asUnsigned(xb, err)
+          while i <= zb:
+            result[i shr 3] = result[i shr 3] or (1'u8 shl (i.uint8 and 7'u8))
+            inc i
+        else:
+          err = true
+      else:
+        let xa = evalOrdinal(nil, n)
+        skip n
+        if not xa.isNaN:
+          let i = asUnsigned(xa, err)
           result[i shr 3] = result[i shr 3] or (1'u8 shl (i.uint8 and 7'u8))
-          inc i
-      else:
-        err = true
-    else:
-      let xa = evalOrdinal(nil, n)
-      skip n
-      if not xa.isNaN:
-        let i = asUnsigned(xa, err)
-        result[i shr 3] = result[i shr 3] or (1'u8 shl (i.uint8 and 7'u8))
-      else:
-        err = true
+        else:
+          err = true
   if err:
     return @[]
 

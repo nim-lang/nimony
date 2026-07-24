@@ -12,7 +12,7 @@
     (tup 2 "a2"))
    (efld@5,1 :a3.0. . . A.0.
     (tup 3 "a3"))))
- (proc@5 :dollar`.A.0. x . .
+ (func@5 :dollar`.A.0. x . .
   (params
    (param :e.0 . . A.0. .))string.0.sysvq0asl . .
   (stmts
@@ -46,7 +46,7 @@
     (tup 1 "b2"))
    (efld@F,1 :b3.0.~5 . . B.0.
     (tup 5 "b3"))))
- (proc@5,2 :dollar`.B.0. x . .
+ (func@5,2 :dollar`.B.0. x . .
   (params
    (param :e.1 . . B.0. .))string.0.sysvq0asl . .
   (stmts
@@ -80,7 +80,7 @@
     (tup 30000 "c2"))
    (efld@E,1 :c3.0. . . C.0.
     (tup 30001 "c3"))))
- (proc@5,4 :dollar`.C.0. x . .
+ (func@5,4 :dollar`.C.0. x . .
   (params
    (param :e.2 . . C.0. .))string.0.sysvq0asl . .
   (stmts

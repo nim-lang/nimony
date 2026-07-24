@@ -1,12 +1,12 @@
 (stmts
  (ite
   (eq 1 1)
-  (goto L14)
-  (goto L9))
- (lab :L9)
+  (goto L11)
+  (goto L7))
+ (lab :L7)
  (call echo "true")
- (goto L14)
- (lab :L14)
+ (goto L11)
+ (lab :L11)
  (call side.effect)
  (call echo 3)
  (ret .))

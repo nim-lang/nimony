@@ -497,6 +497,10 @@ func `..<`*[T, U: Ordinal](a: sink T; b: sink U): HSlice[T, U] {.inline.} =
   ## the for-loop form `for i in a ..< b` resolves to the `..<` iterator.
   result = HSlice[T, U](a: a, b: pred(b))
 
+func contains*[T: Comparable](s: Slice[T]; x: T): bool {.inline.} =
+  ## True when `x` lies within the inclusive interval `s`; enables `x in a .. b`.
+  not (x < s.a) and not (s.b < x)
+
 type
   BackwardsIndex* = distinct int ## Type constructed by `^` for reversed
                                  ## array/string/seq access.

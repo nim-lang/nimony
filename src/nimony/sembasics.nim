@@ -19,13 +19,18 @@ import ".." / gear2 / modnames
 
 # -------------- symbol lookups -------------------------------------
 
+type
+  ChoiceOption* = enum
+    FindAll, FindOverloads, InnerMost
+
 template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind|NimonyOther;
                     info: PackedLineInfo; body: untyped) =
   addParLe(dest, kind, info)
   body
   dest.addParRi()
 
-proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo): int =
+proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo;
+                             option = FindAll): int =
   result = 0
   let ignoreStyle = IgnoreStyleFeature in c.features
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -33,9 +38,18 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
       let iface = addr c.importedModules.getOrQuit(moduleId).iface
       for foreignName in stylesOfIface(iface[], realName, ignoreStyle):
         let candidates = addr iface[].getOrQuit(foreignName)
-        inc result, candidates[].len
         for defId in candidates[]:
-          dest.add symToken(defId, info)
+          # when resolving a caller `fn`, keep re-exported modules out of the
+          # sym choice so `foo[...]` binds the proc, not a same-named module
+          # (nim-lang/nimony#2130):
+          var callable = true
+          if option == FindOverloads:
+            let res = tryLoadSym(defId)
+            if res.status == LacksNothing:
+              callable = isValidFnHead(res.decl.symKind)
+          if callable:
+            inc result
+            dest.add symToken(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
   dest.add symToken(s.name, info)
@@ -117,10 +131,6 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; dest: var TokenBuf; modu
     dest.shrink oldLen
     dest.add identToken(identifier, info)
 
-type
-  ChoiceOption* = enum
-    FindAll, FindOverloads, InnerMost
-
 proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo;
                        option = FindAll): int =
   result = 0
@@ -130,17 +140,20 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
     var nonOverloadable = 0
     for k in stylesOfScope(it, identifier, ignoreStyle):
       for sym in it.tab.getOrDefault(k):
-        dest.addSymUse sym, info
-        inc result
-        if sym.kind.isNonOverloadable:
-          inc nonOverloadable
+        # when resolving a caller `fn`, keep the module symbol out of the sym
+        # choice so `foo[...]` binds a same-named proc (nim-lang/nimony#2130):
+        if option != FindOverloads or isValidFnHead(sym.kind):
+          dest.addSymUse sym, info
+          inc result
+          if sym.kind.isNonOverloadable:
+            inc nonOverloadable
     if result == 1 and (option == InnerMost or
         (option == FindOverloads and nonOverloadable == 1)):
       # unambiguous local symbol found
       # in case of FindOverloads, if symbol is overloadable, consider other overloads
       return
     it = it.up
-  inc result, considerImportedSymbols(c, dest, identifier, info)
+  inc result, considerImportedSymbols(c, dest, identifier, info, option)
 
 proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo;
                     option: ChoiceOption): int =
@@ -258,8 +271,7 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLi
   if dest.len > pos:
     needsParRi = true
     if dest[pos].stmtKind == StmtsS:
-      assert dest[dest.len - 1].kind == ParRi
-      dest.shrink(dest.len - 1)
+      dest.reopenLastTree pos
     else:
       dest.insert [parLeToken(StmtsS, dest[pos].info)], pos
   buildErr c, dest, info, msg, orig
@@ -307,19 +319,11 @@ proc declToCursor*(c: var SemContext; dest: var TokenBuf; s: Sym): LoadResult =
     result = tryLoadSym(s.name)
   elif s.pos > 0:
     var buf = createTokenBuf(10)
-    var pos = s.pos - 1
-    var nested = 0
     # XXX optimize this for non-generic procs. No need to
     # copy their bodies here.
-    while true:
-      buf.add dest[pos]
-      case dest[pos].kind
-      of ParLe: inc nested
-      of ParRi:
-        dec nested
-        if nested == 0: break
-      else: discard
-      inc pos
+    let decl = cursorAt(dest, s.pos - 1)
+    buf.addSubtree decl
+    endRead(dest)
     result = LoadResult(status: LacksNothing, decl: cursorAt(buf, 0))
     programs.publish s.name, buf, c.phase
   else:
@@ -557,7 +561,7 @@ proc publish*(c: var SemContext; dest: var TokenBuf; s: SymId; start: int) =
   assert s != SymId(0)
   var buf = createTokenBuf(dest.len - start + 1)
   for i in start..<dest.len:
-    buf.add dest[i]
+    buf.addRaw dest[i]
   programs.publish s, buf, c.phase
 
 # -------------------------------------------------------------------------------------------------

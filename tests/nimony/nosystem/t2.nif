@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 2251             )
+(.indexat 2244             )
 (stmts@,2,tests/nimony/nosystem/t2.nim
  (type@2,1 :int.0.
   (i 64).
@@ -26,7 +26,7 @@
     (tup 0 "typeOfProc"))
    (efld~C,2 :typeOfIter.0. x . TypeOfMode.0.
     (tup 1 "typeOfIter"))))
- (proc@2,7 :dollar`.TypeOfMode.0. x . .
+ (func@2,7 :dollar`.TypeOfMode.0. x . .
   (params
    (param :e.0 . . TypeOfMode.0. .))string.0.sysvq0asl . .
   (stmts
@@ -74,7 +74,7 @@
    (var@4 :x.4 . . string.0.sysvq0asl "abc"@4)
    (asgn@7,1 result.1~7 4@2)
    (asgn@2,2 x.4~2 "34"@2)
-   (ret~2,~1 result.1)))
+   (ret result.1)))
  (proc@,O :overloaded.0.@5 . . .
   (params@F). . .
   (stmts@2,1
@@ -95,7 +95,7 @@
    (result :result.2 . .
     (i~F,~B 64).)
    (asgn result.2 x.3)
-   (ret~V result.2)))
+   (ret result.2)))
  (comment@F,B untyped.0. typedesc.0.@I int.0.@1,6 int.0.@1,6 int.0.~2,6 int.0.~3,8 int.0.@6,8 int.0.@4,H int.0.~5,H))(.index@,2,tests/nimony/nosystem/t2.nim
  (x int.0. 76)
  (x float.0. 64)
@@ -110,5 +110,5 @@
  (x string.0. 218)
  (x \2B.0. 50)
  (h foo.0. 170)
- (h overloaded.0. 318)
+ (h overloaded.0. 313)
  (h exprReturn.0. 221))

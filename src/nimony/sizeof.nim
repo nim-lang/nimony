@@ -154,12 +154,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
 
   case n.typeKind
   of IntT, UIntT, FloatT:
-    let n = n.firstSon
-    assert n.kind == IntLit
-    let s = int(if pool.integers[n.intId] != -1:
-        pool.integers[n.intId] div 8
-      else:
-        ptrSize)
+    let bits = typebits(n.firstSon.load)
+    let s = int(if bits != -1: bits div 8 else: ptrSize)
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
@@ -185,7 +181,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true
     var n = n
-    inc n
+    n = sub(n) # bound the field walk, `n` is a copy
     var c2 = createSizeofValue(c.strict, PackedP in pragmas.pragmas)
     if n.kind != DotToken:  # base type
       getSize(c2, cache, n, ptrSize)
@@ -326,91 +322,91 @@ when isMainModule:
    (type :IntObj.0.mod123abc . . .
     (object .
      (fld :x.0.mod123abc . .
-      (i +64) .)))""", 8)
+      (i 64) .)))""", 8)
 
   testSizeof("""
    (type :IntIntObj.0.mod123abc . . .
     (object .
      (fld :x.0.mod123abc . .
-      (i +64) .)
+      (i 64) .)
      (fld :y.0.mod123abc . .
-      (i +64) .)))""", 16)
+      (i 64) .)))""", 16)
 
   testSizeof("""
    (type :CharObj.0.mod123abc . . .
     (object .
      (fld :x.0.mod123abc . .
-      (c +8) .)))""", 1)
+      (c 8) .)))""", 1)
 
   testSizeof("""
    (type :CharIntObj.0.mod123abc . . .
     (object .
      (fld :x.0.mod123abc . .
-      (c +8) .)
+      (c 8) .)
      (fld :y.0.mod123abc . .
-      (i +64) .)))""", 16)
+      (i 64) .)))""", 16)
 
   testSizeof("""
    (type :IntCharObj.0.mod123abc . . .
     (object .
      (fld :x.0.mod123abc . .
-      (i +64) .)
+      (i 64) .)
      (fld :y.0.mod123abc . .
-      (c +8) .)))""", 16)
+      (c 8) .)))""", 16)
 
   testSizeof("""
-   (type ~24 :IntIntObjPacked.0.mod123abc . .
+   (type :IntIntObjPacked.0.mod123abc . .
     (pragmas
      (packed))
     (object .
      (fld :x.1.mod123abc . .
-      (i +64) .)
+      (i 64) .)
      (fld :y.1.mod123abc . .
-      (i +64) .)))""", 16)
+      (i 64) .)))""", 16)
 
   testSizeof("""
-   (type ~24 :IntCharObjPacked.0.mod123abc . .
+   (type :IntCharObjPacked.0.mod123abc . .
     (pragmas
      (packed))
     (object .
      (fld :x.1.mod123abc . .
-      (i +64) .)
+      (i 64) .)
      (fld :y.1.mod123abc . .
-      (c +8) .)))""", 9)
+      (c 8) .)))""", 9)
 
   testSizeof("""
-   (type ~24 :CharIntObjPacked.0.mod123abc . .
+   (type :CharIntObjPacked.0.mod123abc . .
     (pragmas
      (packed))
     (object .
      (fld :x.1.mod123abc . .
-      (c +8) .)
+      (c 8) .)
      (fld :y.1.mod123abc . .
-      (i +64) .)))""", 9)
+      (i 64) .)))""", 9)
 
   testSizeof("""
-   (type ~24 :CharPackedFieldObj.0.mod123abc . . .
+   (type :CharPackedFieldObj.0.mod123abc . . .
     (object .
      (fld :x.1.mod123abc . .
-      (c +8) .)
+      (c 8) .)
      (fld :y.1.mod123abc . .
       IntIntObjPacked.0.mod123abc .)))""", 17)
 
   testSizeof("""
-   (type ~24 :PackedFieldCharObj.0.mod123abc . . .
+   (type :PackedFieldCharObj.0.mod123abc . . .
     (object .
      (fld :x.1.mod123abc . .
       IntIntObjPacked.0.mod123abc .)
      (fld :y.1.mod123abc . .
-      (c +8) .)))""", 17)
+      (c 8) .)))""", 17)
 
   testSizeof("""
-   (type ~24 :CharIntObjPacked.0.mod123abc . .
+   (type :CharIntObjPackedNested.0.mod123abc . .
     (pragmas
      (packed))
     (object .
      (fld :x.1.mod123abc . .
-      (c +8) .)
+      (c 8) .)
      (fld :y.1.mod123abc . .
       IntIntObj.0.mod123abc .)))""", 17)
 
@@ -420,7 +416,7 @@ when isMainModule:
      (union))
     (object .
      (fld :y.0.mod123abc . .
-      (i +64) .)))""", 8)
+      (i 64) .)))""", 8)
 
   testSizeof("""
    (type :CharIntUnion.0.mod123abc . .
@@ -428,9 +424,9 @@ when isMainModule:
      (union))
     (object .
      (fld :x.0.mod123abc . .
-      (c +8) .)
+      (c 8) .)
      (fld :y.0.mod123abc . .
-      (i +64) .)))""", 8)
+      (i 64) .)))""", 8)
 
   testSizeof("""
    (type :IntObjFloatUnion.0.mod123abc . .
@@ -438,20 +434,20 @@ when isMainModule:
      (union))
     (object .
      (fld :x.0.mod123abc . .
-      (i +64) .)
+      (i 64) .)
      (fld :y.0.mod123abc . .
       IntIntObj.0.mod123abc .)
      (fld :z.0.mod123abc . .
-      (f +32) .)))""", 16)
+      (f 32) .)))""", 16)
 
   testSizeof("""
    (type :XYEnum.0.mod123abc . . .
     (enum
-     (u +8)
+     (u 8)
      (efld :X.0.mod123abc . . E.0.mod123abc
-      (tup +0 "X"))
+      (tup 0 "X"))
      (efld :Y.0.mod123abc . . E.0.mod123abc
-      (tup +1 "Y"))))""", 1)
+      (tup 1 "Y"))))""", 1)
 
   testSizeof("""
    (type :CharCharCaseObj.0.mod123abc . . .
@@ -462,12 +458,12 @@ when isMainModule:
        (ranges X.0.mod123abc)
        (stmts
         (fld :c.0.mod123abc . .
-         (c +8) .)))
+         (c 8) .)))
       (of
        (ranges Y.0.mod123abc)
        (stmts
         (fld :x.0.mod123abc . .
-         (c +8) .))))))""", 2)
+         (c 8) .))))))""", 2)
 
   testSizeof("""
    (type :IntCharCaseObj.0.mod123abc . . .
@@ -478,9 +474,9 @@ when isMainModule:
        (ranges X.0.mod123abc)
        (stmts
         (fld :c.0.mod123abc . .
-         (i +64) .)))
+         (i 64) .)))
       (of
        (ranges Y.0.mod123abc)
        (stmts
         (fld :x.0.mod123abc . .
-         (c +8) .))))))""", 16)
+         (c 8) .))))))""", 16)

@@ -881,7 +881,7 @@ proc rawAlloc(a: var MemRegion, requestedSize: int, alignment: int = 0): pointer
           compensateCounters(a, tc, size)
 
     # allocate a small block: for small chunks, we use only its next pointer
-    let s = size div MemAlign
+    let s = size shr MemAlignShift
     var c = a.freeSmallChunks[s]
     if c != nil and c.chunkAlignOff != alignOff.int32:
       c = nil
@@ -1026,13 +1026,13 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
         # set to 0xff to check for usage after free bugs:
         nimSetMem(cast[pointer](cast[int](p) +% sizeof(FreeCell)), -1'i32,
                 s -% sizeof(FreeCell))
-      let activeChunk = a.freeSmallChunks[s div MemAlign]
+      let activeChunk = a.freeSmallChunks[s shr MemAlignShift]
       if activeChunk != nil and c != activeChunk and
           activeChunk.chunkAlignOff == c.chunkAlignOff:
         # This pointer is not part of the active chunk, lend it out
         #  and do not adjust the current chunk (same logic as compensateCounters.)
         # Put the cell into the active chunk,
-        #  may prevent a queue of available chunks from forming in a.freeSmallChunks[s div MemAlign].
+        #  may prevent a queue of available chunks from forming in a.freeSmallChunks[s shr MemAlignShift].
         #  This queue would otherwise waste memory in the form of free cells until we return to those chunks.
         f.next = activeChunk.freeList
         activeChunk.freeList = f # lend the cell
@@ -1043,7 +1043,7 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
         c.freeList = f
         if c.free < s:
           # The chunk could not have been active as it didn't have enough space to give
-          listAdd(a.freeSmallChunks[s div MemAlign], c)
+          listAdd(a.freeSmallChunks[s shr MemAlignShift], c)
           c.free = c.free + int32(s)
         else:
           c.free = c.free + int32(s)
@@ -1067,14 +1067,14 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
           sysAssert(c.free >= s, "Invariant violated: chunk in freeSmallChunks has insufficient space")
           when false:
             if c.free == SmallChunkSize-smallChunkOverhead() and c.foreignCells == 0:
-              listRemove(a.freeSmallChunks[s div MemAlign], c)
+              listRemove(a.freeSmallChunks[s shr MemAlignShift], c)
               c.size = SmallChunkSize
               freeBigChunk(a, cast[PBigChunk](c))
     else:
       when logAlloc: cprintf("dealloc(pointer_%p) # SMALL FROM %p CALLER %p\n", p, c.owner, addr(a))
 
       when UseDestructors:
-        addToSharedFreeList(c, f, s div MemAlign)
+        addToSharedFreeList(c, f, s shr MemAlignShift)
     sysAssert(((cast[int](p) and PageMask) - smallChunkOverhead() - c.chunkAlignOff) %%
                s == 0, "rawDealloc 2")
   else:
@@ -1170,7 +1170,7 @@ proc ptrSize(p: pointer): int =
     if not isSmallChunk(c):
       dec result, bigChunkOverhead()
 
-proc alloc(allocator: var MemRegion, size: Natural): pointer {.gcsafe.} =
+proc alloc(allocator: var MemRegion, size: Natural): pointer {.inline, gcsafe.} =
   when not UseDestructors:
     result = rawAlloc(allocator, size+sizeof(FreeCell))
     cast[ptr FreeCell](result).zeroField = 1 # mark it as used
@@ -1184,7 +1184,7 @@ proc alloc0(allocator: var MemRegion, size: Natural): pointer =
   result = alloc(allocator, size)
   zeroMem(result, size)
 
-proc dealloc(allocator: var MemRegion, p: pointer) =
+proc dealloc(allocator: var MemRegion, p: pointer) {.inline.} =
   when not UseDestructors:
     sysAssert(p != nil, "dealloc: p is nil")
     var x = cast[pointer](cast[int](p) -% sizeof(FreeCell))

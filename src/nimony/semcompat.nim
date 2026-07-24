@@ -66,8 +66,8 @@ proc compatVarargsElem(paramType: Cursor): Cursor =
     result = default(Cursor)
   else:
     var elem = paramType
-    inc elem
-    if elem.kind == ParRi:
+    elem = sub(elem)
+    if not elem.hasMore:
       result = default(Cursor)
     else:
       result = elem
@@ -110,13 +110,13 @@ proc compatToOpenArrayTypevars(): (SymId, SymId) =
     let routine = asRoutine(res.decl)
     var tv = routine.typevars
     if tv.substructureKind == TypevarsU:
-      inc tv
-      if tv.kind == ParLe and tv.symKind == TypevarY:
+      tv = sub(tv)
+      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[0] = inner.symId
         skip tv
-      if tv.kind == ParLe and tv.symKind == TypevarY:
+      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[1] = inner.symId
@@ -135,7 +135,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
   else:
     let info = typeCursor.info
     var elem = typeCursor
-    inc elem
+    elem = sub(elem)
     if elem.hasMore:
       # Capture children of the original `(varargs …)` into a fresh buffer so
       # the in-place `replace` can read its source without aliasing `dest`.
@@ -196,7 +196,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     # following the varargs slot and must end up after the bundle.
     var trailing = createTokenBuf(max(8, m.args.len - endPos))
     for i in endPos ..< m.args.len:
-      trailing.add m.args[i]
+      trailing.addRaw m.args[i]
     # Move the flat varargs args out of `m.args` into a `(stmts …)` scratch
     # wrapper so an iterator over them terminates at the closing `)` rather
     # than walking off the end. (Without the wrapper, `hasMore` — which only
@@ -205,7 +205,9 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     var flat = createTokenBuf(max(8, endPos - start + 2))
     flat.addParLe(StmtsS, info)
     for i in start ..< endPos:
-      flat.add m.args[i]
+      # balanced span: raw copy keeps its seals and leaves the pending
+      # StmtsS as the only open tag for the close below
+      flat.addRaw m.args[i]
     flat.addParRi()
     m.args.shrink start
 

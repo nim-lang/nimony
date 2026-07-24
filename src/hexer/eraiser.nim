@@ -35,7 +35,7 @@ import std / [sets, tables, hashes, assertions, syncio]
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops]
+import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops, reporters]
 import ".." / models / tags
 import duplifier, passes
 include ".." / nimony / nif_annotations
@@ -114,7 +114,9 @@ proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
 
 proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
   var fnType = skipProcTypeToParams(getType(typeCache, n.firstSon))
-  assert fnType.tagEnum == ParamsTagId
+  if fnType.tagEnum != ParamsTagId:
+    raiseAssert "BUG eraiser callCanRaise: callee type not params at " & infoToStr(n.info) &
+         ": " & toString(getType(typeCache, n.firstSon), false)
   skip fnType # params
   skip fnType # return type
   # now pragmas follow:
@@ -123,9 +125,12 @@ proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
   let head = n.load()
   let info = n.info
-  inc n # skip `(call)`
+  let callStart = n # skip `(call)`
+  n = sub(n)
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
-  assert fnType.tagEnum == ParamsTagId
+  if fnType.tagEnum != ParamsTagId:
+    raiseAssert "BUG eraiser trCall: callee type not params at " & infoToStr(info) &
+         ": " & toString(getType(c.typeCache, n), false)
   skip fnType # params
   let retType = fnType
   skip fnType # return type
@@ -147,7 +152,8 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
         dest.add head
         while n.hasMore:
           tr c, dest, n
-        takeParRi dest, n
+        dest.addParRi(n.endInfo)
+        n = callStart; skip n
       addRaiseStmt(dest, symId, info)
     if not isVoid:
       dest.addSymUse symId, info
@@ -156,7 +162,8 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
     dest.add head
     while n.hasMore:
       tr c, dest, n
-    takeParRi dest, n
+    dest.addParRi(n.endInfo)
+    n = callStart; skip n
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind
@@ -169,7 +176,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       tr c, dest, n
   if cr:
-    addRaiseStmt(dest, target, n.info)
+    addRaiseStmt(dest, target, n.endInfo)
 
 proc trAssign(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:

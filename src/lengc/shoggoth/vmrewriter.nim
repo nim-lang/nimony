@@ -168,20 +168,23 @@ type
     numRegs: int
     dispatch: Table[TagId, int]  # root tag -> dfa index
     preds: Table[TagId, PredProc]
-    dslBase: uint32              # TagId of the first RuleTok (`rules`)
+    dslIds: array[rtRules..rtSame, TagId]  # DSL vocabulary tag ids (see ruleTok)
     # meta-tag vocabulary for compiled patterns (in `tags`)
     metaWild, metaAnyInt, metaAnySym, metaAnyLit, metaPure, metaSame: TagId
     tagVar, tagParam: TagId      # NIFC local-var / parameter decl tags
 
 proc ruleTok(e: Engine; c: Cursor): RuleTok =
-  ## Map a cursor's tag to the DSL enum via the contiguous-id range — one
-  ## subtraction + cast, no string compare. `rtOther` for anything else.
+  ## Map a cursor's tag to the DSL enum. An 11-entry scan instead of the old
+  ## contiguous-id cast: with a SHARED tag pool (the production pipeline hands
+  ## the module's Leng pool in, see `newEngine`) a DSL name that already exists
+  ## as a Leng tag — `pure` is one — gets its pre-existing id, so the DSL ids
+  ## are not contiguous. Only consulted on RULE-file cursors (parse + DO
+  ## templates), never in the hot matching path.
   if c.kind != TagLit: return rtOther
-  let t = uint32(cursorTagId(c))
-  if t >= e.dslBase and t < e.dslBase + uint32(RuleTokNames.len):
-    cast[RuleTok](t - e.dslBase)
-  else:
-    rtOther
+  let t = cursorTagId(c)
+  for rt in rtRules..rtSame:
+    if e.dslIds[rt] == t: return rt
+  rtOther
 
 # ---- compiling LHS patterns ----------------------------------------------
 
@@ -523,8 +526,22 @@ proc buildDispatch(e: Engine) =
       entries.add ScopeEntry(ruleId: ri, siblings: e.rules[ri].rootKids)
     e.dispatch[tag] = buildScopeDFA(e, entries)
 
-proc newEngine*(rulesSrc: string): Engine =
-  result = Engine(pool: newPool(), tags: newTagPool(),
+proc isIntTPred(args: openArray[Cursor]): bool =
+  ## The built-in `(WHEN (isIntT T))` guard: T is a SIGNED integer type `(i N)`.
+  ## Used by the `x - x → 0` rule — a float `x - x` is not `0.0` under IEEE
+  ## (NaN/Inf), and the integer `0` template would be ill-typed for `(f N)`/
+  ## `(u N)` operands.
+  let c = args[0]
+  c.kind == TagLit and c.tags.tagName(c.cursorTagId) == "i"
+
+proc newEngine*(rulesSrc: string; pool: Pool = nil; tags: TagPool = nil): Engine =
+  ## Build an engine from a rules source. Pass the MODULE's `pool`/`tags` (e.g.
+  ## the typenav context's, as `optdriver` does) so the compiled patterns' tag
+  ## ids line up with the buffers the engine will rewrite; with no pool given
+  ## (tests, fuzzing) the engine owns a private one and inputs go through
+  ## `parseInput`.
+  result = Engine(pool: (if pool == nil: newPool() else: pool),
+                  tags: (if tags == nil: newTagPool() else: tags),
                   dispatch: initTable[TagId, int](),
                   preds: initTable[TagId, PredProc]())
   result.metaWild   = result.tags.registerTag("@wild")
@@ -533,13 +550,11 @@ proc newEngine*(rulesSrc: string): Engine =
   result.metaAnyLit = result.tags.registerTag("@anylit")
   result.metaPure   = result.tags.registerTag("@pure")
   result.metaSame   = result.tags.registerTag("@same")
-  # Register the DSL vocabulary contiguously so `ruleTok` is a cast.
-  for i in 0 ..< RuleTokNames.len:
-    let id = uint32 result.tags.registerTag(RuleTokNames[i])
-    if i == 0: result.dslBase = id
-    else: assert id == result.dslBase + uint32(i), "DSL tags not contiguous"
+  for rt in rtRules..rtSame:
+    result.dslIds[rt] = result.tags.registerTag(RuleTokNames[ord(rt)])
   result.tagVar   = result.tags.registerTag("var")
   result.tagParam = result.tags.registerTag("param")
+  result.preds[result.tags.registerTag("isIntT")] = isIntTPred   # built-in guard
   result.ruleBuf = parseFromBuffer(rulesSrc, "R", 256, result.pool, result.tags)
   parseRules(result)
   finalizeRules(result)
@@ -783,14 +798,7 @@ proc canon*(e: Engine; buf: var TokenBuf) =
 when isMainModule:
   const rulesSrc = staticRead("rules/arith.rewrite.nif")
 
-  proc isPow2(args: openArray[Cursor]): bool =
-    let c = args[0]
-    if c.kind != IntLit: return false
-    let v = intVal(c)
-    v > 0 and (v and (v - 1)) == 0
-
   var e = newEngine(rulesSrc)
-  e.registerPred("isPow2", isPow2)
 
   proc sameTokens(a, b: var TokenBuf): bool =
     if a.len != b.len: return false
@@ -864,21 +872,51 @@ when isMainModule:
     discard runRewrites(e, buf)
     check buf, "(stmts (asgn x.0.M 0))"
 
+  block sub_same_float_blocked:
+    # x - x is NOT 0.0 under IEEE (NaN/Inf), and the `0` template would be
+    # ill-typed for a float sub — the rule is gated to `(i W)`.
+    var buf = e.parseInput("(stmts (asgn x.0.M (sub (f 64) y.0.M y.0.M)))")
+    discard runRewrites(e, buf)
+    check buf, "(stmts (asgn x.0.M (sub (f 64) y.0.M y.0.M)))"
+
+  block sub_same_impure_blocked:
+    # Eliding `f() - f()` would drop two calls — the rule requires a pure operand.
+    var buf = e.parseInput("(stmts (asgn x.0.M (sub (i 32) (call side.0.M) (call side.0.M))))")
+    discard runRewrites(e, buf)
+    check buf, "(stmts (asgn x.0.M (sub (i 32) (call side.0.M) (call side.0.M))))"
+
   block fixpoint_chains:
     var buf = e.parseInput("(stmts (asgn x.0.M (and (true) (not (not y.0.M)))))")
     let passes = runRewritesFix(e, buf)
     doAssert passes >= 1
     check buf, "(stmts (asgn x.0.M y.0.M))"
 
-  block pow2_when_fires:
-    var buf = e.parseInput("(stmts (asgn x.0.M (mul (i 32) y.0.M 4)))")
-    discard runRewrites(e, buf)
-    check buf, "(stmts (asgn x.0.M (shl (i 32) y.0.M 4)))"
+  # (The old `mul by pow2 → shl` rule is gone: its DO template shifted by the
+  # MULTIPLIER (`y*4 → y shl 4`), not log2 of it — a miscompile the DSL cannot
+  # express correctly until it grows computed captures.)
 
-  block pow2_when_blocks:
-    var buf = e.parseInput("(stmts (asgn x.0.M (mul (i 32) y.0.M 3)))")
-    discard runRewrites(e, buf)
-    check buf, "(stmts (asgn x.0.M (mul (i 32) y.0.M 3)))"
+  block deref_addr_lvalue:
+    # The fold must also fire in LVALUE position — this is the inliner residue
+    # of `inc(addr i)` after addr-argument substitution.
+    var buf = e.parseInput(
+      "(stmts (asgn (deref (addr i.0.M)) (add (i 64) (deref (addr i.0.M)) 1)))")
+    let passes = runRewritesFix(e, buf)
+    doAssert passes >= 1
+    check buf, "(stmts (asgn i.0.M (add (i 64) i.0.M 1)))"
+
+  block shared_pool_engine:
+    # The production pipeline hands the module's pool/tags in; tag ids of rules
+    # and input then coincide (including the `pure` DSL/Leng name collision).
+    var pool = newPool()
+    var tags = newTagPool()
+    var e2 = newEngine(rulesSrc, pool, tags)
+    var buf = parseFromBuffer("(stmts (asgn x.0.M (deref (addr y.0.M))))", "M",
+                              100, pool, tags)
+    discard runRewrites(e2, buf)
+    var exp = parseFromBuffer("(stmts (asgn x.0.M y.0.M))", "M", 100, pool, tags)
+    if not sameTokens(buf, exp):
+      echo "FAILED shared_pool_engine. got:\n", toString(buf)
+      quit 1
 
   block lineinfo_preserved:
     let f = e.pool.filenames.getOrIncl("t.nim")
@@ -917,26 +955,21 @@ when isMainModule:
         wantInfo c, 4, 2
         skip c
 
+    # A SYNTHESIZED template token (the `x - x → 0` rule's `0`) is stamped with
+    # the matched node's info.
     var b2 = createTokenBuf(16, e.pool, e.tags)
-    b2.openTag tg("mul");  b2.appendLineInfo li(f, 7, 3)
+    b2.openTag tg("sub");  b2.appendLineInfo li(f, 7, 3)
     b2.openTag tg("i");    b2.appendLineInfo li(f, 7, 5)
     b2.addIntLit 32
     b2.closeTag()
     b2.addSymUse "y.0.M";  b2.appendLineInfo li(f, 7, 9)
-    b2.addIntLit 4;        b2.appendLineInfo li(f, 7, 11)
+    b2.addSymUse "y.0.M";  b2.appendLineInfo li(f, 7, 11)
     b2.closeTag()
 
     discard runRewrites(e, b2)
     var d = b2.beginRead()
-    doAssert tagNameOf(d) == "shl"
+    doAssert d.kind == IntLit and intVal(d) == 0
     wantInfo d, 7, 3
-    d.into:
-      wantInfo d, 7, 5
-      skip d
-      wantInfo d, 7, 9
-      skip d
-      wantInfo d, 7, 11
-      skip d
 
   block canon_alpha_equiv:
     # Two procs differing only in parameter/local names canon to the same tokens.

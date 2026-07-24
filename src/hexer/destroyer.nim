@@ -278,12 +278,13 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
     leaveScope(c, addr(c.currentScope), kind)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
+  if params.kind != ParLe: return
   var p = params
-  inc p
+  p = sub(p)  # throwaway copy; bounds the walk under vpr
   while p.hasMore:
     let r = takeLocal(p, SkipFinalParRi)
     if r.typ.typeKind == SinkT:
-      let destructor = getDestructor(c.lifter[], r.typ.firstSon, p.info)
+      let destructor = getDestructor(c.lifter[], r.typ.firstSon, p.endInfo)
       if destructor != NoSymId:
         c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
@@ -477,6 +478,9 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
       tr(c, n)
 
     leaveScope c, addr(c.currentScope)
-  c.dest.addParRi()
+  # The root `(stmts` is deliberately left OPEN: the pipeline appends the
+  # generated hooks and closes it. An emitted close cannot be rolled back
+  # under `-d:virtualParRi` (it seals the tag and is elided), so the old
+  # "close here, shrink away in the pipeline" dance is impossible.
   genMissingHooks lifter[]
   pass.dest = ensureMove c.dest

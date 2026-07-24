@@ -5,12 +5,17 @@ import ".." / lib / symparser
 
 proc takeUnquoted*(c: var Cursor): StrId =
   var r = ""
+  var scopes: seq[Cursor] = @[]
   while true:
     case c.kind
     of ParLe:
-      inc c
+      scopes.add c; c = sub(c)
     of ParRi:
-      inc c
+      # the first close ends the walk (quoted content is flat in practice)
+      if scopes.len > 0:
+        c = scopes.pop; skip c
+      else:
+        inc c
       break
     of EofToken:
       r.add "<unexpected eof>"
@@ -38,10 +43,6 @@ proc takeUnquoted*(c: var Cursor): StrId =
   result = getOrIncl(pool.strings, r)
 
 proc takeIdent*(n: var Cursor): StrId =
-  var nested = 0
-  while exprKind(n) in {OchoiceX, CchoiceX}:
-    inc nested
-    inc n
   case n.kind
   of Ident:
     result = n.litId
@@ -52,15 +53,17 @@ proc takeIdent*(n: var Cursor): StrId =
     result = pool.strings.getOrIncl(extractBasename(sym, isGlobal))
     inc n
   of ParLe:
-    if exprKind(n) == QuotedX:
+    if exprKind(n) in {OchoiceX, CchoiceX}:
+      result = StrId(0)
+      n.peekInto:
+        if n.hasMore:
+          result = takeIdent(n)
+    elif exprKind(n) == QuotedX:
       result = takeUnquoted(n)
     else:
       result = StrId(0)
   else:
     result = StrId(0)
-  while nested > 0:
-    if n.kind == ParRi: dec nested
-    inc n
 
 proc getIdent*(n: Cursor): StrId =
   var n = n

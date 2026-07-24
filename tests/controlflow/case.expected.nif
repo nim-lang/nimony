@@ -6,45 +6,45 @@
  (ite
   (eq
    (i -1)other.var 0)
-  (goto L85)
-  (goto L30))
- (lab :L30)
+  (goto L63)
+  (goto L23))
+ (lab :L23)
  (ite
   (eq
    (i -1)other.var 1)
-  (goto L85)
-  (goto L41))
- (lab :L41)
+  (goto L63)
+  (goto L31))
+ (lab :L31)
  (ite
   (eq
    (i -1)other.var 2)
-  (goto L85)
-  (goto L52))
- (lab :L52)
+  (goto L63)
+  (goto L39))
+ (lab :L39)
  (ite
   (le
    (i -1)5 other.var)
-  (goto L63)
-  (goto L74))
- (lab :L63)
+  (goto L47)
+  (goto L55))
+ (lab :L47)
  (ite
   (le
    (i -1)other.var 15)
-  (goto L85)
-  (goto L74))
- (lab :L74)
+  (goto L63)
+  (goto L55))
+ (lab :L55)
  (ite
   (eq
    (i -1)other.var 80)
-  (goto L85)
-  (goto L90))
- (lab :L85)
+  (goto L63)
+  (goto L67))
+ (lab :L63)
  (asgn `cf.0 1)
- (goto L95)
- (lab :L90)
+ (goto L71)
+ (lab :L67)
  (asgn `cf.0 0)
- (goto L95)
- (lab :L95)
+ (goto L71)
+ (lab :L71)
  (let :my.var . .
   (i -1)`cf.0)
  (ret .))

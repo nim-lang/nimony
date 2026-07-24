@@ -53,18 +53,18 @@ proc isStaticValue*(n: Cursor): bool =
       result = isStaticValue(elem)
     of AconstrX, SetconstrX, TupconstrX, OconstrX:
       var elem = n
-      inc elem
+      elem = sub(elem)
       skip elem # type
       result = true
       while elem.hasMore:
         if elem.substructureKind in {KvU, RangeU}:
-          inc elem
+          elem = sub(elem)
           skip elem # key or range start
           if not isStaticValue(elem):
             result = false
             break
           skip elem
-          if elem.kind == ParRi:
+          if not elem.hasMore:
             break
           inc elem
         else:
@@ -122,8 +122,8 @@ proc staticOpenArrayElemType*(t: Cursor): Cursor =
       inc t
       result = t
   elif t.typeKind == VarargsT:
-    inc t
-    if t.kind != ParRi:
+    t = sub(t)
+    if t.hasMore:
       result = t
 
 proc staticValueTypeMatches*(elemType, valueType: Cursor): bool =
@@ -138,8 +138,8 @@ proc staticValueTypeMatches*(elemType, valueType: Cursor): bool =
     return sameStaticSymbol(elemType.symId, valueType.symId)
   if elemType.typeKind == VarargsT and valueType.typeKind == ArrayT:
     var elem = elemType
-    inc elem
-    if elem.kind == ParRi:
+    elem = sub(elem)
+    if not elem.hasMore:
       return true
     var arrElem = valueType
     inc arrElem

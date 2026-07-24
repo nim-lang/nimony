@@ -109,6 +109,15 @@ when defined(nimNativeIo) and defined(posix):
   proc c_isatty(fildes: cint): cint =
     var termbuf {.noinit.}: array[64, byte]   # holds a `struct termios` (~60B)
     if nativeIoctl(fildes, 0x5401'u, addr termbuf) == 0'i32: 1'i32 else: 0'i32
+elif defined(nimNativeIo) and defined(windows):
+  # Libc-free: a `File` wraps a Win32 `HANDLE`, not an msvcrt `FILE*`, so there is
+  # no `_fileno`/`_isatty` to call. `GetConsoleMode` succeeds only for console
+  # handles, which is exactly the "is this a terminal?" probe we need.
+  import std/windows/winlean
+  proc c_fileno(f: File): Handle = getFileHandle(f)
+  proc c_isatty(h: Handle): cint =
+    var mode: DWORD = 0'u32
+    if isSuccess(getConsoleMode(h, addr mode)): 1'i32 else: 0'i32
 elif defined(posix):
   proc c_isatty(fildes: cint): cint {.importc: "isatty", header: "<unistd.h>".}
   proc c_fileno(f: File): cint {.importc: "fileno", header: "<stdio.h>".}

@@ -30,37 +30,32 @@ type
                    # Final IR never introduces a single cfvar.
 
 proc isComplex(n: Cursor; goal: Goal): bool =
-  var nested = 0
   var n = n
-  while true:
-    case n.kind
-    of IntLit, UIntLit, FloatLit, StringLit, CharLit, UnknownToken, EofToken, Ident, Symbol, SymbolDef, DotToken:
-      inc n
-    of ParLe:
-      if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, PatternvarS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
-        return true
-      elif n.exprKind == ExprX:
-        inc n
-        let inner = n
-        skip n
-        if n.kind == ParRi:
-          # ExprX with exactly one son might be harmless:
-          if isComplex(inner, goal):
-            return true
-        else:
-          # More than one son is always complex:
-          return true
-        inc nested
-      elif goal in {TowardsNjvl, LowerCasts, TowardsFinalIr} and n.exprKind in (CallKinds+{AndX, OrX}):
-        return true
+  case n.kind
+  of ParLe:
+    if n.stmtKind in {IfS, CaseS, WhileS, AsgnS, LetS, VarS, CursorS, PatternvarS, StmtsS, ResultS, GletS, TletS, GvarS, TvarS}:
+      result = true
+    elif n.exprKind == ExprX:
+      var probe = n
+      probe = sub(probe) # peek only, never left
+      let inner = probe
+      skip probe
+      if probe.hasMore:
+        # More than one son is always complex:
+        result = true
       else:
-        inc n
-        inc nested
-    of ParRi:
-      inc n
-      dec nested
-    if nested == 0: break
-  return false
+        # ExprX with exactly one son might be harmless:
+        result = isComplex(inner, goal)
+    elif goal in {TowardsNjvl, LowerCasts, TowardsFinalIr} and n.exprKind in (CallKinds+{AndX, OrX}):
+      result = true
+    else:
+      result = false
+      n.loopInto:
+        if isComplex(n, goal):
+          return true
+        skip n
+  else:
+    result = false
 
 type
   Mode = enum
@@ -148,74 +143,75 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
   if n.kind != ParLe or n.exprKind != ExprX:
     transformed.takeTree n
     return
-  transformed.takeToken n              # `(expr`
-  while n.hasMore:
-    if n.kind != ParLe or n.stmtKind != StmtsS:
-      transformed.takeTree n           # not the leading stmts — pass through
-      continue
-    transformed.takeToken n            # `(stmts`
+  transformed.add n                    # `(expr`
+  n.into:
     while n.hasMore:
-      if n.kind != ParLe or n.stmtKind notin {LetS, VarS, CursorS}:
-        transformed.takeTree n
+      if n.kind != ParLe or n.stmtKind != StmtsS:
+        transformed.takeTree n         # not the leading stmts — pass through
         continue
-      let info = n.info
-      let local = takeLocal(n, SkipFinalParRi)
-      let sym = local.name.symId
-      let symInfo = local.name.info
-      outerDest.addParLe(VarS, info)
-      outerDest.add symdefToken(sym, symInfo)
-      outerDest.addSubtree local.exported
-      if markNoinit:
-        outerDest.addParLe(PragmasS, info)
-        outerDest.addParLe(NoinitP, info)
-        outerDest.addParRi()
-        if local.pragmas.kind == ParLe:  # keep any original pragmas too
-          var p = local.pragmas
-          inc p
-          while p.kind != ParRi:
-            outerDest.addSubtree p
-            skip p
-        outerDest.addParRi()
-      else:
-        outerDest.addSubtree local.pragmas
-      outerDest.addSubtree local.typ
-      outerDest.addDotToken()          # uninitialised
-      outerDest.addParRi()
-      if local.val.kind != DotToken:
-        transformed.addParLe(AsgnS, info)
-        transformed.add symToken(sym, symInfo)
-        transformed.addSubtree local.val
-        transformed.addParRi()
-    transformed.takeToken n            # closing `)` of stmts
-  transformed.takeToken n              # closing `)` of expr
+      transformed.add n                # `(stmts`
+      n.into:
+        while n.hasMore:
+          if n.kind != ParLe or n.stmtKind notin {LetS, VarS, CursorS}:
+            transformed.takeTree n
+            continue
+          let info = n.info
+          let local = takeLocal(n, SkipFinalParRi)
+          let sym = local.name.symId
+          let symInfo = local.name.info
+          outerDest.addParLe(VarS, info)
+          outerDest.add symdefToken(sym, symInfo)
+          outerDest.addSubtree local.exported
+          if markNoinit:
+            outerDest.addParLe(PragmasS, info)
+            outerDest.addParLe(NoinitP, info)
+            outerDest.addParRi()
+            if local.pragmas.kind == ParLe:  # keep any original pragmas too
+              var p = local.pragmas
+              p = sub(p) # peek only, never left
+              while p.hasMore:
+                outerDest.addSubtree p
+                skip p
+            outerDest.addParRi()
+          else:
+            outerDest.addSubtree local.pragmas
+          outerDest.addSubtree local.typ
+          outerDest.addDotToken()      # uninitialised
+          outerDest.addParRi()
+          if local.val.kind != DotToken:
+            transformed.addParLe(AsgnS, info)
+            transformed.add symToken(sym, symInfo)
+            transformed.addSubtree local.val
+            transformed.addParRi()
+        transformed.addParRi(n.endInfo)  # closing `)` of stmts
+    transformed.addParRi(n.endInfo)      # closing `)` of expr
 
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if isComplex(n, c.goal):
     # `x or y`  <=> `if x: true else: y` <=> `if x: tmp = true else: tmp = y`
     let info = n.info
     var tmp = declareTempBool(c, dest, info)
-    inc n
+    n.into:
 
-    var aa = Target(m: IsEmpty)
-    trExpr c, dest, n, aa
-    # Hoist any leading let/var decls in the RHS's stmt-list-expr to outer
-    # scope so they remain visible after the `or` lowering — same idea as
-    # `trAnd` below; see the comment there.
-    var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
-    var rhsCursor = beginRead(rhs)
-    copyIntoKind dest, IfS, info:
-      copyIntoKind dest, ElifU, info:
-        dest.addTarget aa                # if x
-        copyIntoKind dest, StmtsS, info:
-          copyIntoKind dest, AsgnS, info: # tmp = true
-            dest.addSymUse tmp, info
-            copyIntoKind dest, TrueX, info: discard
-      copyIntoKind dest, ElseU, info:
-        copyIntoKind dest, StmtsS, info:
-          trExprInto c, dest, rhsCursor, tmp # tmp = y
-    tar.t.addSymUse tmp, info
-    skipParRi n
+      var aa = Target(m: IsEmpty)
+      trExpr c, dest, n, aa
+      # Hoist any leading let/var decls in the RHS's stmt-list-expr to outer
+      # scope so they remain visible after the `or` lowering — same idea as
+      # `trAnd` below; see the comment there.
+      var rhs = createTokenBuf(16)
+      hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
+      var rhsCursor = beginRead(rhs)
+      copyIntoKind dest, IfS, info:
+        copyIntoKind dest, ElifU, info:
+          dest.addTarget aa                # if x
+          copyIntoKind dest, StmtsS, info:
+            copyIntoKind dest, AsgnS, info: # tmp = true
+              dest.addSymUse tmp, info
+              copyIntoKind dest, TrueX, info: discard
+        copyIntoKind dest, ElseU, info:
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, rhsCursor, tmp # tmp = y
+      tar.t.addSymUse tmp, info
   else:
     copyInto tar.t, n:
       trExpr c, dest, n, tar
@@ -226,31 +222,30 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
     # `x and y` <=> `if x: y else: false` <=> `if x: tmp = y else: tmp = false`
     let info = n.info
     var tmp = declareTempBool(c, dest, info)
-    inc n
+    n.into:
 
-    var aa = Target(m: IsEmpty)
-    trExpr c, dest, n, aa
-    # Hoist any `let`/`var` decls that live inside the RHS's stmt-list-expr
-    # to the outer `dest` (alongside `tmp`) so they remain in scope for the
-    # surrounding `if` body. The hoisted decls become `var` placeholders
-    # and the original initialiser is rewritten into an `asgn` that runs
-    # only when `x` is true (preserving short-circuit evaluation).
-    var rhs = createTokenBuf(16)
-    hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
-    var rhsCursor = beginRead(rhs)
-    copyIntoKind dest, IfS, info:
-      copyIntoKind dest, ElifU, info:
-        dest.addTarget aa                # if x
-        copyIntoKind dest, StmtsS, info:
-          trExprInto c, dest, rhsCursor, tmp # tmp = y
-      copyIntoKind dest, ElseU, info:
-        copyIntoKind dest, StmtsS, info:
-          # tmp = false
-          copyIntoKind dest, AsgnS, info:
-            dest.addSymUse tmp, info
-            copyIntoKind dest, FalseX, info: discard
-    tar.t.addSymUse tmp, info
-    skipParRi n
+      var aa = Target(m: IsEmpty)
+      trExpr c, dest, n, aa
+      # Hoist any `let`/`var` decls that live inside the RHS's stmt-list-expr
+      # to the outer `dest` (alongside `tmp`) so they remain in scope for the
+      # surrounding `if` body. The hoisted decls become `var` placeholders
+      # and the original initialiser is rewritten into an `asgn` that runs
+      # only when `x` is true (preserving short-circuit evaluation).
+      var rhs = createTokenBuf(16)
+      hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
+      var rhsCursor = beginRead(rhs)
+      copyIntoKind dest, IfS, info:
+        copyIntoKind dest, ElifU, info:
+          dest.addTarget aa                # if x
+          copyIntoKind dest, StmtsS, info:
+            trExprInto c, dest, rhsCursor, tmp # tmp = y
+        copyIntoKind dest, ElseU, info:
+          copyIntoKind dest, StmtsS, info:
+            # tmp = false
+            copyIntoKind dest, AsgnS, info:
+              dest.addSymUse tmp, info
+              copyIntoKind dest, FalseX, info: discard
+      tar.t.addSymUse tmp, info
   else:
     copyInto tar.t, n:
       trExpr c, dest, n, tar
@@ -329,44 +324,44 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
 
   let kind = n.exprKind
   tar.t.add n
-  inc n
+  n.into:
 
-  case kind
-  of OconstrX, NewobjX:
-    # `(oconstr T (kv field val INTLIT?)*)` — also accepts a leading
-    # inheritance form `(oconstr T (oconstr ...) (kv ...)*)`.
-    if n.hasMore:
-      tar.t.takeTree n  # T
-    while n.hasMore:
-      if n.kind == ParLe and n.substructureKind == KvU:
-        tar.t.takeToken n  # `(kv`
-        if n.hasMore:
-          tar.t.takeTree n  # field key
-        if n.hasMore:
-          trAggregateValue c, dest, n, tar
-        while n.hasMore:
-          tar.t.takeTree n  # optional INTLIT (inheritance count)
-        tar.t.takeToken n  # closing `)` of kv
-      else:
-        # Inheritance-style first-child: another constructor expression.
+    case kind
+    of OconstrX, NewobjX:
+      # `(oconstr T (kv field val INTLIT?)*)` — also accepts a leading
+      # inheritance form `(oconstr T (oconstr ...) (kv ...)*)`.
+      if n.hasMore:
+        tar.t.takeTree n  # T
+      while n.hasMore:
+        if n.kind == ParLe and n.substructureKind == KvU:
+          tar.t.add n  # `(kv`
+          n.into:
+            if n.hasMore:
+              tar.t.takeTree n  # field key
+            if n.hasMore:
+              trAggregateValue c, dest, n, tar
+            while n.hasMore:
+              tar.t.takeTree n  # optional INTLIT (inheritance count)
+            tar.t.addParRi(n.endInfo)  # closing `)` of kv
+        else:
+          # Inheritance-style first-child: another constructor expression.
+          trExpr c, dest, n, tar
+    of TupconstrX, AconstrX:
+      # `(tupconstr T X+)`, `(aconstr T X*)` — type then values.
+      if n.hasMore:
+        tar.t.takeTree n
+      while n.hasMore:
+        trAggregateValue c, dest, n, tar
+    of TupX, BracketX, CurlyX, SetconstrX, TabconstrX:
+      # `(tup X+)`, `(bracket X*)`, `(curly X*)`, `(setconstr X*)`,
+      # `(tabconstr X*)` — value list, no leading type.
+      while n.hasMore:
+        trAggregateValue c, dest, n, tar
+    else:
+      while n.hasMore:
         trExpr c, dest, n, tar
-  of TupconstrX, AconstrX:
-    # `(tupconstr T X+)`, `(aconstr T X*)` — type then values.
-    if n.hasMore:
-      tar.t.takeTree n
-    while n.hasMore:
-      trAggregateValue c, dest, n, tar
-  of TupX, BracketX, CurlyX, SetconstrX, TabconstrX:
-    # `(tup X+)`, `(bracket X*)`, `(curly X*)`, `(setconstr X*)`,
-    # `(tabconstr X*)` — value list, no leading type.
-    while n.hasMore:
-      trAggregateValue c, dest, n, tar
-  else:
-    while n.hasMore:
-      trExpr c, dest, n, tar
 
-  tar.t.addParRi()
-  inc n
+    tar.t.addParRi()
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if tar.m in {IsAppend, IsEmpty} and c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
@@ -456,24 +451,22 @@ proc trCondAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targe
   let info = n.info
   let cf = makeCfVar(c, dest, tar, info)
 
-  inc n
+  n.into:
 
-  var aa = Target(m: IsEmpty)
-  trCond c, dest, n, aa, true
+    var aa = Target(m: IsEmpty)
+    trCond c, dest, n, aa, true
 
-  copyIntoKind dest, IfS, info:
-    copyIntoKind dest, ElifU, info:
-      dest.addTarget aa                # if x
-      copyIntoKind dest, StmtsS, info:
-        var bb = Target(m: IsEmpty)
-        trCond c, dest, n, bb, true
-        copyIntoKind dest, IfS, info:
-          copyIntoKind dest, ElifU, info:
-            dest.addTarget bb                # if y
-            copyIntoKind dest, StmtsS, info:
-              useCfVar dest, cf, info
-
-  skipParRi n
+    copyIntoKind dest, IfS, info:
+      copyIntoKind dest, ElifU, info:
+        dest.addTarget aa                # if x
+        copyIntoKind dest, StmtsS, info:
+          var bb = Target(m: IsEmpty)
+          trCond c, dest, n, bb, true
+          copyIntoKind dest, IfS, info:
+            copyIntoKind dest, ElifU, info:
+              dest.addTarget bb                # if y
+              copyIntoKind dest, StmtsS, info:
+                useCfVar dest, cf, info
 
 proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # `x or y` <=>
@@ -486,55 +479,84 @@ proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
   let info = n.info
   let cf = makeCfVar(c, dest, tar, info)
 
-  inc n
+  n.into:
 
-  var aa = Target(m: IsEmpty)
-  trCond c, dest, n, aa, true
+    var aa = Target(m: IsEmpty)
+    trCond c, dest, n, aa, true
 
-  copyIntoKind dest, IfS, info:
-    copyIntoKind dest, ElifU, info:
-      dest.addTarget aa                # if x
-      copyIntoKind dest, StmtsS, info:
-        useCfVar dest, cf, info
-    # Watch out, we cannot use an ElifU here directly because `bb` can
-    # have side effects!
-    copyIntoKind dest, ElseU, info:
-      copyIntoKind dest, StmtsS, info:
-        var bb = Target(m: IsEmpty)
-        trCond c, dest, n, bb, true
-        copyIntoKind dest, IfS, info:
-          copyIntoKind dest, ElifU, info:
-            dest.addTarget bb                # if y
-            copyIntoKind dest, StmtsS, info:
-              useCfVar dest, cf, info
+    copyIntoKind dest, IfS, info:
+      copyIntoKind dest, ElifU, info:
+        dest.addTarget aa                # if x
+        copyIntoKind dest, StmtsS, info:
+          useCfVar dest, cf, info
+      # Watch out, we cannot use an ElifU here directly because `bb` can
+      # have side effects!
+      copyIntoKind dest, ElseU, info:
+        copyIntoKind dest, StmtsS, info:
+          var bb = Target(m: IsEmpty)
+          trCond c, dest, n, bb, true
+          copyIntoKind dest, IfS, info:
+            copyIntoKind dest, ElifU, info:
+              dest.addTarget bb                # if y
+              copyIntoKind dest, StmtsS, info:
+                useCfVar dest, cf, info
 
-  skipParRi n
+proc condNodeSafe(n: Cursor): bool =
+  var n = n
+  case n.kind
+  of ParLe:
+    if n.exprKind in CallKinds: return false
+    if n.exprKind == ExprX:
+      # A single-son `(expr val)` is a transparent wrapper — e.g. the `!=`
+      # template expands to `(expr (not (== x y)))`, which is pure. Walk into
+      # it; a multi-son `(expr (stmts …) val)` carries real statements (a hoist
+      # would be needed) and stays complex. Mirrors `isComplex`.
+      var probe = n
+      probe = sub(probe) # into `(expr`; peek only, never left
+      skip probe                # the (would-be sole) value son
+      if probe.hasMore: return false
+    elif n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
+      return false
+    n.loopInto:
+      if not condNodeSafe(n): return false
+      skip n
+    result = true
+  else:
+    result = true
 
 proc condPassthroughSafe(n: Cursor): bool =
   ## True if an `and`/`or` condition subtree contains only short-circuit nodes
   ## and *pure* leaves that finalir can emit inline — no calls and no
-  ## statement-expressions. Such a tree is handed to finalir verbatim so its
-  ## two-target condition compiler (Cx) can lower it to shared `(lab)`/`(jmp)`
-  ## merges (linear). A subtree with a call in a leaf must instead keep the
-  ## bool-temp lowering here, because short-circuit evaluation requires the
-  ## call to be hoisted *into* the branch, which Cx-in-finalir does not do.
-  var n = n
+  ## statement-expressions with actual statements. Such a tree is handed to
+  ## finalir verbatim so its two-target condition compiler (Cx) can lower it to
+  ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf must
+  ## instead keep the bool-temp lowering here, because short-circuit evaluation
+  ## requires the call to be hoisted *into* the branch, which Cx does not do.
   if n.kind != ParLe: return false
-  var nested = 0
-  while true:
-    case n.kind
-    of ParLe:
-      if n.exprKind in CallKinds: return false
-      if n.exprKind == ExprX: return false
-      if n.stmtKind in {IfS, CaseS, TryS, BlockS, WhileS, ForS, StmtsS}:
-        return false
-      inc nested
-    of ParRi:
-      dec nested
-    else: discard
-    inc n
-    if nested == 0: break
-  result = true
+  result = condNodeSafe(n)
+
+proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
+  ## Copy the condition subtree at `n` into `dest`, dropping the brackets of any
+  ## single-son `(expr val)` wrapper. The `!=`, `>=`, `>`, `notin`, … templates
+  ## expand to exactly `(expr (not (== x y)))` etc.; keeping that wrapper leaves
+  ## the finalir condition compiler and the contract/nil analysis staring at a
+  ## statement-expression instead of the pure `not (== …)` leaf they understand.
+  if n.kind == ParLe and n.exprKind == ExprX:
+    var probe = n
+    probe = sub(probe) # peek only, never left
+    skip probe
+    if not probe.hasMore:             # single son ⇒ transparent wrapper
+      n.into:                         # drop `(expr` and the matching `)`
+        takeStrippingTrivialExpr(dest, n)
+      return
+  if n.kind == ParLe:
+    dest.add n                        # `(tag`
+    n.into:
+      while n.hasMore:
+        takeStrippingTrivialExpr(dest, n)
+      dest.addParRi(n.endInfo)        # `)`
+  else:
+    dest.takeToken n
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
@@ -545,14 +567,14 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
       # `TowardsFinalIr` mode we still want the binding/hoisting path inside
       # `trAnd`'s `isComplex` branch, but never the cfvar form.
       if c.goal == TowardsFinalIr and condPassthroughSafe(n):
-        tar.t.takeTree n
+        takeStrippingTrivialExpr(tar.t, n)
       elif mustUseLabel:
         trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
       if c.goal == TowardsFinalIr and condPassthroughSafe(n):
-        tar.t.takeTree n
+        takeStrippingTrivialExpr(tar.t, n)
       elif mustUseLabel:
         trCondOr c, dest, n, tar
       else:
@@ -603,30 +625,28 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       case n.substructureKind
       of ElifU:
         var t0 = Target(m: IsEmpty)
-        inc n
-        trCond c, dest, n, t0, c.goal == TowardsNjvl
+        n.into:
+          trCond c, dest, n, t0, c.goal == TowardsNjvl
 
-        dest.add head
-        inc toClose
-        inc ifs
+          dest.add head
+          inc toClose
+          inc ifs
 
-        copyIntoKind dest, ElifU, info:
-          dest.addTarget t0
-          #copyIntoKind dest, StmtsS, info:
+          copyIntoKind dest, ElifU, info:
+            dest.addTarget t0
+            #copyIntoKind dest, StmtsS, info:
+            if tar.m != IsIgnored:
+              copyIntoKind dest, StmtsS, info:
+                trExprInto c, dest, n, tmp
+            else:
+              trStmt c, dest, n
+      of ElseU:
+        n.into:
           if tar.m != IsIgnored:
             copyIntoKind dest, StmtsS, info:
               trExprInto c, dest, n, tmp
           else:
             trStmt c, dest, n
-        skipParRi n
-      of ElseU:
-        inc n
-        if tar.m != IsIgnored:
-          copyIntoKind dest, StmtsS, info:
-            trExprInto c, dest, n, tmp
-        else:
-          trStmt c, dest, n
-        skipParRi n
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
@@ -650,35 +670,35 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     tmp = declareTemp(c, dest, n)
 
   var t0 = Target(m: IsEmpty)
-  inc n
-  trExpr c, dest, n, t0
-  dest.addParLe CaseS, info
-  dest.addTarget t0
-  while n.hasMore:
-    case n.substructureKind
-    of OfU:
-      copyInto(dest, n):
-        takeTree dest, n # choices
-        if tar.m != IsIgnored:
-          copyIntoKind dest, StmtsS, info:
-            trExprInto c, dest, n, tmp
-        else:
-          trStmt c, dest, n
-    of ElseU:
-      copyInto(dest, n):
-        if tar.m != IsIgnored:
-          copyIntoKind dest, StmtsS, info:
-            trExprInto c, dest, n, tmp
-        else:
-          trStmt c, dest, n
-    of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
-       TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
-       StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-       UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
-       ForcallU, NoSub:
-      # Bug: just copy the thing around
-      takeTree dest, n
-  takeParRi dest, n
+  n.into:
+    trExpr c, dest, n, t0
+    dest.addParLe CaseS, info
+    dest.addTarget t0
+    while n.hasMore:
+      case n.substructureKind
+      of OfU:
+        copyInto(dest, n):
+          takeTree dest, n # choices
+          if tar.m != IsIgnored:
+            copyIntoKind dest, StmtsS, info:
+              trExprInto c, dest, n, tmp
+          else:
+            trStmt c, dest, n
+      of ElseU:
+        copyInto(dest, n):
+          if tar.m != IsIgnored:
+            copyIntoKind dest, StmtsS, info:
+              trExprInto c, dest, n, tmp
+          else:
+            trStmt c, dest, n
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+         TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
+         StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+         UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
+         ForcallU, NoSub:
+        # Bug: just copy the thing around
+        takeTree dest, n
+    dest.addParRi(n.endInfo)
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, info
 
@@ -745,25 +765,25 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let head = n.load()
-  inc n
-  var tar = Target(m: IsEmpty)
-  trExpr c, dest, n, tar # iterator call
-  dest.add head
-  dest.addTarget tar
-  takeTree dest, n # for loop variables
-  trStmt c, dest, n
-  dest.takeParRi n
+  n.into:
+    var tar = Target(m: IsEmpty)
+    trExpr c, dest, n, tar # iterator call
+    dest.add head
+    dest.addTarget tar
+    takeTree dest, n # for loop variables
+    trStmt c, dest, n
+    dest.addParRi(n.endInfo)
 
 proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## The iter call is consumed entirely by cps.nim's trCoroFor (it is
   ## rewritten to a wrapper call with extra args). Don't extract its result
   ## into a temp here — keep it verbatim so cps sees its original shape.
   let head = n.load()
-  inc n
-  dest.add head
-  takeTree dest, n # iter call, verbatim
-  trStmt c, dest, n # body
-  dest.takeParRi n
+  n.into:
+    dest.add head
+    takeTree dest, n # iter call, verbatim
+    trStmt c, dest, n # body
+    dest.addParRi(n.endInfo)
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var tmp = createTokenBuf(30)
@@ -810,7 +830,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
       trStmt c, dest, n
 
   if tar.m != IsIgnored:
-    tar.t.addSymUse tmp, n.info
+    tar.t.addSymUse tmp, n.endInfo # `n` is already past the block
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
@@ -839,41 +859,39 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of RetS, RaiseS, YldS:
     var tar = Target(m: IsEmpty)
     let head = n
-    inc n
-    trExpr c, dest, n, tar
-    dest.add head
-    dest.addTarget tar
-    dest.addParRi()
-    skipParRi n
-
-  of DiscardS:
-    if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
-      inc n
-      if n.kind == DotToken:
-        dest.takeToken n
-      else:
-        let typ = getType(c, n)
-        var tar = Target(m: IsBound)
-        trExpr c, dest, n, tar
-        # we must bind the result to a temporary variable!
-        let tmp = pool.syms.getOrIncl("`x." & $c.counter)
-        inc c.counter
-        let info = n.info
-        dest.addParLe LetS, info
-        dest.addSymDef tmp, info
-        dest.addEmpty2 info # no export marker, no pragmas
-        dest.copyTree typ
-        dest.addTarget tar
-        dest.addParRi()
-    else:
-      var tar = Target(m: IsEmpty)
-      let head = n
-      inc n
+    n.into:
       trExpr c, dest, n, tar
       dest.add head
       dest.addTarget tar
       dest.addParRi()
-    skipParRi n
+
+  of DiscardS:
+    let head = n
+    n.into:
+      if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
+        if n.kind == DotToken:
+          dest.takeToken n
+        else:
+          let typ = getType(c, n)
+          var tar = Target(m: IsBound)
+          trExpr c, dest, n, tar
+          # we must bind the result to a temporary variable!
+          let tmp = pool.syms.getOrIncl("`x." & $c.counter)
+          inc c.counter
+          let info = n.endInfo # the discard operand is consumed: `n` is at
+                               # the (possibly elided) close
+          dest.addParLe LetS, info
+          dest.addSymDef tmp, info
+          dest.addEmpty2 info # no export marker, no pragmas
+          dest.copyTree typ
+          dest.addTarget tar
+          dest.addParRi()
+      else:
+        var tar = Target(m: IsEmpty)
+        trExpr c, dest, n, tar
+        dest.add head
+        dest.addTarget tar
+        dest.addParRi()
 
   of WhileS:
     trWhile c, dest, n
@@ -960,7 +978,8 @@ proc needsBitCast(destType: Cursor; srcType: Cursor): bool =
 
 proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   let info = n.info
-  inc n # skip "cast" tag
+  let castStart = n # skip "cast" tag
+  n = sub(n)
 
   var destTypeBuf = createTokenBuf(8)
   takeTree destTypeBuf, n # copy dest type, n now at srcExpr
@@ -971,7 +990,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   if dtk notin {IntT, UIntT, FloatT, CharT, BoolT}:
     var srcTarget = Target(m: IsEmpty)
     trExpr c, dest, n, srcTarget
-    skipParRi n
+    n = castStart; skip n
     tar.t.addParLe CastX, info
     tar.t.addSubtree destType
     tar.t.addTarget srcTarget
@@ -983,7 +1002,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     # Same-family cast (e.g. int-to-int) - use plain C cast
     var srcTarget = Target(m: IsEmpty)
     trExpr c, dest, n, srcTarget
-    skipParRi n
+    n = castStart; skip n
     tar.t.addParLe CastX, info
     tar.t.addSubtree destType
     tar.t.addTarget srcTarget
@@ -994,7 +1013,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   # lower to copyMem(addr dest, addr src, sizeof(DstType))
   var srcTarget = Target(m: IsEmpty)
   trExpr c, dest, n, srcTarget
-  skipParRi n
+  n = castStart; skip n
 
   # Ensure source is a variable
   var srcSym: SymId

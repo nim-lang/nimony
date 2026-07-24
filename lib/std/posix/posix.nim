@@ -12,7 +12,7 @@ when defined(posix):
 
   type
     InAddrScalar* = uint32
-    Sighandler = proc (a: cint) {.noconv.}
+    Sighandler* = proc (a: cint) {.noconv.}
     FileHandle* = cint
     SocketHandle* = cint
 
@@ -93,24 +93,24 @@ when defined(posix):
 
       Stat* {.importc: "struct stat",
                header: "<sys/stat.h>", final, pure.} = object ## struct stat
-        st_dev* {.importc: "st_dev".} : Dev          ## Device ID of device containing file.
-        st_ino* {.importc: "st_ino".} : Ino          ## File serial number.
-        st_size* {.importc: "st_size".} : Off  ## For regular files, the file size in bytes.
+        st_dev* {.importc: "st_dev".}: Dev          ## Device ID of device containing file.
+        st_ino* {.importc: "st_ino".}: Ino          ## File serial number.
+        st_size* {.importc: "st_size".}: Off  ## For regular files, the file size in bytes.
                                               ## For symbolic links, the length in bytes of the
                                               ## pathname contained in the symbolic link.
                                               ## For a shared memory object, the length in bytes.
                                               ## For a typed memory object, the length in bytes.
                                               ## For other file types, the use of this field is
                                               ## unspecified.
-        st_mode* {.importc: "st_mode".} : Mode        ## Mode of file (see below).
+        st_mode* {.importc: "st_mode".}: Mode        ## Mode of file (see below).
         when defined(osx):
           # On macOS `st_mtime` is a macro that expands to `st_mtimespec.tv_sec`,
           # so declaring it as a separate field would alias `st_mtim` and trigger
           # a `-Winitializer-overrides` warning whenever a `Stat` value is zeroed.
-          st_mtim* {.importc: "st_mtimespec".} : Timespec ## Time of last data modification with nanosecond precision.
+          st_mtim* {.importc: "st_mtimespec".}: Timespec ## Time of last data modification with nanosecond precision.
         else:
-          st_mtime* {.importc: "st_mtime".} : int64     ## Time of last data modification (seconds since epoch).
-          st_mtim* {.importc: "st_mtim".} : Timespec      ## Time of last data modification with nanosecond precision.
+          st_mtime* {.importc: "st_mtime".}: int64     ## Time of last data modification (seconds since epoch).
+          st_mtim* {.importc: "st_mtim".}: Timespec      ## Time of last data modification with nanosecond precision.
 
 
   const StatHasNanoseconds* = defined(linux) or defined(freebsd) or
@@ -432,12 +432,12 @@ when defined(posix):
 
   # <sys/wait.h>
   proc WEXITSTATUS*(s: cint): cint =  (s and 0xff00) shr 8
-  proc WTERMSIG*(s:cint): cint = s and 0x7f
-  proc WSTOPSIG*(s:cint): cint = WEXITSTATUS(s)
-  proc WIFEXITED*(s:cint) : bool = WTERMSIG(s) == 0
-  proc WIFSIGNALED*(s:cint) : bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
-  proc WIFSTOPPED*(s:cint) : bool = (s and 0xff) == 0x7f
-  proc WIFCONTINUED*(s:cint) : bool = s == WCONTINUED
+  proc WTERMSIG*(s: cint): cint = s and 0x7f
+  proc WSTOPSIG*(s: cint): cint = WEXITSTATUS(s)
+  proc WIFEXITED*(s: cint): bool = WTERMSIG(s) == 0
+  proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
+  proc WIFSTOPPED*(s: cint): bool = (s and 0xff) == 0x7f
+  proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
 
   # -------- Process / pipe / exec bindings needed by std/osproc --------
   # The syscall-based subset (pipe/dup2/fork/exec/waitpid/kill/...) is provided
@@ -458,6 +458,17 @@ when defined(posix):
   type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
 
   when defined(nimNativeIo):
+    # GCC 14+ treats POSIX functions like `execve` as builtins with a known
+    # prototype (`int execve(const char*, char* const*, char* const*)`) and emits
+    # `-Wbuiltin-declaration-mismatch` against our header-free binding, whose only
+    # difference is pointer qualifiers (`char**` vs `char* const*`) — identical at
+    # the ABI level. Nothing in the C standard turns a POSIX declaration into a
+    # builtin, so this is GCC overreach; silence it here rather than smuggle
+    # `const`-qualified casts through every call site (nim-lang/nimony#2148).
+    # Guarded to GCC: clang has no such warning and would instead spam
+    # `-Wunknown-warning-option` for the flag it does not recognize.
+    when defined(gcc):
+      {.passC: "-Wno-builtin-declaration-mismatch".}
     proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
     proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
     proc fork*(): Pid {.importc: "fork", sideEffect.}
@@ -468,6 +479,10 @@ when defined(posix):
     # `rusage`. arkham lowers bare syscall names, so on the native backend we bind to
     # `wait4` directly and pass `rusage = nil` ourselves, keeping the 3-arg `waitpid`
     # signature the rest of the code (and the libc path) expects.
+    # No `<sys/wait.h>` header (strip it like mkdir/rmdir/unlink above): on Linux it
+    # transitively pulls `<unistd.h>`, whose `execve(const char*, char* const*, ...)`
+    # prototype conflicts with our bare `execve` binding. The status decoders and
+    # `WNOHANG`/`WCONTINUED` are all self-defined, so the header buys us nothing.
     proc wait4(pid: Pid; status: var cint; options: cint;
                rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
     proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =

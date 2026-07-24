@@ -45,12 +45,11 @@ Hexer accepts Nimony's grammar.
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import ".." / nimony / [langmodes, nifconfig]
 import lengcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
-import ".." / lib / vfs
+import ".." / lib / [vfs, nimversion]
 
 include ".." / lib / compat2
 
 const
-  Version = slurp("../../doc/version.md")
   Usage = "Hexer Compiler. Version " & Version & """
 
   (c) 2024-2025 Andreas Rumpf

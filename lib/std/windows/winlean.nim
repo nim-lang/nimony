@@ -361,6 +361,10 @@ when defined(windows):
                   lpOverlapped: nil pointer): WINBOOL {.
     importc: "WriteFile", stdcall, dynlib: "kernel32", sideEffect.}
 
+  proc getConsoleMode*(hConsoleHandle: Handle; lpMode: ptr DWORD): WINBOOL {.
+    importc: "GetConsoleMode", stdcall, dynlib: "kernel32", sideEffect.}
+    ## Succeeds only for console (terminal) handles; used as an `isatty` probe.
+
   proc createProcessW*(lpApplicationName: nil WideCString;
                       lpCommandLine: WideCString;
                       lpProcessAttributes: nil pointer;

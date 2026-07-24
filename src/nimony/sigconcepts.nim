@@ -14,7 +14,7 @@ import std / [sets, tables, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
-import nimony_model, decls, programs, semdata, typeprops, features, symtabs
+import nimony_model, decls, programs, semdata, typeprops, features, symtabs, conceptcache
 import ".." / lib / symparser
 
 proc isConceptType*(a: Cursor): bool {.inline.} =
@@ -49,29 +49,18 @@ proc conceptRoutineBasename*(routine: Cursor): StrId =
 proc collectSelfSymsInType*(typ: Cursor; result: var seq[SymId]) =
   ## Collect every `Self` typevar referenced inside a type tree.
   var typ = typ
-  var nested = 0
-  while nested >= 0:
-    case typ.kind
-    of Symbol:
-      let res = tryLoadSym(typ.symId)
-      if res.status == LacksNothing and res.decl.symKind == TypevarY:
-        if typ.symId notin result:
-          result.add typ.symId
-      inc typ
-      if nested == 0:
-        return
-    of ParLe:
-      inc nested
-      inc typ
-    of ParRi:
-      dec nested
-      inc typ
-      if nested == 0:
-        return
-    else:
-      inc typ
-      if nested == 0:
-        return
+  case typ.kind
+  of Symbol:
+    let res = tryLoadSym(typ.symId)
+    if res.status == LacksNothing and res.decl.symKind == TypevarY:
+      if typ.symId notin result:
+        result.add typ.symId
+  of ParLe:
+    typ.loopInto:
+      collectSelfSymsInType(typ, result)
+      skip typ
+  else:
+    discard
 
 proc conceptSelfSymFromSlot*(body: Cursor): SymId =
   let selfSlot = conceptSelfSlot(body)
@@ -139,6 +128,15 @@ iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basenam
     for cand in visibleNamedSyms(c, basename):
       if not seen.containsOrIncl(cand):
         yield cand
+
+proc collectConceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId): seq[SymId] =
+  let (hit, cached) = tryCandidatesFromCache(c, conceptSym, basename)
+  if hit:
+    return cached
+  result = default(seq[SymId])
+  for cand in conceptRoutineCandidates(c, conceptSym, basename):
+    result.add cand
+  storeCandidates(c, conceptSym, basename, result)
 
 proc routineHasNoSideEffect*(routine: Cursor): bool {.inline.} =
   let r = asRoutine(routine)

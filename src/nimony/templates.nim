@@ -30,77 +30,73 @@ type
 
 proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
                         e: var ExpansionContext; body: Cursor) =
-  var nested = 0
+  ## Expands a single tree/token of the template body into `dest`.
   var body = body
-  let isAtom = body.kind != ParLe
-  while true:
-    case body.kind
-    of UnknownToken, EofToken, DotToken, Ident:
-      dest.add body
-    of Symbol:
-      let s = body.symId
-      let arg = e.formalParams.getOrDefault(s)
-      if arg != default(Cursor):
-        dest.addSubtree arg
+  case body.kind
+  of UnknownToken, EofToken, DotToken, Ident:
+    dest.add body
+  of Symbol:
+    let s = body.symId
+    let arg = e.formalParams.getOrDefault(s)
+    if arg != default(Cursor):
+      dest.addSubtree arg
+    else:
+      let nv = e.newVars.getOrDefault(s)
+      if nv != SymId(0):
+        dest.add symToken(nv, body.info)
       else:
-        let nv = e.newVars.getOrDefault(s)
-        if nv != SymId(0):
-          dest.add symToken(nv, body.info)
+        let tv = e.inferred[].getOrDefault(s)
+        if tv != default(Cursor):
+          dest.addSubtree tv
         else:
-          let tv = e.inferred[].getOrDefault(s)
-          if tv != default(Cursor):
-            dest.addSubtree tv
-          else:
-            dest.add body # keep Symbol as it was
-    of SymbolDef:
-      let s = body.symId
-      let newDef = newSymId(c, s)
-      e.newVars[s] = newDef
-      dest.add symdefToken(newDef, body.info)
-    of StringLit, CharLit, IntLit, UIntLit, FloatLit:
+          dest.add body # keep Symbol as it was
+  of SymbolDef:
+    let s = body.symId
+    let newDef = newSymId(c, s)
+    e.newVars[s] = newDef
+    dest.add symdefToken(newDef, body.info)
+  of StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    dest.add body
+  of ParLe:
+    let forStmt = asForStmt(body)
+    if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
+      # the loop body is expanded once per matched vararg; the `(for …)`
+      # tree itself produces no output
+      assert forStmt.vars.substructureKind == UnpackflatU
+      var arg = e.firstVarargMatch
+      var fv = forStmt.vars
+      inc fv
+      inc fv
+      let vid = fv.symId
+      if arg.kind notin {DotToken, ParRi}:
+        while arg.hasMore:
+          e.formalParams[vid] = arg
+          expandTemplateImpl c, dest, e, forStmt.body
+          skip arg
+    elif body.exprKind == UnpackX:
+      var un = body
+      un = sub(un) # bounded: `kind` is ParRi for a bare `unpack()`
+      var arg = e.firstVarargMatch
+      if un.kind == ParRi:
+        # `unpack()` variant:
+        while arg.hasMore:
+          dest.takeTree arg
+      else:
+        # `unpack(fn)` variant:
+        while arg.hasMore:
+          dest.addParLe CallX, arg.info
+          dest.copyTree un # fn
+          dest.takeTree arg
+          dest.addParRi()
+    else:
       dest.add body
-    of ParLe:
-      let forStmt = asForStmt(body)
-      if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
-        assert forStmt.vars.substructureKind == UnpackflatU
-        var arg = e.firstVarargMatch
-        var fv = forStmt.vars
-        inc fv
-        inc fv
-        let vid = fv.symId
-        if arg.kind notin {DotToken, ParRi}:
-          while arg.hasMore:
-            e.formalParams[vid] = arg
-            expandTemplateImpl c, dest, e, forStmt.body
-            skip arg
-
-        skip body
-        unsafeDec body
-      elif body.exprKind == UnpackX:
-        inc body
-        var arg = e.firstVarargMatch
-        if body.kind == ParRi:
-          # `unpack()` variant:
-          while arg.hasMore:
-            dest.takeTree arg
-        else:
-          # `unpack(fn)` variant:
-          while arg.hasMore:
-            dest.addParLe CallX, arg.info
-            dest.copyTree body # fn
-            dest.takeTree arg
-            dest.addParRi()
+      body.into:
+        while body.hasMore:
+          expandTemplateImpl c, dest, e, body
           skip body
-          unsafeDec body
-      else:
-        dest.add body
-        inc nested
-    of ParRi:
-      dest.add body
-      dec nested
-      if nested == 0: break
-    if isAtom: break
-    inc body
+        dest.addParRi(body.endInfo)
+  of ParRi:
+    discard "cannot happen: subtree ends are consumed by the bounded scope"
 
 proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor): bool =
   result = false
@@ -113,18 +109,18 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
         p.into PluginP:
           # `.plugin: "path"` — single-string form only.
           var path = StrId(0)
-          var pathInfo = p.info
+          var pathInfo = p.endInfo # the pragma may be degenerate/empty
           if p.kind == StringLit:
             path = p.litId
             pathInfo = p.info
           if path != StrId(0):
             var b = createTokenBuf(30)
-            b.addParLe StmtsS, args.info
+            b.addParLe StmtsS, args.endInfo # zero-arg calls: args sits at a scope's end
             # Pass the invoked template's name as the first child of the input
             # so a single shared plugin can dispatch on which template was
             # called. The plugin reads it with `pluginName` and skips to
             # the real call-site arguments with `callArgs`.
-            b.add identToken(symToIdent(temp.name.symId), args.info)
+            b.add identToken(symToIdent(temp.name.symId), args.endInfo)
             var a = args
             while a.hasMore:
               b.takeTree a
@@ -171,62 +167,63 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   if oldHead.symKind != TemplateY: return false
 
   var newBuf = createTokenBuf(prog.mem[sym].buffer.len + 16)
-  newBuf.takeToken oldHead    # `(template`
-  newBuf.takeTree oldHead     # name (SymbolDef)
-  newBuf.takeTree oldHead     # exported marker
-  newBuf.takeTree oldHead     # pattern
-  let typevarsAt = newBuf.len
-  newBuf.takeTree oldHead     # typevars
-  let paramsAt = newBuf.len
-  newBuf.takeTree oldHead     # params
-  newBuf.takeTree oldHead     # return type
-  newBuf.takeTree oldHead     # pragmas
-  newBuf.takeTree oldHead     # effects
-  # oldHead is now positioned at the body.
+  newBuf.add oldHead          # `(template`
+  oldHead.into:
+    newBuf.takeTree oldHead     # name (SymbolDef)
+    newBuf.takeTree oldHead     # exported marker
+    newBuf.takeTree oldHead     # pattern
+    let typevarsAt = newBuf.len
+    newBuf.takeTree oldHead     # typevars
+    let paramsAt = newBuf.len
+    newBuf.takeTree oldHead     # params
+    newBuf.takeTree oldHead     # return type
+    newBuf.takeTree oldHead     # pragmas
+    newBuf.takeTree oldHead     # effects
+    # oldHead is now positioned at the body.
 
-  let oldRoutine = c.routine
-  c.routine = createSemRoutine(TemplateY, c.routine)
-  # Mirror `semProcImpl`'s template setup so the lazy body sem matches
-  # what phase 3 would do.
-  inc c.routine.inLoop
-  inc c.routine.inGeneric
-  c.openScope()  # parameter scope
-  c.openScope()  # body scope
+    let oldRoutine = c.routine
+    c.routine = createSemRoutine(TemplateY, c.routine)
+    # Mirror `semProcImpl`'s template setup so the lazy body sem matches
+    # what phase 3 would do.
+    inc c.routine.inLoop
+    inc c.routine.inGeneric
+    c.openScope()  # parameter scope
+    c.openScope()  # body scope
 
-  var ctx = createUntypedContext(addr c, UntypedTemplate, dirty = false)
-  addParams(ctx, newBuf, typevarsAt)
-  addParams(ctx, newBuf, paramsAt)
+    var ctx = createUntypedContext(addr c, UntypedTemplate, dirty = false)
+    addParams(ctx, newBuf, typevarsAt)
+    addParams(ctx, newBuf, paramsAt)
 
-  # `addParams` populates `ctx.params` (used by `getIdentReplaceParams`'s
-  # `isTemplParam` check) — but `getIdentReplaceParams` first calls
-  # `buildSymChoice`, which scans the actual SemContext scope. The
-  # original phase-3 path got params into scope via `semParams`, which
-  # ran `addSym` for each param. Lazily promoting from the published
-  # decl skips that, so re-attach the params to the scope here.
-  block addParamsToScope:
-    var p = readonlyCursorAt(newBuf, paramsAt)
-    if p.substructureKind == ParamsU:
-      p.into ParamsU:
-        while p.hasMore:
-          let param = asLocal(p)
-          if param.name.kind == SymbolDef:
-            var nameStr = pool.syms[param.name.symId]
-            extractBasename(nameStr)
-            if nameStr.len > 0:
-              let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
-              addOverloadable(c.currentScope,
-                              pool.strings.getOrIncl(nameStr), s)
-          skip p
+    # `addParams` populates `ctx.params` (used by `getIdentReplaceParams`'s
+    # `isTemplParam` check) — but `getIdentReplaceParams` first calls
+    # `buildSymChoice`, which scans the actual SemContext scope. The
+    # original phase-3 path got params into scope via `semParams`, which
+    # ran `addSym` for each param. Lazily promoting from the published
+    # decl skips that, so re-attach the params to the scope here.
+    block addParamsToScope:
+      var p = readonlyCursorAt(newBuf, paramsAt)
+      if p.substructureKind == ParamsU:
+        p.into ParamsU:
+          while p.hasMore:
+            let param = asLocal(p)
+            if param.name.kind == SymbolDef:
+              var nameStr = pool.syms[param.name.symId]
+              extractBasename(nameStr)
+              if nameStr.len > 0:
+                let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
+                addOverloadable(c.currentScope,
+                                pool.strings.getOrIncl(nameStr), s)
+            skip p
 
-  semTemplBody ctx, newBuf, oldHead
-  # `oldHead` is now past the body, sitting on the closing `)`.
+    semTemplBody ctx, newBuf, oldHead
+    # `oldHead` is now past the body, at the template's (possibly elided) close.
 
-  c.closeScope()  # body scope
-  c.closeScope()  # parameter scope
-  c.routine = oldRoutine
+    c.closeScope()  # body scope
+    c.closeScope()  # parameter scope
+    c.routine = oldRoutine
 
-  # Closing `)` for the template
-  newBuf.takeToken oldHead
+    # Closing `)` for the template
+    newBuf.addParRi(oldHead.endInfo)
 
   prog.mem[sym].buffer = newBuf
   prog.mem[sym].phase = SemcheckBodies

@@ -163,20 +163,18 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
   of ParLe:
     case exprKind(n)
     of OchoiceX, CchoiceX:
-      inc n
-      if n.kind == ParRi:
-        hasError = true
-      else:
-        filenameVal(n, res, hasError, allowAs)
-      while n.hasMore: skip n
-      consumeParRi n
+      n.peekInto:
+        if not n.hasMore:
+          hasError = true
+        else:
+          filenameVal(n, res, hasError, allowAs)
     of QuotedX:
       let s = pool.strings[takeUnquoted(n)]
       res.add ImportedFilename(path: s, name: s)
     of CallX, InfixX:
       var x = n
       skip n # ensure we skipped it completely
-      inc x
+      x = sub(x)
       let opId = takeIdent(x)
       if opId == StrId(0):
         hasError = true
@@ -186,12 +184,12 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
         if not allowAs:
           hasError = true
           return
-        if x.kind == ParRi:
+        if not x.hasMore:
           hasError = true
           return
         var rhs = x
         skip rhs # skip lhs
-        if rhs.kind == ParRi:
+        if not rhs.hasMore:
           hasError = true
           return
         let aliasId = takeIdent(rhs)
@@ -218,7 +216,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     of PrefixX:
       var x = n
       skip n # ensure we skipped it completely
-      inc x
+      x = sub(x)
       let opId = takeIdent(x)
       if opId == StrId(0):
         hasError = true

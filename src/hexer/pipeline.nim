@@ -84,10 +84,8 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("destroyer")
   injectDestructors(pass, c.liftingCtx)
 
-  # Special handling: Merge generated hooks
-  assert pass.dest[pass.dest.len-1].kind == ParRi
-  shrink(pass.dest, pass.dest.len-1)
-
+  # Special handling: Merge generated hooks. The destroyer left the root
+  # `(stmts` open for us; append the hooks, then close it.
   if c.liftingCtx[].dest.len > 0:
     var hookReader = beginRead(c.liftingCtx[].dest)
     #echo "HOOKS: ", toString(hookReader)

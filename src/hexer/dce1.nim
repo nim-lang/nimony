@@ -27,43 +27,37 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
   of ParLe:
     case n.stmtKind
     of ProcS, TypeS, VarS, ConstS, GvarS, TvarS:
-      inc n
-      var newOwner = owner
-      let symName = pool.syms[n.symId]
-      if n.kind == SymbolDef:
-        if isInstantiation(symName):
-          a.offers.incl(n.symId)
-        if not isLocalName(symName):
-          newOwner = n.symId
-
-      while n.hasMore:
-        tr n, a, newOwner
-      inc n
-    else:
-      if n.substructureKind == FldU:
-        inc n
-        let symName = pool.syms[n.symId]
+      n.into:
+        var newOwner = owner
         if n.kind == SymbolDef:
+          let symName = pool.syms[n.symId]
           if isInstantiation(symName):
             a.offers.incl(n.symId)
-      elif n.substructureKind == PragmasU:
+          if not isLocalName(symName):
+            newOwner = n.symId
+        while n.hasMore:
+          tr n, a, newOwner
+    else:
+      if n.substructureKind == PragmasU:
         # Check if this pragma section contains exportc
         # If so, mark the owner as a root (exportc symbols are entry points)
-        inc n
         var hasExportc = false
-        while n.hasMore:
-          if n.kind == ParLe and n.pragmaKind == ExportcP:
-            hasExportc = true
-          tr n, a, owner
-        inc n
+        n.into:
+          while n.hasMore:
+            if n.kind == ParLe and n.pragmaKind == ExportcP:
+              hasExportc = true
+            tr n, a, owner
         if hasExportc and owner != SymId(0):
           a.roots.incl(owner)
-        return
       else:
-        inc n
-      while n.hasMore:
-        tr n, a, owner
-      inc n
+        let isFld = n.substructureKind == FldU
+        n.into:
+          if isFld and n.kind == SymbolDef:
+            let symName = pool.syms[n.symId]
+            if isInstantiation(symName):
+              a.offers.incl(n.symId)
+          while n.hasMore:
+            tr n, a, owner
   of Symbol:
     if not isLocalName(pool.syms[n.symId]):
       if owner == SymId(0):

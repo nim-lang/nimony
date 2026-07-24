@@ -55,109 +55,126 @@ const
   OpenArrayHeadName* = "openArray.0." & SystemModuleSuffix
 
 proc createBuiltinTypes*(bits: int): BuiltinTypes =
+  # Positions are recorded while building rather than hardcoded, so the
+  # layout stays correct when `-d:virtualParRi` elides the `)` tokens.
   result = BuiltinTypes(mem: createTokenBuf(30))
 
-  result.mem.add tagToken"auto" # 0
-  result.mem.addParRi() # 1
+  let autoPos = result.mem.len
+  result.mem.add tagToken"auto"
+  result.mem.addParRi()
 
+  let stringPos = result.mem.len
   when true:
-    result.mem.add symToken(pool.syms.getOrIncl(StringName), NoLineInfo) # 2
-    result.mem.addDotToken() # 3
+    result.mem.add symToken(pool.syms.getOrIncl(StringName), NoLineInfo)
+    result.mem.addDotToken()
   else:
-    result.mem.add tagToken"string" # 2
-    result.mem.addParRi() # 3
+    result.mem.add tagToken"string"
+    result.mem.addParRi()
 
-  result.mem.add tagToken"bool" # 4
-  result.mem.addParRi() # 5
+  let boolPos = result.mem.len
+  result.mem.add tagToken"bool"
+  result.mem.addParRi()
 
   let configBits = pool.integers.getOrIncl(bits)
-  result.mem.add tagToken"i" # 6
-  result.mem.add intToken(configBits, NoLineInfo) # 7
-  result.mem.addParRi() # 8
+  let intPos = result.mem.len
+  result.mem.add tagToken"i"
+  result.mem.add intToken(configBits, NoLineInfo)
+  result.mem.addParRi()
 
-  result.mem.add tagToken"u" # 9
-  result.mem.add intToken(configBits, NoLineInfo) # 10
-  result.mem.addParRi() # 11
+  let uintPos = result.mem.len
+  result.mem.add tagToken"u"
+  result.mem.add intToken(configBits, NoLineInfo)
+  result.mem.addParRi()
 
-  result.mem.add tagToken"f" # 12
-  result.mem.add intToken(pool.integers.getOrIncl(64), NoLineInfo) # 13
-  result.mem.addParRi() # 14
+  let floatPos = result.mem.len
+  result.mem.add tagToken"f"
+  result.mem.add intToken(pool.integers.getOrIncl(64), NoLineInfo)
+  result.mem.addParRi()
 
-  result.mem.add tagToken"c" # 15
-  result.mem.add intToken(pool.integers.getOrIncl(8), NoLineInfo) # 16
-  result.mem.addParRi() # 17
+  let charPos = result.mem.len
+  result.mem.add tagToken"c"
+  result.mem.add intToken(pool.integers.getOrIncl(8), NoLineInfo)
+  result.mem.addParRi()
 
-  result.mem.add dotToken(NoLineInfo) # 18
+  let voidPos = result.mem.len
+  result.mem.add dotToken(NoLineInfo)
 
-  result.mem.add tagToken"nilt" # 19
-  result.mem.addParRi() # 20
+  let niltPos = result.mem.len
+  result.mem.add tagToken"nilt"
+  result.mem.addParRi()
 
-  template addBitsType(tag: string, bits: int) =
-    # adds 3
-    result.mem.add tagToken(tag) # +1
-    result.mem.add intToken(pool.integers.getOrIncl(bits), NoLineInfo) # +2
-    result.mem.addParRi() # +3
+  template addBitsType(tag: string, bits: int): int =
+    let pos = result.mem.len
+    result.mem.add tagToken(tag)
+    result.mem.add intToken(pool.integers.getOrIncl(bits), NoLineInfo)
+    result.mem.addParRi()
+    pos
 
-  addBitsType "i", 8 # 21
-  addBitsType "i", 16 # 24
-  addBitsType "i", 32 # 27
-  addBitsType "i", 64 # 30
+  let int8Pos = addBitsType("i", 8)
+  let int16Pos = addBitsType("i", 16)
+  let int32Pos = addBitsType("i", 32)
+  let int64Pos = addBitsType("i", 64)
 
-  addBitsType "u", 8 # 33
-  addBitsType "u", 16 # 36
-  addBitsType "u", 32 # 39
-  addBitsType "u", 64 # 42
+  let uint8Pos = addBitsType("u", 8)
+  let uint16Pos = addBitsType("u", 16)
+  let uint32Pos = addBitsType("u", 32)
+  let uint64Pos = addBitsType("u", 64)
 
-  addBitsType "f", 32 # 45
-  addBitsType "f", 64 # 48
+  let float32Pos = addBitsType("f", 32)
+  let float64Pos = addBitsType("f", 64)
 
-  result.mem.add tagToken"tuple" # 51
-  result.mem.addParRi() # 52
+  let tuplePos = result.mem.len
+  result.mem.add tagToken"tuple"
+  result.mem.addParRi()
 
-  result.mem.add tagToken"untyped" # 53
-  result.mem.addParRi() # 54
+  let untypedPos = result.mem.len
+  result.mem.add tagToken"untyped"
+  result.mem.addParRi()
 
-  result.mem.add tagToken"cstring" # 55
-  result.mem.add tagToken"notnil" # 56
-  result.mem.addParRi() # 57 close notnil
-  result.mem.addParRi() # 58 close cstring
+  let cstringPos = result.mem.len
+  result.mem.add tagToken"cstring"
+  result.mem.add tagToken"notnil"
+  result.mem.addParRi() # close notnil
+  result.mem.addParRi() # close cstring
 
   # UncheckedArray[pointer] = (uarray (ptr (void)))
-  result.mem.add tagToken"uarray" # 59
-  result.mem.add tagToken"ptr" # 60
-  result.mem.add tagToken"void" # 61
-  result.mem.addParRi() # 62 close void
-  result.mem.addParRi() # 63 close ptr
-  result.mem.addParRi() # 64 close uarray
+  let vtablePos = result.mem.len
+  result.mem.add tagToken"uarray"
+  result.mem.add tagToken"ptr"
+  result.mem.add tagToken"void"
+  result.mem.addParRi() # close void
+  result.mem.addParRi() # close ptr
+  result.mem.addParRi() # close uarray
 
-  result.mem.add symToken(pool.syms.getOrIncl(ContinuationName), NoLineInfo) # 65
+  let continuationPos = result.mem.len
+  result.mem.add symToken(pool.syms.getOrIncl(ContinuationName), NoLineInfo)
 
   result.mem.freeze()
 
-  result.autoType = result.mem.cursorAt(0)
-  result.stringType = result.mem.cursorAt(2)
-  result.boolType = result.mem.cursorAt(4)
-  result.intType = result.mem.cursorAt(6)
-  result.uintType = result.mem.cursorAt(9)
-  result.floatType = result.mem.cursorAt(12)
-  result.charType = result.mem.cursorAt(15)
-  result.voidType = result.mem.cursorAt(18)
-  result.nilType = result.mem.cursorAt(19)
-  result.int8Type = result.mem.cursorAt(21)
-  result.int16Type = result.mem.cursorAt(24)
-  result.int32Type = result.mem.cursorAt(27)
-  result.int64Type = result.mem.cursorAt(30)
-  result.uint8Type = result.mem.cursorAt(33)
-  result.uint16Type = result.mem.cursorAt(36)
-  result.uint32Type = result.mem.cursorAt(39)
-  result.uint64Type = result.mem.cursorAt(42)
-  result.float32Type = result.mem.cursorAt(45)
-  result.float64Type = result.mem.cursorAt(48)
-  result.emptyTupleType = result.mem.cursorAt(51)
-  result.untypedType = result.mem.cursorAt(53)
-  result.cstringType = result.mem.cursorAt(55)
-  result.vtableType = result.mem.cursorAt(59)
-  result.continuationType = result.mem.cursorAt(65)
+  result.autoType = result.mem.cursorAt(autoPos)
+  result.stringType = result.mem.cursorAt(stringPos)
+  result.boolType = result.mem.cursorAt(boolPos)
+  result.intType = result.mem.cursorAt(intPos)
+  result.uintType = result.mem.cursorAt(uintPos)
+  result.floatType = result.mem.cursorAt(floatPos)
+  result.charType = result.mem.cursorAt(charPos)
+  result.voidType = result.mem.cursorAt(voidPos)
+  result.nilType = result.mem.cursorAt(niltPos)
+  result.int8Type = result.mem.cursorAt(int8Pos)
+  result.int16Type = result.mem.cursorAt(int16Pos)
+  result.int32Type = result.mem.cursorAt(int32Pos)
+  result.int64Type = result.mem.cursorAt(int64Pos)
+  result.uint8Type = result.mem.cursorAt(uint8Pos)
+  result.uint16Type = result.mem.cursorAt(uint16Pos)
+  result.uint32Type = result.mem.cursorAt(uint32Pos)
+  result.uint64Type = result.mem.cursorAt(uint64Pos)
+  result.float32Type = result.mem.cursorAt(float32Pos)
+  result.float64Type = result.mem.cursorAt(float64Pos)
+  result.emptyTupleType = result.mem.cursorAt(tuplePos)
+  result.untypedType = result.mem.cursorAt(untypedPos)
+  result.cstringType = result.mem.cursorAt(cstringPos)
+  result.vtableType = result.mem.cursorAt(vtablePos)
+  result.continuationType = result.mem.cursorAt(continuationPos)
 
 proc isStringType*(a: Cursor): bool {.inline.} =
   result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)

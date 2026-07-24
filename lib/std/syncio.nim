@@ -26,7 +26,7 @@ type
     fspSet               ## Seek to absolute value
     fspCur               ## Seek relative to current position
     fspEnd               ## Seek relative to end
-  
+
   FilePermission* = enum   ## File access permission, modelled after UNIX.
     fpUserExec,            ## execute access for the file owner
     fpUserWrite,           ## write access for the file owner
@@ -121,6 +121,11 @@ when defined(nimNativeIo):
     proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
       File(fd: fd, flags: flags)
 
+    proc getFileHandle*(f: File): Handle {.inline.} =
+      ## The underlying Win32 handle (libc-free build). Used e.g. by
+      ## `std/terminal`'s `isatty`, which has no `_fileno`/`FILE*` to go through.
+      f.fd
+
     let
       stdin* = newFile(getStdHandle(STD_INPUT_HANDLE), {ffReadable})
         ## Standard input file handle.
@@ -133,18 +138,29 @@ when defined(nimNativeIo):
     # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}
     proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "read".}
-    proc sysOpen(path: cstring; flags, mode: cint): cint {.importc: "open".}
+    proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
     proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
     proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
 
-    const
-      # Linux open(2) flags (stable across x86_64/arm64).
-      O_RDONLY = 0'i32
-      O_WRONLY = 1'i32
-      O_RDWR   = 2'i32
-      O_CREAT  = 0o100'i32
-      O_TRUNC  = 0o1000'i32
-      O_APPEND = 0o2000'i32
+    when defined(macosx) or defined(macos) or defined(freebsd) or
+         defined(openbsd) or defined(netbsd) or defined(dragonfly):
+      const
+        # BSD/Darwin open(2) flags (differ from Linux; O_RDONLY/WRONLY/RDWR match).
+        O_RDONLY = 0x0000'i32
+        O_WRONLY = 0x0001'i32
+        O_RDWR   = 0x0002'i32
+        O_CREAT  = 0x0200'i32
+        O_TRUNC  = 0x0400'i32
+        O_APPEND = 0x0008'i32
+    else:
+      const
+        # Linux open(2) flags (stable across x86_64/arm64).
+        O_RDONLY = 0'i32
+        O_WRONLY = 1'i32
+        O_RDWR   = 2'i32
+        O_CREAT  = 0o100'i32
+        O_TRUNC  = 0o1000'i32
+        O_APPEND = 0o2000'i32
 
     proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
       File(fd: fd, flags: flags)

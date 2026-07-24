@@ -28,7 +28,11 @@ const
 
 
 when defined(windows):
-  proc GetLastError(): int32 {.importc, header: "<windows.h>", nodecl.}
+  # Bare kernel32 import (no `header: "<windows.h>"`): nimony emits the
+  # prototype and the linker binds the symbol, keeping the `system` translation
+  # unit header-free for the all-native target (see `system/panics`). `nodecl`
+  # is dropped along with the header so a prototype is actually emitted.
+  proc GetLastError(): int32 {.importc: "GetLastError", stdcall.}
   const ERROR_BAD_EXE_FORMAT = 193
 
 proc nimLoadLibraryError(path: string) =
@@ -135,13 +139,15 @@ elif defined(windows) or defined(dos):
     # TODO: use `importc: "HINSTANCE"` when available
     type
       THINSTANCE = pointer
+  # Bare kernel32 imports (no `<windows.h>`) — nimony emits the prototypes and
+  # the linker binds them, keeping the `system` unit header-free (see `panics`).
   proc getProcAddress(lib: THINSTANCE, name: cstring): ProcAddr {.
-      importc: "GetProcAddress", header: "<windows.h>", stdcall.}
+      importc: "GetProcAddress", stdcall.}
 
   proc freeLibrary(lib: THINSTANCE) {.
-      importc: "FreeLibrary", header: "<windows.h>", stdcall.}
+      importc: "FreeLibrary", stdcall.}
   proc winLoadLibrary(path: cstring): THINSTANCE {.
-      importc: "LoadLibraryA", header: "<windows.h>", stdcall.}
+      importc: "LoadLibraryA", stdcall.}
 
   proc nimUnloadLibrary(lib: LibHandle) =
     freeLibrary(cast[THINSTANCE](lib))

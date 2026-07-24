@@ -35,15 +35,18 @@ proc semBindStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toBind: v
       # the same symbol!
       # This is however not true anymore for hygienic templates as semantic
       # processing for them changes the symbol table...
+      # Capture the identifier's info up front: `takeIdent` consumes it, so
+      # afterwards `n` may sit on the (virtual) ParRi where `n.info` asserts.
+      let info = n.info
       let name = takeIdent(n)
       if name == StrId(0):
-        c.buildErr dest, n.info, "invalid identifier"
+        c.buildErr dest, info, "invalid identifier"
       var symsBuf = createTokenBuf(4)
-      discard buildSymChoice(c, symsBuf, name, n.info, FindAll)
+      discard buildSymChoice(c, symsBuf, name, info, FindAll)
       var syms = cursorAt(symsBuf, 0)
       case syms.kind
       of Ident:
-        c.buildErr dest, n.info, "undeclared identifier: " & pool.strings[syms.litId]
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
       of Symbol:
         dest.add syms
       else:
@@ -60,11 +63,14 @@ proc semMixinStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; toMixin:
   dest.add n
   n.into:  # (mixin …)
     while n.hasMore:
+      # Capture the identifier's info up front: `takeIdent` consumes it, so
+      # afterwards `n` may sit on the (virtual) ParRi where `n.info` asserts.
+      let info = n.info
       let name = takeIdent(n)
       if name == StrId(0):
-        c.buildErr dest, n.info, "invalid identifier"
+        c.buildErr dest, info, "invalid identifier"
       toMixin.incl(name)
-      discard buildSymChoice(c, dest, name, n.info, FindAll)
+      discard buildSymChoice(c, dest, name, info, FindAll)
   dest.addParRi()
 
 type
@@ -335,82 +341,79 @@ proc semTemplTypeDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   let orig = n
   let decl = asTypeDecl(orig)
   let declStart = dest.len
-  takeToken dest, n
-  let nameStart = dest.len
-  takeTree dest, n # name
-  addDecl(c, dest, decl.name, decl.pragmas, TypeY, nameStart, declStart)
-  takeTree dest, n # exported
-  let isGeneric = n.substructureKind == TypevarsU
-  if isGeneric:
-    openScope c
-    semTemplGenericParams c, dest, n
-  else:
-    takeToken dest, n
-  semTemplPragmas c, dest, n # pragmas
-  semTemplType c, dest, n # body
-  takeParRi dest, n
-  if isGeneric:
-    closeScope c
+  copyInto dest, n:
+    let nameStart = dest.len
+    takeTree dest, n # name
+    addDecl(c, dest, decl.name, decl.pragmas, TypeY, nameStart, declStart)
+    takeTree dest, n # exported
+    let isGeneric = n.substructureKind == TypevarsU
+    if isGeneric:
+      openScope c
+      semTemplGenericParams c, dest, n
+    else:
+      takeToken dest, n
+    semTemplPragmas c, dest, n # pragmas
+    semTemplType c, dest, n # body
+    if isGeneric:
+      closeScope c
 
 proc semTemplLocal(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymKind) =
   let local = asLocal(n)
   let declStart = dest.len
-  takeToken dest, n
-  let nameStart = dest.len
-  takeTree dest, n # name
-  addDecl(c, dest, local.name, local.pragmas, k, nameStart, declStart)
-  takeTree dest, n # exported
-  semTemplPragmas c, dest, n # pragmas
-  if k == ConstY and n.kind == DotToken:
-    # const without explicit type: emit (auto) so the type slot is non-empty
-    # in the stored generic/template body; the actual type is inferred
-    # at instantiation time when semLocal processes the (auto) placeholder.
-    dest.add parLeToken(AutoT, n.info)
-    dest.addParRi()
-    inc n
-  else:
-    semTemplType c, dest, n # type
-  semTemplBody c, dest, n # value
-  takeParRi dest, n
+  copyInto dest, n:
+    let nameStart = dest.len
+    takeTree dest, n # name
+    addDecl(c, dest, local.name, local.pragmas, k, nameStart, declStart)
+    takeTree dest, n # exported
+    semTemplPragmas c, dest, n # pragmas
+    if k == ConstY and n.kind == DotToken:
+      # const without explicit type: emit (auto) so the type slot is non-empty
+      # in the stored generic/template body; the actual type is inferred
+      # at instantiation time when semLocal processes the (auto) placeholder.
+      dest.add parLeToken(AutoT, n.info)
+      dest.addParRi()
+      inc n
+    else:
+      semTemplType c, dest, n # type
+    semTemplBody c, dest, n # value
 
 proc semTemplRoutineDecl(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; k: SymKind) =
   let orig = n
   let routine = asRoutine(orig)
   let declStart = dest.len
-  takeToken dest, n # proc/func/etc tag
-  let nameStart = dest.len
-  takeTree dest, n # name
-  addDecl(c, dest, routine.name, routine.pragmas, k, nameStart, declStart)
-  takeTree dest, n # exported
-  semTemplBody c, dest, n # pattern
-  let isGeneric = n.substructureKind == TypevarsU
-  if isGeneric:
+  copyInto dest, n: # proc/func/etc tag
+    let nameStart = dest.len
+    takeTree dest, n # name
+    addDecl(c, dest, routine.name, routine.pragmas, k, nameStart, declStart)
+    takeTree dest, n # exported
+    semTemplBody c, dest, n # pattern
+    let isGeneric = n.substructureKind == TypevarsU
+    if isGeneric:
+      openScope c
+      semTemplGenericParams c, dest, n
+    else:
+      takeToken dest, n
+    # params open a scope
     openScope c
-    semTemplGenericParams c, dest, n
-  else:
-    takeToken dest, n
-  # params open a scope
-  openScope c
-  inc c.inNestedRoutine
-  inc c.inTemplateHeader
-  if n.substructureKind == ParamsU:
-    dest.add n
-    n.into ParamsU:
-      while n.hasMore:
-        semTemplLocal(c, dest, n, ParamY)
-    dest.addParRi()
-  else:
-    takeToken dest, n # dot
-  dec c.inTemplateHeader
-  semTemplType c, dest, n # return type
-  semTemplPragmas c, dest, n # pragmas
-  semTemplBody c, dest, n # effects
-  semTemplBody c, dest, n # body
-  dec c.inNestedRoutine
-  closeScope c
-  if isGeneric:
+    inc c.inNestedRoutine
+    inc c.inTemplateHeader
+    if n.substructureKind == ParamsU:
+      dest.add n
+      n.into ParamsU:
+        while n.hasMore:
+          semTemplLocal(c, dest, n, ParamY)
+      dest.addParRi()
+    else:
+      takeToken dest, n # dot
+    dec c.inTemplateHeader
+    semTemplType c, dest, n # return type
+    semTemplPragmas c, dest, n # pragmas
+    semTemplBody c, dest, n # effects
+    semTemplBody c, dest, n # body
+    dec c.inNestedRoutine
     closeScope c
-  takeParRi dest, n
+    if isGeneric:
+      closeScope c
 
 proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -441,9 +444,8 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
           dest.shrink start
           dest.add symToken(firstSym, n.info)
         else:
-          let tag = dest[start]
-          assert tag.kind == ParLe
-          dest[start] = parLeToken(CchoiceX, tag.info)
+          assert dest[start].kind == ParLe
+          setTag(dest[start], TagId(CchoiceX)) # keeps the sealed jump
       elif contains(c.toMixin, n.litId):
         if count == 1:
           dest.shrink start
@@ -499,12 +501,11 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
               skip n  # avoid infinite loop on illformed
         dest.addParRi()
       of WhileS:
-        takeToken dest, n
-        semTemplBody c, dest, n
-        openScope c
-        semTemplBody c, dest, n
-        closeScope c
-        takeParRi dest, n
+        copyInto dest, n:
+          semTemplBody c, dest, n
+          openScope c
+          semTemplBody c, dest, n
+          closeScope c
       of CaseS:
         dest.add n
         openScope c
@@ -541,33 +542,31 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
         closeScope c
         dest.addParRi()
       of ForS:
-        takeToken dest, n
-        openScope c
-        semTemplBody c, dest, n
-        case n.substructureKind
-        of UnpackflatU, UnpacktupU:
-          semTemplBodySons c, dest, n
-        else:
-          error "illformed AST", n
-        openScope c
-        semTemplBody c, dest, n
-        closeScope c
-        closeScope c
-        takeParRi dest, n
+        copyInto dest, n:
+          openScope c
+          semTemplBody c, dest, n
+          case n.substructureKind
+          of UnpackflatU, UnpacktupU:
+            semTemplBodySons c, dest, n
+          else:
+            error "illformed AST", n
+          openScope c
+          semTemplBody c, dest, n
+          closeScope c
+          closeScope c
       of BlockS:
         let orig = n
         let declStart = dest.len
-        takeToken dest, n
-        openScope c
-        if n.kind == DotToken:
-          takeToken dest, n
-        else:
-          let nameStart = dest.len
-          takeTree dest, n
-          addBareDecl(c, dest, orig, BlockY, nameStart, declStart)
-        semTemplBody c, dest, n
-        closeScope c
-        takeParRi dest, n
+        copyInto dest, n:
+          openScope c
+          if n.kind == DotToken:
+            takeToken dest, n
+          else:
+            let nameStart = dest.len
+            takeTree dest, n
+            addBareDecl(c, dest, orig, BlockY, nameStart, declStart)
+          semTemplBody c, dest, n
+          closeScope c
       of VarS: semTemplLocal(c, dest, n, VarY)
       of LetS: semTemplLocal(c, dest, n, LetY)
       of ConstS: semTemplLocal(c, dest, n, ConstY)
@@ -595,16 +594,15 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
       semTemplBodySons c, dest, n
     of DotX:
       # XXX qualified symbols not special cased here, not tested if this works
-      takeToken dest, n
-      semTemplBody c, dest, n
-      # XXX unsure if this is 1 to 1 with `fuzzyLookup`
-      inc c.noGenSym
-      semTemplBody c, dest, n
-      dec c.noGenSym
-      if n.hasMore:
-        # annoying inheritance depth:
-        takeTree dest, n
-      takeParRi dest, n
+      copyInto dest, n:
+        semTemplBody c, dest, n
+        # XXX unsure if this is 1 to 1 with `fuzzyLookup`
+        inc c.noGenSym
+        semTemplBody c, dest, n
+        dec c.noGenSym
+        if n.hasMore:
+          # annoying inheritance depth:
+          takeTree dest, n
     of QuotedX:
       let ident = getIdent(n)
       # emulate `qualifiedLookUp(n) != nil`:

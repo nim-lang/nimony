@@ -67,7 +67,7 @@ proc peelComparableArg(n: Cursor): Cursor =
     case result.exprKind
     of ExprX:
       var it = result
-      inc it
+      it = sub(it)  # throwaway copy; bounds the walk under vpr
       while it.hasMore:
         if isLastSon(it):
           result = it
@@ -159,7 +159,7 @@ proc isExhaustive(n: Cursor; exhaustiveKind: SubstructureKind): bool =
   var it = n
   if it.kind != ParLe:
     return false
-  inc it
+  it = sub(it)  # throwaway copy; bounds the walk under vpr
   var lastKind = NoSub
   while it.hasMore:
     lastKind = it.substructureKind
@@ -172,13 +172,13 @@ proc getCallInfo(n: Cursor; attachedOp: var AttachedOp; arg: var Cursor): bool =
   if n.exprKind notin CallKinds and n.stmtKind notin {CallS, CmdS, HcallS, CallstrlitS, InfixS, PrefixS}:
     return false
   var it = n
-  inc it
+  it = sub(it)  # throwaway copy; bounds the peek under vpr
   if it.kind != Symbol:
     return false
   if not getAttachedOp(it.symId, attachedOp):
     return false
   inc it
-  if it.kind == ParRi:
+  if not it.hasMore:
     return false
   arg = it
   result = true
@@ -198,14 +198,12 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor)
 
 proc analyseChildren(c: var Con; b: var BasicBlock; n: var Cursor) =
   assert n.kind == ParLe
-  inc n
-  while n.kind != ParRi and n.kind != EofToken:
-    let before = cursorToPosition(c.source[], n)
-    analyse(c, b, n)
-    if n.kind != ParRi and n.kind != EofToken and cursorToPosition(c.source[], n) == before:
-      skip n
-  if n.kind == ParRi:
-    inc n
+  n.into:
+    while n.hasMore and n.kind != EofToken:
+      let before = cursorToPosition(c.source[], n)
+      analyse(c, b, n)
+      if n.hasMore and n.kind != EofToken and cursorToPosition(c.source[], n) == before:
+        skip n
 
 proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
   case n.kind
@@ -342,11 +340,9 @@ proc opt(c: Con; n: var Cursor; dest: var TokenBuf) =
       dest.add dotToken(n.info)
       skip n
     else:
-      dest.add n
-      inc n
-      while n.hasMore:
-        opt(c, n, dest)
-      dest.takeParRi n
+      takeInto dest, n:
+        while n.hasMore:
+          opt(c, n, dest)
   of ParRi:
     raiseAssert "unexpected ')' in tree rewrite"
   of Symbol, SymbolDef, DotToken, UnknownToken, EofToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -406,10 +402,11 @@ proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits
         dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.takeToken n
-      while n.hasMore:
-        runArcoptTree(dest, n, moduleSuffix, bits)
-      dest.takeToken n
+      dest.add n.load()
+      n.into:
+        while n.hasMore:
+          runArcoptTree(dest, n, moduleSuffix, bits)
+      dest.addParRi()
   of ParRi:
     raiseAssert "ParRi should not be encountered here"
   else:

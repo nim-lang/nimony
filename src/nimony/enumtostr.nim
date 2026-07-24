@@ -15,48 +15,48 @@ import decls, nimony_model, semdata, sembasics, symtabs, programs
 proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var Cursor; symId, enumSymId: SymId) =
   dest.add tagToken("case", enumDecl.info)
   dest.add symToken(symId, enumDecl.info)
-  inc enumDecl # skips enum
-  skip enumDecl # skips base type
-  while enumDecl.hasMore:
-    let enumDeclInfo = enumDecl.info
-    dest.add tagToken("of", enumDeclInfo)
+  enumDecl.into: # enum
+    skip enumDecl # skips base type
+    while enumDecl.hasMore:
+      let enumDeclInfo = enumDecl.info
+      dest.add tagToken("of", enumDeclInfo)
 
-    dest.add tagToken("ranges", enumDeclInfo)
+      dest.add tagToken("ranges", enumDeclInfo)
 
-    inc enumDecl # into efld
-    let symId = enumDecl.symId
-    let symInfo = enumDecl.info
-    inc enumDecl                # past name (SymbolDef)
-    skip enumDecl, SkipExport   # export marker
-    skip enumDecl, SkipPragmas  # pragmas
-    skip enumDecl, SkipType     # type
+      var symId: SymId
+      var symInfo: PackedLineInfo
+      var fieldValue: Cursor
+      enumDecl.into: # efld
+        symId = enumDecl.symId
+        symInfo = enumDecl.info
+        inc enumDecl                # past name (SymbolDef)
+        skip enumDecl, SkipExport   # export marker
+        skip enumDecl, SkipPragmas  # pragmas
+        skip enumDecl, SkipType     # type
 
-    inc enumDecl # into tupleConstr
-    skip enumDecl # skips counter field
-    var fieldValue = enumDecl
-    skip enumDecl # skips string value
-    skipParRi enumDecl
+        enumDecl.into: # tupleConstr
+          skip enumDecl # skips counter field
+          fieldValue = enumDecl
+          skip enumDecl # skips string value
 
-    skipParRi enumDecl
+      while enumDecl.hasMore and enumDecl.kind == ParLe and enumDecl.tagId == nifstreams.ErrT:
+        skip enumDecl
 
-    while enumDecl.kind == ParLe and enumDecl.tagId == nifstreams.ErrT:
-      skip enumDecl
+      dest.add symToken(symId, symInfo)
+      dest.addParRi() # ranges
 
-    dest.add symToken(symId, symInfo)
-    dest.addParRi() # ranges
+      dest.add tagToken("stmts", enumDeclInfo)
+      dest.add tagToken("ret", enumDeclInfo)
+      if fieldValue.kind == StringLit:
+        dest.add strToken(fieldValue.litId, enumDeclInfo)
+      else:
+        # handle errors
+        dest.addSubtree fieldValue
 
-    dest.add tagToken("stmts", enumDeclInfo)
-    dest.add tagToken("ret", enumDeclInfo)
-    if fieldValue.kind == StringLit:
-      dest.add strToken(fieldValue.litId, enumDeclInfo)
-    else:
-      # handle errors
-      dest.addSubtree fieldValue
+      dest.addParRi() # ret
+      dest.addParRi() # stmts
 
-    dest.addParRi() # ret
-    dest.addParRi() # stmts
-
-    dest.addParRi() # of
+      dest.addParRi() # of
 
   dest.addParRi() # case
 
@@ -67,7 +67,7 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   let dollorName = "dollar`." & pool.syms[enumSymId]
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
-  dest.add tagToken("proc", enumSymInfo)
+  dest.add tagToken("func", enumSymInfo)
   dest.add symdefToken(dollorSymId, enumSymInfo)
 
   # TODO: defaults to (nodecl)
@@ -103,4 +103,4 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   genEnumToStrProcCase(c, dest, body, paramSymId, enumSymId)
   dest.addParRi() # stmts
 
-  dest.addParRi() # proc
+  dest.addParRi() # func

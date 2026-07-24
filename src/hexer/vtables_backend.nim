@@ -37,7 +37,7 @@ type
   MethodDecl = object
     cls: SymId
     name: SymId
-    paramRest: Cursor
+    params: Cursor  # the routine's `(params …)` node
 
   Context* = object
     tmpCounter: int
@@ -276,59 +276,55 @@ proc maybeImport(c: var Context; cls, vtabName: SymId) =
 
 proc trGetRtti(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n # call
-  skip n # skip "getRtti" symbol
-  assert n.kind == Symbol # we have the class name here
-  let typ = getType(c.typeCache, n)
-  let cls = getClass(typ)
-  let vtabName = getVTableName(c, cls)
-  dest.copyIntoKind AddrX, info:
-    dest.addSymUse vtabName, info
-    maybeImport(c, cls, vtabName)
-  inc n
-  skipParRi n
-
-proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  dest.takeToken n # objconstr
-  var cls = SymId(0)
-  if n.kind == Symbol and hasRtti(n.symId):
-    cls = n.symId
-
-  dest.takeTree n # type
-  if cls != SymId(0):
-    #dest.copyIntoKind KvU, info:
-    #  dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+  n.into: # call
+    skip n # skip "getRtti" symbol
+    assert n.kind == Symbol # we have the class name here
+    let typ = getType(c.typeCache, n)
+    let cls = getClass(typ)
     let vtabName = getVTableName(c, cls)
     dest.copyIntoKind AddrX, info:
       dest.addSymUse vtabName, info
-    maybeImport(c, cls, vtabName)
-  while n.hasMore:
-    tr c, dest, n
-  takeParRi dest, n
+      maybeImport(c, cls, vtabName)
+    inc n
+
+proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  takeInto dest, n: # objconstr
+    var cls = SymId(0)
+    if n.kind == Symbol and hasRtti(n.symId):
+      cls = n.symId
+
+    dest.takeTree n # type
+    if cls != SymId(0):
+      #dest.copyIntoKind KvU, info:
+      #  dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
+      let vtabName = getVTableName(c, cls)
+      dest.copyIntoKind AddrX, info:
+        dest.addSymUse vtabName, info
+      maybeImport(c, cls, vtabName)
+    while n.hasMore:
+      tr c, dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
   let fn = n.firstSon
   if not forceStaticCall and fn.kind == Symbol and isMethod(c, fn.symId):
-    dest.takeToken n # skip `(call)`
-    trMethodCall c, dest, n
-    takeParRi dest, n
+    takeInto dest, n: # `(call)`
+      trMethodCall c, dest, n
   elif fn.kind == Symbol and fn.symId == c.getRttiSym:
     trGetRtti c, dest, n
   else:
-    dest.takeToken n # skip `(call)`
-    while n.hasMore:
-      tr c, dest, n
-    takeParRi dest, n
+    takeInto dest, n: # `(call)`
+      while n.hasMore:
+        tr c, dest, n
 
 proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # (proccall fn args...) - static call, convert to regular call bypassing vtable
   let info = n.info
-  inc n  # skip (proccall
   dest.addParLe(CallS, info)
-  while n.hasMore:
-    tr c, dest, n
-  takeParRi dest, n
+  n.into:  # skip (proccall
+    while n.hasMore:
+      tr c, dest, n
+    dest.addParRi(n.endInfo)
 
 proc classData(typ: Cursor): (int, UHash) =
   var n = typ
@@ -482,12 +478,13 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
 
 proc trInstanceof(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  inc n # skip `instanceof`
-  let x = n
-  skip n
-  let typ = n
-  skip n # skip type
-  skipParRi n
+  var x = default(Cursor)
+  var typ = default(Cursor)
+  n.into: # instanceof
+    x = n
+    skip n
+    typ = n
+    skip n # skip type
   trInstanceofImpl c, dest, x, typ, info
 
 type
@@ -511,7 +508,8 @@ proc needsTemp(c: var Context; n: Cursor): MaybeTemp =
 proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
   let info = nn.info
   var n = nn
-  inc n # skip `baseobj`
+  let objStart = n # skip `baseobj`
+  n = sub(n)
   let typ = n
   skip n # skip type
   if n.kind == IntLit and pool.integers[n.intId] < 0:
@@ -566,7 +564,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
           copyIntoKind dest, AddrX, info:
             var bufn = beginRead(buf)
             tr c, dest, bufn
-    skipParRi n
+    n = objStart; skip n
   else:
     let isPtr = typ.typeKind in {RefT, PtrT}
     if isPtr:
@@ -576,7 +574,8 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
       dest.addSubtree typ
       skip n
       tr c, dest, n
-      takeParRi dest, n
+      dest.addParRi(n.endInfo)
+      n = objStart; skip n
     else:
       n = nn
       copyInto dest, n:
@@ -634,7 +633,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     raiseAssert "BUG: unexpected ParRi in vtables_backend.tr"
 
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
-  let sig = methodKey(methodName, m.paramRest)
+  let sig = methodKey(methodName, m.params)
   # see if this is an override:
   for inh in inheritanceChain(m.cls):
     let methodIndex = c.vtables.getOrQuit(inh).signatureToIndex.getOrDefault(sig, -1)
@@ -734,14 +733,14 @@ proc collectMethods(c: var Context; n: var Cursor) =
     if not r.isGeneric:
       var p = r.params
       if p.kind == ParLe:
-        inc p
+        p = sub(p) # peek at the first param only, never left
         let param = takeLocal(p, SkipFinalParRi)
         let cls = getClass(param.typ)
         if cls == SymId(0):
           error "cannot attach method to type " & typeToString(param.typ)
         else:
           # we might not have registered the class yet, so we use a single flat `methodDecls` list:
-          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, paramRest: p)
+          c.methodDecls.add MethodDecl(cls: cls, name: r.name.symId, params: r.params)
       else:
         error "method needs a first parameter of the class type: " & toString(orig, false)
   of TypeS:

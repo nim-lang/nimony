@@ -8,36 +8,10 @@ import duplifier
 
 proc hasContinueStmt(c: Cursor): bool =
   var c = c
-  var nested = 0
   result = false
-  while true:
-    case c.kind
-    of EofToken:
-      break
-    of ParLe:
-      case c.stmtKind
-      of ContinueS:
-        result = true
-        break
-      of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS,
-          GletS, TletS, LetS, CursorS, PatternvarS, ProcS, FuncS,
-          IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
-          BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS, BreakS, ForS,
-          WhileS, CoroforS, CaseS, RetS, YldS, StmtsS, PragmasS,
-          PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
-          FromimportS, ImportexceptS, ExportS, ExportexceptS,
-          CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
-          AssertS, CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
-          BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
-        inc nested
-        inc c
-    of ParRi:
-      dec nested
-      inc c
-    else:
-      inc c
-
-    if nested == 0:
+  linearScan c:
+    if c.stmtKind == ContinueS:
+      result = true
       break
 
 proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
@@ -68,7 +42,7 @@ proc getForVars(e: var EContext, forVars: Cursor): seq[Cursor] =
   var forVars = forVars
   if forVars.substructureKind notin {UnpackflatU, UnpacktupU}:
     error e, "`unpackflat` or `unpacktup` expected, but got: ", forVars
-  inc forVars # unpackflat/unpacktup
+  forVars = sub(forVars) # unpackflat/unpacktup; peek only, never left
   while forVars.hasMore:
     result.add forVars
     skip forVars
@@ -85,7 +59,10 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
     inc c
   else:
     var typ = local.typ
-    createDecl(e, dest, destSym, typ, c, info, VarS, needsAddr=false)
+    # Fresh SymId per yield expansion
+    let freshSym = pool.syms.getOrIncl("`ii." & $e.getTmpId)
+    res[destSym] = freshSym
+    createDecl(e, dest, freshSym, typ, c, info, VarS, needsAddr=false)
 
 proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor; needsAddr: bool) =
   assert typ.hasMore
@@ -114,12 +91,11 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
     connectSingleExprToLoopVar(e, dest, c, forVars[0], result)
   else:
     if c.kind == ParLe and c.exprKind == TupX:
-      inc c
-      var i = 0
-      while c.hasMore:
-        connectSingleExprToLoopVar(e, dest, c, forVars[i], result)
-        inc i
-      skipParRi(e, c)
+      c.into:
+        var i = 0
+        while c.hasMore:
+          connectSingleExprToLoopVar(e, dest, c, forVars[i], result)
+          inc i
     else:
       let tmpId: SymId
       let info: PackedLineInfo
@@ -136,17 +112,18 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
         var typCur = yieldType
         createDecl(e, dest, tmpId, typCur, c, info, LetS, needsAddr=false)
 
-      inc typ # skips tuple
+      typ = sub(typ) # skips tuple; peek only, never left
       for i in 0..<forVars.len:
         let isKvU = typ.substructureKind == KvU
+        var kvStart = default(Cursor)
         if isKvU:
-          inc typ # skip tag
+          kvStart = typ; typ = sub(typ) # skip tag
           skip typ # skip name
 
         if forVars[i].substructureKind in {UnpacktupU, UnpackflatU}:
           var counter = 0
           var unpackCursor = forVars[i]
-          inc unpackCursor
+          unpackCursor = sub(unpackCursor) # peek only, never left
           var left = startTupleAccess(tmpId, info, needsDeref)
           # The yielded element may itself be wrapped in `var`/`lent`/etc.
           # (e.g. `pairs(seq[T])` yields `(int, var T)`). Peel any modifier
@@ -157,60 +134,58 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
           # inner tuple.
           let hasModifier = typ.kind == ParLe and typ.typeKind in TypeModifiers
           var leftTupleAccess = createTupleAccess(left, i, info)
+          var modStart = default(Cursor)
           if hasModifier:
             var deref = createTokenBuf()
             deref.copyIntoKind HderefX, info:
               deref.add leftTupleAccess
             leftTupleAccess = deref
-            inc typ
+            modStart = typ; typ = sub(typ)
           assert typ.typeKind == TupleT
-          inc typ
-          # When we deref'd a `var`/`lent`/... element above, the resulting
-          # tuple-field accesses are by-value but the for-vars are still typed
-          # as `var T`/`lent T`/... — sem propagates the outer modifier to
-          # every unpacked sub-var. Pass `needsAddr` through so each `let sym
-          # = (tupat ...)` is wrapped in `(haddr ...)`.
-          let innerNeedsAddr = needsDeref or hasModifier
-          while unpackCursor.hasMore:
-            unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr)
-            inc counter
-            skip unpackCursor
-            skip typ
-          skipParRi(typ)
+          typ.into:
+            # When we deref'd a `var`/`lent`/... element above, the resulting
+            # tuple-field accesses are by-value but the for-vars are still typed
+            # as `var T`/`lent T`/... — sem propagates the outer modifier to
+            # every unpacked sub-var. Pass `needsAddr` through so each `let sym
+            # = (tupat ...)` is wrapped in `(haddr ...)`.
+            let innerNeedsAddr = needsDeref or hasModifier
+            while unpackCursor.hasMore:
+              unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr)
+              inc counter
+              skip unpackCursor
+              skip typ
           if hasModifier:
-            skipParRi(typ)
+            typ = modStart; skip typ
         else:
           var left = startTupleAccess(tmpId, info, needsDeref)
           unpackTupleAccess(e, dest, forVars[i], left, i, info, typ, needsDeref)
           skip typ
 
         if isKvU:
-          skipParRi(typ)
+          typ = kvStart; skip typ
 
 proc transformBreakStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  dest.add c
-  inc c
-  if c.kind == DotToken and e.breaks.len > 0 and e.breaks[^1] != SymId(0):
-    let lab = e.breaks[^1]
-    dest.add symToken(lab, c.info)
-  else:
-    assert c.kind in {DotToken, Symbol}
-    dest.add c
-  inc c
-  takeParRi dest, c
+  takeInto dest, c:
+    if c.kind == DotToken and e.breaks.len > 0 and e.breaks[^1] != SymId(0):
+      let lab = e.breaks[^1]
+      dest.add symToken(lab, c.info)
+    else:
+      assert c.kind in {DotToken, Symbol}
+      dest.add c
+    inc c
 
 proc transformContinueStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   if e.continues.len > 0 and e.continues[^1] != SymId(0):
     dest.add tagToken("break", c.info)
-    inc c
-    let lab = e.continues[^1]
-    dest.add symToken(lab, c.info)
+    c.into:
+      let lab = e.continues[^1]
+      dest.add symToken(lab, c.info)
+      inc c # dotToken
+      dest.addParRi(c.endInfo)
   else:
-    dest.add c
-    inc c
-    dest.addDotToken()
-  inc c # dotToken
-  takeParRi dest, c
+    takeInto dest, c:
+      dest.addDotToken()
+      inc c # dotToken
 
 proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
@@ -224,30 +199,11 @@ proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, Sy
   ## (with distinct labels) on every yield expansion of the outer iterator.
   case c.kind
   of ParLe:
-    var depth = 0
-    while true:
-      case c.kind
-      of ParLe:
-        dest.add c
-        inc c
-        inc depth
-      of ParRi:
-        dest.add c
-        inc c
-        dec depth
-        if depth == 0: break
-      of Symbol:
-        let s = c.symId
-        if mapping.hasKey(s):
-          dest.add symToken(mapping.getOrQuit(s), c.info)
-        else:
-          dest.add c
-        inc c
-      of EofToken:
-        bug "unexpected EOF in copyWithMapping"
-      else:
-        dest.add c
-        inc c
+    dest.add c
+    c.into:
+      while c.hasMore:
+        copyWithMapping(dest, c, mapping)
+      dest.addParRi(c.endInfo)
   of Symbol:
     let s = c.symId
     if mapping.hasKey(s):
@@ -290,25 +246,22 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
       transformForStmt(e, dest, forCursor)
       endRead(forStmtBuf)
     of WhileS:
-      dest.add c
-      inc c
-      inlineLoopBody(e, dest, c, mapping)
-      e.breaks.add SymId(0)
-      e.continues.add SymId(0)
-      inlineLoopBody(e, dest, c, mapping)
-      takeParRi(dest, c)
+      takeInto dest, c:
+        inlineLoopBody(e, dest, c, mapping)
+        e.breaks.add SymId(0)
+        e.continues.add SymId(0)
+        inlineLoopBody(e, dest, c, mapping)
       discard e.breaks.pop()
       discard e.continues.pop()
     of BlockS:
-      dest.takeToken(c)
-      if c.kind == SymbolDef:
-        e.breaks.add c.symId
-      else:
-        e.breaks.add SymId(0)
-      dest.takeToken(c)
-      inlineLoopBody(e, dest, c, mapping)
+      takeInto dest, c:
+        if c.kind == SymbolDef:
+          e.breaks.add c.symId
+        else:
+          e.breaks.add SymId(0)
+        dest.takeToken(c)
+        inlineLoopBody(e, dest, c, mapping)
       discard e.breaks.pop
-      takeParRi(dest, c)
     of StmtsS:
       if fromForloop:
         c.into:
@@ -321,23 +274,21 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
             inlineLoopBody(e, dest, c, mapping)
         dest.addParRi()
     of VarS, LetS, CursorS, PatternvarS, ResultS:
-      dest.add c
-      inc c
-      let oldName = c.symId
-      let freshLocal = pool.syms.getOrIncl("`ii." & $e.getTmpId)
-      mapping[oldName] = freshLocal
-      dest.add symdefToken(freshLocal, c.info) # name
+      takeInto dest, c:
+        let oldName = c.symId
+        let freshLocal = pool.syms.getOrIncl("`ii." & $e.getTmpId)
+        mapping[oldName] = freshLocal
+        dest.add symdefToken(freshLocal, c.info) # name
 
-      inc c
-      # export marker:
-      dest.takeTree c
-      # pragmas:
-      dest.takeTree c
-      # type:
-      dest.takeTree c
-      # value:
-      inlineLoopBody(e, dest, c, mapping)
-      dest.takeParRi(c)
+        inc c
+        # export marker:
+        dest.takeTree c
+        # pragmas:
+        dest.takeTree c
+        # type:
+        dest.takeTree c
+        # value:
+        inlineLoopBody(e, dest, c, mapping)
     of CallS, CmdS, GvarS, TvarS, ConstS, GletS, TletS, ProcS,
         FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS,
         TypeS, EmitS, AsgnS, ScopeS, IfS, WhenS, CaseS, RetS,
@@ -349,24 +300,19 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
         AsmS, DeferS, CoroforS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
-        dest.add c
-        inc c
-        dest.takeTree c
-        while c.hasMore:
-          inlineLoopBody(e, dest, c, mapping)
-        takeParRi(dest, c)
-      elif c.exprKind in {DotX, DdotX}:
-        dest.add c
-        inc c
-        inlineLoopBody(e, dest, c, mapping)
-        while c.hasMore:
+        takeInto dest, c:
           dest.takeTree c
-        takeParRi(dest, c)
-      else:
-        dest.add c
-        inc c
-        e.loop(dest, c):
+          while c.hasMore:
+            inlineLoopBody(e, dest, c, mapping)
+      elif c.exprKind in {DotX, DdotX}:
+        takeInto dest, c:
           inlineLoopBody(e, dest, c, mapping)
+          while c.hasMore:
+            dest.takeTree c
+      else:
+        takeInto dest, c:
+          while c.hasMore:
+            inlineLoopBody(e, dest, c, mapping)
   else:
     takeTree(dest, c)
 
@@ -394,19 +340,18 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
         dest.add tagToken("stmts", c.info)
         e.continues.add lab
 
-      inc c # skips yield
-      var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
-      var body = forStmt.body
-      inlineLoopBody(e, dest, body, mapping, true)
+      c.into: # skips yield
+        var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
+        var body = forStmt.body
+        inlineLoopBody(e, dest, body, mapping, true)
 
-      if loopBodyHasContinueStmt:
-        discard e.continues.pop()
-        dest.addParRi() # stmts
+        if loopBodyHasContinueStmt:
+          discard e.continues.pop()
+          dest.addParRi() # stmts
+          dest.addParRi()
+
         dest.addParRi()
-
-      dest.addParRi()
-      dest.addParRi()
-      skipParRi(e, c)
+        dest.addParRi()
     of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS,
         TletS, LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS,
         ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS,
@@ -417,10 +362,9 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
         AsmS, DeferS, NoStmt:
-      dest.add c
-      inc c
-      e.loop(dest, c):
-        inlineIteratorBody(e, dest, c, forStmt, yieldType)
+      takeInto dest, c:
+        while c.hasMore:
+          inlineIteratorBody(e, dest, c, forStmt, yieldType)
   else:
     takeTree(dest, c)
 
@@ -432,16 +376,15 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
   of ParLe:
     case c.stmtKind
     of VarS, LetS, CursorS, PatternvarS:
-      dest.add c
-      inc c
-      let oldName = c.symId
-      let newName = pool.syms.getOrIncl("`lf." & $e.instId)
-      inc e.instId
-      relations[oldName] = newName
-      dest.add symdefToken(newName, c.info)
-      inc c
-      e.loop(dest, c):
-        replaceSymbol(e, dest, c, relations)
+      takeInto dest, c:
+        let oldName = c.symId
+        let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+        inc e.instId
+        relations[oldName] = newName
+        dest.add symdefToken(newName, c.info)
+        inc c
+        while c.hasMore:
+          replaceSymbol(e, dest, c, relations)
     of PragmasS:
       # Pragma lists declare no locals to rename, so copy them verbatim instead
       # of descending. This also keeps us from treating a `(cursor)` *pragma* as
@@ -460,24 +403,19 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         AsmS, DeferS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
-        dest.add c
-        inc c
-        dest.takeTree c
-        while c.hasMore:
-          replaceSymbol(e, dest, c, relations)
-        takeParRi(dest, c)
-      elif c.exprKind in {DotX, DdotX}:
-        dest.add c
-        inc c
-        replaceSymbol(e, dest, c, relations)
-        while c.hasMore:
+        takeInto dest, c:
           dest.takeTree c
-        takeParRi(dest, c)
-      else:
-        dest.add c
-        inc c
-        e.loop(dest, c):
+          while c.hasMore:
+            replaceSymbol(e, dest, c, relations)
+      elif c.exprKind in {DotX, DdotX}:
+        takeInto dest, c:
           replaceSymbol(e, dest, c, relations)
+          while c.hasMore:
+            dest.takeTree c
+      else:
+        takeInto dest, c:
+          while c.hasMore:
+            replaceSymbol(e, dest, c, relations)
   of Symbol:
     let s = c.symId
     if relations.hasKey(s):
@@ -500,28 +438,26 @@ proc rewriteYieldsAndCopy(e: var EContext; dest: var TokenBuf;
     if sk == YldS:
       let info = c.info
       let head = c.load()
-      inc c # past yld tag
-      if c.kind == DotToken:
-        # bare yield (void return) — leave as-is
-        dest.add head
-        dest.takeToken c # the dot token
-        dest.takeParRi c
-      else:
-        # (yld v) ⇒ (asgn resultSym v) ; (yld .)
-        dest.copyIntoKind AsgnS, info:
-          dest.addSymUse resultSym, info
-          dest.takeTree c # v
-        dest.add head
-        dest.addDotToken()
-        dest.takeParRi c # close original yld
+      c.into: # past yld tag
+        if c.kind == DotToken:
+          # bare yield (void return) — leave as-is
+          dest.add head
+          dest.takeToken c # the dot token
+        else:
+          # (yld v) ⇒ (asgn resultSym v) ; (yld .)
+          dest.copyIntoKind AsgnS, info:
+            dest.addSymUse resultSym, info
+            dest.takeTree c # v
+          dest.add head
+          dest.addDotToken()
+        dest.addParRi(c.endInfo) # close original yld
     elif sk in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
                 TemplateS, TypeS}:
       dest.takeTree c
     else:
-      dest.takeToken c
-      while c.hasMore:
-        rewriteYieldsAndCopy(e, dest, c, resultSym)
-      dest.takeParRi c
+      takeInto dest, c:
+        while c.hasMore:
+          rewriteYieldsAndCopy(e, dest, c, resultSym)
   else:
     dest.takeToken c
 
@@ -535,35 +471,41 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
   let synthResultSym = pool.syms.getOrIncl(
     "`coroResult." & $getTmpId(e) & "." & e.main)
 
-  dest.takeToken c # IteratorS tag
+  dest.add c # IteratorS tag
+  let iterStart = c
+  c = sub(c)
   for _ in 0..<BodyPos:
     dest.takeTree c
 
   # Now at body. Either DotToken (forward decl) or a (stmts ...).
   if c.kind == DotToken:
     dest.takeToken c
-    dest.takeParRi c
+    dest.addParRi(c.endInfo)
+    c = iterStart; skip c
     return
   if c.stmtKind != StmtsS:
     dest.takeTree c
-    dest.takeParRi c
+    dest.addParRi(c.endInfo)
+    c = iterStart; skip c
     return
 
-  dest.takeToken c # body's StmtsS opening
+  dest.add c # body's StmtsS opening
+  c.into:
 
-  let info = c.info
-  dest.copyIntoKind ResultS, info:
-    dest.addSymDef synthResultSym, info
-    dest.addDotToken() # exported
-    dest.addDotToken() # pragmas
-    dest.copyTree retType
-    dest.addDotToken() # value
+    let info = c.info
+    dest.copyIntoKind ResultS, info:
+      dest.addSymDef synthResultSym, info
+      dest.addDotToken() # exported
+      dest.addDotToken() # pragmas
+      dest.copyTree retType
+      dest.addDotToken() # value
 
-  while c.hasMore:
-    rewriteYieldsAndCopy(e, dest, c, synthResultSym)
+    while c.hasMore:
+      rewriteYieldsAndCopy(e, dest, c, synthResultSym)
 
-  dest.takeParRi c # close body stmts
-  dest.takeParRi c # close iter decl
+    dest.addParRi(c.endInfo) # close body stmts
+  dest.addParRi(c.endInfo) # close iter decl
+  c = iterStart; skip c
 
 proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   ## Lower `for x in closureIter(args): body` into a `(corofor ...)` tag.
@@ -648,7 +590,8 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var callCur = forStmt.iter
   if callCur.exprKind == HderefX:
     inc callCur # peel hderef for var/lent-returning iters
-  dest.takeToken callCur # (call tag
+  dest.add callCur # (call tag
+  callCur = sub(callCur) # drained below; the close is synthesized
   dest.takeTree callCur # iter sym
   while callCur.hasMore:
     dest.takeTree callCur
@@ -681,7 +624,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
 
   var bodyCur = forStmt.body
   if bodyCur.stmtKind == StmtsS:
-    inc bodyCur
+    bodyCur = sub(bodyCur) # peek only, never left
     while bodyCur.hasMore:
       transformStmt(e, dest, bodyCur)
   else:
@@ -714,7 +657,7 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
       emitCoroFor(e, dest, forStmt)
       return
     var params = routine.params
-    inc params # (params
+    params = sub(params) # (params; peek only, never left
     inc iter # name
     var relationsMap = initTable[SymId, SymId]()
     while params.hasMore:
@@ -855,12 +798,9 @@ proc transformWhileStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   dest.add tagToken("stmts", c.info)
 
   e.breaks.add lab
-  dest.add c
-  inc c
-
-  transformStmt(e, dest, c) # condition
-  transformLoopBody(e, dest, c)
-  takeParRi(dest, c)
+  takeInto dest, c:
+    transformStmt(e, dest, c) # condition
+    transformLoopBody(e, dest, c)
 
   discard e.breaks.pop()
 
@@ -875,11 +815,9 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   of ParLe:
     case c.stmtKind
     of StmtsS:
-      dest.add c
-      inc c
-      while c.kind notin {EofToken, ParRi}:
-        transformStmt(e, dest, c)
-      takeParRi dest, c
+      takeInto dest, c:
+        while c.hasMore:
+          transformStmt(e, dest, c)
     of ForS:
       transformForStmt(e, dest, c)
     of IteratorS:
@@ -909,45 +847,41 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
     of TemplateS:
       dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
-      dest.add c
-      inc c
-      takeTree(dest, c) # name
-      takeTree(dest, c) # exported
-      takeTree(dest, c) # pattern
-      let isGeneric = c.substructureKind == TypevarsU
-      for i in 3..<BodyPos:
-        takeTree(dest, c)
-      let oldTmpId = e.tmpId
-      e.tmpId = 0
-      if isGeneric:
-        takeTree(dest, c)
-      else:
-        transformStmt(e, dest, c)
-      e.tmpId = oldTmpId
-      takeParRi(dest, c)
+      takeInto dest, c:
+        takeTree(dest, c) # name
+        takeTree(dest, c) # exported
+        takeTree(dest, c) # pattern
+        let isGeneric = c.substructureKind == TypevarsU
+        for i in 3..<BodyPos:
+          takeTree(dest, c)
+        let oldTmpId = e.tmpId
+        e.tmpId = 0
+        if isGeneric:
+          takeTree(dest, c)
+        else:
+          transformStmt(e, dest, c)
+        e.tmpId = oldTmpId
     of VarS, LetS, CursorS, PatternvarS, ResultS:
       # We transform `var x {.cursor.} = y` into `cursor x = y` here because
       # this is the first step of the backend pipeline.
       let before = dest.len
-      dest.add c
-      inc c
       var hasCursorPragma = false
-      for i in 0..<LocalValuePos:
-        if i == LocalPragmasPos:
-          if hasPragma(c, CursorP):
-            hasCursorPragma = true
-        takeTree(dest, c)
-      transformStmt(e, dest, c)
-      takeParRi(dest, c)
+      takeInto dest, c:
+        for i in 0..<LocalValuePos:
+          if i == LocalPragmasPos:
+            if hasPragma(c, CursorP):
+              hasCursorPragma = true
+          takeTree(dest, c)
+        transformStmt(e, dest, c)
       if hasCursorPragma:
-        dest[before] = parLeToken(CursorS, dest[before].info)
+        # `setTag` keeps an already-sealed jump intact; `parLeToken` would
+        # reset it
+        dest[before].setTag cast[TagId](CursorS)
     of GvarS, GletS, TvarS, TletS, ConstS:
-      dest.add c
-      inc c
-      for i in 0..<LocalValuePos:
-        takeTree(dest, c)
-      transformStmt(e, dest, c)
-      takeParRi(dest, c)
+      takeInto dest, c:
+        for i in 0..<LocalValuePos:
+          takeTree(dest, c)
+        transformStmt(e, dest, c)
     of WhileS:
       transformWhileStmt(e, dest, c)
     of BreakS:
@@ -955,19 +889,18 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
     of ContinueS:
       transformContinueStmt(e, dest, c)
     of BlockS:
-      dest.takeToken(c)
-      if c.kind == SymbolDef:
-        e.breaks.add c.symId
-        dest.takeToken(c)
-      else:
-        let info = c.info
-        skip c
-        let s = pool.syms.getOrIncl("`lab." & $getTmpId(e))
-        dest.add symdefToken(s, info)
-        e.breaks.add s
-      transformStmt(e, dest, c)
-      discard e.breaks.pop
-      takeParRi(dest, c)
+      takeInto dest, c:
+        if c.kind == SymbolDef:
+          e.breaks.add c.symId
+          dest.takeToken(c)
+        else:
+          let info = c.info
+          skip c
+          let s = pool.syms.getOrIncl("`lab." & $getTmpId(e))
+          dest.add symdefToken(s, info)
+          e.breaks.add s
+        transformStmt(e, dest, c)
+        discard e.breaks.pop
     of TypeS:
       # Type bodies contain field decls and field-level pragmas (e.g. the
       # `.cursor` annotation on a field). Their tags overlap with
@@ -982,10 +915,9 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
         UsingS, AsmS, DeferS, CoroforS, NoStmt:
-      dest.add c
-      inc c
-      e.loop(dest, c):
-        transformStmt(e, dest, c)
+      takeInto dest, c:
+        while c.hasMore:
+          transformStmt(e, dest, c)
   else:
     takeTree(dest, c)
 

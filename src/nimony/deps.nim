@@ -655,10 +655,31 @@ proc sharedObjDir(): string =
   ## pragmas (currently just `vendor/mimalloc/src/static.c`). These TUs don't
   ## depend on per-project state, so compiling them once and reusing the .o
   ## across nimcaches saves ~4-5 s per cold build on Windows.
-  result = parentDir(stdlibDir()) / "nimcache_static"
+  result = getCacheDir("nimony") / "nimcache_static"
 
 proc sharedObjFile(cfile: CFile): string =
   sharedObjDir() / cfile.obj
+
+proc emitFrontendArgs(b: var Builder; baseDir, commandLineArgs: string) =
+  ## Emit the shared `--base:` plus the forwarded `commandLineArgs` for a
+  ## frontend tool command (`nimsem`/`idetools`), de-duplicating as we go.
+  ## `--base:` is always written explicitly from `baseDir`, so any `--base:`
+  ## already present in `commandLineArgs` is dropped, and other exact-duplicate
+  ## args are collapsed. This matters for the nested sub-compiles that
+  ## compile-time evaluation spawns (`semos.runProgram`/`prepareEval`,
+  ## `macro_plugin`): those thread the outer `--base:`/`--nimcache:` back in via
+  ## `commandLineArgs`, which would otherwise emit `--base:X --base:X …
+  ## --nimcache:X … --nimcache:X` — an argv that no longer matches the outer
+  ## build's command for the same module.
+  var seen: seq[string] = @[]
+  if baseDir.len > 0:
+    let baseArg = "--base:" & quoteShell(baseDir)
+    b.addStrLit baseArg
+    seen.add baseArg
+  for arg in commandLineArgs.split(' '):
+    if arg.len > 0 and not arg.startsWith("--base:") and arg notin seen:
+      b.addStrLit arg
+      seen.add arg
 
 proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
   b.withTree "cmd":
@@ -1487,12 +1508,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
       b.addStrLit c.nimsem
-      if c.config.baseDir.len > 0:
-        b.addStrLit "--base:" & quoteShell(c.config.baseDir)
-      if commandLineArgs.len > 0:
-        for arg in commandLineArgs.split(' '):
-          if arg.len > 0:
-            b.addStrLit arg
+      emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
       b.addStrLit "m"
       b.addKeyw "args"
       # Module files are passed via (args) in each (do nimsem) block
@@ -1501,12 +1517,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
       b.withTree "cmd":
         b.addSymbolDef "idetools"
         b.addStrLit c.nimsem
-        if c.config.baseDir.len > 0:
-          b.addStrLit "--base:" & quoteShell(c.config.baseDir)
-        if commandLineArgs.len > 0:
-          for arg in commandLineArgs.split(' '):
-            if arg.len > 0:
-              b.addStrLit arg
+        emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
         b.addStrLit "idetools"
         b.addKeyw "args"
         b.withTree "input":

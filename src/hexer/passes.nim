@@ -56,12 +56,17 @@ when not defined(nimony):
     passTimingLog.flushFile()
 
 proc initPass*(initialBuf: sink TokenBuf; moduleSuffix: string;
-               firstPassName: string; bits: int): Pass =
+               firstPassName: string; bits: int; nextTemp = 0): Pass =
   ## Initialize a new Pass pipeline with the given input buffer.
   ## The buffer is moved into the Pass and a cursor is created.
+  ## `nextTemp` seeds the xelim temp counter: a NESTED pipeline (e.g. the
+  ## per-coroutine njvl run in `treIteratorBody`) must continue the outer
+  ## pipeline's counter, or its `lowerExprs` re-mints \`x.N SymIds that
+  ## collide with still-live outer temps in the same proc (one frame slot,
+  ## two types — see tests/nimony/cps/tifexpr_arg_temp_collision.nim).
   when not defined(nimony):
     ensurePassTimingInit()
-  result = Pass(buf: initialBuf, moduleSuffix: moduleSuffix, bits: bits, nextTemp: 0, passName: firstPassName)
+  result = Pass(buf: initialBuf, moduleSuffix: moduleSuffix, bits: bits, nextTemp: nextTemp, passName: firstPassName)
   result.n = beginRead(result.buf)
   result.dest = createTokenBuf(300)
   when not defined(nimony):
@@ -94,6 +99,10 @@ proc prepareForNext*(pass: var Pass; nextPassName: string) =
 proc finishPass*(pass: var Pass) =
   ## Log the final pass's elapsed time. Call once after the last pass body
   ## has finished; no-op when timing is disabled.
+  when defined(logPasses):
+    echo pass.passName, " produced:"
+    echo "  ", toString(pass.dest, false)
+
   when not defined(nimony):
     if passTimingEnabled:
       logPassTiming(pass.moduleSuffix, pass.passName, pass.passStart)

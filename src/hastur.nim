@@ -79,6 +79,8 @@ Options:
                         (implies --no-build). Binaries not found there are
                         looked up on `$PATH`.
   --no-build            skip the setup.hastur prep step during the tree walk
+  --native-debug        build arkham + nifasm unoptimized (they default to
+                        -d:release); for `-d:arkhamDbgSym` / gdb toolchain work
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
                         mimalloc plays nicely with valgrind, then run a
                         valgrind smoke test on the bootstrapped binary.
@@ -439,6 +441,15 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
   if forward.len != 0:
     nimonycmd.add ' '
     nimonycmd.add forward
+  # The libc-free stdlib (native allocator + raw-syscall IO) is the compiler's
+  # default now, but some tests assume the libc build, so they opt back in with
+  # `-d:useLibc`: valgrind can only track the libc (mimalloc) heap — the native
+  # mmap heap has no malloc hooks and is invisible to it — and the checked-in
+  # golden `.nim.c` files were generated for the libc configuration.
+  if cat == Valgrind or
+     file.changeFileExt(".valgrind").fileExists() or
+     file.changeFileExt(".nim.c").fileExists():
+    nimonycmd.add " -d:useLibc"
   when defined(linux):
     # Only request valgrind-tracked mimalloc when valgrind is actually present;
     # the flag pulls in `<valgrind/valgrind.h>`, which a valgrind-less box lacks.
@@ -598,7 +609,13 @@ proc prebuildSharedObjects(forward: string) =
     if hasValgrind:
       try: removeFile("nimcache_static" / "static.o")
       except OSError: discard
-      cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+      # The valgrind tests compile with `-d:useLibc` (valgrind can only track the
+      # libc/mimalloc heap; the native mmap heap has no hooks), so the shared
+      # `static.o` they reuse must be the *mimalloc* object — build the prebuild
+      # probe with `-d:useLibc` too. Without it the libc-free default is used and
+      # `static.o` is never produced (mimalloc isn't compiled), so valgrind runs
+      # against an untracked heap and reports 0 allocations.
+      cmd.add " -d:useLibc --passC:\"-DMI_TRACK_VALGRIND=1\""
   cmd.add ' ' & src.quoteShell
   if execShellCmd(cmd) != 0:
     # Non-fatal: if this fails the tests still run, just without the
@@ -826,7 +843,7 @@ proc categoryOf(path: string): Category =
   ## (or, for a not-yet-existing `record` destination, its parent directory).
   categoryOfDir(if dirExists(path): path else: path.parentDir)
 
-# The general test-tree runner is `walkTests`/`walkRoots` further below; the
+# The general test-tree runner is `collectTests`/`walkRoots` further below; the
 # old per-suite `nimonytests`/`exampletests` drivers folded into it.
 
 # ── native-backend regression set ────────────────────────────────────────────
@@ -1216,6 +1233,7 @@ proc robustMoveFile(src, dest: string) =
     moveFile src, dest
 
 var release = false
+var nativeToolsDebug = false
 
 proc nimcPrefix(): string =
   # `--warningAsError:ProveInit:off` and `--warningAsError:Uninit:off`:
@@ -1225,6 +1243,18 @@ proc nimcPrefix(): string =
   # any tool using `createThread` (hastur itself) or `initDeque` (pnak)
   # fails to build on Nim 2.2.10.
   (if release: "nim c -d:release " else: "nim c ") &
+    "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
+
+proc nativeToolPrefix(): string =
+  ## arkham + nifasm are the native backend's HOT codegen tools: they run
+  ## once per module on every `nimony n` build, so unlike the other tools they
+  ## ship OPTIMIZED by default. A debug build roughly doubles `nimony n` cold
+  ## time (measured: nimsem 50.7s debug → 39.5s release) because — unlike the C
+  ## backend, whose heavy lifting is gcc (always optimized) — the native
+  ## backend's heavy lifting IS these two tools. Pass `--native-debug` to hastur
+  ## to build them unoptimized instead (for `-d:arkhamDbgSym` / gdb work on the
+  ## toolchain itself).
+  (if nativeToolsDebug: "nim c " else: "nim c -d:release ") &
     "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
 
 proc validatePassesFlag(): string =
@@ -1302,12 +1332,12 @@ proc buildArkham(showProgress = false) =
   ## auto-clone is a later step). arkham's own `nim.cfg` already sets
   ## `--outdir:bin`; we pass it explicitly so the result is deterministic
   ## regardless of the current directory.
-  exec nimcPrefix() & "--outdir:" & binDir() & " ../nativenif/src/arkham/arkham.nim", showProgress
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/arkham/arkham.nim", showProgress
 
 proc buildNifasm(showProgress = false) =
   ## `nifasm` (asm-NIF -> static, libc-free ELF/Mach-O/PE executable; also the
   ## linker) — sibling repo, same assume-exists arrangement as `buildArkham`.
-  exec nimcPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
 
 proc buildHexer*(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
@@ -1448,6 +1478,86 @@ proc buildNimonyToolchain(showProgress = false) =
   buildNimsem(showProgress)
   buildNimony(showProgress)
   buildHexer(showProgress)
+
+proc runNativeCodegenTests*(dir: string; overwrite: bool) =
+  ## Custom runner for `tests/nativecg`: a golden suite over the C-free native
+  ## backend's *emitted machine code*. For each `.nim` it
+  ##   1. compiles with `nimony n --opt:speed` (so the shoggoth inliner/optimizer
+  ##      that feeds the native path actually runs),
+  ##   2. goldens arkham's `<main>.asm.nif` (the typed assembler NIF) against a
+  ##      checked-in `<test>.asm.nif`, and
+  ##   3. runs the linked libc-free ELF, checking `.output` / `.exitcode`.
+  ##
+  ## The asm-NIF is byte-stable for a fixed *relative* test path — module
+  ## suffixes are derived from the relative path, and a module's own symbols
+  ## carry no suffix — so the golden is portable across checkouts/machines as
+  ## long as hastur is invoked from the repo root (which it always is). No
+  ## normalization is needed.
+  ##
+  ## Requires the sibling `../nativenif` checkout (arkham/nifasm), exactly like
+  ## the `native` subcommand; the directory is `hastur.mode = skip` so the
+  ## default `all` sweep leaves this opt-in.
+  if not skipBuild:
+    buildNimony()
+    buildHexer()
+    buildShoggoth()
+    buildArkham()
+    buildNifasm()
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  var files: seq[string] = @[]
+  for x in walkDir(dir):
+    if x.kind == pcFile and x.path.endsWith(".nim") and
+       x.path.extractFilename != "setup.nim":   # the runner itself, not a test
+      files.add x.path
+  sort files
+  for file in files:
+    let msgs = file.changeFileExt(".msgs")
+    if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+      continue                              # negative test: not a codegen case
+    inc c.total
+    let cacheArg =
+      if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
+      else: ""
+    let (compilerOutput, compilerExitCode) =
+      execLocal("nimony",
+        "n --opt:speed --silentMake --isMain " & cacheArg & quoteShell(file))
+    if compilerExitCode != 0:
+      failure c, file, "native compiler exitcode 0",
+        removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+      continue
+    # 1) Golden arkham's assembler NIF for the main module.
+    let asmFile = generatedFile(file, ".asm.nif")
+    if not asmFile.fileExists():
+      failure c, file, "arkham asm.nif", "missing: " & asmFile
+      continue
+    diffFiles(c, file, file.changeFileExt(".asm.nif"), asmFile, overwrite)
+    # 2) Behavioural check: the linked ELF must run and match .output/.exitcode.
+    let exe = generatedExeFile(file)
+    if not exe.fileExists():
+      failure c, file, "native executable", "missing: " & exe
+      continue
+    let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
+    var output = file.changeFileExt(".output")
+    if testProgramExitCode != 0:
+      output = file.changeFileExt(".exitcode")
+      if not output.fileExists():
+        failure c, file, "test program exitcode 0",
+          "exitcode " & $testProgramExitCode & "\n" & testProgramOutput
+        continue
+    if output.fileExists():
+      let outputSpec = readFile(output).strip
+      if outputSpec != testProgramOutput.strip:
+        if overwrite:
+          writeFile(output, testProgramOutput)
+        failure c, file, outputSpec, testProgramOutput
+  echo c.total - c.failures, " / ", c.total,
+    " native-codegen tests successful in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some native-codegen tests failed."
+  else:
+    echo "SUCCESS."
 
 # ---- deterministic self-host bootstrap ------------------------------------
 # `bin0/` is a fresh copy of the host-Nim-built toolchain in `bin/`; `binN/`
@@ -1974,7 +2084,20 @@ proc runSetupNimDir(c: var TestCounters; dir, forward: string; overwrite: bool) 
   if execShellCmd(cmd) != 0:
     inc c.failures
 
-proc walkTests(c: var TestCounters; dir, forward: string; overwrite, isRoot: bool) =
+type WalkPlan = object
+  ## Accumulated during the tree walk so the run phase can drive ONE
+  ## saturated parallel pool instead of one pool per directory. The old
+  ## walk ran each leaf directory to completion before starting the next,
+  ## so every directory boundary was a hard pool barrier (N-1 cores idle on
+  ## its tail test) plus a fresh `warmupSharedCache` spawn. Flattening every
+  ## parallel-safe file into a single queue pays warmup/prebuild once and
+  ## keeps the pool full across the whole run — the win is largest where
+  ## process spawns are expensive (Windows CI).
+  parFiles: seq[string]              # parallel-safe test files, flattened
+  serialDirs: seq[(string, Category)] # dirs that must run serially (see below)
+
+proc collectTests(c: var TestCounters; plan: var WalkPlan; dir, forward: string;
+                  overwrite, isRoot: bool) =
   # `hastur.mode = skip` excludes a directory from the sweep, but only when the
   # walk *descends* into it — pointing hastur straight at it (isRoot) still
   # runs it. That's how a WIP/known-broken suite (e.g. dagon) stays out of the
@@ -1982,8 +2105,12 @@ proc walkTests(c: var TestCounters; dir, forward: string; overwrite, isRoot: boo
   let cat = categoryOfDir(dir)
   if cat == Skip and not isRoot: return
   if fileExists(dir / "setup.nim"):
+    # A `setup.nim` owns its subtree and runs its own tests right here — it is
+    # a self-contained runner, not part of the shared file pool.
     runSetupNimDir(c, dir, forward, overwrite)
     return
+  # `setup.hastur` prep (e.g. building the toolchain) must precede every test
+  # in its subtree, so it runs during the walk, before the run phase kicks off.
   runSetupHastur(dir)
   var hasNim = false
   var subs: seq[string] = @[]
@@ -1991,15 +2118,23 @@ proc walkTests(c: var TestCounters; dir, forward: string; overwrite, isRoot: boo
     if x.kind == pcFile and x.path.endsWith(".nim"): hasNim = true
     elif x.kind == pcDir: subs.add x.path
   if hasNim:
-    # Leaf test directory: run its own `.nim` files via the flat built-in
-    # runner and do NOT descend. Nested dirs here (`deps/`, `imp/`, `system/`,
-    # …) hold import fixtures pulled in by those tests, not standalone tests —
-    # the old per-category runner never entered them either.
-    testDir(c, dir, overwrite, cat, forward)
+    # Leaf test directory: gather its own `.nim` files and do NOT descend.
+    # Nested dirs here (`deps/`, `imp/`, `system/`, …) hold import fixtures
+    # pulled in by those tests, not standalone tests — the old per-category
+    # runner never entered them either.
+    if parallelJobs > 1 and canRunParallel(cat):
+      for x in walkDir(dir):
+        if x.kind == pcFile and x.path.endsWith(".nim"):
+          plan.parFiles.add x.path
+    else:
+      # `Basics`/`Compat` reset the shared `nimcache/` around their loop and so
+      # cannot share the pool's cache layout; serial (`--jobs:1`) runs keep the
+      # in-process `testFile` path. Either way, defer to a per-dir `testDir`.
+      plan.serialDirs.add (dir, cat)
   else:
     # Pure grouping directory (e.g. `tests/`, `tests/nimony/`): recurse.
     sort subs
-    for s in subs: walkTests(c, s, forward, overwrite, isRoot = false)
+    for s in subs: collectTests(c, plan, s, forward, overwrite, isRoot = false)
 
 proc walkRoots(roots: openArray[string]; forward: string; overwrite: bool) =
   ## Run one or more test trees, accumulating into shared counters and
@@ -2007,9 +2142,21 @@ proc walkRoots(roots: openArray[string]; forward: string; overwrite: bool) =
   ## `tests/` and `examples/`.
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
+  var plan = WalkPlan()
   for r in roots:
     if not dirExists(r): quit "FAILURE: not a directory: " & r
-    walkTests(c, r, forward, overwrite, isRoot = true)
+    collectTests(c, plan, r, forward, overwrite, isRoot = true)
+  # Serial suites first: `Basics`/`Compat` wipe the whole `nimcache/`, which
+  # would delete the pool's per-test cache dirs if it ran afterwards. They
+  # finish and reset the cache, then the single flat pool populates it.
+  for (d, cat) in plan.serialDirs:
+    testDir(c, d, overwrite, cat, forward)
+  if plan.parFiles.len > 0:
+    sort plan.parFiles
+    # One saturated pool over every parallel-safe file from every directory.
+    # `parallelTestDir` ignores the `cat` argument (each worker re-derives its
+    # own category from the file's directory), so a mixed-category queue is safe.
+    parallelTestDir(c, plan.parFiles, overwrite, Normal, forward, parallelJobs)
   echo c.total - c.failures, " / ", c.total, " tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0: quit "FAILURE: Some tests failed."
@@ -2066,6 +2213,10 @@ proc handleCmdLine =
           except: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
+      of "native-debug", "nativedebug":
+        # Build arkham + nifasm UNOPTIMIZED (they default to -d:release; see
+        # nativeToolPrefix). For `-d:arkhamDbgSym` / gdb work on the toolchain.
+        nativeToolsDebug = true
       of "valgrind":
         withValgrind = true
       of "forward":
@@ -2110,8 +2261,8 @@ proc handleCmdLine =
 
   of "boot":
     buildNimony()
-    var bootArgs = ""
-    if release: bootArgs.add "--opt:speed"
+    var bootArgs = "-d:virtualParRi"
+    if release: bootArgs.add " --opt:speed"
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
       bootArgs.add quoteShell(a)

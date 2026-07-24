@@ -96,14 +96,13 @@ type
       discard
 
   LLInstrKind* = enum
-    llAdd, llSub, llMul, llSDiv, llUDiv, llSRem, llURem,
-    llShl, llAShr, llLShr, llAnd, llOr, llXor,
+    llBinOp,
     llIcmp, llFcmp,
     llZext, llSext, llTrunc, llFpext, llFptrunc, llSitofp, llFptosi,
     llBitcast, llInttoptr, llPtrtoint,
     llAlloca, llLoad, llStore, llGep,
     llCall, llExtractValue, llInsertValue,
-    llPhi, llSelect,
+    llPhi, llSelect, llFneg,
     llBr, llCondBr, llSwitch, llRet, llUnreachable,
     llAtomicrmw, llCmpxchg, llFence,
     llRaw # escape hatch for intrinsics mixing values + metadata
@@ -112,7 +111,7 @@ type
     result*: LLValue                       # result register; llvNone when void
     dbgLoc*: string                        # ", !dbg !N" suffix, empty if none
     case kind*: LLInstrKind
-    of llAdd..llXor:
+    of llBinOp:
       binOp*: string                       # "add", "sub", ... (allows nuw/nsw via flags)
       binLhs*: LLValue
       binRhs*: LLValue
@@ -151,18 +150,18 @@ type
       gepIndices*: seq[LLValue]
       gepInbounds*: bool
     of llCall:
-      callCallee*: string                  # "@name" for direct, "%reg" for indirect
+      callCallee*: LLValue                 # llvGlobal (@name) for direct, llvReg for indirect
+                                           # callee.typ is llFunc when signature is known
       callRetType*: LLType
       callArgs*: seq[LLValue]
-      callFuncType*: string                # non-empty => varargs signature prefix
     of llExtractValue:
       evAggregate*: LLValue
-      evAggType*: string                   # the aggregate type text, e.g. "{ i32, i1 }"
+      evAggType*: LLType                   # the aggregate type, e.g. { i32, i1 }
       evIndex*: int
     of llInsertValue:
       ivAggregate*: LLValue
       ivElement*: LLValue
-      ivAggType*: string
+      ivAggType*: LLType
       ivIndex*: int
     of llPhi:
       phiIncoming*: seq[(LLValue, string)] # (value, label)
@@ -170,6 +169,8 @@ type
       selCond*: LLValue
       selTrue*: LLValue
       selFalse*: LLValue
+    of llFneg:
+      fnegVal*: LLValue
     of llRet:
       retVal*: LLValue                     # llvNone if void
     of llBr:
@@ -179,7 +180,7 @@ type
       condBrTrue*: string
       condBrFalse*: string
     of llSwitch:
-      switchValType*: string               # the value's type text
+      switchValType*: LLType               # the value's type
       switchVal*: LLValue
       switchDefault*: string
       switchCases*: seq[(LLValue, string)] # (value, label)
@@ -195,7 +196,7 @@ type
       cxPtr*: LLValue
       cxExpected*: LLValue
       cxDesired*: LLValue
-      cxAggType*: string                   # the {T, i1} aggregate type text
+      cxAggType*: LLType                   # the {T, i1} aggregate type
       cxSuccessOrdering*: LLAtomicOrdering
       cxFailureOrdering*: LLAtomicOrdering
       cxWeak*: bool
@@ -240,19 +241,31 @@ type
     dbgLoc*: string # ", !dbg !N" suffix, empty if none
 
   LLExternDecl* = object
-    declaration*: string # full declare line (kept as text)
-    name*: string        # for dedup
+    name*: string        # bare extern name (WITHOUT @; for dedup)
+    retType*: LLType     # return type (used when raw == "")
+    params*: seq[LLType] # parameter types (used when raw == "")
+    isVarargs*: bool
+    raw*: string         # non-empty => emit this declare line verbatim
+                         # (for builtins whose attributes don't fit the model)
+
+  LLNamedType* = object
+    ## A named type definition: `%Name = type <body>`.
+    name*: string # WITHOUT leading %
+    body*: LLType # nil => emit `= type opaque`
+    packed*: bool
 
   LLModule* = object
-    typeDefs*: seq[string]   # full named type definition lines, in emission order
+    typeDefs*: seq[LLNamedType] # named type definitions (dedup by name)
     globals*: seq[LLGlobal]
     externs*: seq[LLExternDecl]
     funcs*: seq[LLFunc]
-    initFunc*: LLFunc        # the @lengc_init global constructor
+    initFunc*: LLFunc           # the @lengc_init global constructor
     hasInitBody*: bool
-    metadata*: seq[string]   # raw metadata nodes
-    cuId*: int               # DICompileUnit metadata id
-    globalExprIds*: seq[int] # DIGlobalVariableExpression ids
+    metadata*: seq[string]      # raw metadata nodes (final, handed to serializer)
+    cuId*: int                  # DICompileUnit metadata id
+    dwarfVerId*: int            # !"Dwarf Version" module.flags id
+    diVerId*: int               # !"Debug Info Version" module.flags id
+    globalExprIds*: seq[int]    # DIGlobalVariableExpression ids
 
 # ---- Value constructors ----
 
@@ -279,6 +292,13 @@ proc llUndef*(typ: LLType): LLValue {.inline.} =
 
 proc llZeroInit*(typ: LLType): LLValue {.inline.} =
   LLValue(kind: llvZero, typ: typ)
+
+proc llDefaultZero*(typ: LLType): LLValue {.inline.} =
+  ## Zero value for default initialization: pointers get `null`, everything
+  ## else `zeroinitializer`. After genTypeLLVM every pointer-ish source type
+  ## (PtrT/AptrT/ProctypeT) has collapsed to `llPtr`, so this is the only
+  ## distinction that matters.
+  if typ != nil and typ.kind == llPtr: llNull(typ) else: llZeroInit(typ)
 
 proc llNoneVal*(): LLValue {.inline.} =
   LLValue(kind: llvNone)
@@ -319,16 +339,8 @@ proc newLLFuncType*(retType: LLType; params: seq[LLType];
 
 # ---- Instruction constructors ----
 
-proc newLLBinInstr*(kind: LLInstrKind; res: LLValue; binOp: string;
+proc newLLBinInstr*(res: LLValue; binOp: string;
                      binLhs, binRhs: LLValue; dbgLoc = ""): LLInstr =
-  ## Construct a binary-op instruction whose `kind` is determined at runtime.
-  ## The `case` inside the proc lets the Nim compiler verify that `binOp`,
-  ## `binLhs`, `binRhs` — which only exist in the `llAdd..llXor` branch — are
-  ## always valid for the value of `kind` passed by the caller.
-  case kind
-  of llAdd..llXor:
-    LLInstr(kind: kind, result: res, dbgLoc: dbgLoc,
-            binOp: binOp, binLhs: binLhs, binRhs: binRhs)
-  else:
-    raise newException(ValueError, "newLLBinInstr: kind " & $kind &
-        " is not in the llAdd..llXor range")
+  ## Construct a binary-op instruction.
+  LLInstr(result: res, dbgLoc: dbgLoc, kind: llBinOp,
+          binOp: binOp, binLhs: binLhs, binRhs: binRhs)
