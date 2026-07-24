@@ -80,7 +80,10 @@ proc initIoRing*(): IoRing =
   result.slots.init()
   result.nextSeq = 1
 
-  when hasIoPoll:
+  when hasIouring:
+    import ./ioring/backends/iouring
+    result.backend = initIoUringBackend(cast[int](addr result.slots))
+  elif hasIoPoll:
     import ./ioring/core/backends
     when hasEpoll:
       import ./ioring/backends/epoll
