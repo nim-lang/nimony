@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 1322             )
+(.indexat 1310             )
 (stmts@,2,tests/nimony/nosystem/tcstring.nim
  (type@2,1 :int.0.
   (i 64).
@@ -56,16 +56,16 @@
    (nil))
   (nil@H))
  (const@2,I :myconst.0. . .
-  (cstring@A
+  (cstring
    (notnil))
   (suf@H "abc" "C"))
  (gvar@4,K :zz.0. . .
-  (cstring@8,~2
+  (cstring
    (notnil))
   (hconv@E
-   (cstring~6,~2
+   (cstring
     (notnil))"xzy"))
- (comment@G,8 int.0. int.0. int.0.~3 int.0.@,1 int.0.@,1 int.0.~3,1 int.0.@1,3 int.0.@1,3 bool.0.~3,3 cstring.0.~4,A int.0.~3,5 pointer.0.~5,7 cstring.0.~8,C))(.index@,2,tests/nimony/nosystem/tcstring.nim
+ (comment@G,8 int.0. int.0. int.0.~3 int.0.@,1 int.0.@,1 int.0.~3,1 int.0.@1,3 int.0.@1,3 bool.0.~3,3 cstring.0.~3,3 int.0.~3,5 pointer.0.~5,7 cstring.0.~8,C))(.index@,2,tests/nimony/nosystem/tcstring.nim
  (x int.0. 82)
  (x bool.0. 64)
  (x cstring.0. 66)
@@ -76,4 +76,4 @@
  (h x.0. 167)
  (h y.0. 63)
  (h myconst.0. 55)
- (h zz.0. 75))
+ (h zz.0. 73))

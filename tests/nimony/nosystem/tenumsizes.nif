@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 2117             )
+(.indexat 2129             )
 (stmts@,3,tests/nimony/nosystem/tenumsizes.nim
  (type@7 :A.0.~2 . . .
   (enum@2
@@ -34,7 +34,7 @@
      (ranges a3.0.)
      (stmts
       (ret "a3"))))
-   (ret result.0)))
+   (ret@9,1 result.0)))
  (type@7,2 :B.0.~2 . . .
   (onum@2
    (i 32)
@@ -68,7 +68,7 @@
      (ranges b3.0.~5)
      (stmts
       (ret "b3"))))
-   (ret result.1)))
+   (ret@J,1 result.1)))
  (type@7,4 :C.0.~2 . . .
   (onum@2
    (u 16)
@@ -102,20 +102,20 @@
      (ranges c3.0.)
      (stmts
       (ret "c3"))))
-   (ret result.2))))(.index@,3,tests/nimony/nosystem/tenumsizes.nim
+   (ret@I,1 result.2))))(.index@,3,tests/nimony/nosystem/tenumsizes.nim
  (h A.0. 84)
  (h@9 a0.0. 42)
  (h@9 a1.0. 47)
  (h@9 a2.0. 47)
  (h@9 a3.0. 47)
  (x dollar`.A.0. 49)
- (h B.0. 435)
+ (h B.0. 439)
  (h@9,2 b0.0. 45)
  (h@9,2 b1.0. 50)
  (h@9,2 b2.0. 47)
  (h@9,2 b3.0. 47)
  (x dollar`.B.0. 51)
- (h C.0. 441)
+ (h C.0. 445)
  (h@9,4 c0.0. 45)
  (h@9,4 c1.0. 47)
  (h@9,4 c2.0. 47)
