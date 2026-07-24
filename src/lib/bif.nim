@@ -104,6 +104,13 @@ when not defined(nimony):
     proc endStore*(s: var string) {.inline.} = discard
 
 const
+  UnusedNameTag* = "unusedname"
+    ## Text NIF carries reader *directives* outside the token stream; bif has no
+    ## directive channel. The one directive the pipeline must preserve — the
+    ## plugin protocol's `(.unusedname X)` gensym hint — is represented as a
+    ## leading `(unusedname X)` tree in the stored buffer instead. Binary
+    ## readers peel it off (`plugins.loadPluginTree`); `niftools nif2bif` lifts
+    ## the directive into this tree when converting.
   Version = 5'u8
   MagicLen = 8
   LittleEndianTag = 0'u8
@@ -142,7 +149,9 @@ proc findDeclaration*(module: var BifModule; name: string): Cursor =
       return module.buf.cursorAt(entry.pos)
 
 iterator declarations*(module: var BifModule):
-    tuple[name: string, visibility: IndexVis, declaration: Cursor] =
+    tuple[name: string, visibility: IndexVis, declaration: Cursor] {.sideEffect.} =
+  # `.sideEffect`: Nimony defaults iterators to `.noSideEffect`, but `cursorAt`
+  # installs the buffer's cursor owner (a refcount write).
   ## Iterates all indexed global declarations in storage order.
   for entry in module.index:
     yield (poolSym(module.buf.pool, entry.sym), entry.vis,

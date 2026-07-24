@@ -13,6 +13,7 @@
 import std / [assertions, hashes, syncio, cmdline]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
 import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse, addSymDef
+from ".." / ".." / "lib" / bif import isBifFile, load, UnusedNameTag
 import ".." / ".." / "lib" / [bitabs, nifbuilder, symparser]
 import ".." / ".." / "models" / [tags, nimony_tags]
 import ".." / nif_annotations
@@ -714,9 +715,31 @@ template peek*(t: var Replacer; body: untyped) =
 
 proc loadPluginTree(filename: string): NifBuilder =
   var hint = ""
-  result = parseFromFile(
-    filename, hint, sharedPool = pluginPool, sharedTags = pluginTags,
-    denseLineInfo = true)
+  if isBifFile(filename):
+    # Binary input behind an unchanged `.nif` name. `bif.load` mints fresh
+    # pools (the bif invariant), but every kind query above dispatches on
+    # `pluginTags` *identity*, so the content must be re-interned into the
+    # plugin world — `addSubtree` re-interns tags, literals and line-info
+    # filenames across pools. The text format's `.unusedname` directive
+    # arrives as a leading `(unusedname X)` tree; peel it off here.
+    var m = bif.load(filename)
+    var c = beginRead(m.buf)
+    if c.hasMore and c.kind == TagLit and
+        m.buf.tags.tagName(c.cursorTagId) == UnusedNameTag:
+      c.into:
+        while c.hasMore:
+          if c.kind == Symbol:
+            hint = c.symName
+          skip c
+    result = createTree()
+    while c.hasMore:
+      result.addSubtree(c)
+      skip c
+    c.endRead()
+  else:
+    result = parseFromFile(
+      filename, hint, sharedPool = pluginPool, sharedTags = pluginTags,
+      denseLineInfo = true)
   if hint.len > 0:
     var hintBase = ""
     var hintNumber = 0
