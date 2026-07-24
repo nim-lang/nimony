@@ -13,8 +13,8 @@
 import std / [assertions, hashes, syncio, cmdline]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
 import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse, addSymDef
-from ".." / ".." / "lib" / bif import isBifFile, load, UnusedNameTag
-import ".." / ".." / "lib" / [bitabs, nifbuilder, symparser]
+from ".." / ".." / "lib" / bif import isBifFile, load, store, UnusedNameTag
+import ".." / ".." / "lib" / [bitabs, symparser]
 import ".." / ".." / "models" / [tags, nimony_tags]
 import ".." / nif_annotations
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
@@ -755,16 +755,23 @@ proc loadPluginTree(filename: string): NifBuilder =
         nextUnusedName = hintNumber
 
 proc writePluginTree(tree: var NifBuilder; filename: string) =
-  var output = nifbuilder.open(filename)
+  # Binary bif behind the `.out.nif` name (the compiler sniffs the header;
+  # decode with `niftools bif2nif` for debugging). The copy into a private
+  # pool keeps the file compact — `tree` shares the big plugin pools, and
+  # `store` writes a buffer's pools whole. The gensym hint travels as the
+  # leading `(unusedname X)` tree, exactly as on the input side.
+  var buf = createTokenBuf(tree.len + 4)
   if unusedNameBase.len > 0:
-    output.addRaw "(.unusedname "
-    output.addSymbol unusedNameBase & "." & $nextUnusedName
-    output.addRaw ")\n"
-  tree.appendTo(output)
-  try:
-    output.close()
-  except:
-    quit "FAILURE: cannot write " & filename
+    buf.openTag(buf.tags.registerTag(UnusedNameTag))
+    nifcore.addSymUse(buf, unusedNameBase & "." & $nextUnusedName)
+    buf.closeTag()
+  if tree.len > 0:
+    var c = beginRead(tree)
+    while c.hasMore:
+      buf.addSubtree(c)
+      skip c
+    c.endRead()
+  bif.store(buf, filename)
 
 proc loadReplacer*(inputFile = paramStr(1)): Replacer =
   ## Loads the input NIF file and returns a `Replacer` ready for

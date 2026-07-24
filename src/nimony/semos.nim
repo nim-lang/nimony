@@ -18,7 +18,7 @@ from ".." / lib / nifcoreparse import parse
 # qualified-only: the private-pool plugin-input copy must not fight the
 # global-pool overloads nifprelude puts in scope
 from ".." / lib / nifcore import nil
-from ".." / lib / bif import storeToString, UnusedNameTag
+from ".." / lib / bif import storeToString, isBifFile, UnusedNameTag
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -467,18 +467,39 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
       cmd &= quoteShell(inputFileB)
     exec cmd
   var nextName = ""
-  var r = rd.open(outputFile)
-  nextName = rd.firstUnusedName(r)
-  # seed the parse with the invocation site's absolute info: plugin output
-  # copies the (file-less, relative) infos of its input, so without an anchor
-  # they resolve to NoFile and diagnostics print as `???`
-  var seed = NoNifLineInfo
-  if info.isValid:
-    let u = unpack(lineMan, info)
-    if u.file.isValid:
-      seed = NifLineInfo(file: u.file, line: u.line, col: u.col)
-  parse(r, dest, parentSeed = seed, denseLineInfo = true)
-  rd.close(r)
+  if isBifFile(outputFile):
+    # Binary output: the tokens carry absolute line infos, so no parentSeed
+    # resolution is needed; the gensym hint arrives as the leading
+    # `(unusedname X)` tree. `addSubtree` re-interns the fresh-pool content
+    # into the caller's global-pool world.
+    var m = bif.load(outputFile)
+    if m.buf.len > 0:
+      var n = beginRead(m.buf)
+      if n.kind == TagLit and
+          tagName(m.buf.tags, n.cursorTagId) == UnusedNameTag:
+        n.into:
+          while n.hasMore:
+            if n.kind == Symbol:
+              nextName = symName(n)
+            skip n
+      while n.hasMore:
+        addSubtree(dest, n)
+        skip n
+      endRead(n)
+  else:
+    # Text output (hand-written or third-party plugins).
+    var r = rd.open(outputFile)
+    nextName = rd.firstUnusedName(r)
+    # seed the parse with the invocation site's absolute info: text plugin
+    # output copies the (file-less, relative) infos of its input, so without
+    # an anchor they resolve to NoFile and diagnostics print as `???`
+    var seed = NoNifLineInfo
+    if info.isValid:
+      let u = unpack(lineMan, info)
+      if u.file.isValid:
+        seed = NifLineInfo(file: u.file, line: u.line, col: u.col)
+    parse(r, dest, parentSeed = seed, denseLineInfo = true)
+    rd.close(r)
   registerGeneratedSymbols(c, firstDisamb, nextName)
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
