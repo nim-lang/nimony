@@ -443,6 +443,13 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
   n = childCursor(n)
 
   var effects: seq[Effect] = @[]
+  # Depth of manually opened subtrees (addParLe without a matching addParRi
+  # yet). While depth > 0, emissions land INSIDE the open subtree and thus
+  # contribute no child at this level; the open itself is exactly one child.
+  var depth = 0
+
+  template emit(e: Effect) =
+    if depth == 0: effects.add e
 
   while n.hasMore:
     if not n.isTagLit:
@@ -459,47 +466,53 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
 
       case callName
       of "addDotToken":
-        if writesToDest: effects.add fixedEffect(ckDot)
+        if writesToDest: emit fixedEffect(ckDot)
       of "addSymDef":
-        if writesToDest: effects.add fixedEffect(ckD)
+        if writesToDest: emit fixedEffect(ckD)
       of "addSymUse", "copyIntoSymUse":
         if writesToDest:
           # Try to classify via sym context (field type refinement or decl context)
           if firstArg.len > 0 and firstArg in graph.symContext:
-            effects.add fixedEffect(graph.symContext[firstArg])
+            emit fixedEffect(graph.symContext[firstArg])
           else:
-            effects.add fixedEffect(ckAny)
+            emit fixedEffect(ckAny)
       of "addIntLit", "addUIntLit", "addIntVal", "addStrLit",
          "addCharLit", "addFloatLit":
-        if writesToDest: effects.add fixedEffect(ckLit)
+        if writesToDest: emit fixedEffect(ckLit)
       of "addParPair":
-        if writesToDest: effects.add fixedEffect(enumSuffixToKind(firstArg))
+        if writesToDest: emit fixedEffect(enumSuffixToKind(firstArg))
       of "copyIntoKind", "copyIntoKinds", "buildTree":
-        if writesToDest: effects.add fixedEffect(enumSuffixToKind(firstArg))
+        if writesToDest: emit fixedEffect(enumSuffixToKind(firstArg))
       of "copyInto":
-        if writesToDest: effects.add fixedEffect(ckAny) # copies one node from input
+        if writesToDest: emit fixedEffect(ckAny) # copies one node from input
       of "takeTree", "copyTree", "addEmpty", "addToken",
          "addSubtree", "addTarget":
-        if writesToDest: effects.add fixedEffect(ckAny)
+        if writesToDest: emit fixedEffect(ckAny)
       of "addParLe":
-        if writesToDest: effects.add fixedEffect(ckAny) # manual node, paired with addParRi
+        if writesToDest:
+          # Manual open: one child at this level; everything until the
+          # matching addParRi is nested inside it.
+          emit fixedEffect(ckAny)
+          inc depth
       of "addParRi", "takeParRi":
-        discard # closing paren, not a child
+        # Closing paren, not a child. At depth 0 it closes a subtree opened
+        # outside this statement list (master behavior: ignore).
+        if writesToDest and depth > 0: dec depth
       of "addEmpty2":
         if writesToDest:
           # addEmpty2 adds two DotTokens
-          effects.add fixedEffect(ckDot)
-          effects.add fixedEffect(ckDot)
+          emit fixedEffect(ckDot)
+          emit fixedEffect(ckDot)
       of "addRootRef":
-        if writesToDest: effects.add fixedEffect(ckT) # adds a type reference
+        if writesToDest: emit fixedEffect(ckT) # adds a type reference
       of "addIdent":
-        if writesToDest: effects.add fixedEffect(ckAny)
+        if writesToDest: emit fixedEffect(ckAny)
       of "flush":
         # controlflow.nim context emitter: appends one Target subtree to the
         # pass buffer (`c.dest`) via the context `c`, so the call names `c`
         # (not `c.dest`) as receiver — `writesToDest` is false, hence unguarded.
         # Equivalent to `c.dest.add someTarget`: contributes exactly one child.
-        effects.add fixedEffect(ckAny)
+        emit fixedEffect(ckAny)
       of "skip", "skipToEnd", "skipUntilEnd", "skipParRi", "consumeParRi", "inc", "swap",
          "endRead", "assert", "registerLocal", "registerLocalPtrOf",
          "openScope", "closeScope", "openProcScope", "registerParams",
@@ -512,11 +525,11 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
         if callName in graph.procs:
           let pe = graph.procs[callName]
           if writesToDest:
-            effects.add pe.effect
+            emit pe.effect
           elif not pe.destIsParam:
             # Proc accesses dest through context field (c.dest).
             # The shared context carries dest, so always include.
-            effects.add pe.effect
+            emit pe.effect
           # else: proc takes dest as parameter but call doesn't pass dest → skip
         elif writesToDest:
           # Unknown call that mentions dest
@@ -529,14 +542,14 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
       let ifEffect = analyzeIfBranches(graph, n, destLv)
       if ifEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add ifEffect
+      emit ifEffect
       skip n
 
     of "case":
       let caseEffect = analyzeCaseBranches(graph, n, destLv)
       if caseEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add caseEffect
+      emit caseEffect
       skip n
 
     of "while":
@@ -544,7 +557,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
       let loopEffect = analyzeWhileLoop(graph, n, destLv)
       if loopEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add loopEffect
+      emit loopEffect
       skip n
 
     of "for":
@@ -552,7 +565,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
       let forEffect = analyzeForLoop(graph, n, destLv)
       if forEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add forEffect
+      emit forEffect
       skip n
 
     of "discard", "var", "let", "const", "asgn", "comment":
@@ -560,6 +573,10 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
     else:
       return unknownEffect()
 
+  if depth != 0:
+    # Net-opening body: this statement list leaves subtrees open, so its
+    # children cannot be described as a flat sequence for the caller.
+    return unknownEffect()
   return seqEffect(effects)
 
 proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
