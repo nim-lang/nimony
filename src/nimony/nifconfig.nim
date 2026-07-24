@@ -124,6 +124,7 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
     cc: "gcc",
+    ccKey: "gcc",
     linker: "",
     appType: appConsole, # console is the default
     checkFlags: "br"     # = genFlags(DefaultSettings) (BoundCheck + RangeCheck);
