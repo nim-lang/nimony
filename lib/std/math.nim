@@ -13,7 +13,6 @@ type
     func `/`(x, y: Self): Self
     func `==`(x, y: Self): bool
     func `<`(x, y: Self): bool
-    func `>`(x, y: Self): bool
 
   # Concepts for the individual transcendental functions below. They let generic
   # code (e.g. `std/complex`) depend precisely on the operations it actually uses,

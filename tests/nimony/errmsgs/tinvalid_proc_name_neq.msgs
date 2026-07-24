@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tinvalid_proc_name_neq.nim(2, 6) Error: define `==` instead of `!=` to implement user defined comparison operator. it allows you to use `!=` automatically.

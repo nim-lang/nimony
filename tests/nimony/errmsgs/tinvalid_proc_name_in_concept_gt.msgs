@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tinvalid_proc_name_in_concept_gt.nim(3, 10) Error: If a type has `<`, it automatically has `>`.

@@ -41,6 +41,8 @@ proc conceptRoutineBasename*(routine: Cursor): StrId =
   var prc = routine
   assert prc.symKind in RoutineKinds
   inc prc
+  if prc.kind == ParLe and prc.tagId == nifstreams.ErrT:
+    return StrId(0)
   assert prc.kind == SymbolDef
   var name = pool.syms[prc.symId]
   extractBasename(name)
