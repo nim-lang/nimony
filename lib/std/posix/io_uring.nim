@@ -532,26 +532,22 @@ proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.
   #   raise ERROR_io_uring_not_initializes
 
 # XXX: is it ok that =destroy can raise error?
-proc `=destroy`(queue: Queue) {.raises, tags: [].} =
+proc `=destroy`(queue: Queue) {.tags: [].} =
   ## tear down the queue
-  if queue.fd != 0:
-    discard close(queue.fd)
-  if queue.cq.ring != nil:
-    uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
-  if queue.sq.ring != nil:
-    uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
-  if queue.sq.sqes != nil:
-    uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
-  if queue.params != nil:
-    # deallocShared(queue.params)
-    dealloc(queue.params)
-
-proc `=sink`(dest: var Queue, source: Queue) =
-  # avoid unmapping uring object after moving
-  copyMem(dest.addr, source.addr, sizeof Queue)
-
-proc `=copy`(dest: var Queue; source: Queue) {.error: "Queue can has only one owner".}
-
+  try:
+    if queue.fd != 0:
+      discard close(queue.fd)
+    if queue.cq.ring != nil:
+      uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
+    if queue.sq.ring != nil:
+      uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
+    if queue.sq.sqes != nil:
+      uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
+    if queue.params != nil:
+      # deallocShared(queue.params)
+      dealloc(queue.params)
+  except:
+    discard
 proc isPowerOfTwo(x: int): bool = (x != 0) and ((x and (x - 1)) == 0)
 
 proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;

@@ -56,6 +56,8 @@ var poolState: int
   ## 0 = uninitialised, 1 = initialising, 2 = ready. Accessed atomically so the
   ## first parallel-for from any thread starts the pool exactly once.
 
+var gPool: Pool
+
 proc ensureParPool*() =
   ## Start the worker pool the first time a parallel `for` runs. Idempotent and
   ## thread-safe: concurrent first-callers race through a CAS, the loser spins
@@ -63,7 +65,7 @@ proc ensureParPool*() =
   if atomicLoad(poolState, moAcquire) == 2: return
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
-    initPool()
+    gPool = createPool()
     atomicStore(poolState, 2, moRelease)
   else:
     while atomicLoad(poolState, moAcquire) != 2:
@@ -135,8 +137,8 @@ proc parWait*(j: var ParJoin; workload = MixedBound) =
   ## `CpuBound` skips the I/O poll: such chunks never park, so there is nothing
   ## in the event loop and the joiner just spins for the in-flight CPU work.
   while atomicLoad(j.remaining, moAcquire) > 0:
-    if not poolHelp() and workload != CpuBound:
-      discard poolPollIo(0.cint)
+    if not gPool.help() and workload != CpuBound:
+      discard gPool.poll(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool, spreading chunks
@@ -146,7 +148,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## runners — but the spread still avoids needlessly caller-running chunks on
   ## the submitting thread and balances load. Re-exported so the `||` plugin
   ## only needs symbols visible through `import std/parfor`.
-  submit(c, hint)
+  gPool.submit(c, hint)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}
