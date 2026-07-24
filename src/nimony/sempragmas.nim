@@ -222,7 +222,8 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       crucial.externName = pool.strings[readonlyCursorAt(dest, strPos).strId]
     # Header pragma extra
     if pk == HeaderP:
-      let idx = dest.len - 1
+      # not `dest.len - 1`: the string may carry a line-info suffix token
+      let idx = lastValueStart(dest)
       let tok = dest[idx]
       if tok.isStringLit:
         let raw = pool.strings[tok.strId]
