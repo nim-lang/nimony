@@ -24,6 +24,7 @@ import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
 import ".." / "lib" / symparser             # splitSymName, splitModulePath, basename
 import ".." / "lib" / foreignmodules         # shared lazy loader (ForeignModule)
+import ".." / "lib" / bif                    # binary NIF: isBifFile probe + load
 import noptions                              # ConfigRef
 
 type
@@ -203,7 +204,38 @@ proc detectToplevelDecls(c: var MainModule) =
       else:
         inc n
 
-proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo) =
+type
+  DensifyRemap = object
+    ## Id translation for densifying a buffer whose pools differ from `dest`'s
+    ## (the `.bif` load path: bif mints fresh pools — its INVARIANT — while the
+    ## backends need the canonical Leng tag pool for `stmtKind` & co to decode).
+    ## Inactive (empty `tagMap`) when source and dest share pools: densify's
+    ## string-based re-adds (`strVal`/`symName` resolve against the *cursor's*
+    ## pool) are already cross-pool safe; only the two raw ids — the `TagId`
+    ## passed to `openTag` and the `FileId`/comment inside a `NifLineInfo` —
+    ## need mapping.
+    tagMap: seq[TagId]     # source TagId -> dest TagId; 1-based, [0] unused
+    fileMap: seq[FileId]   # source FileId -> dest FileId; 1-based, [0] unused
+    srcPool: Pool          # for re-interning the rare line-info comment StrId
+
+proc buildDensifyRemap(dest: var TokenBuf; src: TokenBuf): DensifyRemap =
+  result = DensifyRemap(srcPool: src.pool)
+  result.tagMap = newSeq[TagId](src.tags.tags.len + 1)
+  for i in 1 .. src.tags.tags.len:
+    result.tagMap[i] = dest.tags.registerTag(src.tags.tags[TagId(i)])
+  result.fileMap = newSeq[FileId](src.pool.filenames.len + 1)
+  for i in 1 .. src.pool.filenames.len:
+    result.fileMap[i] = dest.pool.filenames.getOrIncl(src.pool.filenames[FileId(i)])
+
+proc mapInfo(dest: var TokenBuf; info: NifLineInfo; remap: DensifyRemap): NifLineInfo =
+  result = info
+  if remap.tagMap.len > 0 and info.isValid:
+    result.file = remap.fileMap[int info.file]
+    if result.comment != StrId(0):
+      result.comment = dest.pool.strings.getOrIncl(remap.srcPool.strings[result.comment])
+
+proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo;
+             remap: DensifyRemap) =
   ## Copy the tree at `n` into `dest`, stamping *every* head token with its
   ## effective line info. nifcore stores line info sparsely (only when it
   ## changes); the nifcursors world propagated it to every node, and the
@@ -214,14 +246,15 @@ proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo) =
   ## a node inherits the most recent info *in stream order*, not its parent's.
   let raw = rawLineInfo(n)
   if raw.isValid: cur = raw
-  let eff = cur
+  let eff = mapInfo(dest, cur, remap)
   case n.kind
   of TagLit:
-    let tag = n.cursorTagId
+    var tag = n.cursorTagId
+    if remap.tagMap.len > 0: tag = remap.tagMap[int tag]
     dest.openTag tag
     if eff.isValid: dest.appendLineInfo eff
     n.into:
-      while n.hasMore: densify(dest, n, cur)
+      while n.hasMore: densify(dest, n, cur, remap)
     dest.closeTag()
   of DotToken:
     dest.addDotToken();          (if eff.isValid: dest.appendLineInfo eff); inc n
@@ -245,28 +278,43 @@ proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo) =
     inc n  # absorbed into the head token's own value/info; never freestanding
 
 proc load*(filename: string): MainModule =
-  var r = rd.open(filename)
-  case rd.processDirectives(r)
-  of rd.Success: discard
-  of rd.WrongHeader: quit "nif files must start with Version directive"
-  of rd.WrongMeta: quit "the format of meta information is wrong!"
-  let nodeCount = rd.fileSize(r) div 7
-  # Parse with a canonical Leng tag pool so interned TagIds equal the master
-  # ordinals that `stmtKind`/`typeKind`/`symKind` decode against (otherwise a
-  # fresh pool assigns IDs in encounter order and every kind reads as None).
-  var raw = createTokenBuf(nodeCount, nil, createLengTagPool())
-  nifcoreparse.parse(r, raw)
-  rd.close(r)
+  ## Load the main module, sniffing the file header for the actual format:
+  ## filenames stay `.nif` throughout the pipeline, the content decides.
+  ## Text is parsed with a canonical Leng tag pool so interned TagIds equal the
+  ## master ordinals that `stmtKind`/`typeKind`/`symKind` decode against; a
+  ## `.bif` is loaded zero-copy with its own fresh pools (the bif INVARIANT)
+  ## and translated to the canonical pools during the densify copy below.
+  let fromBif = isBifFile(filename)
+  var raw = default(TokenBuf)
+  if fromBif:
+    var bm = bif.load(filename)  # mmap; the index is not needed here, we rescan
+    raw = ensureMove bm.buf
+  else:
+    var r = rd.open(filename)
+    case rd.processDirectives(r)
+    of rd.Success: discard
+    of rd.WrongHeader: quit "nif files must start with Version directive"
+    of rd.WrongMeta: quit "the format of meta information is wrong!"
+    let nodeCount = rd.fileSize(r) div 7
+    raw = createTokenBuf(nodeCount, nil, createLengTagPool())
+    nifcoreparse.parse(r, raw)
+    rd.close(r)
   # Densify line info so `info(n)` is valid at every node (see `densify`). The
-  # densified buffer MUST share `raw`'s pool/tags: line info carries a `FileId`
-  # interned in that pool, so copying it across pools would dangle.
-  result = MainModule(src: createTokenBuf(nodeCount, raw.pool, raw.tags),
-                      current: TypeScope(locals: initTable[SymId, Cursor]()),
+  # densified buffer shares `raw`'s pool/tags in the text case; in the bif case
+  # it gets its own canonical pools and `DensifyRemap` translates the raw ids
+  # (tags, line-info FileIds) — strings/symbols re-intern by value anyway.
+  result = MainModule(current: TypeScope(locals: initTable[SymId, Cursor]()),
                       filename: filename,
                       prog: NifProgram(scheme: splitModulePath(filename)))
+  var remap = default(DensifyRemap)
+  if fromBif:
+    result.src = createTokenBuf(raw.len, nil, createLengTagPool())
+    remap = buildDensifyRemap(result.src, raw)
+  else:
+    result.src = createTokenBuf(raw.len, raw.pool, raw.tags)
   var rc = beginRead(raw)
   var curInfo = NoNifLineInfo
-  densify(result.src, rc, curInfo)
+  densify(result.src, rc, curInfo, remap)
   result.pool = result.src.pool
   result.tags = result.src.tags
   detectToplevelDecls(result)

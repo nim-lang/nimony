@@ -25,14 +25,19 @@
 import std / [tables]
 import nifcore, nifcoreparse
 import nifreader, stringviews
+import bif
 
 type
   ForeignModule* = ref object
     r*: Reader                          ## open reader (lazy per-symbol jumps)
-    index*: Table[string, int]          ## symbol → absolute byte offset
+    index*: Table[string, int]          ## symbol → absolute byte offset (text)
+                                        ## or token position (bif)
     decls*: Table[string, Cursor]       ## parsed-decl cache
     declBufs*: seq[TokenBuf]            ## per-decl buffers, kept alive
     hasEmbeddedIndex*: bool             ## false → the file carried no `.indexat`
+    isBif*: bool                        ## binary module: decls come from `bifBuf`
+    bifBuf*: TokenBuf                   ## bif only: the whole module, resident
+                                        ## (zero-copy mmap; its own fresh pools)
 
 proc readEmbeddedIndex*(r: var Reader): Table[string, int] =
   ## Read the embedded `(.index (h sym Δoff) (x sym Δoff) …)` section located by
@@ -68,12 +73,25 @@ proc openForeignModule*(path: string): ForeignModule =
   ## index, and keep the reader open for lazy per-symbol jumps. The returned
   ## module's `hasEmbeddedIndex` is false when the file carried no index — the
   ## caller decides how to report that (lengc/arkham/nifasm phrase the error).
-  result = ForeignModule(r: nifreader.open(path),
-                         index: initTable[string, int](),
-                         decls: initTable[string, Cursor]())
-  if indexStartsAt(result.r) > 0:
-    result.hasEmbeddedIndex = true
-    result.index = readEmbeddedIndex(result.r)
+  ## The file header is sniffed: a binary `.bif` (still named `.nif` in the
+  ## pipeline) is loaded whole (zero-copy mmap) and its embedded index — token
+  ## positions instead of byte offsets — fills `index` under the same key type.
+  if isBifFile(path):
+    result = ForeignModule(isBif: true,
+                           index: initTable[string, int](),
+                           decls: initTable[string, Cursor](),
+                           hasEmbeddedIndex: true)  # a bif always carries one
+    var bm = bif.load(path)
+    for e in bm.index:
+      result.index[poolSym(bm.buf.pool, e.sym)] = int e.pos
+    result.bifBuf = ensureMove bm.buf
+  else:
+    result = ForeignModule(r: nifreader.open(path),
+                           index: initTable[string, int](),
+                           decls: initTable[string, Cursor]())
+    if indexStartsAt(result.r) > 0:
+      result.hasEmbeddedIndex = true
+      result.index = readEmbeddedIndex(result.r)
 
 proc hasDecl*(m: ForeignModule; name: string): bool =
   m.decls.hasKey(name) or m.index.hasKey(name)
@@ -89,9 +107,15 @@ proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil): 
   ## consumers (lengc keys `defs`/scopes by `SymId`, so foreign decls must intern
   ## into the same pool or their ids won't line up with the main module's).
   if m.decls.hasKey(name): return m.decls[name]
-  m.r.jumpTo(m.index[name])
   var buf = createTokenBuf(64, pool, tags)
-  parse(m.r, buf)                             # exactly one balanced decl tree
+  if m.isBif:
+    # The decl subtree is already resident; `addSubtree` re-interns literals,
+    # tag names and line-info filenames across pools (the bif buffer keeps its
+    # own fresh pools), so the copy lands in the caller's `tags`/`pool` world.
+    buf.addSubtree cursorAt(m.bifBuf, m.index[name])
+  else:
+    m.r.jumpTo(m.index[name])
+    parse(m.r, buf)                           # exactly one balanced decl tree
   # Take the cursor on the LOCAL buffer *before* moving it into `declBufs`
   # (the leng/nimony pattern, see nifmodules.getDeclOrNil): `beginRead` installs
   # the buffer's ref-counted cursor owner, which then travels with the buffer

@@ -210,6 +210,25 @@ proc readExact(f: File; p: pointer; n: int) =
   let got = readBytes(f, p, n)
   assert got == n
 
+proc isBifFile*(filename: string): bool =
+  ## Cheap format probe: does `filename` start with the BIF magic name? Only the
+  ## 6 name bytes are compared — NOT endianness/version — so that a
+  ## wrong-version `.bif` is still routed to `load` and rejected with the
+  ## precise "bad magic / incompatible" message instead of being fed to the
+  ## text parser. Pipeline files keep their `.nif` names regardless of content;
+  ## this probe is how a reader picks the decoder.
+  result = false
+  var f = default(File)
+  if not open(f, filename, fmRead): return false
+  var m = default(array[MagicLen, char])
+  if readBytes(f, addr m[0], MagicLen) == MagicLen:
+    result = true
+    for i in 0 ..< MagicLen - 2:   # compare "NIFBIN" only
+      if m[i] != "NIFBIN"[i]:
+        result = false
+        break
+  close(f)
+
 # `indexOffset` is the one fixed-width field: a placeholder that gets patched in
 # place, so it must always occupy exactly 8 bytes (a varint would resize on patch).
 proc writeU64(f: File; x: uint64) =
