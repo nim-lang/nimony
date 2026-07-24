@@ -539,6 +539,7 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     takeToken dest, n
   elif n.substructureKind == TypevarsU:
     inc c.routine.inGeneric
+    inc c.inGenericDefinition
     takeInto dest, n:
       while n.hasMore:
         semGenericParam c, dest, n
@@ -1013,6 +1014,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     if kind == TemplateY:
       inc c.routine.inLoop
       inc c.routine.inGeneric
+      inc c.inGenericDefinition
 
     try:
       c.openScope() # open parameter scope
@@ -1079,6 +1081,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         transformDefer dest, beforeBody
       dest.addParRi(it.n.endInfo)
     finally:
+      if c.routine.inGeneric > 0:
+        dec c.inGenericDefinition, c.routine.inGeneric
       c.routine = c.routine.parent
   if newName == NoSymId:
     producesVoid c, dest, info, it.typ
@@ -1413,6 +1417,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
           dest.takeTree n # body
     if isGeneric:
       closeScope c
+      dec c.inGenericDefinition, c.routine.inGeneric - prevGeneric
       c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
       c.routine.inInst = prevInst
 

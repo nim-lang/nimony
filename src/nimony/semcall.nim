@@ -534,9 +534,62 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
       m.add createMatch(addr c)
       sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
+proc addMatchedArg(c: var SemContext; dest: var TokenBuf; formal: Cursor;
+                   arg: var Cursor; argTyp: Cursor) =
+  if arg.exprKind != ToClosureX and needsToClosureWrap(formal, argTyp):
+    dest.addParLe ToClosureX, arg.info
+    takeTree dest, arg
+    dest.addParRi()
+  else:
+    takeTree dest, arg
+
+proc emitMatchedCallArgs(c: var SemContext; dest: var TokenBuf; m: var Match;
+                         origArgs: openArray[CallArg]) =
+  if m.args.len == 0:
+    return
+  var f = m.fn.typ
+  if f.typeKind in RoutineTypes:
+    skipToParams f
+  if f.substructureKind != ParamsU:
+    dest.add m.args
+    return
+  var params = sub(f)
+  var check = params
+  while check.hasMore:
+    if check.symKind == ParamY and asLocal(check).typ.typeKind == VarargsT:
+      dest.add m.args
+      return
+    skip check
+  var paramsWalk = params
+  var i = 0
+  var needsWrap = false
+  while paramsWalk.hasMore and i < origArgs.len:
+    if paramsWalk.symKind == ParamY:
+      let param = asLocal(paramsWalk)
+      if needsToClosureWrap(param.typ, origArgs[i].typ):
+        needsWrap = true
+        break
+      inc i
+    skip paramsWalk
+  if not needsWrap:
+    dest.add m.args
+    return
+  var arg = beginRead(m.args)
+  i = 0
+  paramsWalk = params
+  while arg.hasMore and paramsWalk.hasMore:
+    if paramsWalk.symKind == ParamY:
+      let param = asLocal(paramsWalk)
+      if i < origArgs.len:
+        addMatchedArg c, dest, param.typ, arg, origArgs[i].typ
+      else:
+        takeTree dest, arg
+      inc i
+    skip paramsWalk
+
 proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; origArgs: openArray[CallArg]) =
   if not (m.genericConverter or m.refineArgType or m.insertedParam):
-    dest.add m.args
+    emitMatchedCallArgs c, dest, m, origArgs
   else:
     m.args.addParRi()
     var f = m.fn.typ
@@ -652,7 +705,7 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
                 if convMatch.err:
                   # adding type args errored
                   buildErr c, dest, convInfo, getErrorMsg(convMatch)
-                elif not inGenericDefinitionContext(c.routine):
+                elif c.inGenericDefinition == 0:
                   let inst = c.requestRoutineInstance(conv.sym, convMatch.typeArgs, convMatch.inferred, convInfo)
                   dest[dest.len-1].setSymId inst.targetSym
                 else:
@@ -678,7 +731,11 @@ proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; 
         semConv c, dest, item
         arg = item.n
       else:
-        takeTree dest, arg
+        if f.symKind == ParamY and i < origArgs.len:
+          let param = asLocal(f)
+          addMatchedArg c, dest, param.typ, arg, origArgs[i].typ
+        else:
+          takeTree dest, arg
       skip f # should not be parri
       inc i
     assert f.kind == ParRi
@@ -1075,7 +1132,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # of scope right after resolveOverloads returns.
       var matched = ensureMove(m[idx])
       let returnType: Cursor
-      if isMagic == NonMagicCall and not inGenericDefinitionContext(c.routine) and
+      if isMagic == NonMagicCall and c.inGenericDefinition == 0 and
           isGeneric(getProcDecl(finalFn.sym)):
         let inst = c.requestRoutineInstance(finalFn.sym, matched.typeArgs, matched.inferred, cs.callNode.info)
         # `addFn` emits the callee in different shapes — usually a

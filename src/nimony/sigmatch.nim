@@ -71,7 +71,6 @@ type
     hasError: bool # mark that error message was set
     skippedMod: TypeKind
     argInfo: PackedLineInfo
-    argExpr: Cursor ## expression currently being matched (for closure conversion)
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
     returnType*: Cursor
@@ -1262,10 +1261,6 @@ proc procTypeMatch(m: var Match; f, a: var Cursor) =
     m.error ClosureMismatch, f, a
   elif fcc.usesPassive != acc.usesPassive:
     m.error PassiveMismatch, f, a
-  if not m.err and fcc.usesClosure and not acc.usesClosure and m.argExpr.exprKind != ToClosureX:
-    m.args.addParLe ToClosureX, m.argInfo
-    inc m.opened
-    inc m.convCosts
   # XXX consider when f or a is (params):
   if not fIsProctype:
     skip f, SkipEffects # effects
@@ -2178,9 +2173,24 @@ proc varargsMatch(m: var Match; f: var Cursor; arg: CallArg) =
     var elemMut = elem
     singleArg(m, elemMut, arg)
 
+proc routineProcProps*(typ: Cursor): ProcProperties =
+  var t = typ
+  if t.typeKind in RoutineTypes:
+    skipToReturnType t
+    skip t, SkipType
+    result = extractProcProps(t)
+  else:
+    result = ProcProperties(cc: Nimcall, usesRaises: false, usesClosure: false, usesPassive: false)
+
+proc needsToClosureWrap*(formal, actualTyp: Cursor): bool =
+  if formal.typeKind notin RoutineTypes: return false
+  if actualTyp.typeKind notin RoutineTypes: return false
+  let fcc = routineProcProps(formal)
+  let acc = routineProcProps(skipModifier(actualTyp))
+  result = fcc.usesClosure and not acc.usesClosure and acc.cc == Nimcall
+
 proc singleArgCore(m: var Match; f: var Cursor; arg: CallArg) =
   let fOrig = f
-  m.argExpr = arg.n
   singleArgImpl(m, f, arg)
   if not m.err:
     m.useArg arg, fOrig # since it was a match, copy it

@@ -30,16 +30,6 @@ type
 proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =
   result = SemRoutine(kind: kind, parent: parent, resId: SymId(0))
 
-proc inGenericDefinitionContext*(r: SemRoutine): bool =
-  ## True when semchecking a generic body before instantiation, including
-  ## nested procs and closures declared within an outer generic routine.
-  result = false
-  var it = r
-  while it != nil:
-    if it.inGeneric > 0:
-      return true
-    it = it.parent
-
 const
   MaxNestedTemplates* = 100
 
@@ -243,6 +233,9 @@ type
       ## tests/nimony/lookups/tforward_decl_export.nim.
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
     inTypeInst*: int # > 0 means we're inside a generic type instantiation
+    inGenericDefinition*: int
+      ## > 0 while semchecking a generic/template body before instantiation,
+      ## including nested procs and closures declared within an outer generic.
     deferredLocals*: Table[StrId, Cursor]
       ## Signature-phase on-demand resolution (nim-lang/nimony#1974): toplevel
       ## let/var are deferred to the body phase, but their decl cursor is
