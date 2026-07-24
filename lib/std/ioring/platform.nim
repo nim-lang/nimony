@@ -3,7 +3,10 @@
 when defined(linux):
   const hasEpoll* = true
   const hasKqueue* = false
-  const hasIouring* = true
+  when not defined(nimony):
+    const hasIouring* = true
+  else:
+    const hasIouring* = false
 elif defined(macosx) or defined(freebsd) or defined(netbsd) or
      defined(openbsd) or defined(dragonfly):
   const hasEpoll* = false
