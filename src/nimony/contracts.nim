@@ -49,7 +49,7 @@ proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
     quit msg
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
-    c.errors.add strToken(pool.strings.getOrIncl(msg), info)
+    c.errors.add strLitToken(pool.strings.getOrIncl(msg))
 
 proc contractViolation(c: var Context; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
@@ -109,7 +109,7 @@ proc mapSymbol(c: var Context; paramMap: Table[SymId, int]; call: Cursor; symId:
   let pos = paramMap.getOrDefault(symId)
   if pos > 0:
     let arg = call.argAt(pos)
-    if arg.kind == Symbol:
+    if arg.isSymbol:
       result = getVarId(c, arg.symId)
 
 proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
@@ -117,30 +117,30 @@ proc compileCmp(c: var Context; paramMap: Table[SymId, int]; req, call: Cursor):
   var a = InvalidVarId
   var b = InvalidVarId
   var cnst = createXint(0'i32)
-  if r.kind == Symbol:
+  if r.isSymbol:
     a = mapSymbol(c, paramMap, call, r.symId)
     inc r
-  if r.kind == Symbol:
+  if r.isSymbol:
     b = mapSymbol(c, paramMap, call, r.symId)
     inc r
-  elif r.kind == IntLit:
+  elif r.isIntLit:
     b = VarId(0)
-    cnst = createXint(pool.integers[r.intId])
+    cnst = createXint(r.intVal)
     inc r
   elif r.kind == UIntLit:
     b = VarId(0)
-    cnst = createXint(pool.uintegers[r.uintId])
+    cnst = createXint(r.uintVal)
     inc r
   elif (let op = r.exprKind; op in {AddX, SubX}):
     r.peekInto:
       skip r # type
-      if r.kind == Symbol:
+      if r.isSymbol:
         b = mapSymbol(c, paramMap, call, r.symId)
         inc r
-        if r.kind == IntLit:
-          cnst = createXint(pool.integers[r.intId])
+        if r.isIntLit:
+          cnst = createXint(r.intVal)
         elif r.kind == UIntLit:
-          cnst = createXint(pool.uintegers[r.uintId])
+          cnst = createXint(r.uintVal)
         else:
           error "expected integer literal but got: ", r
       else:
@@ -225,19 +225,19 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   result = false
   case t.typeKind
   of PtrT, RefT:
-    var e = t.firstSon
+    var e = t.childCursor
     skip e # base type
     if e.hasMore and e.substructureKind == mark:
       result = true
   of CstringT, PointerT:
-    let e = t.firstSon
+    let e = t.childCursor
     # no base type
     if e.hasMore and e.substructureKind == mark:
       result = true
   of ProctypeT:
     # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
     # nilability marker is at slot 0.
-    let e = t.firstSon
+    let e = t.childCursor
     if e.substructureKind == mark:
       result = true
   else:
@@ -260,7 +260,7 @@ proc analysableRoot(c: var Context; n: Cursor): SymId =
       skip n # skip intlit
     else:
       break
-  if n.kind == Symbol:
+  if n.isSymbol:
     result = n.symId
     let x = getLocalInfo(c.typeCache, result)
     if x.kind == GvarY:
@@ -315,7 +315,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
     while n.hasMore:
       assert n.substructureKind == KvU
       n.into:
-        assert n.kind == Symbol
+        assert n.isSymbol
         let expected = lookupField(c.typeCache, objType, n.symId)
         assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
         skip n # field name
@@ -327,7 +327,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
 
 proc analyseArrayConstr(c: var Context; n: var Cursor) =
   n.into:
-    let expected = n.firstSon # element type of the array
+    let expected = n.childCursor # element type of the array
     skip n # type
     while n.hasMore:
       checkNilMatch c, n, expected
@@ -335,7 +335,7 @@ proc analyseArrayConstr(c: var Context; n: var Cursor) =
 
 proc analyseTupConstr(c: var Context; n: var Cursor) =
   n.into:
-    var expected = n.firstSon # type of the first field
+    var expected = n.childCursor # type of the first field
     skip n # type
     while n.hasMore:
       assert expected.hasMore
@@ -357,11 +357,10 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     inc pc
   of SymbolDef:
     bug "symbol definition in single path"
-  of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
+  of EofToken, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit,
+     UnknownToken, ExtendedSuffix, LineInfoLit, ParLe, ParRi:
     inc pc
-  of ParRi:
-    bug "unpaired ')'"
-  of ParLe:
+  of TagLit:
     case pc.exprKind
     of CallKinds:
       analyseCall c, pc
@@ -407,7 +406,7 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
     if pk == OutT:
       var arg = n
       if arg.exprKind == HaddrX: inc arg
-      if arg.kind == Symbol:
+      if arg.isSymbol:
         # is now initialized:
         c.writesTo.add arg.symId
     elif pk == VarargsT:
@@ -479,16 +478,16 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
   if pc.exprKind in {AddX, SubX}:
     pc.into:
       skip pc # type
-      if pc.kind == Symbol:
+      if pc.isSymbol:
         let symId2 = pc.symId
         fact.b = getVarId(c, symId2)
         inc pc
-        if pc.kind == IntLit:
-          fact.c = fact.c + createXint(pool.integers[pc.intId])
+        if pc.isIntLit:
+          fact.c = fact.c + createXint(pc.intVal)
           result = true
           inc pc
         elif pc.kind == UIntLit:
-          fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+          fact.c = fact.c + createXint(pc.uintVal)
           result = true
           inc pc
         else:
@@ -496,19 +495,19 @@ proc rightHandSide(c: var Context; pc: var Cursor; fact: var LeXplusC): bool =
       else:
         analyseExpr c, pc
         analyseExpr c, pc
-  elif pc.kind == Symbol:
+  elif pc.isSymbol:
     let symId2 = pc.symId
     fact.b = getVarId(c, symId2)
     result = true
     inc pc
-  elif pc.kind == IntLit:
+  elif pc.isIntLit:
     fact.b = VarId(0)
-    fact.c = fact.c + createXint(pool.integers[pc.intId])
+    fact.c = fact.c + createXint(pc.intVal)
     result = true
     inc pc
   elif pc.kind == UIntLit:
     fact.b = VarId(0)
-    fact.c = fact.c + createXint(pool.uintegers[pc.uintId])
+    fact.c = fact.c + createXint(pc.uintVal)
     result = true
     inc pc
   elif pc.exprKind == NilX:
@@ -543,15 +542,15 @@ proc translateCond(c: var Context; pc: var Cursor; wasEquality: var bool): LeXpl
     analyseExpr c, pc
     return result
 
-  if r.kind == IntLit:
+  if r.isIntLit:
     result.a = VarId(0)
-    result.c = -createXint(pool.integers[r.intId])
+    result.c = -createXint(r.intVal)
     inc r
   elif r.kind == UIntLit:
     result.a = VarId(0)
-    result.c = -createXint(pool.uintegers[r.uintId])
+    result.c = -createXint(r.uintVal)
     inc r
-  elif r.kind == Symbol:
+  elif r.isSymbol:
     result.a = getVarId(c, r.symId)
     inc r
   elif r.exprKind == NilX:
@@ -606,7 +605,7 @@ proc isNonNilExpr(n: Cursor): bool =
     skip inner # skip type part
     result = isNonNilExpr(inner)
   else:
-    if n.kind == StringLit:
+    if n.isStringLit:
       result = true
     else:
       result = false
@@ -618,7 +617,7 @@ proc cannotBeNil(c: var Context; n: Cursor): bool {.inline.} =
 proc analyseAsgn(c: var Context; pc: var Cursor) =
   pc.into: # skip asgn instruction
     let expected = getType(c.typeCache, pc)
-    if pc.kind == Symbol:
+    if pc.isSymbol:
       let symId = pc.symId
       let x = getLocalInfo(c.typeCache, symId)
       if x.kind in {LetY, GletY, TletY}:
@@ -703,26 +702,25 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
     #echo "Instruction is ", toString(pc, false)
     case pc.kind
     of GotoInstr:
-      # Every goto intruction leaves the basic block.
+      # GotoInstr is a DotToken; a nonzero 28-bit payload leaves the block,
+      # a plain `.` is inert
       let diff = pc.getInt28
-      if diff < 0:
+      if diff == 0:
+        inc pc
+      elif diff < 0:
         return Continuation(thenPart: LoopBack, elsePart: NoBasicBlock)
       else:
         # ordinary goto, simply follow it:
         return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
-    of ParRi:
-      if nested == 0:
-        bug "unpaired ')'"
-      dec nested
-      inc pc
     of Symbol:
       inc pc
     of SymbolDef:
       bug "symbol definition in single path"
-    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    of EofToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit,
+       UnknownToken, ExtendedSuffix, LineInfoLit, ParLe, ParRi:
       inc pc
-    of ParLe:
-      #echo "PC IS: ", pool.tags[pc.tag]
+    of TagLit:
+      #echo "PC IS: ", globalTags.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
         let conditionalFacts = analyseCondition(c, pc)
@@ -759,7 +757,7 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
             skip pc # pragmas
             c.typeCache.registerLocal(name, cast[SymKind](kind), pc)
             skip pc # type
-            if pc.kind != DotToken or skipInitCheck:
+            if not pc.isDotToken or skipInitCheck:
               c.directlyInitialized.incl name
             analyseExpr c, pc
         of NoStmt:
@@ -842,7 +840,6 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
 proc checkContracts(c: var Context; n: Cursor) =
   c.cf = toControlflow(n)
   c.facts = createFacts()
-  freeze c.cf
   #echo "CF IS ", codeListing(c.cf)
 
   c.startInstr = readonlyCursorAt(c.cf, 0)
@@ -895,7 +892,7 @@ proc traverseBody(c: var Context; n: var Cursor) =
     traverseProc(c, n)
   elif sk in {MacroS, TemplateS, TypeS, CommentS, PragmasS}:
     skip n
-  elif n.kind == ParLe:
+  elif n.isTagLit:
     n.loopInto:
       traverseBody(c, n)
   else:
@@ -916,7 +913,7 @@ proc traverseProc(c: var Context; n: var Cursor) =
 proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
-    c.toplevelStmts.add n
+    c.toplevelStmts.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         traverseToplevel(c, n)
@@ -951,7 +948,6 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   var nt = beginRead c.toplevelStmts
   checkContracts(c, nt)
 
-  endRead input
   #restore(input, oldInfos)
   c.typeCache.closeScope()
   result = ensureMove c.errors

@@ -73,14 +73,13 @@ proc getCfvar(n: var Cursor): Cfvar =
   inc n
   let s = n.symId
   inc n
-  let v = pool.integers[n.intId]
+  let v = n.intVal
   inc n
   skipParRi n
   result = (s, int(v))
 
 proc computeCfvarMask(c: var Context; n: var Cursor; mask: var CfvarMask) =
-  case n.kind
-  of ParLe:
+  if n.isTagLit:
     if n.njvlKind == VV:
       inc n
       let mflag = getCfvar(n)
@@ -110,11 +109,11 @@ proc aJoin(c: var Context; n: var Cursor) =
   inc n
   let sym = n.symId
   inc n
-  let fresh = pool.integers[n.intId]
+  let fresh = n.intVal
   inc n
-  let old1 = pool.integers[n.intId]
+  let old1 = n.intVal
   inc n
-  let old2 = pool.integers[n.intId]
+  let old2 = n.intVal
   inc n
   skipParRi n
   let freshX = (sym, int(fresh))
@@ -211,12 +210,12 @@ proc pickBranch(c: Context; n: var Cursor): (Branch, SymId) =
     result = (UnknownBranch, NoSymId)
 
 proc emitJump(c: var Context; dest: var TokenBuf; label: SymId; info: PackedLineInfo) =
-  dest.add tagToken("jmp", info)
+  dest.addParLe("jmp", info)
   dest.addSymUse label, info
   dest.addParRi()
 
 proc emitLabel(c: var Context; dest: var TokenBuf; label: SymId; info: PackedLineInfo) =
-  dest.add tagToken("lab", info)
+  dest.addParLe("lab", info)
   dest.addSymDef label, info
   dest.addParRi()
 
@@ -242,7 +241,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if label[0] != NoSymId:
       emitJump(c, dest, labelFromCfvar(label), info)
   of IteV, ItecV:
-    var cond = n.firstSon
+    var cond = n.childCursor
     let (branch, targetLabel) = pickBranch(c, cond)
     case branch
     of ThenBranch:
@@ -272,7 +271,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.takeTree n # keep the join information
       skipParRi n
     of UnknownBranch:
-      dest.takeToken n
+      dest.takeTree n
       dest.takeTree n # condition is an expression so we don't have to traverse it
       trStmt c, dest, n
       trStmt c, dest, n
@@ -286,15 +285,14 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skipParRi n
   else:
     case n.kind
-    of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StringLit, DotToken, EofToken, UnknownToken, Ident:
-      dest.takeToken n
-    of ParLe:
-      dest.takeToken n
-      while n.hasMore:
-        trStmt c, dest, n
-      dest.takeToken n
-    of ParRi:
-      bug "Unmatched ParRi"
+    of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit, DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident:
+      dest.takeTree n
+    of TagLit:
+      takeInto dest, n:
+        while n.hasMore:
+          trStmt c, dest, n
+    else:
+      bug "Unmatched ParRi" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 
 proc toGoto*(n: Cursor; moduleSuffix: string): TokenBuf =
@@ -303,7 +301,7 @@ proc toGoto*(n: Cursor; moduleSuffix: string): TokenBuf =
   c.typeCache.openScope()
   result = createTokenBuf(300)
   assert n.stmtKind == StmtsS, $n.kind
-  result.add n
+  result.addParLe(n.tag, n.info)
 
   aStmt c, n
 

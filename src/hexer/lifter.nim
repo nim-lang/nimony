@@ -47,6 +47,11 @@ type
     op: AttachedOp
     routineKind: SymKind
     calledErrorHook: PackedLineInfo
+    calledErrorHookSet: bool
+      ## the FLAG for `.error` propagation. `calledErrorHook` only carries
+      ## the position for the message; it may legitimately be `NoLineInfo`
+      ## (an index-jumped decl load cannot resolve its relative line infos),
+      ## so info-validity must not double as the flag.
     info: PackedLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
@@ -138,19 +143,21 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
     result = isErrorHook(lookupHookSym(c, siblingOp, s))
 
-proc siblingHookErrorInfo(c: var LiftingCtx; typ: TypeCursor;
-                          siblingOp: AttachedOp): PackedLineInfo =
-  ## Returns the sibling `=copy`/`=dup` hook's `name.info` if it is marked
-  ## `.error` for the (nominal) type `typ`. Otherwise `NoLineInfo`.
-  result = NoLineInfo
-  if typ.kind notin {Symbol, SymbolDef}:
+proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
+                      siblingOp: AttachedOp): (bool, PackedLineInfo) =
+  ## Returns (true, the sibling `=copy`/`=dup` hook's `name.info`) if it is
+  ## marked `.error` for the (nominal) type `typ`. The info may be
+  ## `NoLineInfo` even when the flag is true (index-jumped decl loads have
+  ## no resolvable line infos).
+  result = (false, NoLineInfo)
+  if not (typ.isSymbol or typ.isSymbolDef):
     return
   let siblingSym = lookupHookSym(c, siblingOp, typ.symId)
   if not isErrorHook(siblingSym):
     return
   let res = tryLoadSym(siblingSym)
   let r = asRoutine(res.decl)
-  result = r.name.info
+  result = (true, r.name.info)
 
 proc getCompilerProc(c: var LiftingCtx; name: string): SymId =
   result = pool.syms.getOrIncl(name & ".0." & SystemModuleSuffix)
@@ -215,7 +222,7 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     # buffer) and needs the base type's `=destroy`/`=dup`. Without this the
     # `else` branch below treated every named distinct as trivial, so the
     # duplifier moved instead of copied — a use-after-free for resource types.
-    result = isTrivial(c, r.body.firstSon)
+    result = isTrivial(c, r.body.childCursor)
   else:
     result = true
 
@@ -245,7 +252,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
   of LentT:
     result = true # lent types are borrowed; no hooks needed
   of SinkT, ArrayT:
-    result = isTrivial(c, typ.firstSon)
+    result = isTrivial(c, typ.childCursor)
   of ObjectT:
     result = isTrivialObjectBody(c, typ)
   of TupleT:
@@ -317,7 +324,7 @@ proc generateHookName(c: var LiftingCtx; op: AttachedOp; key: string): string =
   result.add c.thisModuleSuffix
 
 proc requestLifting(c: var LiftingCtx; op: AttachedOp; t: TypeCursor): SymId =
-  if t.kind in {Symbol, SymbolDef}:
+  if (t.isSymbol or t.isSymbolDef):
     result = loadHook(c, op, t.symId)
     if result != SymId(0):
       return result
@@ -344,6 +351,7 @@ proc maybeCallHook(c: var LiftingCtx; s: SymId; paramA, paramB: TokenBuf; forceS
       let r = asRoutine(res.decl)
       if hasPragma(r.pragmas, ErrorP):
         c.calledErrorHook = r.name.info
+        c.calledErrorHookSet = true
     if c.op == attachedDup:
       copyIntoKind c.dest, AsgnS, c.info:
         copyTree c.dest, paramA
@@ -363,11 +371,12 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   # may not exist yet (it's only just been queued), so `maybeCallHook`'s
   # pragma check on the sym would miss it. Look at the sub-type's sibling
   # here and propagate `.error` into the *enclosing* hook now.
-  if c.op in {attachedCopy, attachedDup} and c.calledErrorHook == NoLineInfo:
+  if c.op in {attachedCopy, attachedDup} and not c.calledErrorHookSet:
     let siblingOp = if c.op == attachedCopy: attachedDup else: attachedCopy
-    let info = siblingHookErrorInfo(c, typ, siblingOp)
-    if info != NoLineInfo:
+    let (isErr, info) = siblingHookError(c, typ, siblingOp)
+    if isErr:
       c.calledErrorHook = info
+      c.calledErrorHookSet = true
 
   let orig = typ
   let typ = toTypeImpl typ
@@ -409,7 +418,7 @@ proc accessTupField(c: var LiftingCtx; tup: TokenBuf; idx: int; paramPos = 0): T
         copyTree result, tup
     else:
       copyTree result, tup
-    result.add intToken(pool.integers.getOrIncl(idx), c.info)
+    result.addIntLit(idx, c.info)
 
 proc unravelObjField(c: var LiftingCtx; n: var Cursor; paramA, paramB: TokenBuf; depth: int) =
   let r = takeLocal(n, SkipFinalParRi)
@@ -527,7 +536,7 @@ proc baseobjOf(c: var LiftingCtx; typ: Cursor; x: TokenBuf; paramPos = 0): Token
   let nd = needsDeref(c, x, paramPos)
   copyIntoKind result, BaseobjX, c.info:
     copyTree result, typ
-    result.add intToken(pool.integers.getOrIncl(+1), c.info)
+    result.addIntLit(+1, c.info)
     if nd:
       result.addParLe HderefX, c.info
     copyTree result, x
@@ -612,21 +621,21 @@ proc accessArrayAt(c: var LiftingCtx; arr: TokenBuf; indexVar: SymId; paramPos =
 proc indexVarLowerThanArrayLen(c: var LiftingCtx; indexVar: SymId; arrayLen: xint) =
   copyIntoKind c.dest, LtX, c.info:
     copyIntoKind c.dest, IntT, c.info:
-      c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
+      c.dest.addIntLit(-1, c.info)
     copyIntoSymUse c.dest, indexVar, c.info
     var err = false
     let alen = asSigned(arrayLen, err)
     if not err:
-      c.dest.add intToken(pool.integers.getOrIncl(alen), c.info)
+      c.dest.addIntLit(alen, c.info)
     else:
       err = false
       let ualen = asUnsigned(arrayLen, err)
       assert(not err)
-      c.dest.add uintToken(pool.uintegers.getOrIncl(ualen), c.info)
+      c.dest.addUIntLit(ualen, c.info)
 
 proc addIntType(c: var LiftingCtx) =
   copyIntoKind c.dest, IntT, c.info:
-    c.dest.add intToken(pool.integers.getOrIncl(-1), c.info)
+    c.dest.addIntLit(-1, c.info)
 
 proc incIndexVar(c: var LiftingCtx; indexVar: SymId) =
   copyIntoKind c.dest, AsgnS, c.info:
@@ -634,14 +643,14 @@ proc incIndexVar(c: var LiftingCtx; indexVar: SymId) =
     copyIntoKind c.dest, AddX, c.info:
       addIntType c
       copyIntoSymUse c.dest, indexVar, c.info
-      c.dest.add intToken(pool.integers.getOrIncl(+1), c.info)
+      c.dest.addIntLit(+1, c.info)
 
 proc declareIndexVar(c: var LiftingCtx; indexVar: SymId) =
   copyIntoKind c.dest, VarY, c.info:
     addSymDef c.dest, indexVar, c.info
     c.dest.addEmpty2 c.info # not exported, no pragmas
     addIntType c
-    c.dest.add intToken(pool.integers.getOrIncl(0), c.info)
+    c.dest.addIntLit(0, c.info)
 
 proc unravelArray(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
@@ -723,7 +732,7 @@ proc emitIncRef(c: var LiftingCtx; x: TokenBuf) =
 
 proc unravelRef(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf) =
   assert n.typeKind == RefT
-  let baseType = n.firstSon
+  let baseType = n.childCursor
   case c.op
   of attachedDestroy:
     emitRefDestructor c, paramA, baseType
@@ -800,7 +809,7 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     # in `string`'s custom `=destroy`/`=dup` and not in any reachable field —
     # actually calls that hook. The plain field-recursion produced an empty
     # body for such types and silently moved the buffer.
-    unravel(c, typ.firstSon, paramA, paramB)
+    unravel(c, typ.childCursor, paramA, paramB)
   of TupleT:
     unravelTuple c, typ, paramA, paramB
   of ArrayT:
@@ -818,7 +827,7 @@ proc addParamType(c: var LiftingCtx; typ: TypeCursor) =
     # `n.into` bounds the child walk: `typ` is a cursor into an enclosing
     # decl, so an unbounded `hasMore` loop would run past the type's
     # (elided) close and copy the decl's remaining children too.
-    c.dest.add n.load()
+    c.dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         if isNilAnnotation(n):
@@ -861,16 +870,20 @@ proc maybeAddReturn(c: var LiftingCtx; res: SymId) =
 proc publishProc(sym: SymId; dest: TokenBuf; procStart: int) =
   var buf = createTokenBuf(100)
   # verbatim copy of a (possibly still-open) span: keep seals, no open-tag churn
-  for i in procStart ..< dest.len: buf.addRaw dest[i]
+  for i in procStart ..< dest.len: buf.add dest[i]
   programs.publish(sym, buf)
 
 proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
   if c.op == attachedCopy:
-    let info = siblingHookErrorInfo(c, typ, attachedDup)
-    if info != NoLineInfo: c.calledErrorHook = info
+    let (isErr, info) = siblingHookError(c, typ, attachedDup)
+    if isErr:
+      c.calledErrorHook = info
+      c.calledErrorHookSet = true
   elif c.op == attachedDup:
-    let info = siblingHookErrorInfo(c, typ, attachedCopy)
-    if info != NoLineInfo: c.calledErrorHook = info
+    let (isErr, info) = siblingHookError(c, typ, attachedCopy)
+    if isErr:
+      c.calledErrorHook = info
+      c.calledErrorHookSet = true
 
   let paramA = pool.syms.getOrIncl("dest.0")
   var paramTreeA = createTokenBuf(4)
@@ -938,7 +951,7 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
         unravelDispatch(c, typ, paramTreeA, paramTreeB)
         if c.dest.len == beforeUnravel:
           var t = typ
-          if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId):
+          if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId):
             discard "empty hooks are valid for RTTI'ed types"
           else:
             assert false, "empty hook created for " & toString(typ, false)
@@ -949,19 +962,22 @@ proc genProcDecl(c: var LiftingCtx; sym: SymId; typ: TypeCursor) =
     # unreachable. Drop the body we just built so later passes don't see the
     # inner calls — those calls would otherwise be flagged against user line
     # info even though no reachable code path can execute them.
-    if c.calledErrorHook != NoLineInfo:
+    if c.calledErrorHookSet:
       c.dest.shrink bodyStart
       copyIntoKind(c.dest, StmtsS, c.info): discard
   # tell vtables.nim we need dynamic binding here:
   if c.routineKind == MethodY:
     # `setTag`, not a `parLeToken` overwrite: the decl is sealed by now and
     # its jump must be preserved
-    setTag(c.dest[procStart], TagId(MethodS))
-    c.dest[procStart] = withLineInfo(c.dest[procStart], c.info)
-
-  if c.calledErrorHook != NoLineInfo:
+    var mtok = c.dest[procStart]
+    setTag(mtok, TagId(MethodS))
+    c.dest[procStart] = mtok
+  if c.calledErrorHookSet:
     let before = c.dest.len
-    c.dest.insert [parLeToken(ErrorP, c.calledErrorHook), parRiToken(c.calledErrorHook)], pragmasPos
+    var errBuf = createTokenBuf(2)
+    errBuf.addParLe(cast[TagId](uint32(ord(ErrorP))), c.calledErrorHook)
+    errBuf.addParRi()
+    c.dest.insert(errBuf, pragmasPos)
     # The insert lands inside two already-sealed scopes; widen their jumps
     # (no-op in classic mode):
     let growth = c.dest.len - before
@@ -977,9 +993,10 @@ proc genMissingHooks*(c: var LiftingCtx) =
     for i in 0 ..< reqs.len:
       c.op = reqs[i].op
       c.calledErrorHook = NoLineInfo
+      c.calledErrorHookSet = false
       # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
       let t = reqs[i].typ
-      if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:
+      if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId) and reqs[i].op in {attachedDestroy, attachedTrace}:
         c.routineKind = MethodY
       else:
         c.routineKind = ProcY
@@ -997,9 +1014,9 @@ proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLi
   c.op = op
   c.calledErrorHook = NoLineInfo
   c.info = info
-  let t = if typ.typeKind == SinkT: typ.firstSon else: typ
+  let t = if typ.typeKind == SinkT: typ.childCursor else: typ
   # For RTTI types (inheritable objects), hooks need to be methods for vtable dispatch
-  if t.kind in {Symbol, SymbolDef} and hasRtti(t.symId) and op in {attachedDestroy, attachedTrace}:
+  if (t.isSymbol or t.isSymbolDef) and hasRtti(t.symId) and op in {attachedDestroy, attachedTrace}:
     c.routineKind = MethodY
   else:
     c.routineKind = ProcY

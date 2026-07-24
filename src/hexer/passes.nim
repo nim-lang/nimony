@@ -9,7 +9,7 @@
 
 when not defined(nimony):
   import std/[monotimes, times, syncio, os, strutils]
-import ../lib/[nifcursors, nifstreams]
+import ../lib/[nifpools]
 
 type
   Pass* = object
@@ -84,7 +84,6 @@ proc prepareForNext*(pass: var Pass; nextPassName: string) =
       logPassTiming(pass.moduleSuffix, pass.passName, pass.passStart)
 
   # End reading from old buffer
-  endRead(pass.buf)
 
   # Swap: previous output becomes next input
   swap(pass.buf, pass.dest)

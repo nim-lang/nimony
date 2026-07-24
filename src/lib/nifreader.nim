@@ -9,6 +9,11 @@
 import std / [memfiles, parseutils, assertions]
 import stringviews
 import vfs
+import nifcore  # the ONE token-kind enum, shared with the binary token model
+export NifKind
+
+const StringLit* = StrLit
+  ## The reader's traditional name for the string-literal token kind.
 when defined(nimony):
   import std/syncio
 
@@ -22,12 +27,6 @@ const
   B62Digits = {'0'..'9', 'A'..'Z', 'a'..'z'}
 
 type
-  NifKind* = enum
-    UnknownToken, EofToken,
-    DotToken, Ident, Symbol, SymbolDef,
-    StringLit, CharLit, IntLit, UIntLit, FloatLit,
-    ParLe, ParRi
-
   FilePos* = object
     col*, line*: int32
 
@@ -64,6 +63,9 @@ proc `$`*(t: ExpandedToken): string =
   of Ident, Symbol, SymbolDef,
      StringLit, CharLit, IntLit, UIntLit, FloatLit:
     result = $t.tk & ":" & $t.data
+  of TagLit, ExtendedSuffix, LineInfoLit:
+    # binary-only kinds; the textual reader never produces them
+    result = "<" & $t.tk & ">"
 
 template inc(p: pchar; diff = 1) =
   p = cast[pchar](cast[int](p) + diff)
@@ -377,6 +379,10 @@ proc handleSuffix(r: var Reader; result: var ExpandedToken) {.inline.} =
 
 proc next*(r: var Reader; result: var ExpandedToken) =
   result = default(ExpandedToken)
+  # In the unified NifKind, ordinal 0 is DotToken, not UnknownToken — the
+  # classification branches below rely on `tk` starting out as "unknown"
+  # (e.g. the char-literal branch leaves it untouched on a lex error).
+  result.tk = UnknownToken
   skipWhitespace r
   if r.p >= r.eof:
     result.tk = EofToken

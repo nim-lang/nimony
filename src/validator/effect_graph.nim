@@ -211,86 +211,85 @@ proc flatten*(e: Effect): FlatResult =
 
 proc extractDotCallName*(c: Cursor): string =
   result = ""
-  if c.kind != ParLe: return
-  var n = c
-  if pool.tags[n.tag] != "dot": return
-  inc n
-  skip n
-  if n.kind == Ident:
-    result = pool.strings[n.litId]
+  if not c.isTagLit: return
+  if globalTags.tags[c.cursorTagId] != "dot": return
+  var n = childCursor(c)
+  if not n.hasMore: return
+  skip n # receiver
+  if n.hasMore and n.kind == Ident:
+    result = n.strVal
 
 proc extractCalleeName*(n: Cursor): string =
   ## From a (call ...) or (cmd ...) node, extract the callee name.
   ## For method calls like `(call (dot recv callee) ...)`, returns the method name.
   ## For bare calls like `(call callee ...)`, returns the callee name.
-  var c = n
-  if c.kind != ParLe: return ""
-  inc c # skip (call/cmd
+  if not n.isTagLit: return ""
+  let c = childCursor(n)
+  if not c.hasMore: return ""
   if c.kind == Ident:
-    return pool.strings[c.litId]
-  elif c.kind == ParLe:
+    return c.strVal
+  elif c.isTagLit:
     return extractDotCallName(c)
   return ""
 
 proc extractLastDotField*(c: Cursor): string =
   ## From `(dot obj fieldName)`, extract the innermost field name.
   result = ""
-  if c.kind != ParLe: return
-  var n = c
-  if pool.tags[n.tag] != "dot": return
-  inc n
+  if not c.isTagLit: return
+  if globalTags.tags[c.cursorTagId] != "dot": return
+  var n = childCursor(c)
+  if not n.hasMore: return
   skip n # skip receiver
-  if n.kind == Ident:
-    result = pool.strings[n.litId]
+  if n.hasMore and n.kind == Ident:
+    result = n.strVal
 
 proc extractDotReceiver*(c: Cursor): Cursor =
   ## From `(dot receiver field)`, return a Cursor to the receiver lvalue.
   ## Works for nested dots: `(dot (dot c dest) field)` returns cursor to `(dot c dest)`.
-  if c.kind != ParLe: return default(Cursor)
-  var n = c
-  if pool.tags[n.tag] != "dot": return default(Cursor)
-  inc n
-  return n  # cursor at the receiver (Ident or nested dot)
+  if not c.isTagLit: return default(Cursor)
+  if globalTags.tags[c.cursorTagId] != "dot": return default(Cursor)
+  return childCursor(c)  # cursor at the receiver (Ident or nested dot)
 
 
 proc equalLvalues*(a, b: Cursor): bool =
   ## Structural comparison of two lvalue expressions.
   ## Lvalues are either bare Ident nodes or (dot recv field) expressions (potentially nested).
+  if not a.hasMore or not b.hasMore: return false
   if a.kind != b.kind: return false
   case a.kind
   of Ident:
-    return a.litId == b.litId
-  of ParLe:
-    if pool.tags[a.tag] != "dot" or pool.tags[b.tag] != "dot":
+    return a.strId == b.strId
+  of TagLit:
+    if globalTags.tags[a.cursorTagId] != "dot" or globalTags.tags[b.cursorTagId] != "dot":
       return false
-    var ca = a
-    var cb = b
-    inc ca # skip (dot
-    inc cb
+    var ca = childCursor(a)
+    var cb = childCursor(b)
     # Compare receivers recursively
     if not equalLvalues(ca, cb): return false
     skip ca
     skip cb
     # Compare field names
+    if not ca.hasMore or not cb.hasMore: return false
     if ca.kind != Ident or cb.kind != Ident: return false
-    return ca.litId == cb.litId
+    return ca.strId == cb.strId
   else:
     return false
 
 proc lvalueToStr*(c: Cursor): string =
   ## Convert an lvalue Cursor to a human-readable string for error messages.
+  if not c.hasMore: return "?"
   case c.kind
   of Ident:
-    return pool.strings[c.litId]
-  of ParLe:
-    if pool.tags[c.tag] == "dot":
-      var n = c
-      inc n
+    return c.strVal
+  of TagLit:
+    if globalTags.tags[c.cursorTagId] == "dot":
+      var n = childCursor(c)
       result = lvalueToStr(n)
-      skip n
-      if n.kind == Ident:
-        result.add "."
-        result.add pool.strings[n.litId]
+      if n.hasMore:
+        skip n
+        if n.hasMore and n.kind == Ident:
+          result.add "."
+          result.add n.strVal
     else:
       return "?"
   else:
@@ -298,24 +297,22 @@ proc lvalueToStr*(c: Cursor): string =
 
 proc isLvalue*(c: Cursor): bool =
   ## Check if cursor points at an analyzable lvalue (Ident or dot expression).
-  c.kind == Ident or (c.kind == ParLe and pool.tags[c.tag] == "dot")
+  (c.hasMore and c.kind == Ident) or (c.isTagLit and globalTags.tags[c.cursorTagId] == "dot")
 
 proc callMentionsDest*(n: Cursor; destLv: Cursor): bool =
   ## Check if a call/cmd node writes to the tracked dest lvalue.
   ## For method calls, checks the receiver. For all calls, scans arguments.
   ## Returns true if destLv is nil (no tracking).
   if cursorIsNil(destLv): return true
-  var c = n
-  if c.kind != ParLe: return false
-  inc c
-  if c.kind == ParLe:
+  if not n.isTagLit: return false
+  var c = childCursor(n)
+  if c.isTagLit:
     # Method call: (call (dot RECV callee) args...)
-    if pool.tags[c.tag] == "dot":
-      var dot = c
-      inc dot # skip (dot — now at receiver
+    if globalTags.tags[c.cursorTagId] == "dot":
+      let dot = childCursor(c) # at the receiver
       if equalLvalues(dot, destLv): return true
     skip c
-  elif c.kind == Ident:
+  elif c.hasMore and c.kind == Ident:
     # Function call: (call callee DEST args...)
     inc c  # skip callee
   # Scan remaining arguments
@@ -327,21 +324,20 @@ proc callMentionsDest*(n: Cursor; destLv: Cursor): bool =
 proc extractCallInfo(n: Cursor): (string, string) =
   ## From a (cmd ...) or (call ...) node, extract callee name and first arg.
   ## For first arg, handles both bare Idents and (dot obj field) → returns field name.
-  var c = n
-  if c.kind != ParLe: return ("", "")
-  inc c
+  if not n.isTagLit: return ("", "")
+  var c = childCursor(n)
   var callee = ""
-  if c.kind == ParLe:
+  if c.isTagLit:
     callee = extractDotCallName(c)
     skip c
-  elif c.kind == Ident:
-    callee = pool.strings[c.litId]
+  elif c.hasMore and c.kind == Ident:
+    callee = c.strVal
     inc c
-    skip c  # skip dest for non-method call
+    if c.hasMore: skip c  # skip dest for non-method call
   var firstArg = ""
-  if c.kind == Ident:
-    firstArg = pool.strings[c.litId]
-  elif c.kind == ParLe:
+  if c.hasMore and c.kind == Ident:
+    firstArg = c.strVal
+  elif c.isTagLit:
     # Could be (dot obj field) — extract the field name
     firstArg = extractLastDotField(c)
   (callee, firstArg)
@@ -351,29 +347,27 @@ proc extractCallMeta(n: Cursor; targetLv: Cursor): (string, string, bool) =
   ## - callee name
   ## - first arg name (string, for symContext lookup)
   ## - whether targetLv lvalue is mentioned as receiver/argument
-  var c = n
-  if c.kind != ParLe: return ("", "", false)
-  inc c
+  if not n.isTagLit: return ("", "", false)
+  var c = childCursor(n)
   var callee = ""
   var mentionsTarget = cursorIsNil(targetLv)
-  if c.kind == ParLe:
+  if c.isTagLit:
     # Method call: (call (dot RECV callee) args...)
     callee = extractDotCallName(c)
-    if not mentionsTarget and pool.tags[c.tag] == "dot":
-      var dot = c
-      inc dot # skip (dot — now at receiver
+    if not mentionsTarget and globalTags.tags[c.cursorTagId] == "dot":
+      let dot = childCursor(c) # at the receiver
       if equalLvalues(dot, targetLv):
         mentionsTarget = true
     skip c
-  elif c.kind == Ident:
+  elif c.hasMore and c.kind == Ident:
     # Function call: (call callee DEST args...)
-    callee = pool.strings[c.litId]
+    callee = c.strVal
     inc c
 
   var firstArg = ""
-  if c.kind == Ident:
-    firstArg = pool.strings[c.litId]
-  elif c.kind == ParLe:
+  if c.hasMore and c.kind == Ident:
+    firstArg = c.strVal
+  elif c.isTagLit:
     firstArg = extractLastDotField(c)
 
   while c.hasMore:
@@ -403,24 +397,23 @@ proc enumSuffixToKind*(name: string): ChildKind =
 proc resolveConstRange(n: Cursor): int =
   ## Try to resolve a `(infix ..< +0 BodyPos)` pattern to a constant.
   ## Returns -1 if can't resolve.
-  var c = n
-  if c.kind != ParLe: return -1
-  let tag = pool.tags[c.tag]
+  if not n.isTagLit: return -1
+  let tag = globalTags.tags[n.cursorTagId]
   if tag != "infix": return -1
-  inc c
+  var c = childCursor(n)
   # operator: ..<
-  if c.kind == Ident:
-    let op = pool.strings[c.litId]
+  if c.hasMore and c.kind == Ident:
+    let op = c.strVal
     if op notin ["..<", "\\2E\\2E<"]: return -1
   else: return -1
   skip c
   # start: should be +0 (IntLit 0)
-  if c.kind != IntLit: return -1
-  let startVal = pool.integers[c.intId]
+  if not c.hasMore or c.kind != IntLit: return -1
+  let startVal = c.intVal
   skip c
   # end: should be a known constant like BodyPos
-  if c.kind == Ident:
-    let name = pool.strings[c.litId]
+  if c.hasMore and c.kind == Ident:
+    let name = c.strVal
     case name
     of "BodyPos": return BodyPos - startVal.int
     of "ParamsPos": return ParamsPos - startVal.int
@@ -431,8 +424,8 @@ proc resolveConstRange(n: Cursor): int =
     of "LocalTypePos": return LocalTypePos - startVal.int
     of "LocalValuePos": return LocalValuePos - startVal.int
     else: return -1
-  elif c.kind == IntLit:
-    return pool.integers[c.intId].int - startVal.int
+  elif c.hasMore and c.kind == IntLit:
+    return c.intVal.int - startVal.int
   else:
     return -1
 
@@ -445,68 +438,81 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
   ## Analyze a (stmts ...) block that produces children in `dest`.
   ## This is the core analysis routine that replaces `classifyChildren`.
   var n = body
-  if n.kind != ParLe: return unknownEffect()
-  if pool.tags[n.tag] != "stmts": return unknownEffect()
-  inc n
+  if not n.isTagLit: return unknownEffect()
+  if globalTags.tags[n.cursorTagId] != "stmts": return unknownEffect()
+  n = childCursor(n)
 
   var effects: seq[Effect] = @[]
+  # Depth of manually opened subtrees (addParLe without a matching addParRi
+  # yet). While depth > 0, emissions land INSIDE the open subtree and thus
+  # contribute no child at this level; the open itself is exactly one child.
+  var depth = 0
+
+  template emit(e: Effect) =
+    if depth == 0: effects.add e
 
   while n.hasMore:
-    if n.kind != ParLe:
+    if not n.isTagLit:
       if n.kind == Ident:
         # Bare identifier — could be template invocation
         return unknownEffect()
       skip n
       continue
 
-    let stmtTag = pool.tags[n.tag]
+    let stmtTag = globalTags.tags[n.cursorTagId]
     case stmtTag
     of "call", "cmd", "callstrlit", "hcall", "proccall":
       let (callName, firstArg, writesToDest) = extractCallMeta(n, destLv)
 
       case callName
       of "addDotToken":
-        if writesToDest: effects.add fixedEffect(ckDot)
+        if writesToDest: emit fixedEffect(ckDot)
       of "addSymDef":
-        if writesToDest: effects.add fixedEffect(ckD)
+        if writesToDest: emit fixedEffect(ckD)
       of "addSymUse", "copyIntoSymUse":
         if writesToDest:
           # Try to classify via sym context (field type refinement or decl context)
           if firstArg.len > 0 and firstArg in graph.symContext:
-            effects.add fixedEffect(graph.symContext[firstArg])
+            emit fixedEffect(graph.symContext[firstArg])
           else:
-            effects.add fixedEffect(ckAny)
+            emit fixedEffect(ckAny)
       of "addIntLit", "addUIntLit", "addIntVal", "addStrLit",
          "addCharLit", "addFloatLit":
-        if writesToDest: effects.add fixedEffect(ckLit)
+        if writesToDest: emit fixedEffect(ckLit)
       of "addParPair":
-        if writesToDest: effects.add fixedEffect(enumSuffixToKind(firstArg))
+        if writesToDest: emit fixedEffect(enumSuffixToKind(firstArg))
       of "copyIntoKind", "copyIntoKinds", "buildTree":
-        if writesToDest: effects.add fixedEffect(enumSuffixToKind(firstArg))
+        if writesToDest: emit fixedEffect(enumSuffixToKind(firstArg))
       of "copyInto":
-        if writesToDest: effects.add fixedEffect(ckAny) # copies one node from input
-      of "takeTree", "takeToken", "copyTree", "addEmpty", "addToken",
+        if writesToDest: emit fixedEffect(ckAny) # copies one node from input
+      of "takeTree", "copyTree", "addEmpty", "addToken",
          "addSubtree", "addTarget":
-        if writesToDest: effects.add fixedEffect(ckAny)
+        if writesToDest: emit fixedEffect(ckAny)
       of "addParLe":
-        if writesToDest: effects.add fixedEffect(ckAny) # manual node, paired with addParRi
+        if writesToDest:
+          # Manual open: one child at this level; everything until the
+          # matching addParRi is nested inside it.
+          emit fixedEffect(ckAny)
+          inc depth
       of "addParRi", "takeParRi":
-        discard # closing paren, not a child
+        # Closing paren, not a child. At depth 0 it closes a subtree opened
+        # outside this statement list (master behavior: ignore).
+        if writesToDest and depth > 0: dec depth
       of "addEmpty2":
         if writesToDest:
           # addEmpty2 adds two DotTokens
-          effects.add fixedEffect(ckDot)
-          effects.add fixedEffect(ckDot)
+          emit fixedEffect(ckDot)
+          emit fixedEffect(ckDot)
       of "addRootRef":
-        if writesToDest: effects.add fixedEffect(ckT) # adds a type reference
+        if writesToDest: emit fixedEffect(ckT) # adds a type reference
       of "addIdent":
-        if writesToDest: effects.add fixedEffect(ckAny)
+        if writesToDest: emit fixedEffect(ckAny)
       of "flush":
         # controlflow.nim context emitter: appends one Target subtree to the
         # pass buffer (`c.dest`) via the context `c`, so the call names `c`
         # (not `c.dest`) as receiver — `writesToDest` is false, hence unguarded.
         # Equivalent to `c.dest.add someTarget`: contributes exactly one child.
-        effects.add fixedEffect(ckAny)
+        emit fixedEffect(ckAny)
       of "skip", "skipToEnd", "skipUntilEnd", "skipParRi", "consumeParRi", "inc", "swap",
          "endRead", "assert", "registerLocal", "registerLocalPtrOf",
          "openScope", "closeScope", "openProcScope", "registerParams",
@@ -519,11 +525,11 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
         if callName in graph.procs:
           let pe = graph.procs[callName]
           if writesToDest:
-            effects.add pe.effect
+            emit pe.effect
           elif not pe.destIsParam:
             # Proc accesses dest through context field (c.dest).
             # The shared context carries dest, so always include.
-            effects.add pe.effect
+            emit pe.effect
           # else: proc takes dest as parameter but call doesn't pass dest → skip
         elif writesToDest:
           # Unknown call that mentions dest
@@ -536,14 +542,14 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
       let ifEffect = analyzeIfBranches(graph, n, destLv)
       if ifEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add ifEffect
+      emit ifEffect
       skip n
 
     of "case":
       let caseEffect = analyzeCaseBranches(graph, n, destLv)
       if caseEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add caseEffect
+      emit caseEffect
       skip n
 
     of "while":
@@ -551,7 +557,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
       let loopEffect = analyzeWhileLoop(graph, n, destLv)
       if loopEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add loopEffect
+      emit loopEffect
       skip n
 
     of "for":
@@ -559,7 +565,7 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
       let forEffect = analyzeForLoop(graph, n, destLv)
       if forEffect.kind == ekUnknown:
         return unknownEffect()
-      effects.add forEffect
+      emit forEffect
       skip n
 
     of "discard", "var", "let", "const", "asgn", "comment":
@@ -567,44 +573,44 @@ proc analyzeStmtsBody*(graph: EffectGraph; body: Cursor; destLv: Cursor): Effect
     else:
       return unknownEffect()
 
+  if depth != 0:
+    # Net-opening body: this statement list leaves subtrees open, so its
+    # children cannot be described as a flat sequence for the caller.
+    return unknownEffect()
   return seqEffect(effects)
 
 proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
   ## Analyze an if/when statement. All branches must produce compatible effects.
-  var c = n
-  if c.kind != ParLe: return unknownEffect()
-  inc c # skip (if
+  if not n.isTagLit: return unknownEffect()
+  var c = childCursor(n) # children of the (if ...)
 
   var allEffects: seq[Effect] = @[]
   var hasElse = false
 
   while c.hasMore:
-    if c.kind != ParLe:
+    if not c.isTagLit:
       skip c
       continue
-    let branchTag = pool.tags[c.tag]
+    let branchTag = globalTags.tags[c.cursorTagId]
     case branchTag
     of "elif":
-      inc c # skip (elif
-      skip c, SkipCond # skip condition
+      var b = childCursor(c)
+      if b.hasMore: skip b # skip condition
       # The body is the second child — should be (stmts ...)
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        allEffects.add analyzeStmtsBody(graph, c, destLv)
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        allEffects.add analyzeStmtsBody(graph, b, destLv)
       else:
         return unknownEffect()
-      skip c, SkipBody # skip body
-      if c.kind == ParRi: inc c # close elif
     of "else":
       hasElse = true
-      inc c # skip (else
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        allEffects.add analyzeStmtsBody(graph, c, destLv)
+      let b = childCursor(c)
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        allEffects.add analyzeStmtsBody(graph, b, destLv)
       else:
         return unknownEffect()
-      skip c, SkipBody # skip body
-      if c.kind == ParRi: inc c # close else
     else:
-      skip c
+      discard
+    skip c
 
   if allEffects.len == 0:
     return emptyEffect()
@@ -621,41 +627,37 @@ proc analyzeIfBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
 
 proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
   ## Analyze a case statement. All branches must produce compatible effects.
-  var c = n
-  if c.kind != ParLe: return unknownEffect()
-  inc c # skip (case
-  skip c, SkipValue # skip discriminator
+  if not n.isTagLit: return unknownEffect()
+  var c = childCursor(n)
+  if c.hasMore: skip c # skip discriminator
 
   var allEffects: seq[Effect] = @[]
   var hasElse = false
 
   while c.hasMore:
-    if c.kind != ParLe:
+    if not c.isTagLit:
       skip c
       continue
-    let branchTag = pool.tags[c.tag]
+    let branchTag = globalTags.tags[c.cursorTagId]
     case branchTag
     of "of":
-      inc c # skip (of
-      skip c # skip ranges
+      var b = childCursor(c)
+      if b.hasMore: skip b # skip ranges
       # The body is the second child — should be (stmts ...)
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        allEffects.add analyzeStmtsBody(graph, c, destLv)
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        allEffects.add analyzeStmtsBody(graph, b, destLv)
       else:
         return unknownEffect()
-      skip c, SkipBody # skip body
-      if c.kind == ParRi: inc c # close of
     of "else":
       hasElse = true
-      inc c # skip (else
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        allEffects.add analyzeStmtsBody(graph, c, destLv)
+      let b = childCursor(c)
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        allEffects.add analyzeStmtsBody(graph, b, destLv)
       else:
         return unknownEffect()
-      skip c, SkipBody # skip body
-      if c.kind == ParRi: inc c # close else
     else:
-      skip c
+      discard
+    skip c
 
   if allEffects.len == 0:
     return emptyEffect()
@@ -670,12 +672,11 @@ proc analyzeCaseBranches*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect
 
 proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
   ## Analyze `while n.hasMore: body` — produces 0+ children.
-  var c = n
-  if c.kind != ParLe: return unknownEffect()
-  inc c # skip (while
-  skip c, SkipCond # skip condition
+  if not n.isTagLit: return unknownEffect()
+  var c = childCursor(n)
+  if c.hasMore: skip c # skip condition
   # body
-  if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+  if c.isTagLit and globalTags.tags[c.cursorTagId] == "stmts":
     let bodyEffect = analyzeStmtsBody(graph, c, destLv)
     let flat = flatten(bodyEffect)
     if flat.ok and flat.children.len > 0:
@@ -695,20 +696,19 @@ proc analyzeWhileLoop*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
 
 proc analyzeForLoop*(graph: EffectGraph; n: Cursor; destLv: Cursor): Effect =
   ## Analyze `for i in 0..<N: body` — produces N*bodyEffect children.
-  var c = n
-  if c.kind != ParLe: return unknownEffect()
-  inc c # skip (for
+  if not n.isTagLit: return unknownEffect()
+  var c = childCursor(n)
 
   # for loop structure in NIF: (for VARS RANGE BODY)
   # Skip the loop variable(s)
-  skip c # loop var or unpackflat
+  if c.hasMore: skip c # loop var or unpackflat
 
   # The range expression: try to resolve as constant range
   let rangeCount = resolveConstRange(c)
-  skip c # skip range
+  if c.hasMore: skip c # skip range
 
   # Body
-  if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+  if c.isTagLit and globalTags.tags[c.cursorTagId] == "stmts":
     let bodyEffect = analyzeStmtsBody(graph, c, destLv)
     if rangeCount >= 0:
       let flat = flatten(bodyEffect)
@@ -759,15 +759,14 @@ proc declKindToChildKind(tag: string): ChildKind =
 
 proc extractFieldType(n: Cursor): string =
   ## From a field declaration `(fld NAME . . TYPE .)`, extract the TYPE name.
-  var c = n
-  if c.kind != ParLe: return ""
-  inc c # skip (fld
-  skip c, SkipName # skip name
-  skip c, SkipExport # skip export
-  skip c, SkipPragmas # skip pragmas
+  if not n.isTagLit: return ""
+  var c = childCursor(n)
+  if c.hasMore: skip c # skip name
+  if c.hasMore: skip c # skip export
+  if c.hasMore: skip c # skip pragmas
   # now at type
-  if c.kind == Ident:
-    return pool.strings[c.litId]
+  if c.hasMore and c.kind == Ident:
+    return c.strVal
   return ""
 
 proc tagToSymKind(tag: string): ChildKind =
@@ -789,27 +788,25 @@ proc findAddSymDefInBody(body: Cursor; tag: string; result: var SymContext) =
   let kind = tagToSymKind(tag)
   if kind == ckAny: return
   var n = body
-  if n.kind != ParLe: return
-  if pool.tags[n.tag] != "stmts": return
-  inc n
+  if not n.isTagLit: return
+  if globalTags.tags[n.cursorTagId] != "stmts": return
+  n = childCursor(n)
   while n.hasMore:
-    if n.kind == ParLe:
-      let stmtTag = pool.tags[n.tag]
+    if n.isTagLit:
+      let stmtTag = globalTags.tags[n.cursorTagId]
       if stmtTag in CallTags:
         # Check if this is an addSymDef call
-        var peek = n
-        inc peek
+        var peek = childCursor(n)
         var callee = ""
-        if peek.kind == ParLe:
+        if peek.isTagLit:
           callee = extractDotCallName(peek)
           skip peek
-        elif peek.kind == Ident:
-          callee = pool.strings[peek.litId]
+        elif peek.hasMore and peek.kind == Ident:
+          callee = peek.strVal
           inc peek
-          skip peek  # skip dest
-        if callee == "addSymDef" and peek.kind == Ident:
-          let varName = pool.strings[peek.litId]
-          result[varName] = kind
+          if peek.hasMore: skip peek  # skip dest
+        if callee == "addSymDef" and peek.hasMore and peek.kind == Ident:
+          result[peek.strVal] = kind
           # Only the first addSymDef in a declaration body is the defining name
           return
     skip n
@@ -823,42 +820,39 @@ proc buildSymContext*(buf: var TokenBuf): SymContext =
   ## 3. Type declarations: `(type NAME ...)` → NAME is a type
   result = initTable[string, ChildKind]()
   var n = beginRead(buf)
-  if n.kind != ParLe: return
+  if not n.isTagLit: return
   n.linearScan:
-    let tag = pool.tags[n.tag]
+    let tag = globalTags.tags[n.cursorTagId]
 
     # Field type refinements via distinct types
     if tag == "fld":
       let typeName = extractFieldType(n)
       let refined = typeNameToKind(typeName)
       if refined != ckAny:
-        var p = n
-        inc p
-        if p.kind == Ident:
-          result[pool.strings[p.litId]] = refined
+        let p = childCursor(n)
+        if p.hasMore and p.kind == Ident:
+          result[p.strVal] = refined
 
     # Type declarations
     elif tag == "type":
-      var p = n
-      inc p
-      if p.kind == Ident:
-        result[pool.strings[p.litId]] = ckT
+      let p = childCursor(n)
+      if p.hasMore and p.kind == Ident:
+        result[p.strVal] = ckT
 
     # copyIntoKind/buildTree calls — scan their body for addSymDef
     elif tag in CallTags:
       let callee = extractCalleeName(n)
       if callee in ["copyIntoKind", "buildTree"]:
-        var peek = n
-        inc peek  # skip (cmd/call
-        skip peek # skip callee (ident or dot)
-        if peek.kind == ParLe: skip peek  # skip dest for dot-calls
+        var peek = childCursor(n)
+        if peek.hasMore: skip peek # skip callee (ident or dot)
+        if peek.isTagLit: skip peek  # skip dest for dot-calls
         var copyTag = ""
-        if peek.kind == Ident:
-          copyTag = pool.strings[peek.litId]
+        if peek.hasMore and peek.kind == Ident:
+          copyTag = peek.strVal
           skip peek  # skip tag
-          skip peek  # skip info
+          if peek.hasMore: skip peek  # skip info
           while peek.hasMore:
-            if peek.kind == ParLe and pool.tags[peek.tag] == "stmts":
+            if peek.isTagLit and globalTags.tags[peek.cursorTagId] == "stmts":
               findAddSymDefInBody(peek, copyTag, result)
               break
             skip peek
@@ -884,64 +878,55 @@ proc extractEnsuresNif(procCursor: Cursor): (Effect, string) =
   ## Returns (effect, destVarName) where destVarName is the argument to the predicate.
   ## The proc structure is: (proc NAME ... (pragmas ... (kv ensuresNif (call PRED ARG))) ... (stmts ...))
   var c = procCursor
-  if c.kind != ParLe: return (nil, "")
-  inc c # skip (proc
+  if not c.isTagLit: return (nil, "")
+  c = childCursor(c)
   # Walk children looking for (pragmas ...)
   while c.hasMore:
-    if c.kind == ParLe and pool.tags[c.tag] == "pragmas":
+    if c.isTagLit and globalTags.tags[c.cursorTagId] == "pragmas":
       # Found pragmas — scan for (kv ensuresNif ...)
-      var p = c
-      inc p # skip (pragmas
+      var p = childCursor(c)
       while p.hasMore:
-        if p.kind == ParLe and pool.tags[p.tag] == "kv":
-          var kv = p
-          inc kv # skip (kv
-          if kv.kind == Ident and pool.strings[kv.litId] == "ensuresNif":
+        if p.isTagLit and globalTags.tags[p.cursorTagId] == "kv":
+          var kv = childCursor(p)
+          if kv.hasMore and kv.kind == Ident and kv.strVal == "ensuresNif":
             skip kv # skip "ensuresNif"
             # Next should be (call PREDICATE ARG)
-            if kv.kind == ParLe and pool.tags[kv.tag] == "call":
-              var call = kv
-              inc call # skip (call
-              if call.kind == Ident:
-                let predName = pool.strings[call.litId]
+            if kv.isTagLit and globalTags.tags[kv.cursorTagId] == "call":
+              var call = childCursor(kv)
+              if call.hasMore and call.kind == Ident:
+                let predName = call.strVal
                 if predName == "addedNothing":
                   return (emptyEffect(), "")
                 else:
                   inc call # skip predicate name, now at the argument
                   var destName = ""
-                  if call.kind == Ident:
-                    destName = pool.strings[call.litId]
-                  elif call.kind == ParLe:
+                  if call.hasMore and call.kind == Ident:
+                    destName = call.strVal
+                  elif call.isTagLit:
                     destName = extractLastDotField(call)
                   return (fixedEffect(predicateToKind(predName)), destName)
         skip p
-      # No ensuresNif found in this pragmas block
-      skip c
-    else:
-      skip c
+    skip c
   return (nil, "")
 
 proc extractRequiresNif(procCursor: Cursor): (ChildKind, string) =
   ## Scan a proc declaration for a `requiresNif` pragma annotation.
   ## Returns (cursorKind, cursorVarName) or (ckAny, "") if no annotation.
   var c = procCursor
-  if c.kind != ParLe: return (ckAny, "")
-  inc c # skip (proc
+  if not c.isTagLit: return (ckAny, "")
+  c = childCursor(c)
   while c.hasMore:
-    if c.kind == ParLe and pool.tags[c.tag] == "pragmas":
-      var p = c
-      inc p
+    if c.isTagLit and globalTags.tags[c.cursorTagId] == "pragmas":
+      var p = childCursor(c)
       while p.hasMore:
-        if p.kind == ParLe and pool.tags[p.tag] == "kv":
-          var kv = p
-          inc kv
-          if kv.kind == Ident and pool.strings[kv.litId] == "requiresNif":
+        if p.isTagLit and globalTags.tags[p.cursorTagId] == "kv":
+          var kv = childCursor(p)
+          if kv.hasMore and kv.kind == Ident and kv.strVal == "requiresNif":
             skip kv
-            if kv.kind == ParLe and pool.tags[kv.tag] == "call":
-              var call = kv
-              inc call
-              if call.kind == Ident:
-                let predName = pool.strings[call.litId]
+            if kv.isTagLit and globalTags.tags[kv.cursorTagId] == "call":
+              var call = childCursor(kv)
+              if call.hasMore and call.kind == Ident:
+                let predName = call.strVal
                 let kind = case predName
                   of "isExpr": ckX
                   of "isType": ckT
@@ -949,15 +934,13 @@ proc extractRequiresNif(procCursor: Cursor): (ChildKind, string) =
                   else: ckAny
                 inc call # skip predicate name
                 var cursorName = ""
-                if call.kind == Ident:
-                  cursorName = pool.strings[call.litId]
-                elif call.kind == ParLe:
+                if call.hasMore and call.kind == Ident:
+                  cursorName = call.strVal
+                elif call.isTagLit:
                   cursorName = extractLastDotField(call)
                 return (kind, cursorName)
         skip p
-      skip c
-    else:
-      skip c
+    skip c
   return (ckAny, "")
 
 proc detectDestIsParam*(destLv: Cursor): bool =
@@ -965,36 +948,34 @@ proc detectDestIsParam*(destLv: Cursor): bool =
   ## or through a context field (dot expression like `c.dest`).
   ## Returns true for direct parameter, false for context access.
   if cursorIsNil(destLv): return true
-  destLv.kind == Ident
+  destLv.hasMore and destLv.kind == Ident
 
 proc detectDestLvalue*(body: Cursor; hintName: string): Cursor =
   ## Deep-scan a proc body for calls that reference `hintName` as a dest variable.
   ## Returns the full lvalue Cursor (bare `dest` or `(dot c dest)` etc.).
   ## Returns nil Cursor if not found.
   var c = body
-  if c.kind != ParLe: return default(Cursor)
+  if not c.isTagLit: return default(Cursor)
   c.linearScan:
-    let tag = pool.tags[c.tag]
+    let tag = globalTags.tags[c.cursorTagId]
     if tag in CallTags:
-      var peek = c
-      inc peek
-      if peek.kind == ParLe:
+      var peek = childCursor(c)
+      if peek.isTagLit:
         # Method call: (call (dot RECV callee) args...)
-        if pool.tags[peek.tag] == "dot":
-          var dot = peek
-          inc dot # skip (dot — now at receiver
-          if dot.kind == Ident and pool.strings[dot.litId] == hintName:
+        if globalTags.tags[peek.cursorTagId] == "dot":
+          let dot = childCursor(peek) # at the receiver
+          if dot.hasMore and dot.kind == Ident and dot.strVal == hintName:
             return dot  # bare `dest` as receiver
-          elif dot.kind == ParLe and pool.tags[dot.tag] == "dot":
+          elif dot.isTagLit and globalTags.tags[dot.cursorTagId] == "dot":
             if extractLastDotField(dot) == hintName:
               return dot  # `(dot c dest)` as receiver
-      elif peek.kind == Ident:
+      elif peek.hasMore and peek.kind == Ident:
         inc peek  # skip callee
         # Scan args for dest reference
         while peek.hasMore:
-          if peek.kind == Ident and pool.strings[peek.litId] == hintName:
+          if peek.kind == Ident and peek.strVal == hintName:
             return peek  # bare `dest` as argument
-          elif peek.kind == ParLe and pool.tags[peek.tag] == "dot":
+          elif peek.isTagLit and globalTags.tags[peek.cursorTagId] == "dot":
             if extractLastDotField(peek) == hintName:
               return peek  # `(dot c dest)` as argument
           skip peek
@@ -1004,11 +985,11 @@ proc detectWrapsInput*(graph: EffectGraph; body: Cursor; destLv: Cursor): bool =
   ## Check if the proc body uses copyInto dest, n: at the top level,
   ## indicating it preserves the input tag (the "preservation property").
   var c = body
-  if c.kind != ParLe or pool.tags[c.tag] != "stmts": return false
-  inc c
+  if not c.isTagLit or globalTags.tags[c.cursorTagId] != "stmts": return false
+  c = childCursor(c)
   while c.hasMore:
-    if c.kind == ParLe:
-      let tag = pool.tags[c.tag]
+    if c.isTagLit:
+      let tag = globalTags.tags[c.cursorTagId]
       if tag in CallTags:
         let (callName, _, mentionsDest) = extractCallMeta(c, destLv)
         if callName == "copyInto" and mentionsDest:
@@ -1022,7 +1003,7 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
   const IgnoredNames = ["dest", "c", "result", "info", "nested"]
   result = @[]
   var c = body
-  if c.kind != ParLe: return
+  if not c.isTagLit: return
   template addIfNew(lv: Cursor) =
     var found = false
     for existing in result:
@@ -1032,52 +1013,51 @@ proc detectCursorLvs*(body: Cursor): seq[Cursor] =
     if not found:
       result.add lv
   c.linearScan:
-    let tag = pool.tags[c.tag]
+    let tag = globalTags.tags[c.cursorTagId]
     if tag in CallTags:
       let callName = extractCalleeName(c)
       if callName in ["inc", "skip", "skipParRi", "consumeParRi", "skipToEnd", "skipUntilEnd",
-                      "copyInto", "takeTree", "takeToken", "takeParRi"]:
+                      "copyInto", "takeTree", "takeParRi"]:
         # Extract the cursor argument
-        var peek = c
-        inc peek
-        if peek.kind == ParLe:
+        var peek = childCursor(c)
+        if peek.isTagLit:
           # Method call: (call (dot RECV callee) args...)
           let recv = extractDotReceiver(peek)
           if not cursorIsNil(recv) and isLvalue(recv):
-            if recv.kind != Ident or pool.strings[recv.litId] notin IgnoredNames:
+            if recv.kind != Ident or recv.strVal notin IgnoredNames:
               addIfNew recv
           skip peek
           # Also check first arg after dot
-          if peek.kind == Ident:
-            let arg = pool.strings[peek.litId]
+          if peek.hasMore and peek.kind == Ident:
+            let arg = peek.strVal
             if arg notin IgnoredNames:
               addIfNew peek
-        elif peek.kind == Ident:
-          let callee = pool.strings[peek.litId]
+        elif peek.hasMore and peek.kind == Ident:
+          let callee = peek.strVal
           inc peek  # skip callee
           if callee in ["inc", "skip", "skipParRi", "consumeParRi", "skipToEnd", "skipUntilEnd"]:
             # First arg is the cursor
-            if peek.kind == Ident:
-              let arg = pool.strings[peek.litId]
+            if peek.hasMore and peek.kind == Ident:
+              let arg = peek.strVal
               if arg notin IgnoredNames:
                 addIfNew peek
-          elif callee in ["copyInto", "takeTree", "takeToken", "takeParRi"]:
+          elif callee in ["copyInto", "takeTree", "takeParRi"]:
             # Second arg (after dest) is the cursor
-            skip peek  # skip dest
-            if peek.kind == Ident:
-              let arg = pool.strings[peek.litId]
-              if arg notin IgnoredNames:
-                addIfNew peek
+            if peek.hasMore:
+              skip peek  # skip dest
+              if peek.hasMore and peek.kind == Ident:
+                let arg = peek.strVal
+                if arg notin IgnoredNames:
+                  addIfNew peek
 
 # ---- Building the full graph for a file ----
 
 proc locateProcChildren(info: var ProcInfo) =
   ## From a proc cursor, locate its params and body children.
-  var c = info.procCursor
-  inc c # skip (proc
+  var c = childCursor(info.procCursor)
   while c.hasMore:
-    if c.kind == ParLe:
-      let tag = pool.tags[c.tag]
+    if c.isTagLit:
+      let tag = globalTags.tags[c.cursorTagId]
       if tag == "params":
         info.paramsPos = c
       elif tag == "stmts":
@@ -1089,29 +1069,16 @@ proc findProcs*(buf: var TokenBuf): seq[ProcInfo] =
   ## Find all proc declarations with their params and body positions.
   result = @[]
   var n = beginRead(buf)
-  var nested = 0
-  assert n.kind == ParLe
-  inc nested
-  inc n
-  while nested > 0:
-    case n.kind
-    of ParLe:
-      let tag = pool.tags[n.tag]
-      if tag in RoutineTags:
-        var p = n
-        inc p # skip (proc
-        var name = ""
-        if p.kind == Ident:
-          name = pool.strings[p.litId]
-        if name.len > 0:
-          result.add ProcInfo(name: name, procCursor: n)
-      inc nested
-      inc n
-    of ParRi:
-      dec nested
-      inc n
-    else:
-      inc n
+  assert n.isTagLit
+  n.linearScan:
+    let tag = globalTags.tags[n.cursorTagId]
+    if tag in RoutineTags:
+      let p = childCursor(n)
+      var name = ""
+      if p.hasMore and p.kind == Ident:
+        name = p.strVal
+      if name.len > 0:
+        result.add ProcInfo(name: name, procCursor: n)
   # Locate params and body from cached cursors
   for info in result.mitems:
     locateProcChildren(info)
@@ -1241,7 +1208,7 @@ proc callAdvancesCursor(callName: string): bool =
   ## Check if a call is a known cursor-advancing operation.
   case callName
   of "inc", "skip", "skipParRi", "consumeParRi", "skipToEnd", "skipUntilEnd",
-     "copyInto", "takeTree", "takeToken", "takeParRi", "copyTree":
+     "copyInto", "takeTree", "takeParRi", "copyTree":
     return true
   else:
     return false
@@ -1255,16 +1222,16 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorLv: Cursor): Cur
   ## or if the path terminates via a noreturn call.
   if cursorIsNil(cursorLv): return csUnknown
   var n = body
-  if n.kind != ParLe: return csUnknown
-  if pool.tags[n.tag] != "stmts": return csUnknown
-  inc n
+  if not n.isTagLit: return csUnknown
+  if globalTags.tags[n.cursorTagId] != "stmts": return csUnknown
+  n = childCursor(n)
 
   var advanced = false
   while n.hasMore:
-    if n.kind != ParLe:
+    if not n.isTagLit:
       skip n
       continue
-    let tag = pool.tags[n.tag]
+    let tag = globalTags.tags[n.cursorTagId]
     case tag
     of "call", "cmd", "callstrlit", "hcall", "proccall":
       let (callName, _, mentionsCursor) = extractCallMeta(n, cursorLv)
@@ -1289,19 +1256,17 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorLv: Cursor): Cur
       skip n
     of "while":
       # Analyze the while body — cursor might be advanced inside the loop
-      var c = n
-      inc c  # skip (while
-      skip c, SkipCond  # skip condition
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+      var c = childCursor(n)
+      if c.hasMore: skip c  # skip condition
+      if c.isTagLit and globalTags.tags[c.cursorTagId] == "stmts":
         let state = analyzeCursorPath(graph, c, cursorLv)
         if state == csAdvanced: advanced = true
       skip n
     of "for":
-      var c = n
-      inc c  # skip (for
-      skip c, SkipName  # skip loop var
-      skip c, SkipValue  # skip range
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
+      var c = childCursor(n)
+      if c.hasMore: skip c  # skip loop var
+      if c.hasMore: skip c  # skip range
+      if c.isTagLit and globalTags.tags[c.cursorTagId] == "stmts":
         let state = analyzeCursorPath(graph, c, cursorLv)
         if state == csAdvanced: advanced = true
       skip n
@@ -1313,36 +1278,32 @@ proc analyzeCursorPath*(graph: EffectGraph; body: Cursor; cursorLv: Cursor): Cur
 proc analyzeIfCursorPaths*(graph: EffectGraph; n: Cursor; cursorLv: Cursor): CursorState =
   ## Analyze an if/when — cursor must be advanced in ALL branches.
   ## Missing else means there's a path without advancement.
-  var c = n
-  if c.kind != ParLe: return csUnknown
-  inc c  # skip (if
+  if not n.isTagLit: return csUnknown
+  var c = childCursor(n)
 
   var allAdvanced = true
   var hasElse = false
   while c.hasMore:
-    if c.kind != ParLe:
+    if not c.isTagLit:
       skip c
       continue
-    let branchTag = pool.tags[c.tag]
+    let branchTag = globalTags.tags[c.cursorTagId]
     case branchTag
     of "elif":
-      inc c  # skip (elif
-      skip c, SkipCond  # skip condition
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        if analyzeCursorPath(graph, c, cursorLv) != csAdvanced:
+      var b = childCursor(c)
+      if b.hasMore: skip b  # skip condition
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        if analyzeCursorPath(graph, b, cursorLv) != csAdvanced:
           allAdvanced = false
-      skip c, SkipBody  # skip body
-      if c.kind == ParRi: inc c  # close elif
     of "else":
       hasElse = true
-      inc c  # skip (else
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        if analyzeCursorPath(graph, c, cursorLv) != csAdvanced:
+      let b = childCursor(c)
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        if analyzeCursorPath(graph, b, cursorLv) != csAdvanced:
           allAdvanced = false
-      skip c, SkipBody  # skip body
-      if c.kind == ParRi: inc c  # close else
     else:
-      skip c
+      discard
+    skip c
 
   if not hasElse:
     allAdvanced = false  # missing else = path without cursor advancement
@@ -1350,37 +1311,33 @@ proc analyzeIfCursorPaths*(graph: EffectGraph; n: Cursor; cursorLv: Cursor): Cur
 
 proc analyzeCaseCursorPaths*(graph: EffectGraph; n: Cursor; cursorLv: Cursor): CursorState =
   ## Analyze a case — cursor must be advanced in ALL branches.
-  var c = n
-  if c.kind != ParLe: return csUnknown
-  inc c  # skip (case
-  skip c, SkipValue  # skip discriminator
+  if not n.isTagLit: return csUnknown
+  var c = childCursor(n)
+  if c.hasMore: skip c  # skip discriminator
 
   var allAdvanced = true
   var hasElse = false
   while c.hasMore:
-    if c.kind != ParLe:
+    if not c.isTagLit:
       skip c
       continue
-    let branchTag = pool.tags[c.tag]
+    let branchTag = globalTags.tags[c.cursorTagId]
     case branchTag
     of "of":
-      inc c  # skip (of
-      skip c  # skip match values/ranges
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        if analyzeCursorPath(graph, c, cursorLv) != csAdvanced:
+      var b = childCursor(c)
+      if b.hasMore: skip b  # skip match values/ranges
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        if analyzeCursorPath(graph, b, cursorLv) != csAdvanced:
           allAdvanced = false
-      skip c, SkipBody  # skip body
-      if c.kind == ParRi: inc c  # close of
     of "else":
       hasElse = true
-      inc c  # skip (else
-      if c.kind == ParLe and pool.tags[c.tag] == "stmts":
-        if analyzeCursorPath(graph, c, cursorLv) != csAdvanced:
+      let b = childCursor(c)
+      if b.isTagLit and globalTags.tags[b.cursorTagId] == "stmts":
+        if analyzeCursorPath(graph, b, cursorLv) != csAdvanced:
           allAdvanced = false
-      skip c, SkipBody  # skip body
-      if c.kind == ParRi: inc c  # close else
     else:
-      skip c
+      discard
+    skip c
 
   if not hasElse:
     allAdvanced = false

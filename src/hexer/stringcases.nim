@@ -30,19 +30,19 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
     # form below is exactly what the inliner's `trySpliceVarInit` recognises.
     let condTmp = pool.syms.getOrIncl("`tc." & $c.getTmpId)
     dest.copyIntoUnchecked "var", info:
-      dest.add symdefToken(condTmp, info)
+      dest.addSymDef(condTmp, info)
       dest.addDotToken() # pragmas
-      dest.add tagToken("bool", info)
+      dest.addParLe("bool", info)
       dest.addParRi()
       dest.copyIntoUnchecked "call", info:
-        dest.add symToken(pool.syms.getOrIncl(StrAtLeOp), info)
-        dest.add symToken(selector, info)
-        dest.add intToken(pool.integers.getOrIncl(f.best[1]), info)
-        dest.add charToken(f.best[0], info)
+        dest.addSymUse(pool.syms.getOrIncl(StrAtLeOp), info)
+        dest.addSymUse(selector, info)
+        dest.addIntLit(f.best[1], info)
+        dest.addCharLit(f.best[0], info)
 
     dest.copyIntoUnchecked "if", info:
       dest.copyIntoUnchecked "elif", info:
-        dest.add symToken(condTmp, info)
+        dest.addSymUse(condTmp, info)
         dest.copyIntoUnchecked "stmts", info:
           decodeSolution c, dest, s, f.thenA, selector, info
       dest.copyIntoUnchecked "else", info:
@@ -54,18 +54,18 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
       for x in s[i].choices:
         dest.copyIntoUnchecked "elif", info:
           dest.copyIntoUnchecked "call", info:
-            dest.add symToken(pool.syms.getOrIncl(EqStringsOp), info)
-            dest.add symToken(selector, info)
+            dest.addSymUse(pool.syms.getOrIncl(EqStringsOp), info)
+            dest.addSymUse(selector, info)
             genStringLit c, dest, x[0], info
           dest.copyIntoUnchecked "stmts", info:
             dest.copyIntoUnchecked "jmp", info:
-              dest.add symToken(pool.syms.getOrIncl(x[1]), info)
+              dest.addSymUse(pool.syms.getOrIncl(x[1]), info)
 
 proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
-  if n.kind == StringLit:
-    result = n.litId
+  if n.isStringLit:
+    result = n.strId
     inc n
-  elif n.kind == Symbol:
+  elif n.isSymbol:
     var inlineValue = getInitValue(c.typeCache, n.symId)
     if not cursorIsNil(inlineValue):
       result = getSimpleStringLit(c, inlineValue)
@@ -76,8 +76,8 @@ proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
     case n.exprKind:
     of SufX:
       n.into:
-        assert n.kind == StringLit
-        result = n.litId
+        assert n.isStringLit
+        result = n.strId
         while n.hasMore: skip n
     of HconvX, ConvX:
       n.into:
@@ -103,20 +103,20 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     # the other overload of `borrowCStringUnsafe`
     selector = pool.syms.getOrIncl("`tc." & $c.getTmpId)
     dest.copyIntoUnchecked "var", sinfo:
-      dest.add symdefToken(selector, sinfo)
+      dest.addSymDef(selector, sinfo)
       dest.addDotToken() # pragmas
-      dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
+      dest.addSymUse(pool.syms.getOrIncl(StringName), sinfo)
       dest.copyIntoUnchecked "call", sinfo:
-        dest.add symToken(pool.syms.getOrIncl(BorrowCStringUnsafeOp), sinfo)
+        dest.addSymUse(pool.syms.getOrIncl(BorrowCStringUnsafeOp), sinfo)
         trExpr(c, dest, selectorNode)
-  elif selectorNode.kind == Symbol:
+  elif selectorNode.isSymbol:
     selector = selectorNode.symId
   else:
     selector = pool.syms.getOrIncl("`tc." & $c.getTmpId)
     dest.copyIntoUnchecked "var", sinfo:
-      dest.add symdefToken(selector, sinfo)
+      dest.addSymDef(selector, sinfo)
       dest.addDotToken() # pragmas
-      dest.add symToken(pool.syms.getOrIncl(StringName), sinfo)
+      dest.addSymUse(pool.syms.getOrIncl(StringName), sinfo)
       trExpr(c, dest, selectorNode)
   skip nb # selector
 
@@ -127,8 +127,8 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         assert nb.substructureKind == RangesU
         nb.into:                              # (ranges ...)
           while nb.hasMore:
-            let litId = getSimpleStringLit(c, nb)
-            pairs.add (pool.strings[litId], labl)
+            let strId = getSimpleStringLit(c, nb)
+            pairs.add (pool.strings[strId], labl)
         skip nb # skip action for now
     else:
       skip nb
@@ -145,13 +145,13 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
   let elseLabel = pool.syms.getOrIncl("`sc." & $getTmpId(c))
   dest.copyIntoUnchecked "jmp", selectorNode.info:
-    dest.add symToken(elseLabel, selectorNode.info)
+    dest.addSymUse(elseLabel, selectorNode.info)
   var hasElse = false
   while nb.hasMore:
     let info = nb.info
     if nb.substructureKind == OfU:
       dest.copyIntoUnchecked "lab", info:
-        dest.add symdefToken(pool.syms.getOrIncl(pairs[i][1]), info)
+        dest.addSymDef(pool.syms.getOrIncl(pairs[i][1]), info)
       nb.into:                                # (of ...)
         nb.into:                              # (ranges ...)
           while nb.hasMore:
@@ -159,10 +159,10 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
             inc i
         trStmt c, dest, nb
         dest.copyIntoUnchecked "jmp", info:
-          dest.add symToken(afterwards, info)
+          dest.addSymUse(afterwards, info)
     elif nb.substructureKind == ElseU:
       dest.copyIntoUnchecked "lab", info:
-        dest.add symdefToken(elseLabel, info)
+        dest.addSymDef(elseLabel, info)
       nb.into:
         trStmt c, dest, nb
       hasElse = true
@@ -170,9 +170,9 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       error "invalid `case` statement", nb
   if not hasElse:
     dest.copyIntoUnchecked "lab", sinfo:
-      dest.add symdefToken(elseLabel, sinfo)
+      dest.addSymDef(elseLabel, sinfo)
 
   nb = caseStart; skip nb
   dest.copyIntoUnchecked "lab", n.info:
-    dest.add symdefToken(afterwards, n.info)
+    dest.addSymDef(afterwards, n.info)
   n = nb

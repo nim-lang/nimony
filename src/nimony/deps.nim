@@ -25,6 +25,8 @@ import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
+import ".." / lib / nifreader as rd
+from ".." / lib / nifcoreparse import parse
 
 type
   FilePair = object
@@ -331,19 +333,19 @@ proc evalDepCond(config: NifConfig; n: Cursor): bool =
   ## a valid dep from the build graph while a false positive only schedules
   ## a file that the semantic checker will then ignore.
   var n = n
-  if n.kind == ParLe:
+  if n.isTagLit:
     case n.exprKind
     of CallX, CmdX, CallstrlitX, InfixX, PrefixX:
       inc n
-      if n.kind != Ident:
+      if not n.isIdent:
         return true
-      let head = pool.strings[n.litId]
+      let head = pool.strings[n.strId]
       inc n
       case head
       of "defined":
-        if n.kind == Ident:
-          result = config.isDefined(pool.strings[n.litId])
-        elif n.kind == Symbol:
+        if n.isIdent:
+          result = config.isDefined(pool.strings[n.strId])
+        elif n.isSymbol:
           var name = pool.syms[n.symId]
           extractBasename(name)
           result = config.isDefined(name)
@@ -383,8 +385,8 @@ proc evalDepCond(config: NifConfig; n: Cursor): bool =
       result = evalDepCond(config, n)
     else:
       result = true  # unknown shape — assume true
-  elif n.kind == Ident:
-    case pool.strings[n.litId]
+  elif n.isIdent:
+    case pool.strings[n.strId]
     of "true": result = true
     of "false": result = false
     else: result = true  # bare identifier we cannot evaluate — assume true
@@ -395,7 +397,7 @@ proc whenMarkerHolds(c: DepContext; x: Cursor): bool =
   ## `(when COND COND ...)` — implicit AND across the children. All must hold
   ## for the import to be live. An empty `(when)` (legacy form, no children)
   ## is treated as live so older deps files keep working.
-  assert x.kind == ParLe and x.stmtKind == WhenS
+  assert x.isTagLit and x.stmtKind == WhenS
   var inner = x
   inner.into WhenS:
     while inner.hasMore:
@@ -421,13 +423,13 @@ proc processImport(c: var DepContext; it: var Cursor; current: Node) =
       skip x, SkipCond
     while x.hasMore:
       var isCyclic = false
-      if x.kind == ParLe and x.exprKind == PragmaxX:
+      if x.isTagLit and x.exprKind == PragmaxX:
         var y = x
         inc y
         skip y
         if y.substructureKind == PragmasU:
           inc y
-          if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+          if y.isIdent and pool.strings[y.strId] == "cyclic":
             isCyclic = true
 
       var files: seq[ImportedFilename] = @[]
@@ -483,18 +485,18 @@ proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
       var x = it
       skip it
       x.into TupX:
-        assert x.kind == StringLit
-        let typ = pool.strings[x.litId]
+        assert x.isStringLit
+        let typ = pool.strings[x.strId]
         inc x
-        assert x.kind == StringLit
-        let path = pool.strings[x.litId]
+        assert x.isStringLit
+        let path = pool.strings[x.strId]
         inc x
-        assert x.kind == StringLit
-        let args = pool.strings[x.litId]
+        assert x.isStringLit
+        let args = pool.strings[x.strId]
         inc x
         var linkFlags = ""        # optional 4th field (`.build` per-file link flags)
-        if x.kind == StringLit:
-          linkFlags = pool.strings[x.litId]
+        if x.isStringLit:
+          linkFlags = pool.strings[x.strId]
           inc x
         while x.hasMore: skip x
         if typ in ["C", "ObjC", "Cpp", "ObjCpp"]:
@@ -520,15 +522,15 @@ proc processBundle(c: var DepContext; it: var Cursor) =
       var x = it
       skip it
       x.into TupX:
-        assert x.kind == StringLit
-        let builder = pool.strings[x.litId]
+        assert x.isStringLit
+        let builder = pool.strings[x.strId]
         inc x
-        assert x.kind == StringLit
-        let path = pool.strings[x.litId]
+        assert x.isStringLit
+        let path = pool.strings[x.strId]
         inc x
         var args = ""
-        if x.kind == StringLit:
-          args = pool.strings[x.litId]
+        if x.isStringLit:
+          args = pool.strings[x.strId]
           inc x
         while x.hasMore: skip x
         c.bundles.add Bundle(builder: builder, toolSrc: path,
@@ -547,26 +549,26 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
     discard "ignore `export` statement"
     skip n
   of NoStmt:
-    if n.tagId == TagId(BuildIdx):
+    if n.cursorTagId == TagId(BuildIdx):
       processBuild c, n, current
-    elif n.tagId == TagId(BundleIdx):
+    elif n.cursorTagId == TagId(BundleIdx):
       processBundle c, n
-    elif n.tagId == TagId(PassLP):
+    elif n.cursorTagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
-          assert n.kind == StringLit
+          assert n.isStringLit
           # A single `{.passL.}` value may hold several flags (e.g.
           # `-framework Foundation`). nifmake quotes each StringLit as ONE argv
           # token, so split into whitespace-separated flags here — otherwise the
           # linker sees `-framework Foundation` as a single unknown argument.
-          for flag in splitWhitespace(pool.strings[n.litId]):
+          for flag in splitWhitespace(pool.strings[n.strId]):
             c.passL.add flag
           inc n
-    elif n.tagId == TagId(PassCP):
+    elif n.cursorTagId == TagId(PassCP):
       n.into:  # (passC …)
         while n.hasMore:
-          assert n.kind == StringLit
-          for flag in splitWhitespace(pool.strings[n.litId]):
+          assert n.isStringLit
+          for flag in splitWhitespace(pool.strings[n.strId]):
             c.passC.add flag
           inc n
     else:
@@ -577,7 +579,7 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
 
 proc processDeps(c: var DepContext; n: Cursor; current: Node) =
   var n = n
-  if n.kind == ParLe and pool.tags[n.tagId] == "stmts":
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
     n.into:
       while n.hasMore:
         processDep c, n, current
@@ -635,16 +637,13 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   else:
     depsFile = c.config.deps2File(p)
 
-  var stream = nifstreams.open(depsFile)
-  try:
-    discard processDirectives(stream.r)
-    var buf = fromStream(stream)
-    processDeps c, beginRead(buf), current
-    if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
-      importSystem c, current
-  finally:
-    nifstreams.close(stream)
-
+  var r = rd.open(depsFile)
+  var buf = createTokenBuf()
+  parse(r, buf)
+  rd.close(r)
+  processDeps c, beginRead(buf), current
+  if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
+    importSystem c, current
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)

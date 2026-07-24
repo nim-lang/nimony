@@ -69,6 +69,16 @@ type
     TagLit            # opening tag with body-token-count "jump"
     ExtendedSuffix    # supplies 28 extra high bits to the preceding token
     LineInfoLit       # trailing line-info suffix on a head token (file/line/col)
+    # ── reader-level lexical kinds ────────────────────────────────────────
+    # Produced only by the textual NIF reader (nifreader.ExpandedToken.tk);
+    # they never occur in a binary token stream, where parens are implicit
+    # (TagLit + jump) and EOF is `not hasMore`. Sharing ONE enum keeps every
+    # token-kind consumer (including external ones like Nim's ast2nif.nim)
+    # on a single type. The 16 members exactly fill the 4-bit kind field.
+    UnknownToken      # lexical error / unclassified byte sequence
+    EofToken          # end of input
+    ParLe             # textual '('
+    ParRi             # textual ')'
 
   NifToken* = distinct uint32
 
@@ -105,7 +115,9 @@ const
   JumpBits*    = 32'u32 - JumpShift                 # 19
   InlineJumpCap* = (1'u32 shl JumpBits) - 1'u32     # 524287
 
-template kind*(n: NifToken): NifKind = NifKind(uint32(n) and KindMask)
+proc kind*(n: NifToken): NifKind {.inline.} = NifKind(uint32(n) and KindMask)
+  ## A `proc` (not a `template`) so downstream `export … except kind` can drop
+  ## it — nimony's `except` cannot filter a name that has a template overload.
 template uoperand*(n: NifToken): uint32 = uint32(n) shr KindBits
 template soperand*(n: NifToken): int32 =
   ## Sign-extended 28-bit payload (for inline signed values).
@@ -251,7 +263,7 @@ proc setTag*(n: var NifToken; t: TagId) {.inline.} =
 
 type
   Pool* = ref object
-    ## Literals pool — only categories where dedup genuinely pays:
+    ## Pool pool — only categories where dedup genuinely pays:
     ## strings and symbols. Integers / unsigned integers / floats are
     ## stored entirely inside the token stream (using a chain of
     ## `ExtendedSuffix` tokens to widen the carrier), so there's no
@@ -339,16 +351,27 @@ template decRcAndFree(owner: CursorOwner) =
       owner.tags = nil
     dealloc(owner)
 
+var
+  fallbackPool*: Pool = nil
+    ## Application-default literals pool: cursor accessors use it when the
+    ## underlying buffer carries no pool (e.g. a `default(TokenBuf)` that was
+    ## filled via raw/interned adds). Applications that share ONE pool across
+    ## all buffers (like the nimony toolchain) set this once at startup;
+    ## adapters with per-buffer pools leave it nil.
+  fallbackTags*: TagPool = nil
+    ## Application-default tag pool, same contract as `fallbackPool`.
+
 proc pool*(c: Cursor): Pool {.inline.} =
-  ## Literals pool the cursor's underlying buffer was built against.
-  if c.owner != nil: c.owner.pool else: nil
+  ## Pool pool the cursor's underlying buffer was built against,
+  ## or `fallbackPool` when the buffer carries none.
+  if c.owner != nil and c.owner.pool != nil: c.owner.pool else: fallbackPool
 
 proc tags*(c: Cursor): TagPool {.inline.} =
-  ## Tag pool the cursor's underlying buffer was built against. Adapter
-  ## code is expected to know which TagPool layout to expect, so callers
-  ## typically reach for `cast[MyTag](c.cursorTagId.uint32)` instead of
-  ## consulting `c.tags` directly.
-  if c.owner != nil: c.owner.tags else: nil
+  ## Tag pool the cursor's underlying buffer was built against (or
+  ## `fallbackTags`). Adapter code is expected to know which TagPool layout
+  ## to expect, so callers typically reach for
+  ## `cast[MyTag](c.cursorTagId.uint32)` instead of consulting `c.tags`.
+  if c.owner != nil and c.owner.tags != nil: c.owner.tags else: fallbackTags
 
 proc toUniqueId*(c: Cursor): int {.inline.} =
   ## A stable identity for the cursor's *position*: two cursors over the same
@@ -767,6 +790,15 @@ else:
     if dest.owner != nil: decRcAndFree(dest.owner)
     elif dest.data != nil: dealloc(dest.data)
 
+template ensurePools*(b: var TokenBuf) =
+  ## Bind the application-default pools to a buffer that was created without
+  ## any (e.g. `default(TokenBuf)`), so interning builders and cross-pool
+  ## copies work on it. No-op when the buffer already has pools.
+  if b.pool == nil:
+    b.pool = (if fallbackPool != nil: fallbackPool else: newPool())
+  if b.tags == nil:
+    b.tags = (if fallbackTags != nil: fallbackTags else: newTagPool())
+
 proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
                      sharedTags: TagPool = nil): TokenBuf =
   ## Mint a new buffer. Pass `sharedPool` to thread a single literals
@@ -867,6 +899,16 @@ proc add*(b: var TokenBuf; t: NifToken) {.inline.} =
 # (assigned 1,2,… in intern order), a loader that re-interns the pool values in
 # the same order reproduces identical ids, so the raw token words stay valid.
 
+proc shrink*(b: var TokenBuf; newLen: int) =
+  ## Truncate to `newLen` tokens. Any still-open tags at or past the cut are
+  ## discarded from the build-time stack so later `closeTag` calls keep
+  ## sealing the right opens (rollback-past-an-open-tag pattern).
+  assert newLen >= 0 and newLen <= b.len
+  if b.owner != nil: prepareMutation(b)
+  while b.openTags.len > 0 and b.openTags[^1] >= newLen:
+    b.openTags.setLen b.openTags.len - 1
+  b.len = newLen
+
 proc rawTokenPtr*(b: TokenBuf): pointer {.inline.} =
   ## Pointer to the first token word; `len(b) * sizeof(NifToken)` bytes follow.
   b.data
@@ -882,6 +924,51 @@ proc growRawUninit*(b: var TokenBuf; count: int): pointer =
   b.len = count
   b.data
 
+proc subtreeWidth*(c: Cursor): int =
+  ## Total tokens occupied by the value at `c` (head + body).
+  if c.kind == TagLit:
+    int(tokenWidth(c).uint64 + c.cursorJump)
+  else:
+    tokenWidth(c)
+
+proc replace*(dest: var TokenBuf; by: Cursor; pos: int) =
+  ## Replace the sealed subtree at `pos` with the sealed subtree `by`.
+  if dest.owner != nil: prepareMutation(dest)
+  var at = Cursor(p: cast[ptr NifToken](cast[uint](dest.data) +
+                    uint(pos) * sizeof(NifToken).uint), rem: dest.len - pos)
+  let actualLen = min(subtreeWidth(at), dest.len - pos)
+  let byLen = subtreeWidth(by)
+  let oldLen = dest.len
+  let delta = byLen - actualLen
+  if delta != 0:
+    for k in 0 ..< dest.openTags.len:
+      if dest.openTags[k] >= pos + actualLen: dest.openTags[k] += delta
+  if delta > 0:
+    discard growRawUninit(dest, oldLen + delta)
+    for i in countdown(oldLen - 1, pos + actualLen):
+      dest.data[i + delta] = dest.data[i]
+  elif delta < 0:
+    for i in pos + actualLen ..< oldLen:
+      dest.data[i + delta] = dest.data[i]
+    dest.len = oldLen + delta
+  for i in 0 ..< byLen:
+    dest.data[pos + i] = cast[ptr NifToken](cast[uint](by.p) +
+                           uint(i) * sizeof(NifToken).uint)[]
+
+proc insert*(dest: var TokenBuf; src: TokenBuf; pos: int) =
+  ## Splice `src`'s tokens into `dest` at index `pos` (raw). Enclosing sealed
+  ## scopes' jumps are NOT adjusted — the caller must `widenSealed` them.
+  assert pos >= 0 and pos <= dest.len
+  let n = src.len
+  if n == 0: return
+  let oldLen = dest.len
+  if dest.owner != nil: prepareMutation(dest)
+  discard growRawUninit(dest, oldLen + n)
+  for i in countdown(oldLen - 1, pos):
+    dest.data[i + n] = dest.data[i]
+  for i in 0 ..< n:
+    dest.data[pos + i] = src.data[i]
+
 # ── Builder API (interns, emits suffix on overflow) ──────────────────────
 
 proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32;
@@ -895,6 +982,7 @@ proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32;
   ## none) — a NIF `#…#` decoration on this head. A non-zero comment forces the
   ## overflow position layout and rides as one further `ExtendedSuffix` (a second
   ## only for ids past 2^28), so `rawLineInfo` recovers it unambiguously.
+  ensurePools(b)
   if not file.isValid: return
   var line = line
   var col = col
@@ -943,6 +1031,7 @@ proc encodeInlineStr(s: string): uint32 {.inline.} =
 template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped) =
   ## Shared body for StrLit/Ident/Symbol/SymbolDef. Inlines bytes for
   ## `s.len <= 3`; otherwise interns in the given `pool` BiTable.
+  ensurePools(b)
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(kind, encodeInlineStr(s)))
   else:
@@ -968,6 +1057,7 @@ proc addSymDef*(b: var TokenBuf; s: string) =
   addStringLike(b, SymbolDef, s, b.pool.syms)
 
 proc addInternedSymbol(b: var TokenBuf; kind: NifKind; id: SymId) =
+  ensurePools(b)
   let s = b.pool.syms[id]
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(kind, encodeInlineStr(s)))
@@ -1036,6 +1126,14 @@ proc openTag*(b: var TokenBuf; t: TagId) {.inline.} =
   b.data[b.len] = tagLitToken(t, 0)
   inc b.len
 
+proc reopenLastTree*(b: var TokenBuf; pos: int) =
+  ## Reopen the finished tree headed by the TagLit at `pos` so more children can
+  ## be appended; close it again with `closeTag` (which recomputes the jump over
+  ## the old + new children). The tree's subtree must be the last content of `b`.
+  if b.owner != nil: prepareMutation(b)
+  assert b.data[pos].kind == TagLit, "reopenLastTree: no TagLit at pos"
+  b.openTags.add pos
+
 proc closeTag*(b: var TokenBuf) =
   ## Seal the most recently opened tag.
   if b.owner != nil: prepareMutation(b)
@@ -1091,6 +1189,10 @@ proc ensureOwner(b: var TokenBuf) {.inline.} =
     GC_ref(b.owner.tags)
     b.owner.rc = 1
 
+proc unclosedTagPositions*(b: TokenBuf): seq[int] =
+  ## Debug helper: build-time stack of still-open TagLit positions.
+  b.openTags
+
 proc beginRead*(b: var TokenBuf): Cursor =
   assert b.openTags.len == 0, "beginRead with unclosed tags"
   ensureOwner(b)
@@ -1121,23 +1223,67 @@ proc cursorAt*(b: var TokenBuf; i: int): Cursor =
                   p: addr b.data[i],
                   rem: b.len - i)
 
+proc cursorTailAt*(b: var TokenBuf; i: int): Cursor =
+  ## Like `cursorAt` but accepts `i == b.len` (a sealed tree's implicit close
+  ## can leave the next position at end-of-buffer). Then `rem == 0` and the
+  ## cursor reports a virtual close — only `kind`-style probes are valid.
+  assert i >= 0 and i <= b.len
+  ensureOwner(b)
+  inc b.owner.rc
+  result = Cursor(owner: b.owner,
+                  p: cast[ptr NifToken](cast[uint](b.data) +
+                       uint(i) * sizeof(NifToken).uint),
+                  rem: b.len - i)
+
 proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   ## Token index of `c` within `b` (inverse of `cursorAt`). Stable key for
   ## per-expression tables (e.g. a register allocator's location map).
   (cast[int](c.p) - cast[int](b.data)) div sizeof(NifToken)
 
-# ── Subtree copy ─────────────────────────────────────────────────────────
+proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor =
+  ## Like `cursorAt` but does not require `var b` (the buffer must already be
+  ## owned — i.e. previously `beginRead`/`cursorAt`'d — or the cursor is
+  ## ownerless and valid only while `b` outlives it).
+  assert i >= 0 and i < b.len
+  result = Cursor(p: cast[ptr NifToken](unsafeAddr b.data[i]), rem: b.len - i)
+  if b.owner != nil:
+    inc b.owner.rc
+    result.owner = b.owner
 
-proc subtreeWidth*(c: Cursor): int =
-  ## Total tokens occupied by the value at `c` (head + body).
-  if c.kind == TagLit:
-    int(tokenWidth(c).uint64 + c.cursorJump)
-  else:
-    tokenWidth(c)
+proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
+  ## Advance `c` by `diff` tokens, keeping the bounded `rem` correct (used by CF
+  ## goto navigation). `diff` must not exceed `rem`.
+  result = Cursor(p: cast[ptr NifToken](cast[uint](c.p) +
+                    diff.uint * sizeof(NifToken).uint),
+                  rem: c.rem - diff)
+  if c.owner != nil:
+    inc c.owner.rc
+    result.owner = c.owner
+
+proc hasCurrentToken*(c: Cursor): bool {.inline.} =
+  ## True if `c` points at a readable token (pointer + bound check). Prefer
+  ## `hasMore` in regular traversal; this survives malformed input.
+  c.p != nil and c.rem > 0
+
+proc unsafeDec*(c: var Cursor) {.inline.} =
+  ## Move one token backwards (no bounds check). Only valid on a cursor known
+  ## to sit past a real token; used by backward scans over a raw buffer.
+  c.p = cast[ptr NifToken](cast[uint](c.p) - sizeof(NifToken).uint)
+  inc c.rem
+
+proc peekPastEnd*(n: Cursor): Cursor =
+  ## A loosely-bounded cursor at the token following the fully-consumed bounded
+  ## scope `n` (`rem == 0`; the close is implicit). Read-only peek at a sibling
+  ## the caller KNOWS exists.
+  result = n
+  result.rem = high(int)
+
+# ── Subtree copy ─────────────────────────────────────────────────────────
 
 proc reinternLineInfo(dest: var TokenBuf; c: Cursor): NifLineInfo =
   ## Map the source head's trailing line info into `dest`'s pools — the filename
   ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
+  ensurePools(dest)
   let li = rawLineInfo(c)
   if not li.isValid: return NoNifLineInfo
   let fname = if c.pool != nil: c.pool.filenames[li.file] else: ""
@@ -1179,6 +1325,8 @@ proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
     dest.add c.load; c.inc              # defensive: not a valid head token
   of ExtendedSuffix:
     assert false, "ExtendedSuffix cannot be a head token"
+  of UnknownToken, EofToken, ParLe, ParRi:
+    assert false, "reader-level lexical kind cannot appear in a token buffer"
 
 proc addSubtree*(dest: var TokenBuf; c: Cursor) =
   ## Copy the subtree rooted at `c` into `dest`. When both pools AND
@@ -1204,11 +1352,19 @@ proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
   ## The source is borrowed and remains usable. Matching pools make the
   ## append one bulk copy without constructing a read cursor.
   assert src.openTags.len == 0, "addBufferSamePool with unclosed source tags"
-  assert dest.data != src.data, "cannot append a TokenBuf to itself"
-  assert dest.pool == src.pool and dest.tags == src.tags,
-         "addBufferSamePool requires matching pools"
   if src.len == 0:
+    # an empty buffer may never have been written to, leaving its pool
+    # refs nil — nothing to copy, nothing to check
     return
+  assert dest.data != src.data, "cannot append a TokenBuf to itself"
+  # A buffer filled only via raw/`openTag` adds may still carry nil pool
+  # refs; its interned ids belong to the application fallback pools, so
+  # compare the EFFECTIVE pools.
+  ensurePools(dest)
+  let spool = (if src.pool != nil: src.pool else: fallbackPool)
+  let stags = (if src.tags != nil: src.tags else: fallbackTags)
+  assert dest.pool == spool and dest.tags == stags,
+         "addBufferSamePool requires matching pools"
   if dest.owner != nil:
     prepareMutation(dest)
   if dest.len + src.len > dest.cap:

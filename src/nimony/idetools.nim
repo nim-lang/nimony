@@ -11,8 +11,8 @@ import semos, programs, typenav, typeprops, decls, nifconfig, nimony_model
 import ".."/gear2/modnames
 
 proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
-  let i = unpack(pool.man, info)
-  let t = unpack(pool.man, toTrack)
+  let i = unpack(lineMan, info)
+  let t = unpack(lineMan, toTrack)
   if i.file.isValid and t.file.isValid:
     if i.file != t.file: return false
     if i.line != t.line: return false
@@ -21,26 +21,25 @@ proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
     if t.col > i.col + tokenLen: return false
   return true
 
-proc foundSymbol(tok: PackedToken; mode: TrackMode) =
+proc foundSymbol(n: Cursor; mode: TrackMode) =
   # format that is compatible with nimsuggest's in the hope it helps:
-  let info = unpack(pool.man, tok.info)
+  let info = unpack(lineMan, n.info)
   if info.file.isValid:
-    if (tok.kind == Symbol and mode == TrackUsages) or (tok.kind == SymbolDef and mode == TrackDef):
-      var r = (if tok.kind == Symbol: "use\t" else: "def\t")
+    if (n.isSymbol and mode == TrackUsages) or (n.isSymbolDef and mode == TrackDef):
+      var r = (if n.isSymbol: "use\t" else: "def\t")
       r.add "\t" # unknown symbol kind
-      r.add pool.syms[tok.symId]
+      r.add pool.syms[n.symId]
       r.add "\t"
       # unknown signature:
       r.add "\t"
       # filename:
       r.add "\t"
-      r.add pool.files[info.file]
+      r.add pool.filenames[info.file]
       r.add "\t"
       r.addInt info.line
       r.add "\t"
       r.addInt info.col
       stdout.writeLine(r)
-
 type
   SearchKind = enum skOther, skField, skDot
 
@@ -67,7 +66,7 @@ proc findAndAddFieldDefinition(c: var IdeContext, n: var Cursor, name: string, n
     if n.substructureKind == FldU:
       var sym = n
       inc sym
-      if sym.kind == SymbolDef and sym.symId == nameSym:
+      if sym.isSymbolDef and sym.symId == nameSym:
         c.usages.add(Usage(n: sym, containingType: containingType))
     skip n
 
@@ -164,7 +163,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
             if containingType.typeKind in {RefT, PtrT}:
               inc containingType
 
-            if containingType.kind == Symbol and lineInfoMatch(n.info, c.toTrack, c.tokenLen):
+            if containingType.isSymbol and lineInfoMatch(n.info, c.toTrack, c.tokenLen):
               # Add definition of field, only happens once because of the matching line info check
               let typeDefinition = getTypeSection(containingType.symId)
               var typeBody = typeDefinition.body
@@ -177,39 +176,22 @@ proc tr(c: var IdeContext, n: var Cursor) =
 
           inc n
 
-        of ParLe:
+        of TagLit:
           n.loopInto:
             tr(c, n)
 
         else:
           inc n
 
-proc getParent(n: Cursor): Cursor =
-  ## Walk cursor backwards until reaching the start of the parent of n
-  result = n
-  unsafeDec result
-  var depth = 1
-  while depth > 0:
-    case result.kind
-    of ParLe:
-      dec depth
-      if depth == 0:
-        break
-    of ParRi:
-      inc depth
-    else:
-      discard
-    unsafeDec result
-
 proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLineInfo;
                    tokenLen: int; parentPos: int; symOffset, parentOffset: var int): bool =
-  ## Positions of the tracked symbol token and its innermost parent ParLe
+  ## Positions of the tracked symbol token and its innermost parent TagLit
   ## in the PARSED buffer. (The caller's stream scan counts the file's
   ## physical ParRi tokens, which are elided in the in-memory buffer under
   ## `-d:virtualParRi`, so its offsets cannot be used here.)
   result = false
   case n.kind
-  of ParLe:
+  of TagLit:
     let myPos = cursorToPosition(buf, n)
     n.into:
       while n.hasMore:
@@ -236,7 +218,6 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
   block locateBlock:
     var loc = beginRead(buf)
     discard locateSymImpl(loc, buf, sym, toTrack, name.len, 0, offset, parentOffset)
-    endRead(buf)
   if offset < 0:
     quit "symbol not found"
 
@@ -279,81 +260,50 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
         (usage.containingType.cursorIsNil or usage.containingType.symId != expectedContainingType.symId):
       continue
 
-    foundSymbol(usage.n.load, c.trackMode)
+    foundSymbol(usage.n, c.trackMode)
 
 proc usages*(files: openArray[string]; config: NifConfig) =
-  # This is comparable to a linking step: We iterate over all `.idetools.nif` files to see
-  # what symbol is meant by the `file,line,col` tracking information.
-  let requestedInfo = lineinfos.pack(pool.man, pool.files.getOrIncl(config.toTrack.filename),
+  # This is comparable to a linking step: we scan the module's semmed NIF to
+  # see what symbol is meant by the `file,line,col` tracking information.
+  let requestedInfo = lineinfos.pack(lineMan, pool.filenames.getOrIncl(config.toTrack.filename),
                                      config.toTrack.line, config.toTrack.col)
   # first pass: search for the symbol at `file,line,col`:
   var isLocalSym = false
   var symId = SymId 0
-  var symFile = ""
-  var symOffset = 0
-  var symParentOffset = 0
 
   let moduleName = moduleSuffix(config.toTrack.filename, config.paths)
   let nifFile = config.nifcachePath / moduleName & ".s.nif"
 
-  var s = nifstreams.open(nifFile)
-  var parentStarts = newSeqOfCap[int](100)
-  try:
-    discard processDirectives(s.r)
-    var i = 0
-    while true:
-      let tok = next(s)
-      case tok.kind
-      of Symbol, SymbolDef:
+  var buf = parseFromFile(nifFile)
+  block search:
+    var n = beginRead(buf)
+    while n.hasMore:
+      if n.isSymbol or n.isSymbolDef:
         # performance critical! May run over every symbol in the project!
-        var name = addr pool.syms[tok.symId]
+        let name = pool.syms[n.symId]
         var tokenLen = 0
         var dots = 0
-        for i in 0 ..< name[].len:
-          if name[][i] == '.':
+        for i in 0 ..< name.len:
+          if name[i] == '.':
             inc dots
           if dots == 0: inc tokenLen
-        if lineInfoMatch(tok.info, requestedInfo, tokenLen):
-          symOffset = i
-          symParentOffset = parentStarts[^1]
+        if lineInfoMatch(n.info, requestedInfo, tokenLen):
           isLocalSym = dots < 2
-          symId = tok.symId
-          symFile = nifFile
-          break
-      of EofToken: break
-      of ParLe:
-        parentStarts.add(i)
-      of ParRi:
-        discard parentStarts.pop()
-      of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
-        discard "proceed"
-
-      inc i
-  finally:
-    close(s)
+          symId = n.symId
+          break search
+      inc n
 
   if symId == SymId 0:
     quit "symbol not found"
   elif isLocalSym:
     # Set path so files are found when resolving symbols
     prog.main.dir = nifFile.splitPath.head
-    findLocal(symFile, symId, requestedInfo, config.toTrack.mode)
+    findLocal(nifFile, symId, requestedInfo, config.toTrack.mode)
   else:
     for file in files:
-      var s = nifstreams.open(file)
-      try:
-        discard processDirectives(s.r)
-        let indexStart = s.r.indexStartsAt()
-        while true:
-          if indexStart > 0 and s.r.offset() >= indexStart: break
-          let tok = next(s)
-          case tok.kind
-          of Symbol:
-            if tok.symId == symId: foundSymbol(tok, config.toTrack.mode)
-          of SymbolDef:
-            if tok.symId == symId: foundSymbol(tok, config.toTrack.mode)
-          of EofToken: break
-          of UnknownToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, ParLe, ParRi:
-            discard "proceed"
-      finally:
-        close(s)
+      var fbuf = parseFromFile(file)
+      var n = beginRead(fbuf)
+      while n.hasMore:
+        if (n.isSymbol or n.isSymbolDef) and n.symId == symId:
+          foundSymbol(n, config.toTrack.mode)
+        inc n

@@ -38,7 +38,7 @@
 
 import std / [tables, sets, hashes, assertions]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
+import nifpools
 import ".." / leng_model
 import ".." / ".." / models / tags
 import patchsets_legacy
@@ -175,11 +175,10 @@ proc foldNot(c: var Context; n: var Cursor;
 
 proc fold(c: var Context; n: var Cursor): FoldResult =
   result = FoldResult(kind: NoFold)
-  case n.kind
-  of IntLit:
-    result = FoldResult(kind: FoldInt, i: pool.integers[n.intId])
+  if n.kind == IntLit:
+    result = FoldResult(kind: FoldInt, i: n.intVal)
     inc n
-  of ParLe:
+  elif n.isTagLit:
     let pos = cursorToPosition(c.orig[], n)
     let info = n.info
     let ek = n.exprKind
@@ -228,8 +227,7 @@ when isMainModule:
   import nifrender
 
   proc parse(src: string): TokenBuf =
-    var stream = nifstreams.openFromBuffer(src, "M")
-    result = fromStream(stream)
+    result = parseFromBuffer(src, "M")
 
   template assertUnchanged(input: string) =
     var buf = parse(input)

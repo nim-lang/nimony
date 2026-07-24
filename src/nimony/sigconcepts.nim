@@ -18,7 +18,7 @@ import nimony_model, decls, programs, semdata, typeprops, features, symtabs, con
 import ".." / lib / symparser
 
 proc isConceptType*(a: Cursor): bool {.inline.} =
-  a.kind == Symbol and isConceptSym(a.symId)
+  a.isSymbol and isConceptSym(a.symId)
 
 proc conceptTargetNeedsStrictCheck*(a: Cursor): bool =
   ## Standalone concepts keep lenient matching for generic typevars and for
@@ -26,14 +26,14 @@ proc conceptTargetNeedsStrictCheck*(a: Cursor): bool =
   ## requirements structurally so they cannot inherit base-type operators
   ## silently; other types (including `string` objects and ranges) keep the
   ## legacy acceptance until full requirement matching is complete.
-  if a.kind == DotToken:
+  if a.isDotToken:
     return false
-  if a.kind == Symbol:
+  if a.isSymbol:
     let res = tryLoadSym(a.symId)
     if res.status == LacksNothing and res.decl.symKind == TypevarY:
       return false
   var t = a
-  if t.kind == Symbol:
+  if t.isSymbol:
     t = typeImpl(t.symId)
   t.typeKind == DistinctT
 
@@ -41,7 +41,7 @@ proc conceptRoutineBasename*(routine: Cursor): StrId =
   var prc = routine
   assert prc.symKind in RoutineKinds
   inc prc
-  assert prc.kind == SymbolDef
+  assert prc.isSymbolDef
   var name = pool.syms[prc.symId]
   extractBasename(name)
   pool.strings.getOrIncl(name)
@@ -55,7 +55,7 @@ proc collectSelfSymsInType*(typ: Cursor; result: var seq[SymId]) =
     if res.status == LacksNothing and res.decl.symKind == TypevarY:
       if typ.symId notin result:
         result.add typ.symId
-  of ParLe:
+  of TagLit:
     typ.loopInto:
       collectSelfSymsInType(typ, result)
       skip typ
@@ -68,7 +68,7 @@ proc conceptSelfSymFromSlot*(body: Cursor): SymId =
     return SymId(0)
   var s = selfSlot
   inc s
-  if s.kind == SymbolDef:
+  if s.isSymbolDef:
     s.symId
   else:
     SymId(0)

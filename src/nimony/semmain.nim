@@ -49,21 +49,21 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
     case ex.kind
     of ImportAll:
       result.addParLe(TagId(ExportIdx), NoLineInfo)
-      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      result.addStrLit(path, NoLineInfo)
       result.addParRi()
     of FromImport:
       if ex.list.len != 0:
         result.addParLe(TagId(FromexportIdx), NoLineInfo)
-        result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+        result.addStrLit(path, NoLineInfo)
         for s in ex.list:
-          result.add identToken(s, NoLineInfo)
+          result.addIdent(s, NoLineInfo)
         result.addParRi()
     of ImportExcept:
       let kind = if ex.list.len == 0: ExportIdx else: ExportexceptIdx
       result.addParLe(TagId(kind), NoLineInfo)
-      result.add strToken(pool.strings.getOrIncl(path), NoLineInfo)
+      result.addStrLit(path, NoLineInfo)
       for s in ex.list:
-        result.add identToken(s, NoLineInfo)
+        result.addIdent(s, NoLineInfo)
       result.addParRi()
 
 proc writeNewDepsFile(c: var SemContext; outfile: string) =
@@ -87,7 +87,7 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
                 deps.addStrLit i.path.toAbsolutePath
                 deps.buildTree PragmasS, NoLineInfo:
                   deps.buildTree KvU, NoLineInfo:
-                    deps.addIdent "plugin"
+                    deps.addIdent(pool.strings.getOrIncl("plugin"), NoLineInfo)
                     deps.addStrLit i.fromPlugin
     if c.toBuild.len != 0:
       deps.buildTree TagId(BuildIdx), NoLineInfo:
@@ -115,17 +115,17 @@ proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
   if c.matchedForwardDecls.len == 0: return
   var i = 0
   while i < dest.len:
-    if dest[i].kind == ParLe and i + 1 < dest.len and
-        dest[i + 1].kind == SymbolDef and
-        dest[i + 1].symId in c.matchedForwardDecls:
-      let info = dest[i].info
+    if readonlyCursorAt(dest, i).kind == TagLit and
+        childCursor(readonlyCursorAt(dest, i)).isSymbolDef and
+        childCursor(readonlyCursorAt(dest, i)).symId in c.matchedForwardDecls:
+      let info = readonlyCursorAt(dest, i).info
       # Overwrite exactly the decl's subtree. `span` is jump-based under
       # `-d:virtualParRi` (the subtree's ParRis are elided, so a raw
       # nesting counter would run to the end of the buffer) and
       # ParRi-walk based in classic mode.
-      let declSpan = span(readonlyCursorAt(dest, i))
+      let declSpan = subtreeWidth(readonlyCursorAt(dest, i))
       for k in i ..< i + declSpan:
-        dest[k] = dotToken(info)
+        dest[k] = dotToken()
       i += declSpan
     else:
       inc i
@@ -149,29 +149,30 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
       if i.fromPlugin.len == 0:
         let abs = i.path.toAbsolutePath
         importBuf.buildTree KvU, NoLineInfo:
-          importBuf.addIdent moduleSuffix(abs, c.g.config.paths)
+          importBuf.addIdent(pool.strings.getOrIncl(moduleSuffix(abs, c.g.config.paths)), NoLineInfo)
           # Slash-normalise: paths in the .nif must use `/` regardless of OS
           # so the file is byte-identical across Windows / Linux / macOS, and
           # downstream consumers (dagon) compare prefixes uniformly.
           importBuf.addStrLit toUnixPath(abs.toRelativePath(curWorkDir))
     importBuf.addParRi()
-    dest.insert importBuf, 1 # after the (stmts tag
+    # after the (stmts tag — including its line-info suffix tokens
+    dest.insert importBuf, tokenWidth(readonlyCursorAt(dest, 0))
     # a small module's `(stmts` is sealed; the insert cannot widen it itself:
     widenSealed dest, 0, importBuf.len
   when defined(sealCheck):
     for i in 0 ..< dest.len:
-      if dest[i].kind == ParLe and pool.tags[nifstreams.tag(dest[i])] == "aconstr":
+      if dest[i].isTagLit and globalTags.tags[dest[i].tagId] == "aconstr":
         for k in max(0,i-3) .. min(dest.len-1, i+12):
           let tk = dest[k]
-          if tk.kind == ParLe:
-            echo "  [", k, "] ParLe ", pool.tags[nifstreams.tag(tk)], " jump=", jump(tk)
+          if tk.isTagLit:
+            echo "  [", k, "] TagLit ", globalTags.tags[tk.tagId], " jump=", uint32(tk) shr JumpShift
           elif tk.kind in {Symbol, SymbolDef}:
-            echo "  [", k, "] ", tk.kind, " ", pool.syms[nifstreams.symId(tk)]
+            echo "  [", k, "] ", tk.kind, " ", pool.syms[tk.symId]
           else:
             echo "  [", k, "] ", tk.kind
         break
   onRaiseQuit writeFile(dest, outfile, OnlyIfChanged)
-  let root = dest[0].info
+  let root = readonlyCursorAt(dest, 0).info
   onRaiseQuit createIndex(outfile, root, true,
     IndexSections(
       converters: move c.converterIndexMap,
@@ -188,7 +189,7 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   assert n.stmtKind == StmtsS
   c.phase = x
   var n = n
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       semStmt c, dest, n, false
@@ -201,7 +202,6 @@ proc getModuleLineInfo(buf: var TokenBuf): PackedLineInfo =
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
   result = n.info
-  endRead(buf)
 
 # `ensurePhase` / `loadSymWithPhase` now live in programs.nim / templates.nim
 # respectively, so the on-demand consumers (semcall's template promotion, and
@@ -214,7 +214,6 @@ proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) 
   n.into:
     while n.hasMore:
       semStmt c, dest, n, false
-  endRead(buf)
 
 proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =
   ## Phase 1: Register toplevel symbols.
@@ -249,7 +248,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   var typevars = decl.typevars
   assert classifyType(c, typevars) == InvokeT
   typevars = sub(typevars) # peek only, never left
-  assert typevars.kind == Symbol
+  assert typevars.isSymbol
 
   let symId = typevars.symId
 
@@ -313,7 +312,7 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
     # instance is the object type, not a ref/ptr type
     inc firstParam
   var typBuf = createTokenBuf(2)
-  typBuf.add symToken(typeInstSym, NoLineInfo)
+  typBuf.add symToken(typeInstSym)
   var paramMatch = createMatch(addr c)
   typematch paramMatch, firstParam, Item(n: emptyNode(c), typ: beginRead(typBuf))
   if classifyMatch(paramMatch) in {EqualMatch, GenericMatch}:
@@ -340,7 +339,7 @@ proc requestMethods(c: var SemContext; dest: var TokenBuf; s: SymId; decl: Curso
   var typevars = decl.typevars
   assert classifyType(c, typevars) == InvokeT
   inc typevars
-  assert typevars.kind == Symbol
+  assert typevars.isSymbol
 
   let base = typevars.symId
 
@@ -388,16 +387,21 @@ proc fromGeneric(dest: var TokenBuf; i: int): SymId =
   skip n, SkipExport # skip exported
   skip n # pattern
   if n.typeKind == InvokeT:
-    result = n.firstSon.symId
+    result = n.childCursor.symId
   else:
     result = NoSymId
-  endRead(dest)
 
 proc findOrigin(dest: var TokenBuf; origin: SymId): int =
+  ## Position of the decl HEAD whose name is `origin` — the insert point.
+  ## Not `SymbolDef pos - 1`: the head may carry a line-info suffix token
+  ## and inserting between them would split head and suffix.
   var i = 0
   while i < dest.len:
-    if dest[i].kind == SymbolDef and dest[i].symId == origin:
-      return i-1 # before name
+    if dest[i].stmtKind in {ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS}:
+      let namePos = i + tokenWidth(readonlyCursorAt(dest, i))
+      if namePos < dest.len and dest[namePos].kind == SymbolDef and
+         readonlyCursorAt(dest, namePos).symId == origin:
+        return i
     inc i
   return -1
 
@@ -415,25 +419,26 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
   var i = 0
   while i < dest.len:
     if dest[i].stmtKind in {ProcS, FuncS, ConverterS, MethodS, MacroS, IteratorS}:
-      inc i
-      if dest[i].kind == SymbolDef:
+      let headPos = i
+      # the head may carry a line-info suffix; the name is tokenWidth away
+      i += tokenWidth(readonlyCursorAt(dest, i))
+      if i < dest.len and dest[i].kind == SymbolDef:
         let origin = fromGeneric(dest, i)
         if origin != NoSymId and origin in c.genericInnerProcs:
           # move to right below the position of the origin
           let originPos = findOrigin(dest, origin)
           assert originPos > 0
 
-          let procDecl = cursorAt(dest, i-1)
+          let procDecl = cursorAt(dest, headPos)
           var n = procDecl
           skip n
-          let procLen = cursorToPosition(dest,n) - (i-1)
-          endRead(dest)
+          let procLen = cursorToPosition(dest,n) - headPos
 
           # Extract the procedure declaration
           var procBuf = createTokenBuf(procLen)
-          for j in (i-1)..<(i-1+procLen):
-            procBuf.addRaw dest[j]
-            dest[j] = dotToken(NoLineInfo) # invalidate
+          for j in headPos ..< headPos+procLen:
+            procBuf.add dest[j]
+            dest[j] = dotToken() # invalidate
 
           let before = dest.len
           dest.insert procBuf, originPos
@@ -459,7 +464,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   #echo "PHASE 1"
   var (buf1, moduleLineInfo) = phase1(c, dest, n0)
   dbgCheckSeals(buf1, "phase1")
-  when defined(dumpPhases) and defined(virtualParRi):
+  when defined(dumpPhases):
     block:
       var r = beginRead(buf1)
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase1.nif", toString(r, false))
@@ -475,14 +480,14 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   #echo "PHASE 3"
   dest = phase3(c, buf2, moduleLineInfo)
   dbgCheckSeals(dest, "phase3")
-  when defined(dumpPhases) and defined(virtualParRi):
+  when defined(dumpPhases):
     block:
       var r = beginRead(dest)
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase3.nif", toString(r, false))
       endRead(dest)
 
   if c.expanded.len > 0:
-    dest.addParLe CommentS, c.expanded[0].info
+    dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
     dest.add c.expanded
     dest.addParRi()
 
@@ -575,7 +580,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
 proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   ## Post-processing after phase3: generics, contracts, derefs.
   if c.expanded.len > 0:
-    dest.addParLe CommentS, c.expanded[0].info
+    dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
     dest.add c.expanded
     dest.addParRi()
 

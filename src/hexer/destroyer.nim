@@ -123,24 +123,24 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
   case n.kind
   of Symbol:
     let repl = newVars.getOrDefault(n.symId, n.symId)
-    dest.add symToken(repl, n.info)
+    dest.addSymUse(repl, n.info)
     inc n
-  of ParLe:
+  of TagLit:
     let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
     copyInto dest, n:
-      if isLocalDecl and n.kind == SymbolDef:
+      if isLocalDecl and n.isSymbolDef:
         let repl = pool.syms.getOrIncl("`ffv." & $idgen)
         newVars[n.symId] = repl
-        dest.add symdefToken(repl, n.info)
+        dest.addSymDef(repl, n.info)
         inc idgen
         inc n
       while n.hasMore:
         freshVars(n, newVars, idgen, dest)
-  of UIntLit, StringLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, DotToken, Ident:
-    dest.add n
+  of UIntLit, StrLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
+    dest.addSubtree n
     inc n
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in destroyer.createFreshVars"
+  else:
+    raiseAssert "BUG: unexpected ParRi in destroyer.createFreshVars" # classic ParRi only
 
 proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
   var n = n
@@ -219,7 +219,7 @@ proc leaveAnonBlock(c: var Context) =
     bug "do not know which block to leave"
 
 proc trBreak(c: var Context; n: var Cursor) =
-  let lab = n.firstSon
+  let lab = n.childCursor
   if lab.kind == Symbol:
     leaveNamedBlock(c, lab.symId)
   else:
@@ -253,7 +253,7 @@ proc trRaise(c: var Context; n: var Cursor) =
 
 proc trLocal(c: var Context; n: var Cursor) =
   let info = n.info
-  c.dest.add n
+  c.dest.addParLe(n.cursorTagId, n.info)
   var r = takeLocal(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -278,18 +278,18 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
     leaveScope(c, addr(c.currentScope), kind)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
-  if params.kind != ParLe: return
+  if not params.isTagLit: return
   var p = params
   p = sub(p)  # throwaway copy; bounds the walk under vpr
   while p.hasMore:
     let r = takeLocal(p, SkipFinalParRi)
     if r.typ.typeKind == SinkT:
-      let destructor = getDestructor(c.lifter[], r.typ.firstSon, p.endInfo)
+      let destructor = getDestructor(c.lifter[], r.typ.childCursor, p.endInfo)
       if destructor != NoSymId:
         c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
 proc trProcDecl(c: var Context; n: var Cursor) =
-  c.dest.add n
+  c.dest.addParLe(n.cursorTagId, n.info)
   var r = takeRoutine(n, SkipFinalParRi)
   copyTree c.dest, r.name
   copyTree c.dest, r.exported
@@ -336,7 +336,7 @@ proc trWhile(c: var Context; n: var Cursor) =
     trNestedScope c, n, WhileOrBlock
 
 proc trBlock(c: var Context; n: var Cursor) =
-  let label = n.firstSon
+  let label = n.childCursor
   let labelId = if label.kind == SymbolDef: label.symId else: c.anonBlock
   var oldScope = move c.currentScope
   c.currentScope = createNestedScope(WhileOrBlock, oldScope, n.info, labelId)
@@ -389,7 +389,7 @@ proc trTry(c: var Context; n: var Cursor) =
     hasExcept = true
     skip nn
   copyInto(c.dest, n):
-    let fin = if nn.substructureKind == FinU: nn.firstSon else: default(Cursor)
+    let fin = if nn.substructureKind == FinU: nn.childCursor else: default(Cursor)
     # Body kind depends on whether an `except` arm exists:
     #   - has except: raise from the body is caught by that except, so the
     #     finally runs naturally afterward (no duplication) and there's no
@@ -456,14 +456,14 @@ proc tr(c: var Context; n: var Cursor) =
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
         BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
-      if n.kind == ParLe:
-        c.dest.add n
+      if n.isTagLit:
+        c.dest.addParLe(n.cursorTagId, n.info)
         n.into:
           while n.hasMore:
             tr(c, n)
         c.dest.addParRi()
       else:
-        c.dest.add n
+        c.dest.addSubtree n
         inc n
 
 proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
@@ -472,7 +472,7 @@ proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
     dest: move(pass.dest))
   assert n.stmtKind == StmtsS
-  c.dest.add n
+  c.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr(c, n)

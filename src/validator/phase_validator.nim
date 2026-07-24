@@ -126,13 +126,13 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
   case c.kind
   of DotToken:
     ckDot
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
     ckLit
   of SymbolDef:
     ckD
   of Symbol, Ident:
     ckY
-  of ParLe:
+  of TagLit:
     let raw = tagEnum(c)
     let isExpr = rawTagIsNimonyExpr(raw) or rawTagIsLengExpr(raw)
     let isStmt = rawTagIsNimonyStmt(raw) or rawTagIsLengStmt(raw)
@@ -140,7 +140,7 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
     if inType:
       if isType:
         return ckT
-      let tagStr = pool.tags[c.tag]
+      let tagStr = globalTags.tags[c.cursorTagId]
       for t in typeCtxTagsLiteral:
         if t == tagStr: return ckT
     if isExpr and isStmt:
@@ -163,8 +163,8 @@ proc classifyCursor(c: Cursor; preferStmt: bool; inType: bool): ChildKind =
     ckAny
 
 proc tagName(c: Cursor): string =
-  if c.kind == ParLe:
-    result = pool.tags[c.tag]
+  if c.isTagLit:
+    result = globalTags.tags[c.cursorTagId]
   else:
     result = ""
 
@@ -177,7 +177,7 @@ proc collectChildKinds(parent: Cursor; preferStmtContext: bool;
                        outKinds: var seq[ChildKind]) =
   ## Walks the children of `parent` (which must point at ParLe) and appends
   ## their classifications to `outKinds`. Does not recurse into children.
-  assert parent.kind == ParLe
+  assert parent.isTagLit
   var c = sub(parent) # past the ParLe; bound the walk to the children
   var idx = 0
   while c.hasMore:
@@ -327,7 +327,7 @@ proc checkTree(ctx: var ValidatorCtx; c: var Cursor;
 
 proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
                 parentTag: string; childIdx: int; inType: bool) =
-  assert c.kind == ParLe
+  assert c.isTagLit
   let raw = tagEnum(c)
   let tag = tagName(c)
   let info = c.info
@@ -392,13 +392,11 @@ proc checkParLe(ctx: var ValidatorCtx; c: var Cursor;
 
 proc checkTree(ctx: var ValidatorCtx; c: var Cursor;
                parentTag: string; childIdx: int; inType: bool) =
-  case c.kind
-  of ParLe:
+  if c.isTagLit:
     checkParLe(ctx, c, parentTag, childIdx, inType)
-  of ParRi:
-    discard
   else:
-    inc c
+    if c.hasMore:
+      inc c
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -411,7 +409,7 @@ proc validate*(buf: var TokenBuf; phase: Phase;
   var ctx = ValidatorCtx(phase: phase, maxViolations: maxViolations)
   var c = beginRead(buf)
   let info = c.info
-  if c.kind == ParLe:
+  if c.isTagLit:
     checkTree(ctx, c, "", 0, false)
   # After the root subtree has been consumed, the cursor must be exhausted.
   # Anything remaining is content that a pass walking the IR with nested
@@ -424,7 +422,6 @@ proc validate*(buf: var TokenBuf; phase: Phase;
     ctx.addViolation info, "",
       "trailing content after root subtree: " &
       "the pass would silently drop these tokens"
-  endRead(buf)
   result = move ctx.violations
 
 proc reportViolations*(phaseName: string; vs: openArray[Violation]): bool =

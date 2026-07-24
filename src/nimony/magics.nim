@@ -7,7 +7,7 @@
 ## Magics, somewhat compatible with Nim 2.0, but it's neither required nor desirable.
 
 import ".." / models / tags
-import ".." / lib / [nifcursors, nifstreams]
+import ".." / lib / [nifpools]
 import nimony_model
 
 when defined(nimony):

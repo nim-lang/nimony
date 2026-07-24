@@ -80,18 +80,18 @@ proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
 
 proc collectTupleLocals(n: var Cursor; hasRaisesPragma: var bool; res: var HashSet[SymId]) =
   case n.kind
-  of ParLe:
-    if n.exprKind == FailedX and n.firstSon.kind == Symbol:
-      res.incl n.firstSon.symId
+  of TagLit:
+    if n.exprKind == FailedX and n.childCursor.kind == Symbol:
+      res.incl n.childCursor.symId
       n.into:
         while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
     elif n.pragmaKind == RaisesP:
       hasRaisesPragma = true
       n.into:
         while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
-    elif n.stmtKind == ResultS and n.firstSon.kind == SymbolDef:
+    elif n.stmtKind == ResultS and n.childCursor.kind == SymbolDef:
       if hasRaisesPragma:
-        res.incl n.firstSon.symId
+        res.incl n.childCursor.symId
       n.into:
         while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
     elif n.symKind in RoutineKinds:
@@ -100,8 +100,6 @@ proc collectTupleLocals(n: var Cursor; hasRaisesPragma: var bool; res: var HashS
     else:
       n.into:
         while n.hasMore: collectTupleLocals(n, hasRaisesPragma, res)
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in eraiser.collectTupleLocals"
   else:
     inc n
 
@@ -113,10 +111,10 @@ proc localsThatBecomeTuples*(n: Cursor): HashSet[SymId] =
   collectTupleLocals(n, hasRaisesPragma, result)
 
 proc callCanRaise*(typeCache: var TypeCache; n: Cursor): bool =
-  var fnType = skipProcTypeToParams(getType(typeCache, n.firstSon))
+  var fnType = skipProcTypeToParams(getType(typeCache, n.childCursor))
   if fnType.tagEnum != ParamsTagId:
     raiseAssert "BUG eraiser callCanRaise: callee type not params at " & infoToStr(n.info) &
-         ": " & toString(getType(typeCache, n.firstSon), false)
+         ": " & toString(getType(typeCache, n.childCursor), false)
   skip fnType # params
   skip fnType # return type
   # now pragmas follow:
@@ -138,7 +136,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
   let canRaise = hasPragma(fnType, RaisesP)
   if canRaise and not inhibit:
     c.needsXelim = true
-    let isVoid = retType.kind == DotToken or retType.typeKind == VoidT
+    let isVoid = retType.isDotToken or retType.typeKind == VoidT
     if not isVoid:
       dest.addParLe(ExprX, info)
     copyIntoKind dest, StmtsS, info:
@@ -149,7 +147,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
         dest.addEmpty2 info # export marker, pragma
         copyTree dest, retType
         # value is the call expression:
-        dest.add head
+        dest.addParLe(head.tagId, info)
         while n.hasMore:
           tr c, dest, n
         dest.addParRi(n.endInfo)
@@ -159,7 +157,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
       dest.addSymUse symId, info
       dest.addParRi()
   else:
-    dest.add head
+    dest.addParLe(head.tagId, info)
     while n.hasMore:
       tr c, dest, n
     dest.addParRi(n.endInfo)
@@ -185,7 +183,7 @@ proc trAssign(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr c, dest, n
@@ -194,9 +192,9 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-    takeToken dest, n
-  of ParLe:
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
+    takeTree dest, n
+  of TagLit:
     let ek = n.exprKind
     case ek
     of CallKinds:
@@ -226,8 +224,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         copyInto dest, n:
           while n.hasMore:
             tr c, dest, n
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in eraiser.tr"
+  else:
+    raiseAssert "BUG: unexpected ParRi in eraiser.tr" # classic ParRi only
 
 proc injectRaisingCalls*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally

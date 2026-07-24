@@ -33,8 +33,8 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
   ## Expands a single tree/token of the template body into `dest`.
   var body = body
   case body.kind
-  of UnknownToken, EofToken, DotToken, Ident:
-    dest.add body
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
+    dest.addSubtree body
   of Symbol:
     let s = body.symId
     let arg = e.formalParams.getOrDefault(s)
@@ -43,21 +43,21 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
     else:
       let nv = e.newVars.getOrDefault(s)
       if nv != SymId(0):
-        dest.add symToken(nv, body.info)
+        dest.addSymUse(nv, body.info)
       else:
         let tv = e.inferred[].getOrDefault(s)
         if tv != default(Cursor):
           dest.addSubtree tv
         else:
-          dest.add body # keep Symbol as it was
+          dest.addSubtree body # keep Symbol as it was
   of SymbolDef:
     let s = body.symId
     let newDef = newSymId(c, s)
     e.newVars[s] = newDef
-    dest.add symdefToken(newDef, body.info)
-  of StringLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.add body
-  of ParLe:
+    dest.addSymDef(newDef, body.info)
+  of StrLit, CharLit, IntLit, UIntLit, FloatLit:
+    dest.addSubtree body
+  of TagLit:
     let forStmt = asForStmt(body)
     if forStmt.kind == ForS and forStmt.iter.exprKind == UnpackX:
       # the loop body is expanded once per matched vararg; the `(for …)`
@@ -68,7 +68,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
       inc fv
       inc fv
       let vid = fv.symId
-      if arg.kind notin {DotToken, ParRi}:
+      if arg.hasMore and not arg.isDotToken:
         while arg.hasMore:
           e.formalParams[vid] = arg
           expandTemplateImpl c, dest, e, forStmt.body
@@ -77,7 +77,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
       var un = body
       un = sub(un) # bounded: `kind` is ParRi for a bare `unpack()`
       var arg = e.firstVarargMatch
-      if un.kind == ParRi:
+      if not un.hasMore:
         # `unpack()` variant:
         while arg.hasMore:
           dest.takeTree arg
@@ -89,19 +89,19 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.takeTree arg
           dest.addParRi()
     else:
-      dest.add body
+      dest.addParLe(body.cursorTagId, body.info)
       body.into:
         while body.hasMore:
           expandTemplateImpl c, dest, e, body
           skip body
         dest.addParRi(body.endInfo)
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
+  else:
+    discard "ParRi/close (classic) or stray suffix (nifcore)"
 
 proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor): bool =
   result = false
   var p = temp.pragmas
-  if p.kind != ParLe:
+  if not p.isTagLit:
     return
   p.into:  # (pragmas …)
     while p.hasMore:
@@ -110,8 +110,8 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
           # `.plugin: "path"` — single-string form only.
           var path = StrId(0)
           var pathInfo = p.endInfo # the pragma may be degenerate/empty
-          if p.kind == StringLit:
-            path = p.litId
+          if p.isStringLit:
+            path = p.strId
             pathInfo = p.info
           if path != StrId(0):
             var b = createTokenBuf(30)
@@ -120,7 +120,7 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
             # so a single shared plugin can dispatch on which template was
             # called. The plugin reads it with `pluginName` and skips to
             # the real call-site arguments with `callArgs`.
-            b.add identToken(symToIdent(temp.name.symId), args.endInfo)
+            b.addIdent(symToIdent(temp.name.symId), args.endInfo)
             var a = args
             while a.hasMore:
               b.takeTree a
@@ -167,7 +167,7 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   if oldHead.symKind != TemplateY: return false
 
   var newBuf = createTokenBuf(prog.mem[sym].buffer.len + 16)
-  newBuf.add oldHead          # `(template`
+  newBuf.addParLe(oldHead.cursorTagId, oldHead.info)          # `(template`
   oldHead.into:
     newBuf.takeTree oldHead     # name (SymbolDef)
     newBuf.takeTree oldHead     # exported marker
@@ -201,19 +201,25 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
     # ran `addSym` for each param. Lazily promoting from the published
     # decl skips that, so re-attach the params to the scope here.
     block addParamsToScope:
-      var p = readonlyCursorAt(newBuf, paramsAt)
-      if p.substructureKind == ParamsU:
-        p.into ParamsU:
-          while p.hasMore:
-            let param = asLocal(p)
-            if param.name.kind == SymbolDef:
-              var nameStr = pool.syms[param.name.symId]
-              extractBasename(nameStr)
-              if nameStr.len > 0:
-                let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
-                addOverloadable(c.currentScope,
-                                pool.strings.getOrIncl(nameStr), s)
-            skip p
+      template attach(atPos: int; expected: SubstructureKind; kindOfSym: SymKind) =
+        var p = readonlyCursorAt(newBuf, atPos)
+        if p.substructureKind == expected:
+          p.into expected:
+            while p.hasMore:
+              let param = asLocal(p)
+              if param.name.isSymbolDef:
+                var nameStr = pool.syms[param.name.symId]
+                extractBasename(nameStr)
+                if nameStr.len > 0:
+                  let s = Sym(kind: kindOfSym, name: param.name.symId, pos: 0)
+                  addOverloadable(c.currentScope,
+                                  pool.strings.getOrIncl(nameStr), s)
+              skip p
+      # Typevars must be re-attached as well: a body ident like `T` in
+      # `template sizeof*[T](_: T): int = sizeof(T)` has to resolve to the
+      # typevar Symbol here or expansion can never substitute it.
+      attach typevarsAt, TypevarsU, TypevarY
+      attach paramsAt, ParamsU, ParamY
 
     semTemplBody ctx, newBuf, oldHead
     # `oldHead` is now past the body, at the template's (possibly elided) close.
@@ -259,19 +265,19 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
 
   var a = args
   var f = templ.params
-  if f.kind != DotToken:
+  if not f.isDotToken:
     assert f.isParamsTag
     f.into ParamsU:
       while f.hasMore and a.hasMore:
         var param = f
         inc param
-        assert param.kind == SymbolDef
+        assert param.isSymbolDef
         e.formalParams[param.symId] = a
         skip a
         skip f
       while f.hasMore: skip f  # mop-up if a ran out first
 
-  if templ.body.kind == DotToken:
+  if templ.body.isDotToken:
     c.buildErr dest, info, "cannot expand template from prototype; possibly a recursive template call"
   else:
     expandTemplateImpl c, dest, e, templ.body

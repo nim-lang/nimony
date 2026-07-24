@@ -62,7 +62,7 @@ iterator currentScopeLocals*(c: var TypeCache): SymId =
       yield s
 
 proc registerParams*(c: var TypeCache; routine: SymId; decl, params: Cursor) =
-  if params.kind == ParLe:
+  if params.isTagLit:
     var p = params
     p = sub(p) # bound the param walk
     while p.hasMore:
@@ -97,7 +97,7 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
       # the ordinal literal so constant folding can inline it at use sites
       # (e.g. a `case` label emitted by Lengc must be an integer constant).
       result = local.val
-      if result.kind == ParLe and result.exprKind == TupX:
+      if result.isTagLit and result.exprKind == TupX:
         inc result
         return result
       return default(Cursor)
@@ -122,7 +122,7 @@ proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
 proc getInitValue*(c: var TypeCache; s: SymId): Cursor =
   result = getInitValueImpl(c, s)
   var counter = 0
-  while counter < 20 and not cursorIsNil(result) and result.kind == Symbol:
+  while counter < 20 and not cursorIsNil(result) and result.isSymbol:
     inc counter
     # see if we can resolve it even further:
     let res = getInitValueImpl(c, result.symId)
@@ -166,7 +166,7 @@ proc fetchSymKind*(c: var TypeCache; s: SymId): SymKind =
   result = if res.status == LacksNothing: res.decl.symKind else: NoSym
 
 proc registerLocals(c: var TypeCache; n: var Cursor) =
-  if n.kind == ParLe:
+  if n.isTagLit:
     let k = n.stmtKind
     case k
     of StmtsS:
@@ -199,7 +199,7 @@ proc skipToObjectBody(n: Cursor): Cursor =
   result = n
   if result.typeKind in {PtrT, RefT}:
     inc result
-  while counter > 0 and result.kind == Symbol:
+  while counter > 0 and result.isSymbol:
     dec counter
     let d = getTypeSection(result.symId)
     if d.kind == TypeY:
@@ -212,7 +212,7 @@ proc skipToObjectBody(n: Cursor): Cursor =
 proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
   if n.substructureKind in {FldU, GfldU}:
     let decl = takeLocal(n, SkipFinalParRi)
-    if decl.name.kind == SymbolDef and decl.name.symId == fld:
+    if decl.name.isSymbolDef and decl.name.symId == fld:
       result = decl.typ
     else:
       result = default(Cursor)
@@ -276,8 +276,8 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   tupType = skipModifier(tupType)
   if tupType.typeKind == TupleT:
     skip n # skip tuple expression
-    if n.kind == IntLit:
-      var idx = pool.integers[n.intId]
+    if n.isIntLit:
+      var idx = n.intVal
       inc tupType # into the tuple type
       while idx > 0:
         skip tupType
@@ -303,9 +303,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       result = c.builtins.charType
     of FloatLit:
       result = c.builtins.floatType
-    of StringLit:
+    of StrLit:
       result = c.builtins.stringType
-    of ParLe:
+    of TagLit:
       case stmtKind(n)
       of IfS:
         # Walk all branches and pick the first non-void branch's type. A
@@ -315,7 +315,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         var n = n
         inc n # skip `if`
         result = c.builtins.voidType
-        while n.kind == ParLe:
+        while n.isTagLit:
           let sub = n.substructureKind
           if sub notin {ElifU, ElseU}: break
           var br = n
@@ -348,15 +348,15 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       else:
         case njvlKind(n)
         of VV:
-          result = getTypeImpl(c, n.firstSon, flags)
+          result = getTypeImpl(c, n.childCursor, flags)
         of EtupatV:
           result = tupatType(c, n, flags)
         else: discard
     else:
-      # XXX FIXME This can never be true as we know n.kind != ParLe!
+      # XXX FIXME This can never be true as we know not n.isTagLit!
       case n.substructureKind
       of RangesU, RangeU:
-        result = getTypeImpl(c, n.firstSon, flags)
+        result = getTypeImpl(c, n.childCursor, flags)
       else: discard
   of KvX:
     var m = n
@@ -364,7 +364,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     skip m # skip key
     result = getTypeImpl(c, m, flags)
   of AtX, ArratX:
-    result = getTypeImpl(c, n.firstSon, flags)
+    result = getTypeImpl(c, n.childCursor, flags)
     case typeKind(result)
     of ArrayT, SetT:
       inc result # to the element type
@@ -373,7 +373,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     else:
       result = c.builtins.autoType # still an error
   of PatX:
-    result = getTypeImpl(c, n.firstSon, flags)
+    result = getTypeImpl(c, n.childCursor, flags)
     case typeKind(result)
     of PtrT:
       inc result
@@ -394,7 +394,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = getTypeImpl(c, n, flags)
   of DoX:
     # the parameter list that follows `(do)` is actually a good type
-    result = getTypeImpl(c, n.firstSon, flags)
+    result = getTypeImpl(c, n.childCursor, flags)
   of ExprX:
     var n = n
     n.into: # skip "expr"
@@ -404,7 +404,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         if not n.hasMore:
           result = getTypeImpl(c, prev, flags)
   of CallX, CallstrlitX, InfixX, PrefixX, CmdX, HcallX, ProccallX:
-    result = getTypeImpl(c, n.firstSon, flags)
+    result = getTypeImpl(c, n.childCursor, flags)
     if result.typeKind in RoutineTypes:
       skipToReturnType result
   of FalseX, TrueX, AndX, OrX, XorX, NotX, DefinedX, DeclaredX, IsmainmoduleX, EqX, NeqX, LeX, LtX,
@@ -428,9 +428,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
      PlussetX, MinussetX, MulsetX, XorsetX,
      CastX, ConvX, HconvX, DconvX, BaseobjX,
      OconstrX, NewobjX, AconstrX, SetconstrX, TupconstrX, NewrefX:
-    result = n.firstSon
+    result = n.childCursor
   of ParX, EmoveX:
-    result = getTypeImpl(c, n.firstSon, flags)
+    result = getTypeImpl(c, n.childCursor, flags)
   of NilX:
     result = c.builtins.nilType
   of DotX, DdotX:
@@ -451,9 +451,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
             obj.exprKind in {DerefX, HderefX}:
         inc obj
         var t = getTypeImpl(c, obj, flags)
-        if t.kind == Symbol:
+        if t.isSymbol:
           var counter = 20
-          while counter > 0 and t.kind == Symbol:
+          while counter > 0 and t.isSymbol:
             dec counter
             let res = tryLoadSym(t.symId)
             if res.status == LacksNothing and res.decl.stmtKind == TypeS:
@@ -468,12 +468,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         result = c.builtins.autoType
 
   of DerefX, HderefX:
-    result = getTypeImpl(c, n.firstSon, flags)
+    result = getTypeImpl(c, n.childCursor, flags)
     if typeKind(result) == SinkT:
       inc result
 
     var counter = 20
-    while counter > 0 and result.kind == Symbol:
+    while counter > 0 and result.isSymbol:
       dec counter
       let d = getTypeSection(result.symId)
       if d.kind == TypeY:
@@ -493,18 +493,18 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     # determining the type of `(err)` is not an error by itself:
     result = n
   of AddrX, HaddrX:
-    let elemType = getTypeImpl(c, n.firstSon, flags)
+    let elemType = getTypeImpl(c, n.childCursor, flags)
     var buf = createTokenBuf(4)
-    buf.add parLeToken(PtrT, n.info)
+    buf.addParLe(PtrT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
   of CurlyX:
     # should not be encountered but keep this code for now
-    let elemType = getTypeImpl(c, n.firstSon, flags)
+    let elemType = getTypeImpl(c, n.childCursor, flags)
     var buf = createTokenBuf(4)
-    buf.add parLeToken(SetT, n.info)
+    buf.addParLe(SetT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
     c.mem.add buf
@@ -512,7 +512,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of TupX:
     # should not be encountered but keep this code for now
     var buf = createTokenBuf(4)
-    buf.add parLeToken(TupleT, n.info)
+    buf.addParLe(TupleT, n.info)
     var n = n
     n.into:
       while n.hasMore:
@@ -529,9 +529,9 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     result = tupatType(c, n, flags)
   of BracketX:
     # should not be encountered but keep this code for now
-    let elemType = getTypeImpl(c, n.firstSon, flags)
+    let elemType = getTypeImpl(c, n.childCursor, flags)
     var buf = createTokenBuf(4)
-    buf.add parLeToken(ArrayT, n.info)
+    buf.addParLe(ArrayT, n.info)
     buf.addSubtree elemType
     var n = n
     var arrayLen = 0
@@ -547,7 +547,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
     result = c.builtins.voidType
   of DupX:
-    result = getTypeImpl(c, n.firstSon, flags)
+    result = getTypeImpl(c, n.childCursor, flags)
   of CurlyatX, TabconstrX:
     # error: should have been eliminated earlier
     result = c.builtins.autoType
@@ -555,8 +555,8 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     var n = n
     inc n # tag
     skip n # expr
-    if n.kind in {Ident, StringLit}:
-      case pool.strings[n.litId]
+    if n.isIdent or n.isStringLit:
+      case pool.strings[n.strId]
       of "i": result = c.builtins.intType
       of "i8": result = c.builtins.int8Type
       of "i16": result = c.builtins.int16Type
@@ -576,7 +576,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of EnvpX:
     result = c.builtins.autoType
   of ToClosureX:
-    let srcProc = getTypeImpl(c, n.firstSon, flags).asRoutine
+    let srcProc = getTypeImpl(c, n.childCursor, flags).asRoutine
     assert srcProc.kind != NoSym
     var buf = createTokenBuf()
     copyIntoKind(buf, srcProc.kind, n.info):
@@ -587,7 +587,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       buf.addSubtree srcProc.params
       buf.addSubtree srcProc.retType
       copyIntoKind(buf, PragmasU, srcProc.pragmas.info):
-        if srcProc.pragmas.kind != DotToken:
+        if not srcProc.pragmas.isDotToken:
           var n2 = srcProc.pragmas
           loopInto n2:
             buf.takeTree n2
@@ -603,7 +603,7 @@ proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor
   #assert result.typeKind != AutoT
   if SkipAliases in flags:
     var counter = 20
-    while counter > 0 and result.kind == Symbol:
+    while counter > 0 and result.isSymbol:
       dec counter
       let d = lookupSymbol(c, result.symId)
       if not cursorIsNil(d) and d.stmtKind == TypeS:
@@ -616,7 +616,7 @@ proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor
 proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool =
   # returns false if the routine is generic
   result = true # assume it is concrete
-  assert n.kind == SymbolDef, "expected SymbolDef, got: " & toString(n, false)
+  assert n.isSymbolDef, "expected SymbolDef, got: " & toString(n, false)
   let sym = n.symId
   for i in 0..<BodyPos:
     if i == ParamsPos:
@@ -636,7 +636,7 @@ proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind:
 
 proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType: Cursor) =
   var buf = createTokenBuf(4)
-  buf.add parLeToken(PtrT, elemType.info)
+  buf.addParLe(PtrT, elemType.info)
   buf.addSubtree elemType
   buf.addParRi()
   c.mem.add buf

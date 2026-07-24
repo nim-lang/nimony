@@ -19,8 +19,8 @@ proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string
 proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
   ## Mangles the single tree/token at `c` and advances past it.
   case c.kind
-  of ParLe:
-    let tag {.cursor.} = pool.tags[c.tagId]
+  of TagLit:
+    let tag {.cursor.} = globalTags.tags[c.cursorTagId]
     if c.substructureKind in {FldU, GfldU}:
       c.into:
         skip c, SkipName # name
@@ -32,15 +32,15 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       b.addTree tag
       c.into:
         mangleImpl b, c, mm # type is interesting
-        if c.kind == ParLe and c.typeKind == RangetypeT:
+        if c.isTagLit and c.typeKind == RangetypeT:
           var first, last: int64
           c.into:
             skip c # type is irrelevant, we care about the length
-            assert c.kind == IntLit
-            first = pool.integers[c.intId]
+            assert c.isIntLit
+            first = c.intVal
             inc c
-            assert c.kind == IntLit
-            last = pool.integers[c.intId]
+            assert c.isIntLit
+            last = c.intVal
             inc c
           b.addIntLit(last - first + 1)
         while c.hasMore:
@@ -62,8 +62,8 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
       b.addTree(tag)
       c.into:
         # normalize bits
-        assert c.kind == IntLit
-        let bits = pool.integers[c.intId]
+        assert c.isIntLit
+        let bits = c.intVal
         if bits < 0 and b.bits >= 0:
           b.addIntLit(b.bits)
         else:
@@ -93,8 +93,6 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         while c.hasMore:
           mangleImpl b, c, mm
       b.endTree()
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
   of Symbol:
     # Strip the owning module's suffix from nested generic-instance
     # symbols (`Foo.0.I<hash>.modname`). Two modules that instantiate
@@ -119,17 +117,17 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
     else:
       b.addSymbolDef(s)
     inc c
-  of StringLit:
-    b.addStrLit(pool.strings[c.litId])
+  of StrLit:
+    b.addStrLit(pool.strings[c.strId])
     inc c
   of IntLit:
-    b.addIntLit(pool.integers[c.intId])
+    b.addIntLit(c.intVal)
     inc c
   of UIntLit:
-    b.addUIntLit(pool.uintegers[c.uintId])
+    b.addUIntLit(c.uintVal)
     inc c
   of FloatLit:
-    b.addFloatLit(pool.floats[c.floatId])
+    b.addFloatLit(c.floatVal)
     inc c
   of DotToken:
     b.addEmpty()
@@ -138,13 +136,18 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
     b.addCharLit(char c.uoperand)
     inc c
   of Ident:
-    b.addIdent(pool.strings[c.litId])
+    b.addIdent(pool.strings[c.strId])
     inc c
   of UnknownToken:
     b.addIdent "!unknown!"
     inc c
   of EofToken:
     b.addIdent "!eof!"
+    inc c
+  else:
+    # ParRi/close (classic) or a stray suffix (nifcore); unreachable in a
+    # well-formed walk since children are visited via `hasMore`.
+    b.addIdent "!?!"
     inc c
 
 proc takeMangle*(c: var Cursor; mm: MangleMode; bits = -1): string =
@@ -165,7 +168,7 @@ proc mangleProctype(b: var Mangler; n: var Cursor; mm: MangleMode): string =
   var b = createMangler(60)
   n.into:
     skipRoutinePrefix n, kind
-    if n.kind != DotToken:
+    if not n.isDotToken:
       n.into:  # (params …)
         while n.hasMore:
           let pa = takeLocal(n, SkipFinalParRi)

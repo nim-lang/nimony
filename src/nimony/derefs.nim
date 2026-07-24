@@ -82,9 +82,17 @@ type
       # rewrite bare `raise` into `exc = err; raise _e` so the original error code
       # is preserved when propagating past the handler.
 
-proc takeToken(c: var Context; n: var Cursor) {.inline.} =
-  c.dest.add n
-  inc n
+proc takeTree(c: var Context; n: var Cursor) {.inline.} =
+  c.dest.takeTree n
+
+proc endsWithOpenHderef(dest: TokenBuf): bool =
+  ## True when the buffer's last value is a freshly opened `(hderef` head.
+  ## The head may be followed by line-info suffix tokens, so a raw
+  ## `dest[dest.len-1].tag` read would compare suffix payload bits.
+  result = false
+  if dest.len > 0:
+    let t = dest[lastValueStart(dest)]
+    result = t.kind == TagLit and t.tagId == TagId(HderefTagId)
 
 proc rootOf(n: Cursor; allowIndirection = false): SymId =
   var n = n
@@ -163,8 +171,8 @@ proc isAddressable*(n: Cursor): bool =
 proc tr(c: var Context; n: var Cursor; e: Expects)
 
 proc trSons(c: var Context; n: var Cursor; e: Expects) =
-  if n.kind != ParLe:
-    takeToken c, n
+  if not n.isTagLit:
+    takeTree c, n
   else:
     takeInto c.dest, n:
       while n.hasMore:
@@ -215,7 +223,7 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
         break
     else:
       break
-  if n.kind == Symbol:
+  if n.isSymbol:
     if c.typeCache.fetchSymKind(n.symId) == ParamY and n.symId == c.r.firstParam:
       # There is a difference between
       # proc forward(x: var int): var int = x
@@ -256,7 +264,7 @@ proc skipToRoot(n: Cursor): Cursor =
 proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
   result = false
   let n = skipToRoot(n)
-  if n.kind == Symbol:
+  if n.isSymbol:
     # Use the type cache rather than `tryLoadSym` so that local symbols
     # (anonymous ones like `n.2` lack a module suffix) cannot collide
     # across modules through the shared `pool.syms` interning.
@@ -288,8 +296,8 @@ proc borrowsFromReadonly(c: var Context; n: Cursor; allowLet = false): bool =
       result = local.typ.typeKind notin {MutT, OutT, LentT, SinkT}
     else:
       result = false
-  elif n.kind in {StringLit, IntLit, UIntLit, FloatLit, CharLit} or
-       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}:
+  elif n.hasMore and (n.kind in {StrLit, IntLit, UIntLit, FloatLit, CharLit} or
+       n.exprKind in {SufX, OconstrX, NewobjX, AconstrX}):
     result = true
   else:
     result = false
@@ -329,7 +337,7 @@ proc checkTupleConstrBorrowing(c: var Context; n: Cursor): LvalueStatus =
 
 proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
-  if n.kind == Symbol:
+  if n.isSymbol:
     result = n.symId == c.r.resultSym
 
 proc trReturn(c: var Context; n: var Cursor) =
@@ -373,9 +381,9 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
       checkForDangerousLocations c, n
 
   case n.kind
-  of Symbol, UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+  of Symbol, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
     inc n
-  of ParLe:
+  of TagLit:
     if isDeclarative(n):
       skip n
     elif n.stmtKind == AsgnS:
@@ -404,13 +412,13 @@ proc checkForDangerousLocations(c: var Context; n: var Cursor) =
     else:
       n.into:
         recurse()
-  of ParRi:
+  else:
     bug "checkForDangerousLocations: ParRi"
 
 proc trProcPragmas(c: var Context; n: var Cursor) =
   # we also need to traverse the `requires` pragmas!
-  if n.kind == DotToken:
-    takeToken c, n
+  if n.isDotToken:
+    takeTree c, n
   else:
     takeInto c.dest, n: # pragmas
       while n.hasMore:
@@ -531,7 +539,7 @@ proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
     quit msg
   dest.buildTree ErrT, info:
     dest.addSubtree arg
-    dest.add strToken(pool.strings.getOrIncl(msg), info)
+    dest.addStrLit(msg, info)
 
 proc trPragmaBlock(c: var Context; n: var Cursor) =
   takeInto c.dest, n: # pragmax
@@ -607,7 +615,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
       skip n
       return
 
-  c.dest.add head # (call)
+  c.dest.addParLe(head.tagId, n.info) # (call)
   tr c, n, WantT # `fn` part of the call
 
   var needHderef = false
@@ -636,7 +644,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     finishCallArgs()
 
   swap c.dest, callBuf
-  if needHderef and c.dest[c.dest.len-1].tag != TagId(HderefTagId):
+  if needHderef and not endsWithOpenHderef(c.dest):
     c.dest.addParLe(HderefX, info)
     c.dest.add callBuf
     c.dest.addParRi()
@@ -673,7 +681,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
             # already emitted an error:
             errAlreadyEmitted = true
             skip n
-    elif borrowsFromReadonly(c, n, allowLet = le.kind == Symbol):
+    elif borrowsFromReadonly(c, n, allowLet = le.isSymbol):
       # A bare-symbol destination is a whole-variable (re)assignment, handled by
       # the definite-assignment pass in contracts_fir; a projection (`a.field`,
       # `a[i]`) of a `let` mutates its contents and must be rejected here.
@@ -694,8 +702,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
         trAsgnRhs c, le, n, e
 
 proc trSonsLocation(c: var Context; n: var Cursor; e: Expects) =
-  if n.kind != ParLe:
-    takeToken c, n
+  if not n.isTagLit:
+    takeTree c, n
   elif n.exprKind in {DotX, DdotX}:
     takeInto c.dest, n:
       tr c, n, e
@@ -719,8 +727,8 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSonsLocation c, n, WantT
     else:
-      if (k in {MutT, LentT} and not isViewType(typ.firstSon)) or k == OutT:
-        if c.dest[c.dest.len-1].tag == TagId(HderefTagId):
+      if (k in {MutT, LentT} and not isViewType(typ.childCursor)) or k == OutT:
+        if endsWithOpenHderef(c.dest):
           trSonsLocation c, n, WantT
         else:
           c.dest.addParLe(HderefX, n.info)
@@ -731,8 +739,8 @@ proc trLocation(c: var Context; n: var Cursor; e: Expects) =
   elif e.wantMutable:
     if e == WantVarTResult:
       c.dest.addParLe(HaddrX, n.info)
-      if n.kind == Symbol:
-        takeToken c, n
+      if n.isSymbol:
+        takeTree c, n
       else:
         trSonsLocation c, n, WantT
       c.dest.addParRi()
@@ -766,10 +774,10 @@ proc trLocal(c: var Context; n: var Cursor) =
       trAsgnRhs c, name, n, e
     when defined(debugSigmatch):
       if n.hasMore:
-        let u = unpack(pool.man, n.info)
+        let u = unpack(lineMan, n.info)
         echo "LOCAL LEFTOVER kind=", n.kind,
-          (if n.kind == ParLe: " tag=" & pool.tags[n.tagId] else: ""),
-          " at ", pool.files[u.file], ":", u.line, ":", u.col
+          (if n.isTagLit: " tag=" & globalTags.tags[n.tagId] else: ""),
+          " at ", pool.filenames[u.file], ":", u.line, ":", u.col
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
   takeInto c.dest, n:
@@ -799,7 +807,7 @@ proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
         # inside the owning type decl), so use `typenav.lookupField` which
         # walks the object body.
         var fieldKind: TypeKind = NoType
-        if n.kind == Symbol:
+        if n.isSymbol:
           let fieldType = lookupField(c.typeCache, objType, n.symId)
           if not cursorIsNil(fieldType):
             fieldKind = fieldType.typeKind
@@ -859,7 +867,7 @@ type
 proc parseExceptArm(armCur: Cursor): ExceptArm =
   ## armCur points just inside `(except ...`, at the type/decl/dot.
   var n = armCur
-  if n.kind == DotToken:
+  if n.isDotToken:
     var bodyN = n
     inc bodyN
     return ExceptArm(isCatchAll: true, bodyStart: bodyN)
@@ -867,7 +875,7 @@ proc parseExceptArm(armCur: Cursor): ExceptArm =
     var inner = n
     inc inner  # past `(let`
     var bindSym = NoSymId
-    if inner.kind == SymbolDef:
+    if inner.isSymbolDef:
       bindSym = inner.symId
     skip inner  # name
     skip inner  # export marker
@@ -915,7 +923,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
   ## error codes `exc` is nil and every arm falls through to the else, where
   ## we re-raise so the original `errorTracker` value is preserved.
   let info = n.info
-  c.dest.add n
+  c.dest.addParLe(n.cursorTagId, n.info)
   n.into:  # take '(try' tag
 
     # Allow raises inside the try body — there is at least one except arm:
@@ -998,7 +1006,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
             c.dest.addSymUse errSym, info
       # Recursively transform the original arm body
       var bodyCur = arm.bodyStart
-      if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
+      if bodyCur.isTagLit and bodyCur.stmtKind == StmtsS:
         bodyCur.into:
           while bodyCur.hasMore:
             tr c, bodyCur, WantT
@@ -1016,7 +1024,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
     c.dest.addParLe StmtsS, info
     if hasCatchall:
       var bodyCur = catchallBody
-      if bodyCur.kind == ParLe and bodyCur.stmtKind == StmtsS:
+      if bodyCur.isTagLit and bodyCur.stmtKind == StmtsS:
         bodyCur.into:
           while bodyCur.hasMore:
             tr c, bodyCur, WantT
@@ -1046,6 +1054,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
       tr c, n, WantT
 
     c.dest.addParRi(n.endInfo)  # close try
+
 
 proc trTry(c: var Context; n: var Cursor) =
   var prescan = n
@@ -1080,7 +1089,7 @@ proc trRaise(c: var Context; n: var Cursor) =
   var lookahead = n
   inc lookahead  # past `(raise` tag
 
-  if lookahead.kind == DotToken:
+  if lookahead.isDotToken:
     if c.handlerStack.len > 0:
       let h = c.handlerStack[^1]
       let excSym = pool.syms.getOrIncl(ExcThreadVarName)
@@ -1096,7 +1105,7 @@ proc trRaise(c: var Context; n: var Cursor) =
       return
     # No active handler — pass through unchanged.
     takeInto c.dest, n:  # `(raise`
-      takeToken c, n  # `.`
+      takeTree c, n  # `.`
     return
 
   let opType = getType(c.typeCache, lookahead, {SkipAliases})
@@ -1160,7 +1169,7 @@ proc trFor(c: var Context; n: var Cursor) =
     (unpackflat
      (let :p.0 . .
       (mut string.0.sysvq0asl) .)) ]#
-  var nn = n.firstSon
+  var nn = n.childCursor
   skip nn # iterator
   case substructureKind(nn)
   of UnpackflatU, UnpacktupU:
@@ -1194,10 +1203,10 @@ proc trType(c: var Context; n: var Cursor) =
   ## For types with custom hooks (from sem), use those.
   ## For non-generic nominal types (objects/distincts), generate hooks via lifter.
   let info = n.info
-  c.dest.add n
+  c.dest.addParLe(n.cursorTagId, n.info)
   n.into: # (type
     var s = SymId(0)
-    if n.kind == SymbolDef:
+    if n.isSymbolDef:
       s = n.symId
     c.dest.takeTree n # the symbol definition
     c.dest.takeTree n # exported
@@ -1227,11 +1236,11 @@ proc trType(c: var Context; n: var Cursor) =
     # pragmas:
     if s != SymId(0) and (c.hooks.hasKey(s) or hasMethods):
       # Type has custom hooks or methods from semantic analysis
-      if n.kind == DotToken:
+      if n.isDotToken:
         c.dest.addParLe PragmasU, info
         inc n
       else:
-        c.dest.add n # existing pragma tag
+        c.dest.addParLe(n.cursorTagId, n.info) # existing pragma tag
         n.into:
           while n.hasMore:
             c.dest.takeTree n # existing individual pragmas
@@ -1242,11 +1251,11 @@ proc trType(c: var Context; n: var Cursor) =
       c.dest.addParRi()
     elif needsForgedHooks:
       # Non-generic nominal type - generate hooks via lifter
-      if n.kind == DotToken:
+      if n.isDotToken:
         c.dest.addParLe PragmasU, info
         inc n
       else:
-        c.dest.add n # existing pragma tag
+        c.dest.addParLe(n.cursorTagId, n.info) # existing pragma tag
         n.into:
           while n.hasMore:
             c.dest.takeTree n # existing individual pragmas
@@ -1297,16 +1306,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         skip n
         return
     trLocation c, n, e
-  of IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
     if e.wantMutable:
       # Consider `fvar(returnsVar(someLet))`: We must not allow this.
       cannotPassToVar c.dest, n.info, n
       inc n
     else:
-      takeToken c, n
-  of UnknownToken, ParRi, EofToken, DotToken, Ident, SymbolDef:
-    takeToken c, n
-  of ParLe:
+      takeTree c, n
+  of TagLit:
     case n.exprKind
     of CallKinds:
       var disallowDangerous = true
@@ -1412,6 +1419,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
           takeTree c.dest, n
         else:
           trSons c, n, WantT
+  else:
+    # atoms (UnknownToken/EofToken/DotToken/Ident/SymbolDef) plus, in the
+    # classic model, a real ParRi scope-close: copy the token verbatim.
+    takeTree c, n
 
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
@@ -1426,11 +1437,11 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
   c.typeCache.openScope()
   var n2 = n
   var n3 = n
-  c.dest.add n2
+  c.dest.addParLe(n2.cursorTagId, n2.info)
   n2 = sub(n2)
   while n2.hasMore:
     # clean up dots that sem might have introduced for moving inner generic instances:
-    if n2.kind == DotToken: inc n2
+    if n2.isDotToken: inc n2
     else: tr(c, n2, WantT)
   genMissingHooks c.lifter[], c.dest
   if c.r.dangerousLocations.len > 0:

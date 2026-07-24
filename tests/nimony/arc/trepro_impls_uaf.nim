@@ -11,7 +11,7 @@
 ## `add` writes one element past the end of the new buffer.
 
 import std / [sets, syncio, assertions]
-include "../../../src/lib/nifprelude"
+import "../../../src/lib/nifcore"
 
 type
   ImplKind = enum
@@ -58,12 +58,12 @@ proc add(impls: var Implications; imp: Implication) =
     for i in impls.startIdx ..< impls.items.len:
       let other = impls.items[i]
       if other.kind == compKind and other.cond == imp.cond and other.sym == imp.sym:
-        impls.items[i] = Implication(kind: Always, cond: SymId(0), sym: imp.sym)
+        impls.items[i] = Implication(kind: Always, cond: default(SymId), sym: imp.sym)
         return
   impls.items.add imp
 
 proc always(sym: SymId): Implication {.inline.} =
-  Implication(kind: Always, cond: SymId(0), sym: sym)
+  Implication(kind: Always, cond: default(SymId), sym: sym)
 
 proc ifTrue(cond, sym: SymId): Implication {.inline.} =
   Implication(kind: IfTrue, cond: cond, sym: sym)
@@ -75,7 +75,7 @@ proc ifTrue(cond, sym: SymId): Implication {.inline.} =
 
 proc innerWork(impls: var Implications; symBase: int; n: int) =
   for i in 0 ..< n:
-    impls.add always(SymId(symBase + i))
+    impls.add always(SymId(uint32(symBase + i)))
 
 proc iteWork(impls: var Implications; symBase: int) =
   let cp = impls.checkpoint()

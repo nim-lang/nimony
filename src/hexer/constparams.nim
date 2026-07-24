@@ -51,7 +51,7 @@ proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
            typeprops.isInheritable(typ, false)
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
-  if params.kind != ParLe: return
+  if not params.isTagLit: return
   var n = params
   n = sub(n) # skips (params; bounds the walk under vpr
   while n.hasMore:
@@ -154,7 +154,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # the in-flight exception by signalling `Failure` to the caller; the caller
   # consults the threadvar `exc` for the actual value. Outside a raises proc
   # there is no error channel, so we degrade to a bare `(ret .)`.
-  if n.firstSon.kind == DotToken:
+  if n.childCursor.kind == DotToken:
     let info = n.info
     skip n # the whole bare `(raise .)`
     if c.canRaise:
@@ -166,20 +166,20 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, RetS, info:
         dest.addDotToken()
     return
-  let localIsVoid = isVoidType(getType(c.typeCache, n.firstSon))
+  let localIsVoid = isVoidType(getType(c.typeCache, n.childCursor))
   if c.exceptVars.len > 0:
     # also bind the value to a potential `T as e` variable:
     let info = n.info
     copyIntoKind dest, AsgnS, info:
       dest.addSymUse c.exceptVars[^1], info
       if isSpecial and not localIsVoid:
-        let x = n.firstSon
+        let x = n.childCursor
         assert x.kind == Symbol
         copyIntoKind dest, TupatX, info:
           dest.addSymUse x.symId, info
           dest.addIntLit 0, info
       else:
-        dest.addSubtree n.firstSon
+        dest.addSubtree n.childCursor
 
   copyInto dest, n:
     produceRaiseTuple c, dest, c.retType, n.info
@@ -212,7 +212,7 @@ proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.nextRaiseIsSpecial = true
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTuple: bool) =
-  var fnType = skipProcTypeToParams(getType(c.typeCache, n.firstSon))
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n.childCursor))
   assert fnType.tagEnum == ParamsTagId
   var pragmas = fnType
   skip pragmas
@@ -224,17 +224,17 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
   if needsTuple:
     needsTuple = produceSuccessTuple(c, dest, retType, n.info)
 
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   n.into: # skip `(call)`
     tr c, dest, n # handle `fn`
 
     fnType = sub(fnType) # peek only, never left
     while n.hasMore:
       let previousFormalParam = fnType
-      if fnType.kind == ParRi:
+      if not fnType.hasMore:
         tr c, dest, n # can happen for closure parameter
       else:
-        assert fnType.kind == ParLe
+        assert fnType.isTagLit
         let param = takeLocal(fnType, SkipFinalParRi)
         let pk = param.typ.typeKind
         if pk in {MutT, OutT, LentT}:
@@ -323,7 +323,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr c, dest, n
@@ -350,9 +350,9 @@ proc trPragmaBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add parLeToken(ExprX, info)
-  dest.add parLeToken(StmtsS, info)
-  let typ = n.firstSon
+  dest.addParLe(ExprX, info)
+  dest.addParLe(StmtsS, info)
+  let typ = n.childCursor
 
   let target = pool.syms.getOrIncl("`constRefTemp." & $c.tmpCounter)
   inc c.tmpCounter
@@ -361,7 +361,7 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addEmpty2 info # export marker, pragma
     copyTree dest, typ
     dest.addDotToken() # value
-  dest.add parLeToken(pool.tags.getOrIncl("keepovf"), info)
+  dest.addParLe(globalTags.registerTag("keepovf"), info)
   dest.copyInto n:
     tr(c, dest, n) # type
     tr(c, dest, n) # operand A
@@ -375,7 +375,7 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # We only deal with the data flow here.
-  var nn = n.firstSon
+  var nn = n.childCursor
   skip nn # stmts
   let oldLen = c.exceptVars.len
   if nn.substructureKind == ExceptU:
@@ -385,11 +385,11 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         let exc = nn.symId
         c.exceptVars.add exc
         c.typeCache.takeLocalHeader(dest, nn, LetY)
-        assert nn.kind == DotToken
-        dest.add nn
+        assert nn.isDotToken
+        dest.addSubtree nn
         inc nn
 
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     tr c, dest, n
     c.exceptVars.shrink oldLen
@@ -408,19 +408,19 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  var nn = n.firstSon
+  var nn = n.childCursor
   if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(nn.symId)):
     let isResultSym = nn.symId == c.resultSym
     skip nn
     if nn.exprKind in CallKinds and callCanRaise(c.typeCache, nn):
       # nothing to do, both are in compatible tuple form:
       copyInto dest, n:
-        dest.add n # result
+        dest.addSubtree n  # result
         inc n
         trCall c, dest, n, true
     else:
       copyInto dest, n:
-        dest.add n # result
+        dest.addSubtree n  # result
         inc n
         let maybeClose: bool
         if isResultSym:
@@ -455,18 +455,18 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of Symbol:
     if c.constRefParams.contains(n.symId):
       copyIntoKind dest, DerefX, n.info:
-        dest.add n
+        dest.addSubtree n
     elif (n.symId == c.resultSym and c.canRaise) or c.tupleVars.contains(n.symId):
       let info = n.info
       copyIntoKind dest, TupatX, info:
         dest.addSymUse n.symId, info
         dest.addIntLit 1, info
     else:
-      dest.add n
+      dest.addSubtree n
     inc n
-  of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-    takeToken dest, n
-  of ParLe:
+  of SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
+    takeTree dest, n
+  of TagLit:
     let ek = n.exprKind
     case ek
     of CallKinds:
@@ -518,8 +518,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore: tr c, dest, n
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in constparams.tr"
+  else:
+    raiseAssert "BUG: unexpected ParRi in constparams.tr" # classic ParRi only
 
 proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally

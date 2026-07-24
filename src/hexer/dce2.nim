@@ -76,16 +76,16 @@ template toLengName(sym: SymId): SymId = sym
 
 proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: ResolveTable) =
   case n.kind
-  of ParLe:
+  of TagLit:
     let stmtKind = n.stmtKind
     case stmtKind
     of TypeS:
       # types are fundamentally different from procs when it comes to generic instantiations:
       # We need to ensure **consistency** for types, but for procs we need to ensure **uniqueness**.
-      let head = n.load()
-      dest.add head
+      let headTag = n.cursorTagId
+      dest.addParLe(headTag, n.info)
       n.into:
-        if n.kind == SymbolDef:
+        if n.isSymbolDef:
           let def = n.symId
           let t = translate(resolved, def)
           dest.addSymDef t.toLengName, n.info
@@ -99,12 +99,13 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       dest.addParRi()
 
     of ProcS, VarS, ConstS, GvarS, TvarS:
-      let head = n.load()
+      let headTag = n.cursorTagId
+      let headInfo = n.info
       n.into:
-        if n.kind == SymbolDef:
+        if n.isSymbolDef:
           let def = n.symId
           if isLocalName(pool.syms[def]):
-            dest.add head
+            dest.addParLe(headTag, headInfo)
             dest.addSymDef def.toLengName, n.info
             inc n # skip symbol def
             while n.hasMore:
@@ -114,9 +115,9 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             let t = translate(resolved, def)
             if t != def:
               # we are a loser and need to add an `extern` declaration:
-              dest.add parLeToken(pool.tags.getOrIncl("imp"), head.info)
+              dest.addParLe(globalTags.registerTag("imp"), headInfo)
 
-              dest.add head
+              dest.addParLe(headTag, headInfo)
               dest.addSymDef t.toLengName, n.info
               inc n # skip symbol def
               var untilBody = if stmtKind == ProcS: 3 else: 2 # pragmas type (for procs: return type)
@@ -129,7 +130,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
               dest.addParRi()
               dest.addParRi() # also close the "imp" declaration
             else:
-              dest.add head
+              dest.addParLe(headTag, headInfo)
               dest.addSymDef def.toLengName, n.info
               inc n # skip symbol def
               while n.hasMore:
@@ -141,12 +142,12 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
             while n.hasMore: skip n
         else:
           # let errors propagate:
-          dest.add head
+          dest.addParLe(headTag, headInfo)
           while n.hasMore:
             tr dest, n, alive, resolved
           dest.addParRi()
     else:
-      dest.add n.load()
+      dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           tr dest, n, alive, resolved
@@ -159,16 +160,14 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
     let t = translate(resolved, n.symId)
     dest.addSymDef t.toLengName, n.info
     inc n
-  of UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
-  of ParRi: raiseAssert "ParRi should not be encountered here"
+  else: # atoms and suffix kinds; classic: a physical ParRi cannot appear here
+    dest.takeTree n
 
 proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; outdir: string) =
   var buf = parseFromFile(file)
   var n = beginRead(buf)
   var dest = createTokenBuf(buf.len)
   tr dest, n, live, resolved
-  endRead(buf)
   let outPath =
     if outdir.len > 0:
       outdir / splitModulePath(file).name & ".c.nif"
@@ -242,21 +241,21 @@ proc readLiveFile*(infile: string): LiveSet =
     live: initTable[string, HashSet[SymId]]())
   if n.stmtKind != StmtsS:
     raiseAssert infile & ": expected (stmts ...)"
-  let liveTagId = pool.tags.getOrIncl(liveTag)
-  let resolveTagId = pool.tags.getOrIncl(resolveTag)
-  let modTagId = pool.tags.getOrIncl(modTag)
+  let liveTagId = globalTags.registerTag(liveTag)
+  let resolveTagId = globalTags.registerTag(resolveTag)
+  let modTagId = globalTags.registerTag(modTag)
   n.into:                                       # (stmts ...)
     while n.hasMore:
-      if n.kind != ParLe:
+      if not n.isTagLit:
         raiseAssert infile & ": expected ParLe"
-      if n.tag == resolveTagId:
+      if n.cursorTagId == resolveTagId:
         n.into:                                 # (resolved ...)
           while n.hasMore:
-            if n.kind == ParLe and n.substructureKind == KvU:
+            if n.isTagLit and n.substructureKind == KvU:
               n.into:                           # (kv ...)
-                if n.kind != StringLit:
+                if not n.isStringLit:
                   raiseAssert infile & ": kv key must be StringLit"
-                let key = pool.strings[n.litId]
+                let key = pool.strings[n.strId]
                 skip n
                 if n.kind != Symbol:
                   raiseAssert infile & ": kv value must be Symbol"
@@ -266,15 +265,15 @@ proc readLiveFile*(infile: string): LiveSet =
                   raiseAssert infile & ": expected ')' closing kv"
             else:
               raiseAssert infile & ": expected (kv …)"
-      elif n.tag == liveTagId:
+      elif n.cursorTagId == liveTagId:
         n.into:                                 # (live ...)
           while n.hasMore:
-            if n.kind != ParLe or n.tag != modTagId:
+            if not n.isTagLit or n.cursorTagId != modTagId:
               raiseAssert infile & ": expected (mod …)"
             n.into:                             # (mod ...)
-              if n.kind != StringLit:
+              if not n.isStringLit:
                 raiseAssert infile & ": (mod) name must be StringLit"
-              let modName = pool.strings[n.litId]
+              let modName = pool.strings[n.strId]
               skip n
               var syms = initHashSet[SymId]()
               while n.hasMore:

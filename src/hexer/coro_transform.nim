@@ -432,9 +432,9 @@ proc isLiftedClosureTuple*(n: Cursor): bool =
   if n.typeKind != TupleT: return false
   var t = n
   t = sub(t)  # throwaway copy; bounds the probe under vpr
-  if t.kind != ParLe or t.typeKind != ProctypeT: return false
+  if not t.isTagLit or t.typeKind != ProctypeT: return false
   skip t
-  if t.kind != ParLe or t.typeKind != RefT: return false
+  if not t.isTagLit or t.typeKind != RefT: return false
   skip t
   result = not t.hasMore
 
@@ -464,8 +464,10 @@ proc isClosureIter*(s: SymId): bool =
 proc getNextState*(buf: TokenBuf; n: Cursor): int =
   var pos = cursorToPosition(buf, n)
   while pos < buf.len:
-    if pool.tags[buf[pos].tag] == "lab":
-      return int(pool.integers[buf[pos+1].intId])
+    # raw linear scan: only TagLit tokens carry a tagId (suffix/literal bits
+    # alias it), and the head may carry a line-info suffix before its child
+    if buf[pos].kind == TagLit and globalTags.tags[buf[pos].tagId] == "lab":
+      return int(readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos))).intVal)
     inc pos
   return -1
 
@@ -797,7 +799,7 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # ---------------------------------------------------------------------
 
 proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let fn = n.firstSon
+  let fn = n.childCursor
   let typ = c.typeCache.getType(fn, {SkipAliases})
   if procHasPragma(typ, PassiveP):
     var retType = getType(c.typeCache, n)
@@ -831,7 +833,7 @@ proc trLocalValue*(c: var Context; dest: var TokenBuf; n: var Cursor; lhs: Curso
       coroTr c, dest, n
 
 proc trAsgn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var rhs = n.firstSon
+  var rhs = n.childCursor
   skip rhs
   if c.hooks.isPassiveCall(c, rhs):
     var lhsTransformed = createTokenBuf(6)
@@ -844,7 +846,7 @@ proc trAsgn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       coroTr c, dest, n
 
 proc trLocal*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let sym = n.firstSon.symId
+  let sym = n.childCursor.symId
   let kind = n.symKind
   let info = n.info
 
@@ -997,8 +999,8 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
   # this.res[] = x
   # var tmpCaller = this.caller; deallocFrame(this); return/raise tmpCaller
-  let head = n.load()
-  let info = head.info
+  let headTag = n.cursorTagId
+  let info = n.info
   returnValue(c, dest, n, info)
   if c.currentProc.isClosureIter:
     # `.closure` iters: caller.fn holds the resume slot, not a return
@@ -1018,7 +1020,7 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
       dest.addIntLit 1, info # field is in superclass
   emitDeallocFrame(c, dest, info)
-  dest.add head
+  dest.addParLe(headTag, info)
   dest.addSymUse tmpVar, info
   dest.addParRi()
 
@@ -1028,8 +1030,8 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
-  if n.kind == ParLe and pool.tags[n.tag] == "lab":
-    currentState = int(pool.integers[n.firstSon.intId])
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab":
+    currentState = int(n.childCursor.intVal)
 
   let sk = n.stmtKind
   let nk = n.njvlKind
@@ -1067,7 +1069,7 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
         skip n # symdef
     else:
       case n.kind
-      of ParLe:
+      of TagLit:
         n.loopInto:
           escapingLocalsImpl c, n, currentState
       of Symbol:
@@ -1080,7 +1082,7 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
         inc n
 
 proc escapingLocals*(c: var Context; n: Cursor) =
-  if n.kind == DotToken: return
+  if n.isDotToken: return
   var currentState = 0
   var n = n
   escapingLocalsImpl c, n, currentState
@@ -1116,7 +1118,7 @@ proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParPair FalseX, info
   else:
     dest.addParLe VarS, info
-    dest.add symDef
+    dest.addSubtree symDef
     dest.addDotToken()  # exported
     dest.addDotToken()  # pragmas
     dest.copyTree c.typeCache.builtins.boolType
@@ -1137,18 +1139,18 @@ proc trJtrue*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
           dest.addSymUse field.field, info
       else:
-        dest.add n
+        dest.addSubtree n
       dest.addParPair TrueX, info
       dest.addParRi()
       skip n
 
 proc emitJump*(dest: var TokenBuf; label: int; info: PackedLineInfo) =
-  dest.add tagToken("jmp", info)
+  dest.addParLe("jmp", info)
   dest.addIntLit label, info
   dest.addParRi()
 
 proc emitLabel*(dest: var TokenBuf; label: int; info: PackedLineInfo) =
-  dest.add tagToken("lab", info)
+  dest.addParLe("lab", info)
   dest.addIntLit label, info
   dest.addParRi()
 
@@ -1220,7 +1222,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # `ite` was emitted with the else slot elided rather than explicitly
         # filled with `.`). Treating the scope end as "no else" prevents
         # `elseCur.into:` from asserting on a non-ParLe cursor.
-        if elseCur.hasMore and elseCur.kind == ParLe:
+        if elseCur.hasMore and elseCur.isTagLit:
           emitJump dest, lelse, info
           emitLabel dest, lelse, info
           elseCur.into:
@@ -1244,10 +1246,10 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc c.currentProc.labelCounter
     else:
       case n.kind
-      of ParLe:
+      of TagLit:
         case n.stmtKind
         of LocalDecls - {ResultS}:
-          let sym = n.firstSon.symId
+          let sym = n.childCursor.symId
           let kind = n.symKind
           var addLabel = false
           takeInto dest, n:
@@ -1273,13 +1275,13 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
             DeferS, NoStmt:
-          dest.add n.load()
+          dest.addParLe(n.cursorTagId, n.info)
           n.into:
             while n.hasMore:
               trGoto c, dest, n
           dest.addParRi()
       else:
-        dest.takeToken n
+        dest.takeTree n
 
 proc toGoto*(c: var Context; n: Cursor): TokenBuf =
   result = createTokenBuf(300)
@@ -1328,7 +1330,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
   escapingLocals(c, n)
 
   assert n.stmtKind == StmtsS
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     dest.add init
     declareContinuationResult c, dest, NoLineInfo
@@ -1409,9 +1411,10 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
   let srcKind = symKind(n)
   if srcKind == IteratorY:
     dest.addParLe ProcS, info
-    inc n
   else:
-    dest.takeToken n
+    # copy the decl head only (classic `takeToken`), then descend
+    dest.addParLe(n.cursorTagId, n.info)
+  inc n
   skip n         # skip original name
   dest.addSymDef newSym, info
   dest.takeTree n # exported
@@ -1498,7 +1501,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
                   dest.addSymUse envFld, info
                   dest.addIntLit 0, info
             var p = params
-            if p.kind == ParLe:
+            if p.isTagLit:
               p = sub(p)  # throwaway copy; bounds the walk under vpr
               while p.hasMore:
                 assert p.substructureKind == ParamU
@@ -1600,7 +1603,7 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
 
 proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) =
   var n = origParams
-  if n.kind == ParLe:
+  if n.isTagLit:
     n = sub(n)  # throwaway copy; bounds the walk under vpr
     while n.hasMore:
       assert n.substructureKind == ParamU
@@ -1615,10 +1618,10 @@ proc registerParamsInTypecache*(c: var Context; sym: SymId; origParams: Cursor) 
 
 proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
                      paramsBegin, paramsEnd: int; origParams: Cursor) =
-  let info = dest[paramsBegin].info
+  let info = readonlyCursorAt(dest, paramsBegin).info
   var retType = createTokenBuf(4)
   # balanced span: raw copy keeps its seals
-  for i in paramsEnd..<dest.len: retType.addRaw dest[i]
+  for i in paramsEnd..<dest.len: retType.add dest[i]
 
   dest.shrink paramsBegin
   let thisParam = pool.syms.getOrIncl(EnvParamName)
@@ -1731,10 +1734,11 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
   var paramsEnd = -1
   var paramsBegin = -1
   var origParams = default(Cursor)
-  dest.add n # ProcS etc.
+  let procStart = dest.len # position of the head (addParLe may also emit a
+                           # line-info suffix, so `dest.len - 1` would be off)
+  dest.addParLe(n.cursorTagId, n.info) # ProcS etc.
   let procScopeStart = n
   n = sub(n)
-  let procStart = dest.len - 1
   var isConcrete = true # assume it is concrete
   let sym = n.symId
   c.procStack.add(sym)
@@ -1758,7 +1762,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
         if isConcrete:
           if kind == IteratorY:
             # retag in place: `parLeToken` would reset an already-set jump
-            dest[procStart].setTag cast[TagId](ProcS)
+            setTagAt(dest, procStart, cast[TagId](ProcS))
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
@@ -1775,8 +1779,8 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
     dest.addParRi() # stmts
   elif isConcrete:
     registerParamsInTypecache(c, sym, origParams)
-    if n.kind != ParLe:
-      dest.add n
+    if not n.isTagLit:
+      dest.addSubtree n
       inc n
     else:
       coroTrSons(c, dest, n)
@@ -1800,7 +1804,7 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
 proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of DotToken, EofToken, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StringLit:
+     IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of Symbol:
     if isProc(c, n.symId) and c.hooks.isPassiveProc(c, n.symId):
@@ -1830,7 +1834,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n
   of UnknownToken:
     takeTree dest, n
-  of ParLe:
+  of TagLit:
     case n.stmtKind
     of LocalDecls - {ResultS}:
       trLocal c, dest, n
@@ -2031,18 +2035,18 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if n.typeKind == ProctypeT:
             c.hooks.trProctype(c, dest, n)
           else:
-            case pool.tags[n.tagId]
+            case globalTags.tags[n.cursorTagId]
             of "jmp":
               n.into:
-                gotoNextState(c, dest, int(pool.integers[n.intId]), n.info)
+                gotoNextState(c, dest, int(n.intVal), n.info)
                 inc n
             of "lab":
               dest.addParRi() # close stmts
               dest.addParRi() # close proc decl
               n.into:
-                newLocalProc c, dest, int(pool.integers[n.intId]), c.procStack[^1]
+                newLocalProc c, dest, int(n.intVal), c.procStack[^1]
                 inc n
             else:
               coroTrSons(c, dest, n)
-  of ParRi:
+  else:
     bug "unexpected ')' inside"

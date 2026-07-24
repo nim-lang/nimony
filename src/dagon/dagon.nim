@@ -111,13 +111,13 @@ proc symHref(ctx: RenderCtx; sym: SymId): string =
   rel & "#" & anchor
 
 proc sourcePath(n: Cursor): string =
-  if n.kind != ParLe: return ""
-  let raw = unpack(pool.man, n.info)
-  if raw.file.isValid: result = pool.files[raw.file]
+  if not n.isTagLit: return ""
+  let raw = unpack(lineMan, n.info)
+  if raw.file.isValid: result = pool.filenames[raw.file]
   else: result = ""
 
 proc docOf(info: PackedLineInfo): string =
-  let raw = unpack(pool.man, info)
+  let raw = unpack(lineMan, info)
   if raw.comment != 0'u32: pool.strings[StrId(raw.comment)]
   else: ""
 
@@ -289,7 +289,7 @@ proc recordEntry(idx: var seq[DocIdxEntry]; sk: NimonyStmt; sym: SymId; doc: str
 proc isExported(exported: Cursor): bool =
   ## A decl is exported when its `exported` slot holds the `x` ident; sem
   ## emits `.` for private decls.
-  exported.kind == Ident and pool.strings[exported.litId] == "x"
+  exported.kind == Ident and exported.strVal == "x"
 
 proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
                    ctx: RenderCtx; sk: NimonyStmt;
@@ -306,8 +306,8 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
       emitName(b, basename(pool.syms[r.name.symId]))
       emitOp(b, "(")
       var p = r.params
-      if p.kind == ParLe and p.substructureKind == ParamsU:
-        inc p
+      if p.isTagLit and p.substructureKind == ParamsU:
+        p = sub(p)
         var first = true
         while p.hasMore:
           if not first: emitOp(b, "; ")
@@ -320,7 +320,7 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
           skip p
       emitOp(b, ")")
       var rt = r.retType
-      if rt.kind notin {DotToken, EofToken}:
+      if rt.hasMore and rt.kind != DotToken:
         emitOp(b, ": ")
         renderTypeExpr(b, ctx,rt)
     emitDocBlock(b, doc)
@@ -339,7 +339,7 @@ proc renderTypeDecl(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
   # whitespace inside `<code>`, which loses the field listing for compound
   # type bodies.
   var bodyG: SrcGen = SrcGen()
-  let hasBody = t.body.kind notin {DotToken, EofToken}
+  let hasBody = t.body.hasMore and t.body.kind != DotToken
   if hasBody:
     var bodyCur = t.body
     bodyG = typeExprSrcGen(bodyCur)
@@ -378,7 +378,7 @@ proc renderLocal(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
       emitText(b, " ")
       emitName(b, basename(pool.syms[l.name.symId]))
       var typ = l.typ
-      if typ.kind notin {DotToken, EofToken}:
+      if typ.hasMore and typ.kind != DotToken:
         emitOp(b, ": ")
         renderTypeExpr(b, ctx,typ)
     emitDocBlock(b, doc)
@@ -389,34 +389,31 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
   ## `(import (kv suffix "path") …)` blocks and populate `ctx.importMap`.
   ## Stops at the first non-import child so the regular decl walk picks up
   ## from where we left off.
-  while n.kind == ParLe and n.stmtKind == ImportS:
-    inc n  # enter (import …)
-    while n.hasMore:
-      if n.kind == ParLe and n.substructureKind == KvU:
-        inc n  # enter (kv …)
-        var suffix = ""
-        var path = ""
-        if n.kind == Ident:
-          suffix = pool.strings[n.litId]
-          inc n
-        if n.kind == StringLit:
-          path = pool.strings[n.litId]
-          inc n
-        if suffix.len > 0 and path.len > 0:
-          # Path may be relative (sem stores it relative to cwd so the .nif
-          # is reproducible across checkouts); absolutise so the root-prefix
-          # match works. Slash-normalise on Windows so `deriveRelpath`'s
-          # prefix test agrees with the already-normalised roots.
-          let absPath = toUnixPath:
-            if isAbsolute(path): path
-            else: absolutePath(path)
-          ctx.importMap[suffix] =
-            deriveRelpath(absPath, ctx.projectRoot, ctx.stdlibRoot)
-        while n.hasMore: skip n
-        inc n  # closing ')' of (kv …)
+  while n.isTagLit and n.stmtKind == ImportS:
+    n.loopInto:  # (import …)
+      if n.isTagLit and n.substructureKind == KvU:
+        n.into:  # (kv …)
+          var suffix = ""
+          var path = ""
+          if n.hasMore and n.kind == Ident:
+            suffix = n.strVal
+            inc n
+          if n.hasMore and n.kind == StrLit:
+            path = n.strVal
+            inc n
+          if suffix.len > 0 and path.len > 0:
+            # Path may be relative (sem stores it relative to cwd so the .nif
+            # is reproducible across checkouts); absolutise so the root-prefix
+            # match works. Slash-normalise on Windows so `deriveRelpath`'s
+            # prefix test agrees with the already-normalised roots.
+            let absPath = toUnixPath:
+              if isAbsolute(path): path
+              else: absolutePath(path)
+            ctx.importMap[suffix] =
+              deriveRelpath(absPath, ctx.projectRoot, ctx.stdlibRoot)
+          while n.hasMore: skip n
       else:
         skip n
-    inc n  # closing ')' of (import …)
 
 proc buildNameLookup(ctx: var RenderCtx) =
   for i in 1 ..< pool.syms.len:
@@ -442,7 +439,7 @@ proc renderDecls(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
   ## the source flatten into inner stmt-lists at sem time, and the decls we
   ## want to document live inside those.
   while n.hasMore:
-    if n.kind == ParLe:
+    if n.isTagLit:
       let sk = n.stmtKind
       if sk in AllDeclKinds:
         let info = n.info
@@ -454,9 +451,8 @@ proc renderDecls(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
         else:
           renderLocal(b, idx, ctx, sk, n, doc)
       elif sk == StmtsS:
-        inc n  # enter the inner (stmts …)
-        renderDecls(b, idx, ctx, n)
-        if n.kind == ParRi: inc n
+        n.into:  # the inner (stmts …)
+          renderDecls(b, idx, ctx, n)
       else:
         skip n
     else:
@@ -551,7 +547,7 @@ proc renderModule(input, htmlOut, docIdxOut: string; format: HtmlOutFormat;
     stdlibRoot: stdlibRoot)
 
   # Enter (stmts …) and consume any leading (import (kv …)) into the map.
-  if n.kind == ParLe: inc n
+  if n.isTagLit: n = sub(n)
   parseImports(n, ctx)
   buildNameLookup(ctx)
 
@@ -588,7 +584,6 @@ proc renderModule(input, htmlOut, docIdxOut: string; format: HtmlOutFormat;
         emitTag(b, "ul"):
           renderDecls(b, idx, ctx, n)
 
-  endRead(buf)
   writeFile(htmlOut, finalize(b))
   writeDocIdx(docIdxOut, currentModule, moduleName, src, ctx.currentRelpath, idx)
 
@@ -603,8 +598,8 @@ type
     modRelpath: string
 
 proc takeStrLit(n: var Cursor): string =
-  if n.kind == StringLit:
-    result = pool.strings[n.litId]
+  if n.hasMore and n.kind == StrLit:
+    result = n.strVal
     inc n
   else:
     result = ""
@@ -620,35 +615,31 @@ proc readDocIdx(path: string; entries: var seq[IndexEntry];
   if not fileExists(path): return
   var buf = parseFromFile(path)
   var n = beginRead(buf)
-  if n.kind != ParLe: endRead(buf); return
-  inc n  # enter (docidx …)
   var modid = ""
   var modname = ""
   var modRelpath = ""
   let beforeEntries = entries.len
-  while n.hasMore:
-    if n.kind != ParLe:
+  n.loopInto:  # (docidx …)
+    if not n.isTagLit:
       inc n
-      continue
-    let tag = pool.tags[n.tagId]
-    inc n
-    case tag
-    of "module":
-      modid = takeStrLit(n)
-      modname = takeStrLit(n)
-      discard takeStrLit(n)            # srcPath (unused by link step today)
-      modRelpath = takeStrLit(n)
-    of "entry":
-      var e = IndexEntry(modid: modid, modname: modname, modRelpath: modRelpath)
-      e.kind = takeStrLit(n)
-      e.basename = takeStrLit(n)
-      e.symid = takeStrLit(n)
-      e.summary = takeStrLit(n)
-      entries.add e
-    else: discard
-    while n.hasMore: skip n
-    inc n  # closing ')'
-  endRead(buf)
+    else:
+      let tag = globalTags.tags[n.cursorTagId]
+      n.into:
+        case tag
+        of "module":
+          modid = takeStrLit(n)
+          modname = takeStrLit(n)
+          discard takeStrLit(n)        # srcPath (unused by link step today)
+          modRelpath = takeStrLit(n)
+        of "entry":
+          var e = IndexEntry(modid: modid, modname: modname, modRelpath: modRelpath)
+          e.kind = takeStrLit(n)
+          e.basename = takeStrLit(n)
+          e.symid = takeStrLit(n)
+          e.summary = takeStrLit(n)
+          entries.add e
+        else: discard
+        while n.hasMore: skip n
   if entries.len > beforeEntries:
     modules.add (modid, modname, modRelpath)
 

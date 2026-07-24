@@ -15,6 +15,9 @@ else:
 import ".." / lib / platform
 
 include ".." / lib / nifprelude
+# only `parse` — a full import would re-export nifcore and shadow the global
+# `pool` / `createTokenBuf` the shim provides.
+from ".." / lib / nifcoreparse import parse
 
 when defined(nimony):
   func addUnique(s: var seq[string]; x: sink string) =
@@ -148,35 +151,35 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
   ## Interprets the single tree at `c`; unknown tags are searched
   ## recursively for known sections.
   var c = c
-  if c.kind == ParLe:
-    case pool.tags[c.tag]
+  if c.isTagLit:
+    case globalTags.tags[c.cursorTagId]
     of "defines":
       c.into:
         while c.hasMore:
-          if c.kind == StringLit:
-            result.defines.addUnique pool.strings[c.litId]
+          if c.isStringLit:
+            result.defines.addUnique pool.strings[c.strId]
           skip c
     of "paths":
       c.into:
         while c.hasMore:
-          if c.kind == StringLit:
-            result.paths.add pool.strings[c.litId]
+          if c.isStringLit:
+            result.paths.add pool.strings[c.strId]
           skip c
     of "nimblepaths":
       c.into:
         while c.hasMore:
-          if c.kind == StringLit:
-            result.nimblePaths.add pool.strings[c.litId]
+          if c.isStringLit:
+            result.nimblePaths.add pool.strings[c.strId]
           skip c
     of "intbits":
       c.into:
-        if c.kind == IntLit:
-          result.bits = int pool.integers[c.intId]
+        if c.isIntLit:
+          result.bits = int c.intVal
         while c.hasMore: skip c
     of "compat":
       c.into:
-        if c.kind == IntLit:
-          result.compat = bool(pool.integers[c.intId])
+        if c.isIntLit:
+          result.compat = bool(c.intVal)
         while c.hasMore: skip c
     else:
       c.into:
@@ -185,15 +188,11 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
           skip c
 
 proc parseNifConfig*(configFile: string; result: var NifConfig) =
-  var f = nifstreams.open(configFile)
-  discard processDirectives(f.r)
-  var buf = fromStream(f)
+  var r = nifreader.open(configFile)
+  var buf = createTokenBuf()
+  nifcoreparse.parse(r, buf)   # reads directives + the tree into `buf`
   var c = beginRead(buf)
-  try:
-    parseConfig(c, result)
-  finally:
-    f.close()
-
+  parseConfig(c, result)
 proc getOptionsAsOneString*(config: NifConfig): string =
   ## Returns the concatenation of options that affects generated files.
   result = "--base:" & config.baseDir

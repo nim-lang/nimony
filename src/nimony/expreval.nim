@@ -41,13 +41,13 @@ proc isConstBoolValue*(n: Cursor): bool =
   n.exprKind in {TrueX, FalseX}
 
 proc isConstIntValue*(n: Cursor): bool =
-  n.kind == IntLit
+  n.isIntLit
 
 proc isConstUIntValue*(n: Cursor): bool =
   n.kind == UIntLit
 
 proc isConstStringValue*(n: Cursor): bool =
-  n.kind == StringLit
+  n.isStringLit
 
 proc isConstCharValue*(n: Cursor): bool =
   n.kind == CharLit
@@ -57,7 +57,7 @@ proc initEvalContext*(c: ptr SemContext; noExecute = false): EvalContext =
 
 proc error(c: var EvalContext, msg: string, info: PackedLineInfo): Cursor =
   var buf = createTokenBuf(4)
-  buf.addParLe nifstreams.ErrT, info
+  buf.addParLe nifpools.ErrT, info
   buf.addDotToken()
   buf.addStrLit msg
   buf.addParRi()
@@ -84,10 +84,10 @@ proc getConstOrdinalValue*(val: Cursor): xint =
   of CharLit:
     result = createXint val.uoperand
   of IntLit:
-    result = createXint pool.integers[val.intId]
+    result = createXint val.intVal
   of UIntLit:
-    result = createXint pool.uintegers[val.uintId]
-  of ParLe:
+    result = createXint val.uintVal
+  of TagLit:
     case val.exprKind
     of FalseX:
       result = createXint(0'i64)
@@ -98,25 +98,35 @@ proc getConstOrdinalValue*(val: Cursor): xint =
   else:
     result = createNaN()
 
-proc singleToken*(c: var EvalContext; tok: PackedToken): Cursor =
+proc singleToken*(c: var EvalContext; tok: NifToken): Cursor =
   var buf = createTokenBuf(1)
   buf.add tok
   result = cursorAt(buf, 0)
 
 proc stringValue(c: var EvalContext; s: string; info: PackedLineInfo): Cursor {.inline.} =
-  result = singleToken(c, strToken(pool.strings.getOrIncl(s), info))
+  var buf = createTokenBuf(2)
+  buf.addStrLit(s, info)
+  result = cursorAt(buf, 0)
 
 proc intValue(c: var EvalContext; i: int64; info: PackedLineInfo): Cursor {.inline.} =
-  result = singleToken(c, intToken(pool.integers.getOrIncl(i), info))
+  var buf = createTokenBuf(2)
+  buf.addIntLit(i, info)
+  result = cursorAt(buf, 0)
 
 proc uintValue(c: var EvalContext; u: uint64; info: PackedLineInfo): Cursor {.inline.} =
-  result = singleToken(c, uintToken(pool.uintegers.getOrIncl(u), info))
+  var buf = createTokenBuf(2)
+  buf.addUIntLit(u, info)
+  result = cursorAt(buf, 0)
 
 proc floatValue(c: var EvalContext; f: float; info: PackedLineInfo): Cursor {.inline.} =
-  result = singleToken(c, floatToken(pool.floats.getOrIncl(f), info))
+  var buf = createTokenBuf(2)
+  buf.addFloatLit(f, info)
+  result = cursorAt(buf, 0)
 
 proc charValue(c: var EvalContext; ch: char; info: PackedLineInfo): Cursor {.inline.} =
-  result = singleToken(c, charToken(ch, info))
+  var buf = createTokenBuf(2)
+  buf.addCharLit(ch, info)
+  result = cursorAt(buf, 0)
 
 proc boolValue(c: var EvalContext; val: bool): Cursor {.inline.} =
   if val:
@@ -170,8 +180,8 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
         var prag = pragmas
         if prag.pragmaKind == SemanticsP:
           inc prag
-          if prag.kind in {Ident, StringLit}:
-            op = pool.strings[prag.litId]
+          if prag.isIdent or prag.isStringLit:
+            op = pool.strings[prag.strId]
             break
         skip pragmas
   var args = n
@@ -181,25 +191,25 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
     of "string.&":
       let a = eval(c, args)
       let b = eval(c, args)
-      if a.kind != StringLit or b.kind != StringLit or args.hasMore:
+      if a.kind != StrLit or b.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
-      let val = pool.strings[a.litId] & pool.strings[b.litId]
+      let val = pool.strings[a.strId] & pool.strings[b.strId]
       result = stringValue(c, val, n.info)
     of "string.==":
       let a = eval(c, args)
       let b = eval(c, args)
-      if a.kind != StringLit or b.kind != StringLit or args.hasMore:
+      if a.kind != StrLit or b.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
-      let val = pool.strings[a.litId] == pool.strings[b.litId]
+      let val = pool.strings[a.strId] == pool.strings[b.strId]
       result = boolValue(c, val)
     of "string.len":
       let a = eval(c, args)
-      if a.kind != StringLit or args.hasMore:
+      if a.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
-      let val = pool.strings[a.litId].len
+      let val = pool.strings[a.strId].len
       result = intValue(c, val, n.info)
     else:
       if c.c == nil or c.c.executeExpr == nil or c.noExecute:
@@ -271,7 +281,7 @@ template evalFloatBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty
     a = propagateError eval(c, n)
     b = propagateError eval(c, n)
   if a.kind == FloatLit and b.kind == FloatLit:
-    let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+    let rf = opr(a.floatVal, b.floatVal)
     result = floatValue(c, rf, orig.info)
   else:
     cannotEval orig
@@ -285,7 +295,7 @@ template evalCmpOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
       let a = propagateError eval(c, n)
       let b = propagateError eval(c, n)
       if a.kind == FloatLit and b.kind == FloatLit:
-        let rf = opr(pool.floats[a.floatId], pool.floats[b.floatId])
+        let rf = opr(a.floatVal, b.floatVal)
         result = boolValue(c, rf)
       else:
         cannotEval orig
@@ -339,7 +349,7 @@ template evalFloatUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.
     skip n, SkipType # type
     a = propagateError eval(c, n)
   if a.kind == FloatLit:
-    let rf = opr(pool.floats[a.floatId])
+    let rf = opr(a.floatVal)
     result = floatValue(c, rf, orig.info)
   else:
     cannotEval orig
@@ -430,10 +440,10 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
   of UT:
     result.addUIntLit uint x
   of CT:
-    result.add charToken(char x, NoLineInfo)
+    result.addCharLit(char x, NoLineInfo)
   else:
     var hasError = true
-    if typ.kind == Symbol:
+    if typ.isSymbol:
       let sym = tryLoadSym(typ.symId)
       if sym.status == LacksNothing:
         var local = asTypeDecl(sym.decl)
@@ -445,7 +455,7 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
 
 proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: PackedLineInfo) =
   result.addParLe SetconstrX, info
-  result.buildTree TagId(SetT), NoLineInfo:
+  result.copyInto(TagId(SetT), NoLineInfo):
     result.addSubtree elementTyp
 
   var start = -1
@@ -591,18 +601,18 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
   if dtk == FloatT:
     if val.kind == FloatLit:
       result = val
-    elif val.kind == IntLit:
-      result = floatValue(c, cast[float64](pool.integers[val.intId]), nOrig.info)
+    elif val.isIntLit:
+      result = floatValue(c, cast[float64](val.intVal), nOrig.info)
     elif val.kind == UIntLit:
-      result = floatValue(c, cast[float64](pool.uintegers[val.uintId]), nOrig.info)
+      result = floatValue(c, cast[float64](val.uintVal), nOrig.info)
     else:
       cannotEval nOrig
   elif dtk in {IntT, UIntT}:
     if val.kind == FloatLit:
       if dtk == IntT:
-        result = intValue(c, cast[int64](pool.floats[val.floatId]), nOrig.info)
+        result = intValue(c, cast[int64](val.floatVal), nOrig.info)
       else:
-        result = uintValue(c, cast[uint64](pool.floats[val.floatId]), nOrig.info)
+        result = uintValue(c, cast[uint64](val.floatVal), nOrig.info)
     else:
       let x = getConstOrdinalValue(val)
       if isNaN(x):
@@ -658,13 +668,13 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
   result = default(Cursor)
   template propagateError(r: Cursor): Cursor =
     let val = r
-    if val.kind == ParLe and val.tagId == nifstreams.ErrT:
+    if val.isTagLit and val.cursorTagId == nifpools.ErrT:
       return val
     else:
       val
   case n.kind
   of Ident:
-    error "cannot evaluate undeclared ident: " & pool.strings[n.litId], n.info
+    error "cannot evaluate undeclared ident: " & pool.strings[n.strId], n.info
     inc n
   of Symbol:
     let symId = n.symId
@@ -686,10 +696,10 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         return eval(c, local.val)
       else: discard
     error "cannot evaluate symbol at compile time: " & pool.syms[symId], info
-  of StringLit, CharLit, IntLit, UIntLit, FloatLit:
+  of StrLit, CharLit, IntLit, UIntLit, FloatLit:
     result = n
     inc n
-  of ParLe:
+  of TagLit:
     let exprKind = n.exprKind
     case exprKind
     of TrueX, FalseX, NanX, InfX, NeginfX, NilX:
@@ -753,7 +763,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       if isDistinct:
         result = val
         return
-      if targetType.typeKind == CstringT and val.kind == StringLit:
+      if targetType.typeKind == CstringT and val.isStringLit:
         result = val
       elif targetType.typeKind == FloatT:
         if val.kind == FloatLit:
@@ -917,7 +927,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       var buf = createTokenBuf(16)
       copyInto buf, n:
         var objBody = skipModifier(n)
-        if objBody.kind == Symbol:
+        if objBody.isSymbol:
           let res = tryLoadSym(objBody.symId)
           if res.status == LacksNothing:
             objBody = asTypeDecl(res.decl).body
@@ -927,9 +937,9 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
           if n.substructureKind == KvU:
             copyInto buf, n:
               var fieldSym = SymId(0)
-              if n.kind == Symbol:
+              if n.isSymbol:
                 fieldSym = n.symId
-              buf.takeToken n # field sym/ident
+              buf.takeTree n # field sym/ident
               var fieldType = default(Cursor)
               var fieldExported = false
               if findObjectField(objBody, fieldSym, fieldType, fieldExported):
@@ -939,7 +949,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
               buf.addSubtree v
               if n.hasMore:
                 # optional inheritance level
-                buf.takeToken n
+                buf.takeTree n
           else:
             cannotEval n
             return
@@ -959,7 +969,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = evalCall(c, n)
       skip n
     of SizeofX:
-      let s = c.c.semGetSize(c.c[], n.firstSon)
+      let s = c.c.semGetSize(c.c[], n.childCursor)
       var err = false
       let value = asSigned(s, err)
       if err:
@@ -974,7 +984,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
     of CardX:
       result = evalCardSet(c, n)
     else:
-      if n.tagId == nifstreams.ErrT:
+      if n.cursorTagId == nifpools.ErrT:
         result = n
         skip n
       elif (n.stmtKind == BlockS or n.stmtKind == StmtsS) and
@@ -1009,7 +1019,7 @@ proc evalExpr*(c: var SemContext, n: var Cursor;
   ec.expectedType = expectedType
   ec.keepEnumFields = keepEnumFields
   let val = eval(ec, n)
-  result = createTokenBuf(val.span)
+  result = createTokenBuf(val.subtreeWidth)
   result.addSubtree val
 
 proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
@@ -1022,8 +1032,8 @@ proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
   evalOrdinal(addr c, n)
 
 proc getConstStringValue*(val: Cursor): StrId =
-  if val.kind == StringLit:
-    result = val.litId
+  if val.isStringLit:
+    result = val.strId
   else:
     result = StrId(0)
 
@@ -1046,19 +1056,19 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
   of IntT, UIntT, FloatT:
     inc typ
     let bits = typebits(typ.load)
-    var tok: PackedToken
     var suf: string
+    var litBuf = createTokenBuf(2)
     case kind
     of IntT:
       suf = "i"
       let val = asSigned(ordinal, err)
       if err: return
-      tok = intToken(pool.integers.getOrIncl(val), n.info)
+      litBuf.addIntLit(val, n.info)
     of UIntT:
       suf = "u"
       let val = asUnsigned(ordinal, err)
       if err: return
-      tok = uintToken(pool.uintegers.getOrIncl(val), n.info)
+      litBuf.addUIntLit(val, n.info)
     of FloatT:
       suf = "f"
       let negative = isNegative(ordinal)
@@ -1067,31 +1077,34 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
       if err: return
       if negative:
         val = -val
-      tok = floatToken(pool.floats.getOrIncl(val), n.info)
+      litBuf.addFloatLit(val, n.info)
     else: bug("unreachable")
     suf.addInt(bits)
-    buf.add parLeToken(SufX, n.info)
-    buf.add tok
-    buf.add strToken(pool.strings.getOrIncl(suf), n.info)
+    buf.addParLe(SufX, n.info)
+    var litCur = beginRead(litBuf)
+    while litCur.hasMore:
+      buf.addSubtree litCur
+      skip litCur
+    buf.addStrLit(suf, n.info)
     buf.addParRi()
   of BoolT:
     if n.exprKind in {TrueX, FalseX}:
       buf.addSubtree n
     elif ordinal == zero():
-      buf.add parLeToken(FalseX, n.info)
+      buf.addParLe(FalseX, n.info)
       buf.addParRi()
     elif ordinal == createXint(1'i64):
-      buf.add parLeToken(TrueX, n.info)
+      buf.addParLe(TrueX, n.info)
       buf.addParRi()
     else: err = true
   of CharT:
     if n.kind == CharLit:
-      buf.add n
+      buf.addSubtree n
     else:
       let val = asUnsigned(ordinal, err)
       err = err or val < 0 or val > uint64(char.high)
       if not err:
-        buf.add charToken(char(val), n.info)
+        buf.addCharLit(char(val), n.info)
   of EnumT, HoleyEnumT, AnumT:
     # finds the field sym but could also generate a conversion
     let decl = asEnumDecl(typ)
@@ -1109,7 +1122,7 @@ proc annotateOrdinal(buf: var TokenBuf; typ: var Cursor; n: Cursor; err: var boo
         let x = getConstOrdinalValue(val)
         if ordinal == x:
           err = false
-          buf.add symToken(field.name.symId, n.info)
+          buf.addSymUse(field.name.symId, n.info)
           done = true
       while fields.hasMore: skip fields  # mop-up so into closes cleanly
   else:
@@ -1127,28 +1140,28 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
   var iter = initObjFieldIter()
   while nextField(iter, n):
     let r = takeLocal(n, SkipFinalParRi)
-    if r.kind in {FldY, GfldY} and r.name.kind == SymbolDef and r.name.symId == fieldSym:
+    if r.kind in {FldY, GfldY} and r.name.isSymbolDef and r.name.symId == fieldSym:
       typ = r.typ
-      exported = r.exported.kind != DotToken
+      exported = not r.exported.isDotToken
       return true
   return false
 
 proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
-  if n.kind == ParLe and n.tagId == nifstreams.ErrT:
+  if n.isTagLit and n.cursorTagId == nifpools.ErrT:
     buf.addSubtree n
     return
   let orig = typ
   var typ = skipModifier(typ)
   var symType = default(Cursor)
   var opened = 0
-  while typ.kind == Symbol:
+  while typ.isSymbol:
     let sym = typ.symId
     let res = tryLoadSym(sym)
     if res.status == LacksNothing:
       let decl = asTypeDecl(res.decl)
       if decl.body.typeKind == DistinctT:
-        buf.add parLeToken(DconvX, n.info)
-        buf.add symToken(sym, n.info)
+        buf.addParLe(DconvX, n.info)
+        buf.addSymUse(sym, n.info)
         inc opened
         typ = decl.body
         inc typ # distinct tag
@@ -1167,20 +1180,20 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       inc typ
       let bits = typebits(typ.load)
       if bits == 64:
-        buf.add n
+        buf.addSubtree n
       else:
-        buf.add parLeToken(SufX, n.info)
-        buf.add n
-        buf.add strToken(pool.strings.getOrIncl("f" & $bits), n.info)
+        buf.addParLe(SufX, n.info)
+        buf.addSubtree n
+        buf.addStrLit("f" & $bits, n.info)
         buf.addParRi()
     else: err = true
-  of StringLit:
+  of StrLit:
     if not cursorIsNil(symType) and isStringType(symType):
-      buf.add n
+      buf.addSubtree n
     elif typ.typeKind == CstringT:
-      buf.add parLeToken(SufX, n.info)
-      buf.add n
-      buf.add strToken(pool.strings.getOrIncl("C"), n.info)
+      buf.addParLe(SufX, n.info)
+      buf.addSubtree n
+      buf.addStrLit("C", n.info)
       buf.addParRi()
     else: err = true
   of Symbol:
@@ -1189,10 +1202,10 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       case res.decl.symKind
       of EfldY:
         let field = asLocal(res.decl)
-        if field.typ.kind == Symbol and not cursorIsNil(symType) and
+        if field.typ.isSymbol and not cursorIsNil(symType) and
             field.typ.symId == symType.symId:
           # same type as expected
-          buf.add n
+          buf.addSubtree n
         else:
           # might need conversion
           var val = field.val
@@ -1202,7 +1215,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         # other syms are not valid literals
         err = true
     else: err = true
-  of ParLe:
+  of TagLit:
     let exprKind = n.exprKind
     case exprKind
     of TrueX, FalseX:
@@ -1250,8 +1263,8 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           inc typSlot # past aconstr tag → uarray T
           var elemType = typSlot
           inc elemType # past uarray tag → element type
-          buf.add parLeToken(AddrX, n.info)
-          buf.add parLeToken(AconstrX, aconstr.info)
+          buf.addParLe(AddrX, n.info)
+          buf.addParLe(AconstrX, aconstr.info)
           buf.addSubtree typSlot
           var vals = aconstr
           vals.into:
@@ -1280,7 +1293,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     of TupX, TupconstrX:
       if typ.typeKind == TupleT:
         let start = buf.len
-        buf.add parLeToken(TupconstrX, n.info)
+        buf.addParLe(TupconstrX, n.info)
         buf.addSubtree typ
         var vals = n
         vals.peekInto:
@@ -1302,7 +1315,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       else: err = true
     of BracketX, AconstrX:
       if typ.typeKind == ArrayT: # XXX seq?
-        buf.add parLeToken(AconstrX, n.info)
+        buf.addParLe(AconstrX, n.info)
         buf.addSubtree typ
         var vals = n
         inc typ # tag, get to element type
@@ -1316,7 +1329,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
       else: err = true
     of CurlyX, SetconstrX:
       if typ.typeKind == SetT:
-        buf.add parLeToken(SetconstrX, n.info)
+        buf.addParLe(SetconstrX, n.info)
         buf.addSubtree typ
         var vals = n
         inc typ # tag, get to element type
@@ -1342,7 +1355,7 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
         # `findObjectField` because field syms are nested inside their
         # owning type and not loadable through `tryLoadSym`.
         let start = buf.len
-        buf.add parLeToken(OconstrX, n.info)
+        buf.addParLe(OconstrX, n.info)
         buf.addSubtree symType
         var vals = n
         vals.peekInto:
@@ -1350,15 +1363,15 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
           while vals.hasMore:
             err = true
             if vals.substructureKind == KvU:
-              buf.add vals
+              buf.addParLe(vals.cursorTagId, vals.info)
               vals.peekInto:
-                if vals.kind == Symbol:
+                if vals.isSymbol:
                   let fieldSym = vals.symId
                   var fieldType = default(Cursor)
                   var fieldExported = false
                   if findObjectField(typ, fieldSym, fieldType, fieldExported):
                     err = false
-                    buf.add vals
+                    buf.addSubtree vals
                     inc vals
                     annotateConstantType(buf, fieldType, vals)
                     skip vals
@@ -1383,10 +1396,10 @@ proc annotateConstantType*(buf: var TokenBuf; typ, n: Cursor) =
     if opened > 0:
       # could also replace with a general shrink to start
       buf.shrink buf.len - opened
-    buf.addParLe nifstreams.ErrT, n.info
+    buf.addParLe nifpools.ErrT, n.info
     buf.addDotToken()
     let msg = "cannot annotate constant " & asNimCode(n) & " with type " & typeToString(orig)
-    buf.add strToken(pool.strings.getOrIncl(msg), n.info)
+    buf.addStrLit(msg, n.info)
     buf.addParRi()
   else:
     while opened > 0:
@@ -1424,7 +1437,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
   var baseType = toTypeImpl baseType
   case baseType.typeKind
   of IntT, UIntT:
-    let bits = int pool.integers[baseType.firstSon.intId]
+    let bits = int baseType.childCursor.intVal
     # - 3 because we do `div 8` as a byte has 8 bits:
     result = createXint(1'i64) shl (bits - 3)
   of CharT:
@@ -1446,7 +1459,7 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
       var bt = baseType
       inc bt  # skip EnumT/HoleyEnumT/AnumT tag
       if bt.typeKind in {IntT, UIntT}:
-        let baseBits = int pool.integers[bt.firstSon.intId]
+        let baseBits = int bt.childCursor.intVal
         let baseBytes = baseBits div 8
         if baseBytes > 0 and result < createXint(baseBytes):
           # IntT with negative field values is the compiler's default
@@ -1467,13 +1480,13 @@ proc bitsetSizeInBytes*(baseType: Cursor): xint =
     if err: result = createNaN()
     else: result = createXint div8Roundup(m)
   of DistinctT:
-    result = bitsetSizeInBytes(baseType.firstSon)
+    result = bitsetSizeInBytes(baseType.childCursor)
   else:
     result = createNaN()
 
 proc countEnumValues*(n: Cursor): xint =
   result = createNaN()
-  if n.kind == Symbol:
+  if n.isSymbol:
     let sym = tryLoadSym(n.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
@@ -1487,7 +1500,7 @@ proc getArrayIndexLen*(index: Cursor): xint =
   of EnumT:
     result = countEnumValues(index)
   of IntT, UIntT:
-    let bits = int pool.integers[index.firstSon.intId]
+    let bits = int index.childCursor.intVal
     result = createXint(1'i64) shl bits
   of CharT:
     result = createXint 256'i64
@@ -1515,7 +1528,7 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
   ## returns @[] if it could not be evaluated.
   assert n.exprKind == SetconstrX
   assert typ.typeKind == SetT
-  let size = bitsetSizeInBytes(typ.firstSon)
+  let size = bitsetSizeInBytes(typ.childCursor)
   var err = false
   let s = asSigned(size, err)
   if err:

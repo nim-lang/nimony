@@ -241,7 +241,7 @@ proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo) =
     dest.addUIntLit uintVal(n);  (if eff.isValid: dest.appendLineInfo eff); inc n
   of FloatLit:
     dest.addFloatLit floatVal(n);(if eff.isValid: dest.appendLineInfo eff); inc n
-  of ExtendedSuffix, LineInfoLit:
+  of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     inc n  # absorbed into the head token's own value/info; never freestanding
 
 proc load*(filename: string): MainModule =

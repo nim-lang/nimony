@@ -18,7 +18,9 @@ import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
 
 const
-  GotoInstr* = InlineInt
+  GotoInstr* = DotToken
+    ## CF jumps are DotTokens with a nonzero 28-bit payload (see
+    ## `int28Token`); a plain no-op dot has payload 0 — use `isGoto`.
 
 type
   Label = distinct int
@@ -66,67 +68,60 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   var jumpTargets = initIntSet()
   let last = if last < 0: c.len-1 else: min(last, c.len-1)
   for i in start..last:
-    if c[i].kind == GotoInstr:
+    if c[i].kind == GotoInstr and c[i].getInt28 != 0:
       jumpTargets.incl(i+c[i].getInt28)
-  # second iteration: generate string representation:
+  # second iteration: generate string representation. nifcore never
+  # materialises ParRi tokens, so track each sealed scope's last-content
+  # index and inject `endTree()` once we've walked past it:
   var i = start
   var b = nifbuilder.open(1000)
-  # Under `-d:virtualParRi` the matching ParRi of a sealed ParLe is elided
-  # from the buffer, so the raw index walk below never sees it. Track the
-  # last-content index of every open sealed scope and inject `endTree()`
-  # once we've walked past it. Overflow scopes (jump == MaxJump) keep a
-  # physical ParRi and are still closed by the `of ParRi` branch.
-  when defined(virtualParRi):
-    var closeStack: seq[int] = @[]
+  var closeStack: seq[int] = @[]
   while i <= last:
     if i in jumpTargets:
       b.addTree "lab"
       b.addSymbolDef("L" & $i)
       b.endTree()
-    case c[i].kind
-    of GotoInstr:
-      b.addTree "goto"
-      let diff = c[i].getInt28()
+    let tok = c[i]
+    case tok.kind
+    of DotToken:
+      # GotoInstr is a DotToken with a nonzero 28-bit payload
+      let diff = tok.getInt28
       if diff != 0:
+        b.addTree "goto"
         b.addIdent "L" & $(i+diff)
-      else:
-        b.addIdent "L<BUG HERE>" & $i
-      b.endTree()
-    of Symbol:
-      b.addSymbol pool.syms[c[i].symId]
-    of SymbolDef:
-      b.addSymbolDef pool.syms[c[i].symId]
-    of EofToken:
-      b.addRaw "\n<unexptected EOF>\n"
-    of DotToken: b.addEmpty
-    of Ident: b.addIdent pool.strings[c[i].litId]
-    of StringLit: b.addStrLit pool.strings[c[i].litId]
-    of CharLit: b.addCharLit c[i].charLit
-    of IntLit: b.addIntLit pool.integers[c[i].intId]
-    of UIntLit: b.addUIntLit pool.uintegers[c[i].uintId]
-    of FloatLit: b.addFloatLit pool.floats[c[i].floatId]
-    of ParLe:
-      b.addTree pool.tags[c[i].tagId]
-      when defined(virtualParRi):
-        if jump(c[i]) != MaxJump:
-          closeStack.add(i + span(readonlyCursorAt(c, i)) - 1)
-    of ParRi: b.endTree()
-    when defined(virtualParRi):
-      while closeStack.len > 0 and closeStack[^1] == i:
         b.endTree()
-        discard closeStack.pop()
+      else:
+        b.addEmpty
+    # cursor-level accessors: short strings/names live INLINE in the token,
+    # so the raw token payload is not always a pool id
+    of Symbol: b.addSymbol readonlyCursorAt(c, i).symName
+    of SymbolDef: b.addSymbolDef readonlyCursorAt(c, i).symName
+    of EofToken: b.addRaw "\n<unexptected EOF>\n"
+    of Ident: b.addIdent readonlyCursorAt(c, i).strVal
+    of StrLit: b.addStrLit readonlyCursorAt(c, i).strVal
+    of CharLit: b.addCharLit charLit(tok)
+    of IntLit: b.addIntLit readonlyCursorAt(c, i).intVal
+    of UIntLit: b.addUIntLit readonlyCursorAt(c, i).uintVal
+    of FloatLit: b.addFloatLit readonlyCursorAt(c, i).floatVal
+    of TagLit:
+      b.addTree globalTags.tags[tok.tagId]
+      closeStack.add(i + subtreeWidth(readonlyCursorAt(c, i)) - 1)
+    of ExtendedSuffix, LineInfoLit, UnknownToken, ParLe, ParRi:
+      discard "suffix bits and lexical kinds carry no listing content"
+    while closeStack.len > 0 and closeStack[^1] == i:
+      b.endTree()
+      discard closeStack.pop()
     inc i
   if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
   result = b.extract()
-
-# ── source-position side-channel ──────────────────────────────────────────
-# The mover needs to map every CF token back to the source token it came from.
-# Rather than stamp a payload into the token `info` field (nifcore tokens may
-# carry no line info), we thread a parallel `seq[int32]` of source positions
-# through the `Target`/`dest` buffers. Only actual source-token copies get a
-# real position (see `addSource`); everything synthesized is `-1`. The arrays
-# are kept in sync lazily: `padSrc` fills the gap with `-1` up to the buffer's
-# current length just before a precise append and once at the very end.
+  # ── source-position side-channel ──────────────────────────────────────────
+  # The mover needs to map every CF token back to the source token it came from.
+  # Rather than stamp a payload into the token `info` field (nifcore tokens may
+  # carry no line info), we thread a parallel `seq[int32]` of source positions
+  # through the `Target`/`dest` buffers. Only actual source-token copies get a
+  # real position (see `addSource`); everything synthesized is `-1`. The arrays
+  # are kept in sync lazily: `padSrc` fills the gap with `-1` up to the buffer's
+  # current length just before a precise append and once at the very end.
 
 proc padSrcSeq(src: var seq[int32]; upTo: int) =
   while src.len < upTo: src.add(-1'i32)
@@ -153,8 +148,9 @@ proc patch(c: var ControlFlow; p: Label) =
   let diff = c.dest.len - p.int
   assert diff != 0
   assert c.dest[p.int].kind == GotoInstr
-  c.dest[p.int].patchInt28Token int32(diff)
-
+  var tok = c.dest[p.int]
+  tok.patchInt28Token int32(diff)
+  c.dest[p.int] = tok
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target)
 proc trStmt(c: var ControlFlow; n: var Cursor)
 
@@ -173,11 +169,16 @@ proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
   ## Copy a single *source* token into `tar`, recording its source position.
   ## The only three call sites that funnel source tokens into the CF pipeline.
   padSrc(tar)
-  tar.t.add n
+  if n.isTagLit:
+    # register the head so the matching `addParRi` can seal it (a raw
+    # token copy would leave a stale jump and nothing to close)
+    tar.t.addParLe(n.cursorTagId, n.info)
+  else:
+    tar.t.add load(n)
   tar.src.add srcPosOf(c, n)
 
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
-  assert typ.kind != DotToken
+  assert not typ.isDotToken
   result = pool.syms.getOrIncl("`cf." & $c.nextVar)
   inc c.nextVar
   c.dest.addParLe kind, info
@@ -489,7 +490,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
   n.into:
     let selectorType = c.typeCache.getType(n)
     let isExhaustive = isOrdinalType(selectorType, allowEnumWithHoles=true)
-    let simpleSelector = n.kind == Symbol
+    let simpleSelector = n.isSymbol
     var selector: SymId
     if simpleSelector:
       selector = n.symId
@@ -573,10 +574,10 @@ proc trBlock(c: var ControlFlow; n: var Cursor; tar: var Target) =
   let thisBlock = BlockOrLoop(kind: IsBlock, sym: SymId(0), parent: c.currentBlock)
   c.currentBlock = thisBlock
   n.into:
-    if n.kind == SymbolDef:
+    if n.isSymbolDef:
       thisBlock.sym = n.symId
       inc n
-    elif n.kind == DotToken:
+    elif n.isDotToken:
       inc n
     else:
       bug "invalid block statement"
@@ -621,13 +622,11 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
 
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   case n.kind
-  of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StringLit, CharLit,
-     Ident, DotToken, EofToken, UnknownToken:
+  of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StrLit, CharLit,
+     Ident, DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit:
     c.addSource(tar, n)
     inc n
-  of ParRi:
-    bug "unreachable"
-  of ParLe:
+  of TagLit:
     case n.exprKind
     of AndX:
       trAndValue c, n, tar
@@ -682,6 +681,8 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
          AsmS, DeferS, NoStmt:
         trExprLoop c, n, tar
+  else:
+    bug "unreachable"
 
 proc trWhile(c: var ControlFlow; n: var Cursor) =
   let info = n.info
@@ -747,7 +748,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
       c.dest.addParLe(RetS, info)
       c.flush aa
       c.dest.addParRi()
-    elif (n.kind == Symbol and n.symId == c.resultSym) or (n.kind == DotToken):
+    elif (n.isSymbol and n.symId == c.resultSym) or (n.isDotToken):
       discard "do not generate `result = result`"
       inc n
     else:
@@ -764,7 +765,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
 proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   n.into:
-    if n.kind == DotToken:
+    if n.isDotToken:
       while it != nil and it.kind notin {IsLoop, IsBlock}:
         if it.kind == IsRoutine:
           # we cannot cross routine boundaries!
@@ -775,7 +776,7 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
       else:
         bug "break outside of loop"
       inc n
-    elif n.kind == Symbol:
+    elif n.isSymbol:
       let lab = n.symId
       while it != nil and it.sym != lab:
         if it.kind == IsRoutine:
@@ -793,7 +794,7 @@ proc trBreak(c: var ControlFlow; n: var Cursor) =
 proc trContinue(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   n.into:
-    if n.kind == DotToken:
+    if n.isDotToken:
       if it != nil:
         it.contInstrs.add c.jmpForw(n.info)
       else:
@@ -874,7 +875,7 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
 
 proc isComplexLhs(n: Cursor): bool =
   var n = n
-  if n.kind == ParLe and n.exprKind in CallKinds+{PatX, ArratX}:
+  if n.isTagLit and n.exprKind in CallKinds+{PatX, ArratX}:
     return true
   n.linearScan:
     if n.exprKind in CallKinds+{PatX, ArratX}:
@@ -892,7 +893,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   var aa = Target(m: IsEmpty)
   var bb = Target(m: IsEmpty)
-  let head = n.load()
+  let headTag = n.cursorTagId
   var typ = default(Cursor)
 
   n.into:
@@ -901,19 +902,20 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     assert aa.t.len > 0
     trExpr c, n, bb
     assert bb.t.len > 0
-  c.dest.add head
+  c.dest.addParLe(headTag, info)
   c.flush aa
   c.flush bb
   c.dest.addParRi()
 
-  let lhs = cursorAt(c.dest, asgnBegin+1)
+  # the `(asgn` head may carry line-info suffix tokens
+  let lhsPos = asgnBegin + tokenWidth(readonlyCursorAt(c.dest, asgnBegin))
+  let lhs = cursorAt(c.dest, lhsPos)
   if isComplexLhs(lhs):
     # The lhs/rhs of the just-emitted `asgn` are copied around below (and `dest`
     # is truncated), so the source-position side-channel must be reshuffled with
     # them. Align `destSrc` to `dest` first, then splice the matching slices into
     # the rewritten `stmts` (via a parallel `stmtsSrc`).
     c.pad()
-    let lhsPos = asgnBegin+1
     var rhs = lhs
     skip rhs
     let rhsPos = cursorToPosition(c.dest, rhs)
@@ -950,13 +952,12 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
         inc kR
     padSrcSeq(stmtsSrc, stmts.len)
 
-    endRead c.dest
     c.dest.shrink asgnBegin
     c.destSrc.setLen asgnBegin
     c.dest.add stmts
     for s in stmtsSrc: c.destSrc.add s
   else:
-    endRead c.dest
+    discard
 
 proc addRet(c: var ControlFlow) =
   c.dest.addParLe(RetS, NoLineInfo)
@@ -1003,7 +1004,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
       while n.hasMore:
         trStmt c, n
   of ScopeS, StaticstmtS:
-    c.dest.add n
+    c.dest.addParLe(n.cursorTagId, n.info)
     c.typeCache.openScope()
     n.into:
       while n.hasMore:
@@ -1045,11 +1046,12 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
     var tar = Target(m: IsAppend)
-    let head = n.load()
+    let headTag = n.cursorTagId
+    let headInfo = n.info
     n.into:
       while n.hasMore:
         trExpr c, n, tar
-    c.dest.add head
+    c.dest.addParLe(headTag, headInfo)
     c.flush tar
     c.dest.addParRi()
   of PragmaxS:
@@ -1071,7 +1073,7 @@ proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): To
     trProc c, n
   else:
     assert sk == StmtsS
-    c.dest.add n
+    c.dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         trStmt c, n
@@ -1119,17 +1121,18 @@ proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
     # Handle different instruction types
     if c[pos].kind == GotoInstr:
       let diff = c[pos].getInt28
-      if diff != 0:
+      if diff != 0: # payload 0 = a plain no-op dot, not a jump
         worklist.add(pos + diff)  # Add the target of the jump
         # For forward jumps, everything between the goto and its target is potentially unreachable
         if diff > 0:
           # Don't automatically continue to the next instruction after a goto
           continue
-    elif cast[TagEnum](c[pos].tag) == IteTagId:
+    elif cast[TagEnum](c[pos].tagId) == IteTagId:
       # For if-then-else, process the condition and both branches
       var p = pos + 1
-      # Skip the condition, marking it as reachable
-      while p <= last and c[p].kind != GotoInstr:
+      # Skip the condition, marking it as reachable. A goto is a DotToken
+      # with a NONZERO payload; plain dots inside the condition don't count.
+      while p <= last and not (c[p].kind == GotoInstr and c[p].getInt28 != 0):
         result[p - start] = true
         inc p
 

@@ -88,7 +88,7 @@ proc passiveCallHook(c: var Context; n: Cursor): bool =
   ## carries `{.passive.}`. `delay`/`delay0`/`suspend` are NOT passive
   ## calls — they're their own lowering shape.
   if n.exprKind in CallKinds - {DelayX}:
-    let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
+    let typ = c.typeCache.getType(n.childCursor, {SkipAliases})
     return procHasPragma(typ, PassiveP)
   return false
 
@@ -103,7 +103,7 @@ proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
     dest.addSymUse contVar, info
 
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
-  let typ = c.typeCache.getType(n.firstSon, {SkipAliases})
+  let typ = c.typeCache.getType(n.childCursor, {SkipAliases})
   let retType = getType(c.typeCache, n)
   let hasResult = not isVoidType(retType)
   if hasResult:
@@ -114,7 +114,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     let info = n.info
     # fallback to init wrapper call for methods, closures, proctype
     # calls because we cant restore its coroTypeForProc
-    if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.firstSon.kind == DotToken or n.firstSon.symKind notin RoutineKinds:
+    if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.childCursor.kind == DotToken or n.childCursor.symKind notin RoutineKinds:
       let contVar = pool.syms.getOrIncl("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
@@ -126,7 +126,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         copyIntoKind dest, CallS, info:
           let callStart = n
           n = sub(n)
-          if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
+          if n.kind == Symbol and typ.childCursor.kind == SymbolDef:
             dest.addSymUse coroWrapperProc(c, n.symId), info
             inc n
           else:
@@ -153,7 +153,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
       # nop — `callee == nil` marks the frame as stack-allocated.
       let coroVar = pool.syms.getOrIncl("`coroVar." & $c.currentProc.counter)
       inc c.currentProc.counter
-      var sym = n.firstSon.symId
+      var sym = n.childCursor.symId
       copyIntoKind dest, VarS, info:
         dest.addSymDef coroVar, info
         dest.addDotToken() # exported
@@ -219,7 +219,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     copyIntoKind dest, CallS, info:
       let callStart = n
       n = sub(n)
-      if n.kind == Symbol and typ.firstSon.kind == SymbolDef:
+      if n.kind == Symbol and typ.childCursor.kind == SymbolDef:
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
@@ -315,7 +315,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # ---------------------------------------------------------------------
 
 proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if n.kind == ParLe:
+  if n.isTagLit:
     let nk = n.typeKind
     let isPassiveProc = nk == ProctypeT and procHasPragma(n, PassiveP)
     # An itertype is a coroutine-shaped value type. `.closure` iter values
@@ -334,14 +334,14 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addParLe TupleT, info
       var ptStart = default(Cursor)
       if isPassiveProc:
-        dest.add n                      # proctype tag (passive proc)
+        dest.addParLe(n.cursorTagId, n.info)  # proctype tag (passive proc)
         ptStart = n; n = sub(n)
       else:
         # itertype → wrapper proctype (both `.closure` and `.passive`)
         dest.addParLe ProctypeT, info
         ptStart = n; n = sub(n)          # consume original itertype tag
       dest.takeTree n         # nilability tag
-      dest.add n              # params tag
+      dest.addParLe(n.cursorTagId, n.info)  # params tag
       n.into:
         while n.hasMore:
           trProctype(c, dest, n)
@@ -379,7 +379,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trProctype(c, dest, n)
   else:
-    dest.takeToken n
+    dest.takeTree n
 
 # ---------------------------------------------------------------------
 # Top-level pass + hook wiring.
@@ -409,14 +409,13 @@ proc transformToCps*(pass: var Pass) =
     hooks: passiveHooks(), nextTemp: pass.nextTemp)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
-  c.coroTypes.add n.load() # the `(stmts` open tag
+  c.coroTypes.addParLe(n.cursorTagId, n.info) # the `(stmts` open tag
   n.into:
     while n.hasMore:
       coroTr(c, pass.dest, n)
     for (sym, start) in c.shouldPublish:
       var buf = createTokenBuf(16)
       buf.copyTree pass.dest.cursorAt(start)
-      endRead(pass.dest)
       publishSignature buf, sym, 0
     c.coroTypes.add pass.dest # concat coroTypes and other statements
     c.coroTypes.addParRi() # close the root; its source ParRi may be elided

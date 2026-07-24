@@ -14,6 +14,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
 import ".." / lib / nifreader as rd
+from ".." / lib / nifcoreparse import parse
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -145,14 +146,14 @@ proc moduleNameFromPath*(path: string): string =
 
 proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs: bool) =
   case n.kind
-  of StringLit:
-    let s = pool.strings[n.litId]
+  of StrLit:
+    let s = pool.strings[n.strId]
     # string literal could contain a path or .nim extension:
     let name = moduleNameFromPath(s)
     res.add ImportedFilename(path: s, name: name)
     inc n
   of Ident:
-    let s = pool.strings[n.litId]
+    let s = pool.strings[n.strId]
     res.add ImportedFilename(path: s, name: s)
     inc n
   of Symbol:
@@ -160,7 +161,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     extractBasename s
     res.add ImportedFilename(path: s, name: s)
     inc n
-  of ParLe:
+  of TagLit:
     case exprKind(n)
     of OchoiceX, CchoiceX:
       n.peekInto:
@@ -247,7 +248,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       let orig = n
       inc n
       let start = res.len
-      if n.kind == ParRi:
+      if not n.hasMore:
         hasError = true
       else:
         filenameVal(n, res, hasError, allowAs)
@@ -256,14 +257,14 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
           inc n
           if n.substructureKind == KvU:
             inc n
-            if n.kind == Ident and pool.strings[n.litId] == "plugin":
+            if n.isIdent and pool.strings[n.strId] == "plugin":
               inc n
-              if n.kind == StringLit:
+              if n.isStringLit:
                 for i in start ..< res.len:
-                  res[i].plugin = pool.strings[n.litId]
+                  res[i].plugin = pool.strings[n.strId]
                   success = true
                 inc n
-                if n.kind == ParRi: inc n
+                if not n.hasMore: inc n
                 else: hasError = true
         if not success:
           n = orig
@@ -301,17 +302,14 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
-  var stream = nifstreams.open(src)
-  try:
-    discard processDirectives(stream.r)
-    result = fromStream(stream)
-  finally:
-    nifstreams.close(stream)
-
+  var r = rd.open(src)
+  result = createTokenBuf()
+  parse(r, result, denseLineInfo = true)
+  rd.close(r)
 proc getFile*(info: PackedLineInfo): string =
-  let fid = unpack(pool.man, info).file
+  let fid = unpack(lineMan, info).file
   if fid.isValid:
-    result = pool.files[fid]
+    result = pool.filenames[fid]
   else:
     result = ""
 
@@ -445,13 +443,19 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
       cmd &= " "
       cmd &= quoteShell(inputFileB)
     exec cmd
-  var s = nifstreams.open(outputFile)
   var nextName = ""
-  try:
-    nextName = rd.firstUnusedName(s.r)
-    parse s, dest, NoLineInfo
-  finally:
-    close s
+  var r = rd.open(outputFile)
+  nextName = rd.firstUnusedName(r)
+  # seed the parse with the invocation site's absolute info: plugin output
+  # copies the (file-less, relative) infos of its input, so without an anchor
+  # they resolve to NoFile and diagnostics print as `???`
+  var seed = NoNifLineInfo
+  if info.isValid:
+    let u = unpack(lineMan, info)
+    if u.file.isValid:
+      seed = NifLineInfo(file: u.file, line: u.line, col: u.col)
+  parse(r, dest, parentSeed = seed, denseLineInfo = true)
+  rd.close(r)
   registerGeneratedSymbols(c, firstDisamb, nextName)
 
 proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
@@ -531,19 +535,16 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
       deps.add c.importSnippets
     deps.addParRi()
     let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
-    writeFile deps, depsFile
-
+    writeFile(depsFile, toString(deps, true))
     let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules,
                                         c.commandLineArgs, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:
       let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
-      var s = nifstreams.open(outfile)
-      try:
-        parse s, dest, NoLineInfo
-      finally:
-        close s
+      var r = rd.open(outfile)
+      parse(r, dest)
+      rd.close(r)
       result = ""  # success: caller interprets "" as no error
   except:
     result = "I/O error while evaluating " & srcName

@@ -140,7 +140,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
     result = createIntegralType(c, "(aptr (c +8))")
   of CharLit:
     result = createIntegralType(c, "(c +8)")
-  of ExtendedSuffix, LineInfoLit:
+  of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     result = createIntegralType(c, "(err)")
   of TagLit:
     case n.exprKind

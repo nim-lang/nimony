@@ -49,6 +49,22 @@ proc resolveInfo(b: var TokenBuf; tok: rd.ExpandedToken;
                          col:  p.col + tok.pos.col,
                          comment: comment)
 
+proc peekRootInfo*(r: var rd.Reader; pool: Pool): NifLineInfo =
+  ## Absolute line info of the next token — typically a module's toplevel
+  ## `(stmts)` head, which carries the file explicitly — without consuming it.
+  ## Index-jumped decl reads pass this as `parse`'s `parentSeed` so their
+  ## file-less child position deltas resolve against the module root (a decl's
+  ## parent in the original tree IS the toplevel `(stmts)` node).
+  let start = rd.offset(r)
+  var tok = default(rd.ExpandedToken)
+  rd.next(r, tok)
+  if tok.filename.len != 0:
+    result = NifLineInfo(file: pool.filenames.getOrIncl(rd.decodeFilename(tok)),
+                         line: tok.pos.line, col: tok.pos.col)
+  else:
+    result = NoNifLineInfo
+  rd.jumpTo(r, start)
+
 proc parse*(r: var rd.Reader; b: var TokenBuf;
             parentSeed: NifLineInfo = NoNifLineInfo;
             denseLineInfo = false) =
@@ -70,7 +86,8 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
   while true:
     rd.next(r, tok)
     case tok.tk
-    of rd.EofToken, rd.UnknownToken:
+    of rd.EofToken, rd.UnknownToken, TagLit, ExtendedSuffix, LineInfoLit:
+      # the last three are binary-only kinds the textual reader never yields
       break
     of rd.ParLe:
       let info = resolveInfo(b, tok, parents)
@@ -226,7 +243,7 @@ proc emitValueWithLineInfo(bld: var Builder; c: var Cursor;
     bld.addFloatLit(floatVal(c))
     emitRelLineInfo(bld, abs, parents[^1], pool)
     c.inc
-  of ExtendedSuffix, LineInfoLit:
+  of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     assert false, "suffix token is not a value head"
 
 proc emitValueWithoutLineInfo(bld: var Builder; c: var Cursor;
@@ -257,7 +274,7 @@ proc emitValueWithoutLineInfo(bld: var Builder; c: var Cursor;
     bld.addUIntLit(uintVal(c)); c.inc
   of FloatLit:
     bld.addFloatLit(floatVal(c)); c.inc
-  of ExtendedSuffix, LineInfoLit:
+  of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     assert false, "suffix token is not a value head"
 
 proc appendTo*(b: var TokenBuf; dest: var Builder;
@@ -361,7 +378,7 @@ proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
     bld.addUIntLit(uintVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
   of FloatLit:
     bld.addFloatLit(floatVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
-  of ExtendedSuffix, LineInfoLit:
+  of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     assert false, "suffix token is not a value head"
 
 proc toModuleString*(b: var TokenBuf; dottedSuffix = ""; sizeHint = 0): string =

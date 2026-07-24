@@ -78,8 +78,8 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
   var b = b
   if a.kind != b.kind: return false
   case a.kind
-  of ParLe:
-    if a.tagId != b.tagId: return false
+  of TagLit:
+    if a.cursorTagId != b.cursorTagId: return false
     if a.exprKind in {PatX, ArratX}:
       # compare the accessed object only, not the array indexes:
       inc a
@@ -95,21 +95,22 @@ proc sameTreesIgnoreArrayIndexes*(a, b: Cursor): bool =
         skip a
         skip b
       result = true
-  of ParRi:
-    result = true
   of Symbol, SymbolDef:
     result = a.symId == b.symId
   of IntLit:
-    result = a.intId == b.intId
+    result = a.intVal == b.intVal
   of UIntLit:
-    result = a.uintId == b.uintId
+    result = a.uintVal == b.uintVal
   of FloatLit:
-    result = a.floatId == b.floatId
-  of StringLit, Ident:
-    result = a.litId == b.litId
-  of CharLit, UnknownToken:
+    result = a.floatVal == b.floatVal
+  of StrLit, Ident:
+    result = a.strId == b.strId
+  of CharLit:
     result = a.uoperand == b.uoperand
-  of DotToken, EofToken:
+  of DotToken:
+    result = true
+  else:
+    # ParRi/close (classic) or a stray suffix (nifcore); unreachable in a walk.
     result = true
 
 proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
@@ -127,7 +128,7 @@ proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
   ## the index literal). OBJ here is required to be the bare root symbol `r`, so
   ## each OBJ is a single token and one `inc` steps tag→OBJ, another OBJ→selector.
   result = false
-  if tree.kind == ParLe and x.kind == ParLe and tree.exprKind == x.exprKind:
+  if tree.kind == TagLit and x.kind == TagLit and tree.exprKind == x.exprKind:
     var treeObj = tree
     inc treeObj                 # tree: accessor tag -> OBJ
     var xObj = x
@@ -146,7 +147,7 @@ proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
                  treeSel.symId != xSel.symId
       of TupatX:                # disjoint iff the two tuple indices differ
         result = treeSel.kind == IntLit and xSel.kind == IntLit and
-                 pool.integers[treeSel.intId] != pool.integers[xSel.intId]
+                 treeSel.intVal != xSel.intVal
       else:
         discard
 
@@ -163,7 +164,7 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
     if tree.symId == r:
       result = true
     inc tree
-  of ParLe:
+  of TagLit:
     if disjointDirectField(tree, r, x):
       # A sibling field/index that cannot alias `x`: skip the whole subtree.
       skip tree
@@ -215,26 +216,23 @@ proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex
   # spuriously reports "not indexed"). Track each open sealed scope's last-content
   # index and decrement when we walk past it. Overflow scopes (jump == MaxJump)
   # keep a physical ParRi and are handled by the `of ParRi` branch.
-  when defined(virtualParRi):
-    var closeStack: seq[int] = @[]
+  var closeStack: seq[int] = @[]
   for i in 0 ..< cf.len:
     case cf[i].kind
-    of ParLe:
+    of TagLit:
       inc nested
-      when defined(virtualParRi):
-        if jump(cf[i]) != MaxJump:
-          closeStack.add(i + span(readonlyCursorAt(cf, i)) - 1)
-    of ParRi: dec nested
-    else: discard
+      # nifcore: every TagLit's close is implicit; no MaxJump sentinel.
+      closeStack.add(i + subtreeWidth(readonlyCursorAt(cf, i)) - 1)
+    else:
+      discard # nifcore: no physical ParRi token; closes are tracked below
     let s = srcMap[i]
     if s >= 0:
       let k = int(s - result.base)
       if result.data[k].pos < 0:
         result.data[k] = FindStartEntry(pos: int32(i), nested: int16(nested))
-    when defined(virtualParRi):
-      while closeStack.len > 0 and closeStack[^1] == i:
-        dec nested
-        discard closeStack.pop()
+    while closeStack.len > 0 and closeStack[^1] == i:
+      dec nested
+      discard closeStack.pop()
 
 proc findStart(c: TokenBuf; srcPos: int; n: var Cursor;
                index: FindStartIndex): int =
@@ -250,12 +248,19 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
   var pc = pc
   let root = rootOf(x)
   while true:
+    if not pc.hasMore:
+      # ran off the end of the CF buffer: the routine ends here, no
+      # further usage on this path (classic had a closing ParRi to stop on)
+      break
     #echo "PC IS: ", pc.kind
     case pc.kind
     of GotoInstr:
+      # GotoInstr == DotToken: a nonzero payload is a jump, zero is the
+      # plain no-op dot.
       let diff = pc.getInt28
-      assert diff != 0
-      if diff < 0:
+      if diff == 0:
+        inc pc
+      elif diff < 0:
         # jump backwards:
         let back = pc +! diff
         if not marks.containsOrIncl(cursorToPosition(cfBase, back)):
@@ -266,11 +271,6 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
       else:
         # ordinary goto, simply follow it:
         pc = pc +! diff
-    of ParRi:
-      if nested == 0:
-        bug "unpaired ')'"
-      dec nested
-      inc pc
     of Symbol:
       if x.kind == Symbol and pc.symId == x.symId:
         otherUsage = pc
@@ -281,10 +281,10 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
         # found the definition, so it gets a new value:
         break
       inc pc
-    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    of Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
       inc pc
-    of ParLe:
-      #echo "PC IS: ", pool.tags[pc.tag]
+    of TagLit:
+      #echo "PC IS: ", globalTags.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
         # `containsRoot` (not `containsUsage`): an `if` condition that reads the
@@ -375,6 +375,8 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
            AssumeS, AssertS:
           # declarative junk we don't care about:
           skip pc
+    else:
+      inc pc   # LineInfoLit / stray suffix — just advance
   return true
 
 proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
@@ -387,7 +389,6 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
   skip n
   # step over the (real) closes that separate `x` from the next CF
   # instruction; under ParRi elision there are none to step over
-  while hasCurrentToken(n) and n.kind == ParRi: inc n
   let cfBase = c.readonlyCursorAt(0)
   var pcs = @[n]
   var marks = initIntSet()
@@ -413,8 +414,6 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf;
     # source-position → position index so `findStart` runs in O(1) per query.
     var srcMap: seq[int32] = @[]
     mover.cf = toControlflowWithMap(beginRead buf, srcMap)
-    freeze mover.cf
-    endRead buf
     mover.index = buildFindStartIndex(mover.cf, srcMap)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0

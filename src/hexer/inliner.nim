@@ -60,7 +60,7 @@ when not defined(nimony):
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   c.typeCache.openScope()
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   let declStart = n
   n = sub(n)
   var r = asRoutine(decl, SkipExclBody)
@@ -90,7 +90,7 @@ proc shouldInlineRoutine(pragmas: Cursor): bool =
 proc shouldInlineCall(c: var Context; n: Cursor; routine: var Routine): bool =
   result = false
   if n.exprKind in CallKinds and c.thisRoutine != NoSymId:
-    let callee = n.firstSon
+    let callee = n.childCursor
     if callee.kind == Symbol:
       let s = tryLoadSym(callee.symId)
       if s.status == LacksNothing:
@@ -156,17 +156,15 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
       if toReplace.sym != NoSymId:
         addVarReplacement(dest, toReplace, info)
       else:
-        dest.add n
+        dest.addSubtree n
     inc n
-  of Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-    dest.add n
+  of Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
+    dest.addSubtree n
     inc n
-  of ParRi:
-    bug "unhandled ')' in inliner.nim"
-  of ParLe:
+  of TagLit:
     case n.stmtKind
     of RetS:
-      let retVal = n.firstSon
+      let retVal = n.childCursor
       if retVal.kind != DotToken and not (retVal.kind == Symbol and c.resultSym == retVal.symId):
         # generate assignment: `dest = result`
         copyIntoKind dest, AsgnS, info:
@@ -186,8 +184,7 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
 
       copyIntoKind dest, BreakS, info:
         dest.addSymUse c.returnLabel, info
-      assert n.kind == ParRi
-      inc n
+      consumeParRi n
     of ResultS:
       if c.target.kind == TargetIsNone:
         # we need the result declaration. But it is inlined, so
@@ -196,12 +193,11 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
           while n.hasMore:
             inlineRoutineBody(c, dest, n)
         dest.addParRi()
-        assert n.kind == ParRi
-        inc n
+        consumeParRi n
       else:
         # discard the result declaration!
         discard
-      c.resultSym = n.firstSon.symId
+      c.resultSym = n.childCursor.symId
     else:
       if isDeclarative(n):
         takeTree dest, n
@@ -209,6 +205,8 @@ proc inlineRoutineBody(c: var InlineContext; dest: var TokenBuf; n: var Cursor) 
         copyInto dest, n:
           while n.hasMore:
             inlineRoutineBody(c, dest, n)
+  else:
+    bug "unhandled ')' in inliner.nim" # classic: a physical ParRi
 
 proc mapParamToLocal(c: var InlineContext; dest: var TokenBuf; args: var Cursor; params: var Cursor) =
   # assign parameters: This also ensures that side effects are executed,
@@ -277,7 +275,7 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; rout
     dest.addParRi()
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let le = n.firstSon
+  let le = n.childCursor
   var ri = le
   skip ri
   var routine = default(Routine)
@@ -314,9 +312,9 @@ proc trLocalDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-    takeToken dest, n
-  of ParLe:
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
+    takeTree dest, n
+  of TagLit:
     case n.stmtKind
     of AsgnS:
       trAsgn c, dest, n
@@ -349,8 +347,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore: tr c, dest, n
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in inliner.tr"
+  else:
+    raiseAssert "BUG: unexpected ParRi in inliner.tr" # classic ParRi only
 
 proc inlineCalls*(n: Cursor; thisModuleSuffix: string; ptrSize: int): TokenBuf =
   var c = createInliner(thisModuleSuffix, ptrSize)

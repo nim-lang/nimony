@@ -28,40 +28,46 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
   be generic, so generate the parmeter type properly. It also needs to
   skip modifiers first.]#
   var n = signature
+  # Peek the return type first: a distinct return wraps the WHOLE call in a
+  # `(dconv …)`. Under nifcore's open-tag bookkeeping the wrapper must be
+  # OPENED before the call — classic inserted the open tag after the fact,
+  # which now both splits the head from its line-info suffix and corrupts
+  # the seal positions.
+  var retType = signature
+  skip retType # past the params
+  var retIsDistinct = false
+  if not retType.isDotToken:
+    discard skipDistinct(retType, retIsDistinct)
   result = createTokenBuf(10)
-  result.add parLeToken(StmtsS, info)
-  result.add parLeToken(CallS, info)
-  result.add identToken(fn, info)
+  result.addParLe(StmtsS, info)
+  if retIsDistinct:
+    result.addParLe(DconvX, info)
+    var ret2 = signature
+    skip ret2 # past the params
+    result.copyTree ret2
+  result.addParLe(CallS, info)
+  result.addIdent(fn, info)
   var distinctParams = 0
   n.into ParamsU:
     while n.hasMore:
       let param = asLocal(n)
-      if param.kind == ParamY and param.name.kind == SymbolDef:
+      if param.kind == ParamY and param.name.isSymbolDef:
         var isDistinct = false
         let destType = skipDistinct(param.typ, isDistinct)
         if isDistinct:
-          result.add parLeToken(DconvX, info)
+          result.addParLe(DconvX, info)
           result.copyTree destType
-          result.add symToken(param.name.symId, info)
+          result.addSymUse(param.name.symId, info)
           result.addParRi(info)
           inc distinctParams
         else:
-          result.add symToken(param.name.symId, info)
+          result.addSymUse(param.name.symId, info)
       skip n
-  if n.kind == DotToken:
-    discard "fine: no return type"
-  else:
-    var isDistinct = false
-    discard skipDistinct(n, isDistinct)
-    if isDistinct:
-      var finalConv = createTokenBuf(4)
-      finalConv.add parLeToken(DconvX, info)
-      finalConv.copyTree n
-      result.insert finalConv, 1
-      result.addParRi(info)
 
-  result.addParRi(info)
-  result.addParRi(info)
+  result.addParRi(info) # call
+  if retIsDistinct:
+    result.addParRi(info) # dconv
+  result.addParRi(info) # stmts
   if distinctParams == 0:
     result.shrink 0
     result.buildLocalErr info, "cannot .borrow: no parameter of a `distinct` type"

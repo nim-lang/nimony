@@ -6,7 +6,7 @@
 
 import std / [formatfloat]
 
-import bitabs, nifreader, nifstreams, nifcursors
+import bitabs, nifreader, nifpools
 
 when defined(nimony):
   import std / sha1
@@ -20,60 +20,42 @@ else:
   import std / sha1
   {.pop.}
 
-proc update(dest: var Sha1State; n: PackedToken) =
-  case n.kind
-  of ParLe:
-    update(dest, "(")
-    update(dest, pool.tags[n.tagId])
-  of ParRi:
-    update(dest, ")")
-  of SymbolDef:
-    update(dest, " :")
-    update(dest, pool.syms[n.symId])
-  of Symbol:
-    update(dest, " ")
-    update(dest, pool.syms[n.symId])
-  of Ident:
-    update(dest, " ")
-    update(dest, pool.strings[n.litId])
-  of IntLit:
-    update(dest, " ")
-    update(dest, $pool.integers[n.intId])
-  of UIntLit:
-    update(dest, " ")
-    update(dest, $pool.uintegers[n.uintId])
-  of FloatLit:
-    update(dest, " ")
-    update(dest, $pool.floats[n.floatId])
-  of StringLit:
-    update(dest, " ")
-    update(dest, pool.strings[n.litId])
-  of CharLit:
-    update(dest, " ")
-    update(dest, $n.uoperand)
-  of DotToken:
+proc updateAtom(dest: var Sha1State; n: Cursor) =
+  ## Hashes one leaf token (build-agnostic: the hashed content is the tag/sym
+  ## name, string, or numeric value, so the digest matches classic byte-for-byte).
+  if n.isSymbolDef:
+    update(dest, " :"); update(dest, pool.syms[n.symId])
+  elif n.isSymbol:
+    update(dest, " "); update(dest, pool.syms[n.symId])
+  elif n.isIdent:
+    update(dest, " "); update(dest, pool.strings[n.strId])
+  elif n.isIntLit:
+    update(dest, " "); update(dest, $n.intVal)
+  elif n.isUIntLit:
+    update(dest, " "); update(dest, $n.uintVal)
+  elif n.isFloatLit:
+    update(dest, " "); update(dest, $n.floatVal)
+  elif n.isStringLit:
+    update(dest, " "); update(dest, pool.strings[n.strId])
+  elif n.isCharLit:
+    update(dest, " "); update(dest, $n.uoperand)
+  elif n.isDotToken:
     update(dest, ".")
-  of UnknownToken:
-    update(dest, "?")
-  of EofToken:
-    update(dest, "!EOF!")
 
 proc updateLoop*(dest: var Sha1State; n: var Cursor; inlineT: TagId; foundInline: var bool) =
   ## Hashes the single tree/token at `n`, advancing past it. The digest is
   ## the same with and without ParRi elision: the close is hashed as ")"
   ## whether or not its token physically exists.
-  case n.kind
-  of ParLe:
-    update dest, n.load
-    if n.tagId == inlineT: foundInline = true
+  if n.isTagLit:
+    update(dest, "(")
+    update(dest, globalTags.tags[n.cursorTagId])
+    if n.cursorTagId == inlineT: foundInline = true
     n.into:
       while n.hasMore:
         updateLoop(dest, n, inlineT, foundInline)
     update dest, ")"
-  of ParRi:
-    discard "cannot happen: subtree ends are consumed by the bounded scope"
   else:
-    update dest, n.load
+    updateAtom(dest, n)
     inc n
 
 const

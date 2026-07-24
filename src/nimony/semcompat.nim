@@ -51,7 +51,7 @@ proc compatOpenArrayInstance(c: var SemContext; elemType: Cursor;
   ## hand back the same instance Symbol.
   var invokeBuf = createTokenBuf(8)
   invokeBuf.addParLe(InvokeT, info)
-  invokeBuf.add symToken(pool.syms.getOrIncl(OpenArrayHeadName), info)
+  invokeBuf.addSymUse(pool.syms.getOrIncl(OpenArrayHeadName), info)
   invokeBuf.addSubtree elemType
   invokeBuf.addParRi()
   var scratch = createTokenBuf(16)
@@ -97,7 +97,7 @@ proc compatVarargsHasHint(paramType: Cursor): bool =
   if paramType.typeKind == VarargsT:
     var c = paramType
     loopInto c:
-      if c.kind == StringLit: result = true
+      if c.isStringLit: result = true
       skip c
 
 proc compatToOpenArrayTypevars(): (SymId, SymId) =
@@ -111,12 +111,12 @@ proc compatToOpenArrayTypevars(): (SymId, SymId) =
     var tv = routine.typevars
     if tv.substructureKind == TypevarsU:
       tv = sub(tv)
-      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
+      if tv.hasMore and tv.isTagLit and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[0] = inner.symId
         skip tv
-      if tv.hasMore and tv.kind == ParLe and tv.symKind == TypevarY:
+      if tv.hasMore and tv.isTagLit and tv.symKind == TypevarY:
         var inner = tv
         inc inner
         result[1] = inner.symId
@@ -131,7 +131,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
   if typeStart >= dest.len: return
   let typeCursor = cursorAt(dest, typeStart)
   if typeCursor.typeKind != VarargsT or compatVarargsHasHint(typeCursor):
-    endRead(dest)
+    discard
   else:
     let info = typeCursor.info
     var elem = typeCursor
@@ -147,14 +147,12 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       var inner = typeCursor
       loopInto inner:
         takeTree rebuilt, inner
-      endRead(dest)
 
       var elemCursor = cursorAt(rebuilt, 0)
       inc elemCursor    # past `(varargs` to the element type
       let inst = compatOpenArrayInstance(c, elemCursor, info)
-      endRead(rebuilt)
       let hintStr =
-        if inst.kind == Symbol: pool.syms[inst.symId]
+        if inst.isSymbol: pool.syms[inst.symId]
         else: ""
       rebuilt.addStrLit hintStr, info
       rebuilt.addParRi()
@@ -162,7 +160,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       dest.replace beginRead(rebuilt), typeStart
     else:
       # bare `(varargs)` — nothing to instantiate
-      endRead(dest)
+      discard
 
 proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
   ## True if the tail at `start` starts with an
@@ -172,8 +170,9 @@ proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
   result = false
   if start < m.args.len:
     if m.args[start].exprKind == HcallX:
-      if start + 1 < m.args.len and m.args[start + 1].kind == Symbol:
-        result = pool.syms[m.args[start + 1].symId].startsWith("toOpenArray.")
+      let callee = childCursor(readonlyCursorAt(m.args, start))
+      if callee.hasMore and callee.kind == Symbol:
+        result = pool.syms[callee.symId].startsWith("toOpenArray.")
 
 proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
                                  elemType: Cursor; info: PackedLineInfo) =
@@ -196,7 +195,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     # following the varargs slot and must end up after the bundle.
     var trailing = createTokenBuf(max(8, m.args.len - endPos))
     for i in endPos ..< m.args.len:
-      trailing.addRaw m.args[i]
+      trailing.add m.args[i]
     # Move the flat varargs args out of `m.args` into a `(stmts …)` scratch
     # wrapper so an iterator over them terminates at the closing `)` rather
     # than walking off the end. (Without the wrapper, `hasMore` — which only
@@ -207,7 +206,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     for i in start ..< endPos:
       # balanced span: raw copy keeps its seals and leaves the pending
       # StmtsS as the only open tag for the close below
-      flat.addRaw m.args[i]
+      flat.add m.args[i]
     flat.addParRi()
     m.args.shrink start
 
@@ -242,7 +241,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     let inst = c.requestRoutineInstance(origin, typeArgs, inferred, info)
 
     m.args.addParLe(HcallX, info)
-    m.args.add symToken(inst.targetSym, info)
+    m.args.addSymUse(inst.targetSym, info)
     m.args.addParLe(AconstrX, info)
     m.args.addParLe(ArrayT, info)
     m.args.addSubtree elemTypeC
