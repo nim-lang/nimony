@@ -63,7 +63,57 @@ type
     keepReturns: bool
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
-  result = "<codeListing: not available under nifcore>"
+  # for debugging purposes
+  # first iteration: compute all necessary labels:
+  var jumpTargets = initIntSet()
+  let last = if last < 0: c.len-1 else: min(last, c.len-1)
+  for i in start..last:
+    if c[i].kind == GotoInstr and c[i].getInt28 != 0:
+      jumpTargets.incl(i+c[i].getInt28)
+  # second iteration: generate string representation. nifcore never
+  # materialises ParRi tokens, so track each sealed scope's last-content
+  # index and inject `endTree()` once we've walked past it:
+  var i = start
+  var b = nifbuilder.open(1000)
+  var closeStack: seq[int] = @[]
+  while i <= last:
+    if i in jumpTargets:
+      b.addTree "lab"
+      b.addSymbolDef("L" & $i)
+      b.endTree()
+    let tok = c[i]
+    case tok.kind
+    of DotToken:
+      # GotoInstr is a DotToken with a nonzero 28-bit payload
+      let diff = tok.getInt28
+      if diff != 0:
+        b.addTree "goto"
+        b.addIdent "L" & $(i+diff)
+        b.endTree()
+      else:
+        b.addEmpty
+    # cursor-level accessors: short strings/names live INLINE in the token,
+    # so the raw token payload is not always a pool id
+    of Symbol: b.addSymbol readonlyCursorAt(c, i).symName
+    of SymbolDef: b.addSymbolDef readonlyCursorAt(c, i).symName
+    of EofToken: b.addRaw "\n<unexptected EOF>\n"
+    of Ident: b.addIdent readonlyCursorAt(c, i).strVal
+    of StrLit: b.addStrLit readonlyCursorAt(c, i).strVal
+    of CharLit: b.addCharLit charLit(tok)
+    of IntLit: b.addIntLit readonlyCursorAt(c, i).intVal
+    of UIntLit: b.addUIntLit readonlyCursorAt(c, i).uintVal
+    of FloatLit: b.addFloatLit readonlyCursorAt(c, i).floatVal
+    of TagLit:
+      b.addTree globalTags.tags[tok.tagId]
+      closeStack.add(i + subtreeWidth(readonlyCursorAt(c, i)) - 1)
+    of ExtendedSuffix, LineInfoLit, UnknownToken, ParLe, ParRi:
+      discard "suffix bits and lexical kinds carry no listing content"
+    while closeStack.len > 0 and closeStack[^1] == i:
+      b.endTree()
+      discard closeStack.pop()
+    inc i
+  if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
+  result = b.extract()
   # ── source-position side-channel ──────────────────────────────────────────
   # The mover needs to map every CF token back to the source token it came from.
   # Rather than stamp a payload into the token `info` field (nifcore tokens may

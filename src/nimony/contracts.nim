@@ -357,11 +357,10 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     inc pc
   of SymbolDef:
     bug "symbol definition in single path"
-  of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, UnknownToken:
+  of EofToken, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit,
+     UnknownToken, ExtendedSuffix, LineInfoLit, ParLe, ParRi:
     inc pc
-  of ParRi:
-    bug "unpaired ')'"
-  of ParLe:
+  of TagLit:
     case pc.exprKind
     of CallKinds:
       analyseCall c, pc
@@ -703,25 +702,24 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
     #echo "Instruction is ", toString(pc, false)
     case pc.kind
     of GotoInstr:
-      # Every goto intruction leaves the basic block.
+      # GotoInstr is a DotToken; a nonzero 28-bit payload leaves the block,
+      # a plain `.` is inert
       let diff = pc.getInt28
-      if diff < 0:
+      if diff == 0:
+        inc pc
+      elif diff < 0:
         return Continuation(thenPart: LoopBack, elsePart: NoBasicBlock)
       else:
         # ordinary goto, simply follow it:
         return Continuation(thenPart: toBasicBlock(c, pc +! diff), elsePart: NoBasicBlock)
-    of ParRi:
-      if nested == 0:
-        bug "unpaired ')'"
-      dec nested
-      inc pc
     of Symbol:
       inc pc
     of SymbolDef:
       bug "symbol definition in single path"
-    of EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
+    of EofToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit,
+       UnknownToken, ExtendedSuffix, LineInfoLit, ParLe, ParRi:
       inc pc
-    of ParLe:
+    of TagLit:
       #echo "PC IS: ", globalTags.tags[pc.tag]
       if pc.cfKind == IteF:
         inc pc
@@ -915,7 +913,7 @@ proc traverseProc(c: var Context; n: var Cursor) =
 proc traverseToplevel(c: var Context; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
-    c.toplevelStmts.add n
+    c.toplevelStmts.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         traverseToplevel(c, n)
@@ -950,7 +948,6 @@ proc analyzeContracts*(input: var TokenBuf): TokenBuf =
   var nt = beginRead c.toplevelStmts
   checkContracts(c, nt)
 
-  endRead input
   #restore(input, oldInfos)
   c.typeCache.closeScope()
   result = ensureMove c.errors
