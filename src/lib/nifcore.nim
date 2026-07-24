@@ -96,6 +96,7 @@ const
   KindMask*    = (1'u32 shl KindBits) - 1'u32       # 0x0F
   PayloadBits* = 32'u32 - KindBits                  # 28
   PayloadMask* = (1'u32 shl PayloadBits) - 1'u32    # 0x0FFFFFFF
+  IdPayloadMax* = PayloadMask shr 1'u32
 
   TagBits*     = 9'u32
   TagShift*    = KindBits                           # 4
@@ -127,16 +128,16 @@ proc charToken*(ch: char): NifToken {.inline.} =
   NifToken(toX(CharLit, uint32(ch)))
 
 proc strLitToken*(id: StrId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(StrLit, uint32(id) shl 1))    # bit 0 = 0 ⇒ pool ref
 proc symToken*(id: SymId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(Symbol, uint32(id) shl 1))
 proc symdefToken*(id: SymId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(SymbolDef, uint32(id) shl 1))
 proc identToken*(id: StrId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(Ident, uint32(id) shl 1))
 
 proc extendedSuffixToken*(high28: uint32): NifToken {.inline.} =
@@ -426,10 +427,11 @@ proc combinedPayload*(c: Cursor): uint64 {.inline.} =
   result = uint64(c.load.uoperand)
   var i = 1
   var shift = PayloadBits
-  while c.rem > i and peekAhead(c, i).kind == ExtendedSuffix:
+  while c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift < 64'u32:
     result = result or (uint64(peekAhead(c, i).uoperand) shl shift)
     inc i
     shift += PayloadBits
+  assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift >= 64'u32), "too many ExtendedSuffix tokens!"
 
 # String/sym layout (StrLit, Ident, Symbol, SymbolDef):
 #   bit 0      mode (1 = inline-short, 0 = pool ref)
