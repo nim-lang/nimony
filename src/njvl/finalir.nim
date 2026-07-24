@@ -76,8 +76,19 @@ proc openScope(c: var Context) =
 
 proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
   # insert kill instructions for the locals that go out of scope:
-  var i = 0
+  var locals: seq[SymId] = @[]
   for s in c.typeCache.currentScopeLocals:
+    locals.add s
+  # sort by name: the scope table iterates in SymId-hash order, which follows
+  # pool interning order and is not stable across toolchain changes — the
+  # golden files need deterministic output (kill order is a set)
+  for i in 1 ..< locals.len:
+    var j = i
+    while j > 0 and pool.syms[locals[j-1]] > pool.syms[locals[j]]:
+      swap locals[j-1], locals[j]
+      dec j
+  var i = 0
+  for s in locals:
     if i == 0:
       dest.addParLe("kill", info)
     dest.addSymUse s, info
