@@ -3,8 +3,8 @@
 # processFd() to dispatch I/O for all slots on a given fd.
 # Subclasses override registerEvent/reArmEvent/fetchEvents.
 
-import ../types
-import ../slots
+import ./types
+import ./slots
 
 type
   PollBackend* = ref object of Backend
@@ -30,9 +30,9 @@ when defined(posix):
   import std / assertions
   from std/posix/posix import SockAddr, SockLen
 
-  proc posixRead(fd: cint; buf: pointer; count: int): int {.importc: "read", header: "<unistd.h>".}
-  proc posixWrite(fd: cint; buf: pointer; count: int): int {.importc: "write", header: "<unistd.h>".}
-  proc posixAccept(s: cint; addr: ptr SockAddr; addrlen: ptr SockLen): cint {.
+  proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read", header: "<unistd.h>".}
+  proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write", header: "<unistd.h>".}
+  proc posixAccept(s: cint; `addr`: ptr SockAddr; addrlen: ptr SockLen): cint {.
     importc: "accept", header: "<sys/socket.h>".}
 
   proc processFd*(b: PollBackend; fd: cint; firedEvents: int) =
