@@ -132,6 +132,24 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
       else:
         skip p
 
+proc addTemplFormalsToScope(c: var SemContext; buf: TokenBuf; at: int) =
+  ## Register published generic/type/formal params on `c.currentScope` so
+  ## `semTemplBody`'s `buildSymChoice` resolves to this template's symbols,
+  ## not homonymous typevars from an enclosing caller during lazy promotion.
+  var p = readonlyCursorAt(buf, at)
+  if p.substructureKind in {ParamsU, TypevarsU}:
+    p.into:
+      while p.hasMore:
+        let param = asLocal(p)
+        if param.name.kind == SymbolDef:
+          var nameStr = pool.syms[param.name.symId]
+          extractBasename(nameStr)
+          if nameStr.len > 0:
+            let s = Sym(kind: param.kind, name: param.name.symId, pos: 0)
+            addOverloadable(c.currentScope,
+                            pool.strings.getOrIncl(nameStr), s)
+        skip p
+
 proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   ## On-demand upgrade of a verbatim-published template body. Phase 2's
   ## `semProcImpl` takes the template body verbatim via `takeTree` and
@@ -188,32 +206,13 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
     inc c.routine.inLoop
     inc c.routine.inGeneric
     c.openScope()  # parameter scope
+    addTemplFormalsToScope(c, newBuf, typevarsAt)
+    addTemplFormalsToScope(c, newBuf, paramsAt)
     c.openScope()  # body scope
 
     var ctx = createUntypedContext(addr c, UntypedTemplate, dirty = false)
     addParams(ctx, newBuf, typevarsAt)
     addParams(ctx, newBuf, paramsAt)
-
-    # `addParams` populates `ctx.params` (used by `getIdentReplaceParams`'s
-    # `isTemplParam` check) — but `getIdentReplaceParams` first calls
-    # `buildSymChoice`, which scans the actual SemContext scope. The
-    # original phase-3 path got params into scope via `semParams`, which
-    # ran `addSym` for each param. Lazily promoting from the published
-    # decl skips that, so re-attach the params to the scope here.
-    block addParamsToScope:
-      var p = readonlyCursorAt(newBuf, paramsAt)
-      if p.substructureKind == ParamsU:
-        p.into ParamsU:
-          while p.hasMore:
-            let param = asLocal(p)
-            if param.name.kind == SymbolDef:
-              var nameStr = pool.syms[param.name.symId]
-              extractBasename(nameStr)
-              if nameStr.len > 0:
-                let s = Sym(kind: ParamY, name: param.name.symId, pos: 0)
-                addOverloadable(c.currentScope,
-                                pool.strings.getOrIncl(nameStr), s)
-            skip p
 
     semTemplBody ctx, newBuf, oldHead
     # `oldHead` is now past the body, at the template's (possibly elided) close.
