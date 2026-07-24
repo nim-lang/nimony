@@ -301,7 +301,8 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     synthBuf.addIdent "bindSymHelper", tInfo
     synthBuf.addSubtree(beginRead(tBuf))
     synthBuf.addStrLit nifText, info
-  synthBuf.addParRi()  # extra closer so the final `inc` after sem doesn't run off
+  # no sentinel closer: nifcore's closeTag asserts on an unmatched ParRi and
+  # the bounded cursor already stops at the buffer end
   var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
   semExpr c, dest, inner
   it.typ = inner.typ
@@ -389,7 +390,8 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       synthBuf.copyIntoKind BracketX, info:
         for s in resolved:
           synthBuf.addStrLit pool.syms[s], info
-  synthBuf.addParRi()  # extra closer so the final `inc` after sem doesn't run off
+  # no sentinel closer: nifcore's closeTag asserts on an unmatched ParRi and
+  # the bounded cursor already stops at the buffer end
   var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
   semExpr c, dest, inner
   it.typ = inner.typ
