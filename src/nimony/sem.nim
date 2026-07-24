@@ -939,7 +939,8 @@ proc bindSubsInvokeArgs(c: var SemContext; decl: TypeDecl; buf: var TokenBuf;
     while arg.hasMore:
       subs(c, buf, sc, arg)
       skip arg
-    buf.addParRi()
+    # no sentinel ParRi: closeTag asserts on it and `bindInvokeArgs`
+    # walks the flat buffer hasMore-bounded
     result = bindInvokeArgs(decl, beginRead(buf))
   else:
     result = initTable[SymId, Cursor]()
@@ -1094,7 +1095,8 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
             dest.shrink exprStart
             c.buildErr dest, info,
               "field '" & pool.strings[fieldName] & "' can only be accessed in a pattern matching `case` branch"
-            result = InvalidDot
+            # the open DotX was shrunk away; don't fall through to its close
+            return InvalidDot
           elif field.level >= 0:
             result = MatchedDotField
             if doDeref:

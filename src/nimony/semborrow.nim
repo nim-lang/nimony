@@ -28,8 +28,23 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
   be generic, so generate the parmeter type properly. It also needs to
   skip modifiers first.]#
   var n = signature
+  # Peek the return type first: a distinct return wraps the WHOLE call in a
+  # `(dconv …)`. Under nifcore's open-tag bookkeeping the wrapper must be
+  # OPENED before the call — classic inserted the open tag after the fact,
+  # which now both splits the head from its line-info suffix and corrupts
+  # the seal positions.
+  var retType = signature
+  skip retType # past the params
+  var retIsDistinct = false
+  if not retType.isDotToken:
+    discard skipDistinct(retType, retIsDistinct)
   result = createTokenBuf(10)
   result.addParLe(StmtsS, info)
+  if retIsDistinct:
+    result.addParLe(DconvX, info)
+    var ret2 = signature
+    skip ret2 # past the params
+    result.copyTree ret2
   result.addParLe(CallS, info)
   result.addIdent(fn, info)
   var distinctParams = 0
@@ -48,20 +63,11 @@ proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info:
         else:
           result.addSymUse(param.name.symId, info)
       skip n
-  if n.isDotToken:
-    discard "fine: no return type"
-  else:
-    var isDistinct = false
-    discard skipDistinct(n, isDistinct)
-    if isDistinct:
-      var finalConv = createTokenBuf(4)
-      finalConv.addParLe(DconvX, info)
-      finalConv.copyTree n
-      result.insert finalConv, 1
-      result.addParRi(info)
 
-  result.addParRi(info)
-  result.addParRi(info)
+  result.addParRi(info) # call
+  if retIsDistinct:
+    result.addParRi(info) # dconv
+  result.addParRi(info) # stmts
   if distinctParams == 0:
     result.shrink 0
     result.buildLocalErr info, "cannot .borrow: no parameter of a `distinct` type"
