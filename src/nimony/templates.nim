@@ -132,6 +132,37 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
       else:
         skip p
 
+proc addTemplFormalsToScope(c: var SemContext; buf: TokenBuf; at: int) =
+  ## Put a promoted template's OWN typevars and params on the parameter scope.
+  ##
+  ## `semTemplBody` resolves a body `Ident` through `getIdentReplaceParams`,
+  ## which asks `buildSymChoice` (`InnerMost`) for a symbol and substitutes it
+  ## only when that SymId is a formal of THIS template (`isTemplParam`, i.e.
+  ## `ctx.params`). Lazy promotion runs inside the CALLER's live scope, so
+  ## without this the innermost `T` is the caller's homonymous typevar — not one
+  ## of our formals, so the ident stays an `Ident`, is re-sem'd at the expansion
+  ## site against yet another `T`, and yields the bogus `got: T but wanted: T`
+  ## (issue #2181). Registering our formals in the inner parameter scope makes
+  ## `InnerMost` pick ours and the substitution happen.
+  ##
+  ## Phase 3 gets all this for free: `semGenericParams` / `semParams` `addSym`
+  ## every formal as they check it. Promotion starts from an already-sem'd
+  ## published decl and skips both, so it has to re-attach them here.
+  var p = readonlyCursorAt(buf, at)
+  if p.substructureKind in {ParamsU, TypevarsU}:
+    p.into:
+      while p.hasMore:
+        let param = asLocal(p)
+        if param.name.isSymbolDef:
+          var nameStr = pool.syms[param.name.symId]
+          extractBasename(nameStr)
+          if nameStr.len > 0:
+            # `param.kind` is the decl's own `ParamY` / `TypevarY`, so the two
+            # call sites cannot disagree with the structure they pass.
+            addOverloadable(c.currentScope, pool.strings.getOrIncl(nameStr),
+                            Sym(kind: param.kind, name: param.name.symId, pos: 0))
+        skip p
+
 proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
   ## On-demand upgrade of a verbatim-published template body. Phase 2's
   ## `semProcImpl` takes the template body verbatim via `takeTree` and
@@ -194,32 +225,10 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
     addParams(ctx, newBuf, typevarsAt)
     addParams(ctx, newBuf, paramsAt)
 
-    # `addParams` populates `ctx.params` (used by `getIdentReplaceParams`'s
-    # `isTemplParam` check) — but `getIdentReplaceParams` first calls
-    # `buildSymChoice`, which scans the actual SemContext scope. The
-    # original phase-3 path got params into scope via `semParams`, which
-    # ran `addSym` for each param. Lazily promoting from the published
-    # decl skips that, so re-attach the params to the scope here.
-    block addParamsToScope:
-      template attach(atPos: int; expected: SubstructureKind; kindOfSym: SymKind) =
-        var p = readonlyCursorAt(newBuf, atPos)
-        if p.substructureKind == expected:
-          p.into expected:
-            while p.hasMore:
-              let param = asLocal(p)
-              if param.name.isSymbolDef:
-                var nameStr = pool.syms[param.name.symId]
-                extractBasename(nameStr)
-                if nameStr.len > 0:
-                  let s = Sym(kind: kindOfSym, name: param.name.symId, pos: 0)
-                  addOverloadable(c.currentScope,
-                                  pool.strings.getOrIncl(nameStr), s)
-              skip p
-      # Typevars must be re-attached as well: a body ident like `T` in
-      # `template sizeof*[T](_: T): int = sizeof(T)` has to resolve to the
-      # typevar Symbol here or expansion can never substitute it.
-      attach typevarsAt, TypevarsU, TypevarY
-      attach paramsAt, ParamsU, ParamY
+    # `addParams` populates `ctx.params`, but that is only half of it — see
+    # `addTemplFormalsToScope`.
+    addTemplFormalsToScope(c, newBuf, typevarsAt)
+    addTemplFormalsToScope(c, newBuf, paramsAt)
 
     semTemplBody ctx, newBuf, oldHead
     # `oldHead` is now past the body, at the template's (possibly elided) close.
