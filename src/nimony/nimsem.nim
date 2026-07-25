@@ -9,7 +9,7 @@
 import std / [parseopt, sets, strutils, os, assertions, syncio]
 
 import ".." / gear2 / modnames
-import ".." / lib / [argsfinder, symparser, nifcursors, nifstreams, nifreader,
+import ".." / lib / [argsfinder, symparser, nifpools, nifreader,
                      nifbuilder, nifindexes, tooldirs, vfs, nimversion]
 import semmain, sem, nifconfig, semos, semdata, indexgen, programs,
        derefs, deps, idetools, cli, langmodes

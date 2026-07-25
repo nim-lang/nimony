@@ -74,7 +74,7 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
-                      info: PackedLineInfo): SymId =
+                      info: NifLineInfo): SymId =
   result = SymId(0)
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
@@ -112,11 +112,11 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
 
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
-                      info: PackedLineInfo) =
+                      info: NifLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[] # ignored
   discard importSingleFile(c, dest, f1, origin, filter, exports, info)
 
-proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
+proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string; filter: ImportFilter; info: NifLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[]
   let source = importSingleFile(c, dest, f1, origin, filter, exports, info)
   while exports.len != 0:
@@ -140,13 +140,13 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
   let info = x.info
   while x.hasMore:
     var isCyclic = false
-    if x.kind == ParLe and x.exprKind == PragmaxX:
+    if x.isTagLit and x.exprKind == PragmaxX:
       var y = x
       inc y, SkipTag
       skip y, AnyExpr  # filename expr
       if y.substructureKind == PragmasU:
         inc y, SkipTag
-        if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+        if y.isIdent and pool.strings[y.strId] == "cyclic":
           isCyclic = true
 
     if isCyclic:
@@ -188,7 +188,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
       # Non-cyclic import in same statement; skip it (should not happen in practice)
       skip x
 
-proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilename]; mode: ImportFilter; info: PackedLineInfo) =
+proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilename]; mode: ImportFilter; info: NifLineInfo) =
   let origin = getFile(info)
   for f in files:
     importSingleFileConsiderExports c, dest, f, origin, mode, info
@@ -196,13 +196,13 @@ proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilenam
     onConceptImportsChanged(c)
 
 template maybeCyclic(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
-  if x.kind == ParLe and x.exprKind == PragmaxX:
+  if x.isTagLit and x.exprKind == PragmaxX:
     var y = x
     inc y
     skip y
     if y.substructureKind == PragmasU:
       inc y
-      if y.kind == Ident and pool.strings[y.litId] == "cyclic":
+      if y.isIdent and pool.strings[y.strId] == "cyclic":
         cyclicImport(c, dest, x)
         return
 
@@ -264,7 +264,7 @@ proc semFromImport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     filenameVal(x, files, hasError, allowAs = true)
     if not hasError:
       while x.hasMore:
-        if x.kind == ParLe and x.exprKind == NilX:
+        if x.isTagLit and x.exprKind == NilX:
           # from a import nil
           skip x, AnyExpr
         else:
@@ -278,11 +278,11 @@ proc semFromImport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc findModuleSymbol*(n: Cursor): SymId =
   result = SymId(0)
-  if n.kind == Symbol:
+  if n.isSymbol:
     let res = tryLoadSym(n.symId)
     if res.status == LacksNothing and symKind(res.decl) == ModuleY:
       result = n.symId
-  elif n.kind == ParLe and exprKind(n) in {OchoiceX, CchoiceX}:
+  elif n.isTagLit and exprKind(n) in {OchoiceX, CchoiceX}:
     # if any sym in choice is module sym, count it as a module reference
     # this emulates behavior that was caused by sym order shenanigans before, could be removed
     var n = n
@@ -334,7 +334,7 @@ proc registerExportName(c: var SemContext; moduleSym: SymId; strId: StrId) =
     c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initHashSet[StrId]())
     c.exports.getOrQuit(moduleSym).list.incl strId
 
-proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLineInfo) =
+proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineInfo) =
   let res = tryLoadSym(sym)
   let isModule = res.status == LacksNothing and res.decl.symKind == ModuleY
   if isModule:
@@ -356,7 +356,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
     registerExportName(c, moduleSym, pool.strings.getOrIncl(basename))
     # Enum types carry their fields as separately-named symbols. Exporting only
     # the type name leaves the field names filtered out at the import site
-    # (e.g. `export NifKind` wouldn't bring `ParLe`/`DotToken` into scope).
+    # (e.g. `export NifKind` wouldn't bring `TagLit`/`DotToken` into scope).
     # Walk the enum body and enroll each field basename in the same filter.
     if res.status == LacksNothing and res.decl.symKind == TypeY:
       let decl = asTypeDecl(res.decl)
@@ -373,7 +373,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLin
           while enumBody.hasMore:
             if enumBody.substructureKind == EfldU:
               let local = asLocal(enumBody)
-              if local.name.kind == SymbolDef:
+              if local.name.isSymbolDef:
                 var fname = pool.syms[local.name.symId]
                 extractBasename(fname)
                 registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
@@ -391,17 +391,17 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       var syms = beginRead(symBuf)
       case syms.kind
       of Ident:
-        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.strId]
       of Symbol:
         doExport(c, dest, syms.symId, info)
-      of ParLe:
+      of TagLit:
         case syms.exprKind
         of ErrX:
           dest.add symBuf
         of OchoiceX, CchoiceX:
           syms.into:
             while syms.hasMore:
-              assert syms.kind == Symbol
+              assert syms.isSymbol
               doExport(c, dest, syms.symId, info)
               inc syms, AnyExpr
         else:
@@ -411,7 +411,7 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
-proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId; info: PackedLineInfo) =
+proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId; info: NifLineInfo) =
   let name = pool.syms[sym]
   let suffix = extractModule(name)
   if not c.processedModules.hasKey(suffix) or
@@ -445,7 +445,6 @@ proc semExportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semExpr c, dest, m, {AllowModuleSym} # get module sym
     x = m.n
     let moduleSym = findModuleSymbol(cursorAt(dest, moduleSymStart))
-    endRead(dest)
     dest.shrink moduleSymStart
     if moduleSym == SymId(0):
       c.buildErr dest, info, "expected module for `export except`"
@@ -458,17 +457,17 @@ proc semExportExcept*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       var syms = beginRead(symBuf)
       case syms.kind
       of Ident:
-        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.litId]
+        c.buildErr dest, info, "undeclared identifier: " & pool.strings[syms.strId]
       of Symbol:
         doExportExcept(c, dest, moduleSym, syms.symId, info)
-      of ParLe:
+      of TagLit:
         case syms.exprKind
         of ErrX:
           dest.add symBuf
         of OchoiceX, CchoiceX:
           syms.into:
             while syms.hasMore:
-              assert syms.kind == Symbol
+              assert syms.isSymbol
               doExportExcept(c, dest, moduleSym, syms.symId, info)
               inc syms, AnyExpr
         else:

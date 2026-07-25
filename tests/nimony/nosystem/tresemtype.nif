@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 1854             )
+(.indexat 1858             )
 (stmts@,3,tests/nimony/nosystem/tresemtype.nim
  (proc :foo.0.@5 . .
   (typevars@8
@@ -13,8 +13,8 @@
    (var@4,2 :obj.0 . . Foo.0.@6
     (oconstr@9 Foo.0.~3
      (kv@4 val.0~3 x.0@2)))))
- (call@3,5 foo.0.Imj9rno.~3 123@1)
- (call@3,6 foo.0.Iwjalau.~3 "abc"@1)
+ (call@,5 foo.0.Imj9rno. 123@4)
+ (call@,6 foo.0.Iwjalau. "abc"@4)
  (template@,8 :fooTempl.0.@9 . .
   (typevars@H
    (typevar@1 :T.1. . . . .))
@@ -50,7 +50,7 @@
    (i 64))
   (params@8,~5
    (param@1 :x.4 . .
-    (i 64).)).~3,~5 . .~3,~5
+    (i 64).)).~3,~5 .~3,~5 .~3,~5
   (stmts~1,~4
    (type@9 :Foo.4.~4 . .
     (pragmas)
@@ -63,7 +63,7 @@
  (proc@3,6 :foo.0.Iwjalau. . .~3,~6
   (at foo.0. string.0.sysvq0asl)
   (params@8,~6
-   (param@1 :x.5 . . string.0.sysvq0asl .)).~3,~6 . .~3,~6
+   (param@1 :x.5 . . string.0.sysvq0asl .)).~3,~6 .~3,~6 .~3,~6
   (stmts~1,~5
    (type@9 :Foo.5.~4 . .
     (pragmas)
@@ -75,12 +75,12 @@
  (h foo.0. 84)
  (h@8 T.0. 35)
  (h@2,1 Foo.0. 92)
- (h fooTempl.0. 238)
+ (h fooTempl.0. 232)
  (h@H,8 T.1. 47)
  (h@2,9 Foo.1. 92)
  (h@2,9 Foo.2. 178)
  (h@2,9 Foo.3. 189)
  (h foo.0.Imj9rno. 229)
- (h@2,1 Foo.4. 139)
+ (h@2,1 Foo.4. 144)
  (h foo.0.Iwjalau. 183)
- (h@2,1 Foo.5. 157))
+ (h@2,1 Foo.5. 162))

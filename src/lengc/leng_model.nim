@@ -18,30 +18,30 @@ proc bug*(msg: string) {.noreturn.} =
 
 proc skipParRi*(n: var Cursor) =
   # XXX: Give Leng some better error reporting.
-  if n.kind == ParRi:
+  if not n.hasMore:
     consumeParRi n
   else:
     when defined(debug):
       writeStackTrace()
     quit "expected ')', but got: " & $n.kind
 
-template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](tag(c))
+template tagEnum*(c: Cursor): TagEnum = cast[TagEnum](cursorTagId(c))
 
 proc stmtKind*(c: Cursor): LengStmt {.inline.} =
-  if c.kind == ParLe and rawTagIsLengStmt(tagEnum(c)):
+  if c.isTagLit and rawTagIsLengStmt(tagEnum(c)):
     result = cast[LengStmt](tagEnum(c))
   else:
     result = NoStmt
 
 proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     let e = tagEnum(c)
     if rawTagIsLengPragma(e):
       result = cast[LengPragma](e)
     else:
       result = NoPragma
   elif c.kind == Ident:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    let tagId = globalTags.registerTag(pool.strings[c.strId])
     if rawTagIsLengPragma(cast[TagEnum](tagId)):
       result = cast[LengPragma](tagId)
     else:
@@ -50,15 +50,15 @@ proc pragmaKind*(c: Cursor): LengPragma {.inline.} =
     result = NoPragma
 
 proc substructureKind*(c: Cursor): LengOther {.inline.} =
-  if c.kind == ParLe and rawTagIsLengOther(tagEnum(c)):
-    result = cast[LengOther](tag(c))
+  if c.isTagLit and rawTagIsLengOther(tagEnum(c)):
+    result = cast[LengOther](cursorTagId(c))
   else:
     result = NoSub
 
 proc typeKind*(c: Cursor): LengType {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsLengType(tagEnum(c)):
-      result = cast[LengType](tag(c))
+      result = cast[LengType](cursorTagId(c))
     else:
       result = NoType
   elif c.kind == DotToken:
@@ -67,19 +67,19 @@ proc typeKind*(c: Cursor): LengType {.inline.} =
     result = NoType
 
 proc typeQual*(c: Cursor): LengTypeQualifier {.inline.} =
-  if c.kind == ParLe and rawTagIsLengTypeQualifier(tagEnum(c)):
-    result = cast[LengTypeQualifier](tag(c))
+  if c.isTagLit and rawTagIsLengTypeQualifier(tagEnum(c)):
+    result = cast[LengTypeQualifier](cursorTagId(c))
   else:
     result = NoQualifier
 
 proc callConvKind*(c: Cursor): CallConv {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsCallConv(tagEnum(c)):
-      result = cast[CallConv](tag(c))
+      result = cast[CallConv](cursorTagId(c))
     else:
       result = NoCallConv
   elif c.kind == Ident:
-    let tagId = pool.tags.getOrIncl(pool.strings[c.litId])
+    let tagId = globalTags.registerTag(pool.strings[c.strId])
     if rawTagIsCallConv(cast[TagEnum](tagId)):
       result = cast[CallConv](tagId)
     else:
@@ -88,16 +88,16 @@ proc callConvKind*(c: Cursor): CallConv {.inline.} =
     result = NoCallConv
 
 proc exprKind*(c: Cursor): LengExpr {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsLengExpr(tagEnum(c)):
-      result = cast[LengExpr](tag(c))
+      result = cast[LengExpr](cursorTagId(c))
     else:
       result = NoExpr
   else:
     result = NoExpr
 
 proc symKind*(c: Cursor): LengSym {.inline.} =
-  if c.kind == ParLe:
+  if c.isTagLit:
     if rawTagIsLengSym(tagEnum(c)):
       result = cast[LengSym](tagEnum(c))
     else:
@@ -112,17 +112,9 @@ proc tracebackTypeC*(n: Cursor): Cursor =
     unsafeDec result
 
 
-proc tagToken*(t: LengType; info = NoLineInfo): PackedToken =
-  result = tagToken(TagId(t), info)
-
-# Backwards-compat alias for callers that still use the old name; the body
-# now goes through `tagToken` so the new (kind|tag|jump) layout is used.
-template parLeToken*(t: LengType; info = NoLineInfo): PackedToken =
-  tagToken(t, info)
-
 # Read helpers:
 
-template elementType*(n: Cursor): Cursor = n.firstSon
+template elementType*(n: Cursor): Cursor = n.childCursor
 
 type
   TypeDecl* = object

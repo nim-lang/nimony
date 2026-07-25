@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3618             )
+(.indexat 3622             )
 (stmts@,2,tests/nimony/nosystem/tvarargs.nim
  (type@2,1 :int.0.
   (i 64).
@@ -44,7 +44,7 @@
      (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.0)))
+   (ret@2,2 result.0)))
  (func@,B :typeof.0.@5
   (typeof). .
   (params@B
@@ -171,7 +171,7 @@
  (x@G,7 typeOfProc.0. 53)
  (x@G,7 typeOfIter.0. 72)
  (x dollar`.TypeOfMode.0. 74)
- (x typeof.0. 361)
+ (x typeof.0. 365)
  (x string.0. 218)
  (x \2B.0. 50)
  (x \2D.0. 170)

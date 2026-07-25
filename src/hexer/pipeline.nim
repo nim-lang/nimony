@@ -29,7 +29,7 @@ when defined(verifyArc):
 
 proc publishHooks*(n: var Cursor) =
   case n.kind
-  of ParLe:
+  of TagLit:
     case n.stmtKind
     of ProcS, FuncS, MacroS, MethodS, ConverterS:
       let decl = asRoutine(n)
@@ -40,8 +40,6 @@ proc publishHooks*(n: var Cursor) =
     else:
       n.into:
         while n.hasMore: publishHooks(n)
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in publishHooks"
   else:
     inc n
 
@@ -90,7 +88,6 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
     var hookReader = beginRead(c.liftingCtx[].dest)
     #echo "HOOKS: ", toString(hookReader)
     publishHooks hookReader
-    endRead(c.liftingCtx[].dest)
 
   pass.dest.add move(c.liftingCtx[].dest)
   pass.dest.addParRi()

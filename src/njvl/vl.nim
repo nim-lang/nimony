@@ -48,14 +48,14 @@ proc trParams(c: var Context; params: Cursor) =
   n = sub(n) # skips (params; peek only, never left
   while n.hasMore:
     let r = takeLocal(n, SkipFinalParRi)
-    if r.name.kind == SymbolDef:
+    if r.name.isSymbolDef:
       c.vt.newValueFor r.name.symId # register parameter as known location
 
 proc trCfvar(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
-    assert n.kind == SymbolDef
+    assert n.isSymbolDef
     let s = n.symId
-    dest.takeToken n
+    dest.takeTree n
     # Do versioning for cfvars!
     newValueFor c.vt, s
 
@@ -110,14 +110,14 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if v < 0:
       dest.addSymUse s, info
     else:
-      dest.add tagToken("v", info)
+      dest.addParLe("v", info)
       dest.addSymUse s, info
       dest.addIntLit v, info
       dest.addParRi()
     inc n
-  of UnknownToken, EofToken, DotToken, Ident, SymbolDef, StringLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
-  of ParLe:
+  of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef, StrLit, CharLit, IntLit, UIntLit, FloatLit:
+    dest.takeTree n
+  of TagLit:
     case n.exprKind
     of CallKinds:
       trCall c, dest, n
@@ -144,11 +144,11 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeInto dest, n:
           while n.hasMore:
             trExpr c, dest, n
-  of ParRi: bug "Unmatched ParRi"
+  else: bug "Unmatched ParRi" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add tagToken("store", info)
+  dest.addParLe("store", info)
   let storeStart = n
   n = sub(n)
   trExpr c, dest, n # source
@@ -164,7 +164,7 @@ proc trStore(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.add n # "ite" or "itec"
+  dest.addParLe(n.cursorTagId, n.info) # "ite" or "itec"
   let iteStart = n
   n = sub(n)
   trExpr c, dest, n
@@ -189,7 +189,7 @@ proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let joinData = combineJoin(c.vt, IfJoin)
   for s, j in joinData:
     if isValid(j):
-      dest.add tagToken("join", info)
+      dest.addParLe("join", info)
       dest.addSymUse s, info
       dest.addIntLit j.newv, info
       dest.addIntLit j.old1, info
@@ -213,7 +213,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openSection c.vt
 
-  dest.add n # "loop"
+  dest.addParLe(n.cursorTagId, n.info) # "loop"
   let loopStart = n
   n = sub(n)
 
@@ -221,7 +221,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   trStmt c, dest, n # pre condition
   trExpr c, dest, n # condition
   assert n.stmtKind == StmtsS
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   let bodyStart = n
   n = sub(n)
   while n.hasMore:
@@ -234,7 +234,7 @@ proc trLoop(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # as we don't know if the loop ran a single time or not!
   for s, j in joinData:
     if isValid(j):
-      dest.add tagToken("join", n.info)
+      dest.addParLe("join", n.info)
       dest.addSymUse s, n.info
       dest.addIntLit j.newv, n.info
       dest.addIntLit j.old1, n.info
@@ -250,17 +250,17 @@ proc trKill(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Do not version the variables here!
   takeInto dest, n:
     while n.hasMore:
-      assert n.kind == Symbol
+      assert n.isSymbol
       let s = n.symId
       killVar c.vt, s
-      dest.takeToken n
+      dest.takeTree n
 
 proc trJtrue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     while n.hasMore:
-      assert n.kind == Symbol
+      assert n.isSymbol
       let s = n.symId
-      dest.takeToken n
+      dest.takeTree n
       # Do versioning for cfvars!
       newValueFor c.vt, s
 
@@ -317,13 +317,12 @@ proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
   var elimJumps = ensureMove(pass.dest)
   var n = beginRead(elimJumps)
   assert n.stmtKind == StmtsS, $n.kind
-  result.add n
+  result.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       trStmt c, result, n
   result.addParRi()
   c.typeCache.closeScope()
-  endRead elimJumps
 
 when isMainModule:
   from std/os import paramStr, paramCount

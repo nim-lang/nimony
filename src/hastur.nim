@@ -14,7 +14,8 @@ when defined(windows):
 else:
   import std/posix
 
-import lib / [nifindexes, lineinfos, argsfinder]
+import lib / [nifindexes, argsfinder]
+from lib / nifpools import NoLineInfo
 import gear2 / modnames
 
 const
@@ -2261,8 +2262,8 @@ proc handleCmdLine =
 
   of "boot":
     buildNimony()
-    var bootArgs = "-d:virtualParRi"
-    if release: bootArgs.add " --opt:speed"
+    var bootArgs = ""
+    if release: bootArgs.add "--opt:speed"
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
       bootArgs.add quoteShell(a)

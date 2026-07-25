@@ -41,5 +41,5 @@
    (ite ´err.2
     (stmts
      (jtrue ´g.1)).)
-   (kill ´r.0 ´g.1)))
+   (kill ´g.1 ´r.0)))
  (kill ´r.0.main))

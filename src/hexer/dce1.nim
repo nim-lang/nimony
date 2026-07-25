@@ -24,12 +24,12 @@ type
 
 proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
   case n.kind
-  of ParLe:
+  of TagLit:
     case n.stmtKind
     of ProcS, TypeS, VarS, ConstS, GvarS, TvarS:
       n.into:
         var newOwner = owner
-        if n.kind == SymbolDef:
+        if n.isSymbolDef:
           let symName = pool.syms[n.symId]
           if isInstantiation(symName):
             a.offers.incl(n.symId)
@@ -44,7 +44,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         var hasExportc = false
         n.into:
           while n.hasMore:
-            if n.kind == ParLe and n.pragmaKind == ExportcP:
+            if n.isTagLit and n.pragmaKind == ExportcP:
               hasExportc = true
             tr n, a, owner
         if hasExportc and owner != SymId(0):
@@ -66,8 +66,8 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         if not a.uses.hasKey(owner): a.uses[owner] = initHashSet[SymId]()
         a.uses.getOrQuit(owner).incl(n.symId)
     inc n
-  of SymbolDef, UnknownToken, EofToken, DotToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit: inc n
-  of ParRi: raiseAssert "ParRi should not be encountered here"
+  of SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit: inc n
+  else: raiseAssert "ParRi should not be encountered here" # classic ParRi only
 
 const
   depName = "uses"
@@ -99,14 +99,14 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
   var n = beginRead(buf)
   result = ModuleAnalysis()
   if n.stmtKind == StmtsS:
-    let depTag = pool.tags.getOrIncl(depName)
-    let offerTag = pool.tags.getOrIncl(offerName)
-    let rootTag = pool.tags.getOrIncl(rootName)
+    let depTag = globalTags.registerTag(depName)
+    let offerTag = globalTags.registerTag(offerName)
+    let rootTag = globalTags.registerTag(rootName)
     n.into:                                     # (stmts ...)
       while n.hasMore:
-        if n.kind != ParLe:
+        if not n.isTagLit:
           raiseAssert infile & ": expected ParLe"
-        if n.tag == rootTag:
+        if n.cursorTagId == rootTag:
           n.into:                               # (roots ...)
             while n.hasMore:
               if n.kind == Symbol:
@@ -114,7 +114,7 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
                 skip n
               else:
                 raiseAssert infile & ": expected Symbol"
-        elif n.tag == depTag:
+        elif n.cursorTagId == depTag:
           n.into:                               # (uses ...)
             let key = n.symId
             result.uses[key] = initHashSet[SymId]()
@@ -125,7 +125,7 @@ proc readModuleAnalysis*(infile: string): ModuleAnalysis =
                 skip n
               else:
                 raiseAssert infile & ": expected Symbol"
-        elif n.tag == offerTag:
+        elif n.cursorTagId == offerTag:
           n.into:                               # (offers ...)
             while n.hasMore:
               if n.kind == Symbol:
@@ -141,4 +141,3 @@ proc writeDceOutput*(buf: var TokenBuf; outfile, dottedSuffix: string) =
   ## avoiding the file read + parse step.
   let n = beginRead(buf)
   prepDce(outfile, n, dottedSuffix)
-  endRead(buf)

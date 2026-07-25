@@ -19,8 +19,8 @@
 
 import std / assertions
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
-import intermodinliner   # runInterModuleInliner (nifcursors)
+import nifpools
+import intermodinliner   # runInterModuleInliner (nifpools)
 
 proc runImi*(input, suffix, xnifDir: string; changed: var bool): string =
   ## Parse the `.c.nif` at `input`, run inter-module inlining, and return the

@@ -14,6 +14,11 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
 import ".." / lib / nifreader as rd
+from ".." / lib / nifcoreparse import parse
+# qualified-only: the private-pool plugin-input copy must not fight the
+# global-pool overloads nifprelude puts in scope
+from ".." / lib / nifcore import nil
+from ".." / lib / bif import storeToString, isBifFile, UnusedNameTag
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -145,14 +150,14 @@ proc moduleNameFromPath*(path: string): string =
 
 proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var bool; allowAs: bool) =
   case n.kind
-  of StringLit:
-    let s = pool.strings[n.litId]
+  of StrLit:
+    let s = pool.strings[n.strId]
     # string literal could contain a path or .nim extension:
     let name = moduleNameFromPath(s)
     res.add ImportedFilename(path: s, name: name)
     inc n
   of Ident:
-    let s = pool.strings[n.litId]
+    let s = pool.strings[n.strId]
     res.add ImportedFilename(path: s, name: s)
     inc n
   of Symbol:
@@ -160,7 +165,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
     extractBasename s
     res.add ImportedFilename(path: s, name: s)
     inc n
-  of ParLe:
+  of TagLit:
     case exprKind(n)
     of OchoiceX, CchoiceX:
       n.peekInto:
@@ -247,7 +252,7 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
       let orig = n
       inc n
       let start = res.len
-      if n.kind == ParRi:
+      if not n.hasMore:
         hasError = true
       else:
         filenameVal(n, res, hasError, allowAs)
@@ -256,14 +261,14 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
           inc n
           if n.substructureKind == KvU:
             inc n
-            if n.kind == Ident and pool.strings[n.litId] == "plugin":
+            if n.isIdent and pool.strings[n.strId] == "plugin":
               inc n
-              if n.kind == StringLit:
+              if n.isStringLit:
                 for i in start ..< res.len:
-                  res[i].plugin = pool.strings[n.litId]
+                  res[i].plugin = pool.strings[n.strId]
                   success = true
                 inc n
-                if n.kind == ParRi: inc n
+                if not n.hasMore: inc n
                 else: hasError = true
         if not success:
           n = orig
@@ -301,17 +306,14 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
   exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
     quoteShell(src)
 
-  var stream = nifstreams.open(src)
-  try:
-    discard processDirectives(stream.r)
-    result = fromStream(stream)
-  finally:
-    nifstreams.close(stream)
-
-proc getFile*(info: PackedLineInfo): string =
-  let fid = unpack(pool.man, info).file
+  var r = rd.open(src)
+  result = createTokenBuf()
+  parse(r, result, denseLineInfo = true)
+  rd.close(r)
+proc getFile*(info: NifLineInfo): string =
+  let fid = info.file
   if fid.isValid:
-    result = pool.files[fid]
+    result = pool.filenames[fid]
   else:
     result = ""
 
@@ -335,7 +337,7 @@ proc runValidatorOnPlugin(c: var SemContext; nf: string) =
     return
   exec quoteShell(v) & " " & quoteShell(nf)
 
-proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
   ## Build a plugin's `.nim` source as an executable. Plugins import
   ## `lib/plugins.nim` and are compiled by Nimony itself.
   runValidatorOnPlugin(c, nf)
@@ -382,9 +384,24 @@ proc writeFileIfChanged(file, content: string) {.canRaise.} =
 
 const pluginTempBase = "tmp"
 
-proc addUnusedName(input, name: string): string =
-  result = "(.unusedname " & name & ")\n"
-  result.add input
+proc bifPluginInput(input: var TokenBuf; firstName: string): string =
+  ## Serializes a plugin input as in-memory `.bif` bytes: a private-pool copy
+  ## of `input` behind a leading `(unusedname firstName)` tree — the binary
+  ## carrier of what the text protocol's `.unusedname` directive transported
+  ## (bif has no directive channel; `plugins.loadPluginTree` peels the tree
+  ## off). The private pool matters twice over: the cache filename is a
+  ## checksum of these bytes and the global pool's ids depend on compile
+  ## history, and storing a global-pool buffer would write that whole pool.
+  var buf = nifcore.createTokenBuf(input.len + 4)
+  nifcore.openTag(buf, registerTag(buf.tags, UnusedNameTag))
+  nifcore.addSymUse(buf, firstName)
+  nifcore.closeTag(buf)
+  var n = beginRead(input)
+  while n.hasMore:
+    nifcore.addSubtree(buf, n)
+    skip n
+  endRead(n)
+  result = storeToString(buf)
 
 proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
                               nextName: string) =
@@ -404,15 +421,19 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
   if nextDisamb > firstDisamb:
     c.locals[pluginTempBase] = nextDisamb - 1
 
-proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
-                pluginName: string; input: string; additionalInput = "") =
-  ## Runs a plugin with a NIF `.unusedname` hint and registers every generated
-  ## local symbol as fresh for subsequent semantic checking.
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
+                pluginName: string; input: var TokenBuf;
+                additionalInput: var TokenBuf) =
+  ## Runs a plugin with a gensym hint and registers every generated local
+  ## symbol as fresh for subsequent semantic checking. The inputs are written
+  ## as binary `.bif` behind the unchanged `.in.nif`/`.types.nif` names — the
+  ## plugin-side loader sniffs the header (and still accepts text, so
+  ## hand-written inputs keep working). Inspect one with `niftools bif2nif`.
   let firstDisamb = c.locals.getOrDefault(pluginTempBase, -1) + 1
   let firstName = pluginTempBase & "." & $firstDisamb
-  let pluginInput = addUnusedName(input, firstName)
+  let pluginInput = bifPluginInput(input, firstName)
   let pluginAdditionalInput =
-    if additionalInput.len > 0: addUnusedName(additionalInput, firstName)
+    if additionalInput.len > 0: bifPluginInput(additionalInput, firstName)
     else: ""
 
   let p = splitFile(pluginName)
@@ -445,14 +466,43 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
       cmd &= " "
       cmd &= quoteShell(inputFileB)
     exec cmd
-  var s = nifstreams.open(outputFile)
   var nextName = ""
-  try:
-    nextName = rd.firstUnusedName(s.r)
-    parse s, dest, NoLineInfo
-  finally:
-    close s
+  if isBifFile(outputFile):
+    # Binary output: the tokens carry absolute line infos, so no parentSeed
+    # resolution is needed; the gensym hint arrives as the leading
+    # `(unusedname X)` tree. `addSubtree` re-interns the fresh-pool content
+    # into the caller's global-pool world.
+    var m = bif.load(outputFile)
+    if m.buf.len > 0:
+      var n = beginRead(m.buf)
+      if n.kind == TagLit and
+          tagName(m.buf.tags, n.cursorTagId) == UnusedNameTag:
+        n.into:
+          while n.hasMore:
+            if n.kind == Symbol:
+              nextName = symName(n)
+            skip n
+      while n.hasMore:
+        addSubtree(dest, n)
+        skip n
+      endRead(n)
+  else:
+    # Text output (hand-written or third-party plugins).
+    var r = rd.open(outputFile)
+    nextName = rd.firstUnusedName(r)
+    # seed the parse with the invocation site's absolute info: text plugin
+    # output copies the (file-less, relative) infos of its input, so without
+    # an anchor they resolve to NoFile and diagnostics print as `???`
+    parse(r, dest, parentSeed = info, denseLineInfo = true)
+    rd.close(r)
   registerGeneratedSymbols(c, firstDisamb, nextName)
+
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
+                pluginName: string; input: var TokenBuf) =
+  ## Single-input form (template/for-loop/module plugins; type plugins pass
+  ## their triggering type definitions as `additionalInput`).
+  var noAdditional = nifcore.createTokenBuf(1)
+  runPlugin(c, dest, info, pluginName, input, noAdditional)
 
 proc runProgram(file: string; nimcachePath: string; usedModules: HashSet[string];
                 commandLineArgs: string;
@@ -531,19 +581,16 @@ proc runEval*(c: var SemContext; dest: var TokenBuf; srcName: string; src: Token
       deps.add c.importSnippets
     deps.addParRi()
     let depsFile = c.g.config.nifcachePath / srcName & ".p.deps.nif"
-    writeFile deps, depsFile
-
+    writeFile(depsFile, toString(deps, true))
     let (output, exitCode) = runProgram(progfile, c.g.config.nifcachePath, usedModules,
                                         c.commandLineArgs, sourceDir)
     if exitCode != 0:
       result = ensureMove(output)
     else:
       let outfile = c.g.config.nifcachePath / srcName.addFileExt(".out.nif")
-      var s = nifstreams.open(outfile)
-      try:
-        parse s, dest, NoLineInfo
-      finally:
-        close s
+      var r = rd.open(outfile)
+      parse(r, dest)
+      rd.close(r)
       result = ""  # success: caller interprets "" as no error
   except:
     result = "I/O error while evaluating " & srcName

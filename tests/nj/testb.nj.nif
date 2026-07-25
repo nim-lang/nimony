@@ -29,7 +29,7 @@
        (call echo.0 "after if without else")))
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0)))
+   (kill a.0 ´r.0)))
  (proc :test2.0 . . .
   (params). . .
   (stmts
@@ -54,7 +54,7 @@
        (call echo.0 "after if with else")).)
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0)))
+   (kill a.0 ´r.0)))
  (proc :test3.0 . . .
   (params). . .
   (stmts
@@ -84,7 +84,7 @@
        (call echo.0 "after outer if")).)
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0 b.0)))
+   (kill a.0 b.0 ´r.0)))
  (proc :test4.0 . . .
   (params). . .
   (stmts
@@ -123,7 +123,7 @@
        (call echo.0 "level 0 after")).)
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0 c.0 b.0)))
+   (kill a.0 b.0 c.0 ´r.0)))
  (proc :test5.0 . . .
   (params). . .
   (stmts
@@ -137,7 +137,7 @@
      (jtrue ´r.0))
     (stmts
      (call echo.0 "after return if")))
-   (kill ´r.0 a.0)))
+   (kill a.0 ´r.0)))
  (proc :test6.0 . . .
   (params). . .
   (stmts
@@ -160,7 +160,7 @@
        (call echo.0 "stmt3")))
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0)))
+   (kill a.0 ´r.0)))
  (proc :test7.0 . . .
   (params). . .
   (stmts
@@ -194,7 +194,7 @@
        (call echo.0 "after outer if")).)
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0 b.0)))
+   (kill a.0 b.0 ´r.0)))
  (proc :test8.0 . . .
   (params). . .
   (stmts
@@ -209,7 +209,7 @@
      (jtrue ´g.1))
     (stmts
      (call echo.0 "after block break")))
-   (kill ´r.0 a.0 ´g.1)))
+   (kill a.0 ´g.1 ´r.0)))
  (proc :test9.0 . . .
   (params). . .
   (stmts
@@ -238,7 +238,7 @@
          (call echo.0 "after second if")))))
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0 b.0)))
+   (kill a.0 b.0 ´r.0)))
  (proc :test10.0 . . .
   (params). . .
   (stmts
@@ -287,5 +287,5 @@
        (continue .)).)
      (kill ´g.1)
      (continue .)))
-   (kill ´r.0 a.0 d.0 c.0 b.0)))
+   (kill a.0 b.0 c.0 d.0 ´r.0)))
  (kill ´r.0.main))

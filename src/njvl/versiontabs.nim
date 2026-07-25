@@ -16,6 +16,15 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls]
 
+
+# nifcore has no ParLe/ParRi token kinds. The journal's section delimiters
+# are raw marker tokens that are never cursor-walked: a jump-0 TagLit opens
+# a section, a DotToken closes it (only Symbol entries appear in between).
+const SectionOpen = TagLit
+const SectionClose = DotToken
+proc sectionOpenToken(): NifToken {.inline.} =
+  tagLitToken(cast[TagId](uint32(ord(StmtsS))))
+proc sectionCloseToken(): NifToken {.inline.} = dotToken()
 type
   VersionTab* = object
     history: TokenBuf
@@ -24,8 +33,18 @@ type
 proc createVersionTab*(): VersionTab =
   result = VersionTab(history: createTokenBuf(100), currentVersion: initTable[SymId, int]())
 
+proc journalSymId(n: NifToken): SymId {.inline.} =
+  ## Decodes a journal entry written by `newValueFor`. PRIVATE on purpose: it is
+  ## only sound because this module writes those entries as raw pool refs
+  ## (`symToken`), never in the inline short-name encoding — the general case
+  ## needs a Cursor and a pool, which a journal of loose tokens has not got.
+  SymId(uoperand(n) shr 1)
+
 proc newValueFor*(v: var VersionTab, symId: SymId) =
-  v.history.addSymUse symId, NoLineInfo
+  # raw pool-ref token (never inline): `combineJoin` reads it back with
+  # `journalSymId`, by raw index, which an inline-encoded short symbol would
+  # corrupt. The pairing is this module's invariant — see `journalSymId`.
+  v.history.add symToken(symId)
   v.currentVersion.mgetOrPut(symId, -1) += 1
 
 proc getVersion*(v: VersionTab, symId: SymId): int =
@@ -39,10 +58,10 @@ proc openSection*(v: var VersionTab) =
   # `history` is a marker journal that `combineJoin` scans BACKWARDS by
   # index; the parens are raw section delimiters, not a tree — bypass
   # sealing/ParRi elision so the closing markers stay physical.
-  v.history.addRaw parLeToken(StmtsS, NoLineInfo)
+  v.history.add sectionOpenToken()
 
 proc closeSection*(v: var VersionTab) =
-  v.history.addRaw parRiToken(NoLineInfo)
+  v.history.add sectionCloseToken()
 
 type
   JoinVar* = object
@@ -56,22 +75,22 @@ type
 proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
   # we know the else branch as at the end of our `v`:
   assert v.history.len >= 1
-  assert v.history[v.history.len - 1].kind == ParRi
+  assert v.history[v.history.len - 1].kind == SectionClose
   var i = v.history.len - 2
   result = initTable[SymId, JoinVar]()
   # traverse `else`, `then` branches. Or for loops just their body.
   var nested = ord(mode == IfJoin)
   while i >= 0:
     case v.history[i].kind
-    of ParLe:
+    of SectionOpen:
       dec i
       dec nested
       if nested == 0: break
-    of ParRi:
-      # When traversing backwards, ParRi means entering a nested section
+    of SectionClose:
+      # When traversing backwards, a close marker means entering a nested section
       inc nested
     of Symbol:
-      let s = v.history[i].symId
+      let s = journalSymId(v.history[i])
       var entry = addr result.mgetOrPut(s, JoinVar(newv: 0, old1: 0, old2: 0))
       # the old counters are diffs for now
       if nested == 1:

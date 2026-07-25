@@ -21,9 +21,6 @@ type
     vtableType*: Cursor # UncheckedArray[pointer]
     continuationType*: Cursor
 
-proc tagToken(tag: string; info: PackedLineInfo = NoLineInfo): PackedToken {.inline.} =
-  parLeToken(pool.tags.getOrIncl(tag), info)
-
 const
   sso* = true ## set to true to enable SSO string implementation
 
@@ -60,53 +57,53 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result = BuiltinTypes(mem: createTokenBuf(30))
 
   let autoPos = result.mem.len
-  result.mem.add tagToken"auto"
+  result.mem.addParLe "auto"
   result.mem.addParRi()
 
   let stringPos = result.mem.len
   when true:
-    result.mem.add symToken(pool.syms.getOrIncl(StringName), NoLineInfo)
+    result.mem.addSymUse(pool.syms.getOrIncl(StringName), NoLineInfo)
     result.mem.addDotToken()
   else:
-    result.mem.add tagToken"string"
+    result.mem.addParLe "string"
     result.mem.addParRi()
 
   let boolPos = result.mem.len
-  result.mem.add tagToken"bool"
+  result.mem.addParLe "bool"
   result.mem.addParRi()
 
-  let configBits = pool.integers.getOrIncl(bits)
+  let configBits = bits
   let intPos = result.mem.len
-  result.mem.add tagToken"i"
-  result.mem.add intToken(configBits, NoLineInfo)
+  result.mem.addParLe "i"
+  result.mem.addIntLit(configBits, NoLineInfo)
   result.mem.addParRi()
 
   let uintPos = result.mem.len
-  result.mem.add tagToken"u"
-  result.mem.add intToken(configBits, NoLineInfo)
+  result.mem.addParLe "u"
+  result.mem.addIntLit(configBits, NoLineInfo)
   result.mem.addParRi()
 
   let floatPos = result.mem.len
-  result.mem.add tagToken"f"
-  result.mem.add intToken(pool.integers.getOrIncl(64), NoLineInfo)
+  result.mem.addParLe "f"
+  result.mem.addIntLit(64, NoLineInfo)
   result.mem.addParRi()
 
   let charPos = result.mem.len
-  result.mem.add tagToken"c"
-  result.mem.add intToken(pool.integers.getOrIncl(8), NoLineInfo)
+  result.mem.addParLe "c"
+  result.mem.addIntLit(8, NoLineInfo)
   result.mem.addParRi()
 
   let voidPos = result.mem.len
-  result.mem.add dotToken(NoLineInfo)
+  result.mem.addDotToken(NoLineInfo)
 
   let niltPos = result.mem.len
-  result.mem.add tagToken"nilt"
+  result.mem.addParLe "nilt"
   result.mem.addParRi()
 
   template addBitsType(tag: string, bits: int): int =
     let pos = result.mem.len
-    result.mem.add tagToken(tag)
-    result.mem.add intToken(pool.integers.getOrIncl(bits), NoLineInfo)
+    result.mem.addParLe(tag)
+    result.mem.addIntLit(bits, NoLineInfo)
     result.mem.addParRi()
     pos
 
@@ -124,32 +121,31 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   let float64Pos = addBitsType("f", 64)
 
   let tuplePos = result.mem.len
-  result.mem.add tagToken"tuple"
+  result.mem.addParLe "tuple"
   result.mem.addParRi()
 
   let untypedPos = result.mem.len
-  result.mem.add tagToken"untyped"
+  result.mem.addParLe "untyped"
   result.mem.addParRi()
 
   let cstringPos = result.mem.len
-  result.mem.add tagToken"cstring"
-  result.mem.add tagToken"notnil"
+  result.mem.addParLe "cstring"
+  result.mem.addParLe "notnil"
   result.mem.addParRi() # close notnil
   result.mem.addParRi() # close cstring
 
   # UncheckedArray[pointer] = (uarray (ptr (void)))
   let vtablePos = result.mem.len
-  result.mem.add tagToken"uarray"
-  result.mem.add tagToken"ptr"
-  result.mem.add tagToken"void"
+  result.mem.addParLe "uarray"
+  result.mem.addParLe "ptr"
+  result.mem.addParLe "void"
   result.mem.addParRi() # close void
   result.mem.addParRi() # close ptr
   result.mem.addParRi() # close uarray
 
   let continuationPos = result.mem.len
-  result.mem.add symToken(pool.syms.getOrIncl(ContinuationName), NoLineInfo)
+  result.mem.addSymUse(pool.syms.getOrIncl(ContinuationName), NoLineInfo)
 
-  result.mem.freeze()
 
   result.autoType = result.mem.cursorAt(autoPos)
   result.stringType = result.mem.cursorAt(stringPos)
@@ -177,7 +173,7 @@ proc createBuiltinTypes*(bits: int): BuiltinTypes =
   result.continuationType = result.mem.cursorAt(continuationPos)
 
 proc isStringType*(a: Cursor): bool {.inline.} =
-  result = a.kind == Symbol and a.symId == pool.syms.getOrIncl(StringName)
+  result = a.isSymbol and a.symId == pool.syms.getOrIncl(StringName)
   #a.typeKind == StringT: StringT now unused!
 
 proc isSomeStringType*(a: Cursor): bool {.inline.} =
