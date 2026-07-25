@@ -218,6 +218,7 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
     # what phase 3 would do.
     inc c.routine.inLoop
     inc c.routine.inGeneric
+    inc c.inGenericDefinition
     c.openScope()  # parameter scope
     c.openScope()  # body scope
 
@@ -235,6 +236,7 @@ proc tryPromoteTemplateBody*(c: var SemContext; sym: SymId): bool =
 
     c.closeScope()  # body scope
     c.closeScope()  # parameter scope
+    dec c.inGenericDefinition
     c.routine = oldRoutine
 
     # Closing `)` for the template

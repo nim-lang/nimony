@@ -545,6 +545,7 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     takeTree dest, n
   elif n.substructureKind == TypevarsU:
     inc c.routine.inGeneric
+    inc c.inGenericDefinition
     takeInto dest, n:
       while n.hasMore:
         semGenericParam c, dest, n
@@ -1004,11 +1005,17 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       buildErr c, dest, it.n.info, "TR pattern not implemented"
       skip it.n
     c.routine = createSemRoutine(kind, c.routine)
+    # Save/restore rather than a matching `dec`: both the template case below
+    # and `semGenericParams` bump `inGenericDefinition`, and an error path must
+    # not leak either increment into the enclosing definition. Captured BEFORE
+    # this routine's own increments.
+    let outerGenericDefinition = c.inGenericDefinition
     # 'break' and 'continue' are valid in a template regardless of whether we
     # really have a loop or not:
     if kind == TemplateY:
       inc c.routine.inLoop
       inc c.routine.inGeneric
+      inc c.inGenericDefinition
 
     try:
       c.openScope() # open parameter scope
@@ -1075,6 +1082,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         transformDefer dest, beforeBody
       dest.addParRi(it.n.endInfo)
     finally:
+      c.inGenericDefinition = outerGenericDefinition
       c.routine = c.routine.parent
   if newName == NoSymId:
     producesVoid c, dest, info, it.typ
@@ -1325,6 +1333,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
     let beforeGenerics = dest.len
     var isGeneric: bool
     let prevGeneric = c.routine.inGeneric
+    let prevGenericDefinition = c.inGenericDefinition
     let prevInst = c.routine.inInst
     if n.isDotToken:
       takeTree dest, n
@@ -1401,6 +1410,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
           dest.takeTree n # body
     if isGeneric:
       closeScope c
+      c.inGenericDefinition = prevGenericDefinition
       c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
       c.routine.inInst = prevInst
 

@@ -233,6 +233,15 @@ type
       ## tests/nimony/lookups/tforward_decl_export.nim.
     deferredCyclicImports*: seq[(string, SymId)] # (module suffix, module sym) for cyclic imports to resolve after phase1
     inTypeInst*: int # > 0 means we're inside a generic type instantiation
+    inGenericDefinition*: int
+      ## > 0 while semchecking a generic (or template) definition that has not
+      ## been instantiated yet. Unlike `c.routine.inGeneric` this is a property
+      ## of the CONTEXT, not of one routine: a nested proc, lambda or do-block
+      ## closure inside a generic body gets a fresh `c.routine` whose
+      ## `inGeneric` is 0, so code keyed off that would eagerly instantiate and
+      ## eagerly report unresolved overloads inside a body whose typevars are
+      ## still abstract (issues #2143, #2175). Maintained by save/restore at
+      ## each routine/type definition, so it survives that nesting.
     deferredLocals*: Table[StrId, Cursor]
       ## Signature-phase on-demand resolution (nim-lang/nimony#1974): toplevel
       ## let/var are deferred to the body phase, but their decl cursor is

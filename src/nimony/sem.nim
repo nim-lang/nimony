@@ -2088,7 +2088,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       let condStart = dest.len
       var phase = SemcheckBodies
       swap c.phase, phase
-      semConstBoolExpr c, dest, it.n, allowUnresolved = c.routine.inGeneric > 0
+      semConstBoolExpr c, dest, it.n, allowUnresolved = c.inGenericDefinition > 0
       swap c.phase, phase
       let condValue = cursorAt(dest, condStart).exprKind
       if not leaveUnresolved:
@@ -4549,7 +4549,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   if matches == 0:
     dest.shrink exprStart
     result = false
-  elif matches == 1 and c.routine.inGeneric == 0 and instLastMatch:
+  elif matches == 1 and c.inGenericDefinition == 0 and instLastMatch:
     # can instantiate single match
     dest.shrink exprStart
     let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, lastMatch.inferred, info)
