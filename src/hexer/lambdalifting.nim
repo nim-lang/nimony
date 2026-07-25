@@ -696,10 +696,15 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
               if n.hasMore: skip n
       addRootRef dest, info
   else:
-    let isProctypeInput = n.typeKind == ProctypeT
+    # `itertype` (a first-class closure-iterator value) has the SAME compact
+    # 4-field shape as `proctype`; treating it as an 8-field routine decl walks
+    # `BodyPos` fields past the end of the tree. Under nifcore there is no
+    # `ParRi` token to stop on, so that overrun reads off the end of the buffer
+    # and trips nifcore's cursor assert instead (issue #2177).
+    let isCompactRoutine = n.typeKind in {ProctypeT, ItertypeT}
     takeInto dest, n:
-      if isProctypeInput:
-        # new layout: nilability, params, retType, pragmas
+      if isCompactRoutine:
+        # compact layout: nilability, params, retType, pragmas
         for i in 0..3:
           if not n.hasMore: break
           tre c, dest, n

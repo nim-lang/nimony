@@ -2088,7 +2088,7 @@ proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: When
       let condStart = dest.len
       var phase = SemcheckBodies
       swap c.phase, phase
-      semConstBoolExpr c, dest, it.n, allowUnresolved = c.routine.inGeneric > 0
+      semConstBoolExpr c, dest, it.n, allowUnresolved = c.inGenericDefinition > 0
       swap c.phase, phase
       let condValue = cursorAt(dest, condStart).exprKind
       if not leaveUnresolved:
@@ -4549,7 +4549,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   if matches == 0:
     dest.shrink exprStart
     result = false
-  elif matches == 1 and c.routine.inGeneric == 0 and instLastMatch:
+  elif matches == 1 and c.inGenericDefinition == 0 and instLastMatch:
     # can instantiate single match
     dest.shrink exprStart
     let inst = c.requestRoutineInstance(lastMatch.fn.sym, lastMatch.typeArgs, lastMatch.inferred, info)
@@ -4725,6 +4725,55 @@ proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let expected = it.typ
   it.typ = destType
   commonType c, dest, it, beforeExpr, expected
+
+proc closureProcType(c: var SemContext; typ: TypeCursor): TypeCursor =
+  ## `typ` with `.closure` added — the type of a `(toClosure X)` node. Mirrors
+  ## exactly what `typenav.getTypeImpl` computes for that node on the hexer
+  ## side, so frontend and backend agree on what the wrapper is worth.
+  var t = typ
+  let kind = t.typeKind
+  if kind notin {ProctypeT, ItertypeT}: return typ
+  var buf = createTokenBuf(16)
+  buf.addParLe kind, t.info
+  t.into:
+    buf.takeTree t          # nilability
+    buf.takeTree t          # params
+    buf.takeTree t          # return type
+    # pragmas: keep whatever is there and append `(closure)`
+    buf.addParLe PragmasU, t.info
+    if t.isDotToken:
+      inc t
+    else:
+      t.into:
+        while t.hasMore: buf.takeTree t
+    buf.addParPair ClosureP
+    buf.addParRi()
+  buf.addParRi()
+  result = typeToCursor(c, buf, 0)
+
+proc semToClosure(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(toClosure X)` is produced by `sigmatch.procTypeMatch` when a `nimcall`
+  ## routine is passed to a `.closure.` formal; `lambdalifting` lowers it later.
+  ## The frontend re-sems its own output — generic instantiation, template
+  ## expansion and `const` evaluation all run `semExpr` over an already-sem'd
+  ## tree — so it has to be able to sem this node instead of `bug`ging out
+  ## (issues #2143, #2175, #2176, #2177).
+  ##
+  ## Reporting the CLOSURE-ified type is the load-bearing part: the wrapped
+  ## argument gets re-matched against the same `.closure.` formal, and only a
+  ## type that already says `.closure.` stops `procTypeMatch` from wrapping the
+  ## wrapper. That keeps the single wrap site in the matcher, which is the one
+  ## place that sees every formal — including varargs elements.
+  let expected = it.typ
+  let before = dest.len
+  var inner = Item(n: default(Cursor), typ: c.types.autoType)
+  takeInto dest, it.n:
+    inner.n = it.n
+    semExpr c, dest, inner
+    it.n = inner.n
+  it.typ = closureProcType(c, inner.typ)
+  if classifyType(c, expected) notin {AutoT, VoidT, NoType, ErrT}:
+    commonType c, dest, it, before, expected
 
 proc semDconv(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
@@ -5298,7 +5347,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           takeTree dest, it.n
         it.typ = valIt.typ
     of ToClosureX:
-      bug "frontend should not encounter `toClosure`"
+      semToClosure c, dest, it
 
   else:
     # ParRi / EofToken / SymbolDef / UnknownToken / DotToken and anything else
