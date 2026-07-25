@@ -43,7 +43,7 @@ import ".." / njvl / [njvl_model, finalir]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-  renderer, typeprops, inferle, xints, builtintypes
+  renderer, typeprops, inferle, xints, builtintypes, features
 
 type
   BorrowableCheck = enum
@@ -68,6 +68,7 @@ type
                                        # per-exit state accumulation (journaled).
     errors: TokenBuf
     procCanRaise: bool
+    features: set[Feature]
     moduleSuffix: string
     nestedProcs: int
     loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
@@ -994,7 +995,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
       fnType = previousFormalParam
     checkNilMatch c, n, param.typ
     traverseExpr c, n
-  if needsBorrowCheck:
+  if needsBorrowCheck and not c.features.contains(LenientAliasingFeature):
     borrowCheckForCall c, args
   while fnType.hasMore: skip fnType
   fnType = paramsStart; skip fnType
@@ -1692,7 +1693,7 @@ proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string): TokenBuf =
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose = false): TokenBuf =
+proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; verbose = false): TokenBuf =
   ## Main entry point: lowers `input` to the Final IR and analyzes contracts.
   ## When `verbose` is true, every contract/init failure dumps the enclosing
   ## proc's IR to stderr to aid debugging.
@@ -1704,7 +1705,8 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; verbose
     tr: initFlowTracker(),
     flow: initFlowState(),
     loopExitLabels: initHashSet[SymId](),
-    verbose: verbose
+    verbose: verbose,
+    features: features
   )
   c.typeCache.openScope()
 
@@ -1718,6 +1720,6 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parseFromFile(infile)
-    discard analyzeContractsFinalIr(input, "main")
+    discard analyzeContractsFinalIr(input, "main", {})
 
   main(paramStr(1))
