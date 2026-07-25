@@ -1,0 +1,2 @@
+tests/nimony/mut/tlet_field_mutation.nim(12, 2) Error: cannot mutate expression a.field
+tests/nimony/mut/tlet_field_mutation.nim(15, 8) Error: cannot mutate expression o.inner.x

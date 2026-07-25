@@ -417,8 +417,11 @@ proc containsSym*(filename, name: string): bool =
   ## block and the tags/strings tables to reach `syms`, which it scans comparing
   ## just the equal-length entries. No token block is mapped and no pool `BiTable`
   ## is built, so a module that never mentions `name` is rejected far more cheaply
-  ## than a full `load`; `nim track` uses it to skip loading the whole nimcache for
-  ## a query whose symbol lives in only a handful of modules.
+  ## than a full `load`.
+  ##
+  ## NOTE: nothing calls this yet. It exists for a whole-project symbol query
+  ## (`idetools.usages` is the candidate — it currently scans every file it is
+  ## handed) and is covered by the self-test below, not by a consumer.
   ##
   ## A symbol is in `syms` iff it is stored by pool id — i.e. any name longer than
   ## `StrInlineMaxLen`, which a mangled `ident.disamb.suffix` always is; shorter

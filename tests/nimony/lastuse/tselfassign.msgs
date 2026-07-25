@@ -1,0 +1,2 @@
+tests/nimony/lastuse/tselfassign.nim(12, 7) LastUse: false
+tests/nimony/lastuse/tselfassign.nim(15, 7) LastUse: true

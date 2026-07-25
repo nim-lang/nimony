@@ -383,14 +383,19 @@ proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
   of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     assert false, "suffix token is not a value head"
 
-proc toModuleString*(b: var TokenBuf; dottedSuffix = ""; sizeHint = 0): string =
+proc toModuleString*(b: var TokenBuf; dottedSuffix = ""; sizeHint = 0;
+                     compact = false): string =
   ## Like `toString` but emits a full module file: the `(.nif27)` header with a
   ## patched `.indexat`, the body, and a trailing `(.index …)` mapping each global
   ## SymbolDef to its declaration's byte offset. `dottedSuffix` (e.g. `.mymod`)
   ## compresses self-module symbol suffixes to a trailing dot (the reader re-
   ## expands via its `thisModule`). Mirrors `nifstreams.toModuleString` so the
   ## output is byte-compatible with the canonical tooling (`reindex`).
-  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 20)
+  ##
+  ## `compact` drops the layout whitespace (`nifbuilder`'s compact mode). The
+  ## result parses identically — indentation is decoration — and is what a text
+  ## NIF costs when it is treated as a cache rather than as something to read.
+  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 20, compact)
   let patchPos = bld.addHeader27()
   var c = b.beginRead()
   var cur = NoNifLineInfo
