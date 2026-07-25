@@ -107,6 +107,7 @@ const
   KindMask*    = (1'u32 shl KindBits) - 1'u32       # 0x0F
   PayloadBits* = 32'u32 - KindBits                  # 28
   PayloadMask* = (1'u32 shl PayloadBits) - 1'u32    # 0x0FFFFFFF
+  IdPayloadMax* = PayloadMask shr 1'u32
 
   TagBits*     = 9'u32
   TagShift*    = KindBits                           # 4
@@ -142,23 +143,21 @@ proc charToken*(ch: char): NifToken {.inline.} =
 # Raw pool-ref constructors. They do NOT apply the writer's inline rule (see
 # "String/sym layout" below), so a name of at most `StrInlineMaxLen` bytes gets
 # an encoding the builders would never produce. Reach for `internedSymToken` /
-# the `add*` builders unless you own both ends of the encoding. The id bound is
-# `PayloadMask shr 1` — one bit goes to the inline/pool-ref flag, so a larger id
-# would overflow the payload instead of widening into an `ExtendedSuffix`
-# (which a single token cannot express).
-const PoolRefIdMax* = PayloadMask shr 1
-
+# the `add*` builders unless you own both ends of the encoding. The `IdPayloadMax`
+# bound is `PayloadMask shr 1` because one bit goes to the inline/pool-ref flag,
+# so a larger id would overflow the payload instead of widening into an
+# `ExtendedSuffix` (which a single token cannot express).
 proc strLitToken*(id: StrId): NifToken {.inline.} =
-  assert uint32(id) <= PoolRefIdMax
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(StrLit, uint32(id) shl 1))    # bit 0 = 0 ⇒ pool ref
 proc symToken*(id: SymId): NifToken {.inline.} =
-  assert uint32(id) <= PoolRefIdMax
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(Symbol, uint32(id) shl 1))
 proc symdefToken*(id: SymId): NifToken {.inline.} =
-  assert uint32(id) <= PoolRefIdMax
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(SymbolDef, uint32(id) shl 1))
 proc identToken*(id: StrId): NifToken {.inline.} =
-  assert uint32(id) <= PoolRefIdMax
+  assert uint32(id) <= IdPayloadMax
   NifToken(toX(Ident, uint32(id) shl 1))
 
 proc extendedSuffixToken*(high28: uint32): NifToken {.inline.} =
@@ -469,10 +468,11 @@ proc combinedPayload*(c: Cursor): uint64 {.inline.} =
   result = uint64(c.load.uoperand)
   var i = 1
   var shift = PayloadBits
-  while c.rem > i and peekAhead(c, i).kind == ExtendedSuffix:
+  while c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift < 64'u32:
     result = result or (uint64(peekAhead(c, i).uoperand) shl shift)
     inc i
     shift += PayloadBits
+  assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift >= 64'u32), "too many ExtendedSuffix tokens!"
 
 # String/sym layout (StrLit, Ident, Symbol, SymbolDef):
 #   bit 0      mode (1 = inline-short, 0 = pool ref)
@@ -1096,7 +1096,7 @@ proc internedSymToken*(p: Pool; kind: NifKind; id: SymId): NifToken =
   if s.len <= StrInlineMaxLen:
     NifToken(toX(kind, encodeInlineStr(s)))
   else:
-    assert uint32(id) <= PoolRefIdMax,
+    assert uint32(id) <= IdPayloadMax,
       "symbol id " & $id & " needs an ExtendedSuffix chain: no single token fits"
     NifToken(toX(kind, uint32(id) shl 1))
 

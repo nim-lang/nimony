@@ -675,7 +675,7 @@ proc poolRefToken(k: NifKind; id: uint32): NifToken =
   ## Ids past 2^27 would need an `ExtendedSuffix` chain; no compiler run comes
   ## anywhere near that, and emitting a wider carrier silently is worse than
   ## stopping, so this is a hard error rather than an `assert`.
-  if id > (PayloadMask shr 1):
+  if id > IdPayloadMax:
     quit "bif: pool id " & $id & " too large to remap (27-bit carrier)"
   NifToken(uint32(k) or ((id shl 1) shl KindBits))
 
