@@ -61,13 +61,13 @@ proc createContext(orig: ptr TokenBuf): Context =
 
 # ---- synthesis -----------------------------------------------------------
 
-proc addIntSynth(c: var Context; value: int64; info: PackedLineInfo): int =
+proc addIntSynth(c: var Context; value: int64; info: NifLineInfo): int =
   result = c.synth.len
   var buf = createTokenBuf(2)
   buf.addIntLit value, info
   c.synth.add buf
 
-proc addBoolSynth(c: var Context; value: bool; info: PackedLineInfo): int =
+proc addBoolSynth(c: var Context; value: bool; info: NifLineInfo): int =
   result = c.synth.len
   var buf = createTokenBuf(2)
   let tag = if value: TrueTagId else: FalseTagId
@@ -75,11 +75,11 @@ proc addBoolSynth(c: var Context; value: bool; info: PackedLineInfo): int =
   buf.addParRi()
   c.synth.add buf
 
-proc recordInt(c: var Context; pos: int; value: int64; info: PackedLineInfo) =
+proc recordInt(c: var Context; pos: int; value: int64; info: NifLineInfo) =
   let idx = addIntSynth(c, value, info)
   c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
 
-proc recordBool(c: var Context; pos: int; value: bool; info: PackedLineInfo) =
+proc recordBool(c: var Context; pos: int; value: bool; info: NifLineInfo) =
   let idx = addBoolSynth(c, value, info)
   c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
 
@@ -88,7 +88,7 @@ proc recordBool(c: var Context; pos: int; value: bool; info: PackedLineInfo) =
 proc fold(c: var Context; n: var Cursor): FoldResult
 
 proc foldBinaryTyped(c: var Context; n: var Cursor; op: LengExpr;
-                     pos: int; info: PackedLineInfo): FoldResult =
+                     pos: int; info: NifLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var l, r = FoldResult(kind: NoFold)
   n.into:
@@ -111,7 +111,7 @@ proc foldBinaryTyped(c: var Context; n: var Cursor; op: LengExpr;
   result = FoldResult(kind: FoldInt, i: v)
 
 proc foldUnaryTyped(c: var Context; n: var Cursor; op: LengExpr;
-                    pos: int; info: PackedLineInfo): FoldResult =
+                    pos: int; info: NifLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var inner = FoldResult(kind: NoFold)
   n.into:
@@ -127,7 +127,7 @@ proc foldUnaryTyped(c: var Context; n: var Cursor; op: LengExpr;
   result = FoldResult(kind: FoldInt, i: v)
 
 proc foldCmpTyped(c: var Context; n: var Cursor; op: LengExpr;
-                  pos: int; info: PackedLineInfo): FoldResult =
+                  pos: int; info: NifLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var l, r = FoldResult(kind: NoFold)
   n.into:
@@ -146,7 +146,7 @@ proc foldCmpTyped(c: var Context; n: var Cursor; op: LengExpr;
   result = FoldResult(kind: FoldBool, b: v)
 
 proc foldBoolBin(c: var Context; n: var Cursor; op: LengExpr;
-                 pos: int; info: PackedLineInfo): FoldResult =
+                 pos: int; info: NifLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var l, r = FoldResult(kind: NoFold)
   n.into:
@@ -162,7 +162,7 @@ proc foldBoolBin(c: var Context; n: var Cursor; op: LengExpr;
   result = FoldResult(kind: FoldBool, b: v)
 
 proc foldNot(c: var Context; n: var Cursor;
-             pos: int; info: PackedLineInfo): FoldResult =
+             pos: int; info: NifLineInfo): FoldResult =
   result = FoldResult(kind: NoFold)
   var inner = FoldResult(kind: NoFold)
   n.into:

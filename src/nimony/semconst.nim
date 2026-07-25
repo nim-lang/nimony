@@ -140,7 +140,7 @@ proc semConstExpr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var value = beginRead(valueBuf)
   annotateConstantType dest, it.typ, value
 
-proc addXint*(c: var SemContext; dest: var TokenBuf; x: xint; info: PackedLineInfo) =
+proc addXint*(c: var SemContext; dest: var TokenBuf; x: xint; info: NifLineInfo) =
   var err = false
   let val = asSigned(x, err)
   if not err:

@@ -83,7 +83,7 @@ type
     kind: ScopeKind
     isTopLevel: bool
     destroyOps: seq[DestructorOp]
-    info: PackedLineInfo
+    info: NifLineInfo
     finallySection: Cursor
     parent: ptr Scope
 
@@ -94,13 +94,13 @@ type
     dest: TokenBuf
     lifter: ref LiftingCtx
 
-proc createNestedScope(kind: ScopeKind; parent: var Scope; info: PackedLineInfo;
+proc createNestedScope(kind: ScopeKind; parent: var Scope; info: NifLineInfo;
                        label = NoLabel; fin = default(Cursor)): Scope =
   Scope(label: label,
     kind: kind, destroyOps: @[], info: info, parent: addr(parent),
     isTopLevel: false, finallySection: fin)
 
-proc createEntryScope(info: PackedLineInfo): Scope =
+proc createEntryScope(info: NifLineInfo): Scope =
   Scope(label: NoLabel,
     kind: Other, destroyOps: @[], info: info, parent: nil,
     isTopLevel: true)

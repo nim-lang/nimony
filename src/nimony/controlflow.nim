@@ -134,12 +134,12 @@ proc srcPosOf(c: ControlFlow; n: Cursor): int32 =
 
 proc genLabel(c: ControlFlow): Label = Label(c.dest.len)
 
-proc jmpBack(c: var ControlFlow, p: Label; info: PackedLineInfo) =
+proc jmpBack(c: var ControlFlow, p: Label; info: NifLineInfo) =
   let diff = p.int - c.dest.len
   assert diff < 0
   c.dest.add int28Token(diff.int32, info)
 
-proc jmpForw(c: var ControlFlow; info: PackedLineInfo): Label =
+proc jmpForw(c: var ControlFlow; info: NifLineInfo): Label =
   result = Label(c.dest.len)
   c.dest.add int28Token(0, info) # destination will be patched later
 
@@ -177,7 +177,7 @@ proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
     tar.t.add load(n)
   tar.src.add srcPosOf(c, n)
 
-proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: PackedLineInfo): SymId =
+proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: NifLineInfo): SymId =
   assert not typ.isDotToken
   result = pool.syms.getOrIncl("`cf." & $c.nextVar)
   inc c.nextVar
@@ -192,7 +192,7 @@ type
     t: TokenBuf
     src: seq[int32]
 
-proc makeVar(c: var ControlFlow; info: PackedLineInfo; tar: var Target; typ: Cursor): TargetWrapper =
+proc makeVar(c: var ControlFlow; info: NifLineInfo; tar: var Target; typ: Cursor): TargetWrapper =
   case tar.m
   of IsVar:
     result = TargetWrapper(m: IsVar)

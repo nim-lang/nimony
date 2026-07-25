@@ -14,7 +14,8 @@ when defined(windows):
 else:
   import std/posix
 
-import lib / [nifindexes, lineinfos, argsfinder]
+import lib / [nifindexes, argsfinder]
+from lib / nifpools import NoLineInfo
 import gear2 / modnames
 
 const

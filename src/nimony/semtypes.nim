@@ -190,7 +190,7 @@ proc semEnumType(c: var SemContext; dest: var TokenBuf; n: var Cursor; enumType:
         baseType = c.types.int64Type # according to old codegen
     dest.replace baseType, baseTypeStart
 
-proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo) =
+proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: NifLineInfo) =
   let name = pool.strings.getOrIncl("Self")
   let result = identToSym(c, name, TypevarY)
   let s = Sym(kind: TypevarY, name: result,
@@ -313,7 +313,7 @@ proc copyPragmasWithoutHooks(dest: var TokenBuf; pragmas: Cursor) =
         dest.takeTree n
 
 proc subsGenericTypeFromArgs(c: var SemContext; dest: var TokenBuf;
-                             info: PackedLineInfo; instSuffix: string;
+                             info: NifLineInfo; instSuffix: string;
                              origin, targetSym: SymId; decl: TypeDecl; args: Cursor) =
   #[
   What we need to do is rather simple: A generic instantiation is
@@ -384,7 +384,7 @@ proc addRangeValues(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   addRangeBound c, dest, n
   addRangeBound c, dest, n
 
-proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
+proc semRangeTypeFromExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   let callStart = n # call tag
   n = sub(n)
   skip n # `..`
@@ -412,7 +412,7 @@ const InvocableTypeMagics = {ArrayT, RangetypeT, VarargsT,
   PtrT, RefT, UarrayT, SetT, StaticT, TypedescT,
   SinkT, LentT}
 
-proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: TypeKind; info: PackedLineInfo; invokeStart: Cursor) =
+proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: TypeKind; info: NifLineInfo; invokeStart: Cursor) =
   # `n` is at first arg, inside the invoke scope owned by `semInvoke`;
   # this proc consumes the remaining args and leaves the invoke scope.
   var typeBuf = createTokenBuf(16)
@@ -503,7 +503,7 @@ proc isStaticValue(n: Cursor): bool =
     result = false
 
 proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                        elemType: Cursor; info: PackedLineInfo): bool =
+                        elemType: Cursor; info: NifLineInfo): bool =
   ## Sem a generic argument bound to a value (`static`) parameter: an ordinary
   ## expression of the parameter's element type that must either be a
   ## compile-time constant or still symbolic (when used inside another

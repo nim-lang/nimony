@@ -1,5 +1,5 @@
 ## nifpools — nifcore plus the process-global literal/tag pools and the
-## PackedLineInfo bridge that nimsem/hexer are architected around. This is the
+## NifLineInfo bridge that nimsem/hexer are architected around. This is the
 ## module the frontend imports (usually via nifprelude); lengc-style code that
 ## manages its own pools imports nifcore/nifcoreparse directly. The Nim
 ## compiler's IC modules use the classic surface in nifstreams.nim instead.
@@ -13,12 +13,12 @@
 ##     `Pool.strings/syms/filenames` are plain `BiTable[_,string]`s, so
 ##     `pool.syms.getOrIncl` / `pool.strings[id]` are direct field access.
 ##
-##  2. Line info.  The frontend stamps a packed `PackedLineInfo` per token;
-##     nifcore keeps a sparse `LineInfoLit` suffix decoded to a `NifLineInfo`
-##     struct. We keep `PackedLineInfo` = the real `lineinfos` type (no alias,
-##     no collision with direct `lineinfos` importers) and pack/unpack across
-##     the boundary via the shared `lineMan`. `.info` is ~99% pass-through, so
-##     the round-trip is invisible to callers.
+##  2. Line info.  The frontend speaks nifcore's `NifLineInfo` struct
+##     directly: `.info` reads decode the token's `LineInfoLit` suffix, the
+##     info-carrying builders re-attach it via `appendLineInfo`. The classic
+##     `PackedLineInfo`/`lineMan` bridge is gone from the frontend; it
+##     survives only in nifstreams.nim for the frozen Nim-compiler side.
+##     `NoLineInfo` is kept as the frontend's name for `NoNifLineInfo`.
 ##
 ## Inline literals need no bridge: nifcore stores int/uint/float inline and
 ## code reads `intVal`/`uintVal`/`floatVal` directly.
@@ -37,11 +37,9 @@ import nifcore
 # `hasMore` for end-of-scope) — there is no classic `NifKind` shim, because
 # nimony's type-bound lookup makes `nifcore.kind(Cursor)` impossible to shadow.
 export nifcore except createTokenBuf, pool, addIdent
-# nifcore re-exports bitabs and lineinfos.{FileId,NoFile,isValid}. We need the
-# rest of lineinfos too (PackedLineInfo / LineInfoManager / pack / unpack /
-# NoLineInfo). PackedLineInfo stays the real lineinfos type — no shadowing.
-import lineinfos
-export lineinfos
+# nifcore re-exports bitabs and lineinfos.{FileId,NoFile,isValid} — all the
+# lineinfos surface the frontend still needs. PackedLineInfo/LineInfoManager/
+# pack/unpack stay out of scope here (nifstreams keeps them for the Nim side).
 import ".." / models / tags   # TagEnum + TagData (the master tag namespace)
 
 # ── Global pool / tags / line-info manager ───────────────────────────────
@@ -57,7 +55,10 @@ proc createMasterTagPool(): TagPool =
         "tag pool misalignment for " & TagData[e][0]
 
 var globalTags*: TagPool = createMasterTagPool()
-var lineMan*: LineInfoManager
+
+const NoLineInfo* = NoNifLineInfo
+  ## The frontend's classic name for "no line info". A plain `NifLineInfo`
+  ## with `NoFile`; test with `isValid`, don't compare against it.
 
 # The old global `pool` (a nifstreams `Literals`) IS a nifcore `Pool` here, so
 # `pool.strings` / `pool.syms` / `pool.filenames` resolve to real BiTable fields
@@ -86,23 +87,18 @@ proc typebits*(n: NifToken): int {.inline.} =
   ## nifcore keeps small ints inline, so the value is the signed operand.
   if n.kind == IntLit: int(n.soperand) else: 0
 
-# ── Line info bridge (PackedLineInfo <-> nifcore NifLineInfo) ─────────────
+# ── Line info: nifcore's NifLineInfo, read and written directly ──────────
 
-proc toPacked(li: NifLineInfo): PackedLineInfo =
-  if li.file.isValid: pack(lineMan, li.file, li.line, li.col)
-  else: NoLineInfo
+proc info*(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
+proc endInfo*(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
 
-proc info*(c: Cursor): PackedLineInfo {.inline.} = toPacked(rawLineInfo(c))
-proc endInfo*(c: Cursor): PackedLineInfo {.inline.} = toPacked(rawLineInfo(c))
-
-proc emitInfo(dest: var TokenBuf; info: PackedLineInfo) =
+proc emitInfo(dest: var TokenBuf; info: NifLineInfo) =
   if info.isValid:
-    let u = unpack(lineMan, info)
-    appendLineInfo(dest, u.file, u.line, u.col)
+    appendLineInfo(dest, info)
 
-proc addStrLit*(dest: var TokenBuf; s: StrId; info: PackedLineInfo) =
+proc addStrLit*(dest: var TokenBuf; s: StrId; info: NifLineInfo) =
   nifcore.addStrLit(dest, pool.strings[s]); emitInfo(dest, info)
-proc addStrLit*(dest: var TokenBuf; s: string; info: PackedLineInfo) =
+proc addStrLit*(dest: var TokenBuf; s: string; info: NifLineInfo) =
   nifcore.addStrLit(dest, s); emitInfo(dest, info)
 
 # ── End-of-scope / node predicates ───────────────────────────────────────
@@ -143,7 +139,7 @@ proc isCharLit*(c: Cursor): bool {.inline.} = hasMore(c) and load(c).kind == Cha
 # (the classic CF repurposed `UnknownToken`; nifcore has no such spare atom).
 const InlineInt* = ExtendedSuffix
 
-proc int28Token*(operand: int32; info: PackedLineInfo): NifToken {.inline.} =
+proc int28Token*(operand: int32; info: NifLineInfo): NifToken {.inline.} =
   ## CF goto/jump carrier: a DotToken with a 28-bit signed inline payload.
   ## It must NOT be an `ExtendedSuffix`: cursor `tokenWidth` greedily counts
   ## consecutive suffix tokens, so an ExtendedSuffix goto would be glued to
@@ -182,16 +178,16 @@ proc setSymId*(dest: var NifToken; sym: SymId) {.inline.} =
 
 # `buildTree` with an explicit info argument (classic signature). nifcore's own
 # `buildTree` takes no info; these thread it through `addParLe`.
-template buildTree*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
+template buildTree*(dest: var TokenBuf; tag: TagId; info: NifLineInfo; body: untyped) =
   addParLe(dest, tag, info)
   body
   addParRi(dest)
-template buildTree*[T: enum](dest: var TokenBuf; tag: T; info: PackedLineInfo; body: untyped) =
+template buildTree*[T: enum](dest: var TokenBuf; tag: T; info: NifLineInfo; body: untyped) =
   addParLe(dest, cast[TagId](uint32(ord(tag))), info)
   body
   addParRi(dest)
 
-proc info*(n: NifToken): PackedLineInfo {.inline.} = NoLineInfo
+proc info*(n: NifToken): NifLineInfo {.inline.} = NoLineInfo
   ## Classic tokens carried their line info inline; a bare 4-byte nifcore token
   ## cannot. Reading it back yields `NoLineInfo` — matching the constructors
   ## above, which drop the passed info for the same reason. Callers that need
@@ -248,7 +244,7 @@ proc addParLe*(dest: var TokenBuf; tag: TagId; info = NoLineInfo) =
   emitInfo(dest, info)
 
 proc addParRi*(dest: var TokenBuf) = closeTag(dest)
-proc addParRi*(dest: var TokenBuf; info: PackedLineInfo) = closeTag(dest)
+proc addParRi*(dest: var TokenBuf; info: NifLineInfo) = closeTag(dest)
 
 proc isUnknownToken*(c: Cursor): bool {.inline.} = hasMore(c) and load(c).kind == UnknownToken
 proc isUnknownToken*(n: NifToken): bool {.inline.} = n.kind == UnknownToken
@@ -272,23 +268,23 @@ proc insert*(dest: var TokenBuf; src: Cursor; pos: int) =
 # nifcore builds an atom then attaches its line info as a trailing suffix, so
 # these are add-then-`emitInfo`, not a single info-bearing token.
 
-proc addSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+proc addSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) =
   nifcore.addSymUse(dest, s); emitInfo(dest, info)
-proc addSymDef*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+proc addSymDef*(dest: var TokenBuf; s: SymId; info: NifLineInfo) =
   nifcore.addSymDef(dest, s); emitInfo(dest, info)
-proc addDotToken*(dest: var TokenBuf; info: PackedLineInfo) =
+proc addDotToken*(dest: var TokenBuf; info: NifLineInfo) =
   nifcore.addDotToken(dest); emitInfo(dest, info)
-proc addIdent*(dest: var TokenBuf; s: StrId; info: PackedLineInfo) =
+proc addIdent*(dest: var TokenBuf; s: StrId; info: NifLineInfo) =
   nifcore.addIdent(dest, pool.strings[s]); emitInfo(dest, info)
 proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) =
   nifcore.addIdent(dest, s); emitInfo(dest, info)
-proc addIntLit*(dest: var TokenBuf; v: int64; info: PackedLineInfo) =
+proc addIntLit*(dest: var TokenBuf; v: int64; info: NifLineInfo) =
   nifcore.addIntLit(dest, v); emitInfo(dest, info)
-proc addUIntLit*(dest: var TokenBuf; v: uint64; info: PackedLineInfo) =
+proc addUIntLit*(dest: var TokenBuf; v: uint64; info: NifLineInfo) =
   nifcore.addUIntLit(dest, v); emitInfo(dest, info)
-proc addFloatLit*(dest: var TokenBuf; v: float64; info: PackedLineInfo) =
+proc addFloatLit*(dest: var TokenBuf; v: float64; info: NifLineInfo) =
   nifcore.addFloatLit(dest, v); emitInfo(dest, info)
-proc addCharLit*(dest: var TokenBuf; v: char; info: PackedLineInfo) =
+proc addCharLit*(dest: var TokenBuf; v: char; info: NifLineInfo) =
   nifcore.addCharLit(dest, v); emitInfo(dest, info)
 
 proc add*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
@@ -351,12 +347,12 @@ template linearScan*(n: var Cursor; body: untyped) =
         body
       inc n
 
-template copyInto*(dest: var TokenBuf; tag: TagId; info: PackedLineInfo; body: untyped) =
+template copyInto*(dest: var TokenBuf; tag: TagId; info: NifLineInfo; body: untyped) =
   addParLe(dest, tag, info)
   body
   closeTag(dest)
 
-template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: PackedLineInfo; body: untyped) =
+template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: NifLineInfo; body: untyped) =
   addParLe(dest, globalTags.registerTag(tag), info)
   body
   closeTag(dest)

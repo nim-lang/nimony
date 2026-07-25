@@ -43,7 +43,7 @@
 # included from sem.nim
 
 proc compatOpenArrayInstance(c: var SemContext; elemType: Cursor;
-                             info: PackedLineInfo): TypeCursor =
+                             info: NifLineInfo): TypeCursor =
   ## Build `(invoke openArray elemType)` and instantiate it. Returns the
   ## resolved Symbol cursor for `openArray[T]`. Idempotent for repeated
   ## calls with the same `elemType` — `semLocalType` consults the type
@@ -175,7 +175,7 @@ proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
         result = pool.syms[callee.symId].startsWith("toOpenArray.")
 
 proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
-                                 elemType: Cursor; info: PackedLineInfo) =
+                                 elemType: Cursor; info: NifLineInfo) =
   ## Replace the flat varargs args at the tail of `m.args` (from
   ## `m.firstVarargPosition`) with the openArray bundle. Called from
   ## `resolveOverloads` after the best candidate is picked, so

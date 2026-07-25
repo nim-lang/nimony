@@ -123,7 +123,7 @@ proc newSymId(c: var Context; s: SymId): SymId =
     c.makeLocalSym(name)
   result = pool.syms.getOrIncl(name)
 
-proc addVarReplacement(dest: var TokenBuf; v: VarReplacement; info: PackedLineInfo) =
+proc addVarReplacement(dest: var TokenBuf; v: VarReplacement; info: NifLineInfo) =
   if v.needsDeref:
     copyIntoKind dest, DerefX, info:
       dest.addSymUse v.sym, info

@@ -79,7 +79,7 @@ proc postLengcgenPhase*(): Phase =
 
 type
   Violation* = object
-    info*: PackedLineInfo
+    info*: NifLineInfo
     tag*: string
     msg*: string
     parents*: string   ## "/"-joined parent tag chain (root first)
@@ -315,7 +315,7 @@ proc matchesPragmaContext(tag: string; kinds: openArray[ChildKind];
     return true
   false
 
-proc addViolation(ctx: var ValidatorCtx; info: PackedLineInfo;
+proc addViolation(ctx: var ValidatorCtx; info: NifLineInfo;
                   tag, msg: string) =
   if ctx.violations.len >= ctx.maxViolations: return
   ctx.violations.add Violation(

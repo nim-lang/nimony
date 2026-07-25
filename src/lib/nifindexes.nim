@@ -7,7 +7,8 @@
 ## Create an index file for a NIF file.
 
 import std / [tables, assertions, hashes, syncio, strutils]
-import bitabs, lineinfos, nifreader, nifpools, nifchecksums, symparser, vfs, stringviews
+import bitabs, nifreader, nifpools, nifchecksums, symparser, vfs, stringviews
+from lineinfos import PackedLineInfo  # only for NifIndexEntry.info (frozen Nim side)
 
 when defined(nimony):
   import std / sha1
@@ -128,7 +129,7 @@ proc getSymbolSection(tag: TagId; values: seq[(SymId, SymId)]): TokenBuf =
 
   result.addParRi()
 
-proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sections: IndexSections) {.canRaise.} =
+proc createIndex*(infile: string; root: NifLineInfo; buildChecksum: bool; sections: IndexSections) {.canRaise.} =
   # Mirror the doc-mode cache split: `foo.sc.nif` → `foo.sc.idx.nif`, the regular
   # `foo.s.nif` → `foo.s.idx.nif`. Keeps both populations valid in parallel.
   let isDocMode = infile.endsWith(".sc.nif")
@@ -169,7 +170,7 @@ proc createIndex*(infile: string; root: PackedLineInfo; buildChecksum: bool; sec
   if existingContent != content:
     vfsWrite(indexName, content)
 
-proc createIndex*(infile: string; buildChecksum: bool; root: PackedLineInfo) {.canRaise.} =
+proc createIndex*(infile: string; buildChecksum: bool; root: NifLineInfo) {.canRaise.} =
   createIndex(infile, root, buildChecksum, IndexSections())
 
 proc writeFileAndIndex*(outfile: string; content: TokenBuf) {.canRaise.} =

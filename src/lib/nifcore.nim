@@ -53,7 +53,8 @@ when defined(nimony):
 import std / [assertions, hashes]
 import bitabs, lineinfos
 export bitabs  # adapters touching pool.strings / tags need getOrIncl etc.
-export lineinfos.FileId, lineinfos.NoFile, lineinfos.isValid
+export lineinfos.FileId, lineinfos.NoFile, lineinfos.isValid,
+       lineinfos.`==`, lineinfos.hash
 
 type
   NifKind* = enum
@@ -209,6 +210,16 @@ const
                                comment: StrId(0))
 
 proc isValid*(x: NifLineInfo): bool {.inline.} = x.file.isValid
+
+func `==`*(a, b: NifLineInfo): bool {.inline.} =
+  ## Explicit because Nimony does not synthesize structural `==`/`hash` for
+  ## objects (frontend code keeps infos in HashSets, e.g. error dedup).
+  a.file == b.file and a.line == b.line and a.col == b.col and
+    a.comment == b.comment
+
+func hash*(x: NifLineInfo): Hash {.inline.} =
+  hash((uint64(uint32(x.file)) shl 32) xor (uint64(cast[uint32](x.line)) shl 16) xor
+       (uint64(cast[uint32](x.col)) shl 8) xor uint64(uint32(x.comment)))
 
 proc fitsCommonLineInfo(file: FileId; line, col: int32): bool {.inline.} =
   uint32(file) <= LiFileMaxC and uint32(col) <= LiColMaxC and

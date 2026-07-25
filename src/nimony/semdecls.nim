@@ -43,7 +43,7 @@ proc findMatchingForwardDecl*(c: var SemContext; symId: SymId; implDecl: Cursor)
         return
 
 proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
-                           lastSonInfo: var PackedLineInfo; beforeLastSon: var int) =
+                           lastSonInfo: var NifLineInfo; beforeLastSon: var int) =
   ## Process all statements in the proc body, treating the last one as an expression.
   while it.n.hasMore:
     if not isLastSon(it.n):
@@ -54,7 +54,7 @@ proc processBodyStatements(c: var SemContext; dest: var TokenBuf; it: var Item;
       semExpr c, dest, it, {AllowEmpty}
 
 proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
-                              lastSonInfo: PackedLineInfo; beforeLastSon: int) =
+                              lastSonInfo: NifLineInfo; beforeLastSon: int) =
   ## Handle return type checking for templates.
   case c.routine.returnType.typeKind
   of UntypedT:
@@ -69,7 +69,7 @@ proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Ite
     commonType c, dest, it, beforeLastSon, c.routine.returnType
 
 proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
-                          lastSonInfo: PackedLineInfo; beforeLastSon: int) =
+                          lastSonInfo: NifLineInfo; beforeLastSon: int) =
   ## Handle return type for regular procedures, transforming `expr` to `result = expr` if needed.
   if classifyType(c, it.typ) in {VoidT, UntypedT}:
     discard "ok"
@@ -570,7 +570,7 @@ proc semParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   else:
     buildErr c, dest, n.info, "expected '.' or 'params'"
 
-proc addReturnResult(c: var SemContext; dest: var TokenBuf; resId: SymId; info: PackedLineInfo; bodyStart: int) =
+proc addReturnResult(c: var SemContext; dest: var TokenBuf; resId: SymId; info: NifLineInfo; bodyStart: int) =
   if resId != SymId(0):
     dest.reopenLastTree bodyStart # reopen the body `(stmts)`
     # maybe add `return result`:
@@ -617,7 +617,7 @@ proc getObjSymId(c: var SemContext; obj: TypeCursor): SymId =
   else:
     result = SymId(0)
 
-proc checkTypeHook(c: var SemContext; dest: var TokenBuf; params: seq[TypeCursor]; op: HookKind; info: PackedLineInfo) =
+proc checkTypeHook(c: var SemContext; dest: var TokenBuf; params: seq[TypeCursor]; op: HookKind; info: NifLineInfo) =
   var cond: bool
   case op
   of NoHook:
@@ -695,7 +695,7 @@ proc getHookName(symId: SymId): string =
   extractBasename(result)
   #result = result.normalize
 
-proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: PackedLineInfo): TypeCursor =
+proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: NifLineInfo): TypeCursor =
   let params = getParamsType(c, dest, beforeParams)
   case name
   of "=destroy":
@@ -730,7 +730,7 @@ proc hookToKind(name: string): HookKind =
   else: NoHook
 
 proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
-                     declStart, beforeExportMarker, beforeGenericParams: int; info: PackedLineInfo) =
+                     declStart, beforeExportMarker, beforeGenericParams: int; info: NifLineInfo) =
   let root = nominalRoot(c.routine.returnType)
   if root == SymId(0) and LenientConvertersFeature notin c.features:
     var errBuf = createTokenBuf(16)
@@ -746,7 +746,7 @@ proc attachConverter(c: var SemContext; dest: var TokenBuf; symId: SymId;
         c.converterIndexMap.add((root, symId))
 
 proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
-                  declStart, beforeParams, beforeGenericParams: int; info: PackedLineInfo) =
+                  declStart, beforeParams, beforeGenericParams: int; info: NifLineInfo) =
   if c.currentScope.up.kind != ToplevelScope:
     buildErr c, dest, info, "'method' is only allowed at top level"
 
@@ -829,7 +829,7 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
 
 proc attachSpecialProc(c: var SemContext; dest: var TokenBuf; kind: SymKind;
                        symId: SymId; declStart, beforeExportMarker, beforeGenericParams, beforeParams: int;
-                       hk: HookKind; info: PackedLineInfo; isMagic: bool) =
+                       hk: HookKind; info: NifLineInfo; isMagic: bool) =
   ## Attach converters, methods, or hooks that should become methods.
   if kind == ConverterY:
     attachConverter c, dest, symId, declStart, beforeExportMarker, beforeGenericParams, info
@@ -902,7 +902,7 @@ proc semBodyGenericInst(c: var SemContext; dest: var TokenBuf; it: var Item;
 
 proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
                       kind: SymKind; crucial: CrucialPragma; symId: SymId;
-                      beforeGenericParams, beforeParams: int; hookName: string; info: PackedLineInfo) =
+                      beforeGenericParams, beforeParams: int; hookName: string; info: NifLineInfo) =
   ## Process proc body for body checking pass.
   if it.n.stmtKind != StmtsS:
     bug "(stmts) expected, but got ", it.n
@@ -958,7 +958,7 @@ proc semBodyCheckBody(c: var SemContext; dest: var TokenBuf; it: var Item;
 
 proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
                   kind: SymKind; crucial: CrucialPragma; pass: PassKind;
-                  symId: SymId; beforeParams: int; hookName: string; info: PackedLineInfo) =
+                  symId: SymId; beforeParams: int; hookName: string; info: NifLineInfo) =
   ## Handle proc with empty body (forward decl, .error, .borrow, or extern).
   if ErrorP in crucial.flags and pass in {checkGenericInst, checkBody}:
     let hk = hookToKind(hookName)
@@ -1285,7 +1285,7 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
       takeTree result, n # copy (object)
     result.addParRi(n.endInfo) # ) from type
 
-proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; objSym: SymId; info: PackedLineInfo) =
+proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; objSym: SymId; info: NifLineInfo) =
   var params = cursorAt(dest, genericsPos)
   if params.substructureKind == TypevarsU:
     # build an invocation of the inner object type; enterScope bounds the
@@ -1442,7 +1442,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
     var decl = beginRead(innerObjDecl)
     semTypeSection c, dest, decl, refOwner
 
-proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: PackedLineInfo) =
+proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: NifLineInfo) =
   buf.addParLe(TupatX, info)
   buf.addSymUse(lvalue, info)
   buf.addIntLit(i, info)

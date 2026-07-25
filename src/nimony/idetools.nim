@@ -10,9 +10,9 @@ import ".." / lib / [symparser, nifindexes, tooldirs]
 import semos, programs, typenav, typeprops, decls, nifconfig, nimony_model
 import ".."/gear2/modnames
 
-proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
-  let i = unpack(lineMan, info)
-  let t = unpack(lineMan, toTrack)
+proc lineInfoMatch*(info, toTrack: NifLineInfo; tokenLen: int): bool =
+  let i = info
+  let t = toTrack
   if i.file.isValid and t.file.isValid:
     if i.file != t.file: return false
     if i.line != t.line: return false
@@ -23,7 +23,7 @@ proc lineInfoMatch*(info, toTrack: PackedLineInfo; tokenLen: int): bool =
 
 proc foundSymbol(n: Cursor; mode: TrackMode) =
   # format that is compatible with nimsuggest's in the hope it helps:
-  let info = unpack(lineMan, n.info)
+  let info = n.info
   if info.file.isValid:
     if (n.isSymbol and mode == TrackUsages) or (n.isSymbolDef and mode == TrackDef):
       var r = (if n.isSymbol: "use\t" else: "def\t")
@@ -51,7 +51,7 @@ type
       ## For bare identifiers: nil
 
   IdeContext = object
-    toTrack: PackedLineInfo
+    toTrack: NifLineInfo
     trackMode: TrackMode
     searchKind: SearchKind
     sym: SymId
@@ -183,7 +183,7 @@ proc tr(c: var IdeContext, n: var Cursor) =
         else:
           inc n
 
-proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLineInfo;
+proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: NifLineInfo;
                    tokenLen: int; parentPos: int; symOffset, parentOffset: var int): bool =
   ## Positions of the tracked symbol token and its innermost parent TagLit
   ## in the PARSED buffer. (The caller's stream scan counts the file's
@@ -207,7 +207,7 @@ proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: PackedLine
   else:
     inc n
 
-proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMode) =
+proc findLocal(file: string; sym: SymId; toTrack: NifLineInfo; mode: TrackMode) =
   var buf = parseFromFile(file)
 
   var name = pool.syms[sym]
@@ -265,8 +265,8 @@ proc findLocal(file: string; sym: SymId; toTrack: PackedLineInfo; mode: TrackMod
 proc usages*(files: openArray[string]; config: NifConfig) =
   # This is comparable to a linking step: we scan the module's semmed NIF to
   # see what symbol is meant by the `file,line,col` tracking information.
-  let requestedInfo = lineinfos.pack(lineMan, pool.filenames.getOrIncl(config.toTrack.filename),
-                                     config.toTrack.line, config.toTrack.col)
+  let requestedInfo = NifLineInfo(file: pool.filenames.getOrIncl(config.toTrack.filename),
+                                  line: config.toTrack.line, col: config.toTrack.col)
   # first pass: search for the symbol at `file,line,col`:
   var isLocalSym = false
   var symId = SymId 0

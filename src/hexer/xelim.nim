@@ -93,7 +93,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
     copyTree dest, typ # type
     dest.addDotToken() # value
 
-proc declareTempBool(c: var Context; dest: var TokenBuf; info: PackedLineInfo): SymId =
+proc declareTempBool(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
   let s = tempSymName(c)
   result = pool.syms.getOrIncl(s)
   copyIntoKind dest, VarS, info:
@@ -422,7 +422,7 @@ type
   CfVar = object
     v: SymId # as variable
 
-proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: PackedLineInfo): CfVar =
+proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: NifLineInfo): CfVar =
   if tar.m == IsEmpty:
     tar.m = IsCfvar
     let s = "`j." & $c.counter & "." & c.thisModuleSuffix
@@ -438,7 +438,7 @@ proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: Packed
     assert tar.m == IsCfvar
     result = CfVar(v: readonlyCursorAt(tar.t, 0).symId)
 
-proc useCfVar(dest: var TokenBuf; cf: CfVar; info: PackedLineInfo) =
+proc useCfVar(dest: var TokenBuf; cf: CfVar; info: NifLineInfo) =
   dest.addParLe("jtrue", info)
   dest.addSymUse cf.v, info
   dest.addParRi()

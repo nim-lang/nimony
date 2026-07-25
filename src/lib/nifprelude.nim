@@ -2,7 +2,7 @@
 
 {.push warning[UnusedImport]: off.}
 
-import bitabs, nifpools, lineinfos, nifbuilder
+import bitabs, nifpools, nifbuilder
 from nifreader import nil   # text reader; qualified-only: its NifKind must
                             # not shadow nifcore's token kinds
 

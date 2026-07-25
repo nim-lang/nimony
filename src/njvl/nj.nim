@@ -168,7 +168,7 @@ proc addParLe*(dest: var TokenBuf; kind: NjvlKind;
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 
-proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   # insert kill instructions:
   var locals: seq[SymId] = @[]
   for s in c.typeCache.currentScopeLocals:
@@ -206,7 +206,7 @@ proc closeBasicBlock(c: var Context; b: var BasicBlock; dest: var TokenBuf) =
       # The guard was "borrowed" by openElseBranch — we return it here.
       c.current.guards[idx].active = true
 
-proc openElseBranch(b: var BasicBlock; dest: var TokenBuf; info: PackedLineInfo) =
+proc openElseBranch(b: var BasicBlock; dest: var TokenBuf; info: NifLineInfo) =
   ## Open an else branch on the current ite, deferring its closure to `closeBasicBlock`.
   ## This is the core of else exploitation: subsequent statements in the same block
   ## are emitted inside this else branch rather than after the ite.
@@ -214,7 +214,7 @@ proc openElseBranch(b: var BasicBlock; dest: var TokenBuf; info: PackedLineInfo)
   dest.addParLe StmtsS, info # begin of else branch
   inc b.openElseBranches
 
-proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: PackedLineInfo): (int, SymId) =
+proc maybeEmitGuard(c: var Context; dest: var TokenBuf; info: NifLineInfo): (int, SymId) =
   ## If any guard is active, emit `(ite (not guard) (stmts` and temporarily
   ## disable the guard. Returns `(index, sym)` of the disabled guard, or
   ## `(-1, NoSymId)` if no guard was active.
@@ -263,7 +263,7 @@ proc declareCfVar(c: var Context; dest: var TokenBuf; s: SymId) =
   let boolTyp = c.typeCache.builtins.boolType
   c.typeCache.registerLocal(s, VarY, boolTyp)
 
-proc useErrorTracker(c: Context; dest: var TokenBuf; errorTracker: SymId; info: PackedLineInfo) =
+proc useErrorTracker(c: Context; dest: var TokenBuf; errorTracker: SymId; info: NifLineInfo) =
   ## Emit the correct expression to read the error code from errorTracker.
   ## In TupleRaise mode, errorTracker is a tuple and we need (tupat errorTracker +0).
   ## In VoidRaise/NoRaise mode, errorTracker is a plain ErrorCode variable.
@@ -276,7 +276,7 @@ proc useErrorTracker(c: Context; dest: var TokenBuf; errorTracker: SymId; info: 
   else:
     dest.addSymUse errorTracker, info
 
-proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; info: PackedLineInfo) =
+proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; info: NifLineInfo) =
   ## Emit the correct store to set the error code in errorTracker from a source expression.
   ## In TupleRaise mode, store to (tupat errorTracker +0).
   ## In VoidRaise/NoRaise mode, store directly to errorTracker.
@@ -291,7 +291,7 @@ proc storeToErrorTracker(c: var Context; dest: var TokenBuf; value: var Cursor; 
     else:
       dest.addSymUse c.current.errorTracker, info
 
-proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; tracker, constSym: SymId; info: PackedLineInfo) =
+proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; tracker, constSym: SymId; info: NifLineInfo) =
   ## Store a constant (like Success) to errorTracker.
   assert constSym != NoSymId
   assert tracker != NoSymId
@@ -305,7 +305,7 @@ proc storeConstToErrorTracker(c: Context; dest: var TokenBuf; tracker, constSym:
     else:
       dest.addSymUse tracker, info
 
-proc declareResultVar(dest: var TokenBuf; s: SymId; info: PackedLineInfo) =
+proc declareResultVar(dest: var TokenBuf; s: SymId; info: NifLineInfo) =
   copyIntoKind dest, ResultS, info:
     dest.addSymDef s, info
     dest.addDotToken() # export marker
@@ -401,7 +401,7 @@ type
     # dest buffer (potentially thousands of tokens) — the per-arg copy is
     # tiny and cheaper.
     mutates: seq[TokenBuf]
-    info: PackedLineInfo
+    info: NifLineInfo
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
   let info = n.info
@@ -470,7 +470,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
             trExpr c, dest, n
   else: bug "Unmatched ParRi" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
-proc emitReturnGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc emitReturnGuards(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   dest.addParLe("jtrue", info)
   # we also need to break out of everything:
   for i in countdown(c.current.guards.len - 1, 0):
@@ -499,7 +499,7 @@ proc trBoundExpr(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
     trExpr c, dest, n
     result = CallInfo(isNoReturn: false, mode: NoRaise, mutates: @[], info: n.endInfo)
 
-proc raiseGuards(c: var Context; dest: var TokenBuf; info: PackedLineInfo;
+proc raiseGuards(c: var Context; dest: var TokenBuf; info: NifLineInfo;
                  skipInnermostHandler = false) =
   let before = dest.len
   dest.addParLe("jtrue", info)
@@ -955,7 +955,7 @@ proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) 
       dest.addParRi()
       dest.addParRi()
 
-proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): TokenBuf =
+proc extractForBorrow(c: var Context; forStmt: ForStmt; info: NifLineInfo): TokenBuf =
   ## If the for-loop iterates with a borrowing iterator (yields var T or lent T),
   ## initialize the corresponding loop variables with a fake `(haddr firstArg)`.
   ## This lets contract analysis treat the real loop binders as borrowers so
@@ -1010,7 +1010,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = forStart; skip n
 
 proc buildCaseCondition(c: var Context; dest: var TokenBuf; n: var Cursor;
-                        selector: SymId; selectorType: Cursor; info: PackedLineInfo) =
+                        selector: SymId; selectorType: Cursor; info: NifLineInfo) =
   ## Build condition for one of-branch using OrX for multiple ranges/values
   assert n.substructureKind == RangesU
   let rangesStart = n  # into RangesU

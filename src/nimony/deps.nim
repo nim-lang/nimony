@@ -270,7 +270,7 @@ proc wouldCreateCycle(c: var DepContext; current: Node; p: FilePair): bool =
     it = c.nodes[it].parent
   return false
 
-proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
+proc importSingleFile(c: var DepContext; f1: string; info: NifLineInfo;
                       current: Node; isSystem: bool) =
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)
   if not semos.fileExists(f2): return
@@ -291,7 +291,7 @@ proc importSingleFile(c: var DepContext; f1: string; info: PackedLineInfo;
     else:
       current.deps.add existingNode
 
-proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLineInfo; current: Node) =
+proc processPluginImport(c: var DepContext; f: ImportedFilename; info: NifLineInfo; current: Node) =
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f.path)
   if not semos.fileExists(f2): return
   let p = c.toPair(f2)
@@ -306,7 +306,7 @@ proc processPluginImport(c: var DepContext; f: ImportedFilename; info: PackedLin
   else:
     current.deps.add existingNode
 
-proc importCyclicModule(c: var DepContext; f1: string; info: PackedLineInfo;
+proc importCyclicModule(c: var DepContext; f1: string; info: NifLineInfo;
                         current: Node) =
   ## Merge a cyclic import target into the current node's cycle group.
   let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1)

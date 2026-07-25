@@ -299,7 +299,7 @@ proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
 # shape in lock-step with `generateCoroutineHelpers`.
 # ---------------------------------------------------------------------
 
-proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
+proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   ## Consume an (itertype ...) tree at `n` and emit
   ##   `(tuple (proctype . (params <orig>... (param result ptr T) (param caller Continuation)) Continuation <pragmas>) (ref RootObj))`
   ## Cursor is left past the closing ParRi of the input itertype.
@@ -367,7 +367,7 @@ proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: Packe
       dest.copyIntoKind RefT, info:
         dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
 
-proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: PackedLineInfo) =
+proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLineInfo) =
   ## Build the iter-value tuple type from an iterator sym's decl. Used
   ## at iter-sym-as-value and iter-nil sites where we don't have an
   ## itertype tree on hand.
@@ -480,7 +480,7 @@ proc coroTrSons*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # IR emitters — operate on (ptr CoroutineBase) frames via `this.0`
 # ---------------------------------------------------------------------
 
-proc contNextState*(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
+proc contNextState*(c: var Context; dest: var TokenBuf; state: int; info: NifLineInfo) =
   assert state >= 0
   if cursorIsNil(c.continuationProcImpl):
     bug "could not load system.ContinuationProc"
@@ -498,7 +498,7 @@ proc contNextState*(c: var Context; dest: var TokenBuf; state: int; info: Packed
           dest.addSymUse pool.syms.getOrIncl(RootObjName), info
         dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
-proc stashResumeFn*(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
+proc stashResumeFn*(c: var Context; dest: var TokenBuf; state: int; info: NifLineInfo) =
   ## For `.closure` iters: emit
   ##   `this.caller.fn = cast[ContinuationProc](next_state)`
   ## so the wrapper, on a subsequent iter-value call, reads this slot
@@ -526,7 +526,7 @@ proc stashResumeFn*(c: var Context; dest: var TokenBuf; state: int; info: Packed
         dest.copyTree c.continuationProcImpl
         dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
 
-proc emitAllocFrame*(c: var Context; dest: var TokenBuf; calleeSym: SymId; info: PackedLineInfo) =
+proc emitAllocFrame*(c: var Context; dest: var TokenBuf; calleeSym: SymId; info: NifLineInfo) =
   ## Emit: cast[ptr CalleeCoroutine](allocFrame(sizeof(CalleeCoroutine)))
   dest.copyIntoKind CastX, info:
     dest.copyIntoKind PtrT, info:
@@ -536,7 +536,7 @@ proc emitAllocFrame*(c: var Context; dest: var TokenBuf; calleeSym: SymId; info:
       dest.copyIntoKind SizeofX, info:
         dest.addSymUse coroTypeForProc(c, calleeSym), info
 
-proc emitDeallocFrame*(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc emitDeallocFrame*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   ## Emit: deallocFrame(cast[ptr CoroutineBase](this))
   dest.copyIntoKind CallS, info:
     dest.addSymUse pool.syms.getOrIncl(DeallocFrameProcName), info
@@ -545,7 +545,7 @@ proc emitDeallocFrame*(c: var Context; dest: var TokenBuf; info: PackedLineInfo)
         dest.addSymUse pool.syms.getOrIncl(RootObjName), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
-proc emitStopContinuation*(dest: var TokenBuf; info: PackedLineInfo) =
+proc emitStopContinuation*(dest: var TokenBuf; info: NifLineInfo) =
   ## Emit `Continuation(fn: nil, env: nil)` — the sentinel "no caller"
   ## continuation passed to closure-iterator init wrappers.
   dest.copyIntoKind OconstrX, info:
@@ -557,7 +557,7 @@ proc emitStopContinuation*(dest: var TokenBuf; info: PackedLineInfo) =
       dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
       dest.addParPair NilX, info
 
-proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   ## Emit the terminating return for a coroutine state machine.
   ##
   ## `.passive` procs / `.passive` iters: save `this.caller`,
@@ -613,7 +613,7 @@ proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: PackedLineInfo) 
   dest.copyIntoKind RetS, info:
     dest.addSymUse tmpVar, info
 
-proc emitStackFrameTag*(c: var Context; dest: var TokenBuf; coroVar: SymId; info: PackedLineInfo) =
+proc emitStackFrameTag*(c: var Context; dest: var TokenBuf; coroVar: SymId; info: NifLineInfo) =
   ## Emit: coroVar.callee = nil
   ## Marks the frame as stack-allocated so deallocFrame is a nop.
   dest.copyIntoKind AsgnS, info:
@@ -623,14 +623,14 @@ proc emitStackFrameTag*(c: var Context; dest: var TokenBuf; coroVar: SymId; info
       dest.addIntLit 1, info # field is in superclass
     dest.addParPair NilX, info
 
-proc emitItEnv(dest: var TokenBuf; info: PackedLineInfo;
+proc emitItEnv(dest: var TokenBuf; info: NifLineInfo;
                itSym, envFieldSym: SymId) =
   dest.copyIntoKind DotX, info:
     dest.addSymUse itSym, info
     dest.addSymUse envFieldSym, info
     dest.addIntLit 0, info # direct field of Continuation
 
-proc emitWhileBegin*(dest: var TokenBuf; info: PackedLineInfo;
+proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
                      itSym, myEnvSym: SymId) =
   ## Open half of the corofor trampoline (shared by cps's `.passive`
   ## and lambdalifting's `.closure` expansions). Emits:
@@ -682,7 +682,7 @@ proc emitWhileBegin*(dest: var TokenBuf; info: PackedLineInfo;
     dest.addSymUse myEnvSym, info
   dest.addParLe StmtsS, info     # body-stmts open
 
-proc emitWhileEnd*(dest: var TokenBuf; info: PackedLineInfo; itSym: SymId) =
+proc emitWhileEnd*(dest: var TokenBuf; info: NifLineInfo; itSym: SymId) =
   ## Close half of the corofor trampoline. Balances `emitWhileBegin`'s
   ## opens and emits `finally: finalizeCoroutine(addr it)`.
   let finalizeSym = pool.syms.getOrIncl("finalizeCoroutine.0." & SystemModuleSuffix)
@@ -908,7 +908,7 @@ proc trLocal*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # State-machine entries — body-level structural lowering of yield/return
 # ---------------------------------------------------------------------
 
-proc declareContinuationResult*(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc declareContinuationResult*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   dest.copyIntoKind ResultS, info:
     dest.addSymDef pool.syms.getOrIncl("result.0"), info
     dest.addDotToken() # exported
@@ -948,14 +948,14 @@ proc newLocalProc*(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
       dest.addSymUse pool.syms.getOrIncl("stdout.0.syn1lfpjv"), info
       dest.addStrLit extractVersionedBasename(pool.syms[sym]) & ".s" & $state & "\n"
 
-proc gotoNextState*(c: var Context; dest: var TokenBuf; state: int; info: PackedLineInfo) =
+proc gotoNextState*(c: var Context; dest: var TokenBuf; state: int; info: NifLineInfo) =
   # generate: `return state(this)`
   dest.copyIntoKind RetS, info:
     dest.copyIntoKind CallS, info:
       dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
-proc returnValue*(c: var Context; dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
+proc returnValue*(c: var Context; dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   n.into: # yield/return
     if n.kind == DotToken or (n.kind == Symbol and n.symId == c.currentProc.resultSym):
       inc n
@@ -1144,12 +1144,12 @@ proc trJtrue*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
       skip n
 
-proc emitJump*(dest: var TokenBuf; label: int; info: PackedLineInfo) =
+proc emitJump*(dest: var TokenBuf; label: int; info: NifLineInfo) =
   dest.addParLe("jmp", info)
   dest.addIntLit label, info
   dest.addParRi()
 
-proc emitLabel*(dest: var TokenBuf; label: int; info: PackedLineInfo) =
+proc emitLabel*(dest: var TokenBuf; label: int; info: NifLineInfo) =
   dest.addParLe("lab", info)
   dest.addIntLit label, info
   dest.addParRi()
@@ -1376,7 +1376,7 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
           programs.publish(value.field, dest, beforeField)
   programs.publish(objType, dest, beforeType)
 
-proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cursor; hasResult: bool; info: PackedLineInfo) =
+proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cursor; hasResult: bool; info: NifLineInfo) =
   ## Identical to the original single-branch wrapper body: alloc a
   ## fresh frame, delegate to the iter entry.
   d.copyIntoKind RetS, info:

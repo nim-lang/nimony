@@ -24,7 +24,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
 proc wrapDeferScope(dest: var TokenBuf; beforeBody: int;
-                    defers: var seq[TokenBuf]; info: PackedLineInfo) =
+                    defers: var seq[TokenBuf]; info: NifLineInfo) =
   ## Collect-then-wrap: nifcore's sealed model can't insert unbalanced opens,
   ## so instead of splicing `(try (stmts` at scope start we take the finished
   ## body `dest[beforeBody..]`, drop it, and re-emit it wrapped in one nested

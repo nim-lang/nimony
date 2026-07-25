@@ -74,7 +74,7 @@ proc addParLe*(dest: var TokenBuf; kind: NjvlKind; info = NoLineInfo) =
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 
-proc closeScope(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   # insert kill instructions for the locals that go out of scope:
   var locals: seq[SymId] = @[]
   for s in c.typeCache.currentScopeLocals:
@@ -101,12 +101,12 @@ proc freshLabel(c: var Context; prefix: string): SymId =
   result = pool.syms.getOrIncl(prefix & $c.current.tmpCounter)
   inc c.current.tmpCounter
 
-proc emitLab(dest: var TokenBuf; name: SymId; info: PackedLineInfo) =
+proc emitLab(dest: var TokenBuf; name: SymId; info: NifLineInfo) =
   dest.addParLe LabV, info
   dest.addSymDef name, info
   dest.addParRi()
 
-proc emitJmp(dest: var TokenBuf; name: SymId; info: PackedLineInfo) =
+proc emitJmp(dest: var TokenBuf; name: SymId; info: NifLineInfo) =
   dest.addParLe JmpV, info
   dest.addSymUse name, info
   dest.addParRi()
@@ -123,7 +123,7 @@ type
     # own buffer rather than holding a Cursor into `dest`, which any later
     # append to `dest` would invalidate via COW.
     mutates: seq[TokenBuf]
-    info: PackedLineInfo
+    info: NifLineInfo
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo
 
@@ -366,7 +366,7 @@ proc genCond(c: var Context; dest: var TokenBuf; n: var Cursor;
     genLeaf c, dest, n, trueL, falseL, fallL
 
 proc genIfViaCx(c: var Context; dest: var TokenBuf; n: var Cursor;
-                info: PackedLineInfo; ifStart: Cursor) =
+                info: NifLineInfo; ifStart: Cursor) =
   ## `if <complex cond>: then [else: else]` via `Cx`, so short-circuit
   ## `and`/`or` lower to shared `(lab)`/`(jmp)` merges. `n` is at the `(elif`;
   ## `ifStart` is the enclosing `(if ...)` head captured by `trIf`, whose close
@@ -604,7 +604,7 @@ proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) 
       dest.addParRi()
       dest.addParRi()
 
-proc extractForBorrow(c: var Context; forStmt: ForStmt; info: PackedLineInfo): TokenBuf =
+proc extractForBorrow(c: var Context; forStmt: ForStmt; info: NifLineInfo): TokenBuf =
   ## If the for-loop iterates with a borrowing iterator (yields `var T`/`lent T`),
   ## initialize the corresponding loop variables with a fake `(haddr firstArg)`
   ## so contract analysis treats the loop binders as borrowers.

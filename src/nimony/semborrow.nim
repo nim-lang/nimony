@@ -14,7 +14,7 @@ import nimony_model, symtabs, builtintypes, decls,
   semdata, sembasics, typeprops
 import ".." / lib / symparser
 
-proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info: PackedLineInfo): TokenBuf =
+proc genBorrowedProcBody*(c: var SemContext; fn: StrId; signature: Cursor; info: NifLineInfo): TokenBuf =
   #[Consider:
 
   type

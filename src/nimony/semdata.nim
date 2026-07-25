@@ -68,7 +68,7 @@ type
     magic*, externName*: string
     bits*: int
     size*: int  ## value of `{.size: X.}` pragma in bytes; 0 if not set
-    hasVarargs*: PackedLineInfo
+    hasVarargs*: NifLineInfo
     flags*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma
     headerFileTok*: NifToken
@@ -85,7 +85,7 @@ type
     #targetType*: TypeCursor
     #typeParams*: seq[TypeCursor]
     inferred*: Table[SymId, Cursor]
-    requestFrom*: seq[PackedLineInfo]
+    requestFrom*: seq[NifLineInfo]
 
   ProcInstance* = object
     targetSym*: SymId
@@ -111,9 +111,9 @@ type
 
   PluginObj* = object
     path*: StrId
-    info*: PackedLineInfo
+    info*: NifLineInfo
 
-  SemExpressionExecutor* = proc (c: var SemContext; expr: Cursor; expectedType: TypeCursor; result: var TokenBuf; info: PackedLineInfo): string {.nimcall.}
+  SemExpressionExecutor* = proc (c: var SemContext; expr: Cursor; expectedType: TypeCursor; result: var TokenBuf; info: NifLineInfo): string {.nimcall.}
   SemStmtCallback* = proc (c: var SemContext; dest: var TokenBuf; n: Cursor) {.nimcall.}
   SemGetSize* = proc(c: var SemContext; n: Cursor; strict=false): xint {.nimcall.}
   ForceInstantiate* = proc (c: var SemContext; dest: var TokenBuf) {.nimcall.}
@@ -125,7 +125,7 @@ type
   CommonTypeCallbackT* = proc (c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: int; expected: TypeCursor) {.nimcall.}
   SemLocalTypeImplCallbackT* = proc (c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext; exported: bool; ownerSym: SymId) {.nimcall.}
   # Additional core entry points needed by the pragma module (sempragmas).
-  DeclareResultCallbackT* = proc (c: var SemContext; dest: var TokenBuf; info: PackedLineInfo): SymId {.nimcall.}
+  DeclareResultCallbackT* = proc (c: var SemContext; dest: var TokenBuf; info: NifLineInfo): SymId {.nimcall.}
   SemEmitCallbackT* = proc (c: var SemContext; dest: var TokenBuf; it: var Item) {.nimcall.}
 
   MethodIndexEntry* = object
@@ -150,7 +150,7 @@ type
     includeStack*: seq[string]
     importedModules*: OrderedTable[SymId, ImportedModule]
     selfModuleSym*: SymId
-    instantiatedFrom*: seq[PackedLineInfo]
+    instantiatedFrom*: seq[NifLineInfo]
     importTab*: OrderedTable[StrId, seq[SymId]] ## mapping of identifiers to modules containing the identifier
     globals*, locals*: Table[string, int]
     fieldCounts*: Table[string, int]

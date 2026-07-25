@@ -319,7 +319,7 @@ type
     fnKind: SymKind
     fnName: StrId
     callNode: NifToken
-    callNodeInfo: PackedLineInfo
+    callNodeInfo: NifLineInfo
     scope: Cursor
       ## the call node's head, captured by `semCall`; every exit path
       ## leaves it via `leaveCall`/`it.n = cs.scope; skip it.n` instead of

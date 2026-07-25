@@ -278,9 +278,8 @@ type
     skipped: int
     noColors: bool
 
-proc lineInfoStr(info: PackedLineInfo): (int, int) =
-  let u = unpack(lineMan, info)
-  (u.line.int, u.col.int + 1)
+proc lineInfoStr(info: NifLineInfo): (int, int) =
+  (info.line.int, info.col.int + 1)
 
 proc locationStr(file: string; line, col: int): string =
   file & "(" & $line & ", " & $col & ")"
@@ -313,17 +312,17 @@ proc enumNameToTag(name: string): string =
       if nimName & suffix == name:
         return tagStr
 
-proc addViolation(ctx: var CheckContext; info: PackedLineInfo; tag, msg: string) =
+proc addViolation(ctx: var CheckContext; info: NifLineInfo; tag, msg: string) =
   let (line, col) = lineInfoStr(info)
   ctx.violations.add Violation(line: line, col: col, file: ctx.filename,
                                tag: tag, msg: msg, isWarning: false)
 
-proc addWarning(ctx: var CheckContext; info: PackedLineInfo; tag, msg: string) =
+proc addWarning(ctx: var CheckContext; info: NifLineInfo; tag, msg: string) =
   let (line, col) = lineInfoStr(info)
   ctx.violations.add Violation(line: line, col: col, file: ctx.filename,
                                tag: tag, msg: msg, isWarning: true)
 
-proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: PackedLineInfo) =
+proc checkCopyIntoKind(ctx: var CheckContext; n: Cursor; info: NifLineInfo) =
   if not n.isTagLit: return
   var c = childCursor(n)
 

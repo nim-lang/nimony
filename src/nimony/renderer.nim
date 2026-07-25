@@ -4,7 +4,7 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
-import ".." / lib / [bitabs, lineinfos, nifpools, filelinecache, symparser]
+import ".." / lib / [bitabs, nifpools, filelinecache, symparser]
 import ".." / njvl / njvl_model
 
 import nimony_model, decls
@@ -2018,15 +2018,15 @@ proc renderTree(n: Cursor, renderFlags: RenderFlags = {}, renderType = false): s
              else: toString(orig, false)
 
 proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
-  var m0: PackedLineInfo = NoLineInfo
-  var m1: PackedLineInfo = NoLineInfo
+  var m0: NifLineInfo = NoLineInfo
+  var m1: NifLineInfo = NoLineInfo
   var n2 = n
   var file0 = FileId 0
 
   var togo = subtreeWidth(n2)  # tokens incl. suffixes; consume `tokenWidth` per step
   while togo > 0:
     if n2.info.isValid:
-      let currentFile = getFileId(lineMan, n2.info)
+      let currentFile = n2.info.file
       if not m0.isValid:
         m0 = n2.info
         file0 = currentFile
@@ -2037,9 +2037,9 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
 
   when false: #if m0.isValid:
     if file0.isValid:
-      let (_, line0, col0) = unpack(lineMan, m0)
+      let (line0, col0) = (m0.line, m0.col)
       if m1.isValid:
-        let (_, line1, col1) = unpack(lineMan, m1)
+        let (line1, col1) = (m1.line, m1.col)
         result = extract(pool.filenames[file0],
                         FilePosition(line: line0, col: col0),
                         FilePosition(line: line1, col: col1))

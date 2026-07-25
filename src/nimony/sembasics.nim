@@ -24,12 +24,12 @@ type
     FindAll, FindOverloads, InnerMost
 
 template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind|NimonyOther;
-                    info: PackedLineInfo; body: untyped) =
+                    info: NifLineInfo; body: untyped) =
   addParLe(dest, kind, info)
   body
   dest.addParRi()
 
-proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: PackedLineInfo;
+proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: NifLineInfo;
                              option = FindAll): int =
   result = 0
   let ignoreStyle = IgnoreStyleFeature in c.features
@@ -51,10 +51,10 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
             inc result
             dest.addSymUse(defId, info)
 
-proc addSymUse*(dest: var TokenBuf; s: Sym; info: PackedLineInfo) =
+proc addSymUse*(dest: var TokenBuf; s: Sym; info: NifLineInfo) =
   dest.addSymUse(s.name, info)
 
-proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo) =
+proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo) =
   # not used yet
   var count = 0
   let oldLen = dest.len
@@ -79,7 +79,7 @@ proc isNonOverloadable*(t: SymKind): bool {.inline.} =
   t in {LetY, VarY, ParamY, TypevarY, StaticTypevarY, ConstY, TypeY, ResultY, FldY, GfldY, CursorY, PatternvarY, BlockY, GletY, TletY, GvarY, TvarY}
 
 proc buildSymChoiceForSelfModule*(c: var SemContext; dest: var TokenBuf;
-                                  identifier: StrId; info: PackedLineInfo): int =
+                                  identifier: StrId; info: NifLineInfo): int =
   result = 0
   let oldLen = dest.len
   let ignoreStyle = IgnoreStyleFeature in c.features
@@ -105,7 +105,7 @@ iterator topLevelSyms*(c: var SemContext; identifier: StrId): SymId {.sideEffect
       yield sym.name
 
 proc rawBuildSymChoiceForForeignModule(c: var SemContext; dest: var TokenBuf; module: SymId;
-                                       identifier: StrId; info: PackedLineInfo;
+                                       identifier: StrId; info: NifLineInfo;
                                        marker: var HashSet[SymId]): int =
   result = 0
   let m = addr c.importedModules.getOrQuit(module)
@@ -121,7 +121,7 @@ proc rawBuildSymChoiceForForeignModule(c: var SemContext; dest: var TokenBuf; mo
       inc result, rawBuildSymChoiceForForeignModule(c, dest, forward, identifier, info, marker)
 
 proc buildSymChoiceForForeignModule*(c: var SemContext; dest: var TokenBuf; module: SymId;
-                                     identifier: StrId; info: PackedLineInfo): int =
+                                     identifier: StrId; info: NifLineInfo): int =
   let oldLen = dest.len
   dest.buildTree OchoiceX, info:
     var marker = initHashSet[SymId]()
@@ -131,7 +131,7 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; dest: var TokenBuf; modu
     dest.shrink oldLen
     dest.addIdent(identifier, info)
 
-proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo;
+proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
                        option = FindAll): int =
   result = 0
   let ignoreStyle = IgnoreStyleFeature in c.features
@@ -155,7 +155,7 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
     it = it.up
   inc result, considerImportedSymbols(c, dest, identifier, info, option)
 
-proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: PackedLineInfo;
+proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
                     option: ChoiceOption): int =
   let oldLen = dest.len
   dest.buildTree OchoiceX, info:
@@ -165,7 +165,7 @@ proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; i
     dest.shrink oldLen
     dest.addIdent(identifier, info)
 
-proc addSymChoiceSyms*(c: var SemContext; dest: var TokenBuf; identifier: StrId; marker: var HashSet[SymId]; info: PackedLineInfo) =
+proc addSymChoiceSyms*(c: var SemContext; dest: var TokenBuf; identifier: StrId; marker: var HashSet[SymId]; info: NifLineInfo) =
   # like rawBuildSymChoice but adds to an existing symchoice, ignoring duplicates
   let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
@@ -211,17 +211,17 @@ template withNewScope*(c: var SemContext; body: untyped) =
 
 # -------------------------- error handling -------------------------
 
-proc pushErrorContext*(c: var SemContext; info: PackedLineInfo) = c.instantiatedFrom.add info
+proc pushErrorContext*(c: var SemContext; info: NifLineInfo) = c.instantiatedFrom.add info
 proc popErrorContext(c: var SemContext) = discard c.instantiatedFrom.pop
 
-template withErrorContext*(c: var SemContext; info: PackedLineInfo; body: untyped) =
+template withErrorContext*(c: var SemContext; info: NifLineInfo; body: untyped) =
   pushErrorContext(c, info)
   try:
     body
   finally:
     popErrorContext(c)
 
-proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
+proc buildErr*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; msg: string; orig: Cursor) =
   when defined(debugBuildErr):
     if not c.debugAllowErrors:
       writeStackTrace()
@@ -257,12 +257,12 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg:
     else:
       dest.addStrLit(msg, info)
 
-proc buildErr*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; msg: string) =
+proc buildErr*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; msg: string) =
   var orig = createTokenBuf(1)
   orig.addDotToken()
   c.buildErr dest, info, msg, cursorAt(orig, 0)
 
-proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLineInfo; msg: string; orig: Cursor) =
+proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string; orig: Cursor) =
   ## Builds ErrT node and combine it with the node at `pos` so that no nodes are added outside of
   ## the node at `pos`.
   ## When there is no node at `pos`, New ErrT node is added to `c.dest`.
@@ -280,12 +280,12 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLi
   if needsParRi:
     dest.addParRi
 
-proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: PackedLineInfo; msg: string) =
+proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string) =
   var orig = createTokenBuf(1)
   orig.addDotToken()
   c.combineErr dest, pos, info, msg, cursorAt(orig, 0)
 
-proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig: Cursor) =
+proc buildLocalErr*(dest: var TokenBuf; info: NifLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
     if true: # not c.debugAllowErrors: - c not given
       writeStackTrace()
@@ -295,7 +295,7 @@ proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string; orig:
     dest.addSubtree orig
     dest.addStrLit(msg, info)
 
-proc buildLocalErr*(dest: var TokenBuf; info: PackedLineInfo; msg: string) =
+proc buildLocalErr*(dest: var TokenBuf; info: NifLineInfo; msg: string) =
   var orig = createTokenBuf(1)
   orig.addDotToken()
   dest.buildLocalErr info, msg, cursorAt(orig, 0)
@@ -402,7 +402,7 @@ type
     status*: SymStatus
     lit*: StrId
     s*: Sym
-    info*: PackedLineInfo
+    info*: NifLineInfo
 
 proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   var name = str

@@ -495,7 +495,7 @@ proc collectFunctionSummaries*(buf: var TokenBuf): FunctionSummaryTable =
         else:
           skip n
 
-proc addSummaryPragma(dest: var TokenBuf; summary: FunctionSummary; info: PackedLineInfo) =
+proc addSummaryPragma(dest: var TokenBuf; summary: FunctionSummary; info: NifLineInfo) =
   dest.addParLe(TagId(SmryP), info)
   if summary.writesGlobal: dest.addIdent "writeGlobal", info
   if summary.readsGlobal: dest.addIdent "readGlobal", info
@@ -517,7 +517,7 @@ proc addSummaryPragma(dest: var TokenBuf; summary: FunctionSummary; info: Packed
   dest.addParRi()
 
 proc writePragmasWithSummary(dest: var TokenBuf; pragmas: Cursor;
-                             summary: FunctionSummary; info: PackedLineInfo) =
+                             summary: FunctionSummary; info: NifLineInfo) =
   var p = pragmas
   if p.isDotToken:
     dest.addParLe(TagId(PragmasU), info)

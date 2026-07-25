@@ -97,7 +97,7 @@ proc passiveCallHook(c: var Context; n: Cursor): bool =
 # ---------------------------------------------------------------------
 
 proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
-                            contVar: SymId; info: PackedLineInfo) =
+                            contVar: SymId; info: NifLineInfo) =
   dest.copyIntoKind CallS, info:
     dest.addSymUse pool.syms.getOrIncl("complete.0." & SystemModuleSuffix), info
     dest.addSymUse contVar, info

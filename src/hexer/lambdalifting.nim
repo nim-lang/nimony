@@ -367,7 +367,7 @@ const
 # `coro_transform`. The wrapper-signature shape is owned there too, so
 # both passes stay in lock-step automatically.
 
-proc addRootRef(dest: var TokenBuf; info: PackedLineInfo)
+proc addRootRef(dest: var TokenBuf; info: NifLineInfo)
   {.ensuresNif: addedType(dest).} =
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
@@ -376,7 +376,7 @@ type
   UntypedEnvMode = enum
     WantValue, WantAddr
 
-proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue)
+proc untypedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv; mode=WantValue)
   {.ensuresNif: addedExpr(dest).} =
   if env.s == SymId(0):
     bug "lambdalifting untypedEnv: no environment in scope at " & infoToStr(info)
@@ -400,7 +400,7 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=
     else:
       dest.addSymUse env.s, info
 
-proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
+proc typedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv)
   {.ensuresNif: addedExpr(dest).} =
   if env.s == SymId(0):
     bug "lambdalifting typedEnv: no environment in scope at " & infoToStr(info)
@@ -523,7 +523,7 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `(tupat someTuple 0)` would falsely match.
     var targetBuf = createTokenBuf(4)
     var valSymForEnv: SymId = SymId(0)  # case 2: synthesize env-arg from this
-    var valInfoForEnv: PackedLineInfo = default(PackedLineInfo)
+    var valInfoForEnv: NifLineInfo = default(NifLineInfo)
     var upstreamEnvArg = false           # case 3: env-arg is penultimate arg
     if n.kind == Symbol and isClosureIterSym(n.symId):
       targetBuf.addSymUse coro_transform.coroWrapperForExternIter(n.symId), n.info
@@ -633,7 +633,7 @@ proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
-proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
+proc addEnvParam(dest: var TokenBuf; info: NifLineInfo; envTyp: SymId) =
   dest.copyIntoKind ParamU, info:
     dest.addSymDef pool.syms.getOrIncl(EnvParamName), info
     dest.addDotToken() # no export marker
@@ -1050,7 +1050,7 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
-proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: PackedLineInfo) =
+proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: NifLineInfo) =
   dest.copyIntoKind TupconstrX, info:
     dest.copyIntoKind TupleT, info:
       c.toProcType(dest, origTyp)

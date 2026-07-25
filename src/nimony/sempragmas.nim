@@ -33,7 +33,7 @@ import nimony_model, builtintypes, decls, asthelpers, programs,
 proc semStmt(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: bool) =
   c.semStmtCB(c, dest, n, isNewScope)
 
-proc declareResult(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo): SymId =
+proc declareResult(c: var SemContext; dest: var TokenBuf; info: NifLineInfo): SymId =
   c.declareResultCB(c, dest, info)
 
 proc semEmit(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -573,7 +573,7 @@ proc readPragmaStrings(c: var SemContext; dest: var TokenBuf; it: var Item): seq
       result.add pool.strings[it.n.strId]
       inc it.n
 
-proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                     lang, rawName, rawArgs: string) =
   ## Resolve a `compile` source path (relative to the pragma's own file)
   ## and record a `(tup lang name args)` entry in `c.toBuild`. `deps.nim` reuses
@@ -591,7 +591,7 @@ proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
     c.toBuild.addStrLit name, info
     c.toBuild.addStrLit customArgs, info
 
-proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                     builder, rawTool, rawArgs, rawLinkFlags: string) =
   ## Record a `{.build(builder, tool[, args[, linkflags]]).}` custom-backend entry:
   ## the module carrying this pragma has its Leng IR (`.c.nif`) piped through
@@ -626,7 +626,7 @@ proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
     c.toBuild.addStrLit customArgs, info
     c.toBuild.addStrLit linkFlags, info
 
-proc addBundle(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+proc addBundle(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                builder, rawTool, rawArgs: string) =
   ## Record a `{.bundle(builder, tool[, args]).}` custom-linker entry: `tool` is a
   ## standalone link driver compiled on demand by the generic `builder` command

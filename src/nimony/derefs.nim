@@ -66,7 +66,7 @@ type
     props: set[RoutineProp]
     firstParam: SymId
     resultSym: SymId
-    dangerousLocations: Table[SymId, PackedLineInfo]
+    dangerousLocations: Table[SymId, NifLineInfo]
 
   Context = object
     dest: TokenBuf
@@ -485,7 +485,7 @@ proc trProcDecl(c: var Context; n: var Cursor) =
   swap c.r, r
   c.typeCache.closeScope()
 
-proc callCanRaise(c: var Context; info: PackedLineInfo) {.inline.} =
+proc callCanRaise(c: var Context; info: NifLineInfo) {.inline.} =
   if CanRaise notin c.r.props:
     buildLocalErr c.dest, info, "cannot call a routine marked as `.raises` outside of a `try`..`except` block"
 
@@ -531,7 +531,7 @@ proc firstArgIsMutable(c: var Context; n: Cursor): bool =
   else:
     result = false
 
-proc cannotPassToVar(dest: var TokenBuf; info: PackedLineInfo; arg: Cursor) =
+proc cannotPassToVar(dest: var TokenBuf; info: NifLineInfo; arg: Cursor) =
   let msg = "cannot pass " & asNimCode(arg) & " to var/out T parameter"
   when defined(debug):
     writeStackTrace()
@@ -774,7 +774,7 @@ proc trLocal(c: var Context; n: var Cursor) =
       trAsgnRhs c, name, n, e
     when defined(debugSigmatch):
       if n.hasMore:
-        let u = unpack(lineMan, n.info)
+        let u = n.info
         echo "LOCAL LEFTOVER kind=", n.kind,
           (if n.isTagLit: " tag=" & globalTags.tags[n.tagId] else: ""),
           " at ", pool.filenames[u.file], ":", u.line, ":", u.col
@@ -911,7 +911,7 @@ proc shouldCollapseTry(c: var Context; tryAfterTag: Cursor): bool =
     skip n  # past the whole `(except ...)`
   result = anyRef
 
-proc emitRefExceptionType(dest: var TokenBuf; info: PackedLineInfo) =
+proc emitRefExceptionType(dest: var TokenBuf; info: NifLineInfo) =
   ## Emits `(ref Exception)` into `dest`.
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(ExceptionName), info

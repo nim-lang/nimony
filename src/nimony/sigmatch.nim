@@ -50,7 +50,7 @@ type
     ParamAlreadyGiven
 
   MatchError* = object
-    info: PackedLineInfo
+    info: NifLineInfo
     #msg: string
     kind: MatchErrorKind
     typeVar: SymId
@@ -70,7 +70,7 @@ type
                             ## structurally from the two signatures
     hasError: bool # mark that error message was set
     skippedMod: TypeKind
-    argInfo: PackedLineInfo
+    argInfo: NifLineInfo
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
     returnType*: Cursor
@@ -2049,7 +2049,7 @@ proc isEmptyOpenArrayCall*(n: Cursor): bool =
   if n.hasMore:
     return false
 
-proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: PackedLineInfo) =
+proc addEmptyRangeType(buf: var TokenBuf; c: ptr SemContext; info: NifLineInfo) =
   buf.addParLe(RangetypeT, info)
   buf.addSubtree c.types.intType
   buf.addIntLit(0, info)

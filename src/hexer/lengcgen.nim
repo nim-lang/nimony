@@ -36,7 +36,7 @@ proc expectSymdef(c: var EContext; n: var Cursor) =
   if not n.isSymbolDef:
     error c, "expected symbol definition, but got: ", n
 
-proc getSymDef(c: var EContext; n: var Cursor): (SymId, PackedLineInfo) =
+proc getSymDef(c: var EContext; n: var Cursor): (SymId, NifLineInfo) =
   expectSymdef(c, n)
   result = (n.symId, n.info)
   inc n
@@ -45,7 +45,7 @@ proc expectSym(c: var EContext; n: var Cursor) =
   if not n.isSymbol:
     error c, "expected symbol, but got: ", n
 
-proc getSym(c: var EContext; n: var Cursor): (SymId, PackedLineInfo) =
+proc getSym(c: var EContext; n: var Cursor): (SymId, NifLineInfo) =
   expectSym(c, n)
   result = (n.symId, n.info)
   inc n
@@ -58,7 +58,7 @@ proc expectIntLit(c: var EContext; n: var Cursor) =
   if not n.isIntLit:
     error c, "expected int literal, but got: ", n
 
-proc add(dest: var TokenBuf; tag: string; info: PackedLineInfo) =
+proc add(dest: var TokenBuf; tag: string; info: NifLineInfo) =
   dest.addParLe(tag, info)
 
 proc takeParRi(dest: var TokenBuf; n: var Cursor; start: Cursor) {.inline.} =
@@ -76,23 +76,23 @@ type
 
 proc openGenPragmas(): GenPragmas = GenPragmas(opened: false)
 
-proc maybeOpen(dest: var TokenBuf; g: var GenPragmas; info: PackedLineInfo) {.inline.} =
+proc maybeOpen(dest: var TokenBuf; g: var GenPragmas; info: NifLineInfo) {.inline.} =
   if not g.opened:
     g.opened = true
     dest.addParLe("pragmas", info)
 
-proc addKey(dest: var TokenBuf; g: var GenPragmas; key: string; info: PackedLineInfo) =
+proc addKey(dest: var TokenBuf; g: var GenPragmas; key: string; info: NifLineInfo) =
   maybeOpen dest, g, info
   dest.addParLe(key, info)
   dest.addParRi()
 
-proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: StrId; info: PackedLineInfo) =
+proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: StrId; info: NifLineInfo) =
   maybeOpen dest, g, info
   dest.addParLe(globalTags.registerTag(key), info)
   dest.addStrLit(val, info)
   dest.addParRi()
 
-proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: int64; info: PackedLineInfo) =
+proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: int64; info: NifLineInfo) =
   maybeOpen dest, g, info
   dest.addParLe(globalTags.registerTag(key), info)
   dest.addIntLit(val, info)
@@ -146,7 +146,7 @@ proc externKind(p: CollectedPragmas): string =
     result = ""
 
 proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragmas;
-                   prag: CollectedPragmas; pinfo: PackedLineInfo) =
+                   prag: CollectedPragmas; pinfo: NifLineInfo) =
   let extKind = externKind(prag)
   if extKind.len != 0:
     if prag.extern != StrId(0):
@@ -219,7 +219,7 @@ proc trEnumField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
 
     dest.addParRi(n.endInfo)
 
-proc genStringType(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
+proc genStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   # now unused
   let s = pool.syms.getOrIncl(StringName)
   dest.addParLe("type", info)
@@ -271,7 +271,7 @@ proc genStringType(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
   dest.addParRi() # "object"
   dest.addParRi() # "type"
 
-proc useStringType(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
+proc useStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   let s = pool.syms.getOrIncl(StringName)
   dest.addSymUse(s, info)
 
@@ -429,7 +429,7 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   else:
     dest.addSymUse(val, info)
 
-proc addRttiField(c: var EContext; dest: var TokenBuf; info: PackedLineInfo) =
+proc addRttiField(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   dest.addParLe("fld", info)
   dest.addSymDef(pool.syms.getOrIncl(VTableField), info)
   dest.addEmpty() # pragmas
@@ -1049,7 +1049,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
   else:
     dest.add dst
 
-proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: PackedLineInfo) =
+proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineInfo) =
   when sso:
     ## Generate an SSO string literal as an oconstr expression.
     ## Short strings (len <= AlwaysAvail) pack all data inline in `bytes`.
@@ -2077,7 +2077,7 @@ proc transformInlineRoutines(c: var EContext; dest: var TokenBuf; n: var Cursor)
   while d.hasMore:
     trStmt c, dest, d, TraverseAll
 
-proc makeOutput(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo): TokenBuf =
+proc makeOutput(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo): TokenBuf =
   # Build the final output with stmts wrapper and includes
   result = createTokenBuf()
   result.addParLe("stmts", rootInfo)
@@ -2118,7 +2118,7 @@ proc libCandidates(s: string; dest: var seq[string]) =
     dest.add s
 
 proc emitDynlibLoad(dest: var TokenBuf; loadSym, stepSym: SymId;
-                    candidates: seq[string]; idx: int; info: PackedLineInfo) =
+                    candidates: seq[string]; idx: int; info: NifLineInfo) =
   ## Emit the left-nested load expression for candidates[0..idx]:
   ##   nimDynlibLoadStep(... nimLoadLibrary(c0) ..., c_idx)
   ## so the alternatives are tried in declared order, keeping the first hit.
@@ -2134,7 +2134,7 @@ proc emitDynlibLoad(dest: var TokenBuf; loadSym, stepSym: SymId;
     dest.addStrLit candidates[idx]
     dest.addParRi()
 
-proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
+proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
   # dynlib init:
   for key, vals in c.dynlibs:
     let dynlib = pool.strings[key]
@@ -2191,7 +2191,7 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
 proc initProcName(moduleSuffix: string): string =
   "`ini.0." & moduleSuffix
 
-proc genInitProc(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; importedSuffixes: seq[string]) =
+proc genInitProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo; importedSuffixes: seq[string]) =
   ## Generate an explicit init proc for this module that:
   ## 1. Guards against double-initialization
   ## 2. Calls imported modules' init procs in order
@@ -2247,12 +2247,12 @@ proc genInitProc(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo; 
     dest.addSymUse(importInitSym, rootInfo)
     dest.addParRi()
 
-proc genInitProcEnd(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
+proc genInitProcEnd(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
   # Close: stmts, proc
   dest.addParRi() # stmts (body)
   dest.addParRi() # proc
 
-proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: PackedLineInfo) =
+proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
   ## Generate cmdCount/cmdLine globals and a C main() wrapper for the main module.
   ## The gvars get exportc pragmas so NIFC defines them with the expected C names.
   ## Symbol names must contain dots to be recognized as Symbol tokens (not Ident) in NIF.

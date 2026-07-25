@@ -45,7 +45,7 @@ type
 
   SynthesizeSerializerCtx = object
     dest: TokenBuf
-    info: PackedLineInfo
+    info: NifLineInfo
     routineKind: SymKind
     hookNames: Table[string, int]
     thisModuleSuffix, newModuleSuffix: string
@@ -88,7 +88,7 @@ proc instantiationTypevars(sym: SymId): Cursor =
       if tv.typeKind == InvokeT:
         result = tv
 
-proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
+proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
                     thisMod: string)
 
 proc emitTreeAsIdents(buf: var TokenBuf; n: var Cursor; thisMod: string) =
@@ -108,7 +108,7 @@ proc emitTreeAsIdents(buf: var TokenBuf; n: var Cursor; thisMod: string) =
     buf.addSubtree n
     inc n
 
-proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: PackedLineInfo;
+proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
                     thisMod: string) =
   ## Strip an instantiated/non-instantiated Symbol to its basename Ident.
   ## For an instantiated Symbol, also emit the surrounding `(at <basename>
@@ -711,7 +711,7 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
         c.usedModules.incl(s.g.config.nifcachePath / owner)
 
 proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
-                  dest: var TokenBuf; info: PackedLineInfo): string {.nimcall.} =
+                  dest: var TokenBuf; info: NifLineInfo): string {.nimcall.} =
   ## Sub-compile and run an arbitrary expression (typically a `block:` whose
   ## body is too complex for `expreval.eval` — local `var`s, nested procs,
   ## `for` loops, etc.). The result is serialised to NIF in `dest` using the

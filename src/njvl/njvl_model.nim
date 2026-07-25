@@ -28,7 +28,7 @@ proc addParLe*(dest: var TokenBuf; kind: NjvlKind; info = NoLineInfo) =
   dest.addParLe(cast[TagId](uint32(ord(kind))), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: NjvlKind;
-                       info: PackedLineInfo; body: untyped) =
+                       info: NifLineInfo; body: untyped) =
   dest.addParLe(kind, info)
   body
   dest.addParRi()

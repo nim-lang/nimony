@@ -42,7 +42,7 @@ type
     errors: TokenBuf
     procCanRaise: bool
 
-proc buildErr(c: var Context; info: PackedLineInfo; msg: string) =
+proc buildErr(c: var Context; info: NifLineInfo; msg: string) =
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg

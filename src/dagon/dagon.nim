@@ -112,13 +112,12 @@ proc symHref(ctx: RenderCtx; sym: SymId): string =
 
 proc sourcePath(n: Cursor): string =
   if not n.isTagLit: return ""
-  let raw = unpack(lineMan, n.info)
+  let raw = n.info
   if raw.file.isValid: result = pool.filenames[raw.file]
   else: result = ""
 
-proc docOf(info: PackedLineInfo): string =
-  let raw = unpack(lineMan, info)
-  if raw.comment != 0'u32: pool.strings[StrId(raw.comment)]
+proc docOf(info: NifLineInfo): string =
+  if info.comment != StrId(0): pool.strings[info.comment]
   else: ""
 
 proc emitKw(b: var HtmlBuilder; kw: string) =

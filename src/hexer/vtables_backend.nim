@@ -86,7 +86,7 @@ type
     sym: SymId
     needsDeref, needsParRi: bool
 
-proc useTemp(dest: var TokenBuf; temp: TempLoc; info: PackedLineInfo) =
+proc useTemp(dest: var TokenBuf; temp: TempLoc; info: NifLineInfo) =
   if temp.needsDeref:
     copyIntoKind dest, DerefX, info:
       dest.addSymUse temp.sym, info
@@ -196,7 +196,7 @@ type ClassInfo = object
   level: int
   ptrKind: TypeKind
 
-proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo)
+proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: NifLineInfo)
 
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()
@@ -336,7 +336,7 @@ proc classData(typ: Cursor): (int, UHash) =
     for _ in inheritanceChain(s): inc result[0]
     result[1] = uhash(pool.syms[s])
 
-proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassInfo; info: PackedLineInfo) =
+proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassInfo; info: NifLineInfo) =
   if class.ptrKind != NoType:
     # cast is enough, see trBaseobj
     copyIntoKind dest, CastX, info:
@@ -349,7 +349,7 @@ proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassI
       dest.addIntLit(class.level, info)
       tr c, dest, x
 
-proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo) =
+proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: NifLineInfo) =
   # get vtable field of `x`, might need to get to root object
   copyIntoKind dest, DotX, info:
     var x = x
@@ -393,7 +393,7 @@ proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassI
     dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
     dest.addIntLit 0, info
 
-proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: PackedLineInfo) =
+proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: NifLineInfo) =
   # `v of T` is translated into a logical 'and' expression:
   # let vtab = v.vtab
   # (level < len(vtab.display)) and (vtab.display[level] == hash(T))

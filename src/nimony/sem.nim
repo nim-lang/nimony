@@ -161,7 +161,7 @@ proc isNoReturn(n: Cursor): bool {.inline.} =
 proc requestRoutineInstance*(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
                             inferred: Table[SymId, Cursor];
-                            info: PackedLineInfo): ProcInstance
+                            info: NifLineInfo): ProcInstance
 
 proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, arg: CallArg): bool
 
@@ -250,7 +250,7 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
 
 # -------------------- declare `result` -------------------------
 
-proc declareResult*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo): SymId =
+proc declareResult*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo): SymId =
   if c.routine.kind in {ProcY, FuncY, ConverterY, MethodY, MacroY} and
       classifyType(c, c.routine.returnType) != VoidT:
     let name = pool.strings.getOrIncl("result")
@@ -405,7 +405,7 @@ proc subs(c: var SemContext; dest: var TokenBuf; sc: var SubsContext; body: Curs
     discard
 
 proc produceInvoke(c: var SemContext; dest: var TokenBuf; req: InstRequest;
-                   typeVars: Cursor; info: PackedLineInfo) =
+                   typeVars: Cursor; info: NifLineInfo) =
   dest.buildTree InvokeT, info:
     dest.addSymUse(req.origin, info)
     var typeVars = typeVars
@@ -566,7 +566,7 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
     block:
       let reports = checkSeals(dest)
       if reports.len > 0:
-        let u = unpack(lineMan, info)
+        let u = info
         echo "SEAL[semStmt after ", (if u.file != FileId(0): pool.filenames[u.file] else: "?"), ":", u.line, "]"
         for r in reports: echo "  ", r
         writeStackTrace()
@@ -615,7 +615,7 @@ proc sameIdent(a, b: SymId): bool =
 proc requestRoutineInstance*(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
                             inferred: Table[SymId, Cursor];
-                            info: PackedLineInfo): ProcInstance =
+                            info: NifLineInfo): ProcInstance =
   let key = typeToCanon(typeArgs, 0)
   var targetSym = c.instantiatedProcs.getOrDefault((origin, key))
   if targetSym == SymId(0):
@@ -710,7 +710,7 @@ type
     FailedDot
     InvalidDot
 
-proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId; info: PackedLineInfo; flags: set[SemFlag]): DotExprState
+proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId; info: NifLineInfo; flags: set[SemFlag]): DotExprState
 
 proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
                          atStart: Cursor): bool
@@ -756,7 +756,7 @@ proc isStringLiteral(n: Cursor): bool =
   # supposing it's a string type
   result = n.isStringLit or n.exprKind == SufX
 
-proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: Item; info: PackedLineInfo; beforeExpr: int) =
+proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: Item; info: NifLineInfo; beforeExpr: int) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT, AnumT}
 
@@ -1016,7 +1016,7 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
   elif bypassVis and result.level == 0:
     result.rootOwner = genericRootSym(decl)
 
-proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ident: StrId; info: PackedLineInfo): Sym =
+proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ident: StrId; info: NifLineInfo): Sym =
   # mirrors semIdent
   let insertPos = dest.len
   let count =
@@ -1051,7 +1051,7 @@ proc findEnumField(decl: EnumDecl; name: StrId): SymId =
         return symId
 
 proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId;
-                   info: PackedLineInfo; flags: set[SemFlag]): DotExprState =
+                   info: NifLineInfo; flags: set[SemFlag]): DotExprState =
   let exprStart = dest.len
   let expected = it.typ
   dest.addParLe(DotX, info)
@@ -1328,7 +1328,7 @@ proc semQuoted(c: var SemContext; dest: var TokenBuf; n: var Cursor; flags: set[
   let nameId = takeUnquoted(n)
   result = semIdentImpl(c, dest, n, nameId, flags)
 
-proc addWithInfoRewrite(dest: var TokenBuf; n: var Cursor; info: PackedLineInfo) =
+proc addWithInfoRewrite(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   ## Copies the tree/token at `n`, rewriting every token's line info to
   ## `info`. Structure-aware, so the (possibly elided) closes stay balanced.
   if n.isTagLit:
@@ -1377,7 +1377,7 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
             addWithInfoRewrite(dest, n, info)
           dest.addParRi(info)
 
-proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: int; context: TypeDeclContext; info: PackedLineInfo) =
+proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: int; context: TypeDeclContext; info: NifLineInfo) =
   case exprType.typeKind
   of TypedescT:
     dest.shrink start
@@ -1404,7 +1404,7 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
       dest.shrink start
       c.buildErr dest, info, "not a type"
 
-proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext; info: PackedLineInfo) =
+proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext; info: NifLineInfo) =
   # expression needs to be fully evaluated, switch to body phase
   var phase = SemcheckBodies
   swap c.phase, phase
@@ -1415,7 +1415,7 @@ proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: 
   exprToType c, dest, it.typ, start, context, info
   swap c.phase, phase
 
-proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: PackedLineInfo; start: int; context: TypeDeclContext) =
+proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: NifLineInfo; start: int; context: TypeDeclContext) =
   if s.kind in {TypeY, TypevarY}:
     let res = tryLoadSym(s.name)
     let wasMagic = maybeInlineMagic(c, dest, res)
@@ -1536,7 +1536,7 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
   else:
     semExpr c, dest, it
 
-proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; info: PackedLineInfo) =
+proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; info: NifLineInfo) =
   ## The enclosing routine tree must still be open when this runs:
   ## `insert`/`replace` maintain the open-tag bookkeeping but cannot widen
   ## the sealed jump of an enclosing scope.
@@ -1639,7 +1639,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
 proc semCaseOfValueImpl(c: var SemContext; dest: var TokenBuf; it: var Item; selectorType: TypeCursor;
                     seen: var seq[(xint, xint)])
 
-proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; expected: TypeCursor; seen: var seq[(xint, xint)]; info: PackedLineInfo) =
+proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; expected: TypeCursor; seen: var seq[(xint, xint)]; info: NifLineInfo) =
   let info = it.n.info
   var orig = it.n
 
@@ -1794,7 +1794,7 @@ proc semLocalTypeExpr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   it.typ = typeToCursor(c, dest, start)
   dest.shrink start
 
-proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo;
+proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLineInfo;
                       asgnStart: Cursor) =
   # check if LHS is builtin subscript:
   var subscript = Item(n: it.n, typ: c.types.autoType)
@@ -1838,7 +1838,7 @@ proc semSubscriptAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info:
     semCall c, dest, call, {}, SubscriptAsgnCall
     it.typ = call.typ
 
-proc semCurlyatAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo;
+proc semCurlyatAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLineInfo;
                     asgnStart: Cursor) =
   # `{}=` has no builtin meaning; always rewrite to a call to `{}=`:
   var lhsBuf = createTokenBuf(4)
@@ -1861,7 +1861,7 @@ proc semCurlyatAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: P
   semCall c, dest, call, {}, CurlyatAsgnCall
   it.typ = call.typ
 
-proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: PackedLineInfo;
+proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLineInfo;
                 asgnStart: Cursor) =
   # check if LHS is builtin subscript:
   let dotInfo = it.n.info
@@ -2225,7 +2225,7 @@ proc semCaseOfValueString(c: var SemContext; dest: var TokenBuf; it: var Item; s
     buildErr c, dest, it.n.info, "`ranges` within `of` expected"
     skip it.n
 
-proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; selectorType: TypeCursor; seen: seq[(xint, xint)]) =
+proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; selectorType: TypeCursor; seen: seq[(xint, xint)]) =
   var total = createXint(0'i32)
   for s in items(seen):
     total = total + s[1] - s[0] + createXint(1'i32)
@@ -2410,7 +2410,7 @@ type
     ident: StrId
     fieldSym: SymId
     fieldType: TypeCursor
-    info: PackedLineInfo
+    info: NifLineInfo
 
 proc findOneofEfld(c: var SemContext; name: StrId): SymId =
   result = SymId(0)
@@ -2545,7 +2545,7 @@ proc semObjectCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item;
     dest.addParRi()
 
 proc buildEfld(buf: var TokenBuf; sym: SymId; parentType: SymId;
-               ordinal: int; name: StrId; info: PackedLineInfo;
+               ordinal: int; name: StrId; info: NifLineInfo;
                exported: bool) =
   buf.addParLe(EfldY, info)
   buf.addSymDef(sym, info)
@@ -2562,13 +2562,13 @@ proc buildEfld(buf: var TokenBuf; sym: SymId; parentType: SymId;
   buf.addParRi()
 
 proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
-                                it: var Item; info: PackedLineInfo;
+                                it: var Item; info: NifLineInfo;
                                 state: var SemObjectState): TypeCursor =
   skip it.n # skip the empty (fld . . . . .)
 
   type BranchInfo = object
     name: StrId
-    info: PackedLineInfo
+    info: NifLineInfo
   var branches: seq[BranchInfo] = @[]
   var seen = initHashSet[StrId]()
   var scan = it.n
@@ -2923,7 +2923,7 @@ proc isIdentCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {
       result = false
 
 proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
-                      forHeadPos, beforeCall: int; info: PackedLineInfo;
+                      forHeadPos, beforeCall: int; info: NifLineInfo;
                       loopVarType: TypeCursor; forStart: Cursor): bool =
   ## When a `for` loop's iterator resolves to a routine with a `.plugin`
   ## pragma, invoke the plugin with the for-loop context instead of doing
@@ -3793,7 +3793,7 @@ proc semTupleConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
       c.buildErr dest, info, "tuple type " & typeToString(it.typ) & " too long for tuple constructor"
   commonType c, dest, it, start, expected
 
-proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
+proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
   var callBuf = createTokenBuf(16)
   callBuf.addParLe(CallX, info)
   discard buildSymChoice(c, callBuf, pool.strings.getOrIncl("default"), info, FindAll)
@@ -3803,7 +3803,7 @@ proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Packe
   semCall c, dest, it, {}
 
 proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
-                         setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                         setFields: Table[SymId, Cursor]; info: NifLineInfo;
                          bindings: Table[SymId, Cursor]; depth: int) =
   let fieldSym = field.name.symId
   if setFields.hasKey(fieldSym):
@@ -3838,18 +3838,18 @@ proc asNimSym(symId: SymId): string =
   result = pool.syms[symId]
   extractBasename(result)
 
-template conflictingBranchesError(c: var SemContext; dest: var TokenBuf, info: PackedLineInfo, prevFields: SymId, currentFields: SymId) =
+template conflictingBranchesError(c: var SemContext; dest: var TokenBuf, info: NifLineInfo, prevFields: SymId, currentFields: SymId) =
   c.buildErr dest, info, "The fields '" & asNimSym(prevFields) &
               "' and '" & asNimSym(currentFields) & "' cannot be initialized together, " &
               "because they are from conflicting branches in the case object."
 
-template badDiscriminatorError(c: var SemContext; dest: var TokenBuf, info: PackedLineInfo, field: SymId, discriminator: SymId) =
+template badDiscriminatorError(c: var SemContext; dest: var TokenBuf, info: NifLineInfo, field: SymId, discriminator: SymId) =
   c.buildErr dest, info,
     onRaiseQuit(("cannot prove that it's safe to initialize '$1' with " &
     "the runtime value for the discriminator '$2'.") %
     [asNimSym(field), asNimSym(discriminator)])
 
-template wrongBranchError(c: var SemContext; dest: var TokenBuf, info: PackedLineInfo, field: SymId,
+template wrongBranchError(c: var SemContext; dest: var TokenBuf, info: NifLineInfo, field: SymId,
       discriminator: SymId, discriminatorVal: Cursor) =
   c.buildErr dest, info,
       onRaiseQuit(("a case selecting discriminator '$1' with value '$2' " &
@@ -3892,7 +3892,7 @@ proc getValueInKv(n: Cursor): Cursor =
   skip result
 
 proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor; selector: Local;
-                setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                setFields: Table[SymId, Cursor]; info: NifLineInfo;
                 bindings: Table[SymId, Cursor]; depth: int) =
   var lastFieldSymId = SymId(0)
   var isBranchSelected = false
@@ -3965,7 +3965,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
           buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
 
 proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                          setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                          setFields: Table[SymId, Cursor]; info: NifLineInfo;
                           bindings: Table[SymId, Cursor]; depth = 0) =
   var iter = initObjFieldIter()
   while nextField(iter, n, keepCase = true):
@@ -3983,7 +3983,7 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
 
 proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
-                           setFields: Table[SymId, Cursor]; info: PackedLineInfo;
+                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
                            prebuiltBindings = initTable[SymId, Cursor]()) =
   var constrKind = NoExpr
   var objImpl = typ
@@ -4129,7 +4129,7 @@ proc inferFieldTypes(c: var SemContext; args: Cursor;
 
 proc buildInferredInvoke(c: var SemContext; objTypeSym: SymId;
                           decl: TypeDecl; inferred: Table[SymId, Cursor];
-                          info: PackedLineInfo): TypeCursor =
+                          info: NifLineInfo): TypeCursor =
   ## Build an InvokeT from inferred type params and instantiate it.
   ## Returns default if not all params were inferred.
   var typeBuf = createTokenBuf(16)
@@ -4167,7 +4167,7 @@ proc fieldTypesByNameFromObj(decl: TypeDecl): Table[StrId, TypeCursor] =
 
 proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
                              efldSym: SymId; args: Cursor;
-                             info: PackedLineInfo): TypeCursor =
+                             info: NifLineInfo): TypeCursor =
   ## Infer generic type for a sum type constructor like `Some(val: 4)`.
   let objTypeSym = getAnumOwnerType(efldSym)
   if objTypeSym == SymId(0): return default(TypeCursor)
@@ -4191,7 +4191,7 @@ proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
 
 proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
                              decl: TypeDecl; args: Cursor;
-                             info: PackedLineInfo): TypeCursor =
+                             info: NifLineInfo): TypeCursor =
   ## Infer generic type for an object constructor like `Foo(x: 4)`.
   let fieldTypesByName = fieldTypesByNameFromObj(decl)
   var inferred = initTable[SymId, Cursor]()
@@ -4199,7 +4199,7 @@ proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
   result = buildInferredInvoke(c, objTypeSym, decl, inferred, info)
 
 proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
-                          efldSym: SymId; expected: TypeCursor; info: PackedLineInfo;
+                          efldSym: SymId; expected: TypeCursor; info: NifLineInfo;
                           oconstrStart: Cursor) =
   let branchInfo = it.n.info
   inc it.n
@@ -4384,7 +4384,7 @@ proc semNewref(c: var SemContext; dest: var TokenBuf; it: var Item) =
       skip it.n # existing `default(T)` call
   commonType c, dest, it, exprStart, expected
 
-proc buildDefaultTuple(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
+proc buildDefaultTuple(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
   dest.addParLe(TupconstrX, info)
   dest.addSubtree typ
   var currentField = typ
@@ -4480,7 +4480,7 @@ proc semTupAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
 proc collectExplicitInstMatches(c: var SemContext; dest: var TokenBuf; syms: Cursor;
                                 args: Cursor; matches: var int; lastMatch: var Match;
                                 instLastMatch: var bool; errMsg: var string;
-                                errInfo: var PackedLineInfo) =
+                                errInfo: var NifLineInfo) =
   ## Walks a symchoice tree (or a bare symbol), adding every sym whose
   ## typevars match `args` to `dest`. Malformed content is reported via
   ## `errMsg`/`errInfo` (empty `errMsg` means success).

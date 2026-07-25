@@ -18,7 +18,14 @@
 
 import std / tables
 import nifpools
-export nifpools
+# `except`: the frontend went all-NifLineInfo; the classic side keeps speaking
+# PackedLineInfo, so nifpools' same-name/same-params variants must not leak
+# through (`info(n: NifToken)` differs only in return type, `NoLineInfo` is a
+# same-name const of a different type — either would be ambiguous or wrong for
+# ast2nif). The classic replacements are defined below / come from lineinfos.
+export nifpools except info, NoLineInfo
+import lineinfos
+export lineinfos
 
 from nifreader import Reader, ExpandedToken, decodeStr
 
@@ -31,9 +38,27 @@ proc litId*(n: NifToken): StrId {.inline.} = strId(n)
 proc litId*(c: Cursor): StrId {.inline.} = strId(c)
 proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
 
+var lineMan*: LineInfoManager
+  ## The classic packed line-info side channel (`pool.man`). Frontend code no
+  ## longer uses it — it lives here purely for ast2nif's writer, which packs
+  ## `TLineInfo` into `PackedLineInfo` and unpacks on emit.
+
 template files*(p: Pool): untyped = p.filenames
 template tags*(p: Pool): untyped = globalTags.tags
 template man*(p: Pool): untyped = lineMan
+
+proc info*(n: NifToken): PackedLineInfo {.inline.} = lineinfos.NoLineInfo
+  ## Classic tokens carried their line info inline; a bare 4-byte nifcore
+  ## token cannot, so reading it back yields `NoLineInfo` (ast2nif's
+  ## `emitInfo(t.info)` then emits nothing — matching the writer, which
+  ## attaches real positions at the builder level instead).
+
+proc info*(c: Cursor): PackedLineInfo {.inline.} =
+  ## Classic packed view of a cursor's line info (ast2nif shadows this with
+  ## its own NifLineInfo template; kept for any other classic reader).
+  let li = rawLineInfo(c)
+  if li.file.isValid: pack(lineMan, li.file, li.line, li.col)
+  else: lineinfos.NoLineInfo
 
 type
   IntId*   = distinct int64         ## value carriers (nifcore stores inline)
@@ -62,7 +87,10 @@ proc intId*(c: Cursor): IntId {.inline.} = IntId(intVal(c))
 proc uintId*(c: Cursor): UIntId {.inline.} = UIntId(uintVal(c))
 
 proc addIntLit*(dest: var TokenBuf; id: IntId; info: PackedLineInfo) =
-  addIntLit(dest, int64(id), info)
+  addIntLit(dest, int64(id))
+  if info.isValid:
+    let u = unpack(lineMan, info)
+    appendLineInfo(dest, u.file, u.line, u.col)
 
 # Classic single-token constructors with a (dropped) line-info argument.
 proc strToken*(s: StrId; info: PackedLineInfo): NifToken {.inline.} = strLitToken(s)

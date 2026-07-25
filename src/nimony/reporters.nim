@@ -5,7 +5,7 @@
 # distribution, for details about the copyright.
 
 import std / [syncio, strutils, os, assertions, sets, terminal]
-import ".." / lib / [nifpools, bitabs, lineinfos]
+import ".." / lib / [nifpools, bitabs]
 
 include ".." / lib / compat2
 
@@ -22,7 +22,7 @@ type
     noColors*: bool
     warnings*: int
     errors*: int
-    reportedErrSources: HashSet[PackedLineInfo]
+    reportedErrSources: HashSet[NifLineInfo]
 
 
 proc useColors*(): bool = terminal.isatty(stdout)
@@ -105,13 +105,12 @@ proc shortenDir*(x: string): string =
   else:
     result = x
 
-proc infoToStr*(info: PackedLineInfo): string =
-  let rawInfo = unpack(lineMan, info)
-  if not info.isValid or not rawInfo.file.isValid:
+proc infoToStr*(info: NifLineInfo): string =
+  if not info.isValid:
     result = "???"
   else:
-    result = pool.filenames[rawInfo.file].shortenDir()
-    result.add "(" & $rawInfo.line & ", " & $(rawInfo.col+1) & ")"
+    result = pool.filenames[info.file].shortenDir()
+    result.add "(" & $info.line & ", " & $(info.col+1) & ")"
 
 proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var int) =
   ## Recursive cursor walk (build-agnostic): an `(err …)` node is

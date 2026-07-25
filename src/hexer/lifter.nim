@@ -46,13 +46,13 @@ type
     dest*: TokenBuf
     op: AttachedOp
     routineKind: SymKind
-    calledErrorHook: PackedLineInfo
+    calledErrorHook: NifLineInfo
     calledErrorHookSet: bool
       ## the FLAG for `.error` propagation. `calledErrorHook` only carries
       ## the position for the message; it may legitimately be `NoLineInfo`
       ## (an index-jumped decl load cannot resolve its relative line infos),
       ## so info-validity must not double as the flag.
-    info: PackedLineInfo
+    info: NifLineInfo
     requests: seq[GenHookRequest]
     structuralTypeToHook: array[AttachedOp, Table[string, SymId]]
     nominalTypeToHook: array[AttachedOp, Table[SymId, SymId]]
@@ -144,7 +144,7 @@ proc hasHook(c: var LiftingCtx; s: SymId): bool =
     result = isErrorHook(lookupHookSym(c, siblingOp, s))
 
 proc siblingHookError(c: var LiftingCtx; typ: TypeCursor;
-                      siblingOp: AttachedOp): (bool, PackedLineInfo) =
+                      siblingOp: AttachedOp): (bool, NifLineInfo) =
   ## Returns (true, the sibling `=copy`/`=dup` hook's `name.info`) if it is
   ## marked `.error` for the (nominal) type `typ`. The info may be
   ## `NoLineInfo` even when the flag is true (index-jumped decl loads have
@@ -1010,7 +1010,7 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil): ref LiftingCtx =
   (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY, frontendHooks: frontendHooks)
 
-proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLineInfo): SymId =
+proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: NifLineInfo): SymId =
   c.op = op
   c.calledErrorHook = NoLineInfo
   c.info = info
@@ -1022,7 +1022,7 @@ proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: PackedLi
     c.routineKind = ProcY
   result = lift(c, t)
 
-proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: PackedLineInfo): SymId =
+proc getDestructor*(c: var LiftingCtx; typ: TypeCursor; info: NifLineInfo): SymId =
   getHook(c, attachedDestroy, typ, info)
 
 when isMainModule:

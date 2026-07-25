@@ -340,7 +340,7 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: TokenBuf; typ: Cursor)
   else:
     copyIntoKind c.dest, CallS, info: emitArgs(c.dest)
 
-proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: PackedLineInfo; typ: Cursor) =
+proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: NifLineInfo; typ: Cursor) =
   let staticCall = typ.typeKind notin {RefT, PtrT}
   template emitArgs(dest: var TokenBuf) =
     copyIntoSymUse dest, destroyProc, info
@@ -421,7 +421,7 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
       copyIntoKind c.dest, HaddrX, info:
         tr c, n, WillBeOwned
 
-proc callWasMoved(c: var Context; sym: SymId; info: PackedLineInfo; typ: Cursor) =
+proc callWasMoved(c: var Context; sym: SymId; info: NifLineInfo; typ: Cursor) =
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
     copyIntoKind c.dest, CallS, info:
@@ -635,7 +635,7 @@ proc derefsBoxedRef(c: var Context; ptrOperand: Cursor): bool =
     inc typ
   result = not cursorIsNil(typ) and typ.typeKind == RefT
 
-proc addDataFieldHop(c: var Context; info: PackedLineInfo) =
+proc addDataFieldHop(c: var Context; info: NifLineInfo) =
   ## Emit the `d 0` that follows an already-emitted `(deref refptr)` to reach the
   ## object payload of a boxed `ref` cell.
   c.dest.addSymUse(pool.syms.getOrIncl(DataField), info)
@@ -801,12 +801,12 @@ type
   OwningTemp = object
     active: bool
     s: SymId
-    info: PackedLineInfo
+    info: NifLineInfo
 
 template owningTempDefault(): OwningTemp =
   OwningTemp(active: false, s: NoSymId, info: NoLineInfo)
 
-proc bindToTemp(c: var Context; typ: Cursor; info: PackedLineInfo; kind = VarS): OwningTemp =
+proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): OwningTemp =
   let s = pool.syms.getOrIncl("`tmp." & $c.tmpCounter)
   inc c.tmpCounter
 
@@ -927,7 +927,7 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
     else:
       tr(c, n, WantOwner)
 
-proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: PackedLineInfo) =
+proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
   copyIntoKind c.dest, IfS, info:
     copyIntoKind c.dest, ElifU, info:
       copyIntoKind c.dest, EqX, info:
@@ -1294,7 +1294,7 @@ proc readableHookname(s: string): string =
       inc i
     setLen result, i
 
-proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: PackedLineInfo): int =
+proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: NifLineInfo): int =
   let res = tryLoadSym(fn)
   result = 0
   if res.status == LacksNothing:

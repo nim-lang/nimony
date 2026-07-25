@@ -38,7 +38,7 @@ type
     dest: TokenBuf
     outfile: string
     buf1: TokenBuf
-    moduleLineInfo: PackedLineInfo
+    moduleLineInfo: NifLineInfo
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
@@ -197,7 +197,7 @@ proc phaseX(c: var SemContext; dest: var TokenBuf; n: Cursor; x: SemPhase) =
   # clear pragmaStack in case {.pop.} was not called
   c.pragmaStack.setLen(0)
 
-proc getModuleLineInfo(buf: var TokenBuf): PackedLineInfo =
+proc getModuleLineInfo(buf: var TokenBuf): NifLineInfo =
   ## Get the line info from the module's StmtsS tag.
   var n = beginRead(buf)
   assert n.stmtKind == StmtsS
@@ -215,13 +215,13 @@ proc semToplevelStmts(c: var SemContext; dest: var TokenBuf; buf: var TokenBuf) 
     while n.hasMore:
       semStmt c, dest, n, false
 
-proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, PackedLineInfo) =
+proc phase1(c: var SemContext; dest: var TokenBuf; n: Cursor): (TokenBuf, NifLineInfo) =
   ## Phase 1: Register toplevel symbols.
   phaseX(c, dest, n, SemcheckTopLevelSyms)
   let lineInfo = getModuleLineInfo(dest)
   result = (move dest, lineInfo)
 
-proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
+proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: NifLineInfo): TokenBuf =
   ## Phase 2: Check signatures.
   c.phase = SemcheckSignatures
   # #1974: deferredLocals lives within this phase; onDemandResolved carries
@@ -235,7 +235,7 @@ proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo
   result.addParRi()
   c.pragmaStack.setLen(0)
 
-proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: PackedLineInfo): TokenBuf =
+proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: NifLineInfo): TokenBuf =
   ## Phase 3: Check bodies.
   c.phase = SemcheckBodies
   c.deferredLocals.clear()  # phase-2 cursors are stale here (#1974)

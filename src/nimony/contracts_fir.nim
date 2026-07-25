@@ -57,7 +57,7 @@ type
     borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
     mode: BorrowableCheck
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
-    info: PackedLineInfo
+    info: NifLineInfo
 
   NjvlContext = object
     flow: FlowState                    # the journaled analysis state: the
@@ -94,7 +94,7 @@ proc markInit(c: var NjvlContext; symId: SymId) {.inline.} =
 proc isInitialized(c: NjvlContext; symId: SymId): bool {.inline.} =
   symId in c.flow.inits
 
-proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
+proc dumpCurrentProc(c: var NjvlContext; info: NifLineInfo; msg: string) =
   ## Dump the NJ IR of the proc currently under analysis to stderr. Used
   ## by `--verbose` so the user can see the lowered form that caused
   ## a contract/init failure. Gated on `c.verbose` — callers still invoke
@@ -106,7 +106,7 @@ proc dumpCurrentProc(c: var NjvlContext; info: PackedLineInfo; msg: string) =
   stderr.writeLine toString(c.currentProcStart, false)
   stderr.writeLine "--- end NJ IR dump ---"
 
-proc buildErr(c: var NjvlContext; info: PackedLineInfo; msg: string) =
+proc buildErr(c: var NjvlContext; info: NifLineInfo; msg: string) =
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
@@ -259,7 +259,7 @@ proc pathsOverlap(a, b: BorrowInfo): bool =
       return false
   result = true
 
-proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowInfo; info: PackedLineInfo) =
+proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowInfo; info: NifLineInfo) =
   for b in c.activeBorrows:
     if pathsOverlap(mutPath, b):
       buildErr c, info, "'" & pool.syms[mutPath.path[0]] & "' is borrowed and cannot be mutated"

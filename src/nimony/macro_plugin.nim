@@ -10,7 +10,7 @@
 
 import std/[syncio, os, osproc, tables, hashes, assertions]
 
-import ".." / lib / [nifpools, lineinfos, bitabs, nifindexes, symparser]
+import ".." / lib / [nifpools, bitabs, nifindexes, symparser]
 import ".." / lib / nifreader
 from ".." / lib / nifcoreparse import parse
 import ".." / models / [tags]
@@ -93,7 +93,7 @@ proc rewriteSymsToIdents(buf: var TokenBuf) =
 # Plugin module generator
 # ----------------------------------------------------------------------------
 
-proc emitImportStdMacros(dest: var TokenBuf; info: PackedLineInfo) =
+proc emitImportStdMacros(dest: var TokenBuf; info: NifLineInfo) =
   ## Emit `(import (infix / std (bracket syncio macros)))` — the same shape
   ## nifler emits for `import std/[syncio, macros]`.
   dest.copyInto(globalTags.registerTag("import"), info):
@@ -104,13 +104,13 @@ proc emitImportStdMacros(dest: var TokenBuf; info: PackedLineInfo) =
         dest.addIdent "syncio", info
         dest.addIdent "macros", info
 
-proc emitNimNodeRetType(dest: var TokenBuf; info: PackedLineInfo) =
+proc emitNimNodeRetType(dest: var TokenBuf; info: NifLineInfo) =
   ## Pre-sem the return type is just the ident `NimNode`. Sem resolves it
   ## against `lib/std/macros.nim`'s `NimNode*` type.
   dest.addIdent "NimNode", info
 
 proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
-                                  info: PackedLineInfo) =
+                                  info: NifLineInfo) =
   ## Copy a `(params (param ...)*)` subtree but rewrite each param's TYPE slot
   ## from `(untyped)` / `(typed)` to the ident `NimNode`. The user's macro
   ## signature uses `untyped` (for "any AST, don't sem-check") which is
@@ -147,7 +147,7 @@ proc copyParamsRewritingMetatypes(dest: var TokenBuf; params: Cursor;
         dest.takeTree n
 
 proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
-                  info: PackedLineInfo) =
+                  info: NifLineInfo) =
   ## Emit `(proc <implName> . . . (params <copied-and-rewritten>) NimNode . . <body>)`.
   let r = asRoutine(macroDecl, SkipInclBody)
   dest.copyInto(globalTags.registerTag("proc"), info):
@@ -167,7 +167,7 @@ proc emitImplProc(dest: var TokenBuf; implName: string; macroDecl: Cursor;
     spliceBodyWithoutResult(dest, r.body)
 
 proc emitMainProc(dest: var TokenBuf; implName: string; paramCount: int;
-                  info: PackedLineInfo) =
+                  info: NifLineInfo) =
   ## Emit:
   ##   proc main =
   ##     let input = loadInput()
@@ -231,7 +231,7 @@ proc countParams(macroDecl: Cursor): int =
     skip p
 
 proc buildPluginNif*(macroDecl: Cursor; macroSym: SymId;
-                     info: PackedLineInfo): TokenBuf =
+                     info: NifLineInfo): TokenBuf =
   ## Build a `.p.nif`-shaped TokenBuf for a macro plugin module.
   ##
   ## Shape:
@@ -275,7 +275,7 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
     result.add ".exe"
 
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
-                         info: lineinfos.PackedLineInfo;
+                         info: NifLineInfo;
                          commandLineArgs: string): string =
   ## Build the plugin module straight from NIF (no Nim text round-trip), write
   ## it as a `.p.nif`, and have Nimony compile it through `s` (the NIF-input
@@ -341,7 +341,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   result = exePath
 
 proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
-                     info: lineinfos.PackedLineInfo;
+                     info: NifLineInfo;
                      macroSym: SymId; args: TokenBuf): bool =
   let exePath = getMacroPluginPath(nifcachePath, macroSym)
   if not fileExists(exePath):

@@ -16,7 +16,7 @@ proc hasContinueStmt(c: Cursor): bool =
 
 proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
         typ: var Cursor; value: var Cursor;
-        info: PackedLineInfo; kind: StmtKind; needsAddr: bool) =
+        info: NifLineInfo; kind: StmtKind; needsAddr: bool) =
   assert typ.hasMore
   dest.addParLe kind, info
   dest.addSymDef(destSym, info)
@@ -30,7 +30,7 @@ proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
     takeTree(dest, value)
   dest.addParRi()
 
-proc createTupleAccess(left: TokenBuf; i: int; info: PackedLineInfo): TokenBuf =
+proc createTupleAccess(left: TokenBuf; i: int; info: NifLineInfo): TokenBuf =
   result = createTokenBuf()
   result.addParLe(TupatX, info)
   result.add left
@@ -64,7 +64,7 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
     res[destSym] = freshSym
     createDecl(e, dest, freshSym, typ, c, info, VarS, needsAddr=false)
 
-proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left: TokenBuf; i: int; info: PackedLineInfo; typ: Cursor; needsAddr: bool) =
+proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left: TokenBuf; i: int; info: NifLineInfo; typ: Cursor; needsAddr: bool) =
   assert typ.hasMore
   let local = asLocal(forVar)
   let symId = local.name.symId
@@ -73,7 +73,7 @@ proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left
   var localTyp = local.typ
   createDecl(e, dest, symId, localTyp, tup, info, LetS, needsAddr)
 
-proc startTupleAccess(s: SymId; info: PackedLineInfo; needsDeref: bool): TokenBuf =
+proc startTupleAccess(s: SymId; info: NifLineInfo; needsDeref: bool): TokenBuf =
   result = createTokenBuf()
   if needsDeref:
     result.copyIntoKind HderefX, info:
@@ -97,7 +97,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
           inc i
     else:
       let tmpId: SymId
-      let info: PackedLineInfo
+      let info: NifLineInfo
       var typ = yieldType.skipModifier()
       let needsDeref = yieldType.typeKind in {LentT, MutT}
       assert typ.typeKind == TupleT

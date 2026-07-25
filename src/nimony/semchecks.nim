@@ -17,10 +17,10 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import nimony_model, builtintypes, renderer, typeprops, semdata, sembasics
 
-proc typeMismatch*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; got, expected: TypeCursor) =
+proc typeMismatch*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; got, expected: TypeCursor) =
   c.buildErr dest, info, "type mismatch: got: " & typeToString(got) & " but wanted: " & typeToString(expected)
 
-proc typecheck*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; got, expected: TypeCursor) =
+proc typecheck*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; got, expected: TypeCursor) =
   if sameTrees(expected, got):
     discard "fine"
   elif isVoidType(expected) and isVoidType(got):
@@ -31,7 +31,7 @@ proc typecheck*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; got
   else:
     c.typeMismatch dest, info, got, expected
 
-proc combineType*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; d: var Cursor; src: Cursor) =
+proc combineType*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; d: var Cursor; src: Cursor) =
   if typeKind(d) == AutoT:
     d = src
   elif sameTrees(d, src):
@@ -39,13 +39,13 @@ proc combineType*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; d
   else:
     c.typeMismatch dest, info, src, d
 
-proc producesVoid*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; d: var Cursor) =
+proc producesVoid*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; d: var Cursor) =
   if typeKind(d) in {AutoT, VoidT}:
     combineType c, dest, info, d, c.types.voidType
   else:
     c.typeMismatch dest, info, c.types.voidType, d
 
-proc producesNoReturn*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo; d: var Cursor) =
+proc producesNoReturn*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; d: var Cursor) =
   if typeKind(d) in {AutoT, VoidT}:
     combineType c, dest, info, d, c.types.voidType
   else:

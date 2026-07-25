@@ -118,7 +118,7 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind dest, HaddrX, info:
       tr c, dest, n
 
-proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): bool =
+proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo): bool =
   if isVoidType(typ):
     result = false
   else:
@@ -130,7 +130,7 @@ proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: 
     dest.addSymUse pool.syms.getOrIncl(SuccessName), info
     result = true
 
-proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
+proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
   if not isVoidType(c.retType):
     dest.addParLe TupconstrX, info
     dest.addParLe TupleT, info
@@ -138,7 +138,7 @@ proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: Pa
     dest.addSubtree typ
     dest.addParRi()
 
-proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: PackedLineInfo) =
+proc finishRaiseTuple(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   if not isVoidType(c.retType):
     if c.resultSym != SymId(0):
       copyIntoKind dest, TupatX, info:

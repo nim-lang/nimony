@@ -251,7 +251,7 @@ proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): 
 proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      templateDecl, args, firstVarargMatch: Cursor;
                      inferred: ptr Table[SymId, Cursor];
-                     info: PackedLineInfo) =
+                     info: NifLineInfo) =
   var templ = asRoutine(templateDecl, SkipInclBody)
 
   if expandPlugin(c, dest, templ, args):

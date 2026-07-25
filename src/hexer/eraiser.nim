@@ -69,7 +69,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache = move(c2.typeCache)
   c.needsXelim = c2.needsXelim
 
-proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: PackedLineInfo) =
+proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: NifLineInfo) =
   copyIntoKind dest, IfS, info:
     copyIntoKind dest, ElifU, info:
       copyIntoKind dest, FailedX, info:

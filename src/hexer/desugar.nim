@@ -22,7 +22,7 @@ type
     activeChecks: set[CheckMode]
     pending: TokenBuf
 
-proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo): SymId =
+proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo): SymId =
   let s = "`desugar." & $c.counter
   inc c.counter
   result = pool.syms.getOrIncl(s)
@@ -165,17 +165,17 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
   c.typeCache.closeScope()
 
-proc addUIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
+proc addUIntType(buf: var TokenBuf; bits: int; info: NifLineInfo) =
   buf.addParLe("u", info)
   buf.addIntLit(bits, info)
   buf.addParRi()
 
-proc addIntType(buf: var TokenBuf; bits: int; info: PackedLineInfo) =
+proc addIntType(buf: var TokenBuf; bits: int; info: NifLineInfo) =
   buf.addParLe("i", info)
   buf.addIntLit(bits, info)
   buf.addParRi()
 
-proc addSetType(buf: var TokenBuf; size: int; info: PackedLineInfo) =
+proc addSetType(buf: var TokenBuf; size: int; info: NifLineInfo) =
   case size
   of 1, 2, 4, 8:
     buf.addUIntType(size * 8, info)
@@ -197,7 +197,7 @@ proc trSetType(c: var Context; dest: var TokenBuf; n: var Cursor) =
       addSetType dest, int size, info
     skip n
 
-proc liftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: PackedLineInfo): Cursor =
+proc liftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: NifLineInfo): Cursor =
   let tmp = declareTemp(c, dest, typ, n.info)
   dest.addSubtree n
   dest.addParRi()
@@ -205,7 +205,7 @@ proc liftTemp(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: 
   c.tempUseBufStack[^1].addSymUse(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
 
-proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: PackedLineInfo): Cursor =
+proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; info: NifLineInfo): Cursor =
   var ptrTypeBuf = createTokenBuf(8)
   copyIntoKind ptrTypeBuf, PtrT, typ.info:
     ptrTypeBuf.addSubtree typ
@@ -219,22 +219,22 @@ proc liftTempAddr(c: var Context; dest: var TokenBuf; n: Cursor; typ: Cursor; in
     c.tempUseBufStack[^1].addSymUse(tmp, n.info)
   result = beginRead(c.tempUseBufStack[^1])
 
-template addTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; typ: Cursor; info: PackedLineInfo; body: typed) {.untyped.} =
+template addTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; typ: Cursor; info: NifLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, kind, info:
     dest.addSubtree typ
     body
 
-template addUIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) {.untyped.} =
+template addUIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: NifLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, kind, info:
     dest.addUIntType(bits, info)
     body
 
-template addIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: PackedLineInfo; body: typed) {.untyped.} =
+template addIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; info: NifLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, kind, info:
     dest.addIntType(bits, info)
     body
 
-template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound: int; info: PackedLineInfo; body: typed) {.untyped.} =
+template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound: int; info: NifLineInfo; body: typed) {.untyped.} =
   copyIntoKind dest, WhileS, info:
     addIntTypedOp dest, LtX, -1, info:
       dest.addSubtree i
@@ -247,7 +247,7 @@ template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound:
           dest.addSubtree i
           dest.addIntLit(1, info)
 
-proc arrayToPointer(dest: var TokenBuf; arr: Cursor; info: PackedLineInfo) =
+proc arrayToPointer(dest: var TokenBuf; arr: Cursor; info: NifLineInfo) =
   copyIntoKind dest, AddrX, info:
     copyIntoKind dest, ArratX, info:
       dest.addSubtree arr
@@ -504,7 +504,7 @@ proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.arrayToPointer(a, info)
       dest.addIntLit(size, info)
 
-proc genSingleInclSmall(dest: var TokenBuf; s, elem: Cursor; size: int; info: PackedLineInfo) =
+proc genSingleInclSmall(dest: var TokenBuf; s, elem: Cursor; size: int; info: NifLineInfo) =
   let bits = size * 8
   copyIntoKind dest, AsgnS, info:
     dest.addSubtree s
@@ -517,7 +517,7 @@ proc genSingleInclSmall(dest: var TokenBuf; s, elem: Cursor; size: int; info: Pa
           dest.addSubtree elem
           dest.addUIntLit(uint64(bits), info)
 
-proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: PackedLineInfo) =
+proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: NifLineInfo) =
   template addLhs() =
     copyIntoKind dest, ArratX, info:
       dest.addSubtree s
@@ -780,7 +780,7 @@ proc collectConcatLeaves(c: var Context; leavesBuf: var TokenBuf;
 
 proc emitLenSum(dest: var TokenBuf; lenSym: SymId;
                 leafCursors: openArray[Cursor]; lo, hi: int;
-                info: PackedLineInfo) =
+                info: NifLineInfo) =
   ## Emit `len(leaf[lo]) + len(leaf[lo+1]) + ... + len(leaf[hi])`,
   ## left-associated, as a single `int` expression.
   if lo == hi:

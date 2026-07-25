@@ -17,7 +17,7 @@ const
   BorrowCStringUnsafeOp* = "borrowCStringUnsafe.1." & SystemModuleSuffix
 
 proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: int;
-                    selector: SymId; info: PackedLineInfo) =
+                    selector: SymId; info: NifLineInfo) =
   case s[i].kind
   of ForkedSearch:
     let f = forked(s, i)

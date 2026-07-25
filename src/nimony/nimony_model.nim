@@ -249,12 +249,12 @@ proc addParLe*(dest: var TokenBuf; tag: string; info = NoLineInfo) {.inline.} =
   dest.addParLe(globalTags.registerTag(tag), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
-                       info: PackedLineInfo; body: untyped) =
+                       info: NifLineInfo; body: untyped) =
   dest.addParLe(kind, info)
   body
   dest.addParRi()
 
-template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: PackedLineInfo; body: untyped) =
+template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: NifLineInfo; body: untyped) =
   dest.addParLe(kinds[0], info)
   dest.addParLe(kinds[1], info)
   body
@@ -286,7 +286,7 @@ template takeInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.hasMore and not n.isTagLit
 
-proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: PackedLineInfo) {.inline.} =
+proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.inline.} =
   dest.addSymUse(s, info)
 
 proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
@@ -295,14 +295,14 @@ proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
 proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline.} =
   dest.addSubtree src
 
-proc addEmpty*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+proc addEmpty*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =
   dest.addDotToken(info)
 
-proc addEmpty2*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+proc addEmpty2*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =
   dest.addDotToken(info)
   dest.addDotToken(info)
 
-proc addEmpty3*(dest: var TokenBuf; info: PackedLineInfo = NoLineInfo) =
+proc addEmpty3*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =
   dest.addDotToken(info)
   dest.addDotToken(info)
   dest.addDotToken(info)

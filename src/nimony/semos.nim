@@ -310,8 +310,8 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
   result = createTokenBuf()
   parse(r, result, denseLineInfo = true)
   rd.close(r)
-proc getFile*(info: PackedLineInfo): string =
-  let fid = unpack(lineMan, info).file
+proc getFile*(info: NifLineInfo): string =
+  let fid = info.file
   if fid.isValid:
     result = pool.filenames[fid]
   else:
@@ -337,7 +337,7 @@ proc runValidatorOnPlugin(c: var SemContext; nf: string) =
     return
   exec quoteShell(v) & " " & quoteShell(nf)
 
-proc compilePlugin(c: var SemContext; info: PackedLineInfo; nf, exefile: string) =
+proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
   ## Build a plugin's `.nim` source as an executable. Plugins import
   ## `lib/plugins.nim` and are compiled by Nimony itself.
   runValidatorOnPlugin(c, nf)
@@ -421,7 +421,7 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
   if nextDisamb > firstDisamb:
     c.locals[pluginTempBase] = nextDisamb - 1
 
-proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                 pluginName: string; input: var TokenBuf;
                 additionalInput: var TokenBuf) =
   ## Runs a plugin with a gensym hint and registers every generated local
@@ -493,16 +493,11 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
     # seed the parse with the invocation site's absolute info: text plugin
     # output copies the (file-less, relative) infos of its input, so without
     # an anchor they resolve to NoFile and diagnostics print as `???`
-    var seed = NoNifLineInfo
-    if info.isValid:
-      let u = unpack(lineMan, info)
-      if u.file.isValid:
-        seed = NifLineInfo(file: u.file, line: u.line, col: u.col)
-    parse(r, dest, parentSeed = seed, denseLineInfo = true)
+    parse(r, dest, parentSeed = info, denseLineInfo = true)
     rd.close(r)
   registerGeneratedSymbols(c, firstDisamb, nextName)
 
-proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: PackedLineInfo;
+proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                 pluginName: string; input: var TokenBuf) =
   ## Single-input form (template/for-loop/module plugins; type plugins pass
   ## their triggering type definitions as `additionalInput`).

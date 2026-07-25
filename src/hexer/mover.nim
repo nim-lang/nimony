@@ -402,7 +402,7 @@ proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
   return true
 
 proc isLastUse*(n: Cursor; buf: var TokenBuf;
-                otherUsage: var PackedLineInfo;
+                otherUsage: var NifLineInfo;
                 mover: var MoverContext): bool =
   # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
   if mover.cf.len == 0:

@@ -24,7 +24,7 @@ proc genEnumToStrProcCase(c: var SemContext; dest: var TokenBuf; enumDecl: var C
       dest.addParLe("ranges", enumDeclInfo)
 
       var symId: SymId
-      var symInfo: PackedLineInfo
+      var symInfo: NifLineInfo
       var fieldValue: Cursor
       enumDecl.into: # efld
         symId = enumDecl.symId

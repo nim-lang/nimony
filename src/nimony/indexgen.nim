@@ -38,14 +38,13 @@ proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): 
     for suffix, syms in exports:
       # open NIF file to get the path of source file of the module from the line info.
       let modPath = mp.dir / (suffix & mp.ext)
-      var fileId: lineinfos.FileId
       var r = rd.open(modPath)
       var mbuf = createTokenBuf()
       parse(r, mbuf)
       rd.close(r)
       var mn = beginRead(mbuf)
       if mn.isTagLit: inc mn      # into the stmts; first child carries the info
-      fileId = lineMan.getFileId(mn.info)
+      let fileId = mn.info.file
       assert fileId.isValid
       let path = pool.filenames[fileId].toAbsolutePath
       result.addParLe(TagId(FromexportIdx))

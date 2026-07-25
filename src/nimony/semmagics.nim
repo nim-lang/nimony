@@ -441,7 +441,7 @@ proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.stringType
   commonType c, dest, it, beforeExpr, expected
 
-proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
+proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
   case typ.kind
   of Symbol:
     let s = tryLoadSym(typ.symId)
@@ -523,7 +523,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Pac
   else:
     c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
 
-proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: PackedLineInfo) =
+proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
   case typ.kind
   of Symbol:
     let s = tryLoadSym(typ.symId)

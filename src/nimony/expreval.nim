@@ -55,7 +55,7 @@ proc isConstCharValue*(n: Cursor): bool =
 proc initEvalContext*(c: ptr SemContext; noExecute = false): EvalContext =
   result = EvalContext(c: c, noExecute: noExecute)
 
-proc error(c: var EvalContext, msg: string, info: PackedLineInfo): Cursor =
+proc error(c: var EvalContext, msg: string, info: NifLineInfo): Cursor =
   var buf = createTokenBuf(4)
   buf.addParLe nifpools.ErrT, info
   buf.addDotToken()
@@ -103,27 +103,27 @@ proc singleToken*(c: var EvalContext; tok: NifToken): Cursor =
   buf.add tok
   result = cursorAt(buf, 0)
 
-proc stringValue(c: var EvalContext; s: string; info: PackedLineInfo): Cursor {.inline.} =
+proc stringValue(c: var EvalContext; s: string; info: NifLineInfo): Cursor {.inline.} =
   var buf = createTokenBuf(2)
   buf.addStrLit(s, info)
   result = cursorAt(buf, 0)
 
-proc intValue(c: var EvalContext; i: int64; info: PackedLineInfo): Cursor {.inline.} =
+proc intValue(c: var EvalContext; i: int64; info: NifLineInfo): Cursor {.inline.} =
   var buf = createTokenBuf(2)
   buf.addIntLit(i, info)
   result = cursorAt(buf, 0)
 
-proc uintValue(c: var EvalContext; u: uint64; info: PackedLineInfo): Cursor {.inline.} =
+proc uintValue(c: var EvalContext; u: uint64; info: NifLineInfo): Cursor {.inline.} =
   var buf = createTokenBuf(2)
   buf.addUIntLit(u, info)
   result = cursorAt(buf, 0)
 
-proc floatValue(c: var EvalContext; f: float; info: PackedLineInfo): Cursor {.inline.} =
+proc floatValue(c: var EvalContext; f: float; info: NifLineInfo): Cursor {.inline.} =
   var buf = createTokenBuf(2)
   buf.addFloatLit(f, info)
   result = cursorAt(buf, 0)
 
-proc charValue(c: var EvalContext; ch: char; info: PackedLineInfo): Cursor {.inline.} =
+proc charValue(c: var EvalContext; ch: char; info: NifLineInfo): Cursor {.inline.} =
   var buf = createTokenBuf(2)
   buf.addCharLit(ch, info)
   result = cursorAt(buf, 0)
@@ -134,7 +134,7 @@ proc boolValue(c: var EvalContext; val: bool): Cursor {.inline.} =
   else:
     result = getFalseValue(c)
 
-template error(msg: string; info: PackedLineInfo) {.dirty.} =
+template error(msg: string; info: NifLineInfo) {.dirty.} =
   result = c.error(msg, info)
 
 template cannotEval(n: Cursor) {.dirty.} =
@@ -453,7 +453,7 @@ proc intToToken(result: var TokenBuf; x: int; typ: Cursor) =
     if hasError:
       assert false, "Got unexpected type: " & toString(typ)
 
-proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: PackedLineInfo) =
+proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; info: NifLineInfo) =
   result.addParLe SetconstrX, info
   result.copyInto(TagId(SetT), NoLineInfo):
     result.addSubtree elementTyp

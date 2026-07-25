@@ -74,7 +74,7 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       mode: ImportFilter; exports: var seq[(string, ImportFilter)];
-                      info: PackedLineInfo): SymId =
+                      info: NifLineInfo): SymId =
   result = SymId(0)
   let f2 = resolveFile(c.g.config.paths, origin, f1.path)
   if not fileExists(f2):
@@ -112,11 +112,11 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
 
 proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string;
                       filter: ImportFilter;
-                      info: PackedLineInfo) =
+                      info: NifLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[] # ignored
   discard importSingleFile(c, dest, f1, origin, filter, exports, info)
 
-proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string; filter: ImportFilter; info: PackedLineInfo) =
+proc importSingleFileConsiderExports(c: var SemContext; dest: var TokenBuf; f1: ImportedFilename; origin: string; filter: ImportFilter; info: NifLineInfo) =
   var exports: seq[(string, ImportFilter)] = @[]
   let source = importSingleFile(c, dest, f1, origin, filter, exports, info)
   while exports.len != 0:
@@ -188,7 +188,7 @@ proc cyclicImport(c: var SemContext; dest: var TokenBuf; x: var Cursor) =
       # Non-cyclic import in same statement; skip it (should not happen in practice)
       skip x
 
-proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilename]; mode: ImportFilter; info: PackedLineInfo) =
+proc doImports(c: var SemContext; dest: var TokenBuf; files: seq[ImportedFilename]; mode: ImportFilter; info: NifLineInfo) =
   let origin = getFile(info)
   for f in files:
     importSingleFileConsiderExports c, dest, f, origin, mode, info
@@ -334,7 +334,7 @@ proc registerExportName(c: var SemContext; moduleSym: SymId; strId: StrId) =
     c.exports[moduleSym] = ImportFilter(kind: FromImport, list: initHashSet[StrId]())
     c.exports.getOrQuit(moduleSym).list.incl strId
 
-proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: PackedLineInfo) =
+proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineInfo) =
   let res = tryLoadSym(sym)
   let isModule = res.status == LacksNothing and res.decl.symKind == ModuleY
   if isModule:
@@ -411,7 +411,7 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
   producesVoid c, dest, info, it.typ
 
-proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId; info: PackedLineInfo) =
+proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId; info: NifLineInfo) =
   let name = pool.syms[sym]
   let suffix = extractModule(name)
   if not c.processedModules.hasKey(suffix) or
