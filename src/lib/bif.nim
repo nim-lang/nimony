@@ -68,14 +68,19 @@
 ## id order and re-interned in order on load, reproducing identical ids, so the
 ## raw token words stay valid **without any patching**.
 ##
-## INVARIANT (important): that zero-patch property holds *only* because the load
+## INVARIANT (important): that zero-patch property holds *only* because `load`
 ## interns into **empty, freshly minted** pools, so the first `getOrIncl` returns
-## id 1 again. `bif` therefore never loads into a shared/pre-populated pool: doing
-## so would assign different ids to the same strings while the token words still
-## carry the old ids — silent corruption. Cross-module pool sharing would require
-## remapping every pool-referencing token, which defeats the whole point. If you
-## need a buffer to share a pool with others, load it with `bif` first and then
-## copy across pools via `nifcore.addSubtree` (which re-interns properly).
+## id 1 again. `load` therefore never loads into a shared/pre-populated pool:
+## doing so would assign different ids to the same strings while the token words
+## still carry the old ids — silent corruption.
+##
+## A consumer that must share ONE pool across modules — the compiler frontend
+## uses `SymId` *equality* as symbol identity, so every buffer of one
+## compilation has to speak the same pool — uses `loadInto` instead: it takes
+## the caller's pools, maps the file's ids onto them (one `getOrIncl` per pool
+## ENTRY, not per token) and translates the token stream through those maps. See
+## "loading into caller-supplied pools" below. `nifcore.addSubtree` also
+## re-interns properly, but decodes and re-hashes every literal.
 
 when defined(nimony):
   {.feature: "lenientnils".}
@@ -571,6 +576,235 @@ proc load*(filename: string): BifModule =
     let v = int rVarint(r)
     result.index[i] = IndexEntry(sym: sym, pos: pos, vis: IndexVis(v))
 
+# ── loading into caller-supplied pools ──────────────────────────────────────
+# `load` mints fresh pools because the stored token words carry raw pool ids
+# (see the INVARIANT). The compiler frontend cannot use that: it compares
+# `SymId`s for symbol identity, so all its buffers must share one `Pool` (and
+# one `TagPool`, since `kind` queries cast a `TagId` straight to a tag enum).
+#
+# `loadInto` bridges the two worlds. It maps the file's pools onto the caller's
+# — one `getOrIncl` per stored pool ENTRY, i.e. per distinct string, not per
+# token — and then rewrites the token stream through those maps.
+#
+# Rewriting cannot be an in-place patch of the id fields: a `LineInfoLit` packs
+# the `FileId` in 7 bits and only widens to a 14-bit layout by growing a token,
+# and the frontend's shared pool routinely holds more than 127 filenames. So the
+# translation re-emits the stream through the builder API, which re-derives
+# every tag `jump` for the (few) heads that changed width. It stays linear, does
+# no hashing and no string decoding — ids come from the maps.
+
+type
+  PoolRemap* = object
+    ## File id → caller-pool id, indexed by the file id. Slot 0 is unused: every
+    ## `BiTable` id is 1-based (`Id(0)` means "not used").
+    tags*: seq[TagId]
+    strings*: seq[StrId]
+    syms*: seq[SymId]
+    files*: seq[FileId]
+    identity*: bool
+      ## True when every map is the identity — the caller's pools already agree
+      ## with the file's ids (typically: loading the first module into empty
+      ## pools), so the token stream needs no rewrite at all.
+
+proc buildRemap*(src: var TokenBuf; pool: Pool; tags: TagPool): PoolRemap =
+  ## Intern every entry of `src`'s pools into `pool` / `tags` and record the
+  ## resulting ids. `src` is a freshly `load`ed buffer, so its ids are dense
+  ## `1 .. len` and the maps are plain seqs.
+  result = PoolRemap(tags: @[], strings: @[], syms: @[], files: @[],
+                     identity: true)
+  let nTags = src.tags.tags.len
+  result.tags = newSeq[TagId](nTags + 1)
+  for i in 1 .. nTags:
+    let id = tags.tags.getOrIncl(src.tags.tags[TagId(i)])
+    if uint32(id) > TagMask:
+      quit "bif: tag pool overflow — '" & src.tags.tags[TagId(i)] &
+           "' got id " & $id & ", but a TagLit holds only 9 bits"
+    result.tags[i] = id
+    if uint32(id) != uint32(i): result.identity = false
+  let nStrings = src.pool.strings.len
+  result.strings = newSeq[StrId](nStrings + 1)
+  for i in 1 .. nStrings:
+    let id = pool.strings.getOrIncl(src.pool.strings[StrId(i)])
+    result.strings[i] = id
+    if uint32(id) != uint32(i): result.identity = false
+  let nSyms = src.pool.syms.len
+  result.syms = newSeq[SymId](nSyms + 1)
+  for i in 1 .. nSyms:
+    let id = pool.syms.getOrIncl(src.pool.syms[SymId(i)])
+    result.syms[i] = id
+    if uint32(id) != uint32(i): result.identity = false
+  let nFiles = src.pool.filenames.len
+  result.files = newSeq[FileId](nFiles + 1)
+  for i in 1 .. nFiles:
+    let id = pool.filenames.getOrIncl(src.pool.filenames[FileId(i)])
+    result.files[i] = id
+    if uint32(id) != uint32(i): result.identity = false
+
+proc mapStr(m: PoolRemap; id: StrId): StrId =
+  let i = int(uint32(id))
+  if i <= 0 or i >= m.strings.len: quit "bif: string id " & $id & " out of range"
+  m.strings[i]
+
+proc mapSym(m: PoolRemap; id: SymId): SymId =
+  let i = int(uint32(id))
+  if i <= 0 or i >= m.syms.len: quit "bif: symbol id " & $id & " out of range"
+  m.syms[i]
+
+proc mapFile(m: PoolRemap; id: FileId): FileId =
+  let i = int(uint32(id))
+  if i <= 0 or i >= m.files.len: quit "bif: file id " & $i & " out of range"
+  m.files[i]
+
+proc mapTag(m: PoolRemap; id: TagId): TagId =
+  let i = int(uint32(id))
+  if i <= 0 or i >= m.tags.len: quit "bif: tag id " & $id & " out of range"
+  m.tags[i]
+
+proc remapLineInfo(c: Cursor; m: PoolRemap): NifLineInfo =
+  ## The head's trailing line info with its `FileId` (and `#comment#` `StrId`)
+  ## moved to the caller's pool. `NoNifLineInfo` when the head carries none.
+  let li = rawLineInfo(c)
+  if not li.isValid: return NoNifLineInfo
+  var comment = StrId(0)
+  if uint32(li.comment) != 0'u32: comment = mapStr(m, li.comment)
+  result = NifLineInfo(file: mapFile(m, li.file), line: li.line, col: li.col,
+                       comment: comment)
+
+proc poolRefToken(k: NifKind; id: uint32): NifToken =
+  ## A `StrLit`/`Ident`/`Symbol`/`SymbolDef` token in pool-ref mode (bit 0 = 0).
+  ## Ids past 2^27 would need an `ExtendedSuffix` chain; no compiler run comes
+  ## anywhere near that, and emitting a wider carrier silently is worse than
+  ## stopping, so this is a hard error rather than an `assert`.
+  if id > (PayloadMask shr 1):
+    quit "bif: pool id " & $id & " too large to remap (27-bit carrier)"
+  NifToken(uint32(k) or ((id shl 1) shl KindBits))
+
+type
+  Translator = object
+    ## State threaded through the recursive re-emit: the id maps plus the
+    ## bookkeeping that moves the symbol index's token positions along.
+    m: PoolRemap
+    entries: seq[IndexEntry]   ## source index, in non-decreasing `pos` order
+    newPos: seq[int32]         ## destination position per entry
+    k: int                     ## entries resolved so far
+    srcBase: uint              ## address of source token 0
+
+proc noteTagPos(t: var Translator; c: Cursor; destPos: int) =
+  ## Called just before the `TagLit` at `c` is re-emitted at `destPos`. Index
+  ## entries point at the enclosing tag of a declaration, `buildIndex` records
+  ## them in forward order, and this walk visits every tag in that same order —
+  ## so one shared cursor over `entries` suffices.
+  if t.k >= t.entries.len: return
+  let srcPos = int32((cast[uint](toUniqueId(c)) - t.srcBase) div
+                     uint(sizeof(NifToken)))
+  while t.k < t.entries.len and t.entries[t.k].pos <= srcPos:
+    t.newPos[t.k] = int32(destPos)
+    inc t.k
+
+proc remapValue(dest: var TokenBuf; c: var Cursor; t: var Translator) =
+  ## Copy one value (atom or whole `TagLit` subtree) from `c` into `dest`,
+  ## translating every pool reference. Shaped like `nifcore.addAcrossPools`, but
+  ## where that one decodes each literal to a `string` and re-interns it, this
+  ## one looks the new id up in the map.
+  let destLi = remapLineInfo(c, t.m)
+  case c.kind
+  of TagLit:
+    let destPos = dest.len
+    noteTagPos(t, c, destPos)
+    dest.openTag mapTag(t.m, c.cursorTagId)
+    dest.appendLineInfo destLi          # right after the tag head
+    c.into:
+      while c.hasMore:
+        remapValue(dest, c, t)
+    let lenBefore = dest.len
+    dest.closeTag()
+    if dest.len != lenBefore:
+      # The body outgrew the 19-bit jump field, so `closeTag` spliced an
+      # `ExtendedSuffix` at `destPos + 1` and shifted everything behind it.
+      # Recorded positions past the splice move with it.
+      for i in 0 ..< t.k:
+        if t.newPos[i] > int32(destPos): t.newPos[i] = t.newPos[i] + 1'i32
+  of StrLit, Ident, Symbol, SymbolDef:
+    # An inline-stored short literal carries its bytes in the token itself —
+    # no pool involved, so it copies verbatim (Cursor discipline: never read a
+    # `strId`/`symId` off such a token).
+    if isInlineLit(c):
+      dest.add c.load
+    elif c.kind == Symbol or c.kind == SymbolDef:
+      dest.add poolRefToken(c.kind, uint32(mapSym(t.m, SymId(combinedPayload(c) shr 1))))
+    else:
+      dest.add poolRefToken(c.kind, uint32(mapStr(t.m, StrId(combinedPayload(c) shr 1))))
+    dest.appendLineInfo destLi
+    c.inc
+  of IntLit:     dest.addIntLit intVal(c);    dest.appendLineInfo destLi; c.inc
+  of UIntLit:    dest.addUIntLit uintVal(c);  dest.appendLineInfo destLi; c.inc
+  of FloatLit:   dest.addFloatLit floatVal(c); dest.appendLineInfo destLi; c.inc
+  of CharLit:    dest.addCharLit charLit(c);  dest.appendLineInfo destLi; c.inc
+  of DotToken:   dest.addDotToken();          dest.appendLineInfo destLi; c.inc
+  of LineInfoLit:
+    dest.add c.load; c.inc                    # defensive: not a valid head token
+  of ExtendedSuffix:
+    quit "bif: ExtendedSuffix cannot be a head token"
+  of UnknownToken, EofToken, ParLe, ParRi:
+    quit "bif: lexical token kind in a binary token stream"
+
+proc remapInto(raw: var BifModule; pool: Pool; tags: TagPool;
+               canBorrow: bool): BifModule =
+  ## Translate a freshly loaded (fresh-pool) `BifModule` into `pool` / `tags`.
+  ## `canBorrow` says whether `raw`'s token block may be handed on by reference
+  ## — true only for the mmap loader, whose mapping outlives everything; a
+  ## file-read block dies with `raw`.
+  result = BifModule()
+  let m = buildRemap(raw.buf, pool, tags)
+  let n = raw.buf.len
+  if m.identity:
+    # The caller's pools already assign exactly these ids, so the stored token
+    # words are valid as they are (the usual case for the first module loaded
+    # into empty pools).
+    if canBorrow:
+      result.buf = adoptForeignTokens(rawTokenPtr(raw.buf), n, pool, tags)
+    else:
+      result.buf = createTokenBuf(max(n, 16), pool, tags)
+      if n > 0:
+        copyMem(growRawUninit(result.buf, n), rawTokenPtr(raw.buf),
+                n * sizeof(NifToken))
+    result.index = raw.index          # ids and positions both unchanged
+    return
+  var t = Translator(m: m, entries: raw.index,
+                     newPos: newSeq[int32](raw.index.len), k: 0,
+                     srcBase: cast[uint](rawTokenPtr(raw.buf)))
+  # Slack for the heads that widen (line infos moving to the 14-bit file layout).
+  result.buf = createTokenBuf(max(n + (n shr 3), 16), pool, tags)
+  if n > 0:
+    var c = raw.buf.beginRead()
+    while c.hasMore:
+      remapValue(result.buf, c, t)
+    c.endRead()
+  result.index = newSeq[IndexEntry](raw.index.len)
+  for i in 0 ..< raw.index.len:
+    result.index[i] = IndexEntry(sym: mapSym(m, raw.index[i].sym),
+                                 pos: t.newPos[i], vis: raw.index[i].vis)
+
+proc loadInto*(filename: string; pool: Pool; tags: TagPool): BifModule =
+  ## Read a `.bif` and translate it into the CALLER's pools, so the result can
+  ## share one `Pool`/`TagPool` with every other buffer of the run — which is
+  ## what makes `SymId` equality a valid symbol-identity test across modules.
+  ## The returned `index` is translated too (its `sym`s are caller-pool ids, its
+  ## `pos`itions point into the returned buffer).
+  ##
+  ## Cost: one `getOrIncl` per stored pool entry plus one linear pass over the
+  ## token stream — no parsing, no per-token hashing. When the ids happen to
+  ## line up (empty target pools) even that pass is skipped and the mmap'd token
+  ## block is borrowed, exactly as in `load`.
+  var raw = load(filename)
+  result = remapInto(raw, pool, tags, canBorrow = true)
+
+proc loadFromFileInto*(f: File; pool: Pool; tags: TagPool): BifModule =
+  ## `loadInto` from an already-open file, without the memory mapping (the token
+  ## block is always copied). See `loadInto` for the translation contract.
+  var raw = loadFromFile(f)
+  result = remapInto(raw, pool, tags, canBorrow = false)
+
 # ── self-test ───────────────────────────────────────────────────────────────
 
 when isMainModule:
@@ -587,6 +821,41 @@ when isMainModule:
     for i in 0 ..< a.len:
       if not (a[i] == b[i]): return false
     true
+
+  # Structural (not bitwise) comparison: `loadInto` re-emits the stream, so a
+  # remapped buffer is only required to *mean* the same thing — token widths
+  # legitimately differ when a line info moves to the wide file layout.
+  proc sameValue(a, b: Cursor): bool =
+    if a.kind != b.kind: return false
+    let la = rawLineInfo(a)
+    let lb = rawLineInfo(b)
+    if la.line != lb.line or la.col != lb.col: return false
+    if lineInfoFile(a) != lineInfoFile(b): return false
+    case a.kind
+    of TagLit:            a.tags.tags[a.cursorTagId] == b.tags.tags[b.cursorTagId]
+    of StrLit, Ident:     strVal(a) == strVal(b)
+    of Symbol, SymbolDef: symName(a) == symName(b)
+    of IntLit:            intVal(a) == intVal(b)
+    of UIntLit:           uintVal(a) == uintVal(b)
+    of FloatLit:          floatVal(a) == floatVal(b)
+    of CharLit:           charLit(a) == charLit(b)
+    of DotToken:          true
+    else:                 false
+
+  proc sameTree(a, b: var Cursor): bool =
+    result = true
+    while a.hasMore and b.hasMore:
+      if not sameValue(a, b): return false
+      if a.kind == TagLit:
+        var ok = true
+        a.peekInto:
+          b.peekInto:
+            ok = sameTree(a, b)
+        if not ok: return false
+      else:
+        a.inc
+        b.inc
+    result = a.hasMore == b.hasMore
 
   block round_trip:
     # Build a buffer exercising every pool + inline/overflow paths, then
@@ -687,5 +956,132 @@ when isMainModule:
       doAssert idx[i].sym == m.index[i].sym
       doAssert idx[i].pos == m.index[i].pos
       doAssert idx[i].vis == m.index[i].vis
+
+  proc buildModule(selfSym, sharedSym, fileName: string): TokenBuf =
+    ## A module-shaped buffer: `(stmts (sdef <selfSym> x (call <sharedSym> …)))`,
+    ## with line info on several heads so the remap has filenames to move.
+    result = createTokenBuf(16)
+    let tStmts = result.tags.registerTag("stmts")
+    let tSdef = result.tags.registerTag("sdef")
+    let tCall = result.tags.registerTag("call")
+    let f = result.pool.filenames.getOrIncl(fileName)
+    result.buildTree tStmts:
+      result.appendLineInfo f, 1'i32, 0'i32
+      result.buildTree tSdef:
+        result.appendLineInfo f, 12'i32, 4'i32
+        result.addSymDef selfSym
+        result.addIdent "x"
+        result.buildTree tCall:
+          result.addSymUse sharedSym
+          result.addStrLit "hi"                        # inline (<= 3 bytes)
+          result.addStrLit "a longer interned string"  # pool ref
+          result.appendLineInfo f, 13'i32, 8'i32
+          result.addIntLit 42
+          result.addFloatLit 3.14
+          result.addCharLit 'q'
+          result.addDotToken()
+
+  block remap_into_shared_pools:
+    var src = buildModule("foo.3.mymod", "shared.1.othermod", "some/where.nim")
+    let tmp = "/tmp/bif_remap_selftest.bif"
+    store(src, tmp, dottedSuffix = ".mymod")
+
+    # Pools that are already busy, so no id can line up by accident. The 200
+    # filenames matter: the loaded line infos referenced file id 1 (7-bit
+    # layout) and must widen to the 14-bit layout on the way in.
+    let pool = newPool()
+    let tags = newTagPool()
+    discard tags.registerTag("unrelated")
+    discard pool.strings.getOrIncl("some other string")
+    discard pool.syms.getOrIncl("prior.symbol.0.othermod")
+    for i in 0 ..< 200: discard pool.filenames.getOrIncl("file" & $i & ".nim")
+
+    var m = loadInto(tmp, pool, tags)
+    doAssert m.buf.pool == pool, "loaded buffer does not carry the caller's pool"
+    doAssert m.buf.tags == tags, "loaded buffer does not carry the caller's tags"
+    doAssert uint32(pool.filenames.getOrIncl("some/where.nim")) > LiFileMaxC,
+             "test setup: the file id did not exceed the 7-bit layout"
+
+    var a = src.beginRead()
+    var b = m.buf.beginRead()
+    doAssert sameTree(a, b), "remapped tree differs from the source"
+    a.endRead()
+    b.endRead()
+    # The wide file layout costs one extra token per line info, so the rewrite
+    # provably ran (and provably could not have been an in-place id patch).
+    doAssert m.buf.len > src.len,
+             "line infos did not widen — the remap path was not exercised"
+
+    # The point of the exercise: ids in the loaded buffer ARE the caller pool's
+    # ids, so `SymId` equality is a valid identity test against anything else
+    # interned there.
+    doAssert m.index.len == 1, "expected 1 global sym, got " & $m.index.len
+    doAssert m.index[0].sym == pool.syms.getOrIncl("foo.3.mymod")
+    doAssert m.index[0].vis == ivExported
+    var decl = cursorAt(m.buf, int m.index[0].pos)
+    doAssert decl.kind == TagLit and tags.tags[decl.cursorTagId] == "sdef",
+             "index position does not point at the declaration's tag"
+    var body = decl.sub()
+    doAssert body.kind == SymbolDef
+    doAssert symId(body, pool) == m.index[0].sym
+
+    # A second module translated into the SAME pools must agree on the symbol
+    # they share — the relation the whole translation exists for.
+    var src2 = buildModule("bar.7.other", "shared.1.othermod", "else/where.nim")
+    let tmp2 = "/tmp/bif_remap_selftest2.bif"
+    store(src2, tmp2, dottedSuffix = ".other")
+    var m2 = loadInto(tmp2, pool, tags)
+    proc firstSymUse(mo: var BifModule): SymId =
+      var c = mo.buf.beginRead()
+      result = SymId(0)
+      while c.hasMore:
+        if c.kind == Symbol:
+          result = symId(c, mo.buf.pool)
+          break
+        c.inc
+      c.endRead()
+    doAssert uint32(firstSymUse(m)) != 0'u32
+    doAssert firstSymUse(m) == firstSymUse(m2),
+             "the shared symbol got different SymIds in two modules"
+    doAssert firstSymUse(m) == pool.syms.getOrIncl("shared.1.othermod")
+    # …and the tag pools agree too, which is what makes `cursorTagId` castable.
+    doAssert m2.buf.tags == tags
+    # Guard against a vacuous comparator: two genuinely different modules must
+    # NOT compare equal.
+    var d1 = src.beginRead()
+    var d2 = m2.buf.beginRead()
+    doAssert not sameTree(d1, d2), "sameTree does not detect a difference"
+    d1.endRead()
+    d2.endRead()
+
+  block remap_identity_and_file_reader:
+    # Empty target pools: the file's ids are reproduced exactly, so the token
+    # stream is handed over untouched (and the mmap block is borrowed).
+    let tmp = "/tmp/bif_remap_selftest.bif"
+    let pool = newPool()
+    let tags = newTagPool()
+    var m = loadInto(tmp, pool, tags)
+    var plain = load(tmp)
+    doAssert sameTokens(plain.buf, m.buf), "identity remap rewrote the stream"
+    doAssert m.index.len == plain.index.len
+    for i in 0 ..< m.index.len:
+      doAssert m.index[i].sym == plain.index[i].sym
+      doAssert m.index[i].pos == plain.index[i].pos
+    doAssert m.buf.pool == pool
+
+    # The file (non-mmap) reader must reach the same result, and must NOT hand
+    # out a token block that dies with the temporary buffer.
+    let pool2 = newPool()
+    let tags2 = newTagPool()
+    discard pool2.syms.getOrIncl("prior.symbol.0.othermod")   # force a rewrite
+    var ff = open(tmp, fmRead)
+    var fm = loadFromFileInto(ff, pool2, tags2)
+    close(ff)
+    var a = m.buf.beginRead()
+    var b = fm.buf.beginRead()
+    doAssert sameTree(a, b), "loadFromFileInto disagrees with loadInto"
+    a.endRead()
+    b.endRead()
+    doAssert fm.index[0].sym == pool2.syms.getOrIncl("foo.3.mymod")
 
   echo "bif self-tests passed"
