@@ -1011,20 +1011,31 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
     else:
       m.error(ConstraintMismatch, f, a)
   elif f.kind == a.kind:
+    # Atoms are compared by their DECODED value, never by the raw token payload:
+    # a literal of at most `StrInlineMaxLen` bytes is stored inside its token
+    # (so its payload is not a pool id), and a numeric payload is only the low
+    # 28 bits (so values differing above that would compare equal).
+    template matchAtom(sameValue: bool) =
+      if sameValue:
+        inc f
+        inc a
+      else:
+        m.error(InvalidMatch, fOrig, aOrig)
+
     case f.kind
-    of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident, SymbolDef,
-        StrLit, CharLit, IntLit, UIntLit, FloatLit:
-      if f.uoperand != a.uoperand:
-        m.error(InvalidMatch, fOrig, aOrig)
-      else:
-        inc f
-        inc a
-    of Symbol:
-      if not sameSymbol(f.symId, a.symId):
-        m.error(InvalidMatch, fOrig, aOrig)
-      else:
-        inc f
-        inc a
+    of DotToken:   matchAtom getInt28(f) == getInt28(a)
+    of Ident:      matchAtom f.strId == a.strId
+    of StrLit:     matchAtom f.strId == a.strId
+    of CharLit:    matchAtom f.charLit == a.charLit
+    of IntLit:     matchAtom f.intVal == a.intVal
+    of UIntLit:    matchAtom f.uintVal == a.uintVal
+    of FloatLit:   matchAtom f.floatVal == a.floatVal
+    of SymbolDef:  matchAtom f.symId == a.symId
+    of Symbol:     matchAtom sameSymbol(f.symId, a.symId)
+    of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit:
+      # Lexical kinds never reach a token buffer and suffix tokens belong to the
+      # head they trail (`inc` absorbs them), so this is a malformed tree.
+      m.error(InvalidMatch, fOrig, aOrig)
     of TagLit:
       # special cases:
       case f.typeKind

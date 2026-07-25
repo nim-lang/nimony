@@ -153,9 +153,15 @@ proc int28Token*(operand: int32; info: NifLineInfo): NifToken {.inline.} =
 proc getInt28*(n: NifToken): int32 {.inline.} = n.soperand
 proc getInt28*(c: Cursor): int32 {.inline.} = load(c).soperand
 
-proc symId*(n: NifToken): SymId {.inline.} = SymId(nifcore.uoperand(n) shr 1)
-proc strId*(n: NifToken): StrId {.inline.} = StrId(nifcore.uoperand(n) shr 1)
+# NO token-level `symId` / `strId`. A bare `NifToken` cannot be decoded to a
+# pool id: a name of at most `StrInlineMaxLen` bytes is stored INSIDE the token,
+# and turning those packed bytes into an id requires a pool to intern them in.
+# The old `SymId(uoperand(n) shr 1)` pair silently returned garbage for exactly
+# that case while sitting in the same overload set as the correct `Cursor`
+# versions, so `buf[i].strId` compiled and read plausibly. Use a Cursor
+# (`readonlyCursorAt(buf, i).strId`), which handles both encodings.
 proc charLit*(n: NifToken): char {.inline.} = char(nifcore.uoperand(n) and 0xFF)
+  ## Safe on a raw token: `CharLit` has no inline/pool duality.
 proc tagId*(n: NifToken): TagId {.inline.} = TagId((uint32(n) shr TagShift) and TagMask)
 
 proc skipUntilEnd*(c: var Cursor) =
@@ -173,8 +179,10 @@ proc patchInt28Token*(n: var NifToken; operand: int32) {.inline.} =
 
 
 proc setSymId*(dest: var NifToken; sym: SymId) {.inline.} =
-  ## Rewrite a Symbol/SymbolDef token's id in place (kind preserved).
-  dest = (if dest.kind == SymbolDef: symdefToken(sym) else: symToken(sym))
+  ## Rewrite a Symbol/SymbolDef token's id in place (kind preserved). Goes
+  ## through `internedSymToken` so a short name lands in the inline encoding the
+  ## builders would have produced, rather than a pool ref only this path emits.
+  dest = internedSymToken(pool, (if dest.kind == SymbolDef: SymbolDef else: Symbol), sym)
 
 # `buildTree` with an explicit info argument (classic signature). nifcore's own
 # `buildTree` takes no info; these thread it through `addParLe`.

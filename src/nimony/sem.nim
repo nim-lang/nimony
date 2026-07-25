@@ -1607,7 +1607,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
     return
   assert modeTok.isSymbol
   var semFlags: set[SemFlag] = {}
-  var modeSym = pool.syms[modeTok.symId]
+  var modeSym = pool.syms[readonlyCursorAt(dest, beforeMode).symId]
   modeSym.extractBasename
   case modeSym
   of "typeOfProc":

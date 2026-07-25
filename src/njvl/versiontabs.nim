@@ -33,9 +33,17 @@ type
 proc createVersionTab*(): VersionTab =
   result = VersionTab(history: createTokenBuf(100), currentVersion: initTable[SymId, int]())
 
+proc journalSymId(n: NifToken): SymId {.inline.} =
+  ## Decodes a journal entry written by `newValueFor`. PRIVATE on purpose: it is
+  ## only sound because this module writes those entries as raw pool refs
+  ## (`symToken`), never in the inline short-name encoding — the general case
+  ## needs a Cursor and a pool, which a journal of loose tokens has not got.
+  SymId(uoperand(n) shr 1)
+
 proc newValueFor*(v: var VersionTab, symId: SymId) =
-  # raw pool-ref token (never inline): `combineJoin` reads `symId` back by
-  # raw index, which an inline-encoded short symbol would corrupt
+  # raw pool-ref token (never inline): `combineJoin` reads it back with
+  # `journalSymId`, by raw index, which an inline-encoded short symbol would
+  # corrupt. The pairing is this module's invariant — see `journalSymId`.
   v.history.add symToken(symId)
   v.currentVersion.mgetOrPut(symId, -1) += 1
 
@@ -82,7 +90,7 @@ proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
       # When traversing backwards, a close marker means entering a nested section
       inc nested
     of Symbol:
-      let s = v.history[i].symId
+      let s = journalSymId(v.history[i])
       var entry = addr result.mgetOrPut(s, JoinVar(newv: 0, old1: 0, old2: 0))
       # the old counters are diffs for now
       if nested == 1:

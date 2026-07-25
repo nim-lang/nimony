@@ -139,17 +139,26 @@ proc tagLitToken*(t: TagId; jump: uint32 = 0): NifToken {.inline.} =
 proc charToken*(ch: char): NifToken {.inline.} =
   NifToken(toX(CharLit, uint32(ch)))
 
+# Raw pool-ref constructors. They do NOT apply the writer's inline rule (see
+# "String/sym layout" below), so a name of at most `StrInlineMaxLen` bytes gets
+# an encoding the builders would never produce. Reach for `internedSymToken` /
+# the `add*` builders unless you own both ends of the encoding. The id bound is
+# `PayloadMask shr 1` — one bit goes to the inline/pool-ref flag, so a larger id
+# would overflow the payload instead of widening into an `ExtendedSuffix`
+# (which a single token cannot express).
+const PoolRefIdMax* = PayloadMask shr 1
+
 proc strLitToken*(id: StrId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= PoolRefIdMax
   NifToken(toX(StrLit, uint32(id) shl 1))    # bit 0 = 0 ⇒ pool ref
 proc symToken*(id: SymId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= PoolRefIdMax
   NifToken(toX(Symbol, uint32(id) shl 1))
 proc symdefToken*(id: SymId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= PoolRefIdMax
   NifToken(toX(SymbolDef, uint32(id) shl 1))
 proc identToken*(id: StrId): NifToken {.inline.} =
-  assert uint32(id) <= PayloadMask
+  assert uint32(id) <= PoolRefIdMax
   NifToken(toX(Ident, uint32(id) shl 1))
 
 proc extendedSuffixToken*(high28: uint32): NifToken {.inline.} =
@@ -1074,6 +1083,22 @@ proc addInternedSymbol(b: var TokenBuf; kind: NifKind; id: SymId) =
     let payload = uint64(uint32(id)) shl 1
     b.add NifToken(toX(kind, lowBits(payload)))
     addSuffixIfNeeded(b, payload)
+
+proc internedSymToken*(p: Pool; kind: NifKind; id: SymId): NifToken =
+  ## The single token `addSymUse` / `addSymDef` would emit for `id`: inline when
+  ## the name fits in `StrInlineMaxLen` bytes, a pool ref otherwise. Patching a
+  ## Symbol/SymbolDef token IN PLACE must go through this — a raw `symToken` for
+  ## a short name gives one symbol two different payloads within a tree, which
+  ## breaks the same-string ⇒ same-payload invariant the writer rule
+  ## establishes (and hence every payload-level equality test).
+  assert kind == Symbol or kind == SymbolDef, "not a symbol kind: " & $kind
+  let s = p.syms[id]
+  if s.len <= StrInlineMaxLen:
+    NifToken(toX(kind, encodeInlineStr(s)))
+  else:
+    assert uint32(id) <= PoolRefIdMax,
+      "symbol id " & $id & " needs an ExtendedSuffix chain: no single token fits"
+    NifToken(toX(kind, uint32(id) shl 1))
 
 proc addSymDef*(b: var TokenBuf; id: SymId) =
   ## Emits a symbol definition already interned in `b.pool`.

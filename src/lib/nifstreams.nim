@@ -34,7 +34,15 @@ from nifreader import Reader, ExpandedToken, decodeStr
 type
   PackedToken* = NifToken           ## ast2nif still says PackedToken
 
-proc litId*(n: NifToken): StrId {.inline.} = strId(n)
+# Raw payload decodes, sound ONLY on this surface. Every token here comes from
+# `next` or the classic `symToken`/`strToken`/`identToken` constructors, which
+# intern EVERY literal — including names of at most `StrInlineMaxLen` bytes,
+# which the nifcore builders would instead store inside the token. On such an
+# inline token the payload is packed bytes, not an id, so nifpools (nimony's own
+# surface, where buffers come from the builders) deliberately has no equivalent:
+# there it must go through a `Cursor`, which handles both encodings.
+proc litId*(n: NifToken): StrId {.inline.} = StrId(uoperand(n) shr 1)
+proc symId*(n: NifToken): SymId {.inline.} = SymId(uoperand(n) shr 1)
 proc litId*(c: Cursor): StrId {.inline.} = strId(c)
 proc firstSon*(n: Cursor): Cursor {.inline.} = childCursor(n)
 

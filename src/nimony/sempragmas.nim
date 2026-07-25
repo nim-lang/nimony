@@ -224,9 +224,11 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     if pk == HeaderP:
       # not `dest.len - 1`: the string may carry a line-info suffix token
       let idx = lastValueStart(dest)
-      let tok = dest[idx]
-      if tok.isStringLit:
-        let raw = pool.strings[tok.strId]
+      if dest[idx].isStringLit:
+        # Read through a Cursor, never `dest[idx].strId`: a string of at most
+        # `StrInlineMaxLen` bytes (`"x.h"`!) is stored INSIDE the token, and the
+        # token-level `strId` would decode those packed bytes as a pool id.
+        let raw = pool.strings[readonlyCursorAt(dest, idx).strId]
         let name = resolveHeaderPath(raw, info.getFile(), c.g.config)
         if name != raw:
           dest[idx] = strLitToken(pool.strings.getOrIncl(name))
