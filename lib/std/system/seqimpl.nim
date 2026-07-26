@@ -63,7 +63,7 @@ func newSeqOf*[T](size: int; initValue: T): seq[T] {.nodestroy.} =
       {.cast(noSideEffect).}:
         oomHandler memSize
 
-func newSeqUninit*[T](size: int): seq[T] {.nodestroy, inline.} =
+func newSeqUninit*[T](size: int): seq[T] {.nodestroy, inline, semantics: "newSeqUninit".} =
   ## Creates a new sequence of length `size` without initializing elements (unsafe unless you fill them).
   if size == 0:
     result = seq[T](len: size, data: nil)

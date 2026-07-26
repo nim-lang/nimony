@@ -10,7 +10,8 @@ when defined(nimony):
   {.feature: "untyped".}
   {.feature: "lenientnils".}
 
-import std / assertions
+import std / [assertions, syncio]
+from std / os import `/`, absolutePath, parentDir, isAbsolute, getCurrentDir
 
 include ".." / lib / nifprelude
 import nimony_model, decls, programs, xints, semdata, renderer, builtintypes, typeprops, langmodes
@@ -144,6 +145,101 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor
 
 proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported: var bool): bool
 
+proc constSourceDir(info: NifLineInfo): string =
+  ## Directory of the source file that a `slurp`/`staticRead` path is resolved
+  ## against, mirroring `exprexec`'s `absoluteParentDir(getFile(info))`.
+  let fid = info.file
+  if fid.isValid:
+    result = pool.filenames[fid].absolutePath().parentDir()
+  else:
+    result = getCurrentDir()
+
+proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Cursor =
+  ## Builds the constant value for an empty `seq[T]` (`@[]`), i.e.
+  ## `(oconstr seq[T] (kv len 0) (kv data (nil)))`. The object-constructor
+  ## type slot is later replaced by `annotateConstantType`, but the field
+  ## symbols (`len`, `data`) must match the concrete `seq[T]` object so that
+  ## `findObjectField` resolves them; they are read from the type itself.
+  var t = skipModifier(seqType)
+  # An instantiated `newSeqUninit[T]` has return type `seq[T]`, spelled as the
+  # invocation `(at seq T)`; unwrap it to the generic `seq` head symbol. Its
+  # object body carries the `len`/`data` field symbols, which are
+  # instantiation-independent (`len.0`/`data.0`), so they match the concrete
+  # `seq[T]` used later by `annotateConstantType`.
+  if t.exprKind == AtX and not t.isSymbol:
+    var head = t
+    inc head # descend past the `at` tag to the `seq` head symbol
+    if head.isSymbol:
+      t = head
+  var objBody = default(Cursor)
+  if t.isSymbol:
+    let res = tryLoadSym(t.symId)
+    if res.status == LacksNothing:
+      objBody = asTypeDecl(res.decl).body
+  elif t.typeKind == ObjectT:
+    objBody = t
+  if cursorIsNil(objBody) or objBody.typeKind != ObjectT:
+    return c.error("cannot evaluate empty seq at compile time", info)
+  var lenSym = SymId(0)
+  var dataSym = SymId(0)
+  var walk = sub(objBody)
+  skip walk # parent type
+  var iter = initObjFieldIter()
+  while nextField(iter, walk):
+    let r = takeLocal(walk, SkipFinalParRi)
+    if r.kind in {FldY, GfldY} and r.name.isSymbolDef:
+      if lenSym == SymId(0): lenSym = r.name.symId
+      elif dataSym == SymId(0): dataSym = r.name.symId
+  if lenSym == SymId(0) or dataSym == SymId(0):
+    return c.error("cannot evaluate empty seq at compile time", info)
+  var buf = createTokenBuf(16)
+  buf.addParLe(OconstrX, info)
+  buf.addSubtree seqType # type slot, replaced by `annotateConstantType`
+  buf.copyIntoKind(KvU, info):
+    buf.addSymUse(lenSym, info)
+    buf.addIntLit(0, info)
+  buf.copyIntoKind(KvU, info):
+    buf.addSymUse(dataSym, info)
+    buf.copyIntoKind(NilX, info): discard
+  buf.addParRi() # oconstr
+  result = cursorAt(buf, 0)
+
+proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
+                      args: var Cursor): Cursor =
+  ## Reconstructs `(call routine args...)` from `args` (positioned at the first
+  ## argument) and runs it through `executeExpr`'s sub-compile. Used as the
+  ## fallback for calls that `evalCall` cannot fold in-process.
+  if c.c == nil or c.c.executeExpr == nil or c.noExecute:
+    return c.error("cannot evaluate expression at compile time: " & asNimCode(n), n.info)
+  # Forward args to `executeExpr` verbatim. Running `eval` here would strip
+  # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
+  # would then fail to match the callee's formal parameter types.
+  # `executeExpr` re-runs the full nimony pipeline and can resolve constants
+  # itself via `rewriteSymsToIdents`.
+  var evaluatedCall = createTokenBuf(16)
+  evaluatedCall.addParLe CallS, n.info
+  evaluatedCall.addSymUse routine.name.symId, n.info
+  while args.hasMore:
+    evaluatedCall.takeTree args
+  evaluatedCall.addParRi()
+
+  var resultBuf = createTokenBuf(12)
+  assert c.c.executeExpr != nil
+  # Prefer the routine's concrete return type so nested calls inside a
+  # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
+  # with the outer const's type. Keep `expectedType` for generic return
+  # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
+  var retType = skipModifier(routine.retType)
+  if retType.typeKind == AutoT or containsGenericParams(retType):
+    if not cursorIsNil(c.expectedType):
+      retType = skipModifier(c.expectedType)
+  let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
+                                 retType, resultBuf, n.info)
+  if errorMsg.len == 0:
+    result = cursorAt(resultBuf, 0)
+  else:
+    result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
+
 proc evalCall(c: var EvalContext; n: Cursor): Cursor =
   var callee = n
   inc callee
@@ -211,38 +307,36 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
         return
       let val = pool.strings[a.strId].len
       result = intValue(c, val, n.info)
-    else:
-      if c.c == nil or c.c.executeExpr == nil or c.noExecute:
+    of "slurp":
+      # `slurp`/`staticRead` reads a file at compile time. Fold it natively so
+      # a small file (e.g. `doc/version.md`) does not trigger a full nested
+      # sub-compile. Paths are resolved relative to the source file, matching
+      # `exprexec`'s sub-compile behaviour; failures fold to "" like the proc.
+      let a = eval(c, args)
+      if a.kind != StrLit or args.hasMore:
         cannotEval(n)
         return
-      # Forward args to `executeExpr` verbatim. Running `eval` here would strip
-      # distinct/conversion wrappers (e.g. `TagId(1)` → `1`), and the sub-compile
-      # would then fail to match the callee's formal parameter types.
-      # `executeExpr` re-runs the full nimony pipeline and can resolve constants
-      # itself via `rewriteSymsToIdents`.
-      var evaluatedCall = createTokenBuf(16)
-      evaluatedCall.addParLe CallS, n.info
-      evaluatedCall.addSymUse routine.name.symId, n.info
-      while args.hasMore:
-        evaluatedCall.takeTree args
-      evaluatedCall.addParRi()
-
-      var resultBuf = createTokenBuf(12)
-      assert c.c.executeExpr != nil
-      # Prefer the routine's concrete return type so nested calls inside a
-      # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
-      # with the outer const's type. Keep `expectedType` for generic return
-      # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
-      var retType = skipModifier(routine.retType)
-      if retType.typeKind == AutoT or containsGenericParams(retType):
-        if not cursorIsNil(c.expectedType):
-          retType = skipModifier(c.expectedType)
-      let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
-                                     retType, resultBuf, n.info)
-      if errorMsg.len == 0:
-        result = cursorAt(resultBuf, 0)
+      let relPath = pool.strings[a.strId]
+      let full = if isAbsolute(relPath): relPath
+                 else: constSourceDir(n.info) / relPath
+      var contents = ""
+      try:
+        contents = readFile(full)
+      except:
+        contents = ""
+      result = stringValue(c, contents, n.info)
+    of "newSeqUninit":
+      # `@[]` lowers to `newSeqUninit[T](0)`. Fold the empty case natively to an
+      # empty `seq[T]` value; a non-zero size yields uninitialised memory and
+      # cannot be a constant, so forward it to the sub-compile instead.
+      var probe = args
+      let sz = eval(c, probe)
+      if isConstIntValue(sz) and sz.intVal == 0 and not probe.hasMore:
+        result = emptySeqValue(c, skipModifier(routine.retType), n.info)
       else:
-        result = c.error("cannot evaluate expression at compile time: " & asNimCode(n) & "\n\n" & errorMsg, n.info)
+        result = forwardToExecute(c, n, routine, args)
+    else:
+      result = forwardToExecute(c, n, routine, args)
 
 template evalOrdBinOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
