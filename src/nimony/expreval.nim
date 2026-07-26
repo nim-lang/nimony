@@ -148,11 +148,17 @@ proc findObjectField(objType: Cursor; fieldSym: SymId; typ: var Cursor; exported
 proc constSourceDir(info: NifLineInfo): string =
   ## Directory of the source file that a `slurp`/`staticRead` path is resolved
   ## against, mirroring `exprexec`'s `absoluteParentDir(getFile(info))`.
+  ## `absolutePath`/`getCurrentDir` are `.raises`, so wrap them; on failure the
+  ## empty result leaves the path CWD-relative.
+  result = ""
   let fid = info.file
-  if fid.isValid:
-    result = pool.filenames[fid].absolutePath().parentDir()
-  else:
-    result = getCurrentDir()
+  try:
+    if fid.isValid:
+      result = pool.filenames[fid].absolutePath().parentDir()
+    else:
+      result = getCurrentDir()
+  except:
+    result = ""
 
 proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Cursor =
   ## Builds the constant value for an empty `seq[T]` (`@[]`), i.e.
