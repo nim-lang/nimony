@@ -572,14 +572,13 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
           for flag in splitWhitespace(pool.strings[n.strId]):
             c.passC.add flag
           inc n
-    elif n.tagId == TagId(PluginP):
-      n.into: # (pluginL …)
-        while n.hasMore:
-          assert n.kind == StringLit
-          let p = pool.strings[n.litId]
-          let p2 = resolveFile(c.config.paths, current.files[current.active].nimFile, p)
-          current.depPlugins.incl p2
-          inc n
+    elif n.cursorTagId == TagId(PluginP):
+      loopInto n: # (pluginL …)
+        assert n.kind == StringLit
+        let p = pool.strings[n.strId]
+        let p2 = resolveFile(c.config.paths, current.files[current.active].nimFile, p)
+        current.depPlugins.incl p2
+        inc n
     else:
       skip n
   else:
