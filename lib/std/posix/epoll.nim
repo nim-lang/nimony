@@ -10,28 +10,28 @@
 from ./posix import SocketHandle
 
 const
-  EPOLLIN* = 0x00000001
-  EPOLLPRI* = 0x00000002
-  EPOLLOUT* = 0x00000004
-  EPOLLERR* = 0x00000008
-  EPOLLHUP* = 0x00000010
-  EPOLLRDNORM* = 0x00000040
-  EPOLLRDBAND* = 0x00000080
-  EPOLLWRNORM* = 0x00000100
-  EPOLLWRBAND* = 0x00000200
-  EPOLLMSG* = 0x00000400
-  EPOLLRDHUP* = 0x00002000
-  EPOLLEXCLUSIVE* = 1 shl 28
-  EPOLLWAKEUP* = 1 shl 29
-  EPOLLONESHOT* = 1 shl 30
-  EPOLLET* = 1 shl 31
+  EPOLLIN* = 0x00000001'u32
+  EPOLLPRI* = 0x00000002'u32
+  EPOLLOUT* = 0x00000004'u32
+  EPOLLERR* = 0x00000008'u32
+  EPOLLHUP* = 0x00000010'u32
+  EPOLLRDNORM* = 0x00000040'u32
+  EPOLLRDBAND* = 0x00000080'u32
+  EPOLLWRNORM* = 0x00000100'u32
+  EPOLLWRBAND* = 0x00000200'u32
+  EPOLLMSG* = 0x00000400'u32
+  EPOLLRDHUP* = 0x00002000'u32
+  EPOLLEXCLUSIVE* = (1 shl 28).uint32
+  EPOLLWAKEUP* = (1 shl 29).uint32
+  EPOLLONESHOT* = (1 shl 30).uint32
+  EPOLLET* = (1 shl 31).uint32
 
 # Valid opcodes ( "op" parameter ) to issue to epoll_ctl().
 
 const
-  EPOLL_CTL_ADD* = 1          # Add a file descriptor to the interface.
-  EPOLL_CTL_DEL* = 2          # Remove a file descriptor from the interface.
-  EPOLL_CTL_MOD* = 3          # Change file descriptor epoll_event structure.
+  EPOLL_CTL_ADD* = 1'i32          # Add a file descriptor to the interface.
+  EPOLL_CTL_DEL* = 2'i32          # Remove a file descriptor from the interface.
+  EPOLL_CTL_MOD* = 3'i32          # Change file descriptor epoll_event structure.
 
 type
   EpollData* {.importc: "epoll_data_t",
