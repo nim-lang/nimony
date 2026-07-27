@@ -15,7 +15,7 @@ type
 
 proc incStep(coro: ptr CoroutineBase): Continuation {.nimcall.} =
   let self = cast[ptr IncFrame](coro)
-  discard atomicFetchAdd(counter, self.amount, moRelease)
+  discard atomicFetchAdd(counter, self.amount, moRelaxed)
   discard atomicFetchAdd(done, 1, moRelease)
   result = Continuation(fn: nil, env: nil)
 
