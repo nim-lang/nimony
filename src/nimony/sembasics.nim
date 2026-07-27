@@ -285,6 +285,23 @@ proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineI
   orig.addDotToken()
   c.combineErr dest, pos, info, msg, cursorAt(orig, 0)
 
+proc buildErrAt*(c: var SemContext; dest: var TokenBuf; pos: int; msg: string) =
+  ## Builds ErrT node on the existing node at `pos` and it becomes the origin of the error.
+  ## If the node at `pos` is a tag node, it must be closed.
+  ## e.g:
+  ## input:
+  ## content of `dest`: (tagX (tagY a) (tagZ b))
+  ## `pos`:                   ^
+  ## output:
+  ## content of `dest`: (tagX (err (tagY a) ...) (tagZ b))
+  assert dest.len > pos
+  var tmpBuf = createTokenBuf()
+  block:
+    let n = readonlyCursorAt(dest, pos)
+    buildErr c, tmpBuf, n.info, msg, n
+  let errAt = beginRead(tmpBuf)
+  replace dest, errAt, pos
+
 proc buildLocalErr*(dest: var TokenBuf; info: NifLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
     if true: # not c.debugAllowErrors: - c not given
