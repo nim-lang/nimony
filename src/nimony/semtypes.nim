@@ -1062,20 +1062,26 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     of SetT:
       if tryTypeClass(c, dest, n):
         return
+      let setStart = dest.len
       var elemTypeStart = 0
       dest.takeInto n:
         elemTypeStart = dest.len
         semLocalTypeImpl c, dest, n, InLocalDecl
       let elemType = cursorAt(dest, elemTypeStart)
+      var errMsg = ""
       if containsGenericParams(elemType):
         # allow
         discard
       elif not isOrdinalType(elemType, allowEnumWithHoles = true):
-        c.buildErr dest, info, "set element type must be ordinal"
+        errMsg = "set element type must be ordinal"
       else:
         let length = lengthOrd(c, elemType)
         if length.isNaN or length > MaxSetElements:
-          c.buildErr dest, info, "type " & typeToString(elemType) & " is too large to be a set element type"
+          errMsg = "type " & typeToString(elemType) & " is too large to be a set element type"
+      if errMsg.len > 0:
+        # replace the `(set ...)` tree with the error node; an appended
+        # sibling would give the enclosing decl an extra child:
+        c.buildErrAt dest, setStart, errMsg
     of OrT, AndT:
       dest.takeInto n:
         while n.hasMore:
