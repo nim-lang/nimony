@@ -131,9 +131,12 @@ proc help*(p: Pool): bool {.inline.} =
   ## work-donation). Returns true if any task ran.
   p.drainOnce(0)
 
+type TArg = tuple[p: Pool, threadIdx: int]
+
 proc workerLoop(arg: pointer) {.nimcall.} =
   # index passed by value via the pointer slot
-  let (p, threadIdx) = cast[ptr tuple[p: Pool, threadIdx: int]](arg)[]
+  let (p, threadIdx) = cast[ptr TArg](arg)[]
+  dealloc(arg)
   while not atomicLoad(p.stopFlag, moRelaxed):
     # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
     #    each continuation, re-submitting any that yield more work.
@@ -151,8 +154,10 @@ proc init*(p: Pool) =
       # workers read garbage thread indices (valgrind: uninitialised value in
       # tryBulkDequeue/workerLoop, origin the reused frame). No storage, no
       # lifetime, no race.
-      var arg: tuple[p: Pool, threadIdx: int] = (p, i)
-      create p.workers[i], workerLoop, cast[pointer](arg.addr)
+      var arg = cast[ptr TArg](alloc(sizeof TArg))
+      arg[].p = p
+      arg[].threadIdx = i
+      create p.workers[i], workerLoop, cast[pointer](arg)
     except:
       discard
 
