@@ -86,7 +86,7 @@ type
     sym: SymId
     needsDeref, needsParRi: bool
 
-proc useTemp(dest: var TokenBuf; temp: TempLoc; info: PackedLineInfo) =
+proc useTemp(dest: var TokenBuf; temp: TempLoc; info: NifLineInfo) =
   if temp.needsDeref:
     copyIntoKind dest, DerefX, info:
       dest.addSymUse temp.sym, info
@@ -196,7 +196,7 @@ type ClassInfo = object
   level: int
   ptrKind: TypeKind
 
-proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo)
+proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: NifLineInfo)
 
 proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let fnNode = n.load()
@@ -231,7 +231,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addParLe(ExprX, info)
         temp.needsParRi = true
       copyIntoKind dest, CallS, info:
-        dest.add symToken(pool.syms.getOrIncl("nimChckNilDisp.0." & SystemModuleSuffix), info)
+        dest.addSymUse(pool.syms.getOrIncl("nimChckNilDisp.0." & SystemModuleSuffix), info)
         useTemp dest, temp, info
     copyIntoKind dest, CastX, info:
       genProctype(c, dest, fnType)
@@ -306,7 +306,7 @@ proc trObjConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
 
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; forceStaticCall: bool) =
-  let fn = n.firstSon
+  let fn = n.childCursor
   if not forceStaticCall and fn.kind == Symbol and isMethod(c, fn.symId):
     takeInto dest, n: # `(call)`
       trMethodCall c, dest, n
@@ -336,7 +336,7 @@ proc classData(typ: Cursor): (int, UHash) =
     for _ in inheritanceChain(s): inc result[0]
     result[1] = uhash(pool.syms[s])
 
-proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassInfo; info: PackedLineInfo) =
+proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassInfo; info: NifLineInfo) =
   if class.ptrKind != NoType:
     # cast is enough, see trBaseobj
     copyIntoKind dest, CastX, info:
@@ -346,10 +346,10 @@ proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassI
   else:
     copyIntoKind dest, BaseobjX, info:
       dest.addSymUse class.root, info
-      dest.addToken intToken(pool.integers.getOrIncl(class.level), info)
+      dest.addIntLit(class.level, info)
       tr c, dest, x
 
-proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: PackedLineInfo) =
+proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassInfo; info: NifLineInfo) =
   # get vtable field of `x`, might need to get to root object
   copyIntoKind dest, DotX, info:
     var x = x
@@ -366,16 +366,16 @@ proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassI
         copyIntoKind dest, DotX, info:
           copyIntoKind dest, DerefX, info:
             tr c, dest, x
-          dest.add symToken(dataField, info)
+          dest.addSymUse(dataField, info)
           dest.addIntLit(0, info)
       else:
         copyIntoKind dest, BaseobjX, info:
-          dest.add symToken(class.root, info)
+          dest.addSymUse(class.root, info)
           dest.addIntLit(class.level, info)
           copyIntoKind dest, DotX, info:
             copyIntoKind dest, DerefX, info:
               tr c, dest, x
-            dest.add symToken(dataField, info)
+            dest.addSymUse(dataField, info)
             dest.addIntLit(0, info)
     elif class.ptrKind == PtrT:
       dest.addParLe(DerefX, info)
@@ -393,7 +393,7 @@ proc genVtableField(c: var Context; dest: var TokenBuf; x: Cursor; class: ClassI
     dest.copyIntoSymUse pool.syms.getOrIncl(VTableField), info
     dest.addIntLit 0, info
 
-proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: PackedLineInfo) =
+proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: NifLineInfo) =
   # `v of T` is translated into a logical 'and' expression:
   # let vtab = v.vtab
   # (level < len(vtab.display)) and (vtab.display[level] == hash(T))
@@ -512,7 +512,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
   n = sub(n)
   let typ = n
   skip n # skip type
-  if n.kind == IntLit and pool.integers[n.intId] < 0:
+  if n.kind == IntLit and n.intVal < 0:
     inc n # integer literal
     let x = n
     skip n # skip expression
@@ -553,7 +553,7 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
               trInstanceofImpl c, dest, beginRead(buf), typ, info
             copyIntoKind dest, StmtsS, info:
               copyIntoKind dest, CallS, info:
-                dest.add symToken(pool.syms.getOrIncl("nimInvalidObjConv.0." & SystemModuleSuffix), info)
+                dest.addSymUse(pool.syms.getOrIncl("nimInvalidObjConv.0." & SystemModuleSuffix), info)
                 dest.addStrLit asNimCode(typ)
 
       # Negative value means we need to produce a runtime check and a cast:
@@ -592,7 +592,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.add n
+  dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:
       tr c, dest, n
@@ -601,9 +601,9 @@ proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StringLit, UnknownToken, DotToken, EofToken:
-    takeToken dest, n
-  of ParLe:
+  of Symbol, SymbolDef, Ident, IntLit, UIntLit, FloatLit, CharLit, StrLit, UnknownToken, DotToken, EofToken:
+    takeTree dest, n
+  of TagLit:
     case n.exprKind
     of CallKinds - {ProccallX}:
       trCall c, dest, n, false
@@ -629,8 +629,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore: tr c, dest, n
-  of ParRi:
-    raiseAssert "BUG: unexpected ParRi in vtables_backend.tr"
+  else:
+    raiseAssert "BUG: unexpected ParRi in vtables_backend.tr" # classic ParRi only
 
 proc processMethod(c: var Context; m: MethodDecl; methodName: string) =
   let sig = methodKey(methodName, m.params)
@@ -732,7 +732,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
     let r = takeRoutine(n, SkipFinalParRi)
     if not r.isGeneric:
       var p = r.params
-      if p.kind == ParLe:
+      if p.isTagLit:
         p = sub(p) # peek at the first param only, never left
         let param = takeLocal(p, SkipFinalParRi)
         let cls = getClass(param.typ)
@@ -839,7 +839,7 @@ proc transformVTables*(pass: var Pass; needsXelim: var bool) =
   processMethods c
 
   assert n.stmtKind == StmtsS
-  pass.dest.add n
+  pass.dest.addParLe(n.cursorTagId, n.info)
   inc n
 
   emitVTables c, pass.dest

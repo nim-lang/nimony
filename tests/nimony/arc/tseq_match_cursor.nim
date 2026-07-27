@@ -3,7 +3,7 @@
 ## (mimicking typeToCursor → Match.fn.typ → seq[Match]).
 
 import std / [tables, assertions, syncio]
-import ".." / ".." / ".." / src / lib / [nifstreams, nifcursors, lineinfos, bitabs]
+import ".." / ".." / ".." / src / lib / nifcore
 
 type
   FnLike = object
@@ -35,7 +35,7 @@ proc buildCandidate(c: var Ctx; key: string; src: TokenBuf; symbol: SymId): FnLi
   result = FnLike(kind: 0, sym: symbol, typ: typ, flag: false)
 
 proc createMatch(): MatchLike =
-  MatchLike(fn: FnLike(kind: 0, sym: SymId(0), flag: false), note: -1)
+  MatchLike(fn: FnLike(kind: 0, sym: default(SymId), flag: false), note: -1)
 
 proc setFn(m: var MatchLike; fn: FnLike) =
   m.fn = fn
@@ -46,9 +46,9 @@ proc resolveLike(c: var Ctx) =
   for i in 0 ..< 12:
     # synthesize a small TokenBuf for the type signature
     var srcBuf = createTokenBuf(8)
-    srcBuf.add parLeToken(pool.tags.getOrIncl("proc"), NoLineInfo)
-    srcBuf.add intToken(pool.integers.getOrIncl(i.int64), NoLineInfo)
-    srcBuf.add parRiToken(NoLineInfo)
+    srcBuf.openTag srcBuf.tags.registerTag("proc")
+    srcBuf.addIntLit i.int64
+    srcBuf.closeTag()
     let key = "k" & $i
     let candidate = buildCandidate(c, key, srcBuf, SymId(uint32(i + 1)))
     matches.add createMatch()
@@ -58,7 +58,6 @@ proc resolveLike(c: var Ctx) =
   echo "matches.len=", matches.len
 
 proc main() =
-  discard registerTag("proc")
   var c = Ctx(typeMem: initTable[string, TokenBuf]())
   # run many rounds so mimalloc reuses slots between cursors
   for round in 0 ..< 8:

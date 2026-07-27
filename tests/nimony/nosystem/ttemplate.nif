@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3571             )
+(.indexat 3612             )
 (stmts@,2,tests/nimony/nosystem/ttemplate.nim
  (type@2,1 :int.0.
   (i 64).
@@ -51,7 +51,7 @@
      (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.0)))
+   (ret@2,2 result.0)))
  (proc@,E :typeof.0.@5
   (typeof). .
   (params@B
@@ -65,7 +65,7 @@
  (type@A,H :string.0.~8 x . . string.0.sysvq0asl)
  (type@F,K :MyGeneric.0.~D .
   (typevars~4
-   (typevar@1 :T.2. . . . .)).
+   (typevar@1 :T.2. . . . .)).~3
   (object@2 .
    (fld~D,1 :x.0 . . T.2.@3 .)))
  (gvar@2,O :myglob.0. . . MyGeneric.0.Iu9y0wv.@H .)
@@ -90,40 +90,40 @@
     (i@6 64).)
    (param@4 :y.1 . .
     (i@3 64).))
-  (i@D 64). .
+  (i@D 64).@D .
   (stmts@W
    (add@2
-    (i 64)x.2~2 y.1@2)))
+    (i~I,~2 64)x.2~2 y.1@2)))
  (proc@,Y :foo.0.@5 . . .
   (params@8
    (param@1 :x.3 . .
     (i@3 64).)
    (param@9 :y.2 . . string.0.sysvq0asl .))
-  (i@L 64). .
+  (i@L 64).@L .
   (stmts@2,1
    (result@4 :result.1 . .
-    (i@A,~5 64).)
+    (i@A,~5 64).@A,~5)
    (var@4 :x.5 . . string.0.sysvq0asl "abc"@4)
    (asgn@7,1 result.1~7
     (expr@N,~4
      (add@2
-      (i 64)4~I,4
+      (i~I,~2 64)4~I,4
       (expr~2
        (add@2
-        (i 64)2~A,4 89~7,4)))))
+        (i~I,~2 64)2~A,4 89~7,4)))))
    (asgn@2,2 x.5~2 "34"@2)
-   (ret result.1)))
+   (ret@4,2 result.1)))
  (proc@,d :overloaded.0.@5 . . .
   (params@F). . .
   (stmts@2,1
    (let@4 :someInt.0 . .
     (i@A,~A 64)
     (add@D
-     (i 64)23@1 90@5))
+     (i~3,~A 64)23@1 90@5))
    (discard@,1
-    (call@B foo.0.~3
-     (add@3
-      (i 64)34~2 56@1)"xyz"@8))))
+    (call@8 foo.0.
+     (add@6
+      (i@,~B 64)34~2 56@1)"xyz"@B))))
  (type@5,h :uint.0.
   (u 64).
   (pragmas@6
@@ -133,9 +133,9 @@
    (typevar@1 :T.3. . . . .))
   (params@G
    (param@1 :x.4 . .
-    (i@3 64).))T.3.@A . .
+    (i@3 64).))T.3.@A .@A .
   (stmts@U
-   (conv@1 T.3.~1 x.4@1)))
+   (conv@1 T.3. x.4@1)))
  (glet@4,l :val.0. . .
   (i 64)123@6)
  (discard@,m
@@ -170,17 +170,17 @@
  (x@G,A typeOfProc.0. 53)
  (x@G,A typeOfIter.0. 72)
  (x dollar`.TypeOfMode.0. 74)
- (x typeof.0. 361)
+ (x typeof.0. 365)
  (x string.0. 218)
  (h MyGeneric.0. 50)
  (h@B,K T.2. 43)
- (h myglob.0. 78)
+ (h myglob.0. 80)
  (h other.0. 52)
  (x \2B.0. 149)
  (h plus.0. 170)
- (h foo.0. 176)
- (h overloaded.0. 413)
- (x uint.0. 221)
+ (h foo.0. 183)
+ (h overloaded.0. 434)
+ (x uint.0. 228)
  (h conv.0. 66)
  (h@D,j T.3. 43)
  (h val.0. 127)

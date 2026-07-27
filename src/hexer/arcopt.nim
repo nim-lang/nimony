@@ -63,7 +63,7 @@ proc getAttachedOp(symId: SymId; attachedOp: var AttachedOp): bool =
 
 proc peelComparableArg(n: Cursor): Cursor =
   result = n
-  while result.kind == ParLe:
+  while result.isTagLit:
     case result.exprKind
     of ExprX:
       var it = result
@@ -103,7 +103,7 @@ proc breakStmt(b: var BasicBlock; n: Cursor) =
     it.wasMovedLocs.setLen 0
     it.hasBreak = true
 
-    if n.kind == Symbol:
+    if n.isSymbol:
       if it.label == n.symId:
         break
     else:
@@ -157,7 +157,7 @@ proc intersect(summary: var seq[WasMovedLoc]; branch: seq[WasMovedLoc]) =
 
 proc isExhaustive(n: Cursor; exhaustiveKind: SubstructureKind): bool =
   var it = n
-  if it.kind != ParLe:
+  if not it.isTagLit:
     return false
   it = sub(it)  # throwaway copy; bounds the walk under vpr
   var lastKind = NoSub
@@ -167,7 +167,7 @@ proc isExhaustive(n: Cursor; exhaustiveKind: SubstructureKind): bool =
   result = lastKind == exhaustiveKind
 
 proc getCallInfo(n: Cursor; attachedOp: var AttachedOp; arg: var Cursor): bool =
-  if n.kind != ParLe:
+  if not n.isTagLit:
     return false
   if n.exprKind notin CallKinds and n.stmtKind notin {CallS, CmdS, HcallS, CallstrlitS, InfixS, PrefixS}:
     return false
@@ -197,7 +197,7 @@ proc wasMovedDestroyPair(c: var Con; b: var BasicBlock; d, darg: Cursor) =
 proc analyse(c: var Con; b: var BasicBlock; n: var Cursor)
 
 proc analyseChildren(c: var Con; b: var BasicBlock; n: var Cursor) =
-  assert n.kind == ParLe
+  assert n.isTagLit
   n.into:
     while n.hasMore and n.kind != EofToken:
       let before = cursorToPosition(c.source[], n)
@@ -211,7 +211,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
     b.invalidateWasMoved n
     b.symToDel.add n
     inc n
-  of ParLe:
+  of TagLit:
     if n.stmtKind in {ProcS, FuncS, ConverterS, MethodS, IteratorS, MacroS, TemplateS} or
         isDeclarative(n):
       skip n
@@ -307,7 +307,7 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
           analyse(c, blockBody, n)
           mergeBasicBlockInfo(b, blockBody)
     of BreakS:
-      let label = n.firstSon
+      let label = n.childCursor
       breakStmt(b, label)
       skip n
     of RetS, RaiseS:
@@ -329,24 +329,22 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
           analyse(c, b, son)
       else:
         analyseChildren(c, b, n)
-  of DotToken, UnknownToken, EofToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit, SymbolDef, ParRi:
+  else: # atoms and suffix kinds; classic: also a physical ParRi
     inc n
 
 proc opt(c: Con; n: var Cursor; dest: var TokenBuf) =
   case n.kind
-  of ParLe:
+  of TagLit:
     let pos = cursorToPosition(c.source[], n)
     if c.toDelete.contains(pos):
-      dest.add dotToken(n.info)
+      dest.addDotToken(n.info)
       skip n
     else:
       takeInto dest, n:
         while n.hasMore:
           opt(c, n, dest)
-  of ParRi:
-    raiseAssert "unexpected ')' in tree rewrite"
-  of Symbol, SymbolDef, DotToken, UnknownToken, EofToken, Ident, StringLit, CharLit, IntLit, UIntLit, FloatLit:
-    dest.takeToken n
+  else:
+    dest.takeTree n
 
 proc optimizeArc*(pass: var Pass) =
   var c = Con(
@@ -381,8 +379,8 @@ proc runArcoptBody(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =
 
 proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits: int) =
   case n.kind
-  of ParLe:
-    let tag = n.tagId
+  of TagLit:
+    let tag = n.cursorTagId
     let info = n.info
     if n.stmtKind == ProcS:
       let d = takeProcDecl(n)
@@ -391,7 +389,7 @@ proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits
       dest.addSubtree d.params
       dest.addSubtree d.returnType
       dest.addSubtree d.pragmas
-      if d.body.kind == ParLe:
+      if d.body.isTagLit:
         var body = createTokenBuf(64)
         var b = d.body
         body.addSubtree b
@@ -402,20 +400,17 @@ proc runArcoptTree(dest: var TokenBuf; n: var Cursor; moduleSuffix: string; bits
         dest.addSubtree d.body
       dest.addParRi()
     else:
-      dest.add n.load()
+      dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
           runArcoptTree(dest, n, moduleSuffix, bits)
       dest.addParRi()
-  of ParRi:
-    raiseAssert "ParRi should not be encountered here"
   else:
-    dest.takeToken n
+    dest.takeTree n
 
 proc runArcopt*(buf: var TokenBuf; moduleSuffix = ""; bits = 0) =
   ## Direct entry point for already generated NIFC buffers.
   var n = beginRead(buf)
   var dest = createTokenBuf(buf.len)
   runArcoptTree(dest, n, moduleSuffix, bits)
-  endRead(buf)
   buf = ensureMove(dest)

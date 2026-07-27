@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 2605             )
+(.indexat 2612             )
 (stmts@,2,tests/nimony/nosystem/tdistinct.nim
  (type@2,1 :int.0.
   (i 64).
@@ -48,7 +48,7 @@
      (ranges typeOfIter.0.)
      (stmts
       (ret "typeOfIter"))))
-   (ret result.0)))
+   (ret@2,2 result.0)))
  (proc@,D :typeof.0.@5
   (typeof). .
   (params@B
@@ -101,11 +101,11 @@
   (pragmas@U
    (borrow@2)).
   (stmts@9
-   (result :result.1 . . VarId.0.@7 .)
+   (result :result.1 . . VarId.0.@7 .@7)
    (asgn result.1
     (dconv VarId.0.@6
      (add
-      (i 64)
+      (i@7,~9 64)
       (dconv
        (i@B,~2 64)x.4)
       (dconv
@@ -115,10 +115,10 @@
  (asgn@2,b x.0.~2
   (infix@4 \2B.1. x.0.~2 x.0.@2))
  (glet@4,d :y.0. . .
-  (i@4 8)
+  (i 8)
   (conv@8
-   (i~4 8)x.0.@1))
- (comment@F,D untyped.0. typedesc.0.@I int.0.@1,6 int.0.@1,6 int.0.~2,6 int.0.@1,7 int.0.@1,7 int.0.~2,7 int.0.@2,9 int.0.@2,9 bool.0.~2,9 int.0.@5,D int8.0.~7,Q))(.index@,2,tests/nimony/nosystem/tdistinct.nim
+   (i 8)x.0.@1))
+ (comment@F,D untyped.0. typedesc.0.@I int.0.@1,6 int.0.@1,6 int.0.~2,6 int.0.@1,7 int.0.@1,7 int.0.~2,7 int.0.@2,9 int.0.@2,9 bool.0.~2,9 int.0.@5,D int8.0.@5,D))(.index@,2,tests/nimony/nosystem/tdistinct.nim
  (x int.0. 83)
  (x bool.0. 64)
  (x char.0. 66)
@@ -130,12 +130,12 @@
  (x@G,9 typeOfProc.0. 53)
  (x@G,9 typeOfIter.0. 72)
  (x dollar`.TypeOfMode.0. 74)
- (x typeof.0. 361)
+ (x typeof.0. 365)
  (x string.0. 218)
  (x \2B.0. 50)
  (x \2D.0. 170)
  (x <=.0. 170)
  (x VarId.0. 167)
  (x \2B.1. 67)
- (h x.0. 356)
+ (h x.0. 363)
  (h y.0. 87))

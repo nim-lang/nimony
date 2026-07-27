@@ -73,7 +73,7 @@ proc parseTypePragmas(n: Cursor): TypePragmas =
           skip n
         else:
           skip n
-  elif n.kind != DotToken:
+  elif not n.isDotToken:
     error "illformed AST inside type section: ", n
 
 proc `<`(x: xint; b: int64): bool = x < createXint(b)
@@ -134,9 +134,9 @@ proc getSizeObject(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; ite
 proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor; ptrSize: int) =
   var counter = 20
   var n = n
-  let cacheKey = if n.kind == Symbol: n.symId else: NoSymId
+  let cacheKey = if n.isSymbol: n.symId else: NoSymId
   var pragmas = default(TypePragmas)
-  while counter > 0 and n.kind == Symbol:
+  while counter > 0 and n.isSymbol:
     if cache.hasKey(n.symId):
       # `hasKey` just returned true, so `getOrQuit` will not quit.
       let c2 = cache.getOrQuit(n.symId)
@@ -154,7 +154,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
 
   case n.typeKind
   of IntT, UIntT, FloatT:
-    let bits = typebits(n.firstSon.load)
+    let bits = typebits(n.childCursor.load)
     let s = int(if bits != -1: bits div 8 else: ptrSize)
     update c, s, s
   of CharT, BoolT:
@@ -162,7 +162,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
-    getSize c, cache, n.firstSon, ptrSize
+    getSize c, cache, n.childCursor, ptrSize
   of EnumT, HoleyEnumT, AnumT:
     let b = enumBounds(n)
     if b.lo < 0:
@@ -183,7 +183,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     var n = n
     n = sub(n) # bound the field walk, `n` is a copy
     var c2 = createSizeofValue(c.strict, PackedP in pragmas.pragmas)
-    if n.kind != DotToken:  # base type
+    if not n.isDotToken:  # base type
       getSize(c2, cache, n, ptrSize)
     elif InheritableP in pragmas.pragmas:
       # No explicit base, but inheritable: account for the RTTI pointer in
@@ -203,7 +203,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
 
   of ArrayT:
     var elem = createSizeofValue(c.strict)
-    getSize(elem, cache, n.firstSon, ptrSize)
+    getSize(elem, cache, n.childCursor, ptrSize)
     let al1 = asSigned(getArrayLen(n), c.overflow)
     var arr = createSizeofValue(c.strict)
     if elem.overflow or elem.size <= 0 or al1 >= high(int) div elem.size:
@@ -215,7 +215,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     combine c, arr
 
   of SetT:
-    let size0 = bitsetSizeInBytes(n.firstSon)
+    let size0 = bitsetSizeInBytes(n.childCursor)
     let size1 = int asSigned(size0, c.overflow)
     update c, size1, 1
   of TupleT:
@@ -232,7 +232,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     if cacheKey != NoSymId: cache[cacheKey] = c2
     combine c, c2
   of RangetypeT:
-    getSize c, cache, n.firstSon, ptrSize
+    getSize c, cache, n.childCursor, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT,
      AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT:
@@ -269,7 +269,7 @@ proc typeIsBig*(n: Cursor; ptrSize: int): bool {.inline.} =
 proc typeSectionMode(n: Cursor): PragmaKind =
   var n = n
   var counter = 20
-  while counter > 0 and n.kind == Symbol:
+  while counter > 0 and n.isSymbol:
     let sym = tryLoadSym(n.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)
@@ -303,13 +303,13 @@ when isMainModule:
       var n = beginRead srcBuf
       assert n.stmtKind == TypeS
       inc n
-      assert n.kind == SymbolDef
+      assert n.isSymbolDef
       let result = n.symId
       endRead srcBuf
       publish result, srcBuf, SemcheckBodies
       result
     var symBuf = createTokenBuf(1)
-    symBuf.add symToken(symId, NoLineInfo)
+    symBuf.add symToken(symId)
     let n = beginRead symBuf
     var sz = getSize(n, 8)
     endRead symBuf

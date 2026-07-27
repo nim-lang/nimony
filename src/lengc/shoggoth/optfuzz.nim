@@ -8,7 +8,7 @@
 
 import std / [os, assertions, times, strutils]
 include "../../lib" / nifprelude
-import nifstreams, nifcursors
+import nifpools
 import ".." / leng_model
 import ".." / ".." / models / tags   # `*TagId` enumerators for genRewriter
 import nifrender
@@ -20,7 +20,7 @@ import copy_propagation, constant_folding, cse, induction_variables_legacy
 import rewriter
 proc isPow2(c: Cursor): bool =
   if c.kind != IntLit: return false
-  let v = pool.integers[c.intId]
+  let v = c.intVal
   v > 0 and (v and (v - 1)) == 0
 genRewriter staticRead("rules/arith.rewrite.nif")
 
@@ -47,11 +47,11 @@ proc wellFormed(buf: var TokenBuf): bool =
 proc rec(n: var Cursor; acc: var seq[TokenBuf]) =
   ## Recursive descent collecting every ProcS body (incl. nested procs).
   while n.hasMore:
-    if n.kind == ParLe:
+    if n.isTagLit:
       if n.stmtKind == ProcS:
         var probe = n
         let d = takeProcDecl(probe)
-        if d.body.kind == ParLe:
+        if d.body.isTagLit:
           var b = createTokenBuf(64)
           var bc = d.body
           b.addSubtree bc

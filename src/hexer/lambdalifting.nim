@@ -177,7 +177,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       c.hasClosures = true
     if n.kind == Symbol:
       # if a closure proc is called, we don't want to see it as "escaping".
-      dest.add n
+      dest.addSubtree n
       inc n
     while n.hasMore:
       tr(c, dest, n)
@@ -220,8 +220,8 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.kind
-  of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
+     IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of Symbol:
     let loc = c.typeCache.getLocalInfo(n.symId)
@@ -265,7 +265,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     else:
       takeTree dest, n
-  of ParLe:
+  of TagLit:
     case n.stmtKind
     of LocalDecls:
       trLocal c, dest, n
@@ -347,8 +347,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
         EnvpX, KvX, NoExpr:
         trSons(c, dest, n)
-  of ParRi:
-    bug "unexpected ')' inside"
+  else:
+    bug "unexpected ')' inside" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 when false:
   proc paramsWithClosurePragma(typ: Cursor): bool =
@@ -367,7 +367,7 @@ const
 # `coro_transform`. The wrapper-signature shape is owned there too, so
 # both passes stay in lock-step automatically.
 
-proc addRootRef(dest: var TokenBuf; info: PackedLineInfo)
+proc addRootRef(dest: var TokenBuf; info: NifLineInfo)
   {.ensuresNif: addedType(dest).} =
   dest.copyIntoKind RefT, info:
     dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
@@ -376,7 +376,7 @@ type
   UntypedEnvMode = enum
     WantValue, WantAddr
 
-proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=WantValue)
+proc untypedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv; mode=WantValue)
   {.ensuresNif: addedExpr(dest).} =
   if env.s == SymId(0):
     bug "lambdalifting untypedEnv: no environment in scope at " & infoToStr(info)
@@ -400,7 +400,7 @@ proc untypedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv; mode=
     else:
       dest.addSymUse env.s, info
 
-proc typedEnv(dest: var TokenBuf; info: PackedLineInfo; env: CurrentEnv)
+proc typedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv)
   {.ensuresNif: addedExpr(dest).} =
   if env.s == SymId(0):
     bug "lambdalifting typedEnv: no environment in scope at " & infoToStr(info)
@@ -491,7 +491,7 @@ proc isClosureCoroFor(c: var Context; n: Cursor): bool =
   if typ.typeKind == TupleT:
     var t = typ
     inc t  # past tuple tag
-    if t.kind == ParLe and t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
+    if t.isTagLit and t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
       return true
   return false
 
@@ -523,7 +523,7 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `(tupat someTuple 0)` would falsely match.
     var targetBuf = createTokenBuf(4)
     var valSymForEnv: SymId = SymId(0)  # case 2: synthesize env-arg from this
-    var valInfoForEnv: PackedLineInfo = default(PackedLineInfo)
+    var valInfoForEnv: NifLineInfo = default(NifLineInfo)
     var upstreamEnvArg = false           # case 3: env-arg is penultimate arg
     if n.kind == Symbol and isClosureIterSym(n.symId):
       targetBuf.addSymUse coro_transform.coroWrapperForExternIter(n.symId), n.info
@@ -633,7 +633,7 @@ proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
-proc addEnvParam(dest: var TokenBuf; info: PackedLineInfo; envTyp: SymId) =
+proc addEnvParam(dest: var TokenBuf; info: NifLineInfo; envTyp: SymId) =
   dest.copyIntoKind ParamU, info:
     dest.addSymDef pool.syms.getOrIncl(EnvParamName), info
     dest.addDotToken() # no export marker
@@ -696,10 +696,15 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
               if n.hasMore: skip n
       addRootRef dest, info
   else:
-    let isProctypeInput = n.typeKind == ProctypeT
+    # `itertype` (a first-class closure-iterator value) has the SAME compact
+    # 4-field shape as `proctype`; treating it as an 8-field routine decl walks
+    # `BodyPos` fields past the end of the tree. Under nifcore there is no
+    # `ParRi` token to stop on, so that overrun reads off the end of the buffer
+    # and trips nifcore's cursor assert instead (issue #2177).
+    let isCompactRoutine = n.typeKind in {ProctypeT, ItertypeT}
     takeInto dest, n:
-      if isProctypeInput:
-        # new layout: nilability, params, retType, pragmas
+      if isCompactRoutine:
+        # compact layout: nilability, params, retType, pragmas
         for i in 0..3:
           if not n.hasMore: break
           tre c, dest, n
@@ -718,7 +723,7 @@ proc treType(c: var Context; dest: var TokenBuf; n: var Cursor)
     tre(c, dest, n)
 
 proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  let s = n.firstSon.symId
+  let s = n.childCursor.symId
   let fld = c.localToEnv.getOrDefault(s)
   let kind = n.symKind
   if fld.field != SymId(0):
@@ -939,9 +944,9 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var addTmpVar = false
   if wantsEnv:
     if isStatic:
-      dest.add callNode
+      dest.addParLe(callNode.cursorTagId, callNode.info)
       # do not produce a tuple:
-      dest.add n
+      dest.addSubtree n
       inc n
     else:
       if n.kind == Symbol:
@@ -973,14 +978,14 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymUse tmp, info
           dest.addIntLit 1, info
         dest.addParPair NilX, info
-      dest.add callNode
+      dest.addParLe(callNode.cursorTagId, callNode.info)
       copyIntoKind dest, TupatX, info:
         dest.addSymUse tmp, info
         dest.addIntLit 0, info
   else:
-    dest.add callNode
+    dest.addParLe(callNode.cursorTagId, callNode.info)
     if isStatic:
-      takeToken dest, n
+      takeTree dest, n
   let firstArg = n
   while n.hasMore:
     tre(c, dest, n)
@@ -1006,7 +1011,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if needNilCheck:
     dest.addParRi() # end of ElifU
     copyIntoKind dest, ElseU, info:
-      dest.add callNode
+      dest.addParLe(callNode.cursorTagId, callNode.info)
       copyIntoKind dest, CastX, info:
         c.toNonClosureProcType dest, typ
         copyIntoKind dest, TupatX, info:
@@ -1050,17 +1055,17 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
-proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: PackedLineInfo) =
+proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: NifLineInfo) =
   dest.copyIntoKind TupconstrX, info:
     dest.copyIntoKind TupleT, info:
       c.toProcType(dest, origTyp)
       dest.addRootRef info
     dest.copyIntoKind CastX, info:
       c.toProcType(dest, origTyp)
-      if n.kind == ParLe:
+      if n.isTagLit:
         treSons c, dest, n
       else:
-        dest.takeToken n
+        dest.takeTree n
     dest.addParPair NilX, info
 
 proc treToClosure(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1150,10 +1155,10 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc n
       else:
         takeTree dest, n
-  of DotToken, UnknownToken, EofToken, Ident, SymbolDef,
-     IntLit, UIntLit, FloatLit, CharLit, StringLit:
+  of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,
+     IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
-  of ParLe:
+  of TagLit:
     case n.stmtKind
     of LocalDecls:
       treLocal c, dest, n
@@ -1253,8 +1258,8 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
           treKv(c, dest, n)
         else:
           treSons(c, dest, n)
-  of ParRi:
-    bug "unexpected ')' inside"
+  else:
+    bug "unexpected ')' inside" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 proc genObjectTypes(c: var Context; dest: var TokenBuf) =
   var objectTypes = initTable[SymId, seq[EnvField]]()
@@ -1310,7 +1315,7 @@ proc elimLambdas*(pass: var Pass) =
     pass.dest = createTokenBuf(cap)
     var n2 = beginRead(oldDest)
     assert n2.stmtKind == StmtsS
-    pass.dest.add n2 # stmts opener
+    pass.dest.addParLe(n2.cursorTagId, n2.info)  # stmts opener
     n2.into:
       genObjectTypes(c, pass.dest)
       # Walk statements into a side buffer so we can prepend any
@@ -1331,12 +1336,10 @@ proc elimLambdas*(pass: var Pass) =
       for entry in c.coroCtx.shouldPublish:
         var buf = createTokenBuf(16)
         buf.copyTree stmtsBuf.cursorAt(entry.start)
-        endRead(stmtsBuf)
         publishSignature buf, entry.sym, 0
       pass.dest.add c.coroCtx.coroTypes
       pass.dest.add stmtsBuf
       pass.dest.addParRi(n2.endInfo)
-    endRead(oldDest)
     pass.nextTemp = c.coroCtx.nextTemp
     c.typeCache.closeScope()
 

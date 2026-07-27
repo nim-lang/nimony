@@ -153,6 +153,11 @@ in the plugin rather than a malformed NIF tree at runtime.
 Plugins are deterministic: same input produces same output. The compiler caches
 results and skips re-execution when possible.
 
+The input files are written in NIF's *binary* form (bif) for speed — the names
+keep their `.nif` extension and the plugin API sniffs the file header, so it
+transparently accepts text NIF too (hand-written inputs keep working). To
+inspect a cached input, decode it with `tools/niftools bif2nif <file>`.
+
 
 ## Plugin search
 

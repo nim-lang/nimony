@@ -31,6 +31,7 @@ type
       ## e.g. passing a `float64` constant where a `float32` is expected. Off by
       ## default because the narrowing can silently lose precision; opt in with
       ## `.feature: "lenientFloats".` (v2 implies it).
+    LenientAliasingFeature
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -51,7 +52,8 @@ proc parseFeatures*(s: string): set[Feature] =
   of "ignorestyle": {IgnoreStyleFeature}
   of "vartoverloads": {VarToverloadsFeature}
   of "lenientfloats": {LenientFloatsFeature}
+  of "lenientaliasing": {LenientAliasingFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
-            VarToverloadsFeature, LenientFloatsFeature}
+            VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature}
   else: {}

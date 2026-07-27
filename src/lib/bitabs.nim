@@ -62,9 +62,9 @@ proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
   var h = origH and maxHash(t)
   if t.keys.len != 0:
     while true:
-      let litId = t.keys[h]
-      if not isFilled(litId): break
-      if v == t.vals[idToIdx t.keys[h]]: return litId
+      let strId = t.keys[h]
+      if not isFilled(strId): break
+      if v == t.vals[idToIdx t.keys[h]]: return strId
       h = nextTry(h, maxHash(t))
   return Id(0)
 
@@ -75,9 +75,9 @@ template getOrInclImpl() {.maybeDirty.} =
   var h = origH and maxHash(t)
   if t.keys.len != 0:
     while true:
-      let litId = t.keys[h]
-      if not isFilled(litId): break
-      if v == t.vals[idToIdx t.keys[h]]: return litId
+      let strId = t.keys[h]
+      if not isFilled(strId): break
+      if v == t.vals[idToIdx t.keys[h]]: return strId
       h = nextTry(h, maxHash(t))
     # not found, we need to insert it:
     if mustRehash(t.keys.len, t.vals.len):
@@ -85,8 +85,8 @@ template getOrInclImpl() {.maybeDirty.} =
       # recompute where to insert:
       h = origH and maxHash(t)
       while true:
-        let litId = t.keys[h]
-        if not isFilled(litId): break
+        let strId = t.keys[h]
+        if not isFilled(strId): break
         h = nextTry(h, maxHash(t))
   else:
     setLen(t.keys, 16)
@@ -107,18 +107,18 @@ proc getOrInclFromView*[Id, T, View](t: var BiTable[Id, T]; v: View): Id =
   t.vals.add $v
 
 when defined(nimony):
-  proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): var T {.inline.} =
-    let idx = idToIdx litId
+  proc `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): var T {.inline.} =
+    let idx = idToIdx strId
     assert idx < t.vals.len
     result = t.vals[idx]
 else:
-  proc `[]`*[Id, T](t: var BiTable[Id, T]; litId: Id): var T {.inline.} =
-    let idx = idToIdx litId
+  proc `[]`*[Id, T](t: var BiTable[Id, T]; strId: Id): var T {.inline.} =
+    let idx = idToIdx strId
     assert idx < t.vals.len
     result = t.vals[idx]
 
-  proc `[]`*[Id, T](t: BiTable[Id, T]; litId: Id): lent T {.inline.} =
-    let idx = idToIdx litId
+  proc `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): lent T {.inline.} =
+    let idx = idToIdx strId
     assert idx < t.vals.len
     result = t.vals[idx]
 
@@ -149,8 +149,8 @@ type
 proc getOrIncl*[Id](t: var BiTableFloat[Id]; v: float64): Id {.inline .} =
   BiTable[Id, uint64](t).getOrIncl(cast[uint64](v))
 
-proc `[]`*[Id](t: BiTableFloat[Id]; litId: Id): float64 {.inline.} =
-  cast[float64](BiTable[Id, uint64](t)[litId])
+proc `[]`*[Id](t: BiTableFloat[Id]; strId: Id): float64 {.inline.} =
+  cast[float64](BiTable[Id, uint64](t)[strId])
 
 when isMainModule:
   when defined(nimony):

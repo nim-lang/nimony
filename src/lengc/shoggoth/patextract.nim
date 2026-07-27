@@ -88,7 +88,7 @@ proc copyStripLineInfo(dest: var TokenBuf; src: var Cursor) =
   of SymbolDef: dest.addSymDef symName(src); inc src
   of Ident:     dest.addIdent strVal(src); inc src
   of DotToken:  dest.addDotToken(); inc src
-  of ExtendedSuffix, LineInfoLit: inc src        # never a value head; drop
+  of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi: inc src        # never a value head; drop
 
 proc printProcs(nifFile, nameSubstr: string) =
   var buf = parseFromFile(nifFile)

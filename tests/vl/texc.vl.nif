@@ -55,5 +55,5 @@
      (stmts
       (jtrue ´g.1)).
      (stmts))
-    (kill ´r.0 ´g.1))))
+    (kill ´g.1 ´r.0))))
  (kill ´r.0.main))

@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 1328             )
+(.indexat 1338             )
 (stmts@,2,tests/nimony/nosystem/tforloop.nim
  (type@2,1 :int.0.
   (i 64).
@@ -45,20 +45,20 @@
     (i@6 64).)
    (param@4 :b.0 . .
     (i@3 64).))
-  (i@D 64). .
+  (i@D 64).@D .
   (stmts@2,1
    (var@4 :x.3 . .
     (i@H,~1 64)a.0@4)
    (while@,1
     (le@8
-     (i 64)x.3~2 b.0@3)
+     (i@7,~4 64)x.3~2 b.0@3)
     (stmts@2,1
      (yld x.3@6)
      (asgn@2,1 x.3~2
       (add@4
-       (i 64)x.3~2 1@2))))))
+       (i@6,~9 64)x.3~2 1@2))))))
  (for@4,F
-  (call@K countup.0.~7 0@1 44@4)
+  (call@D countup.0. 0@8 44@B)
   (unpackflat
    (let :mycounter.0 . .
     (i@C,~B 64).))

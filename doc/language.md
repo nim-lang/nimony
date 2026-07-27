@@ -4136,6 +4136,7 @@ The following features are available:
 | `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
 | `"ignoreStyle"` | Be compatible with Nim 2's style insensitivity rules. |
 | `"varToverloads"` | Allow for overloading via `var T`. For compatibility with Nim 2. |
+| `"lenientAliasing"` | Allow for aliasing like `f(#[byvar]# x, x)` in function calls. For compatibility with Nim 2. |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
 
