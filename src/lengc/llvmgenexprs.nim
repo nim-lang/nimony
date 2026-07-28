@@ -763,7 +763,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
      OconstrC, AconstrC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
      BitandC, BitorC, BitxorC, BitnotC,
-     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC:
+     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC, InstrC:
     error c.m, "not an lvalue: ", n
 
 proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -1008,6 +1008,12 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let retTypeCursor = getType(c.m, n)
     let retType = genTypeLLVMReadOnly(c, retTypeCursor)
     genCallWithType(c, n, retType, result)
+  of InstrC:
+    # The portable rows map onto `llvm.cttz`/`ctlz`/`ctpop`/`bswap`, but each
+    # needs a `declare` and (for cttz/ctlz) an extra `i1 is_zero_poison`
+    # operand, which `genCallWithType` cannot express. Reject rather than
+    # silently lower an intrinsic to something else.
+    error c.m, "the LLVM backend has no lowering for (instr ...) yet: ", n
   of AddrC:
     genAddrLLVM(c, n, result)
   of DerefC:

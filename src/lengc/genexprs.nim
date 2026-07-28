@@ -68,6 +68,86 @@ proc genCall(c: var GeneratedCode; n: var Cursor) =
       inc i
     c.add ParRi
 
+proc intrinsicOfCallee(c: var GeneratedCode; callee: Cursor;
+                       bits: var int): IntrinsicOp =
+  ## The opcode a `(instr SYM …)` names, plus the width its row bound (taken
+  ## from the declared first operand). Reads the `(instruction X)` /
+  ## `(intrinsic X)` pragma off the callee's declaration — a table lookup on an
+  ## ident, not a match against a C name.
+  result = NoIntrinsicOp
+  bits = 0
+  if callee.kind != Symbol: return
+  let d = c.m.getDeclOrNil(callee.symId)
+  if d == nil or d.kind != ProcY: return
+  var n = d.pos
+  n.into:
+    inc n                                   # name
+    if n.typeKind == ParamsT:               # first param's type → the width
+      var p = n
+      p.loopInto:
+        if p.substructureKind == ParamU and bits == 0:
+          let pd = takeParamDecl(p)
+          if pd.typ.kind == TagLit and pd.typ.typeKind in {IT, UT, CT}:
+            var b = pd.typ
+            inc b
+            if b.kind == IntLit: bits = int(b.intVal)
+        else:
+          skip p
+    skip n                                  # params
+    skip n                                  # return type
+    if n.substructureKind == PragmasU:
+      var p = n
+      p.loopInto:
+        let pk = p.pragmaKind
+        if pk in {InstructionP, IntrinsicP}:
+          var a = p; a = sub(a)
+          if a.kind == Ident:
+            result = intrinsicOpByName(c.m.pool.strings[a.strId],
+                       (if pk == InstructionP: icPinned else: icPortable))
+        skip p
+    while n.hasMore: skip n
+
+proc cBuiltinFor(op: IntrinsicOp; bits: int): string =
+  ## The GCC/clang builtin a *portable* opcode lowers to. Target-pinned rows
+  ## have no portable C spelling by construction and return "" — the C backend
+  ## rejects them rather than guessing an equivalent.
+  case op
+  of CtzOp:      (if bits <= 32: "__builtin_ctz" else: "__builtin_ctzll")
+  of ClzOp:      (if bits <= 32: "__builtin_clz" else: "__builtin_clzll")
+  of PopcountOp: (if bits <= 32: "__builtin_popcount" else: "__builtin_popcountll")
+  of BswapOp:
+    if bits <= 16: "__builtin_bswap16"
+    elif bits <= 32: "__builtin_bswap32"
+    else: "__builtin_bswap64"
+  else: ""
+
+proc genInstr(c: var GeneratedCode; n: var Cursor) =
+  ## `(instr SYM X*)` — an intrinsic application. Selection-final: the opcode
+  ## the source named is the one emitted, so this never falls back to a call.
+  genCLineDir(c, info(n))
+  let start = n
+  n.into:
+    var bits = 0
+    let op = intrinsicOfCallee(c, n, bits)
+    var builtin = ""
+    if op == NoIntrinsicOp:
+      error c.m, "callee of (instr ...) carries no instruction/intrinsic pragma: ", start
+    else:
+      builtin = cBuiltinFor(op, bits)
+      if builtin.len == 0:
+        error c.m, "the C backend has no lowering for the target-pinned instruction `" &
+          IntrinsicNames[op] & "`; use the portable `{.intrinsic: ....}` form " &
+          "or guard the call with a `when`: ", start
+    c.add builtin
+    skip n                                  # the callee symbol
+    c.add ParLe
+    var i = 0
+    while n.hasMore:
+      if i > 0: c.add Comma
+      genx c, n
+      inc i
+    c.add ParRi
+
 proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   n.into:
@@ -424,6 +504,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add ParRi
       while n.hasMore: skip n
   of CallC: genCall c, n
+  of InstrC: genInstr c, n
   of AddC: typedBinOp c, n, " + "
   of SubC: typedBinOp c, n, " - "
   of MulC: typedBinOp c, n, " * "

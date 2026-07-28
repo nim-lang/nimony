@@ -15,7 +15,7 @@ else:
   {.pragma: untyped.}
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / symparser
+import ".." / lib / [symparser, intrinsics]
 import ".." / models / tags
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops, langmodes, typekeys, nifconfig]
 import hexer_context, pipeline, dce1, lifter
@@ -98,6 +98,15 @@ proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: int64; i
   dest.addIntLit(val, info)
   dest.addParRi()
 
+proc addKeyIdent(dest: var TokenBuf; g: var GenPragmas; key, val: string; info: NifLineInfo) =
+  ## `(instruction bsf)` — the value is an *ident* from a generated enum, not a
+  ## free string, so a backend decodes it by table lookup rather than by
+  ## string-matching a C name.
+  maybeOpen dest, g, info
+  dest.addParLe(globalTags.registerTag(key), info)
+  dest.addIdent(pool.strings.getOrIncl(val), info)
+  dest.addParRi()
+
 proc closeGenPragmas(dest: var TokenBuf; g: GenPragmas) =
   if g.opened:
     dest.addParRi()
@@ -132,8 +141,26 @@ type
     header: StrId
     dynlib: StrId
     callConv: CallConv
+    intrinsic: IntrinsicOp   ## the `{.instruction: X.}` / `{.intrinsic: X.}` row
+                             ## (`NoIntrinsicOp` if neither); sem already checked
+                             ## it against the signature, so hexer only forwards
 
 proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): CollectedPragmas
+
+proc applicationTag(n: Cursor): string =
+  ## `"call"` or `"instr"` for a call-shaped node. Whether something costs an
+  ## ABI call must be answerable downstream from the TAG ALONE — with no symbol
+  ## resolution and no cross-module load — so the callee is resolved once, here,
+  ## and the answer is baked into the tag.
+  result = "call"
+  if n.isTagLit:
+    let callee = sub(n)
+    if callee.kind == Symbol:
+      let res = tryLoadSym(callee.symId)
+      if res.status == LacksNothing and res.decl.symKind.isRoutine:
+        let pragmas = asRoutine(res.decl, SkipExclBody).pragmas
+        if hasPragma(pragmas, InstructionP) or hasPragma(pragmas, IntrinsicP):
+          result = "instr"
 
 proc externKind(p: CollectedPragmas): string =
   if ImportcP in p.flags:
@@ -785,6 +812,16 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.extern = n.strId
               result.flags.incl pk
               inc n
+          of InstructionP, IntrinsicP:
+            # sem already resolved and checked the opcode; re-resolve the ident
+            # here so hexer carries the enum rather than a name.
+            n.into:
+              if not n.isIdent:
+                error c, "expected an opcode identifier, but got: ", n
+              let cls = if pk == InstructionP: icPinned else: icPortable
+              result.intrinsic = intrinsicOpByName(pool.strings[n.strId], cls)
+              result.flags.incl pk
+              inc n
           of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
              VarargsP, NoSideEffectP, NodestroyP, BycopyP, ByrefP,
              InlineP, NoinlineP, NoinitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
@@ -956,6 +993,10 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if SelectanyP in prag.flags:
     dest.addKey genPragmas, "selectany", pinfo
+
+  if prag.intrinsic != NoIntrinsicOp:
+    let key = if InstructionP in prag.flags: "instruction" else: "intrinsic"
+    dest.addKeyIdent genPragmas, key, IntrinsicNames[prag.intrinsic], pinfo
 
   closeGenPragmas dest, genPragmas
 
@@ -1546,7 +1587,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     of TupconstrX:
       trTupleConstr c, dest, n
     of CmdX, CallstrlitX, InfixX, PrefixX, HcallX, CallX:
-      dest.addParLe("call", n.info)
+      dest.addParLe(applicationTag(n), n.info)
       n.into:
         while n.hasMore:
           trExpr(c, dest, n)
@@ -1982,7 +2023,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of ConstS:
       trLocal c, dest, n, ConstY, mode
     of CallKindsS:
-      dest.addParLe("call", n.info)
+      dest.addParLe(applicationTag(n), n.info)
       n.into:
         while n.hasMore:
           trExpr c, dest, n

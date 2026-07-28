@@ -1041,7 +1041,25 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         extractBasename(name)
         # go up a scope for the parameter scope:
         c.currentScope.up.addOverloadable(pool.strings.getOrIncl(name), s)
+      # An intrinsic's signature is unified against its row here, where the
+      # params and the return type are already in `dest`. The message lands in
+      # the `effects` slot — the one routine slot that already accepts an
+      # `(err …)`, so the tree stays positionally intact.
+      let intrinsicErr =
+        if crucial.intrinsic != NoIntrinsicOp:
+          intrinsicSignatureError(c, dest, beforeParams, crucial.intrinsic)
+        else:
+          ""
       if it.n.isDotToken:
+        if intrinsicErr.len > 0:
+          inc it.n
+          buildErr c, dest, info, intrinsicErr
+        else:
+          takeTree dest, it.n
+      elif it.n.exprKind == ErrX:
+        # An error an earlier pass already recorded in this slot (sem runs the
+        # signature phase before the body phase and re-reads what it produced).
+        # Pass it through instead of reporting a bogus second complaint.
         takeTree dest, it.n
       else:
         buildErr c, dest, it.n.info, "`effects` must be empty"

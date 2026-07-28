@@ -512,6 +512,8 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
         while n.hasMore and n.stmtKind != LabS: skip n
   of ScopeS:
     genScopeLLVM c, n
+  of InstrS:
+    error c.m, "the LLVM backend has no lowering for (instr ...) yet: ", n
   of CallS:
     var saved = n
     inc saved

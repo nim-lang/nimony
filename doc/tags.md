@@ -341,6 +341,9 @@
 | `(compile STR)`; `(compile STR STR)` | NimonyPragma | `compile` pragma (Nim-compatible alias of `build`; the source language is inferred from the file extension, e.g. `.m` → Objective-C) |
 | `(bundle STR STR)`; `(bundle STR STR STR)` | NimonyPragma, NifIndexKind | `bundle` pragma: a custom linker command override `(builder, tool[, args])`; the `tool` is built on demand by `builder` and replaces the final link step, consuming the project's link manifest |
 | `(toClosure X)` | NimonyExpr | converts non closure proc to closure proc |
+| `(instruction X)` | NimonyPragma, LengPragma | target-pinned instruction annotation; the argument is an opcode ident from `lib/intrinsics`'s `IntrinsicOp` (e.g. `bsf`). The proc is a *declaration* of one machine instruction: calls to it become `(instr …)`, never an ABI call. Its signature spelling is dictated by the row's operand roles and checked at the declaration |
+| `(intrinsic X)` | NimonyPragma, LengPragma | portable-intrinsic annotation; like `instruction` but the opcode is target-neutral and may expand to any number of instructions (`Memcpy`, `AtomicFetchAdd`, …). Its signature is unified against the row's shape at the declaration |
+| `(instr SYM X*)` | LengExpr, LengStmt | intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode |
 
 ### unpackflat, unpacktup, unpackdecl
 

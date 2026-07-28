@@ -561,6 +561,11 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
       of SelectanyP:
         result.flags.incl pk
         skip n
+      of InstructionP, IntrinsicP:
+        # An intrinsic declares a machine instruction, not a callable: there is
+        # nothing to emit for the declaration itself.
+        result.flags.incl pk
+        skip n
       of WasP:
         n.into:
           result.wasName = toString(n, false)

@@ -150,7 +150,10 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       result = createIntegralType(c, "(f +64)")
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")
-    of CallC:
+    of CallC, InstrC:
+      # `(instr SYM …)` is typed EXACTLY like `(call SYM …)` — the callee's
+      # signature drives everything. Only the *cost* differs, which is what the
+      # separate tag exists to make visible.
       var procType = navigateToObjectBody(c, getTypeImpl(c, firstChild(n)))
       if procType.typeKind == ProctypeT or procType.symKind == ProcY:
         inc procType

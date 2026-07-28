@@ -17,6 +17,7 @@ from std / sequtils import insert
 
 import ".." / lib / nifcoreparse   # re-exports nifcore
 import ".." / lib / nifcdecl        # leng_model replacement (stmtKind/decls/tags)
+import ".." / lib / intrinsics      # the shared `{.instruction.}` / `{.intrinsic.}` table
 import mangler
 import cprelude
 import noptions
@@ -297,6 +298,13 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
       of SelectanyP:
         result.flags.incl pk
         skip n
+      of InstructionP, IntrinsicP:
+        # An intrinsic declares a machine instruction, not a callable: there is
+        # no definition anywhere, and every call to it is an `(instr …)` the
+        # expression generator lowers directly. Recording the flag is enough —
+        # `genProcDecl` then emits nothing for the declaration itself.
+        result.flags.incl pk
+        skip n
       of WasP:
         genWasPragma c, n
       of ErrsP, RaisesP, SmryP:
@@ -567,6 +575,13 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   var prc = takeProcDecl(n)
 
   let prag = parseProcPragmas(c, prc.pragmas)
+  if prag.flags * {InstructionP, IntrinsicP} != {}:
+    # No C declaration: an intrinsic has no definition to link against, and
+    # every application of it is an `(instr …)` lowered at the use site.
+    c.code.setLen signatureBegin
+    c.m.closeScope()
+    c.currentProc = oldProc
+    return
   if InlineP in prag.flags:
     c.add StaticKeyword
     c.add "inline "
