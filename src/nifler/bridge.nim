@@ -874,6 +874,61 @@ proc moduleToIr*(n: PNode; c: var TranslationContext) =
     c.deps.addTree StmtsL
   toNif(n, nil, c)
 
+proc pathExprVal(n: PNode; res: var seq[string]) =
+  ## Turn an `import`/`include` path expression into the module paths it
+  ## denotes. Mirrors `semos.filenameVal`, but reads the Nim AST directly
+  ## instead of the NIF we emit from it.
+  case n.kind
+  of nkIdent:
+    res.add n.ident.s
+  of nkStrLit, nkRStrLit, nkTripleStrLit:
+    res.add n.strVal
+  of nkAccQuoted:
+    var s = ""
+    for i in 0..<n.safeLen:
+      if n[i].kind == nkIdent: s.add n[i].ident.s
+    if s.len > 0: res.add s
+  of nkInfix:
+    if n.safeLen == 3 and n[0].kind == nkIdent:
+      let op = n[0].ident.s
+      if op == "as":
+        # `import foo as bar`: only the left hand side names a file.
+        pathExprVal(n[1], res)
+      else:
+        # `std/[a, b]` is `infix(/, std, bracket(a, b))`, hence the cross product.
+        var prefix: seq[string] = @[]
+        var suffix: seq[string] = @[]
+        pathExprVal(n[1], prefix)
+        pathExprVal(n[2], suffix)
+        for p in prefix:
+          for s in suffix: res.add p & op & s
+  of nkPrefix:
+    if n.safeLen == 2 and n[0].kind == nkIdent:
+      var suffix: seq[string] = @[]
+      pathExprVal(n[1], suffix)
+      for s in suffix: res.add n[0].ident.s & s
+  of nkBracket, nkPar, nkTupleConstr:
+    for i in 0..<n.safeLen: pathExprVal(n[i], res)
+  of nkPragmaExpr:
+    # `import foo {.cyclic.}`
+    if n.safeLen > 0: pathExprVal(n[0], res)
+  else:
+    discard
+
+proc collectModuleRefs*(n: PNode; res: var seq[string]) =
+  ## Collect every module `n` pulls in, ignoring `when` conditions: this feeds
+  ## `nifler scan`, which only prefetches, so over-approximating is free while
+  ## missing a module merely costs a `nifler` invocation in the driver later.
+  if n == nil: return
+  case n.kind
+  of nkImportStmt, nkIncludeStmt:
+    for i in 0..<n.safeLen: pathExprVal(n[i], res)
+  of nkFromStmt, nkImportExceptStmt:
+    # `from x import a, b` / `import x except a`: only the first son is a module.
+    if n.safeLen > 0: pathExprVal(n[0], res)
+  else:
+    for i in 0..<n.safeLen: collectModuleRefs(n[i], res)
+
 proc createConf(): ConfigRef =
   result = newConfigRef()
   #result.notes.excl hintLineTooLong
@@ -888,10 +943,17 @@ template bench(task, body) =
     body
 
 proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled, depsOnly: bool;
-                preserveDocs: bool = false) =
+                preserveDocs: bool = false; moduleRefs: ptr seq[string] = nil;
+                bailOnError = true): bool {.discardable.} =
+  ## Returns false when the file did not parse. `bailOnError` (the default)
+  ## quits instead, which is what the `parse` command wants; `nifler scan`
+  ## passes false so a broken module doesn't abort the prefetch — the driver
+  ## re-runs nifler on it and reports the error the usual way.
+  result = false
   let stream = llStreamOpen(AbsoluteFile thisfile, fmRead)
   if stream == nil:
-    quit "cannot open file: " & thisfile
+    if bailOnError:
+      quit "cannot open file: " & thisfile
   else:
     var conf = createConf()
     let fileIdx = fileInfoIdx(conf, AbsoluteFile thisfile)
@@ -902,11 +964,16 @@ proc parseFile*(thisfile, outfile: string; portablePaths, depsEnabled, depsOnly:
 
     if conf.errorCounter > 0:
       closeParser(parser)
-      quit QuitFailure
+      if bailOnError:
+        quit QuitFailure
+      return false
 
     var tc = initTranslationContext(conf, outfile, portablePaths, depsEnabled, depsOnly, preserveDocs)
 
     bench "moduleToIr":
       moduleToIr(fullTree, tc)
+    if moduleRefs != nil:
+      collectModuleRefs(fullTree, moduleRefs[])
     closeParser(parser)
     tc.close(depsOnly)
+    result = true

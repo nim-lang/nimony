@@ -8,11 +8,15 @@
 
 from std / strutils import multiReplace, split, strip, startsWith
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
-from std / osproc import execCmdEx
+from std / osproc import execCmdEx, startProcess, waitForExit, close, Process,
+  ProcessOption, poParentStreams, poUsePath
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
+import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser, modresolve]
+# `resolveFile`/`resolveFileWrapper` are shared with `nifler scan`, which walks
+# the very same module graph; re-export so `sem.nim`/`deps.nim` still see them.
+export modresolve
 import ".." / lib / nifreader as rd
 from ".." / lib / nifcoreparse import parse
 # qualified-only: the private-pool plugin-input copy must not fight the
@@ -91,8 +95,30 @@ proc toRelativePath*(f: string, dir: string): string =
 
 proc joinPath*(head, tail: string): string = head / tail
 
+proc execArgs*(exe: string; args: openArray[string]): int =
+  ## Spawn `exe` directly rather than handing a command line to `/bin/sh -c`,
+  ## which costs an extra fork+exec (~0.7 ms measured) per tool run. Returns
+  ## the exit code, or 1 if the process could not be started at all.
+  result = 1
+  try:
+    let p = startProcess(exe, args = args, options = {poParentStreams, poUsePath})
+    result = waitForExit(p)
+    close p
+  except:
+    result = 1
+
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
+
+proc exec*(exe: string; args: openArray[string]) =
+  if execArgs(exe, args) != 0:
+    var msg = "FAILURE: " & exe
+    for a in args: msg.add " " & a
+    quit(msg)
+
+proc tryExec*(exe: string; args: openArray[string]): bool =
+  ## For optional steps: report failure instead of aborting the build.
+  result = execArgs(exe, args) == 0
 
 proc nimexec(cmd: string) =
   let t = findExe("nim")
@@ -111,32 +137,6 @@ proc requiresTool*(tool, src: string; forceRebuild: bool) =
       else: "c --outdir:" & binDir()
     # compile required tool
     nimexec(args & "  " & src)
-
-proc resolveFile*(paths: openArray[string]; origin: string; toResolve: string): string =
-  let nimFile = toResolve.addFileExt(".nim")
-  #if toResolve.startsWith("std/") or toResolve.startsWith("ext/"):
-  #  result = stdFile nimFile
-  if toResolve.isAbsolute:
-    result = nimFile
-  elif toResolve.len > 0 and toResolve[0] == '$':
-    var key = ""
-    var i = 1
-    while i < toResolve.len:
-      if toResolve[i] in {'/', '\\'}:
-        break
-      key.add toResolve[i]
-      inc i
-    let val = getEnv(key)
-    if val.len == 0:
-      result = nimFile
-    else:
-      result = val / nimFile.substr(i)
-  else:
-    result = splitFile(origin).dir / nimFile
-    var i = 0
-    while not os.fileExists(result) and i < paths.len:
-      result = paths[i] / nimFile
-      inc i
 
 type
   ImportedFilename* = object

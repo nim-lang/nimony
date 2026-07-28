@@ -8,7 +8,7 @@
 ## No semantic checking is done and no symbol lookups are performed.
 
 import std / [parseopt, strutils, os, assertions, times]
-import bridge, configcmd
+import bridge, configcmd, scancmd
 import ".." / lib / [vfs, nimversion]
 
 include ".." / lib / compat2
@@ -22,6 +22,8 @@ Usage:
 Command:
   p|parse file.nim [output.nif]         parse project.nim, produce a NIF file
   deps file.nim [output.deps.nif]       produce only the deps file (imports/includes)
+  scan file.nim                         parse file.nim and everything it imports
+                                        or includes into <nifcache>, in one process
   config project.nim [output.cfg.nif]   produce a NIF file representing the
                                         entire configuration of `project.nim`
 
@@ -29,6 +31,9 @@ Options:
   --portablePaths       keep line information portable accross different OSes
   --deps                also produce a <inputfile>.deps.nif file (for 'parse' command)
   --docs                preserve `##` doc comments as NIF comment-meta on decls
+  --nifcache:DIR        where 'scan' writes its .p.nif files
+  --path:DIR            add DIR to the module search path (for 'scan')
+  --skipSystem          don't pull in `std/system` (for 'scan')
   --force, -f           force a rebuild
   --version             show the version
   --help                show this help
@@ -44,6 +49,8 @@ proc handleCmdLine() =
   var portablePaths = true # false
   var deps = false
   var preserveDocs = false
+  var skipSystem = false
+  var scanCfg = ScanConfig(paths: @[], nifcachePath: "", preserveDocs: false)
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -59,6 +66,9 @@ proc handleCmdLine() =
       of "portablepaths": portablePaths = true
       of "deps": deps = true
       of "docs": preserveDocs = true
+      of "nifcache": scanCfg.nifcachePath = val
+      of "path": scanCfg.paths.add val
+      of "skipsystem": skipSystem = true
       else: quit(Usage)
     of cmdEnd: assert false, "cannot happen"
 
@@ -78,6 +88,12 @@ proc handleCmdLine() =
         discard "nothing to do"
       else:
         parseFile inp, outp, portablePaths, deps, action == "deps", preserveDocs
+  of "scan":
+    if args.len == 0:
+      quit "'scan' command takes a filename"
+    else:
+      scanCfg.preserveDocs = preserveDocs
+      scanProject(scanCfg, args[0], skipSystem)
   of "config":
     if args.len == 0:
       quit "'config' command takes a filename"

@@ -85,19 +85,16 @@ type
     cmdTime: Table[string, tuple[sec: float, count: int]]
     execWallTime: float
 
-proc addSpace(result: var string) {.inline.} =
-  if result.len > 0 and result[^1] != ' ': result.add ' '
-
-proc addFilename(result: var string; filename, prefix, suffix: string) =
+proc addFilename(result: var seq[string]; filename, prefix, suffix: string) =
   if filename.len > 0:
-    result.addSpace()
-    if prefix.len > 0: result.add prefix
-    # This is not a bug, a suffix is always assumed to be part of the filename
-    # and so also subject to quoting:
-    result.add (suffix & filename).quoteShell
+    # This is not a bug, a suffix is always assumed to be part of the filename:
+    # prefix, suffix and filename together form a single argument (`-o:PATH`).
+    result.add prefix & suffix & filename
 
-proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: string): string =
-  result = ""
+proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: string): seq[string] =
+  ## The command as a real argv. Rendering it back into a shell line is
+  ## `toShellCmd`, needed only for display and for the Windows executor.
+  result = @[]
   if cmd.tokens.len == 0:
     quit "undeclared command: " & cmd.name
 
@@ -105,7 +102,7 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
   var toolArgs: seq[string] = @[]
   if n.kind == StrLit:
     let tool = findTool(n.strVal)
-    result.add quoteShell(tool)
+    result.add tool
     inc n
     if baseDir.len > 0 and cmd.ext.len > 0:
       let argsFile = findArgs(baseDir, extractArgsKey(tool) & cmd.ext)
@@ -113,22 +110,18 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
 
   while n.hasMore:
     if n.kind == StrLit:
-      addSpace(result)
-      # each StrLit is one argument; without quoting an argument
-      # containing a space (e.g. a forwarded `--define:key=a b` or a path)
-      # splits into several (tool names and filenames are quoted already)
-      result.add quoteShell(n.strVal)
+      # each StrLit is one argument, whatever it contains
+      result.add n.strVal
       inc n
     elif n.isTagLit:
       let tag = globalTags.tags[n.cursorTagId]
       if tag == "args":
         # Add explicit arguments from the .nif file
         for i in 0..<args.len:
-          addSpace(result)
-          result.add quoteShell(args[i])
-        # Add tool-specific arguments (from .args files)
+          result.add args[i]
+        # Add tool-specific arguments (from .args files); `processArgsFile`
+        # already split these into one entry per argument.
         for arg in toolArgs:
-          addSpace(result)
           result.add arg
         skip n  # advance past the (args …) subtree
       else:
@@ -167,6 +160,12 @@ proc expandCommand(cmd: Command; inputs, outputs, args: seq[string]; baseDir: st
           raiseAssert "unsupported tag in `cmd` definition: " & tag
     else:
       raiseAssert "unsupported token in `cmd` definition: " & $n.kind
+
+proc toShellCmd(argv: seq[string]): string =
+  result = ""
+  for a in argv:
+    if result.len > 0: result.add ' '
+    result.add quoteShell(a)
 
 proc registerCommand(dag: var Dag; cmdName: string; ext: string): int =
   for i in 0..<dag.commands.len:
@@ -288,13 +287,89 @@ proc topologicalSort(dag: var Dag): seq[int] =
   let nodes = addr dag.nodes
   result.sort proc(a, b: int): int = cmp(nodes[a].depth, nodes[b].depth)
 
-proc executeCommand(command: string): bool =
-  ## Execute a shell command and return success status
+proc executeCommand(argv: seq[string]): bool =
+  ## Run one build node. Spawned directly rather than through `/bin/sh -c`:
+  ## the shell is an extra fork+exec (~0.7 ms measured) for every node.
+  if argv.len == 0: return false
   try:
-    let exitCode = execShellCmd(command)
+    let p = startProcess(argv[0], args = argv.toOpenArray(1, argv.len-1),
+                         options = {poParentStreams, poUsePath})
+    let exitCode = waitForExit(p)
+    close p
     result = exitCode == 0
   except:
     result = false
+
+when defined(windows):
+  proc execArgvProcesses(argvs: seq[seq[string]]; n: int;
+                         beforeRunEvent: proc (idx: int);
+                         afterRunEvent: proc (idx: int; p: Process)): int =
+    var commands = newSeq[string](argvs.len)
+    for i in 0..<argvs.len: commands[i] = toShellCmd(argvs[i])
+    if n > 0:
+      result = execProcesses(commands, n = n,
+                             beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
+    else:
+      result = execProcesses(commands,
+                             beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
+else:
+  import std / posix
+
+  proc execArgvProcesses(argvs: seq[seq[string]]; n: int;
+                         beforeRunEvent: proc (idx: int);
+                         afterRunEvent: proc (idx: int; p: Process)): int =
+    ## `osproc.execProcesses` with a real argv. The stdlib version force-adds
+    ## `poEvalCommand`, so every build node pays for a `/bin/sh` in front of it.
+    ## The scheduling is the same sliding window: keep `jobs` children alive and
+    ## refill whichever slot `waitpid` reports.
+    if argvs.len == 0: return 0
+    let jobs = if n > 0: n else: countProcessors()
+    let m = min(max(1, jobs), argvs.len)
+    var q = newSeq[Process](m)
+    var idxs = newSeq[int](m)
+    var next = 0
+    var alive = 0
+    var maxCode = 0
+
+    proc spawn(slot: int) =
+      let idx = next
+      inc next
+      beforeRunEvent(idx)
+      idxs[slot] = idx
+      q[slot] =
+        if argvs[idx].len > 1:
+          startProcess(argvs[idx][0], args = argvs[idx].toOpenArray(1, argvs[idx].len-1),
+                       options = {poParentStreams, poUsePath})
+        else:
+          startProcess(argvs[idx][0], options = {poParentStreams, poUsePath})
+      inc alive
+
+    for slot in 0..<m: spawn(slot)
+
+    while alive > 0:
+      var status: cint = 1
+      let res = waitpid(-1, status, 0)
+      if res <= 0:
+        # Can only happen if something outside this loop reaped our children.
+        # Refusing to guess beats reporting a build as successful.
+        quit "nifmake: lost track of a build step (waitpid failed)"
+      var slot = -1
+      for r in 0..<m:
+        if q[r] != nil and processID(q[r]) == res:
+          slot = r
+          break
+      if slot < 0: continue  # not one of ours
+      let code =
+        if WIFEXITED(status): int(WEXITSTATUS(status))
+        elif WIFSIGNALED(status): int(WTERMSIG(status))
+        else: 0
+      if code > maxCode: maxCode = code
+      afterRunEvent(idxs[slot], q[slot])
+      close q[slot]
+      q[slot] = nil
+      dec alive
+      if next < argvs.len: spawn(slot)
+    result = maxCode
 
 proc failed(arg: string) =
   stdout.write "nifmake: "
@@ -393,7 +468,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     var i = 0
     while i < sortedNodes.len:
       let currentDepth = dag.nodes[sortedNodes[i]].depth
-      var commands: seq[string] = @[]
+      var commands: seq[seq[string]] = @[]
       var nodeIds: seq[int] = @[]
       var cmdNames: seq[string] = @[]
       var labels: seq[string] = @[]  # captured by afterRunEvent (can't capture `dag`)
@@ -408,7 +483,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
           if Verbose in opt:
-            echo "Command: ", expandedCmd
+            echo "Command: ", toShellCmd(expandedCmd)
           commands.add(expandedCmd)
           nodeIds.add(sortedNodes[i])
           cmdNames.add(dag.commands[node.cmdIdx].name)
@@ -434,13 +509,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             let sec = toSeconds(getMonoTime() - startTimes[idx])
             profile[].recordCmdTime(cmdNames[idx], sec)
 
-        let maxExitCode =
-          if gMaxJobs > 0:
-            execProcesses(commands, n = gMaxJobs,
-                          beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
-          else:
-            execProcesses(commands,
-                          beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
+        let maxExitCode = execArgvProcesses(commands, gMaxJobs,
+                            beforeRunEvent = beforeRunEvent, afterRunEvent = afterRunEvent)
         if profile != nil:
           profile[].execWallTime += toSeconds(getMonoTime() - depthStart)
         if maxExitCode != 0:
@@ -449,7 +519,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             stdout.flushFile()
           for i, p in pairs(progress):
             if p == Running:
-              failed commands[i]
+              failed toShellCmd(commands[i])
           return false
   else:
     # Sequential execution
@@ -462,7 +532,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
         if Verbose in opt:
-          echo "Command: ", expandedCmd
+          echo "Command: ", toShellCmd(expandedCmd)
         let cmdName = dag.commands[node.cmdIdx].name
         let start = if profile != nil: getMonoTime() else: MonoTime()
         if not executeCommand(expandedCmd):
@@ -471,7 +541,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           if prog.active:
             stdout.write "\n"
             stdout.flushFile()
-          failed expandedCmd
+          failed toShellCmd(expandedCmd)
           return false
         inc prog.done
         prog.draw(nodeLabel(dag, node[]))
@@ -524,7 +594,7 @@ proc generateMakefile(dag: Dag; filename: string) =
 
     # Command line
     let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
-    content.add "\t" & mescape(expandedCmd) & "\n\n"
+    content.add "\t" & mescape(toShellCmd(expandedCmd)) & "\n\n"
 
   # Add clean target
   content.add "clean:\n"

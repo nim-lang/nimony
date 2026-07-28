@@ -144,11 +144,6 @@ proc exeFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
     else:
       base / ("lib" & baseName & ".a")
 
-proc resolveFileWrapper(paths: openArray[string]; origin: string; toResolve: string): string =
-  result = resolveFile(paths, origin, toResolve)
-  if not semos.fileExists(result) and toResolve.startsWith("std/"):
-    result = resolveFile(paths, origin, toResolve.substr(4))
-
 type
   Node = ref object
     files: seq[FilePair]
@@ -1786,11 +1781,36 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   exec(nifmakeCmd)
   exec(exeFile)
 
-proc progArg(flags: set[BuildFlag]; lo, hi: int): string =
+proc prefetchParsedFiles(config: NifConfig; nifler, project: string;
+                         forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command) =
+  ## Let nifler parse the whole module graph in a single process so that the
+  ## traversal below finds every `.p.nif` already in place. Spawning one nifler
+  ## per module costs ~2.7 ms each while the parse itself takes ~1.5 µs per
+  ## line, so this is nearly all of the dep scan's wall time.
+  ##
+  ## Strictly an optimization: `execNifler` still checks every file and still
+  ## spawns nifler for whatever the prefetch missed, and a scan that fails
+  ## outright (an old nifler without the subcommand, say) just leaves the old
+  ## behaviour in place. Under `--force` there is nothing to gain — `execNifler`
+  ## re-runs nifler unconditionally then.
+  if forceRebuild or project.endsWith(".nif"): return
+  var args = @["scan"]
+  if cmd == DoDoc: args.add "--docs"
+  if {SkipSystem, IsSystem} * moduleFlags != {}: args.add "--skipSystem"
+  args.add "--nifcache:" & config.nifcachePath
+  for p in config.paths:
+    args.add "--path:" & p
+  args.add project
+  discard tryExec(nifler, args)
+
+proc nifmakeRunArgs(base: seq[string]; flags: set[BuildFlag]; lo, hi: int;
+                    buildFile: string): seq[string] =
+  result = base
   # nifmake itself routes the bar (terminal-only); we only suppress it where
   # nimony asked for silence or machine-readable output.
-  if SilentMake in flags or Report in flags: ""
-  else: "--progress:" & $lo & ":" & $hi & " "
+  if not (SilentMake in flags or Report in flags):
+    result.add "--progress:" & $lo & ":" & $hi
+  result.add buildFile
 
 proc buildGraph*(config: sink NifConfig; project: string;
     flags: set[BuildFlag];
@@ -1806,6 +1826,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
       quoteShell(cfgNif)
     parseNifConfig cfgNif, config
 
+  prefetchParsedFiles(config, nifler, project, forceRebuild, moduleFlags, cmd)
+
   var c = initDepContext(config, project, nifler, false, forceRebuild, moduleFlags, cmd)
   generateCachedConfigFile c, passC, passL
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
@@ -1813,12 +1835,13 @@ proc buildGraph*(config: sink NifConfig; project: string;
   when defined(windows) and not defined(nimony):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
-  let nifmakeCommand = quoteShell(nifmake) &
-    (if forceRebuild: " --force" else: "") &  # Use generic force flag
-    (if Profile in flags: " --profile" else: "") &
-    (if Report in flags: " --report" else: "") &
-    " --base:" & quoteShell(config.baseDir) &
-    " -j run "
+  var nifmakeArgs: seq[string] = @[]
+  if forceRebuild: nifmakeArgs.add "--force"  # Use generic force flag
+  if Profile in flags: nifmakeArgs.add "--profile"
+  if Report in flags: nifmakeArgs.add "--report"
+  nifmakeArgs.add "--base:" & config.baseDir
+  nifmakeArgs.add "-j"
+  nifmakeArgs.add "run"
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
@@ -1826,7 +1849,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
   # indicator across the separate processes instead of restarting per phase.
   let twoPhase = cmd != DoCheck
 
-  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
+  exec nifmake, nifmakeRunArgs(nifmakeArgs, flags, 0, if twoPhase: 50 else: 100, buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
@@ -1845,7 +1868,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
       if parent.len > 0 and parent != docOut:
         onRaiseQuit createDir(path(parent))
     let buildDocFilename = generateDocBuildFile(c)
-    exec nifmakeCommand & progArg(flags, 50, 100) & quoteShell(buildDocFilename)
+    exec nifmake, nifmakeRunArgs(nifmakeArgs, flags, 50, 100, buildDocFilename)
     return
 
   if cmd != DoCheck:
@@ -1865,7 +1888,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
-    exec nifmakeCommand & progArg(flags, 50, 100) & quoteShell(buildFinalFilename)
+    exec nifmake, nifmakeRunArgs(nifmakeArgs, flags, 50, 100, buildFinalFilename)
 
   if Stats in flags:
     # Walk every source module in the dep graph and sum line counts. Counting
