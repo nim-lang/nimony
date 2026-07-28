@@ -4631,7 +4631,11 @@ proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, lhsBuf, lhs, {KeepMagics}
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
-  semBuiltinSubscript(c, dest, it, lhs, atStart)
+  if lhs.n.isTagLit and lhs.n.cursorTagId == nifpools.ErrT:
+    it.n = atStart
+    dest.takeTree it.n
+  else:
+    semBuiltinSubscript(c, dest, it, lhs, atStart)
 
 proc semCurlyat(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
