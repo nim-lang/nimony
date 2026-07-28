@@ -19,10 +19,68 @@ import ".." / "lib" / nifcoreparse        # re-exports nifcore + parseFromBuffer
 import ".." / "lib" / nifcdecl              # stmtKind/exprKind/typeKind, tag enums
 import ".." / "models" / tags               # *TagId ordinals for synthesis
 import nifmodules                                   # MainModule, getDeclOrNil
+import ".." / "lib" / intrinsics             # the shared `{.instruction.}` row table
+export intrinsics   # `intrinsicOfCallee` returns an `IntrinsicOp`, so every
+                    # importer needs the enum and the row table with it
 
 proc firstChild(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
+
+proc intrinsicOfCallee*(m: var MainModule; callee: Cursor;
+                        bits: var int): IntrinsicOp =
+  ## The opcode a `(instr SYM …)` names, plus the width its row bound (taken
+  ## from the declared first operand). Reads the `(instruction X)` /
+  ## `(intrinsic X)` pragma off the callee's declaration — a table lookup on an
+  ## ident, not a match against a C name. Shared by both Leng back ends: the
+  ## C one keys its `__builtin_*` choice off it and the LLVM one reuses that
+  ## same choice, so neither re-derives the row from the declaration itself.
+  result = NoIntrinsicOp
+  bits = 0
+  if callee.kind != Symbol: return
+  let d = m.getDeclOrNil(callee.symId)
+  if d == nil or d.kind != ProcY: return
+  var n = d.pos
+  n.into:
+    inc n                                   # name
+    if n.typeKind == ParamsT:               # first param's type → the width
+      var p = n
+      p.loopInto:
+        if p.substructureKind == ParamU and bits == 0:
+          let pd = takeParamDecl(p)
+          if pd.typ.kind == TagLit and pd.typ.typeKind in {IT, UT, CT}:
+            var b = pd.typ
+            inc b
+            if b.kind == IntLit: bits = int(b.intVal)
+        else:
+          skip p
+    skip n                                  # params
+    skip n                                  # return type
+    if n.substructureKind == PragmasU:
+      var p = n
+      p.loopInto:
+        let pk = p.pragmaKind
+        if pk in {InstructionP, IntrinsicP}:
+          var a = p; a = sub(a)
+          if a.kind == Ident:
+            result = intrinsicOpByName(m.pool.strings[a.strId],
+                       (if pk == InstructionP: icPinned else: icPortable))
+        skip p
+    while n.hasMore: skip n
+
+proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
+  ## The GCC/clang builtin a *portable* opcode lowers to. Target-pinned rows
+  ## have no portable C spelling by construction and return "" — the C backend
+  ## rejects them rather than guessing an equivalent.
+  case op
+  of CtzOp:      (if bits <= 32: "__builtin_ctz" else: "__builtin_ctzll")
+  of ClzOp:      (if bits <= 32: "__builtin_clz" else: "__builtin_clzll")
+  of PopcountOp: (if bits <= 32: "__builtin_popcount" else: "__builtin_popcountll")
+  of BswapOp:
+    if bits <= 16: "__builtin_bswap16"
+    elif bits <= 32: "__builtin_bswap32"
+    else: "__builtin_bswap64"
+  else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
   if n.kind in {Symbol, SymbolDef}:

@@ -644,6 +644,16 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   let procInfo = n.info
   var prc = takeProcDecl(n)
   let prag = parseProcPragmasLLVM(c, prc.pragmas)
+  if prag.flags * {InstructionP, IntrinsicP} != {}:
+    # An intrinsic declares an instruction, not a callable: there is nothing to
+    # emit for the declaration itself, and its body slot is empty. Falling
+    # through would build an `LLFunc` with an entry block and no terminator —
+    # invalid IR. The C backend has the same guard in `genProcDecl`.
+    c.m.closeScope()
+    c.inToplevel = true
+    c.currentProc = oldProc
+    c.currentBlockIdx = oldBlock
+    return
   if AssemblerP in prag.flags:
     # Same reasoning as the C backend (see its `genProcDecl`): an `{.assembler.}`
     # body names machine registers and promises a one-to-one instruction mapping,

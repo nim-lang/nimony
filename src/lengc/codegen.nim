@@ -613,8 +613,13 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   if prag.flags * {InstructionP, IntrinsicP} != {}:
     # No C declaration: an intrinsic has no definition to link against, and
     # every application of it is an `(instr …)` lowered at the use site.
+    # Undo EVERY piece of entry state, `inToplevel` included: the normal exit
+    # restores it, and leaving it false here would make the rest of the module
+    # think it is inside a proc — so a later module-scope `(var …)` would stop
+    # being routed into `c.init` and land at file scope with its initializer.
     c.code.setLen signatureBegin
     c.m.closeScope()
+    c.inToplevel = true
     c.currentProc = oldProc
     return
   if InlineP in prag.flags:
