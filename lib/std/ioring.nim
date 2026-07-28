@@ -46,7 +46,16 @@ proc completeCb(ring: Ring; slotIdx: int; res: int) {.nimcall.} =
       inc ring.cqCount
     ring.cqLock.release()
 
-proc initIoRing*(): Ring =
+proc initIoRing*(pool: Pool = nil): Ring =
+  ## `pool`, if given, is the worker pool whose idle loop will drive this
+  ## ring's I/O backend (via `Pool.registerReactor`) — pass one you built
+  ## with `createPool()` if this ring's reactor should have dedicated
+  ## threads (e.g. to keep IO-wait threads separate from CPU-bound `parfor`
+  ## work). Left as `nil` (the default), the ring shares the process-wide
+  ## `defaultPool()` with everything else that hasn't asked for isolation —
+  ## previously every `Ring` unconditionally started its own private
+  ## `WorkerCount` threads, so N rings meant N*WorkerCount OS threads
+  ## contending for the same cores, on top of whatever `parfor` started.
   new result
   result.slots = SlotArena()
   result.slots.init()
@@ -62,11 +71,21 @@ proc initIoRing*(): Ring =
   else:
     {.error: "No I/O backend available for this platform".}
   result.backend.completeFn = completeCb
-  result.pool = Pool()
-  result.pool.init()
+  result.pool = if pool != nil: pool else: defaultPool()
+  let ring = result
+  result.pool.registerReactor(proc(timeoutMs: int): bool =
+    if atomicLoad(ring.closed, moRelaxed): return false
+    ring.backend.pollFn(ring.backend, timeoutMs)
+  )
 
 proc shutdown*(ring: Ring) =
-  ring.pool.shutdown()
+  ## Closes this ring's backend only. Does **not** shut down `ring.pool`:
+  ## that pool may be the shared `defaultPool()` (or one the caller passed
+  ## in and still owns), so tearing it down here would kill worker threads
+  ## out from under every other user of that pool. Whoever created the pool
+  ## (via `createPool()`) owns its `shutdown()`; `defaultPool()` is
+  ## intended to live for the process's lifetime.
+  atomicStore(ring.closed, true, moRelaxed)
   ring.backend.closeFn(ring.backend)
 
 proc nextSeqNum(ring: Ring): SeqNum =
@@ -76,7 +95,7 @@ proc submitRead*(ring: Ring; fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = ring.nextSeqNum()
-  let idx = ring.slots.allocSlot()
+  let idx = ring.slots.allocSlot(fd)
   let op = ring.slots.addrSlot(idx)
   op.kind = opRead
   op.fd = fd
@@ -91,7 +110,7 @@ proc submitWrite*(ring: Ring; fd: cint; buf: pointer; len: int;
                   cont = Continuation(fn: nil, env: nil);
                   resPtr: nil ptr int = nil): SeqNum =
   result = ring.nextSeqNum()
-  let idx = ring.slots.allocSlot()
+  let idx = ring.slots.allocSlot(fd)
   let op = ring.slots.addrSlot(idx)
   op.kind = opWrite
   op.fd = fd
@@ -106,7 +125,7 @@ proc submitAccept*(ring: Ring; listenFd: cint;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
   result = ring.nextSeqNum()
-  let idx = ring.slots.allocSlot()
+  let idx = ring.slots.allocSlot(listenFd)
   let op = ring.slots.addrSlot(idx)
   op.kind = opAccept
   op.fd = listenFd
@@ -146,7 +165,35 @@ when defined(posix):
   proc setNonBlocking*(fd: cint) =
     var flags = fcntl(fd, F_GETFL)
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)
-  proc closeFd*(fd: cint) =
+  proc closeFdRaw*(fd: cint) =
+    ## Close a fd that is known to have no in-flight ring ops on it (e.g. one
+    ## that was never submitted through `ring`). Prefer `ring.closeFd` for
+    ## any fd that may have pending reads/writes/accepts.
+    discard posixClose(fd)
+
+  proc closeFd*(ring: Ring; fd: cint) =
+    ## Close `fd`, first cancelling any ops still in flight on it so their
+    ## continuations are resumed (with a cancellation result) instead of
+    ## leaking, and deregistering it from the backend before the actual
+    ## close(). Previously `closeFd` only called close(2): the backend never
+    ## found out (so epoll/kqueue kept a registration for a possibly-reused
+    ## fd number) and any pending slot for this fd stayed `inUse` forever —
+    ## a permanent slot-arena leak for every fd closed with an op in flight.
+    ##
+    ## Order matters: deregister from the backend *before* close(2), so a
+    ## fresh fd that the OS immediately reuses for the same number cannot
+    ## race with a stale registration/slot that still refers to it.
+    if ring.backend.forgetFdFn != nil:
+      ring.backend.forgetFdFn(ring.backend, fd)
+    let onCancel = proc(idx: int) =
+      let slot = addr ring.slots.slots[idx]
+      const ECancelled = -125 # -ECANCELED
+      if slot.res != 0:
+        cast[ptr int](slot.res)[] = ECancelled
+      let cont = slot.cont
+      if cont.fn != nil:
+        ring.pool.submit(cont, int(fd))
+    ring.slots.cancelAllForFd(fd, onCancel)
     discard posixClose(fd)
 
 when defined(posix):

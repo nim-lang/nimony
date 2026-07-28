@@ -12,24 +12,26 @@ import ../core/backends
 
 type KqueueBackend* = ref object of PollBackend
 
-proc kqueueRegisterEvent(b: KqueueBackend; fd: cint; slotIdx: int; mask: int) =
+proc kqueueRegisterEvent(b: KqueueBackend; fd: cint; mask: int) =
+  # EV_ADD is idempotent in kqueue (add-or-modify), unlike epoll's ADD/MOD
+  # split, so there is no separate "first time vs re-arm" bookkeeping needed
+  # here. `ident` (the fd) is what `kqueuePoll` reads back on delivery, not
+  # `udata`, so no slot index needs to travel through the kernel at all.
   var ev {.noinit.}: Kevent
   if (mask and EvRead) != 0:
     ev.ident = uint(fd)
     ev.filter = EVFILT_READ
     ev.flags = EV_ADD or EV_ONESHOT
-    ev.udata = cast[pointer](uint(slotIdx))
     discard kevent(b.pollFd, addr ev, 1, nil, 0, nil)
   if (mask and EvWrite) != 0:
     ev.ident = uint(fd)
     ev.filter = EVFILT_WRITE
     ev.flags = EV_ADD or EV_ONESHOT
-    ev.udata = cast[pointer](uint(slotIdx))
     discard kevent(b.pollFd, addr ev, 1, nil, 0, nil)
 
-proc kqueueReArmEvent(b: Backend; fd: cint; slotIdx: int; mask: int) {.nimcall.} =
+proc kqueueReArmEvent(b: Backend; fd: cint; mask: int) {.nimcall.} =
   let self = KqueueBackend(b)
-  self.kqueueRegisterEvent(fd, slotIdx, mask)
+  self.kqueueRegisterEvent(fd, mask)
 
 proc kqueueSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
   let self = KqueueBackend(b)
@@ -38,7 +40,7 @@ proc kqueueSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
     mask = mask or EvRead
   if op.kind == opWrite:
     mask = mask or EvWrite
-  self.kqueueRegisterEvent(op.fd, slotIdx, mask)
+  self.kqueueRegisterEvent(op.fd, mask)
 
 proc kqueuePoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
   let self = KqueueBackend(b)

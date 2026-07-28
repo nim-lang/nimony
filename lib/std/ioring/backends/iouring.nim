@@ -71,7 +71,38 @@ proc iouringPoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
         b.completeFn(b.ring, slotIdx, int(cqes[i].res))
   return true
 
-proc iouringClose(b: Backend) {.nimcall.} = discard
+proc iouringForgetFd(b: Backend; fd: cint) {.nimcall.} =
+  ## Ask the kernel to cancel every in-flight op on `fd` before the arena
+  ## frees the corresponding slots (see `ioring.closeFd`). Without this, a
+  ## completion for an op the arena already freed/reused could land on the
+  ## wrong (later) slot index once the fd number and the slot index are both
+  ## recycled — best-effort: if there is no room for the cancel SQE right
+  ## now we still proceed with the close, we just may leak that one slot
+  ## until the kernel completion arrives naturally.
+  let self = IoUringBackend(b)
+  self.tryInitLocalQueue()
+  try:
+    var sqe = localQueue.getSqe()
+    if sqe == nil:
+      discard localQueue.submit()
+      sqe = localQueue.getSqe()
+    if sqe != nil:
+      discard sqe.cancelFd(FileHandle(fd))
+      discard localQueue.submit()
+  except:
+    discard
+
+proc iouringClose(b: Backend) {.nimcall.} =
+  # Previously a no-op: the mapped SQ/CQ rings and the io_uring fd were never
+  # released, leaking both per shutdown. Overwriting the threadvar with a
+  # fresh (zero) `Queue` runs `=destroy` on the old value, which unmaps the
+  # rings and closes the fd (see `posix/io_uring.=destroy`).
+  let self = IoUringBackend(b)
+  if localQueue.params != nil:
+    try:
+      localQueue = newQueue(self.sqEntries)
+    except:
+      discard
 
 proc initIoUringBackend*(arena: SlotArena; ring: Ring; sqEntries = 256): Backend =
   try:
@@ -82,6 +113,7 @@ proc initIoUringBackend*(arena: SlotArena; ring: Ring; sqEntries = 256): Backend
     result.submitFn = iouringSubmit
     result.pollFn = iouringPoll
     result.closeFn = iouringClose
+    result.forgetFdFn = iouringForgetFd
   except:
     # fallback to epoll
     result = initEpollBackend(arena, ring)

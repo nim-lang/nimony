@@ -16,6 +16,11 @@ type
     submitFn*: proc(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.}
     pollFn*: proc(b: Backend; timeoutMs: int): bool {.nimcall.}
     closeFn*: proc(b: Backend) {.nimcall.}
+    forgetFdFn*: proc(b: Backend; fd: cint) {.nimcall.}
+      ## Drop any backend-side per-fd registration/bookkeeping before a fd is
+      ## closed (e.g. epoll's ADD/MOD tracking). `nil` for backends where the
+      ## OS already tears this down on close (kqueue, io_uring) — callers
+      ## must nil-check before calling.
 
   Ring* = ref object of RootObj
     slots*: SlotArena
@@ -25,5 +30,6 @@ type
     cqLock*: TicketLock
     cq*: seq[IoCompletion]
     cqHead*, cqTail*, cqCount*: int
+    closed*: bool # accessed atomically; set once by shutdown()
 
 

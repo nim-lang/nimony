@@ -38,21 +38,49 @@ type
   Stripe = object
     L: TicketLock
     head, tail, count: int
-    data: array[StripeSize, Task]
+    data: array[StripeSize, Task] 
+
+  ReactorProc* = proc(timeoutMs: int): bool {.closure.}
+    ## Polls one I/O backend once; returns true if it delivered anything.
+    ## `std/ioring` registers one of these per `Ring` via `registerReactor`.
 
   Pool* = ref object of RootObj
     stripes: array[StripeCount, Stripe]
     workers: array[WorkerCount, RawThread]
     stopFlag: bool # accessed atomically
+    reactors: seq[ReactorProc]
+    reactorsLock: TicketLock
 
-method poll*(p: Pool; timeoutMs: int): bool {.base.} =
-  ## Poll the shared I/O instance once and dispatch every ready handler on the
-  ## calling thread. `timeoutMs` is how long to block waiting for an event (`0`
-  ## = non-blocking peek). Returns true if at least one handler fired. Safe to
-  ## call from any thread (oneshot semantics: each event goes to exactly one
-  ## caller) — used both by the worker loop and by `parWait` so a thread blocked
-  ## on a join can still advance the I/O its parked chunks are waiting on.
+proc registerReactor*(p: Pool; r: ReactorProc) =
+  ## Register an I/O backend to be polled by every worker's idle loop (and by
+  ## `parWait`). Lets independent subsystems (e.g. several `std/ioring`
+  ## `Ring`s) share one `Pool` — and its worker threads — instead of each
+  ## spinning up its own, which previously meant every `Ring` (and `parfor`'s
+  ## own pool) duplicated `WorkerCount` OS threads contending over the same
+  ## physical cores. Safe to call concurrently; registration is expected to
+  ## be rare (typically once per `Ring`), so a lock here costs nothing on the
+  ## hot path (`poll`, below, only takes the lock to snapshot the list).
+  withLock p.reactorsLock:
+    p.reactors.add(r)
+
+proc poll*(p: Pool; timeoutMs: int): bool =
+  ## Poll every registered I/O backend once and dispatch ready handlers on
+  ## the calling thread. `timeoutMs` bounds how long the *first* reactor may
+  ## block waiting for an event (`0` = non-blocking peek); subsequent
+  ## reactors in the same call are polled non-blockingly so that N
+  ## registered backends don't add up to N*timeoutMs of latency. Returns
+  ## true if any handler fired. Safe to call from any thread (oneshot
+  ## semantics: each event goes to exactly one caller) — used both by the
+  ## worker loop and by `parWait` so a thread blocked on a join can still
+  ## advance the I/O its parked chunks are waiting on.
   result = false
+  var snapshot: seq[ReactorProc]
+  withLock p.reactorsLock:
+    if p.reactors.len == 0: return false
+    snapshot = p.reactors
+  for i, r in snapshot:
+    if r(if i == 0: timeoutMs else: 0):
+      result = true
 
 # --- Submit / dequeue ---
 
@@ -150,7 +178,13 @@ proc workerLoop(arg: pointer) {.nimcall.} =
       when defined(windows):
         sleep(timeoutMs.uint32)
       else:
-        var ts = Timespec(tv_sec: (timeoutMs.float32/1000).Time)
+        # `(timeoutMs.float32/1000).Time` truncates to whole seconds and
+        # never sets `tv_nsec` — for `timeoutMs=1` that is `tv_sec=0,
+        # tv_nsec=0`, so `nanosleep` returned immediately instead of
+        # sleeping for ~1ms (busy-spinning the idle worker instead of
+        # yielding the core). Use div/mod into whole seconds + nanoseconds.
+        var ts = Timespec(tv_sec: Time(timeoutMs div 1000),
+                           tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
         var rem = Timespec()
         discard nanosleep(ts, rem)
 
@@ -184,3 +218,35 @@ proc shutdown*(p: Pool) =
   atomicStore(p.stopFlag, true, moRelaxed)
   for i in 0 ..< WorkerCount:
     p.workers[i].join()
+
+# --- Shared default instance -----------------------------------------------
+#
+# `Pool` is a first-class, instantiable type (`createPool()` makes an
+# independent instance with its own worker threads) so a subsystem that
+# needs its own thread/IO profile — e.g. `std/ioring`, which registers its
+# epoll/kqueue/io_uring backend via `registerReactor` — can create one. But
+# most callers (like `std/parfor`'s `||` loop) just want "the" shared
+# pool and don't care to configure it, and every module reinventing its own
+# CAS-guarded lazy-init global (as `std/parfor` used to) means N copies of
+# the same bootstrap dance and no single source of truth for "is there
+# already a shared pool". `defaultPool()` is that single source of truth:
+# a lazily-created, process-wide singleton that any zero-config caller can
+# share, while still leaving `createPool()` available for anyone who wants
+# an independent instance instead.
+var defaultPoolState: int
+  ## 0 = uninitialised, 1 = initialising, 2 = ready.
+var gDefaultPool: Pool
+
+proc defaultPool*(): Pool =
+  ## The lazily-initialised, process-wide default pool. Thread-safe and
+  ## idempotent: concurrent first-callers race through a CAS, the loser
+  ## spins until the winner finishes `createPool()`.
+  if atomicLoad(defaultPoolState, moAcquire) == 2: return gDefaultPool
+  var expected = 0
+  if atomicCompareExchange(defaultPoolState, expected, 1):
+    gDefaultPool = createPool()
+    atomicStore(defaultPoolState, 2, moRelease)
+  else:
+    while atomicLoad(defaultPoolState, moAcquire) != 2:
+      discard
+  gDefaultPool

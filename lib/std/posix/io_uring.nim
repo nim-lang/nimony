@@ -985,6 +985,14 @@ proc cancel*[T: SomeNumber | pointer](sqe: ptr Sqe; cancelUserData: T; flags: ui
   sqe.opFlags.cancelFlags = flags
   sqe.prepRw(OP_ASYNC_CANCEL, -1.cint, cancelUserData, 0, 0)
 
+proc cancelFd*(sqe: ptr Sqe; fd: FileHandle): ptr Sqe =
+  ## Cancel every still-in-flight op submitted against `fd` (IORING_ASYNC_CANCEL_FD),
+  ## as opposed to `cancel`, which matches a single op by its user_data. Used
+  ## when a fd is being closed so the kernel does not later complete into a
+  ## slot index that the arena has since freed and reused for something else.
+  sqe.opFlags.cancelFlags = 1'u32 shl ord(ASYNC_CANCEL_FD)
+  sqe.prepRw(OP_ASYNC_CANCEL, fd, 0, 0, 0)
+
 proc shutdown*(sqe: ptr Sqe; sockfd: FileHandle; how: uint32): ptr Sqe =
   sqe.prepRw(OP_SHUTDOWN, sockfd, 0, how.int, 0)
 

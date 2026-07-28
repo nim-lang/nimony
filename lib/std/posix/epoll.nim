@@ -65,7 +65,7 @@ proc epoll_create1*(flags: cint): cint {.importc: "epoll_create1",
   ## Same as epoll_create but with an FLAGS parameter.  The unused SIZE
   ## parameter has been dropped.
 
-proc epoll_ctl*[FD: cint | SocketHandle](epfd: cint; op: cint; fd: FD; event: ptr EpollEvent): cint {.
+proc epoll_ctl*[FD: cint | SocketHandle](epfd: cint; op: cint; fd: FD; event: nil ptr EpollEvent): cint {.
     importc: "epoll_ctl", header: "<sys/epoll.h>".}
   ## Manipulate an epoll instance "epfd". Returns `0` in case of success,
   ## `-1` in case of error (the "errno" variable will contain the specific error code).
