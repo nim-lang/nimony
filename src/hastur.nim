@@ -531,10 +531,17 @@ proc warmupSharedCache(): string =
   ## without the savings).
   const warmupSrc = "tools/warmup.nim"
   if not fileExists(warmupSrc):
+    # Loud, because the fallback is silent-but-slow: without the prefill every
+    # test recompiles `system` from scratch (~3s each on Windows CI, ~700
+    # tests). A missing warmup file previously just disabled the optimization
+    # with no output at all, so the regression was invisible.
+    stderr.writeLine "warmup: " & warmupSrc &
+      " missing; every test will recompile the stdlib from scratch"
     return ""
   result = nimcacheDir / "warmup"
   let nimony = toolExe("nimony")
   if not fileExists(nimony):
+    stderr.writeLine "warmup: skipping, no nimony at " & nimony
     return ""
   let cmd = nimony.quoteShell & " c --nimcache:" & result.quoteShell &
             " " & warmupSrc.quoteShell
