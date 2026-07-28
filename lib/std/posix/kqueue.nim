@@ -37,6 +37,15 @@ elif defined(haiku):
     EVFILT_PROC*     = -5'i16 ## attached to struct proc
     EVFILT_SIGNAL*   = -6'i16 ## attached to struct proc
     EVFILT_TIMER*    = -7'i16 ## timers
+else:
+  const
+    EVFILT_READ*     = -1'i16
+    EVFILT_WRITE*    = -2'i16
+    EVFILT_AIO*      = -3'i16 ## attached to aio requests
+    EVFILT_VNODE*    = -4'i16 ## attached to vnodes
+    EVFILT_PROC*     = -5'i16 ## attached to struct proc
+    EVFILT_SIGNAL*   = -6'i16 ## attached to struct proc
+    EVFILT_TIMER*    = -7'i16 ## timers
 when defined(macosx):
   const
     EVFILT_MACHPORT* = -8'i16  ## Mach portsets
@@ -53,6 +62,12 @@ elif defined(dragonfly):
     EVFILT_EXCEPT*   = -8'i16  ## exceptional conditions
     EVFILT_USER*     = -9'i16  ## user events
     EVFILT_FS*       = -10'i16 ## filesystem events
+else:
+  const
+    EVFILT_MACHPORT* = -8'i16  ## Mach portsets
+    EVFILT_FS*       = -9'i16  ## filesystem events
+    EVFILT_USER*     = -10'i16 ## user events
+    EVFILT_VM        = -12'i16 ## virtual memory events
 
 # Actions:
 const

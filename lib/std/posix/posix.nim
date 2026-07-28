@@ -220,13 +220,13 @@ when defined(posix):
       ## Test for a socket.
 
   when defined(nimNativeIo):
-    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
+    proc mmap*(a1: nil pointer, a2: uint, a3, a4, a5: cint, a6: Off): pointer {.
       importc: "mmap".}
-    proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap".}
+    proc munmap*(a1: nil pointer, a2: uint): cint {.importc: "munmap".}
   else:
-    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
+    proc mmap*(a1: nil pointer, a2: uint, a3, a4, a5: cint, a6: Off): pointer {.
       importc: "mmap", header: "<sys/mman.h>".}
-    proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap", header: "<sys/mman.h>".}
+    proc munmap*(a1: nil pointer, a2: uint): cint {.importc: "munmap", header: "<sys/mman.h>".}
 
   when not defined(nimNativeIo):
     var errnoVar {.importc: "errno", header: "<errno.h>".}: cint
@@ -447,7 +447,9 @@ when defined(posix):
   # types (they would pull <spawn.h>/<signal.h> → transitive <unistd.h>), so
   # they stay behind `when not defined(nimNativeIo)`.
   when defined(nimNativeIo):
-    type Pid* = cint
+    type
+      Pid* = cint
+      Sigset* {.importc: "sigset_t", nodecl.} = object
   else:
     type Pid* {.importc: "pid_t", header: "<sys/types.h>".} = cint
 

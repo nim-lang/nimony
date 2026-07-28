@@ -453,7 +453,7 @@ proc `+`(p: pointer; i: uint32): pointer =
 
 proc uringMap(offset: Off; fd: FileHandle; begin: uint32;
                count: uint32; typSize: int): pointer {.raises, tags: [].} =
-  let size = int(begin + count * typSize.uint32)
+  let size = uint(begin + count * typSize.uint32)
   result = mmap(nil, size, PROT_READ or PROT_WRITE, MAP_SHARED or MAP_POPULATE,
                 fd.cint, offset)
   if result == MAP_FAILED:
@@ -461,7 +461,7 @@ proc uringMap(offset: Off; fd: FileHandle; begin: uint32;
 
 proc uringUnmap(p: pointer; size: int) {.raises, tags: [].} =
   ## interface to tear down some memory (probably mmap'd)
-  let code = munmap(p, size)
+  let code = munmap(p, size.uint)
   if code < 0:
     raiseOSError(osLastError(), "io_uring uringUnmap failed")
 
