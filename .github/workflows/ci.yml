@@ -5,6 +5,15 @@ on:
     - 'master'
   pull_request:
 
+# One in-flight run per branch/PR. The Windows job alone is ~40 minutes, so
+# without this every follow-up push to an open PR leaves the superseded run
+# burning a full matrix to produce results nobody will look at. `master` is
+# excluded from cancellation (github.sha makes its group unique per commit)
+# so the history of green builds there stays complete.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/master' && github.sha || '' }}
+  cancel-in-progress: true
+
 jobs:
   build:
     strategy:
@@ -85,8 +94,15 @@ jobs:
         if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install -y valgrind gcc-14 g++-14
+          # gcc-14/g++-14 ship preinstalled on the ubuntu-24.04 image, so only
+          # valgrind actually needs fetching. Installing the compilers anyway
+          # made this step ~5 minutes (apt pulled and reinstalled the full
+          # toolchain); with just valgrind it is a few seconds.
+          # `--no-install-recommends` keeps valgrind from dragging in its
+          # (unused here) debuginfo/doc recommends.
+          sudo apt-get update -qq
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install \
+            --no-install-recommends -yq valgrind
           sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 --slave /usr/bin/g++ g++ /usr/bin/g++-14
 
       - name: Install dependencies (Linux i386)

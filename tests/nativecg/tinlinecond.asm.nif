@@ -1,0 +1,406 @@
+(.nif27)
+(.indexat 5569             )
+(stmts
+ (arch x64)
+ (type :`cchar.0.
+  (i 8))
+ (gvar :nimEnviron.0
+  (ptr
+   (ptr
+    (c 8))))
+ (gvar :cmdLine.0
+  (ptr
+   (ptr
+    (c 8))))
+ (gvar :cmdCount.0
+  (i 32))
+ (gvar :`iniGuard.0.
+  (bool))
+ (proc :main.0
+  (params
+   (param :p0.0
+    (rdi)
+    (i 32))
+   (param :p1.0
+    (rsi)
+    (ptr
+     (ptr `cchar.0.)))
+   (param :p2.0
+    (rdx)
+    (ptr
+     (ptr `cchar.0.))))
+  (result :ret.0
+   (rax)
+   (i 32))
+  (clobber
+   (rax)
+   (rcx)
+   (r8)
+   (r9)
+   (r10)
+   (r11))
+  (stmts
+   (rebind :tmp0.0
+    (ptr
+     (i 32))
+    (r11))
+   (lea tmp0.0 cmdCount.0)
+   (mov
+    (mem tmp0.0)p0.0)
+   (kill tmp0.0)
+   (rebind :p1.0
+    (ptr
+     (ptr `cchar.0.))
+    (rsi))
+   (rebind :p1.0
+    (ptr
+     (ptr
+      (c 8)))
+    (rsi))
+   (rebind :tmp1.0
+    (ptr
+     (ptr
+      (ptr
+       (c 8))))
+    (r11))
+   (lea tmp1.0 cmdLine.0)
+   (mov
+    (mem tmp1.0)p1.0)
+   (kill tmp1.0)
+   (rebind :p2.0
+    (ptr
+     (ptr `cchar.0.))
+    (rdx))
+   (rebind :p2.0
+    (ptr
+     (ptr
+      (c 8)))
+    (rdx))
+   (rebind :tmp2.0
+    (ptr
+     (ptr
+      (ptr
+       (c 8))))
+    (r11))
+   (lea tmp2.0 nimEnviron.0)
+   (mov
+    (mem tmp2.0)p2.0)
+   (kill tmp2.0)
+   (prepare `ini.0.
+    (call)
+    (kill p0.0)
+    (kill p1.0)
+    (kill p2.0))
+   (prepare nimFlushStdStreams.0.sysvq0asl
+    (call))
+   (mov
+    (rax)0)
+   (mov
+    (rdi)
+    (rax))
+   (mov
+    (rax)60)
+   (syscall)
+   (mov
+    (rax)60)
+   (mov
+    (rdi)0)
+   (syscall)))
+ (proc :classify.0.
+  (params
+   (param :p0.0
+    (rdi)
+    (i 64))
+   (param :p1.0
+    (rsi)
+    (i 64)))
+  (result :ret.0
+   (rax)
+   (i 64))
+  (clobber
+   (rax)
+   (rdx)
+   (rcx)
+   (r8)
+   (r9)
+   (r10)
+   (r11))
+  (stmts
+   (var :result.1
+    (r8)
+    (i 64))
+   (cmp p0.0 p1.0)
+   (jg L3.0)
+   (mov result.1 1)
+   (jmp L2.0)
+   (lab :L3.0)
+   (mov result.1 2)
+   (lab :L2.0)
+   (mov
+    (rax)result.1)
+   (kill result.1)
+   (ret)))
+ (proc :loop.0.
+  (params
+   (param :p0.0
+    (rdi)
+    (i 64)))
+  (result :ret.0
+   (rax)
+   (i 64))
+  (clobber
+   (rax)
+   (rsi)
+   (rdx)
+   (rcx)
+   (r8)
+   (r9)
+   (r10)
+   (r11))
+  (stmts
+   (push
+    (rbx))
+   (push
+    (r12))
+   (push
+    (r13))
+   (sub
+    (rsp)
+    (ssize))
+   (mov
+    (rbx)p0.0)
+   (kill p0.0)
+   (var :result.2
+    (r12)
+    (i 64))
+   (mov result.2 0)
+   (var :i.0
+    (s)
+    (i 64))
+   (rebind :tmp0.0
+    (i 64)
+    (r10))
+   (mov tmp0.0 0)
+   (mov
+    (mem
+     (rsp)i.0)tmp0.0)
+   (kill tmp0.0)
+   (loop
+    (stmts
+     (rebind :tmp1.0
+      (i 64)
+      (r10))
+     (mov tmp1.0 1)
+     (cmp tmp1.0 0)
+     (je L5.0)
+     (kill tmp1.0)
+     (rebind :tmp2.0
+      (i 64)
+      (r10))
+     (mov tmp2.0
+      (mem
+       (rsp)i.0))
+     (cmp tmp2.0
+      (rbx))
+     (kill tmp2.0)
+     (jg L7.0)
+     (var :`x.2
+      (r13)
+      (i 64))
+     (prepare classify.0.
+      (mov
+       (rdi)
+       (mem
+        (rsp)i.0))
+      (mov
+       (arg p0.0)
+       (rdi))
+      (mov
+       (rsi)2)
+      (mov
+       (arg p1.0)
+       (rsi))
+      (call)
+      (mov
+       (rax)
+       (res ret.0)))
+     (mov `x.2
+      (rax))
+     (rebind :result.2
+      (i 64)
+      (r12))
+     (add result.2 `x.2)
+     (prepare inc.1.Irn1g7r1.syn1lfpjv
+      (lea
+       (rdi)
+       (rsp)i.0)
+      (mov
+       (arg p0.0)
+       (rdi))
+      (call))
+     (jmp L6.0)
+     (lab :L7.0)
+     (jmp L5.0)
+     (lab :L6.0)))
+   (lab :L5.0)
+   (kill `x.2)
+   (lab :whileStmtLabel.0)
+   (mov
+    (rax)result.2)
+   (kill result.2)
+   (add
+    (rsp)
+    (ssize))
+   (pop
+    (r13))
+   (pop
+    (r12))
+   (pop
+    (rbx))
+   (ret)))
+ (proc :`ini.0.
+  (params)
+  (result)
+  (clobber
+   (rax)
+   (rdi)
+   (rsi)
+   (rdx)
+   (rcx)
+   (r8)
+   (r9)
+   (r10)
+   (r11))
+  (stmts
+   (push
+    (rbx))
+   (rebind :tmp0.0
+    (bool)
+    (r10))
+   (rebind :tmp1.0
+    (ptr
+     (bool))
+    (r11))
+   (lea tmp1.0 `iniGuard.0.)
+   (mov tmp0.0
+    (mem tmp1.0))
+   (kill tmp1.0)
+   (cmp tmp0.0 0)
+   (je L10.0)
+   (kill tmp0.0)
+   (jmp L8.0)
+   (lab :L10.0)
+   (lab :L9.0)
+   (rebind :tmp2.0
+    (i 64)
+    (r10))
+   (mov tmp2.0 1)
+   (rebind :tmp3.0
+    (ptr
+     (bool))
+    (r11))
+   (lea tmp3.0 `iniGuard.0.)
+   (mov
+    (mem tmp3.0)tmp2.0)
+   (kill tmp3.0)
+   (kill tmp2.0)
+   (prepare `ini.0.sysvq0asl
+    (call))
+   (prepare `ini.0.syn1lfpjv
+    (call))
+   (var :`x.3
+    (rbx)
+    (i 64))
+   (prepare loop.0.
+    (mov
+     (rdi)3)
+    (mov
+     (arg p0.0)
+     (rdi))
+    (call)
+    (mov
+     (rax)
+     (res ret.0)))
+   (mov `x.3
+    (rax))
+   (prepare write.2.syn1lfpjv
+    (rebind :tmp4.0
+     (ptr
+      (ptr `t.0.IArefSX46ileX4fbj0syn1lfpjv.syn1lfpjv))
+     (r11))
+    (lea tmp4.0 stdout.0.syn1lfpjv)
+    (mov
+     (rdi)
+     (mem tmp4.0))
+    (kill tmp4.0)
+    (mov
+     (arg p0.0)
+     (rdi))
+    (mov
+     (rsi)`x.3)
+    (mov
+     (arg p1.0)
+     (rsi))
+    (call))
+   (prepare write.7.syn1lfpjv
+    (rebind :tmp5.0
+     (ptr
+      (ptr `t.0.IArefSX46ileX4fbj0syn1lfpjv.syn1lfpjv))
+     (r11))
+    (lea tmp5.0 stdout.0.syn1lfpjv)
+    (mov
+     (rdi)
+     (mem tmp5.0))
+    (kill tmp5.0)
+    (mov
+     (arg p0.0)
+     (rdi))
+    (mov
+     (rsi)10)
+    (mov
+     (arg p1.0)
+     (rsi))
+    (call))
+   (kill `x.3)
+   (lab :L8.0)
+   (pop
+    (rbx))
+   (ret)))
+ (proc :isLe.0.
+  (params
+   (param :p0.0
+    (rdi)
+    (i 64))
+   (param :p1.0
+    (rsi)
+    (i 64)))
+  (result :ret.0
+   (rax)
+   (bool))
+  (clobber
+   (rax)
+   (rdx)
+   (rcx)
+   (r8)
+   (r9)
+   (r10)
+   (r11))
+  (stmts
+   (var :result.0
+    (r8)
+    (i 64))
+   (mov result.0 1)
+   (cmp p0.0 p1.0)
+   (jle L12.0)
+   (mov result.0 0)
+   (lab :L12.0)
+   (mov
+    (rax)result.0)
+   (kill result.0)
+   (ret))))(.index
+ (x `cchar.0. 56)
+ (x `iniGuard.0. 151)
+ (x classify.0. 1262)
+ (x loop.0. 438)
+ (x `ini.0. 1630)
+ (x isLe.0. 1623))
