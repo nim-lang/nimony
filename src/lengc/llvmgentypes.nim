@@ -912,7 +912,7 @@ proc genGlobalConstr(c: var LLVMCode; n: var Cursor;
         result = genGlobalConstr(c, n, declaredType)
         skip n
         while n.hasMore: skip n
-    of AddrC:
+    of AddrC, HaddrC:
       n.into:
         if n.kind == Symbol:
           let name = mangleSym(c, n.symId)

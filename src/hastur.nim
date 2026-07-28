@@ -876,6 +876,11 @@ const
     "tests/nimony/closures"
   ]
   NativeTestFiles = [
+    # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
+    # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose POINT is
+    # that the C and native backends agree on results they reach by different
+    # instructions.
+    "tests/nimony/intrinsics/tintrinsics",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",

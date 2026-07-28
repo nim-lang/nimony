@@ -1,0 +1,2 @@
+tests/nimony/assembler/tbadassembler.nim(7, 19) Error: `assembler` pragma is only allowed on routines
+tests/nimony/assembler/tbadassembler.nim(10, 11) Error: `register` pragma takes a register name

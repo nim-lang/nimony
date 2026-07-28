@@ -9,7 +9,7 @@
 import std / [tables, sets, hashes, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [symparser, nifindexes]
+import ".." / lib / [symparser, nifindexes, intrinsics]
 import nimony_model, symtabs, builtintypes, decls, programs, magics, reporters, nifconfig, xints,
   langmodes, features
 
@@ -69,6 +69,10 @@ type
     bits*: int
     size*: int  ## value of `{.size: X.}` pragma in bytes; 0 if not set
     hasVarargs*: NifLineInfo
+    intrinsic*: IntrinsicOp  ## the `{.instruction: X.}` / `{.intrinsic: X.}` row,
+                             ## or `NoIntrinsicOp`. Its signature is checked
+                             ## against the row in `semProcImpl`, where the
+                             ## params and the return type are already known.
     flags*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma
     headerFileTok*: NifToken

@@ -1,0 +1,3 @@
+tests/nimony/assembler/tbadinout.nim(8, 1) Error: operand 1 of `add` is read and written, so it must be declared `var`
+tests/nimony/assembler/tbadinout.nim(10, 1) Error: operand 2 of `add` is only read, so it must not be declared `var`
+tests/nimony/assembler/tbadinout.nim(12, 1) Error: operand 1 of `bsf` is only read, so it must not be declared `var`

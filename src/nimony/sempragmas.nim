@@ -20,7 +20,7 @@ import std / [tables, sets, hashes, assertions, strutils]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath, splitFile, extractFilename, `/`
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / symparser
+import ".." / lib / [symparser, intrinsics]
 import nimony_model, builtintypes, decls, asthelpers, programs,
   magics, nifconfig, semdata, sembasics,
   semchecks, semconst, semos, renderer, features, pragmacanon, identstyle,
@@ -194,6 +194,67 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       dest.addSubtree n
     else:
       buildErr c, dest, n.info, "`magic` pragma takes a string literal"
+    dest.addParRi()
+  of AssemblerP:
+    # `{.assembler.}` — every construct in the body maps one-to-one to assembler.
+    # The CHECKING is delegated to the back end (arkham), which is where the
+    # machine model lives; NIF carries precise line info, so its diagnostics are
+    # as good as a front-end pass would give. Sem only records the flag.
+    crucial.flags.incl pk
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, "`assembler` pragma is only allowed on routines"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+    else:
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+  of RegisterP:
+    # `{.register: "rdi".}` on a parameter, result or local. Which register names
+    # exist, and whether the annotation is consistent with the proc's ABI, is a
+    # target question — arkham's, not sem's.
+    crucial.flags.incl pk
+    let pinfo = n.info                 # the pragma NAME's info: `toPragmaArgs` moves
+    dest.addParLe(pk, pinfo)           # `n` past it, and a bare `{.register.}` has
+    toPragmaArgs()                     # nothing after it to report against
+    if hasParRi and n.hasMore:
+      semConstStrExprIgnoreTopLevel c, dest, n
+    else:
+      buildErr c, dest, pinfo, "`register` pragma takes a register name"
+    dest.addParRi()
+  of StackP:
+    crucial.flags.incl pk
+    dest.addParLe(pk, n.info)
+    dest.addParRi()
+    toPragmaArgs()
+  of InstructionP, IntrinsicP:
+    # `{.instruction: bsf.}` / `{.intrinsic: Ctz.}` — the argument is an opcode
+    # ident from `lib/intrinsics`, NOT a free string, so a typo is an error here
+    # rather than an "unsupported intrinsic" assert three passes later. The
+    # signature check against the row happens in `semProcImpl`, where the params
+    # and the return type are already in `dest`.
+    crucial.flags.incl pk
+    let cls = if pk == InstructionP: icPinned else: icPortable
+    dest.addParLe(pk, n.info)
+    toPragmaArgs()
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
+      if hasParRi and n.hasMore: skip n
+    elif hasParRi and n.hasMore and n.kind in {StrLit, Ident}:
+      let opName = pool.strings[n.strId]
+      let op = intrinsicOpByName(opName, cls)
+      if op == NoIntrinsicOp:
+        buildErr c, dest, n.info, "unknown " & $pk & ": " & opName
+      else:
+        crucial.intrinsic = op
+      takeTree dest, n
+    elif n.hasMore and n.exprKind == ErrX:
+      dest.addSubtree n
+    else:
+      buildErr c, dest, n.info, "`" & $pk & "` pragma takes an opcode identifier"
     dest.addParRi()
   of ErrorP, ReportP, DeprecatedP:
     crucial.flags.incl pk
@@ -537,6 +598,107 @@ proc semPragmas*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: 
       dest.addDotToken()
   else:
     buildErr c, dest, n.info, "expected '.' or 'pragmas'"
+
+# ── intrinsic declarations ──────────────────────────────────────────────────
+# The declaration is the typing contract: what a proc signature already
+# expresses stays in the signature, and the one thing it cannot express — the
+# operand model — is unified against the row HERE, once. After this check the
+# symbol is an ordinary typed proc, so no later pass (sigmatch, getType, hexer,
+# arkham) needs a rule per opcode.
+
+proc intBitsOf(c: var SemContext; typ: Cursor): int =
+  ## Bit width of `(i N)` / `(u N)` / `(c N)`, or -1 for anything else.
+  ## `int`/`uint` already carry the config's width here, so no resolution step.
+  result = -1
+  if typ.kind == TagLit and typ.typeKind in {IntT, UIntT, CharT}:
+    var bits = typ
+    inc bits
+    if bits.kind == IntLit: result = typebits(bits.load)
+
+proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
+              w: var int; widths: set[uint8]): bool =
+  ## Unify one type pattern against one declared type. `w` carries the row's
+  ## single width variable `W` across the whole signature: unbound (0) on the
+  ## first `…W` pattern, then required to match.
+  case pat
+  of ptNone:
+    result = false
+  of ptVoid:
+    result = typ.kind == DotToken or (typ.kind == TagLit and typ.typeKind == VoidT)
+  of ptBool:
+    result = typ.kind == TagLit and typ.typeKind == BoolT
+  of ptInt32:
+    result = typ.kind == TagLit and typ.typeKind == IntT and intBitsOf(c, typ) == 32
+  of ptAnyInt:
+    result = intBitsOf(c, typ) > 0
+  of ptIntW, ptUIntW, ptAnyIntW:
+    if typ.kind != TagLit:
+      result = false
+    else:
+      let k = typ.typeKind
+      let kindOk =
+        if pat == ptIntW: k == IntT
+        elif pat == ptUIntW: k == UIntT
+        else: k in {IntT, UIntT, CharT}
+      let bits = intBitsOf(c, typ)
+      if not kindOk or bits <= 0 or uint8(bits) notin widths:
+        result = false
+      else:
+        if w == 0: w = bits          # bind W
+        result = w == bits           # ... or match what it is already bound to
+
+proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
+                              paramsAt: int; op: IntrinsicOp): string =
+  ## The mismatch message, or "" when the declaration matches the row. Reads
+  ## `dest` through cursors ONLY — the caller emits any error afterwards, once
+  ## every cursor is gone (appending to `dest` may reallocate it), and into the
+  ## routine's `effects` slot, the one slot that already accepts an `(err …)`.
+  let row = IntrinsicRows[op]
+  let opName = IntrinsicNames[op]
+  result = ""
+  var w = 0
+  var i = 0
+  var n = cursorAt(dest, paramsAt)
+  if n.substructureKind == ParamsU:
+    var p = sub(n)
+    while p.hasMore:
+      if i >= row.arity:
+        result = "`" & opName & "` takes " & $row.arity & " operand(s)"
+        break
+      let param = asLocal(p)
+      # §4.1: the roles dictate the spelling, with no author choice. An `inout`
+      # operand is read AND written, which only `var` expresses — and the `var` is
+      # what makes the call site emit `(haddr d)`, the tag that tells the back end
+      # to bind d's location instead of materialising a pointer to it.
+      var ptyp = param.typ
+      let wantsVar = row.roles[i] == roInout
+      let isVar = ptyp.kind == TagLit and ptyp.typeKind == MutT
+      if wantsVar and not isVar:
+        result = "operand " & $(i + 1) & " of `" & opName & "` is read and " &
+                 "written, so it must be declared `var`"
+        break
+      if isVar and not wantsVar:
+        result = "operand " & $(i + 1) & " of `" & opName & "` is only read, " &
+                 "so it must not be declared `var`"
+        break
+      if isVar: inc ptyp             # `(mut T)` → match the row's pattern against T
+      if not matchPat(c, row.params[i], ptyp, w, row.widths):
+        result = "operand " & $(i + 1) & " of `" & opName & "` has a type the " &
+                 "instruction cannot take"
+        break
+      inc i
+      skip p
+  if result.len == 0:
+    if i != row.arity:
+      result = "`" & opName & "` takes " & $row.arity & " operand(s), " &
+               "but " & $i & " were declared"
+    else:
+      var ret = n
+      skip ret                       # past the (params …) → the return type
+      if not matchPat(c, row.ret, ret, w, row.widths):
+        result = "the result type of `" & opName & "` does not match the " &
+                 "instruction's destination"
+  endRead n
 
 proc semAssumeAssert*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: StmtKind) =
   let info = it.n.info

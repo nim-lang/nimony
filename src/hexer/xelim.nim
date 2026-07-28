@@ -804,10 +804,16 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   let kind = n.symKind
+  # An `{.assembler.}` body is a transliteration: source order IS the contract,
+  # so no pass may hoist a subexpression into a temporary or otherwise reorder
+  # it — the whole point is that every construct maps one-to-one to an
+  # instruction. Take such a body verbatim and let the back end check it (see
+  # `nativenif/doc/intrinsics.md` §8).
+  let isAsm = hasPragma(asRoutine(decl, SkipExclBody).pragmas, AssemblerP)
   copyInto dest, n:
     let symId = n.symId
     let isConcrete = takeRoutineHeader(c.typeCache, dest, decl, n)
-    if isConcrete:
+    if isConcrete and not isAsm:
       if isLocalDecl(symId):
         c.typeCache.registerLocal(symId, kind, decl)
       c.typeCache.openScope()

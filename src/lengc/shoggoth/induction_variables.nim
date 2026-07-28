@@ -107,9 +107,9 @@ proc scanBody(c: var Context; n: Cursor;
   if isIvIncPattern(n, ivSym):
     candidates.add (ivSym, cursorToPosition(c.orig[], n))
     return                                   # iv-inc's children can't matter
-  if n.exprKind == AddrC:
+  if n.exprKind in AddrKinds:
     var probe = n
-    inc probe                                # past `(addr`
+    inc probe                                # past `(addr`/`(haddr`
     while probe.hasMore:
       if probe.kind == Symbol:
         addrTaken.incl symId(probe)

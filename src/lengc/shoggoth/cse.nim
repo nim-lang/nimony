@@ -267,7 +267,7 @@ proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
     let lhs = child0(start)
     if lhs.kind == Symbol:
       writes.incl symId(lhs)
-  if start.exprKind == AddrC:
+  if start.exprKind in AddrKinds:
     let s = rootOf(child0(start))
     if s != SymId(0): addrs.incl s
   var n = start
@@ -745,7 +745,7 @@ proc trExpr(c: var Context; n: var Cursor) =
   case n.kind
   of TagLit:
     case n.exprKind
-    of AddrC:
+    of AddrC, HaddrC:
       let inner = child0(n)
       # `(addr L)` where `L` is an address-CSE'd memory lvalue: unify with loads/
       # writes of `L`. Cache `addr L` once; this whole node rewrites to the bare
@@ -1095,7 +1095,7 @@ proc collectWriteTargets(c: var Context; n: var Cursor) =
     inc n
     return
   # `(addr L)` of a memory lvalue → `L` is address-CSE'd.
-  if n.exprKind == AddrC:
+  if n.exprKind in AddrKinds:
     let inner = child0(n)
     if inner.kind == TagLit and inner.exprKind in {DotC, AtC, DerefC, PatC}:
       c.writeTargets.incl hashExpr(inner)

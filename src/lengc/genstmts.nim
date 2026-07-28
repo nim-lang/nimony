@@ -516,6 +516,9 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of CallS:
     genCall c, n
     c.add Semicolon
+  of InstrS:
+    genInstr c, n
+    c.add Semicolon
   of VarS:
     genVar c, n, IsLocal
   of GvarS:

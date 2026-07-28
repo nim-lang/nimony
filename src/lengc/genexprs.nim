@@ -68,6 +68,54 @@ proc genCall(c: var GeneratedCode; n: var Cursor) =
       inc i
     c.add ParRi
 
+proc intrinsicOfCallee(c: var GeneratedCode; callee: Cursor;
+                       bits: var int): IntrinsicOp {.inline.} =
+  intrinsicOfCallee(c.m, callee, bits)
+
+proc genInstr(c: var GeneratedCode; n: var Cursor) =
+  ## `(instr SYM X*)` — an intrinsic application. Selection-final: the opcode
+  ## the source named is the one emitted, so this never falls back to a call.
+  genCLineDir(c, info(n))
+  let start = n
+  n.into:
+    var bits = 0
+    let op = intrinsicOfCallee(c, n, bits)
+    var builtin = ""
+    if op == NoIntrinsicOp:
+      error c.m, "callee of (instr ...) carries no instruction/intrinsic pragma: ", start
+    else:
+      builtin = cBuiltinFor(op, bits)
+      if builtin.len == 0:
+        let row = IntrinsicRows[op]
+        if row.isFlagRead or row.isFlagWrite:
+          # No portable form exists or ever will: C has no notion of a condition
+          # code, and what makes a flag usable at all — that nothing runs between
+          # its definition and its read — is exactly what a C compiler will not
+          # promise. Say that, rather than suggesting `{.intrinsic.}`.
+          errorAt c.m, "`" & IntrinsicNames[op] & "` is a machine flag " &
+            "instruction; C has no condition codes, so it is only available " &
+            "inside an `{.assembler.}` proc compiled by arkham", start
+        elif row.inoutOperand >= 0:
+          # A two-address row. C has no destructive-operand form, and suggesting
+          # `{.intrinsic.}` would be wrong advice: the portable spelling of
+          # `add(d, s)` is not another intrinsic, it is `d = d + s`.
+          errorAt c.m, "`" & IntrinsicNames[op] & "` is a two-address machine " &
+            "instruction; C has no such form, so write `d = d " &
+            "<op> s` for the portable path or guard the call with a `when`", start
+        else:
+          error c.m, "the C backend has no lowering for the target-pinned instruction `" &
+            IntrinsicNames[op] & "`; use the portable `{.intrinsic: ....}` form " &
+            "or guard the call with a `when`: ", start
+    c.add builtin
+    skip n                                  # the callee symbol
+    c.add ParLe
+    var i = 0
+    while n.hasMore:
+      if i > 0: c.add Comma
+      genx c, n
+      inc i
+    c.add ParRi
+
 proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
   n.into:
@@ -272,7 +320,7 @@ proc genCond(c: var GeneratedCode; n: var Cursor) =
     c.add ParRi
 
 proc genx(c: var GeneratedCode; n: var Cursor) =
-  if n.exprKind != AddrC and n.kind != StrLit:
+  if n.exprKind notin AddrKinds and n.kind != StrLit:
     c.flags.excl gfInCallImportC
   case n.exprKind
   of NoExpr:
@@ -395,7 +443,9 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       genx c, n
       c.add ParRi
       while n.hasMore: skip n
-  of AddrC:
+  of AddrC, HaddrC:
+    # C has one `&`: a hidden address is the same `&x`, only the REASON differs
+    # (see `nifcdecl.AddrKinds`), and C has nowhere to put the reason.
     genAddr c, n
     c.flags.excl gfInCallImportC
   of SizeofC:
@@ -424,6 +474,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add ParRi
       while n.hasMore: skip n
   of CallC: genCall c, n
+  of InstrC: genInstr c, n
   of AddC: typedBinOp c, n, " + "
   of SubC: typedBinOp c, n, " - "
   of MulC: typedBinOp c, n, " * "

@@ -112,7 +112,7 @@ proc accessRoots*(c: Cursor; roots: var seq[SymId]) =
     roots.add symId(c)
   of TagLit:
     case c.exprKind
-    of DotC, AtC, DerefC, PatC, AddrC:
+    of DotC, AtC, DerefC, PatC, AddrC, HaddrC:
       accessRoots(firstChild(c), roots)        # the base / addressed lvalue
     of ConvC, CastC:
       var r = c

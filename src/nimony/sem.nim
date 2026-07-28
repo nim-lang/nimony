@@ -15,7 +15,7 @@ import std / [tables, sets, syncio, formatfloat, assertions, strutils, hashes]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [symparser, nifindexes, docpaths]
+import ".." / lib / [symparser, nifindexes, docpaths, intrinsics]
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigconcepts, sigmatch, magics, reporters, nifconfig,
   intervals, xints, typeprops, conceptcache,
