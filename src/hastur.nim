@@ -72,7 +72,14 @@ Options:
   --version             show the version
   --help                show this help
   --forward:OPTION      pass an option to the Nimony compiler
-  --release             build in release mode
+  --debug               build the front-end tools (nimony, nimsem, hexer, …)
+                        unoptimized; they default to -d:release, like arkham
+                        and nifasm. For gdb work on the tools themselves —
+                        a debug toolchain is ~8x slower at compiling, so all
+                        test runs want the default
+  --release             no-op for the toolchain (release is the default); for
+                        `boot` it additionally compiles the bootstrapped
+                        nimony's own output with --opt:speed
   --jobs:N|auto         run up to N tests in parallel (auto = #cores)
   --cachedir:PATH       use PATH instead of `nimcache/` for intermediates
   --bindir:PATH         resolve the toolchain (nimony, lengc, …) from
@@ -531,10 +538,17 @@ proc warmupSharedCache(): string =
   ## without the savings).
   const warmupSrc = "tools/warmup.nim"
   if not fileExists(warmupSrc):
+    # Loud, because the fallback is silent-but-slow: without the prefill every
+    # test recompiles `system` from scratch (~3s each on Windows CI, ~700
+    # tests). A missing warmup file previously just disabled the optimization
+    # with no output at all, so the regression was invisible.
+    stderr.writeLine "warmup: " & warmupSrc &
+      " missing; every test will recompile the stdlib from scratch"
     return ""
   result = nimcacheDir / "warmup"
   let nimony = toolExe("nimony")
   if not fileExists(nimony):
+    stderr.writeLine "warmup: skipping, no nimony at " & nimony
     return ""
   let cmd = nimony.quoteShell & " c --nimcache:" & result.quoteShell &
             " " & warmupSrc.quoteShell
@@ -1233,17 +1247,26 @@ proc robustMoveFile(src, dest: string) =
   if fileExists(src):
     moveFile src, dest
 
-var release = false
+var bootOptSpeed = false
+var debugBuild = false
 var nativeToolsDebug = false
 
 proc nimcPrefix(): string =
+  ## The front-end tools ship OPTIMIZED by default, exactly like arkham and
+  ## nifasm (see `nativeToolPrefix`). A debug toolchain is ~8x slower at
+  ## compiling (measured on `nimony n bug.nim`: nimsem 0.155s release vs
+  ## 1.204s debug, hexer 0.065s vs 0.676s), which dominates every test run —
+  ## and because the suites rebuild the toolchain via `setup.hastur`, an
+  ## unoptimized default silently downgraded whatever the user had built
+  ## before. `--debug` opts out for gdb work on the tools themselves.
+  #
   # `--warningAsError:ProveInit:off` and `--warningAsError:Uninit:off`:
   # Nimony's `src/config.nims` promotes these warnings to errors, but Nim
   # 2.2.10's host stdlib (typedthreads.nim, deques.nim) trips them on
   # patterns that aren't actionable from our side. Without these overrides,
   # any tool using `createThread` (hastur itself) or `initDeque` (pnak)
   # fails to build on Nim 2.2.10.
-  (if release: "nim c -d:release " else: "nim c ") &
+  (if debugBuild: "nim c " else: "nim c -d:release ") &
     "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
 
 proc nativeToolPrefix(): string =
@@ -2052,14 +2075,15 @@ proc repCmd() =
 
 proc runSetupHastur(dir: string) =
   ## Prep step for a built-in-runner directory: run each line of
-  ## `<dir>/setup.hastur` as a hastur subcommand before its tests. `--release`
-  ## is forwarded so a release CI run also builds the toolchain in release
-  ## mode (the child hastur wouldn't otherwise inherit it).
+  ## `<dir>/setup.hastur` as a hastur subcommand before its tests. `--debug`
+  ## is forwarded so a `--debug` run also builds the toolchain unoptimized
+  ## (the child hastur wouldn't otherwise inherit it); without it the child
+  ## builds release, same as the parent's default.
   if skipBuild: return
   let f = dir / "setup.hastur"
   if not fileExists(f): return
   let self = getAppFilename().quoteShell
-  let relFlag = if release: " --release" else: ""
+  let relFlag = if debugBuild: " --debug" else: ""
   for raw in lines(f):
     let line = raw.strip
     if line.len == 0 or line.startsWith("#"): continue
@@ -2218,6 +2242,18 @@ proc handleCmdLine =
         # Build arkham + nifasm UNOPTIMIZED (they default to -d:release; see
         # nativeToolPrefix). For `-d:arkhamDbgSym` / gdb work on the toolchain.
         nativeToolsDebug = true
+      of "debug":
+        # Build the front-end tools UNOPTIMIZED (they default to -d:release;
+        # see nimcPrefix). Position-agnostic like `--release` below: these
+        # decide how the toolchain is built, and the tree walk rebuilds it
+        # via `setup.hastur` long after the subcommand was parsed.
+        debugBuild = true
+      of "release":
+        # Build-mode-wise a no-op (release IS the default). Retained because
+        # for `boot` it additionally means "compile the bootstrapped nimony's
+        # own output with --opt:speed", which is a separate axis and stays
+        # opt-in.
+        bootOptSpeed = true
       of "valgrind":
         withValgrind = true
       of "forward":
@@ -2235,7 +2271,6 @@ proc handleCmdLine =
           of "codegen": flags.incl RecordCodegen
           of "ast": flags.incl RecordAst
           of "overwrite": overwrite = true
-          of "release": release = true
           else: writeHelp()
         else:
           args.add key
@@ -2263,7 +2298,7 @@ proc handleCmdLine =
   of "boot":
     buildNimony()
     var bootArgs = ""
-    if release: bootArgs.add "--opt:speed"
+    if bootOptSpeed: bootArgs.add "--opt:speed"
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
       bootArgs.add quoteShell(a)

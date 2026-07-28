@@ -78,11 +78,17 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     # nifcore cannot splice an unbalanced `(asgn resId` open; collect the
     # last-son subtree, drop it, and re-emit it wrapped in `(asgn resId …)`.
     var lastSon = createTokenBuf(dest.len - beforeLastSon + 2)
-    lastSon.addUnstructured cursorAt(dest, beforeLastSon)
+    var lastSonN = cursorAt(dest, beforeLastSon)
+    lastSon.addUnstructured lastSonN
+    # Drop the rc before rewinding: a live cursor turns `shrink` into a full
+    # copy of `dest`.
+    endRead lastSonN
     dest.shrink beforeLastSon
     dest.addParLe(AsgnS, lastSonInfo)
     dest.addSymUse(c.routine.resId, lastSonInfo)
-    dest.addUnstructured cursorAt(lastSon, 0)
+    var reemit = cursorAt(lastSon, 0)
+    dest.addUnstructured reemit
+    endRead reemit
     dest.addParRi()
   else:
     commonType c, dest, it, beforeLastSon, c.routine.returnType

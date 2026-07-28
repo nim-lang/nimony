@@ -129,19 +129,26 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # `cursorTailAt`: for a zero-arg call (or a vararg position past the
     # last arg) these positions sit right after the sealed call's last
     # token — its physical close is elided under `-d:virtualParRi`.
-    let callHead = readonlyCursorAt(dest, beforeCall)
+    var callHead = readonlyCursorAt(dest, beforeCall)
+    let callInfo = callHead.info
     var pastFn = childCursor(callHead)
     skip pastFn # past the callee; the rebuilt args (if any) follow
     let argsPos = beforeCall + cursorToPosition(callHead, pastFn)
     var args = cursorTailAt(dest, argsPos)
     var firstVarargMatch = cursorTailAt(dest, argsPos + m.firstVarargPosition)
-    expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, readonlyCursorAt(dest, beforeCall).info)
-    # Release the rc refs the two `cursorAt` calls bumped on `dest`, so the
+    expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, callInfo)
+    # Release the rc refs the cursor constructors bumped on `dest`, so the
     # subsequent `shrink dest` + body re-sem can mutate `dest` without
-    # forcing the COW slow path. The earlier `endRead(dest)` calls were
-    # buffer-side no-ops; the cursor overload is what actually dec-refs.
+    # forcing the COW slow path (a full copy of the entire module buffer).
+    # The earlier `endRead(dest)` calls were buffer-side no-ops; the cursor
+    # overload is what actually dec-refs. `callHead` counts too: both it and
+    # the throwaway `readonlyCursorAt` that used to supply `.info` bumped the
+    # rc and were never released, so `shrink` always took the copying path.
+    # `pastFn` is a plain `childCursor` copy sharing `callHead`'s ref, so it
+    # must not be released separately.
     endRead args
     endRead firstVarargMatch
+    endRead callHead
     expectUnique dest
     shrink dest, beforeCall
     expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds
@@ -1064,7 +1071,11 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     elif isMagic == MagicCallNeedsSemcheck:
       # semcheck produced magic expression
       var magicExprBuf = createTokenBuf(dest.len - cs.beforeCall)
-      magicExprBuf.addUnstructured cursorAt(dest, cs.beforeCall)
+      var magicExprN = cursorAt(dest, cs.beforeCall)
+      magicExprBuf.addUnstructured magicExprN
+      # Drop the rc before rewinding: a live cursor turns `shrink` into a full
+      # copy of `dest`.
+      endRead magicExprN
       dest.shrink cs.beforeCall
       var magicExpr = Item(n: cursorAt(magicExprBuf, 0), typ: it.typ)
       semExpr c, dest, magicExpr, cs.flags

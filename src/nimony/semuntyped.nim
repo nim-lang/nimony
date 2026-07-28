@@ -273,6 +273,7 @@ proc semTemplSymbol(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor; firstS
             withoutGensyms.addSubtree choice
           inc choice, AnyExpr
       withoutGensyms.addParRi()
+      endRead choice # else the `shrink` below copies all of `dest`
       dest.shrink start
       dest.add withoutGensyms
 
@@ -428,6 +429,11 @@ proc semTemplBody*(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
       if firstSymN.isTagLit: inc firstSymN
       assert firstSymN.isSymbol
       let firstSym = firstSymN.symId
+      # Release the rc `cursorAt` bumped on `dest` right after reading the
+      # SymId out: every branch below (and `semTemplSymbol`) rewinds `dest`
+      # with `shrink`, and a live cursor forces that through the COW path,
+      # copying the whole module buffer per identifier.
+      endRead firstSymN
       if firstSym in c.params:
         assert count == 1
         dest.shrink start
