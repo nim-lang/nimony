@@ -5,26 +5,16 @@
 
 import ./types
 import ./slots
+import ./backend
 
 type
   PollBackend* = ref object of Backend
     pollFd*: cint
-    arena*: int
+    reArmEventFn*: proc(b: Backend; fd: cint; slotIdx: int; mask: int) {.nimcall.}
 
 const
   EvRead* = 1
   EvWrite* = 2
-
-method registerEvent*(b: PollBackend; fd: cint; slotIdx: int; mask: int) {.base.} = discard
-method reArmEvent*(b: PollBackend; fd: cint; slotIdx: int; mask: int) {.base.} = discard
-
-method submit*(b: PollBackend; slotIdx: int; op: ptr OpContext) =
-  var mask = 0
-  if op.kind == opRead or op.kind == opAccept:
-    mask = mask or EvRead
-  if op.kind == opWrite:
-    mask = mask or EvWrite
-  b.registerEvent(op.fd, slotIdx, mask)
 
 when defined(posix):
   import std / assertions
@@ -35,8 +25,9 @@ when defined(posix):
   proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.
     importc: "accept", header: "<sys/socket.h>".}
 
-  proc processFd*(b: PollBackend; fd: cint; firedEvents: int) =
-    let a = cast[ptr SlotArena](b.arena)
+  proc processFd*(b: Backend; fd: cint; firedEvents: int) =
+    let self = PollBackend(b)
+    let a = b.arena
     # collect all pending slot indices for this fd
     var pending = newSeq[int]()
     for j in 0..<MaxOps:
@@ -51,16 +42,16 @@ when defined(posix):
       of opRead:
         let r = posixRead(fd, s.buf, s.len)
         if b.completeFn != nil:
-          b.completeFn(j, if r >= 0: r else: -1, b.completeEnv)
+          b.completeFn(b.ring, j, if r >= 0: r else: -1)
       of opWrite:
         let r = posixWrite(fd, s.buf, s.len)
         if b.completeFn != nil:
-          b.completeFn(j, if r >= 0: r else: -1, b.completeEnv)
+          b.completeFn(b.ring, j, if r >= 0: r else: -1)
       of opAccept:
         var addrLen = s.acceptLen
         let clientFd = posixAccept(fd, addr s.acceptAddr, addr addrLen)
         if b.completeFn != nil:
-          b.completeFn(j, if clientFd >= 0: clientFd else: -1, b.completeEnv)
+          b.completeFn(b.ring, j, if clientFd >= 0: clientFd else: -1)
     # re-arm if any slots remain for this fd
     var needsArm = false
     var armMask = 0
@@ -78,6 +69,6 @@ when defined(posix):
         else:
           break
     if needsArm:
-      b.reArmEvent(fd, armSlotIdx, armMask)
+      self.reArmEventFn(b, fd, armSlotIdx, armMask)
 else:
-  proc processFd*(b: PollBackend; fd: cint; firedEvents: int) = discard
+  proc processFd*(b: Backend; fd: cint; firedEvents: int) = discard

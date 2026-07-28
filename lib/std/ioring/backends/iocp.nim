@@ -4,6 +4,7 @@
 
 import ../platform
 import ../core/types
+import ../core/backend
 
 type IocpBackend* = ref object
   fd: cint

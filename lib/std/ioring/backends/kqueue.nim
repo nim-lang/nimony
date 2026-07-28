@@ -7,16 +7,12 @@ import ../../posix/posix
 
 import ../core/types
 import ../core/slots
+import ../core/backend
 import ../core/backends
 
 type KqueueBackend* = ref object of PollBackend
 
-proc initKqueueBackend*(arena: int): KqueueBackend =
-  new result
-  result.pollFd = kqueue()
-  result.arena = arena
-
-method registerEvent*(b: KqueueBackend; fd: cint; slotIdx: int; mask: int) =
+proc kqueueRegisterEvent(b: KqueueBackend; fd: cint; slotIdx: int; mask: int) =
   var ev {.noinit.}: Kevent
   if (mask and EvRead) != 0:
     ev.ident = uint(fd)
@@ -31,16 +27,27 @@ method registerEvent*(b: KqueueBackend; fd: cint; slotIdx: int; mask: int) =
     ev.udata = cast[pointer](uint(slotIdx))
     discard kevent(b.pollFd, addr ev, 1, nil, 0, nil)
 
-method reArmEvent*(b: KqueueBackend; fd: cint; slotIdx: int; mask: int) =
-  b.registerEvent(fd, slotIdx, mask)
+proc kqueueReArmEvent(b: Backend; fd: cint; slotIdx: int; mask: int) {.nimcall.} =
+  let self = KqueueBackend(b)
+  self.kqueueRegisterEvent(fd, slotIdx, mask)
 
-method poll*(b: KqueueBackend; timeoutMs: int): bool =
-  let a = cast[ptr SlotArena](b.arena)
+proc kqueueSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
+  let self = KqueueBackend(b)
+  var mask = 0
+  if op.kind == opRead or op.kind == opAccept:
+    mask = mask or EvRead
+  if op.kind == opWrite:
+    mask = mask or EvWrite
+  self.kqueueRegisterEvent(op.fd, slotIdx, mask)
+
+proc kqueuePoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
+  let self = KqueueBackend(b)
+  let a = b.arena
   var events {.noinit.}: array[64, Kevent]
   var ts = Timespec(
     tv_sec: Time(timeoutMs div 1000),
     tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
-  let n = int(kevent(b.pollFd, nil, 0, addr events[0], 64, addr ts))
+  let n = int(kevent(self.pollFd, nil, 0, addr events[0], 64, addr ts))
   if n <= 0:
     return false
   for i in 0..<n:
@@ -49,5 +56,16 @@ method poll*(b: KqueueBackend; timeoutMs: int): bool =
     b.processFd(fd, fired)
   return true
 
-method close*(b: KqueueBackend) =
-  discard close(b.pollFd)
+proc kqueueClose(b: Backend) {.nimcall.} =
+  let self = KqueueBackend(b)
+  discard close(self.pollFd)
+
+proc initKqueueBackend*(arena: SlotArena; ring: Ring): KqueueBackend =
+  new result
+  result.pollFd = kqueue()
+  result.arena = arena
+  result.ring = ring
+  result.submitFn = kqueueSubmit
+  result.pollFn = kqueuePoll
+  result.closeFn = kqueueClose
+  result.reArmEventFn = kqueueReArmEvent

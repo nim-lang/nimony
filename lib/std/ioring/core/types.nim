@@ -24,16 +24,3 @@ type
     res*: int
     acceptAddr*: Sockaddr_storage
     acceptLen*: SockLen
-
-  Backend* = ref object of RootObj
-    completeFn*: proc(slotIdx: int; res: int; env: int) {.nimcall.}
-    completeEnv*: int
-
-method submit*(b: Backend; slotIdx: int; op: ptr OpContext) {.base.} =
-  discard
-
-method close*(b: Backend) {.base.} =
-  discard
-
-method poll*(b: Backend; timeoutMs: int): bool {.base.} =
-  return false

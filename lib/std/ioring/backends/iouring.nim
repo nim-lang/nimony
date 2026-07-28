@@ -7,22 +7,13 @@ import std/[assertions, posix/posix]
 import ../../posix/io_uring
 import ../core/types
 import ../core/slots
+import ../core/backend
 from ./epoll import initEpollBackend
-import std/syncio
 
 type IoUringBackend* = ref object of Backend
-  arena: int
   sqEntries: int
 
 var localQueue {.threadvar.}: Queue
-
-proc initIoUringBackend*(arena: int; sqEntries = 256): Backend =
-  try:
-    localQueue = newQueue(sqEntries)
-    result = IoUringBackend(arena: arena, sqEntries: sqEntries)
-  except:
-    # fallback to epoll
-    result = initEpollBackend(arena)
 
 proc tryInitLocalQueue(b: IoUringBackend) =
   if localQueue.params == nil:
@@ -31,8 +22,9 @@ proc tryInitLocalQueue(b: IoUringBackend) =
     except:
       return
 
-method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
-  b.tryInitLocalQueue()
+proc iouringSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
+  let self = IoUringBackend(b)
+  self.tryInitLocalQueue()
   var sqe: nil ptr Sqe
   try:
     sqe = localQueue.getSqe()
@@ -54,8 +46,9 @@ method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
 
-method poll*(b: IoUringBackend; timeoutMs: int): bool =
-  b.tryInitLocalQueue()
+proc iouringPoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
+  let self = IoUringBackend(b)
+  self.tryInitLocalQueue()
   try:
     discard localQueue.submit()
   except:
@@ -70,13 +63,25 @@ method poll*(b: IoUringBackend; timeoutMs: int): bool =
     discard
   if n <= 0:
     return false
-  let a = cast[ptr SlotArena](b.arena)
+  let a = b.arena
   for i in 0..<n:
     let slotIdx = int(cqes[i].userData)
     if slotIdx >= 0 and slotIdx < MaxOps and a.slots[slotIdx].inUse:
       if b.completeFn != nil:
-        b.completeFn(slotIdx, int(cqes[i].res), b.completeEnv)
+        b.completeFn(b.ring, slotIdx, int(cqes[i].res))
   return true
 
-method close*(b: IoUringBackend) =
-  discard
+proc iouringClose(b: Backend) {.nimcall.} = discard
+
+proc initIoUringBackend*(arena: SlotArena; ring: Ring; sqEntries = 256): Backend =
+  try:
+    localQueue = newQueue(sqEntries)
+    result = IoUringBackend(sqEntries: sqEntries)
+    result.arena = arena
+    result.ring = ring
+    result.submitFn = iouringSubmit
+    result.pollFn = iouringPoll
+    result.closeFn = iouringClose
+  except:
+    # fallback to epoll
+    result = initEpollBackend(arena, ring)

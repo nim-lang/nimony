@@ -5,22 +5,22 @@ import ./types
 
 const MaxOps* = 8192
 
-type SlotArena* = object
+type SlotArena* = ref object
   slots*: array[MaxOps, OpContext]
   freelist*: seq[int]
 
-proc init*(a: var SlotArena) =
+proc init*(a: SlotArena) =
   a.freelist = newSeq[int]()
   for i in 0..<MaxOps:
     a.freelist.add(i)
 
-proc allocSlot*(a: var SlotArena): int =
+proc allocSlot*(a: SlotArena): int =
   result = a.freelist.pop()
   a.slots[result].inUse = true
 
-proc addrSlot*(a: var SlotArena; idx: int): ptr OpContext =
+proc addrSlot*(a: SlotArena; idx: int): ptr OpContext =
   addr a.slots[idx]
 
-proc freeSlot*(a: var SlotArena; idx: int) =
+proc freeSlot*(a: SlotArena; idx: int) =
   a.slots[idx] = OpContext()
   a.freelist.add(idx)

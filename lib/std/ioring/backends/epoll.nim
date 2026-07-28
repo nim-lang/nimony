@@ -7,18 +7,14 @@ import ../../posix/posix
 
 import ../core/types
 import ../core/slots
+import ../core/backend
 import ../core/backends
 
 const MaxIoEvents = 64
 
 type EpollBackend* = ref object of PollBackend
 
-proc initEpollBackend*(arena: int): EpollBackend =
-  new result
-  result.pollFd = epoll_create1(0)
-  result.arena = arena
-
-method registerEvent*(b: EpollBackend; fd: cint; slotIdx: int; mask: int) =
+proc epollRegisterEvent(b: EpollBackend; fd: cint; slotIdx: int; mask: int) =
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
   if (mask and EvRead) != 0:
@@ -28,7 +24,7 @@ method registerEvent*(b: EpollBackend; fd: cint; slotIdx: int; mask: int) =
   ev.data.`ptr` = cast[pointer](uint(slotIdx))
   discard epoll_ctl(b.pollFd, EPOLL_CTL_ADD, fd, addr ev)
 
-method reArmEvent*(b: EpollBackend; fd: cint; slotIdx: int; mask: int) =
+proc epollReArmEvent(b: EpollBackend; fd: cint; slotIdx: int; mask: int) =
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
   if (mask and EvRead) != 0:
@@ -38,10 +34,20 @@ method reArmEvent*(b: EpollBackend; fd: cint; slotIdx: int; mask: int) =
   ev.data.`ptr` = cast[pointer](uint(slotIdx))
   discard epoll_ctl(b.pollFd, EPOLL_CTL_MOD, fd, addr ev)
 
-method poll*(b: EpollBackend; timeoutMs: int): bool =
-  let a = cast[ptr SlotArena](b.arena)
+proc epollSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
+  let self = EpollBackend(b)
+  var mask = 0
+  if op.kind == opRead or op.kind == opAccept:
+    mask = mask or EvRead
+  if op.kind == opWrite:
+    mask = mask or EvWrite
+  self.epollRegisterEvent(op.fd, slotIdx, mask)
+
+proc epollPoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
+  let self = EpollBackend(b)
+  let a = b.arena
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-  let n = int(epoll_wait(b.pollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
+  let n = int(epoll_wait(self.pollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
   if n <= 0:
     return false
   for i in 0..<n:
@@ -54,5 +60,15 @@ method poll*(b: EpollBackend; timeoutMs: int): bool =
     b.processFd(fd, int(ioEvents[i].events))
   return true
 
-method close*(b: EpollBackend) =
-  discard close(b.pollFd)
+proc epollClose(b: Backend) {.nimcall.} =
+  let self = EpollBackend(b)
+  discard close(self.pollFd)
+
+proc initEpollBackend*(arena: SlotArena; ring: Ring): EpollBackend =
+  new result
+  result.pollFd = epoll_create1(0)
+  result.arena = arena
+  result.ring = ring
+  result.submitFn = epollSubmit
+  result.pollFn = epollPoll
+  result.closeFn = epollClose

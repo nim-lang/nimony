@@ -15,103 +15,64 @@
 #   ring.shutdown()
 
 import std / [atomics, threadpool, assertions, ticketlocks]
-import ./ioring/core/[types, slots]
+import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
+export backend.Ring, backend.Backend, backend.CqSize
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
 
-# ---------------------------------------------------------------------------
-# IoPool — overrides Pool.poll to drive the I/O backend from worker threads
-# ---------------------------------------------------------------------------
+when hasIouring:
+  import ./ioring/backends/iouring
+elif hasIoPoll:
+  when hasEpoll:
+    import ./ioring/backends/epoll
+  elif hasKqueue:
+    import ./ioring/backends/kqueue
 
-type IoPool* = ref object of Pool
-  backend*: Backend
-
-method poll*(p: IoPool; timeoutMs: int): bool =
-  result = p.backend.poll(timeoutMs)
-
-# ---------------------------------------------------------------------------
-# IoRing
-# ---------------------------------------------------------------------------
-
-const CqSize = 4096
-
-type
-  IoRing* = ref object of RootObj
-    slots: SlotArena
-    nextSeq: SeqNum
-    backend: Backend
-    pool: IoPool
-    cqLock: TicketLock
-    cq: array[CqSize, IoCompletion]
-    cqHead, cqTail, cqCount: int
-
-# --- completion delivery (called from backend's poll via completeFn) ---
-
-proc completeCb(slotIdx: int; res: int; env: int) {.nimcall.} =
-  let ring = cast[IoRing](env)
+proc completeCb(ring: Ring; slotIdx: int; res: int) {.nimcall.} =
   let slot = addr ring.slots.slots[slotIdx]
-
-  var c = IoCompletion(id: slot.seqnum, op: slot.kind, fd: slot.fd)
-  c.result = res
-
   if slot.res != 0:
-    cast[ptr int](slot.res)[] = c.result
-
+    cast[ptr int](slot.res)[] = res
   let cont = slot.cont
   slot.cont = Continuation(fn: nil, env: nil)
-
   ring.slots.freeSlot(slotIdx)
-
   if cont.fn != nil:
-    ring.pool.submit(cont, int(c.fd))
+    ring.pool.submit(cont, int(slot.fd))
   else:
     ring.cqLock.acquire()
     if ring.cqCount < CqSize:
-      ring.cq[ring.cqTail] = c
+      ring.cq[ring.cqTail] = IoCompletion(id: slot.seqnum, op: slot.kind, fd: slot.fd, result: res)
       ring.cqTail = (ring.cqTail + 1) and (CqSize - 1)
       inc ring.cqCount
     ring.cqLock.release()
 
-# --- lifecycle ---
-
-proc initIoRing*(): IoRing =
+proc initIoRing*(): Ring =
   new result
+  result.slots = SlotArena()
   result.slots.init()
+  result.cq = newSeq[IoCompletion](CqSize)
   result.nextSeq = 1
-
   when hasIouring:
-    import ./ioring/backends/iouring
-    result.backend = initIoUringBackend(cast[int](addr result.slots))
+    result.backend = initIoUringBackend(result.slots, result)
   elif hasIoPoll:
-    import ./ioring/core/backends
     when hasEpoll:
-      import ./ioring/backends/epoll
-      result.backend = initEpollBackend(cast[int](addr result.slots))
+      result.backend = initEpollBackend(result.slots, result)
     elif hasKqueue:
-      import ./ioring/backends/kqueue
-      result.backend = initKqueueBackend(cast[int](addr result.slots))
+      result.backend = initKqueueBackend(result.slots, result)
   else:
     {.error: "No I/O backend available for this platform".}
-
   result.backend.completeFn = completeCb
-  result.backend.completeEnv = cast[int](result)
-  result.pool = IoPool()
-  result.pool.backend = result.backend
+  result.pool = Pool()
   result.pool.init()
 
-proc shutdown*(ring: IoRing) =
+proc shutdown*(ring: Ring) =
   ring.pool.shutdown()
-  ring.backend.close()
+  ring.backend.closeFn(ring.backend)
 
-# --- sequence numbers ---
-
-proc nextSeqNum(ring: IoRing): SeqNum =
+proc nextSeqNum(ring: Ring): SeqNum =
   SeqNum(atomicFetchAdd(ring.nextSeq, 1'u32, moRelaxed))
 
-# --- submission API ---
-
-proc submitRead*(ring: IoRing; fd: cint; buf: pointer; len: int;
+proc submitRead*(ring: Ring; fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = ring.nextSeqNum()
@@ -124,9 +85,9 @@ proc submitRead*(ring: IoRing; fd: cint; buf: pointer; len: int;
   op.len = len
   op.cont = cont
   op.res = cast[int](resPtr)
-  ring.backend.submit(idx, op)
+  ring.backend.submitFn(ring.backend, idx, op)
 
-proc submitWrite*(ring: IoRing; fd: cint; buf: pointer; len: int;
+proc submitWrite*(ring: Ring; fd: cint; buf: pointer; len: int;
                   cont = Continuation(fn: nil, env: nil);
                   resPtr: nil ptr int = nil): SeqNum =
   result = ring.nextSeqNum()
@@ -139,9 +100,9 @@ proc submitWrite*(ring: IoRing; fd: cint; buf: pointer; len: int;
   op.len = len
   op.cont = cont
   op.res = cast[int](resPtr)
-  ring.backend.submit(idx, op)
+  ring.backend.submitFn(ring.backend, idx, op)
 
-proc submitAccept*(ring: IoRing; listenFd: cint;
+proc submitAccept*(ring: Ring; listenFd: cint;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
   result = ring.nextSeqNum()
@@ -154,11 +115,9 @@ proc submitAccept*(ring: IoRing; listenFd: cint;
   op.res = cast[int](resPtr)
   op.acceptAddr = Sockaddr_storage()
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
-  ring.backend.submit(idx, op)
+  ring.backend.submitFn(ring.backend, idx, op)
 
-# --- completion harvesting ---
-
-proc pollCompletions*(ring: IoRing; comps: var openArray[IoCompletion]): int =
+proc pollCompletions*(ring: Ring; comps: var openArray[IoCompletion]): int =
   result = 0
   ring.cqLock.acquire()
   while result < comps.len and ring.cqCount > 0:
@@ -168,14 +127,12 @@ proc pollCompletions*(ring: IoRing; comps: var openArray[IoCompletion]): int =
     inc result
   ring.cqLock.release()
 
-proc waitCompletions*(ring: IoRing; comps: var openArray[IoCompletion]): int =
+proc waitCompletions*(ring: Ring; comps: var openArray[IoCompletion]): int =
   result = 0
   while true:
     result = ring.pollCompletions(comps)
     if result > 0: return
-    discard ring.backend.poll(0)
-
-# --- convenience: fd helpers ---
+    discard ring.backend.pollFn(ring.backend, 0)
 
 when defined(posix):
   proc posixClose(fd: cint): cint {.importc: "close", header: "<unistd.h>".}
@@ -186,11 +143,9 @@ when defined(posix):
     const O_NONBLOCK* = 0x0800.cint
   else:
     const O_NONBLOCK* = 0x0004.cint
-
   proc setNonBlocking*(fd: cint) =
     var flags = fcntl(fd, F_GETFL)
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)
-
   proc closeFd*(fd: cint) =
     discard posixClose(fd)
 
@@ -200,7 +155,6 @@ when defined(posix):
       sin_family*: cushort
       sin_port*: cushort
       sin_addr*: InAddr
-
   const
     AF_INET* = 2.cint
     SOCK_STREAM* = 1.cint
@@ -208,16 +162,14 @@ when defined(posix):
     SOL_SOCKET* = (when defined(macosx): 0xFFFF.cint else: 1.cint)
     SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
     INADDR_ANY* = 0'u32
-
   proc socket(domain, typ, protocol: cint): cint {.importc, header: "<sys/socket.h>".}
-  proc setsockopt(s: cint; level, optname: cint; optval: pointer; optlen: SockLen): cint {.
+  proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.
     importc, header: "<sys/socket.h>".}
   proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.
     importc: "bind", header: "<sys/socket.h>".}
   proc listen(s: cint; backlog: cint): cint {.importc, header: "<sys/socket.h>".}
   proc htons(x: uint16): uint16 {.importc, header: "<arpa/inet.h>".}
-
-  proc listenTcp*(ring: IoRing; port: uint16; backlog = 128): cint =
+  proc listenTcp*(ring: Ring; port: uint16; backlog = 128): cint =
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     assert fd >= 0, "socket() failed"
     var yes: cint = 1
