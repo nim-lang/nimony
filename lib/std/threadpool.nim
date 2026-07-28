@@ -9,6 +9,8 @@
 
 import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks]
 
+when not defined(windows):
+  import std/posix/posix
 # --- Configuration ---
 
 const
@@ -142,7 +144,15 @@ proc workerLoop(arg: pointer) {.nimcall.} =
     #    each continuation, re-submitting any that yield more work.
     let busy = p.drainOnce(threadIdx)
     # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
-    discard p.poll(if busy: 0.cint else: 1.cint)
+    let eventFired = p.poll(if busy: 0.cint else: 1.cint)
+    if not eventFired and not busy:
+      const timeoutMs = 1
+      when defined(windows):
+        sleep(timeoutMs.uint32)
+      else:
+        var ts = Timespec(tv_sec: (timeoutMs.float32/1000).Time)
+        var rem = Timespec()
+        discard nanosleep(ts, rem)
 
 proc init*(p: Pool) =
   ## Initialize the I/O poller and start worker threads.
