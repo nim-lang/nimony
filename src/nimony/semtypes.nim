@@ -1072,6 +1072,11 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       if containsGenericParams(elemType):
         # allow
         discard
+      elif elemType.kind == Symbol and prog.mem.hasKey(elemType.symId) and
+          prog.mem[elemType.symId].phase < SemcheckSignaturesInProgress:
+        # forward declared element type; the checks below run when the type
+        # is semchecked again after the declaration has been resolved, see #2098
+        discard
       elif not isOrdinalType(elemType, allowEnumWithHoles = true):
         errMsg = "set element type must be ordinal"
       else:
@@ -1248,3 +1253,4 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       discard "handled"
     else:
       semTypeExpr c, dest, n, context, info
+
