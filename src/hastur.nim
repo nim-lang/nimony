@@ -1388,6 +1388,55 @@ proc buildPnak*(showProgress = false) =
   let exe = "pnak".addFileExt(ExeExt)
   robustMoveFile "src/pnak/" & exe, binDir() / exe
 
+const AllTools = [
+  # (source path, executable name) for every host-Nim tool `build all` produces.
+  # Order is irrelevant: these are independent `nim c` invocations with no
+  # build-order dependency on each other.
+  ("src/nifler/nifler.nim", "nifler"),
+  ("src/nimony/nimsem.nim", "nimsem"),
+  ("src/nimony/nimony.nim", "nimony"),
+  ("src/lengc/lengc.nim", "lengc"),
+  ("src/lengc/shoggoth/shoggoth.nim", "shoggoth"),
+  ("src/niflink/niflink.nim", "niflink"),
+  ("src/hexer/hexer.nim", "hexer"),
+  ("src/nifmake/nifmake.nim", "nifmake"),
+  ("src/njvl/nj.nim", "nj"),
+  ("src/njvl/vl.nim", "vl"),
+  ("src/validator/validator.nim", "validator"),
+  ("src/dagon/dagon.nim", "dagon"),
+  ("src/pnak/pnak.nim", "pnak")]
+
+proc buildAllTools(jobs: int) =
+  ## Compile every tool in `AllTools` at once, then move the results into
+  ## `bin/`. The old code ran the 13 `nim c` calls back to back, which left
+  ## most of the machine idle: a GitHub runner has 4 cores, and after the test
+  ## suite this is the largest step in the job.
+  ##
+  ## Running them together is safe because the invocations are independent.
+  ## Each writes to Nim's default per-project cache (`~/.cache/nim/<name>_r`),
+  ## keyed by project name so no two tools share one, and each emits a distinct
+  ## executable, so the `nimsem`/`nimony` and `nj`/`vl` pairs that share a
+  ## source directory still cannot clobber each other. The binaries this
+  ## produces are byte-identical to the ones the sequential path produced.
+  ##
+  ## `nimsem` and `nimony` also take `validatePassesFlag()`, matching what the
+  ## sequential path did.
+  var cmds: seq[string] = @[]
+  for (src, name) in items(AllTools):
+    let extra = if name in ["nimsem", "nimony"]: validatePassesFlag() else: ""
+    cmds.add nimcPrefix() & extra & src
+
+  # execProcesses returns the highest exit code of any command rather than a
+  # count of failures, so report the code instead of a number of tools.
+  let worstExit = execProcesses(cmds, n = max(1, jobs),
+    options = {poStdErrToStdOut, poUsePath, poEvalCommand, poParentStreams})
+  if worstExit != 0:
+    quit "FAILURE: a tool failed to build (worst exit code " & $worstExit & ")"
+
+  for (src, name) in items(AllTools):
+    let exe = name.addFileExt(ExeExt)
+    robustMoveFile src.parentDir / exe, binDir() / exe
+
 # ---------------------------------------------------------------------------
 # Bootstrapping progress (see https://github.com/nim-lang/nimony/issues/1788).
 #
@@ -2320,19 +2369,7 @@ proc handleCmdLine =
     exec "git submodule update --init"
     case (if args.len > 0: args[0] else: "")
     of "", "all":
-      buildNifler(showProgress)
-      buildNimsem(showProgress)
-      buildNimony(showProgress)
-      buildLengc(showProgress)
-      buildShoggoth(showProgress)
-      buildNiflink(showProgress)
-      buildHexer(showProgress)
-      buildNifmake(showProgress)
-      buildNj(showProgress)
-      buildVl(showProgress)
-      buildValidator(showProgress)
-      buildDagon(showProgress)
-      buildPnak(showProgress)
+      buildAllTools(if parallelJobs > 1: parallelJobs else: countProcessors())
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
