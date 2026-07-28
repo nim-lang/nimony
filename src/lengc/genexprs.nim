@@ -144,6 +144,13 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
           errorAt c.m, "`" & IntrinsicNames[op] & "` is a machine flag " &
             "instruction; C has no condition codes, so it is only available " &
             "inside an `{.assembler.}` proc compiled by arkham", start
+        elif row.inoutOperand >= 0:
+          # A two-address row. C has no destructive-operand form, and suggesting
+          # `{.intrinsic.}` would be wrong advice: the portable spelling of
+          # `add(d, s)` is not another intrinsic, it is `d = d + s`.
+          errorAt c.m, "`" & IntrinsicNames[op] & "` is a two-address machine " &
+            "instruction; C has no such form, so write `d = d " &
+            "<op> s` for the portable path or guard the call with a `when`", start
         else:
           error c.m, "the C backend has no lowering for the target-pinned instruction `" &
             IntrinsicNames[op] & "`; use the portable `{.intrinsic: ....}` form " &

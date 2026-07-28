@@ -655,9 +655,6 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
   ## routine's `effects` slot, the one slot that already accepts an `(err …)`.
   let row = IntrinsicRows[op]
   let opName = IntrinsicNames[op]
-  if row.hasInoutOperand:
-    return "`" & opName & "` has an inout operand, which needs the " &
-           "`" & opName & "(var d, x)` spelling — not implemented yet"
   result = ""
   var w = 0
   var i = 0
@@ -669,7 +666,23 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
         result = "`" & opName & "` takes " & $row.arity & " operand(s)"
         break
       let param = asLocal(p)
-      if not matchPat(c, row.params[i], param.typ, w, row.widths):
+      # §4.1: the roles dictate the spelling, with no author choice. An `inout`
+      # operand is read AND written, which only `var` expresses — and the `var` is
+      # what makes the call site emit `(haddr d)`, the tag that tells the back end
+      # to bind d's location instead of materialising a pointer to it.
+      var ptyp = param.typ
+      let wantsVar = row.roles[i] == roInout
+      let isVar = ptyp.kind == TagLit and ptyp.typeKind == MutT
+      if wantsVar and not isVar:
+        result = "operand " & $(i + 1) & " of `" & opName & "` is read and " &
+                 "written, so it must be declared `var`"
+        break
+      if isVar and not wantsVar:
+        result = "operand " & $(i + 1) & " of `" & opName & "` is only read, " &
+                 "so it must not be declared `var`"
+        break
+      if isVar: inc ptyp             # `(mut T)` → match the row's pattern against T
+      if not matchPat(c, row.params[i], ptyp, w, row.widths):
         result = "operand " & $(i + 1) & " of `" & opName & "` has a type the " &
                  "instruction cannot take"
         break

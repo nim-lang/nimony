@@ -65,6 +65,21 @@ type
     NotOfOp
     PfOp
     NotPfOp
+    # ── two-address arithmetic: `roInout` on operand 0, no result. These are the
+    #    rows the `d = ins(x)` spelling cannot express, so §4.1 gives them the
+    #    `ins(var d, x)` form instead.
+    AddOp
+    SubOp
+    BitandOp
+    BitorOp
+    BitxorOp
+    ShiftlOp
+    ShiftrOp
+    SarOp
+    NegOp
+    BitnotOp
+    IncOp
+    DecOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -155,9 +170,17 @@ const
     # parse (a pragma entry is an expression — the same collision that made
     # `{.asm.}` impossible). `ovf`/`novf` are the source spellings; the backend
     # maps them back, so the assembler still sees `(of)`/`(no)`.
-    "zf", "nz", "cf", "nc", "sf", "ns", "ovf", "novf", "pf", "np"]
+    "zf", "nz", "cf", "nc", "sf", "ns", "ovf", "novf", "pf", "np",
+    # The rule throughout: the source name IS the nifasm tag, unless Nim's grammar
+    # forbids it. `and`/`or`/`xor`/`not`/`shl`/`shr` are keywords, so they take the
+    # spelling nimony's own IR already uses for those operations; the backend maps
+    # them back to `(and)`, `(or)`, … Everything Nim can parse keeps its mnemonic,
+    # `sar` included — the renames are exactly the collisions and nothing more.
+    "add", "sub", "bitand", "bitor", "bitxor", "shiftl", "shiftr", "sar",
+    "neg", "bitnot", "inc", "dec"]
 
   AllIn = [roIn, roIn, roIn, roIn]
+  InoutFirst = [roInout, roIn, roIn, roIn]        ## operand 0 read AND written
   NoOps = [ptNone, ptNone, ptNone, ptNone]        ## no operands at all
   Un = [ptAnyIntW, ptNone, ptNone, ptNone]        ## one integer source
   UnCount = [ptAnyIntW, ptAnyInt, ptNone, ptNone] ## a value plus a count
@@ -168,6 +191,11 @@ const
     ## and OF rather than computing them, which is still a definition — the column
     ## says "do not expect the previous value here", and that is what a reader of
     ## `defs` needs to know.
+  AllButCarry = {mfZF, mfSF, mfOF, mfPF}
+    ## `inc`/`dec` deliberately PRESERVE the carry flag — that is the whole reason
+    ## they exist next to `add r, 1`. A row that got this wrong would silently
+    ## break a multi-word add loop, so the column records it.
+  IntWidths = {8'u8, 16'u8, 32'u8, 64'u8}
 
   IntrinsicRows*: array[IntrinsicOp, IntrinsicRow] = [
     # The `NoIntrinsicOp` placeholder. Every field is spelled out: this file also
@@ -291,10 +319,58 @@ const
                  widths: {}, tie: -1, effects: {}, uses: {mfPF}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
-                 widths: {}, tie: -1, effects: {}, uses: {mfPF}, defs: {})
+                 widths: {}, tie: -1, effects: {}, uses: {mfPF}, defs: {}),
+
+    # ── two-address arithmetic ─────────────────────────────────────────────
+    # `roInout` on operand 0 is NOT `tie`. `tie` says the RESULT aliases a source
+    # (`d = bswap(x)` — still a value-producing form, and the allocator inserts
+    # the copy). Here there is no result at all: the output goes back through
+    # operand 0, which is why §4.1 gives these the `ins(var d, x)` spelling. A
+    # `var` parameter reaches Leng as `(haddr d)`, and that tag is exactly what
+    # tells the back end "bind d's location" rather than "materialise a pointer".
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # add
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # sub
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    # AND/OR/XOR clear CF and OF and set SF/ZF/PF — all five are DEFINED.
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # bitand → (and)
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # bitor → (or)
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # bitxor → (xor)
+                 params: Bin, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    # The shifts take a COUNT, not a same-width operand, hence `UnCount`. A
+    # variable count must live in `cl`; v1 takes a literal, like `rol`/`ror`.
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shiftl → (shl)
+                 params: UnCount, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shiftr → (shr)
+                 params: UnCount, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # sar
+                 params: UnCount, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # neg
+                 params: Un, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
+    # x86 NOT touches no flags at all — the one row here whose `defs` is empty.
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # bitnot → (not)
+                 params: Un, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # inc
+                 params: Un, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllButCarry),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # dec
+                 params: Un, roles: InoutFirst, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllButCarry)
   ]
 
-const LastIntrinsicOp* = NotPfOp
+const LastIntrinsicOp* = DecOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -318,10 +394,21 @@ proc isFlagRead*(r: IntrinsicRow): bool {.inline.} =
   ## place: an `if` condition. See `doc/intrinsics.md` §6.
   r.ret == ptBool and r.uses != {}
 
+proc inoutOperand*(r: IntrinsicRow): int =
+  ## The index of the row's `inout` operand, or -1. Such a row has no result: it
+  ## writes through that operand, which is spelled `var` in the declaration and
+  ## arrives as `(haddr d)` at the call site.
+  result = -1
+  for i in 0 ..< r.arity:
+    if r.roles[i] == roInout: return i
+
 proc isFlagWrite*(r: IntrinsicRow): bool {.inline.} =
-  ## A row whose only output is flags (`cmp`, `test`): it must be a STATEMENT,
+  ## A row whose ONLY output is flags (`cmp`, `test`): it must be a STATEMENT,
   ## since there is no value to bind, and it must not be deleted for having none.
-  r.ret == ptVoid and r.defs != {}
+  ## The `inout` exclusion matters: `add` is also void and also sets every flag,
+  ## but its result goes to a register, so it is an ordinary instruction that
+  ## happens to define flags — not a flag instruction.
+  r.ret == ptVoid and r.defs != {} and r.inoutOperand < 0
 
 proc hasInoutOperand*(r: IntrinsicRow): bool =
   ## A row the `d = ins(x)` spelling cannot express — it needs `ins(var d, x)`,
