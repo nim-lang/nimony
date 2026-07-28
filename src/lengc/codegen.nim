@@ -184,6 +184,23 @@ proc render(m: MainModule; n: Cursor): string =
   buf.addSubtree n
   result = toString(buf)
 
+proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
+  ## `error` without the trailing render of `n`. For a message that already names
+  ## what is wrong in prose: rendering the node would append its raw NIF spelling
+  ## (mangled symbol plus embedded line info), which says nothing a reader wants.
+  let info = rawLineInfo(n)
+  if info.isValid:
+    write stdout, m.pool.filenames[info.file]
+    write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
+  # `Error: `, not the `[Error] ` of the rendering `error` above: this is a
+  # user-facing diagnostic, and that is the spelling every other user-facing
+  # nimony error uses (the test harness keys the expected exit code off it).
+  write stdout, "Error: "
+  writeLine stdout, msg
+  when defined(debug):
+    echo getStackTrace()
+  quit 1
+
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = rawLineInfo(n)
   if info.isValid:
@@ -303,6 +320,20 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # no definition anywhere, and every call to it is an `(instr …)` the
         # expression generator lowers directly. Recording the flag is enough —
         # `genProcDecl` then emits nothing for the declaration itself.
+        result.flags.incl pk
+        skip n
+      of AssemblerP:
+        # `{.assembler.}` bodies are transliterated by arkham, not compiled to C.
+        # Routing them into a C build means assembling them separately and
+        # linking the object — see `nativenif/doc/asm-c-interop.md`, which is not
+        # built yet. Reject loudly rather than emit a prototype that will fail to
+        # link with no explanation.
+        result.flags.incl pk
+        skip n
+      of RegisterP, StackP:
+        # Location pins. They are assertions inside an `{.assembler.}` proc
+        # (rejected above) and allocator hints outside one; C has no way to
+        # honour either (its own `register` keyword is advisory), so drop them.
         result.flags.incl pk
         skip n
       of WasP:
@@ -575,6 +606,10 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   var prc = takeProcDecl(n)
 
   let prag = parseProcPragmas(c, prc.pragmas)
+  if AssemblerP in prag.flags:
+    errorAt c.m, "the C backend cannot compile an `{.assembler.}` proc; it must " &
+      "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
+      prc.name
   if prag.flags * {InstructionP, IntrinsicP} != {}:
     # No C declaration: an intrinsic has no definition to link against, and
     # every application of it is an `(instr …)` lowered at the use site.

@@ -144,6 +144,9 @@ type
     intrinsic: IntrinsicOp   ## the `{.instruction: X.}` / `{.intrinsic: X.}` row
                              ## (`NoIntrinsicOp` if neither); sem already checked
                              ## it against the signature, so hexer only forwards
+    register: StrId          ## `{.register: "rdi".}` — the pinned machine register of a
+                             ## param / result / local. Which names exist is arkham's
+                             ## question; hexer only carries the string across.
 
 proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): CollectedPragmas
 
@@ -812,6 +815,17 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.extern = n.strId
               result.flags.incl pk
               inc n
+          of AssemblerP, StackP:
+            # `(assembler)` on a proc, `(stack)` on a local: bare markers,
+            # forwarded as-is.
+            result.flags.incl pk
+            skip n
+          of RegisterP:
+            n.into:
+              expectStrLit c, n
+              result.register = n.strId
+              result.flags.incl pk
+              inc n
           of InstructionP, IntrinsicP:
             # sem already resolved and checked the opcode; re-resolve the ident
             # here so hexer carries the enum rather than a name.
@@ -997,6 +1011,9 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if prag.intrinsic != NoIntrinsicOp:
     let key = if InstructionP in prag.flags: "instruction" else: "intrinsic"
     dest.addKeyIdent genPragmas, key, IntrinsicNames[prag.intrinsic], pinfo
+
+  if AssemblerP in prag.flags:
+    dest.addKey genPragmas, "assembler", pinfo
 
   closeGenPragmas dest, genPragmas
 
@@ -1775,6 +1792,12 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       dest.addKeyVal genPragmas, "align", prag.align, pinfo
     if prag.bits != 0:
       dest.addKeyVal genPragmas, "bits", prag.bits, pinfo
+    # Location pins. Legal on a param, the result or a local — the back end
+    # decides what they mean per target and rejects a bad one.
+    if RegisterP in prag.flags and prag.register != StrId(0):
+      dest.addKeyVal genPragmas, "register", prag.register, pinfo
+    if StackP in prag.flags:
+      dest.addKey genPragmas, "stack", pinfo
     closeGenPragmas dest, genPragmas
 
     let typAt = n

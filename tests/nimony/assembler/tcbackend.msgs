@@ -1,0 +1,1 @@
+tests/nimony/assembler/tcbackend.nim(9, 6) Error: the C backend cannot compile an `{.assembler.}` proc; it must be assembled by arkham and linked as an object (see doc/asm-c-interop.md)

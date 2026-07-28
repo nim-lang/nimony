@@ -50,6 +50,21 @@ type
     ClzPinnedOp
     RbitOp
     RevOp
+    # ── flags. Two shapes: an instruction that DEFINES flags and returns
+    #    nothing, and a zero-operand `bool` that READS one. There is no flag
+    #    type and no flag variable — see `doc/intrinsics.md` §6.
+    CmpOp
+    TestOp
+    ZfOp
+    NotZfOp
+    CfOp
+    NotCfOp
+    SfOp
+    NotSfOp
+    OfOp
+    NotOfOp
+    PfOp
+    NotPfOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -77,6 +92,14 @@ type
     efReads      ## reads memory through a pointer operand
     efWrites     ## writes memory through a pointer operand
     efBarrier    ## no memory reordering across it
+
+  MachineFlag* = enum
+    ## The condition-code bits both targets expose. x86-64 has all five; AArch64's
+    ## NZCV covers the same ground under other names (Z, C, N, V — no parity).
+    ## They are named here so a row can say WHICH flag it defines or reads, which
+    ## is what makes `zf()` checkable without a flag type: the column carries what
+    ## a `bool` return cannot.
+    mfZF, mfCF, mfSF, mfOF, mfPF
 
   PatKind* = enum
     ## The type-pattern vocabulary. `…W` binds (or matches) the row's single
@@ -112,23 +135,46 @@ type
                                     ## the same service the accumulator model
                                     ## already provides for built-in operators.
     effects*: set[IntrinsicEffect]
+    uses*: set[MachineFlag]         ## flags the row READS. A row with a `ptBool`
+                                    ## result and a non-empty `uses` IS a flag
+                                    ## read — the only shape that can produce a
+                                    ## value with no register behind it.
+    defs*: set[MachineFlag]         ## flags the row WRITES. Documentation in v1
+                                    ## (nothing consults it yet), and the column a
+                                    ## v2 needs to prove no instruction clobbered
+                                    ## a flag between its definition and its read
+                                    ## — the check §6 defers.
 
 const
   IntrinsicNames*: array[IntrinsicOp, string] = [
     "", "Ctz", "Clz", "Popcount", "Bswap",
-    "bsf", "bsr", "popcnt", "bswap", "rol", "ror", "clz", "rbit", "rev"]
+    "bsf", "bsr", "popcnt", "bswap", "rol", "ror", "clz", "rbit", "rev",
+    "cmp", "test",
+    # nifasm's own condition tags, except the overflow pair: its tags are `of`
+    # and `no`, and `of` is a Nim keyword, so `{.instruction: of.}` does not
+    # parse (a pragma entry is an expression — the same collision that made
+    # `{.asm.}` impossible). `ovf`/`novf` are the source spellings; the backend
+    # maps them back, so the assembler still sees `(of)`/`(no)`.
+    "zf", "nz", "cf", "nc", "sf", "ns", "ovf", "novf", "pf", "np"]
 
   AllIn = [roIn, roIn, roIn, roIn]
   NoOps = [ptNone, ptNone, ptNone, ptNone]        ## no operands at all
   Un = [ptAnyIntW, ptNone, ptNone, ptNone]        ## one integer source
   UnCount = [ptAnyIntW, ptAnyInt, ptNone, ptNone] ## a value plus a count
+  Bin = [ptAnyIntW, ptAnyIntW, ptNone, ptNone]    ## two same-width integer sources
+
+  AllArith = {mfZF, mfCF, mfSF, mfOF, mfPF}
+    ## What an x86 arithmetic/compare instruction leaves defined. `test` clears CF
+    ## and OF rather than computing them, which is still a definition — the column
+    ## says "do not expect the previous value here", and that is what a reader of
+    ## `defs` needs to know.
 
   IntrinsicRows*: array[IntrinsicOp, IntrinsicRow] = [
     # The `NoIntrinsicOp` placeholder. Every field is spelled out: this file also
     # bootstraps under nimony, whose const evaluator has no `default(array[…])`.
     IntrinsicRow(cls: icPortable, targets: {}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptNone,
-                 widths: {}, tie: -1, effects: {}),
+                 widths: {}, tie: -1, effects: {}, uses: {}, defs: {}),
 
     # ── portable ───────────────────────────────────────────────────────────
     # `Ctz`/`Clz`/`Popcount` count bits, so the result is an `int32` on every
@@ -136,10 +182,10 @@ const
     # nimony's `countTrailingZeroBits` family.
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptInt32,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptInt32,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     # `Popcount` is x86-64 only for now: it lowers to SSE4.2 `POPCNT` there, while
     # AArch64 has no scalar population count (the NEON `cnt`/`addv` pair needs FP
     # register handling nifasm does not model yet, and the scalar SWAR expansion
@@ -148,11 +194,11 @@ const
     # the target rather than a silent fallback.
     IntrinsicRow(cls: icPortable, targets: {tgX64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptInt32,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     # A byte swap preserves the width, so `W` appears on both sides.
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
 
     # ── x86-64 ─────────────────────────────────────────────────────────────
     # `bsf`/`bsr` leave the destination unmodified when the source is zero, so
@@ -163,41 +209,92 @@ const
     # the target model does not have yet.)
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {16'u8, 32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     # x86 `bswap` reverses a register IN PLACE, so the destination must already
     # hold the source: `tie = 0`. The source spelling stays `d = bswap(x)` and
     # the allocator inserts the copy — which it elides whenever `d` and `x`
     # share a home.
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {32'u8, 64'u8}, tie: 0, effects: {efPure}),
+                 widths: {32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,
                  params: UnCount, roles: AllIn, ret: ptAnyIntW,
-                 widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: 0, effects: {efPure}),
+                 widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,
                  params: UnCount, roles: AllIn, ret: ptAnyIntW,
-                 widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: 0, effects: {efPure}),
+                 widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
 
     # ── AArch64 ────────────────────────────────────────────────────────────
     # Three-address, so no tie. `clz(rbit(x))` is the a64 `Ctz`.
     IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}),
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 1,
                  params: Un, roles: AllIn, ret: ptAnyIntW,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure})
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+
+    # ── flags ──────────────────────────────────────────────────────────────
+    # `cmp`/`test` compute nothing and return nothing: their whole output is in
+    # `defs`. That is exactly why they are NOT `efPure` — a "pure" row with a void
+    # result is dead by definition, and DCE would be right to delete it. The flag
+    # columns are what makes a flag-only instruction non-removable.
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64}, arity: 2,
+                 params: Bin, roles: AllIn, ret: ptVoid,
+                 widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: -1, effects: {},
+                 uses: {}, defs: AllArith),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,
+                 params: Bin, roles: AllIn, ret: ptVoid,
+                 widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: -1, effects: {},
+                 uses: {}, defs: AllArith),
+
+    # The reads. Zero operands, `bool` result, and a `uses` naming the one bit —
+    # the third field is what distinguishes these from an ordinary predicate, and
+    # what lets the rule of §6 ("legal only where it needs no materialisation") be
+    # checked without a flag type infecting the type system. `zf`/`nz` exist on
+    # both targets (AArch64's Z under another name); the rest are x86-64, which is
+    # what the nifasm `(ite …)` vocabulary offers there.
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfSF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfSF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfOF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfOF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfPF}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+                 params: NoOps, roles: AllIn, ret: ptBool,
+                 widths: {}, tie: -1, effects: {}, uses: {mfPF}, defs: {})
   ]
 
-const LastIntrinsicOp* = RevOp
+const LastIntrinsicOp* = NotPfOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -211,6 +308,20 @@ proc intrinsicOpByName*(name: string; cls: IntrinsicClass): IntrinsicOp =
     let op = IntrinsicOp(i)
     if IntrinsicNames[op] == name and IntrinsicRows[op].cls == cls:
       return op
+
+proc isFlagRead*(r: IntrinsicRow): bool {.inline.} =
+  ## A row whose value IS a machine flag rather than a register: `bool` result,
+  ## no operands, and a `uses` naming the bit. Such a value cannot be stored,
+  ## passed or returned — the instruction that would materialise it (`setcc`) is
+  ## itself a flag reader, and anything emitted between the definition and the
+  ## read may have clobbered the bit. v1 therefore allows it in exactly one
+  ## place: an `if` condition. See `doc/intrinsics.md` §6.
+  r.ret == ptBool and r.uses != {}
+
+proc isFlagWrite*(r: IntrinsicRow): bool {.inline.} =
+  ## A row whose only output is flags (`cmp`, `test`): it must be a STATEMENT,
+  ## since there is no value to bind, and it must not be deleted for having none.
+  r.ret == ptVoid and r.defs != {}
 
 proc hasInoutOperand*(r: IntrinsicRow): bool =
   ## A row the `d = ins(x)` spelling cannot express — it needs `ins(var d, x)`,

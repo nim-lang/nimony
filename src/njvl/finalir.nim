@@ -682,9 +682,19 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let oldProc = move c.current
   c.current = CurrentProc(tmpCounter: 1, returnType: r.retType)
 
+  # An `{.assembler.}` body is machine code written by hand: it has no contracts
+  # to check, and its constructs are outside the Final IR's vocabulary anyway (a
+  # machine flag as an `if` condition is not an expression). `xelim` leaves such a
+  # body verbatim — source order is the contract — so it never arrives in the
+  # normalized form this pass assumes. Lower it to a bodyless declaration: there
+  # is nothing to analyse, and nothing to trip over.
+  let isAsm = hasPragma(r.pragmas, AssemblerP)
   copyInto(dest, n):
     let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
-    if isConcrete:
+    if isAsm:
+      skip n
+      dest.addDotToken()
+    elif isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):
         c.typeCache.registerLocal(symId, r.kind, decl)

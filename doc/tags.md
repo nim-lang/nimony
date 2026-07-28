@@ -344,6 +344,9 @@
 | `(instruction X)` | NimonyPragma, LengPragma | target-pinned instruction annotation; the argument is an opcode ident from `lib/intrinsics`'s `IntrinsicOp` (e.g. `bsf`). The proc is a *declaration* of one machine instruction: calls to it become `(instr …)`, never an ABI call. Its signature spelling is dictated by the row's operand roles and checked at the declaration |
 | `(intrinsic X)` | NimonyPragma, LengPragma | portable-intrinsic annotation; like `instruction` but the opcode is target-neutral and may expand to any number of instructions (`Memcpy`, `AtomicFetchAdd`, …). Its signature is unified against the row's shape at the declaration |
 | `(instr SYM X*)` | LengExpr, LengStmt | intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode |
+| `(register STR)` | NimonyPragma, LengPragma | pins a parameter, result or local to a named machine register (`{.register: "rdi".}`). In an `{.assembler.}` proc this is an *assertion* the back end verifies; in an ordinary proc it is a hard pin the register allocator honours |
+| `(stack)` | NimonyPragma, LengPragma | pins a local to a stack slot rather than a register (`{.stack.}`) — the memory counterpart of `(register …)` |
+| `(assembler)` | NimonyPragma, LengPragma | the `{.assembler.}` **proc pragma** (no children): every construct in the body maps one-to-one to assembler, in source order, with no temporaries invented and no operand materialised. The back end (arkham) owns that checking — see `nativenif/doc/intrinsics.md` §8. Spelled `assembler` rather than `asm` because Nim's parser reads a pragma entry as an expression and so cannot accept a keyword there; it is unrelated to the `(asm X+)` statement |
 
 ### unpackflat, unpacktup, unpackdecl
 

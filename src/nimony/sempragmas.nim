@@ -195,6 +195,41 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "`magic` pragma takes a string literal"
     dest.addParRi()
+  of AssemblerP:
+    # `{.assembler.}` — every construct in the body maps one-to-one to assembler.
+    # The CHECKING is delegated to the back end (arkham), which is where the
+    # machine model lives; NIF carries precise line info, so its diagnostics are
+    # as good as a front-end pass would give. Sem only records the flag.
+    crucial.flags.incl pk
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, "`assembler` pragma is only allowed on routines"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+    else:
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+  of RegisterP:
+    # `{.register: "rdi".}` on a parameter, result or local. Which register names
+    # exist, and whether the annotation is consistent with the proc's ABI, is a
+    # target question — arkham's, not sem's.
+    crucial.flags.incl pk
+    let pinfo = n.info                 # the pragma NAME's info: `toPragmaArgs` moves
+    dest.addParLe(pk, pinfo)           # `n` past it, and a bare `{.register.}` has
+    toPragmaArgs()                     # nothing after it to report against
+    if hasParRi and n.hasMore:
+      semConstStrExprIgnoreTopLevel c, dest, n
+    else:
+      buildErr c, dest, pinfo, "`register` pragma takes a register name"
+    dest.addParRi()
+  of StackP:
+    crucial.flags.incl pk
+    dest.addParLe(pk, n.info)
+    dest.addParRi()
+    toPragmaArgs()
   of InstructionP, IntrinsicP:
     # `{.instruction: bsf.}` / `{.intrinsic: Ctz.}` — the argument is an opcode
     # ident from `lib/intrinsics`, NOT a free string, so a typo is an error here

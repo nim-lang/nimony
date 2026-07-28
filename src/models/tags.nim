@@ -347,6 +347,9 @@ type
     InstructionTagId
     IntrinsicTagId
     InstrTagId
+    RegisterTagId
+    StackTagId
+    AssemblerTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -693,5 +696,8 @@ const
     ("toClosure", 341),
     ("instruction", 342),
     ("intrinsic", 343),
-    ("instr", 344)
+    ("instr", 344),
+    ("register", 345),
+    ("stack", 346),
+    ("assembler", 347)
   ]

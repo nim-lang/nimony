@@ -114,6 +114,22 @@ proc llIntBits*(c: LLVMCode; n: int): LLType =
   of 64: c.prim.i64
   else: newLLIntType(n)
 
+proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
+  ## `error` without the trailing render of `n`, for a message that already names
+  ## what is wrong in prose (the render would append the raw mangled symbol).
+  let info = rawLineInfo(n)
+  if info.isValid:
+    write stdout, m.pool.filenames[info.file]
+    write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
+  # `Error: `, not the `[Error] ` of the rendering `error` above: this is a
+  # user-facing diagnostic, and that is the spelling every other user-facing
+  # nimony error uses (the test harness keys the expected exit code off it).
+  write stdout, "Error: "
+  writeLine stdout, msg
+  when defined(debug):
+    echo getStackTrace()
+  quit 1
+
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = rawLineInfo(n)
   if info.isValid:
@@ -566,6 +582,11 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         # nothing to emit for the declaration itself.
         result.flags.incl pk
         skip n
+      of AssemblerP, RegisterP, StackP:
+        # `{.assembler.}` bodies are arkham's; the location pins are assertions
+        # inside one. See the C backend's `parseProcPragmas` for the reasoning.
+        result.flags.incl pk
+        skip n
       of WasP:
         n.into:
           result.wasName = toString(n, false)
@@ -623,6 +644,14 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
   let procInfo = n.info
   var prc = takeProcDecl(n)
   let prag = parseProcPragmasLLVM(c, prc.pragmas)
+  if AssemblerP in prag.flags:
+    # Same reasoning as the C backend (see its `genProcDecl`): an `{.assembler.}`
+    # body names machine registers and promises a one-to-one instruction mapping,
+    # which no IR-level backend can honour. Refuse it by name instead of emitting
+    # a body that silently means something else.
+    errorAt c.m, "the LLVM backend cannot compile an `{.assembler.}` proc; it must " &
+      "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
+      prc.name
 
   let name = genSymDefLLVM(c, prc.name, prag)
 

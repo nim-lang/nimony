@@ -135,9 +135,19 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
     else:
       builtin = cBuiltinFor(op, bits)
       if builtin.len == 0:
-        error c.m, "the C backend has no lowering for the target-pinned instruction `" &
-          IntrinsicNames[op] & "`; use the portable `{.intrinsic: ....}` form " &
-          "or guard the call with a `when`: ", start
+        let row = IntrinsicRows[op]
+        if row.isFlagRead or row.isFlagWrite:
+          # No portable form exists or ever will: C has no notion of a condition
+          # code, and what makes a flag usable at all — that nothing runs between
+          # its definition and its read — is exactly what a C compiler will not
+          # promise. Say that, rather than suggesting `{.intrinsic.}`.
+          errorAt c.m, "`" & IntrinsicNames[op] & "` is a machine flag " &
+            "instruction; C has no condition codes, so it is only available " &
+            "inside an `{.assembler.}` proc compiled by arkham", start
+        else:
+          error c.m, "the C backend has no lowering for the target-pinned instruction `" &
+            IntrinsicNames[op] & "`; use the portable `{.intrinsic: ....}` form " &
+            "or guard the call with a `when`: ", start
     c.add builtin
     skip n                                  # the callee symbol
     c.add ParLe
