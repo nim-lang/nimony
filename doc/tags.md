@@ -237,7 +237,7 @@
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
 | `(hderef X)` | NimonyExpr | hidden pointer deref operation |
 | `(ddot X Y INTLIT STRLIT?)` | NimonyExpr | deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — certifies the access was type-checked with private-field visibility and must be accepted on re-check. |
-| `(haddr X)` | NimonyExpr | hidden address of operation |
+| `(haddr X)` | NimonyExpr, LengExpr | hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)` |
 | `(newref T X?)` | NimonyExpr | Nim's `new` magic proc that allocates a `ref T`; optional initializer expression |
 | `(newobj T (kv Y X)*)` | NimonyExpr | new object constructor |
 | `(tup X+)` | NimonyExpr, NiflerKind | untyped tuple constructor |

@@ -264,7 +264,7 @@ proc classify(c: var Context; n: Cursor) =
         m.loopInto:
           classify(c, m)
           skip m
-    of AddrC:
+    of AddrC, HaddrC:
       let r = rootOf(child0(n))                   # `addr o` / `addr o.f` escapes o
       if r != SymId(0) and r in c.candidates:
         c.candidates[r].disqualified = true

@@ -1652,7 +1652,11 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       if isAddrOfAconstrUarray(n):
         trAddrAconstrUarray(c, dest, n)
       else:
-        dest.addParLe("addr", n.info)
+        # Keep the two apart: `(haddr x)` is the compiler binding x's LOCATION
+        # for a `var`/`out` parameter, `(addr x)` is the user turning it into a
+        # value. They lower identically, but a back end that can bind a location
+        # without materialising a pointer needs to know which it is looking at.
+        dest.addParLe((if n.exprKind == HaddrX: "haddr" else: "addr"), n.info)
         n.into:
           trExpr(c, dest, n)
           dest.addParRi(n.endInfo)

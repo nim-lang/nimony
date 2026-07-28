@@ -191,7 +191,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
         result = firstChild(x)
       else:
         result = createIntegralType(c, "(err)")
-    of AddrC:
+    of AddrC, HaddrC:                       # both are `&lvalue`
       let x = getTypeImpl(c, firstChild(n))
       result = ptrTypeOf(c, x)
     of ConvC, CastC, AconstrC, OconstrC, BaseobjC:

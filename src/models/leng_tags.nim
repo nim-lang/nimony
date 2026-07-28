@@ -46,12 +46,13 @@ type
     CastC = (ord(CastTagId), "cast")  ## `cast` operation (typed cast expression, or `{.cast(pragma).}` pragma form)
     ConvC = (ord(ConvTagId), "conv")  ## type conversion
     CallC = (ord(CallTagId), "call")  ## call operation
+    HaddrC = (ord(HaddrTagId), "haddr")  ## hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)`
     BaseobjC = (ord(BaseobjTagId), "baseobj")  ## object conversion to base type
     ErrvC = (ord(ErrvTagId), "errv")  ## error flag for Leng
     InstrC = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
 
 proc rawTagIsLengExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, BaseobjTagId, ErrvTagId, InstrTagId}
+  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, ErrvTagId, InstrTagId}
 
 type
   LengStmt* = enum

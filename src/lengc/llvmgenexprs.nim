@@ -758,7 +758,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       skip n
       genLvalueLLVM(c, n, result)
       while n.hasMore: skip n
-  of SufC, ParC, AddrC, NilC, InfC, NeginfC, NanC, FalseC, TrueC,
+  of SufC, ParC, AddrC, HaddrC, NilC, InfC, NeginfC, NanC, FalseC, TrueC,
      AndC, OrC, NotC, NegC, SizeofC, AlignofC, OffsetofC,
      OconstrC, AconstrC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
@@ -1014,7 +1014,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     # operand, which `genCallWithType` cannot express. Reject rather than
     # silently lower an intrinsic to something else.
     error c.m, "the LLVM backend has no lowering for (instr ...) yet: ", n
-  of AddrC:
+  of AddrC, HaddrC:
     genAddrLLVM(c, n, result)
   of DerefC:
     let derefType = getType(c.m, n)

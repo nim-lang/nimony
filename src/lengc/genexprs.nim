@@ -362,7 +362,7 @@ proc genCond(c: var GeneratedCode; n: var Cursor) =
     c.add ParRi
 
 proc genx(c: var GeneratedCode; n: var Cursor) =
-  if n.exprKind != AddrC and n.kind != StrLit:
+  if n.exprKind notin AddrKinds and n.kind != StrLit:
     c.flags.excl gfInCallImportC
   case n.exprKind
   of NoExpr:
@@ -485,7 +485,9 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       genx c, n
       c.add ParRi
       while n.hasMore: skip n
-  of AddrC:
+  of AddrC, HaddrC:
+    # C has one `&`: a hidden address is the same `&x`, only the REASON differs
+    # (see `nifcdecl.AddrKinds`), and C has nowhere to put the reason.
     genAddr c, n
     c.flags.excl gfInCallImportC
   of SizeofC:

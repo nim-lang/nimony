@@ -145,7 +145,7 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
       result = a.localRoots.getOrQuit(n.symId)
   of TagLit:
     case n.exprKind
-    of DotC, DerefC, PatC, AtC, AddrC:
+    of DotC, DerefC, PatC, AtC, AddrC, HaddrC:
       result = exprRoots(a, n.childCursor)
     of ConvC, CastC:
       var r = n
@@ -291,7 +291,7 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
     n.loopInto:
       walkStmt(a, n)
   else:
-    if n.exprKind == AddrC:
+    if n.exprKind in AddrKinds:
       let escRoots = exprRoots(a, n.childCursor)
       for r in escRoots: markEscapeElem(a, r)
     n.loopInto:

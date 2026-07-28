@@ -59,7 +59,7 @@ type
     QuotedX = (ord(QuotedTagId), "quoted")  ## name in backticks
     HderefX = (ord(HderefTagId), "hderef")  ## hidden pointer deref operation
     DdotX = (ord(DdotTagId), "ddot")  ## deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — certifies the access was type-checked with private-field visibility and must be accepted on re-check.
-    HaddrX = (ord(HaddrTagId), "haddr")  ## hidden address of operation
+    HaddrX = (ord(HaddrTagId), "haddr")  ## hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)`
     NewrefX = (ord(NewrefTagId), "newref")  ## Nim's `new` magic proc that allocates a `ref T`; optional initializer expression
     NewobjX = (ord(NewobjTagId), "newobj")  ## new object constructor
     TupX = (ord(TupTagId), "tup")  ## untyped tuple constructor

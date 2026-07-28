@@ -96,6 +96,15 @@ proc exprKind*(c: Cursor): LengExpr {.inline.} =
   else:
     result = NoExpr
 
+const AddrKinds* = {AddrC, HaddrC}
+  ## The nifstreams-cursor twin of `nifcdecl.AddrKinds` (the two decoders are
+  ## split by cursor API, not by vocabulary). `(addr x)` and `(haddr x)` both
+  ## denote x's address and lower identically; they are separate tags so a
+  ## consumer that cares *why* the address was taken can tell them apart.
+  ## Matching only one of them is almost always a bug — an escape or
+  ## address-taken analysis that misses `haddr` would let a `var` argument slip
+  ## past it — so match this set unless the difference is the point.
+
 proc symKind*(c: Cursor): LengSym {.inline.} =
   if c.isTagLit:
     if rawTagIsLengSym(tagEnum(c)):
