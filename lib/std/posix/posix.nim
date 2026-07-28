@@ -220,13 +220,13 @@ when defined(posix):
       ## Test for a socket.
 
   when defined(nimNativeIo):
-    proc mmap*(a1: nil pointer, a2: uint, a3, a4, a5: cint, a6: Off): pointer {.
+    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
       importc: "mmap".}
-    proc munmap*(a1: nil pointer, a2: uint): cint {.importc: "munmap".}
+    proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap".}
   else:
-    proc mmap*(a1: nil pointer, a2: uint, a3, a4, a5: cint, a6: Off): pointer {.
+    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
       importc: "mmap", header: "<sys/mman.h>".}
-    proc munmap*(a1: nil pointer, a2: uint): cint {.importc: "munmap", header: "<sys/mman.h>".}
+    proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap", header: "<sys/mman.h>".}
 
   when not defined(nimNativeIo):
     var errnoVar {.importc: "errno", header: "<errno.h>".}: cint
@@ -650,7 +650,7 @@ when defined(posix):
       importc, header: "<string.h>", sideEffect.}
 
   when defined(nimNativeIo):
-    proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.importc: "nanosleep", sideEffect.}
+    proc nanosleep*(req: Timespec; rem: var Timespec): cint {.importc: "nanosleep", sideEffect.}
   else:
-    proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.
+    proc nanosleep*(req: Timespec; rem: var Timespec): cint {.
       importc, header: "<time.h>", sideEffect.}
