@@ -650,7 +650,7 @@ when defined(posix):
       importc, header: "<string.h>", sideEffect.}
 
   when defined(nimNativeIo):
-    proc nanosleep*(req: Timespec; rem: var Timespec): cint {.importc: "nanosleep", sideEffect.}
+    proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.importc: "nanosleep", sideEffect.}
   else:
-    proc nanosleep*(req: Timespec; rem: var Timespec): cint {.
+    proc nanosleep*(req: var Timespec; rem: var Timespec): cint {.
       importc, header: "<time.h>", sideEffect.}

@@ -489,35 +489,50 @@ var IPC_STAT* {.importc: "IPC_STAT", header: "<sys/ipc.h>".}: cint
 when defined(linux) or defined(osx):
   const PROT_READ* = cint(1)
   const PROT_WRITE* = cint(2)
+  const PROT_EXEC* = cint(0x4)
+  const PROT_NONE* = cint(0x0)
+  const MAP_ANONYMOUS* = cint(0x20)
+  const MAP_SHARED* = cint(1)
+  const MAP_PRIVATE* = cint(2)
+  const MAP_FIXED* = cint(0x10)
+  const MS_ASYNC* = cint(1)
+  const MS_SYNC* = cint(4)
+  const MS_INVALIDATE* = cint(2)
+  const MCL_CURRENT* = cint(1)
+  const MCL_FUTURE* = cint(2)
+  let MAP_FAILED* = cast[pointer](-1)
+  const POSIX_MADV_NORMAL* = cint(0)
+  const POSIX_MADV_SEQUENTIAL* = cint(2)
+  const POSIX_MADV_RANDOM* = cint(1)
+  const POSIX_MADV_WILLNEED* = cint(3)
+  const POSIX_MADV_DONTNEED* = cint(4)
 else:
   var PROT_READ* {.importc: "PROT_READ", header: "<sys/mman.h>".}: cint
   var PROT_WRITE* {.importc: "PROT_WRITE", header: "<sys/mman.h>".}: cint
-var PROT_EXEC* {.importc: "PROT_EXEC", header: "<sys/mman.h>".}: cint
-var PROT_NONE* {.importc: "PROT_NONE", header: "<sys/mman.h>".}: cint
-var MAP_ANONYMOUS* {.importc: "MAP_ANONYMOUS", header: "<sys/mman.h>".}: cint
-var MAP_FIXED_NOREPLACE* {.importc: "MAP_FIXED_NOREPLACE", header: "<sys/mman.h>".}: cint
-var MAP_NORESERVE* {.importc: "MAP_NORESERVE", header: "<sys/mman.h>".}: cint
-when defined(linux) or defined(osx):
-  const MAP_SHARED* = cint(1)
-  const MAP_PRIVATE* = cint(2)
-else:
+  var PROT_EXEC* {.importc: "PROT_EXEC", header: "<sys/mman.h>".}: cint
+  var PROT_NONE* {.importc: "PROT_NONE", header: "<sys/mman.h>".}: cint
+  var MAP_ANONYMOUS* {.importc: "MAP_ANONYMOUS", header: "<sys/mman.h>".}: cint
   var MAP_SHARED* {.importc: "MAP_SHARED", header: "<sys/mman.h>".}: cint
   var MAP_PRIVATE* {.importc: "MAP_PRIVATE", header: "<sys/mman.h>".}: cint
-var MAP_FIXED* {.importc: "MAP_FIXED", header: "<sys/mman.h>".}: cint
-var MS_ASYNC* {.importc: "MS_ASYNC", header: "<sys/mman.h>".}: cint
-var MS_SYNC* {.importc: "MS_SYNC", header: "<sys/mman.h>".}: cint
-var MS_INVALIDATE* {.importc: "MS_INVALIDATE", header: "<sys/mman.h>".}: cint
-var MCL_CURRENT* {.importc: "MCL_CURRENT", header: "<sys/mman.h>".}: cint
-var MCL_FUTURE* {.importc: "MCL_FUTURE", header: "<sys/mman.h>".}: cint
-when defined(linux):
-  let MAP_FAILED* = cast[pointer](-1)
-else:
+  var MAP_FIXED* {.importc: "MAP_FIXED", header: "<sys/mman.h>".}: cint
+  var MS_ASYNC* {.importc: "MS_ASYNC", header: "<sys/mman.h>".}: cint
+  var MS_SYNC* {.importc: "MS_SYNC", header: "<sys/mman.h>".}: cint
+  var MS_INVALIDATE* {.importc: "MS_INVALIDATE", header: "<sys/mman.h>".}: cint
+  var MCL_CURRENT* {.importc: "MCL_CURRENT", header: "<sys/mman.h>".}: cint
+  var MCL_FUTURE* {.importc: "MCL_FUTURE", header: "<sys/mman.h>".}: cint
   var MAP_FAILED* {.importc: "MAP_FAILED", header: "<sys/mman.h>".}: pointer
-var POSIX_MADV_NORMAL* {.importc: "POSIX_MADV_NORMAL", header: "<sys/mman.h>".}: cint
-var POSIX_MADV_SEQUENTIAL* {.importc: "POSIX_MADV_SEQUENTIAL", header: "<sys/mman.h>".}: cint
-var POSIX_MADV_RANDOM* {.importc: "POSIX_MADV_RANDOM", header: "<sys/mman.h>".}: cint
-var POSIX_MADV_WILLNEED* {.importc: "POSIX_MADV_WILLNEED", header: "<sys/mman.h>".}: cint
-var POSIX_MADV_DONTNEED* {.importc: "POSIX_MADV_DONTNEED", header: "<sys/mman.h>".}: cint
+  var POSIX_MADV_NORMAL* {.importc: "POSIX_MADV_NORMAL", header: "<sys/mman.h>".}: cint
+  var POSIX_MADV_SEQUENTIAL* {.importc: "POSIX_MADV_SEQUENTIAL", header: "<sys/mman.h>".}: cint
+  var POSIX_MADV_RANDOM* {.importc: "POSIX_MADV_RANDOM", header: "<sys/mman.h>".}: cint
+  var POSIX_MADV_WILLNEED* {.importc: "POSIX_MADV_WILLNEED", header: "<sys/mman.h>".}: cint
+  var POSIX_MADV_DONTNEED* {.importc: "POSIX_MADV_DONTNEED", header: "<sys/mman.h>".}: cint
+
+when defined(linux) or defined(osx):
+  const MAP_FIXED_NOREPLACE* = cint(0x100000)
+  const MAP_NORESERVE* = cint(0x4000)
+else:
+  var MAP_FIXED_NOREPLACE* {.importc: "MAP_FIXED_NOREPLACE", header: "<sys/mman.h>".}: cint
+  var MAP_NORESERVE* {.importc: "MAP_NORESERVE", header: "<sys/mman.h>".}: cint
 var POSIX_TYPED_MEM_ALLOCATE* {.importc: "POSIX_TYPED_MEM_ALLOCATE", header: "<sys/mman.h>".}: cint
 var POSIX_TYPED_MEM_ALLOCATE_CONTIG* {.importc: "POSIX_TYPED_MEM_ALLOCATE_CONTIG", header: "<sys/mman.h>".}: cint
 var POSIX_TYPED_MEM_MAP_ALLOCATABLE* {.importc: "POSIX_TYPED_MEM_MAP_ALLOCATABLE", header: "<sys/mman.h>".}: cint
@@ -649,10 +664,10 @@ var IOFBF* {.importc: "_IOFBF", header: "<stdio.h>".}: cint
 var IONBF* {.importc: "_IONBF", header: "<stdio.h>".}: cint
 
 # <time.h>
-var CLOCKS_PER_SEC* {.importc: "CLOCKS_PER_SEC", header: "<time.h>".}: clong
-var CLOCK_PROCESS_CPUTIME_ID* {.importc: "CLOCK_PROCESS_CPUTIME_ID", header: "<time.h>".}: cint
-var CLOCK_THREAD_CPUTIME_ID* {.importc: "CLOCK_THREAD_CPUTIME_ID", header: "<time.h>".}: cint
 when defined(linux):
+  const CLOCKS_PER_SEC* = clong(1000000)
+  const CLOCK_PROCESS_CPUTIME_ID* = cint(2)
+  const CLOCK_THREAD_CPUTIME_ID* = cint(3)
   const CLOCK_REALTIME* = cint(0)
   const CLOCK_MONOTONIC* = cint(1)
   const TIMER_ABSTIME* = cint(1)
@@ -664,10 +679,16 @@ elif defined(nimNativeIo):
   # our hardcoded `Timespec`; and on the native backend `CLOCK_REALTIME` is a macro
   # with no symbol to bind. TIMER_ABSTIME mirrors the POSIX value (unused on macOS,
   # which lacks clock_nanosleep).
+  const CLOCKS_PER_SEC* = clong(1000000)
+  const CLOCK_PROCESS_CPUTIME_ID* = cint(2)
+  const CLOCK_THREAD_CPUTIME_ID* = cint(3)
   const CLOCK_REALTIME* = cint(0)
   const CLOCK_MONOTONIC* = cint(6)
   const TIMER_ABSTIME* = cint(1)
 else:
+  var CLOCKS_PER_SEC* {.importc: "CLOCKS_PER_SEC", header: "<time.h>".}: clong
+  var CLOCK_PROCESS_CPUTIME_ID* {.importc: "CLOCK_PROCESS_CPUTIME_ID", header: "<time.h>".}: cint
+  var CLOCK_THREAD_CPUTIME_ID* {.importc: "CLOCK_THREAD_CPUTIME_ID", header: "<time.h>".}: cint
   var CLOCK_REALTIME* {.importc: "CLOCK_REALTIME", header: "<time.h>".}: cint
   var TIMER_ABSTIME* {.importc: "TIMER_ABSTIME", header: "<time.h>".}: cint
   var CLOCK_MONOTONIC* {.importc: "CLOCK_MONOTONIC", header: "<time.h>".}: cint

@@ -28,11 +28,11 @@ method submit*(b: PollBackend; slotIdx: int; op: ptr OpContext) =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockAddr, SockLen
+  from std/posix/posix import SockLen
 
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read", header: "<unistd.h>".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write", header: "<unistd.h>".}
-  proc posixAccept(s: cint; `addr`: ptr SockAddr; addrlen: ptr SockLen): cint {.
+  proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.
     importc: "accept", header: "<sys/socket.h>".}
 
   proc processFd*(b: PollBackend; fd: cint; firedEvents: int) =
@@ -58,7 +58,7 @@ when defined(posix):
           b.completeFn(j, if r >= 0: r else: -1, b.completeEnv)
       of opAccept:
         var addrLen = s.acceptLen
-        let clientFd = posixAccept(fd, cast[ptr SockAddr](addr s.acceptAddr), addr addrLen)
+        let clientFd = posixAccept(fd, addr s.acceptAddr, addr addrLen)
         if b.completeFn != nil:
           b.completeFn(j, if clientFd >= 0: clientFd else: -1, b.completeEnv)
     # re-arm if any slots remain for this fd

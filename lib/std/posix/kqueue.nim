@@ -62,12 +62,6 @@ elif defined(dragonfly):
     EVFILT_EXCEPT*   = -8'i16  ## exceptional conditions
     EVFILT_USER*     = -9'i16  ## user events
     EVFILT_FS*       = -10'i16 ## filesystem events
-else:
-  const
-    EVFILT_MACHPORT* = -8'i16  ## Mach portsets
-    EVFILT_FS*       = -9'i16  ## filesystem events
-    EVFILT_USER*     = -10'i16 ## user events
-    EVFILT_VM        = -12'i16 ## virtual memory events
 
 # Actions:
 const
@@ -156,29 +150,51 @@ else:
   const
     NOTE_MSECONDS*   = 0x00000000'u32
 
-type
-  ## This define not fully satisfy NetBSD "struct kevent"
-  ## but it works and tested.
-  Kevent* {.importc: "struct kevent",
-            header: """#include <sys/types.h>
-                       #include <sys/event.h>
-                       #include <sys/time.h>""", pure, final.} = object
-    ident*  : uint     ## identifier for this event  (uintptr_t)
-    filter* : cshort   ## filter for event
-    flags*  : cushort  ## general flags
-    fflags* : cuint    ## filter-specific flags
-    data*   : int      ## filter-specific data  (intptr_t)
-    udata*  : pointer  ## opaque user data identifier
+when defined(macosx) or defined(freebsd) or defined(openbsd) or
+     defined(dragonfly) or defined(netbsd) or defined(haiku):
+  type
+    ## This define not fully satisfy NetBSD "struct kevent"
+    ## but it works and tested.
+    Kevent* {.importc: "struct kevent",
+              header: """#include <sys/types.h>
+                         #include <sys/event.h>
+                         #include <sys/time.h>""", pure, final.} = object
+      ident*  : uint     ## identifier for this event  (uintptr_t)
+      filter* : cshort   ## filter for event
+      flags*  : cushort  ## general flags
+      fflags* : cuint    ## filter-specific flags
+      data*   : int      ## filter-specific data  (intptr_t)
+      udata*  : pointer  ## opaque user data identifier
 
-proc kqueue*(): cint {.importc: "kqueue", header: "<sys/event.h>".}
-  ## Creates new queue and returns its descriptor.
-proc kevent*(kqFD: cint,
-             changelist: nil ptr Kevent, nchanges: cint,
-             eventlist: nil ptr Kevent, nevents: cint, timeout: nil ptr Timespec): cint
-     {.importc: "kevent", header: "<sys/event.h>".}
-  ## Manipulates queue for given `kqFD` descriptor.
+  proc kqueue*(): cint {.importc: "kqueue", header: "<sys/event.h>".}
+    ## Creates new queue and returns its descriptor.
+  proc kevent*(kqFD: cint,
+               changelist: nil ptr Kevent, nchanges: cint,
+               eventlist: nil ptr Kevent, nevents: cint, timeout: nil ptr Timespec): cint
+       {.importc: "kevent", header: "<sys/event.h>".}
+    ## Manipulates queue for given `kqFD` descriptor.
 
-proc EV_SET*(event: ptr Kevent, ident: uint, filter: cshort, flags: cushort,
-             fflags: cuint, data: int, udata: pointer)
-     {.importc: "EV_SET", header: "<sys/event.h>".}
-  ## Fills event with given data.
+  proc EV_SET*(event: ptr Kevent, ident: uint, filter: cshort, flags: cushort,
+               fflags: cuint, data: int, udata: pointer)
+       {.importc: "EV_SET", header: "<sys/event.h>".}
+    ## Fills event with given data.
+else:
+  # Stubs for unsupported platforms (Nimony's first-pass when traversal
+  # touches all branches regardless of condition).
+  type
+    Kevent* = object
+      ident*  : uint
+      filter* : cshort
+      flags*  : cushort
+      fflags* : cuint
+      data*   : int
+      udata*  : pointer
+
+  proc kqueue*(): cint = 0.cint
+  proc kevent*(kqFD: cint,
+               changelist: nil ptr Kevent, nchanges: cint,
+               eventlist: nil ptr Kevent, nevents: cint, timeout: nil ptr Timespec): cint =
+    0.cint
+
+  proc EV_SET*(event: ptr Kevent, ident: uint, filter: cshort, flags: cushort,
+               fflags: cuint, data: int, udata: pointer) = discard
