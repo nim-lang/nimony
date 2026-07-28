@@ -91,10 +91,9 @@ proc checkGenTags() =
 checkGenTags()
 
 proc hasturTests(overwrite: bool) =
-  # CI sets NIMONY_CC=clang on Windows so tests exercise the clang-on-MinGW
-  # path (faster cc step + native PE TLS). Locally the env var is unset
-  # and the gcc default kicks in. On Windows + clang we also force LLD as
-  # the linker: clang emits native PE TLS by default but ld.bfd lays out
+  # NIMONY_CC selects the C compiler the tests forward to nimony; unset
+  # means the gcc default. On Windows + clang we also force LLD as the
+  # linker: clang emits native PE TLS by default but ld.bfd lays out
   # `.tls$` incorrectly, producing binaries that segfault on first TLS
   # access; LLD's layout matches what the loader expects.
   var args = "--jobs:auto"
