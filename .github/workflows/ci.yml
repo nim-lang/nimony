@@ -279,13 +279,13 @@ jobs:
 
       - name: Run tester
         if: matrix.target.cpu != 'i386' # TODO: enables i386
-        env:
-          # Read by tests/tester.nim, which forwards `--cc:clang` to nimony.
-          # On Windows the tester additionally forwards `--passL:-fuse-ld=lld`
-          # because clang emits native PE TLS by default and ld.bfd lays out
-          # `.tls$` incorrectly — only LLD produces a binary that runs.
-          # Empty on Linux/macOS so the existing default toolchains kick in.
-          NIMONY_CC: ${{ runner.os == 'Windows' && 'clang' || '' }}
+        # Every platform tests with its default C toolchain. Windows forced
+        # clang from #1846 on ("faster cc step"), but an A/B of this exact
+        # step on identical runners measured gcc 1568s vs clang 1912s, and
+        # local 3x3 reps at 4 cores agree (gcc 683-830s, clang 854-933s).
+        # Export NIMONY_CC=clang here to exercise the clang-on-MinGW path
+        # again; tools/tester.nim then also adds the -fuse-ld=lld that
+        # clang's native PE TLS needs (ld.bfd lays out `.tls$` wrong).
         run: |
           cd nimony
           nim c -r tools/tester.nim
