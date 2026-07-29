@@ -489,6 +489,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
   if needsRecompile(nf, pluginExe):
     compilePlugin(c, info, nf, pluginExe)
+  c.depsPlugins.incl pool.strings.getOrIncl nf
 
   try:
     writeFileIfChanged(inputFile, pluginInput)
