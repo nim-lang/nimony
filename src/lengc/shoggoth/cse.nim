@@ -429,19 +429,16 @@ proc emitTempType(c: var Context; buf: var TokenBuf; valueExpr: Cursor; ptrWrap:
   ## inter-module-inlined *foreign* object, whose type the backend cannot navigate
   ## in this module's context. The optimizer's own type context CAN resolve it, so
   ## we bake the result in here. `ptrWrap` wraps it as `(ptr T)` for the
-  ## address-cache form (`var t = addr L`). Falls back to `.` when unresolvable
-  ## (the candidate gate already rejects such loads, so this is belt-and-braces).
-  if c.m != nil:
-    let t = getNominalType(c.m[], valueExpr)
-    if not (t.kind == TagLit and t.typeKind == NoType):
-      if ptrWrap:
-        buf.openTag TagId(ord(PtrTagId))
-        buf.addSubtree t
-        buf.closeTag()
-      else:
-        buf.addSubtree t
-      return
-  buf.addDotToken()
+  ## address-cache form (`var t = addr L`). Without a type context (the self-tests)
+  ## the slot is left empty.
+  if c.m == nil:
+    buf.addDotToken()
+  elif ptrWrap:
+    buf.openTag TagId(ord(PtrTagId))
+    buf.addSubtree getNominalType(c.m[], valueExpr)
+    buf.closeTag()
+  else:
+    buf.addSubtree getNominalType(c.m[], valueExpr)
 
 proc addValueVarDecl(c: var Context; tempName: string; expr: Cursor;
                      info: NifLineInfo): int =
