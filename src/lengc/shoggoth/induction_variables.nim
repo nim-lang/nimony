@@ -19,6 +19,8 @@ import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
+import ".." / nifmodules                      # MainModule (type context, threaded through)
+import ".." / typenav                         # getNominalType — the temp's declared type
 
 type
   AccessInfo = object
@@ -32,13 +34,18 @@ type
     synth: seq[TokenBuf]
     tempCounter: int
     moduleSuffix: string
+    m: ptr MainModule  ## module type context; nil ⇒ emit `.` and let the backend
+                       ## re-infer (what the self-tests, which parse a body in
+                       ## isolation, still do)
 
-proc createContext(orig: ptr TokenBuf; moduleSuffix: string): Context =
+proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
+                   m: ptr MainModule): Context =
   Context(orig: orig,
           patchset: initPatchset(orig),
           synth: @[],
           tempCounter: 0,
-          moduleSuffix: moduleSuffix)
+          moduleSuffix: moduleSuffix,
+          m: m)
 
 proc freshTempName(c: var Context): string =
   inc c.tempCounter
@@ -193,7 +200,14 @@ proc addPtrVarDecl(c: var Context; p: string; atCursor: Cursor): int =
   if info.isValid: buf.appendLineInfo info
   buf.addSymDef p
   buf.addDotToken()                          # pragmas
-  buf.addDotToken()                          # type — inferred from init
+  # Declared type: `(ptr typeof <atCursor>)`. Spelled out rather than left to the
+  # backend's re-inference, for the same reason as `cse.emitTempType`.
+  if c.m == nil:
+    buf.addDotToken()                        # no type context: self-tests only
+  else:
+    buf.openTag TagId(ord(PtrTagId))
+    buf.addSubtree getNominalType(c.m[], atCursor)
+    buf.closeTag()
   buf.openTag TagId(ord(AddrTagId))
   buf.addSubtree atCursor
   buf.closeTag()                             # close addr
@@ -270,11 +284,12 @@ proc tr(c: var Context; n: var Cursor) =
 
 # ---- public entry --------------------------------------------------------
 
-proc runInductionVariables*(buf: var TokenBuf; moduleSuffix = "M") =
+proc runInductionVariables*(buf: var TokenBuf; moduleSuffix = "M";
+                            m: ptr MainModule = nil) =
   ## Two-phase IV strength reduction: record rewrite patches, then rebuild
   ## `buf` with pointer decls hoisted before each loop, pointer bumps before
   ## the iv-inc, and `(deref p)` substituted for each `(at arr iv)` access.
-  var ctx = createContext(addr buf, moduleSuffix)
+  var ctx = createContext(addr buf, moduleSuffix, m)
   var n = beginRead(buf)
   tr(ctx, n)
   if not ctx.patchset.isEmpty:

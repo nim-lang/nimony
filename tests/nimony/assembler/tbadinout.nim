@@ -5,8 +5,8 @@
 # pointer to it. So the rule runs in both directions, and both are checked at the
 # DECLARATION rather than wherever the instruction is eventually used.
 
-proc missingVar(d: uint64; s: uint64) {.instruction: add.}
+proc missingVar(d: uint64; s: uint64) {.instruction: "add".}
 
-proc spuriousVar(d: var uint64; s: var uint64) {.instruction: add.}
+proc spuriousVar(d: var uint64; s: var uint64) {.instruction: "add".}
 
-proc notTwoAddress(x: var uint64): uint64 {.instruction: bsf.}
+proc notTwoAddress(x: var uint64): uint64 {.instruction: "bsf".}

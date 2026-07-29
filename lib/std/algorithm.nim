@@ -113,6 +113,10 @@ proc sort*[T](a: var openArray[T];
     assert d == ["fo", "qux", "boo", "barr"]
 
   var n = a.len
+  # len < 2 needs no work — and the temp buffer would be empty, making the
+  # manual `dealloc b.rawData` below free a bogus pointer (a SIGSEGV on some
+  # backends, a silent heap-header scribble on others).
+  if n < 2: return
   var b = newSeqUninit[T](n div 2)
   var s = 1
   while s < n:
