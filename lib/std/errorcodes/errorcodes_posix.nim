@@ -3,206 +3,459 @@
 when not defined(nimony):
   import errorcodes
 
-var EOVERFLOW {.importc: "EOVERFLOW", header: "<errno.h>".}: int32
-var ERANGE {.importc: "ERANGE", header: "<errno.h>".}: int32
-var EDOM {.importc: "EDOM", header: "<errno.h>".}: int32
-var ENOMEM {.importc: "ENOMEM", header: "<errno.h>".}: int32
-var ENOSPC {.importc: "ENOSPC", header: "<errno.h>".}: int32
-var EIO {.importc: "EIO", header: "<errno.h>".}: int32
-var EINVAL {.importc: "EINVAL", header: "<errno.h>".}: int32
-var EBADMSG {.importc: "EBADMSG", header: "<errno.h>".}: int32
-var EILSEQ {.importc: "EILSEQ", header: "<errno.h>".}: int32
-var ENOMSG {.importc: "ENOMSG", header: "<errno.h>".}: int32
-var EDESTADDRREQ {.importc: "EDESTADDRREQ", header: "<errno.h>".}: int32
-var E2BIG {.importc: "E2BIG", header: "<errno.h>".}: int32
-var ENOBUFS {.importc: "ENOBUFS", header: "<errno.h>".}: int32
-var ENODATA {.importc: "ENODATA", header: "<errno.h>".}: int32
-var EBUSY {.importc: "EBUSY", header: "<errno.h>".}: int32
-var ETXTBSY {.importc: "ETXTBSY", header: "<errno.h>".}: int32
-var ECHILD {.importc: "ECHILD", header: "<errno.h>".}: int32
-var EOWNERDEAD {.importc: "EOWNERDEAD", header: "<errno.h>".}: int32
-var ENOLCK {.importc: "ENOLCK", header: "<errno.h>".}: int32
-var ENFILE {.importc: "ENFILE", header: "<errno.h>".}: int32
-var EACCES {.importc: "EACCES", header: "<errno.h>".}: int32
-var EPERM {.importc: "EPERM", header: "<errno.h>".}: int32
-var EAGAIN {.importc: "EAGAIN", header: "<errno.h>".}: int32
-var EWOULDBLOCK {.importc: "EWOULDBLOCK", header: "<errno.h>".}: int32
-var ETIMEDOUT {.importc: "ETIMEDOUT", header: "<errno.h>".}: int32
-var ETIME {.importc: "ETIME", header: "<errno.h>".}: int32
-var EINTR {.importc: "EINTR", header: "<errno.h>".}: int32
-var EDEADLK {.importc: "EDEADLK", header: "<errno.h>".}: int32
-var EADDRINUSE {.importc: "EADDRINUSE", header: "<errno.h>".}: int32
-var EISCONN {.importc: "EISCONN", header: "<errno.h>".}: int32
-var EADDRNOTAVAIL {.importc: "EADDRNOTAVAIL", header: "<errno.h>".}: int32
-var EAFNOSUPPORT {.importc: "EAFNOSUPPORT", header: "<errno.h>".}: int32
-var EOPNOTSUPP {.importc: "EOPNOTSUPP", header: "<errno.h>".}: int32
-var ENOTSUP {.importc: "ENOTSUP", header: "<errno.h>".}: int32
-var ENOSYS {.importc: "ENOSYS", header: "<errno.h>".}: int32
-var EPROTONOSUPPORT {.importc: "EPROTONOSUPPORT", header: "<errno.h>".}: int32
-var ENOTTY {.importc: "ENOTTY", header: "<errno.h>".}: int32
-var ESPIPE {.importc: "ESPIPE", header: "<errno.h>".}: int32
-var EISDIR {.importc: "EISDIR", header: "<errno.h>".}: int32
-var ENOTEMPTY {.importc: "ENOTEMPTY", header: "<errno.h>".}: int32
-var ECANCELED {.importc: "ECANCELED", header: "<errno.h>".}: int32
-var ECONNABORTED {.importc: "ECONNABORTED", header: "<errno.h>".}: int32
-var ENETRESET {.importc: "ENETRESET", header: "<errno.h>".}: int32
-var EALREADY {.importc: "EALREADY", header: "<errno.h>".}: int32
-var EINPROGRESS {.importc: "EINPROGRESS", header: "<errno.h>".}: int32
-var ENAMETOOLONG {.importc: "ENAMETOOLONG", header: "<errno.h>".}: int32
-var EEXIST {.importc: "EEXIST", header: "<errno.h>".}: int32
-var ENOENT {.importc: "ENOENT", header: "<errno.h>".}: int32
-var EIDRM {.importc: "EIDRM", header: "<errno.h>".}: int32
-var ENODEV {.importc: "ENODEV", header: "<errno.h>".}: int32
-var ENOTDIR {.importc: "ENOTDIR", header: "<errno.h>".}: int32
-var EFBIG {.importc: "EFBIG", header: "<errno.h>".}: int32
-var EMSGSIZE {.importc: "EMSGSIZE", header: "<errno.h>".}: int32
-var EPIPE {.importc: "EPIPE", header: "<errno.h>".}: int32
-var EBADF {.importc: "EBADF", header: "<errno.h>".}: int32
-var EMFILE {.importc: "EMFILE", header: "<errno.h>".}: int32
-var ENOSTR {.importc: "ENOSTR", header: "<errno.h>".}: int32
-var ENOTSOCK {.importc: "ENOTSOCK", header: "<errno.h>".}: int32
-var ENOSR {.importc: "ENOSR", header: "<errno.h>".}: int32
-var ENXIO {.importc: "ENXIO", header: "<errno.h>".}: int32
-var ESRCH {.importc: "ESRCH", header: "<errno.h>".}: int32
-var ENOEXEC {.importc: "ENOEXEC", header: "<errno.h>".}: int32
-var ELOOP {.importc: "ELOOP", header: "<errno.h>".}: int32
-var EMLINK {.importc: "EMLINK", header: "<errno.h>".}: int32
-var EXDEV {.importc: "EXDEV", header: "<errno.h>".}: int32
-var EPROTOTYPE {.importc: "EPROTOTYPE", header: "<errno.h>".}: int32
-var ENOPROTOOPT {.importc: "ENOPROTOOPT", header: "<errno.h>".}: int32
-var EPROTO {.importc: "EPROTO", header: "<errno.h>".}: int32
-var EROFS {.importc: "EROFS", header: "<errno.h>".}: int32
-var EFAULT {.importc: "EFAULT", header: "<errno.h>".}: int32
-var ENETDOWN {.importc: "ENETDOWN", header: "<errno.h>".}: int32
-var ENETUNREACH {.importc: "ENETUNREACH", header: "<errno.h>".}: int32
-var ECONNRESET {.importc: "ECONNRESET", header: "<errno.h>".}: int32
-var ENOTCONN {.importc: "ENOTCONN", header: "<errno.h>".}: int32
-var ECONNREFUSED {.importc: "ECONNREFUSED", header: "<errno.h>".}: int32
-var EHOSTUNREACH {.importc: "EHOSTUNREACH", header: "<errno.h>".}: int32
-var ENOTRECOVERABLE {.importc: "ENOTRECOVERABLE", header: "<errno.h>".}: int32
+when defined(linux):
+  proc posixToErrorCode*(err: int32): ErrorCode =
+    if err == 0'i32:
+      Success
+    elif err == 75'i32:
+      OverflowError
+    elif err == 34'i32 or err == 33'i32:
+      RangeError
+    elif err == 12'i32:
+      OutOfMemError
+    elif err == 28'i32:
+      DiskFullError
+    elif err == 5'i32:
+      IOError
+    elif err == 22'i32 or err == 74'i32 or err == 84'i32 or err == 42'i32 or err == 89'i32:
+      ValueError
+    elif err == 7'i32 or err == 105'i32:
+      FullError
+    elif err == 61'i32:
+      EmptyError
+    elif err == 16'i32 or err == 26'i32:
+      BusyError
+    elif err == 10'i32 or err == 130'i32:
+      DeadResource
+    elif err == 37'i32:
+      ResourceExhaustedError
+    elif err == 23'i32:
+      DescriptorExhaustedError
+    elif err == 13'i32 or err == 1'i32:
+      PermissionDenied
+    elif err == 11'i32:
+      RetryError
+    elif err == 110'i32 or err == 62'i32:
+      TimeoutError
+    elif err == 4'i32:
+      InterruptedError
+    elif err == 35'i32:
+      DeadlockError
+    elif err == 98'i32 or err == 106'i32:
+      AlreadyConnected
+    elif err == 99'i32:
+      AddressNotAvailable
+    elif err == 97'i32:
+      AddressFamilyUnsupported
+    elif err == 95'i32 or err == 38'i32 or err == 93'i32 or err == 25'i32 or err == 29'i32 or err == 21'i32 or err == 39'i32:
+      BadOperation
+    elif err == 125'i32 or err == 103'i32 or err == 102'i32:
+      AbortedOperation
+    elif err == 114'i32 or err == 115'i32:
+      AlreadyInProgress
+    elif err == 36'i32:
+      NameTooLong
+    elif err == 17'i32:
+      NameExists
+    elif err == 2'i32 or err == 43'i32 or err == 19'i32 or err == 20'i32:
+      NameNotFound
+    elif err == 27'i32 or err == 90'i32:
+      ContentTooLong
+    elif err == 32'i32 or err == 9'i32 or err == 24'i32 or err == 60'i32 or err == 88'i32 or err == 63'i32 or err == 6'i32 or err == 3'i32:
+      BadDescriptor
+    elif err == 8'i32:
+      BadExecutable
+    elif err == 40'i32 or err == 31'i32 or err == 18'i32:
+      BadLink
+    elif err == 91'i32 or err == 92'i32:
+      BadProtocol
+    elif err == 71'i32:
+      ProtocolError
+    elif err == 30'i32:
+      ReadonlyProtection
+    elif err == 14'i32:
+      SegFault
+    elif err == 100'i32 or err == 101'i32 or err == 104'i32 or err == 107'i32:
+      Disconnected
+    elif err == 111'i32:
+      RefusedConnection
+    elif err == 113'i32:
+      UnreachableHost
+    elif err == 131'i32:
+      UnrecoverableState
+    else:
+      Failure
+  
+  proc errorCodeToPosix*(err: ErrorCode): int32 =
+    case err
+    of Success: 0'i32
+    of OverflowError: 75'i32
+    of RangeError: 34'i32
+    of OutOfMemError: 12'i32
+    of DiskFullError: 28'i32
+    of IOError: 5'i32
+    of ValueError: 22'i32
+    of FullError: 7'i32
+    of EmptyError: 61'i32
+    of BusyError: 16'i32
+    of DeadResource: 10'i32
+    of ResourceExhaustedError: 37'i32
+    of DescriptorExhaustedError: 23'i32
+    of PermissionDenied: 13'i32
+    of RetryError: 11'i32
+    of TimeoutError: 110'i32
+    of InterruptedError: 4'i32
+    of DeadlockError: 35'i32
+    of AlreadyConnected: 98'i32
+    of AddressNotAvailable: 99'i32
+    of AddressFamilyUnsupported: 97'i32
+    of BadOperation: 95'i32
+    of AbortedOperation: 125'i32
+    of AlreadyInProgress: 114'i32
+    of NameTooLong: 36'i32
+    of NameExists: 17'i32
+    of NameNotFound: 2'i32
+    of ContentTooLong: 27'i32
+    of BadDescriptor: 32'i32
+    of BadExecutable: 8'i32
+    of BadLink: 40'i32
+    of BadProtocol: 91'i32
+    of ProtocolError: 71'i32
+    of ReadonlyProtection: 30'i32
+    of SegFault: 14'i32
+    of Disconnected: 100'i32
+    of RefusedConnection: 111'i32
+    of UnreachableHost: 113'i32
+    of UnrecoverableState: 131'i32
+    else: 1'i32
 
+elif defined(macosx):
+  proc posixToErrorCode*(err: int32): ErrorCode =
+    if err == 0'i32:
+      Success
+    elif err == 84'i32:
+      OverflowError
+    elif err == 34'i32 or err == 33'i32:
+      RangeError
+    elif err == 12'i32:
+      OutOfMemError
+    elif err == 28'i32:
+      DiskFullError
+    elif err == 5'i32:
+      IOError
+    elif err == 22'i32 or err == 94'i32 or err == 92'i32 or err == 91'i32 or err == 39'i32:
+      ValueError
+    elif err == 7'i32 or err == 55'i32:
+      FullError
+    elif err == 96'i32:
+      EmptyError
+    elif err == 16'i32 or err == 26'i32:
+      BusyError
+    elif err == 10'i32 or err == 105'i32:
+      DeadResource
+    elif err == 77'i32:
+      ResourceExhaustedError
+    elif err == 23'i32:
+      DescriptorExhaustedError
+    elif err == 13'i32 or err == 1'i32:
+      PermissionDenied
+    elif err == 35'i32:
+      RetryError
+    elif err == 60'i32 or err == 101'i32:
+      TimeoutError
+    elif err == 4'i32:
+      InterruptedError
+    elif err == 11'i32:
+      DeadlockError
+    elif err == 48'i32 or err == 56'i32:
+      AlreadyConnected
+    elif err == 49'i32:
+      AddressNotAvailable
+    elif err == 47'i32:
+      AddressFamilyUnsupported
+    elif err == 102'i32 or err == 45'i32 or err == 78'i32 or err == 43'i32 or err == 25'i32 or err == 29'i32 or err == 21'i32 or err == 66'i32:
+      BadOperation
+    elif err == 89'i32 or err == 53'i32 or err == 52'i32:
+      AbortedOperation
+    elif err == 37'i32 or err == 36'i32:
+      AlreadyInProgress
+    elif err == 63'i32:
+      NameTooLong
+    elif err == 17'i32:
+      NameExists
+    elif err == 2'i32 or err == 90'i32 or err == 19'i32 or err == 20'i32:
+      NameNotFound
+    elif err == 27'i32 or err == 40'i32:
+      ContentTooLong
+    elif err == 32'i32 or err == 9'i32 or err == 24'i32 or err == 99'i32 or err == 38'i32 or err == 98'i32 or err == 6'i32 or err == 3'i32:
+      BadDescriptor
+    elif err == 8'i32:
+      BadExecutable
+    elif err == 62'i32 or err == 31'i32 or err == 18'i32:
+      BadLink
+    elif err == 41'i32 or err == 42'i32:
+      BadProtocol
+    elif err == 100'i32:
+      ProtocolError
+    elif err == 30'i32:
+      ReadonlyProtection
+    elif err == 14'i32:
+      SegFault
+    elif err == 50'i32 or err == 51'i32 or err == 54'i32 or err == 57'i32:
+      Disconnected
+    elif err == 61'i32:
+      RefusedConnection
+    elif err == 65'i32:
+      UnreachableHost
+    elif err == 104'i32:
+      UnrecoverableState
+    else:
+      Failure
+  
+  proc errorCodeToPosix*(err: ErrorCode): int32 =
+    case err
+    of Success: 0'i32
+    of OverflowError: 84'i32
+    of RangeError: 34'i32
+    of OutOfMemError: 12'i32
+    of DiskFullError: 28'i32
+    of IOError: 5'i32
+    of ValueError: 22'i32
+    of FullError: 7'i32
+    of EmptyError: 96'i32
+    of BusyError: 16'i32
+    of DeadResource: 10'i32
+    of ResourceExhaustedError: 77'i32
+    of DescriptorExhaustedError: 23'i32
+    of PermissionDenied: 13'i32
+    of RetryError: 35'i32
+    of TimeoutError: 60'i32
+    of InterruptedError: 4'i32
+    of DeadlockError: 11'i32
+    of AlreadyConnected: 48'i32
+    of AddressNotAvailable: 49'i32
+    of AddressFamilyUnsupported: 47'i32
+    of BadOperation: 102'i32
+    of AbortedOperation: 89'i32
+    of AlreadyInProgress: 37'i32
+    of NameTooLong: 63'i32
+    of NameExists: 17'i32
+    of NameNotFound: 2'i32
+    of ContentTooLong: 27'i32
+    of BadDescriptor: 32'i32
+    of BadExecutable: 8'i32
+    of BadLink: 62'i32
+    of BadProtocol: 41'i32
+    of ProtocolError: 100'i32
+    of ReadonlyProtection: 30'i32
+    of SegFault: 14'i32
+    of Disconnected: 50'i32
+    of RefusedConnection: 61'i32
+    of UnreachableHost: 65'i32
+    of UnrecoverableState: 104'i32
+    else: 1'i32
 
-proc posixToErrorCode*(err: int32): ErrorCode =
-  if err == 0'i32:
-    Success
-  elif err == EOVERFLOW:
-    OverflowError
-  elif err == ERANGE or err == EDOM:
-    RangeError
-  elif err == ENOMEM:
-    OutOfMemError
-  elif err == ENOSPC:
-    DiskFullError
-  elif err == EIO:
-    IOError
-  elif err == EINVAL or err == EBADMSG or err == EILSEQ or err == ENOMSG or err == EDESTADDRREQ:
-    ValueError
-  elif err == E2BIG or err == ENOBUFS:
-    FullError
-  elif err == ENODATA:
-    EmptyError
-  elif err == EBUSY or err == ETXTBSY:
-    BusyError
-  elif err == ECHILD or err == EOWNERDEAD:
-    DeadResource
-  elif err == ENOLCK:
-    ResourceExhaustedError
-  elif err == ENFILE:
-    DescriptorExhaustedError
-  elif err == EACCES or err == EPERM:
-    PermissionDenied
-  elif err == EAGAIN or err == EWOULDBLOCK:
-    RetryError
-  elif err == ETIMEDOUT or err == ETIME:
-    TimeoutError
-  elif err == EINTR:
-    InterruptedError
-  elif err == EDEADLK:
-    DeadlockError
-  elif err == EADDRINUSE or err == EISCONN:
-    AlreadyConnected
-  elif err == EADDRNOTAVAIL:
-    AddressNotAvailable
-  elif err == EAFNOSUPPORT:
-    AddressFamilyUnsupported
-  elif err == EOPNOTSUPP or err == ENOTSUP or err == ENOSYS or err == EPROTONOSUPPORT or err == ENOTTY or err == ESPIPE or err == EISDIR or err == ENOTEMPTY:
-    BadOperation
-  elif err == ECANCELED or err == ECONNABORTED or err == ENETRESET:
-    AbortedOperation
-  elif err == EALREADY or err == EINPROGRESS:
-    AlreadyInProgress
-  elif err == ENAMETOOLONG:
-    NameTooLong
-  elif err == EEXIST:
-    NameExists
-  elif err == ENOENT or err == EIDRM or err == ENODEV or err == ENOTDIR:
-    NameNotFound
-  elif err == EFBIG or err == EMSGSIZE:
-    ContentTooLong
-  elif err == EPIPE or err == EBADF or err == EMFILE or err == ENOSTR or err == ENOTSOCK or err == ENOSR or err == ENXIO or err == ESRCH:
-    BadDescriptor
-  elif err == ENOEXEC:
-    BadExecutable
-  elif err == ELOOP or err == EMLINK or err == EXDEV:
-    BadLink
-  elif err == EPROTOTYPE or err == ENOPROTOOPT:
-    BadProtocol
-  elif err == EPROTO:
-    ProtocolError
-  elif err == EROFS:
-    ReadonlyProtection
-  elif err == EFAULT:
-    SegFault
-  elif err == ENETDOWN or err == ENETUNREACH or err == ECONNRESET or err == ENOTCONN:
-    Disconnected
-  elif err == ECONNREFUSED:
-    RefusedConnection
-  elif err == EHOSTUNREACH:
-    UnreachableHost
-  elif err == ENOTRECOVERABLE:
-    UnrecoverableState
-  else:
-    Failure
+else:
+  var EOVERFLOW {.importc: "EOVERFLOW", header: "<errno.h>".}: int32
+  var ERANGE {.importc: "ERANGE", header: "<errno.h>".}: int32
+  var EDOM {.importc: "EDOM", header: "<errno.h>".}: int32
+  var ENOMEM {.importc: "ENOMEM", header: "<errno.h>".}: int32
+  var ENOSPC {.importc: "ENOSPC", header: "<errno.h>".}: int32
+  var EIO {.importc: "EIO", header: "<errno.h>".}: int32
+  var EINVAL {.importc: "EINVAL", header: "<errno.h>".}: int32
+  var EBADMSG {.importc: "EBADMSG", header: "<errno.h>".}: int32
+  var EILSEQ {.importc: "EILSEQ", header: "<errno.h>".}: int32
+  var ENOMSG {.importc: "ENOMSG", header: "<errno.h>".}: int32
+  var EDESTADDRREQ {.importc: "EDESTADDRREQ", header: "<errno.h>".}: int32
+  var E2BIG {.importc: "E2BIG", header: "<errno.h>".}: int32
+  var ENOBUFS {.importc: "ENOBUFS", header: "<errno.h>".}: int32
+  var ENODATA {.importc: "ENODATA", header: "<errno.h>".}: int32
+  var EBUSY {.importc: "EBUSY", header: "<errno.h>".}: int32
+  var ETXTBSY {.importc: "ETXTBSY", header: "<errno.h>".}: int32
+  var ECHILD {.importc: "ECHILD", header: "<errno.h>".}: int32
+  var EOWNERDEAD {.importc: "EOWNERDEAD", header: "<errno.h>".}: int32
+  var ENOLCK {.importc: "ENOLCK", header: "<errno.h>".}: int32
+  var ENFILE {.importc: "ENFILE", header: "<errno.h>".}: int32
+  var EACCES {.importc: "EACCES", header: "<errno.h>".}: int32
+  var EPERM {.importc: "EPERM", header: "<errno.h>".}: int32
+  var EAGAIN {.importc: "EAGAIN", header: "<errno.h>".}: int32
+  var EWOULDBLOCK {.importc: "EWOULDBLOCK", header: "<errno.h>".}: int32
+  var ETIMEDOUT {.importc: "ETIMEDOUT", header: "<errno.h>".}: int32
+  var ETIME {.importc: "ETIME", header: "<errno.h>".}: int32
+  var EINTR {.importc: "EINTR", header: "<errno.h>".}: int32
+  var EDEADLK {.importc: "EDEADLK", header: "<errno.h>".}: int32
+  var EADDRINUSE {.importc: "EADDRINUSE", header: "<errno.h>".}: int32
+  var EISCONN {.importc: "EISCONN", header: "<errno.h>".}: int32
+  var EADDRNOTAVAIL {.importc: "EADDRNOTAVAIL", header: "<errno.h>".}: int32
+  var EAFNOSUPPORT {.importc: "EAFNOSUPPORT", header: "<errno.h>".}: int32
+  var EOPNOTSUPP {.importc: "EOPNOTSUPP", header: "<errno.h>".}: int32
+  var ENOTSUP {.importc: "ENOTSUP", header: "<errno.h>".}: int32
+  var ENOSYS {.importc: "ENOSYS", header: "<errno.h>".}: int32
+  var EPROTONOSUPPORT {.importc: "EPROTONOSUPPORT", header: "<errno.h>".}: int32
+  var ENOTTY {.importc: "ENOTTY", header: "<errno.h>".}: int32
+  var ESPIPE {.importc: "ESPIPE", header: "<errno.h>".}: int32
+  var EISDIR {.importc: "EISDIR", header: "<errno.h>".}: int32
+  var ENOTEMPTY {.importc: "ENOTEMPTY", header: "<errno.h>".}: int32
+  var ECANCELED {.importc: "ECANCELED", header: "<errno.h>".}: int32
+  var ECONNABORTED {.importc: "ECONNABORTED", header: "<errno.h>".}: int32
+  var ENETRESET {.importc: "ENETRESET", header: "<errno.h>".}: int32
+  var EALREADY {.importc: "EALREADY", header: "<errno.h>".}: int32
+  var EINPROGRESS {.importc: "EINPROGRESS", header: "<errno.h>".}: int32
+  var ENAMETOOLONG {.importc: "ENAMETOOLONG", header: "<errno.h>".}: int32
+  var EEXIST {.importc: "EEXIST", header: "<errno.h>".}: int32
+  var ENOENT {.importc: "ENOENT", header: "<errno.h>".}: int32
+  var EIDRM {.importc: "EIDRM", header: "<errno.h>".}: int32
+  var ENODEV {.importc: "ENODEV", header: "<errno.h>".}: int32
+  var ENOTDIR {.importc: "ENOTDIR", header: "<errno.h>".}: int32
+  var EFBIG {.importc: "EFBIG", header: "<errno.h>".}: int32
+  var EMSGSIZE {.importc: "EMSGSIZE", header: "<errno.h>".}: int32
+  var EPIPE {.importc: "EPIPE", header: "<errno.h>".}: int32
+  var EBADF {.importc: "EBADF", header: "<errno.h>".}: int32
+  var EMFILE {.importc: "EMFILE", header: "<errno.h>".}: int32
+  var ENOSTR {.importc: "ENOSTR", header: "<errno.h>".}: int32
+  var ENOTSOCK {.importc: "ENOTSOCK", header: "<errno.h>".}: int32
+  var ENOSR {.importc: "ENOSR", header: "<errno.h>".}: int32
+  var ENXIO {.importc: "ENXIO", header: "<errno.h>".}: int32
+  var ESRCH {.importc: "ESRCH", header: "<errno.h>".}: int32
+  var ENOEXEC {.importc: "ENOEXEC", header: "<errno.h>".}: int32
+  var ELOOP {.importc: "ELOOP", header: "<errno.h>".}: int32
+  var EMLINK {.importc: "EMLINK", header: "<errno.h>".}: int32
+  var EXDEV {.importc: "EXDEV", header: "<errno.h>".}: int32
+  var EPROTOTYPE {.importc: "EPROTOTYPE", header: "<errno.h>".}: int32
+  var ENOPROTOOPT {.importc: "ENOPROTOOPT", header: "<errno.h>".}: int32
+  var EPROTO {.importc: "EPROTO", header: "<errno.h>".}: int32
+  var EROFS {.importc: "EROFS", header: "<errno.h>".}: int32
+  var EFAULT {.importc: "EFAULT", header: "<errno.h>".}: int32
+  var ENETDOWN {.importc: "ENETDOWN", header: "<errno.h>".}: int32
+  var ENETUNREACH {.importc: "ENETUNREACH", header: "<errno.h>".}: int32
+  var ECONNRESET {.importc: "ECONNRESET", header: "<errno.h>".}: int32
+  var ENOTCONN {.importc: "ENOTCONN", header: "<errno.h>".}: int32
+  var ECONNREFUSED {.importc: "ECONNREFUSED", header: "<errno.h>".}: int32
+  var EHOSTUNREACH {.importc: "EHOSTUNREACH", header: "<errno.h>".}: int32
+  var ENOTRECOVERABLE {.importc: "ENOTRECOVERABLE", header: "<errno.h>".}: int32
+  
+  proc posixToErrorCode*(err: int32): ErrorCode =
+    if err == 0'i32:
+      Success
+    elif err == EOVERFLOW:
+      OverflowError
+    elif err == ERANGE or err == EDOM:
+      RangeError
+    elif err == ENOMEM:
+      OutOfMemError
+    elif err == ENOSPC:
+      DiskFullError
+    elif err == EIO:
+      IOError
+    elif err == EINVAL or err == EBADMSG or err == EILSEQ or err == ENOMSG or err == EDESTADDRREQ:
+      ValueError
+    elif err == E2BIG or err == ENOBUFS:
+      FullError
+    elif err == ENODATA:
+      EmptyError
+    elif err == EBUSY or err == ETXTBSY:
+      BusyError
+    elif err == ECHILD or err == EOWNERDEAD:
+      DeadResource
+    elif err == ENOLCK:
+      ResourceExhaustedError
+    elif err == ENFILE:
+      DescriptorExhaustedError
+    elif err == EACCES or err == EPERM:
+      PermissionDenied
+    elif err == EAGAIN or err == EWOULDBLOCK:
+      RetryError
+    elif err == ETIMEDOUT or err == ETIME:
+      TimeoutError
+    elif err == EINTR:
+      InterruptedError
+    elif err == EDEADLK:
+      DeadlockError
+    elif err == EADDRINUSE or err == EISCONN:
+      AlreadyConnected
+    elif err == EADDRNOTAVAIL:
+      AddressNotAvailable
+    elif err == EAFNOSUPPORT:
+      AddressFamilyUnsupported
+    elif err == EOPNOTSUPP or err == ENOTSUP or err == ENOSYS or err == EPROTONOSUPPORT or err == ENOTTY or err == ESPIPE or err == EISDIR or err == ENOTEMPTY:
+      BadOperation
+    elif err == ECANCELED or err == ECONNABORTED or err == ENETRESET:
+      AbortedOperation
+    elif err == EALREADY or err == EINPROGRESS:
+      AlreadyInProgress
+    elif err == ENAMETOOLONG:
+      NameTooLong
+    elif err == EEXIST:
+      NameExists
+    elif err == ENOENT or err == EIDRM or err == ENODEV or err == ENOTDIR:
+      NameNotFound
+    elif err == EFBIG or err == EMSGSIZE:
+      ContentTooLong
+    elif err == EPIPE or err == EBADF or err == EMFILE or err == ENOSTR or err == ENOTSOCK or err == ENOSR or err == ENXIO or err == ESRCH:
+      BadDescriptor
+    elif err == ENOEXEC:
+      BadExecutable
+    elif err == ELOOP or err == EMLINK or err == EXDEV:
+      BadLink
+    elif err == EPROTOTYPE or err == ENOPROTOOPT:
+      BadProtocol
+    elif err == EPROTO:
+      ProtocolError
+    elif err == EROFS:
+      ReadonlyProtection
+    elif err == EFAULT:
+      SegFault
+    elif err == ENETDOWN or err == ENETUNREACH or err == ECONNRESET or err == ENOTCONN:
+      Disconnected
+    elif err == ECONNREFUSED:
+      RefusedConnection
+    elif err == EHOSTUNREACH:
+      UnreachableHost
+    elif err == ENOTRECOVERABLE:
+      UnrecoverableState
+    else:
+      Failure
+  
+  proc errorCodeToPosix*(err: ErrorCode): int32 =
+    case err
+    of Success: 0'i32
+    of OverflowError: EOVERFLOW
+    of RangeError: ERANGE
+    of OutOfMemError: ENOMEM
+    of DiskFullError: ENOSPC
+    of IOError: EIO
+    of ValueError: EINVAL
+    of FullError: E2BIG
+    of EmptyError: ENODATA
+    of BusyError: EBUSY
+    of DeadResource: ECHILD
+    of ResourceExhaustedError: ENOLCK
+    of DescriptorExhaustedError: ENFILE
+    of PermissionDenied: EACCES
+    of RetryError: EAGAIN
+    of TimeoutError: ETIMEDOUT
+    of InterruptedError: EINTR
+    of DeadlockError: EDEADLK
+    of AlreadyConnected: EADDRINUSE
+    of AddressNotAvailable: EADDRNOTAVAIL
+    of AddressFamilyUnsupported: EAFNOSUPPORT
+    of BadOperation: EOPNOTSUPP
+    of AbortedOperation: ECANCELED
+    of AlreadyInProgress: EALREADY
+    of NameTooLong: ENAMETOOLONG
+    of NameExists: EEXIST
+    of NameNotFound: ENOENT
+    of ContentTooLong: EFBIG
+    of BadDescriptor: EPIPE
+    of BadExecutable: ENOEXEC
+    of BadLink: ELOOP
+    of BadProtocol: EPROTOTYPE
+    of ProtocolError: EPROTO
+    of ReadonlyProtection: EROFS
+    of SegFault: EFAULT
+    of Disconnected: ENETDOWN
+    of RefusedConnection: ECONNREFUSED
+    of UnreachableHost: EHOSTUNREACH
+    of UnrecoverableState: ENOTRECOVERABLE
+    else: 1'i32
 
-proc errorCodeToPosix*(err: ErrorCode): int32 =
-  case err
-  of Success: 0'i32
-  of OverflowError: EOVERFLOW
-  of RangeError: ERANGE
-  of OutOfMemError: ENOMEM
-  of DiskFullError: ENOSPC
-  of IOError: EIO
-  of ValueError: EINVAL
-  of FullError: E2BIG
-  of EmptyError: ENODATA
-  of BusyError: EBUSY
-  of DeadResource: ECHILD
-  of ResourceExhaustedError: ENOLCK
-  of DescriptorExhaustedError: ENFILE
-  of PermissionDenied: EACCES
-  of RetryError: EAGAIN
-  of TimeoutError: ETIMEDOUT
-  of InterruptedError: EINTR
-  of DeadlockError: EDEADLK
-  of AlreadyConnected: EADDRINUSE
-  of AddressNotAvailable: EADDRNOTAVAIL
-  of AddressFamilyUnsupported: EAFNOSUPPORT
-  of BadOperation: EOPNOTSUPP
-  of AbortedOperation: ECANCELED
-  of AlreadyInProgress: EALREADY
-  of NameTooLong: ENAMETOOLONG
-  of NameExists: EEXIST
-  of NameNotFound: ENOENT
-  of ContentTooLong: EFBIG
-  of BadDescriptor: EPIPE
-  of BadExecutable: ENOEXEC
-  of BadLink: ELOOP
-  of BadProtocol: EPROTOTYPE
-  of ProtocolError: EPROTO
-  of ReadonlyProtection: EROFS
-  of SegFault: EFAULT
-  of Disconnected: ENETDOWN
-  of RefusedConnection: ECONNREFUSED
-  of UnreachableHost: EHOSTUNREACH
-  of UnrecoverableState: ENOTRECOVERABLE
-  else: 1'i32

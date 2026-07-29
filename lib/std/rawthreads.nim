@@ -4,10 +4,6 @@
 
 import std/oserrors
 
-const
-  schedh = "<sched.h>"
-  pthreadh = "<pthread.h>"
-
 when defined(windows):
   import windows/winlean
 
@@ -67,76 +63,45 @@ else:
   when not defined(haiku):
     {.passC: "-pthread".}
 
-  when not declared(Time):
-    when defined(linux):
-      type Time = clong
-    else:
-      type Time = int
-
-  when (defined(linux) or defined(nintendoswitch)) and defined(amd64):
-    type
-      SysThread {.importc: "pthread_t",
-                  header: "<sys/types.h>" .} = distinct culong
-      Pthread_attr {.importc: "pthread_attr_t",
-                    header: "<sys/types.h>".} = object
-  elif defined(openbsd) and defined(amd64):
-    type
-      SysThread {.importc: "pthread_t", header: "<pthread.h>".} = object
-      Pthread_attr {.importc: "pthread_attr_t",
-                       header: "<pthread.h>".} = object
-  else:
-    type
-      SysThread {.importc: "pthread_t", header: "<sys/types.h>".} = int
-      Pthread_attr {.importc: "pthread_attr_t",
-                       header: "<sys/types.h>".} = object
   type
-    Timespec {.importc: "struct timespec", header: "<time.h>".} = object
-      tv_sec: Time
-      tv_nsec: clong
+    SysThread = distinct culong  ## pthread_t: unsigned long on glibc/musl,
+                                 ## a pointer on Darwin — same width either way
+    Pthread_attr = object ## pthread_attr_t as an opaque, oversized blob:
+                          ## 56 B on glibc 64-bit, 36 B on i386, 64 B on
+                          ## Darwin. int64 elements give both ABIs' alignment.
+      abi: array[8, int64]
 
   proc pthread_attr_init(a1: var Pthread_attr): cint {.
-    importc, header: pthreadh.}
+    importc: "pthread_attr_init".}
   proc pthread_attr_setstack(a1: ptr Pthread_attr, a2: pointer, a3: int): cint {.
-    importc, header: pthreadh.}
+    importc: "pthread_attr_setstack".}
   proc pthread_attr_setstacksize(a1: var Pthread_attr, a2: int): cint {.
-    importc, header: pthreadh.}
+    importc: "pthread_attr_setstacksize".}
   proc pthread_attr_destroy(a1: var Pthread_attr): cint {.
-    importc, header: pthreadh.}
+    importc: "pthread_attr_destroy".}
 
   proc pthread_create(a1: var SysThread, a2: var Pthread_attr,
             a3: proc (x: pointer): pointer {.noconv.},
-            a4: pointer): cint {.importc: "pthread_create",
-            header: pthreadh.}
+            a4: pointer): cint {.importc: "pthread_create".}
   proc pthread_join(a1: SysThread, a2: ptr pointer): cint {.
-    importc, header: pthreadh.}
+    importc: "pthread_join".}
 
   proc pthread_cancel(a1: SysThread): cint {.
-    importc: "pthread_cancel", header: pthreadh.}
+    importc: "pthread_cancel".}
 
 when defined(posix) and not defined(macosx):
-  type CpuSet {.importc: "cpu_set_t", header: schedh.} = object
+  type CpuSet = object ## cpu_set_t (glibc: 1024-bit mask)
+    abi: array[16, uint64]
 
-  func cpusetZero(s: var CpuSet) {.importc: "CPU_ZERO", header: schedh.}
-  func cpusetIncl(cpu: cint; s: var CpuSet) {.
-    importc: "CPU_SET", header: schedh.}
+  func cpusetZero(s: var CpuSet) =
+    for i in 0 ..< s.abi.len: s.abi[i] = 0'u64
+  func cpusetIncl(cpu: cint; s: var CpuSet) =
+    # CPU_SET is a header macro over the bit array; reimplemented natively.
+    if cpu >= 0 and int(cpu) < s.abi.len * 64:
+      s.abi[int(cpu) shr 6] = s.abi[int(cpu) shr 6] or (1'u64 shl (int(cpu) and 63))
 
-  when defined(android):
-    # libc of android doesn't implement pthread_setaffinity_np,
-    # it exposes pthread_gettid_np though, so we can use that in combination
-    # with sched_setaffinity to set the thread affinity.
-    type Pid {.importc: "pid_t", header: "<sys/types.h>".} = int32 # From posix_other.nim
-
-    proc setAffinityTID(tid: Pid; setsize: csize_t; s: var CpuSet) {.
-      importc: "sched_setaffinity", header: schedh.}
-
-    proc pthread_gettid_np(thread: SysThread): Pid {.
-      importc: "pthread_gettid_np", header: pthreadh.}
-
-    proc setAffinity(thread: SysThread; setsize: csize_t; s: var CpuSet) =
-      setAffinityTID(pthread_gettid_np(thread), setsize, s)
-  else:
-    proc setAffinity(thread: SysThread; setsize: csize_t; s: var CpuSet) {.
-      importc: "pthread_setaffinity_np", header: pthreadh.}
+  proc setAffinity(thread: SysThread; setsize: csize_t; s: var CpuSet) {.
+    importc: "pthread_setaffinity_np".}
 
 
 type
@@ -228,11 +193,11 @@ when defined(windows):
     result = threadId
 
 elif defined(linux):
-  proc syscall(arg: clong): clong {.varargs, importc: "syscall", header: "<unistd.h>".}
-  when defined(amd64):
-    const NR_gettid = clong(186)
-  else:
-    var NR_gettid {.importc: "__NR_gettid", header: "<sys/syscall.h>".}: clong
+  proc syscall(arg: clong): clong {.varargs, importc: "syscall".}
+  const NR_gettid = (
+    when defined(amd64): clong(186)
+    elif defined(i386): clong(224)
+    else: clong(178))  # arm64 (and every asm-generic unistd arch)
 
   proc getThreadId*(): int =
     ## Gets the ID of the currently running thread.
@@ -291,13 +256,13 @@ elif defined(freebsd):
 
 elif defined(macosx):
   proc pthread_threadid_np(thread: SysThread, thread_id: ptr uint64): cint {.
-    importc: "pthread_threadid_np", header: "<pthread.h>".}
+    importc: "pthread_threadid_np".}
 
   proc getThreadId*(): int =
     ## Gets the ID of the currently running thread.
     if threadId == 0:
       var tid = 0'u64
-      discard pthread_threadid_np(0, addr tid)
+      discard pthread_threadid_np(SysThread(0), addr tid)
       threadId = int(tid)
     result = threadId
 

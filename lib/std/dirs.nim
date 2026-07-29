@@ -23,11 +23,8 @@ when defined(windows):
   import errorcodes / errorcodes_windows
 else:
   import errorcodes / errorcodes_posix
-
-  when not defined(nimNativeIo):
-    var errno {.importc: "errno", header: "<errno.h>".}: cint
-  # else: `errno` comes from posix/posix (a native global maintained by the
-  # freestanding directory wrappers), so we don't pull <errno.h>.
+  # `errno` comes from posix/posix: the libc accessor under useLibc, or the
+  # native global maintained by the freestanding wrappers.
 {.feature: "lenientnils".}
 
 proc tryCreateFinalDir*(dir: Path): ErrorCode =
@@ -45,7 +42,7 @@ proc tryCreateFinalDir*(dir: Path): ErrorCode =
     if mkdir(dirStr.toCString, 0o777) == 0'i32:
       result = Success
     else:
-      result = posixToErrorCode(errno)
+      result = posixToErrorCode(errno())
 
 proc createDir*(dir: Path) {.raises.} =
   ## Creates a new directory `dir`. If the directory already exists, no error is raised.
@@ -81,7 +78,7 @@ proc tryRemoveFinalDir*(dir: Path): ErrorCode =
     if rmdir(dirStr.toCString) == 0'i32:
       result = Success
     else:
-      result = posixToErrorCode(errno)
+      result = posixToErrorCode(errno())
 
 proc removeDir*(dir: Path) {.raises.} =
   ## Removes the directory `dir`. If the directory does not exist, no error is raised.
@@ -102,7 +99,7 @@ proc tryRemoveFile*(file: Path): ErrorCode =
     if unlink(fileStr.toCString) == 0'i32:
       result = Success
     else:
-      result = posixToErrorCode(errno)
+      result = posixToErrorCode(errno())
 
 proc removeFile*(file: Path) {.raises.} =
   ## Removes the file `file`.
@@ -141,7 +138,7 @@ proc tryOpenDir*(dir: sink Path): DirWalker =
     var dirStr = $result.dir
     result.pimpl = opendir(dirStr.toCString)
     if result.pimpl == nil:
-      result.status = posixToErrorCode(errno)
+      result.status = posixToErrorCode(errno())
     else:
       result.status = Success
 
@@ -206,7 +203,7 @@ proc tryNextDir*(w: var DirWalker; e: var DirEntry): bool =
       let entry = readdir(w.pimpl)
       if entry == nil:
         if w.status == Success:
-          w.status = posixToErrorCode(errno)
+          w.status = posixToErrorCode(errno())
         result = false
         break
       else:
@@ -231,7 +228,7 @@ proc tryCloseDir*(w: var DirWalker): ErrorCode =
     if closedir(w.pimpl) == 0'i32:
       result = Success
     else:
-      result = posixToErrorCode(errno)
+      result = posixToErrorCode(errno())
 
 iterator walkDir*(dir: Path,
                   relative = false,

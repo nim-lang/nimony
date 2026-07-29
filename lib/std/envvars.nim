@@ -66,14 +66,22 @@ else:
     proc setEnvironmentVariableW(name, value: WideCString): WINBOOL {.
       importc: "SetEnvironmentVariableW", header: "<windows.h>".}
 
-  proc c_getenv(env: cstring): cstring {.
-    importc: "getenv", header: "<stdlib.h>".}
-  when defined(vcc):
-    proc c_putenv_s(envname: cstring, envval: cstring): cint {.importc: "_putenv_s", header: "<stdlib.h>".}
+  when defined(windows):
+    proc c_getenv(env: cstring): cstring {.
+      importc: "getenv", header: "<stdlib.h>".}
+    when defined(vcc):
+      proc c_putenv_s(envname: cstring, envval: cstring): cint {.importc: "_putenv_s", header: "<stdlib.h>".}
+    else:
+      proc c_setenv(envname: cstring, envval: cstring, overwrite: cint): cint {.importc: "setenv", header: "<stdlib.h>".}
+    proc c_unsetenv(env: cstring): cint {.
+      importc: "unsetenv", header: "<stdlib.h>".}
   else:
-    proc c_setenv(envname: cstring, envval: cstring, overwrite: cint): cint {.importc: "setenv", header: "<stdlib.h>".}
-  proc c_unsetenv(env: cstring): cint {.
-    importc: "unsetenv", header: "<stdlib.h>".}
+    # Real libc exports; bare importc, no <stdlib.h>. On the truly
+    # freestanding (arkham) target these have no implementation, but that
+    # target never mutates the process environment either.
+    proc c_getenv(env: cstring): cstring {.importc: "getenv".}
+    proc c_setenv(envname: cstring, envval: cstring, overwrite: cint): cint {.importc: "setenv".}
+    proc c_unsetenv(env: cstring): cint {.importc: "unsetenv".}
 
   # Environment handling cannot be put into RTL, because the `envPairs`
   # iterator depends on `environment`.
@@ -114,35 +122,15 @@ else:
         envComputed = true
 
   else:
-    const
-      useNSGetEnviron = (defined(macosx) and not defined(ios) and not defined(emscripten)) or defined(nimscript)
-
-    when useNSGetEnviron:
-      # From the manual:
-      # Shared libraries and bundles don't have direct access to environ,
-      # which is only available to the loader ld(1) when a complete program
-      # is being linked.
-      # The environment routines can still be used, but if direct access to
-      # environ is needed, the _NSGetEnviron() routine, defined in
-      # <crt_externs.h>, can be used to retrieve the address of environ
-      # at runtime.
-      proc NSGetEnviron(): pointer {.
-        importc: "_NSGetEnviron", header: "<crt_externs.h>".}
-    elif defined(haiku):
-      var gEnv {.importc: "environ", header: "<stdlib.h>".}: cstringArray
-    elif defined(nimNativeIo):
-      # Libc-free backend: no `environ`. The generated `main` captures the
-      # kernel-provided env block into `nimEnviron` (hexer genMainProc).
-      var gEnv {.importc: "nimEnviron".}: cstringArray
-    else:
-      var gEnv {.importc: "environ".}: cstringArray
+    # The generated `main` captures the env block it receives (`char** envp`)
+    # into the `nimEnviron` global on every backend (hexer genMainProc), so
+    # neither libc's `environ` nor Darwin's `_NSGetEnviron` is needed.
+    var gEnv {.importc: "nimEnviron".}: cstringArray
 
     proc getEnvVarsC() =
       # retrieves the variables of char** env of C's main proc
       if not envComputed:
         environment = @[]
-        when useNSGetEnviron:
-          var gEnv = cast[ptr cstringArray](NSGetEnviron())[]
         var i = 0
         while gEnv[i] != nil:
           add environment, $gEnv[i]
@@ -181,8 +169,9 @@ else:
       result = substr(environment[i], find(environment[i], '=')+1)
     else:
       when defined(nimNativeIo):
-        # Libc-free: no `getenv`. The `environment` scan above (built from
-        # `nimEnviron`) is the complete view, so a miss means "not set".
+        # No libc `getenv` on the freestanding target. The `environment` scan
+        # above (built from `nimEnviron`) is the complete view, so a miss
+        # means "not set".
         result = default
       else:
         var key = key
