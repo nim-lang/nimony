@@ -113,9 +113,13 @@ proc addDefine*(config: var NifConfig; symbol: string) =
 
 proc arkhamArch*(config: NifConfig): string =
   ## The `-a:` value arkham expects for `config.targetCPU` (native backend).
+  ## arm64 needs the OS too: plain `arm64` means MACH-O (macOS), so a Linux
+  ## aarch64 host has to ask for `linux_arm64` or nifasm writes a Mach-O binary
+  ## that the kernel refuses with "Exec format error".
   case config.targetCPU
   of cpuAmd64, cpuI386: "x64"
-  of cpuArm64, cpuArm: "arm64"
+  of cpuArm64, cpuArm:
+    if config.targetOS == osLinux: "linux_arm64" else: "arm64"
   else: "x64"  # only x64/arm64 are supported targets; default to host-class x64
 
 proc initNifConfig*(baseDir: sink string): NifConfig =
