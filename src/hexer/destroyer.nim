@@ -93,6 +93,12 @@ type
     anonBlock: SymId
     dest: TokenBuf
     lifter: ref LiftingCtx
+    terminates: bool
+      ## True when the statement just translated ends its statement list
+      ## unconditionally (`return`/`raise`/`break`). Those already ran the
+      ## enclosing scopes' destructors via `trReturn`/`trRaise`/`trBreak`,
+      ## so `trScope` must NOT append the scope's destructor sequence
+      ## after them: it would be dead code. See `trScope`.
 
 proc createNestedScope(kind: ScopeKind; parent: var Scope; info: NifLineInfo;
                        label = NoLabel; fin = default(Cursor)): Scope =
@@ -219,6 +225,10 @@ proc leaveAnonBlock(c: var Context) =
     bug "do not know which block to leave"
 
 proc trBreak(c: var Context; n: var Cursor) =
+  if c.terminates:
+    # unreachable: an earlier jump already left these scopes
+    takeTree c.dest, n
+    return
   let lab = n.childCursor
   if lab.kind == Symbol:
     leaveNamedBlock(c, lab.symId)
@@ -227,6 +237,17 @@ proc trBreak(c: var Context; n: var Cursor) =
   takeTree c.dest, n
 
 proc trReturn(c: var Context; n: var Cursor) =
+  if c.terminates:
+    #[ Unreachable: the statement list already ended in a jump, which ran
+       the destructors for every enclosing scope. Running them a second
+       time is not the harmless dead code it looks like — `eliminateJumps`
+       (CPS) rewrites both `return`s into flag assignments and lays the
+       tail out as straight-line fallthrough, so both sequences execute.
+       A `proc … {.passive.}` whose body ends `result = …` + explicit
+       `return` gets this shape from the frontend's implicit trailing
+       `(ret result)`. ]#
+    takeTree c.dest, n
+    return
   var it = addr(c.currentScope)
   while it != nil:
     leaveScope(c, it)
@@ -243,6 +264,10 @@ proc trRaise(c: var Context; n: var Cursor) =
   spuriously inline the outer finally before the raise lands on the
   inner handler — see `tnested_heap_with_fin.nim`.
   ]#
+  if c.terminates:
+    # unreachable: an earlier jump already left these scopes
+    takeTree c.dest, n
+    return
   var it = addr(c.currentScope)
   while it != nil:
     leaveScope(c, it, it.kind, raising = true)
@@ -269,13 +294,26 @@ proc trLocal(c: var Context; n: var Cursor) =
 
 proc trScope(c: var Context; body: var Cursor; kind = Other) =
   copyIntoKind c.dest, StmtsS, body.info:
+    c.terminates = false
     if body.stmtKind == StmtsS:
       body.into:
         while body.hasMore:
           tr c, body
     else:
       tr c, body
-    leaveScope(c, addr(c.currentScope), kind)
+    #[ A scope whose statement list ends in `return`/`raise`/`break` has
+       already had its destructors emitted by `trReturn`/`trRaise`/
+       `trBreak`, which walk the whole scope chain before the jump.
+       Appending the sequence again here used to be merely dead code in
+       straight-line output — but the CPS pass runs `eliminateJumps` AFTER
+       us, and that rewrites `return` into `(jtrue ´r)` plus fallthrough,
+       which makes the dead tail REACHABLE. The result was every escaping
+       local destroyed twice, plus a destroy of the coroutine-frame field
+       the return value had just been moved out of (arcopt elides the
+       paired `=wasMoved` together with the first, genuinely dead,
+       destroy). ]#
+    if not c.terminates:
+      leaveScope(c, addr(c.currentScope), kind)
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   if not params.isTagLit: return
@@ -410,30 +448,48 @@ proc trTry(c: var Context; n: var Cursor) =
         trNestedScope c, n
 
 proc tr(c: var Context; n: var Cursor) =
+  # `c.terminates` tracks whether the statement we are about to translate
+  # leaves its statement list unconditionally. Only the three jump
+  # statements set it; everything else clears it. A plain nested `(stmts`
+  # is transparent (it is not a scope of its own here) so it inherits the
+  # flag from its last child — see the generic branch below, which does
+  # not clear the flag after the child loop.
   if isAtom(n) or isDeclarative(n):
+    # Emits no code of its own, so it neither terminates the statement
+    # list nor resurrects it: leave `c.terminates` alone.
     takeTree c.dest, n
   else:
     case n.stmtKind
     of RetS:
       trReturn(c, n)
+      c.terminates = true
     of RaiseS:
       trRaise(c, n)
+      c.terminates = true
     of BreakS:
       trBreak(c, n)
+      c.terminates = true
     of IfS:
       trIf c, n
+      c.terminates = false
     of CaseS:
       trCase c, n
+      c.terminates = false
     of BlockS:
       trBlock c, n
+      c.terminates = false
     of LocalDecls:
       trLocal c, n
+      c.terminates = false
     of WhileS, CoroforS:
       trWhile c, n
+      c.terminates = false
     of TryS:
       trTry c, n
+      c.terminates = false
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
+      c.terminates = false
     of IteratorS:
       # iterinliner passes only `.closure` iterators through to here. Their
       # bodies need destroyer treatment (scope tracking, =destroy injection
@@ -445,10 +501,12 @@ proc tr(c: var Context; n: var Cursor) =
         trProcDecl c, n
       else:
         takeTree c.dest, n
+      c.terminates = false
     of MacroS:
       # Macros are out-of-process plugins compiled separately; their
       # bodies don't participate in lowering.
       takeTree c.dest, n
+      c.terminates = false
     of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
         ScopeS, WhenS, ContinueS, ForS, YldS, StmtsS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
@@ -457,20 +515,27 @@ proc tr(c: var Context; n: var Cursor) =
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
         BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
       if n.isTagLit:
+        let isStmtList = n.stmtKind == StmtsS
         c.dest.addParLe(n.cursorTagId, n.info)
+        c.terminates = false
         n.into:
           while n.hasMore:
             tr(c, n)
         c.dest.addParRi()
+        # A transparent `(stmts` keeps whatever its last child left behind;
+        # anything else (a call, an assignment, …) falls through.
+        if not isStmtList:
+          c.terminates = false
       else:
         c.dest.addSubtree n
         inc n
+        c.terminates = false
 
 proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, currentScope: createEntryScope(n.info),
     anonBlock: pool.syms.getOrIncl("`anonblock.0"),
-    dest: move(pass.dest))
+    dest: move(pass.dest), terminates: false)
   assert n.stmtKind == StmtsS
   c.dest.addParLe(n.cursorTagId, n.info)
   n.into:
