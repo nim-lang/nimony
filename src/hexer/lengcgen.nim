@@ -98,15 +98,6 @@ proc addKeyVal(dest: var TokenBuf; g: var GenPragmas; key: string; val: int64; i
   dest.addIntLit(val, info)
   dest.addParRi()
 
-proc addKeyIdent(dest: var TokenBuf; g: var GenPragmas; key, val: string; info: NifLineInfo) =
-  ## `(instruction bsf)` — the value is an *ident* from a generated enum, not a
-  ## free string, so a backend decodes it by table lookup rather than by
-  ## string-matching a C name.
-  maybeOpen dest, g, info
-  dest.addParLe(globalTags.registerTag(key), info)
-  dest.addIdent(pool.strings.getOrIncl(val), info)
-  dest.addParRi()
-
 proc closeGenPragmas(dest: var TokenBuf; g: GenPragmas) =
   if g.opened:
     dest.addParRi()
@@ -141,7 +132,7 @@ type
     header: StrId
     dynlib: StrId
     callConv: CallConv
-    intrinsic: IntrinsicOp   ## the `{.instruction: X.}` / `{.intrinsic: X.}` row
+    intrinsic: IntrinsicOp   ## the `{.instruction: "X".}` / `{.intrinsic: "X".}` row
                              ## (`NoIntrinsicOp` if neither); sem already checked
                              ## it against the signature, so hexer only forwards
     register: StrId          ## `{.register: "rdi".}` — the pinned machine register of a
@@ -827,11 +818,10 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.flags.incl pk
               inc n
           of InstructionP, IntrinsicP:
-            # sem already resolved and checked the opcode; re-resolve the ident
-            # here so hexer carries the enum rather than a name.
+            # sem already resolved and checked the opcode; re-resolve the NAME
+            # here so hexer carries the enum rather than a string.
             n.into:
-              if not n.isIdent:
-                error c, "expected an opcode identifier, but got: ", n
+              expectStrLit c, n
               let cls = if pk == InstructionP: icPinned else: icPortable
               result.intrinsic = intrinsicOpByName(pool.strings[n.strId], cls)
               result.flags.incl pk
@@ -1010,7 +1000,8 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if prag.intrinsic != NoIntrinsicOp:
     let key = if InstructionP in prag.flags: "instruction" else: "intrinsic"
-    dest.addKeyIdent genPragmas, key, IntrinsicNames[prag.intrinsic], pinfo
+    dest.addKeyVal genPragmas, key,
+      pool.strings.getOrIncl(IntrinsicNames[prag.intrinsic]), pinfo
 
   if AssemblerP in prag.flags:
     dest.addKey genPragmas, "assembler", pinfo

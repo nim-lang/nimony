@@ -1024,7 +1024,15 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       var bits = 0
       let op = intrinsicOfCallee(c.m, n, bits)   # `n` is at the callee symbol
       builtin = if op == NoIntrinsicOp: "" else: cBuiltinFor(op, bits)
-      if builtin.len == 0:
+      if op.isAtomic:
+        # `cBuiltinFor` DOES name a builtin for these, but `genGccBuiltinCall`
+        # below knows only the bit-counting family and its `else` branch emits
+        # NOTHING — an atomic silently dropped, the one failure mode a
+        # concurrency primitive must not have. Reject until the `atomicrmw` /
+        # `cmpxchg` lowering exists. (The same hole swallowed these when they
+        # were `importc` calls; naming them makes it reportable.)
+        error c.m, "the LLVM backend has no lowering for the atomics yet: ", start
+      elif builtin.len == 0:
         error c.m, "the LLVM backend has no lowering for this instruction: ", start
       skip n                                  # the callee symbol
       while n.hasMore:

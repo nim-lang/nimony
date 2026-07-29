@@ -84,6 +84,14 @@ type
       ## `swap` while `transformCoroutineDecl` runs, then swap back.
       ## `coroTypes` and `shouldPublish` accumulate here across all
       ## iters in the module and get flushed in `elimLambdas`.
+    pendingIterSigs: seq[(SymId, TokenBuf)]
+      ## Rewritten `.closure` iter signatures, snapshotted by
+      ## `transformClosureIter` while `shouldPublish` offsets still
+      ## index the buffer the iter was written into (for a NESTED
+      ## iter that is treProcLift's local lift buffer, not stmtsBuf).
+      ## Published at the end of pass 2 — publishing earlier would
+      ## flip `tryLoadSym(iterSym)` mid-pass and confuse the
+      ## iter-sym-as-value check.
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
@@ -461,8 +469,20 @@ proc transformClosureIter(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## registered keep working) and reclaim it after. `coroTypes` /
   ## `shouldPublish` stay on `coroCtx`; flushed by `elimLambdas`.
   swap c.coroCtx.typeCache, c.typeCache
+  let publishedBefore = c.coroCtx.shouldPublish.len
   coro_transform.transformCoroutineDecl(c.coroCtx, dest, n)
   swap c.coroCtx.typeCache, c.typeCache
+  # Snapshot the rewritten signature NOW, while `shouldPublish.start`
+  # still indexes `dest`. For a nested iter `dest` is treProcLift's
+  # local lift buffer which is concatenated (at a shifted offset) into
+  # the outer buffer afterwards — flushing against stmtsBuf at the end
+  # of the pass would read a random subtree and publish garbage.
+  for i in publishedBefore ..< c.coroCtx.shouldPublish.len:
+    let entry = c.coroCtx.shouldPublish[i]
+    var buf = createTokenBuf(16)
+    buf.copyTree dest.cursorAt(entry.start)
+    c.pendingIterSigs.add (entry.sym, ensureMove buf)
+  c.coroCtx.shouldPublish.setLen publishedBefore
 
 proc isClosureCoroFor(c: var Context; n: Cursor): bool =
   ## Peek at a `(corofor (call <target> …) …)` to decide whether this
@@ -902,7 +922,9 @@ proc isStaticCall(c: var Context;s: SymId): bool =
 proc toNonClosureProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   # just remove closure pragma from proctype
   var n = n
-  assert n.typeKind in {ProctypeT, ProcT}
+  # ItertypeT: genCall runs before cps rewrites itertypes to wrapper
+  # proctypes, so a first-class closure-iter value lands here too.
+  assert n.typeKind in {ProctypeT, ProcT, ItertypeT}
   takeInto dest, n:
     while n.hasMore:
       if n.substructureKind == PragmasU:
@@ -1326,17 +1348,14 @@ proc elimLambdas*(pass: var Pass) =
       var stmtsBuf = createTokenBuf(cap)
       while n2.hasMore:
         tre(c, stmtsBuf, n2)
-      # Publish the rewritten iter signatures NOW — `shouldPublish`
-      # `start` offsets index into stmtsBuf. Doing this earlier would
-      # change `tryLoadSym(iterSym)` mid-pass and confuse the
-      # iter-sym-as-value check; deferring until after the walk keeps
-      # the pass internally consistent. Order also matters: flush
-      # BEFORE concatenating stmtsBuf into pass.dest so the indices
-      # stay valid.
-      for entry in c.coroCtx.shouldPublish:
-        var buf = createTokenBuf(16)
-        buf.copyTree stmtsBuf.cursorAt(entry.start)
-        publishSignature buf, entry.sym, 0
+      # Publish the rewritten iter signatures NOW — the snapshots were
+      # taken by `transformClosureIter` while the offsets were valid
+      # (nested iters land in treProcLift's lift buffer, not stmtsBuf,
+      # so buffer-relative offsets can't be replayed here). Publishing
+      # earlier would change `tryLoadSym(iterSym)` mid-pass and
+      # confuse the iter-sym-as-value check.
+      for (sym, sig) in c.pendingIterSigs.mitems:
+        publishSignature sig, sym, 0
       pass.dest.add c.coroCtx.coroTypes
       pass.dest.add stmtsBuf
       pass.dest.addParRi(n2.endInfo)

@@ -18,38 +18,26 @@ type
 template toMem(order: MemoryOrder): cint =
   cint(ord(order))
 
-# GCC/Clang __atomic builtins. They operate on any 1/2/4/8-byte type directly.
-
-proc builtinLoadN[T](p: ptr T; mem: cint): T {.
-  importc: "__atomic_load_n", nodecl.}
-proc builtinStoreN[T](p: ptr T; val: T; mem: cint) {.
-  importc: "__atomic_store_n", nodecl.}
-proc builtinExchangeN[T](p: ptr T; val: T; mem: cint): T {.
-  importc: "__atomic_exchange_n", nodecl.}
+proc builtinLoadN[T](p: ptr T; mem: cint): T {.intrinsic: "AtomicLoad".}
+proc builtinStoreN[T](p: ptr T; val: T; mem: cint) {.intrinsic: "AtomicStore".}
+proc builtinExchangeN[T](p: ptr T; val: T; mem: cint): T {.intrinsic: "AtomicExchange".}
 proc builtinCompareExchangeN[T](p: ptr T; expected: ptr T; desired: T;
-    weak: bool; succ, fail: cint): bool {.
-  importc: "__atomic_compare_exchange_n", nodecl.}
+  weak: bool; succ, fail: cint): bool {.intrinsic: "AtomicCompareExchange".}
 
-proc builtinFetchAdd[T](p: ptr T; val: T; mem: cint): T {.
-  importc: "__atomic_fetch_add", nodecl.}
-proc builtinFetchSub[T](p: ptr T; val: T; mem: cint): T {.
-  importc: "__atomic_fetch_sub", nodecl.}
-proc builtinFetchAnd[T](p: ptr T; val: T; mem: cint): T {.
-  importc: "__atomic_fetch_and", nodecl.}
-proc builtinFetchOr[T](p: ptr T; val: T; mem: cint): T {.
-  importc: "__atomic_fetch_or", nodecl.}
-proc builtinFetchXor[T](p: ptr T; val: T; mem: cint): T {.
-  importc: "__atomic_fetch_xor", nodecl.}
+proc builtinFetchAdd[T](p: ptr T; val: T; mem: cint): T {.intrinsic: "AtomicFetchAdd".}
+proc builtinFetchSub[T](p: ptr T; val: T; mem: cint): T {.intrinsic: "AtomicFetchSub".}
+proc builtinFetchAnd[T](p: ptr T; val: T; mem: cint): T {.intrinsic: "AtomicFetchAnd".}
+proc builtinFetchOr[T](p: ptr T; val: T; mem: cint): T {.intrinsic: "AtomicFetchOr".}
+proc builtinFetchXor[T](p: ptr T; val: T; mem: cint): T {.intrinsic: "AtomicFetchXor".}
 
-proc builtinTestAndSet(p: pointer; mem: cint): bool {.
-  importc: "__atomic_test_and_set", nodecl.}
-proc builtinClear(p: pointer; mem: cint) {.
-  importc: "__atomic_clear", nodecl.}
+# The flag pair takes a bare `pointer`: a flag is a byte with no pointee type to
+# read a width from. No native back end lowers them yet — the rows' `targets` is
+# empty, so a native build reports that at the call site instead of guessing.
+proc builtinTestAndSet(p: pointer; mem: cint): bool {.intrinsic: "AtomicTestAndSet".}
+proc builtinClear(p: pointer; mem: cint) {.intrinsic: "AtomicClear".}
 
-proc builtinThreadFence(mem: cint) {.
-  importc: "__atomic_thread_fence", nodecl.}
-proc builtinSignalFence(mem: cint) {.
-  importc: "__atomic_signal_fence", nodecl.}
+proc builtinThreadFence(mem: cint) {.intrinsic: "AtomicThreadFence".}
+proc builtinSignalFence(mem: cint) {.intrinsic: "AtomicSignalFence".}
 
 # Access operations
 
