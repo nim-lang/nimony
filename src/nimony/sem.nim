@@ -3818,13 +3818,24 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
   else:
     dest.addParLe(KvU, info)
     dest.addSymUse(fieldSym, info)
-    var typ = field.typ
-    if bindings.len != 0:
-      # fields in generic type AST contain generic params of the type
-      # for invoked object types, bindings are built from the given arguments
-      # and the field type is instantiated based on them here
-      typ = instantiateType(c, typ, bindings)
-    callDefault c, dest, typ, info
+    if not field.val.isDotToken:
+      # The field declares a constant default value (`x: int = -1`); the spec
+      # requires construction to use it rather than the type's zero default.
+      # The value is already typed (semchecked at the type declaration), so
+      # emit it directly — instantiating only if it carries generic params.
+      if bindings.len != 0 and containsGenericParams(field.val):
+        var v = Item(n: field.val, typ: c.types.autoType)
+        instantiateExprIntoBuf(c, dest, v, bindings)
+      else:
+        dest.addSubtree field.val
+    else:
+      var typ = field.typ
+      if bindings.len != 0:
+        # fields in generic type AST contain generic params of the type
+        # for invoked object types, bindings are built from the given arguments
+        # and the field type is instantiated based on them here
+        typ = instantiateType(c, typ, bindings)
+      callDefault c, dest, typ, info
     if depth != 0:
       dest.addIntLit(depth, info)
     dest.addParRi()
