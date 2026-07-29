@@ -55,6 +55,8 @@ import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore (incl. rootOf, 
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import ".." / ".." / "models" / tags          # VarTagId for synthesis
 import patchsets
+import ".." / nifmodules                      # MainModule (type context, threaded through)
+import ".." / typenav                         # lookupField — the scalar's declared type
 
 # ---- nifcore helpers ------------------------------------------------------
 
@@ -148,6 +150,9 @@ proc runConstructorProjection*(buf: var TokenBuf) =
 type
   Candidate = object
     declPos: int                       ## position of the `(var :o …)` decl
+    typePos: int                       ## position of the `oconstr`'s type `T` (-1 ⇒ absent);
+                                       ## `lookupField` resolves each scalar's declared type
+                                       ## through it
     fieldOrder: seq[SymId]             ## fields in constructor order
     valuePos: Table[SymId, int]        ## field -> position of its `kv` value
     names: Table[SymId, string]        ## field -> fresh scalar name (survivors)
@@ -162,6 +167,9 @@ type
     synth: seq[TokenBuf]
     suffix: string
     counter: int
+    m: ptr MainModule                  ## module type context; nil ⇒ emit `.` and let the
+                                       ## backend re-infer (the pre-existing behaviour, kept
+                                       ## for the self-tests, which parse a body in isolation)
 
 proc freshScalarName(c: var Context): string =
   inc c.counter
@@ -177,13 +185,16 @@ proc recordOconstr(c: var Context; oSym: SymId; declPos: int; oconstr: Cursor) =
     c.candidates[oSym].disqualified = true
     return
   var cand = Candidate(declPos: declPos,
+                       typePos: -1,
                        valuePos: initTable[SymId, int](),
                        names: initTable[SymId, string](),
                        accessed: initHashSet[SymId]())
   var ok = true
   var oc = oconstr
   oc.into:
-    if oc.hasMore: skip oc                       # type T
+    if oc.hasMore:
+      cand.typePos = cursorToPosition(c.orig[], oc)
+      skip oc                                    # type T
     while oc.hasMore:
       if oc.kind == TagLit and oc.substructureKind == KvU:
         var kv = oc
@@ -309,8 +320,24 @@ proc emitRewritten(c: var Context; dest: var TokenBuf; n: Cursor) =
   else:
     dest.addSubtree n
 
-proc buildFieldDecl(c: var Context; name: string; value: Cursor): int =
-  ## Synthesize `(var :name . . <rewritten value>)`.
+proc emitScalarType(c: var Context; buf: var TokenBuf; typePos: int; f: SymId) =
+  ## Spell out the scalar's declared type instead of leaving the slot empty for the
+  ## backend to re-infer. The right type is the FIELD's declared type in `T`, not the
+  ## initializer's: the scalar stands in for every `o.f`, so it must have `o.f`'s type.
+  ## Re-inference from the value gets this wrong whenever the two differ — a narrow
+  ## field initialized from a wider literal would silently widen, changing where the
+  ## arithmetic wraps — and it fails outright on a value whose type the backend cannot
+  ## navigate in this module's context (the same hole `cse.emitTempType` was written to
+  ## close). Without a type context (the self-tests) the slot is left empty.
+  if c.m == nil:
+    buf.addDotToken()
+  else:
+    assert typePos >= 0, "oconstr without a type"
+    buf.addSubtree lookupField(c.m[], cursorAt(c.orig[], typePos), f)
+
+proc buildFieldDecl(c: var Context; name: string; value: Cursor;
+                    typePos: int; f: SymId): int =
+  ## Synthesize `(var :name . <type> <rewritten value>)`.
   result = c.synth.len
   var buf = createTokenBuf(16, c.orig[].pool, c.orig[].tags)
   buf.openTag TagId(ord(VarTagId))
@@ -318,7 +345,7 @@ proc buildFieldDecl(c: var Context; name: string; value: Cursor): int =
   if li.isValid: buf.appendLineInfo li
   buf.addSymDef name
   buf.addDotToken()                              # pragmas
-  buf.addDotToken()                              # type — inferred from value
+  emitScalarType(c, buf, typePos, f)             # declared type
   emitRewritten(c, buf, value)
   buf.closeTag()
   c.synth.add ensureMove(buf)
@@ -334,17 +361,21 @@ proc synthCursor(c: var Context; idx: int): Cursor {.inline.} =
 
 # ---- public entry ---------------------------------------------------------
 
-proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M") =
+proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
+                   m: ptr MainModule = nil) =
   ## Scalar-replace non-escaping local objects in a single proc body. Names the
   ## field scalars `` `sroa.<n>.<suffix> ``; pass a per-body-unique suffix (the
   ## driver uses `bodySuffix`) so two bodies' scalars get distinct module symbols.
+  ## `m` is the module type context each scalar's declared type is resolved through;
+  ## without it the type slots are left empty and the backend re-infers them.
   var c = Context(orig: addr buf,
                   candidates: initTable[SymId, Candidate](),
                   accesses: @[],
                   patchset: initPatchset(addr buf),
                   synth: @[],
                   suffix: moduleSuffix,
-                  counter: 0)
+                  counter: 0,
+                  m: m)
   block:
     let n = beginRead(buf)
     collectCandidates(c, n)
@@ -381,7 +412,7 @@ proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M") =
     for f in fields:
       let name = c.candidates[oSym].names[f]
       let value = cursorAt(c.orig[], c.candidates[oSym].valuePos[f])
-      let idx = buildFieldDecl(c, name, value)
+      let idx = buildFieldDecl(c, name, value, c.candidates[oSym].typePos, f)
       if first:
         c.patchset.addSubst(declPos, synthCursor(c, idx)); first = false
       else:
