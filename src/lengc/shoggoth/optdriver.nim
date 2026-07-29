@@ -72,9 +72,9 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # propagation then cleans up the resulting scalar copies and dead stores, so the
   # later passes see simpler, scalar code.
   runConstructorProjection(buf)
-  runScalarize(buf, bodySuffix)
+  runScalarize(buf, bodySuffix, m)
   runCopyProp(buf, params)
-  runInductionVariables(buf, bodySuffix)
+  runInductionVariables(buf, bodySuffix, m)
   runCSE(buf, bodySuffix, summaries, m)
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
