@@ -5,7 +5,7 @@
 #    See the file "license.txt", included in this distribution.
 #
 
-## The single source of truth for `{.instruction: X.}` / `{.intrinsic: X.}`.
+## The single source of truth for `{.instruction: "X".}` / `{.intrinsic: "X".}`.
 ##
 ## An intrinsic is declared as an ordinary proc prototype, so overload
 ## resolution, `sigmatch` and `getType` need no special cases. What a proc
@@ -17,7 +17,7 @@
 ##
 ## Two repositories read this file:
 ##
-## * nimony's `sempragmas` resolves the pragma's ident to an `IntrinsicOp`,
+## * nimony's `sempragmas` resolves the pragma's name to an `IntrinsicOp`,
 ##   unifies the signature against the row and rejects a mismatch at the
 ##   declaration site.
 ## * arkham (`nativenif`) reads `targets` to answer "does this target have that
@@ -33,13 +33,13 @@
 type
   IntrinsicOp* = enum
     NoIntrinsicOp
-    # ── portable (`{.intrinsic: X.}`): a lowering exists on every target,
+    # ── portable (`{.intrinsic: "X".}`): a lowering exists on every target,
     #    possibly as several instructions.
     CtzOp
     ClzOp
     PopcountOp
     BswapOp
-    # ── target-pinned (`{.instruction: X.}`): exactly one machine instruction.
+    # ── target-pinned (`{.instruction: "X".}`): exactly one machine instruction.
     #    The name is the nifasm instruction tag.
     BsfOp
     BsrOp
@@ -70,28 +70,50 @@ type
     #    `ins(var d, x)` form instead.
     AddOp
     SubOp
-    BitandOp
-    BitorOp
-    BitxorOp
-    ShiftlOp
-    ShiftrOp
+    AndOp
+    OrOp
+    XorOp
+    ShlOp
+    ShrOp
     SarOp
     NegOp
-    BitnotOp
+    NotOp
     IncOp
     DecOp
+    # ── atomics (`{.intrinsic: "AtomicX".}`). Portable: every target has a
+    #    lock-free lowering, though rarely as ONE instruction — x86-64 spells an
+    #    RMW `lock xadd` / a `lock cmpxchg` retry loop, AArch64 an LL/SC
+    #    `ldaxr`/`stlxr` loop. That is precisely what `icPortable` means, and it
+    #    is why these are rows here rather than `importc: "__atomic_*"` calls:
+    #    an atomic is an OPCODE, and calling it a call made every consumer treat
+    #    an inline instruction sequence as an ABI call point.
+    AtomicLoadOp
+    AtomicStoreOp
+    AtomicExchangeOp
+    AtomicCompareExchangeOp
+    AtomicFetchAddOp
+    AtomicFetchSubOp
+    AtomicFetchAndOp
+    AtomicFetchOrOp
+    AtomicFetchXorOp
+    AtomicAddFetchOp
+    AtomicSubFetchOp
+    AtomicTestAndSetOp
+    AtomicClearOp
+    AtomicThreadFenceOp
+    AtomicSignalFenceOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
     ## derivable from `targets`, which is availability and grows as the backends
     ## do. A pinned row can be available everywhere (`mov`/`add`/`cmp` are both
-    ## `X64Inst` and `A64Inst`) and is still pinned: `{.instruction: add.}` means
+    ## `X64Inst` and `A64Inst`) and is still pinned: `{.instruction: "add".}` means
     ## the machine's two-address add, not "a portable addition". A portable row
     ## can be missing on a target (`Popcount`, until a64 gets a lowering) and is
     ## still portable. Deriving the class from `targets` would also make a
     ## declaration's legal spelling flip the day a backend gains an expansion.
-    icPortable   ## `{.intrinsic: X.}` — target-neutral opcode, any expansion
-    icPinned     ## `{.instruction: X.}` — one named machine instruction
+    icPortable   ## `{.intrinsic: "X".}` — target-neutral opcode, any expansion
+    icPinned     ## `{.instruction: "X".}` — one named machine instruction
 
   IntrinsicTarget* = enum
     tgX64        ## x86-64
@@ -129,11 +151,29 @@ type
     ptAnyIntW    ## `(i W)` | `(u W)` | `(c W)`
     ptInt32      ## `(i 32)` — fixed width, does not bind `W`
     ptAnyInt     ## any integer, width unconstrained and unbound
+    ptValW       ## the type an atomic operates ON — an integer (binding `W`) or a
+                 ## POINTER, which is a machine word and binds 64. A free-list head
+                 ## and an ARC counter are both atomic cells; only one of them is a
+                 ## number, so this is deliberately wider than `ptAnyIntW`.
+    ptPtrW       ## `ptr X` where X matches `ptValW` — an atomic's memory operand.
+                 ## The pointee is what fixes the ACCESS WIDTH, and getting that
+                 ## wrong is not a slow program but a corrupt neighbouring field,
+                 ## so the row names the relationship instead of leaving it to the
+                 ## back end to guess.
+    ptRawPtr     ## a bare `pointer` — the byte-wide flag cell of `AtomicTestAndSet`
+                 ## / `AtomicClear`, which have no pointee type to read a width from
+                 ## (C says a flag is a byte, and both back ends agree).
+    ptMemOrder   ## a `__ATOMIC_*` memory-order argument. See `matchPat`: v1 accepts
+                 ## any type here because v1 reads none.
+    ptWeak       ## `AtomicCompareExchange`'s `weak` flag: a `bool` that says a
+                 ## spurious failure is acceptable. v1 reads none either — both
+                 ## lowerings are the strong form, which is always a legal answer.
 
 const
-  MaxOperands* = 4
-    ## Enough for every row here. `(cmpxchg)`-shaped rows and the atomics will
-    ## raise it; nothing depends on the exact value.
+  MaxOperands* = 6
+    ## `AtomicCompareExchange` is the widest row: pointer, expected, desired,
+    ## `weak`, and a memory order for each of the success and failure paths.
+    ## Nothing depends on the exact value.
 
 type
   IntrinsicRow* = object
@@ -165,26 +205,48 @@ const
     "", "Ctz", "Clz", "Popcount", "Bswap",
     "bsf", "bsr", "popcnt", "bswap", "rol", "ror", "clz", "rbit", "rev",
     "cmp", "test",
-    # nifasm's own condition tags, except the overflow pair: its tags are `of`
-    # and `no`, and `of` is a Nim keyword, so `{.instruction: of.}` does not
-    # parse (a pragma entry is an expression — the same collision that made
-    # `{.asm.}` impossible). `ovf`/`novf` are the source spellings; the backend
-    # maps them back, so the assembler still sees `(of)`/`(no)`.
-    "zf", "nz", "cf", "nc", "sf", "ns", "ovf", "novf", "pf", "np",
-    # The rule throughout: the source name IS the nifasm tag, unless Nim's grammar
-    # forbids it. `and`/`or`/`xor`/`not`/`shl`/`shr` are keywords, so they take the
-    # spelling nimony's own IR already uses for those operations; the backend maps
-    # them back to `(and)`, `(or)`, … Everything Nim can parse keeps its mnemonic,
-    # `sar` included — the renames are exactly the collisions and nothing more.
-    "add", "sub", "bitand", "bitor", "bitxor", "shiftl", "shiftr", "sar",
-    "neg", "bitnot", "inc", "dec"]
+    # nifasm's own condition tags, verbatim — `of` and `no` included. They were
+    # once `ovf`/`novf` because the pragma argument was an IDENT, and a Nim keyword
+    # cannot be written where an expression is expected; inside a string literal a
+    # keyword is just text, so the cover names are gone.
+    "zf", "nz", "cf", "nc", "sf", "ns", "of", "no", "pf", "np",
+    # The rule, now without exceptions: THE SOURCE NAME IS THE NIFASM TAG. `and`,
+    # `or`, `xor`, `shl`, `shr` and `not` needed cover names (`bitand`, `shiftl`, …)
+    # for exactly the reason `of` did, and lost them for the same reason. Nothing
+    # in this table is a rename any more — so no consumer has two vocabularies to
+    # reconcile, and a reader of one file can trust the other.
+    "add", "sub", "and", "or", "xor", "shl", "shr", "sar",
+    "neg", "not", "inc", "dec",
+    # The atomics are PORTABLE rows, so — like `Ctz`/`Bswap` — the name is a
+    # capitalised opcode rather than a mnemonic: there is no single instruction to
+    # name after. It reads as the C builtin with the `__atomic_` prefix dropped and
+    # the words joined, which is the mapping the C back end then undoes.
+    "AtomicLoad", "AtomicStore", "AtomicExchange", "AtomicCompareExchange",
+    "AtomicFetchAdd", "AtomicFetchSub", "AtomicFetchAnd", "AtomicFetchOr",
+    "AtomicFetchXor", "AtomicAddFetch", "AtomicSubFetch",
+    "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence"]
 
-  AllIn = [roIn, roIn, roIn, roIn]
-  InoutFirst = [roInout, roIn, roIn, roIn]        ## operand 0 read AND written
-  NoOps = [ptNone, ptNone, ptNone, ptNone]        ## no operands at all
-  Un = [ptAnyIntW, ptNone, ptNone, ptNone]        ## one integer source
-  UnCount = [ptAnyIntW, ptAnyInt, ptNone, ptNone] ## a value plus a count
-  Bin = [ptAnyIntW, ptAnyIntW, ptNone, ptNone]    ## two same-width integer sources
+  AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
+  InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
+  NoOps = [ptNone, ptNone, ptNone, ptNone, ptNone, ptNone]     ## no operands at all
+  Un = [ptAnyIntW, ptNone, ptNone, ptNone, ptNone, ptNone]     ## one integer source
+  UnCount = [ptAnyIntW, ptAnyInt, ptNone, ptNone, ptNone, ptNone] ## a value plus a count
+  Bin = [ptAnyIntW, ptAnyIntW, ptNone, ptNone, ptNone, ptNone] ## two same-width int sources
+
+  # ── atomic operand shapes ────────────────────────────────────────────────
+  # Every one of them ends in a memory order, because the C builtins do and the
+  # declarations these rows check are the same declarations the C back end still
+  # compiles. v1 IGNORES the order (see `ptMemOrder`), but dropping the operand
+  # would fork the source, so the row carries it and the lowering discards it.
+  AtomLoad = [ptPtrW, ptMemOrder, ptNone, ptNone, ptNone, ptNone]
+  AtomRmw = [ptPtrW, ptValW, ptMemOrder, ptNone, ptNone, ptNone]
+    ## `(cell, operand, order)` — store, exchange and every fetch-op form
+  AtomCas = [ptPtrW, ptPtrW, ptValW, ptWeak, ptMemOrder, ptMemOrder]
+    ## `(cell, expected, desired, weak, success order, failure order)`. `expected`
+    ## is a POINTER because a failed compare writes the observed value back through
+    ## it — the one atomic with an output that is not the result.
+  AtomFlag = [ptRawPtr, ptMemOrder, ptNone, ptNone, ptNone, ptNone]
+  AtomFence = [ptMemOrder, ptNone, ptNone, ptNone, ptNone, ptNone]
 
   AllArith = {mfZF, mfCF, mfSF, mfOF, mfPF}
     ## What an x86 arithmetic/compare instruction leaves defined. `test` clears CF
@@ -196,6 +258,16 @@ const
     ## they exist next to `add r, 1`. A row that got this wrong would silently
     ## break a multi-word add loop, so the column records it.
   IntWidths = {8'u8, 16'u8, 32'u8, 64'u8}
+
+  # An atomic is never `efPure`: the whole point is the memory traffic, and a
+  # "pure" one would be DCE's to delete. `efBarrier` is on all of them including
+  # the plain load and store — v1 emits every sequence at sequential-consistency
+  # strength on both targets, so the barrier is the truth about what is emitted,
+  # not an aspiration. A v2 that honours the order operand relaxes this per call,
+  # which is a property of the CALL, not of the row.
+  AtomRead = {efReads, efBarrier}
+  AtomWrite = {efWrites, efBarrier}
+  AtomModify = {efReads, efWrites, efBarrier}
 
   IntrinsicRows*: array[IntrinsicOp, IntrinsicRow] = [
     # The `NoIntrinsicOp` placeholder. Every field is spelled out: this file also
@@ -335,21 +407,21 @@ const
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     # AND/OR/XOR clear CF and OF and set SF/ZF/PF — all five are DEFINED.
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # bitand → (and)
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # and
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # bitor → (or)
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # or
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # bitxor → (xor)
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # xor
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     # The shifts take a COUNT, not a same-width operand, hence `UnCount`. A
     # variable count must live in `cl`; v1 takes a literal, like `rol`/`ror`.
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shiftl → (shl)
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shl
                  params: UnCount, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shiftr → (shr)
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shr
                  params: UnCount, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # sar
@@ -359,7 +431,7 @@ const
                  params: Un, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     # x86 NOT touches no flags at all — the one row here whose `defs` is empty.
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # bitnot → (not)
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # not
                  params: Un, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # inc
@@ -367,10 +439,82 @@ const
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllButCarry),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # dec
                  params: Un, roles: InoutFirst, ret: ptVoid,
-                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllButCarry)
+                 widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllButCarry),
+
+    # ── atomics ────────────────────────────────────────────────────────────
+    # `tie` stays -1 throughout even though several x86 lowerings ARE two-address
+    # (`lock xadd [p], r` returns the old value in `r`). `tie` names an alias the
+    # ALLOCATOR must arrange between a result and a declared operand; here the
+    # register that gets destroyed is the sequence's own, seeded from an operand by
+    # the back end. Spelling that as a tie would over-constrain AArch64, whose LL/SC
+    # loop has no such relationship at all.
+    #
+    # `widths` is `IntWidths` because the machine sizes the access to the cell —
+    # `ldaxrb`/`ldaxrh` and the 8/16-bit `lock` forms all exist. Note that `W`
+    # usually stays UNBOUND at the declaration: these are generic over the cell
+    # type, so the width is the instantiation's and the back end reads it off the
+    # pointee at the call site. See `matchPat`.
+
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 2,  # AtomicLoad
+                 params: AtomLoad, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomRead, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicStore
+                 params: AtomRmw, roles: AllIn, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: AtomWrite, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicExchange
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    # The result is the SUCCESS FLAG, not the cell's type — so `ptBool`, and the
+    # observed value leaves through the `expected` pointer instead.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 6,  # AtomicCompareExchange
+                 params: AtomCas, roles: AllIn, ret: ptBool,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    # The fetch-ops return the value BEFORE the update, the `*_fetch` forms the
+    # value after. Two rows rather than one plus a flag: the difference is which
+    # register the sequence ends up reading, which is the lowering's whole shape.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchAdd
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchSub
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchAnd
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchOr
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchXor
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicAddFetch
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicSubFetch
+                 params: AtomRmw, roles: AllIn, ret: ptValW,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    # `targets: {}` — neither back end lowers the flag pair yet, and `targets` is
+    # exactly the column that says so: a call is then a compile error naming the
+    # target, never a silent fallback. The C back end does not consult `targets`
+    # (it has `__atomic_test_and_set`), so the rows are usable there today.
+    IntrinsicRow(cls: icPortable, targets: {}, arity: 2,              # AtomicTestAndSet
+                 params: AtomFlag, roles: AllIn, ret: ptBool,
+                 widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {}, arity: 2,              # AtomicClear
+                 params: AtomFlag, roles: AllIn, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: AtomWrite, uses: {}, defs: {}),
+    # A fence has no operand but the order and no result at all: its entire content
+    # is `efBarrier`, which is what keeps it from being deleted for producing
+    # nothing — the same argument `cmp`'s `defs` makes for a flag-only instruction.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,  # AtomicThreadFence
+                 params: AtomFence, roles: AllIn, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,  # AtomicSignalFence
+                 params: AtomFence, roles: AllIn, ret: ptVoid,
+                 widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = DecOp
+const LastIntrinsicOp* = AtomicSignalFenceOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -378,7 +522,7 @@ const LastIntrinsicOp* = DecOp
 proc intrinsicOpByName*(name: string; cls: IntrinsicClass): IntrinsicOp =
   ## Resolve a pragma argument to its row. The class is part of the key: the
   ## portable `Bswap` and the x86 instruction `bswap` are different rows, and
-  ## `{.instruction: Bswap.}` must not silently mean the portable one.
+  ## `{.instruction: "Bswap".}` must not silently mean the portable one.
   result = NoIntrinsicOp
   for i in 1 .. ord(LastIntrinsicOp):
     let op = IntrinsicOp(i)
@@ -409,6 +553,38 @@ proc isFlagWrite*(r: IntrinsicRow): bool {.inline.} =
   ## but its result goes to a register, so it is an ordinary instruction that
   ## happens to define flags — not a flag instruction.
   r.ret == ptVoid and r.defs != {} and r.inoutOperand < 0
+
+const IgnoredPats* = {ptMemOrder, ptWeak}
+  ## Operand patterns v1 does not read. See `evaluatedOperands`.
+
+proc evaluatedOperands*(r: IntrinsicRow): int =
+  ## How many LEADING operands a back end must actually evaluate. Everything past
+  ## them is a compile-time knob v1 ignores — the memory orders, and
+  ## `AtomicCompareExchange`'s `weak` — and evaluating one is not merely wasted
+  ## work: `__ATOMIC_SEQ_CST` and its siblings are `importc` globals with no
+  ## definition in a C-runtime-free native program, so a load of one would not
+  ## link. Every row is arranged so the ignored operands are the TRAILING ones,
+  ## which is what lets a count stand in for a per-operand test.
+  ##
+  ## The C back end is the exception and evaluates all of them: it hands the
+  ## arguments straight to the real `__atomic_*` builtin, which does read them.
+  result = r.arity
+  while result > 0 and r.params[result-1] in IgnoredPats: dec result
+
+proc isVoidResult*(r: IntrinsicRow): bool {.inline.} =
+  ## A row that yields no value AND writes no declared operand: `AtomicStore`,
+  ## `AtomicClear`, the fences. Distinct from both neighbours — a flag row's output
+  ## IS the flags (`isFlagWrite`) and a two-address row's goes back through operand
+  ## 0 (`inoutOperand`), while here there is nothing to read afterwards at all. The
+  ## whole content is in `effects`, and it is `effects` that keeps such a row alive.
+  ## The back ends need this to know NOT to home a result register for the node.
+  r.ret == ptVoid and r.defs == {} and r.inoutOperand < 0
+
+proc isAtomic*(op: IntrinsicOp): bool {.inline.} =
+  ## An atomic row. The back ends lower these as a self-contained instruction
+  ## SEQUENCE rather than a transliteration, so they branch on this once instead of
+  ## listing the opcodes at every site.
+  ord(op) >= ord(AtomicLoadOp) and ord(op) <= ord(AtomicSignalFenceOp)
 
 proc hasInoutOperand*(r: IntrinsicRow): bool =
   ## A row the `d = ins(x)` spelling cannot express — it needs `ins(var d, x)`,
