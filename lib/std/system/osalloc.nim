@@ -122,9 +122,13 @@ elif defined(posix) and not defined(StandaloneHeapSize):
   elif defined(solaris):
     const MAP_ANONYMOUS = 0x100
     const MAP_PRIVATE = 0x02        # Changes are private
-  elif defined(linux) and defined(amd64):
+  elif defined(linux) and (defined(amd64) or defined(arm64)):
     # actually, any architecture using asm-generic, but being conservative here,
-    # some arches like mips and alpha use different values
+    # some arches like mips and alpha use different values. arm64 is asm-generic
+    # too, and it MUST take this branch: the `importc`'d fallback below resolves
+    # C *macros*, which the libc-free native backend cannot link — they would
+    # come out of `.bss` as 0, and `mmap` without MAP_ANONYMOUS fails with EBADF
+    # on the fd = -1 we pass.
     const MAP_ANONYMOUS = 0x20
     const MAP_PRIVATE = 0x02        # Changes are private
   elif defined(haiku):

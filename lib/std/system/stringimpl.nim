@@ -449,9 +449,9 @@ func substr*(s: string; first = 0): string =
 
 # ---- SWAR / comparison helpers ----
 
-func bswap64(x: uint64): uint64 {.importc: "__builtin_bswap64", nodecl, noSideEffect.}
-func ctz64(x: uint64): int32  {.importc: "__builtin_ctzll",   nodecl, noSideEffect.}
-func clz64(x: uint64): int32  {.importc: "__builtin_clzll",   nodecl, noSideEffect.}
+proc bswap64(x: uint64): uint64 {.intrinsic: "Bswap", noSideEffect.}
+proc ctz64(x: uint64): int32    {.intrinsic: "Ctz", noSideEffect.}
+proc clz64(x: uint64): int32    {.intrinsic: "Clz", noSideEffect.}
 
 func bswap(x: uint): uint {.inline.} = uint(bswap64(uint64(x)))
 func ctzImpl(x: uint): int {.inline.} = int(ctz64(uint64(x)))
