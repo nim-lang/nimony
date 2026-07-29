@@ -146,11 +146,14 @@ proc posixSymbols(cell: string): seq[string] =
 proc mapPosixCell(cell: string; values: OrderedTable[string, string]): string =
   ## A POSIX cell rewritten to baked `<value>'i32` literals, dropping symbols
   ## this OS lacks and de-duplicating values that coincide (e.g. EAGAIN ==
-  ## EWOULDBLOCK on Linux).
+  ## EWOULDBLOCK on Linux). Numeric literals (the `0'i32` of the Success row)
+  ## pass through unchanged.
   var outv: seq[string] = @[]
   for v in cell.strip.split(", ").filterIt(it.strip.len > 0):
     let t = v.strip
-    if values.hasKey(t):
+    if isNumericToken(t):
+      if t notin outv: outv.add t
+    elif values.hasKey(t):
       let lit = values[t] & "'i32"
       if lit notin outv: outv.add lit
   result = outv.join(", ")

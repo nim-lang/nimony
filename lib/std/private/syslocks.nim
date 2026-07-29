@@ -153,9 +153,10 @@ elif defined(nimNativeIo):
       # `SYS_futex` number — no libc `futex` symbol required.
       const SYS_futex = when defined(amd64): clong(202)
                         elif defined(arm64): clong(98)
+                        elif defined(i386): clong(240)
                         else: clong(202)
       proc syscall(number: clong): clong {.
-        importc: "syscall", header: "<unistd.h>", varargs, sideEffect.}
+        importc: "syscall", varargs, sideEffect.}
       proc futex(uaddr: ptr uint32; op, val: clong; timeout: pointer): clong {.inline.} =
         syscall(SYS_futex, uaddr, op, val, timeout)
 
@@ -285,45 +286,58 @@ elif defined(nimNativeIo):
     futexWake(cond.gen, true)
 
 else:
+  # pthread structures as fixed-size opaque blobs. The sizes are frozen ABI
+  # (glibc's __SIZEOF_PTHREAD_MUTEX_T family; Darwin's _PTHREAD_MUTEX_SIZE
+  # plus the long signature field): pthread_*_init only ever writes within
+  # them and every other call takes a pointer. int64 elements give the
+  # alignment both ABIs require.
+  when defined(osx):
+    type
+      SysLockObj {.pure, final, byref.} = object ## pthread_mutex_t (64 B)
+        abi: array[8, int64]
+      SysCondObj {.pure, final, byref.} = object ## pthread_cond_t (48 B)
+        abi: array[6, int64]
+  elif defined(arm64):
+    type
+      SysLockObj {.pure, final, byref.} = object ## pthread_mutex_t: 48 B on
+        abi: array[6, int64]                     ## aarch64 glibc (NOT x86_64's
+                                                 ## 40; musl's 40 fits inside)
+      SysCondObj {.pure, final, byref.} = object ## pthread_cond_t (48 B)
+        abi: array[6, int64]
+  elif defined(amd64):
+    type
+      SysLockObj {.pure, final, byref.} = object ## pthread_mutex_t (40 B)
+        abi: array[5, int64]
+      SysCondObj {.pure, final, byref.} = object ## pthread_cond_t (48 B)
+        abi: array[6, int64]
+  else: # Linux 32-bit (i386)
+    type
+      SysLockObj {.pure, final, byref.} = object ## pthread_mutex_t (24 B)
+        abi: array[3, int64]
+      SysCondObj {.pure, final, byref.} = object ## pthread_cond_t (48 B)
+        abi: array[6, int64]
   type
-    SysLockObj {.importc: "pthread_mutex_t", pure, final,
-               header: """#include <sys/types.h>
-                          #include <pthread.h>""", byref.} = object
-      # when defined(linux) and defined(amd64):
-      #   abi: array[40 div sizeof(clong), clong]
-
-    SysLockAttr* {.importc: "pthread_mutexattr_t", pure, final
-               header: """#include <sys/types.h>
-                          #include <pthread.h>""".} = object
-      # when defined(linux) and defined(amd64):
-      #   abi: array[4 div sizeof(cint), cint]  # actually a cint
-
-    SysCondObj {.importc: "pthread_cond_t", pure, final,
-               header: """#include <sys/types.h>
-                          #include <pthread.h>""", byref.} = object
-      # when defined(linux) and defined(amd64):
-      #   abi: array[48 div sizeof(clonglong), clonglong]
-
-    SysCondAttr {.importc: "pthread_condattr_t", pure, final
-               header: """#include <sys/types.h>
-                          #include <pthread.h>""".} = object
-      # when defined(linux) and defined(amd64):
-      #   abi: array[4 div sizeof(cint), cint]  # actually a cint
+    SysLockAttr* {.pure, final.} = object ## pthread_mutexattr_t: 4 B on
+      abi: array[2, int64]                ## glibc, 16 B on Darwin; oversized
+                                          ## + 8-aligned covers both (init
+                                          ## writes at most its own size)
+    SysCondAttr {.pure, final.} = object ## pthread_condattr_t: same deal
+      abi: array[2, int64]
 
     SysLockType = distinct cint
 
   func initSysLockAux(L: var SysLockObj, attr: ptr SysLockAttr) {.
-    importc: "pthread_mutex_init", header: "<pthread.h>", noSideEffect.}
+    importc: "pthread_mutex_init", noSideEffect.}
   func deinitSysAux(L: SysLockObj) {.noSideEffect,
-    importc: "pthread_mutex_destroy", header: "<pthread.h>".}
+    importc: "pthread_mutex_destroy".}
 
   func acquireSysAux(L: var SysLockObj) {.noSideEffect,
-    importc: "pthread_mutex_lock", header: "<pthread.h>".}
+    importc: "pthread_mutex_lock".}
   func tryAcquireSysAux(L: var SysLockObj): cint {.noSideEffect,
-    importc: "pthread_mutex_trylock", header: "<pthread.h>".}
+    importc: "pthread_mutex_trylock".}
 
   func releaseSysAux(L: var SysLockObj) {.noSideEffect,
-    importc: "pthread_mutex_unlock", header: "<pthread.h>".}
+    importc: "pthread_mutex_unlock".}
 
   when defined(ios):
     # iOS will behave badly if sync primitives are moved in memory. In order
@@ -370,25 +384,25 @@ else:
       releaseSysAux(L)
 
   # rlocks
-  var SysLockType_Reentrant* {.importc: "PTHREAD_MUTEX_RECURSIVE",
-    header: "<pthread.h>".}: SysLockType
+  const SysLockType_Reentrant* = SysLockType(
+    when defined(osx): 2 else: 1)  ## PTHREAD_MUTEX_RECURSIVE
   func initSysLockAttr*(a: var SysLockAttr) {.
-    importc: "pthread_mutexattr_init", header: "<pthread.h>", noSideEffect.}
+    importc: "pthread_mutexattr_init", noSideEffect.}
   func setSysLockType*(a: var SysLockAttr, t: SysLockType) {.
-    importc: "pthread_mutexattr_settype", header: "<pthread.h>", noSideEffect.}
+    importc: "pthread_mutexattr_settype", noSideEffect.}
 
   # locks
   func initSysCondAux(cond: var SysCondObj, cond_attr: ptr SysCondAttr = nil) {.
-    importc: "pthread_cond_init", header: "<pthread.h>", noSideEffect.}
+    importc: "pthread_cond_init", noSideEffect.}
   func deinitSysCondAux(cond: SysCondObj) {.noSideEffect,
-    importc: "pthread_cond_destroy", header: "<pthread.h>".}
+    importc: "pthread_cond_destroy".}
 
   func waitSysCondAux(cond: var SysCondObj, lock: var SysLockObj): cint {.
-    importc: "pthread_cond_wait", header: "<pthread.h>", noSideEffect.}
+    importc: "pthread_cond_wait", noSideEffect.}
   func signalSysCondAux(cond: var SysCondObj) {.
-    importc: "pthread_cond_signal", header: "<pthread.h>", noSideEffect.}
+    importc: "pthread_cond_signal", noSideEffect.}
   func broadcastSysCondAux(cond: var SysCondObj) {.
-    importc: "pthread_cond_broadcast", header: "<pthread.h>", noSideEffect.}
+    importc: "pthread_cond_broadcast", noSideEffect.}
 
   when defined(ios):
     func initSysCond*(cond: var SysCond, cond_attr: ptr SysCondAttr = nil) =
