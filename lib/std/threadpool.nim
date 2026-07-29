@@ -220,7 +220,7 @@ proc workerLoop(arg: pointer) {.nimcall.} =
 
 # --- Lifecycle ---
 
-proc initPool*() =
+proc init*(p: Pool) =
   ## Initialize the I/O poller and start worker threads.
   for i in 0 ..< WorkerCount:
     try:
