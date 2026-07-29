@@ -231,11 +231,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     dest.addParRi()
     toPragmaArgs()
   of InstructionP, IntrinsicP:
-    # `{.instruction: bsf.}` / `{.intrinsic: Ctz.}` — the argument is an opcode
-    # ident from `lib/intrinsics`, NOT a free string, so a typo is an error here
-    # rather than an "unsupported intrinsic" assert three passes later. The
-    # signature check against the row happens in `semProcImpl`, where the params
-    # and the return type are already in `dest`.
+    # `{.instruction: "bsf".}` / `{.intrinsic: "Ctz".}` — the argument is an opcode
+    # NAME from `lib/intrinsics`, spelled as a string literal like every other
+    # pragma that names a thing (`importc`, `register`). A string rather than an
+    # ident because the name is DATA: it is resolved by a table lookup here, never
+    # by scope or overload resolution, so an ident would only look like a symbol
+    # without being one — and would additionally have to dodge Nim's keywords,
+    # which is why the machine's `of`/`and`/`shl` needed cover names.
+    #
+    # Resolving it here, at the declaration, is what turns a typo into an error
+    # with a source location instead of an "unsupported intrinsic" assert three
+    # passes later. The signature check against the row happens in `semProcImpl`,
+    # where the params and the return type are already in `dest`.
     crucial.flags.incl pk
     let cls = if pk == InstructionP: icPinned else: icPortable
     dest.addParLe(pk, n.info)
@@ -243,7 +250,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     if not kind.isRoutine:
       buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
       if hasParRi and n.hasMore: skip n
-    elif hasParRi and n.hasMore and n.kind in {StrLit, Ident}:
+    elif hasParRi and n.hasMore and n.kind == StrLit:
       let opName = pool.strings[n.strId]
       let op = intrinsicOpByName(opName, cls)
       if op == NoIntrinsicOp:
@@ -254,7 +261,8 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     elif n.hasMore and n.exprKind == ErrX:
       dest.addSubtree n
     else:
-      buildErr c, dest, n.info, "`" & $pk & "` pragma takes an opcode identifier"
+      buildErr c, dest, n.info,
+        "`" & $pk & "` pragma takes an opcode name as a string literal"
     dest.addParRi()
   of ErrorP, ReportP, DeprecatedP:
     crucial.flags.incl pk
@@ -615,6 +623,38 @@ proc intBitsOf(c: var SemContext; typ: Cursor): int =
     inc bits
     if bits.kind == IntLit: result = typebits(bits.load)
 
+proc matchAtomicCell(c: var SemContext; typ: Cursor;
+                     w: var int; widths: set[uint8]): bool =
+  ## The type an atomic operates ON: `ptValW`, and the pointee of `ptPtrW`.
+  ##
+  ## Three shapes, and the third is the interesting one:
+  ##
+  ## * an INTEGER — binds `W` to its width, exactly like `ptAnyIntW`;
+  ## * a POINTER (or `bool`, an 8-bit cell) — a machine word, so it binds 64.
+  ##   These are real atomic cells that no integer pattern would admit: a
+  ##   lock-free list head, an `AtomicFlag`;
+  ## * a TYPE VARIABLE — binds nothing, and that is the point. The atomics are
+  ##   generic over the cell type (one `atomicLoadN[T]`, not one row per width),
+  ##   so the width is a property of the INSTANTIATION and is not knowable here.
+  ##   For a generic declaration this check is therefore a SHAPE check — arity,
+  ##   pointer-ness, which operand is `var`, where a memory order goes — and the
+  ##   width is read off the pointee at the call site by whichever back end lowers
+  ##   it (arkham's `atomicBits`, and the C compiler for `cBuiltinFor`). A
+  ##   CONCRETE declaration still gets the full check, because `W` does bind then.
+  result = false
+  if typ.kind == Symbol:
+    result = true                  # a type variable: nothing to bind, nothing to check
+  elif typ.kind == TagLit:
+    var bits = 0
+    case typ.typeKind
+    of PtrT, PointerT, ProctypeT: bits = 64
+    of BoolT: bits = 8
+    of IntT, UIntT, CharT: bits = intBitsOf(c, typ)
+    else: bits = 0
+    if bits > 0 and uint8(bits) in widths:
+      if w == 0: w = bits          # bind W
+      result = w == bits           # ... or match what it is already bound to
+
 proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
               w: var int; widths: set[uint8]): bool =
   ## Unify one type pattern against one declared type. `w` carries the row's
@@ -646,6 +686,29 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
       else:
         if w == 0: w = bits          # bind W
         result = w == bits           # ... or match what it is already bound to
+  of ptValW:
+    result = matchAtomicCell(c, typ, w, widths)
+  of ptPtrW:
+    if typ.kind == TagLit and typ.typeKind == PtrT:
+      var pointee = typ
+      inc pointee
+      result = matchAtomicCell(c, pointee, w, widths)
+    else:
+      result = false
+  of ptRawPtr:
+    result = typ.kind == TagLit and typ.typeKind == PointerT
+  of ptWeak:
+    result = typ.kind == TagLit and typ.typeKind == BoolT
+  of ptMemOrder:
+    # v1 accepts ANY type here because v1 reads none: both back ends emit every
+    # atomic sequence at sequential-consistency strength, so the argument is
+    # evaluated for its side effects and discarded. The two declaration sites
+    # already spell it differently — a plain `cint` in `std/atomics`, a distinct
+    # `AtomMemModel` in `system/atomintrin` — and neither is wrong while nothing
+    # consults it. A v2 that honours the order tightens this to "the memory-order
+    # enumeration" and gains a real check; today such a check would only forbid
+    # spellings that behave identically.
+    result = true
 
 proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
                               paramsAt: int; op: IntrinsicOp): string =

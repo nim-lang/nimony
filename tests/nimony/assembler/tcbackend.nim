@@ -4,7 +4,7 @@
 # fails to link with no explanation. Reaching such a proc from a C build means
 # assembling it with arkham and linking the object.
 
-proc bsf(x: uint64): uint64 {.instruction: bsf.}
+proc bsf(x: uint64): uint64 {.instruction: "bsf".}
 
 proc firstBit(x {.register: "rdi".}: uint64): uint64 {.assembler.} =
   var r {.register: "rax".}: uint64

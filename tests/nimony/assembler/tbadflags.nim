@@ -9,8 +9,8 @@
 # there: `nativenif/tests/arkham/err_flag_*.c.nif`. See
 # `nativenif/doc/intrinsics.md` §6.
 
-proc cmp64(a, b: uint64) {.instruction: cmp.}
-proc zf(): bool {.instruction: zf.}
+proc cmp64(a, b: uint64) {.instruction: "cmp".}
+proc zf(): bool {.instruction: "zf".}
 
 proc flagsInAnOrdinaryProc(x: uint64): uint64 =
   cmp64(x, x)

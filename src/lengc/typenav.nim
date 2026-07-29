@@ -62,7 +62,7 @@ proc intrinsicOfCallee*(m: var MainModule; callee: Cursor;
         let pk = p.pragmaKind
         if pk in {InstructionP, IntrinsicP}:
           var a = p; a = sub(a)
-          if a.kind == Ident:
+          if a.kind == StrLit:
             result = intrinsicOpByName(m.pool.strings[a.strId],
                        (if pk == InstructionP: icPinned else: icPortable))
         skip p
@@ -80,6 +80,27 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
     if bits <= 16: "__builtin_bswap16"
     elif bits <= 32: "__builtin_bswap32"
     else: "__builtin_bswap64"
+  # The atomics map back to the `__atomic_*` builtins their declarations used to
+  # `importc` directly, so the generated C is unchanged by their becoming rows.
+  # `bits` is not consulted: unlike the bit-counting builtins these are
+  # type-generic in GCC — the width comes from the pointer argument — which is
+  # also why `intrinsicOfCallee` leaves `bits` at 0 here (the first param is a
+  # `ptr T`, not an integer).
+  of AtomicLoadOp: "__atomic_load_n"
+  of AtomicStoreOp: "__atomic_store_n"
+  of AtomicExchangeOp: "__atomic_exchange_n"
+  of AtomicCompareExchangeOp: "__atomic_compare_exchange_n"
+  of AtomicFetchAddOp: "__atomic_fetch_add"
+  of AtomicFetchSubOp: "__atomic_fetch_sub"
+  of AtomicFetchAndOp: "__atomic_fetch_and"
+  of AtomicFetchOrOp: "__atomic_fetch_or"
+  of AtomicFetchXorOp: "__atomic_fetch_xor"
+  of AtomicAddFetchOp: "__atomic_add_fetch"
+  of AtomicSubFetchOp: "__atomic_sub_fetch"
+  of AtomicTestAndSetOp: "__atomic_test_and_set"
+  of AtomicClearOp: "__atomic_clear"
+  of AtomicThreadFenceOp: "__atomic_thread_fence"
+  of AtomicSignalFenceOp: "__atomic_signal_fence"
   else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
