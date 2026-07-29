@@ -575,3 +575,9 @@ type
     msg*: string
 
 var exc* {.threadvar.}: ref Exception
+
+proc newException*[T](exceptn: typedesc[T]; message: string): ref T {.inline, untyped.} =
+  ## Creates a heap-based exception object of type `T` for Nim 2 interop:
+  ## `raise newException(ValueError, "wrong value")`.
+  new(result)
+  result.msg = message

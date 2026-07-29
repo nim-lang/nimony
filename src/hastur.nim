@@ -876,6 +876,18 @@ const
     "tests/nimony/closures"
   ]
   NativeTestFiles = [
+    # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
+    # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose POINT is
+    # that the C and native backends agree on results they reach by different
+    # instructions.
+    "tests/nimony/intrinsics/tintrinsics",
+    # The atomics are intrinsic rows too, and the backends reach them from even
+    # further apart: C emits the `__atomic_*` builtins, x86-64 a `lock`-prefixed
+    # sequence, AArch64 an `ldaxr`/`stlxr` retry loop. Running it here is what says
+    # the three agree — including the compare-exchange FAILURE path, which a wrong
+    # lowering still "passes" single-threaded unless the test reads back the value
+    # the CAS observed.
+    "tests/nimony/intrinsics/tatomics",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",

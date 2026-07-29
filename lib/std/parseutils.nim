@@ -221,25 +221,245 @@ func parseBiggestUInt*(s: openArray[char], number: var BiggestUInt): int {.
 # Following parseBiggestFloat code is copied from `lib/system/strmantle.nim` in Nim 2.
 
 when defined(nimNoLibc):
-  func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.noSideEffect.} =
-    ## Freestanding (`nimony n`, libc-free) decimal→float64. Only reached on
-    ## `parseBiggestFloat`'s slow path, which always hands us a normalized
-    ## `<digits>E<sign><exp>` buffer. The mantissa is accumulated in a 64-bit
-    ## integer (exact for the ≤19 significant digits that fit; further digits bump
-    ## the exponent) and then scaled by 10^exp. Exact when the mantissa is ≤2^53
-    ## and |exp|≤22; for the extreme cases beyond that it is within a few ulp rather
-    ## than correctly rounded (a full Eisel-Lemire parser would close that gap).
-    ## `endptr` is ignored — the only caller passes nil.
-    var i = 0
+  # ── freestanding, CORRECTLY ROUNDED decimal → float64 ────────────────────
+  #
+  # Only `parseBiggestFloat`'s slow path reaches this, and it always hands us a
+  # normalized, NUL-terminated `[-]<digits>E<sign><exp>` buffer. The obvious
+  # implementation — accumulate the mantissa in a uint64 and scale by 10^exp in
+  # floating point — is off by up to a few ulp because each scaling step rounds:
+  # `1e300` came back as `1.0000000000000002e+300` and `2.225073858507201e-308`
+  # as `2.2250738585072004e-308`, which is visible as float literals that differ
+  # between the native and the C (`strtod`) backend.
+  #
+  # This is instead Go's `strconv` big-decimal algorithm (`decimal.go`/`atof.go`):
+  # hold the value as an EXACT decimal digit string plus a decimal-point position
+  # and shift it by powers of two — exactly, in decimal — until the binary
+  # mantissa is normalized, then round exactly once. Every intermediate step is
+  # exact, so that single rounding is the correctly-rounded result. It is much
+  # slower than a float multiply, which does not matter: the fast paths above
+  # already take every literal that fits 15-16 digits with |exponent| <= 22.
+  const
+    MaxDecDigits = 800   ## enough for any float64 shift chain (Go's bound too)
+    MaxShift = 60        ## keeps `leftShift`'s per-digit accumulator in uint64
+    Pow2Digits = [       ## decimal digits of 2^k — an upper bound on the digits
+                         ## a `leftShift(k)` adds (it adds this or one less; the
+                         ## code detects which instead of carrying Go's cutoff
+                         ## table of 61 decimal strings)
+      1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 4, 4,
+      4, 4, 5, 5, 5, 6, 6, 6, 7, 7, 7, 7,
+      8, 8, 8, 9, 9, 9, 10, 10, 10, 10, 11, 11,
+      11, 12, 12, 12, 13, 13, 13, 13, 14, 14, 14, 15,
+      15, 15, 16, 16, 16, 16, 17, 17, 17, 18, 18, 18,
+      19]
+    Log2Pow10 = [1, 3, 6, 9, 13, 16, 19, 23, 26]
+      ## How far the value may be shifted in one step without overshooting the
+      ## [0.5, 1) target, indexed by the decimal-point position (`floor(log2(10^i))`,
+      ## except entry 0, which must be >= 1 so the normalization loop terminates).
+    Log2Pow10Len = 9
+
+  type
+    BigDec = object
+      ## value = 0.d[0..nd-1] * 10^dp  (sign in `neg`)
+      d: array[MaxDecDigits, char]
+      nd: int
+      dp: int
+      neg: bool
+      trunc: bool     ## a nonzero digit fell off the end — the stored value is
+                      ## slightly LOW, which `shouldRoundUp` needs to know
+
+  func trimBig(a: var BigDec) =
+    while a.nd > 0 and a.d[a.nd-1] == '0': dec a.nd
+    if a.nd == 0: a.dp = 0
+
+  func rightShiftBig(a: var BigDec; k: int) =
+    ## a = a / 2^k, exactly (digits are produced until they run out).
+    var r = 0            # read cursor
+    var w = 0            # write cursor
+    var n = 0'u64
+    # Pick up enough leading digits to cover the first shift.
+    while (n shr k) == 0'u64:
+      if r >= a.nd:
+        if n == 0'u64:
+          a.nd = 0
+          return
+        while (n shr k) == 0'u64:
+          n = n * 10'u64
+          inc r
+        break
+      n = n * 10'u64 + uint64(ord(a.d[r]) - ord('0'))
+      inc r
+    a.dp = a.dp - (r - 1)
+    let mask = (1'u64 shl k) - 1'u64
+    # Pick up a digit, put down a digit.
+    while r < a.nd:
+      let c = uint64(ord(a.d[r]) - ord('0'))
+      let dig = n shr k
+      n = n and mask
+      a.d[w] = chr(int(dig) + ord('0'))
+      inc w
+      n = n * 10'u64 + c
+      inc r
+    # Put down the extra digits the division produced.
+    while n > 0'u64:
+      let dig = n shr k
+      n = n and mask
+      if w < MaxDecDigits:
+        a.d[w] = chr(int(dig) + ord('0'))
+        inc w
+      elif dig > 0'u64:
+        a.trunc = true
+      n = n * 10'u64
+    a.nd = w
+    trimBig(a)
+
+  func leftShiftBig(a: var BigDec; k: int) =
+    ## a = a * 2^k, exactly. Digits are produced right to left into the region
+    ## `[0, nd+delta)`; `delta` over-estimates by at most one, and the surplus
+    ## shows up as unwritten leading slots, which the compaction below removes.
+    let delta = Pow2Digits[k]
+    var r = a.nd - 1
+    var w = a.nd + delta        # exclusive: the next digit goes to w-1
+    var n = 0'u64
+    while r >= 0:
+      n = n + (uint64(ord(a.d[r]) - ord('0')) shl k)
+      let quo = n div 10'u64
+      let rem = n - 10'u64 * quo
+      dec w
+      if w < MaxDecDigits: a.d[w] = chr(int(rem) + ord('0'))
+      elif rem != 0'u64: a.trunc = true
+      n = quo
+      dec r
+    while n > 0'u64:
+      let quo = n div 10'u64
+      let rem = n - 10'u64 * quo
+      dec w
+      if w < MaxDecDigits: a.d[w] = chr(int(rem) + ord('0'))
+      elif rem != 0'u64: a.trunc = true
+      n = quo
+    # `w` is the index of the most significant digit actually written: 0 when the
+    # estimate was exact, 1 when it was one too generous.
+    let stored = min(a.nd + delta, MaxDecDigits)
+    if w > 0:
+      var j = 0
+      while w + j < stored:
+        a.d[j] = a.d[w + j]
+        inc j
+      a.nd = j
+    else:
+      a.nd = stored
+    a.dp = a.dp + delta - w
+    trimBig(a)
+
+  func shiftBig(a: var BigDec; k: int) =
+    ## a = a * 2^k for k > 0, a / 2^-k for k < 0. Chunked so no single step
+    ## exceeds `MaxShift`.
+    if a.nd == 0: return
+    var k = k
+    while k > MaxShift:
+      leftShiftBig(a, MaxShift); k = k - MaxShift
+    if k > 0: leftShiftBig(a, k)
+    while k < -MaxShift:
+      rightShiftBig(a, MaxShift); k = k + MaxShift
+    if k < 0: rightShiftBig(a, -k)
+
+  func shouldRoundUpBig(a: BigDec; nd: int): bool =
+    if nd < 0 or nd >= a.nd:
+      result = false
+    elif a.d[nd] == '5' and nd+1 == a.nd:
+      # Exactly halfway — unless digits were dropped, in which case the true
+      # value is above halfway and rounds up regardless.
+      if a.trunc: result = true
+      else: result = nd > 0 and ((ord(a.d[nd-1]) - ord('0')) mod 2) != 0
+    else:
+      result = a.d[nd] >= '5'
+
+  func roundedIntegerBig(a: BigDec): uint64 =
+    if a.dp > 20:
+      result = 0xFFFFFFFFFFFFFFFF'u64
+    else:
+      var i = 0
+      var n = 0'u64
+      while i < a.dp and i < a.nd:
+        n = n * 10'u64 + uint64(ord(a.d[i]) - ord('0'))
+        inc i
+      while i < a.dp:
+        n = n * 10'u64
+        inc i
+      if shouldRoundUpBig(a, a.dp): n = n + 1'u64
+      result = n
+
+  func floatBitsBig(a: var BigDec): uint64 =
+    ## IEEE-754 binary64 bit pattern of `a`, correctly rounded (ties to even).
+    const
+      MantBits = 52
+      ExpBits = 11
+      Bias = -1023
+    var exp = 0
     var mant = 0'u64
-    var se = 0                                   # signed decimal exponent
-    const MantCap = 0xFFFFFFFFFFFFFFFF'u64 div 10'u64
-    while buf[i] in {'0'..'9'}:
-      if mant <= MantCap:
-        mant = mant * 10'u64 + uint64(ord(buf[i]) - ord('0'))
+    var overflow = false
+    if a.nd == 0:
+      exp = Bias
+    elif a.dp > 310:
+      overflow = true
+    elif a.dp < -330:
+      exp = Bias                      # underflows to zero
+    else:
+      # Scale by powers of two until the value is in [0.5, 1).
+      while a.dp > 0:
+        let n = if a.dp >= Log2Pow10Len: 27 else: Log2Pow10[a.dp]
+        shiftBig(a, -n)
+        exp = exp + n
+      while a.dp < 0 or (a.dp == 0 and a.nd > 0 and a.d[0] < '5'):
+        let n = if -a.dp >= Log2Pow10Len: 27 else: Log2Pow10[-a.dp]
+        shiftBig(a, n)
+        exp = exp - n
+      # Binary floats are normalized to [1, 2), not [0.5, 1).
+      dec exp
+      # Below the smallest normal exponent the mantissa loses bits instead.
+      if exp < Bias+1:
+        let n = Bias + 1 - exp
+        shiftBig(a, -n)
+        exp = exp + n
+      if exp - Bias >= (1 shl ExpBits) - 1:
+        overflow = true
       else:
-        inc se                                   # digit kept only as a power of ten
+        shiftBig(a, 1 + MantBits)     # extract 1+MantBits significant bits
+        mant = roundedIntegerBig(a)
+        if mant == (2'u64 shl MantBits):
+          # rounding carried into a new leading bit
+          mant = mant shr 1
+          inc exp
+          if exp - Bias >= (1 shl ExpBits) - 1: overflow = true
+        if not overflow and (mant and (1'u64 shl MantBits)) == 0'u64:
+          exp = Bias                  # subnormal
+    if overflow:
+      mant = 0'u64
+      exp = (1 shl ExpBits) - 1 + Bias
+    result = mant and ((1'u64 shl MantBits) - 1'u64)
+    result = result or (uint64((exp - Bias) and ((1 shl ExpBits) - 1)) shl MantBits)
+    if a.neg: result = result or (1'u64 shl (MantBits + ExpBits))
+
+  func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.noSideEffect.} =
+    ## Freestanding (`nimony n`, libc-free) decimal→float64, correctly rounded.
+    ## The input is `parseBiggestFloat`'s normalized `[-]<digits>E<sign><exp>`
+    ## buffer; `endptr` is ignored (the only caller passes nil).
+    var a = BigDec(nd: 0, dp: 0, neg: false, trunc: false)
+    var i = 0
+    if buf[i] == '-':
+      a.neg = true; inc i
+    elif buf[i] == '+':
       inc i
+    while buf[i] == '0': inc i           # leading zeros carry no information
+    var nd = 0
+    while buf[i] in {'0'..'9'}:
+      if nd < MaxDecDigits:
+        a.d[nd] = buf[i]
+        inc nd
+      elif buf[i] != '0':
+        a.trunc = true
+      inc i
+    a.nd = nd
+    var se = nd                          # digits are integral: value = D * 10^exp
     if buf[i] == 'E' or buf[i] == 'e':
       inc i
       var eneg = false
@@ -247,15 +467,12 @@ when defined(nimNoLibc):
       elif buf[i] == '+': inc i
       var e = 0
       while buf[i] in {'0'..'9'}:
-        e = e * 10 + (ord(buf[i]) - ord('0'))
+        if e < 100000: e = e * 10 + (ord(buf[i]) - ord('0'))
         inc i
-      se += (if eneg: -e else: e)
-    var r = float64(mant)
-    while se >= 22: (r = r * 1e22; se -= 22)
-    while se > 0: (r = r * 10.0; dec se)
-    while se <= -22: (r = r / 1e22; se += 22)
-    while se < 0: (r = r / 10.0; inc se)
-    result = r
+      se = se + (if eneg: -e else: e)
+    a.dp = se
+    trimBig(a)
+    result = cast[float64](floatBitsBig(a))
 else:
   func c_strtod(buf: cstring, endptr: ptr cstring): float64 {.
     importc: "strtod", header: "<stdlib.h>", noSideEffect.}

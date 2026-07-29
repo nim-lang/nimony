@@ -19,10 +19,89 @@ import ".." / "lib" / nifcoreparse        # re-exports nifcore + parseFromBuffer
 import ".." / "lib" / nifcdecl              # stmtKind/exprKind/typeKind, tag enums
 import ".." / "models" / tags               # *TagId ordinals for synthesis
 import nifmodules                                   # MainModule, getDeclOrNil
+import ".." / "lib" / intrinsics             # the shared `{.instruction.}` row table
+export intrinsics   # `intrinsicOfCallee` returns an `IntrinsicOp`, so every
+                    # importer needs the enum and the row table with it
 
 proc firstChild(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
+
+proc intrinsicOfCallee*(m: var MainModule; callee: Cursor;
+                        bits: var int): IntrinsicOp =
+  ## The opcode a `(instr SYM …)` names, plus the width its row bound (taken
+  ## from the declared first operand). Reads the `(instruction X)` /
+  ## `(intrinsic X)` pragma off the callee's declaration — a table lookup on an
+  ## ident, not a match against a C name. Shared by both Leng back ends: the
+  ## C one keys its `__builtin_*` choice off it and the LLVM one reuses that
+  ## same choice, so neither re-derives the row from the declaration itself.
+  result = NoIntrinsicOp
+  bits = 0
+  if callee.kind != Symbol: return
+  let d = m.getDeclOrNil(callee.symId)
+  if d == nil or d.kind != ProcY: return
+  var n = d.pos
+  n.into:
+    inc n                                   # name
+    if n.typeKind == ParamsT:               # first param's type → the width
+      var p = n
+      p.loopInto:
+        if p.substructureKind == ParamU and bits == 0:
+          let pd = takeParamDecl(p)
+          if pd.typ.kind == TagLit and pd.typ.typeKind in {IT, UT, CT}:
+            var b = pd.typ
+            inc b
+            if b.kind == IntLit: bits = int(b.intVal)
+        else:
+          skip p
+    skip n                                  # params
+    skip n                                  # return type
+    if n.substructureKind == PragmasU:
+      var p = n
+      p.loopInto:
+        let pk = p.pragmaKind
+        if pk in {InstructionP, IntrinsicP}:
+          var a = p; a = sub(a)
+          if a.kind == StrLit:
+            result = intrinsicOpByName(m.pool.strings[a.strId],
+                       (if pk == InstructionP: icPinned else: icPortable))
+        skip p
+    while n.hasMore: skip n
+
+proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
+  ## The GCC/clang builtin a *portable* opcode lowers to. Target-pinned rows
+  ## have no portable C spelling by construction and return "" — the C backend
+  ## rejects them rather than guessing an equivalent.
+  case op
+  of CtzOp:      (if bits <= 32: "__builtin_ctz" else: "__builtin_ctzll")
+  of ClzOp:      (if bits <= 32: "__builtin_clz" else: "__builtin_clzll")
+  of PopcountOp: (if bits <= 32: "__builtin_popcount" else: "__builtin_popcountll")
+  of BswapOp:
+    if bits <= 16: "__builtin_bswap16"
+    elif bits <= 32: "__builtin_bswap32"
+    else: "__builtin_bswap64"
+  # The atomics map back to the `__atomic_*` builtins their declarations used to
+  # `importc` directly, so the generated C is unchanged by their becoming rows.
+  # `bits` is not consulted: unlike the bit-counting builtins these are
+  # type-generic in GCC — the width comes from the pointer argument — which is
+  # also why `intrinsicOfCallee` leaves `bits` at 0 here (the first param is a
+  # `ptr T`, not an integer).
+  of AtomicLoadOp: "__atomic_load_n"
+  of AtomicStoreOp: "__atomic_store_n"
+  of AtomicExchangeOp: "__atomic_exchange_n"
+  of AtomicCompareExchangeOp: "__atomic_compare_exchange_n"
+  of AtomicFetchAddOp: "__atomic_fetch_add"
+  of AtomicFetchSubOp: "__atomic_fetch_sub"
+  of AtomicFetchAndOp: "__atomic_fetch_and"
+  of AtomicFetchOrOp: "__atomic_fetch_or"
+  of AtomicFetchXorOp: "__atomic_fetch_xor"
+  of AtomicAddFetchOp: "__atomic_add_fetch"
+  of AtomicSubFetchOp: "__atomic_sub_fetch"
+  of AtomicTestAndSetOp: "__atomic_test_and_set"
+  of AtomicClearOp: "__atomic_clear"
+  of AtomicThreadFenceOp: "__atomic_thread_fence"
+  of AtomicSignalFenceOp: "__atomic_signal_fence"
+  else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =
   if n.kind in {Symbol, SymbolDef}:
@@ -150,7 +229,10 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       result = createIntegralType(c, "(f +64)")
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")
-    of CallC:
+    of CallC, InstrC:
+      # `(instr SYM …)` is typed EXACTLY like `(call SYM …)` — the callee's
+      # signature drives everything. Only the *cost* differs, which is what the
+      # separate tag exists to make visible.
       var procType = navigateToObjectBody(c, getTypeImpl(c, firstChild(n)))
       if procType.typeKind == ProctypeT or procType.symKind == ProcY:
         inc procType
@@ -188,7 +270,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
         result = firstChild(x)
       else:
         result = createIntegralType(c, "(err)")
-    of AddrC:
+    of AddrC, HaddrC:                       # both are `&lvalue`
       let x = getTypeImpl(c, firstChild(n))
       result = ptrTypeOf(c, x)
     of ConvC, CastC, AconstrC, OconstrC, BaseobjC:

@@ -87,6 +87,15 @@ proc elementType*(n: Cursor): Cursor {.inline.} =
   result = n
   inc result
 
+const AddrKinds* = {AddrC, HaddrC}
+  ## `(addr x)` and `(haddr x)` both denote x's address and lower identically:
+  ## every consumer that only needs "this is an address-of" should match on this
+  ## set. They are separate tags because a consumer that cares about *why* the
+  ## address was taken can then tell them apart without a second channel —
+  ## `(haddr x)` is the compiler binding a location for a `var`/`out` parameter,
+  ## `(addr x)` is the user turning a location into a value. Matching one tag
+  ## alone is almost always a bug; matching this set says "either" out loud.
+
 # NB: `leng_model.tracebackTypeC` is intentionally not ported — it walks
 # *backwards* via `unsafeDec`, which `nifcore` has no primitive for, and no
 # current consumer needs it. Add a backward primitive to `nifcore` first if a

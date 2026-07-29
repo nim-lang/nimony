@@ -418,7 +418,7 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
     if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
     let s = slotRootOf(dst)
     if s in params: assigned.incl s
-  elif c.exprKind == AddrC:
+  elif c.exprKind in AddrKinds:
     let s = slotRootOf(c.childCursor)
     if s in params: addrTaken.incl s
   var n = c

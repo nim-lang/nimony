@@ -46,11 +46,13 @@ type
     CastC = (ord(CastTagId), "cast")  ## `cast` operation (typed cast expression, or `{.cast(pragma).}` pragma form)
     ConvC = (ord(ConvTagId), "conv")  ## type conversion
     CallC = (ord(CallTagId), "call")  ## call operation
+    HaddrC = (ord(HaddrTagId), "haddr")  ## hidden address: an address the COMPILER took to bind a location, not one the user asked for. `derefs.nim` inserts it wherever a `var`/`out` parameter needs the argument's location. It survives into Leng — where `(addr X)` is the user's `addr` — because the two mean different things to a consumer: `(addr x)` says "x's address is a value now", so x must have one, while `(haddr x)` says only "the callee wants x's *location*". An `(instr …)` operand slot whose row is `inout` can therefore bind the local's home directly instead of forcing it to memory. Everywhere else it lowers exactly like `(addr X)`
     BaseobjC = (ord(BaseobjTagId), "baseobj")  ## object conversion to base type
     ErrvC = (ord(ErrvTagId), "errv")  ## error flag for Leng
+    InstrC = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
 
 proc rawTagIsLengExpr*(raw: TagEnum): bool {.inline.} =
-  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, BaseobjTagId, ErrvTagId}
+  raw in {SufTagId, AtTagId, DerefTagId, DotTagId, PatTagId, ParTagId, AddrTagId, NilTagId, InfTagId, NeginfTagId, NanTagId, FalseTagId, TrueTagId, AndTagId, OrTagId, NotTagId, NegTagId, SizeofTagId, AlignofTagId, OffsetofTagId, OconstrTagId, AconstrTagId, OvfTagId, AddTagId, SubTagId, MulTagId, DivTagId, ModTagId, ShrTagId, ShlTagId, BitandTagId, BitorTagId, BitxorTagId, BitnotTagId, EqTagId, NeqTagId, LeTagId, LtTagId, CastTagId, ConvTagId, CallTagId, HaddrTagId, BaseobjTagId, ErrvTagId, InstrTagId}
 
 type
   LengStmt* = enum
@@ -85,9 +87,10 @@ type
     JtrueS = (ord(JtrueTagId), "jtrue")  ## set variables v1, v2, ... to `(true)`; hint this should become a jump
     MflagS = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
     VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
+    InstrS = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
 
 proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, StoreTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, StoreTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId}
 
 type
   LengType* = enum
@@ -152,9 +155,14 @@ type
     ExportcP = (ord(ExportcTagId), "exportc")  ## `exportc` pragma
     HeaderP = (ord(HeaderTagId), "header")  ## `header` pragma
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
+    InstructionP = (ord(InstructionTagId), "instruction")  ## target-pinned instruction annotation; the argument is an opcode NAME from `lib/intrinsics`'s `IntrinsicOp`, spelled as a string literal (`{.instruction: "bsf".}`). A string, not an ident: the name is data resolved by table lookup, it is never subject to scope or overload resolution, and an ident would additionally have to dodge Nim's keywords. The proc is a *declaration* of one machine instruction: calls to it become `(instr …)`, never an ABI call. Its signature spelling is dictated by the row's operand roles and checked at the declaration
+    IntrinsicP = (ord(IntrinsicTagId), "intrinsic")  ## portable-intrinsic annotation; like `instruction` (same string-literal argument) but the opcode is target-neutral and may expand to any number of instructions (`Memcpy`, `AtomicFetchAdd`, …). Its signature is unified against the row's shape at the declaration
+    RegisterP = (ord(RegisterTagId), "register")  ## pins a parameter, result or local to a named machine register (`{.register: "rdi".}`). In an `{.assembler.}` proc this is an *assertion* the back end verifies; in an ordinary proc it is a hard pin the register allocator honours
+    StackP = (ord(StackTagId), "stack")  ## pins a local to a stack slot rather than a register (`{.stack.}`) — the memory counterpart of `(register …)`
+    AssemblerP = (ord(AssemblerTagId), "assembler")  ## the `{.assembler.}` **proc pragma** (no children): every construct in the body maps one-to-one to assembler, in source order, with no temporaries invented and no operand materialised. The back end (arkham) owns that checking — see `nativenif/doc/intrinsics.md` §8. Spelled `assembler` rather than `asm` because Nim's parser reads a pragma entry as an expression and so cannot accept a keyword there; it is unrelated to the `(asm X+)` statement
 
 proc rawTagIsLengPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, ExportcTagId, HeaderTagId, PackedTagId, InstructionTagId, IntrinsicTagId, RegisterTagId, StackTagId, AssemblerTagId}
 
 type
   LengTypeQualifier* = enum

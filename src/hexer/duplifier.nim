@@ -1173,6 +1173,7 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
     c.dest.addParRi()
 
 proc trCoroFor(c: var Context; n: var Cursor)
+proc trTry(c: var Context; n: var Cursor)
 
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.isSymbol:
@@ -1274,6 +1275,8 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
           takeTree c.dest, n
       of CoroforS:
         trCoroFor c, n
+      of TryS:
+        trTry c, n
       else:
         trSons c, n, WantNonOwner
 
@@ -1284,6 +1287,22 @@ proc trCoroFor(c: var Context; n: var Cursor) =
   takeInto c.dest, n: # corofor tag
     takeTree c.dest, n # iter call verbatim
     tr c, n, WantNonOwner # body
+
+proc trTry(c: var Context; n: var Cursor) =
+  # copy the `E as e` declaration verbatim: `trLocal` would append
+  # `=wasMoved(e)` as a sibling, breaking `(except)`'s arity (#2099)
+  takeInto c.dest, n:
+    tr c, n, WantNonOwner # try body
+    while n.substructureKind == ExceptU:
+      takeInto c.dest, n:
+        if n.stmtKind == LetS:
+          let r = asLocal(n)
+          c.typeCache.registerLocal(r.name.symId, r.kind, r.typ)
+        takeTree c.dest, n # `E as e`
+        tr c, n, WantNonOwner
+    if n.substructureKind == FinU:
+      takeInto c.dest, n:
+        tr c, n, WantNonOwner
 
 proc readableHookname(s: string): string =
   result = s

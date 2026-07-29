@@ -15,7 +15,7 @@ import std / [tables, sets, syncio, formatfloat, assertions, strutils, hashes]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [symparser, nifindexes, docpaths]
+import ".." / lib / [symparser, nifindexes, docpaths, intrinsics]
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigconcepts, sigmatch, magics, reporters, nifconfig,
   intervals, xints, typeprops, conceptcache,
@@ -4631,7 +4631,11 @@ proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   semExpr c, lhsBuf, lhs, {KeepMagics}
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
-  semBuiltinSubscript(c, dest, it, lhs, atStart)
+  if lhs.n.isTagLit and lhs.n.cursorTagId == nifpools.ErrT:
+    it.n = atStart
+    dest.takeTree it.n
+  else:
+    semBuiltinSubscript(c, dest, it, lhs, atStart)
 
 proc semCurlyat(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info

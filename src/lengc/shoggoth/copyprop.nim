@@ -182,7 +182,7 @@ proc trExpr(c: var Context; n: var Cursor) =
     inc n
   of TagLit:
     case n.exprKind
-    of AddrC:
+    of AddrC, HaddrC:
       # `addr x`: the *address* of `x`, not its value. On the leftmost STORAGE spine
       # `&y` and `&x` differ even when `y == x` (distinct storage), so the base local
       # is not substituted. But a `deref` breaks the spine: `&((*p).f)` addresses the
@@ -452,7 +452,7 @@ proc preScan(c: var Context; n: Cursor) =
       let nameCur = child0(n)
       if nameCur.kind == SymbolDef:
         c.localDefs.incl symId(nameCur)
-    if n.exprKind == AddrC:
+    if n.exprKind in AddrKinds:
       # Only a local whose OWN storage is addressed is excluded from copy prop. An
       # `addr((*p).f)` addresses the pointee (computed from p's value), so `p` stays
       # propagatable — `addrRootOf` stops at the `deref`/`pat` and returns SymId(0).

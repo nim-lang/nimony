@@ -1,0 +1,5 @@
+tests/nimony/intrinsics/tbadintrinsic.nim(5, 51) Error: unknown intrinsic: NoSuchThing
+tests/nimony/intrinsics/tbadintrinsic.nim(7, 1) Error: operand 1 of `Ctz` has a type the instruction cannot take
+tests/nimony/intrinsics/tbadintrinsic.nim(9, 1) Error: the result type of `Ctz` does not match the instruction's destination
+tests/nimony/intrinsics/tbadintrinsic.nim(11, 1) Error: operand 1 of `Ctz` has a type the instruction cannot take
+tests/nimony/intrinsics/tbadintrinsic.nim(13, 1) Error: `Ctz` takes 1 operand(s)

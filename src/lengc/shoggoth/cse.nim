@@ -267,7 +267,7 @@ proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
     let lhs = child0(start)
     if lhs.kind == Symbol:
       writes.incl symId(lhs)
-  if start.exprKind == AddrC:
+  if start.exprKind in AddrKinds:
     let s = rootOf(child0(start))
     if s != SymId(0): addrs.incl s
   var n = start
@@ -429,19 +429,16 @@ proc emitTempType(c: var Context; buf: var TokenBuf; valueExpr: Cursor; ptrWrap:
   ## inter-module-inlined *foreign* object, whose type the backend cannot navigate
   ## in this module's context. The optimizer's own type context CAN resolve it, so
   ## we bake the result in here. `ptrWrap` wraps it as `(ptr T)` for the
-  ## address-cache form (`var t = addr L`). Falls back to `.` when unresolvable
-  ## (the candidate gate already rejects such loads, so this is belt-and-braces).
-  if c.m != nil:
-    let t = getNominalType(c.m[], valueExpr)
-    if not (t.kind == TagLit and t.typeKind == NoType):
-      if ptrWrap:
-        buf.openTag TagId(ord(PtrTagId))
-        buf.addSubtree t
-        buf.closeTag()
-      else:
-        buf.addSubtree t
-      return
-  buf.addDotToken()
+  ## address-cache form (`var t = addr L`). Without a type context (the self-tests)
+  ## the slot is left empty.
+  if c.m == nil:
+    buf.addDotToken()
+  elif ptrWrap:
+    buf.openTag TagId(ord(PtrTagId))
+    buf.addSubtree getNominalType(c.m[], valueExpr)
+    buf.closeTag()
+  else:
+    buf.addSubtree getNominalType(c.m[], valueExpr)
 
 proc addValueVarDecl(c: var Context; tempName: string; expr: Cursor;
                      info: NifLineInfo): int =
@@ -745,7 +742,7 @@ proc trExpr(c: var Context; n: var Cursor) =
   case n.kind
   of TagLit:
     case n.exprKind
-    of AddrC:
+    of AddrC, HaddrC:
       let inner = child0(n)
       # `(addr L)` where `L` is an address-CSE'd memory lvalue: unify with loads/
       # writes of `L`. Cache `addr L` once; this whole node rewrites to the bare
@@ -1095,7 +1092,7 @@ proc collectWriteTargets(c: var Context; n: var Cursor) =
     inc n
     return
   # `(addr L)` of a memory lvalue → `L` is address-CSE'd.
-  if n.exprKind == AddrC:
+  if n.exprKind in AddrKinds:
     let inner = child0(n)
     if inner.kind == TagLit and inner.exprKind in {DotC, AtC, DerefC, PatC}:
       c.writeTargets.incl hashExpr(inner)

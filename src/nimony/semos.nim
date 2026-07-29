@@ -7,7 +7,7 @@
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
 from std / strutils import multiReplace, split, strip, startsWith
-import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths]
+import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
 from std / osproc import execCmdEx
 
 include ".." / lib / nifprelude
@@ -299,12 +299,39 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
 
 # ------------------ include/import handling ------------------------
 
+proc lastModTimeOrStale(path: string): int64 =
+  ## `getLastModificationTime` raises on transient I/O errors. The result is
+  ## only used for staleness comparisons, so any failure must fall through to
+  ## "regenerate": -1 makes that automatic, since `-1 > anything` is false.
+  ## Mirrors `deps.getLastModTime`.
+  try:
+    when defined(nimony):
+      result = getLastModificationTime(path)
+    else:
+      result = times.toUnix(getLastModificationTime(path))
+  except:
+    result = -1'i64
+
 proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
   let nifler = findTool("nifler")
   let name = moduleSuffix(nimFile, paths)
   let src = nifcachePath / name & ".p.nif"
-  exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
-    quoteShell(src)
+  let depsFile = nifcachePath / name & ".p.deps.nif"
+  # `include`d files are part of the dependency graph, so the driver's own
+  # dep scan (`deps.execNifler`) has already parsed this file into the very
+  # same `.p.nif` — with the identical command line — before it ever spawned
+  # us. Re-running nifler would rewrite a byte-identical artifact: on
+  # `nimony n bug.nim` that was 21 of 47 nifler processes, one per module
+  # `system.nim` includes, and at ~2.7ms per spawn it is nearly all process
+  # overhead. Reuse the artifact under the same freshness rule `execNifler`
+  # uses, so the two agree on when a re-parse is actually needed.
+  let srcTime = lastModTimeOrStale(nimFile)
+  if fileExists(src) and fileExists(nimFile) and lastModTimeOrStale(src) > srcTime and
+      fileExists(depsFile) and lastModTimeOrStale(depsFile) > srcTime:
+    discard "already parsed by the dep scan"
+  else:
+    exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
+      quoteShell(src)
 
   var r = rd.open(src)
   result = createTokenBuf()

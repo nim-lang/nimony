@@ -498,8 +498,21 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
       dest.copyTree retType
       dest.addDotToken() # value
 
+    # Inline the body's own for-loops first: `transformStmt`'s IteratorS case
+    # routes a `.closure`/`.passive` iter decl straight here, so nothing else
+    # ever descends into its body. An inner `for i in a..b:` would survive as
+    # a `(for ...)` into duplifier, which then trips over the for-var that no
+    # pass ever declared ("could not find symbol: i.0").
+    # Inlining must run before the yield rewrite: the inline iterator's
+    # expansion copies the loop body once per inner yield, and each copy may
+    # contain an outer `(yld ...)` that still needs rewriting.
+    var bodyBuf = createTokenBuf()
     while c.hasMore:
-      rewriteYieldsAndCopy(e, dest, c, synthResultSym)
+      transformStmt(e, bodyBuf, c)
+
+    var body = beginRead(bodyBuf)
+    while body.hasMore:
+      rewriteYieldsAndCopy(e, dest, body, synthResultSym)
 
     dest.addParRi(c.endInfo) # close body stmts
   dest.addParRi(c.endInfo) # close iter decl

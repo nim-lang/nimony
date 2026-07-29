@@ -758,12 +758,12 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
       skip n
       genLvalueLLVM(c, n, result)
       while n.hasMore: skip n
-  of SufC, ParC, AddrC, NilC, InfC, NeginfC, NanC, FalseC, TrueC,
+  of SufC, ParC, AddrC, HaddrC, NilC, InfC, NeginfC, NanC, FalseC, TrueC,
      AndC, OrC, NotC, NegC, SizeofC, AlignofC, OffsetofC,
      OconstrC, AconstrC,
      AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
      BitandC, BitorC, BitxorC, BitnotC,
-     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC:
+     EqC, NeqC, LeC, LtC, CastC, ConvC, CallC, InstrC:
     error c.m, "not an lvalue: ", n
 
 proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
@@ -1008,7 +1008,39 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     let retTypeCursor = getType(c.m, n)
     let retType = genTypeLLVMReadOnly(c, retTypeCursor)
     genCallWithType(c, n, retType, result)
-  of AddrC:
+  of InstrC:
+    # A portable row lowers exactly like the GCC builtin it stands for, and
+    # `genGccBuiltinCall` already emits those: the `llvm.cttz`/`ctlz`/`ctpop`/
+    # `bswap` call, the `i1 is_zero_poison` operand, and the i64→i32 truncation.
+    # It is keyed on the builtin NAME, which is what `cBuiltinFor` returns, so
+    # `(instr …)` needs no lowering of its own — resolve the row and reuse it.
+    # A target-pinned row has no portable spelling by construction, so there
+    # `cBuiltinFor` yields "" and this rejects rather than substituting.
+    let start = n
+    let retType = genTypeLLVMReadOnly(c, getType(c.m, start))
+    var args: seq[LLValue] = @[]
+    var builtin = ""
+    n.into:
+      var bits = 0
+      let op = intrinsicOfCallee(c.m, n, bits)   # `n` is at the callee symbol
+      builtin = if op == NoIntrinsicOp: "" else: cBuiltinFor(op, bits)
+      if op.isAtomic:
+        # `cBuiltinFor` DOES name a builtin for these, but `genGccBuiltinCall`
+        # below knows only the bit-counting family and its `else` branch emits
+        # NOTHING — an atomic silently dropped, the one failure mode a
+        # concurrency primitive must not have. Reject until the `atomicrmw` /
+        # `cmpxchg` lowering exists. (The same hole swallowed these when they
+        # were `importc` calls; naming them makes it reportable.)
+        error c.m, "the LLVM backend has no lowering for the atomics yet: ", start
+      elif builtin.len == 0:
+        error c.m, "the LLVM backend has no lowering for this instruction: ", start
+      skip n                                  # the callee symbol
+      while n.hasMore:
+        var a = LLValue()
+        genExprLLVM(c, n, a)
+        args.add a
+    genGccBuiltinCall(c, builtin, args, retType, result)
+  of AddrC, HaddrC:
     genAddrLLVM(c, n, result)
   of DerefC:
     let derefType = getType(c.m, n)
