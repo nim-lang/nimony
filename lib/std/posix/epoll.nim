@@ -33,40 +33,41 @@ const
   EPOLL_CTL_DEL* = 2          # Remove a file descriptor from the interface.
   EPOLL_CTL_MOD* = 3          # Change file descriptor epoll_event structure.
 
+# The epoll ABI transcribed from the kernel's uapi/linux/eventpoll.h; layout
+# checked by tests/nimony/stdlib/tposixabi.nim against <sys/epoll.h>.
 type
-  EpollData* {.importc: "epoll_data_t",
-      header: "<sys/epoll.h>", pure, final, union.} = object
-    `ptr`* {.importc: "ptr".}: pointer
-    fd* {.importc: "fd".}: cint
-    u32* {.importc: "u32".}: uint32
-    u64* {.importc: "u64".}: uint64
+  EpollData* {.pure, final, union.} = object ## epoll_data_t
+    `ptr`*: pointer
+    fd*: cint
+    u32*: uint32
+    u64*: uint64
 
 # https://github.com/torvalds/linux/blob/ff6992735ade75aae3e35d16b17da1008d753d28/include/uapi/linux/eventpoll.h#L77
-when defined(linux) and defined(amd64):
+# x86 keeps the struct packed (12 bytes) for compat with the original 32-bit
+# layout; every other architecture aligns the union naturally (16 bytes).
+when defined(amd64) or defined(i386):
   type
-    EpollEvent* {.importc: "struct epoll_event", header: "<sys/epoll.h>", pure, final, packed.} = object
+    EpollEvent* {.pure, final, packed.} = object ## struct epoll_event
       events*: uint32 # Epoll events
       data*: EpollData # User data variable
 else:
   type
-    EpollEvent* {.importc: "struct epoll_event", header: "<sys/epoll.h>", pure, final.} = object
+    EpollEvent* {.pure, final.} = object ## struct epoll_event
       events*: uint32 # Epoll events
       data*: EpollData # User data variable
-proc epoll_create*(size: cint): cint {.importc: "epoll_create",
-    header: "<sys/epoll.h>".}
+proc epoll_create*(size: cint): cint {.importc: "epoll_create".}
   ## Creates an epoll instance.  Returns an fd for the new instance.
   ##
   ## The "size" parameter is a hint specifying the number of file
   ## descriptors to be associated with the new instance.  The fd
   ## returned by epoll_create() should be closed with close().
 
-proc epoll_create1*(flags: cint): cint {.importc: "epoll_create1",
-    header: "<sys/epoll.h>".}
+proc epoll_create1*(flags: cint): cint {.importc: "epoll_create1".}
   ## Same as epoll_create but with an FLAGS parameter.  The unused SIZE
   ## parameter has been dropped.
 
 proc epoll_ctl*[FD: cint | SocketHandle](epfd: cint; op: cint; fd: FD; event: ptr EpollEvent): cint {.
-    importc: "epoll_ctl", header: "<sys/epoll.h>".}
+    importc: "epoll_ctl".}
   ## Manipulate an epoll instance "epfd". Returns `0` in case of success,
   ## `-1` in case of error (the "errno" variable will contain the specific error code).
   ##
@@ -76,8 +77,7 @@ proc epoll_ctl*[FD: cint | SocketHandle](epfd: cint; op: cint; fd: FD; event: pt
   ## is interested in and any associated user data.
 
 proc epoll_wait*(epfd: cint; events: ptr EpollEvent; maxevents: cint;
-                 timeout: cint): cint {.importc: "epoll_wait",
-    header: "<sys/epoll.h>".}
+                 timeout: cint): cint {.importc: "epoll_wait".}
   ## Wait for events on an epoll instance "epfd". Returns the number of
   ## triggered events returned in "events" buffer. Or -1 in case of
   ## error with the "errno" variable set to the specific error code. The

@@ -32,8 +32,7 @@ elif defined(windows):
   import ../windows/winlean
 elif defined(posix):
   import ../posix/posix
-  proc c_rename(oldname, newname: cstring): cint {.
-    importc: "rename", header: "<stdio.h>".}
+  proc c_rename(oldname, newname: cstring): cint {.importc: "rename".}
 
 
 

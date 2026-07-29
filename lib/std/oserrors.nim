@@ -8,7 +8,7 @@ type
 when defined(windows):
   import windows/winlean
 else:
-  var errno {.importc: "errno", header: "<errno.h>".}: cint
+  from posix/posix import errno
 
 
 when defined(windows):
@@ -47,5 +47,5 @@ proc osLastError*(): OSErrorCode {.sideEffect.} =
   when defined(windows):
     result = cast[OSErrorCode](getLastError())
   else:
-    result = OSErrorCode(errno)
+    result = OSErrorCode(errno())
 #{.pop.}

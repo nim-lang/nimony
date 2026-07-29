@@ -22,31 +22,37 @@ jobs:
       matrix:
         branch: [master]
         target:
+          # `builder` lives on the target (not a keyed `include`) because the
+          # two linux rows need different runners: amd64 on ubuntu-24.04,
+          # arm64 on the arm-hosted image. An os-keyed include can't express
+          # that split.
           - os: linux
             cpu: amd64
             nim_branch: devel
+            builder: ubuntu-24.04
           - os: linux
             cpu: i386
             nim_branch: devel
+            builder: ubuntu-24.04
+          # linux/arm64 exercises the asm-generic `struct stat` layout and the
+          # arm64-divergent fcntl constants (O_DIRECTORY et al) that no other
+          # job reaches; tposixabi static_asserts the whole transcription
+          # against this platform's real headers — see nim-lang/nimony#2155.
+          - os: linux
+            cpu: arm64
+            nim_branch: devel
+            builder: ubuntu-24.04-arm
           - os: macos
             cpu: arm64
             nim_branch: devel
+            builder: macos-15
           - os: windows
             cpu: amd64
             nim_branch: devel
-        include:
-          - target:
-              os: linux
-            builder: ubuntu-24.04
-          - target:
-              os: macos
-            builder: macos-15
-          - target:
-              os: windows
             builder: windows-2025
 
     name: '${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
-    runs-on: ${{ matrix.builder }}
+    runs-on: ${{ matrix.target.builder }}
     env:
       NIM_DIR: nim-${{ matrix.target.nim_branch }}-${{ matrix.target.cpu }}
       NIM_BRANCH: ${{ matrix.target.nim_branch }}

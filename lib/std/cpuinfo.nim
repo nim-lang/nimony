@@ -48,28 +48,10 @@ else:
         dynlib: "kernel32", importc: "GetSystemInfo".}
 
 
-  when defined(freebsd) or defined(macosx):
-    {.emit: "#include <sys/types.h>".}
-
-  when defined(openbsd) or defined(netbsd):
-    {.emit: "#include <sys/param.h>".}
-
-  when defined(macosx) or defined(bsd):
-    # we HAVE to emit param.h before sysctl.h so we cannot use .header here
-    # either. The amount of archaic bullshit in Poonix based OSes is just insane.
-    {.emit: "#include <sys/sysctl.h>".}
-    {.push nodecl.}
-    when defined(macosx):
-      proc sysctlbyname(name: cstring,
-        oldp: pointer, oldlenp: var csize_t,
-        newp: nil pointer, newlen: csize_t): cint {.importc.}
-    let
-      CTL_HW{.importc.}: cint
-      HW_NCPU{.importc.}: cint
-    proc sysctl[I](name: var array[I, cint], namelen: cuint,
+  when defined(macosx):
+    proc sysctlbyname(name: cstring,
       oldp: pointer, oldlenp: var csize_t,
-      newp: nil pointer, newlen: csize_t): cint {.importc.}
-    {.pop.}
+      newp: nil pointer, newlen: csize_t): cint {.importc: "sysctlbyname".}
 
   when defined(genode):
     import genode/env
@@ -91,16 +73,12 @@ else:
         si: SystemInfo = default(SystemInfo)
       getSystemInfo(addr si)
       result = int(si.dwNumberOfProcessors)
-    elif defined(macosx) or defined(bsd):
+    elif defined(macosx):
       result = 0
       let dest = addr result
       var len = sizeof(result).csize_t
-      when defined(macosx):
-        # alias of "hw.activecpu"
-        if sysctlbyname("hw.logicalcpu", dest, len, nil, 0) == 0:
-          return
-      var mib = [CTL_HW, HW_NCPU]
-      if sysctl(mib, 2, dest, len, nil, 0) == 0:
+      # alias of "hw.activecpu"
+      if sysctlbyname("hw.logicalcpu", dest, len, nil, 0) == 0:
         return
     elif defined(hpux):
       result = mpctl(MPC_GETNUMSPUS, nil, nil)

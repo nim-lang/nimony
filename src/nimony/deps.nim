@@ -958,17 +958,28 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # Command for C/LLVM compiler (object files)
     b.withTree "cmd":
       b.addSymbolDef "cc"
+      var ccProgram = c.config.cc
       if c.config.backend == backendLLVM:
-        b.addStrLit "clang"
+        ccProgram = "clang"
       elif nativeSysLink:
-        # Compiles the `.compile`d TUs (e.g. Objective-C `.m`); same driver that
-        # links them, so the toolchain/ABI matches.
-        b.addStrLit sysLinker
-      else:
-        b.addStrLit c.config.cc
+        # Compiles the `.compile`d TUs (e.g. Objective-C `.m`); same driver
+        # that links them, so the toolchain/ABI matches.
+        ccProgram = sysLinker
+      b.addStrLit ccProgram
       b.addStrLit "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
       b.addStrLit "-Wno-attributes"
+      # gcc-14 on arm64/Linux emits a stringop-overflow false positive
+      # ("writing 8 bytes into a region of size 0 ... destination object is
+      # likely at address zero") from inlined refcount updates on paths the
+      # optimizer itself proved unreachable. Same policy as #2168: silence
+      # GCC's overreach instead of contorting the codegen. Real GCC only:
+      # clang has no such warning name and would spam
+      # `-Wunknown-warning-option` into every tracked test output — and on
+      # macOS `gcc` IS clang, so gate on the target OS as well.
+      if extractCCKey(ccProgram) != "clang" and
+          c.config.targetOS notin {osMacosx, osIos}:
+        b.addStrLit "-Wno-stringop-overflow"
       # Note on TLS for clang/Windows: clang emits native PE TLS by default,
       # which is what we want — `__thread` access compiles to a single
       # `gs:0x58` load instead of a `__emutls_get_address` call. ld.bfd
@@ -1644,8 +1655,11 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addStrLit config.cc
       b.addStrLit "-c"
       b.addStrLit "-Wno-attributes"
-      if config.baseDir.len > 0:
-        b.addStrLit "-I" & config.baseDir
+      # See the sibling cc cmd above: real-GCC-only workaround for the gcc-14
+      # arm64 stringop-overflow false positive.
+      if extractCCKey(config.cc) != "clang" and
+          config.targetOS notin {osMacosx, osIos}:
+        b.addStrLit "-Wno-stringop-overflow"
       b.addKeyw "args"
       b.addKeyw "input"
       b.addStrLit "-o"

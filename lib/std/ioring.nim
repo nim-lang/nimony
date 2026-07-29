@@ -21,16 +21,16 @@ export threadpool.initPool, threadpool.shutdownPool, threadpool.poolStopped
 when defined(windows):
   import windows/winlean
 else:
-  proc sched_yield(): cint {.importc, header: "<sched.h>".}
+  proc sched_yield(): cint {.importc: "sched_yield".}
 
 when defined(posix):
   proc posixRead(fd: cint; buf: pointer; count: csize_t): int {.
-    importc: "read", header: "<unistd.h>".}
+    importc: "read".}
   proc posixWrite(fd: cint; buf: pointer; count: csize_t): int {.
-    importc: "write", header: "<unistd.h>".}
-  proc posixClose(fd: cint): cint {.importc: "close", header: "<unistd.h>".}
+    importc: "write".}
+  proc posixClose(fd: cint): cint {.importc: "close".}
 
-  proc fcntl(fd: cint; cmd: cint): cint {.varargs, importc, header: "<fcntl.h>".}
+  proc fcntl(fd: cint; cmd: cint): cint {.varargs, importc: "fcntl".}
   const F_GETFL* = 3.cint
   const F_SETFL* = 4.cint
   when defined(linux):
@@ -38,17 +38,38 @@ when defined(posix):
   else:
     const O_NONBLOCK* = 0x0004.cint
 
+  # Socket ABI transcribed per OS (verified by tposixabi's sockaddr checks
+  # against the same layouts in std/posix).
   type
     SockLen* = cuint
-    Sockaddr_storage* {.importc: "struct sockaddr_storage",
-                        header: "<sys/socket.h>".} = object
-    SockAddr* {.importc: "struct sockaddr", header: "<sys/socket.h>".} = object
-    Sockaddr_in* {.importc: "struct sockaddr_in", header: "<netinet/in.h>".} = object
-      sin_family*: cushort
-      sin_port*: cushort
-      sin_addr*: InAddr
-    InAddr* {.importc: "struct in_addr", header: "<netinet/in.h>".} = object
-      s_addr*: uint32
+    Sockaddr_storage* {.pure.} = object ## struct sockaddr_storage (128 B,
+      abi: array[16, uint64]            ## 8-aligned, both ABIs)
+  when defined(linux):
+    type
+      InAddr* {.pure.} = object ## struct in_addr
+        s_addr*: uint32
+      SockAddr* {.pure.} = object ## struct sockaddr
+        sa_family*: uint16
+        sa_data*: array[14, char]
+      Sockaddr_in* {.pure.} = object ## struct sockaddr_in
+        sin_family*: cushort
+        sin_port*: cushort
+        sin_addr*: InAddr
+        sin_zero: array[8, char]
+  else:
+    type
+      InAddr* {.pure.} = object ## struct in_addr
+        s_addr*: uint32
+      SockAddr* {.pure.} = object ## struct sockaddr (BSD: sa_len byte first)
+        sa_len: uint8
+        sa_family*: uint8
+        sa_data*: array[14, char]
+      Sockaddr_in* {.pure.} = object ## struct sockaddr_in
+        sin_len: uint8
+        sin_family*: uint8
+        sin_port*: cushort
+        sin_addr*: InAddr
+        sin_zero: array[8, char]
 
   const
     AF_INET* = 2.cint
@@ -58,15 +79,20 @@ when defined(posix):
     SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
     INADDR_ANY* = 0'u32
 
-  proc socket(domain, typ, protocol: cint): cint {.importc, header: "<sys/socket.h>".}
+  proc socket(domain, typ, protocol: cint): cint {.importc: "socket".}
   proc setsockopt(s: cint; level, optname: cint; optval: pointer; optlen: SockLen): cint {.
-    importc, header: "<sys/socket.h>".}
+    importc: "setsockopt".}
   proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.
-    importc: "bind", header: "<sys/socket.h>".}
-  proc listen(s: cint; backlog: cint): cint {.importc, header: "<sys/socket.h>".}
+    importc: "bind".}
+  proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
   proc accept(s: cint; `addr`: ptr SockAddr; addrlen: ptr SockLen): cint {.
-    importc, header: "<sys/socket.h>".}
-  proc htons(x: uint16): uint16 {.importc, header: "<arpa/inet.h>".}
+    importc: "accept".}
+  proc htons(x: uint16): uint16 {.inline.} =
+    ## Header macro/libc shim; a byte swap on the little-endian targets.
+    when defined(bigEndian):
+      result = x
+    else:
+      result = (x shl 8) or (x shr 8)
 
 const
   MaxFds* = 8192  ## fd-indexed slot table size.
@@ -314,7 +340,10 @@ proc listenTcp*(port: uint16; backlog = 128): cint =
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
     var addr4 = default(Sockaddr_in)
-    addr4.sin_family = cushort(AF_INET)
+    when defined(linux):
+      addr4.sin_family = cushort(AF_INET)
+    else:
+      addr4.sin_family = uint8(AF_INET)
     addr4.sin_port = htons(port)
     addr4.sin_addr.s_addr = INADDR_ANY
     assert bindAddr(fd, cast[ptr SockAddr](addr addr4),
