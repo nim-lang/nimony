@@ -950,7 +950,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # so the whole module set must switch to `.oc.nif` together; wire that up
     # when the optimizer matters for wasm.)
     let wasm = c.config.backend == backendWasm
-    let useOptimizer = c.config.optLevel in {optSpeed, optSize} and not wasm
+    let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
     # A native program that uses the `.compile`/`{.build…}` pragma (in ANY module)
     # is finished by the system linker, so nifasm's relocatable object can be
@@ -1281,12 +1281,18 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # reaches the command line; the rest are found via the embedded index).
         b.withTree "do":
           b.addIdent "ithaqua"
-          let mainCNif = c.config.lengcFile(c.rootNode.files[0], backend)
+          template wasmInput(f: FilePair): string =
+            # under the optimizer the whole module set switches to `.oc.nif`
+            # together — ithaqua derives sibling filenames from the MAIN
+            # input's extension, exactly like arkham's native chain.
+            if useOptimizer: c.config.optimizedFile(f, backend)
+            else: c.config.lengcFile(f, backend)
+          let mainCNif = wasmInput(c.rootNode.files[0])
           b.withTree "input":
             b.addStrLit mainCNif
           objFiles.incl mainCNif
           for v in c.nodes:
-            let cn = c.config.lengcFile(v.files[0], backend)
+            let cn = wasmInput(v.files[0])
             if not objFiles.containsOrIncl(cn):
               b.withTree "input":
                 b.addStrLit cn
