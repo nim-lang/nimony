@@ -372,6 +372,12 @@ type
     rename: Table[SymId, SymId]      ## original param/local sym -> fresh sym
     subst: Table[SymId, Cursor]      ## read-only param sym -> argument subtree
                                      ## to splice at uses (no copy emitted)
+    dropDecl: SymId                  ## the callee's RESULT local (every `(ret X)`
+                                     ## returns it): renamed to the splice
+                                     ## destination, so its `(var …)` decl folds
+                                     ## to an assignment (or vanishes) and the
+                                     ## ret's `dest = result'` self-copy is
+                                     ## elided. SymId(0) = no forwarding.
 
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
@@ -426,6 +432,52 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
     while n.hasMore:
       scanParamUsage(n, params, assigned, addrTaken)
       skip n
+
+proc scanRets(n: var Cursor; resultSym: var SymId; found, ok: var bool) =
+  ## Walk one subtree looking for `(ret X)`. `ok` stays true iff EVERY ret
+  ## returns the same bare symbol, reported in `resultSym`; `found` records
+  ## that at least one ret exists. Nested proc decls (if any) are skipped.
+  case n.kind
+  of TagLit:
+    if n.stmtKind == RetS:
+      var hasVal = false
+      var valIsSym = false
+      var valSym = SymId(0)
+      into n:
+        if n.hasMore and not n.isDotToken:
+          hasVal = true
+          if n.isSymbol:
+            valIsSym = true
+            valSym = n.symId
+        while n.hasMore: skip n
+      if not hasVal or not valIsSym:
+        ok = false
+      elif not found:
+        resultSym = valSym
+        found = true
+      elif resultSym != valSym:
+        ok = false
+    elif n.stmtKind == ProcS:
+      skip n
+    else:
+      into n:
+        while n.hasMore: scanRets(n, resultSym, found, ok)
+  else:
+    inc n
+
+proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
+  ## The callee's result LOCAL for destination forwarding: every `(ret X)` in
+  ## the body returns the same bare, body-local, non-param symbol (nimsem's
+  ## implicit `result` after lowering). SymId(0) when the pattern doesn't hold.
+  var resultSym = SymId(0)
+  var found = false
+  var ok = true
+  var b = body
+  scanRets(b, resultSym, found, ok)
+  if not (found and ok) or resultSym == SymId(0): return SymId(0)
+  if resultSym in pSyms: return SymId(0)          # a param: bound to its arg
+  if not isLocalName(pool.syms[resultSym]): return SymId(0)
+  result = resultSym
 
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
                  bnd: Bindings) =
@@ -528,16 +580,40 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       let info = body.info
       into body:                            # enter (ret …)
         if body.hasMore and not body.isDotToken and targetSym != SymId(0):
-          dest.addParLe TagId(AsgnS), info
-          dest.addSymUse targetSym, info
-          emitRenamed(dest, body, bnd)  # the returned expression
-          dest.addParRi()
+          if body.isSymbol and
+             (body.symId == targetSym or
+              bnd.rename.getOrDefault(body.symId) == targetSym):
+            skip body                       # `ret result`: dest IS result (forwarded)
+          else:
+            dest.addParLe TagId(AsgnS), info
+            dest.addSymUse targetSym, info
+            emitRenamed(dest, body, bnd)  # the returned expression
+            dest.addParRi()
         else:
           while body.hasMore: skip body     # discard the value
       dest.addParLe TagId(JmpS), info
       dest.addSymUse returnLabel, info
       dest.addParRi()
       return
+    if bnd.dropDecl != SymId(0) and body.stmtKind == VarS:
+      var probe = body
+      inc probe                             # past the `var` tag
+      if probe.isSymbolDef and probe.symId == bnd.dropDecl:
+        # The callee's result var: its storage IS the splice destination
+        # (renamed), so the decl folds away — an initializer becomes a plain
+        # assignment to the destination.
+        let vinfo = body.info
+        into body:
+          skip body                         # name
+          skip body                         # pragmas
+          skip body                         # type
+          if body.hasMore and not body.isDotToken:
+            dest.addParLe TagId(AsgnS), vinfo
+            dest.addSymUse targetSym, vinfo
+            emitRenamed(dest, body, bnd)    # the initializer expression
+            dest.addParRi()
+          while body.hasMore: skip body     # drain (`.` initializer / extras)
+        return
     if body.substructureKind == KvU:
       # See `emitRenamed`: field-name slot of `(kv …)` is verbatim to
       # avoid collisions with body-locals that share the field name.
@@ -585,10 +661,15 @@ proc emitTailStmt(dest: var TokenBuf; body: var Cursor; bnd: Bindings;
     let rinfo = body.info
     into body:
       if body.hasMore and not body.isDotToken and targetSym != SymId(0):
-        dest.addParLe TagId(AsgnS), rinfo
-        dest.addSymUse targetSym, rinfo
-        emitRenamed(dest, body, bnd)         # the returned expression
-        dest.addParRi()
+        if body.isSymbol and
+           (body.symId == targetSym or
+            bnd.rename.getOrDefault(body.symId) == targetSym):
+          skip body                          # `ret result`: dest IS result (forwarded)
+        else:
+          dest.addParLe TagId(AsgnS), rinfo
+          dest.addSymUse targetSym, rinfo
+          emitRenamed(dest, body, bnd)       # the returned expression
+          dest.addParRi()
       else:
         while body.hasMore: skip body        # void return: discard the value
   elif body.isTagLit and body.stmtKind in {StmtsS, ScopeS}:
@@ -835,6 +916,16 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   for s in pSyms:
     rename[s] = c.freshSym(s)
   seedRenameFromBody(c, pd.body, rename)
+  # Result-var forwarding: when every `(ret X)` returns the same body local
+  # (nimsem's implicit `result` after lowering), that local's storage IS the
+  # splice destination — rename it to `tmpSym` (overriding the fresh sym the
+  # seed walk minted), fold its decl away (`dropDecl`) and let the ret rewrite
+  # elide the `dest = result'` self-copy. This is the residue shoggoth's
+  # copyprop cannot clean (it is assignment-shaped under control flow), so it
+  # must not be produced in the first place.
+  let resultLocal = resultLocalOf(pd.body, pSyms)
+  if resultLocal != SymId(0):
+    rename[resultLocal] = tmpSym
 
   let info = entry.info
 
@@ -855,7 +946,8 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  var bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  bnd.dropDecl = resultLocal
 
   dest.addParLe TagId(ScopeS), info
 
