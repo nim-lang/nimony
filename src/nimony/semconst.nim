@@ -161,8 +161,43 @@ proc evalConstExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; expect
   result = evalExpr(c, e)
   endRead e
 
+proc isLiteralAlready(n: Cursor): bool =
+  ## True when the semchecked expression is already spelled as the literal that
+  ## a constant slot (a case label, most importantly) requires.
+  if n.kind in {CharLit, IntLit, UIntLit, FloatLit, StrLit, Symbol}:
+    result = true
+  elif n.kind == TagLit:
+    result = n.exprKind in {SufX, TrueX, FalseX, NilX}
+  else:
+    result = false
+
+proc foldIntoDest(dest: var TokenBuf; start: int; expected: TypeCursor; value: Cursor) =
+  ## `evalConstExpr` leaves the *semchecked* expression in `dest` and hands its
+  ## value back on the side. Where that expression ends up as a case label
+  ## (`of 'A'..pred('Q'):`) the semchecked form is not enough: the backends
+  ## require a literal there, and `pred('Q')` is still a `(sub 'Q' 1)` tree.
+  ## Replace it by the evaluated value, re-typed against `expected`.
+  ##
+  ## Left alone when the expression already *is* a literal — overwhelmingly the
+  ## common case, and re-annotating could only change its spelling — and when
+  ## `expected` is too vague to annotate against (`auto`, which several callers
+  ## pass), which `annotateConstantType` reports by emitting an `(err)` node.
+  if dest.len <= start: return
+  var e = cursorAt(dest, start)
+  let literal = isLiteralAlready(e)
+  endRead e
+  if literal: return
+  var folded = createTokenBuf(4)
+  annotateConstantType(folded, expected, value)
+  let f = beginRead(folded)
+  if f.isTagLit and f.cursorTagId == nifpools.ErrT: return
+  expectUnique dest
+  dest.shrink start
+  dest.add folded
+
 proc evalConstIntExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): xint =
   let info = n.info
+  let start = dest.len
   var valueBuf = evalConstExpr(c, dest, n, expected)
   let value = beginRead(valueBuf)
   result = getConstOrdinalValue(value)
@@ -171,9 +206,12 @@ proc evalConstIntExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant integer value but got: " & asNimCode(value)
+  else:
+    foldIntoDest dest, start, expected, value
 
 proc evalConstStrExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; expected: TypeCursor): StrId =
   let info = n.info
+  let start = dest.len
   var valueBuf = evalConstExpr(c, dest, n, expected)
   let value = beginRead(valueBuf)
   result = getConstStringValue(value)
@@ -182,3 +220,5 @@ proc evalConstStrExpr*(c: var SemContext; dest: var TokenBuf; n: var Cursor; exp
       dest.add valueBuf
     else:
       buildErr c, dest, info, "expected constant string value but got: " & asNimCode(value)
+  else:
+    foldIntoDest dest, start, expected, value

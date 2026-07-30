@@ -246,8 +246,8 @@ proc genSwitchLLVM(c: var LLVMCode; n: var Cursor) =
                     var lo = LLValue(); genExprLLVM(c, n, lo)
                     var hi = LLValue(); genExprLLVM(c, n, hi)
                     if lo.kind == llvInt and hi.kind == llvInt:
-                      let loN = parseInt(lo.intText)
-                      let hiN = parseInt(hi.intText)
+                      let loN = parseIntOrQuit(lo.intText)
+                      let hiN = parseIntOrQuit(hi.intText)
                       let span = hiN - loN + 1
                       if span >= 0 and span <= RangeExpandThreshold:
                         # small dense literal range: expand per value to keep switch jump-table
@@ -441,7 +441,7 @@ proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
           inc n
         while n.hasMore: skip n
 
-      typ = c.llIntBits(parseInt(bitsStr))
+      typ = c.llIntBits(parseIntOrQuit(bitsStr))
       intrinsic.add ".with.overflow."
       serialize(typ, intrinsic)
 

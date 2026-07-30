@@ -32,6 +32,16 @@ proc pointeeType(c: var LLVMCode; typ: Cursor): Cursor =
     result = default(Cursor)
 
 
+proc coerceInPlace(c: var LLVMCode; val: var LLValue;
+                   srcTypeCursor, destTypeCursor: Cursor; isCast: bool) =
+  ## Coerce `val` to `destTypeCursor`, overwriting it. `coerceValueLLVM` returns
+  ## through a `var` out-param, and handing it the same variable as both the
+  ## (immutable) input and the output aliases the two -- route it through a
+  ## temporary instead.
+  var coerced = LLValue()
+  coerceValueLLVM(c, val, srcTypeCursor, destTypeCursor, isCast, coerced)
+  val = coerced
+
 proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
     result: var LLValue) =
   n.into:
@@ -42,9 +52,9 @@ proc signedBinOp(c: var LLVMCode; n: var Cursor; op: string;
     let srcRhs = getType(c.m, n)
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
     if not typeEq(lhs.typ, typLL):
-      coerceValueLLVM(c, lhs, srcLhs, typCursor, true, lhs)
+      coerceInPlace(c, lhs, srcLhs, typCursor, true)
     if not typeEq(rhs.typ, typLL):
-      coerceValueLLVM(c, rhs, srcRhs, typCursor, true, rhs)
+      coerceInPlace(c, rhs, srcRhs, typCursor, true)
     let t = c.nextTemp()
     let res = llReg(t, typLL)
     c.emit newLLBinInstr(res = res, binOp = op,
@@ -63,9 +73,9 @@ proc unsignedBinOp(c: var LLVMCode; n: var Cursor; signedOp, unsignedOp: string;
     let srcRhs = getType(c.m, n)
     var rhs = LLValue(); genExprLLVM(c, n, rhs)
     if not typeEq(lhs.typ, typLL):
-      coerceValueLLVM(c, lhs, srcLhs, typCursor, true, lhs)
+      coerceInPlace(c, lhs, srcLhs, typCursor, true)
     if not typeEq(rhs.typ, typLL):
-      coerceValueLLVM(c, rhs, srcRhs, typCursor, true, rhs)
+      coerceInPlace(c, rhs, srcRhs, typCursor, true)
     let op = if isUnsigned: unsignedOp else: signedOp
     let t = c.nextTemp()
     let res = llReg(t, typLL)
@@ -88,9 +98,9 @@ proc cmpOp(c: var LLVMCode; n: var Cursor; signedPred, unsignedPred: string;
     # LLVM cmp needs both operands at one type: widen the narrower one.
     if not typeEq(lhs.typ, rhs.typ):
       if typeSizeBits(c, lhsType) < typeSizeBits(c, rhsType):
-        coerceValueLLVM(c, lhs, lhsType, rhsType, false, lhs)
+        coerceInPlace(c, lhs, lhsType, rhsType, false)
       else:
-        coerceValueLLVM(c, rhs, rhsType, lhsType, false, rhs)
+        coerceInPlace(c, rhs, rhsType, lhsType, false)
     let t = c.nextTemp()
     if isFloatType(lhs.typ):
       let fpPred = case signedPred
@@ -593,7 +603,7 @@ proc genAddrLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   var lval = LLValue()
   n.into:
     genLvalueLLVM(c, n, lval)
-    if n.hasMore and n.typeQual == CppRefQ:
+    if n.hasMore and n.typeQual == CpprefQ:
       skip n
     while n.hasMore: skip n
   result = lval.withType(c.prim.ptrT)
@@ -736,7 +746,7 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var ptrVal = LLValue()
     n.into:
       genExprLLVM(c, n, ptrVal)
-      if n.hasMore and n.typeQual == CppRefQ:
+      if n.hasMore and n.typeQual == CpprefQ:
         skip n
       while n.hasMore: skip n
     result = ptrVal.withType(c.prim.ptrT)
@@ -866,7 +876,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     skip n
     result = LLValue(kind: llvFloat, floatText: "0x7FF0000000000000",
         typ: c.prim.f64)
-  of NegInfC:
+  of NeginfC:
     skip n
     result = LLValue(kind: llvFloat, floatText: "0xFFF0000000000000",
         typ: c.prim.f64)
@@ -1048,7 +1058,7 @@ proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     var ptrVal = LLValue()
     n.into:
       genExprLLVM(c, n, ptrVal)
-      if n.hasMore and n.typeQual == CppRefQ:
+      if n.hasMore and n.typeQual == CpprefQ:
         skip n
       while n.hasMore: skip n
     result = c.emitLoad(ptrVal, loadType)

@@ -275,7 +275,7 @@ proc getPtrQualifier(c: var GeneratedCode; n: Cursor; isCppRef: var bool): strin
       result = ""
   of RestrictQ:
     result = "restrict "
-  of CppRefQ:
+  of CpprefQ:
     if c.m.config.backend == backendCpp:
       isCppRef = true
     result = ""
@@ -318,7 +318,7 @@ proc atomNumber(c: var GeneratedCode; n: var Cursor; typeName, name: string; isC
           # TODO: cpp doesn't support _Atomic
           discard
         skip n
-      of RestrictQ, CppRefQ:
+      of RestrictQ, CpprefQ:
         error c.m, "expected number qualifier but got: ", n
       of NoQualifier:
         case n.pragmaKind

@@ -225,7 +225,7 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
     case n.exprKind
     of SizeofC, AlignofC, OffsetofC:
       result = createIntegralType(c, "(i +8)")
-    of InfC, NegInfC, NanC:
+    of InfC, NeginfC, NanC:
       result = createIntegralType(c, "(f +64)")
     of TrueC, FalseC, AndC, OrC, NotC, EqC, NeqC, LeC, LtC, ErrvC, OvfC:
       result = createIntegralType(c, "(bool)")

@@ -18,7 +18,7 @@
 ## entirely — `nifreader.Reader` already provides `jumpTo`/`offset`, and the
 ## embedded index is read at the raw-token level with no pool involvement.
 
-import std / [assertions, tables]
+import std / [assertions, tables, syncio] # syncio: `quit`
 import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
@@ -66,7 +66,7 @@ proc loadForeign(c: var MainModule; s: SplittedSymName): Cursor =
     raiseAssert "Cannot lookup declaration without module name: " & s.name
   var m: ForeignModule
   if c.prog.mods.hasKey(s.module):
-    m = c.prog.mods[s.module]
+    m = getOrQuit(c.prog.mods, s.module)
   else:
     c.prog.scheme.name = s.module
     m = openForeignModule($c.prog.scheme)
@@ -154,7 +154,7 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
       c.requestedForeignSyms.add pos
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
-  result = addr c.defs[s]
+  result = addr getOrQuit(c.defs, s)
 
 proc getExtern*(c: var MainModule; s: SymId): StrId =
   let d = c.getDeclOrNil(s)

@@ -1477,6 +1477,11 @@ const BootstrapModules = [
   # Tier 20 tip — the driver. Subsumes sem.nim, deps.nim, and hexer/hexer.nim
   # via its import set, so this entry alone exercises the full bootstrap DAG.
   "src/nimony/nimony.nim",
+
+  # The Leng backend's own driver: a separate DAG tip (nothing in the nimony
+  # front end imports it), covering both the C and the LLVM code generators
+  # plus `lib/foreignmodules` and `lib/nifcdecl` via its import set.
+  "src/lengc/lengc.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

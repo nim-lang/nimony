@@ -139,7 +139,7 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
     c.add "*"
     genx c, n
     c.add ParRi
-    if n.hasMore and n.typeQual == CppRefQ:
+    if n.hasMore and n.typeQual == CpprefQ:
       if c.m.config.backend == backendCpp:
         c.code[starAt] = Token EmptyToken
       skip n
@@ -300,7 +300,7 @@ proc genAddr(c: var GeneratedCode; n: var Cursor) =
     if arrType.typeKind == ArrayT and needsAwrapper and inCallImportC:
       c.add ".a[0]"
     c.add ParRi
-    if n.hasMore and n.typeQual == CppRefQ:
+    if n.hasMore and n.typeQual == CpprefQ:
       if c.m.config.backend == backendCpp:
         c.code[ampAt] = Token EmptyToken
       skip n
@@ -361,7 +361,7 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
   of InfC:
     c.add "INF"
     skip n
-  of NegInfC:
+  of NeginfC:
     c.add "-INF"
     skip n
   of NanC:

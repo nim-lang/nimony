@@ -106,15 +106,18 @@ proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil): 
   ## symbols by name). Pass the *caller's shared pool* for **SymId-keyed**
   ## consumers (lengc keys `defs`/scopes by `SymId`, so foreign decls must intern
   ## into the same pool or their ids won't line up with the main module's).
-  if m.decls.hasKey(name): return m.decls[name]
+  # `[]` is `.raises` (KeyError) under Nimony; `getOrQuit` is the non-raising
+  # accessor for the keys the precondition already guarantees are present.
+  if m.decls.hasKey(name): return getOrQuit(m.decls, name)
+  let pos = getOrQuit(m.index, name)
   var buf = createTokenBuf(64, pool, tags)
   if m.isBif:
     # The decl subtree is already resident; `addSubtree` re-interns literals,
     # tag names and line-info filenames across pools (the bif buffer keeps its
     # own fresh pools), so the copy lands in the caller's `tags`/`pool` world.
-    buf.addSubtree cursorAt(m.bifBuf, m.index[name])
+    buf.addSubtree cursorAt(m.bifBuf, pos)
   else:
-    m.r.jumpTo(m.index[name])
+    m.r.jumpTo(pos)
     parse(m.r, buf)                           # exactly one balanced decl tree
   # Take the cursor on the LOCAL buffer *before* moving it into `declBufs`
   # (the leng/nimony pattern, see nifmodules.getDeclOrNil): `beginRead` installs

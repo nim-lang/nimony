@@ -59,12 +59,15 @@ proc genDIBasicType(c: var LLVMCode; name: string; sizeBits,
 proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   ## Get or create a DIFile metadata node for the given FileId.
   let key = int(fid)
-  if key in c.debug.fileIds:
-    return c.debug.fileIds[key]
+  # `getOrDefault` rather than `[]`: the latter is `.raises` (KeyError) under
+  # Nimony. Metadata ids are positive, so -1 is an unambiguous "not cached".
+  let cached = c.debug.fileIds.getOrDefault(key, -1)
+  if cached >= 0:
+    return cached
   let path = c.m.pool.filenames[fid]
   let (dir, name, ext) = splitFile(path)
   let fullName = name & ext
-  let directory = if dir == "": getCurrentDir() else: absolutePath(dir)
+  let directory = absoluteDirOrQuit(dir)
   result = c.addMetadata("!DIFile(filename: \"" & fullName &
       "\", directory: \"" & directory & "\")")
   c.debug.fileIds[key] = result

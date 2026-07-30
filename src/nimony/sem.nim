@@ -3875,7 +3875,7 @@ template wrongBranchError(c: var SemContext; dest: var TokenBuf, info: NifLineIn
       "are in conflict with this value.") %
       [asNimSym(discriminator), asNimCode(discriminatorVal), asNimSym(field)])
 
-proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor; selectorType: Cursor): bool =
+proc caseBranchMatchesExprRaw(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor; selectorType: Cursor): bool =
   result = false
   var branch = branch
   branch = sub(branch)
@@ -3897,6 +3897,17 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
       if sameTrees(branch, matched):
         return true
       skip branch
+
+proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor;
+                           selectorType: Cursor): bool =
+  ## `evalConstIntExpr` semchecks the range bounds *into* `dest`, but here `dest`
+  ## is the object constructor currently being built: leaving the scratch output
+  ## behind produces `(oconstr T (kv ...) <leftovers>)` which later passes -- they
+  ## expect nothing but `kv` children -- choke on. The bounds were already checked
+  ## at the type declaration, so throw the scratch tokens away again.
+  let destStart = dest.len
+  result = caseBranchMatchesExprRaw(c, dest, branch, matched, selectorType)
+  dest.shrink destStart
 
 type
   BranchState = enum
