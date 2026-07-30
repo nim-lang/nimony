@@ -307,14 +307,14 @@ when isMainModule:
       inc n
       assert n.isSymbolDef
       let result = n.symId
-      endRead srcBuf
+      endRead n
       publish result, srcBuf, SemcheckBodies
       result
     var symBuf = createTokenBuf(1)
     symBuf.add symToken(symId)
-    let n = beginRead symBuf
+    var n = beginRead symBuf
     var sz = getSize(n, 8)
-    endRead symBuf
+    endRead n
     var err = false
     let size = sz.asSigned(err)
     assert size == expectedSize, "expected " & $expectedSize & " but got " & $size
