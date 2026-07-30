@@ -158,6 +158,7 @@ type
     isSystem: bool
     plugin: string
     cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
+    depsPlugins: HashSet[StrId] ## Set of plugins `files` uses except import plugins
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -644,6 +645,31 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   processDeps c, beginRead(buf), current
   if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
     importSystem c, current
+
+proc traverseDeps2(c: var DepContext) =
+  # Get the list of used plugins from deps2File so that Nimony generates a build file that
+  # automatically rebuild modules using the plugins when the plugins are modified.
+  # So don't need to get the list when deps2File doesn't exist as modules are semchecked then.
+  # Plugins used under `when false:` or template plugins used with templates never called are not listed in deps2File.
+  for current in c.nodes:
+    for p in current.files:
+      let depsFile = c.config.deps2File(p)
+      if semos.fileExists(depsFile):
+        var r = rd.open(depsFile)
+        var buf = createTokenBuf()
+        parse(r, buf)
+        rd.close(r)
+        var n = beginRead(buf)
+        if n.stmtKind == StmtsS:
+          n.loopInto:
+            if n.pragmaKind == PluginP:
+              n.loopInto:
+                if n.isStringLit:
+                  current.depsPlugins.incl n.strId
+                skip n
+            else:
+              skip n
+
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
   result = absoluteParentDir(c.rootNode.files[0].nimFile)
@@ -1475,6 +1501,10 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     # Input: cached config file
     b.withTree "input":
       b.addStrLit c.config.cachedConfigFile()
+    # Input: plugins
+    for p in v.depsPlugins:
+      b.withTree "input":
+        b.addStrLit pool.strings[p]
     # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
     b.withTree "output":
@@ -1604,6 +1634,8 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.nodes.add root
   result.processedModules[p.modname] = 0
   traverseDeps result, p, root
+  if not isFinal:
+    traverseDeps2 result
 
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     flags: set[BuildFlag]; moduleFlags: set[ModuleFlag]) =
