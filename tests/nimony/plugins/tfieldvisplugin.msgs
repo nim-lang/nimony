@@ -1,0 +1,2 @@
+tests/nimony/plugins/tfieldvisplugin.nim(9, 1) Trace: instantiation from here
+tests/nimony/plugins/tfieldvisplugin.nim(9, 28) Error: undeclared field: 'secret' for type Box

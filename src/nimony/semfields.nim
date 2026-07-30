@@ -3,7 +3,19 @@ type FieldsIter = object
     # can be SymId if loopvars/body are processed before substituting
   obj1, obj2: Cursor
 
-proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym: SymId; body: Cursor) =
+proc addFieldsAccessToken(buf: var TokenBuf; info: NifLineInfo; ownerSym: SymId) =
+  ## `fields()` is compiler reflection: it enumerates EVERY field of the
+  ## object, private ones included, and that is the point — it is what lets a
+  ## generic `==`/`$` in `system` work on a foreign module's private fields.
+  ## The field name came from walking the type's own declaration rather than
+  ## from user code, so stamp the synthesized `(dot obj field)` with the module
+  ## that declares the field: that is who authorizes the access. Without a
+  ## token it would be judged against the module the `for` loop was written
+  ## in, which for a generic `==` is `system`, and rejected (#1988).
+  buf.addIntLit(0, info)
+  buf.addStrLit(extractModule(pool.syms[ownerSym]), info)
+
+proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym, ownerSym: SymId; body: Cursor) =
   ## Copies the single tree/token at `body` into `buf`, substituting the
   ## loop variables.
   var n = body
@@ -20,11 +32,13 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj1
       buf.addIdent(fieldName, n.info)
+      addFieldsAccessToken(buf, n.info, ownerSym)
       buf.addParRi()
     elif s == iter.fieldVar2:
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj2
       buf.addIdent(fieldName, n.info)
+      addFieldsAccessToken(buf, n.info, ownerSym)
       buf.addParRi()
     else:
       buf.addIdent(s, n.info)
@@ -32,7 +46,7 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
     buf.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
-        expandNamedFieldBody(buf, iter, fieldName, fieldSym, n)
+        expandNamedFieldBody(buf, iter, fieldName, fieldSym, ownerSym, n)
         skip n
       buf.addParRi(n.endInfo)
   else:
@@ -40,14 +54,14 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
     # bounded scope); nifcore has no ParRi kind at all.
     buf.addSubtree n
 
-proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym: SymId; body: Cursor) =
+proc buildNamedFieldIter(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym, ownerSym: SymId; body: Cursor) =
   # use `if true` to open a new scope without interfering with `break`:
   buf.addParLe(IfS, body.info)
   buf.addParLe(ElifU, body.info)
   buf.addParLe(TrueX, body.info)
   buf.addParRi()
   buf.addParLe(StmtsS, body.info)
-  expandNamedFieldBody(buf, iter, fieldName, fieldSym, body)
+  expandNamedFieldBody(buf, iter, fieldName, fieldSym, ownerSym, body)
   buf.addParRi() # (stmts)
   buf.addParRi() # (elif)
   buf.addParRi() # (if)
@@ -216,7 +230,8 @@ proc semForFields(c: var SemContext; dest: var TokenBuf; it: var Item; call, ori
           let field = takeLocal(currentField, SkipFinalParRi)
           let fieldSym = if isInternalSym: field.name.symId else: SymId(0)
           # field name is enough:
-          buildNamedFieldIter(iterBuf, iter, getIdent(field.name), fieldSym, body)
+          buildNamedFieldIter(iterBuf, iter, getIdent(field.name), fieldSym,
+                              field.name.symId, body)
       objType = obj.parentType
       if objType.isDotToken:
         break

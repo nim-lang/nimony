@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3612             )
+(.indexat 3628             )
 (stmts@,2,tests/nimony/nosystem/ttemplate.nim
  (type@2,1 :int.0.
   (i 64).
@@ -71,9 +71,9 @@
  (gvar@2,O :myglob.0. . . MyGeneric.0.Iu9y0wv.@H .)
  (gvar@2,P :other.0. . . MyGeneric.0.I1hdb4b1.@G .)
  (asgn@9,R
-  (dot~3 myglob.0.~6 x.0 0 "x")56@2)
+  (dot~3 myglob.0.~6 x.0 0 "tte5tld8n")56@2)
  (asgn@8,S
-  (dot~3 other.0.~5 x.0 0 "x")79.0@2)
+  (dot~3 other.0.~5 x.0 0 "tte5tld8n")79.0@2)
  (proc@,U :\2B.0.@5
   (add -3). .
   (params@9
@@ -176,7 +176,7 @@
  (h@B,K T.2. 43)
  (h myglob.0. 80)
  (h other.0. 52)
- (x \2B.0. 149)
+ (x \2B.0. 165)
  (h plus.0. 170)
  (h foo.0. 183)
  (h overloaded.0. 434)
