@@ -934,6 +934,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
+     TmplbodyS,
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 

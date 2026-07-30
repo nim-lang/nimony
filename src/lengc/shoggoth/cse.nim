@@ -958,7 +958,12 @@ proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
   # DIFFERENT anchor stacks and defeat all cross-statement CSE (which is the whole
   # point of hoisting a shared load/address to a dominating decl). Unknown/other
   # statements stay anchored (the safe, CSE-suppressing default).
-  sk notin {NoStmt, StmtsS,
+  # `(comesfrom)` is transparent like `(stmts)` — it is a debug-info marker, not
+  # a C block — but it is NOT an anchor for a different reason than `(stmts)`:
+  # anchoring it would be harmless, while treating it as a *scope* would be
+  # wrong, since the locals an expanded template declares belong to the
+  # enclosing block.
+  sk notin {NoStmt, StmtsS, ComesfromS,
             AsgnS, StoreS, CallS, VarS, GvarS, TvarS, ConstS, DiscardS,
             RetS, BreakS, RaiseS, JmpS, LabS, EmitS, KeepovfS, MflagS, VflagS}
 
@@ -986,6 +991,19 @@ proc tr(c: var Context; n: var Cursor) =
         c.curStmt = cursorToPosition(c.orig[], n)   # this block's current child
         tr(c, n)
         c.curStmt = savedStmt
+    of ComesfromS:
+      # Like `StmtsS`, but step over the origin symbol first: falling through to
+      # `trExpr` would walk the whole wrapper as an expression and hoist a temp
+      # out past the declarations the expansion itself makes (`useCpuRegisters`
+      # in `nifreader.nim` declares `{.inject.} p` and then loads `^p`).
+      n.loopInto:
+        if n.kind == Symbol:
+          inc n
+        else:
+          let savedStmt = c.curStmt
+          c.curStmt = cursorToPosition(c.orig[], n)
+          tr(c, n)
+          c.curStmt = savedStmt
     else:
       trExpr(c, n)
     if pushed:
