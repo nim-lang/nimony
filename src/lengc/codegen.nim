@@ -15,7 +15,7 @@ when defined(nimony):
   # expansion site (see doc/porting.md, "Dirty templates").
   {.feature: "untyped".}
 
-import std / [assertions, syncio, tables, sets, intsets, formatfloat]
+import std / [assertions, syncio, tables, sets, intsets, formatfloat, packedsets]
 from std / syncio import readFile, writeFile
 from std / os import changeFileExt, splitFile, extractFilename, fileExists
 import ".." / lib / vfs
@@ -124,8 +124,7 @@ type
     data: seq[Token]
     code: seq[Token]
     init: seq[Token]
-    fileIds: seq[FileId]        # first-seen order: the `#define FX_n` block
-                                # it feeds must come out reproducible
+    fileIds: PackedSet[FileId]
     tokens: BiTable[Token, string]
     headerFile: seq[Token]
     generatedTypes: HashSet[SymId]
@@ -138,7 +137,7 @@ type
 
 proc initGeneratedCode*(m: sink MainModule, flags: set[GenFlag]; bits: int): GeneratedCode =
   result = GeneratedCode(m: m, code: @[], tokens: initBiTable[Token, string](),
-      fileIds: @[], flags: flags, inToplevel: true,
+      fileIds: initPackedSet[FileId](), flags: flags, inToplevel: true,
       objConstrNeedsType: true, bits: bits)
   fillTokenTable(result.tokens)
 
@@ -458,8 +457,8 @@ proc genCLineDir(c: var GeneratedCode; info: NifLineInfo) =
     c.add Space
     c.add name
     c.add NewLine
-    if id.isValid and id notin c.fileIds:
-      c.fileIds.add id
+    if id.isValid:
+      c.fileIds.incl id
 
 template moveToDataSection(body: untyped) {.dirty.} =
   let oldLen = c.code.len

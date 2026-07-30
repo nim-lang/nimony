@@ -337,16 +337,25 @@ The ones hit most often:
 |---|---|
 | `for e in MyEnum:` | `for e in low(MyEnum)..high(MyEnum):` |
 | `strutils.toOctal`, `toHex`, `toBin` | write the digit loop locally |
-| `std/packedsets` | `IntSet`, `HashSet`, or a plain `seq` |
 | `x.isNil` on a `ref`/`ptr` | `x == nil` (`isNil` exists only for `cstring`) |
 | `system.insert(s, item, i)` | `sequtils.insert(s, [item], i)` (openArray only) |
 | `$someTuple` | build the string by hand; `$` is not defined for tuples |
 | `$aDistinct` | `$Base(x)` — `$` is not borrowed automatically |
 
 When the gap is a small, genuinely general routine (`strutils.join` was
-one), add it to `lib/std/` with a test in
-`tests/nimony/stdlib/` rather than open-coding it per call site. When it
-is niche (a hex formatter for one backend), keep it local.
+one) or a whole general-purpose module (`std/packedsets`), port it into
+`lib/std/` with a test in `tests/nimony/stdlib/` rather than open-coding
+it per call site. When it is niche (a hex formatter for one backend),
+keep it local.
+
+Porting a *generic container* has one extra rule: it may not reach for
+`{.feature: "untyped".}` to get its body past sem. Nimony binds generic
+bodies eagerly, so every operation the body performs on the element type
+has to be named in the constraint — `Keyable` (`==` + `hash`) for
+`Table`, `Ordinal` (`int(x)` and `A(i)`) for `PackedSet`, `Stringable`
+where a `$` is rendered. Declare a `concept` when the operations are
+user-supplied; use the built-in typeclass when they are intrinsic. Both
+compose: `[A: Ordinal and Stringable]`.
 
 
 ## 11. Alias checking (NJVL)
