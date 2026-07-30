@@ -43,6 +43,8 @@ type
     resultSym*: SymId
 
     localDeclCounters*: int
+    hoistedConsts*: Table[SymId, SymId]  ## proc-level const -> its hoisted,
+                                         ## module-suffixed top-level name
     activeChecks*: set[CheckMode]
     liftingCtx*: ref LiftingCtx
     importedModuleSuffixes*: seq[string]

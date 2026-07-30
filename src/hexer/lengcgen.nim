@@ -110,7 +110,7 @@ type
 
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor)
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner)
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode)
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId)
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string
 
 type
@@ -734,10 +734,10 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
-    trLocal(c, dest, paramCursor, ParamY, TraverseSig)
+    trLocal(c, dest, paramCursor, ParamY, TraverseSig, SymId(0))
     skip n
   else:
-    trLocal(c, dest, n, ParamY, TraverseSig)
+    trLocal(c, dest, n, ParamY, TraverseSig, SymId(0))
 
 proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   if n.isDotToken:
@@ -911,6 +911,23 @@ proc makeLocalDeclName(c: var EContext; s: SymId): string =
 proc makeLocalSymId(c: var EContext; s: SymId): SymId =
   let newName = makeLocalDeclName(c, s)
   result = pool.syms.getOrIncl(newName)
+
+proc trHoistedConst(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMode) =
+  ## A const that still exists inside a proc body HERE has an aggregate value
+  ## — the simple-literal ones were inlined at their use sites by `trExpr`.
+  ## Leng keeps no proc-level consts: hoist the decl to the top level (the
+  ## `c.pending` tail, like synthesized type decls) under a module-suffixed
+  ## name, so the embedded index can serve it — single-dot locals are never
+  ## indexed, and whole-program consumers (arkham's foreign loading, ithaqua)
+  ## resolve foreign declarations through the index.
+  var peek = n
+  inc peek                                  # into (const, at the SymbolDef
+  let oldSym = peek.symId
+  let newSym = makeLocalSymId(c, oldSym)
+  c.hoistedConsts[oldSym] = newSym          # decl precedes every use in Nim
+  var temp = createTokenBuf(30)
+  trLocal c, temp, n, ConstY, mode, newSym
+  c.pending.add temp
 
 proc buildProcType(c: var EContext; dest: var TokenBuf; thisProc: Cursor): SymId =
   var thisProc = asRoutine(thisProc)
@@ -1738,6 +1755,10 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addSubtree n
     inc n
   of Symbol:
+    if c.hoistedConsts.hasKey(n.symId):
+      dest.addSymUse c.hoistedConsts.getOrQuit(n.symId), n.info
+      inc n
+      return
     var inlineValue = getInitValue(c.typeCache, n.symId)
     var inlineValueCopy = inlineValue
     if not cursorIsNil(inlineValue) and not inlineValue.isDotToken and isSimpleLiteral(inlineValueCopy):
@@ -1756,14 +1777,15 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     # of which can appear as a cursor head here.
     error c, "BUG: unexpected ')' or EofToken"
 
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode) =
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId) =
   var symKind = if tag == ResultY: VarY else: tag
   var localDecl = n
   let toPatch = dest.len
   let vinfo = n.info
   dest.addParLe symKind, vinfo
   n.into:
-    let (s, sinfo) = getSymDef(c, n)
+    let (s0, sinfo) = getSymDef(c, n)
+    let s = if renameTo != SymId(0): renameTo else: s0
     if tag == ResultY:
       c.resultSym = s
     skipExportMarker c, n
@@ -1797,7 +1819,12 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
 
     let typAt = n
     trType c, dest, n
-    c.typeCache.registerLocal(s, symKind, typAt, n)
+    # Type queries during traversal walk INPUT trees, which carry the
+    # original name — register that; the renamed symbol answers queries
+    # against the emitted tree (the hoisted decl itself).
+    c.typeCache.registerLocal(s0, symKind, typAt, n)
+    if renameTo != SymId(0):
+      c.typeCache.registerLocal(renameTo, symKind, typAt, n)
 
     if mode == TraverseSig:
       if localDecl.substructureKind == ParamU:
@@ -2031,15 +2058,18 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
             trStmt c, dest, n, mode
       c.typeCache.closeScope()
     of VarS, LetS, CursorS, PatternvarS:
-      trLocal c, dest, n, VarY, mode
+      trLocal c, dest, n, VarY, mode, SymId(0)
     of ResultS:
-      trLocal c, dest, n, ResultY, mode
+      trLocal c, dest, n, ResultY, mode, SymId(0)
     of GvarS, GletS:
-      trLocal c, dest, n, GvarY, mode
+      trLocal c, dest, n, GvarY, mode, SymId(0)
     of TvarS, TletS:
-      trLocal c, dest, n, TvarY, mode
+      trLocal c, dest, n, TvarY, mode, SymId(0)
     of ConstS:
-      trLocal c, dest, n, ConstY, mode
+      if mode == TraverseTopLevel:
+        trLocal c, dest, n, ConstY, mode, SymId(0)
+      else:
+        trHoistedConst c, dest, n, mode
     of CallKindsS:
       dest.addParLe(applicationTag(n), n.info)
       n.into:
@@ -2554,13 +2584,13 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         if not initHasCall(c, n):
           # Simple init (literal, nil, etc.): keep at top level.
           # NIFC can emit "Type var = value;" at C file scope directly.
-          trLocal c, dest, n, tag, TraverseAll
+          trLocal c, dest, n, tag, TraverseAll, SymId(0)
         else:
           # Complex init with function calls: emit a no-init declaration at top
           # level and place the actual init as an assignment inside the Init proc
           # body so that any temp variables created by to_stmts remain in scope.
           let savedN = n
-          trLocal c, dest, n, tag, TraverseSig
+          trLocal c, dest, n, tag, TraverseSig, SymId(0)
           var initN = savedN
           inc initN  # past gvar/glet tag -> at SymbolDef
           let (initSym, initInfo) = getSymDef(c, initN)
