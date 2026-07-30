@@ -321,10 +321,10 @@ Watch for:
   `template` so `expreval` sees the constructor directly.
 - 256-entry lookup tables built with a const block + for loop. Replace
   with an inline formula if one exists, or accept the cost.
-- `of` branch values must already *be* constants. `case c` /
-  `of 'A'..pred('Q'):` is not folded and reaches the backend as a
-  `(sub 'Q' 1)` tree, which Leng rejects with "expected valid `of`
-  value". Spell the literal out.
+
+`of` branch values are folded, so `of 'A'..pred('Q'):`, `of 5..K+7:` and
+`of "a" & "b":` all work — the label is replaced by the evaluated
+constant before the backends see it.
 
 
 ## 10. Missing stdlib API

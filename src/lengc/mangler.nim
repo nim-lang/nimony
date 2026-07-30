@@ -31,10 +31,7 @@ proc mangleToC*(s: string): string =
   result = newStringOfCap(s.len)
   while i < s.len:
     case s[i]
-    # 'Q' is the escape prefix and gets its own branch below; spelled out as
-    # 'P'/'R' rather than `pred('Q')`/`succ('Q')` because Nimony does not fold
-    # those down to the constant an `of` branch needs.
-    of 'A'..'P', 'R'..'Z', 'a'..'z', '0'..'9':
+    of 'A'..pred('Q'), succ('Q')..'Z', 'a'..'z', '0'..'9':
       result.add s[i]
     of 'Q': result.add "QQ"
     of '_': result.add "Q_"
