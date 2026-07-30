@@ -1742,6 +1742,13 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       n.into:
         while n.hasMore:
           traverseStmt c, n
+    of TmplbodyS:
+      # Debug-info marker: traverse the body so writes performed by an expanded
+      # template count towards definite assignment.
+      n.into:
+        skip n # the template's symbol
+        while n.hasMore:
+          traverseStmt c, n
     of CaseS:
       traverseCase c, n
     of TryS:
@@ -1796,6 +1803,11 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
     n.into:
+      while n.hasMore:
+        traverseToplevel c, n
+  of TmplbodyS:
+    n.into:
+      skip n # the template's symbol
       while n.hasMore:
         traverseToplevel c, n
   of PragmaxS:

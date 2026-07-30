@@ -727,6 +727,14 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of StmtsS, ScopeS:
     trScopedBody c, dest, n
+  of TmplbodyS:
+    # Debug-info marker; Final IR does not model it. Emit the body inline so
+    # `result` initialization through an expanded template stays visible to the
+    # analysis, and open no scope (locals belong to the enclosing one).
+    n.into:
+      skip n # the template's symbol
+      while n.hasMore:
+        trStmt c, dest, n
   of AsgnS:
     trAsgn c, dest, n
   of IfS:

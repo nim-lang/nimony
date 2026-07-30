@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 1858             )
+(.indexat 1933             )
 (stmts@,3,tests/nimony/nosystem/tresemtype.nim
  (proc :foo.0.@5 . .
   (typevars@8
@@ -27,23 +27,25 @@
    (var@4,2 :obj.1 . . Foo.1.@6
     (oconstr@9 Foo.1.~3
      (kv@4 val.0~3 x.1@2)))))
- (stmts@2,9
-  (type@9 :Foo.2.~4 . .
-   (pragmas)
-   (object@2 .
-    (fld~9,1 :val.0 . .
-     (i 64).)))
-  (gvar@4,2 :obj.2 . . Foo.2.@6
-   (oconstr@9 Foo.2.~3
-    (kv@4 val.0~3 123~A,2))))
- (stmts@2,9
-  (type@9 :Foo.3.~4 . .
-   (pragmas)
-   (object@2 .
-    (fld~9,1 :val.1 . . string.0.sysvq0asl .)))
-  (gvar@4,2 :obj.3 . . Foo.3.@6
-   (oconstr@9 Foo.3.~3
-    (kv@4 val.1~3 "abc"~A,3))))
+ (tmplbody@8,D fooTempl.0.
+  (stmts~6,~4
+   (type@9 :Foo.2.~4 . .
+    (pragmas)
+    (object@2 .
+     (fld~9,1 :val.0 . .
+      (i 64).)))
+   (gvar@4,2 :obj.2 . . Foo.2.@6
+    (oconstr@9 Foo.2.~3
+     (kv@4 val.0~3 123~A,2)))))
+ (tmplbody@8,E fooTempl.0.
+  (stmts~6,~5
+   (type@9 :Foo.3.~4 . .
+    (pragmas)
+    (object@2 .
+     (fld~9,1 :val.1 . . string.0.sysvq0asl .)))
+   (gvar@4,2 :obj.3 . . Foo.3.@6
+    (oconstr@9 Foo.3.~3
+     (kv@4 val.1~3 "abc"~A,3)))))
  (comment@8,D fooTempl.0. fooTempl.0.@,1)
  (proc@3,5 :foo.0.Imj9rno. . .~3,~5
   (at foo.0.
@@ -78,9 +80,9 @@
  (h fooTempl.0. 232)
  (h@H,8 T.1. 47)
  (h@2,9 Foo.1. 92)
- (h@2,9 Foo.2. 178)
- (h@2,9 Foo.3. 189)
- (h foo.0.Imj9rno. 229)
+ (h@2,9 Foo.2. 207)
+ (h@2,9 Foo.3. 227)
+ (h foo.0.Imj9rno. 237)
  (h@2,1 Foo.4. 144)
  (h foo.0.Iwjalau. 183)
  (h@2,1 Foo.5. 162))

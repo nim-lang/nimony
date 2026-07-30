@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3622             )
+(.indexat 3749             )
 (stmts@,2,tests/nimony/nosystem/tvarargs.nim
  (type@2,1 :int.0.
   (i 64).
@@ -130,36 +130,40 @@
       (ochoice write.0. write.1.)stdout.0.@6 x.4@E)))
    (cmd@,2 write.0. stdout.0.@6 '\0A'@E)))
  (gvar@4,c :someVar.0. . . string.0.sysvq0asl ""@A)
- (stmts@2,Y
-  (stmts@2,1
-   (cmd write.1.
-    (haddr@6 stdout.0.)"a"@1,5))
-  (stmts@2,1
-   (cmd write.1.
-    (haddr@6 stdout.0.)someVar.0.@6,5))
-  (stmts@2,1
-   (cmd write.1.
-    (haddr@6 stdout.0.)"b"@F,5))
-  (cmd@,2 write.0.
-   (haddr@6 stdout.0.)'\0A'@E))
- (stmts@2,Y
-  (stmts@2,1
-   (cmd write.1.
-    (haddr@6 stdout.0.)"xzy"@1,7))
-  (stmts@2,1
-   (cmd write.0.
-    (haddr@6 stdout.0.)'c'@8,7))
-  (cmd@,2 write.0.
-   (haddr@6 stdout.0.)'\0A'@E))
- (stmts@2,Y
-  (cmd@,2 write.0.
-   (haddr@6 stdout.0.)'\0A'@E))
- (stmts@2,Y
-  (stmts@2,1
-   (cmd write.1.
-    (haddr@6 stdout.0.)someVar.0.@1,B))
-  (cmd@,2 write.0.
-   (haddr@6 stdout.0.)'\0A'@E))
+ (tmplbody@,e echo.0.
+  (stmts@2,~6
+   (stmts@2,1
+    (cmd write.1.
+     (haddr@6 stdout.0.)"a"@1,5))
+   (stmts@2,1
+    (cmd write.1.
+     (haddr@6 stdout.0.)someVar.0.@6,5))
+   (stmts@2,1
+    (cmd write.1.
+     (haddr@6 stdout.0.)"b"@F,5))
+   (cmd@,2 write.0.
+    (haddr@6 stdout.0.)'\0A'@E)))
+ (tmplbody@,g echo.0.
+  (stmts@2,~8
+   (stmts@2,1
+    (cmd write.1.
+     (haddr@6 stdout.0.)"xzy"@1,7))
+   (stmts@2,1
+    (cmd write.0.
+     (haddr@6 stdout.0.)'c'@8,7))
+   (cmd@,2 write.0.
+    (haddr@6 stdout.0.)'\0A'@E)))
+ (tmplbody@4,i echo.0.
+  (stmts~2,~A
+   (cmd@,2 write.0.
+    (haddr@6 stdout.0.)'\0A'@E)))
+ (tmplbody@,k echo.0.
+  (stmts@2,~C
+   (stmts@2,1
+    (cmd write.1.
+     (haddr@6 stdout.0.)someVar.0.@1,B))
+   (cmd@,2 write.0.
+    (haddr@6 stdout.0.)'\0A'@E)))
  (comment@F,B untyped.0. typedesc.0.@I int.0.@1,5 int.0.@1,5 int.0.~2,5 int.0.@1,6 int.0.@1,6 int.0.~2,6 int.0.@2,8 int.0.@2,8 bool.0.~2,8 char.0.@C,F untyped.0.~B,K echo.0.~F,T echo.0.~F,V echo.0.~B,X echo.0.~F,Z))(.index@,2,tests/nimony/nosystem/tvarargs.nim
  (x int.0. 82)
  (x bool.0. 64)

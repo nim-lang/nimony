@@ -2583,46 +2583,64 @@ proc initHasCall(c: var EContext; n: Cursor): bool =
   # Now at the init value; scan its subtree
   result = scanInitValue(c, n)
 
+proc trToplevelItem(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  let sk = n.stmtKind
+  if sk in {GvarS, GletS, TvarS, TletS}:
+    let tag = if sk in {TvarS, TletS}: TvarY else: GvarY
+    if not initHasCall(c, n):
+      # Simple init (literal, nil, etc.): keep at top level.
+      # NIFC can emit "Type var = value;" at C file scope directly.
+      trLocal c, dest, n, tag, TraverseAll, SymId(0)
+    else:
+      # Complex init with function calls: emit a no-init declaration at top
+      # level and place the actual init as an assignment inside the Init proc
+      # body so that any temp variables created by to_stmts remain in scope.
+      let savedN = n
+      trLocal c, dest, n, tag, TraverseSig, SymId(0)
+      var initN = savedN
+      inc initN  # past gvar/glet tag -> at SymbolDef
+      let (initSym, initInfo) = getSymDef(c, initN)
+      skipExportMarker c, initN
+      skip initN  # past pragmas -> at type
+      skip initN  # past type -> at init value
+      swap dest, c.initBody
+      dest.addParLe AsgnS, initInfo
+      dest.addSymUse(initSym, initInfo)
+      trExpr c, dest, initN
+      dest.addParRi()
+      swap dest, c.initBody
+  elif sk == StmtsS:
+    # Nested stmts block: recurse to handle mixed decls and executable code
+    n.into:
+      while n.hasMore:
+        trToplevelItem c, dest, n
+  elif sk == TmplbodyS:
+    # A template expanded at module toplevel. The wrapper cannot survive
+    # here: its children get split between file scope (global decls) and
+    # the init proc (their initializers and the executable code), so no
+    # single node can span them. Without this unwrap a global-with-call-init
+    # is hoisted whole and codegen emits the initializer as a C
+    # `__attribute__((constructor))`, which runs before NimMain against
+    # zeroed globals (module plugins crashed with 0xC0000005). Dropping the
+    # marker only costs the debug frame for module-init code.
+    n.into:
+      skip n # the template's symbol
+      while n.hasMore:
+        trToplevelItem c, dest, n
+  elif isTopLevelDecl(n):
+    # Pure declarations and compile-time constructs stay at top level:
+    trStmt c, dest, n, TraverseTopLevel
+  else:
+    # Executable code and local vars go into the init proc body:
+    swap dest, c.initBody
+    trStmt c, dest, n, TraverseAll
+    swap dest, c.initBody
+
 proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ## Consumes the whole `(stmts …)` node at `n`, including its close.
   n.into:
     while n.hasMore:
-      let sk = n.stmtKind
-      if sk in {GvarS, GletS, TvarS, TletS}:
-        let tag = if sk in {TvarS, TletS}: TvarY else: GvarY
-        if not initHasCall(c, n):
-          # Simple init (literal, nil, etc.): keep at top level.
-          # NIFC can emit "Type var = value;" at C file scope directly.
-          trLocal c, dest, n, tag, TraverseAll, SymId(0)
-        else:
-          # Complex init with function calls: emit a no-init declaration at top
-          # level and place the actual init as an assignment inside the Init proc
-          # body so that any temp variables created by to_stmts remain in scope.
-          let savedN = n
-          trLocal c, dest, n, tag, TraverseSig, SymId(0)
-          var initN = savedN
-          inc initN  # past gvar/glet tag -> at SymbolDef
-          let (initSym, initInfo) = getSymDef(c, initN)
-          skipExportMarker c, initN
-          skip initN  # past pragmas -> at type
-          skip initN  # past type -> at init value
-          swap dest, c.initBody
-          dest.addParLe AsgnS, initInfo
-          dest.addSymUse(initSym, initInfo)
-          trExpr c, dest, initN
-          dest.addParRi()
-          swap dest, c.initBody
-      elif sk == StmtsS:
-        # Nested stmts block: recurse to handle mixed decls and executable code
-        trToplevel c, dest, n
-      elif isTopLevelDecl(n):
-        # Pure declarations and compile-time constructs stay at top level:
-        trStmt c, dest, n, TraverseTopLevel
-      else:
-        # Executable code and local vars go into the init proc body:
-        swap dest, c.initBody
-        trStmt c, dest, n, TraverseAll
-        swap dest, c.initBody
+      trToplevelItem c, dest, n
 
 proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole) =
   let mp = splitModulePath(infile)

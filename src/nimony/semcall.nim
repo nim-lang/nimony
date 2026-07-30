@@ -218,6 +218,22 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
     let aInfo = a.n.info
+    # make sure template body expression matches return type, mirrored with `semProcBody`:
+    # Hoisted above `semExpr` so the void case can be known before emitting:
+    # both `m.returnType` and `m.inferred` are fixed by `sigmatch` before we run.
+    let returnType =
+      if m.inferred.len == 0 or m.returnType.isDotToken:
+        m.returnType
+      else:
+        instantiateType(c, m.returnType, m.inferred)
+    # A void expansion is a *statement*, so it can be wrapped in `(tmplbody ...)`
+    # to record where it came from; the debug backend turns that into a DWARF
+    # inlined frame (#1987). Non-void expansions are expressions and `beforeCall`
+    # must keep pointing at the value for `commonType`, so they stay unwrapped.
+    let markExpansion = returnType.typeKind == VoidT
+    if markExpansion:
+      dest.addParLe(TmplbodyS, callInfo)
+      dest.addSymUse fnId, callInfo
     inc c.routine.inInst
     # An `untyped` template's body is published unresolved, so its field
     # accesses resolve HERE for the first time and must be judged against the
@@ -228,12 +244,6 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     c.visOwner.add VisOwner(module: extractModule(pool.syms[fnId]),
                             file: res.decl.info.file.uint32)
     semExpr c, dest, a, flags
-    # make sure template body expression matches return type, mirrored with `semProcBody`:
-    let returnType =
-      if m.inferred.len == 0 or m.returnType.isDotToken:
-        m.returnType
-      else:
-        instantiateType(c, m.returnType, m.inferred)
     case returnType.typeKind
     of UntypedT:
       # untyped return type ignored, maybe could be handled in commonType
@@ -244,6 +254,8 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
       commonType c, dest, a, beforeCall, returnType
     discard c.visOwner.pop()
     dec c.routine.inInst
+    if markExpansion:
+      dest.addParRi()
     # now match to expected type:
     it.kind = a.kind
     typeofCallIs c, dest, it, beforeCall, a.typ
