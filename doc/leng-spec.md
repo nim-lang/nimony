@@ -198,7 +198,10 @@ ProcDecl ::= (proc SymbolDef Params Type ProcPragmas [Empty | StmtList])
 
 FieldDecl ::= (fld SymbolDef FieldPragmas Type)
 
-UnionDecl ::= (union [FieldDecl | AnonObjDecl | UnionDecl]*)
+UnionDecl ::= (union [FieldDecl | AnonObjDecl | UnionDecl]*) | # `{.union.}` form
+              (union UnionBranch+) # case object form
+UnionBranch ::= (of BranchRanges [AnonObjDecl | Empty]) |
+                (else [AnonObjDecl | Empty])
 AnonObjDecl ::= (object Empty [FieldDecl | AnonObjDecl | UnionDecl]*)
 ObjDecl ::= (object [Empty | Type] [FieldDecl | AnonObjDecl | UnionDecl]*)
 EnumFieldDecl ::= (efld SymbolDef Number)
@@ -284,6 +287,17 @@ Notes:
 - `varargs` is modelled as a special type but it must be combined with a named parameter
   just like any other parameters.
 - The type `flexarray` can only be used for a last field in an object declaration.
+- `union` has two forms and the child tag tells them apart: the `{.union.}` form
+  holds `fld`/`object`/`union` children, the case-object form holds `of`/`else`
+  children. The two never mix, because a `{.union.}` object cannot contain a
+  `case`. A case-object `union` is a *discriminated* union: the `of` branches
+  carry the `BranchRanges` that select them, and the **discriminator is the `fld`
+  immediately preceding the `union` among its siblings**. That position is an
+  invariant of the lowering, so a consumer reads the selector by remembering the
+  previous field rather than by searching. A branch with no fields is
+  `(of BranchRanges .)` — the empty body still records that the discriminant
+  value is legal. Both forms have identical memory layout: only the largest
+  branch's size matters.
 - The pragma `selectany` can be used to merge proc bodies that have the same name.
   It is used for generic procs so that only one generic instances remains in the
   final executable file.

@@ -156,6 +156,13 @@ proc typeOfField*(c: var MainModule; n: var Cursor; fld: SymId;
       result = if sel == FieldType: decl.typ else: decl.pragmas
     else:
       result = default(Cursor)
+  elif isUnionBranch(n):
+    # Discriminated-union branch: the fields live in its payload object.
+    result = default(Cursor)
+    let b = takeUnionBranch(n)   # advances `n` past the whole branch
+    if b.body.typeKind == ObjectT:
+      var body = b.body
+      result = typeOfField(c, body, fld, sel)
   else:
     result = default(Cursor)
     let tk = n.typeKind
@@ -178,6 +185,11 @@ proc typeOfField*(c: var MainModule; n: var Cursor; fld: SymId;
           if d != nil and d.pos.stmtKind == TypeS:
             var baseBody = asTypeDecl(d.pos).body
             result = typeOfField(c, baseBody, fld, sel)
+    else:
+      # Unknown node. Every other path advances `n`, and the caller above
+      # loops `while n.hasMore and not done` - so failing to advance here is
+      # an infinite loop, not a missed field. Keep the walk progressing.
+      skip n
 
 proc navigateToObjectBody*(c: var MainModule; n: Cursor): Cursor =
   var counter = 20

@@ -270,10 +270,10 @@ type
     GfldU = (ord(GfldTagId), "gfld")  ## guarded field declaration, cannot be accessed outside an `of` branch
     WhenU = (ord(WhenTagId), "when")  ## when statement header
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
-    ElseU = (ord(ElseTagId), "else")  ## `else` action
+    ElseU = (ord(ElseTagId), "else")  ## `else` action, or the default branch of a Leng discriminated `union`
     TypevarsU = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)`
     CaseU = (ord(CaseTagId), "case")  ## `case` statement
-    OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
+    OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement, or of a Leng discriminated `union`
     StmtsU = (ord(StmtsTagId), "stmts")  ## list of statements
     ParamsU = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
@@ -295,7 +295,7 @@ type
     CastP = (ord(CastTagId), "cast")  ## `cast` operation (typed cast expression, or `{.cast(pragma).}` pragma form)
     CursorP = (ord(CursorTagId), "cursor")  ## cursor variable declaration
     EmitP = (ord(EmitTagId), "emit")  ## emit statement
-    UnionP = (ord(UnionTagId), "union")  ## first one is Leng union declaration, second one is Nimony union pragma
+    UnionP = (ord(UnionTagId), "union")  ## first two are Leng union declarations (untagged, and discriminated from a case object - see `doc/leng-spec.md`), third is the Nimony union pragma
     InlineP = (ord(InlineTagId), "inline")  ## `inline` proc annotation
     NoinlineP = (ord(NoinlineTagId), "noinline")  ## `noinline` proc annotation
     ClosureP = (ord(ClosureTagId), "closure")  ## `closure` proc annotation; not a calling convention anymore, simply annotates a proc as a closure

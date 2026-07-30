@@ -43,14 +43,14 @@ type
     IfL = (ord(IfTagId), "if")  ## if statement header
     WhenL = (ord(WhenTagId), "when")  ## when statement header
     ElifL = (ord(ElifTagId), "elif")  ## pair of (condition, action)
-    ElseL = (ord(ElseTagId), "else")  ## `else` action
+    ElseL = (ord(ElseTagId), "else")  ## `else` action, or the default branch of a Leng discriminated `union`
     TypevarsL = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)`
     BreakL = (ord(BreakTagId), "break")  ## `break` statement
     ContinueL = (ord(ContinueTagId), "continue")  ## `continue` statement
     ForL = (ord(ForTagId), "for")  ## for statement
     WhileL = (ord(WhileTagId), "while")  ## `while` statement
     CaseL = (ord(CaseTagId), "case")  ## `case` statement
-    OfL = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
+    OfL = (ord(OfTagId), "of")  ## `of` branch within a `case` statement, or of a Leng discriminated `union`
     RetL = (ord(RetTagId), "ret")  ## `return` instruction
     YldL = (ord(YldTagId), "yld")  ## yield statement
     StmtsL = (ord(StmtsTagId), "stmts")  ## list of statements
