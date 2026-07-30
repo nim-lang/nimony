@@ -9,7 +9,8 @@
 
 ## Leng driver program.
 
-import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
+import std / [parseopt, strutils, os, osproc, tables, assertions, syncio,
+  dirs, paths]
 import codegen, llvmcodegen          # nifcore backends (local to shoggoth/)
 import noptions
 import ".." / lib / symparser
@@ -17,6 +18,12 @@ import ".." / lib / vfs
 import ".." / lib / nimversion
 
 include ".." / lib / compat2
+
+template makeDir(p: string) =
+  when defined(nimony):
+    onRaiseQuit createDir(path(p))
+  else:
+    onRaiseQuit createDir(Path(p))
 
 const
   Usage = "Leng Compiler. Version " & Version & """
@@ -109,13 +116,13 @@ proc handleCmdLine() =
       else:
         case currentAction
         of atC:
-          actionTable[atC].add key
+          getOrQuit(actionTable, atC).add key
         of atCpp:
-          actionTable[atCpp].add key
+          getOrQuit(actionTable, atCpp).add key
         of atNative:
-          actionTable[atNative].add key
+          getOrQuit(actionTable, atNative).add key
         of atLLVM:
-          actionTable[atLLVM].add key
+          getOrQuit(actionTable, atLLVM).add key
         of atNone:
           quit "invalid command: " & key
     of cmdLongOption, cmdShortOption:
@@ -138,7 +145,7 @@ proc handleCmdLine() =
         of "clang":
           s.config.cCompiler = ccCLang
         else:
-          quit "unknown C compiler: '$1'. Available options are: gcc, clang" % [val]
+          quit "unknown C compiler: '" & val & "'. Available options are: gcc, clang"
       of "opt":
         case val.normalize
         of "speed":
@@ -148,7 +155,7 @@ proc handleCmdLine() =
         of "none":
           s.config.optimizeLevel = None
         else:
-          quit "'none', 'speed' or 'size' expected, but '$1' found" % val
+          quit "'none', 'speed' or 'size' expected, but '" & val & "' found"
       of "linedir":
         case val.normalize
         of "", "on":
@@ -156,7 +163,7 @@ proc handleCmdLine() =
         of "off":
           s.config.options.excl optLineDir
         else:
-          quit "'on', 'off' expected, but '$1' found" % val
+          quit "'on', 'off' expected, but '" & val & "' found"
       of "nimcache":
         s.config.nifcacheDir = val
       of "out", "o":
@@ -176,16 +183,16 @@ proc handleCmdLine() =
       else: writeHelp()
     of cmdEnd: assert false, "cannot happen"
 
-  createDir(s.config.nifcacheDir)
+  makeDir(s.config.nifcacheDir)
   if actionTable.len != 0:
     for action in actionTable.keys:
       case action
       of atC, atCpp:
         let isLast = (if compileOnly: isMain else: currentAction == action)
         let flags = if isLast: {codegen.gfMainModule} else: {}
-        generateBackend(s, action, actionTable[action], flags)
+        generateBackend(s, action, getOrQuit(actionTable, action), flags)
       of atNative:
-        let args = actionTable[action]
+        let args = getOrQuit(actionTable, action)
         if args.len == 0:
           quit "command takes a filename"
         else:
@@ -198,11 +205,11 @@ proc handleCmdLine() =
       of atLLVM:
         let isLast = (if compileOnly: isMain else: currentAction == action)
         let llvmFlags = if isLast: {llvmcodegen.gfMainModule} else: {}
-        generateLLVMBackend(s, actionTable[action], llvmFlags)
+        generateLLVMBackend(s, getOrQuit(actionTable, action), llvmFlags)
       of atNone:
         quit "targets are not specified"
 
-    let appName = actionTable[currentAction][^1].splitModulePath.name
+    let appName = getOrQuit(actionTable, currentAction)[^1].splitModulePath.name
     if s.config.outputFile == "":
       s.config.outputFile = appName
 

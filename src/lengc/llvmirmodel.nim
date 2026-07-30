@@ -15,6 +15,11 @@
 ## objects so identity is pointer-equality. Values are tagged unions so the
 ## serializer switches on `kind` instead of parsing string prefixes.
 
+when defined(nimony):
+  # `nil` is the model's "type not known / not applicable" marker -- it travels
+  # through `LLType` fields, params and locals all over the LLVM backend.
+  {.feature: "lenientnils".}
+
 type
   LLTypeKind* = enum
     llVoid, llInt, llFloat, llPtr, llArray, llStruct, llUnion, llFunc

@@ -9,7 +9,14 @@
 
 ## Name mangling. See leng-spec.md for details.
 
-from std / strutils import toOctal, replace, endsWith
+proc addOctal(result: var string; c: char) {.inline.} =
+  ## The 3-digit octal escape `\NNN` used inside C string literals. Spelled out
+  ## here because Nimony's `strutils` has no `toOctal` -- and this variant does
+  ## not allocate.
+  let n = int(c)
+  result.add char(ord('0') + ((n shr 6) and 7))
+  result.add char(ord('0') + ((n shr 3) and 7))
+  result.add char(ord('0') + (n and 7))
 
 proc escape(result: var string; c: char) {.inline.} =
   const HexChars = "0123456789ABCDEF"
@@ -24,7 +31,10 @@ proc mangleToC*(s: string): string =
   result = newStringOfCap(s.len)
   while i < s.len:
     case s[i]
-    of 'A'..pred('Q'), succ('Q')..'Z', 'a'..'z', '0'..'9':
+    # 'Q' is the escape prefix and gets its own branch below; spelled out as
+    # 'P'/'R' rather than `pred('Q')`/`succ('Q')` because Nimony does not fold
+    # those down to the constant an `of` branch needs.
+    of 'A'..'P', 'R'..'Z', 'a'..'z', '0'..'9':
       result.add s[i]
     of 'Q': result.add "QQ"
     of '_': result.add "Q_"
@@ -80,7 +90,7 @@ proc toCChar*(c: char; result: var string) {.inline.} =
   case c
   of '\0'..'\x1F', '\x7F'..'\xFF':
     result.add '\\'
-    result.add toOctal(c)
+    result.addOctal c
   of '\'', '\"', '\\', '?':
     result.add '\\'
     result.add c

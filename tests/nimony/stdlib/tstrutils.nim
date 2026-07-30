@@ -120,6 +120,13 @@ block: # split funcs
   assert split("empty sep returns unsplit s", "") == @["empty sep returns unsplit s"]
   assert splitWhitespace("  foo \t bar  baz  ") == @["foo", "bar", "baz"]
 
+block: # join
+  assert join(["a", "b", "c"], ", ") == "a, b, c"
+  assert join(["a", "b", "c"]) == "abc"
+  assert join(["only"], "--") == "only"
+  assert join(@[], ", ") == ""
+  assert join(split("a,b,c", ','), ";") == "a;b;c"
+
 block: # splitLines
   assert splitLines("\nthis\nis\nan\n\nexample\n") ==
     @["", "this", "is", "an", "", "example", ""]

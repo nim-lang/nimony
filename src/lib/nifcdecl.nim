@@ -31,7 +31,7 @@ proc createLengTagPool*(): TagPool =
   ## `TagEnum` ordinal. Pass to `parseFromFile`/`parseFromBuffer` as
   ## `sharedTags` so `tagEnum`/`stmtKind`/… can decode by ordinal.
   result = newTagPool()
-  for e in TagEnum:
+  for e in low(TagEnum)..high(TagEnum):
     if e == InvalidTagId: continue
     let id = result.registerTag(TagData[e][0])
     assert uint32(id) == uint32(TagData[e][1]),

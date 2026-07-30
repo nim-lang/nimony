@@ -321,9 +321,55 @@ Watch for:
   `template` so `expreval` sees the constructor directly.
 - 256-entry lookup tables built with a const block + for loop. Replace
   with an inline formula if one exists, or accept the cost.
+- `of` branch values must already *be* constants. `case c` /
+  `of 'A'..pred('Q'):` is not folded and reaches the backend as a
+  `(sub 'Q' 1)` tree, which Leng rejects with "expected valid `of`
+  value". Spell the literal out.
 
 
-## 10. Stdlib porting cheat sheet
+## 10. Missing stdlib API
+
+Nimony's `lib/std` is a re-implementation, not a copy, so a Nim module
+you are porting will reach for things that simply are not there yet.
+The ones hit most often:
+
+| Nim | Nimony |
+|---|---|
+| `for e in MyEnum:` | `for e in low(MyEnum)..high(MyEnum):` |
+| `strutils.toOctal`, `toHex`, `toBin` | write the digit loop locally |
+| `std/packedsets` | `IntSet`, `HashSet`, or a plain `seq` |
+| `x.isNil` on a `ref`/`ptr` | `x == nil` (`isNil` exists only for `cstring`) |
+| `system.insert(s, item, i)` | `sequtils.insert(s, [item], i)` (openArray only) |
+| `$someTuple` | build the string by hand; `$` is not defined for tuples |
+| `$aDistinct` | `$Base(x)` — `$` is not borrowed automatically |
+
+When the gap is a small, genuinely general routine (`strutils.join` was
+one), add it to `lib/std/` with a test in
+`tests/nimony/stdlib/` rather than open-coding it per call site. When it
+is niche (a hex formatter for one backend), keep it local.
+
+
+## 11. Alias checking (NJVL)
+
+Nimony rejects a call that passes the same location as two parameters
+when one of them is `var`:
+
+```nim
+coerceValue(c, lhs, srcType, destType, lhs)   # `lhs` is both in and out
+addOverflowDecl(c, c.code, pos)               # `c.code` is a field of `c`
+```
+
+with `mutable argument aliases with immutable parameter` (or `… with
+mutable parameter`). Both shapes are routine in Nim code. The fixes are
+mechanical:
+
+- in/out through one variable: introduce a temporary, then assign back.
+  If it happens at several call sites, wrap it in an `inPlace` helper.
+- container passed alongside its owner: don't take the container as a
+  parameter — return the value and let the caller splice it in.
+
+
+## 12. Stdlib porting cheat sheet
 
 These are the recurring shapes you will hit when porting a stdlib
 module from Nim 2 to `lib/std/`:
@@ -361,7 +407,7 @@ and `cast[CCharArray](myCstringArray)` at the call boundary. Nimony's
 libc's `char**` otherwise.
 
 
-## 11. The `compat2.nim` shim
+## 13. The `compat2.nim` shim
 
 [src/lib/compat2.nim](../src/lib/compat2.nim) is the bootstrap-time
 compat layer that makes the same source compile under both Nim and
@@ -382,7 +428,7 @@ a third place. Don't add Nimony-only or Nim-only sugar to it that is
 not actually needed by the bootstrap.
 
 
-## 12. Build and test
+## 14. Build and test
 
 The build/test driver is `bin/hastur` (built from `src/hastur.nim`).
 Common invocations:
