@@ -170,6 +170,20 @@ proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) 
           emitSymAsIdent(newDest, n.symId, n.info, thisMod)
         else:
           rewriteTreeToIdents(newDest, n, thisMod)
+    elif n.exprKind in {DotX, DdotX}:
+      # The sub-compile runs under a synthesized module suffix, so a private
+      # field's access token can no longer name a module the check would
+      # recognise. Replace it with `AlreadyChecked`: this access was validated
+      # before serialization and must stay accepted.
+      newDest.addParLe(n.cursorTagId, n.info)
+      n.into:
+        while n.hasMore:
+          if n.isStringLit:
+            newDest.addStrLit(AlreadyChecked, n.info)
+            inc n
+          else:
+            rewriteTreeToIdents(newDest, n, thisMod)
+      newDest.addParRi()
     else:
       newDest.addParLe(n.cursorTagId, n.info)
       n.into:

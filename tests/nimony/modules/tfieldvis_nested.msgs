@@ -1,0 +1,3 @@
+tests/nimony/modules/tfieldvis_nested.nim(12, 14) Trace: instantiation from here
+tests/nimony/modules/tfieldvis_nested.nim(11, 47) Trace: instantiation from here
+tests/nimony/modules/tfieldvis_nested.nim(12, 16) Error: undeclared field: 'private' for type Generic

@@ -33,6 +33,11 @@ proc createSemRoutine*(kind: SymKind; parent: SemRoutine): SemRoutine =
 const
   MaxNestedTemplates* = 100
 
+  AlreadyChecked* = "*"
+    ## Access-token value meaning "validated, but the originating module is no
+    ## longer comparable here". Not a legal module suffix, so it cannot collide
+    ## with one. Used by `exprexec`, whose sub-compile is a synthesized module.
+
 type
   Item* = object
     ## A semchecked expression together with its type. Lives here (rather than
@@ -107,6 +112,16 @@ type
     guarded*: bool # true for gfld fields (cannot be accessed via dot)
     rootOwner*: SymId # generic root of owner type
 
+  VisOwner* = object
+    ## One frame of `SemContext.visOwner`: an expansion whose body belongs to
+    ## `module`, written in `file`. Tokens from other files inside the same
+    ## tree are call-site arguments and do not belong to `module`.
+    ##
+    ## `file` is the raw `FileId` value: the name is ambiguous here (two
+    ## imported modules define it) and only equality is ever needed.
+    module*: string
+    file*: uint32
+
   # SemPhase and ToplevelEntry are now in programs.nim
 
   MetaInfo* = object
@@ -169,6 +184,28 @@ type
     instantiatedTypes*: Table[string, SymId]
     instantiatedProcs*: Table[(SymId, string), SymId]
     thisModuleSuffix*: string
+    visOwner*: seq[VisOwner]
+      ## Stack of expansions currently being semchecked. Private field
+      ## visibility must be judged against the module the accessing code was
+      ## WRITTEN in, and an expansion mixes two provenances in one tree:
+      ## the body comes from the expanded routine's module, while the
+      ## arguments substituted into it come from the call site. `file`
+      ## discriminates the two — a token whose line info names the routine's
+      ## own file is body, anything else is a substituted argument and is
+      ## judged against the module being compiled.
+      ##
+      ## Pushed at `untyped` template expansion, macro plugin expansion and
+      ## generic instantiation: the three places where a body's field accesses
+      ## resolve for the FIRST time in a module other than their own. A typed
+      ## template body instead carries the `"x"` access token from its owner
+      ## module and takes the `bypassVis` path.
+      ##
+      ## `c.routine.inInst` cannot answer this: it conflates "this is an
+      ## expansion" with "this was already checked in its owner module", and
+      ## the latter is false for an `untyped` template argument (semchecked
+      ## here for the FIRST time, at a call site that may not see the field)
+      ## and for `{.untyped.}` generics (whose bodies are published unresolved
+      ## and only resolve at the instantiation site). See issue #1988.
     moduleFlags*: set[ModuleFlag]
     features*: set[Feature]
     processedModules*: Table[string, SymId] # suffix to sym

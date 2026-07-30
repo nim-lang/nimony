@@ -155,6 +155,14 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
     let aInfo = a.n.info
     inc c.routine.inInst
+    # An `untyped` template's body is published unresolved, so its field
+    # accesses resolve HERE for the first time and must be judged against the
+    # template's own module. (A typed template's body carries the `"x"` access
+    # token instead and takes the `bypassVis` path.) Tokens in the expanded
+    # tree that come from another file are call-site arguments substituted in,
+    # and stay judged against the caller's module — see `visibilityModule`.
+    c.visOwner.add VisOwner(module: extractModule(pool.syms[fnId]),
+                            file: res.decl.info.file.uint32)
     semExpr c, dest, a, flags
     # make sure template body expression matches return type, mirrored with `semProcBody`:
     let returnType =
@@ -170,6 +178,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
       typecheck(c, dest, aInfo, a.typ, returnType)
     else:
       commonType c, dest, a, beforeCall, returnType
+    discard c.visOwner.pop()
     dec c.routine.inInst
     # now match to expected type:
     it.kind = a.kind
@@ -859,7 +868,19 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds
       var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
       inc c.routine.inInst
+      # Plugin output is semchecked as if written in the macro's own module.
+      # Its tokens carry the macro decl's file, so a private access the plugin
+      # synthesised is judged against the macro's module while call-site
+      # arguments it echoed back keep the caller's — see `visibilityModule`.
+      let macroRes = tryLoadSym(finalFn)
+      if macroRes.status == LacksNothing:
+        c.visOwner.add VisOwner(module: extractModule(pool.syms[finalFn]),
+                                file: macroRes.decl.info.file.uint32)
+      else:
+        c.visOwner.add VisOwner(module: extractModule(pool.syms[finalFn]),
+                                file: cs.callNodeInfo.file.uint32)
       semExpr c, dest, a
+      discard c.visOwner.pop()
       dec c.routine.inInst
       it.kind = a.kind
       typeofCallIs c, dest, it, cs.beforeCall, a.typ
@@ -1312,15 +1333,17 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     # skip optional inheritance depth:
     if cs.fn.n.isIntLit:
       inc cs.fn.n
-    var dotFlags = {KeepMagics, AllowUndeclared, AllowOverloads}
+    var dotFlags: set[SemFlag] = {KeepMagics, AllowUndeclared, AllowOverloads}
+    var dotAccessToken = ""
     if cs.fn.n.isStringLit:
       dotFlags.incl BypassFieldVis
+      dotAccessToken = pool.strings[cs.fn.n.strId]
       inc cs.fn.n
     cs.fn.n = dotHead; skip cs.fn.n
     it.n = cs.fn.n
     # now interpret the dot expression:
     let dotState = tryBuiltinDot(c, dest, cs.fn, lhs, fieldName, dotInfo,
-                                  dotFlags)
+                                  dotFlags, dotAccessToken)
     if dotState == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
       dest.shrink dotStart
       buildErr c, dest, dotInfo, "undeclared identifier in module: '" &
