@@ -393,7 +393,10 @@ proc analyseCallArgs(c: var Context; n: var Cursor) =
   let callCursor = n
   var fnType = skipProcTypeToParams(getType(c.typeCache, n))
   analyseExpr c, n # the `fn` itself could be a proc pointer we must ensure was initialized
-  assert fnType.isParamsTag
+  if not fnType.isParamsTag:
+    while n.hasMore:
+      analyseExpr c, n
+    return
   var paramMap = initTable[SymId, int]() # param to position
   let paramsStart = fnType
   fnType = sub(fnType)

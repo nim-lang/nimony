@@ -46,7 +46,7 @@ proc completeCb(ring: Ring; slotIdx: int; res: int) {.nimcall.} =
       inc ring.cqCount
     ring.cqLock.release()
 
-proc initIoRing*(pool: Pool = nil): Ring =
+proc initIoRing*(pool: nil Pool = nil): Ring =
   ## `pool`, if given, is the worker pool whose idle loop will drive this
   ## ring's I/O backend (via `Pool.registerReactor`) — pass one you built
   ## with `createPool()` if this ring's reactor should have dedicated
@@ -73,7 +73,7 @@ proc initIoRing*(pool: Pool = nil): Ring =
   result.backend.completeFn = completeCb
   result.pool = if pool != nil: pool else: defaultPool()
   let ring = result
-  result.pool.registerReactor(proc(timeoutMs: int): bool =
+  result.pool.registerReactor(proc(timeoutMs: int): bool {.closure.} =
     if atomicLoad(ring.closed, moRelaxed): return false
     ring.backend.pollFn(ring.backend, timeoutMs)
   )
@@ -185,7 +185,7 @@ when defined(posix):
     ## race with a stale registration/slot that still refers to it.
     if ring.backend.forgetFdFn != nil:
       ring.backend.forgetFdFn(ring.backend, fd)
-    let onCancel = proc(idx: int) =
+    let onCancel = proc(idx: int) {.closure.} =
       let slot = addr ring.slots.slots[idx]
       const ECancelled = -125 # -ECANCELED
       if slot.res != 0:
