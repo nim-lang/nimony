@@ -2047,6 +2047,14 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         takeInto dest, n:
           while n.hasMore:
             trStmt c, dest, n, mode
+    of TmplbodyS:
+      # Survives into Leng so the LLVM debug backend can emit an inlined frame.
+      # No `openScope`: the wrapper is transparent, like `stmts` and unlike
+      # `scope`. The template's symbol is copied verbatim as the first child.
+      takeInto dest, n:
+        takeTree dest, n # the template's symbol
+        while n.hasMore:
+          trStmt c, dest, n, mode
     of ScopeS:
       c.typeCache.openScope()
       if mode == TraverseTopLevel:

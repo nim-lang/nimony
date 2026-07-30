@@ -695,7 +695,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
           AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
           StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-          NoStmt:
+          TmplbodyS, NoStmt:
         # generic statement: copy the head and recurse into the children
         copyInto c.dest, n:
           while n.hasMore: trOnlyEssentials c, n

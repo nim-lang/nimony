@@ -5152,6 +5152,11 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of CoroforS:
         buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
         skip it.n
+      of TmplbodyS:
+        # `semTemplateCall` writes this wrapper straight into `dest` around an
+        # already-sem'd expansion, so it never comes back through `semExpr`.
+        buildErr c, dest, it.n.info, "`tmplbody` is emitted by sem and must not appear in source"
+        skip it.n
       of VarS:
         localSigGuard c:
           semLocal c, dest, it, VarY

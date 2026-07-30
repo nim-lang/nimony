@@ -356,6 +356,15 @@ proc genScopeLLVM(c: var LLVMCode; n: var Cursor) =
       genStmtLLVM c, n
     c.m.closeScope()
 
+proc genTmplBodyLLVM(c: var LLVMCode; n: var Cursor) =
+  ## `(tmplbody SYM S*)` — the statements of an expanded template. Deliberately
+  ## does NOT open a scope (unlike `genScopeLLVM`): the wrapper is transparent,
+  ## it exists only so the debug backend can emit the body as an inlined frame.
+  n.into:
+    skip n # the template's symbol
+    while n.hasMore:
+      genStmtLLVM c, n
+
 proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
     if n.kind == SymbolDef:
@@ -510,6 +519,8 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
       genStmtLLVM(c, n)
       if c.currentProc.needsTerminator:
         while n.hasMore and n.stmtKind != LabS: skip n
+  of TmplbodyS:
+    genTmplBodyLLVM c, n
   of ScopeS:
     genScopeLLVM c, n
   of InstrS:

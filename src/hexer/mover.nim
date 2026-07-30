@@ -357,6 +357,10 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
           inc pc
           skip pc # pragma itself
           inc nested
+        of TmplbodyS:
+          inc pc
+          skip pc # the template's symbol
+          inc nested
         of LocalDecls:
           inc pc
           if root != NoSymId and pc.kind == SymbolDef and pc.symId == root:
