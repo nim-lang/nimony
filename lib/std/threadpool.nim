@@ -163,10 +163,24 @@ proc help*(p: Pool): bool {.inline.} =
 
 type TArg = tuple[p: Pool, threadIdx: int]
 
+when defined(useMimalloc):
+  proc miCollect(force: bool) {.importc: "mi_collect".}
+    ## mimalloc heap collection for the CALLING thread. Continuation-based
+    ## scheduling constantly allocates on one worker and frees on another;
+    ## those cross-thread frees land on the allocating heap's remote list and
+    ## are only reclaimed when its owner thread collects. Without a periodic
+    ## collect, that backlog grows without bound (measured: a passive proc
+    ## owning an 8MB seq across one park leaks ~the full seq per invocation;
+    ## flat when alloc+free stay on one thread — see harness
+    ## tests/leak_repro*.nim). An idle-time collect converges it to a small
+    ## per-worker steady state.
+
 proc workerLoop(arg: pointer) {.nimcall.} =
   # index passed by value via the pointer slot
   let (p, threadIdx) = cast[ptr TArg](arg)[]
   dealloc(arg)
+  var idleTicks = 0
+  var sinceCollect = 0
   while not atomicLoad(p.stopFlag, moRelaxed):
     # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
     #    each continuation, re-submitting any that yield more work.
@@ -187,8 +201,26 @@ proc workerLoop(arg: pointer) {.nimcall.} =
                            tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
         var rem = Timespec()
         discard nanosleep(ts, rem)
+    # 3. Reclaim this worker's cross-thread-free backlog: a forced collect
+    #    after a brief idle (~8ms of 1ms polls), plus a hard periodic fallback
+    #    so a worker that never goes idle still collects. force=true is what
+    #    actually drains the remote list; at this cadence its cost is noise.
+    #    (mimalloc-only: the default nimNativeAlloc has its own cross-thread
+    #    free path — measure before assuming it needs an equivalent.)
+    when defined(useMimalloc):
+      inc sinceCollect
+      if busy:
+        idleTicks = 0
+      else:
+        inc idleTicks
+      if idleTicks >= 8 or sinceCollect >= 8192:
+        idleTicks = 0
+        sinceCollect = 0
+        miCollect(true)
 
-proc init*(p: Pool) =
+# --- Lifecycle ---
+
+proc initPool*() =
   ## Initialize the I/O poller and start worker threads.
   for i in 0 ..< WorkerCount:
     try:

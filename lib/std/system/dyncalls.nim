@@ -90,20 +90,17 @@ when defined(posix):
   # =========================================================================
   #
 
-  # c stuff:
-  when defined(linux) or defined(macosx):
-    const RTLD_NOW = cint(2)
-  else:
-    var
-      RTLD_NOW {.importc: "RTLD_NOW", header: "<dlfcn.h>".}: cint
+  # c stuff (values transcribed per OS; RTLD_NOW is 2 on both Linux and
+  # Darwin, RTLD_GLOBAL differs — 0x100 vs 0x8):
+  const RTLD_NOW = cint(2)
+  when defined(globalSymbols):
+    const RTLD_GLOBAL = (when defined(osx): cint(0x8) else: cint(0x100))
 
-  proc dlclose(lib: LibHandle) {.importc, header: "<dlfcn.h>".}
-  proc dlopen(path: cstring, mode: cint): LibHandle {.
-      importc, header: "<dlfcn.h>".}
-  proc dlsym(lib: LibHandle, name: cstring): ProcAddr {.
-      importc, header: "<dlfcn.h>".}
+  proc dlclose(lib: LibHandle) {.importc: "dlclose".}
+  proc dlopen(path: cstring, mode: cint): LibHandle {.importc: "dlopen".}
+  proc dlsym(lib: LibHandle, name: cstring): ProcAddr {.importc: "dlsym".}
 
-  proc dlerror(): cstring {.importc, header: "<dlfcn.h>".}
+  proc dlerror(): cstring {.importc: "dlerror".}
 
   proc nimUnloadLibrary(lib: LibHandle) =
     dlclose(lib)

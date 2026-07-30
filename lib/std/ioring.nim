@@ -154,8 +154,8 @@ proc waitCompletions*(ring: Ring; comps: var openArray[IoCompletion]): int =
     discard ring.backend.pollFn(ring.backend, 0)
 
 when defined(posix):
-  proc posixClose(fd: cint): cint {.importc: "close", header: "<unistd.h>".}
-  proc fcntl(fd: cint; cmd: cint): cint {.varargs, importc, header: "<fcntl.h>".}
+  proc posixClose(fd: cint): cint {.importc: "close".}
+  proc fcntl(fd: cint; cmd: cint): cint {.varargs, importc.}
   const F_GETFL* = 3.cint
   const F_SETFL* = 4.cint
   when defined(linux):
@@ -198,7 +198,7 @@ when defined(posix):
 
 when defined(posix):
   type
-    Sockaddr_in* {.importc: "struct sockaddr_in", header: "<netinet/in.h>".} = object
+    Sockaddr_in* {.importc: "struct sockaddr_in".} = object
       sin_family*: cushort
       sin_port*: cushort
       sin_addr*: InAddr
@@ -209,20 +209,29 @@ when defined(posix):
     SOL_SOCKET* = (when defined(macosx): 0xFFFF.cint else: 1.cint)
     SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
     INADDR_ANY* = 0'u32
-  proc socket(domain, typ, protocol: cint): cint {.importc, header: "<sys/socket.h>".}
-  proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.
-    importc, header: "<sys/socket.h>".}
-  proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.
-    importc: "bind", header: "<sys/socket.h>".}
-  proc listen(s: cint; backlog: cint): cint {.importc, header: "<sys/socket.h>".}
-  proc htons(x: uint16): uint16 {.importc, header: "<arpa/inet.h>".}
+  proc socket(domain, typ, protocol: cint): cint {.importc: "socket".}
+  proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.importc: "setsockopt".}
+  proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "bind".}
+  proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
+  proc htons(x: uint16): uint16 {.inline.} =
+    ## Header macro/libc shim; a byte swap on the little-endian targets.
+    when defined(bigEndian):
+      result = x
+    else:
+      result = (x shl 8) or (x shr 8)
+    
   proc listenTcp*(ring: Ring; port: uint16; backlog = 128): cint =
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     assert fd >= 0, "socket() failed"
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
-    var addr4 = Sockaddr_in(sin_family: cushort(AF_INET), sin_port: htons(port),
-                            sin_addr: InAddr(s_addr: INADDR_ANY))
+    var addr4 = default(Sockaddr_in)
+    when defined(linux):
+      addr4.sin_family = cushort(AF_INET)
+    else:
+      addr4.sin_family = uint8(AF_INET)
+    addr4.sin_port = htons(port)
+    addr4.sin_addr.s_addr = INADDR_ANY
     assert bindAddr(fd, cast[ptr SockAddr](addr addr4),
                     SockLen(sizeof(addr4))) == 0, "bind failed"
     assert listen(fd, backlog.cint) == 0, "listen failed"

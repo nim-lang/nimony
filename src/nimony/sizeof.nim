@@ -137,6 +137,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   let cacheKey = if n.isSymbol: n.symId else: NoSymId
   var pragmas = default(TypePragmas)
   while counter > 0 and n.isSymbol:
+    dec counter
     if cache.hasKey(n.symId):
       # `hasKey` just returned true, so `getOrQuit` will not quit.
       let c2 = cache.getOrQuit(n.symId)
@@ -270,6 +271,7 @@ proc typeSectionMode(n: Cursor): PragmaKind =
   var n = n
   var counter = 20
   while counter > 0 and n.isSymbol:
+    dec counter
     let sym = tryLoadSym(n.symId)
     if sym.status == LacksNothing:
       var local = asTypeDecl(sym.decl)

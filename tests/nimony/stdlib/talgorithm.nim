@@ -26,3 +26,12 @@ block:
   assert not isSorted([3, 2, 1], myCmpInt)
   assert isSorted(["a", "bc", "def", "ghij"], myCmpStr)
   assert not isSorted(["aaa", "bb", "c"], myCmpStr)
+
+block:
+  # len < 2: sort must not touch (or free) its empty temp buffer
+  var e: seq[int] = @[]
+  sort(e, myCmpInt)
+  assert e.len == 0
+  var one = @[42]
+  sort(one, myCmpInt)
+  assert one == @[42]

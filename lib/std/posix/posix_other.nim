@@ -1,100 +1,69 @@
-
-# Regenerate using detect.nim!
-include posix_other_consts
-
-
-type
-  # TODO: fixme {.importc: "clockid_t", header: "<sys/types.h>", nodecl.}
-  ClockId* = cint
-
-when defined(nimNativeIo) and (defined(amd64) or defined(osx) or
-    defined(aarch64) or defined(arm64)):
-  # `time_t` and `struct timespec` have the same shape on all 64-bit
-  # LP64 platforms: a `long` seconds field followed by a `long`
-  # nanoseconds field, 16 bytes total. Hardcoding it means no <time.h>.
-  type
-    Time* = distinct clong   ## time_t, hardcoded so no <time.h>
-
-    Timespec* {.pure.} = object ## struct timespec (16 bytes)
-      tv_sec*: Time  ## Seconds.
-      tv_nsec*: clong  ## Nanoseconds.
-    
-    IOVec* {.pure} = object ## struct iovec
-      iov_base*: pointer ## Base address of a memory region for input or output.
-      iov_len*: csize_t  ## The size of the memory pointed to by iov_base.
-    
-    SockLen* = cuint
-    TSa_Family* = uint8
-
-    SockAddr* {.pure.} = object ## struct sockaddr
-      sa_family*: TSa_Family         ## Address family.
-      sa_data*: array[0..255, char] ## Socket address (variable-length data).
-
-    Sockaddr_storage* = object
-    Sockaddr_in* = object
-      sin_family*: cushort
-      sin_port*: cushort
-      sin_addr*: InAddr
-    InAddr* = object
-      s_addr*: uint32
-    
-    Tmsghdr* {.pure} = object  ## struct msghdr
-      msg_name*: pointer     ## Optional address.
-      msg_namelen*: SockLen  ## Size of address.
-      msg_iov*: ptr IOVec    ## Scatter/gather array.
-      msg_iovlen*: cint      ## Members in msg_iov.
-      msg_control*: pointer  ## Ancillary data; see below.
-      msg_controllen*: SockLen ## Ancillary data buffer len.
-      msg_flags*: cint ## Flags on received message.
-else:
-  type
-    Time* {.importc: "time_t", header: "<time.h>", nodecl.} = distinct clong
-
-    Timespec* {.importc: "struct timespec",
-                 header: "<time.h>", final, pure.} = object ## struct timespec
-      tv_sec* {.exportc.} : Time  ## Seconds.
-      tv_nsec* {.exportc.} : clong  ## Nanoseconds.
-    
-    IOVec* {.importc: "struct iovec", pure, final,
-            header: "<sys/uio.h>".} = object ## struct iovec
-      iov_base*: pointer ## Base address of a memory region for input or output.
-      iov_len*: csize_t  ## The size of the memory pointed to by iov_base.
-    
-    SockLen* {.importc: "socklen_t", header: "<sys/socket.h>".} = cuint
-    TSa_Family* {.importc: "sa_family_t", header: "<sys/socket.h>".} = uint8
-
-    Sockaddr_storage* {.importc: "struct sockaddr_storage",
-                        header: "<sys/socket.h>".} = object
-    Sockaddr_in* {.importc: "struct sockaddr_in", header: "<netinet/in.h>".} = object
-      sin_family*: cushort
-      sin_port*: cushort
-      sin_addr*: InAddr
-    InAddr* {.importc: "struct in_addr", header: "<netinet/in.h>".} = object
-      s_addr*: uint32
-
-    SockAddr* {.importc: "struct sockaddr", header: "<sys/socket.h>",
-                pure, final.} = object ## struct sockaddr
-      sa_family*: TSa_Family         ## Address family.
-      sa_data*: array[0..255, char] ## Socket address (variable-length data).
-    
-    Tmsghdr* {.importc: "struct msghdr", pure, final,
-             header: "<sys/socket.h>".} = object  ## struct msghdr
-      msg_name*: pointer     ## Optional address.
-      msg_namelen*: SockLen  ## Size of address.
-      msg_iov*: ptr IOVec    ## Scatter/gather array.
-      msg_iovlen*: cint      ## Members in msg_iov.
-      msg_control*: pointer  ## Ancillary data; see below.
-      msg_controllen*: SockLen ## Ancillary data buffer len.
-      msg_flags*: cint ## Flags on received message.
-
+# ABI-precise POSIX declarations. Nimony does not import declarations from C
+# headers: the LLVM and native backends never see headers, and on the C
+# backend mixing header prototypes with our own declarations redeclares libc
+# symbols with conflicting types (nim-lang/nimony#2155). Every type and
+# constant here is transcribed from the platform ABI and machine-checked by
+# tests/nimony/stdlib/tposixabi.nim.
 
 when defined(linux):
-  when defined(nimNativeIo):
-    const MAP_POPULATE* = cint(0x8000)
-  else:
-    var
-      MAP_POPULATE* {.importc, header: "<sys/mman.h>".}: cint
-        ## Populate (prefault) page tables for a mapping.
+  when not (defined(amd64) or defined(arm64) or defined(i386)):
+    {.error: "std/posix has no transcribed ABI for this Linux architecture; supported: amd64, arm64, i386".}
+elif defined(osx):
+  discard # one ABI for arm64 and x86_64 (64-bit-inode layouts)
 else:
-  var
-    MAP_POPULATE*: cint = 0
+  {.error: "std/posix has no transcribed ABI for this OS; supported: Linux (amd64/arm64/i386) and macOS".}
+
+include posix_other_consts
+
+type
+  ClockId* = cint  ## clockid_t (int on Linux and Darwin)
+
+  Time* = distinct clong   ## time_t
+
+  Timespec* {.pure.} = object ## struct timespec: `long` seconds + `long`
+                              ## nanoseconds on both Linux and Darwin
+    tv_sec*: Time  ## Seconds.
+    tv_nsec*: clong  ## Nanoseconds.
+
+  IOVec* {.pure} = object ## struct iovec
+    iov_base*: pointer ## Base address of a memory region for input or output.
+    iov_len*: csize_t  ## The size of the memory pointed to by iov_base.
+
+  SockLen* = cuint  ## socklen_t
+
+when defined(linux):
+  type
+    TSa_Family* = uint16  ## sa_family_t
+
+    SockAddr* {.pure.} = object ## struct sockaddr
+      sa_family*: TSa_Family        ## Address family (offset 0, no sa_len).
+      sa_data*: array[0..255, char] ## Socket address (variable-length data).
+
+    Tmsghdr* {.pure} = object  ## struct msghdr (Linux: msg_iovlen and
+                               ## msg_controllen are size_t; natural alignment
+                               ## pads msg_namelen out to the pointer size on
+                               ## 64-bit, matching glibc/musl and the kernel)
+      msg_name*: pointer     ## Optional address.
+      msg_namelen*: SockLen  ## Size of address.
+      msg_iov*: ptr IOVec    ## Scatter/gather array.
+      msg_iovlen*: csize_t   ## Members in msg_iov.
+      msg_control*: pointer  ## Ancillary data; see below.
+      msg_controllen*: csize_t ## Ancillary data buffer len.
+      msg_flags*: cint ## Flags on received message.
+else:
+  type
+    TSa_Family* = uint8  ## sa_family_t
+
+    SockAddr* {.pure.} = object ## struct sockaddr (BSD layout with sa_len)
+      sa_len: uint8                 ## Total length of the address.
+      sa_family*: TSa_Family        ## Address family.
+      sa_data*: array[0..255, char] ## Socket address (variable-length data).
+
+    Tmsghdr* {.pure} = object  ## struct msghdr (Darwin: msg_iovlen is int)
+      msg_name*: pointer     ## Optional address.
+      msg_namelen*: SockLen  ## Size of address.
+      msg_iov*: ptr IOVec    ## Scatter/gather array.
+      msg_iovlen*: cint      ## Members in msg_iov.
+      msg_control*: pointer  ## Ancillary data; see below.
+      msg_controllen*: SockLen ## Ancillary data buffer len.
+      msg_flags*: cint ## Flags on received message.

@@ -383,10 +383,7 @@ else:
   proc c_setvbuf(f: File; buffer: pointer; mode: int32; size: uint): int32 {.
     importc: "setvbuf", header: "<stdio.h>".}
 
-  when defined(macos) or defined(macosx) or defined(linux) or defined(windows):
-    const IOFBF = 0'i32
-  else:
-    var IOFBF {.importc: "_IOFBF", header: "<stdio.h>".}: int32
+  const IOFBF = 0'i32  ## _IOFBF; 0 on glibc/musl, Darwin and Windows alike
 
 proc open*(f: out File; filename: string;
            mode: FileMode = fmRead;

@@ -46,7 +46,26 @@ proc isComplex(n: Cursor; goal: Goal): bool =
       else:
         # ExprX with exactly one son might be harmless:
         result = isComplex(inner, goal)
-    elif goal in {TowardsNjvl, LowerCasts, TowardsFinalIr} and n.exprKind in (CallKinds+{AndX, OrX}):
+    elif n.exprKind in {AndX, OrX}:
+      # `and`/`or` are short-circuit CONTROL FLOW, not expressions, and
+      # `controlflow.nim` models them as such: it emits the operand evaluation
+      # into the enclosing statement stream *before* whatever the surrounding
+      # expression has accumulated so far. Every xelim run must therefore lower
+      # them, not just the final one — otherwise the duplifier (which runs
+      # between xelim1 and xelim2 and asks the mover, i.e. the control-flow
+      # graph, "is this the last read?") reasons about an evaluation order that
+      # xelim_final then contradicts by hoisting the `and`'s `if` *after* the
+      # pre-statements of earlier sibling operands.
+      #
+      # Concretely, for `Obj(key: kk, selected: c and kk == sel)` the CF says
+      # `kk == sel` runs first, so the mover declares `key: kk` the last read
+      # and the duplifier sinks it (`tmp = kk; wasMoved kk`) — but the emitted
+      # code runs that `wasMoved` before the `and`, which then compares an
+      # emptied string and silently yields `false`. `if`/`case`/`try` operands
+      # never had this problem precisely because they are complex in *every*
+      # goal, so they are already statements by the time the duplifier looks.
+      result = true
+    elif goal in {TowardsNjvl, LowerCasts, TowardsFinalIr} and n.exprKind in CallKinds:
       result = true
     else:
       result = false

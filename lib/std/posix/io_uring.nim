@@ -3,7 +3,7 @@ import std/[oserrors, atomics, syncio]
 import ../nativesocket
 
 type
-  KernelRwfT* {.importc: "__kernel_rwf_t", header: "<linux/fs.h>".} = int
+  KernelRwfT* = int32  ## __kernel_rwf_t (a plain int in the kernel uapi)
 
 type
   SqeFlag* {.size: sizeof(uint8).} = enum
@@ -424,11 +424,13 @@ const
   REGISTER_FILES_SKIP* = -2
   OP_SUPPORTED* = 1u shl 0
 
-proc syscall(arg: cint): cint {.importc, header: "<unistd.h>", varargs.}
-var
-  SYS_io_uring_setup {.importc, header: "<sys/syscall.h>".}: cint
-  SYS_io_uring_enter {.importc, header: "<sys/syscall.h>".}: cint
-  SYS_io_uring_register {.importc, header: "<sys/syscall.h>".}: cint
+proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
+const
+  # Arch-independent since their introduction in Linux 5.1 (io_uring was added
+  # after the syscall tables were unified).
+  SYS_io_uring_setup = cint(425)
+  SYS_io_uring_enter = cint(426)
+  SYS_io_uring_register = cint(427)
 
 proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} =
   result = syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
@@ -436,7 +438,8 @@ proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} 
     raiseOSError(osLastError(), "io_uring setup syscall failed")
 
 proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
-            flags: cint, sig: nil ptr Sigset, sz: cint): cint {.raises, tags: [].} =
+            flags: cint, sig: nil pointer, sz: cint): cint {.raises, tags: [].} =
+  ## `sig` points to a kernel sigset (8 bytes on Linux) or is nil.
   result = syscall(SYS_io_uring_enter, fd, toSubmit, minComplete, flags, sig, sz)
   if result < 0:
     raiseOSError(osLastError(), "io_uring enter syscall failed")
@@ -456,7 +459,7 @@ proc uringMap(offset: Off; fd: FileHandle; begin: uint32;
   let size = int(begin + count * typSize.uint32)
   result = mmap(nil, size, PROT_READ or PROT_WRITE, MAP_SHARED or MAP_POPULATE,
                 fd.cint, offset)
-  if result == MAP_FAILED:
+  if mmapFailed(result):
     raiseOSError(osLastError(), "io_uring uringMap failed")
 
 proc uringUnmap(p: pointer; size: int) {.raises, tags: [].} =
@@ -1070,5 +1073,5 @@ proc getxattr*(sqe: ptr Sqe; name: var string; buf: pointer; len: int; path: var
   sqe.prepRw(OP_GETXATTR, 0.cint, cast[pointer](name.toCString), len, buf)
 
 proc socket*(sqe: ptr Sqe; domain: Domain; `type`: SockType; protocol: Protocol; flags: int = 0): ptr Sqe =
-  sqe.opFlags.rwFlags = flags
+  sqe.opFlags.rwFlags = KernelRwfT(flags)
   sqe.prepRw(OP_SOCKET, domain.cint, 0, protocol.cint, `type`.cint)

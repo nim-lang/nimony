@@ -3804,20 +3804,38 @@ proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLi
 
 proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
                          setFields: Table[SymId, Cursor]; info: NifLineInfo;
-                         bindings: Table[SymId, Cursor]; depth: int) =
+                         bindings: Table[SymId, Cursor]; depth: int;
+                         isUnion = false) =
   let fieldSym = field.name.symId
   if setFields.hasKey(fieldSym):
     dest.addSubtree setFields.getOrQuit(fieldSym)
+  elif isUnion:
+    # A union has ONE active member: filling the unset members with
+    # defaults emits sibling designated initializers, and C's
+    # last-initializer-wins semantics zero out the member the user
+    # actually set (black-clear-color class of bug). Emit nothing.
+    discard
   else:
     dest.addParLe(KvU, info)
     dest.addSymUse(fieldSym, info)
-    var typ = field.typ
-    if bindings.len != 0:
-      # fields in generic type AST contain generic params of the type
-      # for invoked object types, bindings are built from the given arguments
-      # and the field type is instantiated based on them here
-      typ = instantiateType(c, typ, bindings)
-    callDefault c, dest, typ, info
+    if not field.val.isDotToken:
+      # The field declares a constant default value (`x: int = -1`); the spec
+      # requires construction to use it rather than the type's zero default.
+      # The value is already typed (semchecked at the type declaration), so
+      # emit it directly — instantiating only if it carries generic params.
+      if bindings.len != 0 and containsGenericParams(field.val):
+        var v = Item(n: field.val, typ: c.types.autoType)
+        instantiateExprIntoBuf(c, dest, v, bindings)
+      else:
+        dest.addSubtree field.val
+    else:
+      var typ = field.typ
+      if bindings.len != 0:
+        # fields in generic type AST contain generic params of the type
+        # for invoked object types, bindings are built from the given arguments
+        # and the field type is instantiated based on them here
+        typ = instantiateType(c, typ, bindings)
+      callDefault c, dest, typ, info
     if depth != 0:
       dest.addIntLit(depth, info)
     dest.addParRi()
@@ -3966,7 +3984,8 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
 
 proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
-                          bindings: Table[SymId, Cursor]; depth = 0) =
+                          bindings: Table[SymId, Cursor]; depth = 0;
+                          isUnion = false) =
   var iter = initObjFieldIter()
   while nextField(iter, n, keepCase = true):
     if n.substructureKind == CaseU:
@@ -3980,7 +3999,7 @@ proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       skip n
     else:
       let field = takeLocal(n, SkipFinalParRi)
-      buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+      buildObjConstrField(c, dest, field, setFields, info, bindings, depth, isUnion)
 
 proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
                            setFields: Table[SymId, Cursor]; info: NifLineInfo;
@@ -4058,7 +4077,8 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
   if obj.kind == ObjectT:
     skip currentField  # parent type / inheritance slot
   if currentField.hasMore and not currentField.isDotToken:
-    buildObjConstrFields(c, dest, currentField, setFields, info, bindings)
+    let isUnion = objDecl.kind == TypeY and hasPragma(objDecl.pragmas, UnionP)
+    buildObjConstrFields(c, dest, currentField, setFields, info, bindings, isUnion = isUnion)
   dest.addParRi()
 
 proc getAnumOwnerType(efldSym: SymId): SymId =

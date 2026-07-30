@@ -10,10 +10,9 @@ export ospaths2
 export osappdirs
 export oscommons
 
-when not (defined(nimNativeIo) and defined(posix)):
-  # The native fork+exec path in `execShellCmd` replaces libc's `system()` only
-  # on POSIX. Every other configuration (Windows, or the libc-backed builds)
-  # still falls back to `c_system`, so keep the declaration available there.
+when not defined(posix):
+  # POSIX replaces libc's `system()` with the native fork+exec path in
+  # `execShellCmd`; only Windows still calls out to `system`.
   proc c_system(cmd: cstring): cint {.
       importc: "system", header: "<stdlib.h>".}
 
@@ -229,12 +228,12 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
   ##   ```Nim
   ##   discard execShellCmd("ls -la")
   ##   ```
-  when defined(nimNativeIo) and defined(posix):
-    # Freestanding: there is no libc `system()` (it is not a syscall). Replicate
-    # it as fork + execve of `/bin/sh -c command` + waitpid, inheriting the
-    # parent's standard streams — exactly what glibc's `system()` does, and the
-    # same fork+exec path osproc.execCmd already uses. `os` can't import osproc
-    # (circular), so the sequence is inlined here.
+  when defined(posix):
+    # No libc `system()` binding: replicate it as fork + execve of
+    # `/bin/sh -c command` + waitpid, inheriting the parent's standard
+    # streams — exactly what glibc's `system()` does, and the same fork+exec
+    # path osproc.execCmd uses. `os` can't import osproc (circular), so the
+    # sequence is inlined here.
     var sh = "/bin/sh"
     var dashc = "-c"
     var cmd = command

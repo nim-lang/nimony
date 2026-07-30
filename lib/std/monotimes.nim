@@ -44,13 +44,12 @@ type
 
 when defined(macosx):
   type
-    MachTimebaseInfoData {.pure, final, importc: "mach_timebase_info_data_t",
-        header: "<mach/mach_time.h>".} = object
-      numer {.exportc.} , denom {.exportc.} : int32
+    MachTimebaseInfoData {.pure, final.} = object ## mach_timebase_info_data_t
+      numer, denom: int32
 
-  proc mach_absolute_time(): int64 {.importc, header: "<mach/mach.h>".}
-  proc mach_timebase_info(info: var MachTimebaseInfoData) {.importc,
-    header: "<mach/mach_time.h>".}
+  proc mach_absolute_time(): int64 {.importc: "mach_absolute_time".}
+  proc mach_timebase_info(info: var MachTimebaseInfoData) {.
+    importc: "mach_timebase_info".}
 
 when defined(js):
   proc getJsTicks: float =

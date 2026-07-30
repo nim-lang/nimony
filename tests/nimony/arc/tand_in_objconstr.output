@@ -1,0 +1,4 @@
+let+and : a- b+ c-
+no-let  : a- b+ c-
+no-and  : a- b+ c-
+let+or  : a- b+ c-
