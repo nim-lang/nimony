@@ -22,8 +22,9 @@
 # sentinel and `addPtrVarDecl` baked `(ptr (err))` into the synthesized pointer's
 # declared type, which the backends then rejected.
 #
-# Fixed: `runInductionVariables` now registers the body's locals before analyzing,
-# into the same per-proc scope `rebuildTree` already put the params in.
+# Fixed: the pass's traversal now registers each local as it walks past the
+# declaration, into the same per-proc scope `rebuildTree` already put the params
+# in — a decl always precedes the loops that use it.
 #
 # Only fails under `--opt:speed`/`--opt:size`, which enable shoggoth; at the
 # default opt level the optimizer is off. `tests/nimony/opt` is the `Optimized`

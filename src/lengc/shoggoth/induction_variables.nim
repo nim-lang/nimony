@@ -270,12 +270,49 @@ proc transformLoop(c: var Context; n: var Cursor) =
   n.loopInto:
     tr(c, n)
 
+proc registerDecl(c: var Context; n: Cursor) =
+  ## Records a local's declared type in the current typenav scope, so that a
+  ## later `(at LOCAL iv)` can be typed. `optdriver.rebuildTree` opens the scope
+  ## and registers the proc's *params*; the body's locals are ours to add, and
+  ## since `tr` walks in source order every decl is registered before the loops
+  ## that can use it. Mirrors the `VarS` case of `aliasing.walk`.
+  ##
+  ## Without this, a body-local array whose type is a nominal symbol — e.g. the
+  ## 32-byte word buffer a `char` set operation desugars to,
+  ## `` `t.0.IAarrayAuS8ZS32. `` rather than a literal `(array …)` — resolves to
+  ## the `(err)` sentinel and `addPtrVarDecl` bakes `(ptr (err))` into the
+  ## declared type, which the backends then reject.
+  if c.m == nil: return
+  var probe = n
+  var nameStart = default(Cursor)
+  var typeStart = default(Cursor)
+  probe.into:
+    nameStart = probe
+    skip probe                             # name
+    if probe.hasMore: skip probe           # pragmas
+    if probe.hasMore:
+      typeStart = probe
+      skip probe                           # type
+    while probe.hasMore: skip probe
+  if nameStart.kind == SymbolDef and not cursorIsNil(typeStart):
+    c.m[].registerLocal(nameStart.symId, typeStart)
+
 proc tr(c: var Context; n: var Cursor) =
   if not n.hasMore: return
   case n.kind
   of TagLit:
-    if n.stmtKind in {WhileS, LoopS}:
+    case n.stmtKind
+    of WhileS, LoopS:
       transformLoop(c, n)
+    of VarS, GvarS, TvarS, ConstS:
+      registerDecl(c, n)
+      n.loopInto:
+        tr(c, n)
+    of ScopeS:
+      if c.m != nil: c.m[].openScope()
+      n.loopInto:
+        tr(c, n)
+      if c.m != nil: c.m[].closeScope()
     else:
       n.loopInto:
         tr(c, n)
@@ -284,46 +321,12 @@ proc tr(c: var Context; n: var Cursor) =
 
 # ---- public entry --------------------------------------------------------
 
-proc registerBodyLocals(m: ptr MainModule; n: var Cursor) =
-  ## Register every local declaration's type in the current typenav scope so
-  ## `getNominalType` can resolve an `(at LOCAL iv)` base. `optdriver.rebuildTree`
-  ## opens the scope but registers only the proc's *params*; a body-local array —
-  ## e.g. the 32-byte word buffer a `char` set operation desugars to, whose type
-  ## is the nominal symbol `` `t.0.IAarrayAuS8ZS32. `` rather than a literal
-  ## `(array …)` — otherwise resolves to the `(err)` sentinel and `addPtrVarDecl`
-  ## bakes `(ptr (err))` into the declared type, which the backends then reject
-  ## with "node is not a type: (err)".
-  ##
-  ## Flat, with no nested scopes: Leng locals are already uniquely numbered
-  ## within a proc, so there is no shadowing to model.
-  while n.hasMore:
-    if n.kind == TagLit and n.stmtKind in {VarS, GvarS, TvarS, ConstS}:
-      var c = n
-      var nameStart = default(Cursor)
-      var typeStart = default(Cursor)
-      c.into:
-        nameStart = c
-        skip c                                 # name
-        if c.hasMore: skip c                   # pragmas
-        if c.hasMore:
-          typeStart = c
-          skip c                               # type
-        while c.hasMore: skip c
-      if nameStart.kind == SymbolDef and not cursorIsNil(typeStart):
-        m[].registerLocal(nameStart.symId, typeStart)
-    inc n
-
 proc runInductionVariables*(buf: var TokenBuf; moduleSuffix = "M";
                             m: ptr MainModule = nil) =
   ## Two-phase IV strength reduction: record rewrite patches, then rebuild
   ## `buf` with pointer decls hoisted before each loop, pointer bumps before
   ## the iv-inc, and `(deref p)` substituted for each `(at arr iv)` access.
   var ctx = createContext(addr buf, moduleSuffix, m)
-  if m != nil:
-    # Into `rebuildTree`'s per-proc scope, next to the params it already
-    # registered — the same scope `cse` populates from its aliasing walk.
-    var probe = beginRead(buf)
-    registerBodyLocals(m, probe)
   var n = beginRead(buf)
   tr(ctx, n)
   if not ctx.patchset.isEmpty:
