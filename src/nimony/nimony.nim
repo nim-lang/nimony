@@ -19,7 +19,6 @@ when defined(nimony):
 import std / [parseopt, sets, strutils, os, assertions, syncio, dirs, paths]
 import ".." / lib / [tooldirs, argsfinder, nimversion]
 
-import ".." / hexer / hexer # only imported to ensure it keeps compiling
 import ".." / gear2 / modnames
 import semmain, sem, nifconfig, semos, semdata, deps, langmodes, cli
 
