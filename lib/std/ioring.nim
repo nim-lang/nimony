@@ -198,7 +198,7 @@ when defined(posix):
 
 when defined(posix):
   type
-    Sockaddr_in* {.importc: "struct sockaddr_in".} = object
+    Sockaddr_in* {.importc: "sockaddr_in".} = object
       sin_family*: cushort
       sin_port*: cushort
       sin_addr*: InAddr

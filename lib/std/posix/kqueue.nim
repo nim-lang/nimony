@@ -155,10 +155,7 @@ when defined(macosx) or defined(freebsd) or defined(openbsd) or
   type
     ## This define not fully satisfy NetBSD "struct kevent"
     ## but it works and tested.
-    Kevent* {.importc: "struct kevent",
-              header: """#include <sys/types.h>
-                         #include <sys/event.h>
-                         #include <sys/time.h>""", pure, final.} = object
+    Kevent* {.importc: "kevent", pure, final.} = object
       ident*  : uint     ## identifier for this event  (uintptr_t)
       filter* : cshort   ## filter for event
       flags*  : cushort  ## general flags
@@ -166,17 +163,17 @@ when defined(macosx) or defined(freebsd) or defined(openbsd) or
       data*   : int      ## filter-specific data  (intptr_t)
       udata*  : pointer  ## opaque user data identifier
 
-  proc kqueue*(): cint {.importc: "kqueue", header: "<sys/event.h>".}
+  proc kqueue*(): cint {.importc: "kqueue".}
     ## Creates new queue and returns its descriptor.
   proc kevent*(kqFD: cint,
                changelist: nil ptr Kevent, nchanges: cint,
                eventlist: nil ptr Kevent, nevents: cint, timeout: nil ptr Timespec): cint
-       {.importc: "kevent", header: "<sys/event.h>".}
+       {.importc: "kevent".}
     ## Manipulates queue for given `kqFD` descriptor.
 
   proc EV_SET*(event: ptr Kevent, ident: uint, filter: cshort, flags: cushort,
                fflags: cuint, data: int, udata: pointer)
-       {.importc: "EV_SET", header: "<sys/event.h>".}
+       {.importc: "EV_SET".}
     ## Fills event with given data.
 else:
   # Stubs for unsupported platforms (Nimony's first-pass when traversal

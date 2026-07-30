@@ -25,10 +25,9 @@ when defined(posix):
   import std / assertions
   from std/posix/posix import SockLen
 
-  proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read", header: "<unistd.h>".}
-  proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write", header: "<unistd.h>".}
-  proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.
-    importc: "accept", header: "<sys/socket.h>".}
+  proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
+  proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
+  proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
 
   proc processFd*(b: Backend; fd: cint; firedEvents: int) =
     ## Dispatch every pending op on `fd` whose direction actually matches the
