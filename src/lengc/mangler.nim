@@ -96,7 +96,7 @@ proc makeCString*(s: string): string =
 when isMainModule:
   import std/assertions
 
-  assert mangle"foo.3.baz" == "foo_3_baz"
-  assert mangle"Query?" == "QQueryqmarkQ"
-  assert mangle"abc_def_[]=" == "abcQ_defQ_putQ"
-  assert mangle"[]" == "getQ"
+  assert mangleToC"foo.3.baz" == "foo_3_baz"
+  assert mangleToC"Query?" == "QQueryqmarkQ"
+  assert mangleToC"abc_def_[]=" == "abcQ_defQ_putQ"
+  assert mangleToC"[]" == "getQ"
