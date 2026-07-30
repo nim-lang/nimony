@@ -21,6 +21,7 @@ type
     tempUseBufStack: seq[TokenBuf]
     activeChecks: set[CheckMode]
     pending: TokenBuf
+    bits: int  ## target `int` width, handed to the const evaluator
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo): SymId =
   let s = "`desugar." & $c.counter
@@ -622,7 +623,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   var typ = c.typeCache.getType(n)
-  var bytes = evalBitSet(n, typ)
+  var bytes = evalBitSet(n, typ, c.bits)
   case bytes.len
   of 0:
     # not constant
@@ -855,6 +856,79 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   c.tempUseBufStack.shrink(oldBufStackLen)
 
+const FoldableFloatExprs = {AddX, SubX, MulX, DivX, NegX, EqX, LeX, LtX}
+
+proc floatOpBits(n: Cursor): int =
+  ## `AddX` & co. carry their type as the first child, so one look decides
+  ## whether this is a float op and at which width. Returns 0 for anything
+  ## that is not one, which is the "do not fold" answer.
+  result = 0
+  if n.kind == TagLit and n.exprKind in FoldableFloatExprs:
+    var ty = sub(n)
+    if ty.typeKind == FloatT:
+      inc ty
+      result = typebits(ty.load)
+
+proc tryFoldFloatExpr(dest: var TokenBuf; exprStart: int; targetBits: int) =
+  ## fixes nim-lang/nimony#1626: folds a float expression over compile-time
+  ## operands, computing at maximum (float64) precision like `const`
+  ## evaluation does. This keeps runtime and `const` results consistent with
+  ## doc/language.md's "maximum precision" rule, e.g.
+  ## `0.09'f32 + 0.01'f32 == 0.09'f64 + 0.01'f64` folds to `true`.
+  ## Runs here in hexer (not in nimsem) so sem only const-evals on demand.
+  ## `targetBits` is the target `int` width (for any `shl`/`not` nested in
+  ## the expression), distinct from the float width returned below.
+  var probe = cursorAt(dest, exprStart)
+  let floatBits = floatOpBits(probe)
+  if floatBits == 0:
+    endRead probe
+    return
+  # `eval` decides what is constant; it already reports "cannot evaluate"
+  # instead of failing, so no structural pre-check is needed here. The
+  # SemContext is nil (hexer has none) and `noExecute` keeps it from
+  # reaching for one via a sub-compile.
+  var ec = initEvalContext(nil, noExecute = true, bits = targetBits)
+  var n = probe
+  var val = eval(ec, n)
+  var isFloat = false
+  var f = 0.0
+  var isBool = false
+  var truthy = false
+  if val.kind == FloatLit:
+    isFloat = true
+    f = val.floatVal
+  elif val.kind == TagLit and val.exprKind in {TrueX, FalseX}:
+    isBool = true
+    truthy = val.exprKind == TrueX
+  let info = probe.info
+  # release every cursor into `dest` before mutating it:
+  endRead n
+  endRead val
+  endRead probe
+  if isFloat and (f != f or f == Inf or f == -Inf):
+    # non-finite results stay unfolded; the runtime computes the same
+    # Inf/NaN and we avoid encoding them as raw FloatLits
+    return
+  if not (isFloat or isBool): return
+  expectUnique dest
+  shrink dest, exprStart
+  if isFloat:
+    dest.addParLe(SufX, info)
+    dest.addFloatLit(f, info)
+    dest.addStrLit("f" & $floatBits, info)
+    dest.addParRi()
+  else:
+    dest.addParLe(if truthy: TrueX else: FalseX, info)
+    dest.addParRi()
+
+proc trFloatArith(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Emits an arithmetic/comparison node normally, then attempts a
+  ## max-precision constant fold over the finished subtree. Children fold
+  ## first (inside `trSons`), so nesting works bottom-up.
+  let start = dest.len
+  trSons(c, dest, n)
+  tryFoldFloatExpr(dest, start, c.bits)
+
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # Simplify (expr (expr ...)) to (expr (...)) so that our
   # controlflow graph can handle them easily:
@@ -1078,12 +1152,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         genStringConcatChain(c, dest, n)
       else:
         trSons(c, dest, n)
+    of AddX, SubX, MulX, DivX, NegX, EqX, LeX, LtX:
+      trFloatArith(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
-        NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
-        AconstrX, BracketX, CurlyX, CurlyatX, OvfX, AddX, SubX,
-        MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
-        BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX,
+        NotX, SizeofX, AlignofX, OffsetofX, OconstrX,
+        AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
+        ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
+        BitnotX, NeqX, CastX, ConvX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
         AshrX, BaseobjX, HconvX, DconvX,
@@ -1101,7 +1177,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
 
 proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf())
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), bits: pass.bits)
   c.typeCache.openScope()
   # Process the root `(stmts` manually (mirroring trSons' copyInto) but
   # keep it OPEN until `pending` has been appended: an emitted close

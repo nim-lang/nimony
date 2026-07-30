@@ -37,6 +37,10 @@ type
                              # the enum type. Used when folding a `static` enum
                              # argument so a `const` alias canonicalizes to the
                              # same value as the literal field it names.
+    bits: int                # target `int` width, for shift/bitnot masking.
+                             # Cannot always come from `c`: that is nil for
+                             # callers outside sem (hexer), which pass their
+                             # own `Pass.bits` instead.
 
 proc isConstBoolValue*(n: Cursor): bool =
   n.exprKind in {TrueX, FalseX}
@@ -53,8 +57,13 @@ proc isConstStringValue*(n: Cursor): bool =
 proc isConstCharValue*(n: Cursor): bool =
   n.kind == CharLit
 
-proc initEvalContext*(c: ptr SemContext; noExecute = false): EvalContext =
-  result = EvalContext(c: c, noExecute: noExecute)
+proc initEvalContext*(c: ptr SemContext; noExecute = false; bits = 0): EvalContext =
+  ## `bits` is the target `int` width. It defaults to the `SemContext`'s
+  ## config; callers that have no `SemContext` must supply it themselves.
+  result = EvalContext(c: c, noExecute: noExecute,
+                       bits: if bits != 0: bits
+                             elif c != nil: c.g.config.bits
+                             else: 0)
 
 proc error(c: var EvalContext, msg: string, info: NifLineInfo): Cursor =
   var buf = createTokenBuf(4)
@@ -465,7 +474,7 @@ template evalUnOp(c: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
 template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.} =
   let orig = n
   var isSigned = false
-  var bits = c0.c.g.config.bits
+  var bits = c0.bits
   var a = createNaN()
   var b = createNaN()
   n.into:
@@ -503,7 +512,7 @@ template evalShiftOp(c0: var EvalContext; n: var Cursor; opr: untyped) {.dirty.}
 template evalBitnot(c0: var EvalContext; n: var Cursor) {.dirty.} =
   let orig = n
   var isSigned = false
-  var bits = c0.c.g.config.bits
+  var bits = c0.bits
   var a = createNaN()
   n.into:
     isSigned = n.typeKind == IntT
@@ -579,9 +588,9 @@ proc bitSetToTokens(result: var TokenBuf; x: seq[uint8]; elementTyp: Cursor; inf
 
   result.addParRi
 
-proc evalBitSetImpl(n, typ: Cursor): seq[uint8]
+proc evalBitSetImpl(n, typ: Cursor; bits: int): seq[uint8]
 
-proc evalOrdinal(c: ptr SemContext, n: Cursor): xint
+proc evalOrdinal(c: ptr SemContext, n: Cursor; bits = 0): xint
 
 proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
   var a = default(Cursor)
@@ -590,7 +599,7 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
     assert n.typeKind == SetT
     skip n # skip type
     a = eval(c, n)
-    b = evalOrdinal(nil, n)
+    b = evalOrdinal(nil, n, c.bits)
     skip n # skips b
   assert a.exprKind == SetconstrX, "got " & toString(a)
 
@@ -602,15 +611,15 @@ proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
         var xa = createNaN()
         var xb = createNaN()
         a.into:
-          xa = evalOrdinal(nil, a)
+          xa = evalOrdinal(nil, a, c.bits)
           skip a
-          xb = evalOrdinal(nil, a)
+          xb = evalOrdinal(nil, a, c.bits)
           skip a
         if b >= xa and b <= xb:
           isInSet = true
           break
       else:
-        let xa = evalOrdinal(nil, a)
+        let xa = evalOrdinal(nil, a, c.bits)
         if xa == b:
           isInSet = true
           break
@@ -649,7 +658,7 @@ proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
   var typeA = a
   inc typeA
 
-  let setA = evalBitSetImpl(a, typeA)
+  let setA = evalBitSetImpl(a, typeA, c.bits)
   result = intValue(c, bitSetCard(setA), info)
 
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
@@ -671,8 +680,8 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   var typeB = b
   inc typeB
   assert sameTrees(typeA, typeB)  # must be the same type
-  let setA = evalBitSetImpl(a, typeA)
-  let setB = evalBitSetImpl(b, typeB)
+  let setA = evalBitSetImpl(a, typeA, c.bits)
+  let setB = evalBitSetImpl(b, typeB, c.bits)
   assert setA.len == setB.len
   var setRes = newSeq[uint8](setA.len)
   case op
@@ -1069,14 +1078,21 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
       result = evalCall(c, n)
       skip n
     of SizeofX:
-      let s = c.c.semGetSize(c.c[], n.childCursor)
-      var err = false
-      let value = asSigned(s, err)
-      if err:
+      # `c.c` is nil for callers that evaluate outside sem (hexer's constant
+      # folding); sizes are only computable with a SemContext, so fold fails
+      # here like the other `c.c == nil` arms do.
+      if c.c == nil:
         cannotEval n
+        skip n
       else:
-        result = intValue(c, value, n.info)
-      skip n
+        let s = c.c.semGetSize(c.c[], n.childCursor)
+        var err = false
+        let value = asSigned(s, err)
+        if err:
+          cannotEval n
+        else:
+          result = intValue(c, value, n.info)
+        skip n
     of PlussetX, MinussetX, XorsetX, MulsetX:
       result = evalSetOp(c, n, n.exprKind)
     of InsetX:
@@ -1122,8 +1138,8 @@ proc evalExpr*(c: var SemContext, n: var Cursor;
   result = createTokenBuf(val.subtreeWidth)
   result.addSubtree val
 
-proc evalOrdinal(c: ptr SemContext, n: Cursor): xint =
-  var ec = initEvalContext(c)
+proc evalOrdinal(c: ptr SemContext, n: Cursor; bits = 0): xint =
+  var ec = initEvalContext(c, bits = bits)
   var n0 = n
   let val = eval(ec, n0)
   result = getConstOrdinalValue(val)
@@ -1624,8 +1640,9 @@ proc getArrayLen*(n: Cursor): xint =
   skip n # skip basetype
   result = getArrayIndexLen(n)
 
-proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
-  ## returns @[] if it could not be evaluated.
+proc evalBitSetImpl(n, typ: Cursor; bits: int): seq[uint8] =
+  ## returns @[] if it could not be evaluated. `bits` is the target `int`
+  ## width, needed when an element is a shift or bitnot expression.
   assert n.exprKind == SetconstrX
   assert typ.typeKind == SetT
   let size = bitsetSizeInBytes(typ.childCursor)
@@ -1642,9 +1659,9 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
         var xa = createNaN()
         var xb = createNaN()
         n.into:
-          xa = evalOrdinal(nil, n)
+          xa = evalOrdinal(nil, n, bits)
           skip n
-          xb = evalOrdinal(nil, n)
+          xb = evalOrdinal(nil, n, bits)
           skip n
         if not xa.isNaN and not xb.isNaN:
           var i = asUnsigned(xa, err)
@@ -1655,7 +1672,7 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
         else:
           err = true
       else:
-        let xa = evalOrdinal(nil, n)
+        let xa = evalOrdinal(nil, n, bits)
         skip n
         if not xa.isNaN:
           let i = asUnsigned(xa, err)
@@ -1665,4 +1682,4 @@ proc evalBitSetImpl(n, typ: Cursor): seq[uint8] =
   if err:
     return @[]
 
-proc evalBitSet*(n, typ: Cursor): seq[uint8] = evalBitSetImpl(n, typ)
+proc evalBitSet*(n, typ: Cursor; bits: int): seq[uint8] = evalBitSetImpl(n, typ, bits)
