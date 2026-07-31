@@ -402,15 +402,22 @@ proc callWasMoved(c: var Context; arg: Cursor; typ: Cursor) =
   if n.exprKind == EmoveX: inc n
   # `=wasMoved` mutates its argument in place, so we have to take its address.
   # Peel any conversion wrappers — `(hconv T x)` / `(conv T x)` / `(cast T x)`
-  # — so we land on the underlying lvalue. The destination type that was
-  # passed in is no longer the right one to look up the hook with, since the
-  # location we are zeroing is the (pre-conversion) source: re-derive the type
-  # from the peeled cursor.
+  # / `(baseobj T depth x)` — so we land on the underlying lvalue. The
+  # destination type that was passed in is no longer the right one to look up
+  # the hook with, since the location we are zeroing is the (pre-conversion)
+  # source: re-derive the type from the peeled cursor.
   var hookTyp = typ
-  if n.exprKind in ConvKinds:
-    while n.exprKind in ConvKinds:
-      inc n
-      skip n  # skip the target type
+  if n.exprKind in ConvKinds or n.exprKind == BaseobjX:
+    while true:
+      if n.exprKind in ConvKinds:
+        inc n
+        skip n  # skip the target type
+      elif n.exprKind == BaseobjX:
+        inc n
+        skip n  # skip the target type
+        skip n  # skip the inheritance-depth literal
+      else:
+        break
     hookTyp = getType(c.typeCache, n)
 
   let info = n.info
