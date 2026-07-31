@@ -342,6 +342,15 @@ proc gstmts(g: var SrcGen, n: var Cursor, c: Context, doIndent=false) =
 
     if doIndent: dedent(g)
 
+proc gstmtsOrExpr(g: var SrcGen, n: var Cursor, c: Context) =
+  ## Branch bodies are `(stmts …)` in statement context, but when the
+  ## surrounding `case`/`if`/`try`/`block` is used as an expression the body
+  ## is a bare expression (a symbol/literal or an `(expr …)` wrapper).
+  if n.stmtKind == StmtsS:
+    gstmts(g, n, c, doIndent = true)
+  else:
+    gsub(g, n)
+
 proc gcomma(g: var SrcGen) =
   putWithSpace(g, tkComma, ",")
 
@@ -383,7 +392,7 @@ proc gblock(g: var SrcGen, n: var Cursor) =
 
     putWithSpace(g, tkColon, ":")
 
-    gstmts(g, n, c, doIndent = true)
+    gstmtsOrExpr(g, n, c)
 
 proc gcond(g: var SrcGen, n: var Cursor) =
   # if n.kind == nkStmtListExpr:
@@ -409,13 +418,13 @@ proc gif(g: var SrcGen, n: var Cursor) =
             putWithSpace(g, tkElif, "elif")
           gcond(g, n)
           putWithSpace(g, tkColon, ":")
-          gstmts(g, n, c, doIndent = true)
+          gstmtsOrExpr(g, n, c)
       of ElseU:
         optNL(g)
         put(g, tkElse, "else")
         putWithSpace(g, tkColon, ":")
         n.into:
-          gstmts(g, n, c, doIndent = true)
+          gstmtsOrExpr(g, n, c)
       else:
         raiseAssert "unreachable"
 
@@ -454,7 +463,7 @@ proc takeCaseStmts(g: var SrcGen, n: var Cursor; c: var Context; isCaseObject = 
 
       dedent(g)
   else:
-    gstmts(g, n, c, doIndent = true)
+    gstmtsOrExpr(g, n, c)
 
 proc gcase(g: var SrcGen, n: var Cursor; isCaseObject = false) =
   var c: Context = initContext()
@@ -1187,7 +1196,7 @@ proc gtry(g: var SrcGen, n: var Cursor) =
     putWithSpace(g, tkColon, ":")
     # # if longMode(g, n) or (lsub(g, n[0]) + g.lineLen > MaxLineLen):
     # #   incl(c.flags, rfLongMode)
-    gstmts(g, n, c, doIndent = true)
+    gstmtsOrExpr(g, n, c)
     while n.substructureKind == ExceptU:
       optNL(g)
       n.into:
@@ -1199,14 +1208,14 @@ proc gtry(g: var SrcGen, n: var Cursor) =
           put(g, tkExcept, "except")
           inc n
         putWithSpace(g, tkColon, ":")
-        gstmts(g, n, c, doIndent = true)
+        gstmtsOrExpr(g, n, c)
 
     if n.substructureKind == FinU:
       optNL(g)
       put(g, tkFinally, "finally")
       n.into:
         putWithSpace(g, tkColon, ":")
-        gstmts(g, n, c, doIndent = true)
+        gstmtsOrExpr(g, n, c)
 
 
 proc gconstr(g: var SrcGen, n: var Cursor, kind: BracketKind, isUntyped = false) =
