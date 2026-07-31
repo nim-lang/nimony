@@ -165,6 +165,23 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 
 # --- Borrow checking ---
 
+proc establishesBorrow(c: var NjvlContext; n: Cursor): bool =
+  ## True if `n` is a call to a routine marked `.establishesBorrow.`, i.e. one
+  ## whose result keeps aliasing its first argument after the call returns.
+  ##
+  ## Nothing in the callee's body can tell us this: a view constructor such as
+  ## `toOpenArray` stores a raw pointer into the result, and the raw pointer is
+  ## exactly where the path we could follow ends. So the annotation on the
+  ## declaration is what carries the borrow across the call boundary.
+  if not n.isTagLit or n.exprKind notin CallKinds: return false
+  var fn = n
+  inc fn # the callee
+  var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
+  if not fnType.isParamsTag: return false
+  skip fnType # params
+  skip fnType # return type
+  result = hasPragma(fnType, EstablishesBorrowP)
+
 proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
@@ -228,7 +245,14 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
     result.mode = IsBorrowableFromConst
   elif n.isSymbol:
     let s = n.symId
-    if (followInlineVars or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT}) and s in c.inlineVars:
+    # A `.establishesBorrow.` call hoisted into an inline temp must be followed
+    # even when `followInlineVars` is off: `f(toOpenArray(s), s)` reaches us as
+    # `f(tmp, (haddr s))` and the alias is invisible unless we look through
+    # `tmp`. The type of such a temp is the view, not `var`/`out`/`lent`, so the
+    # modifier test below does not catch it.
+    if s in c.inlineVars and (followInlineVars or
+                              getType(c.typeCache, n).typeKind in {MutT, OutT, LentT} or
+                              establishesBorrow(c, c.inlineVars.getOrQuit(s))):
       extractBorrowPath(c, c.inlineVars.getOrQuit(s), result, followInlineVars)
     else:
       if result.mode != HasAddr:
@@ -1403,6 +1427,22 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
+  elif not isInline and establishesBorrow(c, n):
+    # `let v = toOpenArray(s)`: `v` keeps aliasing `s` until `v` is killed, so
+    # `s` must not be mutated in between. Unlike the `(haddr X)` case a path we
+    # cannot follow is not an error here — the argument may legitimately be a
+    # raw pointer or a temporary that the callee only reads.
+    #
+    # Inline temps are deliberately excluded. `if x notin s: s.add x` hoists the
+    # view built for `contains` into one, and every hoisted temp is `kill`ed
+    # together at the end of the proc — registering a borrow there would keep it
+    # alive far past the statement that needed it. Their aliasing is covered
+    # precisely, and only for the duration of the call, by the inline-var
+    # look-through in `extractBorrowPath`.
+    var path = extractPath(c, n)
+    if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      path.borrower = name
+      c.activeBorrows.add path
   if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
   if not n.isDotToken:

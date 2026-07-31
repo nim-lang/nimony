@@ -357,6 +357,18 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     dest.addParLe(pk, n.info)
     dest.addParRi()
     toPragmaArgs()
+  of EstablishesBorrowP:
+    # Declares that the result borrows from the first parameter. The borrow
+    # checker needs this at the *call site*: a view constructor builds its
+    # result from a raw pointer, so nothing in the callee's body tells the
+    # caller that the returned value still aliases the argument.
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, $pk & " pragma is only allowed on routines"
+    else:
+      crucial.flags.incl pk
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+    toPragmaArgs()
   of ViewP, InheritableP, PureP, FinalP, PackedP, UnionP, AcyclicP:
     var hasErr = false
     if kind != TypeY:
