@@ -233,6 +233,7 @@
 | `(feature STR)` | NimonyPragma | `feature` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
+| `(establishesBorrow)` | NimonyPragma | `establishesBorrow` pragma: the routine's result borrows from its first parameter. `let v = f(x)` then starts a borrow of `x` that lasts until `v` dies, so `x` cannot be mutated or passed to a `var` parameter in between. This is what carries the borrow across the call boundary for view constructors such as `toOpenArray`, whose bodies build the view out of a raw pointer the borrow checker cannot follow. |
 | `(incompleteStruct)` | NimonyPragma | `incompleteStruct` pragma |
 | `(quoted X+)` | NimonyExpr, NiflerKind | name in backticks |
 | `(hderef X)` | NimonyExpr | hidden pointer deref operation |

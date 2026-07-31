@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/testablishesborrow.nim(4, 9) Error: establishesBorrow pragma is only allowed on routines
+tests/nimony/errmsgs/testablishesborrow.nim(7, 9) Error: establishesBorrow pragma is only allowed on routines
