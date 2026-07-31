@@ -58,3 +58,24 @@ proc escapeViaString: openArray[char] =
   result = toOpenArray(s)
 
 discard escapeViaString()
+
+# 8. Escape of an inner scope into an enclosing one. NJ emits a `kill` per
+#    scope, so the source is seen dying while the view still holds it.
+proc escapeViaBlock =
+  var outer: openArray[int]
+  block:
+    var a = [1, 2, 3]
+    outer = toOpenArray(a)
+  discard outer.len
+
+escapeViaBlock()
+
+# 9. Same, out of a loop body.
+proc escapeViaLoop =
+  var outer: openArray[int]
+  for i in 0 ..< 2:
+    var a = [1, 2, 3]
+    outer = toOpenArray(a)
+  discard outer.len
+
+escapeViaLoop()

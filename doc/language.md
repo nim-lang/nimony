@@ -2339,6 +2339,25 @@ call:
     result = toOpenArray(s)   # OK: the caller owns 's'
   ```
 
+The same holds for scopes within a proc. Assigning a view rebinds what it
+borrows, so the check is against the scope the *source* lives in:
+
+  ```nim
+  proc outlivesSource =
+    var view: openArray[int]
+    block:
+      var a = [1, 2, 3]
+      view = toOpenArray(a)   # Error: borrow of 'a' escapes its scope
+    discard view.len
+
+  proc fine =
+    var s = @[1, 2, 3]
+    var view: openArray[int]
+    block:
+      view = toOpenArray(s)   # OK: 's' outlives the block
+    discard view.len
+  ```
+
 Only a reference-like result can carry a borrow out. Reading a plain value
 through a borrow copies it, so it leaves freely:
 

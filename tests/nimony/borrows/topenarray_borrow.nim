@@ -114,3 +114,27 @@ proc testValueEscapesFreely =
   assert firstOver(s) == 5
 
 testValueEscapesFreely()
+
+# A view assigned in an inner scope is fine as long as its source lives in an
+# enclosing one: the source is not among the symbols that scope kills.
+proc testInnerScopeOuterSource =
+  var s = @[1, 2, 3]
+  var view: openArray[int]
+  block:
+    view = toOpenArray(s)
+  assert sum(view) == 6
+
+testInnerScopeOuterSource()
+
+# Reassigning a view rebinds its borrow, so the previous source is free again.
+proc testRebind =
+  var a = @[1, 2]
+  var b = @[3, 4]
+  var view = toOpenArray(a)
+  assert sum(view) == 3
+  view = toOpenArray(b)
+  grow(a, 9)            # 'a' is no longer borrowed
+  assert sum(view) == 7
+  assert a.len == 3
+
+testRebind()

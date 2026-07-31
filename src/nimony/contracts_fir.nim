@@ -329,17 +329,20 @@ proc borrowCarriedBy(c: var NjvlContext; value: Cursor): BorrowInfo =
   if establishesBorrow(c, value):
     result = extractPath(c, value)
 
+proc canCarryBorrow(c: var NjvlContext; n: Cursor): bool =
+  ## Only a reference-like value can carry a borrow past the expression that
+  ## produced it. `for x in s: return x` reads through an iteration borrow but
+  ## hands back a copy, and a case-of temp holding a plain field value is no
+  ## different — in both the borrow ends at the load, so the type is what
+  ## decides, not the path.
+  let t = getType(c.typeCache, n)
+  result = t.typeKind in {MutT, LentT, OutT} or isViewType(t)
+
 proc checkBorrowOutlivesProc(c: var NjvlContext; value: Cursor) =
   ## A borrow must not outlive what it borrows from. `g = toOpenArray(a)` for a
   ## local `a` leaves `g` pointing into a dead frame, which no amount of
   ## mutation checking downstream can catch — by then the owner is gone.
-  ##
-  ## Only a reference-like value can carry a borrow out. `for x in s: return x`
-  ## reads through an iteration borrow but hands back a copy, and a case-of temp
-  ## holding a plain field value is no different — in both the borrow ends at the
-  ## load, so the type is what decides, not the path.
-  let t = getType(c.typeCache, value)
-  if t.typeKind notin {MutT, LentT, OutT} and not isViewType(t): return
+  if not canCarryBorrow(c, value): return
   let borrowed = borrowCarriedBy(c, value)
   if borrowed.mode == IsBorrowable and borrowed.path.len > 0 and
      diesWithProc(c, borrowed.path[0]):
@@ -1141,6 +1144,18 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
+  # `outer = toOpenArray(a)` rebinds what `outer` aliases, exactly as the
+  # `let outer = toOpenArray(a)` form does in `traverseLocal`. Destinations that
+  # outlive the proc are skipped: they are never `kill`ed, so the scope-exit
+  # check below could not judge them anyway, and `checkEscapingBorrow` above
+  # already had the final say on those.
+  if destSymId != NoSymId and not outlivesProc(c, destSymId) and
+     canCarryBorrow(c, valueStart):
+    endBorrow(c, destSymId)
+    var b = borrowCarriedBy(c, valueStart)
+    if b.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      b.borrower = destSymId
+      c.activeBorrows.add b
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
@@ -1675,8 +1690,22 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     # Final IR has no `jtrue`; if one survives from xelim, it is inert here.
     skip n
   of KillV:
-    # Variable going out of scope - end any active borrows
+    # Variables going out of scope. NJ emits one `kill` per scope, which is what
+    # makes this the place to catch a borrow whose source dies under it.
     n.into:
+      # The whole list has to be read before judging any single entry: a
+      # borrower dying alongside its source is precisely what should happen.
+      var dying: seq[SymId] = @[]
+      var m = n
+      while m.hasMore:
+        let s = extractSymId(m)
+        if s != NoSymId: dying.add s
+        skip m
+      for b in c.activeBorrows:
+        if b.path.len > 0 and b.path[0] in dying and b.borrower notin dying:
+          buildErr c, b.info, "borrow of '" & pool.syms[b.path[0]] &
+            "' escapes its scope; it does not live long enough"
+      # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
         let s = extractSymId(n)
         if s != NoSymId:
