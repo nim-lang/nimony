@@ -286,6 +286,23 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   elif BeStrict in flags:
     assert false, "wanted tuple type but got: " & toString(tupType, false)
 
+proc typeofBranchBody(c: var TypeCache; br: Cursor; flags: set[GetTypeFlag]): Cursor =
+  ## The type of an if/case/try/block branch body. Sem wraps expression
+  ## branches in `(stmts …)` in some shapes (template-expanded bodies), so a
+  ## stmts-wrapped branch takes the type of its TRAILING item; an empty
+  ## `(stmts)` is void.
+  var br = br
+  while br.isTagLit and stmtKind(br) == StmtsS:
+    var it = sub(br)
+    if not it.hasMore:
+      return c.builtins.voidType
+    var last = it
+    while it.hasMore:
+      last = it
+      skip it
+    br = last
+  result = getTypeImpl(c, br, flags)
+
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
   case exprKind(n)
@@ -309,9 +326,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       case stmtKind(n)
       of IfS:
         # Walk all branches and pick the first non-void branch's type. A
-        # branch tagged `(stmts ...)` (e.g. one whose last expression is a
-        # `return`/`raise`) yields void; the if-expression's value comes
-        # from a sibling branch that does yield.
+        # branch body may be `(stmts ...)` — sem emits that shape for
+        # template-expanded if-EXPRESSIONS too, so the branch's value is its
+        # TRAILING item, not blanket void (typing it void made xelim declare
+        # a typeless temp and drop the branch values — deps.nim's wasmInput).
+        # A branch that genuinely yields nothing (trailing `return`/call of a
+        # void proc) still types void through the recursion.
         var n = n
         inc n # skip `if`
         result = c.builtins.voidType
@@ -322,7 +342,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           inc br # `elif` or `else`
           if sub == ElifU:
             skip br # condition
-          let brType = getTypeImpl(c, br, flags)
+          let brType = typeofBranchBody(c, br, flags)
           if brType.typeKind != VoidT:
             result = brType
             break
@@ -333,16 +353,16 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         skip n # skip selector
         inc n # skip `of`
         skip n # skip set
-        result = getTypeImpl(c, n, flags)
+        result = typeofBranchBody(c, n, flags)
       of TryS:
         var n = n
         inc n
-        result = getTypeImpl(c, n, flags)
+        result = typeofBranchBody(c, n, flags)
       of BlockS:
         var n = n
         inc n
         skip n # label or DotToken
-        result = getTypeImpl(c, n, flags)
+        result = typeofBranchBody(c, n, flags)
       of StmtsS, RetS, CommentS:
         result = c.builtins.voidType
       else:
