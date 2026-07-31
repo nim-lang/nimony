@@ -508,11 +508,11 @@ proc genStmt(c: var GeneratedCode; n: var Cursor) =
   of StmtsS:
     n.loopInto:
       genStmt(c, n)
-  of TmplbodyS:
+  of ComesfromS:
     # Debug-info only: the C backend emits the body as if the wrapper were not
     # there. No scope is opened, matching `stmts` rather than `scope`.
     n.into:
-      skip n # the template's symbol
+      skip n # the origin symbol
       while n.hasMore:
         genStmt(c, n)
   of ScopeS:

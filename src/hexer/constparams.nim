@@ -514,7 +514,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
          ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
          CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-         AsmS, DeferS, TmplbodyS, NoStmt:
+         AsmS, DeferS, ComesfromS, NoStmt:
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore: tr c, dest, n

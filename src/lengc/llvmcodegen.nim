@@ -48,7 +48,7 @@ type
     gfMainModule
 
   InlineFrame* = object
-    ## One active `(tmplbody ...)` while generating its body: locations inside
+    ## One active `(comesfrom ...)` while generating its body: locations inside
     ## it are scoped to the template's synthetic DISubprogram and chained to
     ## the call site via `inlinedAt` (#1987).
     spId*: int               # synthetic DISubprogram of the template

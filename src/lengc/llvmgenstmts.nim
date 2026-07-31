@@ -356,8 +356,8 @@ proc genScopeLLVM(c: var LLVMCode; n: var Cursor) =
       genStmtLLVM c, n
     c.m.closeScope()
 
-proc genTmplBodyLLVM(c: var LLVMCode; n: var Cursor) =
-  ## `(tmplbody SYM S*)` — the statements of an expanded template. Deliberately
+proc genComesFromLLVM(c: var LLVMCode; n: var Cursor) =
+  ## `(comesfrom SYM S*)` — the statements of an expanded template. Deliberately
   ## does NOT open a scope (unlike `genScopeLLVM`): the wrapper is transparent,
   ## it exists only so the debug backend can emit the body as an inlined frame.
   ##
@@ -370,7 +370,7 @@ proc genTmplBodyLLVM(c: var LLVMCode; n: var Cursor) =
     var tmplSym = SymId(0)
     if n.kind == Symbol:
       tmplSym = n.symId
-    skip n # the template's symbol
+    skip n # the origin symbol
     # Build the call-site location BEFORE pushing, so a nested expansion's
     # `inlinedAt` chain picks up the enclosing frame and nests correctly.
     let callLocId = dbgLocationId(c, callInfo)
@@ -544,8 +544,8 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
       genStmtLLVM(c, n)
       if c.currentProc.needsTerminator:
         while n.hasMore and n.stmtKind != LabS: skip n
-  of TmplbodyS:
-    genTmplBodyLLVM c, n
+  of ComesfromS:
+    genComesFromLLVM c, n
   of ScopeS:
     genScopeLLVM c, n
   of InstrS:

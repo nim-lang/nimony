@@ -790,8 +790,8 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of IfS, WhenS, WhileS, ForS, CaseS, TryS, RaiseS, ExportS,
            IncludeS, ImportS, FromimportS, ImportexceptS, CommentS, PragmasS,
            ImportasS, ExportexceptS, BindS, MixinS, UsingS,
-           UnpackdeclS, StaticstmtS, AsmS, DeferS, CoroforS, TmplbodyS:
-          # `TmplbodyS` is unwrapped by controlflow, so it cannot appear here.
+           UnpackdeclS, StaticstmtS, AsmS, DeferS, CoroforS, ComesfromS:
+          # `ComesfromS` is unwrapped by controlflow, so it cannot appear here.
           bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS:
           # declarative junk we don't care about:
@@ -934,7 +934,7 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
-     TmplbodyS,
+     ComesfromS,
      BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
     c.toplevelStmts.takeTree n
 

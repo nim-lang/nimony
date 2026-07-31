@@ -513,7 +513,7 @@ proc tr(c: var Context; n: var Cursor) =
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
-        BindS, MixinS, UsingS, AsmS, DeferS, TmplbodyS, NoStmt:
+        BindS, MixinS, UsingS, AsmS, DeferS, ComesfromS, NoStmt:
       if n.isTagLit:
         let isStmtList = n.stmtKind == StmtsS
         c.dest.addParLe(n.cursorTagId, n.info)

@@ -301,12 +301,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     of ContinueS:
       skip n
-    of TmplbodyS:
-      # The first child is the template's *symbol*, not a statement: it must be
+    of ComesfromS:
+      # The first child is the origin *symbol*, not a statement: it must be
       # copied verbatim rather than run through `trStmt`, which would try to
       # version it and lose the writes in the body.
       takeInto dest, n:
-        takeTree dest, n # the template's symbol
+        takeTree dest, n # the origin symbol
         while n.hasMore:
           trStmt c, dest, n
     else:

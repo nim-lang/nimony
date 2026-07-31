@@ -2047,12 +2047,12 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         takeInto dest, n:
           while n.hasMore:
             trStmt c, dest, n, mode
-    of TmplbodyS:
+    of ComesfromS:
       # Survives into Leng so the LLVM debug backend can emit an inlined frame.
       # No `openScope`: the wrapper is transparent, like `stmts` and unlike
-      # `scope`. The template's symbol is copied verbatim as the first child.
+      # `scope`. The origin symbol is copied verbatim as the first child.
       takeInto dest, n:
-        takeTree dest, n # the template's symbol
+        takeTree dest, n # the origin symbol
         while n.hasMore:
           trStmt c, dest, n, mode
     of ScopeS:
@@ -2614,7 +2614,7 @@ proc trToplevelItem(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     n.into:
       while n.hasMore:
         trToplevelItem c, dest, n
-  elif sk == TmplbodyS:
+  elif sk == ComesfromS:
     # A template expanded at module toplevel. The wrapper cannot survive
     # here: its children get split between file scope (global decls) and
     # the init proc (their initializers and the executable code), so no
@@ -2624,7 +2624,7 @@ proc trToplevelItem(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     # zeroed globals (module plugins crashed with 0xC0000005). Dropping the
     # marker only costs the debug frame for module-init code.
     n.into:
-      skip n # the template's symbol
+      skip n # the origin symbol
       while n.hasMore:
         trToplevelItem c, dest, n
   elif isTopLevelDecl(n):

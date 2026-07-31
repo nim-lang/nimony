@@ -357,9 +357,9 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
           inc pc
           skip pc # pragma itself
           inc nested
-        of TmplbodyS:
+        of ComesfromS:
           inc pc
-          skip pc # the template's symbol
+          skip pc # the origin symbol
           inc nested
         of LocalDecls:
           inc pc

@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 1933             )
+(.indexat 1935             )
 (stmts@,3,tests/nimony/nosystem/tresemtype.nim
  (proc :foo.0.@5 . .
   (typevars@8
@@ -27,7 +27,7 @@
    (var@4,2 :obj.1 . . Foo.1.@6
     (oconstr@9 Foo.1.~3
      (kv@4 val.0~3 x.1@2)))))
- (tmplbody@8,D fooTempl.0.
+ (comesfrom@8,D fooTempl.0.
   (stmts~6,~4
    (type@9 :Foo.2.~4 . .
     (pragmas)
@@ -37,7 +37,7 @@
    (gvar@4,2 :obj.2 . . Foo.2.@6
     (oconstr@9 Foo.2.~3
      (kv@4 val.0~3 123~A,2)))))
- (tmplbody@8,E fooTempl.0.
+ (comesfrom@8,E fooTempl.0.
   (stmts~6,~5
    (type@9 :Foo.3.~4 . .
     (pragmas)
@@ -80,8 +80,8 @@
  (h fooTempl.0. 232)
  (h@H,8 T.1. 47)
  (h@2,9 Foo.1. 92)
- (h@2,9 Foo.2. 207)
- (h@2,9 Foo.3. 227)
+ (h@2,9 Foo.2. 208)
+ (h@2,9 Foo.3. 228)
  (h foo.0.Imj9rno. 237)
  (h@2,1 Foo.4. 144)
  (h foo.0.Iwjalau. 183)

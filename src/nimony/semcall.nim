@@ -226,13 +226,13 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
         m.returnType
       else:
         instantiateType(c, m.returnType, m.inferred)
-    # A void expansion is a *statement*, so it can be wrapped in `(tmplbody ...)`
+    # A void expansion is a *statement*, so it can be wrapped in `(comesfrom ...)`
     # to record where it came from; the debug backend turns that into a DWARF
     # inlined frame (#1987). Non-void expansions are expressions and `beforeCall`
     # must keep pointing at the value for `commonType`, so they stay unwrapped.
     let markExpansion = returnType.typeKind == VoidT
     if markExpansion:
-      dest.addParLe(TmplbodyS, callInfo)
+      dest.addParLe(ComesfromS, callInfo)
       dest.addSymUse fnId, callInfo
     inc c.routine.inInst
     # An `untyped` template's body is published unresolved, so its field

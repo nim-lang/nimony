@@ -5152,14 +5152,14 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of CoroforS:
         buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
         skip it.n
-      of TmplbodyS:
+      of ComesfromS:
         # Emitted by `semTemplateCall`. It does come back through here: a
         # template expanded inside a *generic* body is stored with the wrapper
         # and re-sem'd at instantiation. Preserve the head and the template
         # symbol, then sem the body as an ordinary statement list. No new scope
         # (`isNewScope = false` in effect): the wrapper must stay transparent
         # or `{.inject.}` symbols would stop escaping.
-        dest.addParLe(TmplbodyS, it.n.info)
+        dest.addParLe(ComesfromS, it.n.info)
         it.n.into:
           dest.addSubtree it.n # the template's symbol
           skip it.n

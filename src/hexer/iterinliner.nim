@@ -295,7 +295,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
         ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
         PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, CoroforS, TmplbodyS, NoStmt:
+        AsmS, DeferS, CoroforS, ComesfromS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
         takeInto dest, c:
@@ -359,7 +359,7 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, TmplbodyS, NoStmt:
+        AsmS, DeferS, ComesfromS, NoStmt:
       takeInto dest, c:
         while c.hasMore:
           inlineIteratorBody(e, dest, c, forStmt, yieldType)
@@ -398,7 +398,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
         PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, TmplbodyS, NoStmt:
+        AsmS, DeferS, ComesfromS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
         takeInto dest, c:
@@ -923,7 +923,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
-        UsingS, AsmS, DeferS, CoroforS, TmplbodyS, NoStmt:
+        UsingS, AsmS, DeferS, CoroforS, ComesfromS, NoStmt:
       takeInto dest, c:
         while c.hasMore:
           transformStmt(e, dest, c)

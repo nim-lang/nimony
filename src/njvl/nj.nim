@@ -1348,13 +1348,13 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     n = stmtsStart; skip n
     maybeCloseGuard(c, dest, g2, false)
 
-  of TmplbodyS:
+  of ComesfromS:
     # Debug-info marker only. Walk the body inline (no wrapping node, no new
     # scope) so assignments made by an expanded template are seen by the
     # definite-assignment analysis.
     let bodyStart = n
     n = sub(n)
-    skip n # the template's symbol
+    skip n # the origin symbol
     while n.hasMore:
       trGuardedStmts(c, b, dest, n, false)
     n = bodyStart; skip n
