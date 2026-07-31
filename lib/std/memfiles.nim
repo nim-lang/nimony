@@ -232,7 +232,7 @@ proc open*(filename: string, mode: FileMode = fmRead,
       result.flags = result.flags or MAP_SHARED
 
     let pr = if readonly: PROT_READ else: PROT_READ or PROT_WRITE
-    result.mem = mmap(nil, result.size, pr, result.flags, result.handle, offset)
+    result.mem = mmap(nil, csize_t(result.size), pr, result.flags, result.handle, offset)
     if mmapFailed(result.mem):
       fail(OSErrorCode(mmapErrno(result.mem)), "file mapping failed")
 
@@ -258,7 +258,7 @@ proc close*(f: var MemFile) {.raises.} =
       if error:
         lastErr = osLastError()
   else:
-    let mr = pcall(munmap(f.mem, f.size))
+    let mr = pcall(munmap(f.mem, csize_t(f.size)))
     error = mr < 0
     lastErr = if mr < 0: OSErrorCode(int32(0 - mr)) else: OSErrorCode(0)
     if f.handle >= 0:
