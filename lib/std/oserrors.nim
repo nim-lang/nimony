@@ -7,7 +7,7 @@ type
 
 when defined(windows):
   import windows/winlean
-else:
+elif defined(posix):
   from posix/posix import errno
 
 
@@ -46,6 +46,10 @@ proc osLastError*(): OSErrorCode {.sideEffect.} =
   ## * `raiseOSError proc`_
   when defined(windows):
     result = cast[OSErrorCode](getLastError())
-  else:
+  elif defined(posix):
     result = OSErrorCode(errno())
+  else:
+    # Freestanding targets (wasm32 standalone): no OS, no errno. Zero,
+    # honestly, per the wasm bring-up convention.
+    result = OSErrorCode(0)
 #{.pop.}
