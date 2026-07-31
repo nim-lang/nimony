@@ -290,6 +290,66 @@ proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowInfo; info: NifLineI
       buildErr c, info, "'" & pool.syms[mutPath.path[0]] & "' is borrowed and cannot be mutated"
       return
 
+proc localInfoOf(c: var NjvlContext; s: SymId): LocalInfo =
+  ## `getLocalInfo` only knows the locals of the proc under analysis; a global
+  ## carries a module suffix and has to be loaded from disk.
+  result = getLocalInfo(c.typeCache, s)
+  if result.kind == NoSym:
+    let res = tryLoadSym(s)
+    if res.status == LacksNothing:
+      let l = asLocal(res.decl)
+      result = LocalInfo(kind: l.kind, typ: l.typ, val: l.val)
+
+proc diesWithProc(c: var NjvlContext; s: SymId): bool =
+  ## Locals are gone once the proc returns; params, globals and consts are not.
+  result = localInfoOf(c, s).kind in {VarY, LetY, CursorY}
+
+proc outlivesProc(c: var NjvlContext; s: SymId): bool =
+  ## Storing here makes the value observable after the proc has returned:
+  ## `result` flows out through the return, a global simply stays, and a
+  ## `var`/`out` param writes through to a location the caller owns.
+  if s == c.resultSym: return true
+  let x = localInfoOf(c, s)
+  result = x.kind in {GvarY, TvarY, GletY, TletY} or
+           (x.kind == ParamY and x.typ.typeKind in {MutT, OutT})
+
+proc borrowCarriedBy(c: var NjvlContext; value: Cursor): BorrowInfo =
+  ## The borrow `value` carries, if any: one already held by the symbol
+  ## (`let v = toOpenArray(a)` … `g = v`), one the expression establishes on the
+  ## spot (`g = toOpenArray(a)`), or one held by the inline temp the value was
+  ## hoisted into (`return toOpenArray(a)` becomes `(let `x …) (ret `x)`).
+  result = BorrowInfo(path: @[], mode: NotBorrowable, info: value.info)
+  let s = extractSymId(value)
+  if s != NoSymId:
+    for b in c.activeBorrows:
+      if b.borrower == s:
+        return b
+    if s in c.inlineVars:
+      return borrowCarriedBy(c, c.inlineVars.getOrQuit(s))
+  if establishesBorrow(c, value):
+    result = extractPath(c, value)
+
+proc checkBorrowOutlivesProc(c: var NjvlContext; value: Cursor) =
+  ## A borrow must not outlive what it borrows from. `g = toOpenArray(a)` for a
+  ## local `a` leaves `g` pointing into a dead frame, which no amount of
+  ## mutation checking downstream can catch — by then the owner is gone.
+  ##
+  ## Only a reference-like value can carry a borrow out. `for x in s: return x`
+  ## reads through an iteration borrow but hands back a copy, and a case-of temp
+  ## holding a plain field value is no different — in both the borrow ends at the
+  ## load, so the type is what decides, not the path.
+  let t = getType(c.typeCache, value)
+  if t.typeKind notin {MutT, LentT, OutT} and not isViewType(t): return
+  let borrowed = borrowCarriedBy(c, value)
+  if borrowed.mode == IsBorrowable and borrowed.path.len > 0 and
+     diesWithProc(c, borrowed.path[0]):
+    buildErr c, value.info, "borrow of '" & pool.syms[borrowed.path[0]] &
+      "' escapes the proc; it does not live long enough"
+
+proc checkEscapingBorrow(c: var NjvlContext; value: Cursor; destRoot: SymId) =
+  if destRoot != NoSymId and outlivesProc(c, destRoot):
+    checkBorrowOutlivesProc(c, value)
+
 proc endBorrow(c: var NjvlContext; sym: SymId) =
   var i = 0
   while i < c.activeBorrows.len:
@@ -1076,6 +1136,8 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   let destMutPath = extractPath(c, n)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
+  if destMutPath.path.len > 0:
+    checkEscapingBorrow(c, valueStart, destMutPath.path[0])
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
@@ -1240,6 +1302,10 @@ proc traverseRet(c: var NjvlContext; n: var Cursor) =
     else:
       let providesResult = c.resultSym != NoSymId and
         not (n.isSymbol and n.symId == c.resultSym)
+      if providesResult:
+        # `return toOpenArray(a)` returns the value directly rather than storing
+        # it into `result` first, so `traverseStore`'s escape check never sees it.
+        checkBorrowOutlivesProc(c, n)
       traverseExpr c, n
       if providesResult:
         markInit(c, c.resultSym)

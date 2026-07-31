@@ -76,3 +76,41 @@ proc testStringAndArray =
   assert sum(arr) == 15
 
 testStringAndArray()
+
+# --- lifetimes: a borrow may leave the proc when its source does too ---
+
+var globalSeq = @[7, 8, 9]
+var globalView: openArray[int]
+
+# Borrowing from a parameter and handing the view back is fine: the caller owns
+# the source and outlives the call.
+proc fromParam(s: seq[int]): openArray[int] =
+  result = toOpenArray(s)
+
+proc testFromParam =
+  var s = @[1, 2, 3]
+  assert sum(fromParam(s)) == 6
+
+testFromParam()
+
+# A global source outlives everything, so the view may be stored in a global.
+proc fromGlobal =
+  globalView = toOpenArray(globalSeq)
+
+proc testFromGlobal =
+  fromGlobal()
+  assert sum(globalView) == 24
+
+testFromGlobal()
+
+# Returning a plain value read through an iteration borrow copies it; only
+# reference-like results can carry a borrow out of the proc.
+proc firstOver(s: seq[int]): int =
+  for x in s: return x
+  return -1
+
+proc testValueEscapesFreely =
+  var s = @[5, 6]
+  assert firstOver(s) == 5
+
+testValueEscapesFreely()

@@ -1,0 +1,7 @@
+tests/nimony/borrows/topenarray_escape_errors.nim(12, 7) Error: borrow of 'a.0' escapes the proc; it does not live long enough [pass --verbose for the NJ IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(20, 7) Error: borrow of 'a.1' escapes the proc; it does not live long enough [pass --verbose for the NJ IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(27, 12) Error: borrow of 'a.2' escapes the proc; it does not live long enough [pass --verbose for the NJ IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(35, 10) Error: borrow of 'a.3' escapes the proc; it does not live long enough [pass --verbose for the NJ IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(42, 7) Error: borrow of 'a.4' escapes the proc; it does not live long enough [pass --verbose for the NJ IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(51, 12) Error: borrow of 'whole.0' escapes the proc; it does not live long enough [pass --verbose for the NJ IR]
+tests/nimony/borrows/topenarray_escape_errors.nim(58, 12) Error: borrow of 's.0' escapes the proc; it does not live long enough [pass --verbose for the NJ IR]

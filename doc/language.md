@@ -2319,6 +2319,35 @@ above without outliving the call:
   appendFirst(s, s)   # Error: mutable argument aliases with immutable parameter
   ```
 
+A borrow also must not outlive what it borrows from. Storing one where it stays
+reachable after the proc returns — in a global, in `result`, or through a `var`
+parameter — is rejected when the source is a local:
+
+  ```nim
+  var g: openArray[int]
+
+  proc escape =
+    var a = [1, 2, 3]
+    g = toOpenArray(a)   # Error: borrow of 'a' escapes the proc
+  ```
+
+Borrowing from a parameter or from a global is fine, because those outlive the
+call:
+
+  ```nim
+  proc slice(s: seq[int]): openArray[int] =
+    result = toOpenArray(s)   # OK: the caller owns 's'
+  ```
+
+Only a reference-like result can carry a borrow out. Reading a plain value
+through a borrow copies it, so it leaves freely:
+
+  ```nim
+  proc first(s: seq[int]): int =
+    for x in s: return x   # OK: 'x' is a copy, not a view
+    return -1
+  ```
+
 
 ## `out` parameters
 
