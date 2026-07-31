@@ -2372,7 +2372,13 @@ proc handleCmdLine =
 
   of "build":
     const showProgress = true
-    exec "git submodule update --init"
+    # Only fetch the submodule when it is actually missing. A `jj` workspace
+    # (or a `git worktree`) shares one repo and has no gitlink of its own, so
+    # `git submodule update --init` fails there with "Unable to find current
+    # revision" even when the sources are present. Checking for the files is
+    # what the build cares about anyway.
+    if not fileExists("vendor" / "mimalloc" / "src" / "static.c"):
+      exec "git submodule update --init"
     case (if args.len > 0: args[0] else: "")
     of "", "all":
       buildNifler(showProgress)
