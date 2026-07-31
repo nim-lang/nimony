@@ -105,6 +105,24 @@ const AddrKinds* = {AddrC, HaddrC}
   ## address-taken analysis that misses `haddr` would let a `var` argument slip
   ## past it — so match this set unless the difference is the point.
 
+const OperandHeadedS* = {ComesfromS}
+  ## The Leng twin of `nimony_model.OperandHeadedS` (the two models are split by
+  ## tag vocabulary, not by concept). Transparent statement wrappers - no scope,
+  ## no semantics of their own - whose FIRST child is an operand rather than a
+  ## statement, here `(comesfrom SYM S*)` and its expanded symbol.
+  ##
+  ## A walker that recurses into every child as a statement walks that operand
+  ## and corrupts the tree, silently, with the damage surfacing passes later.
+  ## `src/lengc/shoggoth/cse.nim:994` is the scar: it hoisted a load above a
+  ## declaration the expansion itself makes.
+  ##
+  ## Membership is smaller than on the Nimony side because `pragmax` has no Leng
+  ## tag - Leng attaches pragmas to declarations only. The name is the contract;
+  ## the membership follows whatever `leng_tags.nim` carries.
+  ##
+  ## Transparency is the criterion, not the leading operand: `(block ...)` has
+  ## the same shape and is excluded, being a scope and a `break` target.
+
 proc symKind*(c: Cursor): LengSym {.inline.} =
   if c.isTagLit:
     if rawTagIsLengSym(tagEnum(c)):

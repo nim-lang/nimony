@@ -55,7 +55,7 @@ type
     CmdX = (ord(CmdTagId), "cmd")  ## command operation
     CchoiceX = (ord(CchoiceTagId), "cchoice")  ## closed choice
     OchoiceX = (ord(OchoiceTagId), "ochoice")  ## open choice
-    PragmaxX = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
+    PragmaxX = (ord(PragmaxTagId), "pragmax")  ## pragma expressions. Transparent: introduces no scope and no semantics, so a consumer that does not care descends into the body. The `^` marks the pragma list as an operand, not a statement: a statement walker MUST step over it before recursing, or it walks the pragmas as code. See `nimony_model.OperandHeadedS` / `bodyInto`
     QuotedX = (ord(QuotedTagId), "quoted")  ## name in backticks
     HderefX = (ord(HderefTagId), "hderef")  ## hidden pointer deref operation
     DdotX = (ord(DdotTagId), "ddot")  ## deref dot: expression, field symbol, field index; optional trailing `STRLIT` is the same *access token* described on `(dot ...)` — names the module the private-field access was written in, which is what a re-check judges it against.
@@ -165,7 +165,7 @@ type
     YldS = (ord(YldTagId), "yld")  ## yield statement
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
     PragmasS = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
-    PragmaxS = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
+    PragmaxS = (ord(PragmaxTagId), "pragmax")  ## pragma expressions. Transparent: introduces no scope and no semantics, so a consumer that does not care descends into the body. The `^` marks the pragma list as an operand, not a statement: a statement walker MUST step over it before recursing, or it walks the pragmas as code. See `nimony_model.OperandHeadedS` / `bodyInto`
     InclS = (ord(InclTagId), "incl")  ## `incl` set operation; first child is the set's element type
     ExclS = (ord(ExclTagId), "excl")  ## `excl` set operation; first child is the set's element type
     IncludeS = (ord(IncludeTagId), "include")  ## `include` statement
@@ -192,7 +192,7 @@ type
     UsingS = (ord(UsingTagId), "using")  ## `using` statement
     AsmS = (ord(AsmTagId), "asm")  ## `asm` statement
     DeferS = (ord(DeferTagId), "defer")  ## `defer` statement
-    ComesfromS = (ord(ComesfromTagId), "comesfrom")  ## a statement list that came from expanding `SYM` — today a template, and the same shape suits any inliner. Carried so the debug backend can emit it as an inlined frame (DWARF `DISubprogram` + `inlinedAt`). Transparent like `(par ...)` is for expressions: it introduces **no scope** and no semantics, so a consumer that does not care descends into the body and skips the rest. Only statement-position (void) expansions are wrapped
+    ComesfromS = (ord(ComesfromTagId), "comesfrom")  ## a statement list that came from expanding `SYM` — today a template, and the same shape suits any inliner. Carried so the debug backend can emit it as an inlined frame (DWARF `DISubprogram` + `inlinedAt`). Transparent like `(par ...)` is for expressions: it introduces **no scope** and no semantics, so a consumer that does not care descends into the body and skips the rest. The `^` marks `SYM` as an operand, not a statement: a statement walker MUST step over it before recursing, or it walks the origin symbol as code. See `nimony_model.OperandHeadedS` / `bodyInto`. Only statement-position (void) expansions are wrapped
 
 proc rawTagIsNimonyStmt*(raw: TagEnum): bool {.inline.} =
   raw in {CallTagId, CmdTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ResultTagId, GletTagId, TletTagId, LetTagId, CursorTagId, PatternvarTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, BlockTagId, EmitTagId, AsgnTagId, ScopeTagId, IfTagId, WhenTagId, BreakTagId, ContinueTagId, ForTagId, WhileTagId, CoroforTagId, CaseTagId, RetTagId, YldTagId, StmtsTagId, PragmasTagId, PragmaxTagId, InclTagId, ExclTagId, IncludeTagId, ImportTagId, ImportasTagId, FromimportTagId, ImportexceptTagId, ExportTagId, ExportexceptTagId, CommentTagId, DiscardTagId, TryTagId, RaiseTagId, UnpackdeclTagId, AssumeTagId, AssertTagId, CallstrlitTagId, InfixTagId, PrefixTagId, HcallTagId, StaticstmtTagId, BindTagId, MixinTagId, UsingTagId, AsmTagId, DeferTagId, ComesfromTagId}

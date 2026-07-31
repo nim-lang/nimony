@@ -39,6 +39,15 @@ type
     dotAllowed*: bool ## `.D` in tags.md: DotToken is allowed in this slot
     optional*: bool   ## trailing `?`
     repeated*: bool   ## trailing `*` or `+`
+    transparent*: bool
+      ## leading `^` in tags.md: this slot is an operand of a *transparent*
+      ## wrapper, and a walker that recurses into children as statements must
+      ## step over it. See `nimony_model.OperandHeadedS`.
+      ##
+      ## Transparency cannot be inferred from `kind`: `(bind Y)` and
+      ## `(comesfrom ^SYM S*)` have identical slot kinds and opposite walking
+      ## contracts, as do `(when ...)` and `(pragmax ^(pragmas ...) X)`. It has
+      ## to be stated, so the row states it.
 
   TagSpec* = object
     tag*: string
@@ -67,6 +76,11 @@ proc classifyChild*(s: string): ChildSpec =
     result.repeated = true
     name = name[0..^2]
 
+  # `^` before `.`, so `^.D` reads as "transparent, dot allowed".
+  if name.len > 1 and name[0] == '^':
+    result.transparent = true
+    name = name[1..^1]
+
   if name.len > 1 and name[0] == '.':
     result.dotAllowed = true
     name = name[1..^1]
@@ -79,7 +93,13 @@ proc classifyChild*(s: string): ChildSpec =
     of "X": ckX
     of "S": ckS
     of "XS": ckXS
-    of "Y": ckY
+    of "Y", "SYM": ckY
+      # `SYM` is `Y` spelled out: a symbol *use*, not a definition. Only
+      # `(instr SYM X*)` and `(comesfrom SYM S*)` use the long form, and both
+      # mean the same thing - `instr`'s own row says it is "typed exactly like
+      # `(call SYM X*)`". Without this it fell to the `else` below and landed in
+      # `ckAny`, which matches every slot, so the two rows documented a symbol
+      # and validated as "don't care".
     of "LIT", "STR", "INTLIT", "INT_LIT", "STR_LIT": ckLit
     else:
       if name.startsWith("("):
@@ -110,7 +130,14 @@ proc parseTagSpec*(spec: string): TagSpec =
     if s[pos] == ' ':
       inc pos
       continue
-    if s[pos] == '(':
+    if s[pos] == '(' or (s[pos] == '^' and pos + 1 < s.len and s[pos+1] == '('):
+      # A nested `(tag ...)` slot, optionally marked `^` for a transparent
+      # operand. The marker is read here as well as in `classifyChild`, since
+      # nested slots do not go through it.
+      var transparent = false
+      if s[pos] == '^':
+        transparent = true
+        inc pos
       var depth = 1
       inc pos
       while pos < s.len and depth > 0:
@@ -121,7 +148,7 @@ proc parseTagSpec*(spec: string): TagSpec =
       if pos < s.len and s[pos] in {'?', '*', '+'}:
         suffix = $s[pos]
         inc pos
-      var child = ChildSpec(kind: ckNested)
+      var child = ChildSpec(kind: ckNested, transparent: transparent)
       if suffix == "?": child.optional = true
       elif suffix in ["*", "+"]: child.repeated = true
       result.children.add child
@@ -153,6 +180,15 @@ proc parseTagSpec*(spec: string): TagSpec =
       elif token == "...":
         result.isVarargs = true
       pos = j
+
+proc isOperandHeaded*(spec: TagSpec): bool =
+  ## True when this form is a transparent wrapper whose first child is an
+  ## operand: a statement walker must step over that child.
+  ##
+  ## Read straight off the `^` marker in `doc/tags.md`, so it is a property of
+  ## the grammar rather than of the row's prose.
+  spec.children.len > 0 and spec.children[0].transparent and
+    not spec.isVarargs
 
 proc parseTagsMdLines*(mdLines: openArray[string]): TagGrammar =
   ## Parse the Markdown table in `doc/tags.md` split into lines.

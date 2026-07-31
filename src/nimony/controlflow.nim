@@ -1005,9 +1005,9 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
         trStmt c, n
   of ComesfromS:
     # Transparent wrapper: the CFG models the expanded statements themselves,
-    # so drop it like `StmtsS` after stepping over the origin symbol.
-    n.into:
-      skip n # the origin symbol
+    # so drop it like `StmtsS`. `bodyInto` steps over the origin symbol, which a
+    # plain `into` would walk as a statement (see `OperandHeadedS`).
+    n.bodyInto:
       while n.hasMore:
         trStmt c, n
   of ScopeS, StaticstmtS:
