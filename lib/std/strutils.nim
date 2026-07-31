@@ -352,6 +352,16 @@ func splitWhitespace*(s: string; maxsplit: int = -1): seq[string] =
   ## The same as the `splitWhitespace` iterator, but returns a sequence of substrings.
   accResult(splitWhitespace(s, maxsplit))
 
+func join*(a: openArray[string]; sep: string = ""): string =
+  ## Concatenates all strings in `a`, separating them with `sep`.
+  runnableExamples:
+    doAssert join(["A", "B", "Conclusion"], " -> ") == "A -> B -> Conclusion"
+    doAssert join(["ab", "cd"]) == "abcd"
+  result = ""
+  for i in 0 ..< a.len:
+    if i > 0: result.add sep
+    result.add a[i]
+
 func delete*(s: var string, slice: Slice[int]) =
   ## Deletes the items `s[slice]`.
   ##

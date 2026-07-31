@@ -1,0 +1,6 @@
+tests/nimony/modules/tfieldvis_expansion.nim(9, 13) Trace: instantiation from here
+tests/nimony/modules/tfieldvis_expansion.nim(9, 29) Error: undeclared field: 'private' for type Foo
+tests/nimony/modules/tfieldvis_expansion.nim(12, 13) Trace: instantiation from here
+tests/nimony/modules/tfieldvis_expansion.nim(12, 17) Error: undeclared field: 'private' for type Foo
+tests/nimony/modules/tfieldvis_expansion.nim(14, 13) Trace: instantiation from here
+tests/nimony/modules/tfieldvis_expansion.nim(14, 38) Error: undeclared field: 'private' for type Generic

@@ -11,7 +11,12 @@
 # serializer (llvmserializer.nim) renders to .ll text. All LLVM syntax
 # knowledge lives in the serializer.
 
-import std / [assertions, syncio, sets, formatfloat, packedsets,
+when defined(nimony):
+  # See llvmirmodel.nim: a nil `LLType` means "no type here"; the generators
+  # (all `include`d into this module) rely on that throughout.
+  {.feature: "lenientnils".}
+
+import std / [assertions, syncio, sets, formatfloat,
     strutils, sequtils, tables]
 from std / os import changeFileExt, splitFile, extractFilename, fileExists,
     getCurrentDir, absolutePath
@@ -142,6 +147,27 @@ proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
     echo getStackTrace()
   quit 1
 
+# `strutils.parseInt` and `os.absolutePath` are `.raises` (ValueError) under
+# Nimony. Their inputs here come from the front end (digit strings) and from the
+# file table, so a failure is an internal error -- catch it locally instead of
+# spreading `raises` through the whole generator (see doc/porting.md).
+
+proc parseIntOrQuit(s: string): int =
+  result = 0
+  try:
+    result = parseInt(s)
+  except:
+    quit "lengc: expected an integer literal but got: '" & s & "'"
+
+proc absoluteDirOrQuit(dir: string): string =
+  ## Absolute spelling of `dir`, the current directory for an empty one. Both
+  ## `getCurrentDir` and `absolutePath` (whose `root` default calls it) raise.
+  result = ""
+  try:
+    result = if dir == "": getCurrentDir() else: absolutePath(dir)
+  except:
+    quit "lengc: cannot resolve the absolute path of: '" & dir & "'"
+
 # ---- Block / emission helpers ----
 
 proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string
@@ -228,7 +254,7 @@ proc llIntTextC*(text: string; typ: LLType): LLValue {.inline.} =
 proc typeEq*(a, b: LLType): bool {.inline.} =
   ## Structural type equality. Fast path on pointer identity for interned types.
   if system.`==`(a, b): return true
-  if a.isNil or b.isNil: return false
+  if a == nil or b == nil: return false
   serialize(a) == serialize(b)
 
 proc withType*(v: LLValue; typ: LLType): LLValue {.inline.} =
@@ -324,9 +350,14 @@ proc genCallWithType(c: var LLVMCode; n: var Cursor; retType: LLType;
     result: var LLValue)
 proc genCallExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 
-proc llFloatHexText(f: float): string {.inline.} =
+proc llFloatHexText(f: float): string =
   # LLVM float literal as hex: `0x` + IEEE-754 bits — exact, avoids the decimal-point rule.
-  "0x" & toHex(cast[uint64](f), 16)
+  # Spelled out rather than via `strutils.toHex`, which Nimony does not have.
+  const HexChars = "0123456789ABCDEF"
+  let bits = cast[uint64](f)
+  result = "0x"
+  for i in countdown(15, 0):
+    result.add HexChars[int((bits shr (i*4)) and 0xF'u64)]
 
 # ---- Type generation ----
 

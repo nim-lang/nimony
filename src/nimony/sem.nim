@@ -710,7 +710,7 @@ type
     FailedDot
     InvalidDot
 
-proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId; info: NifLineInfo; flags: set[SemFlag]): DotExprState
+proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId; info: NifLineInfo; flags: set[SemFlag]; accessToken = ""): DotExprState
 
 proc tryBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item;
                          atStart: Cursor): bool
@@ -986,16 +986,38 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
       # maybe error
       result = ObjField(level: -1)
 
+proc visibilityModule(c: SemContext; info: NifLineInfo): string =
+  ## The module the code at `info` was WRITTEN in — what private field
+  ## visibility is judged against.
+  ##
+  ## Inside an expansion the tree mixes two provenances: the expanded routine's
+  ## body (which came from `frame.file`) and the call-site arguments
+  ## substituted into it (which did not). Only the former belongs to the
+  ## expanded routine's module; an argument is the caller's own code and stays
+  ## judged against the module being compiled. Walking outwards handles
+  ## expansions nested inside expansions.
+  for i in countdown(c.visOwner.len-1, 0):
+    if c.visOwner[i].file == info.file.uint32:
+      return c.visOwner[i].module
+  result = c.thisModuleSuffix
+
 proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
                               bindings: Table[SymId, Cursor];
-                              bypassVis = false): ObjField =
+                              info: NifLineInfo;
+                              bypassVis = false;
+                              tokenModule = ""): ObjField =
+  ## `tokenModule` is the module named by the input's access token, if it
+  ## carried one: the module that access was written in, which is what its
+  ## visibility must be judged against no matter where it is re-checked.
   let impl = decl.objBody
   result = findObjFieldAux(c, impl, name, bindings)
-  if c.routine.inInst == 0 and not bypassVis:
-    # only check visibility during first semcheck, unless the input NIF
-    # already carried an access-token proving the access was hygiene-checked
-    # at a site that had visibility (e.g. a template body semchecked in the
-    # field's owner module).
+  if not bypassVis or (tokenModule.len > 0 and tokenModule != AlreadyChecked):
+    # Two things bypass the check outright: an object constructor whose field
+    # is already a resolved Symbol (an earlier pass validated it and there is
+    # no module to compare against), and the `AlreadyChecked` token, which
+    # `exprexec` stamps because its sub-compile runs under a synthesized module
+    # suffix that cannot match any real one. A token naming a real module is
+    # not a bypass: it says which module to judge against.
     if result.level == 0:
       result.rootOwner = genericRootSym(decl)
     if result.level >= 0:
@@ -1008,8 +1030,17 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
         if owner == SymId(0):
           visible = true
         else:
+          # Judge against the module this code was WRITTEN in, not the module
+          # being compiled: a template/macro body or a `{.untyped.}` generic
+          # body reaches sem in the consumer's module but belongs to its own.
+          # `c.routine.inInst` used to disable the check here instead, which
+          # also disabled it for `untyped` template arguments semchecked for
+          # the first time at a call site that cannot see the field (#1988).
+          let visMod =
+            if tokenModule.len > 0: tokenModule
+            else: visibilityModule(c, info)
           let ownerModule = extractModule(pool.syms[owner])
-          visible = ownerModule == "" or ownerModule == c.thisModuleSuffix
+          visible = ownerModule == "" or ownerModule == visMod
       if not visible:
         # treat as undeclared
         result = ObjField(level: -1)
@@ -1051,7 +1082,10 @@ proc findEnumField(decl: EnumDecl; name: StrId): SymId =
         return symId
 
 proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Item; fieldName: StrId;
-                   info: NifLineInfo; flags: set[SemFlag]): DotExprState =
+                   info: NifLineInfo; flags: set[SemFlag];
+                   accessToken = ""): DotExprState =
+  ## `accessToken` is the module named by the input `(dot …)`'s access token,
+  ## or "" when it carried none.
   let exprStart = dest.len
   let expected = it.typ
   dest.addParLe(DotX, info)
@@ -1088,8 +1122,9 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
         if objType.typeKind == ObjectT:
           # build bindings for invoked object type to get proper field type:
           let bindings = bindInvokeArgs(decl, invokeArgs)
-          let field = findObjFieldConsiderVis(c, decl, fieldName, bindings,
-                                              bypassVis = BypassFieldVis in flags)
+          let field = findObjFieldConsiderVis(c, decl, fieldName, bindings, info,
+                                              bypassVis = BypassFieldVis in flags,
+                                              tokenModule = accessToken)
           if field.level >= 0 and field.guarded and c.inUncheckedAccess == 0 and
               BypassGuardedCheck notin flags:
             dest.shrink exprStart
@@ -1104,11 +1139,12 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
             dest.addSymUse(field.sym, info)
             dest.addIntLit(field.level, info)
             if not field.exported:
-              # Emit the access-token string lit so later re-checks (template
-              # expansion, generic instantiation, exprexec serialization) see
-              # that this access was hygiene-checked with visibility and must
-              # be accepted even if the consumer module cannot see the field.
-              dest.addStrLit("x", info)
+              # Emit the access token: the module this access was written in.
+              # Later re-checks (template expansion, generic instantiation,
+              # exprexec serialization) happen in a different module, so they
+              # judge the access against this suffix rather than against
+              # whichever module they are running in.
+              dest.addStrLit(visibilityModule(c, info), info)
             it.typ = field.typ # will be fit later with commonType
             it.kind = FldY
           else:
@@ -1183,17 +1219,19 @@ proc semDot(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[SemF
   # skip optional inheritance depth:
   if it.n.isIntLit:
     inc it.n
-  # optional access-token StrLit — `"x"` — certifies this dot expression
-  # was already type-checked with visibility in the field's owner module.
+  # optional access-token StrLit: the module this dot expression was written
+  # in, stamped when it was first type-checked with visibility.
   var innerFlags = flags
+  var accessToken = ""
   if fieldNameCursor.isSymbol:
     innerFlags.incl BypassGuardedCheck
   if it.n.isStringLit:
     innerFlags.incl BypassFieldVis
+    accessToken = pool.strings[it.n.strId]
     inc it.n
   it.n = dotStart; skip it.n
   # now interpret the dot expression:
-  let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, innerFlags)
+  let state = tryBuiltinDot(c, dest, it, lhs, fieldName, info, innerFlags, accessToken)
   if state == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
     dest.shrink exprStart
     c.buildErr dest, info, "undeclared identifier in module: '" & pool.strings[fieldName] & "'"
@@ -1878,13 +1916,15 @@ proc semDotAsgn(c: var SemContext; dest: var TokenBuf; it: var Item; info: NifLi
   if dot.n.isIntLit:
     inc dot.n
   var dotFlags: set[SemFlag] = {}
+  var dotAccessToken = ""
   if dot.n.isStringLit:
     dotFlags.incl BypassFieldVis
+    dotAccessToken = pool.strings[dot.n.strId]
     inc dot.n
   dot.n = dotStart; skip dot.n
   var dotBuf = createTokenBuf(8)
   let builtin = tryBuiltinDot(c, dotBuf, dot, dotLhs, fieldName, dotInfo,
-                               dotFlags) != FailedDot
+                               dotFlags, dotAccessToken) != FailedDot
   if builtin:
     # build regular assignment:
     dest.addParLe(AsgnS, info)
@@ -3875,7 +3915,7 @@ template wrongBranchError(c: var SemContext; dest: var TokenBuf, info: NifLineIn
       "are in conflict with this value.") %
       [asNimSym(discriminator), asNimCode(discriminatorVal), asNimSym(field)])
 
-proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor; selectorType: Cursor): bool =
+proc caseBranchMatchesExprRaw(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor; selectorType: Cursor): bool =
   result = false
   var branch = branch
   branch = sub(branch)
@@ -3897,6 +3937,17 @@ proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matche
       if sameTrees(branch, matched):
         return true
       skip branch
+
+proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor;
+                           selectorType: Cursor): bool =
+  ## `evalConstIntExpr` semchecks the range bounds *into* `dest`, but here `dest`
+  ## is the object constructor currently being built: leaving the scratch output
+  ## behind produces `(oconstr T (kv ...) <leftovers>)` which later passes -- they
+  ## expect nothing but `kv` children -- choke on. The bounds were already checked
+  ## at the type declaration, so throw the scratch tokens away again.
+  let destStart = dest.len
+  result = caseBranchMatchesExprRaw(c, dest, branch, matched, selectorType)
+  dest.shrink destStart
 
 type
   BranchState = enum
@@ -4268,7 +4319,6 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   dest.shrink exprStart
   var decl = default(TypeDecl)
   var objType = it.typ
-  var isGenericObj = containsGenericParams(objType)
   if objType.typeKind in {RefT, PtrT}:
     inc objType
   var invokeArgs = skipInvoke(objType)
@@ -4309,7 +4359,6 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
     if objType.isSymbol:
       decl = getTypeSection(objType.symId)
       objType = decl.objBody
-    isGenericObj = false
   # build bindings for invoked object type to get proper types for fields:
   let bindings = bindInvokeArgs(decl, invokeArgs)
   var fieldBuf = createTokenBuf(16)
@@ -4338,18 +4387,20 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
         # means a prior semcheck pass already validated visibility, so bypass the
         # visibility check in that case.
         let hasFieldSym = fieldNameCursor.isSymbol
-        var field = findObjFieldConsiderVis(c, decl, fieldName, bindings, bypassVis = hasFieldSym)
+        var field = findObjFieldConsiderVis(c, decl, fieldName, bindings, fieldInfo,
+                                            bypassVis = hasFieldSym)
         if field.level >= 0:
           if field.sym in setFieldPositions:
             c.buildErr dest, fieldInfo, "field already set: " & pool.strings[fieldName]
             skip it.n
           else:
             setFieldPositions[field.sym] = fieldStart
-            if isGenericObj:
-              # do not save generic field sym
-              fieldBuf.addIdent(fieldName, fieldInfo)
-            else:
-              fieldBuf.addSymUse(field.sym, fieldInfo)
+            # Store the resolved field symbol even while the object type is
+            # still generic. Field names are object-scoped and `subs` leaves
+            # field `SymbolDef`s untouched across instantiation, so the sym
+            # stays valid; keeping an `Ident` here instead would drop the
+            # "already validated" evidence that `hasFieldSym` reads.
+            fieldBuf.addSymUse(field.sym, fieldInfo)
             # maybe add inheritance depth too somehow?
             var val = Item(n: it.n, typ: field.typ)
             semExpr c, fieldBuf, val

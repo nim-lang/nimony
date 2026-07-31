@@ -9,6 +9,12 @@
 
 # We produce C code as a list of tokens.
 
+when defined(nimony):
+  # `moveToDataSection` & co. are `.dirty` templates whose bodies reach for the
+  # caller's `c`; sem needs the feature to leave those idents untyped until the
+  # expansion site (see doc/porting.md, "Dirty templates").
+  {.feature: "untyped".}
+
 import std / [assertions, syncio, tables, sets, intsets, formatfloat, packedsets]
 from std / syncio import readFile, writeFile
 from std / os import changeFileExt, splitFile, extractFilename, fileExists
@@ -96,7 +102,7 @@ proc toString(c: Cursor; spaces: bool): string =
 proc fillTokenTable(tab: var BiTable[Token, string]) =
   for e in EmptyToken..high(PredefinedToken):
     let id = tab.getOrIncl $e
-    assert id == Token(e), $(id, " ", ord(e))
+    assert id == Token(e), $uint32(id) & " " & $ord(e)
 
 type
   GenFlag* = enum
@@ -454,14 +460,14 @@ proc genCLineDir(c: var GeneratedCode; info: NifLineInfo) =
     if id.isValid:
       c.fileIds.incl id
 
-template moveToDataSection(body: untyped) =
+template moveToDataSection(body: untyped) {.dirty.} =
   let oldLen = c.code.len
   body
   for i in oldLen ..< c.code.len:
     c.data.add c.code[i]
   setLen c.code, oldLen
 
-template moveToInitSection(body: untyped) =
+template moveToInitSection(body: untyped) {.dirty.} =
   let oldLen = c.code.len
   body
   for i in oldLen ..< c.code.len:
@@ -481,7 +487,7 @@ proc isLiteral(n: var Cursor): bool =
     inc n
   else:
     case n.exprKind
-    of FalseC, TrueC, InfC, NegInfC, NanC, SufC, NilC:
+    of FalseC, TrueC, InfC, NeginfC, NanC, SufC, NilC:
       result = true
       skip n
     of AconstrC, OconstrC, CastC, ConvC:
@@ -556,7 +562,7 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
     genType c, typ, name, isConst = vk == IsConst
     let flags = genVarPragmas(c, d.pragmas)
     if not toExtern and (StaticP in flags or useStatic):
-      c.code.insert(Token(StaticKeyword), beforeDecl)
+      c.code.insert([Token(StaticKeyword)], beforeDecl)
     let beforeInit = c.code.len
 
     var value = d.value
@@ -586,8 +592,11 @@ proc genVarDecl(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = fal
 
 include genstmts
 
-proc addOverflowDecl(c: var GeneratedCode; code: var seq[Token]; beforeBody: int) =
-  let tokens = @[
+proc overflowDeclTokens(c: var GeneratedCode): seq[Token] =
+  ## The `NB8 ovf = NIM_FALSE;` prologue. Returned instead of inserted by the
+  ## callee: the destination is always a field of `c` itself, and passing it as
+  ## a separate `var seq` parameter next to `c` aliases the two.
+  result = @[
     c.tokens.getOrIncl("NB8"),
     Token(Space),
     Token(OvfToken),
@@ -595,7 +604,6 @@ proc addOverflowDecl(c: var GeneratedCode; code: var seq[Token]; beforeBody: int
     c.tokens.getOrIncl("NIM_FALSE"),
     Token(Semicolon)
   ]
-  code.insert(tokens, beforeBody)
 
 proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   c.m.openScope()
@@ -687,13 +695,14 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     let beforeBody = c.code.len
     genStmt c, prc.body
     if c.currentProc.needsOverflowFlag:
-      addOverflowDecl c, c.code, beforeBody
+      let ovfDecl = overflowDeclTokens(c)
+      c.code.insert(ovfDecl, beforeBody)
     c.add CurlyRi
   c.m.closeScope()
   c.inToplevel = true
   c.currentProc = oldProc
 
-template genForeignDataDecl(body: untyped) =
+template genForeignDataDecl(body: untyped) {.dirty.} =
   # Foreign var/const/gvar/tvar `extern` declarations are emitted by `genVar`
   # into `c.data` via `moveToDataSection`. But `genImportedSyms` runs *after*
   # `genToplevel` has already filled `c.data` with this module's own consts —
@@ -811,7 +820,8 @@ proc generateCode*(s: var State, inp, outp: string; flags: set[GenFlag]) =
   if c.init.len > 0:
     f.write "static void __attribute__((constructor)) init(void) {"
     if c.currentProc.needsOverflowFlag:
-      addOverflowDecl c, c.init, 0
+      let ovfDecl = overflowDeclTokens(c)
+      c.init.insert(ovfDecl, 0)
     writeTokenSeq f, c.init, c
     f.write "}\n\n"
 

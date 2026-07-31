@@ -557,6 +557,17 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
         semGenericParam c, dest, n
   elif n.typeKind == InvokeT:
     inc c.routine.inInst
+    # `(invoke ORIGIN args…)`: the body about to be semchecked was written in
+    # ORIGIN's module, not in the module driving the instantiation. Matters for
+    # `{.untyped.}` generics, whose bodies are published unresolved and whose
+    # field accesses therefore resolve here for the first time (#1988).
+    var origin = n
+    inc origin
+    if origin.isSymbol:
+      let originRes = tryLoadSym(origin.symId)
+      if originRes.status == LacksNothing:
+        c.visOwner.add VisOwner(module: extractModule(pool.syms[origin.symId]),
+                                file: originRes.decl.info.file.uint32)
     takeTree dest, n
   else:
     buildErr c, dest, n.info, "expected '.' or 'typevars'"
@@ -1016,6 +1027,9 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
     # not leak either increment into the enclosing definition. Captured BEFORE
     # this routine's own increments.
     let outerGenericDefinition = c.inGenericDefinition
+    # Likewise for the origin-module stack: `semGenericParams` pushes on the
+    # `(invoke …)` branch, so restore by length rather than a paired `pop`.
+    let outerVisOwner = c.visOwner.len
     # 'break' and 'continue' are valid in a template regardless of whether we
     # really have a loop or not:
     if kind == TemplateY:
@@ -1027,6 +1041,17 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       c.openScope() # open parameter scope
       let beforeGenericParams = dest.len
       semGenericParams c, dest, it.n
+      if c.visOwner.len == outerVisOwner:
+        # Not a generic instantiation (`semGenericParams` pushes ORIGIN's module
+        # for those). A routine's body is written in the module that declares
+        # the routine, so that is what its field accesses must be judged
+        # against. Establishing it here rather than inheriting matters because
+        # sem re-enters for decls that are not part of an in-flight expansion —
+        # e.g. a type's `=destroy` hook semchecked lazily while a generic from
+        # another module is being instantiated would otherwise be judged
+        # against that generic's module and lose access to its own fields.
+        c.visOwner.add VisOwner(module: extractModule(pool.syms[symId]),
+                                file: info.file.uint32)
       if c.routine.inGeneric > 0 and c.routine.parent.kind != NoSym and c.routine.parent.inGeneric == 0:
         c.genericInnerProcs.incl(symId)
       let beforeParams = dest.len
@@ -1107,6 +1132,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       dest.addParRi(it.n.endInfo)
     finally:
       c.inGenericDefinition = outerGenericDefinition
+      c.visOwner.setLen outerVisOwner
       c.routine = c.routine.parent
   if newName == NoSymId:
     producesVoid c, dest, info, it.typ
@@ -1359,6 +1385,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
     let prevGeneric = c.routine.inGeneric
     let prevGenericDefinition = c.inGenericDefinition
     let prevInst = c.routine.inInst
+    let prevVisOwner = c.visOwner.len
     if n.isDotToken:
       takeTree dest, n
       isGeneric = false
@@ -1437,6 +1464,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
       c.inGenericDefinition = prevGenericDefinition
       c.routine.inGeneric = prevGeneric # revert increase by semGenericParams
       c.routine.inInst = prevInst
+      c.visOwner.setLen prevVisOwner
 
     c.addSym dest, delayed
     dest.addParRi(n.endInfo)

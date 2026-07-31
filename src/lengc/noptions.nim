@@ -1,4 +1,4 @@
-import std/[tables]
+import std/[tables, syncio] # syncio: `quit` is not in Nimony's `system`
 
 type
   Backend* = enum

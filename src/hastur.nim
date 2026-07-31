@@ -37,9 +37,15 @@ Commands:
                        results in place — nothing is installed back to
                        `bin/`. Extra args are forwarded to every
                        `nimony c` invocation.
+                       Every stage is compiled with `-d:release` by default
+                       (the wider test: shoggoth + the `when defined(release)`
+                       paths). `--no-release` boots at the default opt level.
+                       To boot at another mode use `--forward:` so the flag
+                       survives getopt intact — `--forward:-d:danger` replaces
+                       the default rather than stacking on it.
   selfcheck            full compiler regression check: rebuilds the nimony
                        toolchain (nimony+nimsem+hexer share `programs.nim`),
-                       runs `tiers`, then `boot --valgrind`. Use this
+                       runs `tiers`, then `boot --valgrind` (release). Use this
                        after touching any module the compiler itself imports.
   <dir>                run the test tree rooted at <dir> (see Files below):
                        each directory is either a setup.nim custom runner or
@@ -1259,7 +1265,13 @@ proc robustMoveFile(src, dest: string) =
   if fileExists(src):
     moveFile src, dest
 
-var bootOptSpeed = false
+var bootRelease = true
+  ## `boot` compiles the bootstrapped toolchain with `-d:release` by default:
+  ## it has proven to be the wider test. It implies `--opt:speed` (so the
+  ## shoggoth tree optimizer and the inter-module inliner run) *and* defines
+  ## `release`, which exercises the `when defined(release)` paths in nimony,
+  ## nimsem and hexer themselves — a whole class of bugs a debug boot cannot
+  ## reach. `--no-release` boots at the default opt level instead.
 var debugBuild = false
 var nativeToolsDebug = false
 
@@ -1465,6 +1477,11 @@ const BootstrapModules = [
   # Tier 20 tip — the driver. Subsumes sem.nim, deps.nim, and hexer/hexer.nim
   # via its import set, so this entry alone exercises the full bootstrap DAG.
   "src/nimony/nimony.nim",
+
+  # The Leng backend's own driver: a separate DAG tip (nothing in the nimony
+  # front end imports it), covering both the C and the LLVM code generators
+  # plus `lib/foreignmodules` and `lib/nifcdecl` via its import set.
+  "src/lengc/lengc.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.
@@ -1839,7 +1856,25 @@ const BootSelfCompilePasses = 3
   ## same set of stage directories regardless of whether earlier stages
   ## happen to converge to a byte-identical binary.
 
-proc bootCmd*(args: string; withValgrind: bool) =
+proc specifiesOptLevel(args: string): bool =
+  ## Does the caller already pick a build mode for the bootstrapped compiler?
+  ## Then `boot` must not layer its `-d:release` default on top: `-d:danger`
+  ## in particular is a deliberate *stronger* choice, and passing both would
+  ## read as a contradiction on the command line.
+  ##
+  ## Matched without the leading dashes on purpose, so that every spelling
+  ## counts: getopt strips them off a positional `-d:danger` (it reaches here as
+  ## `d:danger` — which is what `--forward:` exists to avoid), while
+  ## `--forward:-d:danger` keeps them.
+  result = "d:release" in args or "d:danger" in args or "opt:" in args
+
+proc bootCmd*(args: string; withValgrind: bool; release = true) =
+  ## `release` ⇒ compile every stage with `-d:release` unless `args` already
+  ## names a build mode. Defaulted here rather than at the dispatch site so
+  ## `selfcheck`, which calls this directly, gets the same coverage.
+  var args = args
+  if release and not specifiesOptLevel(args):
+    args = if args.len > 0: "-d:release " & args else: "-d:release"
   for tool in BootSelfTools:
     let exe = binDir() / tool.addFileExt(ExeExt)
     if not fileExists(exe):
@@ -1857,6 +1892,8 @@ proc bootCmd*(args: string; withValgrind: bool) =
   createDir cacheBase
   let t0 = epochTime()
 
+  echo "[boot] compiling stages with: ",
+       (if args.len > 0: args else: "(no extra flags)")
   var stages = newSeq[string](BootSelfCompilePasses + 1)
   stages[0] = provisionStageZero()
   for n in 1 .. BootSelfCompilePasses:
@@ -1888,7 +1925,9 @@ proc selfcheckCmd() =
   ##   3. `boot --valgrind`: deterministic self-host (bin0 → bin1 → … →
   ##      binN), then run the last stage's nimony under valgrind. Catches
   ##      whole-program regressions (init order, codegen interactions,
-  ##      runtime UAFs) that single-module compiles miss.
+  ##      runtime UAFs) that single-module compiles miss. Boots at
+  ##      `-d:release` (boot's default), so the shoggoth optimizer and the
+  ##      `when defined(release)` paths are part of what this checks.
   ##
   ## Boot's "stages N and N+1 differ" messages are informational — they
   ## normally reflect gcc's `--build-id` non-determinism, not a real
@@ -2261,11 +2300,16 @@ proc handleCmdLine =
         # via `setup.hastur` long after the subcommand was parsed.
         debugBuild = true
       of "release":
-        # Build-mode-wise a no-op (release IS the default). Retained because
-        # for `boot` it additionally means "compile the bootstrapped nimony's
-        # own output with --opt:speed", which is a separate axis and stays
-        # opt-in.
-        bootOptSpeed = true
+        # Build-mode-wise a no-op (release IS the default), for the toolchain
+        # itself *and* — since it is now `boot`'s default — for the toolchain
+        # `boot` compiles. Retained as the explicit spelling of that default.
+        bootRelease = true
+      of "no-release", "norelease":
+        # Boot at the default opt level. For isolating whether a boot failure
+        # is release-specific (`-d:release` turns the shoggoth optimizer on and
+        # flips the `when defined(release)` paths at once, so a green
+        # `--no-release` boot narrows the cause to one of those two).
+        bootRelease = false
       of "valgrind":
         withValgrind = true
       of "forward":
@@ -2310,7 +2354,6 @@ proc handleCmdLine =
   of "boot":
     buildNimony()
     var bootArgs = ""
-    if bootOptSpeed: bootArgs.add "--opt:speed"
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
       bootArgs.add quoteShell(a)
@@ -2322,7 +2365,7 @@ proc handleCmdLine =
     if forward.len > 0:
       if bootArgs.len > 0: bootArgs.add ' '
       bootArgs.add forward
-    bootCmd(bootArgs, withValgrind)
+    bootCmd(bootArgs, withValgrind, release = bootRelease)
 
   of "selfcheck":
     selfcheckCmd()

@@ -23,6 +23,7 @@ import std/monotimes
 import std/nifply
 import std/os
 import std/oserrors
+import std/packedsets
 import std/parsejson
 import std/parseopt
 import std/parseutils

@@ -270,12 +270,49 @@ proc transformLoop(c: var Context; n: var Cursor) =
   n.loopInto:
     tr(c, n)
 
+proc registerDecl(c: var Context; n: Cursor) =
+  ## Records a local's declared type in the current typenav scope, so that a
+  ## later `(at LOCAL iv)` can be typed. `optdriver.rebuildTree` opens the scope
+  ## and registers the proc's *params*; the body's locals are ours to add, and
+  ## since `tr` walks in source order every decl is registered before the loops
+  ## that can use it. Mirrors the `VarS` case of `aliasing.walk`.
+  ##
+  ## Without this, a body-local array whose type is a nominal symbol — e.g. the
+  ## 32-byte word buffer a `char` set operation desugars to,
+  ## `` `t.0.IAarrayAuS8ZS32. `` rather than a literal `(array …)` — resolves to
+  ## the `(err)` sentinel and `addPtrVarDecl` bakes `(ptr (err))` into the
+  ## declared type, which the backends then reject.
+  if c.m == nil: return
+  var probe = n
+  var nameStart = default(Cursor)
+  var typeStart = default(Cursor)
+  probe.into:
+    nameStart = probe
+    skip probe                             # name
+    if probe.hasMore: skip probe           # pragmas
+    if probe.hasMore:
+      typeStart = probe
+      skip probe                           # type
+    while probe.hasMore: skip probe
+  if nameStart.kind == SymbolDef and not cursorIsNil(typeStart):
+    c.m[].registerLocal(nameStart.symId, typeStart)
+
 proc tr(c: var Context; n: var Cursor) =
   if not n.hasMore: return
   case n.kind
   of TagLit:
-    if n.stmtKind in {WhileS, LoopS}:
+    case n.stmtKind
+    of WhileS, LoopS:
       transformLoop(c, n)
+    of VarS, GvarS, TvarS, ConstS:
+      registerDecl(c, n)
+      n.loopInto:
+        tr(c, n)
+    of ScopeS:
+      if c.m != nil: c.m[].openScope()
+      n.loopInto:
+        tr(c, n)
+      if c.m != nil: c.m[].closeScope()
     else:
       n.loopInto:
         tr(c, n)
