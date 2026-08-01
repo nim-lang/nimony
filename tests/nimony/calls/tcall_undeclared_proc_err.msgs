@@ -1,0 +1,6 @@
+tests/nimony/calls/tcall_undeclared_proc_err.nim(4, 1) Error: undeclared identifier: 'undeclaredProc'
+tests/nimony/calls/tcall_undeclared_proc_err.nim(5, 3) Error: undeclared identifier: undeclaredVar1
+tests/nimony/calls/tcall_undeclared_proc_err.nim(5, 19) Error: undeclared identifier: undeclaredVar2
+tests/nimony/calls/tcall_undeclared_proc_err.nim(7, 1) Error: undeclared identifier: 'undeclaredTmpl'
+tests/nimony/calls/tcall_undeclared_proc_err.nim(8, 16) Error: expected pragma
+tests/nimony/calls/tcall_undeclared_proc_err.nim(8, 34) Error: expected pragma

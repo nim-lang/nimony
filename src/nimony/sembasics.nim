@@ -222,6 +222,15 @@ template withErrorContext*(c: var SemContext; info: NifLineInfo; body: untyped) 
     popErrorContext(c)
 
 proc buildErr*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; msg: string; orig: Cursor) =
+  ## Call this proc when you find compile errors.
+  ## Adds `ErrT` node on `dest` and `msg` is printed with `info` later.
+  ## `orig` points to the node causing the compile error.
+  ## If there is any `Err` node in `orig`,  `orig` and `msg` in the child node is used.
+  ##
+  ## There are nodes that have a specific number of children.
+  ## You should avoid making a node with wrong number of children with this proc.
+  ##
+  ## Errors in `ErrT` are printed in `reportErrors` proc in `nimony/reporters.nim`.
   when defined(debugBuildErr):
     if not c.debugAllowErrors:
       writeStackTrace()
