@@ -3880,13 +3880,20 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
       dest.addIntLit(depth, info)
     dest.addParRi()
 
+proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+                          setFields: Table[SymId, Cursor]; info: NifLineInfo;
+                          bindings: Table[SymId, Cursor]; depth = 0;
+                          isUnion = false)
+
 proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymId, Cursor]): (bool, SymId) =
-  var n = n
-  inc n
+  # A branch body is not a flat field list: it can contain a nested `case`
+  # section, so walk it with the field iterator instead of `takeLocal` in a
+  # loop (which would read the `(case ...)` node as a local and run the
+  # cursor off its bounds).
+  var n = sub(n)
   result = (false, SymId(0))
-  if n.substructureKind == NilU:
-    return
-  while n.hasMore:
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
     let local = takeLocal(n, SkipFinalParRi)
     if local.name.symId in setFields:
       result = (true, local.name.symId)
@@ -3994,9 +4001,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             elif state == Unknown:
               wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
             n.into: # stmt
-              while n.hasMore:
-                let field = takeLocal(n, SkipFinalParRi)
-                buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
           else:
             skip n
@@ -4009,9 +4014,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             elif isBranchSelected and setFields.hasKey(selectorSymId):
               wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
             n.into: # stmt
-              while n.hasMore:
-                let field = takeLocal(n, SkipFinalParRi)
-                buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
           else:
             skip n
@@ -4026,12 +4029,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       badDiscriminatorError(c, dest, info, lastFieldSymId, selectorSymId)
     elif bestBranch != default(Cursor):
       bestBranch.peekInto: # stmt
-        while bestBranch.hasMore:
-          if bestBranch.substructureKind == NilU:
-            skip bestBranch
-            break
-          let field = takeLocal(bestBranch, SkipFinalParRi)
-          buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+        buildObjConstrFields(c, dest, bestBranch, setFields, info, bindings, depth)
 
 proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
