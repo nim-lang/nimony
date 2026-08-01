@@ -142,7 +142,12 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
     copyIntoKind dest, StmtsS, info:
       let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
       inc c.tmpCounter
-      copyIntoKind dest, CursorS, info:
+      # The temp holds the call's RETURN VALUE — an owned, freshly
+      # constructed value — so it must be an owning local. As a CursorS the
+      # duplifier could only `=dup` out of it (a cursor is a borrow) and the
+      # destroyer never released it: every `dest = raisingCall()` leaked the
+      # entire returned value once per call.
+      copyIntoKind dest, VarS, info:
         addSymDef dest, symId, info
         dest.addEmpty2 info # export marker, pragma
         copyTree dest, retType
