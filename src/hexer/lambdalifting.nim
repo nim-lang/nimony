@@ -1197,7 +1197,22 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         transformClosureIter c, dest, n
       else:
         takeTree dest, n
-    of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
+    of TypeS:
+      # A closure proctype nested in a named type's body (an alias, an
+      # object field, a generic instance's element type) must be lifted to
+      # the `(tuple <proctype> (ref RootObj))` shape too. Every other
+      # position routes through `treType`; without this the type side keeps
+      # a bare function pointer while values of that type are already
+      # tuples, and NIFC emits mismatched C (issue #2244).
+      takeInto dest, n:       # TypeS tag
+        takeTree dest, n        # name
+        takeTree dest, n        # exported
+        takeTree dest, n        # typevars
+        takeTree dest, n        # pragmas
+        if n.hasMore:
+          treType c, dest, n    # body
+        while n.hasMore: takeTree dest, n
+    of MacroS, TemplateS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
       PragmasS:

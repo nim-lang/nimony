@@ -2277,6 +2277,96 @@ Other fields at the same level (siblings) remain accessible:
     # c.elements.add(x)    # Error: 'c.elements' is borrowed
   ```
 
+### `establishesBorrow` pragma
+
+A routine marked `establishesBorrow`:idx: declares that its result keeps aliasing
+its **first parameter** after the call returns. The borrow then lasts as long as
+whatever the result was bound to:
+
+  ```nim
+  var s = @[1, 2, 3]
+  let view = toOpenArray(s)   # borrows 's'
+  s.add 4                     # Error: 's' is borrowed and cannot be mutated
+  echo view[0]
+  ```
+
+The annotation is required because the borrow checker cannot see the aliasing
+otherwise. A view constructor stores a raw pointer into its result, and a raw
+pointer is exactly where a path it can follow ends. The declaration is what
+carries the information across the call boundary:
+
+  ```nim
+  converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline, establishesBorrow.} =
+    openArray[T](a: rawData(s), len: s.len)
+  ```
+
+Because the pragma names an aliasing relationship rather than a property of the
+type, overloads that build a view out of something with no owner do not carry it
+— borrowing from a raw pointer would be meaningless:
+
+  ```nim
+  func toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
+    ...   # no `establishesBorrow`: the caller owns the lifetime
+  ```
+
+Views passed directly as arguments are covered by the call-site aliasing check
+above without outliving the call:
+
+  ```nim
+  proc appendFirst(v: openArray[int]; s: var seq[int]) =
+    s.add v[0]
+
+  appendFirst(s, s)   # Error: mutable argument aliases with immutable parameter
+  ```
+
+A borrow also must not outlive what it borrows from. Storing one where it stays
+reachable after the proc returns — in a global, in `result`, or through a `var`
+parameter — is rejected when the source is a local:
+
+  ```nim
+  var g: openArray[int]
+
+  proc escape =
+    var a = [1, 2, 3]
+    g = toOpenArray(a)   # Error: borrow of 'a' escapes the proc
+  ```
+
+Borrowing from a parameter or from a global is fine, because those outlive the
+call:
+
+  ```nim
+  proc slice(s: seq[int]): openArray[int] =
+    result = toOpenArray(s)   # OK: the caller owns 's'
+  ```
+
+The same holds for scopes within a proc. Assigning a view rebinds what it
+borrows, so the check is against the scope the *source* lives in:
+
+  ```nim
+  proc outlivesSource =
+    var view: openArray[int]
+    block:
+      var a = [1, 2, 3]
+      view = toOpenArray(a)   # Error: borrow of 'a' escapes its scope
+    discard view.len
+
+  proc fine =
+    var s = @[1, 2, 3]
+    var view: openArray[int]
+    block:
+      view = toOpenArray(s)   # OK: 's' outlives the block
+    discard view.len
+  ```
+
+Only a reference-like result can carry a borrow out. Reading a plain value
+through a borrow copies it, so it leaves freely:
+
+  ```nim
+  proc first(s: seq[int]): int =
+    for x in s: return x   # OK: 'x' is a copy, not a view
+    return -1
+  ```
+
 
 ## `out` parameters
 

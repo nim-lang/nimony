@@ -165,6 +165,23 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 
 # --- Borrow checking ---
 
+proc establishesBorrow(c: var NjvlContext; n: Cursor): bool =
+  ## True if `n` is a call to a routine marked `.establishesBorrow.`, i.e. one
+  ## whose result keeps aliasing its first argument after the call returns.
+  ##
+  ## Nothing in the callee's body can tell us this: a view constructor such as
+  ## `toOpenArray` stores a raw pointer into the result, and the raw pointer is
+  ## exactly where the path we could follow ends. So the annotation on the
+  ## declaration is what carries the borrow across the call boundary.
+  if not n.isTagLit or n.exprKind notin CallKinds: return false
+  var fn = n
+  inc fn # the callee
+  var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
+  if not fnType.isParamsTag: return false
+  skip fnType # params
+  skip fnType # return type
+  result = hasPragma(fnType, EstablishesBorrowP)
+
 proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
@@ -228,7 +245,14 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
     result.mode = IsBorrowableFromConst
   elif n.isSymbol:
     let s = n.symId
-    if (followInlineVars or getType(c.typeCache, n).typeKind in {MutT, OutT, LentT}) and s in c.inlineVars:
+    # A `.establishesBorrow.` call hoisted into an inline temp must be followed
+    # even when `followInlineVars` is off: `f(toOpenArray(s), s)` reaches us as
+    # `f(tmp, (haddr s))` and the alias is invisible unless we look through
+    # `tmp`. The type of such a temp is the view, not `var`/`out`/`lent`, so the
+    # modifier test below does not catch it.
+    if s in c.inlineVars and (followInlineVars or
+                              getType(c.typeCache, n).typeKind in {MutT, OutT, LentT} or
+                              establishesBorrow(c, c.inlineVars.getOrQuit(s))):
       extractBorrowPath(c, c.inlineVars.getOrQuit(s), result, followInlineVars)
     else:
       if result.mode != HasAddr:
@@ -265,6 +289,69 @@ proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowInfo; info: NifLineI
     if pathsOverlap(mutPath, b):
       buildErr c, info, "'" & pool.syms[mutPath.path[0]] & "' is borrowed and cannot be mutated"
       return
+
+proc localInfoOf(c: var NjvlContext; s: SymId): LocalInfo =
+  ## `getLocalInfo` only knows the locals of the proc under analysis; a global
+  ## carries a module suffix and has to be loaded from disk.
+  result = getLocalInfo(c.typeCache, s)
+  if result.kind == NoSym:
+    let res = tryLoadSym(s)
+    if res.status == LacksNothing:
+      let l = asLocal(res.decl)
+      result = LocalInfo(kind: l.kind, typ: l.typ, val: l.val)
+
+proc diesWithProc(c: var NjvlContext; s: SymId): bool =
+  ## Locals are gone once the proc returns; params, globals and consts are not.
+  result = localInfoOf(c, s).kind in {VarY, LetY, CursorY}
+
+proc outlivesProc(c: var NjvlContext; s: SymId): bool =
+  ## Storing here makes the value observable after the proc has returned:
+  ## `result` flows out through the return, a global simply stays, and a
+  ## `var`/`out` param writes through to a location the caller owns.
+  if s == c.resultSym: return true
+  let x = localInfoOf(c, s)
+  result = x.kind in {GvarY, TvarY, GletY, TletY} or
+           (x.kind == ParamY and x.typ.typeKind in {MutT, OutT})
+
+proc borrowCarriedBy(c: var NjvlContext; value: Cursor): BorrowInfo =
+  ## The borrow `value` carries, if any: one already held by the symbol
+  ## (`let v = toOpenArray(a)` … `g = v`), one the expression establishes on the
+  ## spot (`g = toOpenArray(a)`), or one held by the inline temp the value was
+  ## hoisted into (`return toOpenArray(a)` becomes `(let `x …) (ret `x)`).
+  result = BorrowInfo(path: @[], mode: NotBorrowable, info: value.info)
+  let s = extractSymId(value)
+  if s != NoSymId:
+    for b in c.activeBorrows:
+      if b.borrower == s:
+        return b
+    if s in c.inlineVars:
+      return borrowCarriedBy(c, c.inlineVars.getOrQuit(s))
+  if establishesBorrow(c, value):
+    result = extractPath(c, value)
+
+proc canCarryBorrow(c: var NjvlContext; n: Cursor): bool =
+  ## Only a reference-like value can carry a borrow past the expression that
+  ## produced it. `for x in s: return x` reads through an iteration borrow but
+  ## hands back a copy, and a case-of temp holding a plain field value is no
+  ## different — in both the borrow ends at the load, so the type is what
+  ## decides, not the path.
+  let t = getType(c.typeCache, n)
+  result = t.typeKind in {MutT, LentT, OutT} or isViewType(t)
+
+proc checkBorrowOutlivesProc(c: var NjvlContext; value: Cursor) =
+  ## A borrow must not outlive what it borrows from. `g = toOpenArray(a)` for a
+  ## local `a` leaves `g` pointing into a dead frame, which no amount of
+  ## mutation checking downstream can catch — by then the owner is gone.
+  if not canCarryBorrow(c, value): return
+  let borrowed = borrowCarriedBy(c, value)
+  if borrowed.mode == IsBorrowable and borrowed.path.len > 0 and
+     diesWithProc(c, borrowed.path[0]):
+    buildErr c, value.info, "borrow of '" & pool.syms[borrowed.path[0]] &
+      "' escapes the proc; it does not live long enough"
+
+proc checkEscapingBorrow(c: var NjvlContext; value: Cursor; destRoot: SymId) =
+  if destRoot != NoSymId and outlivesProc(c, destRoot):
+    checkBorrowOutlivesProc(c, value)
 
 proc endBorrow(c: var NjvlContext; sym: SymId) =
   var i = 0
@@ -1055,9 +1142,23 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   let destMutPath = extractPath(c, n)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
+  if destMutPath.path.len > 0:
+    checkEscapingBorrow(c, valueStart, destMutPath.path[0])
 
   # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
   let destSymId = extractSymIdForStore(n)
+  # `outer = toOpenArray(a)` rebinds what `outer` aliases, exactly as the
+  # `let outer = toOpenArray(a)` form does in `traverseLocal`. Destinations that
+  # outlive the proc are skipped: they are never `kill`ed, so the scope-exit
+  # check below could not judge them anyway, and `checkEscapingBorrow` above
+  # already had the final say on those.
+  if destSymId != NoSymId and not outlivesProc(c, destSymId) and
+     canCarryBorrow(c, valueStart):
+    endBorrow(c, destSymId)
+    var b = borrowCarriedBy(c, valueStart)
+    if b.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      b.borrower = destSymId
+      c.activeBorrows.add b
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
@@ -1219,6 +1320,10 @@ proc traverseRet(c: var NjvlContext; n: var Cursor) =
     else:
       let providesResult = c.resultSym != NoSymId and
         not (n.isSymbol and n.symId == c.resultSym)
+      if providesResult:
+        # `return toOpenArray(a)` returns the value directly rather than storing
+        # it into `result` first, so `traverseStore`'s escape check never sees it.
+        checkBorrowOutlivesProc(c, n)
       traverseExpr c, n
       if providesResult:
         markInit(c, c.resultSym)
@@ -1406,6 +1511,22 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
     elif path.mode == NotBorrowable:
       buildErr c, n.info, "cannot borrow from '" & asNimCode(inner) &
         "': path is not borrowable; use 'addr' to override or a temporary move"
+  elif not isInline and establishesBorrow(c, n):
+    # `let v = toOpenArray(s)`: `v` keeps aliasing `s` until `v` is killed, so
+    # `s` must not be mutated in between. Unlike the `(haddr X)` case a path we
+    # cannot follow is not an error here — the argument may legitimately be a
+    # raw pointer or a temporary that the callee only reads.
+    #
+    # Inline temps are deliberately excluded. `if x notin s: s.add x` hoists the
+    # view built for `contains` into one, and every hoisted temp is `kill`ed
+    # together at the end of the proc — registering a borrow there would keep it
+    # alive far past the statement that needed it. Their aliasing is covered
+    # precisely, and only for the duration of the call, by the inline-var
+    # look-through in `extractBorrowPath`.
+    var path = extractPath(c, n)
+    if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+      path.borrower = name
+      c.activeBorrows.add path
   if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
     checkNilMatch c, n, localType
   if not n.isDotToken:
@@ -1572,8 +1693,22 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     # Final IR has no `jtrue`; if one survives from xelim, it is inert here.
     skip n
   of KillV:
-    # Variable going out of scope - end any active borrows
+    # Variables going out of scope. NJ emits one `kill` per scope, which is what
+    # makes this the place to catch a borrow whose source dies under it.
     n.into:
+      # The whole list has to be read before judging any single entry: a
+      # borrower dying alongside its source is precisely what should happen.
+      var dying: seq[SymId] = @[]
+      var m = n
+      while m.hasMore:
+        let s = extractSymId(m)
+        if s != NoSymId: dying.add s
+        skip m
+      for b in c.activeBorrows:
+        if b.path.len > 0 and b.path[0] in dying and b.borrower notin dying:
+          buildErr c, b.info, "borrow of '" & pool.syms[b.path[0]] &
+            "' escapes its scope; it does not live long enough"
+      # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
         let s = extractSymId(n)
         if s != NoSymId:

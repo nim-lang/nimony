@@ -27,3 +27,14 @@ echo float(1 shl 4) + 0.5
 echo float(not 0'i32) + 0.5
 proc f(): float = 2.0
 echo f() + 1.0
+
+# a case-expression operand also declines the fold; the "cannot evaluate"
+# rendering must survive expression-bodied `of` branches (they are bare
+# expressions, not `(stmts …)` trees):
+type Orientation = enum soVertical, soHorizontal
+proc pick(o: Orientation; nx, ny: float32): float32 =
+  (case o
+   of soVertical: nx
+   of soHorizontal: ny) + 1.5'f32
+echo pick(soVertical, 1.0'f32, 2.0'f32)
+echo pick(soHorizontal, 1.0'f32, 2.0'f32)

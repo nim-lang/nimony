@@ -1124,6 +1124,16 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
        WasmovedX, SinkhX, TraceX, InternalTypeNameX,
        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
+      # `if`/`case`/`try`/`block` bind their value to a temp unless the
+      # target is `IsIgnored`. A void-typed one has no value to bind, and
+      # `declareTemp` would emit `(var :tmp . . .)` with an empty type slot,
+      # which lengcgen prints as `void tmp;`. Reaching here with a void type
+      # is normal: lambdalifting wraps a closure call in
+      # `(expr (stmts ...) (if ...))` to split on `env == nil`, so a
+      # `proc()` call lands in expression position. `trExprCall` already
+      # guards the same case for plain calls.
+      if n.stmtKind in {IfS, CaseS, TryS, BlockS} and isVoidType(getType(c, n)):
+        tar.m = IsIgnored
       case n.stmtKind
       of IfS:
         trIf c, dest, n, tar

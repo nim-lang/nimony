@@ -13,17 +13,17 @@ func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i 
   (x[i]) = elem
 
 # special cased in compiler as "toOpenArray.0.<system suffix>" for empty array type inference:
-converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline.} =
+converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline, establishesBorrow.} =
   if len(x) == 0:
     openArray[T](a: nil, len: 0)
   else:
     openArray[T](a: cast[ptr UncheckedArray[T]](addr(x)), len: len(x))
 
 # special cased in compiler as "toOpenArray.1.<system suffix>" for empty seq type inference:
-converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline.} =
+converter toOpenArray*[T](s: seq[T]): openArray[T] {.inline, establishesBorrow.} =
   openArray[T](a: rawData(s), len: s.len)
 
-converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline.} =
+converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline, establishesBorrow.} =
   openArray[char](a: readRawData(s), len: s.len)
 
 func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
@@ -75,10 +75,12 @@ func `==`*[T: Equatable](a, b: openArray[T]): bool =
     return true
   return false
 
+# no `establishesBorrow` here: the view is built from a raw pointer, so there is
+# no owner to borrow from and the caller is on its own for the lifetime.
 func toOpenArray*[T](x: ptr UncheckedArray[T]; first, last: int): openArray[T] =
   openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x) + uint(first * sizeof(T))), len: last - first + 1)
 
-func toOpenArray*[T](x: openArray[T]; first, last: int): openArray[T] =
+func toOpenArray*[T](x: openArray[T]; first, last: int): openArray[T] {.establishesBorrow.} =
   openArray[T](a: cast[ptr UncheckedArray[T]](cast[uint](x.a) + uint(first * sizeof(T))), len: last - first + 1)
 
 proc `@`*[T](a: openArray[T]): seq[T] {.nodestroy.} =

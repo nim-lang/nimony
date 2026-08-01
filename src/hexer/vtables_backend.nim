@@ -524,21 +524,27 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
         of UsesSelf:
           discard "nothing to do"
         of UsesTempVal:
+          let xt = getType(c.typeCache, x)
           copyIntoKind dest, VarS, info:
             dest.addSymDef tmp.sym, info
             dest.addEmpty2 info # export marker, pragma
-            dest.addSubtree getType(c.typeCache, x)
+            dest.addSubtree xt
             var x = x
             tr c, dest, x
+          # register so trInstanceofImpl's getType on the temp resolves
+          c.typeCache.registerLocal(tmp.sym, VarY, xt)
         of UsesTempPtr:
+          let xt = getType(c.typeCache, x)
           copyIntoKind dest, VarS, info:
             dest.addSymDef tmp.sym, info
             dest.addEmpty2 info # export marker, pragma
             copyIntoKind dest, PtrT, info:
-              dest.addSubtree getType(c.typeCache, x)
+              dest.addSubtree xt
             copyIntoKind dest, AddrX, info:
               var x = x
               tr c, dest, x
+          # register so trInstanceofImpl's getType on the (deref'd) temp resolves
+          c.typeCache.registerLocalPtrOf(tmp.sym, VarY, xt)
 
         var buf = createTokenBuf(3)
         if tmp.kind == UsesTempPtr:
