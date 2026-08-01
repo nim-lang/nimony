@@ -291,6 +291,7 @@ proc tokenPad(pos: int): int =
 proc appendRaw(s: var string; p: pointer; n: int) =
   if n > 0:
     let old = s.len
+    s.setLen(old + n)
     copyMem(cast[pointer](beginStore(s, old + n, old)), p, n)
     endStore(s)
 

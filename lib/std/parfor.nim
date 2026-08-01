@@ -132,8 +132,9 @@ proc parWait*(j: var ParJoin; workload = MixedBound) =
   ## `CpuBound` skips the I/O poll: such chunks never park, so there is nothing
   ## in the event loop and the joiner just spins for the in-flight CPU work.
   while atomicLoad(j.remaining, moAcquire) > 0:
-    if not gPool.help() and workload != CpuBound:
-      discard gPool.poll(0.cint)
+    let p = gPool()
+    if not p.help() and workload != CpuBound:
+      discard p.poll(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool, spreading chunks
@@ -143,7 +144,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## runners — but the spread still avoids needlessly caller-running chunks on
   ## the submitting thread and balances load. Re-exported so the `||` plugin
   ## only needs symbols visible through `import std/parfor`.
-  gPool.submit(c, hint)
+  gPool().submit(c, hint)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}
