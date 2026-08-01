@@ -1044,7 +1044,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       c.openScope() # open parameter scope
       let beforeGenericParams = dest.len
       semGenericParams c, dest, it.n
-      if c.visOwner.len == outerVisOwner:
+      if c.visOwner.len == outerVisOwner and status != ErrNoIdent:
         # Not a generic instantiation (`semGenericParams` pushes ORIGIN's module
         # for those). A routine's body is written in the module that declares
         # the routine, so that is what its field accesses must be judged
