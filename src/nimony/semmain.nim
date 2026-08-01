@@ -472,7 +472,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     block:
       var r = beginRead(buf1)
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase1.nif", toString(r, false))
-      endRead(buf1)
+      endRead(r)
   #echo "PHASE 2"
   var buf2 = phase2(c, buf1, moduleLineInfo)
   dbgCheckSeals(buf2, "phase2")
@@ -480,15 +480,9 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     block:
       var r = beginRead(buf2)
       syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase2.nif", toString(r, false))
-      endRead(buf2)
+      endRead(r)
   #echo "PHASE 3"
   dest = phase3(c, buf2, moduleLineInfo)
-  dbgCheckSeals(dest, "phase3")
-  when defined(dumpPhases):
-    block:
-      var r = beginRead(dest)
-      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase3.nif", toString(r, false))
-      endRead(dest)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
@@ -506,6 +500,12 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   dest.add c.pendingSumtypes
   instantiateGenericHooks c, dest
   dest.addParRi()
+  dbgCheckSeals(dest, "phase3")
+  when defined(dumpPhases):
+    block:
+      var r = beginRead(dest)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".phase3.nif", toString(r, false))
+      endRead(r)
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
@@ -518,14 +518,14 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
         block:
           var r = beginRead(afterSem)
           syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
-          endRead(afterSem)
+          endRead(r)
       var finalBuf = beginRead afterSem
       dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
       when defined(dumpPhases):
         block:
           var r = beginRead(dest)
           syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
-          endRead(dest)
+          endRead(r)
     when true: #defined(enableContracts):
       var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
