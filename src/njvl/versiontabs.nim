@@ -118,7 +118,7 @@ proc combineJoin*(v: var VersionTab; mode: JoinMode): Table[SymId, JoinVar] =
     counters.old2 = baseVersion + counters.old2
     counters.newv = max(counters.old1, counters.old2) + 1
     v.currentVersion.mgetOrPut(s, 0) = counters.newv
-    v.history.addSymUse s, NoLineInfo
+    v.history.add symToken(s)
 
 proc isValid*(x: JoinVar): bool {.inline.} =
   x.old1 >= 0 and x.old2 >= 0 and x.newv >= 0
