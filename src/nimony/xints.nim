@@ -156,32 +156,36 @@ proc `shr`*(a: xint, b: int): xint =
     val: a.val shr b
   )
 
+proc toTwos(a: xint): uint64 {.inline.} =
+  ## 64 bit two's complement bit pattern of `a`.
+  if a.neg: (not a.val) + 1'u64 else: a.val
+
+proc fromTwos(bits: uint64; signed: bool): xint {.inline.} =
+  if signed and (bits shr 63) != 0'u64:
+    xint(neg: true, val: (not bits) + 1'u64)
+  else:
+    xint(neg: false, val: bits)
+
+# the bitwise ops work on the two's complement pattern, not on sign+magnitude
 proc `and`*(a, b: xint): xint =
-  xint(
-    nan: a.nan or b.nan,
-    neg: a.neg and b.neg,
-    val: a.val and b.val
-  )
+  if a.nan or b.nan: xint(nan: true)
+  else: fromTwos(toTwos(a) and toTwos(b), a.neg or b.neg)
 
 proc `or`*(a, b: xint): xint =
-  xint(
-    nan: a.nan or b.nan,
-    neg: a.neg or b.neg,
-    val: a.val or b.val
-  )
+  if a.nan or b.nan: xint(nan: true)
+  else: fromTwos(toTwos(a) or toTwos(b), a.neg or b.neg)
 
 proc `xor`*(a, b: xint): xint =
-  xint(
-    nan: a.nan or b.nan,
-    neg: a.neg xor b.neg,
-    val: a.val xor b.val
-  )
+  if a.nan or b.nan: xint(nan: true)
+  else: fromTwos(toTwos(a) xor toTwos(b), a.neg or b.neg)
 
 proc `not`*(a: xint): xint =
+  # the result's signedness depends on the operand's type, which `xint` does
+  # not track, so the raw pattern is returned; `mask` applies the sign.
   xint(
     nan: a.nan,
-    neg: a.neg,
-    val: not a.val
+    neg: false,
+    val: not toTwos(a)
   )
 
 proc `mod`*(a, b: xint): xint =
