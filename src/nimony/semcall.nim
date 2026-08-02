@@ -1203,6 +1203,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       buildErr c, calleeBuf, cs.fn.n.info, errorMsg, cs.fn.n
       var calleeN = beginRead(calleeBuf)
       buildCallSource dest, cs, calleeN
+      endRead calleeN
       return
     buildErr c, dest, cs.callNodeInfo, errorMsg, erroredN
 
