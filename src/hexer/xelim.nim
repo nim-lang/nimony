@@ -288,12 +288,29 @@ proc trExprLoop(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
       trExpr c, dest, n, tar
   tar.t.addParRi()
 
+proc readsThroughCall(n: Cursor): bool =
+  ## Goal-independent: does this value tree contain a call — i.e. a read (like
+  ## `xs.len`) that a sibling field's hoisted `wasMoved` could invalidate?
+  ## Unlike `isComplex`, this does NOT depend on `c.goal`, so it fires in the
+  ## post-duplifier `ElimExprs` pass where the ordering hazard is created.
+  var n = n
+  if n.kind != TagLit: return false
+  if n.exprKind in CallKinds: return true
+  result = false
+  n.loopInto:
+    if readsThroughCall(n): return true
+    skip n
+
 proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  ## Bind a *call* in a value-position of an aggregate to a fresh cursor temp
-  ## so the call evaluates at a deterministic textual point relative to
-  ## sibling pre-statements (e.g. a sibling's `wasMoved`). Non-call
-  ## expressions are pure reads and are passed through to `trExpr`
-  ## unchanged.
+  ## Bind a value-position of an aggregate to a fresh cursor temp so it
+  ## evaluates at a deterministic textual point relative to sibling
+  ## pre-statements (e.g. a sibling's `wasMoved`). This covers *calls* and
+  ## *complex non-call values that contain a read* — e.g. `xs.len > 0`, whose
+  ## inner `xs.len` reads a location a later `items: xs` field moves; leaving
+  ## it inline in the constructor evaluated it AFTER the sibling's hoisted
+  ## `wasMoved`, reading the emptied seq (`tmoved_seq_sibling_field`). Only a
+  ## trivially-pure read — a bare symbol or literal — is passed through
+  ## unchanged, since it reads nothing a sibling pre-statement can invalidate.
   ##
   ## **The temp is a `cursor`, not a `let`.** The aggregate constructor
   ## that immediately consumes this temp is the rightful owner of the
@@ -304,7 +321,17 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   ## non-owning view that goes out of scope without cleanup, which is
   ## exactly what xelim needs here. Surfaced 2026-05-01 by self-host
   ## debugging — see `bug_self_host_nifconfig_destroy.md`.
-  if n.kind != TagLit or n.exprKind notin CallKinds:
+  # Bind a value that reads through a call (a bare `xs.len`, or a nested one like
+  # `xs.len > 0`) to a temp so it evaluates before any sibling's hoisted
+  # pre-statement (a later field's `wasMoved`) empties the read location. The old
+  # form only bound top-level `CallKinds`, so a comparison whose OPERAND was the
+  # call was left inline in the constructor and read the moved-from value
+  # (`tmoved_seq_sibling_field`). Pure atoms, literals, `nil` and structural nodes
+  # (`kv`) read nothing invalidatable and pass through unchanged.
+  # A `kv` (named tuple / table entry reaching here via the tup/tab branches) is
+  # structural, not a bindable value expression — pass it to `trExpr`, which
+  # descends into its value. Only genuine value expressions get bound.
+  if n.kind != TagLit or n.substructureKind == KvU or not readsThroughCall(n):
     trExpr c, dest, n, tar
     return
 
