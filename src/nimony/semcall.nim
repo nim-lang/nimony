@@ -108,6 +108,59 @@ proc typeofCallIs(c: var SemContext; dest: var TokenBuf; it: var Item; beforeCal
   it.typ = returnType
   commonType c, dest, it, beforeCall, expected
 
+proc deferPluginCall(c: var SemContext; dest: var TokenBuf; it: var Item;
+                     beforeCall: int; info: NifLineInfo) =
+  ## The plugin answered `(deferexpansion)`. Rewrite the call into
+  ## `(at <template> <args>…)` and type it as `typedesc[…]`, so `exprToType`
+  ## installs that node as the type. `(at …)` is *already* nimony's unresolved
+  ## type application — the shape `Foo[T]` takes inside a generic body — so it
+  ## passes the post-sem validator in a type slot, compares with `sameTrees`,
+  ## and gets substituted by `subsGenericProc` for free. The instantiation's
+  ## re-sem then routes it through `semInvoke`, which recognizes the plugin head
+  ## and asks the plugin again, now with concrete arguments.
+  ##
+  ## Deferring is only well-founded when some argument can still change: with
+  ## nothing left to substitute, the retry would ask the same question forever.
+  var isGeneric = false
+  block:
+    var head = readonlyCursorAt(dest, beforeCall)
+    var a = childCursor(head)
+    skip a # the callee
+    while a.hasMore:
+      if containsGenericParams(a):
+        isGeneric = true
+        break
+      skip a
+    endRead head
+  if not isGeneric:
+    expectUnique dest
+    shrink dest, beforeCall
+    c.buildErr dest, info,
+      "plugin deferred the expansion, but no argument contains a type variable; " &
+      "it would never be asked again"
+    it.typ = c.types.autoType
+    return
+  var atBuf = createTokenBuf(16)
+  block:
+    var head = readonlyCursorAt(dest, beforeCall)
+    atBuf.addParLe(AtT, info)
+    var ch = childCursor(head)
+    while ch.hasMore:
+      atBuf.addSubtree ch
+      skip ch
+    atBuf.addParRi()
+    endRead head
+  let typeStart = dest.len
+  dest.addParLe(TypedescT, info)
+  block:
+    var ab = beginRead(atBuf)
+    dest.addSubtree ab
+    endRead ab
+  dest.addParRi()
+  it.typ = typeToCursor(c, dest, typeStart)
+  expectUnique dest
+  shrink dest, typeStart
+
 proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: SymId; beforeCall: int;
                      m: Match; flags: set[SemFlag]) =
   var expandedInto = createTokenBuf(30)
@@ -136,7 +189,9 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     let argsPos = beforeCall + cursorToPosition(callHead, pastFn)
     var args = cursorTailAt(dest, argsPos)
     var firstVarargMatch = cursorTailAt(dest, argsPos + m.firstVarargPosition)
-    expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch, addr m.inferred, callInfo)
+    var pluginErr = ""
+    let outcome = expandTemplate(c, expandedInto, res.decl, args, firstVarargMatch,
+                                 addr m.inferred, callInfo, pluginErr)
     # Release the rc refs the cursor constructors bumped on `dest`, so the
     # subsequent `shrink dest` + body re-sem can mutate `dest` without
     # forcing the COW slow path (a full copy of the entire module buffer).
@@ -149,6 +204,15 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     endRead args
     endRead firstVarargMatch
     endRead callHead
+    if outcome == PluginDeferred:
+      deferPluginCall c, dest, it, beforeCall, callInfo
+      return
+    if outcome == PluginFailed:
+      expectUnique dest
+      shrink dest, beforeCall
+      c.buildErr dest, callInfo, pluginErr
+      it.typ = c.types.autoType
+      return
     expectUnique dest
     shrink dest, beforeCall
     expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds

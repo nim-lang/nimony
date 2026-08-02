@@ -98,39 +98,156 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
   else:
     discard "ParRi/close (classic) or stray suffix (nifcore)"
 
-proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor): bool =
+type
+  PluginOutcome* = enum
+    NoPluginRan       ## the template carries no `.plugin` pragma
+    PluginExpanded    ## the plugin produced a replacement tree
+    PluginDeferred    ## the plugin answered `(deferexpansion)`: it cannot decide
+                      ## while the arguments still contain type variables
+    PluginFailed      ## the exchange broke down; `errMsg` says how. Reported by
+                      ## the caller against the call site — an `(err …)` written
+                      ## into the plugin's own output buffer is re-checked as an
+                      ## expression and its message lost
+
+const MaxPluginRounds = 32
+  ## Backstop only: `(needtypes …)` already has to name a symbol it was not given,
+  ## so a well-formed exchange terminates after at most one round per level of
+  ## type nesting. This catches a plugin that finds new symbols to ask about
+  ## forever (a cyclic decl walked without a `seen` set, say).
+
+proc appendDecl(s: SymId; dest: var TokenBuf): bool =
+  ## Appends `s`'s declaration — a type *or* a type variable — and says whether
+  ## there was one. Type variables are shipped too, so that a plugin can tell
+  ## "this is a `T` still to be substituted" from "this is a type" positively,
+  ## rather than guessing from what is absent.
   result = false
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing: return
+  if res.decl.symKind notin {TypeY, TypevarY, StaticTypevarY}: return
+  dest.addSubtree res.decl
+  result = true
+
+proc buildTypeDefsInput(decls: var TokenBuf; info: NifLineInfo): TokenBuf =
+  ## Wrap the declarations gathered so far as `(stmts <decl>*)`. A template
+  ## plugin always gets this second input, empty on the first round, so
+  ## `loadTypeDefinitions()` is safe to call unconditionally.
+  result = createTokenBuf(decls.len + 4)
+  result.addParLe StmtsS, info
+  if decls.len > 0:
+    var d = beginRead(decls)
+    while d.hasMore:
+      result.addSubtree d
+      skip d
+    endRead d
+  result.addParRi()
+
+proc readRequestedSyms(dest: var TokenBuf; outputStart: int; syms: var seq[SymId]) =
+  ## Reads the symbols out of a `(needtypes …)` output.
+  var o = readonlyCursorAt(dest, outputStart)
+  o.into:
+    while o.hasMore:
+      if o.isSymbol: syms.add o.symId
+      skip o
+  endRead o
+
+proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cursor;
+                  errMsg: var string): PluginOutcome =
+  result = NoPluginRan
   var p = temp.pragmas
   if not p.isTagLit:
     return
+  var path = StrId(0)
+  var pathInfo = p.endInfo # a degenerate/empty pragma list still needs an info
   p.into:  # (pragmas …)
     while p.hasMore:
       if p.pragmaKind == PluginP:
         p.into PluginP:
           # `.plugin: "path"` — single-string form only.
-          var path = StrId(0)
-          var pathInfo = p.endInfo # the pragma may be degenerate/empty
           if p.isStringLit:
             path = p.strId
             pathInfo = p.info
-          if path != StrId(0):
-            var b = createTokenBuf(30)
-            b.addParLe StmtsS, args.endInfo # zero-arg calls: args sits at a scope's end
-            # Pass the invoked template's name as the first child of the input
-            # so a single shared plugin can dispatch on which template was
-            # called. The plugin reads it with `pluginName` and skips to
-            # the real call-site arguments with `callArgs`.
-            b.addIdent(symToIdent(temp.name.symId), args.endInfo)
-            var a = args
-            while a.hasMore:
-              b.takeTree a
-            b.addParRi()
-            runPlugin(c, dest, pathInfo, pool.strings[path], b)
-            result = true
           while p.hasMore: skip p
-        if result: return
       else:
         skip p
+  if path == StrId(0):
+    return
+
+  # Declarations the plugin has asked for so far. Nothing is shipped up front:
+  # a plugin that does not inspect types never pays for the lookup, and one that
+  # does gets exactly the symbols it names rather than a transitive closure.
+  var decls = createTokenBuf(0)
+  var provided = initHashSet[SymId]()
+  var rounds = 0
+
+  while true:
+    inc rounds
+    var b = createTokenBuf(30)
+    b.addParLe StmtsS, args.endInfo # zero-arg calls: args sits at a scope's end
+    # Pass the invoked template's name as the first child of the input
+    # so a single shared plugin can dispatch on which template was
+    # called. The plugin reads it with `pluginName` and skips to
+    # the real call-site arguments with `callArgs`.
+    b.addIdent(symToIdent(temp.name.symId), args.endInfo)
+    var a = args
+    while a.hasMore:
+      b.takeTree a
+    b.addParRi()
+
+    var types = buildTypeDefsInput(decls, args.endInfo)
+    let outputStart = dest.len
+    runPlugin(c, dest, pathInfo, pool.strings[path], b, types)
+
+    var marker = NoSub
+    if dest.len > outputStart:
+      var o = readonlyCursorAt(dest, outputStart)
+      marker = o.substructureKind
+      endRead o
+
+    case marker
+    of DeferexpansionU:
+      # The marker is a signal, not a tree: drop it and let the caller keep the
+      # call itself, to be re-driven once instantiation has substituted.
+      dest.shrink outputStart
+      return PluginDeferred
+    of NeedtypesU:
+      var wanted: seq[SymId] = @[]
+      readRequestedSyms(dest, outputStart, wanted)
+      dest.shrink outputStart
+      var progress = false
+      for s in wanted:
+        if not provided.containsOrIncl(s):
+          progress = true
+          discard appendDecl(s, decls)
+      if not progress:
+        errMsg = "plugin '" & pool.strings[path] &
+          "' asked again for declarations it was already given"
+        return PluginFailed
+      if rounds >= MaxPluginRounds:
+        errMsg = "plugin '" & pool.strings[path] &
+          "' kept asking for declarations (" & $rounds & " rounds)"
+        return PluginFailed
+    else:
+      return PluginExpanded
+
+proc isPluginTemplate*(fnId: SymId): bool =
+  ## True for a template carrying `.plugin`. A deferred plugin call survives in
+  ## a generic body as `(at <thisSym> <args>…)`, which reaches `semInvoke`
+  ## looking like a generic type instantiation; this is how it is told apart.
+  result = false
+  let res = tryLoadSym(fnId)
+  if res.status == LacksNothing and res.decl.symKind == TemplateY:
+    let templ = asRoutine(res.decl, SkipInclBody)
+    result = hasPragma(templ.pragmas, PluginP)
+
+proc runPluginForSym*(c: var SemContext; dest: var TokenBuf; fnId: SymId;
+                      args: Cursor; errMsg: var string): PluginOutcome =
+  ## Re-drive a plugin template from a symbol plus already-checked arguments —
+  ## the instantiation-time counterpart of the call-site `expandPlugin`.
+  result = NoPluginRan
+  let res = tryLoadSym(fnId)
+  if res.status == LacksNothing and res.decl.symKind == TemplateY:
+    var templ = asRoutine(res.decl, SkipInclBody)
+    result = expandPlugin(c, dest, templ, args, errMsg)
 
 proc addTemplFormalsToScope(c: var SemContext; buf: TokenBuf; at: int) =
   ## Put a promoted template's OWN typevars and params on the parameter scope.
@@ -262,10 +379,11 @@ proc loadSymWithPhase*(c: var SemContext; symId: SymId; targetPhase: SemPhase): 
 proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
                      templateDecl, args, firstVarargMatch: Cursor;
                      inferred: ptr Table[SymId, Cursor];
-                     info: NifLineInfo) =
+                     info: NifLineInfo; errMsg: var string): PluginOutcome =
   var templ = asRoutine(templateDecl, SkipInclBody)
 
-  if expandPlugin(c, dest, templ, args):
+  result = expandPlugin(c, dest, templ, args, errMsg)
+  if result != NoPluginRan:
     return
 
   var e = ExpansionContext(

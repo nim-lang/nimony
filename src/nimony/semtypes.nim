@@ -545,12 +545,64 @@ proc constraintMismatchMsg(m: var Match; constraint, arg: Cursor): string =
   for key, _ in m.missingConstraints:
     result.add "\nmissing: " & key
 
+proc semDeferredPluginInvoke(c: var SemContext; dest: var TokenBuf; typeStart: int;
+                             headId: SymId; n: var Cursor; invokeStart: Cursor;
+                             info: NifLineInfo) =
+  ## Ask a plugin template again about `(at <template> <args>…)`. Called from
+  ## `semInvoke`, where the head is already emitted and the `(at …)` still open.
+  ##
+  ## Three outcomes: the plugin answers and its type replaces the node; it
+  ## defers again (the arguments are still generic, so this is a deeper generic
+  ## body) and the node is kept for the next round; or it is gone, which can
+  ## only mean the pragma was removed after the deferral was recorded.
+  var argsBuf = createTokenBuf(16)
+  while n.hasMore:
+    semLocalTypeImpl c, argsBuf, n, AllowValues
+  n = invokeStart; skip n
+
+  var produced = createTokenBuf(16)
+  var outcome = NoPluginRan
+  var pluginErr = ""
+  block:
+    var a = beginRead(argsBuf)
+    outcome = runPluginForSym(c, produced, headId, a, pluginErr)
+    endRead a
+
+  case outcome
+  of PluginExpanded:
+    dest.shrink typeStart
+    var o = beginRead(produced)
+    semLocalTypeImpl c, dest, o, InLocalDecl
+    endRead o
+  of PluginDeferred:
+    var a = beginRead(argsBuf)
+    while a.hasMore:
+      dest.addSubtree a
+      skip a
+    endRead a
+    dest.addParRi(info)
+  of PluginFailed:
+    dest.shrink typeStart
+    c.buildErr dest, info, pluginErr
+  of NoPluginRan:
+    dest.shrink typeStart
+    c.buildErr dest, info, "'" & pool.syms[headId] & "' is not a plugin template"
+
 proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let typeStart = dest.len
   let info = n.info
   dest.addParLe(n.cursorTagId, n.info) # copy `at`
   let invokeStart = n
   n = sub(n)
+  if n.isSymbol and isPluginTemplate(n.symId):
+    # Has to be caught before the head is sem-checked: a template symbol is not
+    # a type, so `InInvokeHead` would replace it with an error node and the
+    # deferral would never be recognized.
+    let pluginHead = n.symId
+    dest.addSymUse(pluginHead, n.info)
+    inc n
+    semDeferredPluginInvoke c, dest, typeStart, pluginHead, n, invokeStart, info
+    return
   semLocalTypeImpl c, dest, n, InInvokeHead
 
   var headId: SymId = SymId(0)

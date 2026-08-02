@@ -352,13 +352,21 @@ proc matchTypeConstraint(m: var Match; f: var Cursor; a: Cursor): bool =
     var aTag = a
     if aTag.typeKind == InvokeT:
       inc aTag
+    var resolvable = true
     if aTag.isSymbol:
-      aTag = typeImpl(aTag.symId)
+      let res = tryLoadSym(aTag.symId)
+      if res.status == LacksNothing and res.decl.stmtKind == TypeS:
+        aTag = typeImpl(aTag.symId)
+      else:
+        # `(at <plugin template> …)`: a plugin that deferred its expansion. The
+        # type is unknown until instantiation substitutes, so there is no tag to
+        # compare against yet — and `typeImpl` would assert on a non-type decl.
+        resolvable = false
     if aTag.typeKind == TypekindT:
       inc aTag
     f.into:
       assert f.isTagLit
-      result = aTag.isTagLit and f.cursorTagId == aTag.cursorTagId
+      result = resolvable and aTag.isTagLit and f.cursorTagId == aTag.cursorTagId
       skip f # the empty `(tag)` child
   of OrdinalT:
     case a.typeKind
