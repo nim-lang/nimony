@@ -116,48 +116,46 @@ proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var i
   ## Recursive cursor walk (build-agnostic): an `(err …)` node is
   ## `(err <origExpr|.> <instantiation-dots…> <stringMsg>)`; the err's own head
   ## carries the source line info.
-  if n.isTagLit:
-    if n.cursorTagId == errTag:
-      inc count
-      let info = n.info
-      let doReport = not r.reportedErrSources.containsOrIncl(info)
-      n.peekInto:
-        # original expression, optional; remember it — it may contain nested
-        # `(err …)` nodes of its own (classic's linear token scan reported
-        # those too), reported after this outer one to keep the classic order:
-        var payload = default(Cursor)
-        if n.isDotToken:
-          inc n
-        else:
-          payload = n
-          skip n
-        # instantiation contexts:
-        while n.isDotToken:
-          if doReport:
-            r.trace infoToStr(n.info), "instantiation from here"
-          inc n
-        # error message:
-        if n.isStringLit:
-          if doReport:
-            r.error infoToStr(info), pool.strings[n.strId]
-          inc n
-        if not cursorIsNil(payload):
-          reportErrorsRec(r, payload, errTag, count)
-        # an `(err …)` produced by wrapping a whole decl (e.g. attachConverter)
-        # carries the decl's children after the message; walk them too:
-        while n.hasMore:
+  while n.hasMore:
+    if n.isTagLit:
+      if n.cursorTagId == errTag:
+        inc count
+        let info = n.info
+        let doReport = not r.reportedErrSources.containsOrIncl(info)
+        n.peekInto:
+          # original expression, optional; remember it — it may contain nested
+          # `(err …)` nodes of its own (classic's linear token scan reported
+          # those too), reported after this outer one to keep the classic order:
+          var payload = default(Cursor)
+          if n.isDotToken:
+            inc n
+          else:
+            payload = n
+            skip n
+          # instantiation contexts:
+          while n.isDotToken:
+            if doReport:
+              r.trace infoToStr(n.info), "instantiation from here"
+            inc n
+          # error message:
+          if n.isStringLit:
+            if doReport:
+              r.error infoToStr(info), pool.strings[n.strId]
+            inc n
+          if not cursorIsNil(payload):
+            reportErrorsRec(r, payload, errTag, count)
+          # an `(err …)` produced by wrapping a whole decl (e.g. attachConverter)
+          # carries the decl's children after the message; walk them too:
           reportErrorsRec(r, n, errTag, count)
+      else:
+        inc n
     else:
-      n.into:
-        while n.hasMore:
-          reportErrorsRec(r, n, errTag, count)
-  else:
-    skip n
+      skip n
 
 proc reportErrors*(dest: var TokenBuf): int =
   let errTag = globalTags.registerTag("err")
   var r = Reporter(verbosity: 2, noColors: not useColors())
   result = 0
   var n = beginRead(dest)
-  while n.hasMore:
-    reportErrorsRec(r, n, errTag, result)
+  reportErrorsRec(r, n, errTag, result)
+  endRead(n)
