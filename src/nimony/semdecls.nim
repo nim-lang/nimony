@@ -600,6 +600,12 @@ proc semBorrow(c: var SemContext; dest: var TokenBuf; fn: StrId; beforeParams: i
   let signature = cursorAt(dest, beforeParams)
   var procBody = genBorrowedProcBody(c, fn, signature, signature.info)
   var n = cursorAt(procBody, 0)
+  if n.exprKind == ErrX:
+    # No distinct parameter to convert from: the generated "body" is the error
+    # itself, so hand it over as-is. Opening it as a `(stmts` would splice the
+    # message into a malformed tree and lose it.
+    dest.copyTree n
+    return
   var it = Item(n: n, typ: c.types.autoType)
   var resId = SymId(0)
   let bodyStart = dest.len
@@ -990,9 +996,17 @@ proc semEmptyBody(c: var SemContext; dest: var TokenBuf; it: var Item;
   elif BorrowP in crucial.flags and pass in {checkGenericInst, checkBody}:
     if kind notin {ProcY, FuncY, ConverterY, TemplateY, MethodY}:
       c.buildErr dest, it.n.info, ".borrow only valid for proc, func, converter, template or method"
+      inc it.n # skip DotToken
+    elif kind != TemplateY and c.routine.inGeneric > 0:
+      # A generic routine's parameters are still typevars here, so there is no
+      # distinct base to convert to. Leave the body empty and let each
+      # instantiation build it: `checkGenericInst` runs with concrete types.
+      # Templates are excluded: they carry `inGeneric > 0` unconditionally and
+      # have no separate instantiation pass to defer to.
+      takeTree dest, it.n
     else:
       semBorrow(c, dest, symToIdent(symId), beforeParams)
-    inc it.n # skip DotToken
+      inc it.n # skip DotToken
   else:
     takeTree dest, it.n
   c.closeScope() # close parameter scope
