@@ -95,7 +95,7 @@ else:
       result = environment.len
       if result > 0: inc result
 
-  when defined(windows) and not defined(nimscript):
+  when defined(windows) and not defined(nimscript) and not defined(nimNativeIo):
     # because we support Windows GUI applications, things get really
     # messy here...
     when defined(cpp):
@@ -125,6 +125,11 @@ else:
     # The generated `main` captures the env block it receives (`char** envp`)
     # into the `nimEnviron` global on every backend (hexer genMainProc), so
     # neither libc's `environ` nor Darwin's `_NSGetEnviron` is needed.
+    #
+    # Windows takes this path too under `-d:nimNativeIo`: its entry point receives
+    # no `envp`, but `system/winstartup` fills `nimEnviron` from
+    # `GetEnvironmentStringsW` at startup — which is also why the branch above,
+    # whose `wcschr` walk over the raw block needs libc, is excluded there.
     var gEnv {.importc: "nimEnviron".}: cstringArray
 
     proc getEnvVarsC() =
@@ -195,14 +200,20 @@ else:
     runnableExamples:
       assert not existsEnv("unknownEnv")
 
-    var key = key
-    let kc = key.toCString()
-    if kc.isNil:
-      result = false
-    elif c_getenv(kc) != nil:
-      result = true
-    else:
+    when defined(nimNativeIo):
+      # No libc `getenv` on the freestanding target — and this has to be an `else`,
+      # not an early return, or the reference below still reaches the linker. The
+      # `environment` scan is the complete view (see `getEnv`), so it answers alone.
       result = findEnvVar(key) >= 0
+    else:
+      var key = key
+      let kc = key.toCString()
+      if kc.isNil:
+        result = false
+      elif c_getenv(kc) != nil:
+        result = true
+      else:
+        result = findEnvVar(key) >= 0
 
   proc putEnv*(key, val: string) {.tags: [WriteEnvEffect], raises.} =
     ## Sets the value of the `environment variable`:idx: named `key` to `val`.
