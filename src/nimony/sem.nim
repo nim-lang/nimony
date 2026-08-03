@@ -56,6 +56,12 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
       # it now points to the last son (the expression); continue unwrapping if needed
     else:
       inc it
+      if not it.hasMore:
+        # Empty statement list — e.g. a `case`/`if` branch whose whole body
+        # was a compile-time-false `when`. Nothing to inspect; stepping into
+        # the loop below would `skip` past the ParRi and overrun the span
+        # (`isLastSon` skips blindly, so it never sees the empty case).
+        return false
       while not isLastSon(it):
         skip it
 
