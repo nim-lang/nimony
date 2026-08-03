@@ -229,25 +229,12 @@ proc expandPlugin(c: var SemContext; dest: var TokenBuf; temp: Routine, args: Cu
     else:
       return PluginExpanded
 
-proc isPluginTemplate*(fnId: SymId): bool =
-  ## True for a template carrying `.plugin`. A deferred plugin call survives in
-  ## a generic body as `(at <thisSym> <args>…)`, which reaches `semInvoke`
-  ## looking like a generic type instantiation; this is how it is told apart.
-  result = false
+proc isRoutineSym*(fnId: SymId): bool =
+  ## True when `fnId` denotes a routine rather than a type. Used by `semInvoke`
+  ## to tell a deferred plugin call, parked as `(at <template> <args>…)`, apart
+  ## from a real generic type instantiation.
   let res = tryLoadSym(fnId)
-  if res.status == LacksNothing and res.decl.symKind == TemplateY:
-    let templ = asRoutine(res.decl, SkipInclBody)
-    result = hasPragma(templ.pragmas, PluginP)
-
-proc runPluginForSym*(c: var SemContext; dest: var TokenBuf; fnId: SymId;
-                      args: Cursor; errMsg: var string): PluginOutcome =
-  ## Re-drive a plugin template from a symbol plus already-checked arguments —
-  ## the instantiation-time counterpart of the call-site `expandPlugin`.
-  result = NoPluginRan
-  let res = tryLoadSym(fnId)
-  if res.status == LacksNothing and res.decl.symKind == TemplateY:
-    var templ = asRoutine(res.decl, SkipInclBody)
-    result = expandPlugin(c, dest, templ, args, errMsg)
+  result = res.status == LacksNothing and res.decl.symKind in RoutineKinds
 
 proc addTemplFormalsToScope(c: var SemContext; buf: TokenBuf; at: int) =
   ## Put a promoted template's OWN typevars and params on the parameter scope.
