@@ -13,7 +13,7 @@
 ## - Transform calls to virtual methods into calls to the vtable
 ## - Translate the `of` operator into something NIFC can understand
 
-import std/[assertions, tables, hashes, sets, syncio]
+import std/[assertions, tables, hashes, sets, syncio, strutils]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / tinyhashes
@@ -675,6 +675,19 @@ proc processMethods(c: var Context) =
         if m.cls == cls:
           var methodName = pool.syms[m.name]
           extractBasename methodName
+          # The synthesized virtual `=destroy`/`=trace` object hooks are named
+          # `=destroy_<mangledType>` / `=trace_<mangledType>`. Normalize to the
+          # bare hook name so `methodKey` routes them through the canonical
+          # destroy/trace signature — the SAME key the frontend writes into the
+          # exported `(methods)` pragma (see derefs.trType). Otherwise the
+          # collected method (per-type name key) and the pragma entry (canonical
+          # key) land in different vtable slots, and a foreign consumer — which
+          # only sees the pragma — dispatches the destroy through the wrong slot
+          # (running the base hook instead of the derived one, or leaking).
+          if methodName == "=destroy" or methodName.startsWith("=destroy_"):
+            methodName = "=destroy"
+          elif methodName == "=trace" or methodName.startsWith("=trace_"):
+            methodName = "=trace"
           processMethod c, m, methodName
       # Also load methods from the frontend pragmas (for imported generic instances)
       let diff = vtables_frontend.loadVTable(cls)
