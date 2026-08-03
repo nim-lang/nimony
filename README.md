@@ -21,7 +21,7 @@ Clone Nimony and build with `hastur`:
 ```
 git clone https://github.com/nim-lang/nimony.git
 cd nimony
-nim c -r src/hastur build all
+nim c -r --warnings:off -d:release src/hastur build all
 ```
 
 This builds the compiler and all supporting tools into `bin/`. Add `bin/` to your `PATH` to use the compiler and tools.
