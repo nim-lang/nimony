@@ -1,0 +1,1 @@
+tests/nimony/concepts/tconceptambiguousparent.nim(7, 20) Error: ambiguous identifier: Equatable; it is declared in multiple modules

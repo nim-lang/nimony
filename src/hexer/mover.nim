@@ -314,6 +314,19 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
           pc = sub(pc)
           let lhsRedefinesRoot = (pc.kind == Symbol and pc.symId == root) or
                                  sameTrees(pc, x)
+          if not lhsRedefinesRoot:
+            # The left-hand side of a *partial* write — `x.field = v`, `x[i] = v`,
+            # `x[] = v` — still READS the base `x`: for a `ref` it dereferences the
+            # pointer, for a value object it keeps the object live. A bare `skip` of
+            # the LHS missed that read, so an earlier whole-`x` sink was wrongly
+            # allowed and the assignment then wrote through the emptied location — a
+            # nil-deref crash for refs. Scan the LHS with `containsRoot` exactly like
+            # the RHS below; it skips statically-disjoint sibling fields, so
+            # `a.other = v` after a move of `a.field` still sinks.
+            var lhs = pc
+            if containsRoot(lhs, x):
+              otherUsage = pc
+              return false
           skip pc # skip left-hand-side; pc now at the right-hand-side
           # The RHS is evaluated *before* the store, so a read of the old value
           # here (as in `x = f(x)`) means the earlier occurrence is NOT the last

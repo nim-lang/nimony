@@ -1498,6 +1498,15 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
     # fast check that works for aliases too:
     if a.isSymbol and sameSymbol(a.symId, fs):
       discard "perfect match"
+    elif (let fdecl = tryLoadSym(fs);
+          fdecl.status != LacksNothing or fdecl.decl.stmtKind != TypeS):
+      # `fs` names something that is not a type declaration — e.g. a template
+      # parameter left in type position (`symKind == ParamY`) while a template
+      # body is semchecked generically. It is not a valid formal type, so no
+      # argument can match it: reject with the normal diagnostic rather than
+      # asserting in `typeImpl`. (An instantiation with a concrete type binds
+      # `fs` to a real type and never reaches this branch.)
+      m.error InvalidMatch, f, a
     else:
       var impl = typeImpl(fs)
       if impl.isTagLit and impl.cursorTagId == nifpools.ErrT:

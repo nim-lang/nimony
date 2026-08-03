@@ -200,13 +200,16 @@ when defined(posix):
   proc S_ISLNK*(m: Mode): bool = fileType(m) == 0o120000'u32  ## symlink
   proc S_ISSOCK*(m: Mode): bool = fileType(m) == 0o140000'u32 ## socket
 
+  # `a2` is C `size_t`: a bare-importc `int` declaration conflicts with the
+  # glibc prototype when another binding pulls `<sys/mman.h>` into the same
+  # C unit (same fix as osalloc's posix arm).
   when defined(linux) and defined(i386):
-    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
+    proc mmap*(a1: nil pointer, a2: csize_t, a3, a4, a5: cint, a6: Off): pointer {.
       importc: "mmap64".}
   else:
-    proc mmap*(a1: nil pointer, a2: int, a3, a4, a5: cint, a6: Off): pointer {.
+    proc mmap*(a1: nil pointer, a2: csize_t, a3, a4, a5: cint, a6: Off): pointer {.
       importc: "mmap".}
-  proc munmap*(a1: nil pointer, a2: int): cint {.importc: "munmap".}
+  proc munmap*(a1: nil pointer, a2: csize_t): cint {.importc: "munmap".}
 
   when defined(nimNativeIo):
     var errnoVar: cint = 0

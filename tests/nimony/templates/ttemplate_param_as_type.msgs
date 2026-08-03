@@ -1,0 +1,5 @@
+tests/nimony/templates/ttemplate_param_as_type.nim(19, 17) Error: not a type
+tests/nimony/templates/ttemplate_param_as_type.nim(19, 22) Error: not a type
+tests/nimony/templates/ttemplate_param_as_type.nim(19, 46) Error: Type mismatch at [position]
+gvec2(x, y)
+[1] expected: typ but got: <type error> (declared in tests/nimony/templates/ttemplate_param_as_type.nim(17, 1))
