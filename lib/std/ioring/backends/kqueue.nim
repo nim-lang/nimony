@@ -12,7 +12,7 @@ import ../core/backends
 
 type KqueueBackend* = ref object of PollBackend
 
-proc kqueueRegisterEvent(b: KqueueBackend; fd: cint; mask: int) =
+method reArmEvent(b: KqueueBackend; fd: cint; mask: int) =
   # EV_ADD is idempotent in kqueue (add-or-modify), unlike epoll's ADD/MOD
   # split, so there is no separate "first time vs re-arm" bookkeeping needed
   # here. `ident` (the fd) is what `kqueuePoll` reads back on delivery, not
@@ -29,27 +29,21 @@ proc kqueueRegisterEvent(b: KqueueBackend; fd: cint; mask: int) =
     ev.flags = EV_ADD or EV_ONESHOT
     discard kevent(b.pollFd, addr ev, 1, nil, 0, nil)
 
-proc kqueueReArmEvent(b: Backend; fd: cint; mask: int) {.nimcall.} =
-  let self = KqueueBackend(b)
-  self.kqueueRegisterEvent(fd, mask)
-
-proc kqueueSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
-  let self = KqueueBackend(b)
+method submit(b: KqueueBackend; slotIdx: int; op: ptr OpContext) =
   var mask = 0
   if op.kind == opRead or op.kind == opAccept:
     mask = mask or EvRead
   if op.kind == opWrite:
     mask = mask or EvWrite
-  self.kqueueRegisterEvent(op.fd, mask)
+  b.reArmEvent(op.fd, mask)
 
-proc kqueuePoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
-  let self = KqueueBackend(b)
-  let a = b.arena
+method poll(b: KqueueBackend; timeoutMs: int): bool =
+  let a = b.ring.arena
   var events {.noinit.}: array[64, Kevent]
   var ts = Timespec(
     tv_sec: Time(timeoutMs div 1000),
     tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
-  let n = int(kevent(self.pollFd, nil, 0, addr events[0], 64, addr ts))
+  let n = int(kevent(b.pollFd, nil, 0, addr events[0], 64, addr ts))
   if n <= 0:
     return false
   for i in 0..<n:
@@ -58,16 +52,10 @@ proc kqueuePoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
     b.processFd(fd, fired)
   return true
 
-proc kqueueClose(b: Backend) {.nimcall.} =
-  let self = KqueueBackend(b)
-  discard close(self.pollFd)
+method close(b: KqueueBackend) =
+  discard close(b.pollFd)
 
-proc initKqueueBackend*(arena: SlotArena; ring: Ring): KqueueBackend =
+proc initKqueueBackend*(ring: Ring): KqueueBackend =
   new result
   result.pollFd = kqueue()
-  result.arena = arena
   result.ring = ring
-  result.submitFn = kqueueSubmit
-  result.pollFn = kqueuePoll
-  result.closeFn = kqueueClose
-  result.reArmEventFn = kqueueReArmEvent

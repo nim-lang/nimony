@@ -22,9 +22,8 @@ proc tryInitLocalQueue(b: IoUringBackend) =
     except:
       return
 
-proc iouringSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
-  let self = IoUringBackend(b)
-  self.tryInitLocalQueue()
+method submit(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
+  b.tryInitLocalQueue()
   var sqe: nil ptr Sqe
   try:
     sqe = localQueue.getSqe()
@@ -46,9 +45,8 @@ proc iouringSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
 
-proc iouringPoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
-  let self = IoUringBackend(b)
-  self.tryInitLocalQueue()
+method poll(b: IoUringBackend; timeoutMs: int): bool =
+  b.tryInitLocalQueue()
   try:
     discard localQueue.submit()
   except:
@@ -67,11 +65,10 @@ proc iouringPoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
   for i in 0..<n:
     let slotIdx = int(cqes[i].userData)
     if slotIdx >= 0 and slotIdx < MaxOps and a.slots[slotIdx].inUse:
-      if b.completeFn != nil:
-        b.completeFn(b.ring, slotIdx, int(cqes[i].res))
+      b.ring.complete(slotIdx, int(cqes[i].res))
   return true
 
-proc iouringForgetFd(b: Backend; fd: cint) {.nimcall.} =
+method forgetFd(b: IoUringBackend; fd: cint) =
   ## Ask the kernel to cancel every in-flight op on `fd` before the arena
   ## frees the corresponding slots (see `ioring.closeFd`). Without this, a
   ## completion for an op the arena already freed/reused could land on the
@@ -79,8 +76,7 @@ proc iouringForgetFd(b: Backend; fd: cint) {.nimcall.} =
   ## recycled — best-effort: if there is no room for the cancel SQE right
   ## now we still proceed with the close, we just may leak that one slot
   ## until the kernel completion arrives naturally.
-  let self = IoUringBackend(b)
-  self.tryInitLocalQueue()
+  b.tryInitLocalQueue()
   try:
     var sqe = localQueue.getSqe()
     if sqe == nil:
@@ -92,28 +88,22 @@ proc iouringForgetFd(b: Backend; fd: cint) {.nimcall.} =
   except:
     discard
 
-proc iouringClose(b: Backend) {.nimcall.} =
+method close(b: IoUringBackend) =
   # Previously a no-op: the mapped SQ/CQ rings and the io_uring fd were never
   # released, leaking both per shutdown. Overwriting the threadvar with a
   # fresh (zero) `Queue` runs `=destroy` on the old value, which unmaps the
   # rings and closes the fd (see `posix/io_uring.=destroy`).
-  let self = IoUringBackend(b)
   if localQueue.params != nil:
     try:
-      localQueue = newQueue(self.sqEntries)
+      localQueue = newQueue(b.sqEntries)
     except:
       discard
 
-proc initIoUringBackend*(arena: SlotArena; ring: Ring; sqEntries = 256): Backend =
+proc initIoUringBackend*(ring: Ring; sqEntries = 256): Backend =
   try:
     localQueue = newQueue(sqEntries)
     result = IoUringBackend(sqEntries: sqEntries)
-    result.arena = arena
     result.ring = ring
-    result.submitFn = iouringSubmit
-    result.pollFn = iouringPoll
-    result.closeFn = iouringClose
-    result.forgetFdFn = iouringForgetFd
   except:
     # fallback to epoll
-    result = initEpollBackend(arena, ring)
+    result = initEpollBackend(ring)

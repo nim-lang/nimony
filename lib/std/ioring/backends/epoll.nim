@@ -53,7 +53,7 @@ proc fdNotPollable(): bool {.inline.} =
   let e = errnoLocation()[]
   result = e == epollErrPerm or e == epollErrBadFd
 
-proc epollArm(b: EpollBackend; fd: cint; mask: int) =
+method reArmEvent(b: EpollBackend; fd: cint; mask: int) =
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
   if (mask and EvRead) != 0:
@@ -83,22 +83,9 @@ proc epollArm(b: EpollBackend; fd: cint; mask: int) =
       if epoll_ctl(b.pollFd, EPOLL_CTL_MOD, fd, addr ev) != 0:
         reportResidualFailure("ioring: epoll ADD+MOD both failed")
 
-proc epollReArmEvent(b: Backend; fd: cint; mask: int) {.nimcall.} =
-  EpollBackend(b).epollArm(fd, mask)
-
-proc epollSubmit(b: Backend; slotIdx: int; op: ptr OpContext) {.nimcall.} =
-  let self = EpollBackend(b)
-  var mask = 0
-  if op.kind == opRead or op.kind == opAccept:
-    mask = mask or EvRead
-  if op.kind == opWrite:
-    mask = mask or EvWrite
-  self.epollArm(op.fd, mask)
-
-proc epollPoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
-  let self = EpollBackend(b)
+method poll(b: EpollBackend; timeoutMs: int): bool =
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-  let n = int(epoll_wait(self.pollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
+  let n = int(epoll_wait(b.pollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
   if n <= 0:
     return false
   for i in 0..<n:
@@ -106,11 +93,10 @@ proc epollPoll(b: Backend; timeoutMs: int): bool {.nimcall.} =
     b.processFd(fd, int(ioEvents[i].events))
   return true
 
-proc epollClose(b: Backend) {.nimcall.} =
-  let self = EpollBackend(b)
-  discard close(self.pollFd)
+method close(b: EpollBackend) =
+  discard close(b.pollFd)
 
-proc epollForgetFd*(b: EpollBackend; fd: cint) =
+method forgetFd*(b: EpollBackend; fd: cint) =
   ## Drop bookkeeping for a fd that is being closed, so a *future* fd with
   ## the same number (POSIX recycles them) is treated as a fresh ADD rather
   ## than incorrectly reusing stale MOD state.
@@ -118,15 +104,8 @@ proc epollForgetFd*(b: EpollBackend; fd: cint) =
     b.registeredFds.del(fd)
   discard epoll_ctl(b.pollFd, EPOLL_CTL_DEL, fd, nil)
 
-proc initEpollBackend*(arena: SlotArena; ring: Ring): EpollBackend =
+proc initEpollBackend*(ring: Ring): EpollBackend =
   new result
   result.pollFd = epoll_create1(0)
-  result.arena = arena
   result.ring = ring
   result.registeredFds = initTable[cint, bool]()
-  result.submitFn = epollSubmit
-  result.pollFn = epollPoll
-  result.closeFn = epollClose
-  result.reArmEventFn = epollReArmEvent
-  result.forgetFdFn = proc(b: Backend; fd: cint) {.nimcall.} =
-    EpollBackend(b).epollForgetFd(fd)
