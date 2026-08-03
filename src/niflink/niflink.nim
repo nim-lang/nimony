@@ -33,7 +33,7 @@
 ## overrides the manifest's `(output …)`).
 
 import std / [os, syncio, strutils]
-import ".." / "lib" / [nifcore, nifcoreparse]
+import ".." / "lib" / [nifcore, nifcoreparse, argsfinder]
 
 type
   LinkFile = object
@@ -192,11 +192,14 @@ proc main =
       args.add o.path
       for f in o.flags: args.add f
     if m.apptype == "lib": args.add "-shared"
-    # On Windows the toolchain links with clang, whose native PE TLS layout is
-    # mishandled by ld.bfd; LLD lays out `.tls$` the way the loader expects, so
-    # native TLS survives to runtime. Mirror the old link step's `-fuse-ld=lld`.
+    # On Windows a clang toolchain needs LLD: clang emits native PE TLS, which
+    # ld.bfd lays out incorrectly (startup segfaults); LLD matches the loader.
+    # But only under clang — forcing `-fuse-ld=lld` on gcc fails outright when
+    # LLD isn't installed (`collect2: fatal error: cannot find 'ld'`), and
+    # gcc's default emutls doesn't need it. Mirror deps.nim's gating.
     when defined(windows):
-      args.add "-fuse-ld=lld"
+      if extractCCKey(cc) == "clang":
+        args.add "-fuse-ld=lld"
     for f in m.flags: args.add f
     args.add "-o"
     args.add output
