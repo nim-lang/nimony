@@ -227,6 +227,40 @@ proc poolHelp*(): bool {.inline.} =
 proc ioFd*(): cint {.inline.} = gIoFd
   ## The shared I/O poller file descriptor (epoll fd or kqueue fd).
 
+when hasEpoll:
+  # Header-free per the std/posix convention: real symbols are bare-importc'd
+  # and constants are hand-written ABI transcriptions. EPERM/EBADF are 1/9 on
+  # every Linux ABI (asm-generic, shared by amd64/arm64/i386; musl agrees).
+  const
+    epollErrPerm = cint(1)   # EPERM
+    epollErrBadFd = cint(9)  # EBADF
+
+  proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
+    ## glibc's and musl's address-returning errno accessor (same pattern as
+    ## std/posix). Read immediately after a failing epoll_ctl, no intervening
+    ## call, to classify the failure.
+
+  proc cWrite(fd: cint; buf: cstring; n: csize_t): int {.importc: "write",
+    sideEffect.}
+
+  proc reportResidualFailure(msg: string) =
+    ## A residual epoll_ctl failure (both the primary op and its fallback
+    ## failed on a live pollable fd) — report on stderr with the errno number.
+    ## Replaces libc `perror`: same destination, no stdio dependency; the
+    ## numeric errno stands in for `strerror`.
+    var line = msg & " (errno " & $errnoLocation()[] & ")\n"
+    discard cWrite(2, toCString(line), line.len.csize_t)
+
+  proc fdNotPollable(): bool {.inline.} =
+    ## True when a failed epoll_ctl means the fd is no longer a live pollable
+    ## descriptor we own: EPERM (a non-pollable type — a regular file, e.g. a socket
+    ## fd closed by its transfer and its number reused by one of the process's file
+    ## opens before this arm ran) or EBADF (already closed). Skipping such an fd is
+    ## correct — it carries no real transfer, so not watching it can't stall one —
+    ## and avoids error spam under multi-threaded handler resumption.
+    let e = errnoLocation()[]
+    result = e == epollErrPerm or e == epollErrBadFd
+
 proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
   ## Register fd with the shared I/O instance.
   ## Oneshot semantics: exactly one worker handles each fired event.
@@ -236,7 +270,15 @@ proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
     ev.data.p = handler
-    discard epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev)
+    if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
+      if not fdNotPollable():
+        # Not a stale/non-pollable fd → a genuine ADD-vs-MOD race (the slot's
+        # `registered` flag is advisory across workers). ADD on an already-present
+        # fd → EEXIST; fall back to MOD so the fd ends up armed with the current
+        # mask instead of staying a fired (disarmed) oneshot — that stall loses the
+        # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
+        if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
+          reportResidualFailure("ioring: epoll ADD+MOD both failed")
   elif hasKqueue:
     var kevs = default array[2, KEvent]
     var n = 0
@@ -263,7 +305,16 @@ proc rearmFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
     if (events and EvWrite) != 0: mask = mask or EPOLLOUT
     var ev = EpollEvent(events: mask)
     ev.data.p = handler
-    discard epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev)
+    if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
+      # Mirror of registerFd's fallback: MOD on an fd that isn't in the set
+      # (ENOENT — e.g. armed-flag set before the racing ADD landed) → ADD.
+      if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
+        # Both failed: skip a stale/non-pollable fd silently (a socket fd closed by
+        # its transfer and its number reused by a file open before this re-arm) —
+        # it's no longer a live socket we own, so not watching it can't stall a real
+        # transfer. Only a genuinely unexpected failure is worth reporting.
+        if not fdNotPollable():
+          reportResidualFailure("ioring: epoll MOD+ADD both failed")
   elif hasKqueue:
     var kevs = default array[2, KEvent]
     var n = 0

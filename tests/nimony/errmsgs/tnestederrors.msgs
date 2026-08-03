@@ -1,2 +1,6 @@
+tests/nimony/errmsgs/tnestederrors.nim(3, 1) Error: undeclared identifier: 'undeclaredProc'
 tests/nimony/errmsgs/tnestederrors.nim(4, 3) Error: undeclared identifier: undeclaredVar1
+tests/nimony/errmsgs/tnestederrors.nim(4, 19) Error: undeclared identifier: undeclaredVar2
+tests/nimony/errmsgs/tnestederrors.nim(6, 1) Error: undeclared identifier: 'undeclaredTmpl'
 tests/nimony/errmsgs/tnestederrors.nim(7, 16) Error: expected pragma
+tests/nimony/errmsgs/tnestederrors.nim(7, 34) Error: expected pragma

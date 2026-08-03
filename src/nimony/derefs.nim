@@ -1246,6 +1246,40 @@ proc trType(c: var Context; n: var Cursor) =
             c.dest.takeTree n # existing individual pragmas
       if c.hooks.hasKey(s):
         addHookDecls c.dest, c.hooks.getOrQuit(s)
+      # RTTI classes: the object-level `=destroy` hook is virtual (generated as a
+      # method, see lifter.genMissingHooks). It must live in the exported
+      # `(methods)` vtable AND be discoverable as a `(destroy)` hook pragma —
+      # otherwise a foreign consumer that materializes a destroy of this class
+      # forges its OWN module-suffixed hook, which is not in the class's vtable
+      # ("method `=destroy_...` not found in class"). Publishing the owner's
+      # symbol lets the consumer reuse it (via loadHook/tryLoadHook) so the
+      # dispatched method IS in the vtable.
+      #
+      # Only `=destroy` is handled here (not `=trace`): it is the hook the
+      # consumer materializes on scope-exit / reassignment / seq-clear. Forcing
+      # `=trace` generation for every class — even `{.acyclic.}` ones that never
+      # need it — bloats vtables and trips a latent nilability bug in the
+      # synthesized `=trace` body; leave it to the existing forged-hooks path.
+      if hasMethods and not isGeneric and hasRtti(s):
+        var buf = createTokenBuf(1)
+        buf.addSymUse s, info
+        let typeCursor = cursorAt(buf, 0)
+        c.typeSymBufs.add buf
+        let existing = if c.hooks.hasKey(s): c.hooks.getOrQuit(s)
+                       else: default(HooksPerType)
+        let hookProc = getHook(c.lifter[], attachedDestroy, typeCursor, info)
+        if hookProc != SymId(0):
+          if existing.a[attachedDestroy] == SymId(0):
+            # not already emitted from c.hooks above
+            c.dest.addParLe hookToTag(attachedDestroy), NoLineInfo
+            c.dest.addSymUse hookProc, NoLineInfo
+            c.dest.addParRi()
+          let key = destroyMethodKey()
+          var dup = false
+          for (k, _) in methodsToAdd:
+            if k == key: dup = true; break
+          if not dup:
+            methodsToAdd.add (key, hookProc)
       if hasMethods:
         addMethodsDecl c.dest, methodsToAdd
       c.dest.addParRi()

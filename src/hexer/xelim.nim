@@ -142,7 +142,7 @@ proc trExprInto(c: var Context; dest: var TokenBuf; n: var Cursor; v: SymId) =
       dest.addSymUse v, info
       dest.addTarget tar
 
-proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
+proc hoistDeclsFromExprX(tc: var TypeCache; outerDest, transformed: var TokenBuf; n: var Cursor;
                          markNoinit = false) =
   ## Copy the subtree at `n` into `transformed`. If the subtree is an
   ## `(expr (stmts decls…) val…)`, top-level `let`/`var`/`cursor` decls
@@ -175,6 +175,7 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
             transformed.takeTree n
             continue
           let info = n.info
+          let k = n.stmtKind
           let local = takeLocal(n, SkipFinalParRi)
           let sym = local.name.symId
           let symInfo = local.name.info
@@ -197,6 +198,12 @@ proc hoistDeclsFromExprX(outerDest, transformed: var TokenBuf; n: var Cursor;
           outerDest.addSubtree local.typ
           outerDest.addDotToken()      # uninitialised
           outerDest.addParRi()
+          # The hoisted decl is written raw to `outerDest`, bypassing the
+          # `trLocal` path that registers a local's type with typenav. A later
+          # `getType` on the moved RHS — e.g. a closure-field callee lowered to
+          # `(call (tupat sym 0) …)` — must resolve `sym`'s declared type, so
+          # register it here or that lookup bugs ("could not find symbol").
+          tc.registerLocal(sym, cast[SymKind](k), local.typ)
           if local.val.kind != DotToken:
             transformed.addParLe(AsgnS, info)
             transformed.addSymUse(sym, symInfo)
@@ -218,7 +225,7 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       # scope so they remain visible after the `or` lowering — same idea as
       # `trAnd` below; see the comment there.
       var rhs = createTokenBuf(16)
-      hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
+      hoistDeclsFromExprX(c.typeCache, dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
       var rhsCursor = beginRead(rhs)
       copyIntoKind dest, IfS, info:
         copyIntoKind dest, ElifU, info:
@@ -251,7 +258,7 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       # and the original initialiser is rewritten into an `asgn` that runs
       # only when `x` is true (preserving short-circuit evaluation).
       var rhs = createTokenBuf(16)
-      hoistDeclsFromExprX(dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
+      hoistDeclsFromExprX(c.typeCache, dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
       var rhsCursor = beginRead(rhs)
       copyIntoKind dest, IfS, info:
         copyIntoKind dest, ElifU, info:

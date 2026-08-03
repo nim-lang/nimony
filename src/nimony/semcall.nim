@@ -533,11 +533,11 @@ proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
-proc buildCallSource(buf: var TokenBuf; cs: CallState) =
+proc buildCallSource(buf: var TokenBuf; cs: CallState; callee: Cursor) =
   case cs.source
   of RegularCall:
     buf.addParLe(cs.callNode.tagId, cs.callNodeInfo)
-    buf.addSubtree cs.fn.n
+    buf.addSubtree callee
     for a in cs.args:
       buf.addSubtree a.n
   of MethodCall:
@@ -546,14 +546,14 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
     buf.addParLe(DotX, cs.callNodeInfo)
     buf.addSubtree cs.args[0].n
     buf.addParRi()
-    buf.addSubtree cs.fn.n
+    buf.addSubtree callee
     for i in 1 ..< cs.args.len:
       buf.addSubtree cs.args[i].n
   of DotCall:
     assert cs.args.len == 1
     buf.addParLe(DotX, cs.callNodeInfo)
     buf.addSubtree cs.args[0].n
-    buf.addSubtree cs.fn.n
+    buf.addSubtree callee
   of SubscriptCall:
     buf.addParLe(AtX, cs.callNodeInfo)
     for a in cs.args:
@@ -567,8 +567,7 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState) =
     buf.addParLe(AsgnS, cs.callNodeInfo)
     buf.addParLe(DotX, cs.callNodeInfo)
     buf.addSubtree cs.args[0].n
-    var callee = cs.fn.n
-    let nameId = takeIdent(callee)
+    let nameId = getIdent(callee)
     assert nameId != StrId(0)
     var name = pool.strings[nameId]
     assert name[^1] == '='
@@ -1225,7 +1224,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     # do not add symbols defined in args on failed match:
     closeArgsScope c, cs, merge = false
     var errored = createTokenBuf(4)
-    buildCallSource errored, cs
+    buildCallSource errored, cs, cs.fn.n
     let erroredN = cursorAt(errored, 0)
     var errorMsg: string
     if idx == -2:
@@ -1264,6 +1263,12 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.fnName != StrId(0):
         errorMsg.add pool.strings[cs.fnName]
       errorMsg.add "'"
+      var calleeBuf = createTokenBuf(4)
+      buildErr c, calleeBuf, cs.fn.n.info, errorMsg, cs.fn.n
+      var calleeN = beginRead(calleeBuf)
+      buildCallSource dest, cs, calleeN
+      endRead calleeN
+      return
     buildErr c, dest, cs.callNodeInfo, errorMsg, erroredN
 
 proc getFnIdent(c: var SemContext; dest: var TokenBuf): StrId =

@@ -222,8 +222,15 @@ proc armSlot(fd: cint) =
   if slot.registered:
     rearmFd(fd, addr slot.handler, evMask)
   else:
-    registerFd(fd, addr slot.handler, evMask)
+    # Mark registered BEFORE the epoll ADD: the oneshot event can fire (and a
+    # completion can resume the caller on another worker, which then arms the
+    # next request on this fd) the instant the ADD is installed — if that
+    # racer still reads `registered == false` it ADDs again, EEXIST leaves the
+    # fired-oneshot fd disarmed, and the connection stalls forever. With the
+    # flag set first the racer MODs; registerFd/rearmFd also fall back on
+    # EEXIST/ENOENT so either interleaving converges to an armed fd.
     slot.registered = true
+    registerFd(fd, addr slot.handler, evMask)
 
 proc submitRead*(fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);

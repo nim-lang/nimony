@@ -206,21 +206,34 @@ proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: NifLineInfo
   publish c, dest, result, declStart
 
 proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                         ownerSym: SymId; parents: var seq[SymId]) =
+                         ownerSym: SymId; parents: var seq[SymId];
+                         hadError: var bool) =
   let info = n.info
+  let parentName = if n.kind == Ident: pool.strings[n.strId] else: ""
   let before = dest.len
   semLocalTypeImpl c, dest, n, InLocalDecl
   let parentType = cursorAt(dest, before)
   if parentType.kind != Symbol:
+    # An ambiguous name (e.g. a concept redeclared next to `system`'s) sems to a
+    # symbol choice, not a symbol: report the redeclaration instead of the
+    # misleading "can only inherit from other concepts" (nim-lang/nimony#2260).
+    let ambiguous = parentType.exprKind in {CchoiceX, OchoiceX}
     dest.shrink before
-    c.buildErr dest, info, "concept can only inherit from other concepts"
+    hadError = true
+    if ambiguous:
+      c.buildErr dest, info, "ambiguous identifier" &
+        (if parentName.len > 0: ": " & parentName else: "") & "; it is declared in multiple modules"
+    else:
+      c.buildErr dest, info, "concept can only inherit from other concepts"
     return
   let ps = parentType.symId
   dest.shrink before
   if not isConceptSym(ps):
+    hadError = true
     c.buildErr dest, info, "concept can only inherit from other concepts, got: " & typeToString(parentType)
     return
   if ps == ownerSym or conceptExtends(ps, ownerSym):
+    hadError = true
     c.buildErr dest, info, "concept inheritance cycle detected"
     return
   for existing in parents:
@@ -229,7 +242,7 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   parents.add ps
 
 proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                      ownerSym: SymId): bool =
+                      ownerSym: SymId; hadError: var bool): bool =
   let info = n.info
   if n.isDotToken:
     takeTree dest, n
@@ -238,9 +251,9 @@ proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   if n.exprKind == ParX:
     n.into ParX:
       while n.hasMore:
-        semOneConceptParent c, dest, n, ownerSym, parents
+        semOneConceptParent c, dest, n, ownerSym, parents, hadError
   else:
-    semOneConceptParent c, dest, n, ownerSym, parents
+    semOneConceptParent c, dest, n, ownerSym, parents, hadError
   if parents.len == 0:
     dest.addDotToken()
   elif parents.len == 1:
@@ -258,7 +271,8 @@ proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerS
     # Nifler layout: `(concept S0 S1 Parents Body)` with two reserved slots.
     wantDot c, dest, n
     wantDot c, dest, n
-    let hasParents = semConceptParents(c, dest, n, ownerSym)
+    var parentsFailed = false
+    let hasParents = semConceptParents(c, dest, n, ownerSym, parentsFailed)
     if n.symKind == TypevarY:
       takeTree dest, n
     else:
@@ -283,13 +297,15 @@ proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerS
             else:
               buildErr c, dest, n.info, "illformed AST inside concept: " & asNimCode(n)
               skip n
-      if not hasParents and not hasLocalReqs:
+      if not hasParents and not hasLocalReqs and not parentsFailed:
         c.buildErr dest, bodyInfo, "concept must declare at least one requirement or inherit from another concept"
     elif n.isDotToken:
+      skip n
       if not hasParents:
-        c.buildErr dest, bodyInfo, "concept must declare at least one requirement or inherit from another concept"
+        # a broken parent list already reported its own error; don't pile on
+        if not parentsFailed:
+          c.buildErr dest, bodyInfo, "concept must declare at least one requirement or inherit from another concept"
       else:
-        skip n
         dest.addParLe(StmtsS, bodyInfo)
         dest.addParRi()
     else:

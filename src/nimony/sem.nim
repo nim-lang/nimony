@@ -56,6 +56,12 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
       # it now points to the last son (the expression); continue unwrapping if needed
     else:
       inc it
+      if not it.hasMore:
+        # Empty statement list — e.g. a `case`/`if` branch whose whole body
+        # was a compile-time-false `when`. Nothing to inspect; stepping into
+        # the loop below would `skip` past the ParRi and overrun the span
+        # (`isLastSon` skips blindly, so it never sees the empty case).
+        return false
       while not isLastSon(it):
         skip it
 
@@ -1736,6 +1742,22 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
 
 include semdecls
 
+proc isParameterlessRoutine(s: SymId): bool =
+  ## True when the routine `s` is non-generic and declares no value
+  ## parameters — i.e. `template t: T = ...` rather than `t(x)` or `t[T]`.
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing:
+    return false
+  let routine = asRoutine(res.decl)
+  if isGeneric(routine):
+    return false
+  var params = routine.params
+  if params.substructureKind != ParamsU:
+    return true # `.` — no params slot at all
+  params = sub(params) # bounded probe: sealed decl bufs elide ParRi,
+                       # so a raw `inc` would read past an empty (params)
+  result = not params.hasMore
+
 proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int; flags: set[SemFlag]) =
   it.kind = s.kind
   let expected = it.typ
@@ -1780,6 +1802,27 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
     it.typ = typeToCursor(c, dest, typeStart)
     dest.shrink typeStart
     commonType c, dest, it, start, expected
+  elif s.kind in {TemplateY, MacroY} and AllowOverloads notin flags and
+       isParameterlessRoutine(s.name):
+    # A bare parameterless template/macro name is an implicit call: `MAGIC`
+    # means `MAGIC()`. Expand it here instead of falling through to the
+    # routine-as-value path below, which would emit the template symbol as a
+    # first-class value — but templates/macros have no runtime value and lengc
+    # has no decl to mangle for them, so codegen asserts "Symbol not found in
+    # NIF module". (`AllowOverloads` marks a callee position such as `MAGIC(x)`;
+    # there semCall drives the expansion itself and must not be pre-empted. The
+    # parameterless check leaves a generic template's base, e.g. the `foo` in
+    # `foo[float]()`, as a symbol for the AtX generic-instantiation path.)
+    let info = dest[start].info
+    dest.shrink start
+    var callBuf = createTokenBuf(4)
+    callBuf.addParLe(CallX, info)
+    callBuf.addSymUse s.name, info
+    callBuf.addParRi()
+    var call = Item(n: beginRead(callBuf), typ: expected)
+    semCall c, dest, call, flags
+    it.typ = call.typ
+    it.kind = call.kind
   else:
     if s.kind == StaticTypevarY:
       # a *value* generic parameter: it is an ordinary value whose type is the
@@ -3880,13 +3923,20 @@ proc buildObjConstrField(c: var SemContext; dest: var TokenBuf; field: Local;
       dest.addIntLit(depth, info)
     dest.addParRi()
 
+proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
+                          setFields: Table[SymId, Cursor]; info: NifLineInfo;
+                          bindings: Table[SymId, Cursor]; depth = 0;
+                          isUnion = false)
+
 proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymId, Cursor]): (bool, SymId) =
-  var n = n
-  inc n
+  # A branch body is not a flat field list: it can contain a nested `case`
+  # section, so walk it with the field iterator instead of `takeLocal` in a
+  # loop (which would read the `(case ...)` node as a local and run the
+  # cursor off its bounds).
+  var n = sub(n)
   result = (false, SymId(0))
-  if n.substructureKind == NilU:
-    return
-  while n.hasMore:
+  var iter = initObjFieldIter()
+  while nextField(iter, n):
     let local = takeLocal(n, SkipFinalParRi)
     if local.name.symId in setFields:
       result = (true, local.name.symId)
@@ -3994,9 +4044,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             elif state == Unknown:
               wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
             n.into: # stmt
-              while n.hasMore:
-                let field = takeLocal(n, SkipFinalParRi)
-                buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
           else:
             skip n
@@ -4009,9 +4057,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             elif isBranchSelected and setFields.hasKey(selectorSymId):
               wrongBranchError(c, dest, info, presentFieldSymId, selectorSymId, getValueInKv(setFields.getOrQuit(selectorSymId)))
             n.into: # stmt
-              while n.hasMore:
-                let field = takeLocal(n, SkipFinalParRi)
-                buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
           else:
             skip n
@@ -4026,12 +4072,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       badDiscriminatorError(c, dest, info, lastFieldSymId, selectorSymId)
     elif bestBranch != default(Cursor):
       bestBranch.peekInto: # stmt
-        while bestBranch.hasMore:
-          if bestBranch.substructureKind == NilU:
-            skip bestBranch
-            break
-          let field = takeLocal(bestBranch, SkipFinalParRi)
-          buildObjConstrField(c, dest, field, setFields, info, bindings, depth)
+        buildObjConstrFields(c, dest, bestBranch, setFields, info, bindings, depth)
 
 proc buildObjConstrFields(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                           setFields: Table[SymId, Cursor]; info: NifLineInfo;
