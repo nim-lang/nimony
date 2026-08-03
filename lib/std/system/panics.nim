@@ -13,32 +13,32 @@ when defined(nimNativeIo):
                        written: ptr uint32; overlapped: pointer): int32 {.
       stdcall, importc: "WriteFile".}
 
-    proc writeErr(s: string) =
+    proc writeErr*(s: string) =
       var written: uint32 = 0
       discard cWriteErrFile(cGetStdHandle(STD_ERROR_HANDLE), readRawData(s),
                             s.len.uint32, addr written, nil)
-    proc writeErr(s: cstring) =
+    proc writeErr*(s: cstring) =
       var n = 0
       let p = cast[ptr UncheckedArray[char]](s)
       while p[n] != '\0': inc n
       var written: uint32 = 0
       discard cWriteErrFile(cGetStdHandle(STD_ERROR_HANDLE), p, n.uint32,
                             addr written, nil)
-    proc writeErr(x: int64) = writeErr($x)
-    proc writeErr(x: uint64) = writeErr($x)
+    proc writeErr*(x: int64) = writeErr($x)
+    proc writeErr*(x: uint64) = writeErr($x)
   else:
     # POSIX: error text goes straight to fd 2 via the `write` syscall.
     proc cWriteErr(fd: cint; buf: pointer; n: uint): int {.importc: "write".}
 
-    proc writeErr(s: string) =
+    proc writeErr*(s: string) =
       discard cWriteErr(2'i32, readRawData(s), s.len.uint)
-    proc writeErr(s: cstring) =
+    proc writeErr*(s: cstring) =
       var n = 0
       let p = cast[ptr UncheckedArray[char]](s)
       while p[n] != '\0': inc n
       discard cWriteErr(2'i32, p, n.uint)
-    proc writeErr(x: int64) = writeErr($x)
-    proc writeErr(x: uint64) = writeErr($x)
+    proc writeErr*(x: int64) = writeErr($x)
+    proc writeErr*(x: uint64) = writeErr($x)
 
   proc die(value: int32) {.noreturn.} = cExit(value.int)
 else:
@@ -58,10 +58,10 @@ else:
     importc: "fwrite", header: "<stdio.h>".}
   proc fprintf(f: ptr RawCFile; fmt: cstring) {.varargs, importc: "fprintf", header: "<stdio.h>".}
 
-  proc writeErr(x: int64) = fprintf(cstderr, cstring"%lld", x)
-  proc writeErr(x: uint64) = fprintf(cstderr, cstring"%llu", x)
-  proc writeErr(s: string) = discard c_fwrite(readRawData(s), 1'u, s.len.uint, cstderr)
-  proc writeErr(s: cstring) = discard c_fwrite(s, 1'u, s.len.uint, cstderr)
+  proc writeErr*(x: int64) = fprintf(cstderr, cstring"%lld", x)
+  proc writeErr*(x: uint64) = fprintf(cstderr, cstring"%llu", x)
+  proc writeErr*(s: string) = discard c_fwrite(readRawData(s), 1'u, s.len.uint, cstderr)
+  proc writeErr*(s: cstring) = discard c_fwrite(s, 1'u, s.len.uint, cstderr)
 
 proc panic*(s: string) {.noinline, noreturn.} =
   writeErr s
