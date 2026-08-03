@@ -2,8 +2,9 @@
 # and `while` condition must fuse into arkham's compare-and-branch (`cmp;jcc`)
 # — the shoggoth inliner splices the comparison straight into the guard, so no
 # boolean temp is materialised and re-tested. See the checked-in
-# `tinlinecond.asm.nif`: `classify`/`loop` contain `(cmp …)(jg …)` with no call
-# to `isLe` and no 0/1 materialisation.
+# `tinlinecond.<target>.asm.nif` (one golden per target — machine code is the
+# point): `classify`/`loop` contain `(cmp …)(jg …)` with no call to `isLe` and
+# no 0/1 materialisation.
 
 import std/syncio
 

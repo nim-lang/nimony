@@ -8,7 +8,7 @@ when defined(windows):
     else:
       {.link: "../icons/hastur_icon.o".}
 
-import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm, typedthreads, locks]
+import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm, typedthreads, locks, sets]
 when defined(windows):
   import std/winlean
 else:
@@ -879,13 +879,58 @@ proc categoryOf(path: string): Category =
 # explicit whitelist of what is known to run correctly natively — a regression
 # guard: a native miscompile that diverges from the (spec-pinned) result is caught.
 # Grow it as the backend gains features (the same record-what-works philosophy as
-# the rest of hastur). `NativeTestDirs` are directories that pass IN FULL (negative
-# `.msgs` tests auto-skipped); `NativeTestFiles` are individual passers from
-# otherwise-partial directories.
+# the rest of hastur). `NativeTestDirs` are directories that pass apart from the
+# files `NativeTestSkip` names (negative `.msgs` tests auto-skipped too);
+# `NativeTestFiles` are individual passers from otherwise-partial directories.
 const
   NativeTestDirs = [
     "tests/nimony/arc",        # full ARC suite — byte-identical to the C backend
     "tests/nimony/closures"
+  ]
+
+  NativeTestDirsWindows = [
+    # Windows grew a native target later than the other hosts, so what it is known
+    # to run correctly is recorded separately until a run elsewhere confirms the
+    # same — the whole point of this file is that it states OBSERVED results, and
+    # these were observed on Windows. Fold an entry into `NativeTestDirs` once it
+    # has been seen green on Linux/macOS too.
+    #
+    # `tests/nimony/stdlib`: 44 of its 53 pass; the rest are in `NativeTestSkip`.
+    # This is the suite that covers the process vectors the Windows entry point
+    # does not receive (`tcmdline`, `tenvvars`, `tos`) — the reason it is worth
+    # running natively at all rather than only through the C backend.
+    "tests/nimony/stdlib"
+  ]
+
+  NativeTestSkip = [
+    # Files a `NativeTestDir` does not cover yet, with the reason each fails. All
+    # but the last PASS through the C backend, so each of those is a gap in the
+    # native path rather than in the test — which is what makes them worth naming
+    # individually instead of dropping the directory.
+    #
+    # A libc math/stdio extern with a FLOAT parameter. Win64 indexes its SSE
+    # argument registers positionally (an xmm slot burns the GPR of the same
+    # position), which arkham's ABI planner does not model — `emitWinExtproc`
+    # rejects it rather than guess. Moot until the freestanding target has a libc
+    # to bind these to at all.
+    "tests/nimony/stdlib/tcomplex",     # sqrtf
+    "tests/nimony/stdlib/tmath",        # frexp
+    "tests/nimony/stdlib/tstrutils",    # snprintf
+    # `mov` of a `bool` into an `(i 64)` result: nifasm's widening rule admits
+    # int→int only, so a bool source is a type error. Arch-neutral.
+    "tests/nimony/stdlib/thashes",
+    # A `const` holding a string literal: arkham's data-blob emitter has no
+    # `StrLit` case ("arkham const: unsupported literal kind StrLit").
+    "tests/nimony/stdlib/tparseopt",
+    # Compiles and links, but the result diverges from the spec-pinned output —
+    # a native MISCOMPILE (all three are green on the C backend). Undiagnosed.
+    "tests/nimony/stdlib/tbitops",
+    "tests/nimony/stdlib/tencodings",
+    "tests/nimony/stdlib/trandom",
+    # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
+    # fails to run ("vfs: open failed"), and the C backend fails it identically,
+    # so nothing here would fix it.
+    "tests/nimony/stdlib/ttypetraits"
   ]
   NativeTestFiles = [
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
@@ -950,14 +995,24 @@ proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
       failure c, file, outputSpec, testProgramOutput
 
 proc nativetests(overwrite: bool) =
-  ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`)
-  ## through `nimony n`. Requires the sibling `../nativenif` checkout (arkham/nifasm).
+  ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`,
+  ## plus `NativeTestDirsWindows` on Windows, minus `NativeTestSkip`) through
+  ## `nimony n`. Requires the sibling `../nativenif` checkout (arkham/nifasm).
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
-  for dir in NativeTestDirs:
+  # `walkDir` joins with the platform separator onto a forward-slashed constant, so
+  # its paths come back mixed (`tests/nimony/stdlib\tbitops.nim` on Windows) and can
+  # only be compared to the skip list once both sides are spelled one way.
+  proc slashed(p: string): string = p.replace('\\', '/')
+  var skip = initHashSet[string]()
+  for f in NativeTestSkip: skip.incl slashed(f.addFileExt(".nim"))
+  var dirs: seq[string] = @NativeTestDirs
+  when defined(windows): dirs.add @NativeTestDirsWindows
+  for dir in dirs:
     var files: seq[string] = @[]
     for x in walkDir(dir):
-      if x.kind == pcFile and x.path.endsWith(".nim"): files.add x.path
+      if x.kind == pcFile and x.path.endsWith(".nim") and slashed(x.path) notin skip:
+        files.add x.path
     sort files
     for f in files: nativeTestFile c, f, overwrite
   for f in NativeTestFiles:
@@ -1541,20 +1596,38 @@ proc buildNimonyToolchain(showProgress = false) =
   buildNimony(showProgress)
   buildHexer(showProgress)
 
+proc asmNifTarget(asmFile: string): string =
+  ## The target arkham compiled for, read off the `(arch …)` its asm-NIF opens
+  ## with (`x64`, `win_x64`, `arm64`, `linux_arm64`). Taken from the OUTPUT rather
+  ## than re-derived from `hostOS`/`hostCPU` so the golden can never be filed under
+  ## a target the file was not actually generated for.
+  let s = readFile(asmFile)
+  let i = s.find("(arch ")
+  if i < 0: return ""
+  let j = s.find(')', i)
+  if j < 0: return ""
+  result = s[i + len("(arch ") .. j - 1].strip
+
 proc runNativeCodegenTests*(dir: string; overwrite: bool) =
   ## Custom runner for `tests/nativecg`: a golden suite over the C-free native
   ## backend's *emitted machine code*. For each `.nim` it
   ##   1. compiles with `nimony n --opt:speed` (so the shoggoth inliner/optimizer
   ##      that feeds the native path actually runs),
   ##   2. goldens arkham's `<main>.asm.nif` (the typed assembler NIF) against a
-  ##      checked-in `<test>.asm.nif`, and
-  ##   3. runs the linked libc-free ELF, checking `.output` / `.exitcode`.
+  ##      checked-in `<test>.<target>.asm.nif`, and
+  ##   3. runs the linked libc-free executable, checking `.output` / `.exitcode`.
   ##
   ## The asm-NIF is byte-stable for a fixed *relative* test path — module
   ## suffixes are derived from the relative path, and a module's own symbols
   ## carry no suffix — so the golden is portable across checkouts/machines as
   ## long as hastur is invoked from the repo root (which it always is). No
   ## normalization is needed.
+  ##
+  ## It is NOT portable across TARGETS, though — machine code is the point of the
+  ## suite. So the golden is per-target (`tinlinecond.x64.asm.nif`,
+  ## `tinlinecond.win_x64.asm.nif`, …), named for the `(arch …)` arkham actually
+  ## emitted. A target with no checked-in golden yet fails as a missing file;
+  ## `--overwrite` writes it, which is how a new one is added.
   ##
   ## Requires the sibling `../nativenif` checkout (arkham/nifasm), exactly like
   ## the `native` subcommand; the directory is `hastur.mode = skip` so the
@@ -1593,7 +1666,11 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
     if not asmFile.fileExists():
       failure c, file, "arkham asm.nif", "missing: " & asmFile
       continue
-    diffFiles(c, file, file.changeFileExt(".asm.nif"), asmFile, overwrite)
+    let target = asmNifTarget(asmFile)
+    if target.len == 0:
+      failure c, file, "arkham asm.nif with an (arch …)", "no target in: " & asmFile
+      continue
+    diffFiles(c, file, file.changeFileExt(target & ".asm.nif"), asmFile, overwrite)
     # 2) Behavioural check: the linked ELF must run and match .output/.exitcode.
     let exe = generatedExeFile(file)
     if not exe.fileExists():
