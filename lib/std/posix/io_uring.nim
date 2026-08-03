@@ -551,6 +551,15 @@ proc `=destroy`(queue: Queue) {.tags: [].} =
       dealloc(queue.params)
   except:
     discard
+
+proc `=wasMoved`(queue: var Queue) {.tags: [].} =
+  ## A Queue owns the fd, parameters, and mapped rings. Clear every owner
+  ## field after moving it so the temporary value cannot tear down the queue.
+  queue.params = nil
+  queue.fd = 0
+  queue.cq.ring = nil
+  queue.sq.ring = nil
+  queue.sq.sqes = nil
 proc isPowerOfTwo(x: int): bool = (x != 0) and ((x and (x - 1)) == 0)
 
 proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;

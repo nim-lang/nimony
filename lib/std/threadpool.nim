@@ -230,7 +230,9 @@ proc init*(p: Pool) =
       # workers read garbage thread indices (valgrind: uninitialised value in
       # tryBulkDequeue/workerLoop, origin the reused frame). No storage, no
       # lifetime, no race.
-      var arg = cast[ptr TArg](alloc(sizeof TArg))
+      # `TArg` contains a managed Pool reference. Zero the raw allocation so
+      # the generated assignment cleanup cannot observe an uninitialized ref.
+      var arg = cast[ptr TArg](alloc0(sizeof TArg))
       arg[].p = p
       arg[].threadIdx = i
       create p.workers[i], workerLoop, cast[pointer](arg)
