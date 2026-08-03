@@ -84,7 +84,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             while it.hasMore: skip it
         of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
+           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU:
           error "illformed AST: `elif` or `else` inside `if` expected, got ", it
           skip it  # avoid infinite loop on illformed
     # all branches are discardable
@@ -113,7 +113,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
             while it.hasMore: skip it
         of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
            WhenU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
-           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU:
+           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU:
           error "illformed AST: `of`, `elif` or `else` inside `case` expected, got ", it
           skip it
     # all branches are discardable
@@ -3983,7 +3983,7 @@ proc caseBranchMatchesExprRaw(c: var SemContext; dest: var TokenBuf; branch, mat
     of NoSub, NilU, NotnilU, KvU, VvU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
        WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU, StmtsU, ParamsU, PragmasU,
        EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
-       CallargsU, ForcallU:
+       CallargsU, ForcallU, DeferexpansionU, NeedtypesU:
       if sameTrees(branch, matched):
         return true
       skip branch
@@ -4064,7 +4064,7 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
          WhenU, ElifU, TypevarsU, CaseU, StmtsU, ParamsU, PragmasU,
          EitherU, JoinU, UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU, GfldU,
-         CallargsU, ForcallU:
+         CallargsU, ForcallU, DeferexpansionU, NeedtypesU:
         error "illformed AST inside case object: ", n
 
   if selectorSymId notin setFields:

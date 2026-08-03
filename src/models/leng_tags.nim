@@ -6,7 +6,7 @@ type
   LengExpr* = enum
     NoExpr
     SufC = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
+    AtC = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`. In a **type** slot the head is normally a type symbol, but it is a *template* symbol when the node is a deferred plugin call (see `(deferexpansion)`): a pass that walks types must not assume the head names a type
     DerefC = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotC = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* carrying the suffix of the module the access was written in. When present, re-checks at expansion/serialization sites judge the private-field access against that module instead of against the module they are running in, so a template body keeps its author's visibility wherever it is expanded. The reserved value `"*"` means "already validated, originating module no longer comparable" and is used by `exprexec`, whose sub-compile runs under a synthesized module suffix. Emitted by sem whenever it resolves a non-exported field.
     PatC = (ord(PatTagId), "pat")  ## pointer indexing operation

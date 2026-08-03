@@ -499,7 +499,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
               TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
               CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
               UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
-              GfldU, CallargsU, ForcallU, NoSub:
+              GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
             error "expected `of` or `else` inside `case`"
         dest.addParRi # end of union
     of NilU:
@@ -508,7 +508,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
         StaticTypevarU, EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
         ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
         UnpacktupU, ExceptU, FinU, UncheckedU, CallargsU,
-        ForcallU, NoSub:
+        ForcallU, DeferexpansionU, NeedtypesU, NoSub:
       error "illformed AST inside object: ", n
 
 proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -1940,7 +1940,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU,
           UnpackflatU, UnpacktupU, ExceptU, FinU, UncheckedU,
-          GfldU, CallargsU, ForcallU, NoSub:
+          GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         error c, "expected (of) or (else) but got: ", n
 
 proc trKeepovf(c: var EContext; dest: var TokenBuf; n: var Cursor) =

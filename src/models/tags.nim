@@ -351,6 +351,8 @@ type
     RegisterTagId
     StackTagId
     AssemblerTagId
+    DeferexpansionTagId
+    NeedtypesTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -701,5 +703,7 @@ const
     ("instr", 345),
     ("register", 346),
     ("stack", 347),
-    ("assembler", 348)
+    ("assembler", 348),
+    ("deferexpansion", 349),
+    ("needtypes", 350)
   ]
