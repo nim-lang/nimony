@@ -45,20 +45,19 @@ proc initIoRing*(pool: nil Pool = nil): Ring =
   result.cq = newSeq[IoCompletion](CqSize)
   result.nextSeq = 1
   when hasIouring:
-    result.backend = initIoUringBackend(result.slots, result)
+    result.backend = initIoUringBackend(result)
   elif hasIoPoll:
     when hasEpoll:
-      result.backend = initEpollBackend(result.slots, result)
+      result.backend = initEpollBackend(result)
     elif hasKqueue:
-      result.backend = initKqueueBackend(result.slots, result)
+      result.backend = initKqueueBackend(result)
   else:
     {.error: "No I/O backend available for this platform".}
-  result.backend.completeFn = completeCb
   result.pool = if pool != nil: pool else: defaultPool()
   let ring = result
   result.pool.registerReactor(proc(timeoutMs: int): bool {.closure.} =
     if atomicLoad(ring.closed, moRelaxed): return false
-    ring.backend.poll(ring.backend, timeoutMs)
+    ring.backend.poll(timeoutMs)
   )
 
 proc shutdown*(ring: Ring) =
@@ -69,7 +68,7 @@ proc shutdown*(ring: Ring) =
   ## (via `createPool()`) owns its `shutdown()`; `defaultPool()` is
   ## intended to live for the process's lifetime.
   atomicStore(ring.closed, true, moRelaxed)
-  ring.backend.close(ring.backend)
+  ring.backend.close()
 
 proc nextSeqNum(ring: Ring): SeqNum =
   SeqNum(atomicFetchAdd(ring.nextSeq, 1'u32, moRelaxed))
@@ -87,7 +86,7 @@ proc submitRead*(ring: Ring; fd: cint; buf: pointer; len: int;
   op.len = len
   op.cont = cont
   op.res = cast[int](resPtr)
-  ring.backend.submit(ring.backend, idx, op)
+  ring.backend.submit(idx, op)
 
 proc submitWrite*(ring: Ring; fd: cint; buf: pointer; len: int;
                   cont = Continuation(fn: nil, env: nil);
@@ -102,7 +101,7 @@ proc submitWrite*(ring: Ring; fd: cint; buf: pointer; len: int;
   op.len = len
   op.cont = cont
   op.res = cast[int](resPtr)
-  ring.backend.submit(ring.backend, idx, op)
+  ring.backend.submit(idx, op)
 
 proc submitAccept*(ring: Ring; listenFd: cint;
                    cont = Continuation(fn: nil, env: nil);
@@ -117,7 +116,7 @@ proc submitAccept*(ring: Ring; listenFd: cint;
   op.res = cast[int](resPtr)
   op.acceptAddr = Sockaddr_storage()
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
-  ring.backend.submit(ring.backend, idx, op)
+  ring.backend.submit(idx, op)
 
 proc pollCompletions*(ring: Ring; comps: var openArray[IoCompletion]): int =
   result = 0
@@ -134,7 +133,7 @@ proc waitCompletions*(ring: Ring; comps: var openArray[IoCompletion]): int =
   while true:
     result = ring.pollCompletions(comps)
     if result > 0: return
-    discard ring.backend.poll(ring.backend, 0)
+    discard ring.backend.poll(0)
 
 when defined(posix):
   proc posixClose(fd: cint): cint {.importc: "close".}
@@ -166,7 +165,7 @@ when defined(posix):
     ## Order matters: deregister from the backend *before* close(2), so a
     ## fresh fd that the OS immediately reuses for the same number cannot
     ## race with a stale registration/slot that still refers to it.
-    ring.backend.forgetFd(ring.backend, fd)
+    ring.backend.forgetFd(fd)
     let onCancel = proc(idx: int) {.closure.} =
       let slot = addr ring.slots.slots[idx]
       const ECancelled = -125 # -ECANCELED

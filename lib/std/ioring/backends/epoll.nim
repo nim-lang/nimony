@@ -53,7 +53,7 @@ proc fdNotPollable(): bool {.inline.} =
   let e = errnoLocation()[]
   result = e == epollErrPerm or e == epollErrBadFd
 
-method reArmEvent(b: EpollBackend; fd: cint; mask: int) =
+method reArmEvent*(b: EpollBackend; fd: cint; mask: int) =
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
   if (mask and EvRead) != 0:
@@ -83,7 +83,7 @@ method reArmEvent(b: EpollBackend; fd: cint; mask: int) =
       if epoll_ctl(b.pollFd, EPOLL_CTL_MOD, fd, addr ev) != 0:
         reportResidualFailure("ioring: epoll ADD+MOD both failed")
 
-method poll(b: EpollBackend; timeoutMs: int): bool =
+method poll*(b: EpollBackend; timeoutMs: int): bool =
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
   let n = int(epoll_wait(b.pollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
   if n <= 0:
@@ -93,7 +93,7 @@ method poll(b: EpollBackend; timeoutMs: int): bool =
     b.processFd(fd, int(ioEvents[i].events))
   return true
 
-method close(b: EpollBackend) =
+method close*(b: EpollBackend) =
   discard close(b.pollFd)
 
 method forgetFd*(b: EpollBackend; fd: cint) =

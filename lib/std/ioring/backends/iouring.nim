@@ -22,7 +22,7 @@ proc tryInitLocalQueue(b: IoUringBackend) =
     except:
       return
 
-method submit(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
+method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
   b.tryInitLocalQueue()
   var sqe: nil ptr Sqe
   try:
@@ -45,7 +45,7 @@ method submit(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
 
-method poll(b: IoUringBackend; timeoutMs: int): bool =
+method poll*(b: IoUringBackend; timeoutMs: int): bool =
   b.tryInitLocalQueue()
   try:
     discard localQueue.submit()
@@ -61,14 +61,14 @@ method poll(b: IoUringBackend; timeoutMs: int): bool =
     discard
   if n <= 0:
     return false
-  let a = b.arena
+  let a = b.ring.slots
   for i in 0..<n:
     let slotIdx = int(cqes[i].userData)
     if slotIdx >= 0 and slotIdx < MaxOps and a.slots[slotIdx].inUse:
       b.ring.complete(slotIdx, int(cqes[i].res))
   return true
 
-method forgetFd(b: IoUringBackend; fd: cint) =
+method forgetFd*(b: IoUringBackend; fd: cint) =
   ## Ask the kernel to cancel every in-flight op on `fd` before the arena
   ## frees the corresponding slots (see `ioring.closeFd`). Without this, a
   ## completion for an op the arena already freed/reused could land on the
@@ -88,7 +88,7 @@ method forgetFd(b: IoUringBackend; fd: cint) =
   except:
     discard
 
-method close(b: IoUringBackend) =
+method close*(b: IoUringBackend) =
   # Previously a no-op: the mapped SQ/CQ rings and the io_uring fd were never
   # released, leaking both per shutdown. Overwriting the threadvar with a
   # fresh (zero) `Queue` runs `=destroy` on the old value, which unmaps the

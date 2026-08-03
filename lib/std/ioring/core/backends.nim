@@ -15,7 +15,7 @@ const
   EvRead* = 1
   EvWrite* = 2
 
-method reArmEvent(b: PollBackend; fd: cint; mask: int) {.base.} =
+method reArmEvent*(b: PollBackend; fd: cint; mask: int) {.base.} =
   ## Registers (or re-arms, for EPOLLONESHOT-style backends) readiness
   ## interest for `fd`. Takes only `fd` and the direction mask — never a
   ## specific slot index: a fd can have several ops in flight (e.g. a
@@ -23,7 +23,7 @@ method reArmEvent(b: PollBackend; fd: cint; mask: int) {.base.} =
   ## registration, so the registration is keyed by fd, not by any one op.
   discard
 
-method submit(b: PollBackend; slotIdx: int; op: ptr OpContext) =
+method submit*(b: PollBackend; slotIdx: int; op: ptr OpContext) =
   var mask = 0
   if op.kind == opRead or op.kind == opAccept:
     mask = mask or EvRead
@@ -47,7 +47,7 @@ when defined(posix):
     ## registered for both directions at once (e.g. a socket with an
     ## in-flight read and an in-flight write), and only the direction that
     ## actually fired has data ready / a free send buffer.
-    let a = b.ring.arena
+    let a = b.ring.slots
     # O(k) in the number of ops on this fd, via the intrusive per-fd list,
     # instead of an O(MaxOps) scan of the whole arena.
     for j in a.slotsForFd(fd):

@@ -22,26 +22,26 @@ type
     cqHead*, cqTail*, cqCount*: int
     closed*: bool # accessed atomically; set once by shutdown()
 
-method complete(b: Backend; slotIdx: int; res: int) {.base.} =
+method complete*(b: Backend; slotIdx: int; res: int) {.base.} =
   discard
 
-method submit(b: Backend; slotIdx: int; op: ptr OpContext) {.base.} =
+method submit*(b: Backend; slotIdx: int; op: ptr OpContext) {.base.} =
   discard
 
-method poll(b: Backend; timeoutMs: int): bool {.base.} =
+method poll*(b: Backend; timeoutMs: int): bool {.base.} =
+  false
+
+method close*(b: Backend) {.base.} =
   discard
 
-method close(b: Backend) {.base.} =
-  discard
-
-method forgetFd(b: Backend; fd: cint) {.base.} =
+method forgetFd*(b: Backend; fd: cint) {.base.} =
   ## Drop any backend-side per-fd registration/bookkeeping before a fd is
   ## closed (e.g. epoll's ADD/MOD tracking). `nil` for backends where the
   ## OS already tears this down on close (kqueue, io_uring) — callers
   ## must nil-check before calling.
   discard
 
-method complete(ring: Ring; slotIdx: int; res: int) =
+method complete*(ring: Ring; slotIdx: int; res: int) =
   let slot = addr ring.slots.slots[slotIdx]
   if slot.res != 0:
     cast[ptr int](slot.res)[] = res
