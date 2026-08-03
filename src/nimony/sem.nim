@@ -1736,6 +1736,22 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
 
 include semdecls
 
+proc isParameterlessRoutine(s: SymId): bool =
+  ## True when the routine `s` is non-generic and declares no value
+  ## parameters — i.e. `template t: T = ...` rather than `t(x)` or `t[T]`.
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing:
+    return false
+  let routine = asRoutine(res.decl)
+  if isGeneric(routine):
+    return false
+  var params = routine.params
+  if params.substructureKind != ParamsU:
+    return true # `.` — no params slot at all
+  params = sub(params) # bounded probe: sealed decl bufs elide ParRi,
+                       # so a raw `inc` would read past an empty (params)
+  result = not params.hasMore
+
 proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int; flags: set[SemFlag]) =
   it.kind = s.kind
   let expected = it.typ
@@ -1780,6 +1796,27 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
     it.typ = typeToCursor(c, dest, typeStart)
     dest.shrink typeStart
     commonType c, dest, it, start, expected
+  elif s.kind in {TemplateY, MacroY} and AllowOverloads notin flags and
+       isParameterlessRoutine(s.name):
+    # A bare parameterless template/macro name is an implicit call: `MAGIC`
+    # means `MAGIC()`. Expand it here instead of falling through to the
+    # routine-as-value path below, which would emit the template symbol as a
+    # first-class value — but templates/macros have no runtime value and lengc
+    # has no decl to mangle for them, so codegen asserts "Symbol not found in
+    # NIF module". (`AllowOverloads` marks a callee position such as `MAGIC(x)`;
+    # there semCall drives the expansion itself and must not be pre-empted. The
+    # parameterless check leaves a generic template's base, e.g. the `foo` in
+    # `foo[float]()`, as a symbol for the AtX generic-instantiation path.)
+    let info = dest[start].info
+    dest.shrink start
+    var callBuf = createTokenBuf(4)
+    callBuf.addParLe(CallX, info)
+    callBuf.addSymUse s.name, info
+    callBuf.addParRi()
+    var call = Item(n: beginRead(callBuf), typ: expected)
+    semCall c, dest, call, flags
+    it.typ = call.typ
+    it.kind = call.kind
   else:
     if s.kind == StaticTypevarY:
       # a *value* generic parameter: it is an ordinary value whose type is the
