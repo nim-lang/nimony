@@ -88,8 +88,6 @@ type
     envFieldType: Table[SymId, Cursor] ## env FIELD sym -> captured local's type
       ## (typenav cannot type `(envp ...)` nodes, so `genCall` resolves a
       ## capture-rewritten callee's type through this instead)
-    shouldRepublish: seq[(SymId, TokenBuf)]
-      ## routines whose signatures pass 2 rewrote; flushed after the walk
     env: CurrentEnv
     hasClosures: bool
     coroCtx: coro_transform.Context
@@ -1012,19 +1010,7 @@ proc treProcLift(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.procStack.len == 0:
     swap c.dest, dest
   var lift = createTokenBuf(16)
-  let sym = treProc(c, lift, n)
-  if sym != SymId(0):
-    # Pass 2 may have rewritten the signature (env param appended,
-    # closure-typed params/returns lowered to `(fn, env)` tuples).
-    # Schedule the rewritten decl for republishing so downstream passes
-    # (xelim temp typing, lengcgen inlining) type calls against the
-    # LOWERED signature — the published copy is still sem's otherwise.
-    # Deferred like the iter `shouldPublish` flush: publishing mid-walk
-    # would let a later symbol-use of this routine read the rewritten
-    # type and lower it a second time.
-    var copy = createTokenBuf(lift.len)
-    copy.add lift
-    c.shouldRepublish.add (sym, ensureMove copy)
+  discard treProc(c, lift, n)
   c.dest.add lift
   if c.procStack.len == 0:
     swap c.dest, dest
@@ -1687,10 +1673,6 @@ proc elimLambdas*(pass: var Pass) =
       # confuse the iter-sym-as-value check.
       for (sym, sig) in c.pendingIterSigs.mitems:
         publishSignature sig, sym, 0
-      # Republish every routine pass 2 rewrote — same timing rationale as
-      # the iter flush above.
-      for i in 0 ..< c.shouldRepublish.len:
-        programs.publish(c.shouldRepublish[i][0], move c.shouldRepublish[i][1])
       pass.dest.add c.coroCtx.coroTypes
       pass.dest.add stmtsBuf
       pass.dest.addParRi(n2.endInfo)
