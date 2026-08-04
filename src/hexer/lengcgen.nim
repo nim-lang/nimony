@@ -2224,8 +2224,21 @@ proc emitDynlibLoad(dest: var TokenBuf; loadSym, stepSym: SymId;
     dest.addStrLit candidates[idx]
     dest.addParRi()
 
-proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
-  # dynlib init:
+proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
+                rootInfo: NifLineInfo) =
+  ## Emit the `dynlib` bindings: one handle global per library plus one
+  ## function-pointer global per proc pulled from it. Resolving either is CODE
+  ## (`nimLoadLibrary` / `nimGetProcAddr`), so the declaration goes to `dest` with
+  ## NO value and the resolution to `initDest` as an assignment — the same split
+  ## `trToplevel` makes for a module-level `var` with a non-static initializer, and
+  ## the reason no backend needs a rule for when a global's initializer runs.
+  ##
+  ## `initDest` is spliced into the module's init proc BEFORE the module's own
+  ## top-level code, so the bindings are resolved before anything can call through
+  ## one. (They used to live in the initializer so that a library nothing pulls
+  ## from would die with its globals in DCE; as statements they are roots, and the
+  ## library is loaded whether or not anything uses it. Teaching the liveness pass
+  ## that an `asgn` to a dead global is dead would restore that.)
   for key, vals in c.dynlibs:
     let dynlib = pool.strings[key]
     var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c) & "." & c.main
@@ -2250,14 +2263,18 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
     dest.addParLe("void", rootInfo)
     dest.addParRi()
     dest.addParRi()
-    # value: nimDynlibCheck(<candidate chain>, "<original pattern>")
-    dest.addParLe("call", rootInfo)
-    dest.addSymUse(checkSym, rootInfo)
-    emitDynlibLoad(dest, loadSym, stepSym, candidates, candidates.len-1, rootInfo)
-    dest.addStrLit dynlib
-    dest.addParRi()   # close nimDynlibCheck call
-
+    dest.addDotToken()   # no value: the handle is resolved by the init proc
     dest.addParRi()   # close gvar
+
+    # (asgn tmp (call nimDynlibCheck <candidate chain> "<original pattern>"))
+    initDest.addParLe("asgn", rootInfo)
+    initDest.addSymUse(tmp, rootInfo)
+    initDest.addParLe("call", rootInfo)
+    initDest.addSymUse(checkSym, rootInfo)
+    emitDynlibLoad(initDest, loadSym, stepSym, candidates, candidates.len-1, rootInfo)
+    initDest.addStrLit dynlib
+    initDest.addParRi()   # close nimDynlibCheck call
+    initDest.addParRi()   # close asgn
 
     # nimGetProcAddr
     for (varName, val, typeSym) in vals:
@@ -2266,17 +2283,21 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
       dest.addSymDef(varName, rootInfo)
       dest.addDotToken()
       dest.addSymUse(typeSym, rootInfo)
-
-      dest.addParLe("cast", rootInfo)
-      dest.addSymUse(typeSym, rootInfo)
-      dest.addParLe("call", rootInfo)
-      dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr", false)), rootInfo)
-      dest.addSymUse(tmp, rootInfo) # library
-      dest.addStrLit procName # proc name
-      dest.addParRi()
+      dest.addDotToken() # no value: resolved by the init proc, right below
       dest.addParRi()
 
-      dest.addParRi()
+      # (asgn varName (cast T (call nimGetProcAddr tmp "procName")))
+      initDest.addParLe("asgn", rootInfo)
+      initDest.addSymUse(varName, rootInfo)
+      initDest.addParLe("cast", rootInfo)
+      initDest.addSymUse(typeSym, rootInfo)
+      initDest.addParLe("call", rootInfo)
+      initDest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr", false)), rootInfo)
+      initDest.addSymUse(tmp, rootInfo) # library
+      initDest.addStrLit procName # proc name
+      initDest.addParRi()   # close call
+      initDest.addParRi()   # close cast
+      initDest.addParRi()   # close asgn
 
 proc initProcName(moduleSuffix: string): string =
   "`ini.0." & moduleSuffix
@@ -2542,38 +2563,72 @@ proc isTopLevelDecl(n: Cursor): bool {.inline.} =
 
 const RuntimeVarKinds = {VarY, LetY, ResultY, CursorY, PatternvarY, GvarY, GletY, TvarY, TletY}
 
-proc scanInitValue(c: var EContext; n: var Cursor): bool =
-  ## Scans the single tree/token at `n` for calls or runtime variable
-  ## references, advancing past it.
-  result = false
+proc isStaticInitValue(c: var EContext; n: var Cursor): bool =
+  ## Can the single tree/token at `n` be laid out as STATIC DATA — bytes (plus
+  ## link-time addresses) the loader has in place before any code runs? Advances
+  ## past it.
+  ##
+  ## This is the contract for what may stay on a global's declaration. Anything
+  ## else is code, and code has to run somewhere: `trToplevel` moves it into the
+  ## module's init proc as an assignment, in source order. A backend then needs no
+  ## rule of its own about when a global's initializer runs — arkham enforces
+  ## exactly this predicate (`isStaticConstInit`) and rejects a violation, and the
+  ## C/LLVM ones stop needing their hoist into a constructor.
+  ##
+  ## An arithmetic node is deliberately NOT static even when both operands are
+  ## literals: C would take `40 + 2` at file scope, but a machine-code backend has
+  ## to fold it to emit bytes, and constant folding belongs upstream (nimsem), not
+  ## in three backends.
   case n.kind
-  of TagLit:
-    if n.stmtKind in CallKindsS:
-      return true
-    n.into:
-      while n.hasMore:
-        if scanInitValue(c, n):
-          return true
-  of Symbol:
-    if c.typeCache.fetchSymKind(n.symId) in RuntimeVarKinds:
-      result = true # runtime variable → value not available at C file scope
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit, DotToken:
+    result = true
     inc n
+  of Symbol:
+    # A proc (or another compile-time constant) is a link-time ADDRESS. A runtime
+    # variable would have to be READ, which only code can do.
+    result = c.typeCache.fetchSymKind(n.symId) notin RuntimeVarKinds
+    inc n
+  of TagLit:
+    if n.substructureKind == KvU:                 # (kv field value), inside an oconstr
+      result = true
+      n.into:
+        while n.hasMore:
+          let ok = isStaticInitValue(c, n)
+          if not ok: result = false
+    elif n.exprKind in {TrueX, FalseX, NilX, InfX, NeginfX, NanX}:
+      result = true
+      skip n
+    elif n.exprKind in {AddrX, HaddrX}:
+      # The address of a global or proc is fixed at link time whatever it holds, so
+      # only the ROOT of the lvalue matters — but a COMPUTED one (`addr a[i]`) is
+      # not something a linker can bake, so require a bare symbol.
+      result = false
+      n.into:
+        if n.kind == Symbol: result = true
+        while n.hasMore: skip n
+    elif n.exprKind in {SufX, ParX, CastX, ConvX, NegX, AconstrX, OconstrX}:
+      result = true
+      n.into:
+        while n.hasMore:
+          let ok = isStaticInitValue(c, n)
+          if not ok: result = false
+    else:
+      result = false
+      skip n
   else:
+    result = false
     inc n
 
-proc initHasCall(c: var EContext; n: Cursor): bool =
-  ## Returns true if the init expression of a global var/let decl contains any
-  ## function call or runtime variable reference. Such inits cannot be emitted
-  ## inline by NIFC at C file scope (only literals and compile-time constants
-  ## are valid C file-scope initializers).
+proc initIsStatic(c: var EContext; n: Cursor): bool =
+  ## Whether a global var/let decl's initializer may stay on the declaration.
   var n = n
   n = sub(n) # skip the gvar/glet/tvar/tlet tag; peek only
   skip n   # skip SymbolDef
   skip n   # skip export marker
   skip n   # skip pragmas
   skip n   # skip type
-  # Now at the init value; scan its subtree
-  result = scanInitValue(c, n)
+  # Now at the init value
+  result = isStaticInitValue(c, n)
 
 proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   ## Consumes the whole `(stmts …)` node at `n`, including its close.
@@ -2582,9 +2637,10 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       let sk = n.stmtKind
       if sk in {GvarS, GletS, TvarS, TletS}:
         let tag = if sk in {TvarS, TletS}: TvarY else: GvarY
-        if not initHasCall(c, n):
-          # Simple init (literal, nil, etc.): keep at top level.
-          # NIFC can emit "Type var = value;" at C file scope directly.
+        if initIsStatic(c, n):
+          # Static data (literal, constructor of literals, a link-time address):
+          # keep it on the declaration. NIFC emits "Type var = value;" at C file
+          # scope and arkham lays out the bytes for the loader to prefill.
           trLocal c, dest, n, tag, TraverseAll, SymId(0)
         else:
           # Complex init with function calls: emit a no-init declaration at top
@@ -2656,7 +2712,11 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     error c, "expected (stmts) but got: ", n
   swap cdest, toplevels
 
-  initDynlib(c, cdest, rootInfo)
+  # The dynlib bindings' RESOLUTION goes into the init proc ahead of the module's
+  # own top-level code (`c.initBody`), so nothing can call through an unresolved
+  # function pointer; their declarations stay at top level, in `cdest`.
+  var dynlibInit = createTokenBuf(64)
+  initDynlib(c, cdest, dynlibInit, rootInfo)
 
   when sso:
     cdest.add c.strLitBuf
@@ -2668,6 +2728,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   # in the C file, after all function definitions it may call.
   let importedSuffixes = c.importedModuleSuffixes
   genInitProc(c, cdest, rootInfo, importedSuffixes)
+  cdest.add dynlibInit
   cdest.add c.initBody
   genInitProcEnd(c, cdest, rootInfo)
 
