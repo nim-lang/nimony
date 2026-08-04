@@ -59,6 +59,12 @@ const
     ## tuple's env slot so iter values have the same `(ref RootObj)`
     ## shape as closure procs.
   EnvParamName* = "`this.0"
+  ClosureEnvParamName* = "`ep.0"
+    ## The env param appended to a lowered closure signature (distinct from the
+    ## coroutine's `this.0` env above). Lives here — like `RootObjName` and the
+    ## wrapper-signature shape — so lambdalifting's pass-2 lowering and any other
+    ## pass that must emit the identical env slot (e.g. a cross-module foreign-decl
+    ## canonicalizer) stay in lock-step off one definition.
   FnFieldName* = "fn.0"
   EnvFieldName* = "env.0"
   CallerFieldName* = "caller.0"
@@ -68,6 +74,23 @@ const
   CallerParamName* = "`caller.0"
   AllocFrameProcName* = "allocFrame.0." & SystemModuleSuffix
   DeallocFrameProcName* = "deallocFrame.0." & SystemModuleSuffix
+
+proc addClosureEnvParam*(dest: var TokenBuf; info: NifLineInfo; envTyp: SymId) =
+  ## Emit the trailing env `(param)` of a lowered closure signature. `envTyp == 0`
+  ## uses the generic `(ref RootObj)` slot shared with iter values; a concrete env
+  ## type uses a `(ptr)` (NIFC needs the pointer type here, with a cast in the body).
+  dest.copyIntoKind ParamU, info:
+    dest.addSymDef pool.syms.getOrIncl(ClosureEnvParamName), info
+    dest.addDotToken() # no export marker
+    dest.addDotToken() # no pragmas
+    if envTyp == SymId(0):
+      dest.copyIntoKind RefT, info:
+        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+    else:
+      # to keep NIFC's type system happy we need a ptr type here
+      # and then a cast in the body!
+      dest.copyIntoKind PointerT, info: discard
+    dest.addDotToken() # no default value
 
 type
   EnvField* = object

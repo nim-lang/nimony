@@ -366,8 +366,10 @@ when false:
     result = hasPragma(typ, ClosureP)
 
 const
-  # Lambdalifting-specific names (not in coro_transform).
-  EnvParamName = "`ep.0"
+  # Lambdalifting-specific names (not in coro_transform). The lowered closure
+  # env *param* (`ep.0`) and its emitter now live in `coro_transform` as
+  # `ClosureEnvParamName` / `addClosureEnvParam`, shared with any pass that must
+  # emit the identical env slot; only the env *local* stays local here.
   EnvLocalName = "`el.0"
 
 # `RootObjName` / `coroWrapperProcName` / `emitIterTupleType*` /
@@ -653,25 +655,11 @@ proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
-proc addEnvParam(dest: var TokenBuf; info: NifLineInfo; envTyp: SymId) =
-  dest.copyIntoKind ParamU, info:
-    dest.addSymDef pool.syms.getOrIncl(EnvParamName), info
-    dest.addDotToken() # no export marker
-    dest.addDotToken() # no pragmas
-    if envTyp == SymId(0):
-      dest.copyIntoKind RefT, info:
-        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
-    else:
-      # to keep NIFC's type system happy we need a ptr type here
-      # and then a cast in the body!
-      dest.copyIntoKind PointerT, info: discard
-    dest.addDotToken() # no default value
-
 proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     while n.hasMore:
       tre(c, dest, n)
-    addEnvParam dest, NoLineInfo, SymId(0)
+    addClosureEnvParam dest, NoLineInfo, SymId(0)
 
 proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if itertypeNeedsTuple(n):
@@ -703,7 +691,7 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
             assert n.kind == DotToken
             inc n
             dest.addParLe ParamsU, info
-            addEnvParam dest, info, SymId(0)
+            addClosureEnvParam dest, info, SymId(0)
             dest.addParRi()
           tre c, dest, n # return type
           # pragmas:
@@ -821,7 +809,7 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnv
             init.addSymUse name, paramInfo
 
     if doAddEnvParam:
-      addEnvParam dest, n.endInfo, envTyp
+      addClosureEnvParam dest, n.endInfo, envTyp
 
 proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: SymId; needsHeap: bool) =
   if n.stmtKind == StmtsS:
@@ -860,7 +848,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
                     dest.addSymUse field.field, NoLineInfo
 
       elif c.closureProcs.contains(sym):
-        c.env = CurrentEnv(s: pool.syms.getOrIncl(EnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(sym), needsHeap: needsHeap)
+        c.env = CurrentEnv(s: pool.syms.getOrIncl(ClosureEnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(sym), needsHeap: needsHeap)
       else:
         c.env = CurrentEnv(s: SymId(0), mode: EnvIsParam, typ: SymId(0), needsHeap: needsHeap)
       dest.add init
@@ -1065,7 +1053,7 @@ proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
           n.into:
             while n.hasMore:
               tre c, dest, n # params
-        addEnvParam dest, info, SymId(0)
+        addClosureEnvParam dest, info, SymId(0)
       tre c, dest, n # return type
       # pragmas:
       tre c, dest, n
