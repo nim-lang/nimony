@@ -1043,15 +1043,12 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
   let tt = getType(c.typeCache, n)
   let calleeKind = tt.stmtKind
   var fnType = skipProcTypeToParams(tt)
-  traverseExpr c, n # the `fn` itself
-  if not fnType.isParamsTag:
-    while n.hasMore:
-      traverseExpr c, n
-    return
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
   let effect = whichEffect(calleeKind, fnPragmas)
+  traverseExpr c, n # the `fn` itself
+  assert fnType.isParamsTag
   let paramsStart = fnType
   fnType = sub(fnType)
   var paramMap = initTable[SymId, int]()
