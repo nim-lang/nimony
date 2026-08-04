@@ -21,14 +21,6 @@ export backend.Ring, backend.Backend, backend.CqSize
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
 
-when hasIouring:
-  import ./ioring/backends/iouring
-elif hasIoPoll:
-  when hasEpoll:
-    import ./ioring/backends/epoll
-  elif hasKqueue:
-    import ./ioring/backends/kqueue
-
 proc initIoRing*(pool: nil Pool = nil): Ring =
   ## `pool`, if given, is the worker pool whose idle loop will drive this
   ## ring's I/O backend (via `Pool.registerReactor`) — pass one you built
@@ -44,15 +36,7 @@ proc initIoRing*(pool: nil Pool = nil): Ring =
   result.slots.init()
   result.cq = newSeq[IoCompletion](CqSize)
   result.nextSeq = 1
-  when hasIouring:
-    result.backend = initIoUringBackend(result)
-  elif hasIoPoll:
-    when hasEpoll:
-      result.backend = initEpollBackend(result)
-    elif hasKqueue:
-      result.backend = initKqueueBackend(result)
-  else:
-    {.error: "No I/O backend available for this platform".}
+  initPlatformBackend(result)
   result.pool = if pool != nil: pool else: defaultPool()
   let ring = result
   result.pool.registerReactor(proc(timeoutMs: int): bool {.closure.} =
