@@ -76,23 +76,73 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
     c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
       $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
 
+proc dbgLocationId(c: var LLVMCode; info: NifLineInfo): int =
+  ## Build a DILocation metadata node for the given source location and return
+  ## its id, or 0 if the location is invalid. While a template expansion is
+  ## active (`inlineFrames` non-empty), the location is scoped to the
+  ## template's synthetic DISubprogram and chained to the call site via
+  ## `inlinedAt` — this is what makes debuggers show the template as an
+  ## inlined frame instead of jumping into its definition file (#1987).
+  if not info.isValid: return 0
+  let rawInfo = info
+  if not rawInfo.file.isValid: return 0
+  let fileId = getOrCreateDIFile(c, rawInfo.file)
+  if c.currentProc.inlineFrames.len > 0:
+    let fr = c.currentProc.inlineFrames[^1]
+    let scopeId =
+      if fileId == fr.spFileId:
+        fr.spId
+      else:
+        c.addMetadata("!DILexicalBlockFile(scope: !" & $fr.spId &
+          ", file: !" & $fileId & ", discriminator: 0)")
+    result = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+      ", column: " & $(rawInfo.col + 1) &
+      ", scope: !" & $scopeId &
+      ", inlinedAt: !" & $fr.callLocId & ")")
+  else:
+    let scopeId =
+      if fileId == c.currentProc.subprogramFileId:
+        c.currentProc.subprogramId
+      else:
+        c.addMetadata("!DILexicalBlockFile(scope: !" &
+            $c.currentProc.subprogramId &
+          ", file: !" & $fileId & ", discriminator: 0)")
+    result = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+      ", column: " & $(rawInfo.col + 1) &
+      ", scope: !" & $scopeId & ")")
+
 proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
   ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
-  if not info.isValid: return ""
-  let rawInfo = info
-  if not rawInfo.file.isValid: return ""
-  let fileId = getOrCreateDIFile(c, rawInfo.file)
-  let scopeId =
-    if fileId == c.currentProc.subprogramFileId:
-      c.currentProc.subprogramId
-    else:
-      c.addMetadata("!DILexicalBlockFile(scope: !" &
-          $c.currentProc.subprogramId &
-        ", file: !" & $fileId & ", discriminator: 0)")
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
-    ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $scopeId & ")")
-  result = ", !dbg !" & $locId
+  let locId = dbgLocationId(c, info)
+  result = if locId == 0: "" else: ", !dbg !" & $locId
+
+proc getOrCreateInlineSP(c: var LLVMCode; symId: SymId;
+                         bodyInfo: NifLineInfo): (int, int) =
+  ## Get or create the synthetic DISubprogram for template `symId`, shared by
+  ## every call site of the template. Returns (spId, spFileId); (0, 0) when no
+  ## SP can be built. `bodyInfo` is the location of the expansion's first
+  ## statement: template declarations do not survive into Leng, so the body's
+  ## own line info — which points into the template's definition file — is the
+  ## only source for the SP's file and line.
+  if symId in c.debug.inlineSpCache:
+    return c.debug.inlineSpCache[symId]
+  if not bodyInfo.isValid or not bodyInfo.file.isValid: return (0, 0)
+  let fileId = getOrCreateDIFile(c, bodyInfo.file)
+  # A subprogram definition needs a type and a unit; the signature is opaque
+  # (`!{null}`: unknown return, no formals) because a template has neither a
+  # calling convention nor materialized parameters.
+  if c.debug.nullSigId == 0:
+    c.debug.nullSigId = c.addMetadata("!DISubroutineType(types: !{null})")
+  let spId = c.addMetadata("distinct !DISubprogram(name: \"" &
+    nifSymBaseName(c, symId) &
+    "\", scope: !" & $fileId &
+    ", file: !" & $fileId &
+    ", line: " & $bodyInfo.line &
+    ", type: !" & $c.debug.nullSigId &
+    ", scopeLine: " & $bodyInfo.line &
+    ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId & ")")
+  result = (spId, fileId)
+  c.debug.inlineSpCache[symId] = result
 
 proc createSubprogram(c: var LLVMCode; name: string; info: NifLineInfo): int =
   ## Create a DISubprogram metadata node for a function.
@@ -147,18 +197,29 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
     useType = genDIBasicType(c, "int " & $bits, bits, DW_ATE_signed)
   let debugName = if wasName.len > 0: wasName else: nifSymBaseName(c, symId)
   let fileId = getOrCreateDIFile(c, rawInfo.file)
+  # Inside a template expansion the variable belongs to the synthetic
+  # subprogram, and its declare location must carry the matching `inlinedAt`
+  # chain: LLVM's verifier rejects a #dbg_declare whose variable scope and
+  # location scope disagree. `template t = (var x = ...)` is ordinary code,
+  # so this is required, not polish.
+  let inFrame = c.currentProc.inlineFrames.len > 0
+  let varScopeId =
+    if inFrame: c.currentProc.inlineFrames[^1].spId
+    else: c.currentProc.subprogramId
   var varMetadata = "!DILocalVariable(name: \"" & debugName & "\""
   if argNo > 0:
     varMetadata.add ", arg: " & $argNo
-  varMetadata.add ", scope: !" & $c.currentProc.subprogramId &
+  varMetadata.add ", scope: !" & $varScopeId &
     ", file: !" & $fileId &
     ", line: " & $rawInfo.line &
     ", type: !" & $useType & ")"
   let varId = c.addMetadata(varMetadata)
-  c.currentProc.retainedNodes.add varId
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
-    ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $c.currentProc.subprogramId & ")")
+  if not inFrame:
+    # `retainedNodes` lists the variables scoped to *this* subprogram; one
+    # scoped to a template's synthetic SP does not belong in the proc's list.
+    c.currentProc.retainedNodes.add varId
+  let locId = dbgLocationId(c, info)
+  if locId == 0: return
   c.emitRaw "#dbg_declare(ptr " & localName & ", !" & $varId &
       ", !DIExpression(), !" & $locId & ")"
 

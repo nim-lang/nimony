@@ -1446,6 +1446,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.openScope()
         trSons c, n, WantT
         c.typeCache.closeScope()
+      of ComesfromS:
+        # The first child is the origin symbol, not an expression: `trSons`
+        # would analyse it as one. Copy it, then walk the body. No new scope —
+        # the wrapper is transparent.
+        takeInto c.dest, n:
+          takeTree c.dest, n # the origin symbol
+          while n.hasMore:
+            tr c, n, WantT
       of TypeS:
         trType c, n
       else:

@@ -679,7 +679,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
          DiscardS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-         AsmS, DeferS, NoStmt:
+         AsmS, DeferS, ComesfromS, NoStmt:
         trExprLoop c, n, tar
   else:
     bug "unreachable"
@@ -1001,6 +1001,13 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trWhile c, n
   of StmtsS, UnpackdeclS:
     n.into:
+      while n.hasMore:
+        trStmt c, n
+  of ComesfromS:
+    # Transparent wrapper: the CFG models the expanded statements themselves,
+    # so drop it like `StmtsS`. `bodyInto` steps over the origin symbol, which a
+    # plain `into` would walk as a statement (see `OperandHeadedS`).
+    n.bodyInto:
       while n.hasMore:
         trStmt c, n
   of ScopeS, StaticstmtS:

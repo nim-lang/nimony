@@ -445,6 +445,138 @@ proc scanForNonExhaustiveCases(ctx: var CheckContext; buf: var TokenBuf) =
           skip peek
 
 # ---------------------------------------------------------------------------
+# Step 2c: Check that operand-headed tags aren't walked as all-statements
+# ---------------------------------------------------------------------------
+
+proc firstSlotIsOperand(ctx: CheckContext; tag: string): bool =
+  ## True when every documented form of `tag` marks its first child `^`, i.e.
+  ## the tag is a transparent wrapper whose leading child is an operand.
+  ##
+  ## The marker is needed because slot *kind* does not separate the cases:
+  ## `(bind Y)` and `(mixin Y)` lead with `ckY` exactly like
+  ## `(comesfrom ^SYM S*)`, and `(when ...)`, `(using ...)`, `(if ...)` lead
+  ## with `ckNested` exactly like `(pragmax ^(pragmas ...) X)`. None of those is
+  ## transparent, and keying on kind alone flagged all of them - measured, 11 of
+  ## the 15 validator pass files failed that way.
+  ##
+  ## Requiring *every* form to carry it is deliberate: a tag with one
+  ## operand-headed form and one ordinary form has no single walking contract,
+  ## so the check stays out of it.
+  if tag notin ctx.grammar: return false
+  for form in ctx.grammar[tag]:
+    if not form.isOperandHeaded: return false
+  result = ctx.grammar[tag].len > 0
+
+const
+  NodeOpeners = ["into", "loopInto", "takeInto", "copyInto", "copyIntoKind",
+                 "buildTree", "withTree"]
+    ## Templates that descend into the current node and run a block over its
+    ## children. These are what make a branch a generic child walk.
+  OperandSteppers = ["skip", "takeTree", "inc", "copyTree", "copyIntoKind"]
+    ## Calls that consume exactly one child, discharging the leading operand.
+  ContractCarriers = ["bodyInto", "bodyStart"]
+    ## Accessors that handle the operand themselves - see `nimony_model`.
+
+proc branchOpensNodeGenerically(body: Cursor): bool =
+  ## True when the branch descends into the node and walks its children,
+  ## i.e. when the operand-headed contract applies to it at all.
+  ##
+  ## A branch that dispatches elsewhere - `case n.exprKind`, a call to a
+  ## dedicated `trPragmax`, `bug "unreachable"` - never touches the children
+  ## itself and is not this check's business, whatever tags it lists.
+  var n = body
+  n.linearScan:
+    if n.isTagLit and globalTags.tags[n.cursorTagId] in CallTags:
+      if extractCalleeName(n) in NodeOpeners: return true
+  result = false
+
+proc branchStepsOverOperand(body: Cursor): bool =
+  ## True when the branch discharges the leading operand before walking the
+  ## rest. Recognised forms:
+  ##
+  ##   n.bodyInto: ...              the accessor - handles the skip itself
+  ##   n.into: skip n; ...          the hand-written form the 25 sites use
+  ##   takeInto dest, n: takeTree dest, n; ...
+  ##
+  ## Anything that opens the node and goes straight to the loop is a violation.
+  var n = body
+  n.linearScan:
+    if n.isTagLit and globalTags.tags[n.cursorTagId] in CallTags:
+      let callee = extractCalleeName(n)
+      if callee in ContractCarriers: return true
+      if callee in NodeOpeners:
+        # Look inside the block for a leading `skip` / `takeTree` that
+        # discharges the operand before the loop.
+        var inner = childCursor(n)
+        while inner.hasMore:
+          if inner.isTagLit and globalTags.tags[inner.cursorTagId] == "stmts":
+            var first = childCursor(inner)
+            if first.isTagLit and globalTags.tags[first.cursorTagId] in CallTags:
+              if extractCalleeName(first) in OperandSteppers: return true
+            return false
+          skip inner
+        return false
+  result = false
+
+proc scanForOperandHeadedWalks(ctx: var CheckContext; buf: var TokenBuf) =
+  ## Reject a `case n.stmtKind` branch for an operand-headed tag that opens the
+  ## node and recurses into every child as a statement - it walks the leading
+  ## operand. This is the shape that broke `derefs`, `vl` and `cse` when
+  ## `(comesfrom SYM S*)` was introduced, each caught only by a downstream
+  ## suite rather than at edit time.
+  var n = beginRead(buf)
+  assert n.isTagLit
+  n.linearScan:
+    let tag = globalTags.tags[n.cursorTagId]
+    if tag == "case":
+      var peek = childCursor(n)
+      var discr = ""
+      if peek.isTagLit:
+        discr = extractLastDotField(peek)
+      if discr == "stmtKind":
+        if peek.hasMore: skip peek  # skip discriminator
+        while peek.hasMore:
+          if peek.isTagLit and globalTags.tags[peek.cursorTagId] == "of":
+            # (of (ranges LabelA LabelB ...) <body>)
+            var branch = childCursor(peek)
+            var labels: seq[string] = @[]
+            if branch.isTagLit and globalTags.tags[branch.cursorTagId] == "ranges":
+              var lab = childCursor(branch)
+              while lab.hasMore:
+                # Unsemchecked nifler output: the labels are `Ident` tokens,
+                # not resolved `Symbol`s.
+                if lab.kind == Ident:
+                  labels.add enumNameToTag(lab.strVal)
+                skip lab
+            skip branch  # past (ranges ...) to the body
+            var offenders: seq[string] = @[]
+            for l in labels:
+              if l.len > 0 and firstSlotIsOperand(ctx, l): offenders.add l
+            # The contract only binds a branch that actually walks the node's
+            # children. A branch that dispatches elsewhere - the big group
+            # branches in `lambdalifting` and `deferstmts` fall through to
+            # `case n.exprKind` - never touches the leading operand, so it
+            # cannot get it wrong. Testing for the walk structurally is what
+            # makes this sound; counting labels only approximated it.
+            if offenders.len > 0 and branchOpensNodeGenerically(branch) and
+               not branchStepsOverOperand(branch):
+              # A warning, not an error, and the severity is load-bearing.
+              # Eight branches in the existing pass files are in exactly this
+              # shape - `eraiser.nim:216`, `deferstmts.nim:171` and friends list
+              # the two tags among 40-odd "generic container" kinds and copy
+              # every child through. Whether that is a bug depends on what the
+              # pass then does with the operand: `eraiser` copying it verbatim
+              # is harmless, a pass that rewrites what it walks is not. The
+              # check cannot tell those apart, and task 7.1 rules out rewriting
+              # working passes to satisfy it. So: report the fact, let the
+              # author judge, and keep the build green.
+              addWarning(ctx, peek.info, "case stmtKind",
+                "branch for `" & offenders.join("`, `") &
+                "` walks every child as a statement, but the first child is an " &
+                "operand; use `bodyInto` or step over it explicitly")
+          skip peek
+
+# ---------------------------------------------------------------------------
 # Step 3: Obligation tracking — scan procs for unmatched skip/emit
 # ---------------------------------------------------------------------------
 
@@ -1251,6 +1383,7 @@ proc main() =
   # the check only in --strict mode.
   if strict:
     scanForNonExhaustiveCases(ctx, buf)
+    scanForOperandHeadedWalks(ctx, buf)
 
   # Obligation tracking: check cursor params are consumed
   scanObligations(ctx, procMetas)

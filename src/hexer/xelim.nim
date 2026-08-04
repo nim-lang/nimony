@@ -992,6 +992,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyInto(dest, n):
       while n.hasMore:
         trStmt c, dest, n
+  of ComesfromS:
+    # Like `StmtsS` but for the leading template symbol, and deliberately
+    # without `openScope`: the wrapper is transparent, see `doc/tags.md`.
+    copyInto(dest, n):
+      takeTree dest, n # the origin symbol
+      while n.hasMore:
+        trStmt c, dest, n
 
 proc isIntLike(tk: TypeKind): bool {.inline.} =
   tk in {IntT, UIntT, CharT, BoolT}
@@ -1160,7 +1167,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
          StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-         NoStmt:
+         ComesfromS, NoStmt:
         trExprLoop c, dest, n, tar
   else:
     bug "unexpected ')' inside"

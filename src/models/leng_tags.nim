@@ -88,9 +88,10 @@ type
     MflagS = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
     VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
     InstrS = (ord(InstrTagId), "instr")  ## intrinsic/instruction application. Typed exactly like `(call SYM X*)` — `SYM`'s params and return type drive everything — but a distinct tag, so a consumer sees "not an ABI call" from the tag alone. `SYM` must carry `(instruction …)` or `(intrinsic …)`. Selection-final: no pass may substitute a different opcode
+    ComesfromS = (ord(ComesfromTagId), "comesfrom")  ## a statement list that came from expanding `SYM` — today a template, and the same shape suits any inliner. Carried so the debug backend can emit it as an inlined frame (DWARF `DISubprogram` + `inlinedAt`). Transparent like `(par ...)` is for expressions: it introduces **no scope** and no semantics, so a consumer that does not care descends into the body and skips the rest. The `^` marks `SYM` as an operand, not a statement: a statement walker MUST step over it before recursing, or it walks the origin symbol as code. See `nimony_model.OperandHeadedS` / `bodyInto`. Only statement-position (void) expansions are wrapped
 
 proc rawTagIsLengStmt*(raw: TagEnum): bool {.inline.} =
-  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, StoreTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId}
+  raw in {CallTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, ProcTagId, TypeTagId, EmitTagId, AsgnTagId, StoreTagId, KeepovfTagId, ScopeTagId, IfTagId, BreakTagId, WhileTagId, CaseTagId, LabTagId, JmpTagId, RetTagId, StmtsTagId, DiscardTagId, TryTagId, RaiseTagId, OnerrTagId, IteTagId, ItecTagId, LoopTagId, JtrueTagId, MflagTagId, VflagTagId, InstrTagId, ComesfromTagId}
 
 type
   LengType* = enum

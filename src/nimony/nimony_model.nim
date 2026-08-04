@@ -438,6 +438,58 @@ proc skipModifier*(a: Cursor): Cursor =
 const
   LocalDecls* = {VarS, LetS, ConstS, ResultS, CursorS, PatternvarS, GvarS, TvarS, GletS, TletS}
 
+  OperandHeadedS* = {PragmaxS, ComesfromS}
+    ## Statement tags that are *transparent* - they introduce no scope and no
+    ## semantics of their own, so a pass that does not care about the tag may
+    ## descend straight into the body - but whose FIRST child is an operand
+    ## rather than a statement:
+    ##
+    ##   (pragmax (pragmas ...) <body>)   the pragma list
+    ##   (comesfrom SYM S*)               the expanded symbol
+    ##
+    ## A walker that recurses into every child as a statement is therefore wrong
+    ## here, and wrong silently: it walks the operand, corrupts the tree, and the
+    ## damage surfaces passes later. Use `bodyInto` / `bodyStart` below instead
+    ## of opening the node by hand.
+    ##
+    ## Transparency is the membership criterion, not the shape of the first
+    ## child. `(block .D X)` also leads with an operand and is deliberately NOT a
+    ## member: it opens a scope and is a `break` target, so no pass may descend
+    ## into it and forget it was there. `(corofor X S)` likewise - its leading
+    ## call must be lowered, not skipped.
+    ##
+    ## Mirrored on the Leng side as `leng_model.OperandHeadedS` (the two models
+    ## are split by tag vocabulary, not by concept), which holds `{ComesfromS}`
+    ## only - `pragmax` has no Leng tag.
+
+proc bodyStart*(n: Cursor): Cursor =
+  ## Cursor at the first *statement* child of `n`, stepping over the leading
+  ## operand when `n` is operand-headed. The read-only half of the pair: takes
+  ## `n` by value and does not advance it, so it creates no traversal obligation
+  ## for the caller. Mirrors nifcore's `sub`, which it wraps.
+  result = sub(n)
+  if n.stmtKind in OperandHeadedS: skip result
+
+template bodyInto*(n: var Cursor; body: untyped) =
+  ## Like `into`, but steps over the leading operand first when `n` is
+  ## operand-headed, so `body` sees statement children only:
+  ##
+  ##   n.bodyInto:
+  ##     while n.hasMore: trStmt c, n
+  ##
+  ## Restores the outer bounds afterwards and requires `body` to consume every
+  ## remaining child, exactly as `into` does. This is the consuming half of the
+  ## pair and what a pass that does not care about the wrapper should reach for -
+  ## it makes the correct walk shorter to write than the wrong one.
+  ##
+  ## The membership test must happen before `enterScope`: afterwards `n` points
+  ## at the first child and no longer carries the tag.
+  let operandHeaded = n.stmtKind in OperandHeadedS
+  let cursorScope = enterScope(n)
+  if operandHeaded: skip n
+  body
+  leaveScope(n, cursorScope)
+
 template skipToLocalType*(n) =
   inc n # skip ParLe
   inc n # skip name

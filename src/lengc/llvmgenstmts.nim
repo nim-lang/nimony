@@ -356,6 +356,40 @@ proc genScopeLLVM(c: var LLVMCode; n: var Cursor) =
       genStmtLLVM c, n
     c.m.closeScope()
 
+proc genComesFromLLVM(c: var LLVMCode; n: var Cursor) =
+  ## `(comesfrom SYM S*)` — the statements of an expanded template. Deliberately
+  ## does NOT open a scope (unlike `genScopeLLVM`): the wrapper is transparent,
+  ## it exists only so the debug backend can emit the body as an inlined frame.
+  ##
+  ## The head's line info is the *call site*; the children's line info points
+  ## into the template's definition file. DWARF wants exactly that split: a
+  ## synthetic `DISubprogram` for the template, and every location inside it
+  ## chained back to the call site through `inlinedAt` (#1987).
+  let callInfo = n.info
+  n.into:
+    var tmplSym = SymId(0)
+    if n.kind == Symbol:
+      tmplSym = n.symId
+    skip n # the origin symbol
+    # Build the call-site location BEFORE pushing, so a nested expansion's
+    # `inlinedAt` chain picks up the enclosing frame and nests correctly.
+    let callLocId = dbgLocationId(c, callInfo)
+    var pushed = false
+    if tmplSym != SymId(0) and callLocId != 0 and c.debug.cuId != 0 and
+        c.currentProc.subprogramId != 0:
+      let (spId, spFileId) = getOrCreateInlineSP(c, tmplSym, n.info)
+      if spId != 0:
+        c.currentProc.inlineFrames.add InlineFrame(spId: spId,
+          spFileId: spFileId, callLocId: callLocId)
+        pushed = true
+    while n.hasMore:
+      genStmtLLVM c, n
+    if pushed:
+      discard c.currentProc.inlineFrames.pop()
+      # The location cache in `dbgLoc` was computed inside the frame; drop it so
+      # the next instruction re-derives one at the outer scope.
+      c.currentProc.dbgLoc = ""
+
 proc genMflagDeclLLVM(c: var LLVMCode; n: var Cursor) =
   n.into:
     if n.kind == SymbolDef:
@@ -510,6 +544,8 @@ proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
       genStmtLLVM(c, n)
       if c.currentProc.needsTerminator:
         while n.hasMore and n.stmtKind != LabS: skip n
+  of ComesfromS:
+    genComesFromLLVM c, n
   of ScopeS:
     genScopeLLVM c, n
   of InstrS:

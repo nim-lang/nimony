@@ -60,7 +60,7 @@ type
     ProctypeL = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
     PtrL = (ord(PtrTagId), "ptr")  ## `ptr` type contructor; the `(unchecked)` pragma relaxes nil checking on deref
     PragmasL = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
-    PragmaxL = (ord(PragmaxTagId), "pragmax")  ## pragma expressions
+    PragmaxL = (ord(PragmaxTagId), "pragmax")  ## pragma expressions. Transparent: introduces no scope and no semantics, so a consumer that does not care descends into the body. The `^` marks the pragma list as an operand, not a statement: a statement walker MUST step over it before recursing, or it walks the pragmas as code. See `nimony_model.OperandHeadedS` / `bodyInto`
     IncludeL = (ord(IncludeTagId), "include")  ## `include` statement
     ImportL = (ord(ImportTagId), "import")  ## `import` statement
     ImportasL = (ord(ImportasTagId), "importas")  ## `import as` statement

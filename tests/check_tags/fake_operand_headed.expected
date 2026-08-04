@@ -1,0 +1,6 @@
+tests/check_tags/fake_operand_headed.nim(18, 3) Error: `else` branch not allowed; enumerate all values for exhaustive checking [case stmtKind]
+tests/check_tags/fake_operand_headed.nim(32, 3) Error: `else` branch not allowed; enumerate all values for exhaustive checking [case stmtKind]
+tests/check_tags/fake_operand_headed.nim(57, 3) Error: `else` branch not allowed; enumerate all values for exhaustive checking [case stmtKind]
+tests/check_tags/fake_operand_headed.nim(19, 3) Warning: branch for `comesfrom` walks every child as a statement, but the first child is an operand; use `bodyInto` or step over it explicitly [case stmtKind]
+tests/check_tags/fake_operand_headed.nim(23, 3) Warning: branch for `pragmax` walks every child as a statement, but the first child is an operand; use `bodyInto` or step over it explicitly [case stmtKind]
+tests/check_tags/fake_operand_headed.nim(30, 1) Warning: cursor `n` not advanced on every code path [trConforming]

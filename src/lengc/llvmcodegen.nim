@@ -47,6 +47,14 @@ type
   LLVMGenFlag* = enum
     gfMainModule
 
+  InlineFrame* = object
+    ## One active `(comesfrom ...)` while generating its body: locations inside
+    ## it are scoped to the template's synthetic DISubprogram and chained to
+    ## the call site via `inlinedAt` (#1987).
+    spId*: int               # synthetic DISubprogram of the template
+    spFileId*: int           # DIFile id of the template's definition file
+    callLocId*: int          # DILocation id of the call site (inlinedAt target)
+
   LLVMCurrentProc* = object
     funcIdx*: int            # index into module.funcs (InitFuncIdx for init func)
     dbgLoc*: string          # current debug location for next instruction
@@ -61,6 +69,7 @@ type
     subprogramId*: int
     subprogramFileId*: int
     retainedNodes*: seq[int]
+    inlineFrames*: seq[InlineFrame] # innermost active template expansion last
 
   DebugInfo* = object
     nextMetadataId*: int
@@ -71,6 +80,8 @@ type
     diBasicTypeCache*: Table[string, int] # "i32"/"float"/… -> DIBasicType id
     compositeTypeDone*: HashSet[SymId]    # symIds with fully built DICompositeType
     globalExprs*: seq[int] # DIGlobalVariableExpression IDs for DICompileUnit globals
+    inlineSpCache*: Table[SymId, (int, int)] # template sym -> (spId, spFileId)
+    nullSigId*: int # shared `!DISubroutineType(types: !{null})` for template SPs
 
 type
   PrimTypes* = object

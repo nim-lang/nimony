@@ -1119,7 +1119,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           YldS, PragmaxS, ImportasS, ExportexceptS, DiscardS,
           TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
           CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
-          BindS, MixinS, UsingS, AsmS, DeferS:
+          BindS, MixinS, UsingS, AsmS, DeferS, ComesfromS:
         trSons(c, dest, n)
     of SetconstrX:
       genSetConstr(c, dest, n)

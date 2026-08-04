@@ -140,7 +140,7 @@
 | `(was STR)` | LengPragma | |
 | `(selectany)` | LengPragma, NimonyPragma | |
 | `(pragmas (pragma ...)*)` | LengOther, NimonyOther, NimonyStmt, NiflerKind | begin of pragma section |
-| `(pragmax X (pragmas ...))` | NimonyExpr, NimonyStmt, NiflerKind | pragma expressions |
+| `(pragmax ^(pragmas ...) X)` | NimonyExpr, NimonyStmt, NiflerKind | pragma expressions. Transparent: introduces no scope and no semantics, so a consumer that does not care descends into the body. The `^` marks the pragma list as an operand, not a statement: a statement walker MUST step over it before recursing, or it walks the pragmas as code. See `nimony_model.OperandHeadedS` / `bodyInto` |
 | `(align X)` | LengPragma, NimonyPragma | |
 | `(bits X)`| LengPragma, NimonyPragma | |
 | `(vector)` | LengPragma | |
@@ -350,6 +350,41 @@
 | `(assembler)` | NimonyPragma, LengPragma | the `{.assembler.}` **proc pragma** (no children): every construct in the body maps one-to-one to assembler, in source order, with no temporaries invented and no operand materialised. The back end (arkham) owns that checking — see `nativenif/doc/intrinsics.md` §8. Spelled `assembler` rather than `asm` because Nim's parser reads a pragma entry as an expression and so cannot accept a keyword there; it is unrelated to the `(asm X+)` statement |
 | `(deferexpansion)` | NimonyOther | emitted by a template *plugin* as its entire output to say "I cannot answer while the argument still contains type variables — ask me again after instantiation". The compiler then parks the sem-checked call in the tree as `(at <template> <args>…)` instead of replacing it with an expansion — `(at …)` because that is the only unresolved type application a type slot accepts. `subsGenericProc` substitutes into it like any other type, and the instantiation's re-sem turns it back into a call, which drives the plugin again with concrete types. Rejected (a hard error) when no argument contains a generic parameter, which is what makes the retry well-founded |
 | `(needtypes SYM+)` | NimonyOther | emitted by a template *plugin* as its entire output to ask the compiler for the declarations of the named symbols. The compiler appends them to the plugin's second input (`loadTypeDefinitions()`) and runs the plugin again. This is how a plugin resolves a nominal type: it arrives in the main input as an opaque `Symbol`, and a plugin runs in its own process with no way to look it up. Only what is asked for is shipped, so a plugin that never asks pays nothing. Requesting a symbol that was already provided is a hard error, which is what bounds the loop |
+| `(comesfrom ^SYM S*)` | LengStmt, NimonyStmt | a statement list that came from expanding `SYM` — today a template, and the same shape suits any inliner. Carried so the debug backend can emit it as an inlined frame (DWARF `DISubprogram` + `inlinedAt`). Transparent like `(par ...)` is for expressions: it introduces **no scope** and no semantics, so a consumer that does not care descends into the body and skips the rest. The `^` marks `SYM` as an operand, not a statement: a statement walker MUST step over it before recursing, or it walks the origin symbol as code. See `nimony_model.OperandHeadedS` / `bodyInto`. Only statement-position (void) expansions are wrapped |
+
+### Child slot notation
+
+A slot in the first column names the kind of child expected there: `D` a
+symbol definition, `Y` a symbol use, `T` a type, `X` an expression, `S` a
+statement, `P` a pragma list, `LIT`/`STR`/`INTLIT` a literal. A nested
+`(tag ...)` means that literal tag. `...` means the form is underspecified.
+
+Modifiers attach to a slot:
+
+| modifier | meaning |
+|---|---|
+| `.X` | a `DotToken` is also allowed in this slot |
+| `X?` | the slot is optional |
+| `X*`, `X+` | the slot repeats |
+| `^X` | **transparent operand** — see below |
+
+`^` marks the leading child of a *transparent* wrapper: a tag that introduces
+no scope and no semantics, so a pass that does not care about it descends
+straight into the body — but whose first child is an operand rather than a
+statement. A walker that recurses into every child as a statement walks that
+operand and corrupts the tree, silently, with the damage surfacing several
+passes later.
+
+Two tags carry it, `(pragmax ^(pragmas ...) X)` and `(comesfrom ^SYM S*)`.
+The marker exists because the slot *kind* cannot express this: `(bind Y)` has
+the same shape as `(comesfrom ^SYM S*)`, and `(when ...)` the same shape as
+`(pragmax ^(pragmas ...) X)`, with opposite walking contracts. `(block .D X)`
+also leads with an operand and is deliberately unmarked — it opens a scope and
+is a `break` target, so it is not transparent.
+
+`src/validator` reads the marker and reports a `case n.stmtKind` branch that
+opens such a tag and walks every child. In the compiler, use
+`nimony_model.bodyInto` (or `bodyStart`), which steps over the slot for you.
 
 ### unpackflat, unpacktup, unpackdecl
 

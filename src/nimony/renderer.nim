@@ -1429,6 +1429,15 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
           while n.hasMore:
             gsub(g, n, c)
 
+      of ComesfromS:
+        # Debug-info marker with no source syntax: render the expanded
+        # statements alone, so `astToStr` and error messages show what the
+        # user wrote rather than the wrapper.
+        n.into:
+          skip n # the origin symbol
+          while n.hasMore:
+            gsub(g, n, c)
+
       of NoStmt:
         case n.substructureKind
         of RangeU:
