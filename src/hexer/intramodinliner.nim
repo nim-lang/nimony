@@ -190,20 +190,6 @@ proc loadForeign(c: var InlinerCtx; modul: string): bool =
   ## Lazy-load a foreign module: its proc bodies *and* their inline
   ## annotations come out of the same parse, so `lookupInlineInfo` and
   ## `lookupBody` share one file per module.
-  ##
-  ## That file is the **post-DCE `.c.nif`**, and that matters for correctness,
-  ## not speed: in a `.x.nif` every generic instantiation, hexer type and
-  ## string literal is written with the own-module shorthand
-  ## (`seq.0.Ixdx2fh1.`, `strlit.0.I<hash>.`), and dce2's
-  ## `resolveSymbolConflicts` later rewrites all of them to ONE canonical
-  ## owner module. Splicing such a body into a different module resolves those
-  ## names against the *callee's* module, which by then no longer declares
-  ## them — the importer dies with "Symbol not found in NIF module". The
-  ## `.c.nif` has already been through that merge, so its symbols are
-  ## canonical and safe to copy anywhere. `deps.nim` lists the imported
-  ## modules' `.c.nif` as inputs of the `optimize` node so they are
-  ## guaranteed to exist by the time we look; a module we cannot find is
-  ## simply not inlined from.
   if modul == c.moduleSuffix: return true
   if modul in c.foreign: return true
   let xpath = findForeignFile(c, modul, ".c.nif")
@@ -220,8 +206,9 @@ proc subtreeTokenCount(n: Cursor; limit: int): int =
   ## closes do not count). `limit` is only relevant for the comparison the
   ## callers do, the count is exact.
   if not n.isTagLit:
-    return 1
-  result = subtreeWidth(n)
+    result = 1
+  else:
+    result = subtreeWidth(n)
 
 proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   ## Resolves a callee sym to a cursor pointing at its `(proc …)` decl.
@@ -239,10 +226,7 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   if not loadForeign(c, modul): return false
   let fm = c.foreign.getOrQuit(modul)
   if calleeSym notin fm.bodies: return false
-  let cur = cursorAt(fm.buf, fm.bodies.getOrQuit(calleeSym))
-  if c.maxTokens > 0 and subtreeTokenCount(cur, c.maxTokens) > c.maxTokens:
-    return false
-  outCur = cur
+  outCur = cursorAt(fm.buf, fm.bodies.getOrQuit(calleeSym))
   result = true
 
 proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
@@ -1187,13 +1171,6 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   let tmpSym = probe.symId
   let tmpName = pool.syms[tmpSym]
   if not isLocalName(tmpName): return 0
-  # …and it must be a *compiler-minted* temp (xelim spells them `` `x.<n> ``).
-  # The `countSymUses` check below only looks inside the adjacent `if`, which
-  # is sound for a temp xelim mints solely to hold that guard — but a plain
-  # user local (`var negative = isNegative(x)`) can match the very same shape
-  # and still be read further down the scope, and dropping its definition
-  # then leaves those reads dangling.
-  if tmpName.len == 0 or tmpName[0] != '`': return 0
   inc probe                                # past name
   skip probe                               # past pragmas
   skip probe                               # past type
@@ -1447,6 +1424,5 @@ proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
   ## Also writes each `.inline` proc's computed `InlineInfo` into its own
   ## pragma (`(inline THRESHOLD w…)`). That annotation is what importers read
   ## back — see `readInlinePragma` — so no sidecar has to carry it.
-  discard moduleSuffix
   let ma = analyzeModule(buf)
   annotateInlinePragmas(buf, ma.inlineInfo)
