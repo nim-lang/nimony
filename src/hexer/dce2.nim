@@ -213,7 +213,7 @@ proc writeLiveFile*(outfile: string; resolved: ResolveTable;
   ## filename, but this file aggregates symbols from many modules — only
   ## one expansion would be correct, all the others would be wrong. So
   ## we pay the file-size cost rather than mis-expand.
-  var b = nifbuilder.open(outfile)
+  var b = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
   b.withTree "stmts":
     b.withTree resolveTag:
       for key, winner in pairs(resolved):
