@@ -1388,6 +1388,18 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "optimize"
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
+            # The inter-module inliner pulls `.inline` callee bodies out of the
+            # imported modules' `.c.nif` (post-DCE, so their symbols are already
+            # canonicalised by the generic-instance merge). List those as
+            # dependency inputs to order them before this module's optimize —
+            # same arrangement as the `arkham` node below; only input[0] reaches
+            # shoggoth's command line (the `optimize` cmd uses `(input)`).
+            var seenOptDeps = initHashSet[string]()
+            for depIdx in v.deps:
+              let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
+              if not seenOptDeps.containsOrIncl(depNif):
+                b.withTree "input":
+                  b.addStrLit depNif
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized

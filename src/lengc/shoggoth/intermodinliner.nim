@@ -13,10 +13,12 @@
 ## threshold followed by per-parameter weights (see `intramodinliner`'s
 ## `computeInlineInfo`). This pass consumes those annotations and splices
 ## qualifying calls at NIFC level — both same-module and cross-module:
-## cross-module bodies live in the matching `.x.nif` files, picked up via
-## `intramodinliner`'s lazy foreign-module loader (`xnifDir` plus a one-level-up
-## search, so the main module's `.x.nif` inside `<nimcache>/<backend>/` and
-## non-main modules' `.x.nif` directly in `<nimcache>/` are both found).
+## cross-module bodies are taken from the callee module's post-DCE `.c.nif`,
+## picked up via `intramodinliner`'s lazy foreign-module loader (`xnifDir` plus
+## a one-level-up search, so the main module's copy inside
+## `<nimcache>/<backend>/` and non-main modules' directly in `<nimcache>/` are
+## both found). `deps.nim` makes those files inputs of the `optimize` node so
+## they exist by the time we look.
 ##
 ## In addition to the full splice, this pass detects a *partial-inline
 ## prologue* — the guarded early-return shape
@@ -27,7 +29,7 @@
 ## guard does not fire the original call is made instead. That captures
 ## the common-case speedup without paying to inline the cold tail.
 
-import std / [tables, assertions, os]
+import std / [tables, assertions]
 include "../../lib" / nifprelude
 import nifpools
 import ".." / leng_model
@@ -101,6 +103,14 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
 
 # ---- public entry --------------------------------------------------------
 
+const InlineMaxTokens = 100
+  ## Cross-module callee size cap, in NIF tokens. `.inline` carries threshold 0
+  ## ("always"), so this is the only thing keeping the depth-4 cascade of
+  ## `.inline` accessors from producing basic blocks that exhaust arkham's
+  ## register allocator. Sized to admit the cursor/pool accessors this pass
+  ## exists for; a sweep over 40/60/100/160 put the runtime knee at 100 with
+  ## the binary still within +3%.
+
 proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
                             xnifDir: string): bool =
   ## Returns true when `buf` was changed.
@@ -109,15 +119,11 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
   ## `trySpliceVarInit` at every statement-position call and bound-form
   ## `(var :t … (call …))`. The cross-module body fetch is automatic once
   ## `xnifDir` is set — `lookupBody` resolves the callee's module via the
-  ## symbol name (`extractModule`) and lazy-loads the foreign `.x.nif`.
-  var infos = initTable[string, ModuleAnalysis]()
-  # Record the current module's OWN inline info so same-module `.inline` callees
-  # are recognised — `lookupInlineInfo` only consults `infos`, and the foreign
-  # path never populates the suffix we're processing.
-  infos[suffix] = analyzeModule(buf)
-  var ctx = initInlinerCtx(suffix, addr buf, addr infos,
+  ## symbol name (`extractModule`) and lazy-loads the foreign `.c.nif`.
+  var ctx = initInlinerCtx(suffix, addr buf,
                            xnifDir = xnifDir,
                            maxDepth = 4,
+                           maxTokens = InlineMaxTokens,
                            counterPrefix = "x")
   collectProcBodies(ctx)
 
