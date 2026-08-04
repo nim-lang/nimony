@@ -2342,128 +2342,141 @@ proc genInitProcEnd(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) 
   dest.addParRi() # stmts (body)
   dest.addParRi() # proc
 
-proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
+proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
+                 isWindows: bool) =
   ## Generate cmdCount/cmdLine globals and a C main() wrapper for the main module.
   ## The gvars get exportc pragmas so NIFC defines them with the expected C names.
   ## Symbol names must contain dots to be recognized as Symbol tokens (not Ident) in NIF.
+  ##
+  ## Windows is the exception: a process entry point there receives no `argc`,
+  ## `argv` or `envp` — the OS keeps the command line as one unsplit UTF-16
+  ## string behind `GetCommandLineW` and the environment as a block behind
+  ## `GetEnvironmentStringsW`. So `main` takes no parameters and the process
+  ## vectors are not emitted at all; `std/cmdline` and `std/envvars` ask the
+  ## Windows API for those two directly instead.
   let initSym = pool.syms.getOrIncl(initProcName(c.main))
 
-  # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
-  # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
   let ccharSym = pool.syms.getOrIncl("`cchar.0." & c.main)
-  dest.addParLe("type", rootInfo)
-  dest.addSymDef(ccharSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("importc", rootInfo)
-  dest.addStrLit("char", rootInfo)
-  dest.addParRi() # importc
-  dest.addParLe("nodecl", rootInfo)
-  dest.addParRi() # nodecl
-  dest.addParRi() # pragmas
-  dest.addParLe("i", rootInfo) # body: (i 8)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # i
-  dest.addParRi() # type
-
-  # (gvar :cmdCount (pragmas (exportc "cmdCount")) (i 32) .)
   let cmdCountSym = pool.syms.getOrIncl("`cmdCount.0." & c.main)
-  dest.addParLe("gvar", rootInfo)
-  dest.addSymDef(cmdCountSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("exportc", rootInfo)
-  dest.addStrLit("cmdCount", rootInfo)
-  dest.addParRi() # exportc
-  dest.addParRi() # pragmas
-  dest.addParLe("i", rootInfo)
-  dest.addIntLit(32, rootInfo)
-  dest.addParRi() # i
-  dest.addDotToken() # no init value
-  dest.addParRi() # gvar
-
-  # (gvar :cmdLine (pragmas (exportc "cmdLine")) (ptr (ptr cchar)) .)
   let cmdLineSym = pool.syms.getOrIncl("`cmdLine.0." & c.main)
-  dest.addParLe("gvar", rootInfo)
-  dest.addSymDef(cmdLineSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("exportc", rootInfo)
-  dest.addStrLit("cmdLine", rootInfo)
-  dest.addParRi() # exportc
-  dest.addParRi() # pragmas
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addDotToken() # no init value
-  dest.addParRi() # gvar
-
-  # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
-  # The environment block (`char **`), written by `main` from its 3rd parameter.
-  # Distinct from libc's `environ` ON PURPOSE: this same gvar is emitted for the C
-  # backend too (codegen is shared), and an exportc `environ` would clash with
-  # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
-  # `nimEnviron` instead under `-d:nimNativeIo` (on the C backend it's dead — those
-  # modules keep using libc's `environ`). The native nifasm entry passes the
-  # kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
   let nimEnvironSym = pool.syms.getOrIncl("`nimEnviron.0." & c.main)
-  dest.addParLe("gvar", rootInfo)
-  dest.addSymDef(nimEnvironSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("exportc", rootInfo)
-  dest.addStrLit("nimEnviron", rootInfo)
-  dest.addParRi() # exportc
-  dest.addParRi() # pragmas
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addDotToken() # no init value
-  dest.addParRi() # gvar
-
-  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar))) (param :envp . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
-  let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
   let argcSym = pool.syms.getOrIncl("`argc.0." & c.main)
   let argvSym = pool.syms.getOrIncl("`argv.0." & c.main)
   let envpSym = pool.syms.getOrIncl("`envp.0." & c.main)
+
+  if not isWindows:
+    # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
+    # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
+    dest.addParLe("type", rootInfo)
+    dest.addSymDef(ccharSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("importc", rootInfo)
+    dest.addStrLit("char", rootInfo)
+    dest.addParRi() # importc
+    dest.addParLe("nodecl", rootInfo)
+    dest.addParRi() # nodecl
+    dest.addParRi() # pragmas
+    dest.addParLe("i", rootInfo) # body: (i 8)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # i
+    dest.addParRi() # type
+
+    # (gvar :cmdCount (pragmas (exportc "cmdCount")) (i 32) .)
+    dest.addParLe("gvar", rootInfo)
+    dest.addSymDef(cmdCountSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("exportc", rootInfo)
+    dest.addStrLit("cmdCount", rootInfo)
+    dest.addParRi() # exportc
+    dest.addParRi() # pragmas
+    dest.addParLe("i", rootInfo)
+    dest.addIntLit(32, rootInfo)
+    dest.addParRi() # i
+    dest.addDotToken() # no init value
+    dest.addParRi() # gvar
+
+    # (gvar :cmdLine (pragmas (exportc "cmdLine")) (ptr (ptr cchar)) .)
+    dest.addParLe("gvar", rootInfo)
+    dest.addSymDef(cmdLineSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("exportc", rootInfo)
+    dest.addStrLit("cmdLine", rootInfo)
+    dest.addParRi() # exportc
+    dest.addParRi() # pragmas
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addDotToken() # no init value
+    dest.addParRi() # gvar
+
+    # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
+    # The environment block (`char **`), written by `main` from its 3rd parameter.
+    # Distinct from libc's `environ` ON PURPOSE: this same gvar is emitted for the C
+    # backend too (codegen is shared), and an exportc `environ` would clash with
+    # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
+    # `nimEnviron` instead under `-d:nimNativeIo` (on the C backend it's dead — those
+    # modules keep using libc's `environ`). The native nifasm entry passes the
+    # kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
+    dest.addParLe("gvar", rootInfo)
+    dest.addSymDef(nimEnvironSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("exportc", rootInfo)
+    dest.addStrLit("nimEnviron", rootInfo)
+    dest.addParRi() # exportc
+    dest.addParRi() # pragmas
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addDotToken() # no init value
+    dest.addParRi() # gvar
+
+  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar))) (param :envp . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
+  # On Windows the params list is empty — nothing is handed to the entry point
+  # there, so there is nothing to name.
+  let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
   dest.addParLe("proc", rootInfo)
   dest.addSymDef(mainSym, rootInfo)
   # params
   dest.addParLe("params", rootInfo)
-  # (param :argc . (i 32))
-  dest.addParLe("param", rootInfo)
-  dest.addSymDef(argcSym, rootInfo)
-  dest.addDotToken()
-  dest.addParLe("i", rootInfo)
-  dest.addIntLit(32, rootInfo)
-  dest.addParRi() # i
-  dest.addParRi() # param
-  # (param :argv . (ptr (ptr cchar)))
-  dest.addParLe("param", rootInfo)
-  dest.addSymDef(argvSym, rootInfo)
-  dest.addDotToken()
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addSymUse(ccharSym, rootInfo)
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addParRi() # param
-  # (param :envp . (ptr (ptr cchar)))  — the environment block (3rd C-main arg)
-  dest.addParLe("param", rootInfo)
-  dest.addSymDef(envpSym, rootInfo)
-  dest.addDotToken()
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addSymUse(ccharSym, rootInfo)
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addParRi() # param
+  if not isWindows:
+    # (param :argc . (i 32))
+    dest.addParLe("param", rootInfo)
+    dest.addSymDef(argcSym, rootInfo)
+    dest.addDotToken()
+    dest.addParLe("i", rootInfo)
+    dest.addIntLit(32, rootInfo)
+    dest.addParRi() # i
+    dest.addParRi() # param
+    # (param :argv . (ptr (ptr cchar)))
+    dest.addParLe("param", rootInfo)
+    dest.addSymDef(argvSym, rootInfo)
+    dest.addDotToken()
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addSymUse(ccharSym, rootInfo)
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addParRi() # param
+    # (param :envp . (ptr (ptr cchar)))  — the environment block (3rd C-main arg)
+    dest.addParLe("param", rootInfo)
+    dest.addSymDef(envpSym, rootInfo)
+    dest.addDotToken()
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addSymUse(ccharSym, rootInfo)
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addParRi() # param
   dest.addParRi() # params
   # return type: (i 32)
   dest.addParLe("i", rootInfo)
@@ -2477,42 +2490,43 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
   dest.addParRi() # pragmas
   # body
   dest.addParLe("stmts", rootInfo)
-  # (asgn cmdCount argc)
-  dest.addParLe("asgn", rootInfo)
-  dest.addSymUse(cmdCountSym, rootInfo)
-  dest.addSymUse(argcSym, rootInfo)
-  dest.addParRi() # asgn
-  # (asgn cmdLine argv)
-  dest.addParLe("asgn", rootInfo)
-  dest.addSymUse(cmdLineSym, rootInfo)
+  if not isWindows:
+    # (asgn cmdCount argc)
+    dest.addParLe("asgn", rootInfo)
+    dest.addSymUse(cmdCountSym, rootInfo)
+    dest.addSymUse(argcSym, rootInfo)
+    dest.addParRi() # asgn
+    # (asgn cmdLine argv)
+    dest.addParLe("asgn", rootInfo)
+    dest.addSymUse(cmdLineSym, rootInfo)
 
-  dest.addParLe("cast", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
+    dest.addParLe("cast", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
 
-  dest.addSymUse(argvSym, rootInfo)
-  dest.addParRi() # asgn
+    dest.addSymUse(argvSym, rootInfo)
+    dest.addParRi() # cast
 
-  dest.addParRi() # asgn
-  # (asgn nimEnviron (cast (ptr (ptr cchar)) envp))
-  dest.addParLe("asgn", rootInfo)
-  dest.addSymUse(nimEnvironSym, rootInfo)
-  dest.addParLe("cast", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addSymUse(envpSym, rootInfo)
-  dest.addParRi() # cast
-  dest.addParRi() # asgn
+    dest.addParRi() # asgn
+    # (asgn nimEnviron (cast (ptr (ptr cchar)) envp))
+    dest.addParLe("asgn", rootInfo)
+    dest.addSymUse(nimEnvironSym, rootInfo)
+    dest.addParLe("cast", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addSymUse(envpSym, rootInfo)
+    dest.addParRi() # cast
+    dest.addParRi() # asgn
   # (call ini.0.modname)
   dest.addParLe("call", rootInfo)
   dest.addSymUse(initSym, rootInfo)
@@ -2616,7 +2630,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n, TraverseAll
         swap dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; isWindows = defined(windows)) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2672,7 +2686,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   genInitProcEnd(c, cdest, rootInfo)
 
   if isMain and appType in {appConsole, appGui}:
-    genMainProc(c, cdest, rootInfo)
+    genMainProc(c, cdest, rootInfo, isWindows)
 
   # the module's close was consumed by `trToplevel`
   let destfileName = c.dir / c.main & ".x.nif"

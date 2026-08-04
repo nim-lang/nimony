@@ -216,6 +216,17 @@ when defined(windows):
   proc getCommandLineW*(): WideCString {.importc: "GetCommandLineW",
     stdcall, dynlib: "kernel32", sideEffect.}
 
+  proc getEnvironmentStringsW*(): WideCString {.
+    importc: "GetEnvironmentStringsW", stdcall, dynlib: "kernel32", sideEffect.}
+    ## The whole environment as one block of NUL-separated `KEY=VALUE` strings,
+    ## terminated by a second NUL. Release it with `freeEnvironmentStringsW`.
+  proc freeEnvironmentStringsW*(env: WideCString): WINBOOL {.
+    importc: "FreeEnvironmentStringsW", stdcall, dynlib: "kernel32", sideEffect.}
+  proc setEnvironmentVariableW*(name: WideCString;
+                                value: nil WideCString): WINBOOL {.
+    importc: "SetEnvironmentVariableW", stdcall, dynlib: "kernel32", sideEffect.}
+    ## A nil `value` deletes the variable.
+
   proc sleep*(dwMilliseconds: DWORD) {.importc: "Sleep", stdcall, dynlib: "kernel32", sideEffect.}
 
   proc getSystemTimeAsFileTime*(lpSystemTimeAsFileTime: var FILETIME) {.

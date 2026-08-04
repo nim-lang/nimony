@@ -895,7 +895,7 @@ const
     # these were observed on Windows. Fold an entry into `NativeTestDirs` once it
     # has been seen green on Linux/macOS too.
     #
-    # `tests/nimony/stdlib`: 44 of its 53 pass; the rest are in `NativeTestSkip`.
+    # `tests/nimony/stdlib`: 45 of its 53 pass; the rest are in `NativeTestSkip`.
     # This is the suite that covers the process vectors the Windows entry point
     # does not receive (`tcmdline`, `tenvvars`, `tos`) — the reason it is worth
     # running natively at all rather than only through the C backend.
@@ -919,9 +919,6 @@ const
     # `mov` of a `bool` into an `(i 64)` result: nifasm's widening rule admits
     # int→int only, so a bool source is a type error. Arch-neutral.
     "tests/nimony/stdlib/thashes",
-    # A `const` holding a string literal: arkham's data-blob emitter has no
-    # `StrLit` case ("arkham const: unsupported literal kind StrLit").
-    "tests/nimony/stdlib/tparseopt",
     # Compiles and links, but the result diverges from the spec-pinned output —
     # a native MISCOMPILE (all three are green on the C backend). Undiagnosed.
     "tests/nimony/stdlib/tbitops",

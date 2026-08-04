@@ -1,22 +1,11 @@
 import std/[assertions, smartcli]
 
-var
-  nifcArgc {.importc: "cmdCount".}: int32
-  nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
+# The command line is handed to `cliapp` explicitly rather than faked into the
+# process argv: a Windows entry point receives no argv at all, so there is no
+# such vector to write.
 
 block:
-  nifcArgc = 6
-  let cargv = [
-    cstring"backup",
-    cstring"--mode=delta",
-    cstring"--output=backup.log",
-    cstring"run",
-    cstring"src",
-    cstring"dst"
-  ]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  let options = cliapp"""Backup v0.1
+  let options = cliapp("""Backup v0.1
 Copies files to a target.
 
 Usage: backup [options] (run SOURCE DEST | version)
@@ -33,7 +22,8 @@ Options:
   --mode=full|delta  Backup mode
   --output=FILE      Log file
   -v, --verbose      Enable verbose output
-  -h, --help         Show this help and exit"""
+  -h, --help         Show this help and exit""",
+    @["--mode=delta", "--output=backup.log", "run", "src", "dst"])
 
   assert options.source == "src"
   assert options.dest == "dst"
@@ -42,19 +32,7 @@ Options:
   assert $options.command == "cmdRun"
 
 block:
-  nifcArgc = 7
-  let cargv = [
-    cstring"backup",
-    cstring"run",
-    cstring"--mode=full",
-    cstring"src",
-    cstring"--output=after.log",
-    cstring"dst",
-    cstring"-v"
-  ]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  let options = cliapp"""Backup v0.1
+  let options = cliapp("""Backup v0.1
 Copies files to a target.
 
 Usage: backup [options] (run SOURCE DEST | version)
@@ -71,7 +49,8 @@ Options:
   --mode=full|delta  Backup mode
   --output=FILE      Log file
   -v, --verbose      Enable verbose output
-  -h, --help         Show this help and exit"""
+  -h, --help         Show this help and exit""",
+    @["run", "--mode=full", "src", "--output=after.log", "dst", "-v"])
 
   assert options.source == "src"
   assert options.dest == "dst"

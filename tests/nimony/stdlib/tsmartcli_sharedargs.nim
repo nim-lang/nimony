@@ -1,21 +1,11 @@
 import std/[assertions, smartcli]
 
-var
-  nifcArgc {.importc: "cmdCount".}: int32
-  nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
+# The command line is handed to `cliapp` explicitly rather than faked into the
+# process argv: a Windows entry point receives no argv at all, so there is no
+# such vector to write.
 
 block:
-  nifcArgc = 5
-  let cargv = [
-    cstring"greeter",
-    cstring"--output=out.txt",
-    cstring"-v",
-    cstring"greet",
-    cstring"input.txt"
-  ]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  let options = cliapp"""Greeter v0.1
+  let options = cliapp("""Greeter v0.1
 This program greets.
 
 Usage: greeter [options] greet|version INPUT
@@ -31,7 +21,8 @@ Options:
   --mode=fast|slow  Output mode
   --output=FILE     Output file
   -v, --verbose     Enable verbose output
-  -h, --help        Show this help and exit"""
+  -h, --help        Show this help and exit""",
+    @["--output=out.txt", "-v", "greet", "input.txt"])
 
   assert options.input == "input.txt"
   assert options.output == "out.txt"
@@ -39,16 +30,7 @@ Options:
   assert $options.command == "cmdGreet"
 
 block:
-  nifcArgc = 4
-  let cargv = [
-    cstring"greeter",
-    cstring"--mode=slow",
-    cstring"greet",
-    cstring"input.txt"
-  ]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  let options = cliapp"""Greeter v0.1
+  let options = cliapp("""Greeter v0.1
 This program greets.
 
 Usage: greeter [options] greet|version INPUT
@@ -64,7 +46,8 @@ Options:
   --mode=fast|slow  Output mode
   --output=FILE     Output file
   -v, --verbose     Enable verbose output
-  -h, --help        Show this help and exit"""
+  -h, --help        Show this help and exit""",
+    @["--mode=slow", "greet", "input.txt"])
 
   assert options.input == "input.txt"
   assert $options.mode == "cliModeSlow"

@@ -219,8 +219,6 @@ include "system/panics"
 
 include "system/dyncalls"
 
-include "system/winstartup"
-
 func `of`*[T, S](x: T; y: typedesc[S]): bool {.magic: "Of", noSideEffect.}
   ## True if `x`'s runtime type is `S` or a subtype (runtime subtype check).
 func procCall*[T](x: T): untyped {.magic: "ProcCall".}
