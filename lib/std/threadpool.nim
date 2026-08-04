@@ -11,6 +11,8 @@ import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks]
 
 when not defined(windows):
   import std/posix/posix
+else:
+  import windows/winlean
 # --- Configuration ---
 
 const
