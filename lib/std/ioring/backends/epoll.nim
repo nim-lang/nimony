@@ -33,15 +33,13 @@ proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
   ## std/posix). Read immediately after a failing epoll_ctl, no intervening
   ## call, to classify the failure.
 
-proc cWrite(fd: cint; buf: cstring; n: csize_t): int {.importc: "write", sideEffect.}
-
 proc reportResidualFailure(msg: string) =
   ## A residual epoll_ctl failure (both the primary op and its fallback
   ## failed on a live pollable fd) — report on stderr with the errno number.
-  ## Replaces libc `perror`: same destination, no stdio dependency; the
-  ## numeric errno stands in for `strerror`.
-  var line = msg & " (errno " & $errnoLocation()[] & ")\n"
-  discard cWrite(2, toCString(line), line.len.csize_t)
+  ## Rides the panic path's `writeErr` (raw fd 2, no stdio); a private
+  ## bare-importc `write` here would collide with the <unistd.h> prototype
+  ## that this module's usleep/close header imports pull into the TU.
+  writeErr(msg & " (errno " & $errnoLocation()[] & ")\n")
 
 proc fdNotPollable(): bool {.inline.} =
   ## True when a failed epoll_ctl means the fd is no longer a live pollable
