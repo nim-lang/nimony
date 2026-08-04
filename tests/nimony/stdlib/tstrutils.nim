@@ -990,3 +990,22 @@ block: # formatSize
   assert formatSize(4096, includeSpace = true) == "4 KiB"
   # (5378934).float / (1024 * 1024) = 5.12975...
   assert formatSize(5_378_934, prefix = bpColloquial, decimalSep = ',') == "5,129MB"
+
+block: # toHex
+  # explicit width, uppercase, no prefix
+  assert toHex(BiggestInt(1984), 4) == "07C0"
+  assert toHex(BiggestInt(0), 2) == "00"
+  # a value needing more than `len` digits keeps its least-significant nibbles
+  assert toHex(BiggestInt(0xABCD), 2) == "CD"
+  # negatives render in two's complement, filling `len`
+  assert toHex(BiggestInt(-1), 2) == "FF"
+  assert toHex(BiggestInt(-100), 4) == "FF9C"
+  # generic shortcut: exactly 2 * sizeof(T) digits
+  assert toHex(0'u8) == "00"
+  assert toHex(255'u8) == "FF"
+  assert toHex(-1'i8) == "FF"
+  assert toHex(127'i8) == "7F"
+  assert toHex(0'u16) == "0000"
+  assert toHex(0xBEEF'u16) == "BEEF"
+  assert toHex(0'u32) == "00000000"
+  assert toHex(0xDEADBEEF'u32) == "DEADBEEF"
