@@ -7,7 +7,7 @@ type
     NoExpr
     ErrX = (ord(ErrTagId), "err")  ## indicates an error
     SufX = (ord(SufTagId), "suf")  ## literal with suffix annotation
-    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
+    AtX = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`. In a **type** slot the head is normally a type symbol, but it is a *template* symbol when the node is a deferred plugin call (see `(deferexpansion)`): a pass that walks types must not assume the head names a type
     DerefX = (ord(DerefTagId), "deref")  ## pointer deref operation
     DotX = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* carrying the suffix of the module the access was written in. When present, re-checks at expansion/serialization sites judge the private-field access against that module instead of against the module they are running in, so a template body keeps its author's visibility wherever it is expanded. The reserved value `"*"` means "already validated, originating module no longer comparable" and is used by `exprexec`, whose sub-compile runs under a synthesized module suffix. Emitted by sem whenever it resolves a non-exported field.
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
@@ -200,7 +200,7 @@ type
   NimonyType* = enum
     NoType
     ErrT = (ord(ErrTagId), "err")  ## indicates an error
-    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`
+    AtT = (ord(AtTagId), "at")  ## array indexing operation (typed Nimony form vs untyped Leng form); also used for generic proc/type instantiation `(at callee T1 T2 ...)` where an argument may also be a constant *value* bound to a `staticTypevar`. In a **type** slot the head is normally a type symbol, but it is a *template* symbol when the node is a deferred plugin call (see `(deferexpansion)`): a pass that walks types must not assume the head names a type
     AndT = (ord(AndTagId), "and")  ## boolean `and` operation; `Y+` form is also used for concept parent lists with more than two parents
     OrT = (ord(OrTagId), "or")  ## boolean `or` operation
     NotT = (ord(NotTagId), "not")  ## boolean `not` operation
@@ -285,9 +285,11 @@ type
     ForcallU = (ord(ForcallTagId), "forcall")  ## for-loop plugin input: the iterator name, grouped call arguments, loop variables, and the loop body
     ExceptU = (ord(ExceptTagId), "except")  ## except subsection
     FinU = (ord(FinTagId), "fin")  ## finally subsection
+    DeferexpansionU = (ord(DeferexpansionTagId), "deferexpansion")  ## emitted by a template *plugin* as its entire output to say "I cannot answer while the argument still contains type variables — ask me again after instantiation". The compiler then parks the sem-checked call in the tree as `(at <template> <args>…)` instead of replacing it with an expansion — `(at …)` because that is the only unresolved type application a type slot accepts. `subsGenericProc` substitutes into it like any other type, and the instantiation's re-sem turns it back into a call, which drives the plugin again with concrete types. Rejected (a hard error) when no argument contains a generic parameter, which is what makes the retry well-founded
+    NeedtypesU = (ord(NeedtypesTagId), "needtypes")  ## emitted by a template *plugin* as its entire output to ask the compiler for the declarations of the named symbols. The compiler appends them to the plugin's second input (`loadTypeDefinitions()`) and runs the plugin again. This is how a plugin resolves a nominal type: it arrives in the main input as an opaque `Symbol`, and a plugin runs in its own process with no way to look it up. Only what is asked for is shipped, so a plugin that never asks pays nothing. Requesting a symbol that was already provided is a hard error, which is what bounds the loop
 
 proc rawTagIsNimonyOther*(raw: TagEnum): bool {.inline.} =
-  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, StaticTypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, ForcallTagId, ExceptTagId, FinTagId}
+  raw in {NilTagId, NotnilTagId, UncheckedTagId, KvTagId, VvTagId, RangeTagId, RangesTagId, ParamTagId, TypevarTagId, StaticTypevarTagId, EfldTagId, FldTagId, GfldTagId, WhenTagId, ElifTagId, ElseTagId, TypevarsTagId, CaseTagId, OfTagId, StmtsTagId, ParamsTagId, PragmasTagId, EitherTagId, JoinTagId, UnpackflatTagId, UnpacktupTagId, CallargsTagId, ForcallTagId, ExceptTagId, FinTagId, DeferexpansionTagId, NeedtypesTagId}
 
 type
   NimonyPragma* = enum

@@ -213,6 +213,101 @@ renderTree:
 Here the plugin receives the entire block as typed, semantically checked NIF.
 
 
+### Inspecting types: `needTypes`
+
+Type arguments reach a plugin already sem-checked, but only *structural* types
+arrive expanded:
+
+| call | what the plugin sees |
+|------|----------------------|
+| `f(array[3, int])` | `(array (i 64) (rangetype (i 64) 0 2))` |
+| `f(ptr int)` | `(ptr (i 64) (notnil))` |
+| `f(tuple[a: int])` | `(tuple (kv a (i 64)))` |
+| `f(Foo[int])` | `Foo.0.Iw3zqsv.mymod` |
+| `f(MyDistinct)` | `MyDistinct.0.mymod` |
+
+A nominal type — object, enum, distinct, generic instance — is a bare `Symbol`,
+and a plugin cannot resolve it: it runs in its own process, and the module it
+would have to read is still being sem-checked.
+
+So it asks. Returning `needTypes(syms)` as the plugin's whole output makes the
+compiler append those declarations to the second input and run the plugin again:
+
+```nim
+var defs = loadTypeDefinitions()   # (stmts (type :Sym … )*), empty at first
+...
+if missing.len > 0:
+  return needTypes(missing)
+```
+
+Nothing is shipped that was not asked for, so a plugin that never inspects types
+pays nothing. Batch each level into one request — a round costs a re-run, so a
+plugin walking a type graph should ask for a whole level at a time rather than
+one symbol at a time.
+
+Two properties make the exchange safe:
+
+- Asking again for a declaration already provided is a compile-time error. Every
+  round must name something new, so the loop is finite by construction.
+- A symbol that turns out to be a *type variable* is answered with its
+  `(typevar …)` declaration rather than silence. A plugin can therefore
+  recognize `T` positively instead of inferring it from absence — which would
+  misread every not-yet-requested type as a type variable.
+
+A generic instance's `<typevars>` slot holds `(at <head> <args>...)`, so
+`genericHead` and `genericParams` fall straight out of it.
+
+`lib/std/typetraits.nim` is implemented this way, with no compiler magic at all;
+`lib/std/deps/typetraits.nim` is the plugin.
+
+
+### Types in, types out
+
+A template plugin declared to return `typedesc` may be used in type position,
+and its output is re-checked as a type:
+
+```nim
+type Q = distinctBase(MyOtherInt)
+var y: genericHead(Foo[int])[float]
+```
+
+Inside a generic body the plugin runs **once**, on the generic body, with the
+*typevar* as its argument — not once per instantiation. Its output then takes
+part in ordinary substitution, so a plugin that transforms types symbolically
+(`pointerBase(ptr T)` → `T`) is correct there, and cheaper: one expansion
+instead of one per instantiation.
+
+A plugin that has to *decide* something from the concrete type cannot answer
+that way. It says so, by returning `deferExpansion()` as its whole output:
+
+```nim
+if mentionsTypevar(defs, arg):
+  return deferExpansion()
+```
+
+The compiler then leaves the call in the tree as `(at <template> <args>…)` —
+nimony's ordinary unresolved type application, the same shape `Foo[T]` takes in
+a generic body. Instantiation substitutes into it and re-checks it, which asks
+the plugin again with concrete types:
+
+```nim
+proc unwrap[T](x: T): distinctBase(T) =
+  result = distinctBase(T)(x)
+
+echo unwrap(MyInt(12))      # plugin asked again with MyInt  -> int
+echo unwrap(MyFloat(2.5))   # ... and with MyFloat           -> float
+```
+
+Deferring is rejected — a hard error — when no argument contains a generic
+parameter, since nothing would be substituted before the next round and the
+plugin would be asked the same question forever.
+
+Until it is resolved, a deferred type is exactly as usable as a bare type
+variable: it can be declared, passed, converted and returned, but operations
+that need to look through it (`echo` on a value of that type, field access)
+fail in the generic body for the same reason they fail for `T` itself.
+
+
 ## Module plugins
 
 A module plugin receives the **entire module** after semantic analysis. It must

@@ -99,7 +99,7 @@ proc `*`*(a, b: xint): xint =
   )
 
   # Check for overflow (requires casting to uint128 in Nim)
-  if result.val div a.val != b.val:
+  if a.val != 0 and result.val div a.val != b.val:
     result.nan = true
 
 proc `div`*(a, b: xint): xint =

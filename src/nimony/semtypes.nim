@@ -567,6 +567,25 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe(n.cursorTagId, n.info) # copy `at`
   let invokeStart = n
   n = sub(n)
+  if n.isSymbol and isRoutineSym(n.symId):
+    # A routine in the head is not a generic type instantiation: it is a plugin
+    # call that `deferPluginCall` parked here, because `(at …)` is the only
+    # unresolved type application a type slot accepts. The arguments have been
+    # substituted by now, so put the call back together and let the ordinary
+    # expression path drive the plugin again — including a second deferral,
+    # which lands back here.
+    dest.shrink typeStart
+    var callBuf = createTokenBuf(16)
+    callBuf.addParLe(CallX, info)
+    while n.hasMore:
+      callBuf.addSubtree n
+      skip n
+    callBuf.addParRi()
+    n = invokeStart; skip n
+    var call = beginRead(callBuf)
+    semTypeExpr c, dest, call, InLocalDecl, info
+    endRead call
+    return
   semLocalTypeImpl c, dest, n, InInvokeHead
 
   var headId: SymId = SymId(0)

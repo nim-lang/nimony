@@ -677,7 +677,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
-         ForcallU, NoSub:
+         ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
 
@@ -721,7 +721,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
-         ForcallU, NoSub:
+         ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
     dest.addParRi(n.endInfo)
@@ -760,7 +760,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, ElseU, TypevarsU,
          CaseU, OfU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
          UnpackflatU, UnpacktupU, UncheckedU, GfldU, CallargsU,
-         ForcallU, NoSub:
+         ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
   if tar.m != IsIgnored:
@@ -1165,6 +1165,31 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   else:
     bug "unexpected ')' inside"
 
+proc preRegisterRoutines(c: var Context; n: Cursor) =
+  ## Register the signatures of all top-level routines in the type cache before
+  ## the body walk. `getType` on a forward-referenced call otherwise falls back
+  ## to `tryLoadSym` (the *original* sem output), which still holds the
+  ## pre-lambdalifting types — e.g. a bare closure `proctype` where the lifted
+  ## `(tuple <fn> (ref RootObj))` is expected. That is exactly what happens for
+  ## the sem-inlined openarrays helpers (`toOpenArray`, `rawData`, `\5B\5D`)
+  ## in tests/nimony/closures/…: the body's forward `(call rawData)` hoists
+  ## into a cursor temp typed from the stale symbol, while the lifted `rawData`
+  ## ret type is the tuple — the lengcgen C names then disagree.
+  var it = n.sub()
+  while it.hasMore:
+    if it.stmtKind == StmtsS:
+      preRegisterRoutines(c, it)
+    elif it.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS}:
+      let decl = it
+      var h = it.sub()
+      let name = h
+      if name.kind == SymbolDef:
+        for i in 0 ..< BodyPos:
+          if i == ParamsPos:
+            c.typeCache.registerParams(name.symId, decl, h)
+          skip h
+    skip it
+
 proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   var n = pass.n  # Extract cursor locally
   # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
@@ -1176,6 +1201,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
+  preRegisterRoutines(c, n)
   pass.dest.addParLe(n.cursorTagId, n.info)
   n.into:
     while n.hasMore:

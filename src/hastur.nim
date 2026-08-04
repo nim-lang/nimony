@@ -43,6 +43,10 @@ Commands:
                        To boot at another mode use `--forward:` so the flag
                        survives getopt intact — `--forward:-d:danger` replaces
                        the default rather than stacking on it.
+                       On linux/amd64 every stage is built with the C-FREE
+                       NATIVE backend (`nimony n`: arkham + nifasm, no C
+                       compiler, no libc) when those two are built; otherwise
+                       through the C backend.
   selfcheck            full compiler regression check: rebuilds the nimony
                        toolchain (nimony+nimsem+hexer share `programs.nim`),
                        runs `tiers`, then `boot --valgrind` (release). Use this
@@ -98,6 +102,8 @@ Options:
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
                         mimalloc plays nicely with valgrind, then run a
                         valgrind smoke test on the bootstrapped binary.
+                        Forces the C backend (valgrind cannot see the native
+                        backend's libc-free heap).
 
 Files (per test directory, all optional):
   setup.nim             a custom runner program that owns this directory and
@@ -1272,6 +1278,9 @@ var bootRelease = true
   ## `release`, which exercises the `when defined(release)` paths in nimony,
   ## nimsem and hexer themselves — a whole class of bugs a debug boot cannot
   ## reach. `--no-release` boots at the default opt level instead.
+var bootNative = false
+  ## Compile the stages with the C-free native backend (`nimony n` → arkham +
+  ## nifasm)? Decided by `useNativeBoot` at the start of `bootCmd`.
 var debugBuild = false
 var nativeToolsDebug = false
 
@@ -1638,6 +1647,26 @@ const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "s
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
+const BootNativeTools = ["arkham", "nifasm"]
+  ## Carried too for a native boot: `nimony n` reaches them through `findTool`,
+  ## i.e. relative to the running nimony, so without them in `binN/` stage N
+  ## would silently drive `bin/`'s copies.
+
+proc bootCarryTools(): seq[string] =
+  result = @BootCarryTools
+  if bootNative: result.add BootNativeTools
+
+proc useNativeBoot(): bool =
+  ## linux/amd64 is the platform the native backend is complete on: x86-64
+  ## codegen plus the Linux syscall table the libc-free stdlib runs on. Its
+  ## tools live in the sibling `../nativenif` checkout and are outside
+  ## `build all`, so fall back to the C backend when they're missing.
+  when defined(linux) and defined(amd64):
+    for tool in BootNativeTools:
+      if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
+    result = true
+  else:
+    result = false
 
 proc bootSourceFor(tool: string): string =
   case tool
@@ -1671,7 +1700,7 @@ proc provisionStageBin(stage: int): string =
   result = bootStageDir(stage)
   removeDir result
   createDir result
-  for aux in BootCarryTools:
+  for aux in bootCarryTools():
     carryAuxTool(result, aux)
 
 proc provisionStageZero(): string =
@@ -1682,21 +1711,24 @@ proc provisionStageZero(): string =
   result = bootStageDir(0)
   removeDir result
   createDir result
-  for aux in BootCarryTools:
+  for aux in bootCarryTools():
     carryAuxTool(result, aux)
   for tool in BootSelfTools:
     carryAuxTool(result, tool)
 
 proc compileBootTool(stage: int; compiler, source, outBin, cacheBase, args: string;
                      withValgrind: bool) =
-  ## Run `compiler c --out:outBin source`. `compiler` is the previous
+  ## Run `compiler <c|n> --out:outBin source`. `compiler` is the previous
   ## stage's nimony, so it transitively drives the previous stage's
   ## nimsem/hexer (siblings under the same stage's bin dir) for this build.
+  ## The subcommand is `n` for a native boot (arkham + nifasm, no C compiler),
+  ## `c` otherwise.
   let cache = cacheBase / outBin.extractFilename
   removeDir cache
   createDir cache
   if fileExists(outBin): removeFile(outBin)
-  var cmd = compiler.quoteShell & " c --silentMake --nimcache:" &
+  var cmd = compiler.quoteShell & (if bootNative: " n" else: " c") &
+            " --silentMake --nimcache:" &
             cache.quoteShell & " --out:" & outBin.quoteShell
   if withValgrind:
     cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
@@ -1879,7 +1911,10 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
     let exe = binDir() / tool.addFileExt(ExeExt)
     if not fileExists(exe):
       quit "boot: " & exe & " not found; run `hastur build all` first"
-  for tool in BootCarryTools:
+  # valgrind cannot see the native backend's static, libc-free `mmap` heap, so
+  # `--valgrind` (and thus `selfcheck`) always boots through the C backend.
+  bootNative = not withValgrind and useNativeBoot()
+  for tool in bootCarryTools():
     let exe = binDir() / tool.addFileExt(ExeExt)
     if not fileExists(exe):
       quit "boot: " & exe & " not found; run `hastur build all` first"
@@ -1928,6 +1963,9 @@ proc selfcheckCmd() =
   ##      runtime UAFs) that single-module compiles miss. Boots at
   ##      `-d:release` (boot's default), so the shoggoth optimizer and the
   ##      `when defined(release)` paths are part of what this checks.
+  ##
+  ##      `--valgrind` keeps this on the C backend (see `bootCmd`); plain
+  ##      `hastur boot` is the native self-host.
   ##
   ## Boot's "stages N and N+1 differ" messages are informational — they
   ## normally reflect gcc's `--build-id` non-determinism, not a real

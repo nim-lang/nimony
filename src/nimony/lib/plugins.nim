@@ -272,6 +272,53 @@ proc buildErrorTree(info: LineInfo; msg: string): NifBuilder =
   result.addErrorMessage(msg, info)
   result.closeTree()
 
+proc needTypes*(syms: openArray[SymId]): NifBuilder =
+  ## Return this as a template plugin's *entire* output to ask the compiler for
+  ## the declarations of `syms`. The compiler appends them to the second input
+  ## and runs the plugin again, so the next `loadTypeDefinitions()` has them.
+  ##
+  ## This is how a plugin resolves a nominal type. Object, enum, distinct and
+  ## generic-instance types arrive in the main input as a bare `Symbol`, and a
+  ## plugin — a separate process — has no way to look one up. Structural types
+  ## (`ptr`, `array`, `tuple`, …) already arrive expanded and need no request.
+  ##
+  ## Ask for everything missing in one go: rounds cost a re-run, so a plugin
+  ## walking a type graph should batch each level rather than ask one at a time.
+  ## Asking again for something already provided is a compile-time error, which
+  ## is what keeps the exchange finite.
+  ##
+  ## .. code-block:: nim
+  ##   var missing: seq[SymId] = @[]
+  ##   collectUnknownSyms(defs, arg, missing)
+  ##   if missing.len > 0:
+  ##     return needTypes(missing)
+  result = createTree()
+  result.withTree NeedtypesU, NoLineInfo:
+    for s in syms:
+      result.addSymUse s
+
+proc needTypes*(s: SymId): NifBuilder =
+  ## Single-symbol overload of `needTypes`.
+  needTypes([s])
+
+proc deferExpansion*(): NifBuilder =
+  ## Return this as a template plugin's *entire* output to say: "I cannot answer
+  ## while the arguments still contain type variables — ask me again once they
+  ## are concrete."
+  ##
+  ## The compiler then leaves the sem-checked call in place instead of replacing
+  ## it with an expansion. Generic instantiation substitutes into that call and
+  ## re-checks it, which runs the plugin again with the instantiated types. It is
+  ## an error to defer when no argument contains a generic parameter — that
+  ## request could never be satisfied.
+  ##
+  ## .. code-block:: nim
+  ##   if mentionsTypevar(arg):
+  ##     return deferExpansion()
+  result = createTree()
+  result.withTree DeferexpansionU, NoLineInfo:
+    discard
+
 proc errorTree*(msg: string): NifBuilder =
   ## Builds a compiler error tree with no original expression attached.
   buildErrorTree(NoLineInfo, msg)
@@ -794,11 +841,20 @@ proc loadPluginInput*(filename = paramStr(1)): NifCursor =
   result = snapshot(tree)
 
 proc loadTypeDefinitions*(): NifCursor =
-  ## Loads the type-definitions input for a type plugin (`paramStr(3)`).
+  ## Loads the second input file (`paramStr(3)`). Two kinds of plugin get one:
   ##
-  ## Type plugins receive two input files: the full module AST via
-  ## `loadPluginInput()` and the triggering type definitions via this proc.
-  ## The result has the shape `(stmts <type-sym1> <type-sym2> ...)`.
+  ## - **Type plugins**: the definitions that triggered the plugin, shaped
+  ##   `(stmts <type-sym1> <type-sym2> ...)` — bare symbols.
+  ## - **Template plugins**: the declarations the plugin has asked for with
+  ##   `needTypes`, shaped
+  ##   `(stmts (type :Sym <export> <typevars> <pragmas> <body>)*)`, with
+  ##   `(typevar :T …)` entries for symbols that turned out to be type
+  ##   variables. Empty on the first round — a plugin that never calls
+  ##   `needTypes` never gets anything, and pays nothing.
+  ##
+  ##   A generic instance's `<typevars>` slot holds `(at <head> <args>...)`,
+  ##   which is where `genericHead` and `genericParams` come from.
+  ##   See `lib/std/deps/typetraits.nim`.
   loadPluginInput(paramStr(3))
 
 proc pluginName*(n: NifCursor): string =

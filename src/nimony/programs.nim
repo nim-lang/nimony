@@ -27,8 +27,15 @@ type
   NifModule* = ref object
     reader: Reader
     index*: NifIndex
-    public*: Table[string, NifIndexEntry]
-    private*: Table[string, NifIndexEntry]
+    public*: OrderedTable[string, NifIndexEntry]  ## ORDERED: `loadInterface`
+                                                 ## turns this into the
+                                                 ## overload sets, so its
+                                                 ## order is observable in
+                                                 ## diagnostics and must not
+                                                 ## depend on which compiler
+                                                 ## built us (see
+                                                 ## `readEmbeddedIndex`)
+    private*: OrderedTable[string, NifIndexEntry]
     rootInfo: NifLineInfo   ## the toplevel `(stmts)` head's absolute info;
                             ## seeds index-jumped decl parses so their
                             ## relative line infos resolve (file would be
@@ -173,12 +180,12 @@ iterator symIds*(t: ToplevelEntries): SymId =
 
 proc newNifModule(infile: string): NifModule =
   result = NifModule(reader: nifreader.open(infile),
-                     public: initTable[string, NifIndexEntry](),
-                     private: initTable[string, NifIndexEntry]())
+                     public: initOrderedTable[string, NifIndexEntry](),
+                     private: initOrderedTable[string, NifIndexEntry]())
   discard nifreader.processDirectives(result.reader)
   result.rootInfo = peekRootInfo(result.reader, pool)
-proc addEmbeddedIndex(public, private: var Table[string, NifIndexEntry];
-                      embedded: Table[string, NifIndexEntry]) =
+proc addEmbeddedIndex(public, private: var OrderedTable[string, NifIndexEntry];
+                      embedded: OrderedTable[string, NifIndexEntry]) =
   for k, v in embedded:
     if v.vis == Exported:
       public[k] = v
