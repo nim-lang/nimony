@@ -155,7 +155,7 @@ when defined(macosx) or defined(freebsd) or defined(openbsd) or
   type
     ## This define not fully satisfy NetBSD "struct kevent"
     ## but it works and tested.
-    Kevent* {.importc: "kevent", pure, final.} = object
+    KEvent* {.pure, final.} = object
       ident*  : uint     ## identifier for this event  (uintptr_t)
       filter* : cshort   ## filter for event
       flags*  : cushort  ## general flags
@@ -166,12 +166,12 @@ when defined(macosx) or defined(freebsd) or defined(openbsd) or
   proc kqueue*(): cint {.importc: "kqueue".}
     ## Creates new queue and returns its descriptor.
   proc kevent*(kqFD: cint,
-               changelist: nil ptr Kevent, nchanges: cint,
-               eventlist: nil ptr Kevent, nevents: cint, timeout: nil ptr Timespec): cint
+               changelist: nil ptr KEvent, nchanges: cint,
+               eventlist: nil ptr KEvent, nevents: cint, timeout: nil ptr Timespec): cint
        {.importc: "kevent".}
     ## Manipulates queue for given `kqFD` descriptor.
 
-  proc EV_SET*(event: ptr Kevent, ident: uint, filter: cshort, flags: cushort,
+  proc EV_SET*(event: ptr KEvent, ident: uint, filter: cshort, flags: cushort,
                fflags: cuint, data: int, udata: pointer)
        {.importc: "EV_SET".}
     ## Fills event with given data.
@@ -179,7 +179,7 @@ else:
   # Stubs for unsupported platforms (Nimony's first-pass when traversal
   # touches all branches regardless of condition).
   type
-    Kevent* = object
+    KEvent* = object
       ident*  : uint
       filter* : cshort
       flags*  : cushort
@@ -189,9 +189,9 @@ else:
 
   proc kqueue*(): cint = 0.cint
   proc kevent*(kqFD: cint,
-               changelist: nil ptr Kevent, nchanges: cint,
-               eventlist: nil ptr Kevent, nevents: cint, timeout: nil ptr Timespec): cint =
+               changelist: nil ptr KEvent, nchanges: cint,
+               eventlist: nil ptr KEvent, nevents: cint, timeout: nil ptr Timespec): cint =
     0.cint
 
-  proc EV_SET*(event: ptr Kevent, ident: uint, filter: cshort, flags: cushort,
+  proc EV_SET*(event: ptr KEvent, ident: uint, filter: cshort, flags: cushort,
                fflags: cuint, data: int, udata: pointer) = discard

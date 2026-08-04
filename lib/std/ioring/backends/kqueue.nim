@@ -17,7 +17,7 @@ method reArmEvent*(b: KqueueBackend; fd: cint; mask: int) =
   # split, so there is no separate "first time vs re-arm" bookkeeping needed
   # here. `ident` (the fd) is what `kqueuePoll` reads back on delivery, not
   # `udata`, so no slot index needs to travel through the kernel at all.
-  var ev {.noinit.}: Kevent
+  var ev {.noinit.}: KEvent
   if (mask and EvRead) != 0:
     ev.ident = uint(fd)
     ev.filter = EVFILT_READ
@@ -31,7 +31,7 @@ method reArmEvent*(b: KqueueBackend; fd: cint; mask: int) =
 
 method poll*(b: KqueueBackend; timeoutMs: int): bool =
   let a = b.ring.slots
-  var events {.noinit.}: array[64, Kevent]
+  var events {.noinit.}: array[64, KEvent]
   var ts = Timespec(
     tv_sec: Time(timeoutMs div 1000),
     tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
