@@ -32,7 +32,8 @@ when defined(windows):
   # prototype and the linker binds the symbol, keeping the `system` translation
   # unit header-free for the all-native target (see `system/panics`). `nodecl`
   # is dropped along with the header so a prototype is actually emitted.
-  proc GetLastError(): int32 {.importc: "GetLastError", stdcall.}
+  proc GetLastError(): int32 {.importc: "GetLastError", stdcall,
+                               dynlib: "kernel32".}
   const ERROR_BAD_EXE_FORMAT = 193
 
 proc nimLoadLibraryError(path: string) =
@@ -136,15 +137,17 @@ elif defined(windows) or defined(dos):
     # TODO: use `importc: "HINSTANCE"` when available
     type
       THINSTANCE = pointer
-  # Bare kernel32 imports (no `<windows.h>`) — nimony emits the prototypes and
-  # the linker binds them, keeping the `system` unit header-free (see `panics`).
+  # kernel32 imports without `<windows.h>`, keeping the `system` unit
+  # header-free (see `panics`). `dynlib` = static import library on every
+  # backend — these are the runtime loader's own bootstrap, so a static
+  # import-table entry is exactly what they need.
   proc getProcAddress(lib: THINSTANCE, name: cstring): ProcAddr {.
-      importc: "GetProcAddress", stdcall.}
+      importc: "GetProcAddress", stdcall, dynlib: "kernel32".}
 
   proc freeLibrary(lib: THINSTANCE) {.
-      importc: "FreeLibrary", stdcall.}
+      importc: "FreeLibrary", stdcall, dynlib: "kernel32".}
   proc winLoadLibrary(path: cstring): THINSTANCE {.
-      importc: "LoadLibraryA", stdcall.}
+      importc: "LoadLibraryA", stdcall, dynlib: "kernel32".}
 
   proc nimUnloadLibrary(lib: LibHandle) =
     freeLibrary(cast[THINSTANCE](lib))

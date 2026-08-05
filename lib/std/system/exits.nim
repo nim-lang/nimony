@@ -34,11 +34,13 @@ when defined(nimNativeIo):
   when defined(windows):
     # Freestanding Windows: terminate through kernel32 `ExitProcess` — no libc
     # and no POSIX signals, the direct counterpart of the Linux syscall path.
-    # Declared bare (no `header: "<windows.h>"`): nimony emits the prototype and
-    # the linker binds `ExitProcess` from kernel32, keeping the whole `system`
-    # translation unit free of the Windows header (see `panics`).
+    # No `header: "<windows.h>"`, keeping the whole `system` translation unit
+    # free of the Windows header (see `panics`). `dynlib` names the import
+    # library, and means a STATIC import on every backend: the native image
+    # bakes it into its import table, the C backend emits a prototype that
+    # kernel32.lib resolves at link time.
     proc cExitProcess(uExitCode: uint32) {.stdcall, importc: "ExitProcess",
-                                           noreturn.}
+                                           dynlib: "kernel32", noreturn.}
 
     proc cExit*(code: int) {.noreturn.} =
       ## Normal process termination: flush the standard streams, then exit.

@@ -302,6 +302,10 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
       of NodeclP:
         result.flags.incl NodeclP
         skip n
+      of DllP:
+        # Static-import library annotation for the NATIVE backend (arkham);
+        # meaningless for C output — the linker resolves the symbol.
+        skip n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.hasMore and n.kind == StrLit:
