@@ -950,7 +950,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.withTree "cmd":
         b.addSymbolDef "arkham"
         b.addStrLit findTool("arkham")
-        b.addStrLit "-a:" & c.config.arkhamArch
+        # Forward the target verbatim — arkham speaks the same platform symbols
+        # and errors on an unsupported combination (no silent host fallback).
+        b.addStrLit "--os:" & platform.OS[c.config.targetOS].name
+        b.addStrLit "--cpu:" & platform.CPU[c.config.targetCPU].name
         b.withTree "output":
           b.addStrLit "-o:"
         b.addKeyw "input"
