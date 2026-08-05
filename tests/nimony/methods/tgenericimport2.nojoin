@@ -1,0 +1,3 @@
+# Its expected output is printed by the shared 'deps/mgenericinheritance' it
+# imports, and a shared module initializes once per program: joined with its
+# twin, that output would appear once instead of twice. See --joined.

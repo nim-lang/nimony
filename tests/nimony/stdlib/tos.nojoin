@@ -1,0 +1,3 @@
+# `execShellCmd("ls")` writes to the inherited stdout, so this test's output is
+# both environment-dependent (it lists the repo root) and unordered relative to
+# the buffered `echo`s of the tests it would share a program with.
