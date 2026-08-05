@@ -112,14 +112,6 @@ proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
 
 proc arkhamArch*(config: NifConfig): string =
-  ## The `-a:` value arkham expects for `config.targetCPU` (native backend).
-  ## Every arch here also needs the OS: the name selects the object format and the
-  ## whole foreign-call convention, not just the instruction set. Plain `x64` means
-  ## a static Linux ELF that reaches the OS through raw syscalls; `win_x64` means a
-  ## PE that binds `kernel32.dll` through the import table and passes arguments in
-  ## the Win64 registers. Likewise plain `arm64` means MACH-O (macOS), so a Linux
-  ## aarch64 host has to ask for `linux_arm64` or nifasm writes a Mach-O binary that
-  ## the kernel refuses with "Exec format error".
   case config.targetCPU
   of cpuAmd64, cpuI386:
     if config.targetOS == osWindows: "win_x64" else: "x64"
