@@ -1388,6 +1388,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "optimize"
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
+            # Shoggoth's inter-module inliner also reads the imported modules'
+            # `.c.nif`, but they need no edge here: nifmake runs the DAG in
+            # depth batches and finishes one before starting the next, and
+            # every `dceEmit` shares the `.live.nif` input, so all the `.c.nif`
+            # are written in the batch before this node's. Verified by counting
+            # foreign loads that missed their file: zero.
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized

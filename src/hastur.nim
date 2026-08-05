@@ -161,9 +161,19 @@ type
   TestCounters = object
     total: int
     failures: int
+    failed: seq[string]
+      ## Names of the tests that failed, in failure order. A run of several
+      ## hundred tests streams far too much output for a bare "N / M" to be
+      ## actionable — and under `--jobs` the child's own FAILURE block sits
+      ## thousands of lines up, interleaved with every other worker's.
+      ## `reportFailures` replays this list right above the summary.
+
+proc noteFailure(c: var TestCounters; file: string) =
+  inc c.failures
+  c.failed.add file
 
 proc failure(c: var TestCounters; file, expected, given: string) =
-  inc c.failures
+  noteFailure c, file
   var m = file & " --------------------------------------\nFAILURE: expected:\n"
   m.add expected
   m.add "\nbut got\n"
@@ -172,9 +182,15 @@ proc failure(c: var TestCounters; file, expected, given: string) =
   echo m
 
 proc failure(c: var TestCounters; file, msg: string) =
-  inc c.failures
+  noteFailure c, file
   let m = file & " --------------------------------------\nFAILURE: " & msg & "\n"
   echo m
+
+proc reportFailures(c: TestCounters) =
+  if c.failed.len == 0: return
+  echo "\nFAILED (", c.failed.len, "):"
+  for f in c.failed: echo "  ", f
+  echo ""
 
 proc diffFiles(c: var TestCounters; file, a, b: string; overwrite: bool) =
   if not os.sameFileContent(a, b):
@@ -965,7 +981,14 @@ proc parallelTestDir(c: var TestCounters; items: openArray[WorkItem];
         if exit != 0:
           # A `test` worker exits 1; a `joined` worker exits with how many of
           # its members failed, so a group cannot hide a second failure.
-          inc c.failures, min(exit, slots[s].item.weight)
+          let failed = min(exit, slots[s].item.weight)
+          inc c.failures, failed
+          # The worker already printed which of its members failed; up here
+          # only the unit has a name, so that plus the count is what the
+          # summary can replay.
+          c.failed.add(if failed > 1:
+                         slots[s].item.path & " (" & $failed & " tests)"
+                       else: slots[s].item.path)
         slots[s].p = nil
         dec active
         launch(s)
@@ -1151,6 +1174,7 @@ proc nativetests(overwrite: bool) =
     for f in files: nativeTestFile c, f, overwrite
   for f in NativeTestFiles:
     nativeTestFile c, f.addFileExt(".nim"), overwrite
+  reportFailures c
   echo c.total - c.failures, " / ", c.total, " native tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some native tests failed."
@@ -1197,6 +1221,7 @@ proc runNifToolTests*(tool, testDir, inputExt, expectedExt: string; overwrite: b
           os.removeFile(dest)
         else:
           failure c, t, expectedOutput, destContent
+  reportFailures c
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
@@ -1254,6 +1279,7 @@ proc validatorTests*() =
             got.add line
         if got.strip.replace("\\", "/") != expected.strip.replace("\\", "/"):
           failure c, t, expected, got
+  reportFailures c
   echo c.total - c.failures, " / ", c.total, " validator tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
@@ -1385,6 +1411,7 @@ proc testDirCmd(dir: string; overwrite: bool; forward: string) =
   var c = TestCounters(total: 0, failures: 0)
   let t0 = epochTime()
   testDir c, dir, overwrite, categoryOfDir(dir), forward
+  reportFailures c
   echo c.total - c.failures, " / ", c.total, " tests successful in ", formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some tests failed."
@@ -1802,6 +1829,7 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
         if overwrite:
           writeFile(output, testProgramOutput)
         failure c, file, outputSpec, testProgramOutput
+  reportFailures c
   echo c.total - c.failures, " / ", c.total,
     " native-codegen tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
@@ -1845,12 +1873,24 @@ proc bootCarryTools(): seq[string] =
   result = @BootCarryTools
   if bootNative: result.add BootNativeTools
 
+const NativeBootReady = false
+  ## OFF until nativenif master carries arkham's register-allocator fixes.
+  ## The inter-module inliner honours `.inline` without a size cap, so a
+  ## `.inline` cascade can hand arkham a basic block whose live set exceeds
+  ## what its allocator can place, and stage 1 dies with "no staging register
+  ## available for a spill in proc semBodyCheckBody". That is an arkham bug —
+  ## it must spill, not give up — and it is fixed on nativenif's `araq-oor`
+  ## ("make the transient staging picks total"), not yet on the master CI
+  ## checks out. Flip this back to `true` once it is there; the C-backend boot
+  ## below is the whole self-host gate meanwhile.
+
 proc useNativeBoot(): bool =
   ## linux/amd64 is the platform the native backend is complete on: x86-64
   ## codegen plus the Linux syscall table the libc-free stdlib runs on. Its
   ## tools live in the sibling `../nativenif` checkout and are outside
   ## `build all`, so fall back to the C backend when they're missing.
   when defined(linux) and defined(amd64):
+    if not NativeBootReady: return false
     for tool in BootNativeTools:
       if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
     result = true
@@ -2235,6 +2275,7 @@ proc dagontests*(dir: string; overwrite: bool) =
     for x in walkDir(TestDir, relative = true):
       if x.kind == pcFile and x.path.endsWith(".nim") and x.path.startsWith("t"):
         runDagonTest c, TestDir / x.path
+  reportFailures c
   echo c.total - c.failures, " / ", c.total, " dagon tests successful in ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
@@ -2273,6 +2314,7 @@ proc pnaktests*(dir: string) =
     for x in walkDir(TestDir, relative = true):
       if x.kind == pcFile and x.path.endsWith(".nim") and x.path.startsWith("t"):
         runPnakTest c, TestDir / x.path
+  reportFailures c
   echo c.total - c.failures, " / ", c.total, " pnak tests successful in ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
@@ -2385,7 +2427,9 @@ proc runSetupNimDir(c: var TestCounters; dir, forward: string; overwrite: bool) 
   if overwrite: cmd.add " --overwrite"
   if forward.len > 0: cmd.add " --forward:" & forward
   if execShellCmd(cmd) != 0:
-    inc c.failures
+    # The runner printed its own per-test detail; name the suite so the
+    # top-level summary still points somewhere.
+    noteFailure c, dir & " (setup.nim runner)"
 
 type WalkPlan = object
   ## Accumulated during the tree walk so the run phase can drive ONE
@@ -2421,6 +2465,21 @@ proc collectTests(c: var TestCounters; plan: var WalkPlan; dir, forward: string;
     if x.kind == pcFile and x.path.endsWith(".nim"): hasNim = true
     elif x.kind == pcDir: subs.add x.path
   if hasNim:
+    # A grouping directory has no `.nim` files of its own, so a stray one
+    # dropped into `tests/` demotes the whole tree to a "leaf" and silently
+    # skips every suite below it — the run still says SUCCESS, just for 7
+    # tests instead of 672. Nothing distinguishes the two roles except this:
+    # a real leaf's subdirectories are import fixtures (`deps/`, `imp/`, …)
+    # and never carry a runner marker. If one does, the `.nim` here is the
+    # mistake, so say which file and stop rather than quietly test nothing.
+    for s in subs:
+      if fileExists(s / "setup.nim") or fileExists(s / ModeFile):
+        var strays: seq[string] = @[]
+        for x in walkDir(dir):
+          if x.kind == pcFile and x.path.endsWith(".nim"): strays.add x.path
+        quit "FAILURE: " & dir & " groups test suites (" & s &
+             " is one) but also holds test files:\n  " & strays.join("\n  ") &
+             "\nMove them into a suite directory — left here they hide the whole tree."
     # Leaf test directory: gather its own `.nim` files and do NOT descend.
     # Nested dirs here (`deps/`, `imp/`, `system/`, …) hold import fixtures
     # pulled in by those tests, not standalone tests — the old per-category
@@ -2473,6 +2532,7 @@ proc walkRoots(roots: openArray[string]; forward: string; overwrite: bool) =
     # `parallelTestDir` ignores the `cat` argument (each worker re-derives its
     # own category from its path's directory), so a mixed-category queue is safe.
     parallelTestDir(c, plan.parItems, overwrite, Normal, forward, parallelJobs)
+  reportFailures c
   echo c.total - c.failures, " / ", c.total, " tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0: quit "FAILURE: Some tests failed."
