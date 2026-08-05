@@ -16,10 +16,10 @@
 ##
 ## Cross-module callees are supported: `loadForeign` lazy-loads the callee
 ## module's post-DCE `.c.nif` (see there for why it must be that and not the
-## `.x.nif`) and `InlinerCtx.maxTokens` caps how big a foreign body may be.
-## Both halves of the decision come out of that one file — the body itself and
-## the callee's `(inline THRESHOLD w…)` pragma annotation, which
-## `intraModuleInline` wrote at the hexer stage.
+## `.x.nif`). Both halves of the decision come out of that one file — the
+## body itself and the callee's `(inline THRESHOLD w…)` pragma annotation,
+## which `intraModuleInline` wrote at the hexer stage. There is no size cap:
+## `.inline` is honoured whatever the body costs.
 ##
 ## The splice introduces a `(scope …)` block, declares one fresh `(var)`
 ## per parameter initialised from the argument, renames every local in
@@ -105,26 +105,12 @@ type
     counterPrefix: string                   # disambiguates passes (hexer vs dce2)
     bodies: Table[SymId, int]               # same-module callee → offset in `src`
     ownInfo: Table[SymId, InlineInfo]       # same-module `(inline …)` annotations
-    symUses: Table[SymId, int]
-      # How many times each symbol is *read* across the whole module (defs
-      # excluded). `trySpliceCond` drops a local's definition, which is only
-      # sound when nothing else reads it; a use count taken from the single
-      # statement it inspects cannot see the rest of the scope. Kept current
-      # as the pass splices: freshly-minted syms are tallied when their
-      # subtree is handed back to `trIntra`.
     src: ptr TokenBuf                       # the module's parsed buffer
     xnifDir: string                         # directory holding the `.c.nif`s
     maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
     foreign: Table[string, ref ForeignModule]
       # Cached cross-module bodies. `ref` so growing the table doesn't
       # invalidate cursors that point into a previously-fetched buffer.
-    maxTokens: int
-      # Size cap on a *cross-module* callee body, in tokens (0 = unlimited).
-      # `.inline` means threshold 0, i.e. "always", so without a cap a chain of
-      # `.inline` accessors cascades up to `maxDepth` and produces basic blocks
-      # big enough to exhaust arkham's register allocator ("no staging register
-      # available for a spill"). The cap is what makes this pass mean "inline
-      # the tiny accessors" rather than "inline everything marked inline".
     inProgress*: HashSet[SymId]
       # Currently-being-spliced procs. Recursive `.inline` (direct or
       # mutual) would otherwise cause the splice + re-tr loop in dce2 to
@@ -137,7 +123,7 @@ type
       # cross-module cascade is rarely a win and risks runaway growth.
 
 proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
-                     xnifDir = ""; maxDepth = 0; maxTokens = 0;
+                     xnifDir = ""; maxDepth = 0;
                      counterPrefix = "i"): InlinerCtx =
   ## `counterPrefix` is woven into fresh local sym names (`base.0i<n>`,
   ## `returnLabel.0i<n>`). The hexer same-module pass uses `"h"` and
@@ -147,10 +133,8 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
   InlinerCtx(moduleSuffix: moduleSuffix, src: src,
              bodies: initTable[SymId, int](),
              ownInfo: initTable[SymId, InlineInfo](),
-             symUses: initTable[SymId, int](),
              xnifDir: xnifDir,
              maxDepth: maxDepth,
-             maxTokens: maxTokens,
              counterPrefix: counterPrefix,
              foreign: initTable[string, ref ForeignModule](),
              inProgress: initHashSet[SymId]())
@@ -177,34 +161,8 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
               infos[nameCur.symId] = info
         skip n
 
-proc tallySymUses(n: Cursor; counts: var Table[SymId, int]) =
-  ## Add every `Symbol` (use, not `SymbolDef`) occurrence in the subtree to
-  ## `counts`. Additive on purpose: the table spans the module buffer plus
-  ## every subtree the inliner splices into it during the pass.
-  if n.isSymbol:
-    counts[n.symId] = counts.getOrDefault(n.symId, 0) + 1
-    return
-  if not n.isTagLit: return
-  var it = n
-  it.into:
-    while it.hasMore:
-      case it.kind
-      of Symbol:
-        counts[it.symId] = counts.getOrDefault(it.symId, 0) + 1
-        inc it
-      of TagLit:
-        tallySymUses(it, counts)
-        skip it
-      else:
-        inc it
-
 proc collectProcBodies*(c: var InlinerCtx) =
-  ## Index the current module's own bodies and inline annotations, and take
-  ## the module-wide use count `trySpliceCond` needs.
   indexProcBodies(c.src[], c.bodies, c.ownInfo)
-  var n = beginRead(c.src[])
-  tallySymUses(n, c.symUses)
-  endRead(n)
 
 proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   ## Search the caller's dir first, then the parent — system modules
@@ -234,15 +192,6 @@ proc loadForeign(c: var InlinerCtx; modul: string): bool =
   c.foreign[modul] = fm
   result = true
 
-proc subtreeTokenCount(n: Cursor; limit: int): int =
-  ## Number of tokens the subtree occupies (the physical span; elided
-  ## closes do not count). `limit` is only relevant for the comparison the
-  ## callers do, the count is exact.
-  if not n.isTagLit:
-    result = 1
-  else:
-    result = subtreeWidth(n)
-
 proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   ## Resolves a callee sym to a cursor pointing at its `(proc …)` decl.
   ## The cursor's refcount keeps the underlying buffer alive for as
@@ -259,10 +208,12 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   if not loadForeign(c, modul): return false
   let fm = c.foreign.getOrQuit(modul)
   if calleeSym notin fm.bodies: return false
-  let cur = cursorAt(fm.buf, fm.bodies.getOrQuit(calleeSym))
-  if c.maxTokens > 0 and subtreeTokenCount(cur, c.maxTokens) > c.maxTokens:
-    return false
-  outCur = cur
+  # No size cap: `.inline` is the programmer saying "inline this", and the
+  # only bodies that reach here are the ones that carry it (a proc without
+  # the pragma keeps `DefaultInlineInfo`, threshold 100 with no weights, and
+  # `shouldInlineCall` declines it). Refusing a body for being big would make
+  # `.inline` mean "inline if the compiler feels like it".
+  outCur = cursorAt(fm.buf, fm.bodies.getOrQuit(calleeSym))
   result = true
 
 proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
@@ -1184,10 +1135,8 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   ##   (if (elif tmp BODY) …rest…)
   ##
   ## where `f`'s body is exactly `result = X`, every parameter is
-  ## substitutable, and `tmp` is read *only* as that first `elif`'s
-  ## condition — checked against the module-wide `symUses`, not just the
-  ## adjacent `if`, because the definition is about to be dropped and any
-  ## read further down the scope would be left dangling. It then emits
+  ## substitutable, and `tmp` is read as that first `elif`'s condition and
+  ## nowhere else in its scope. It then emits
   ##
   ##   (if (elif X' BODY) …rest…)
   ##
@@ -1206,15 +1155,7 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   inc probe                                # past `var` tag
   if not probe.isSymbolDef: return 0
   let tmpSym = probe.symId
-  let tmpName = pool.syms[tmpSym]
-  if not isLocalName(tmpName): return 0
-  # The whole module must read `tmp` exactly once. The `countSymUses` check
-  # below only looks inside the adjacent `if`, which is sound for a temp
-  # xelim mints solely to hold that guard — but a plain user local
-  # (`var negative = isNegative(x)`) matches the very same shape and may be
-  # read further down the scope, and dropping its definition then leaves
-  # those reads dangling.
-  if c.symUses.getOrDefault(tmpSym, 0) != 1: return 0
+  if not isLocalName(pool.syms[tmpSym]): return 0
   inc probe                                # past name
   skip probe                               # past pragmas
   skip probe                               # past type
@@ -1233,8 +1174,18 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
   let condCur = firstElif.childCursor
   if not condCur.isSymbol or condCur.symId != tmpSym: return 0
-  # `tmp` must be used *only* here — otherwise dropping its def is unsound.
+  # The definition is about to disappear, so `tmp` must be read here and
+  # nowhere else. A local's reads live between its declaration and the end of
+  # its scope, and `n` is bounded to that scope (`trIntra` enters `stmts` /
+  # `scope` with `into`), so "the `if` plus the siblings that follow it" is
+  # the whole live range — no dataflow needed, and no guess from the name
+  # about who minted the local either.
   if countSymUses(nextCur, tmpSym) != 1: return 0
+  var rest = nextCur
+  skip rest                                # past the whole `if`
+  while rest.hasMore:
+    if countSymUses(rest, tmpSym) != 0: return 0
+    skip rest
 
   # --- heavier inline eligibility checks (only after the shape matched) ---
   if cSym in c.inProgress: return 0
@@ -1302,19 +1253,6 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
 
 # ---- Same-module inliner pass (called from hexer.nim) ----
 
-proc tallySpliced(c: var InlinerCtx; spliced: var TokenBuf; count: int) =
-  ## A splice brings in freshly-minted locals that were not in the module
-  ## when `collectProcBodies` counted. Fold their uses into `symUses` before
-  ## the spliced code is re-walked, so a `trySpliceCond` firing *inside* it
-  ## reads a real count rather than an absent (zero) entry. Module-level
-  ## syms get counted twice over; only locals are ever splice candidates,
-  ## so an inflated count for the rest costs nothing.
-  var scan = beginRead(spliced)
-  for _ in 0 ..< count:
-    tallySymUses(scan, c.symUses)
-    skip scan
-  endRead(scan)
-
 proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
   ## Walks `n` and splices `.inline` calls in-place. Mirrors `dce2.tr`'s
   ## splice paths but without liveness / generic-instance resolution.
@@ -1345,7 +1283,6 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             var spliced = createTokenBuf(32)
             let nEmitted = trySplice(c, spliced, n)
             if nEmitted > 0:
-              tallySpliced(c, spliced, nEmitted)
               if calleeSym != SymId(0):
                 c.inProgress.incl calleeSym
               var inner = beginRead(spliced)
@@ -1363,7 +1300,6 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             var spliced = createTokenBuf(32)
             let nEmitted = trySpliceCond(c, spliced, n, condCallee)
             if nEmitted > 0:
-              tallySpliced(c, spliced, nEmitted)
               c.inProgress.incl condCallee
               var inner = beginRead(spliced)
               for _ in 0 ..< nEmitted:
@@ -1393,7 +1329,6 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
           var spliced = createTokenBuf(32)
           let nEmitted = trySpliceVarInit(c, spliced, n)
           if nEmitted > 0:
-            tallySpliced(c, spliced, nEmitted)
             c.inProgress.incl calleeSym
             var inner = beginRead(spliced)
             for _ in 0 ..< nEmitted:

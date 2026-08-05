@@ -103,14 +103,6 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
 
 # ---- public entry --------------------------------------------------------
 
-const InlineMaxTokens = 100
-  ## Cross-module callee size cap, in NIF tokens. `.inline` carries threshold 0
-  ## ("always"), so this is the only thing keeping the depth-4 cascade of
-  ## `.inline` accessors from producing basic blocks that exhaust arkham's
-  ## register allocator. Sized to admit the cursor/pool accessors this pass
-  ## exists for; a sweep over 40/60/100/160 put the runtime knee at 100 with
-  ## the binary still within +3%.
-
 proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
                             xnifDir: string): bool =
   ## Returns true when `buf` was changed.
@@ -120,10 +112,12 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
   ## `(var :t … (call …))`. The cross-module body fetch is automatic once
   ## `xnifDir` is set — `lookupBody` resolves the callee's module via the
   ## symbol name (`extractModule`) and lazy-loads the foreign `.c.nif`.
+  ##
+  ## There is no size cap on the callee: `.inline` means the programmer asked
+  ## for it, so it is honoured whatever the body costs.
   var ctx = initInlinerCtx(suffix, addr buf,
                            xnifDir = xnifDir,
                            maxDepth = 4,
-                           maxTokens = InlineMaxTokens,
                            counterPrefix = "x")
   collectProcBodies(ctx)
 
