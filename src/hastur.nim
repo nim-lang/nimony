@@ -164,7 +164,7 @@ proc diffFiles(c: var TestCounters; file, a, b: string; overwrite: bool) =
     else:
       let gitCmd = "git diff --no-index $1 $2" % [a.quoteShell, b.quoteShell]
       let (diff, diffExitCode) = execCmdEx(gitCmd)
-      if diffExitCode == 0:
+      if diffExitCode <= 1:
         failure c, file, diff
       else:
         failure c, file, gitCmd & "\n" & diff
