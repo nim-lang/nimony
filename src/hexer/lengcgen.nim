@@ -180,13 +180,13 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
   if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
     # `dynlib` on an importc proc means a STATIC import on every backend: the
-    # decl carries its library as a `(dll "…")` pragma — arkham binds it
+    # decl carries its library as a `(dynlib "…")` pragma — arkham binds it
     # through the image's import table, the C/LLVM backends emit an ordinary
     # prototype the linker resolves (every current use is kernel32, which the
     # toolchain links implicitly). No runtime loader stub is generated;
     # genuinely optional libraries go through the explicit `loadLib`/`symAddr`
     # API instead.
-    dest.addKeyVal genPragmas, "dll", prag.dynlib, pinfo
+    dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   # Translate gfld to fld for NIFC (NIFC only knows fld):
@@ -1045,7 +1045,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   takeParRi dest, n, procStart
   swap dst, dest
   # A `dynlib` importc proc IS emitted — as a static import decl carrying a
-  # `(dll …)` pragma (see `externPragmas`) — on every backend.
+  # `(dynlib …)` pragma (see `externPragmas`) — on every backend.
   if MagicP in prag.flags or isGeneric:
     discard "do not add to dest"
   else:

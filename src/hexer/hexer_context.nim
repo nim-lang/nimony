@@ -35,7 +35,7 @@ type
     bits*: int
     bigEndian*: bool
     nativeBackend*: bool  ## targeting arkham+nifasm (no C): a `dynlib` importc
-                          ## proc becomes a STATIC import carrying a `(dll …)`
+                          ## proc becomes a STATIC import carrying a `(dynlib …)`
                           ## pragma instead of runtime loader stubs, and the
                           ## synthesized `main` terminates through `cExit`.
 

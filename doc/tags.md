@@ -211,8 +211,7 @@
 | `(magic X)` | NimonyPragma | `magic` pragma; argument is the magic's name as string literal or ident (e.g. `"Bool"`, `HoleyEnum`) |
 | `(importc X)` | NimonyPragma, LengPragma | `importc` pragma |
 | `(importcpp X)` | NimonyPragma, LengPragma | `importcpp` pragma |
-| `(dynlib X)` | NimonyPragma | `dynlib` pragma |
-| `(dll X)` | LengPragma | static import library of an `importc` proc (native backend): the declaration binds through the image's import table instead of a runtime loader stub |
+| `(dynlib X)` | NimonyPragma, LengPragma | `dynlib` pragma; on a Leng decl: static import library of an `importc` proc (native backend): the declaration binds through the image's import table instead of a runtime loader stub |
 | `(exportc X)` | NimonyPragma, LengPragma | `exportc` pragma |
 | `(header X)` | NimonyPragma, LengPragma | `header` pragma |
 | `(threadvar)` | NimonyPragma | `threadvar` pragma |

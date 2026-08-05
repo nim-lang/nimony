@@ -152,7 +152,7 @@ type
     StaticP = (ord(StaticTagId), "static")  ## `static` type or annotation
     ImportcP = (ord(ImportcTagId), "importc")  ## `importc` pragma
     ImportcppP = (ord(ImportcppTagId), "importcpp")  ## `importcpp` pragma
-    DllP = (ord(DllTagId), "dll")  ## static import library of an `importc` proc (native backend): the declaration binds through the image's import table instead of a runtime loader stub
+    DynlibP = (ord(DynlibTagId), "dynlib")  ## `dynlib` pragma; on a Leng decl: static import library of an `importc` proc (native backend): the declaration binds through the image's import table instead of a runtime loader stub
     ExportcP = (ord(ExportcTagId), "exportc")  ## `exportc` pragma
     HeaderP = (ord(HeaderTagId), "header")  ## `header` pragma
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
@@ -163,7 +163,7 @@ type
     AssemblerP = (ord(AssemblerTagId), "assembler")  ## the `{.assembler.}` **proc pragma** (no children): every construct in the body maps one-to-one to assembler, in source order, with no temporaries invented and no operand materialised. The back end (arkham) owns that checking — see `nativenif/doc/intrinsics.md` §8. Spelled `assembler` rather than `asm` because Nim's parser reads a pragma entry as an expression and so cannot accept a keyword there; it is unrelated to the `(asm X+)` statement
 
 proc rawTagIsLengPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, DllTagId, ExportcTagId, HeaderTagId, PackedTagId, InstructionTagId, IntrinsicTagId, RegisterTagId, StackTagId, AssemblerTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, PackedTagId, InstructionTagId, IntrinsicTagId, RegisterTagId, StackTagId, AssemblerTagId}
 
 type
   LengTypeQualifier* = enum

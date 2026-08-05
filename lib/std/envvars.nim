@@ -60,11 +60,11 @@ else:
       ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
       # xxx this should be distinct int32, distinct would make code less error prone
     proc getEnvironmentStringsW(): WideCString {.
-      importc: "GetEnvironmentStringsW", header: "<windows.h>", dynlib: "kernel32".}
+      importc: "GetEnvironmentStringsW", stdcall, dynlib: "kernel32".}
     proc freeEnvironmentStringsW(env: WideCString): WINBOOL {.
-      importc: "FreeEnvironmentStringsW", header: "<windows.h>", dynlib: "kernel32".}
+      importc: "FreeEnvironmentStringsW", stdcall, dynlib: "kernel32".}
     proc setEnvironmentVariableW(name, value: WideCString): WINBOOL {.
-      importc: "SetEnvironmentVariableW", header: "<windows.h>", dynlib: "kernel32".}
+      importc: "SetEnvironmentVariableW", stdcall, dynlib: "kernel32".}
 
   when defined(windows):
     proc c_getenv(env: cstring): cstring {.
