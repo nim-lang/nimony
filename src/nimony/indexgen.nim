@@ -46,7 +46,7 @@ proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): 
       if mn.isTagLit: inc mn      # into the stmts; first child carries the info
       let fileId = mn.info.file
       assert fileId.isValid
-      let path = pool.filenames[fileId].toAbsolutePath
+      let path = realFile(pool.filenames[fileId]).toAbsolutePath
       result.addParLe(TagId(FromexportIdx))
       result.addStrLit(path, NoLineInfo)
       for s in syms:

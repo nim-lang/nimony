@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 1858             )
+(.indexat 2092             )
 (stmts@,3,tests/nimony/nosystem/tresemtype.nim
  (proc :foo.0.@5 . .
   (typevars@8
@@ -27,7 +27,7 @@
    (var@4,2 :obj.1 . . Foo.1.@6
     (oconstr@9 Foo.1.~3
      (kv@4 val.0~3 x.1@2)))))
- (stmts@2,9
+ (stmts@2,C,__crucial\00fooTempl.0.treckpe1i1\01tests/nimony/nosystem/tresemtype.nim\0111\00tests/nimony/nosystem/tresemtype.nim
   (type@9 :Foo.2.~4 . .
    (pragmas)
    (object@2 .
@@ -36,7 +36,7 @@
   (gvar@4,2 :obj.2 . . Foo.2.@6
    (oconstr@9 Foo.2.~3
     (kv@4 val.0~3 123~A,2))))
- (stmts@2,9
+ (stmts@2,C,__crucial\00fooTempl.0.treckpe1i1\01tests/nimony/nosystem/tresemtype.nim\0111\00tests/nimony/nosystem/tresemtype.nim
   (type@9 :Foo.3.~4 . .
    (pragmas)
    (object@2 .
@@ -78,8 +78,8 @@
  (h fooTempl.0. 232)
  (h@H,8 T.1. 47)
  (h@2,9 Foo.1. 92)
- (h@2,9 Foo.2. 178)
- (h@2,9 Foo.3. 189)
+ (h@2,C,__crucial\00fooTempl.0.treckpe1i1\01tests/nimony/nosystem/tresemtype.nim\0111\00tests/nimony/nosystem/tresemtype.nim Foo.2. 295)
+ (h@2,C,__crucial\00fooTempl.0.treckpe1i1\01tests/nimony/nosystem/tresemtype.nim\0111\00tests/nimony/nosystem/tresemtype.nim Foo.3. 306)
  (h foo.0.Imj9rno. 229)
  (h@2,1 Foo.4. 144)
  (h foo.0.Iwjalau. 183)

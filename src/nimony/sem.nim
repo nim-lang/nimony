@@ -1002,8 +1002,17 @@ proc visibilityModule(c: SemContext; info: NifLineInfo): string =
   ## expanded routine's module; an argument is the caller's own code and stays
   ## judged against the module being compiled. Walking outwards handles
   ## expansions nested inside expansions.
+  ##
+  ## The comparison is on the *real* file: an expansion's tokens carry a forged
+  ## filename recording where they came from (see `nifcore`'s `CrucialPrefix`),
+  ## and a forged name has its own `FileId`, so matching raw ids would miss.
+  if c.visOwner.len == 0: return c.thisModuleSuffix
+  if not info.file.isValid: return c.thisModuleSuffix
+  let infoFile = realFile(pool.filenames[info.file])
   for i in countdown(c.visOwner.len-1, 0):
-    if c.visOwner[i].file == info.file.uint32:
+    let ownerId = FileId(c.visOwner[i].file)
+    if not ownerId.isValid: continue
+    if realFile(pool.filenames[ownerId]) == infoFile:
       return c.visOwner[i].module
   result = c.thisModuleSuffix
 
