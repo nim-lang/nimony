@@ -141,7 +141,7 @@ proc checkWellFormed(buf: var TokenBuf) =
   var n = buf.beginRead()
   while n.hasMore: skip n
 
-proc processFile*(input, output: string; verify = false): Stats =
+proc processFile*(input, output: string; liveFile = ""; verify = false): Stats =
   ## Optimize one NIFC file. Seeds the tag pool so `cursorTagId` aligns with the
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
@@ -149,7 +149,7 @@ proc processFile*(input, output: string; verify = false): Stats =
   # 1. Whole-module inter-module inlining runs first, in the nifcursors world
   #    (via the bridge); the result comes back as a NIF string.
   var imiChanged = false
-  let imiNif = runImi(input, suffix, splitFile(input).dir, imiChanged)
+  let imiNif = runImi(input, suffix, splitFile(input).dir, liveFile, imiChanged)
   if imiChanged: inc st.intermodChanged
   # 2. Load the module as a typenav context (for type-precise aliasing), and
   #    reparse the (post-inlining) body into nifcore SHARING that context's pool

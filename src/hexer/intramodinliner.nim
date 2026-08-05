@@ -14,11 +14,18 @@
 ##   - single-return procs only (no `(ret …)` mid-body);
 ##   - `.inline` pragma callees only (threshold == 0 in `InlineInfo`).
 ##
-## Cross-module callees are supported: `loadForeign` lazy-loads the callee
-## module's post-DCE `.c.nif` (see there for why it must be that and not the
-## `.x.nif`). Both halves of the decision come out of that one file — the
-## body itself and the callee's `(inline THRESHOLD w…)` pragma annotation,
-## which `intraModuleInline` wrote at the hexer stage. There is no size cap:
+## Two passes share this machinery, at the two stages the pipeline has:
+##   - `intraModuleInline` runs inside hexer on the module's own tree, before
+##     the `.x.nif` is written. Same-module callees only (`xnifDir` unset).
+##   - `runInterModuleInliner` (shoggoth) runs on the post-DCE `.c.nif` and is
+##     the one that crosses module borders: `loadForeign` lazy-loads the
+##     callee's `.x.nif` — every module has written one by then — and pipes it
+##     through dce2's resolve table so the copied symbols read exactly as
+##     `dceEmit` would have written them (see `loadForeign`).
+##
+## Either way the body and the callee's `(inline THRESHOLD w…)` pragma
+## annotation come out of the same file; the annotation is what
+## `intraModuleInline` wrote at the hexer stage. There is no size cap:
 ## `.inline` is honoured whatever the body costs.
 ##
 ## The splice introduces a `(scope …)` block, declares one fresh `(var)`
@@ -31,6 +38,10 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / lengc / [leng_model]
+# Only the generic-instance merge result, so a foreign `.x.nif` body can be
+# renamed the way `dceEmit` renamed the rest of the program. `from … import`
+# keeps dce2's own `include`s out of this module's scope.
+from dce2 import ResolveTable, translate, readLiveFile
 
 type
   InlineWeights* = seq[int]
@@ -106,7 +117,8 @@ type
     bodies: Table[SymId, int]               # same-module callee → offset in `src`
     ownInfo: Table[SymId, InlineInfo]       # same-module `(inline …)` annotations
     src: ptr TokenBuf                       # the module's parsed buffer
-    xnifDir: string                         # directory holding the `.c.nif`s
+    xnifDir: string                         # directory holding the `.x.nif`s
+    resolved: ResolveTable                  # dce2's generic-instance picks
     maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
     foreign: Table[string, ref ForeignModule]
       # Cached cross-module bodies. `ref` so growing the table doesn't
@@ -123,7 +135,7 @@ type
       # cross-module cascade is rarely a win and risks runaway growth.
 
 proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
-                     xnifDir = ""; maxDepth = 0;
+                     xnifDir = ""; liveFile = ""; maxDepth = 0;
                      counterPrefix = "i"): InlinerCtx =
   ## `counterPrefix` is woven into fresh local sym names (`base.0i<n>`,
   ## `returnLabel.0i<n>`). The hexer same-module pass uses `"h"` and
@@ -133,7 +145,12 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
   InlinerCtx(moduleSuffix: moduleSuffix, src: src,
              bodies: initTable[SymId, int](),
              ownInfo: initTable[SymId, InlineInfo](),
-             xnifDir: xnifDir,
+             # No live file, no foreign bodies: an unresolved `.x.nif` body
+             # would splice symbols that the merge has renamed away, which
+             # fails later and elsewhere. Off is better than wrong.
+             xnifDir: (if liveFile.len > 0: xnifDir else: ""),
+             resolved: (if liveFile.len > 0: readLiveFile(liveFile).resolved
+                        else: initTable[string, SymId]()),
              maxDepth: maxDepth,
              counterPrefix: counterPrefix,
              foreign: initTable[string, ref ForeignModule](),
@@ -177,17 +194,58 @@ proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   if fileExists(parent): return parent
   return ""
 
+proc trResolve(dest: var TokenBuf; n: var Cursor; resolved: ResolveTable) =
+  case n.kind
+  of Symbol:
+    dest.addSymUse translate(resolved, n.symId), n.info
+    inc n
+  of SymbolDef:
+    dest.addSymDef translate(resolved, n.symId), n.info
+    inc n
+  of TagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore: trResolve dest, n, resolved
+    dest.addParRi()
+  else:
+    dest.takeTree n
+
+proc resolveInstances(buf: var TokenBuf; resolved: ResolveTable) =
+  ## Rewrite every symbol through dce2's resolve table — the tail of `dce2.tr`,
+  ## minus the liveness filter (a body we are about to splice is live by
+  ## definition, and so is everything it mentions: `markLive` walked it).
+  if resolved.len == 0: return
+  var n = beginRead(buf)
+  var dest = createTokenBuf(buf.len)
+  while n.hasMore: trResolve dest, n, resolved
+  buf = ensureMove(dest)
+
 proc loadForeign(c: var InlinerCtx; modul: string): bool =
   ## Lazy-load a foreign module: its proc bodies *and* their inline
   ## annotations come out of the same parse, so `lookupInlineInfo` and
   ## `lookupBody` share one file per module.
+  ##
+  ## The file is the callee's `.x.nif`, which is what the pipeline offers: the
+  ## importer's `.c.nif` holds its own procs only, and hexer's per-module nodes
+  ## have all finished by the time DCE — let alone shoggoth — runs, so no
+  ## build-graph edge is needed to make the file appear.
+  ##
+  ## What *is* needed is one rename. A `.x.nif` is pre-DCE, so duplicated
+  ## generic instances still name their own module (`seq.0.Ixdx2fh1.` in each
+  ## of the 54 modules that instantiate it) where the post-DCE program names
+  ## the single winner of the merge (`seq.0.Ixdx2fh1.arggtw1a3`). Splicing the
+  ## raw body leaves references to a symbol its module no longer declares —
+  ## "Symbol not found in NIF module". `resolveInstances` applies dce2's own
+  ## table to the whole buffer, which is precisely what `dceEmit` did to every
+  ## other copy of that body.
   if modul == c.moduleSuffix: return true
   if modul in c.foreign: return true
-  let xpath = findForeignFile(c, modul, ".c.nif")
+  let xpath = findForeignFile(c, modul, ".x.nif")
   if xpath.len == 0: return false
   var fm: ref ForeignModule
   new fm
   fm.buf = parseFromFile(xpath)
+  resolveInstances(fm.buf, c.resolved)
   indexProcBodies(fm.buf, fm.bodies, fm.inlineInfo)
   c.foreign[modul] = fm
   result = true
@@ -1259,7 +1317,7 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
   ##
   ## Cross-module behaviour: callees in another module are picked up
   ## automatically when the context's `xnifDir` is non-empty —
-  ## `lookupInlineInfo` / `lookupBody` then lazy-load the foreign `.c.nif`.
+  ## `lookupInlineInfo` / `lookupBody` then lazy-load the foreign `.x.nif`.
   ## With `xnifDir == ""` foreign callees are naturally skipped (their
   ## `InlineInfo` defaults to threshold 100, so `shouldInlineCall` declines).
   case n.kind
@@ -1426,12 +1484,11 @@ proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
   ## written *before* the splice because the splice reads it back: `ownInfo`
   ## is filled from the pragmas by `collectProcBodies`.
   ##
-  ## `xnifDir` stays empty here on purpose. This module's own `.x.nif` is
-  ## pre-DCE, so its generic instances and hexer-minted types still carry the
-  ## own-module shorthand (`seq.0.Ixdx2fh1.`) that dce2 later resolves to one
-  ## canonical owner; a body copied *within* the module keeps meaning the same
-  ## thing, while one copied *across* modules would not. Cross-module splicing
-  ## therefore waits for the `.c.nif` (`shoggoth`'s inter-module pass).
+  ## `xnifDir` stays empty here on purpose: this pass is the *intra*-module
+  ## one. Cross-module splicing is `runInterModuleInliner`'s job, and it has to
+  ## be — the other modules' `.x.nif`s are being written by sibling hexer
+  ## processes right now, and the generic-instance merge that decides what
+  ## their symbols are finally called has not run yet.
   let ma = analyzeModule(buf)
   annotateInlinePragmas(buf, ma.inlineInfo)
   if ma.inlineInfo.len == 0: return

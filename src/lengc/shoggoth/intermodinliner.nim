@@ -13,12 +13,12 @@
 ## threshold followed by per-parameter weights (see `intramodinliner`'s
 ## `computeInlineInfo`). This pass consumes those annotations and splices
 ## qualifying calls at NIFC level — both same-module and cross-module:
-## cross-module bodies are taken from the callee module's post-DCE `.c.nif`,
-## picked up via `intramodinliner`'s lazy foreign-module loader (`xnifDir` plus
-## a one-level-up search, so the main module's copy inside
-## `<nimcache>/<backend>/` and non-main modules' directly in `<nimcache>/` are
-## both found). `deps.nim` makes those files inputs of the `optimize` node so
-## they exist by the time we look.
+## cross-module bodies are taken from the callee module's `.x.nif`, picked up
+## via `intramodinliner`'s lazy foreign-module loader (`xnifDir` plus a
+## one-level-up search, so the main module's `.x.nif` inside
+## `<nimcache>/<backend>/` and non-main modules' `.x.nif` directly in
+## `<nimcache>/` are both found) and renamed through the DCE resolve table in
+## `<main>.live.nif`, which the build passes as `--live:`.
 ##
 ## In addition to the full splice, this pass detects a *partial-inline
 ## prologue* — the guarded early-return shape
@@ -104,19 +104,22 @@ proc tryDetectGuardPrologue(body: Cursor; shape: var GuardShape): bool =
 # ---- public entry --------------------------------------------------------
 
 proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
-                            xnifDir: string): bool =
+                            xnifDir, liveFile: string): bool =
   ## Returns true when `buf` was changed.
   ##
   ## Reuses `intramodinliner.trIntra`, which already calls `trySplice` /
   ## `trySpliceVarInit` at every statement-position call and bound-form
   ## `(var :t … (call …))`. The cross-module body fetch is automatic once
   ## `xnifDir` is set — `lookupBody` resolves the callee's module via the
-  ## symbol name (`extractModule`) and lazy-loads the foreign `.c.nif`.
+  ## symbol name (`extractModule`) and lazy-loads the foreign `.x.nif`.
+  ## `liveFile` carries dce2's generic-instance picks; without it foreign
+  ## bodies would keep their pre-merge symbol names.
   ##
   ## There is no size cap on the callee: `.inline` means the programmer asked
   ## for it, so it is honoured whatever the body costs.
   var ctx = initInlinerCtx(suffix, addr buf,
                            xnifDir = xnifDir,
+                           liveFile = liveFile,
                            maxDepth = 4,
                            counterPrefix = "x")
   collectProcBodies(ctx)
