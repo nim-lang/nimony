@@ -142,7 +142,7 @@ proc forgeReemit(f: var ForgeCtx; dest: var TokenBuf; src: var Cursor) =
       # expansion (`tests/nimony/templates/tinvalidrecursion.nim`).
       dest.addSubtree src
       skip src
-     else:
+    else:
       dest.addParLe(cursorTagId(src), info)
       src.into:
         while src.hasMore: forgeReemit(f, dest, src)

@@ -110,7 +110,7 @@ proc infoToStr*(info: NifLineInfo): string =
     result = "???"
   else:
     # `realFile`: expanded code carries a forged filename recording where it came
-    # from (see `nifcore`'s `CrucialPrefix`). A user-facing message wants the
+    # from (see `comesfrom`'s `CrucialPrefix`). A user-facing message wants the
     # actual source path, not the provenance chain.
     result = realFile(pool.filenames[info.file]).shortenDir()
     result.add "(" & $info.line & ", " & $(info.col+1) & ")"

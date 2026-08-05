@@ -1004,7 +1004,7 @@ proc visibilityModule(c: SemContext; info: NifLineInfo): string =
   ## expansions nested inside expansions.
   ##
   ## The comparison is on the *real* file: an expansion's tokens carry a forged
-  ## filename recording where they came from (see `nifcore`'s `CrucialPrefix`),
+  ## filename recording where they came from (see `comesfrom`'s `CrucialPrefix`),
   ## and a forged name has its own `FileId`, so matching raw ids would miss.
   if c.visOwner.len == 0: return c.thisModuleSuffix
   if not info.file.isValid: return c.thisModuleSuffix

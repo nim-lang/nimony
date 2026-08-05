@@ -96,7 +96,7 @@ proc dbgLocationId(c: var LLVMCode; info: NifLineInfo): int =
   ## its id, or 0 if the location is invalid.
   ##
   ## When the location's filename carries expansion provenance
-  ## (`__crucial\0<outer>\0<inner>\0real.nim`, see `nifcore`), the chain is
+  ## (`__crucial\0<outer>\0<inner>\0real.nim`, see `comesfrom`), the chain is
   ## turned into DWARF inlined frames: one synthetic DISubprogram per expanded
   ## routine, each location scoped to the innermost and chained outwards through
   ## `inlinedAt` until it reaches the enclosing proc. That is what makes a
