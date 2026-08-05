@@ -18,7 +18,7 @@ when defined(windows):
     Handle = int
 
     SysLock* {.importc: "CRITICAL_SECTION",
-              header: "<windows.h>", final, pure, byref.} = object # CRITICAL_SECTION in WinApi
+              header: "<windows.h>", final, pure, byref, dynlib: "kernel32".} = object # CRITICAL_SECTION in WinApi
       DebugInfo {.exportc.} : nil pointer
       LockCount {.exportc.} : int32
       RecursionCount {.exportc.} : int32
@@ -26,47 +26,47 @@ when defined(windows):
       LockSemaphore {.exportc.} : int
       SpinCount {.exportc.} : int
 
-    SysCond* {.importc: "RTL_CONDITION_VARIABLE", header: "<windows.h>", byref.} = object
+    SysCond* {.importc: "RTL_CONDITION_VARIABLE", header: "<windows.h>", byref, dynlib: "kernel32".} = object
       thePtr {.importc: "Ptr".} : Handle
 
   func initSysLock*(L: var SysLock) {.importc: "InitializeCriticalSection",
-                                     header: "<windows.h>".}
+                                     header: "<windows.h>", dynlib: "kernel32".}
     ## Initializes the lock `L`.
 
   func tryAcquireSysAux(L: var SysLock): int32 {.importc: "TryEnterCriticalSection",
-                                                 header: "<windows.h>".}
+                                                 header: "<windows.h>", dynlib: "kernel32".}
     ## Tries to acquire the lock `L`.
 
   func tryAcquireSys*(L: var SysLock): bool {.inline.} =
     result = tryAcquireSysAux(L) != 0'i32
 
   func acquireSys*(L: var SysLock) {.importc: "EnterCriticalSection",
-                                    header: "<windows.h>".}
+                                    header: "<windows.h>", dynlib: "kernel32".}
     ## Acquires the lock `L`.
 
   func releaseSys*(L: var SysLock) {.importc: "LeaveCriticalSection",
-                                    header: "<windows.h>".}
+                                    header: "<windows.h>", dynlib: "kernel32".}
     ## Releases the lock `L`.
 
   func deinitSys*(L: SysLock) {.importc: "DeleteCriticalSection",
-                                   header: "<windows.h>".}
+                                   header: "<windows.h>", dynlib: "kernel32".}
 
   func initializeConditionVariable(
     conditionVariable: var SysCond
-  ) {.stdcall, noSideEffect, header: "<windows.h>", importc: "InitializeConditionVariable".}
+  ) {.stdcall, noSideEffect, header: "<windows.h>", importc: "InitializeConditionVariable", dynlib: "kernel32".}
 
   func sleepConditionVariableCS(
     conditionVariable: var SysCond,
     PCRITICAL_SECTION: var SysLock,
     dwMilliseconds: int
-  ): int32 {.stdcall, noSideEffect, header: "<windows.h>", importc: "SleepConditionVariableCS".}
+  ): int32 {.stdcall, noSideEffect, header: "<windows.h>", importc: "SleepConditionVariableCS", dynlib: "kernel32".}
 
 
   func signalSysCond*(hEvent: var SysCond) {.stdcall, noSideEffect,
-    header: "<windows.h>", importc: "WakeConditionVariable".}
+    header: "<windows.h>", importc: "WakeConditionVariable", dynlib: "kernel32".}
 
   func broadcastSysCond*(hEvent: var SysCond) {.stdcall, noSideEffect,
-    header: "<windows.h>", importc: "WakeAllConditionVariable".}
+    header: "<windows.h>", importc: "WakeAllConditionVariable", dynlib: "kernel32".}
 
   func initSysCond*(cond: var SysCond) {.inline.} =
     initializeConditionVariable(cond)

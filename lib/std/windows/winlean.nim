@@ -109,24 +109,24 @@ when defined(windows):
     not isFail(a)
 
   proc closeHandle*(hObject: Handle): WINBOOL {.
-      importc: "CloseHandle", stdcall, header: "<Windows.h>".}
+      importc: "CloseHandle", stdcall, header: "<Windows.h>", dynlib: "kernel32".}
   proc getLastError*(): int32 {.
-      importc: "GetLastError", stdcall, header: "<Windows.h>", sideEffect.}
+      importc: "GetLastError", stdcall, header: "<Windows.h>", dynlib: "kernel32", sideEffect.}
   proc createFileW*(lpFileName: WideCString, dwDesiredAccess, dwShareMode: DWORD,
                     lpSecurityAttributes: nil pointer,
                     dwCreationDisposition, dwFlagsAndAttributes: DWORD,
                     hTemplateFile: Handle): Handle {.
-      importc: "CreateFileW", stdcall, header: "<Windows.h>".}
+      importc: "CreateFileW", stdcall, header: "<Windows.h>", dynlib: "kernel32".}
   proc setEndOfFile*(hFile: Handle): WINBOOL {.
-      importc: "SetEndOfFile", stdcall, header: "<Windows.h>".}
+      importc: "SetEndOfFile", stdcall, header: "<Windows.h>", dynlib: "kernel32".}
   proc setFilePointer*(hFile: Handle, lDistanceToMove: LONG,
                        lpDistanceToMoveHigh: ptr LONG,
                        dwMoveMethod: DWORD): DWORD {.
-      importc: "SetFilePointer", stdcall, header: "<Windows.h>".}
+      importc: "SetFilePointer", stdcall, header: "<Windows.h>", dynlib: "kernel32".}
 
   proc getFileSize*(hFile: Handle, lpFileSizeHigh: ptr DWORD): DWORD {.
       importc: "GetFileSize",
-      stdcall, header: "<Windows.h>".}
+      stdcall, header: "<Windows.h>", dynlib: "kernel32".}
 
   when defined(cpu32):
     type
@@ -139,15 +139,15 @@ when defined(windows):
                         dwFileOffsetHigh, dwFileOffsetLow: DWORD,
                         dwNumberOfBytesToMap: WinSizeT,
                         lpBaseAddress: nil pointer): nil pointer{.
-      importc: "MapViewOfFileEx", stdcall, header: "<Windows.h>".}
+      importc: "MapViewOfFileEx", stdcall, header: "<Windows.h>", dynlib: "kernel32".}
   proc createFileMappingW*(hFile: Handle,
                            lpFileMappingAttributes: nil pointer,
                            flProtect, dwMaximumSizeHigh: DWORD,
                            dwMaximumSizeLow: DWORD,
                            lpName: nil pointer): Handle {.
-      importc: "CreateFileMappingW", stdcall, header: "<Windows.h>".}
+      importc: "CreateFileMappingW", stdcall, header: "<Windows.h>", dynlib: "kernel32".}
   proc unmapViewOfFile*(lpBaseAddress: nil pointer): WINBOOL {.
-      importc: "UnmapViewOfFile", stdcall, header: "<Windows.h>".}
+      importc: "UnmapViewOfFile", stdcall, header: "<Windows.h>", dynlib: "kernel32".}
 
 
   type

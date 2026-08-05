@@ -60,11 +60,11 @@ else:
       ## `WINBOOL` uses opposite convention as posix, !=0 meaning success.
       # xxx this should be distinct int32, distinct would make code less error prone
     proc getEnvironmentStringsW(): WideCString {.
-      importc: "GetEnvironmentStringsW", header: "<windows.h>".}
+      importc: "GetEnvironmentStringsW", header: "<windows.h>", dynlib: "kernel32".}
     proc freeEnvironmentStringsW(env: WideCString): WINBOOL {.
-      importc: "FreeEnvironmentStringsW", header: "<windows.h>".}
+      importc: "FreeEnvironmentStringsW", header: "<windows.h>", dynlib: "kernel32".}
     proc setEnvironmentVariableW(name, value: WideCString): WINBOOL {.
-      importc: "SetEnvironmentVariableW", header: "<windows.h>".}
+      importc: "SetEnvironmentVariableW", header: "<windows.h>", dynlib: "kernel32".}
 
   when defined(windows):
     proc c_getenv(env: cstring): cstring {.
@@ -100,10 +100,10 @@ else:
     # messy here...
     when defined(cpp):
       proc strEnd(cstr: WideCString, c = 0'i32): WideCString {.
-        importcpp: "(NI16*)wcschr((const wchar_t *)#, #)", header: "<string.h>".}
+        importcpp: "(NI16*)wcschr((const wchar_t *)#, #)", header: "<string.h>", dynlib: "msvcrt".}
     else:
       proc strEnd(cstr: WideCString, c = 0'i32): WideCString {.
-        importc: "wcschr", header: "<string.h>".}
+        importc: "wcschr", header: "<string.h>", dynlib: "msvcrt".}
 
     proc getEnvVarsC() =
       if not envComputed:

@@ -14,7 +14,7 @@ when not defined(posix):
   # POSIX replaces libc's `system()` with the native fork+exec path in
   # `execShellCmd`; only Windows still calls out to `system`.
   proc c_system(cmd: cstring): cint {.
-      importc: "system", header: "<stdlib.h>".}
+      importc: "system", header: "<stdlib.h>", dynlib: "msvcrt".}
 
 when defined(posix):
   proc expandFilename*(filename: string): string {.raises.} =
