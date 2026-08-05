@@ -2,18 +2,24 @@
 when defined(nimony):
   import strutils
 
-  var
-    nifcArgc {.importc: "cmdCount".}: int32
-    nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
+  when defined(windows):
+    # Windows hands the entry proc no C argv (the PE stub zeroes the
+    # `cmdCount`/`cmdLine` globals) — the command line comes from
+    # `GetCommandLineW`, which std/cmdline fetches and parses.
+    from cmdline import paramStr, paramCount
+  else:
+    var
+      nifcArgc {.importc: "cmdCount".}: int32
+      nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
 
-  proc paramStr*(i: int): string =
-    if i < nifcArgc and i >= 0:
-      result = borrowCStringUnsafe(nifcArgv[i])
-    else:
-      result = ""
+    proc paramStr*(i: int): string =
+      if i < nifcArgc and i >= 0:
+        result = borrowCStringUnsafe(nifcArgv[i])
+      else:
+        result = ""
 
-  proc paramCount*(): int =
-    result = nifcArgc-1
+    proc paramCount*(): int =
+      result = nifcArgc-1
 
 else:
   from os import paramStr, paramCount
