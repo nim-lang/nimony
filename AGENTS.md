@@ -39,3 +39,26 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 ## Tests results overwrite
 
 Tests often include large amounts of produced NIF code. Use `hastur --overwrite` to overwrite all test results or `hastur --overwrite test ...` to overwrite a specific test case. The resulting diffs are always part of the code review process.
+
+## Joined tests
+
+A test directory's plain tests (no `.msgs`, no golden `.nim.c`/`.nif`, exit code
+0, no valgrind run, no `isMainModule`) are compiled into ONE program: a
+generated `_hastur_joined.nim` imports them and their module-init code runs in
+import order, so the program prints the members' `.output` files back to back.
+That is what keeps the suite fast where process creation is expensive
+(Windows), because the cost of a test is the toolchain process tree behind it,
+not the test itself.
+
+Consequences when writing a test:
+
+- Give a test that prints an `.output` file. `hastur --overwrite` writes one
+  for you. Without it the test is expected to print nothing, and its group
+  fails.
+- A test that must be a program of its own — unstable output, a subprocess
+  writing to the shared stdout, a race with a neighbour over a build artifact —
+  opts out with an empty `<test>.nojoin` sidecar next to it.
+- Nothing is lost on failure: a group that diverges is automatically re-run
+  test by test, so the report still names the single test that broke. Use
+  `--joined:off` to rule the grouping out entirely, or `hastur joined <dir>` to
+  run one group by hand.
