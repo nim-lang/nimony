@@ -1,0 +1,5 @@
+# Imports a plugin-backed stdlib module (macros/json/typetraits/smartcli/parfor).
+# Compiling two such tests in one nifmake run lets its parallel jobs launch the
+# same plugin build twice into the same nimcache and clobber each other. Until
+# that race is fixed these keep separate runs. Same reason as
+# tests/nimony/macros/*.nojoin.
