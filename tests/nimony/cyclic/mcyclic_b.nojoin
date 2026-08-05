@@ -1,0 +1,3 @@
+# The two tests in this directory are one cyclic import unit that prints from
+# its shared initialization, so a program containing both prints it once, not
+# twice. See --joined.

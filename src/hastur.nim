@@ -61,6 +61,10 @@ Commands:
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
   lengc                 run Leng tests.
   test <file>/<dir>    run a single test <file>, or a flat <dir> of tests.
+  joined <dir>         run <dir>'s joinable tests as ONE program (see
+                       `--joined` below). This is what the test pool spawns
+                       per directory; by hand it is how you run or debug a
+                       single group.
   bug [file]           build nimony+hexer and compile <file> to fill nimcache/.
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
@@ -76,7 +80,11 @@ Commands:
 Arguments are forwarded to the Nimony compiler.
 
 Options:
-  --overwrite           overwrite the selected test results
+  --overwrite           overwrite the selected test results. Implies
+                        `--joined:off`: a golden is regenerated from the test
+                        running on its own. A plain test that prints without
+                        an `.output` file gets one written here — that is what
+                        makes it joinable.
   --ast                 track the contents of the AST too
   --codegen             track the contents of the code generator too
   --version             show the version
@@ -91,6 +99,13 @@ Options:
                         `boot` it additionally compiles the bootstrapped
                         nimony's own output with --opt:speed
   --jobs:N|auto         run up to N tests in parallel (auto = #cores)
+  --joined:on|off       compile a directory's plain tests into ONE program
+                        (default on) instead of one per test. Most of a test's
+                        cost is the process tree behind it — nifler, nimsem,
+                        hexer, lengc, nifmake, the C compiler, the linker —
+                        so this is the big lever on Windows. A group that
+                        fails is re-run test by test, so failures stay
+                        attributable; `off` skips the grouping altogether.
   --cachedir:PATH       use PATH instead of `nimcache/` for intermediates
   --bindir:PATH         resolve the toolchain (nimony, lengc, …) from
                         directory PATH instead of hastur's own directory
@@ -116,6 +131,10 @@ Files (per test directory, all optional):
                         hastur subcommand (e.g. `build nimony`) run before the
                         tests beneath it. `tests/setup.hastur` builds the
                         toolchain for the whole sweep.
+  <test>.nojoin         keep <test> out of its directory's joined program (see
+                        `--joined`). For a test whose output is not
+                        reproducible in a shared process, or that races with
+                        its neighbours over a shared build artifact.
   hastur.mode           this directory's category for the built-in nimony
                         runner: nosystem, track, compat, valgrind, opt, or
                         skip (excluded from the sweep, but still run when
@@ -164,7 +183,7 @@ proc diffFiles(c: var TestCounters; file, a, b: string; overwrite: bool) =
     else:
       let gitCmd = "git diff --no-index $1 $2" % [a.quoteShell, b.quoteShell]
       let (diff, diffExitCode) = execCmdEx(gitCmd)
-      if diffExitCode == 0:
+      if diffExitCode <= 1:
         failure c, file, diff
       else:
         failure c, file, gitCmd & "\n" & diff
@@ -445,22 +464,63 @@ proc testValgrind(c: var TestCounters; file: string; overwrite: bool; cat: Categ
 proc echoTestSuccess(file: string) =
   echo "SUCCESS ", file
 
-proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; forward: string) =
-  #echo "TESTING ", file
-  let failuresBefore = c.failures
-  inc c.total
-  var nimonycmd = "--isMain"
+const
+  JoinedPrefix = "_hastur_"
+    ## Generated files carry this prefix; they are never tests themselves.
+  JoinedDriver = JoinedPrefix & "joined"
+    ## Basename of the per-directory joined-group driver module.
+  MinJoinGroup = 2
+    ## A group of one saves nothing and only obscures the reporting.
+
+var joinTests* = true
+  ## `--joined:off` restores one process per test (bisecting a group, or
+  ## working on the joining itself). See the `joined tests` section below.
+
+type WorkItem = object
+  ## One unit of work for the parallel pool: either a single test file, or a
+  ## whole directory's joined group. `weight` is how many tests the unit
+  ## accounts for, so the run's totals stay per-test even though a group is a
+  ## single process.
+  path: string
+  joined: bool
+  weight: int
+
+proc isGeneratedTestFile*(file: string): bool {.inline.} =
+  file.splitFile.name.startsWith(JoinedPrefix)
+
+proc joinable*(file: string; cat: Category): bool =
+  ## A test folds into its directory's joined group when nothing about it needs
+  ## a process of its own: it must be a plain compile-run-diff-output test (no
+  ## expected diagnostics, no golden C or NIF to diff, no non-zero exit code, no
+  ## valgrind run), it must not care about being the main module, and it must
+  ## not opt out with a `.nojoin` sidecar. Everything else keeps its own run.
+  ## Whether a group is actually formed is `joinMembers`' call — this is only
+  ## about the test itself.
+  if cat != Normal: return false
+  if isGeneratedTestFile(file): return false
+  for ext in [".msgs", ".nim.c", ".nif", ".exitcode", ".valgrind", ".nojoin"]:
+    if file.changeFileExt(ext).fileExists(): return false
+  # `isMainModule` is false for an imported member, so such a test would
+  # silently exercise the other branch.
+  result = not readFile(file).contains("isMainModule")
+
+proc nimonyCmdFor(file: string; cat: Category; forward: string): string =
+  ## The `nimony` command line a test file is compiled with, minus the file
+  ## itself. Shared by the per-file runner and the joined-group runner so a
+  ## test's module is built with the exact same flags either way — they land
+  ## in the same `nimcache/`, and differing flags would thrash it.
+  result = "--isMain"
   case cat
   of Normal, Valgrind, Optimized, Skip: discard
   of Basics:
-    nimonycmd.add " --noSystem"
+    result.add " --noSystem"
   of Tracked:
-    nimonycmd.add markersToCmdLine(extractMarkers(readFile(file)), file)
+    result.add markersToCmdLine(extractMarkers(readFile(file)), file)
   of Compat:
-    nimonycmd.add " --compat"
+    result.add " --compat"
   if forward.len != 0:
-    nimonycmd.add ' '
-    nimonycmd.add forward
+    result.add ' '
+    result.add forward
   # The libc-free stdlib (native allocator + raw-syscall IO) is the compiler's
   # default now, but some tests assume the libc build, so they opt back in with
   # `-d:useLibc`: valgrind can only track the libc (mimalloc) heap — the native
@@ -469,16 +529,22 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
   if cat == Valgrind or
      file.changeFileExt(".valgrind").fileExists() or
      file.changeFileExt(".nim.c").fileExists():
-    nimonycmd.add " -d:useLibc"
+    result.add " -d:useLibc"
   when defined(linux):
     # Only request valgrind-tracked mimalloc when valgrind is actually present;
     # the flag pulls in `<valgrind/valgrind.h>`, which a valgrind-less box lacks.
     if hasValgrind:
-      nimonycmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
+      result.add " --passC:\"-DMI_TRACK_VALGRIND=1\" "
     else:
-      nimonycmd.add " "
+      result.add " "
   else:
-    nimonycmd.add " "
+    result.add " "
+
+proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category; forward: string) =
+  #echo "TESTING ", file
+  let failuresBefore = c.failures
+  inc c.total
+  let nimonycmd = nimonyCmdFor(file, cat, forward)
   let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & quoteShell(file), cat)
 
   let msgs = file.changeFileExt(".msgs")
@@ -519,6 +585,13 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
           if overwrite:
             writeFile(output, testProgramOutput)
           failure c, file, outputSpec, testProgramOutput
+      elif overwrite and testProgramExitCode == 0 and
+           testProgramOutput.strip.len > 0 and joinable(file, cat):
+        # A joined member's share of the group's output IS its `.output` file,
+        # so a member that prints without one would leave text nothing accounts
+        # for. `--overwrite` is where that gap gets closed: record what the
+        # test prints (which also gives it an output check it never had).
+        writeFile(output, testProgramOutput)
 
       when defined(linux):
         testValgrind c, file, overwrite, cat, quoteShell exe
@@ -535,6 +608,93 @@ proc testFile(c: var TestCounters; file: string; overwrite: bool; cat: Category;
 
   if c.failures == failuresBefore:
     echoTestSuccess(file)
+
+# ── joined tests ("megatest") ────────────────────────────────────────────────
+# The dominant cost of the suite is not compiling test code, it is the process
+# tree each test drags along: nimony spawns nifler/nimsem/hexer/lengc/nifmake,
+# nifmake spawns a C compiler and the linker, and then the executable itself
+# runs. That is a dozen-odd process creations per test — cheap on Unix, brutal
+# on Windows, and paid ~500 times over.
+#
+# So a directory's plain tests are compiled into ONE program: a generated
+# driver imports each of them, and module initialization (which is where a test
+# file's top-level code lives) runs in import order. The program's output is
+# therefore the members' outputs concatenated, which is exactly what the
+# members' `.output` files already spell out — no new golden files, and every
+# test stays individually runnable via `hastur test <file>`.
+#
+# Same idea as Nim testament's `megatest`, with one deliberate difference:
+# testament interleaves marker modules (`echo "megatest:processing: ..."`)
+# between the members to attribute output. Here a marker module would double
+# the module count — and modules, not tests, are what the process spawns are
+# proportional to — so instead a group that diverges *at all* is re-run
+# member-by-member, which pins the blame precisely and costs nothing when green.
+
+proc joinMembers*(dir: string; cat: Category; overwrite: bool): seq[string] =
+  ## The joinable tests of `dir`, sorted — empty when this directory forms no
+  ## group. Both the parent (planning the run) and the `joined` worker derive
+  ## the member list this way, so they agree on what a group contains without
+  ## having to pass it along.
+  ##
+  ## `--overwrite` never joins: regenerating a member's `.output` means seeing
+  ## that member's output on its own.
+  result = @[]
+  if cat != Normal or not joinTests or overwrite: return
+  for x in walkDir(dir):
+    if x.kind == pcFile and x.path.endsWith(".nim") and joinable(x.path, cat):
+      result.add x.path
+  sort result
+
+proc joinedExpectedOutput(files: openArray[string]): string =
+  ## What the joined program must print: each member's `.output` in import
+  ## order. A member without one is expected to print nothing — the same
+  ## contract `testFile` enforces is absent there, made explicit here.
+  result = ""
+  for f in items files:
+    let o = f.changeFileExt(".output")
+    if o.fileExists():
+      let spec = readFile(o).strip
+      if spec.len > 0:
+        if result.len > 0: result.add '\n'
+        result.add spec
+
+proc joinedTest(c: var TestCounters; dir: string; files: seq[string];
+                overwrite: bool; forward: string) =
+  ## Run `files` as one program. On any divergence — the group does not
+  ## compile, the program exits non-zero, or the output is not the members'
+  ## `.output` files concatenated — fall back to running each member on its
+  ## own, so the report names the test that actually broke.
+  var driverSrc = "# Generated by hastur; see `joinedTest`. Not a test itself.\n"
+  for f in files:
+    driverSrc.add "import \"" & f.splitFile.name & "\"\n"
+  let driver = dir / JoinedDriver.addFileExt(".nim")
+  # Rewrite only on change: an untouched driver keeps its mtime, so a group
+  # whose members did not change stays fully cached across runs.
+  if not fileExists(driver) or readFile(driver) != driverSrc:
+    writeFile(driver, driverSrc)
+
+  template bail(reason: string; detail: string) =
+    echo dir, ": joined group ", reason, "; re-running its ", files.len,
+         " tests individually"
+    if detail.len > 0: echo detail
+    for f in files: testFile c, f, overwrite, Normal, forward
+    return
+
+  let (compilerOutput, compilerExitCode) =
+    execNimony(nimonyCmdFor(driver, Normal, forward) & quoteShell(driver), Normal)
+  if compilerExitCode != 0:
+    bail "did not compile", compilerOutput
+
+  let exe = driver.generatedExeFile()
+  let (progOutput, progExitCode) = osproc.execCmdEx(quoteShell exe)
+  if progExitCode != 0:
+    bail "exited with " & $progExitCode, progOutput
+  if progOutput.strip != joinedExpectedOutput(files):
+    bail "printed unexpected output", ""
+
+  for f in files:
+    inc c.total
+    echoTestSuccess f
 
 proc canRunParallel(cat: Category): bool {.inline.} =
   ## `Compat` and `Basics` reset `nimcache/` around the loop and so are
@@ -738,27 +898,27 @@ proc drainStdout(arg: ReaderArg) {.thread, nimcall.} =
   finally:
     release lock[]
 
-proc parallelTestDir(c: var TestCounters; files: openArray[string];
+proc parallelTestDir(c: var TestCounters; items: openArray[WorkItem];
                      overwrite: bool; cat: Category; forward: string;
                      jobs: int) =
-  ## Run each test in its own subprocess (`bin/hastur test ...`) with a
-  ## per-test `--cacheDir` so concurrent compilations cannot collide on
-  ## intermediates. Up to `jobs` subprocesses run at once. Test results
-  ## are streamed in completion order; final pass/fail counts go into
-  ## the shared `c`.
+  ## Run each work item in its own subprocess (`bin/hastur test ...` for a
+  ## file, `bin/hastur joined ...` for a directory's group) with a per-item
+  ## `--cacheDir` so concurrent compilations cannot collide on intermediates.
+  ## Up to `jobs` subprocesses run at once. Test results are streamed in
+  ## completion order; final pass/fail counts go into the shared `c`.
   let hastur = getAppFilename()
   prebuildSharedObjects(forward)
   let warmupCache = warmupSharedCache()
   warmupCopySeconds = 0
   let parallelStart = epochTime()
-  var queue: seq[(int, string)] = @[]   # (idx, file) preserving input order
-  for i, f in pairs(files): queue.add (i, f)
+  var queue: seq[(int, WorkItem)] = @[]   # (idx, item) preserving input order
+  for i, it in pairs(items): queue.add (i, it)
   var head = 0
 
   type Slot = object
     p: Process
     idx: int
-    file: string
+    item: WorkItem
     reader: Thread[ReaderArg]
   var slots = newSeq[Slot](jobs)
   var active = 0
@@ -767,21 +927,22 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
 
   proc launch(slot: int) =
     if head >= queue.len: return
-    let (idx, file) = queue[head]
+    let (idx, item) = queue[head]
     inc head
     let cacheDir = nimcacheDir / ".par" / $idx
     prefillFromWarmup(warmupCache, cacheDir)
-    var args = @["test", "--no-build", "--cachedir:" & cacheDir]
+    var args = @[(if item.joined: "joined" else: "test"),
+                 "--no-build", "--cachedir:" & cacheDir]
     # Forward the parent's resolved toolchain dir so each worker uses the
     # exact same binaries (the default is now hastur's own sibling dir, an
     # absolute path, not the literal "bin").
     args.add "--bindir:" & toolchainDir
     if overwrite: args.add "--overwrite"
     if forward.len > 0: args.add "--forward:" & forward
-    args.add file
+    args.add item.path
     let p = startProcess(hastur, args = args,
         options = {poStdErrToStdOut, poUsePath})
-    slots[slot] = Slot(idx: idx, file: file, p: p)
+    slots[slot] = Slot(idx: idx, item: item, p: p)
     let arg = ReaderArg(handle: p.outputHandle.int,
                         lockPtr: cast[pointer](addr stdoutLock))
     createThread(slots[slot].reader, drainStdout, arg)
@@ -800,9 +961,11 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
         # tally the result and reuse the slot.
         joinThread(slots[s].reader)
         slots[s].p.close()
-        inc c.total
+        inc c.total, slots[s].item.weight
         if exit != 0:
-          inc c.failures
+          # A `test` worker exits 1; a `joined` worker exits with how many of
+          # its members failed, so a group cannot hide a second failure.
+          inc c.failures, min(exit, slots[s].item.weight)
         slots[s].p = nil
         dec active
         launch(s)
@@ -817,15 +980,25 @@ proc parallelTestDir(c: var TestCounters; files: openArray[string];
          formatFloat(epochTime() - parallelStart, ffDecimal, precision=2), "s."
 
 proc testDir(c: var TestCounters; dir: string; overwrite: bool; cat: Category; forward: string) =
+  let members = joinMembers(dir, cat, overwrite)
+  let joined = members.len >= MinJoinGroup
   var files: seq[string] = @[]
   for x in walkDir(dir):
-    if x.kind == pcFile and x.path.endsWith(".nim"):
-      files.add x.path
+    if x.kind == pcFile and x.path.endsWith(".nim") and not isGeneratedTestFile(x.path):
+      # When the directory has a joined group its members are covered by that
+      # single program; only what is left over still needs a run of its own.
+      if not (joined and joinable(x.path, cat)):
+        files.add x.path
   sort files
   if cat in {Compat, Basics}:
     removeDir "nimcache"
+  if joined:
+    joinedTest c, dir, members, overwrite, forward
   if parallelJobs > 1 and canRunParallel(cat):
-    parallelTestDir(c, files, overwrite, cat, forward, parallelJobs)
+    if files.len > 0:
+      var work: seq[WorkItem] = @[]
+      for f in items files: work.add WorkItem(path: f, weight: 1)
+      parallelTestDir(c, work, overwrite, cat, forward, parallelJobs)
   else:
     for f in items files:
       testFile c, f, overwrite, cat, forward
@@ -869,6 +1042,22 @@ proc categoryOf(path: string): Category =
   ## Category for a test file or directory: the mode of its own directory
   ## (or, for a not-yet-existing `record` destination, its parent directory).
   categoryOfDir(if dirExists(path): path else: path.parentDir)
+
+proc joinedDirCmd(dir: string; overwrite: bool; forward: string) =
+  ## `hastur joined <dir>` — the worker the parallel pool spawns for a group.
+  ## Exits with the number of failed members so the parent can tally them (a
+  ## per-file `hastur test` worker exits 1, i.e. its own single failure).
+  var c = TestCounters(total: 0, failures: 0)
+  # The group's membership does not depend on `--overwrite`; only whether the
+  # members are compiled together does.
+  let members = joinMembers(dir, categoryOfDir(dir), overwrite = false)
+  if not overwrite and members.len >= MinJoinGroup:
+    joinedTest c, dir, members, overwrite, forward
+  else:
+    for f in members: testFile c, f, overwrite, Normal, forward
+  if c.failures > 0:
+    echo "FAILURE: ", c.failures, " of ", c.total, " tests in ", dir, " failed."
+    quit min(c.failures, 125)
 
 # The general test-tree runner is `collectTests`/`walkRoots` further below; the
 # old per-suite `nimonytests`/`exampletests` drivers folded into it.
@@ -2281,7 +2470,7 @@ type WalkPlan = object
   ## parallel-safe file into a single queue pays warmup/prebuild once and
   ## keeps the pool full across the whole run — the win is largest where
   ## process spawns are expensive (Windows CI).
-  parFiles: seq[string]              # parallel-safe test files, flattened
+  parItems: seq[WorkItem]            # parallel-safe units of work, flattened
   serialDirs: seq[(string, Category)] # dirs that must run serially (see below)
 
 proc collectTests(c: var TestCounters; plan: var WalkPlan; dir, forward: string;
@@ -2311,9 +2500,18 @@ proc collectTests(c: var TestCounters; plan: var WalkPlan; dir, forward: string;
     # pulled in by those tests, not standalone tests — the old per-category
     # runner never entered them either.
     if parallelJobs > 1 and canRunParallel(cat):
+      # The directory's plain tests become ONE unit (a `joined` worker compiles
+      # them into a single program); whatever cannot be joined stays a unit of
+      # its own. Both kinds go into the same flat queue.
+      let members = joinMembers(dir, cat, overwrite)
+      let joined = members.len >= MinJoinGroup
+      if joined:
+        plan.parItems.add WorkItem(path: dir, joined: true, weight: members.len)
       for x in walkDir(dir):
-        if x.kind == pcFile and x.path.endsWith(".nim"):
-          plan.parFiles.add x.path
+        if x.kind == pcFile and x.path.endsWith(".nim") and
+           not isGeneratedTestFile(x.path) and
+           not (joined and joinable(x.path, cat)):
+          plan.parItems.add WorkItem(path: x.path, weight: 1)
     else:
       # `Basics`/`Compat` reset the shared `nimcache/` around their loop and so
       # cannot share the pool's cache layout; serial (`--jobs:1`) runs keep the
@@ -2339,12 +2537,16 @@ proc walkRoots(roots: openArray[string]; forward: string; overwrite: bool) =
   # finish and reset the cache, then the single flat pool populates it.
   for (d, cat) in plan.serialDirs:
     testDir(c, d, overwrite, cat, forward)
-  if plan.parFiles.len > 0:
-    sort plan.parFiles
-    # One saturated pool over every parallel-safe file from every directory.
+  if plan.parItems.len > 0:
+    # Biggest units first: a joined group is many tests in one process, so
+    # starting the long poles early keeps the pool's tail short.
+    sort plan.parItems, proc (a, b: WorkItem): int =
+      result = cmp(b.weight, a.weight)
+      if result == 0: result = cmp(a.path, b.path)
+    # One saturated pool over every parallel-safe unit from every directory.
     # `parallelTestDir` ignores the `cat` argument (each worker re-derives its
-    # own category from the file's directory), so a mixed-category queue is safe.
-    parallelTestDir(c, plan.parFiles, overwrite, Normal, forward, parallelJobs)
+    # own category from its path's directory), so a mixed-category queue is safe.
+    parallelTestDir(c, plan.parItems, overwrite, Normal, forward, parallelJobs)
   echo c.total - c.failures, " / ", c.total, " tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0: quit "FAILURE: Some tests failed."
@@ -2401,6 +2603,11 @@ proc handleCmdLine =
           except: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
+      of "joined":
+        # `--joined:off` gives every test its own process again. The joined
+        # runner already falls back to that per group on failure; this is for
+        # ruling the joining out entirely.
+        joinTests = val.normalize notin ["off", "no", "false", "0"]
       of "native-debug", "nativedebug":
         # Build arkham + nifasm UNOPTIMIZED (they default to -d:release; see
         # nativeToolPrefix). For `-d:arkhamDbgSym` / gdb work on the toolchain.
@@ -2568,6 +2775,13 @@ proc handleCmdLine =
           test arg, overwrite, categoryOf(arg), forward
     else:
       quit "`test` takes an argument"
+  of "joined":
+    # Internal: the worker the parallel pool spawns for a directory's joined
+    # group. Usable by hand to run (or debug) one group.
+    if args.len == 1 and args[0].dirExists():
+      joinedDirCmd args[0], overwrite, forward
+    else:
+      quit "`joined` takes one directory"
   of "bug", "debug":
     if args.len == 0:
       args = @["bug.nim"]
@@ -2589,6 +2803,11 @@ proc handleCmdLine =
     removeDir "bin"
     for n in 0 .. 9:
       removeDir "bin" & $n
+    # The joined-group drivers are generated into the test tree itself.
+    for root in ["tests", "examples"]:
+      if dirExists(root):
+        for f in walkDirRec(root):
+          if isGeneratedTestFile(f) and f.endsWith(".nim"): removeFile f
   of "install":
     runInstall(args)
   of "sync":

@@ -1,0 +1,2 @@
+Caught MyError: 42
+SUCCESS: except Type as e works with arbitrary types!
