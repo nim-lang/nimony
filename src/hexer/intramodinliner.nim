@@ -1408,16 +1408,59 @@ proc annotateInlinePragmas(buf: var TokenBuf; infos: Table[SymId, InlineInfo]) =
   buf = ensureMove(dest)
 
 proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
-  ## Same-module inliner pass run as the last step of hexer's `expand`,
-  ## so the `.x.nif` we publish has each `.inline` proc body already
-  ## cascaded against its same-module callees. Cross-module splicing
-  ## (dce2) then needs at most one level of work per call site, since
-  ## the foreign body it pulls is already flat. This eliminates the
-  ## per-importer redundancy where the same cascade was re-walked once
-  ## per dceEmit process.
+  ## Same-module inliner pass run as the last step of hexer's `expand`, so
+  ## the `.x.nif` we publish has each `.inline` proc body already cascaded
+  ## against its same-module callees. An importer then pulls a flat body, and
+  ## the cascade is walked once per module here instead of once per importer.
+  ##
+  ## Measured on nimsem (126 modules), that redundancy is worth little: the
+  ## chains that matter run *across* modules (`nifcore` → `nifpools`), which
+  ## no same-module flattening can pre-expand, so the inter-module pass still
+  ## needs its depth and its cost is unchanged. Keep the numbers in mind
+  ## before spending anything more here — full rebuild 18.66s → 18.87s,
+  ## nimsem-on-system.nim 80ms → 81ms, binary −4KB.
   ##
   ## Also writes each `.inline` proc's computed `InlineInfo` into its own
   ## pragma (`(inline THRESHOLD w…)`). That annotation is what importers read
-  ## back — see `readInlinePragma` — so no sidecar has to carry it.
+  ## back — see `readInlinePragma` — so no sidecar has to carry it. It is
+  ## written *before* the splice because the splice reads it back: `ownInfo`
+  ## is filled from the pragmas by `collectProcBodies`.
+  ##
+  ## `xnifDir` stays empty here on purpose. This module's own `.x.nif` is
+  ## pre-DCE, so its generic instances and hexer-minted types still carry the
+  ## own-module shorthand (`seq.0.Ixdx2fh1.`) that dce2 later resolves to one
+  ## canonical owner; a body copied *within* the module keeps meaning the same
+  ## thing, while one copied *across* modules would not. Cross-module splicing
+  ## therefore waits for the `.c.nif` (`shoggoth`'s inter-module pass).
   let ma = analyzeModule(buf)
   annotateInlinePragmas(buf, ma.inlineInfo)
+  if ma.inlineInfo.len == 0: return
+
+  # Only the `.inline` bodies are flattened, not every call site in the module:
+  # a call site here is one the importer's own pass would splice anyway, and
+  # doing it twice only inflates the `.x.nif` everything downstream reads.
+  var ctx = initInlinerCtx(moduleSuffix, addr buf, counterPrefix = "h")
+  collectProcBodies(ctx)
+  var dest = createTokenBuf(buf.len + buf.len div 16)
+  var n = beginRead(buf)
+  if n.stmtKind != StmtsS: return
+  dest.addParLe(n.cursorTagId, n.info)
+  n.into:
+    while n.hasMore:
+      if n.isTagLit and n.stmtKind == ProcS and
+         n.childCursor.isSymbolDef and ma.inlineInfo.hasKey(n.childCursor.symId):
+        let tag = n.cursorTagId
+        let info = n.info
+        let d = takeProcDecl(n)
+        dest.addParLe(tag, info)
+        dest.addSubtree d.name
+        dest.addSubtree d.params
+        dest.addSubtree d.returnType
+        dest.addSubtree d.pragmas
+        var body = d.body
+        trIntra(ctx, dest, body)
+        dest.addParRi()
+      else:
+        dest.takeTree n
+  dest.addParRi()
+  buf = ensureMove(dest)
