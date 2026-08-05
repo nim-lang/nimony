@@ -12,7 +12,7 @@ import ../../posix/posix
 import ../core/types
 import ../core/slots
 import ../core/backend
-import ../core/backends
+import ./poll
 import std/[tables, ticketlocks]
 
 const MaxIoEvents = 64

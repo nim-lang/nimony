@@ -8,7 +8,7 @@ import ../../posix/posix
 import ../core/types
 import ../core/slots
 import ../core/backend
-import ../core/backends
+import ./poll
 
 type KqueueBackend* = ref object of PollBackend
 

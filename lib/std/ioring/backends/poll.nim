@@ -3,9 +3,9 @@
 # processFd() to dispatch I/O for all slots on a given fd.
 # Subclasses override registerEvent/reArmEvent/fetchEvents.
 
-import ./types
-import ./slots
-import ./backend
+import ../core/types
+import ../core/slots
+import ../core/backend
 
 type
   PollBackend* = ref object of Backend
