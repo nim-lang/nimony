@@ -4,6 +4,7 @@
 # its own submission/completion queue model.
 
 import std/[assertions, posix/posix]
+import std/syncio
 import ../../posix/io_uring
 import ../core/types
 import ../core/slots
@@ -50,7 +51,7 @@ method poll*(b: IoUringBackend; timeoutMs: int): bool =
   try:
     discard localQueue.submit()
   except:
-    discard
+    quit "fatal: bug: submit cannot fail"
   let waitNr = if timeoutMs > 0: 1'u else: 0'u
   const batchSize = 64
   var cqes = newSeq[Cqe](batchSize)
@@ -58,7 +59,7 @@ method poll*(b: IoUringBackend; timeoutMs: int): bool =
   try:
     n = localQueue.copyCqes(cqes, waitNr)
   except:
-    discard
+    quit "fatal: bug: copyCqes cannot fail"
   if n <= 0:
     return false
   let a = b.ring.slots
