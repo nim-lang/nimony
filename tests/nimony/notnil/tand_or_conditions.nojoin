@@ -1,0 +1,3 @@
+# Prints through libc stdio (importc printf), which buffers until exit — its
+# output would land after, not among, the echo-based tests it shares a program
+# with. See --joined.

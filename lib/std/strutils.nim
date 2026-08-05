@@ -871,6 +871,27 @@ func multiReplace*(s: openArray[char]; replacements: openArray[(set[char], char)
 
 const HexChars = "0123456789ABCDEF"
 
+func toHex*(x: BiggestInt; len: Positive): string =
+  ## Converts `x` to a hexadecimal string exactly `len` uppercase digits wide
+  ## (no `0x` prefix). Negative values render in two's complement, and a value
+  ## needing more than `len` digits keeps only its least-significant `len` nibbles.
+  runnableExamples:
+    doAssert toHex(BiggestInt(1984), 4) == "07C0"
+    doAssert toHex(BiggestInt(-1), 2) == "FF"
+  var n = x
+  result = newString(len)
+  for j in countdown(len - 1, 0):
+    result[j] = HexChars[int(n and 0xF)]
+    n = n shr 4
+    # Keep sign nibbles coming for a negative value regardless of whether `shr`
+    # is arithmetic or logical, so its two's-complement form fills `len`.
+    if n == 0 and x < 0: n = -1
+
+func toHex*[T: SomeInteger](x: T): string {.inline.} =
+  ## Full-width hex for `x`: `2 * sizeof(T)` uppercase digits, e.g.
+  ## `toHex(0'u16) == "0000"`, `toHex(255'u8) == "FF"`.
+  toHex(BiggestInt(x), 2 * sizeof(T))
+
 func escape*(s: string, prefix = "\"", suffix = "\""): string =
   ## Escapes a string `s`.
   ##

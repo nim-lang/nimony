@@ -1,0 +1,7 @@
+before add, len=16
+first 16 bytes (should be "(.nif27)\n(index\n"):
+28 2e 6e 69 66 32 37 29 0a 28 69 6e 64 65 78 0a 
+after add, len=17
+first 16 bytes:
+28 2e 6e 69 66 32 37 29 0a 28 69 6e 64 65 78 0a 
+OK

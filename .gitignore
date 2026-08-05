@@ -13,3 +13,5 @@ src/nifgram/nifgram
 src/lib/nifindexes
 tests/tester
 *.exe
+# per-directory driver hastur generates for a joined test group
+_hastur_joined.nim
