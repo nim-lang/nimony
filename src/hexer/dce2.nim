@@ -18,7 +18,7 @@ import dce1
 import ".." / lengc / [leng_model]
 
 type
-  ResolveTable* = Table[string, SymId]
+  ResolveTable = Table[string, SymId]
     # `foo.1.I<type hash>` -> `foo.1.I<type hash>.module`
     # that is selected for the generic instance
 
@@ -34,11 +34,7 @@ proc resolveSymbolConflicts(modules: Table[string, ModuleAnalysis]): ResolveTabl
       if existing == SymId(0) or offerName < pool.syms[existing]:
         result[key] = offer
 
-proc translate*(resolved: ResolveTable; sym: SymId): SymId =
-  ## Maps a generic instance to the module that won the merge. Identity for
-  ## everything else, and for an instance that is itself the winner, so it is
-  ## safe to run over a whole tree. The inter-module inliner uses it to turn a
-  ## pre-DCE `.x.nif` body into what `rewriteModule` would have made of it.
+proc translate(resolved: ResolveTable; sym: SymId): SymId =
   let symName = pool.syms[sym]
   if isInstantiation(symName):
     let key = removeModule(symName)

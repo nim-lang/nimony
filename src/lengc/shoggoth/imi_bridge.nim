@@ -22,11 +22,11 @@ include "../../lib" / nifprelude
 import nifpools
 import intermodinliner   # runInterModuleInliner (nifpools)
 
-proc runImi*(input, suffix, xnifDir, liveFile: string; changed: var bool): string =
+proc runImi*(input, suffix, xnifDir: string; changed: var bool): string =
   ## Parse the `.c.nif` at `input`, run inter-module inlining, and return the
   ## resulting module as a **header-less** canonical NIF string (line info kept,
   ## symbols fully expanded) for nifcore to reparse. `changed` reports whether
   ## the inliner altered anything.
   var buf = parseFromFile(input, 4000)
-  changed = runInterModuleInliner(buf, suffix, xnifDir, liveFile)
+  changed = runInterModuleInliner(buf, suffix, xnifDir)
   result = toString(buf)

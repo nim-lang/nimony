@@ -17,12 +17,8 @@
 ##
 ## Subcommands:
 ##
-##   shoggoth c   [--outdir:DIR] [--live:NIF] [--verify] [--stats]
-##                <input.nif> [<output.nif>]
+##   shoggoth c   [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]
 ##       optimize NIFC modules (the build invokes this via `shoggoth c …`).
-##       `--live:` points at the build's `<main>.live.nif`; the inter-module
-##       inliner needs its generic-instance table to rename the foreign
-##       `.x.nif` bodies it splices. Without it, cross-module inlining is off.
 ##   shoggoth pat [--from:NIF] [--keep] [--shoggoth] <file.nim> [<substr>]
 ##       pattern-by-example: compile a .nim with nimony and print its NIFC procs.
 ##
@@ -34,8 +30,8 @@ import std / [os, strutils]
 import optdriver    # processFile / Stats — keeps its nifcore world isolated
 import patextract   # patMain — likewise nifcore-isolated
 
-proc runOne(input, output, liveFile: string; verify, stats: bool) =
-  let st = processFile(input, output, liveFile, verify)
+proc runOne(input, output: string; verify, stats: bool) =
+  let st = processFile(input, output, verify)
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
@@ -46,30 +42,28 @@ proc runOne(input, output, liveFile: string; verify, stats: bool) =
 proc optimizeMain(args: seq[string]) =
   var positional: seq[string] = @[]
   var outdir = ""
-  var liveFile = ""
   var verify = false
   var stats = false
   for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
-    elif a.startsWith("--live:"): liveFile = a["--live:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
     elif a.startsWith("-"): quit "unknown option: " & a
     else: positional.add a
 
   if positional.len == 0:
-    quit "usage: shoggoth c [--outdir:DIR] [--live:NIF] [--verify] [--stats] <input.nif> [<output.nif>]"
+    quit "usage: shoggoth c [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
     createDir outdir
     for inp in positional:
-      runOne(inp, outdir / extractFilename(inp), liveFile, verify, stats)
+      runOne(inp, outdir / extractFilename(inp), verify, stats)
   elif positional.len == 2:
-    runOne(positional[0], positional[1], liveFile, verify, stats)
+    runOne(positional[0], positional[1], verify, stats)
   else:
     # in-place rewrite of each input
     for inp in positional:
-      runOne(inp, inp, liveFile, verify, stats)
+      runOne(inp, inp, verify, stats)
 
 proc main =
   var rest: seq[string] = @[]

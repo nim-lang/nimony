@@ -975,11 +975,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addSymbolDef "optimize"
         b.addStrLit shoggoth
         b.addStrLit "c"
-        # The inter-module inliner splices `.inline` bodies out of the callee
-        # modules' `.x.nif`s and needs the DCE generic-instance table to rename
-        # them the way `dceEmit` renamed everything else.
-        b.addStrLit "--live:" & (c.config.nifcachePath / c.rootNode.files[0].modname /
-                                 c.rootNode.files[0].modname & ".live.nif")
         b.addKeyw "input"
         b.addKeyw "output"
 
@@ -1393,9 +1388,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "optimize"
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
-            # No dependency inputs: the callee `.x.nif`s the inter-module
-            # inliner reads are all written before DCE runs, and this node's
-            # input is a DCE output, so they are on disk by construction.
+            # Shoggoth's inter-module inliner also reads the imported modules'
+            # `.c.nif`, but they need no edge here: nifmake runs the DAG in
+            # depth batches and finishes one before starting the next, and
+            # every `dceEmit` shares the `.live.nif` input, so all the `.c.nif`
+            # are written in the batch before this node's. Verified by counting
+            # foreign loads that missed their file: zero.
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized
