@@ -202,3 +202,16 @@ when defined(posix):
     assert listen(fd, backlog.cint) == 0, "listen failed"
     setNonBlocking(fd)
     result = fd
+
+var gRingState: int = 0
+var gRing*: Ring
+proc initDefaultRing() =
+  if atomicLoad(gRingState, moAcquire) == 2: return
+  var expected = 0
+  if atomicCompareExchange(gRingState, expected, 1):
+    gRing = initIoRing()
+    atomicStore(gRingState, 2, moRelease)
+  else:
+    while atomicLoad(gRingState, moAcquire) != 2:
+      discard
+initDefaultRing()
