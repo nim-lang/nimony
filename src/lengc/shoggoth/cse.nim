@@ -1050,7 +1050,7 @@ proc readSummary(n: var Cursor; outSummary: var FunctionSummary) =
   if not sawResult:
     outSummary.resultCls = uint32(outSummary.params.len)
 
-proc readSummaryPragma(pragmas: Cursor; outSummary: var FunctionSummary): bool =
+proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool =
   if pragmas.kind != TagLit: return false
   var found = false
   var p = pragmas
