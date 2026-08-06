@@ -142,11 +142,11 @@ proc forgeReemit(f: var ForgeCtx; dest: var TokenBuf; src: var Cursor) =
       # expansion (`tests/nimony/templates/tinvalidrecursion.nim`).
       dest.addSubtree src
       skip src
-      return
-    dest.addParLe(cursorTagId(src), info)
-    src.into:
-      while src.hasMore: forgeReemit(f, dest, src)
-    dest.addParRi()
+     else:
+      dest.addParLe(cursorTagId(src), info)
+      src.into:
+        while src.hasMore: forgeReemit(f, dest, src)
+      dest.addParRi()
   of IntLit:    dest.addIntLit(intVal(src), info); inc src
   of UIntLit:   dest.addUIntLit(uintVal(src), info); inc src
   of FloatLit:  dest.addFloatLit(floatVal(src), info); inc src
