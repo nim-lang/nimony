@@ -53,6 +53,14 @@ type
     source: ptr TokenBuf
     moduleSuffix: string
     mover: MoverContext
+    constr: Cursor
+      ## The outermost constructing expression currently being translated, or
+      ## nil. `genLastRead` asks it whether a sibling operand also reads the
+      ## location it is about to move.
+    pendingMoves: seq[TokenBuf]
+      ## `=wasMoved` calls `genLastRead` deferred. `trConstructing` schedules
+      ## them after `constr`; `trStmts` is the fallback when `constr` had no
+      ## value to hang them off.
 
   Expects = enum
     DontCare,
@@ -205,6 +213,25 @@ proc containsSym(n: Cursor; d: SymId): bool =
       skip n
   else:
     result = false
+
+proc countSym(n: Cursor; d: SymId; count: var int) =
+  var n = n
+  case n.kind
+  of Symbol:
+    if n.symId == d: inc count
+  of TagLit:
+    n.loopInto:
+      countSym(n, d, count)
+      skip n
+  else:
+    discard
+
+proc readTwice(n: Cursor; d: SymId): bool =
+  ## Does `d` occur more than once in `n`? Then moving it out of one operand
+  ## invalidates what another operand reads.
+  var count = 0
+  countSym(n, d, count)
+  result = count > 1
 
 proc potentialAliasing(le, ri: Cursor): bool =
   var destHdrefs = false
@@ -788,6 +815,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
       trOnlyEssentials c, r.body
     else:
       tr c, r.body, DontCare
+      assert c.pendingMoves.len == 0, "deferred =wasMoved escaped " & pool.syms[r.name.symId]
     c.typeCache.closeScope()
   else:
     copyTree c.dest, r.body
@@ -1010,10 +1038,26 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor)
 
   let hookProc = getHook(c.lifter[], attachedWasMoved, typ, info)
   if hookProc != NoSymId:
-    copyIntoKind c.dest, CallS, info:
-      copyIntoSymUse c.dest, hookProc, info
-      copyIntoKind c.dest, HaddrX, info:
-        copyTree c.dest, ex
+    # These statements do not stay here: `xelim` hoists them in front of the
+    # WHOLE enclosing expression. That is fine for the bitcopy above (a pure
+    # read), but not for the `=wasMoved` when a sibling operand reads the same
+    # location — it would read the emptied one (`tmoved_seq_sibling_field`).
+    # Hand the move to `trConstructing`, which schedules it *after* the
+    # expression, by which time every operand has read. The bitcopy above
+    # already owns the value, so the delay is invisible to everything else.
+    let root = rootOf(ex, CannotFollowDerefs)
+    if root != NoSymId and not c.constr.cursorIsNil and readTwice(c.constr, root):
+      var pending = createTokenBuf(8)
+      copyIntoKind pending, CallS, info:
+        copyIntoSymUse pending, hookProc, info
+        copyIntoKind pending, HaddrX, info:
+          copyTree pending, ex
+      c.pendingMoves.add ensureMove(pending)
+    else:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        copyIntoKind c.dest, HaddrX, info:
+          copyTree c.dest, ex
 
   c.dest.addParRi() # finish the StmtList
   c.dest.copyIntoSymUse ow.s, ow.info
@@ -1182,6 +1226,71 @@ proc trDeref(c: var Context; n: var Cursor; e: Expects)
 proc trCoroFor(c: var Context; n: var Cursor)
 proc trTry(c: var Context; n: var Cursor)
 
+proc trStmts(c: var Context; n: var Cursor) {.ensuresNif: addedAny(c.dest).} =
+  ## Statement position is where a deferred move goes when the expression it
+  ## came out of had no value to bind it to — see `trConstructing`.
+  takeInto c.dest, n:
+    while n.hasMore:
+      tr c, n, WantNonOwner
+      for i in 0 ..< c.pendingMoves.len:
+        c.dest.add c.pendingMoves[i]
+      c.pendingMoves.setLen 0
+
+proc bindPendingMoves(c: var Context; start: int; typ: Cursor; info: NifLineInfo) =
+  ## Re-wrap the constructing expression `c.dest[start ..< ^0]` holds into
+  ## `(expr (stmts (cursor :`tmp T <it>) <the deferred moves>) `tmp)`, so the
+  ## moves run once the expression has read everything it needs. The temp is a
+  ## `cursor` for the same reason `genLastRead`'s is: whatever consumes this
+  ## expression is the rightful owner of the value.
+  let tmp = pool.syms.getOrIncl("`tmp." & $c.tmpCounter)
+  inc c.tmpCounter
+  var wrapped = createTokenBuf(64)
+  copyIntoKind wrapped, ExprX, info:
+    copyIntoKind wrapped, StmtsS, info:
+      copyIntoKind wrapped, CursorS, info:
+        addSymDef wrapped, tmp, info
+        wrapped.addEmpty2 info # export marker, pragmas
+        copyTree wrapped, typ
+        var constrExpr = cursorAt(c.dest, start)
+        copyTree wrapped, constrExpr
+        endRead constrExpr
+      for i in 0 ..< c.pendingMoves.len:
+        wrapped.add c.pendingMoves[i]
+    wrapped.copyIntoSymUse tmp, info
+  c.dest.shrink start
+  c.dest.add wrapped
+  c.typeCache.registerLocal(tmp, CursorY, typ)
+  c.pendingMoves.setLen 0
+
+proc trConstructing(c: var Context; n: var Cursor; e: Expects; k: ExprKind)
+    {.ensuresNif: addedAny(c.dest).} =
+  ## A constructing expression is where an operand that moves a location and an
+  ## operand that merely reads it meet, so it is also where a deferred move gets
+  ## scheduled. Only the outermost one does the scheduling: `xelim` hoists the
+  ## whole nest out together, so an inner one is no barrier at all.
+  let outermost = cursorIsNil(c.constr)
+  let constrNode = n
+  let start = c.dest.len
+  if outermost:
+    c.constr = n
+  case k
+  of OconstrX: trObjConstr c, n, e
+  of NewobjX, NewrefX: trNewobj c, n, e, k
+  of AconstrX, TupconstrX: trRawConstructor c, n, e
+  else: trCall c, n, e
+  if outermost:
+    c.constr = default(Cursor)
+    if c.pendingMoves.len > 0:
+      # Ask for the type only now: `getType` hands out a cursor into the type
+      # cache, and the translation above grows that cache — a type read before
+      # the dispatch dangles by the time we would copy it.
+      let typ = getType(c.typeCache, constrNode)
+      if not cursorIsNil(typ) and typ.typeKind != VoidT:
+        bindPendingMoves c, start, typ, constrNode.info
+      # else: a void call has no value to bind to. It only ever appears as a
+      # statement (or as the initializer of the `canRaise` temp the eraiser puts
+      # in front of one), so `trStmts` runs the moves after that statement.
+
 proc tr(c: var Context; n: var Cursor; e: Expects) =
   if n.isSymbol:
     trLocation c, n, e
@@ -1191,7 +1300,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
   else:
     case n.exprKind
     of CallKinds:
-      trCall c, n, e
+      trConstructing c, n, e, CallX
     of DestroyX:
       trExplicitDestroy c, n
     of DupX:
@@ -1207,11 +1316,11 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of ConvKinds, BaseobjX, SufX:
       trConvExpr c, n, e
     of OconstrX:
-      trObjConstr c, n, e
+      trConstructing c, n, e, OconstrX
     of NewobjX:
-      trNewobj c, n, e, NewobjX
+      trConstructing c, n, e, NewobjX
     of NewrefX:
-      trNewobj c, n, e, NewrefX
+      trConstructing c, n, e, NewrefX
     of DotX, AtX, ArratX, PatX, TupatX:
       trLocation c, n, e
     of ParX:
@@ -1221,7 +1330,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
     of EmoveX:
       trEnsureMove c, n, e
     of AconstrX, TupconstrX:
-      trRawConstructor c, n, e
+      trConstructing c, n, e, n.exprKind
     of NilX, FalseX, TrueX, AndX, OrX, NotX, NegX, SizeofX, SetconstrX,
        OchoiceX, CchoiceX, XorX,
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
@@ -1260,8 +1369,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         trProcDecl c, n
       of ScopeS:
         c.typeCache.openScope()
-        trSons c, n, WantNonOwner
+        trStmts c, n
         c.typeCache.closeScope()
+      of StmtsS:
+        trStmts c, n
       of BreakS, ContinueS, MacroS, TemplateS:
         # Macros are compiled into out-of-process plugins by `nimony`
         # itself; templates are expanded at call-sites. Neither has a
