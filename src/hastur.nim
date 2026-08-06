@@ -1945,54 +1945,79 @@ proc provisionStageZero(): string =
   for tool in BootSelfTools:
     carryAuxTool(result, tool)
 
-proc compileBootTool(stage: int; compiler, source, outBin, cacheBase, args: string;
-                     withValgrind: bool) =
-  ## Run `compiler <c|n> --out:outBin source`. `compiler` is the previous
-  ## stage's nimony, so it transitively drives the previous stage's
-  ## nimsem/hexer (siblings under the same stage's bin dir) for this build.
-  ## The subcommand is `n` for a native boot (arkham + nifasm, no C compiler),
-  ## `c` otherwise.
+proc bootToolCmd(compiler, source, outBin, cacheBase, args: string;
+                 withValgrind: bool): string =
+  ## The `compiler <c|n> --out:outBin source` command line for one boot tool.
+  ## `compiler` is the previous stage's nimony, so it transitively drives the
+  ## previous stage's nimsem/hexer (siblings under the same stage's bin dir)
+  ## for this build. The subcommand is `n` for a native boot (arkham + nifasm,
+  ## no C compiler), `c` otherwise.
   let cache = cacheBase / outBin.extractFilename
   removeDir cache
   createDir cache
   if fileExists(outBin): removeFile(outBin)
-  var cmd = compiler.quoteShell & (if bootNative: " n" else: " c") &
-            " --silentMake --nimcache:" &
-            cache.quoteShell & " --out:" & outBin.quoteShell
+  result = compiler.quoteShell & (if bootNative: " n" else: " c") &
+           " --silentMake --nimcache:" &
+           cache.quoteShell & " --out:" & outBin.quoteShell
   if withValgrind:
-    cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+    result.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
   if args.len > 0:
-    cmd.add ' '
-    cmd.add args
-  cmd.add ' '
-  cmd.add source.quoteShell
-  echo "[boot] stage ", stage, ": ", cmd
-  let t0 = epochTime()
-  let exitCode = execShellCmd(cmd)
-  let dt = epochTime() - t0
-  if exitCode != 0:
-    quit "FAILURE: boot stage " & $stage & " (" & outBin.extractFilename &
-         ") failed after " & formatFloat(dt, ffDecimal, precision=2) & "s"
-  if not fileExists(outBin):
-    quit "FAILURE: boot stage " & $stage & ": " & outBin &
-         " was not produced (did `--out` get rejected?)"
-  echo "[boot] stage ", stage, " produced ", outBin, " in ",
-       formatFloat(dt, ffDecimal, precision=2), "s"
+    result.add ' '
+    result.add args
+  result.add ' '
+  result.add source.quoteShell
 
 proc compileBootStage(stage: int; cacheBase, args: string; withValgrind: bool):
                      string =
   ## Build stage `stage` of the toolchain. Returns the stage's bin
   ## directory. Driver of stage N is the stage-(N-1) nimony.
+  ##
+  ## The stage's three tools (nimsem, hexer, nimony) are compiled CONCURRENTLY.
+  ## They are independent: each gets its own `--nimcache` and its own `--out`,
+  ## and the only shared input — the previous stage's `bin/` — is read-only for
+  ## the duration. Serially this was the single longest stretch of the Windows
+  ## CI run (9 compiles, ~600s, all of it one core at a time while nifmake's
+  ## `-j` had nothing left to overlap with across the tool boundary).
   let prev = bootStageDir(stage - 1)
   let prevNimony = prev / "nimony".addFileExt(ExeExt)
   if not fileExists(prevNimony):
     quit "boot: " & prevNimony & " not found (stage " & $(stage - 1) &
          " missing)"
   result = provisionStageBin(stage)
+
+  var outBins: seq[string] = @[]
+  var cmds: seq[string] = @[]
   for tool in BootSelfTools:
     let outBin = result / tool.addFileExt(ExeExt)
-    compileBootTool(stage, prevNimony, bootSourceFor(tool), outBin,
-                    cacheBase, args, withValgrind)
+    outBins.add outBin
+    cmds.add bootToolCmd(prevNimony, bootSourceFor(tool), outBin, cacheBase,
+                         args, withValgrind)
+    echo "[boot] stage ", stage, ": ", cmds[^1]
+
+  let t0 = epochTime()
+  var procs: seq[Process] = @[]
+  for cmd in cmds:
+    # `poEvalCommand` so the already-quoted command line goes through the
+    # shell exactly as `execShellCmd` ran it. Output is inherited: the tools
+    # are quiet under `--silentMake`, and interleaved progress from three
+    # compiles is still more useful than buffering it all to the end.
+    procs.add startProcess(cmd, options = {poEvalCommand, poParentStreams})
+  var failed = ""
+  for i in 0 ..< procs.len:
+    let exitCode = waitForExit(procs[i])
+    close procs[i]
+    if exitCode != 0 and failed.len == 0:
+      failed = outBins[i].extractFilename
+  let dt = epochTime() - t0
+  if failed.len > 0:
+    quit "FAILURE: boot stage " & $stage & " (" & failed &
+         ") failed after " & formatFloat(dt, ffDecimal, precision=2) & "s"
+  for outBin in outBins:
+    if not fileExists(outBin):
+      quit "FAILURE: boot stage " & $stage & ": " & outBin &
+           " was not produced (did `--out` get rejected?)"
+  echo "[boot] stage ", stage, " produced ", BootSelfTools.join(", "), " in ",
+       formatFloat(dt, ffDecimal, precision=2), "s"
 
 const HeaderSkipBytes = 4096
   ## Bytes at the start of an executable to skip during stage-comparison.
@@ -2657,7 +2682,7 @@ proc handleCmdLine =
     tierTests()
 
   of "boot":
-    buildNimony()
+    if not skipBuild: buildNimony()
     var bootArgs = ""
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '

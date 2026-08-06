@@ -278,10 +278,13 @@ jobs:
           mkdir -p nim/dist
           ln -sf "${{ github.workspace }}/nimony" nim/dist/nimony
 
-      - name: Test Building nimony
-        run: |
-          cd nimony
-          nim c -r src/hastur --release build all
+      # NOTE: there is deliberately no separate "build all" step here. Both the
+      # native step below and the tester step build the toolchain themselves
+      # (`hastur native`; `tests/setup.hastur`), and an extra `build all` is not
+      # a cheap no-op the second time round: `nim c` re-runs its whole front end
+      # per tool even when nothing changed (~55s for the 14 tools on the Windows
+      # runner, measured 2026-08-02). A build break still fails the job at the
+      # first step that needs the toolchain, and names the same compile error.
 
       - name: Run native backend tests (Linux amd64)
         # The native path emits a static, libc-free x86-64 ELF — only meaningful on

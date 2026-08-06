@@ -6,6 +6,12 @@ bin3/
 nimcache/
 nimblecache/
 nimcache_static/
+# tools/wine_test.sh: cross-built Windows toolchain, its nimcaches, and the
+# MinGW bundle it links against (see the header of that script)
+bin-wine/
+nimcache_win/
+nimcache_wine*/
+external/
 htmldocs/
 src/hastur
 src/lengc/lengc_grammar.nim
