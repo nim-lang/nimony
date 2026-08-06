@@ -168,7 +168,14 @@ proc main =
   if output.len == 0:
     quit "niflink: no output path (in the manifest or on the command line)"
 
-  let cc = getEnv("CC", "cc")
+  # `cc` is the POSIX driver name; Windows has none (MinGW ships `gcc`), so
+  # default there to what the rest of the toolchain defaults to (`NifConfig.cc`).
+  # The Nim-built nimony happens to export CC=gcc before spawning nifmake, but
+  # `deps.nim` gates that on `not defined(nimony)` — so a *self-hosted* nimony
+  # (every `hastur boot` stage past the first) left niflink reaching for a `cc`
+  # that does not exist. Found by running the suite under Wine.
+  const DefaultCC = when defined(windows): "gcc" else: "cc"
+  let cc = getEnv("CC", DefaultCC)
   var objs = m.objs
 
   # Compile any C sources to an object next to the source, then link them too
