@@ -28,6 +28,15 @@ const
 typedef unsigned char NB8; // best effort
 #endif
 
+/* Assembler-name prefix for `__asm__` symbol labels: Mach-O prepends an
+   underscore to C identifiers, ELF/PE(x64) do not. Used via string-literal
+   concatenation: __asm__(NIM_ASM_PREFIX "write"). */
+#ifdef __APPLE__
+#define NIM_ASM_PREFIX "_"
+#else
+#define NIM_ASM_PREFIX ""
+#endif
+
 typedef unsigned char NC8;
 
 typedef float NF32;
