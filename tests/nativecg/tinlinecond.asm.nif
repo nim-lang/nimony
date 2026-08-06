@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 5569             )
+(.indexat 5882             )
 (stmts
  (arch x64)
  (type :`cchar.0.
@@ -40,6 +40,9 @@
    (r10)
    (r11))
   (stmts
+   (sub
+    (rsp)
+    (ssize))
    (rebind :tmp0.0
     (ptr
      (i 32))
@@ -48,10 +51,6 @@
    (mov
     (mem tmp0.0)p0.0)
    (kill tmp0.0)
-   (rebind :p1.0
-    (ptr
-     (ptr `cchar.0.))
-    (rsi))
    (rebind :p1.0
     (ptr
      (ptr
@@ -67,10 +66,6 @@
    (mov
     (mem tmp1.0)p1.0)
    (kill tmp1.0)
-   (rebind :p2.0
-    (ptr
-     (ptr `cchar.0.))
-    (rdx))
    (rebind :p2.0
     (ptr
      (ptr
@@ -93,11 +88,13 @@
     (kill p2.0))
    (prepare nimFlushStdStreams.0.sysvq0asl
     (call))
+   (rebind :tmp3.0
+    (i 64)
+    (r10))
+   (mov tmp3.0 0)
    (mov
-    (rax)0)
-   (mov
-    (rdi)
-    (rax))
+    (rdi)tmp3.0)
+   (kill tmp3.0)
    (mov
     (rax)60)
    (syscall)
@@ -126,19 +123,26 @@
    (r10)
    (r11))
   (stmts
+   (sub
+    (rsp)
+    (ssize))
    (var :result.1
     (r8)
     (i 64))
-   (cmp p0.0 p1.0)
-   (jg L3.0)
-   (mov result.1 1)
-   (jmp L2.0)
-   (lab :L3.0)
+   (rebind :tmp0.0
+    (i 64)
+    (r11))
+   (mov tmp0.0 1)
    (mov result.1 2)
-   (lab :L2.0)
+   (cmp p0.0 p1.0)
+   (cmovle result.1 tmp0.0)
+   (kill tmp0.0)
    (mov
     (rax)result.1)
    (kill result.1)
+   (add
+    (rsp)
+    (ssize))
    (ret)))
  (proc :loop.0.
   (params
@@ -162,8 +166,6 @@
     (rbx))
    (push
     (r12))
-   (push
-    (r13))
    (sub
     (rsp)
     (ssize))
@@ -177,37 +179,33 @@
    (var :i.0
     (s)
     (i 64))
-   (rebind :tmp0.0
-    (i 64)
-    (r10))
-   (mov tmp0.0 0)
    (mov
     (mem
-     (rsp)i.0)tmp0.0)
-   (kill tmp0.0)
+     (rsp)i.0)0)
    (loop
     (stmts
+     (rebind :tmp0.0
+      (i 64)
+      (r10))
+     (mov tmp0.0 1)
+     (cmp tmp0.0 0)
+     (je L3.0)
+     (kill tmp0.0)
      (rebind :tmp1.0
       (i 64)
       (r10))
-     (mov tmp1.0 1)
-     (cmp tmp1.0 0)
-     (je L5.0)
-     (kill tmp1.0)
-     (rebind :tmp2.0
-      (i 64)
-      (r10))
-     (mov tmp2.0
+     (mov tmp1.0
       (mem
        (rsp)i.0))
-     (cmp tmp2.0
+     (cmp tmp1.0
       (rbx))
-     (kill tmp2.0)
-     (jg L7.0)
+     (kill tmp1.0)
+     (jg L5.0)
      (var :`x.2
-      (r13)
+      (rdi)
       (i 64))
      (prepare classify.0.
+      (kill `x.2)
       (mov
        (rdi)
        (mem
@@ -224,26 +222,42 @@
       (mov
        (rax)
        (res ret.0)))
-     (mov `x.2
+     (mov
+      (rdi)
       (rax))
      (rebind :result.2
       (i 64)
       (r12))
-     (add result.2 `x.2)
-     (prepare inc.1.Irn1g7r1.syn1lfpjv
-      (lea
-       (rdi)
-       (rsp)i.0)
-      (mov
-       (arg p0.0)
-       (rdi))
-      (call))
-     (jmp L6.0)
-     (lab :L7.0)
-     (jmp L5.0)
-     (lab :L6.0)))
-   (lab :L5.0)
-   (kill `x.2)
+     (add result.2
+      (rdi))
+     (var :x.0x5
+      (rdi)
+      (ptr
+       (i 64)))
+     (lea x.0x5
+      (rsp)i.0)
+     (rebind :tmp2.0
+      (i 64)
+      (r10))
+     (mov tmp2.0 1)
+     (add tmp2.0
+      (mem
+       (cast
+        (ptr
+         (i 64))x.0x5)))
+     (mov
+      (mem
+       (cast
+        (ptr
+         (i 64))x.0x5))tmp2.0)
+     (kill tmp2.0)
+     (lab :returnLabel.0x6)
+     (kill x.0x5)
+     (jmp L4.0)
+     (lab :L5.0)
+     (jmp L3.0)
+     (lab :L4.0)))
+   (lab :L3.0)
    (lab :whileStmtLabel.0)
    (mov
     (rax)result.2)
@@ -251,8 +265,6 @@
    (add
     (rsp)
     (ssize))
-   (pop
-    (r13))
    (pop
     (r12))
    (pop
@@ -274,6 +286,9 @@
   (stmts
    (push
     (rbx))
+   (sub
+    (rsp)
+    (ssize))
    (rebind :tmp0.0
     (bool)
     (r10))
@@ -286,11 +301,11 @@
     (mem tmp1.0))
    (kill tmp1.0)
    (cmp tmp0.0 0)
-   (je L10.0)
+   (je L8.0)
    (kill tmp0.0)
-   (jmp L8.0)
-   (lab :L10.0)
-   (lab :L9.0)
+   (jmp L6.0)
+   (lab :L8.0)
+   (lab :L7.0)
    (rebind :tmp2.0
     (i 64)
     (r10))
@@ -362,7 +377,10 @@
      (rsi))
     (call))
    (kill `x.3)
-   (lab :L8.0)
+   (lab :L6.0)
+   (add
+    (rsp)
+    (ssize))
    (pop
     (rbx))
    (ret)))
@@ -386,21 +404,27 @@
    (r10)
    (r11))
   (stmts
+   (sub
+    (rsp)
+    (ssize))
    (var :result.0
     (r8)
     (i 64))
    (mov result.0 1)
    (cmp p0.0 p1.0)
-   (jle L12.0)
+   (jle L10.0)
    (mov result.0 0)
-   (lab :L12.0)
+   (lab :L10.0)
    (mov
     (rax)result.0)
    (kill result.0)
+   (add
+    (rsp)
+    (ssize))
    (ret))))(.index
  (x `cchar.0. 56)
  (x `iniGuard.0. 151)
- (x classify.0. 1262)
- (x loop.0. 438)
- (x `ini.0. 1630)
- (x isLe.0. 1623))
+ (x classify.0. 1227)
+ (x loop.0. 527)
+ (x `ini.0. 1767)
+ (x isLe.0. 1683))
