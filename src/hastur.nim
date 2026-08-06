@@ -1169,7 +1169,13 @@ proc nativetests(overwrite: bool) =
   for dir in NativeTestDirs:
     var files: seq[string] = @[]
     for x in walkDir(dir):
-      if x.kind == pcFile and x.path.endsWith(".nim"): files.add x.path
+      # `_hastur_joined.nim` is the C-backend runner's own build artifact, left
+      # in the tree by an earlier `hastur tests/…`. Walking it in as a test made
+      # the native result depend on whether that run happened, and reported the
+      # joined program's arkham gaps against whichever test was added last.
+      if x.kind == pcFile and x.path.endsWith(".nim") and
+         not isGeneratedTestFile(x.path):
+        files.add x.path
     sort files
     for f in files: nativeTestFile c, f, overwrite
   for f in NativeTestFiles:
