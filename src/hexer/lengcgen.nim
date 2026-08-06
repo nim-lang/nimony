@@ -962,6 +962,7 @@ proc buildProcType(c: var EContext; dest: var TokenBuf; thisProc: Cursor): SymId
   dest.shrink beforeProcPos
 
 proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMode) =
+  let thisProc = n
   c.typeCache.openScope()
   var dst = createTokenBuf(50)
   swap dest, dst
