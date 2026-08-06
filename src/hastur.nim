@@ -112,6 +112,11 @@ Options:
                         (implies --no-build). Binaries not found there are
                         looked up on `$PATH`.
   --no-build            skip the setup.hastur prep step during the tree walk
+  --skip:DIR            leave DIR out of the tree walk (repeatable). For
+                        splitting one sweep across CI runners: the tester job
+                        passes `--skip:tests/boot` while a second job runs
+                        `hastur tests/boot`. Unlike `hastur.mode = skip` this
+                        does not change what a plain local run covers.
   --native-debug        build arkham + nifasm unoptimized (they default to
                         -d:release); for `-d:arkhamDbgSym` / gdb toolchain work
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
@@ -332,6 +337,19 @@ var skipBuild* = false
   ## parent has already rebuilt nimony / lengc before kicking off the
   ## pool, so each worker skips the rebuild. Otherwise every worker
   ## spends seconds re-running `nim c` for nothing.
+
+proc normalizeDirKey(p: string): string =
+  ## Compare directories by a single spelling: the tree walk builds paths with
+  ## the host separator (`tests\boot` on Windows), while a `--skip:` on the
+  ## command line is written portably (`tests/boot`).
+  result = p.replace('\\', '/').strip(chars = {'/'})
+
+var skipDirs*: seq[string] = @[]
+  ## Directories the tree walk leaves out, from `--skip:<dir>` (repeatable).
+  ## Unlike `hastur.mode = skip`, this is a property of *this run*, not of the
+  ## suite: it exists so CI can split one sweep across runners (`--skip:tests/boot`
+  ## on the job that tests, `hastur tests/boot` on the job that boots) without
+  ## changing what a plain local `hastur all` covers.
 
 proc toCommand(cat: Category): string =
   case cat
@@ -2470,6 +2488,9 @@ type WalkPlan = object
 
 proc collectTests(c: var TestCounters; plan: var WalkPlan; dir, forward: string;
                   overwrite, isRoot: bool) =
+  # `--skip:` is honoured even for an explicit root: it says "not in this run",
+  # so a caller that names both is asking for nothing rather than for a fight.
+  if normalizeDirKey(dir) in skipDirs: return
   # `hastur.mode = skip` excludes a directory from the sweep, but only when the
   # walk *descends* into it — pointing hastur straight at it (isRoot) still
   # runs it. That's how a WIP/known-broken suite (e.g. dagon) stays out of the
@@ -2614,6 +2635,9 @@ proc handleCmdLine =
           except: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
+      of "skip":
+        if val.len == 0: writeHelp()
+        skipDirs.add normalizeDirKey(val)
       of "joined":
         # `--joined:off` gives every test its own process again. The joined
         # runner already falls back to that per group on failure; this is for

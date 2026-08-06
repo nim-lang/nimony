@@ -18,6 +18,7 @@ src/lengc/lengc_grammar.nim
 src/nifgram/nifgram
 src/lib/nifindexes
 tests/tester
+tools/tester
 *.exe
 # per-directory driver hastur generates for a joined test group
 _hastur_joined.nim
