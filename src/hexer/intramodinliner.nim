@@ -12,9 +12,20 @@
 ## Restrictions in this first cook:
 ##   - statement-position calls only (call as a direct stmts child);
 ##   - single-return procs only (no `(ret …)` mid-body);
-##   - `.inline` pragma callees only (threshold == 0 in `InlineInfo`);
-##   - same-module callees only — cross-module body fetch via the NIF
-##     index is a follow-up.
+##   - `.inline` pragma callees only (threshold == 0 in `InlineInfo`).
+##
+## Two passes share this machinery, one per pipeline stage, and each stays in
+## the file format of its stage:
+##   - `intraModuleInline` runs inside hexer, pre-DCE, on the tree that becomes
+##     this module's `.x.nif`. Its own module only (`xnifDir` unset).
+##   - `runInterModuleInliner` (shoggoth) runs after DCE, on the `.c.nif`s, and
+##     is the one that crosses module borders: `loadForeign` lazy-loads the
+##     callee's `.c.nif`.
+##
+## Either way the body and the callee's `(inline THRESHOLD w…)` pragma
+## annotation come out of the same file; the annotation is what
+## `intraModuleInline` wrote at the hexer stage. There is no size cap:
+## `.inline` is honoured whatever the body costs.
 ##
 ## The splice introduces a `(scope …)` block, declares one fresh `(var)`
 ## per parameter initialised from the argument, renames every local in
@@ -34,8 +45,13 @@ type
     weights*: InlineWeights
     guardThreshold*: int
     guards*: InlineWeights
-  ModuleAnalysis* = object
-    inlineInfo*: Table[SymId, InlineInfo]
+  ModuleAnalysis = object
+    ## Hexer-stage scratch: what `analyzeModule` computes so
+    ## `annotateInlinePragmas` can write it into the procs. Importers never
+    ## see this type — they read the annotation back with `readInlinePragma`.
+    ## (Not exported: `dce1` has an unrelated `ModuleAnalysis` and both
+    ## modules are imported together by `pipeline`.)
+    inlineInfo: Table[SymId, InlineInfo]
 
 const
   DefaultInlineInfo* = InlineInfo(threshold: 100, weights: @[],
@@ -48,23 +64,55 @@ proc shouldInline*(info: InlineInfo; argScores: openArray[int]): bool =
       sum += (info.weights[i] * score) div 100
   result = sum >= info.threshold
 
-proc readModuleAnalysis*(infile: string): ModuleAnalysis =
-  discard infile
-  result = ModuleAnalysis(inlineInfo: initTable[SymId, InlineInfo]())
+proc readInlinePragma*(pragmas: Cursor; outInfo: var InlineInfo): bool =
+  ## Recover the `InlineInfo` `intraModuleInline` wrote into the proc's own
+  ## `.inline` pragma as `(inline THRESHOLD w…)`. Exactly the transport
+  ## `funcsummary`'s `(smry …)` uses and `readSummaryPragma` reads back: the
+  ## per-proc information travels *with the proc*, so an importer recovers it
+  ## from the same module file it already parsed for the body — no sidecar
+  ## section, and no way for the two to disagree.
+  ##
+  ## Returns false when the proc has no `.inline` pragma, which leaves the
+  ## caller's `DefaultInlineInfo` (threshold 100) in place.
+  if not pragmas.isTagLit: return false
+  result = false
+  var p = pragmas
+  p.peekInto:                               # early-out on the first `.inline`
+    while p.hasMore:
+      if p.isTagLit and p.pragmaKind == InlineP:
+        # `.inline` alone already means threshold 0 ("always"); the annotation
+        # overrides that and appends one weight per parameter.
+        outInfo = InlineInfo(threshold: 0, weights: @[],
+                             guardThreshold: DefaultInlineInfo.guardThreshold,
+                             guards: @[])
+        var seenThreshold = false
+        p.into:
+          while p.hasMore:
+            if p.kind == IntLit:
+              if not seenThreshold:
+                outInfo.threshold = int(p.intVal)
+                seenThreshold = true
+              else:
+                outInfo.weights.add int(p.intVal)
+            skip p
+        result = true
+        break
+      skip p
 
 type
   ForeignModule* = object
     buf*: TokenBuf
     bodies*: Table[SymId, int]              # sym → offset of its (proc …) in `buf`
+    inlineInfo*: Table[SymId, InlineInfo]   # sym → its `(inline …)` annotation
 
   InlinerCtx* = object
     moduleSuffix*: string
     counter: int                            # fresh-name suffix
     counterPrefix: string                   # disambiguates passes (hexer vs dce2)
     bodies: Table[SymId, int]               # same-module callee → offset in `src`
+    ownInfo: Table[SymId, InlineInfo]       # same-module `(inline …)` annotations
     src: ptr TokenBuf                       # the module's parsed buffer
-    infos: ptr Table[string, ModuleAnalysis] # cross-module sidecars
-    xnifDir: string                         # directory holding `.x.nif`/`.dce.nif`
+    xnifDir: string                         # directory holding the `.c.nif`s
     maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
     foreign: Table[string, ref ForeignModule]
       # Cached cross-module bodies. `ref` so growing the table doesn't
@@ -81,7 +129,6 @@ type
       # cross-module cascade is rarely a win and risks runaway growth.
 
 proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
-                     infos: ptr Table[string, ModuleAnalysis];
                      xnifDir = ""; maxDepth = 0;
                      counterPrefix = "i"): InlinerCtx =
   ## `counterPrefix` is woven into fresh local sym names (`base.0i<n>`,
@@ -89,17 +136,22 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
   ## dce2's cross-module pass uses `"d"` so freshly-minted dce2 syms
   ## can never collide with hexer-minted syms that survive in the
   ## `.x.nif` body dce2 is rewriting.
-  InlinerCtx(moduleSuffix: moduleSuffix, src: src, infos: infos,
+  InlinerCtx(moduleSuffix: moduleSuffix, src: src,
              bodies: initTable[SymId, int](),
+             ownInfo: initTable[SymId, InlineInfo](),
              xnifDir: xnifDir,
              maxDepth: maxDepth,
              counterPrefix: counterPrefix,
              foreign: initTable[string, ref ForeignModule](),
              inProgress: initHashSet[SymId]())
 
-proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int]) =
+proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
+                     infos: var Table[SymId, InlineInfo]) =
   ## Walks the top-level `(stmts …)` and records `(proc :sym …)` decls
-  ## by sym → byte offset into `buf`.
+  ## by sym → byte offset into `buf`, along with the `(inline THRESHOLD w…)`
+  ## annotation each inlinable proc carries in its pragmas. Reading the
+  ## annotation costs nothing extra here — we are already at the decl and
+  ## `takeProcDecl` only skips subtrees, it does not walk the body.
   var n = beginRead(buf)
   if n.stmtKind == StmtsS:
     n.into:
@@ -108,11 +160,15 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int]) =
           let nameCur = n.childCursor            # the (proc :sym …) name child
           if nameCur.isSymbolDef:
             bodies[nameCur.symId] = cursorToPosition(buf, n)
+            var probe = n
+            let d = takeProcDecl(probe)
+            var info = DefaultInlineInfo
+            if readInlinePragma(d.pragmas, info):
+              infos[nameCur.symId] = info
         skip n
 
 proc collectProcBodies*(c: var InlinerCtx) =
-  ## Index the current module's own bodies.
-  indexProcBodies(c.src[], c.bodies)
+  indexProcBodies(c.src[], c.bodies, c.ownInfo)
 
 proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   ## Search the caller's dir first, then the parent — system modules
@@ -127,37 +183,25 @@ proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   if fileExists(parent): return parent
   return ""
 
-proc loadForeignAnalysis(c: var InlinerCtx; modul: string): bool =
-  ## Cheap: load only the `.dce.nif` sidecar (inline info, uses, offers).
-  ## Used by `lookupInlineInfo` to decide whether a call is splice-worthy
-  ## before paying the cost of parsing the full `.x.nif`. For a typical
-  ## module that calls many non-`.inline` procs from `sysvq0asl`, the
-  ## sidecar is ~17× smaller than the `.x.nif`; parsing the latter eagerly
-  ## here used to dominate dceEmit wall time on large builds.
-  if modul == c.moduleSuffix: return true
-  if c.infos == nil: return false
-  if modul in c.infos[]: return true
-  let dpath = findForeignFile(c, modul, ".dce.nif")
-  if dpath.len == 0: return false
-  c.infos[][modul] = readModuleAnalysis(dpath)
-  result = true
-
 proc loadForeign(c: var InlinerCtx; modul: string): bool =
-  ## Lazy-load the foreign `.x.nif` (procedure bodies) — only called from
-  ## the actual splice path (`lookupBody`), after `shouldInlineCall` has
-  ## already approved the inline. The matching `.dce.nif` is loaded by
-  ## `loadForeignAnalysis`; we reuse it via the same cache.
+  ## Lazy-load a foreign module: its proc bodies *and* their inline
+  ## annotations come out of the same parse, so `lookupInlineInfo` and
+  ## `lookupBody` share one file per module.
+  ##
+  ## The `.c.nif`, because only this pass runs that late: it is post-DCE, so
+  ## its generic instances already name the module that won the merge and a
+  ## body copies into any other module unchanged. The `.x.nif` still names the
+  ## callee's own module for instances the merge later moves elsewhere; that
+  ## is the intra-module pass's world, not this one's.
   if modul == c.moduleSuffix: return true
   if modul in c.foreign: return true
-  let xpath = findForeignFile(c, modul, ".x.nif")
+  let xpath = findForeignFile(c, modul, ".c.nif")
   if xpath.len == 0: return false
   var fm: ref ForeignModule
   new fm
   fm.buf = parseFromFile(xpath)
-  indexProcBodies(fm.buf, fm.bodies)
+  indexProcBodies(fm.buf, fm.bodies, fm.inlineInfo)
   c.foreign[modul] = fm
-  if c.infos != nil and modul notin c.infos[]:
-    discard loadForeignAnalysis(c, modul)
   result = true
 
 proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
@@ -176,6 +220,11 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   if not loadForeign(c, modul): return false
   let fm = c.foreign.getOrQuit(modul)
   if calleeSym notin fm.bodies: return false
+  # No size cap: `.inline` is the programmer saying "inline this", and the
+  # only bodies that reach here are the ones that carry it (a proc without
+  # the pragma keeps `DefaultInlineInfo`, threshold 100 with no weights, and
+  # `shouldInlineCall` declines it). Refusing a body for being big would make
+  # `.inline` mean "inline if the compiler feels like it".
   outCur = cursorAt(fm.buf, fm.bodies.getOrQuit(calleeSym))
   result = true
 
@@ -232,17 +281,15 @@ proc computeArgScores(callNode: Cursor): seq[int] =
       skip a
 
 proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
-  ## Lazy-loads the foreign module's analysis sidecar (cheap — `.dce.nif`
-  ## only, no `.x.nif`) and returns the InlineInfo (or `DefaultInlineInfo`
-  ## if unknown). The full `.x.nif` is loaded later by `lookupBody`, only
-  ## once we've decided this call is actually splice-worthy.
-  result = DefaultInlineInfo
-  if c.infos == nil: return
+  ## The callee's `(inline THRESHOLD w…)` annotation, or `DefaultInlineInfo`
+  ## (threshold 100 — never inline) when it has none, is in another module we
+  ## cannot find, or is an extern with no body at all.
   let modul = extractModule(pool.syms[calleeSym])
-  if modul != c.moduleSuffix and modul notin c.infos[]:
-    discard loadForeignAnalysis(c, modul)
-  if not c.infos[].hasKey(modul): return
-  result = c.infos[].getOrQuit(modul).inlineInfo.getOrDefault(calleeSym, DefaultInlineInfo)
+  if modul == c.moduleSuffix:
+    return c.ownInfo.getOrDefault(calleeSym, DefaultInlineInfo)
+  if not loadForeign(c, modul): return DefaultInlineInfo
+  result = c.foreign.getOrQuit(modul).inlineInfo.getOrDefault(calleeSym,
+                                                              DefaultInlineInfo)
 
 proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
                       callNode: Cursor): bool =
@@ -298,14 +345,6 @@ proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
   else:
     inc n
 
-proc subtreeTokenCount(n: Cursor; limit: int): int =
-  ## Number of tokens the subtree occupies (the physical span; elided
-  ## closes do not count). `limit` is only relevant for the comparison the
-  ## callers do, the count is exact.
-  if not n.isTagLit:
-    return 1
-  result = subtreeWidth(n)
-
 proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   result = DefaultInlineInfo
   var p = procDecl
@@ -332,7 +371,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
     var body = pd.body
     walkInlineWeights(body, lookup, result.weights, 0)
 
-proc analyzeModule*(buf: var TokenBuf): ModuleAnalysis =
+proc analyzeModule(buf: var TokenBuf): ModuleAnalysis =
   result = ModuleAnalysis(inlineInfo: initTable[SymId, InlineInfo]())
   var n = beginRead(buf)
   if n.stmtKind == StmtsS:
@@ -1108,9 +1147,8 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   ##   (if (elif tmp BODY) …rest…)
   ##
   ## where `f`'s body is exactly `result = X`, every parameter is
-  ## substitutable, and `tmp` is used *only* as that first `elif`'s
-  ## condition (guaranteed by construction — xelim mints `tmp` solely to
-  ## hold the guard). It then emits
+  ## substitutable, and `tmp` is read as that first `elif`'s condition and
+  ## nowhere else in its scope. It then emits
   ##
   ##   (if (elif X' BODY) …rest…)
   ##
@@ -1148,8 +1186,18 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
   let condCur = firstElif.childCursor
   if not condCur.isSymbol or condCur.symId != tmpSym: return 0
-  # `tmp` must be used *only* here — otherwise dropping its def is unsound.
+  # The definition is about to disappear, so `tmp` must be read here and
+  # nowhere else. A local's reads live between its declaration and the end of
+  # its scope, and `n` is bounded to that scope (`trIntra` enters `stmts` /
+  # `scope` with `into`), so "the `if` plus the siblings that follow it" is
+  # the whole live range — no dataflow needed, and no guess from the name
+  # about who minted the local either.
   if countSymUses(nextCur, tmpSym) != 1: return 0
+  var rest = nextCur
+  skip rest                                # past the whole `if`
+  while rest.hasMore:
+    if countSymUses(rest, tmpSym) != 0: return 0
+    skip rest
 
   # --- heavier inline eligibility checks (only after the shape matched) ---
   if cSym in c.inProgress: return 0
@@ -1223,10 +1271,9 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
   ##
   ## Cross-module behaviour: callees in another module are picked up
   ## automatically when the context's `xnifDir` is non-empty —
-  ## `lookupInlineInfo` / `lookupBody` then lazy-load the foreign
-  ## `.dce.nif` / `.x.nif`. With `xnifDir == ""` foreign callees are
-  ## naturally skipped (their `InlineInfo` defaults to threshold 100, so
-  ## `shouldInlineCall` declines).
+  ## `lookupInlineInfo` / `lookupBody` then lazy-load the foreign `.c.nif`.
+  ## With `xnifDir == ""` foreign callees are naturally skipped (their
+  ## `InlineInfo` defaults to threshold 100, so `shouldInlineCall` declines).
   case n.kind
   of TagLit:
     let sk = n.stmtKind
@@ -1373,14 +1420,59 @@ proc annotateInlinePragmas(buf: var TokenBuf; infos: Table[SymId, InlineInfo]) =
   buf = ensureMove(dest)
 
 proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
-  ## Same-module inliner pass run as the last step of hexer's `expand`,
-  ## so the `.x.nif` we publish has each `.inline` proc body already
-  ## cascaded against its same-module callees. Cross-module splicing
-  ## (dce2) then needs at most one level of work per call site, since
-  ## the foreign body it pulls is already flat. This eliminates the
-  ## per-importer redundancy where the same cascade was re-walked once
-  ## per dceEmit process.
-  var ma = analyzeModule(buf)
-  var graphs = initTable[string, ModuleAnalysis]()
-  graphs[moduleSuffix] = ensureMove ma
-  annotateInlinePragmas(buf, graphs.getOrQuit(moduleSuffix).inlineInfo)
+  ## Same-module inliner pass run as the last step of hexer's `expand`, so
+  ## the `.x.nif` we publish has each `.inline` proc body already cascaded
+  ## against its same-module callees. An importer then pulls a flat body, and
+  ## the cascade is walked once per module here instead of once per importer.
+  ##
+  ## Measured on nimsem (126 modules), that redundancy is worth little: the
+  ## chains that matter run *across* modules (`nifcore` → `nifpools`), which
+  ## no same-module flattening can pre-expand, so the inter-module pass still
+  ## needs its depth and its cost is unchanged. Keep the numbers in mind
+  ## before spending anything more here — full rebuild 18.66s → 18.87s,
+  ## nimsem-on-system.nim 80ms → 81ms, binary −4KB.
+  ##
+  ## Also writes each `.inline` proc's computed `InlineInfo` into its own
+  ## pragma (`(inline THRESHOLD w…)`). That annotation is what importers read
+  ## back — see `readInlinePragma` — so no sidecar has to carry it. It is
+  ## written *before* the splice because the splice reads it back: `ownInfo`
+  ## is filled from the pragmas by `collectProcBodies`.
+  ##
+  ## `xnifDir` stays empty here on purpose. This module's own `.x.nif` is
+  ## pre-DCE, so its generic instances and hexer-minted types still carry the
+  ## own-module shorthand (`seq.0.Ixdx2fh1.`) that dce2 later resolves to one
+  ## canonical owner; a body copied *within* the module keeps meaning the same
+  ## thing, while one copied *across* modules would not. Cross-module splicing
+  ## therefore waits for the `.c.nif` (`shoggoth`'s inter-module pass).
+  let ma = analyzeModule(buf)
+  annotateInlinePragmas(buf, ma.inlineInfo)
+  if ma.inlineInfo.len == 0: return
+
+  # Only the `.inline` bodies are flattened, not every call site in the module:
+  # a call site here is one the importer's own pass would splice anyway, and
+  # doing it twice only inflates the `.x.nif` everything downstream reads.
+  var ctx = initInlinerCtx(moduleSuffix, addr buf, counterPrefix = "h")
+  collectProcBodies(ctx)
+  var dest = createTokenBuf(buf.len + buf.len div 16)
+  var n = beginRead(buf)
+  if n.stmtKind != StmtsS: return
+  dest.addParLe(n.cursorTagId, n.info)
+  n.into:
+    while n.hasMore:
+      if n.isTagLit and n.stmtKind == ProcS and
+         n.childCursor.isSymbolDef and ma.inlineInfo.hasKey(n.childCursor.symId):
+        let tag = n.cursorTagId
+        let info = n.info
+        let d = takeProcDecl(n)
+        dest.addParLe(tag, info)
+        dest.addSubtree d.name
+        dest.addSubtree d.params
+        dest.addSubtree d.returnType
+        dest.addSubtree d.pragmas
+        var body = d.body
+        trIntra(ctx, dest, body)
+        dest.addParRi()
+      else:
+        dest.takeTree n
+  dest.addParRi()
+  buf = ensureMove(dest)

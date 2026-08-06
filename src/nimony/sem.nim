@@ -746,7 +746,23 @@ proc semBaseobj(c: var SemContext; dest: var TokenBuf; it: var Item) =
       dest.shrink beforeExpr
       dest.add m.args
     else:
-      c.typeMismatch dest, it.n.endInfo, it.typ, destType
+      # A downcast `(baseobj T -depth x)` (produced by an explicit
+      # conversion) fails the implicit direction above when re-semmed;
+      # try the flipped direction like `semConvArg` does:
+      var m2 = createMatch(addr c)
+      m2.flipped = true
+      var matchArg = arg
+      matchArg.typ = destType
+      typematch m2, skipModifier(arg.typ), matchArg
+      if not m2.err and m2.args[0].tagEnum == BaseobjTagId:
+        dest.shrink beforeExpr
+        dest.add m2.args
+      else:
+        # replace the partially written type so dest holds exactly one
+        # (err) tree instead of `[type][err]` that readers of a single
+        # tree silently truncate to the bare type:
+        dest.shrink beforeExpr
+        c.typeMismatch dest, it.n.endInfo, arg.typ, destType
   commonType c, dest, it, beforeExpr, destType
 
 proc addMaybeBaseobjConv(c: var SemContext; dest: var TokenBuf; m: var Match; beforeExpr: int) =
