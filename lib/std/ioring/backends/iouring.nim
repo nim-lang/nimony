@@ -2,8 +2,14 @@
 # Uses the existing Queue from lib/std/posix/io_uring.nim.
 # Extends Backend directly (not PollBackend) since io_uring uses
 # its own submission/completion queue model.
+#
+# Submissions are deferred to a shared per-backend queue so that the
+# calling thread (e.g. main) never owns an SQE — every SQE is filled
+# and flushed on the thread that calls poll(), which is always a worker
+# thread (or whomever calls waitCompletions()). That avoids the
+# "submitted on main, never polled" hang.
 
-import std/[assertions, posix/posix]
+import std/[assertions, atomics, posix/posix, ticketlocks]
 import std/syncio
 import ../../posix/io_uring
 import ../core/types
@@ -11,8 +17,19 @@ import ../core/slots
 import ../core/backend
 from ./epoll import initEpollBackend
 
-type IoUringBackend* = ref object of Backend
-  sqEntries: int
+const
+  DeferredSize = 4096 ## Must be a power of 2.
+  DrainBatch   = 128  ## Max deferred entries drained per poll() call.
+
+type
+  DeferredQueue = object
+    lock: TicketLock
+    head, tail, count: int
+    data: array[DeferredSize, int] ## slot indices
+
+  IoUringBackend* = ref object of Backend
+    sqEntries: int
+    deferred*: DeferredQueue
 
 var localQueue {.threadvar.}: Queue
 
@@ -25,21 +42,7 @@ proc tryInitLocalQueue(b: IoUringBackend): bool =
       return false
   return true
 
-method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
-  if not b.tryInitLocalQueue():
-    b.ring.complete(slotIdx, -1)
-    return
-  var sqe: nil ptr Sqe
-  try:
-    sqe = localQueue.getSqe()
-    if sqe == nil:
-      discard localQueue.submit()
-      sqe = localQueue.getSqe()
-  except:
-    return
-  if sqe == nil:
-    return
-  sqe.userData = cast[pointer](uint(slotIdx))
+proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
   case op.kind
   of opRead:
     if op.buf != nil:
@@ -50,20 +53,70 @@ method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
 
+method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
+  # Enqueue onto the shared deferred queue so that poll() — which runs on
+  # worker threads (or whatever thread calls waitCompletions) — fills the
+  # SQE into its own thread-local io_uring instance and flushes it.
+  #
+  # Overflow spins rather than calling poll(0) inline: poll(0) would fill
+  # the SQE on the calling (e.g. main) thread — whose ring is never
+  # polled for completions afterwards. Spin-waiting instead lets a worker
+  # drain the queue and own every SQE ↔ CQE pair in its own ring.
+  while true:
+    acquire(b.deferred.lock)
+    if b.deferred.count < DeferredSize:
+      b.deferred.data[b.deferred.tail] = slotIdx
+      b.deferred.tail = (b.deferred.tail + 1) and (DeferredSize - 1)
+      inc b.deferred.count
+      release(b.deferred.lock)
+      return
+    release(b.deferred.lock)
+    cpuRelax()
+
 method poll*(b: IoUringBackend; timeoutMs: int): bool =
   discard b.tryInitLocalQueue()
+  # Drain the shared deferred queue: for every pending slot, fill a fresh
+  # SQE in THIS thread's io_uring instance. Only worker threads (and
+  # callers of waitCompletions) poll, so all SQEs are always submitted
+  # from within the poll loop that also reads their CQEs.
+  #
+  # Drain is bounded (DrainBatch) so a flood of submissions cannot keep a
+  # worker inside poll() forever — the outer worker loop also runs task
+  # draining, and remaining deferred entries are picked up next iteration.
+  var drained = 0
+  while drained < DrainBatch:
+    acquire(b.deferred.lock)
+    if b.deferred.count == 0:
+      release(b.deferred.lock)
+      break
+    let slotIdx = b.deferred.data[b.deferred.head]
+    b.deferred.head = (b.deferred.head + 1) and (DeferredSize - 1)
+    dec b.deferred.count
+    release(b.deferred.lock)
+    inc drained
+    let op = b.ring.slots.addrSlot(slotIdx)
+    var sqe: nil ptr Sqe
+    try:
+      sqe = localQueue.getSqe()
+    except ErrorCode as e:
+      stderr.writeLine("ioring: failed to get sqe: " & $e)
+      break
+    if sqe == nil:
+      break
+    sqe.userData = cast[pointer](uint(slotIdx))
+    fillSqe(sqe, op)
   try:
     discard localQueue.submit()
-  except:
-    quit "fatal: bug: submit cannot fail"
+  except ErrorCode as e:
+    quit "fatal: bug: submit cannot fail: " & $e
   let waitNr = if timeoutMs > 0: 1'u else: 0'u
   const batchSize = 64
   var cqes = newSeq[Cqe](batchSize)
   var n: int = 0
   try:
     n = localQueue.copyCqes(cqes, waitNr)
-  except:
-    quit "fatal: bug: copyCqes cannot fail"
+  except ErrorCode as e:
+    quit "fatal: bug: copyCqes cannot fail: " & $e
   if n <= 0:
     return false
   let a = b.ring.slots
@@ -74,13 +127,6 @@ method poll*(b: IoUringBackend; timeoutMs: int): bool =
   return true
 
 method forgetFd*(b: IoUringBackend; fd: cint) =
-  ## Ask the kernel to cancel every in-flight op on `fd` before the arena
-  ## frees the corresponding slots (see `ioring.closeFd`). Without this, a
-  ## completion for an op the arena already freed/reused could land on the
-  ## wrong (later) slot index once the fd number and the slot index are both
-  ## recycled — best-effort: if there is no room for the cancel SQE right
-  ## now we still proceed with the close, we just may leak that one slot
-  ## until the kernel completion arrives naturally.
   discard b.tryInitLocalQueue()
   try:
     var sqe = localQueue.getSqe()
@@ -94,10 +140,6 @@ method forgetFd*(b: IoUringBackend; fd: cint) =
     discard
 
 method close*(b: IoUringBackend) =
-  # Previously a no-op: the mapped SQ/CQ rings and the io_uring fd were never
-  # released, leaking both per shutdown. Overwriting the threadvar with a
-  # fresh (zero) `Queue` runs `=destroy` on the old value, which unmaps the
-  # rings and closes the fd (see `posix/io_uring.=destroy`).
   if localQueue.params != nil:
     teardown(localQueue)
 
@@ -107,4 +149,4 @@ proc initIoUringBackend*(ring: Ring; sqEntries = 256): Backend =
   result.ring = ring
   if not tryInitLocalQueue(backend):
     # fallback to epoll
-    result = initEpollBackend(ring) 
+    result = initEpollBackend(ring)
