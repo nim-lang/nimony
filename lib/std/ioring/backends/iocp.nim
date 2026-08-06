@@ -1,13 +1,19 @@
-# Windows IOCP backend.
-# NOTE: This was written for the old struct-based Backend.
-# Needs rewriting using the OOP Backend interface (like epoll.nim).
+# Windows IOCP backend (stub).
 
-import ../platform
 import ../core/types
 import ../core/backend
 
-type IocpBackend* = ref object
-  fd: cint
+var dummyFd: cint
 
-proc initIocpBackend*(): Backend =
-  new result
+proc dummySubmit(slotIdx: int; op: ptr OpContext) {.nimcall.} = discard
+proc dummyPoll(timeoutMs: int): bool {.nimcall.} = false
+proc dummyClose() {.nimcall.} = discard
+proc dummyForgetFd(fd: cint) {.nimcall.} = discard
+
+proc initIocpBackendRelays*(): BackendRelays =
+  result = BackendRelays(
+    submit: dummySubmit,
+    poll: dummyPoll,
+    close: dummyClose,
+    forgetFd: dummyForgetFd,
+  )

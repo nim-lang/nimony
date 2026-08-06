@@ -1,4 +1,4 @@
-# Linux epoll backend — extends PollBackend.
+# Linux epoll backend.
 # epoll_ctl ADD is only valid the *first* time a fd is registered; every
 # subsequent (re-)arm on the same fd — including the EPOLLONESHOT re-arm
 # after each event — must use MOD, or epoll_ctl fails with EEXIST and the
@@ -17,7 +17,8 @@ import std/[tables, ticketlocks]
 
 const MaxIoEvents = 64
 
-type EpollBackend* = ref object of PollBackend
+var
+  epollFd: cint
   registeredFds: Table[cint, bool]
   regLock: TicketLock
 
@@ -51,7 +52,7 @@ proc fdNotPollable(): bool {.inline.} =
   let e = errnoLocation()[]
   result = e == epollErrPerm or e == epollErrBadFd
 
-method reArmEvent*(b: EpollBackend; fd: cint; mask: int) =
+proc epollReArm(fd: cint; mask: int) {.nimcall.} =
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
   if (mask and EvRead) != 0:
@@ -64,11 +65,11 @@ method reArmEvent*(b: EpollBackend; fd: cint; mask: int) =
   # occasionally wrong — way to recover the fd on delivery.
   ev.data.`ptr` = cast[pointer](uint(fd))
   var alreadyRegistered: bool
-  withLock b.regLock:
-    alreadyRegistered = b.registeredFds.getOrDefault(fd, false)
-    b.registeredFds[fd] = true
+  withLock regLock:
+    alreadyRegistered = registeredFds.getOrDefault(fd, false)
+    registeredFds[fd] = true
   let op = if alreadyRegistered: EPOLL_CTL_MOD else: EPOLL_CTL_ADD
-  if epoll_ctl(b.pollFd, op, fd, addr ev) != 0 and op == EPOLL_CTL_ADD:
+  if epoll_ctl(epollFd, op, fd, addr ev) != 0 and op == EPOLL_CTL_ADD:
     # Lost the race with a concurrent submit on the same fd that already
     # ADD'ed it (or the fd was previously registered and evicted from our
     # bookkeeping some other way) — fall back to MOD once.
@@ -78,32 +79,37 @@ method reArmEvent*(b: EpollBackend; fd: cint; mask: int) =
       # fd → EEXIST; fall back to MOD so the fd ends up armed with the current
       # mask instead of staying a fired (disarmed) oneshot — that stall loses the
       # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
-      if epoll_ctl(b.pollFd, EPOLL_CTL_MOD, fd, addr ev) != 0:
+      if epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev) != 0:
         reportResidualFailure("ioring: epoll ADD+MOD both failed")
 
-method poll*(b: EpollBackend; timeoutMs: int): bool =
+proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-  let n = int(epoll_wait(b.pollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
+  let n = int(epoll_wait(epollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
   if n <= 0:
     return false
   for i in 0..<n:
     let fd = cint(cast[uint](ioEvents[i].data.`ptr`))
-    b.processFd(fd, int(ioEvents[i].events))
+    processFd(fd, int(ioEvents[i].events))
   return true
 
-method close*(b: EpollBackend) =
-  discard close(b.pollFd)
+proc epollClose() {.nimcall.} =
+  discard close(epollFd)
 
-method forgetFd*(b: EpollBackend; fd: cint) =
+proc epollForgetFd(fd: cint) {.nimcall.} =
   ## Drop bookkeeping for a fd that is being closed, so a *future* fd with
   ## the same number (POSIX recycles them) is treated as a fresh ADD rather
   ## than incorrectly reusing stale MOD state.
-  withLock b.regLock:
-    b.registeredFds.del(fd)
-  discard epoll_ctl(b.pollFd, EPOLL_CTL_DEL, fd, nil)
+  withLock regLock:
+    registeredFds.del(fd)
+  discard epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, nil)
 
-proc initEpollBackend*(ring: Ring): EpollBackend =
-  new result
-  result.pollFd = epoll_create1(0)
-  result.ring = ring
-  result.registeredFds = initTable[cint, bool]()
+proc initEpollBackendRelays*(): BackendRelays =
+  epollFd = epoll_create1(0)
+  registeredFds = initTable[cint, bool]()
+  reArmEvent = epollReArm
+  result = BackendRelays(
+    submit: submitForPoll,
+    poll: epollPoll,
+    close: epollClose,
+    forgetFd: epollForgetFd,
+  )

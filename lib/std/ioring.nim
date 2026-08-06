@@ -6,63 +6,46 @@
 # pushing to a shared completion queue for polling.
 #
 # Usage:
-#   let ring = initIoRing()
-#   let listenFd = ring.listenTcp(8080)
-#   discard ring.submitAccept(listenFd)
+#   initIoRing()
+#   let listenFd = listenTcp(8080)
+#   discard submitAccept(listenFd)
 #   var comps: array[16, IoCompletion]
-#   let n = ring.waitCompletions(comps)
+#   let n = waitCompletions(comps)
 #   echo "client fd=", comps[0].result
-#   ring.shutdown()
+#   shutdown()
 
 import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
-export backend.Ring, backend.Backend, backend.CqSize
+export backend.BackendRelays, backend.CqSize
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
 
-proc initIoRing*(pool: nil Pool = nil): Ring =
-  ## `pool`, if given, is the worker pool whose idle loop will drive this
-  ## ring's I/O backend (via `Pool.registerReactor`) — pass one you built
-  ## with `createPool()` if this ring's reactor should have dedicated
-  ## threads (e.g. to keep IO-wait threads separate from CPU-bound `parfor`
-  ## work). Left as `nil` (the default), the ring shares the process-wide
-  ## `defaultPool()` with everything else that hasn't asked for isolation —
-  ## previously every `Ring` unconditionally started its own private
-  ## `WorkerCount` threads, so N rings meant N*WorkerCount OS threads
-  ## contending for the same cores, on top of whatever `parfor` started.
-  new result
-  result.slots = SlotArena()
-  result.slots.init()
-  result.cq = newSeq[IoCompletion](CqSize)
-  result.nextSeq = 1
-  initPlatformBackend(result)
-  result.pool = if pool != nil: pool else: defaultPool()
-  let ring = result
-  result.pool.registerReactor(proc(timeoutMs: int): bool {.closure.} =
-    if atomicLoad(ring.closed, moRelaxed): return false
-    ring.backend.poll(timeoutMs)
+proc initIoRing*() =
+  gSlots = SlotArena()
+  gSlots.init()
+  gCq = newSeq[IoCompletion](CqSize)
+  gNextSeq = 1
+  initPlatformBackend()
+  initPool()
+  registerReactor(proc(timeoutMs: int): bool {.closure.} =
+    if atomicLoad(gClosed, moRelaxed): return false
+    backendRelays.poll(timeoutMs)
   )
 
-proc shutdown*(ring: Ring) =
-  ## Closes this ring's backend only. Does **not** shut down `ring.pool`:
-  ## that pool may be the shared `defaultPool()` (or one the caller passed
-  ## in and still owns), so tearing it down here would kill worker threads
-  ## out from under every other user of that pool. Whoever created the pool
-  ## (via `createPool()`) owns its `shutdown()`; `defaultPool()` is
-  ## intended to live for the process's lifetime.
-  atomicStore(ring.closed, true, moRelaxed)
-  ring.backend.close()
+proc shutdown*() =
+  atomicStore(gClosed, true, moRelaxed)
+  backendRelays.close()
 
-proc nextSeqNum(ring: Ring): SeqNum =
-  SeqNum(atomicFetchAdd(ring.nextSeq, 1'u32, moRelaxed))
+proc nextSeqNum(): SeqNum =
+  SeqNum(atomicFetchAdd(gNextSeq, 1'u32, moRelaxed))
 
-proc submitRead*(ring: Ring; fd: cint; buf: pointer; len: int;
+proc submitRead*(fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
-  result = ring.nextSeqNum()
-  let idx = ring.slots.allocSlot(fd)
-  let op = ring.slots.addrSlot(idx)
+  result = nextSeqNum()
+  let idx = gSlots.allocSlot(fd)
+  let op = gSlots.addrSlot(idx)
   op.kind = opRead
   op.fd = fd
   op.seqnum = result
@@ -70,14 +53,14 @@ proc submitRead*(ring: Ring; fd: cint; buf: pointer; len: int;
   op.len = len
   op.cont = cont
   op.res = cast[int](resPtr)
-  ring.backend.submit(idx, op)
+  backendRelays.submit(idx, op)
 
-proc submitWrite*(ring: Ring; fd: cint; buf: pointer; len: int;
+proc submitWrite*(fd: cint; buf: pointer; len: int;
                   cont = Continuation(fn: nil, env: nil);
                   resPtr: nil ptr int = nil): SeqNum =
-  result = ring.nextSeqNum()
-  let idx = ring.slots.allocSlot(fd)
-  let op = ring.slots.addrSlot(idx)
+  result = nextSeqNum()
+  let idx = gSlots.allocSlot(fd)
+  let op = gSlots.addrSlot(idx)
   op.kind = opWrite
   op.fd = fd
   op.seqnum = result
@@ -85,14 +68,14 @@ proc submitWrite*(ring: Ring; fd: cint; buf: pointer; len: int;
   op.len = len
   op.cont = cont
   op.res = cast[int](resPtr)
-  ring.backend.submit(idx, op)
+  backendRelays.submit(idx, op)
 
-proc submitAccept*(ring: Ring; listenFd: cint;
+proc submitAccept*(listenFd: cint;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
-  result = ring.nextSeqNum()
-  let idx = ring.slots.allocSlot(listenFd)
-  let op = ring.slots.addrSlot(idx)
+  result = nextSeqNum()
+  let idx = gSlots.allocSlot(listenFd)
+  let op = gSlots.addrSlot(idx)
   op.kind = opAccept
   op.fd = listenFd
   op.seqnum = result
@@ -100,24 +83,24 @@ proc submitAccept*(ring: Ring; listenFd: cint;
   op.res = cast[int](resPtr)
   op.acceptAddr = Sockaddr_storage()
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
-  ring.backend.submit(idx, op)
+  backendRelays.submit(idx, op)
 
-proc pollCompletions*(ring: Ring; comps: var openArray[IoCompletion]): int =
+proc pollCompletions*(comps: var openArray[IoCompletion]): int =
   result = 0
-  ring.cqLock.acquire()
-  while result < comps.len and ring.cqCount > 0:
-    comps[result] = ring.cq[ring.cqHead]
-    ring.cqHead = (ring.cqHead + 1) and (CqSize - 1)
-    dec ring.cqCount
+  gCqLock.acquire()
+  while result < comps.len and gCqCount > 0:
+    comps[result] = gCq[gCqHead]
+    gCqHead = (gCqHead + 1) and (CqSize - 1)
+    dec gCqCount
     inc result
-  ring.cqLock.release()
+  gCqLock.release()
 
-proc waitCompletions*(ring: Ring; comps: var openArray[IoCompletion]): int =
+proc waitCompletions*(comps: var openArray[IoCompletion]): int =
   result = 0
   while true:
-    result = ring.pollCompletions(comps)
+    result = pollCompletions(comps)
     if result > 0: return
-    discard ring.backend.poll(0)
+    discard backendRelays.poll(0)
 
 when defined(posix):
   proc posixClose(fd: cint): cint {.importc: "close".}
@@ -132,12 +115,9 @@ when defined(posix):
     var flags = fcntl(fd, F_GETFL)
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)
   proc closeFdRaw*(fd: cint) =
-    ## Close a fd that is known to have no in-flight ring ops on it (e.g. one
-    ## that was never submitted through `ring`). Prefer `ring.closeFd` for
-    ## any fd that may have pending reads/writes/accepts.
     discard posixClose(fd)
 
-  proc closeFd*(ring: Ring; fd: cint) =
+  proc closeFd*(fd: cint) =
     ## Close `fd`, first cancelling any ops still in flight on it so their
     ## continuations are resumed (with a cancellation result) instead of
     ## leaking, and deregistering it from the backend before the actual
@@ -149,16 +129,16 @@ when defined(posix):
     ## Order matters: deregister from the backend *before* close(2), so a
     ## fresh fd that the OS immediately reuses for the same number cannot
     ## race with a stale registration/slot that still refers to it.
-    ring.backend.forgetFd(fd)
+    backendRelays.forgetFd(fd)
     let onCancel = proc(idx: int) {.closure.} =
-      let slot = addr ring.slots.slots[idx]
-      const ECancelled = -125 # -ECANCELED
+      let slot = addr gSlots.slots[idx]
+      const ECancelled = -125
       if slot.res != 0:
         cast[ptr int](slot.res)[] = ECancelled
       let cont = slot.cont
       if cont.fn != nil:
-        ring.pool.submit(cont, int(fd))
-    ring.slots.cancelAllForFd(fd, onCancel)
+        submit(cont, int(fd))
+    gSlots.cancelAllForFd(fd, onCancel)
     discard posixClose(fd)
 
 when defined(posix):
@@ -184,8 +164,8 @@ when defined(posix):
       result = x
     else:
       result = (x shl 8) or (x shr 8)
-    
-  proc listenTcp*(ring: Ring; port: uint16; backlog = 128): cint =
+
+  proc listenTcp*(port: uint16; backlog = 128): cint =
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     assert fd >= 0, "socket() failed"
     var yes: cint = 1
@@ -203,15 +183,14 @@ when defined(posix):
     setNonBlocking(fd)
     result = fd
 
-var gRingState: int = 0
-var gRing*: Ring
+var ringState: int = 0
 proc initDefaultRing() =
-  if atomicLoad(gRingState, moAcquire) == 2: return
+  if atomicLoad(ringState, moAcquire) == 2: return
   var expected = 0
-  if atomicCompareExchange(gRingState, expected, 1):
-    gRing = initIoRing()
-    atomicStore(gRingState, 2, moRelease)
+  if atomicCompareExchange(ringState, expected, 1):
+    initIoRing()
+    atomicStore(ringState, 2, moRelease)
   else:
-    while atomicLoad(gRingState, moAcquire) != 2:
+    while atomicLoad(ringState, moAcquire) != 2:
       discard
 initDefaultRing()

@@ -26,14 +26,20 @@ elif hasIoPoll:
     import ./backends/epoll
   elif hasKqueue:
     import ./backends/kqueue
+elif hasIocp:
+  import ./backends/iocp
 
-proc initPlatformBackend*(ring: Ring) =
+var backendRelays*: BackendRelays
+
+proc initPlatformBackend*() =
   when hasIouring:
-    ring.backend = initIoUringBackend(ring)
+    backendRelays = initIoUringBackendRelays()
   elif hasIoPoll:
     when hasEpoll:
-      ring.backend = initEpollBackend(ring)
+      backendRelays = initEpollBackendRelays()
     elif hasKqueue:
-      ring.backend = initKqueueBackend(ring)
+      backendRelays = initKqueueBackendRelays()
+  elif hasIocp:
+    backendRelays = initIocpBackendRelays()
   else:
     {.error: "No I/O backend available for this platform".}

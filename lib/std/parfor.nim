@@ -52,19 +52,14 @@ type
 
 # --- one-time pool bootstrap ----------------------------------------------
 #
-# `||` shares the process-wide `std/threadpool.defaultPool()` rather than
-# keeping its own separate pool/bootstrap: a second independent pool would
-# mean 2x `WorkerCount` OS threads contending over the same physical cores
-# (one set for `parfor`, one for whatever else already called
-# `defaultPool()`), and previously every module that wanted "the" pool had
-# to reimplement this exact CAS-guarded lazy-init by hand.
-template gPool*(): Pool = defaultPool()
+# `||` shares the process-wide `std/threadpool.initPool()`. initPool is
+# a lazy singleton so subsequent calls are a no-op.
 
 proc ensureParPool*() =
   ## Start the worker pool the first time a parallel `for` runs (idempotent —
   ## `defaultPool()` is itself a lazy singleton, so subsequent calls, from
   ## this module or any other caller of `defaultPool()`, are a no-op).
-  discard defaultPool()
+  initPool()
 
 # --- range chunking --------------------------------------------------------
 
@@ -132,9 +127,8 @@ proc parWait*(j: var ParJoin; workload = MixedBound) =
   ## `CpuBound` skips the I/O poll: such chunks never park, so there is nothing
   ## in the event loop and the joiner just spins for the in-flight CPU work.
   while atomicLoad(j.remaining, moAcquire) > 0:
-    let p = gPool()
-    if not p.help() and workload != CpuBound:
-      discard p.poll(0.cint)
+    if not poolHelp() and workload != CpuBound:
+      discard poolPollIo(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool, spreading chunks
@@ -144,7 +138,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## runners — but the spread still avoids needlessly caller-running chunks on
   ## the submitting thread and balances load. Re-exported so the `||` plugin
   ## only needs symbols visible through `import std/parfor`.
-  gPool().submit(c, hint)
+  submit(c, hint)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}

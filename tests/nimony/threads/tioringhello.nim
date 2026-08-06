@@ -3,9 +3,9 @@ import std/syncio
 when not defined(windows):
   import std/ioring
   var buf = "Hello world\n"
-  discard gRing.submitWrite(stdout.getFileHandle, buf.toCString, buf.len)
+  discard submitWrite(stdout.getFileHandle, buf.toCString, buf.len)
   var comps: array[16, IoCompletion]
-  let n = gRing.waitCompletions(comps)
+  let n = waitCompletions(comps)
   echo "written=", comps[0].result, " n=", n, " buf.len=", buf.len
 else:
   echo "Hello world"
