@@ -14,6 +14,20 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.ref == 'refs/heads/master' && github.sha || '' }}
   cancel-in-progress: true
 
+# The suite runs as TWO jobs per platform, in parallel:
+#
+#   build — the tree walk minus `tests/boot`
+#   boot  — `tests/boot` (the deterministic 3-stage self-host) on its own
+#
+# They are independent: `boot` reads `bin/` and writes `bin0..bin3` +
+# `nimcache/boot`, the tree walk writes `nimcache/.par`. Serially the bootstrap
+# was 601s of the 1917s Windows run (measured 2026-08-02) with everything else
+# waiting on it, so splitting takes that platform's wall time down by roughly a
+# third. The cost is a second runner per platform, which re-does the ~1 minute
+# of setup and the toolchain build.
+#
+# Both jobs share the `.github/actions/setup` preamble; each adds one step.
+
 jobs:
   build:
     strategy:
@@ -58,247 +72,30 @@ jobs:
       NIM_BRANCH: ${{ matrix.target.nim_branch }}
       NIM_ARCH: ${{ matrix.target.cpu }}
     steps:
-      - name: set `core.autocrlf` to false
-        run: |
-          git config --global core.autocrlf false
-          git config --global init.defaultBranch master
-
-      - name: Disable Defender real-time scan for workspace (Windows)
-        if: runner.os == 'Windows'
-        shell: powershell
-        run: |
-          # Defender scanning every file the Nim/MinGW toolchain touches is the
-          # single biggest reason Windows CI runs ~3x slower than Linux/macOS
-          # for this workload. Excluding the workspace and the compiler
-          # processes brings I/O-bound build/test phases close to parity.
-          $ErrorActionPreference = 'Continue'
-          Add-MpPreference -ExclusionPath "${{ github.workspace }}" -ErrorAction SilentlyContinue
-          Add-MpPreference -ExclusionPath "$env:USERPROFILE\nimcache" -ErrorAction SilentlyContinue
-          Add-MpPreference -ExclusionPath "$env:TEMP" -ErrorAction SilentlyContinue
-          foreach ($p in @('nim.exe','nimony.exe','nimsem.exe','hexer.exe','lengc.exe','nifler.exe','nifmake.exe','nj.exe','vl.exe','validator.exe','dagon.exe','controlflow.exe','contracts.exe','hastur.exe','tester.exe','gcc.exe','g++.exe','ld.exe','as.exe','ar.exe','make.exe')) {
-            Add-MpPreference -ExclusionProcess $p -ErrorAction SilentlyContinue
-          }
-
-      - name: Checkout nimony
-        # Check out into `nimony/` (NOT `nif/`): the native backend's arkham/nifasm
-        # `nim.cfg` reuse nimony's NIF libraries via `../../../nimony/src/lib`, so the
-        # repo's working-tree directory MUST be named `nimony` for that sibling-relative
-        # path to resolve — the same layout developer machines use.
-        uses: actions/checkout@v7
+      # A local `uses:` needs the action's file on disk first, and the setup
+      # action itself owns the real checkout (it has to configure `core.autocrlf`
+      # before git touches any source). So fetch just `.github/actions` into a
+      # path of its own — `nimony/` must stay untouched here, or this sparse
+      # config would be what the real checkout inherits.
+      - uses: actions/checkout@v7
         with:
-          path: nimony
-          submodules: false
+          path: ci-actions
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
 
-      - name: Checkout nativenif (sibling of nimony)
-        uses: actions/checkout@v7
+      - uses: ./ci-actions/.github/actions/setup
         with:
-          repository: nim-lang/nativenif
-          path: nativenif
-          submodules: false
+          cpu: ${{ matrix.target.cpu }}
+          nim_branch: ${{ matrix.target.nim_branch }}
 
-      - name: Install Linux dependency (Linux)
-        if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
-        shell: bash
-        run: |
-          # gcc-14/g++-14 ship preinstalled on the ubuntu-24.04 image, so only
-          # valgrind actually needs fetching. Installing the compilers anyway
-          # made this step ~5 minutes (apt pulled and reinstalled the full
-          # toolchain); with just valgrind it is a few seconds.
-          # `--no-install-recommends` keeps valgrind from dragging in its
-          # (unused here) debuginfo/doc recommends.
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND=noninteractive apt-get install \
-            --no-install-recommends -yq valgrind
-          sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-14 60 --slave /usr/bin/g++ g++ /usr/bin/g++-14
-
-      - name: Install dependencies (Linux i386)
-        if: runner.os == 'Linux' && matrix.target.cpu == 'i386'
-        working-directory: ${{ github.workspace }}
-        run: |
-          sudo dpkg --add-architecture i386
-          sudo apt-get update -qq
-          sudo DEBIAN_FRONTEND='noninteractive' apt-get install \
-            --no-install-recommends -yq gcc-multilib g++-multilib \
-            libssl-dev:i386
-
-          mkdir -p external/bin
-          cat << EOF > external/bin/gcc
-          #!/bin/bash
-
-          exec $(which gcc) -m32 "\$@"
-          EOF
-
-          cat << EOF > external/bin/g++
-          #!/bin/bash
-
-          exec $(which g++) -m32 "\$@"
-          EOF
-
-          chmod 755 external/bin/gcc external/bin/g++
-
-          echo "$PWD/external/bin" >> "${GITHUB_PATH}"
-
-
-      - name: Restore MinGW-W64 (Windows) from cache
-        if: runner.os == 'Windows'
-        id: windows-mingw-cache
-        uses: actions/cache@v5
-        with:
-          path: external/mingw-${{ matrix.target.cpu }}
-          # Bump the suffix when changing MINGW_URL below — the old cache
-          # would otherwise keep delivering the previous bundle even though
-          # the archive name and contents changed.
-          key: 'mingw-${{ matrix.target.cpu }}-gcc14-llvm19'
-
-      - name: Restore Nim DLLs dependencies (Windows) from cache
-        if: runner.os == 'Windows'
-        id: windows-dlls-cache
-        uses: actions/cache@v5
-        with:
-          path: external/dlls-${{ matrix.target.cpu }}
-          key: 'dlls-${{ matrix.target.cpu }}'
-
-      - name: Install MinGW64 dependency (Windows)
-        if: >
-          steps.windows-mingw-cache.outputs.cache-hit != 'true' &&
-          runner.os == 'Windows'
-        shell: bash
-        run: |
-          mkdir -p external
-          # winlibs gcc 14.2.0 + LLVM 19.1.7 bundled. We pull the GCC+LLVM
-          # variant (rather than gcc-only) so `clang` and `ld.lld` ship
-          # alongside `gcc`. The LLD that lands here lays out PE `.tls$`
-          # the way the Windows loader expects — needed for clang's native
-          # TLS code-gen to actually run; ld.bfd in older bundles got this
-          # wrong and produced binaries that segfaulted on first TLS access.
-          # Sticking with msvcrt (matches the older bundle's runtime) so
-          # we don't churn the runtime ABI in this same change.
-          if [[ '${{ matrix.target.cpu }}' == 'amd64' ]]; then
-            MINGW_URL="https://github.com/brechtsanders/winlibs_mingw/releases/download/14.2.0posix-19.1.7-12.0.0-msvcrt-r3/winlibs-x86_64-posix-seh-gcc-14.2.0-llvm-19.1.7-mingw-w64msvcrt-12.0.0-r3.7z"
-            ARCH=64
-          else
-            MINGW_URL="https://github.com/brechtsanders/winlibs_mingw/releases/download/14.2.0posix-19.1.7-12.0.0-msvcrt-r3/winlibs-i686-posix-dwarf-gcc-14.2.0-llvm-19.1.7-mingw-w64msvcrt-12.0.0-r3.7z"
-            ARCH=32
-          fi
-          curl -L "$MINGW_URL" -o "external/mingw-${{ matrix.target.cpu }}.7z"
-          7z x -y "external/mingw-${{ matrix.target.cpu }}.7z" -oexternal/
-          mv external/mingw$ARCH external/mingw-${{ matrix.target.cpu }}
-
-      - name: Install DLLs dependencies (Windows)
-        if: >
-          steps.windows-dlls-cache.outputs.cache-hit != 'true' &&
-          runner.os == 'Windows'
-        shell: bash
-        run: |
-          mkdir -p external
-          curl -L "https://nim-lang.org/download/windeps.zip" -o external/windeps.zip
-          7z x -y external/windeps.zip -oexternal/dlls-${{ matrix.target.cpu }}
-
-      - name: Path to cached dependencies (Windows)
-        if: >
-          runner.os == 'Windows'
-        shell: bash
-        run: |
-          echo '${{ github.workspace }}'"/external/mingw-${{ matrix.target.cpu }}/bin" >> $GITHUB_PATH
-          echo '${{ github.workspace }}'"/external/dlls-${{ matrix.target.cpu }}" >> $GITHUB_PATH
-
-      #- name: Install winget
-      #  if: runner.os == 'Windows'
-      #  continue-on-error: true # for some reason errors if latest version already installed
-      #  # winget included in windows-2025 and above:
-      #  run: winget upgrade winget --accept-package-agreements --accept-source-agreements --disable-interactivity
-
-      #- name: Install make dependencies with winget (Windows)
-      #  if: runner.os == 'Windows'
-      #  run: winget install ezwinports.make --disable-interactivity --accept-source-agreements
-
-      - name: Install make dependencies with chocolatey (Windows)
-        if: runner.os == 'Windows'
-        uses: crazy-max/ghaction-chocolatey@v4
-        with:
-          args: install make
-
-      - name: System Info (Windows)
-        if: runner.os == 'Windows'
-        run: "gcc -v"
-
-      # - name: Restore Nim from cache
-      #   if: >
-      #     steps.nim-compiler-cache.outputs.cache-hit != 'true' &&
-      #     matrix.target.nim_branch != 'devel'
-      #   id: nim-compiler-cache
-      #   uses: actions/cache@v2
-      #   with:
-      #     path: '${{ github.workspace }}/nim-${{ matrix.target.nim_branch }}-${{ matrix.target.cpu }}'
-      #     key: 'nim-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}'
-
-      - name: Setup Nim
-        uses: alaviss/setup-nim@0.1.1
-        with:
-          path: 'nim'
-          version: ${{ matrix.target.nim_branch }}
-          architecture: ${{ matrix.target.cpu }}
-
-      - name: Overlay current Nim compiler source (devel parser fixes)
-        shell: bash
-        run: |
-          # setup-nim installs a *prebuilt nightly binary* from nim-lang/nightlies,
-          # not the live `devel` tree. That nightly can lag real `devel` by weeks
-          # (it has been frozen since 2026-05-06). Nifler compiles Nim's own
-          # `compiler/parser.nim` (resolved through `--path:$nim`, see
-          # src/nifler/nim.cfg), so a stale nightly cannot parse newer syntax such
-          # as `type C = concept of D`. The nightly's `bin/nim` is fine as the
-          # bootstrap compiler; we only need fresh *compiler sources* overlaid on
-          # top so parser fixes land when Nifler is (re)built.
-          git clone --depth 1 --branch ${{ matrix.target.nim_branch }} \
-            https://github.com/nim-lang/Nim nim-src
-          cp -a nim-src/compiler/. nim/compiler/
-
-      - name: Cache host-Nim build artifacts
-        uses: actions/cache@v5
-        with:
-          # `nimony/bin/` holds the built tools. The two `nim` paths are Nim's
-          # default per-project cache locations: `~/.cache/nim/<name>_d/` on
-          # POSIX and `~/nimcache/<name>_d/` on Windows (see compiler/options.nim
-          # `getOsCacheDir`). Caching both lets `hastur build all` short-circuit
-          # to a near-no-op when source hasn't changed; on partial hits the
-          # incremental rebuild still benefits from the prior cache.
-          path: |
-            nimony/bin
-            ~/.cache/nim
-            ~/nimcache
-          key: hastur-release-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims') }}
-          restore-keys: |
-            hastur-release-${{ runner.os }}-${{ matrix.target.cpu }}-${{ matrix.target.nim_branch }}-
-
-      - name: Create dist/nimony symlink for Nim compiler
-        shell: bash
-        run: |
-          rm -rf nim/dist/nimony
-          mkdir -p nim/dist
-          ln -sf "${{ github.workspace }}/nimony" nim/dist/nimony
-
-      - name: Test Building nimony
+      - name: Test building nimony (Linux i386)
+        # i386 runs no tests yet (see the tester step below), so without this it
+        # would assert nothing at all. `build all` is the coverage it does have:
+        # that the toolchain still compiles for a 32-bit target.
+        if: matrix.target.cpu == 'i386'
         run: |
           cd nimony
           nim c -r src/hastur --release build all
-
-      - name: Run native backend tests (Linux amd64)
-        # The native path emits a static, libc-free x86-64 ELF — only meaningful on
-        # Linux amd64. `hastur native` builds the front end + arkham/nifasm (from the
-        # sibling `../nativenif` checked out above) and runs the curated regression
-        # set (full ARC suite + closures + cps) through `nimony n`.
-        #
-        # MUST run before the tester: arkham/nifasm are the only tools in `bin/`
-        # that `build all` does not produce (they come from the sibling repo), so
-        # the cache above restores them from an older run keyed only on
-        # `nimony/src/**` — a nativenif change does not invalidate it. `tests/boot`
-        # boots natively whenever they are present, so without this step first it
-        # would boot with a stale arkham.
-        if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
-        run: |
-          cd nimony
-          nim c -r src/hastur --release native
 
       - name: Run tester
         if: matrix.target.cpu != 'i386' # TODO: enables i386
@@ -309,6 +106,89 @@ jobs:
         # Export NIMONY_CC=clang here to exercise the clang-on-MinGW path
         # again; tools/tester.nim then also adds the -fuse-ld=lld that
         # clang's native PE TLS needs (ld.bfd lays out `.tls$` wrong).
+        #
+        # HASTUR_SKIP hands `tests/boot` to the `boot` job below. Unset — as it
+        # is for anyone running `nim c -r tools/tester.nim` locally — the tester
+        # still walks the whole tree, bootstrap included.
+        env:
+          HASTUR_SKIP: tests/boot
         run: |
           cd nimony
           nim c -r tools/tester.nim
+
+  boot:
+    strategy:
+      fail-fast: false
+      max-parallel: 20
+      matrix:
+        branch: [master]
+        # No i386 row: that target runs no tests yet, so there is no bootstrap
+        # to run either. Otherwise this mirrors `build`'s matrix.
+        target:
+          - os: linux
+            cpu: amd64
+            nim_branch: devel
+            builder: ubuntu-24.04
+          - os: linux
+            cpu: arm64
+            nim_branch: devel
+            builder: ubuntu-24.04-arm
+          - os: macos
+            cpu: arm64
+            nim_branch: devel
+            builder: macos-15
+          - os: windows
+            cpu: amd64
+            nim_branch: devel
+            builder: windows-2025
+
+    name: 'boot ${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
+    runs-on: ${{ matrix.target.builder }}
+    env:
+      NIM_DIR: nim-${{ matrix.target.nim_branch }}-${{ matrix.target.cpu }}
+      NIM_BRANCH: ${{ matrix.target.nim_branch }}
+      NIM_ARCH: ${{ matrix.target.cpu }}
+    steps:
+      # A local `uses:` needs the action's file on disk first, and the setup
+      # action itself owns the real checkout (it has to configure `core.autocrlf`
+      # before git touches any source). So fetch just `.github/actions` into a
+      # path of its own — `nimony/` must stay untouched here, or this sparse
+      # config would be what the real checkout inherits.
+      - uses: actions/checkout@v7
+        with:
+          path: ci-actions
+          sparse-checkout: .github/actions
+          sparse-checkout-cone-mode: false
+
+      - uses: ./ci-actions/.github/actions/setup
+        with:
+          cpu: ${{ matrix.target.cpu }}
+          nim_branch: ${{ matrix.target.nim_branch }}
+
+      - name: Run native backend tests (Linux amd64)
+        # The native path emits a static, libc-free x86-64 ELF — only meaningful on
+        # Linux amd64. `hastur native` builds the front end + arkham/nifasm (from the
+        # sibling `../nativenif` checked out above) and runs the curated regression
+        # set (full ARC suite + closures + cps) through `nimony n`.
+        #
+        # It lives in THIS job, and before the bootstrap, because arkham/nifasm are
+        # the only tools in `bin/` that `build all` does not produce (they come from
+        # the sibling repo), so the shared cache restores them from an older run
+        # keyed only on `nimony/src/**` — a nativenif change does not invalidate it.
+        # `tests/boot` boots natively whenever they are present, so without this
+        # step first it would boot with a stale arkham.
+        if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
+        run: |
+          cd nimony
+          nim c -r src/hastur --release native
+
+      - name: Run bootstrap
+        # `hastur tests/boot` is the same suite the tree walk would have reached;
+        # naming it directly is what lets the other job skip it. The toolchain
+        # build is a separate command because `tests/boot/setup.nim` requires a
+        # fully populated `bin/`, and a directly named suite does not run
+        # `tests/setup.hastur` (which is what builds it during a tree walk).
+        run: |
+          cd nimony
+          nim c -r src/hastur --release build all
+          nim c -r src/hastur --release tests/boot

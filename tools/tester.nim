@@ -1,6 +1,6 @@
 # It supports overwriting tested results using `--overwrite`
 
-import std / [os]
+import std / [os, strutils]
 import "../src/lib" / [nifbuilder]
 
 const
@@ -103,6 +103,13 @@ proc hasturTests(overwrite: bool) =
     when defined(windows):
       if cc == "clang":
         args.add " --forward:--passL:-fuse-ld=lld"
+  # HASTUR_SKIP is a `;`-separated list of suites this invocation must leave
+  # alone. CI sets it to `tests/boot` so the bootstrap runs on its own runner
+  # in parallel with everything else (see .github/workflows/ci.yml); unset
+  # locally, so a plain `nim c -r tools/tester.nim` still covers the whole tree.
+  for dir in os.getEnv("HASTUR_SKIP").split(';'):
+    if dir.len > 0:
+      args.add " --skip:" & dir
   if overwrite:
     args.add " --overwrite"
   # GitHub Actions (and most CI) set `CI=true`. Release-built host tools
