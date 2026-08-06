@@ -1002,6 +1002,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     trParams c, dest, n
 
   let pinfo = n.info
+  let procRaises = hasPragma(n, RaisesP)
   let prag = parsePragmas(c, dest, n)
 
   var genPragmas = openGenPragmas()
@@ -1023,6 +1024,21 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if AssemblerP in prag.flags:
     dest.addKey genPragmas, "assembler", pinfo
+
+  if NoreturnP in prag.flags and not procRaises:
+    # Leng has no noreturn pragma of its own; carry the fact as the existing
+    # `(attr "noreturn")`. The C backend renders it `__attribute__((noreturn))`
+    # (a codegen win in its own right), arkham skips unknown pragmas, and the
+    # optimizer's condition-elimination pass reads it to learn facts from the
+    # fall-through of assert/panic guards.
+    #
+    # NOT for `.raises` procs: under goto exceptions a raising "noreturn" proc
+    # (raiseOSError) RETURNS at the Leng level — it hands back an error code
+    # for the caller to propagate. Telling C it never returns made gcc delete
+    # the callers' error paths (a stage-2 boot miscompile), and it would
+    # mislead the fall-through learning the same way. Only a proc that
+    # genuinely diverges — exits or aborts — may carry the attribute.
+    dest.addKeyVal genPragmas, "attr", pool.strings.getOrIncl("noreturn"), pinfo
 
   closeGenPragmas dest, genPragmas
 
