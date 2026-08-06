@@ -1891,16 +1891,14 @@ proc bootCarryTools(): seq[string] =
   result = @BootCarryTools
   if bootNative: result.add BootNativeTools
 
-const NativeBootReady = false
-  ## OFF until nativenif master carries arkham's register-allocator fixes.
-  ## The inter-module inliner honours `.inline` without a size cap, so a
-  ## `.inline` cascade can hand arkham a basic block whose live set exceeds
-  ## what its allocator can place, and stage 1 dies with "no staging register
-  ## available for a spill in proc semBodyCheckBody". That is an arkham bug —
-  ## it must spill, not give up — and it is fixed on nativenif's `araq-oor`
-  ## ("make the transient staging picks total"), not yet on the master CI
-  ## checks out. Flip this back to `true` once it is there; the C-backend boot
-  ## below is the whole self-host gate meanwhile.
+const NativeBootReady = true
+  ## Requires a nativenif checkout whose arkham holds each emit step's demand
+  ## inside the transient-register budget (the `semBodyCheckBody` staging
+  ## exhaustion: binFold's pick-before-premat, emitCondValue2's early result
+  ## hold, and a staging pick blind to a free temp pool). When stage 1 dies
+  ## with "no staging register available", rebuild arkham/nifasm from a
+  ## nativenif master that carries those fixes — or flip this back to `false`
+  ## and the C-backend boot below is the whole self-host gate meanwhile.
 
 proc useNativeBoot(): bool =
   ## linux/amd64 is the platform the native backend is complete on: x86-64

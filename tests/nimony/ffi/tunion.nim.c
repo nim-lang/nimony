@@ -27,6 +27,15 @@
 typedef unsigned char NB8; // best effort
 #endif
 
+/* Assembler-name prefix for `__asm__` symbol labels: Mach-O prepends an
+   underscore to C identifiers, ELF/PE(x64) do not. Used via string-literal
+   concatenation: __asm__(NIM_ASM_PREFIX "write"). */
+#ifdef __APPLE__
+#define NIM_ASM_PREFIX "_"
+#else
+#define NIM_ASM_PREFIX ""
+#endif
+
 typedef unsigned char NC8;
 
 typedef float NF32;
@@ -435,16 +444,17 @@ NB8 X60QiniGuard_0_tun261nex;
 NI32 cmdCount;
 NC8** cmdLine;
 NC8** nimEnviron;
-void X60Qini_0_tun261nex(void){
-  if (X60QiniGuard_0_tun261nex){
-    return;}
-  X60QiniGuard_0_tun261nex = NIM_TRUE;
-  X60Qini_0_sysvq0asl();
-  x_0_tun261nex.c_0 = (NC8)'a';}
 NI32 main(NI32 X60Qargc_0_tun261nex, char** X60Qargv_0_tun261nex, char** X60Qenvp_0_tun261nex){
   cmdCount = X60Qargc_0_tun261nex;
   cmdLine = ((NC8**)X60Qargv_0_tun261nex);
   nimEnviron = ((NC8**)X60Qenvp_0_tun261nex);
-  X60Qini_0_tun261nex();
+  {
+    {
+      if (X60QiniGuard_0_tun261nex){
+        goto returnLabel_0h1;}
+      X60QiniGuard_0_tun261nex = NIM_TRUE;
+      X60Qini_0_sysvq0asl();
+      x_0_tun261nex.c_0 = (NC8)'a';
+      returnLabel_0h1: ;}}
   nimFlushStdStreams();
   return IL64(0);}
