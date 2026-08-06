@@ -178,6 +178,15 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKey genPragmas, "nodecl", pinfo
   if prag.header != StrId(0):
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
+  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
+    # `dynlib` on an importc proc means a STATIC import on every backend: the
+    # decl carries its library as a `(dynlib "…")` pragma — arkham binds it
+    # through the image's import table, the C/LLVM backends emit an ordinary
+    # prototype the linker resolves (every current use is kernel32, which the
+    # toolchain links implicitly). No runtime loader stub is generated;
+    # genuinely optional libraries go through the explicit `loadLib`/`symAddr`
+    # API instead.
+    dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   # Translate gfld to fld for NIFC (NIFC only knows fld):
@@ -966,7 +975,6 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   let procStart = n
   n = sub(n)
   let (s, sinfo) = getSymDef(c, n)
-
   let newSym = s
   dest.addSymDef(s, sinfo)
 
@@ -1038,12 +1046,18 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     skip n
   takeParRi dest, n, procStart
   swap dst, dest
-  if prag.flags * {MagicP, DynlibP} != {} or isGeneric:
+  # On the native backend a `dynlib` importc proc IS emitted — as a static
+  # import decl carrying a `(dynlib …)` pragma (see `externPragmas`) that
+  # arkham binds through the image's import table. The C/LLVM backends keep
+  # the runtime-loader lowering below, which replaces the declaration by a
+  # function-pointer global *of the same symbol*, so there the declaration
+  # must not be emitted or the two would collide.
+  if MagicP in prag.flags or isGeneric or (not c.nativeBackend and DynlibP in prag.flags):
     discard "do not add to dest"
   else:
     dest.add dst
 
-  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
+  if not c.nativeBackend and prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
     # `{.push dynlib: ...}` applies the pragma to *every* proc in scope,
     # including inline helpers that have bodies. Those don't need dynamic
     # symbol loading, and worse, their `prag.extern` is `StrId(0)` which
@@ -2552,13 +2566,25 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   dest.addParLe("call", rootInfo)
   dest.addSymUse(initSym, rootInfo)
   dest.addParRi() # call
-  # (call nimFlushStdStreams) — flush buffered std streams on normal exit, so
-  # output is not lost when `main` returns without going through `quit`. A
-  # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo).
-  dest.addParLe("call", rootInfo)
-  dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
-  dest.addParRi() # call
-  # (ret 0)
+  if c.nativeBackend:
+    # Native image: terminate through system's `cExit(0)` — a DECLARED
+    # cross-module call that flushes the std streams and then reaches
+    # `ExitProcess` (windows) / `_exit` (linux) via the ordinary import
+    # path. The backend synthesizes no process-exit of its own, so it needs
+    # no OS-specific import knowledge for the entry.
+    dest.addParLe("call", rootInfo)
+    dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "cExit")), rootInfo)
+    dest.addIntLit(0, rootInfo)
+    dest.addParRi() # call
+  else:
+    # (call nimFlushStdStreams) — flush buffered std streams on normal exit, so
+    # output is not lost when `main` returns without going through `quit`. A
+    # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo).
+    dest.addParLe("call", rootInfo)
+    dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
+    dest.addParRi() # call
+  # (ret 0) — unreachable on the native path (`cExit` is noreturn), kept for a
+  # well-formed proc body; the C `main` returns normally.
   dest.addParLe("ret", rootInfo)
   dest.addIntLit(0, rootInfo)
   dest.addParRi() # ret
@@ -2686,7 +2712,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n, TraverseAll
         swap dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; isWindows = defined(windows)) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows)) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2701,6 +2727,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     strLitBuf: createTokenBuf(),
     bits: bits,
     bigEndian: bigEndian,
+    nativeBackend: native,
     localDeclCounters: 1000,
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits)
