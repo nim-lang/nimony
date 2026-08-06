@@ -16,15 +16,19 @@ type IoUringBackend* = ref object of Backend
 
 var localQueue {.threadvar.}: Queue
 
-proc tryInitLocalQueue(b: IoUringBackend) =
+proc tryInitLocalQueue(b: IoUringBackend): bool =
   if localQueue.params == nil:
     try:
       localQueue = newQueue(b.sqEntries)
-    except:
-      return
+    except ErrorCode as e:
+      stderr.writeLine("ioring: failed to init io_uring queue: " & $e)
+      return false
+  return true
 
 method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
-  b.tryInitLocalQueue()
+  if not b.tryInitLocalQueue():
+    b.ring.complete(slotIdx, -1)
+    return
   var sqe: nil ptr Sqe
   try:
     sqe = localQueue.getSqe()
@@ -47,7 +51,7 @@ method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
 
 method poll*(b: IoUringBackend; timeoutMs: int): bool =
-  b.tryInitLocalQueue()
+  discard b.tryInitLocalQueue()
   try:
     discard localQueue.submit()
   except:
@@ -77,7 +81,7 @@ method forgetFd*(b: IoUringBackend; fd: cint) =
   ## recycled — best-effort: if there is no room for the cancel SQE right
   ## now we still proceed with the close, we just may leak that one slot
   ## until the kernel completion arrives naturally.
-  b.tryInitLocalQueue()
+  discard b.tryInitLocalQueue()
   try:
     var sqe = localQueue.getSqe()
     if sqe == nil:
@@ -95,16 +99,12 @@ method close*(b: IoUringBackend) =
   # fresh (zero) `Queue` runs `=destroy` on the old value, which unmaps the
   # rings and closes the fd (see `posix/io_uring.=destroy`).
   if localQueue.params != nil:
-    try:
-      localQueue = newQueue(b.sqEntries)
-    except:
-      discard
+    teardown(localQueue)
 
 proc initIoUringBackend*(ring: Ring; sqEntries = 256): Backend =
-  try:
-    localQueue = newQueue(sqEntries)
-    result = IoUringBackend(sqEntries: sqEntries)
-    result.ring = ring
-  except:
+  var backend = IoUringBackend(sqEntries: sqEntries)
+  result = backend
+  result.ring = ring
+  if not tryInitLocalQueue(backend):
     # fallback to epoll
-    result = initEpollBackend(ring)
+    result = initEpollBackend(ring) 

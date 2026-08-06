@@ -534,9 +534,7 @@ proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.
   # if offset.ringEntries <= 0:
   #   raise ERROR_io_uring_not_initializes
 
-# XXX: is it ok that =destroy can raise error?
-proc `=destroy`(queue: Queue) {.tags: [].} =
-  ## tear down the queue
+proc teardown*(queue: var Queue) {.tags: [].} =
   try:
     if queue.fd != 0:
       discard close(queue.fd)
@@ -549,8 +547,13 @@ proc `=destroy`(queue: Queue) {.tags: [].} =
     if queue.params != nil:
       # deallocShared(queue.params)
       dealloc(queue.params)
-  except:
-    discard
+  except ErrorCode as e:
+    stderr.writeLine("io_uring: teardown failed: " & $e)
+  `=wasMoved`(queue)
+
+proc `=destroy`(queue: var Queue) {.tags: [].} =
+  ## tear down the queue
+  teardown(queue)
 
 proc `=wasMoved`(queue: var Queue) {.tags: [].} =
   ## A Queue owns the fd, parameters, and mapped rings. Clear every owner
