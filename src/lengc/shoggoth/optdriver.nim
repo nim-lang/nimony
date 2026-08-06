@@ -26,6 +26,7 @@ import scalarizer                              # runScalarize (object → field 
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
+import branchprune                             # runBranchPrune (constant-branch removal)
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
@@ -67,6 +68,15 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # as untouchable) and for the backends' register allocation.
   if eng != nil:
     runRewritesFix(eng, buf)
+    # The engine folds conditions the inliner's literal arguments made
+    # constant (`(eq (nil) (nil))` → `(true)`, `(not (true))` → `(false)`);
+    # pruning then deletes the decided branches. This pair is what makes
+    # inlining with literal arguments a WIN instead of dead ballast — and a
+    # spliced `if c != nil: …c.f…` with `c := nil` must lose its ill-typed
+    # `(deref (nil))` arm before a typed backend (arkham) sees it. One
+    # refold after a prune catches expressions the deleted branch fed.
+    if runBranchPrune(buf):
+      runRewritesFix(eng, buf)
   # SROA first: fold field projections off inline constructors (`T(f: a).f` → `a`),
   # then explode non-escaping local objects into per-field scalars; copy
   # propagation then cleans up the resulting scalar copies and dead stores, so the
