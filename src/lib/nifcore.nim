@@ -357,7 +357,13 @@ type
     savedRem: int
     bodyLen: int
 
-template decRcAndFree(owner: CursorOwner) =
+proc decRcAndFree(owner: CursorOwner) =
+  ## A proc, NOT a template and deliberately NOT `.inline`: this is the cold
+  ## free path behind every `=destroy`/`=dup` hook. As a template it was
+  ## expanded into the hooks' bodies, so the (correctly) `.inline` hooks
+  ## dragged the whole ORC free machinery into every splice site — the single
+  ## largest source of backend IR blowup. As an out-of-line proc the hooks
+  ## splice as the few tokens they read as: a nil test and a call.
   dec owner.rc
   if owner.rc == 0:
     if owner.data != nil: dealloc(owner.data)
