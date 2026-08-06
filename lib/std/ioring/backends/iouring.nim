@@ -22,10 +22,14 @@ const
   DrainBatch   = 128  ## Max deferred entries drained per poll() call.
 
 type
+  DeferredEntry = object
+    slotIdx: int
+    fd: cint
+
   DeferredQueue = object
     lock: TicketLock
     head, tail, count: int
-    data: array[DeferredSize, int] ## slot indices
+    data: array[DeferredSize, DeferredEntry]
 
   IoUringBackend* = ref object of Backend
     sqEntries: int
@@ -65,7 +69,7 @@ method submit*(b: IoUringBackend; slotIdx: int; op: ptr OpContext) =
   while true:
     acquire(b.deferred.lock)
     if b.deferred.count < DeferredSize:
-      b.deferred.data[b.deferred.tail] = slotIdx
+      b.deferred.data[b.deferred.tail] = DeferredEntry(slotIdx: slotIdx, fd: op.fd)
       b.deferred.tail = (b.deferred.tail + 1) and (DeferredSize - 1)
       inc b.deferred.count
       release(b.deferred.lock)
@@ -89,12 +93,14 @@ method poll*(b: IoUringBackend; timeoutMs: int): bool =
     if b.deferred.count == 0:
       release(b.deferred.lock)
       break
-    let slotIdx = b.deferred.data[b.deferred.head]
+    let entry = b.deferred.data[b.deferred.head]
     b.deferred.head = (b.deferred.head + 1) and (DeferredSize - 1)
     dec b.deferred.count
     release(b.deferred.lock)
     inc drained
-    let op = b.ring.slots.addrSlot(slotIdx)
+    let op = b.ring.slots.addrSlot(entry.slotIdx)
+    if not op.inUse or op.fd != entry.fd:
+      continue
     var sqe: nil ptr Sqe
     try:
       sqe = localQueue.getSqe()
@@ -103,7 +109,7 @@ method poll*(b: IoUringBackend; timeoutMs: int): bool =
       break
     if sqe == nil:
       break
-    sqe.userData = cast[pointer](uint(slotIdx))
+    sqe.userData = cast[pointer](uint(entry.slotIdx))
     fillSqe(sqe, op)
   try:
     discard localQueue.submit()
@@ -127,17 +133,30 @@ method poll*(b: IoUringBackend; timeoutMs: int): bool =
   return true
 
 method forgetFd*(b: IoUringBackend; fd: cint) =
-  discard b.tryInitLocalQueue()
-  try:
-    var sqe = localQueue.getSqe()
-    if sqe == nil:
-      discard localQueue.submit()
-      sqe = localQueue.getSqe()
-    if sqe != nil:
-      discard sqe.cancelFd(FileHandle(fd))
-      discard localQueue.submit()
-  except:
-    discard
+  # Remove pending deferred entries for `fd` from the shared queue so they
+  # are never submitted against a closed (or worse, recycled) fd number.
+  # We cannot issue a kernel cancel because the io_uring instance is
+  # thread-local to whatever thread calls poll() — a cancel SQE submitted
+  # here would target a different ring and never see the actual ops.
+  # Already-submitted ops complete with whatever error the kernel returns
+  # after close(2) (typically -EBADF); poll() silently skips their CQEs
+  # because cancelAllForFd already freed those slots.
+  acquire(b.deferred.lock)
+  var readIdx = b.deferred.head
+  var writeIdx = b.deferred.head
+  var remaining = b.deferred.count
+  while remaining > 0:
+    let entry = b.deferred.data[readIdx]
+    if entry.fd != fd:
+      if writeIdx != readIdx:
+        b.deferred.data[writeIdx] = entry
+      writeIdx = (writeIdx + 1) and (DeferredSize - 1)
+    else:
+      dec b.deferred.count
+    readIdx = (readIdx + 1) and (DeferredSize - 1)
+    dec remaining
+  b.deferred.tail = writeIdx
+  release(b.deferred.lock)
 
 method close*(b: IoUringBackend) =
   if localQueue.params != nil:

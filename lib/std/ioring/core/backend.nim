@@ -37,7 +37,7 @@ method close*(b: Backend) {.base.} =
 method forgetFd*(b: Backend; fd: cint) {.base.} =
   ## Drop any backend-side per-fd registration/bookkeeping before a fd is
   ## closed (e.g. epoll's ADD/MOD tracking). `nil` for backends where the
-  ## OS already tears this down on close (kqueue, io_uring) — callers
+  ## OS already tears this down on close (kqueue) — callers
   ## must nil-check before calling.
   discard
 
