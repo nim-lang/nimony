@@ -1051,11 +1051,16 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   else:
     dest.add dst
 
-  # (The runtime-loader lowering for `dynlib` importc procs — a fn-pointer
-  # global resolved through nimLoadLibrary/nimGetProcAddr in the module init —
-  # is gone: every `dynlib` importc is a static import now, so `c.dynlibs` is
-  # never populated and `emitDynlibs` emits nothing. The machinery stays for a
-  # future genuinely-dynamic annotation.)
+  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
+    # `{.push dynlib: ...}` applies the pragma to *every* proc in scope,
+    # including inline helpers that have bodies. Those don't need dynamic
+    # symbol loading, and worse, their `prag.extern` is `StrId(0)` which
+    # later crashes `initDynlib`'s `pool.strings[val]` lookup. Only emit
+    # the dynlib loader stub for procs that actually pull a symbol out of
+    # the shared library, i.e. importc/importcpp-marked ones.
+    let typeSym = buildProcType(c, dest, thisProc)
+
+    c.dynlibs.mgetOrPut(prag.dynlib, @[]).add (newSym, prag.extern, typeSym)
 
   c.typeCache.closeScope()
   c.resultSym = oldResultSym
