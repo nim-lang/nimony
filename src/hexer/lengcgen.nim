@@ -178,11 +178,12 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKey genPragmas, "nodecl", pinfo
   if prag.header != StrId(0):
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
-  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
-    # `dynlib` on an importc proc means a STATIC import on the native backend:
-    # the decl carries its library as a `(dynlib "…")` pragma — arkham binds it
-    # through the image's import table. The C/LLVM backends ignore the pragma
-    # (they use the runtime-loader lowering in `trProc` instead).
+  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {} and
+      c.nativeBackend and c.dynlibIsStaticImport:
+    # Only the native Windows target carries the library name into Leng, because
+    # only it has to build the import table itself. Every other combination
+    # either has a linker to do that or uses the runtime loader — see
+    # `dynlibIsStaticImport` for the whole matrix.
     dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -1043,18 +1044,17 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     skip n
   takeParRi dest, n, procStart
   swap dst, dest
-  # On the native backend a `dynlib` importc proc IS emitted — as a static
-  # import decl carrying a `(dynlib …)` pragma (see `externPragmas`) that
-  # arkham binds through the image's import table. The C/LLVM backends keep
-  # the runtime-loader lowering below, which replaces the declaration by a
-  # function-pointer global *of the same symbol*, so there the declaration
-  # must not be emitted or the two would collide.
-  if MagicP in prag.flags or isGeneric or (not c.nativeBackend and DynlibP in prag.flags):
+  # A `dynlib` importc proc IS declared unless the runtime loader is taking it
+  # over: that lowering replaces the declaration by a function-pointer global
+  # *of the same symbol*, so emitting both would collide. Where the symbol is a
+  # static import instead — the native image's own import table, or a linker
+  # resolving it from the import library — the declaration is what carries it.
+  if MagicP in prag.flags or isGeneric or (c.usesRuntimeDynlibLoader and DynlibP in prag.flags):
     discard "do not add to dest"
   else:
     dest.add dst
 
-  if not c.nativeBackend and prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
+  if c.usesRuntimeDynlibLoader and prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
     # `{.push dynlib: ...}` applies the pragma to *every* proc in scope,
     # including inline helpers that have bodies. Those don't need dynamic
     # symbol loading, and worse, their `prag.extern` is `StrId(0)` which
@@ -2725,6 +2725,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     bits: bits,
     bigEndian: bigEndian,
     nativeBackend: native,
+    isWindows: isWindows,
     localDeclCounters: 1000,
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits)
