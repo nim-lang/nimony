@@ -161,7 +161,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc envTypeForProc(c: var Context; procId: SymId): SymId =
   let s = extractVersionedBasename(pool.syms[procId])
-  result = pool.syms.getOrIncl(s & ".env." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(derivedName(s, "env") & "." & c.thisModuleSuffix)
 
 proc localToField(c: var Context; n: Cursor; local, typ: SymId): SymId =
   if c.localToEnv.hasKey(local):

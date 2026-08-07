@@ -53,11 +53,9 @@ type
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
-proc computeVTableName(c: var Context; cls: SymId; middle = ".vt."): SymId =
-  var clsName = splitSymName pool.syms[cls]
-  clsName.name.add middle
-  clsName.name.add clsName.module
-  result = pool.syms.getOrIncl(clsName.name)
+proc computeVTableName(c: var Context; cls: SymId; tag = "vt"): SymId =
+  let clsName = splitSymName pool.syms[cls]
+  result = pool.syms.getOrIncl(derivedName(clsName.name, tag) & "." & clsName.module)
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
   if c.vtableNames.hasKey(cls):
@@ -781,7 +779,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
     if vtab.state != Mine: continue
     var displayName = SymId(0)
     if vtab.display.len > 0:
-      displayName = computeVTableName(c, cls, ".dy.")
+      displayName = computeVTableName(c, cls, "dy")
       dest.copyIntoKind ConstS, NoLineInfo:
         dest.addSymDef displayName, NoLineInfo
         dest.addIdent "x", NoLineInfo # export the vtable!

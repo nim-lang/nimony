@@ -179,13 +179,13 @@ proc coroNameStem*(procId: SymId): string =
   splitSymName(pool.syms[procId]).name
 
 proc coroTypeForProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(coroNameStem(procId) & ".coro." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "coro") & "." & c.thisModuleSuffix)
 
 proc coroWrapperProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(coroNameStem(procId) & ".init." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "init") & "." & c.thisModuleSuffix)
 
 proc stateToProcName*(c: Context; sym: SymId; state: int): SymId =
-  result = pool.syms.getOrIncl(coroNameStem(sym) & ".s" & $state & "." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(derivedName(coroNameStem(sym), "s" & $state) & "." & c.thisModuleSuffix)
 
 proc localToFieldname*(c: var Context; local: SymId): SymId =
   var name = pool.syms[local]
@@ -205,14 +205,14 @@ proc coroWrapperForExternIter*(iterSym: SymId): SymId =
   ## generic instances so two instantiations don't collide on a single
   ## wrapper.
   let split = splitSymName(pool.syms[iterSym])
-  result = pool.syms.getOrIncl(split.name & ".init." & split.module)
+  result = pool.syms.getOrIncl(derivedName(split.name, "init") & "." & split.module)
 
 proc coroTypeForExternIter*(iterSym: SymId): SymId =
   ## Same idea as `coroWrapperForExternIter` but for the coroutine
   ## frame type — uses the iter's OWN module suffix so cross-module
   ## iter values reference the right `.coro` type.
   let split = splitSymName(pool.syms[iterSym])
-  result = pool.syms.getOrIncl(split.name & ".coro." & split.module)
+  result = pool.syms.getOrIncl(derivedName(split.name, "coro") & "." & split.module)
 
 proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
   ## Publish a placeholder signature for an iter's init wrapper so
@@ -234,7 +234,7 @@ proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
   let split = splitSymName(pool.syms[iterSym])
   if split.module != moduleSuffix:
     return  # foreign iter — wrapper published by its own module
-  let wrapperSym = pool.syms.getOrIncl(split.name & ".init." & split.module)
+  let wrapperSym = pool.syms.getOrIncl(derivedName(split.name, "init") & "." & split.module)
   if tryLoadSym(wrapperSym).status == LacksNothing:
     return  # already published (e.g. by an earlier corofor for the
             # same iter, or by a previous compile)
