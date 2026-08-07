@@ -40,6 +40,18 @@ proc shutdown*() =
 proc nextSeqNum(): SeqNum =
   SeqNum(atomicFetchAdd(gNextSeq, 1'u32, moRelaxed))
 
+proc submitNop*(cont = Continuation(fn: nil, env: nil);
+                resPtr: nil ptr int = nil): SeqNum =
+  result = nextSeqNum()
+  let idx = gSlots.allocSlot(-1)
+  let op = gSlots.addrSlot(idx)
+  op.kind = opNop
+  op.fd = -1
+  op.seqnum = result
+  op.cont = cont
+  op.res = cast[int](resPtr)
+  backendRelays.submit(idx, op)
+
 proc submitRead*(fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =

@@ -63,6 +63,8 @@ when defined(posix):
             var addrLen = s.acceptLen
             let clientFd = posixAccept(fd, addr s.acceptAddr, addr addrLen)
             complete(j, if clientFd >= 0: clientFd else: -1)
+        of opNop:
+          discard
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
     var armMask = 0

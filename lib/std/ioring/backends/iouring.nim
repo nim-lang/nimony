@@ -18,7 +18,7 @@ import ../core/backend
 from ./epoll import initEpollBackendRelays
 
 const
-  DeferredSize = 4096 ## Must be a power of 2.
+  DeferredSize = 262144 ## Must be a power of 2.
   DrainBatch   = 128  ## Max deferred entries drained per poll() call.
 
 type
@@ -55,6 +55,8 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
       discard sqe.write(op.fd, cast[pointer](op.buf), op.len)
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
+  of opNop:
+    discard sqe.nop()
 
 proc iouringSubmit(slotIdx: int; op: ptr OpContext) {.nimcall.} =
   # Enqueue onto the shared deferred queue so that poll() — which runs on

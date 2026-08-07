@@ -3,7 +3,7 @@ import std/posix/posix
 
 type
   IoOp* = enum
-    opRead, opWrite, opAccept
+    opNop, opRead, opWrite, opAccept
 
   SeqNum* = uint32
 
