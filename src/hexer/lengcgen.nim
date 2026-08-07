@@ -179,13 +179,10 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
   if prag.header != StrId(0):
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
   if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
-    # `dynlib` on an importc proc means a STATIC import on every backend: the
-    # decl carries its library as a `(dynlib "…")` pragma — arkham binds it
-    # through the image's import table, the C/LLVM backends emit an ordinary
-    # prototype the linker resolves (every current use is kernel32, which the
-    # toolchain links implicitly). No runtime loader stub is generated;
-    # genuinely optional libraries go through the explicit `loadLib`/`symAddr`
-    # API instead.
+    # `dynlib` on an importc proc means a STATIC import on the native backend:
+    # the decl carries its library as a `(dynlib "…")` pragma — arkham binds it
+    # through the image's import table. The C/LLVM backends ignore the pragma
+    # (they use the runtime-loader lowering in `trProc` instead).
     dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
