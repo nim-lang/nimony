@@ -1472,52 +1472,6 @@ proc condVal(n: Cursor): CondVal =
             result = (if l == condTrue or r == condTrue: condTrue else: condFalse)
   else: discard
 
-type
-  PruneCtx = object
-    symUses: Table[SymId, int]  ## splice-wide Symbol use counts, for label
-                                ## pinning; left empty when the splice holds
-                                ## no `(lab …)` at all (the common case)
-
-proc hasLabelDef(n: Cursor): bool =
-  ## Any `(lab …)` in the subtree — the trigger for building the pinning
-  ## context at all.
-  if not n.isTagLit: return false
-  if n.stmtKind == LabS: return true
-  result = false
-  var it = n.childCursor
-  while it.hasMore:
-    if hasLabelDef(it): return true
-    skip it
-
-proc collectSymUses(c: var Cursor; uses: var Table[SymId, int]) =
-  case c.kind
-  of Symbol:
-    uses.mgetOrPut(c.symId, 0) += 1
-    inc c
-  of TagLit:
-    c.into:
-      while c.hasMore:
-        collectSymUses(c, uses)
-  else:
-    inc c
-
-proc collectBranchLabels(c: var Cursor; localUses: var Table[SymId, int];
-                         defs: var seq[SymId]) =
-  case c.kind
-  of Symbol:
-    localUses.mgetOrPut(c.symId, 0) += 1
-    inc c
-  of TagLit:
-    if c.stmtKind == LabS:
-      var lc = c
-      inc lc                              # into the lab: at the symbol def
-      if lc.kind == SymbolDef: defs.add lc.symId
-    c.into:
-      while c.hasMore:
-        collectBranchLabels(c, localUses, defs)
-  else:
-    inc c
-
 proc hasAnyDef(n: Cursor): bool =
   ## Any SymbolDef in the subtree: a `(lab :L)` someone may jump to, or a
   ## `(var :v …)` declaration later reachable code may reference. Either
@@ -1534,26 +1488,7 @@ proc hasAnyDef(n: Cursor): bool =
   else:
     result = false
 
-proc branchPinned(px: PruneCtx; branch: Cursor): bool =
-  ## Does the branch define a `(lab :name)` some OUTSIDE code jumps to? Such
-  ## a branch is reachable however its guard folds: hexer's try/except
-  ## lowering parks the handler in an `(elif (false) (stmts (lab :`exlab.N)
-  ## …))` entered only via `(jmp …)` from the try body, so "guard is (false)"
-  ## does NOT mean "dead" for it. A label whose every use sits INSIDE the
-  ## branch (this inliner's own returnLabel: `(jmp L)` + trailing `(lab :L)`
-  ## in the same spliced body) pins nothing — the branch takes the label and
-  ## its jumps with it. Compares the branch's own use counts against the
-  ## splice-wide ones collected up front.
-  var localUses = initTable[SymId, int]()
-  var defs: seq[SymId] = @[]
-  var c = branch
-  collectBranchLabels(c, localUses, defs)
-  for L in defs:
-    if px.symUses.getOrDefault(L, 0) > localUses.getOrDefault(L, 0):
-      return true                         # someone outside jumps in
-  false
-
-proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
+proc emitPruned(dest: var TokenBuf; n: var Cursor) =
   ## Copy one subtree, deleting every `(elif …)` arm whose guard `condVal`
   ## decided. This is a CORRECTNESS duty, not an optimization: the false arm
   ## of a spliced body may no longer type-check at all — `if c != nil: …c.f…`
@@ -1561,8 +1496,13 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
   ## backend (arkham) must never see it, so the splice that manufactured the
   ## constant guard deletes the arm too. An `(elif (true) …)` arm demotes to
   ## the `if`'s final `(else …)` (the arms after it can never run); an `if`
-  ## with no live arm left contributes its `else` body, or nothing. A pinned
-  ## branch (see `branchPinned`) bails the whole `if` out to a verbatim copy.
+  ## with no live arm left contributes its `else` body, or nothing.
+  ##
+  ## A decided arm may be deleted with its labels: a jmp into a sibling
+  ## branch is not part of the final IR (try/except lowers to a FLAT goto
+  ## sequence), so any `(lab …)` inside the arm is jumped to only from
+  ## inside it — this inliner's own returnLabel pattern — and the arm takes
+  ## the label and its jumps with it.
   case n.kind
   of TagLit:
     if n.stmtKind == IfS:
@@ -1573,22 +1513,17 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
       var takenIsElif = false
       var haveTaken = false
       var dropped = false                 # anything decided at all?
-      var bailout = false                 # a to-be-dropped branch is pinned
       var probe = n
       probe.into:
         while probe.hasMore:
           let sk = probe.substructureKind
           if haveTaken:
-            # Dead branch after a taken one — droppable only when no outside
-            # code jumps into it.
-            if px.branchPinned(probe): bailout = true
-            dropped = true
+            dropped = true                # dead branch after a taken one
           elif sk == ElifU:
             case condVal(probe.childCursor)
             of condTrue:
               taken = probe; takenIsElif = true; haveTaken = true; dropped = true
             of condFalse:
-              if px.branchPinned(probe): bailout = true
               dropped = true
             of condUnknown:
               kept.add probe
@@ -1597,13 +1532,13 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
           else:
             kept.add probe                # unexpected shape: keep verbatim
           skip probe
-      if bailout or not dropped:
+      if not dropped:
         # Nothing decided at this level: keep the `if`, but still recurse
         # into the branch bodies (they may contain prunable ifs).
         dest.addParLe(n.cursorTagId, n.info)
         n.into:
           while n.hasMore:
-            emitPruned(px, dest, n)
+            emitPruned(dest, n)
         dest.addParRi()
         return
       if kept.len == 0:
@@ -1614,7 +1549,7 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
           b.into:
             if takenIsElif and b.hasMore: skip b    # past the guard
             while b.hasMore:
-              emitPruned(px, dest, b)
+              emitPruned(dest, b)
         skip n
         return
       # Some undecided elifs survive: rebuild the `if` from them, a taken
@@ -1625,7 +1560,7 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
         dest.addParLe(a.cursorTagId, a.info)
         a.into:
           while a.hasMore:
-            emitPruned(px, dest, a)
+            emitPruned(dest, a)
         dest.addParRi()
       if haveTaken:
         let btag = (if takenIsElif: TagId(ElseU) else: taken.cursorTagId)
@@ -1634,7 +1569,7 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
         b.into:
           if takenIsElif and b.hasMore: skip b      # past the guard
           while b.hasMore:
-            emitPruned(px, dest, b)
+            emitPruned(dest, b)
         dest.addParRi()
       dest.addParRi()
       skip n
@@ -1659,7 +1594,7 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
             skip n                          # dead: drop
           else:
             if unreachable: unreachable = false
-            emitPruned(px, dest, n)
+            emitPruned(dest, n)
             if sk in {JmpS, RetS}: unreachable = true
       dest.addParRi()
     elif n.stmtKind == NoStmt and n.substructureKind == NoSub:
@@ -1669,31 +1604,17 @@ proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
       dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
-          emitPruned(px, dest, n)
+          emitPruned(dest, n)
       dest.addParRi()
   else:
     dest.takeTree n
 
 proc prunedInto(dest: var TokenBuf; expanded: var TokenBuf) =
   ## Emit every top-level subtree of `expanded` into `dest` with the decided
-  ## `if` arms deleted (`emitPruned`). The label-pinning use counts are built
-  ## only when the splice contains a `(lab …)` at all — the common splice has
-  ## none and skips that walk.
-  var px = PruneCtx(symUses: initTable[SymId, int]())
-  var scan = beginRead(expanded)
-  var labs = false
-  while scan.hasMore:
-    if hasLabelDef(scan): labs = true
-    skip scan
-  endRead(scan)
-  if labs:
-    var uc = beginRead(expanded)
-    while uc.hasMore:
-      collectSymUses(uc, px.symUses)
-    endRead(uc)
+  ## `if` arms deleted (`emitPruned`).
   var pruner = beginRead(expanded)
   while pruner.hasMore:
-    emitPruned(px, dest, pruner)
+    emitPruned(dest, pruner)
   endRead(pruner)
 
 # ---- Same-module inliner pass (called from hexer.nim) ----
