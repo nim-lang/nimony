@@ -95,7 +95,7 @@ type
 
   InnerSqeCmd* {.union.} = object
     addr3* {.importc: "addr3".}: nil pointer
-    pad2* {.importc: "__pad2".}: array[1, uint64]
+    pad2* {.importc: "__pad2".}: array[2, uint64]
     cmd* {.importc: "cmd".}: uint8
   
   Op* {.size: sizeof(uint8).} = enum
@@ -534,27 +534,35 @@ proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.
   # if offset.ringEntries <= 0:
   #   raise ERROR_io_uring_not_initializes
 
-# XXX: is it ok that =destroy can raise error?
-proc `=destroy`(queue: Queue) {.raises, tags: [].} =
+proc teardown*(queue: var Queue) {.tags: [].} =
+  try:
+    if queue.fd != 0:
+      discard close(queue.fd)
+    if queue.cq.ring != nil:
+      uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
+    if queue.sq.ring != nil:
+      uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
+    if queue.sq.sqes != nil:
+      uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
+    if queue.params != nil:
+      # deallocShared(queue.params)
+      dealloc(queue.params)
+  except ErrorCode as e:
+    stderr.writeLine("io_uring: teardown failed: " & $e)
+  `=wasMoved`(queue)
+
+proc `=destroy`(queue: var Queue) {.tags: [].} =
   ## tear down the queue
-  if queue.fd != 0:
-    discard close(queue.fd)
-  if queue.cq.ring != nil:
-    uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
-  if queue.sq.ring != nil:
-    uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
-  if queue.sq.sqes != nil:
-    uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
-  if queue.params != nil:
-    # deallocShared(queue.params)
-    dealloc(queue.params)
+  teardown(queue)
 
-proc `=sink`(dest: var Queue, source: Queue) =
-  # avoid unmapping uring object after moving
-  copyMem(dest.addr, source.addr, sizeof Queue)
-
-proc `=copy`(dest: var Queue; source: Queue) {.error: "Queue can has only one owner".}
-
+proc `=wasMoved`(queue: var Queue) {.tags: [].} =
+  ## A Queue owns the fd, parameters, and mapped rings. Clear every owner
+  ## field after moving it so the temporary value cannot tear down the queue.
+  queue.params = nil
+  queue.fd = 0
+  queue.cq.ring = nil
+  queue.sq.ring = nil
+  queue.sq.sqes = nil
 proc isPowerOfTwo(x: int): bool = (x != 0) and ((x and (x - 1)) == 0)
 
 proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;
@@ -991,6 +999,14 @@ proc link_timeout*(sqe: ptr Sqe; ts: Timespec; flags: TimeoutFlags): ptr Sqe =
 proc cancel*[T: SomeNumber | pointer](sqe: ptr Sqe; cancelUserData: T; flags: uint32): ptr Sqe =
   sqe.opFlags.cancelFlags = flags
   sqe.prepRw(OP_ASYNC_CANCEL, -1.cint, cancelUserData, 0, 0)
+
+proc cancelFd*(sqe: ptr Sqe; fd: FileHandle): ptr Sqe =
+  ## Cancel every still-in-flight op submitted against `fd` (IORING_ASYNC_CANCEL_FD),
+  ## as opposed to `cancel`, which matches a single op by its user_data. Used
+  ## when a fd is being closed so the kernel does not later complete into a
+  ## slot index that the arena has since freed and reused for something else.
+  sqe.opFlags.cancelFlags = 1'u32 shl ord(ASYNC_CANCEL_FD)
+  sqe.prepRw(OP_ASYNC_CANCEL, fd, 0, 0, 0)
 
 proc shutdown*(sqe: ptr Sqe; sockfd: FileHandle; how: uint32): ptr Sqe =
   sqe.prepRw(OP_SHUTDOWN, sockfd, 0, how.int, 0)

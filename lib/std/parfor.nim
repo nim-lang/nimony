@@ -51,23 +51,15 @@ type
     remaining*: int   ## accessed atomically
 
 # --- one-time pool bootstrap ----------------------------------------------
-
-var poolState: int
-  ## 0 = uninitialised, 1 = initialising, 2 = ready. Accessed atomically so the
-  ## first parallel-for from any thread starts the pool exactly once.
+#
+# `||` shares the process-wide `std/threadpool.initPool()`. initPool is
+# a lazy singleton so subsequent calls are a no-op.
 
 proc ensureParPool*() =
-  ## Start the worker pool the first time a parallel `for` runs. Idempotent and
-  ## thread-safe: concurrent first-callers race through a CAS, the loser spins
-  ## until the winner has finished `initPool`.
-  if atomicLoad(poolState, moAcquire) == 2: return
-  var expected = 0
-  if atomicCompareExchange(poolState, expected, 1):
-    initPool()
-    atomicStore(poolState, 2, moRelease)
-  else:
-    while atomicLoad(poolState, moAcquire) != 2:
-      discard
+  ## Start the worker pool the first time a parallel `for` runs (idempotent —
+  ## `defaultPool()` is itself a lazy singleton, so subsequent calls, from
+  ## this module or any other caller of `defaultPool()`, are a no-op).
+  initPool()
 
 # --- range chunking --------------------------------------------------------
 

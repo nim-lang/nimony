@@ -16,7 +16,7 @@ type
 proc incStep(coro: ptr CoroutineBase): Continuation {.nimcall.} =
   let self = cast[ptr IncFrame](coro)
   discard atomicFetchAdd(counter, self.amount, moRelaxed)
-  discard atomicFetchAdd(done, 1, moRelaxed)
+  discard atomicFetchAdd(done, 1, moRelease)
   result = Continuation(fn: nil, env: nil)
 
 proc main =
@@ -32,7 +32,7 @@ proc main =
     submit(cont, hint = i)
 
   # Spin until all tasks complete.
-  while atomicLoad(done, moRelaxed) < NumTasks:
+  while atomicLoad(done, moAcquire) < NumTasks:
     discard
 
   shutdownPool()
