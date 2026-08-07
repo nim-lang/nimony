@@ -7,7 +7,7 @@
 # A Task wraps a Continuation plus metadata. The pool schedules Tasks;
 # the worker trampolines the inner continuation.
 
-import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks]
+import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks, cpuinfo]
 
 when not defined(windows):
   import std/posix/posix
@@ -18,7 +18,6 @@ else:
 const
   StripeCount* = 8    ## Must be a power of 2.
   StripeSize*  = 128  ## Tasks per stripe; must be a power of 2.
-  WorkerCount* = 8
   MaxIoEvents  = 64
   BulkSize*    = 16   ## Max tasks drained per bulk dequeue.
 
@@ -48,8 +47,9 @@ proc poolPollIo*(timeoutMs: int): bool {.nimcall.} =
 
 var
   stripes: array[StripeCount, Stripe]
-  workers: array[WorkerCount, RawThread]
+  workers: seq[RawThread]
   stopFlag: bool # accessed atomically
+  workerCount* = 0
   gReactor*: proc(timeoutMs: int): bool {.nimcall.} = poolPollIo
 
 # --- Submit / dequeue ---
@@ -176,10 +176,12 @@ proc workerLoop(arg: pointer) {.nimcall.} =
 var poolState: int
 
 proc initPool*() =
-  if atomicLoad(poolState, moAcquire) == 2: return
+  if atomicLoad(poolState, moAcquire) == 2 or workerCount > 0: return
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
-    for i in 0 ..< WorkerCount:
+    workerCount = max(1, cpuinfo.countProcessors() - 1)
+    workers.setLen(workerCount)
+    for i in 0 ..< workerCount:
       try:
         create workers[i], workerLoop, cast[pointer](i)
       except:
@@ -194,5 +196,5 @@ proc stopped*(): bool {.inline.} =
 
 proc shutdownPool*() =
   atomicStore(stopFlag, true, moRelaxed)
-  for i in 0 ..< WorkerCount:
+  for i in 0 ..< workerCount:
     workers[i].join()
