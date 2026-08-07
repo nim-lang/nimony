@@ -59,6 +59,10 @@ Commands:
   native               run the curated native-backend regression set through
                        `nimony n` (arkham + nifasm, from the sibling
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
+  wasmdiff             differential harness: run every `tests/ithaqua/*.nim`
+                       through BOTH the native backend (arkham, the oracle)
+                       and the wasm backend (ithaqua) and require matching
+                       stdout + exit code. Needs the sibling `../nativenif`.
   lengc                 run Leng tests.
   test <file>/<dir>    run a single test <file>, or a flat <dir> of tests.
   joined <dir>         run <dir>'s joinable tests as ONE program (see
@@ -1636,6 +1640,13 @@ proc buildNifasm(showProgress = false) =
   ## linker) — sibling repo, same assume-exists arrangement as `buildArkham`.
   exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
 
+proc buildIthaqua(showProgress = false) =
+  ## `ithaqua` (Leng -> wasm32 codegen) — sibling `../nativenif` repo, same
+  ## assume-exists, sibling-relative `nim.cfg` arrangement as `buildArkham`.
+  ## Only the `wasmdiff` differential harness needs it, so it stays off the
+  ## default build the way arkham/nifasm do.
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/ithaqua/ithaqua.nim", showProgress
+
 proc buildHexer*(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
   let exe = "hexer".addFileExt(ExeExt)
@@ -1859,6 +1870,159 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
     quit "FAILURE: Some native-codegen tests failed."
+  else:
+    echo "SUCCESS."
+
+proc soleNimcacheSubdir(nimcache: string): string =
+  ## A single `nimony` build drops exactly one module-hash directory inside the
+  ## `--nimcache` it was given. Return it (empty if none / more than one, which
+  ## the caller treats as a failed compile). Each `wasmdiff` leg gets its own
+  ## `--nimcache` dir precisely so this stays unambiguous — the subdir name is
+  ## the module suffix we also use to locate the emitted `<hash>.c.nif` and the
+  ## native exe.
+  result = ""
+  if not dirExists(nimcache): return
+  var count = 0
+  for x in walkDir(nimcache):
+    if x.kind == pcDir:
+      result = x.path
+      inc count
+  if count != 1: result = ""
+
+proc runFixtureProgram(cmd: string; secs: int): tuple[output: string, exitCode: int, timedOut: bool] =
+  ## Run a compiled fixture (the native ELF, or `node out.wasm`) capturing its
+  ## stdout ONLY (`options={}` leaves stderr on hastur's own stderr), so the
+  ## comparison is over real program output rather than merged streams. A
+  ## MISCOMPILED wasm program can loop forever, so the run is wrapped in the
+  ## `timeout` coreutil when it's on PATH: exit 124 then means it was killed for
+  ## exceeding `secs` and is reported as a hang, never as matching output.
+  let killer = findExe("timeout")
+  let wrapped =
+    if killer.len > 0: killer.quoteShell & " " & $secs & " " & cmd
+    else: cmd
+  let (outp, ec) = execCmdEx(wrapped, options = {})
+  result = (outp, ec, killer.len > 0 and ec == 124)
+
+proc wasmdiffCmd() =
+  ## Differential test harness: the C-free NATIVE backend (arkham/nifasm) is the
+  ## executable ORACLE the WASM backend (ithaqua) is checked against. Each fixture
+  ## `tests/ithaqua/*.nim` is the SAME source pushed through both pipelines; their
+  ## stdout must match byte-for-byte and their exit codes must agree.
+  ##
+  ##   native leg: `nimony n <f>` → static libc-free ELF at
+  ##               `<nc>/<hash>/<stem>`; run it, capture stdout + exit.
+  ##   wasm leg:   `nimony w --out:<work>/out.wasm <f>` (the real driver path:
+  ##               hexer → dce → ithaqua orchestrated by nifmake), then
+  ##               `node tests/ithaqua/run_wasm.js out.wasm`; capture stdout + exit.
+  ##
+  ## Isolation is per-leg via a distinct `--nimcache` dir. (The historical
+  ## path-length sensitivity that once forced repo-root invocation was the
+  ## standalone-heap page-alignment bug, fixed in osalloc — the harness now
+  ## also runs correctly from scratch cwds, but per-leg nimcache isolation
+  ## is kept: two legs must never share module caches.)
+  if not skipBuild:
+    buildNimony()
+    buildHexer()
+    buildShoggoth()
+    buildArkham()
+    buildNifasm()
+    buildIthaqua()
+  let dir = "tests/ithaqua"
+  let nimony = binDir() / "nimony".addFileExt(ExeExt)
+  let runnerJs = dir / "run_wasm.js"
+  let nodeExe = findExe("node")
+  if nodeExe.len == 0:
+    quit "wasmdiff: `node` not found on PATH (needed to run the wasm leg)"
+  if not fileExists(runnerJs):
+    quit "wasmdiff: missing node host shim " & runnerJs
+
+  var files: seq[string] = @[]
+  for x in walkDir(dir):
+    if x.kind == pcFile and x.path.endsWith(".nim") and
+       x.path.extractFilename != "setup.nim":
+      files.add x.path
+  sort files
+  if files.len == 0:
+    quit "wasmdiff: no fixtures found under " & dir
+
+  let workBase = getTempDir() / "hastur-wasmdiff"
+  removeDir workBase
+  let t0 = epochTime()
+  var failures = 0
+  for file in files:
+    let stem = file.splitFile.name
+    var failMsg = ""
+
+    # --- native leg (the oracle) ------------------------------------------
+    let nativeNc = workBase / stem / "native-nc"
+    createDir nativeNc
+    let (nCompOut, nCompEc) = execCmdEx(
+      nimony.quoteShell & " n --nimcache:" & nativeNc.quoteShell & " " &
+        file.quoteShell)
+    var nativeOut = ""
+    var nativeEc = 0
+    var nativeOk = false
+    if nCompEc != 0:
+      failMsg = "native compile failed (exit " & $nCompEc & "):\n" & nCompOut
+    else:
+      let sub = soleNimcacheSubdir(nativeNc)
+      let exe = sub / stem.addFileExt(ExeExt)
+      if sub.len == 0 or not fileExists(exe):
+        failMsg = "native exe not found under " & nativeNc
+      else:
+        let (o, ec, timedOut) = runFixtureProgram(exe.quoteShell, 30)
+        if timedOut:
+          failMsg = "native oracle timed out (>30s) — bad fixture, not a diff"
+        else:
+          nativeOut = o
+          nativeEc = ec
+          nativeOk = true
+
+    # --- wasm leg ---------------------------------------------------------
+    var wasmOut = ""
+    var wasmEc = 0
+    var wasmOk = false
+    if nativeOk:
+      let wasmNc = workBase / stem / "wasm-nc"
+      createDir wasmNc
+      let outWasm = workBase / stem / "out.wasm"
+      let (wCompOut, wCompEc) = execCmdEx(
+        nimony.quoteShell & " w --nimcache:" & wasmNc.quoteShell &
+          " --out:" & outWasm.quoteShell & " " & file.quoteShell)
+      if wCompEc != 0 or not fileExists(outWasm):
+        failMsg = "wasm compile failed (exit " & $wCompEc & "):\n" & wCompOut
+      else:
+        let (o, ec, timedOut) = runFixtureProgram(
+          nodeExe.quoteShell & " " & runnerJs.quoteShell & " " &
+            outWasm.quoteShell, 15)
+        if timedOut:
+          failMsg = "wasm execution timed out (>15s) — likely an infinite " &
+            "loop in miscompiled wasm"
+        else:
+          wasmOut = o
+          wasmEc = ec
+          wasmOk = true
+
+    # --- compare ----------------------------------------------------------
+    if failMsg.len == 0 and nativeOk and wasmOk:
+      if nativeOut != wasmOut:
+        failMsg = "stdout mismatch\n" &
+          "--- native (oracle) ---\n" & nativeOut &
+          "--- wasm ---\n" & wasmOut & "---\n"
+      elif nativeEc != wasmEc:
+        failMsg = "exit-code mismatch: native " & $nativeEc & " vs wasm " & $wasmEc
+
+    if failMsg.len == 0:
+      echo "PASS ", file
+    else:
+      echo "FAIL ", file
+      echo failMsg
+      inc failures
+
+  echo files.len - failures, " / ", files.len, " wasmdiff fixtures matched in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if failures > 0:
+    quit "FAILURE: " & $failures & " wasmdiff fixture(s) differ."
   else:
     echo "SUCCESS."
 
@@ -2804,6 +2968,11 @@ proc handleCmdLine =
     buildArkham()
     buildNifasm()
     nativetests(overwrite)
+  of "wasmdiff":
+    # Differential harness: native backend (arkham) as the oracle for the wasm
+    # backend (ithaqua). Builds both toolchains, then diffs stdout + exit code
+    # of every `tests/ithaqua/*.nim` fixture across the two pipelines.
+    wasmdiffCmd()
   of "lengc":
     buildLengc()
 

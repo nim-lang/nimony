@@ -213,7 +213,19 @@ elif defined(nintendoswitch) or defined(freertos) or defined(zephyr) or defined(
     die(1)
 
 else:
-  die "no implementation for dyncalls"
+  # Freestanding targets without dynamic loading (standalone, wasm32, …):
+  # same loud-stub shape as the embedded arm above — the symbols exist so
+  # generic code links, and any actual use aborts with a message.
+  proc nimLoadLibrary(path: cstring): LibHandle {.exportc: "nimLoadLibrary".} =
+    writeErr("nimLoadLibrary not implemented")
+    writeErr("\n")
+    die(1)
+
+  proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr {.exportc: "nimGetProcAddr"} =
+    writeErr("nimGetProcAddr not implemented")
+    writeErr(name)
+    writeErr("\n")
+    die(1)
 
 proc nimDynlibLoadStep(prev: LibHandle; cand: cstring): LibHandle {.exportc: "nimDynlibLoadStep".} =
   ## One step of a compile-time-expanded dynlib name pattern: keep the first
