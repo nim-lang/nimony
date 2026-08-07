@@ -63,6 +63,7 @@ Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --outdir:DIR              (d only) write .c.nif outputs to DIR
   --isMain                  mark the file as the main module
+  --native                  target the native backend (arkham+nifasm, no C)
   --app:TYPE                application type: console, gui, lib, staticlib (default: console)
   --flags:FLAGS             undocumented flags
   --version                 show the version
@@ -80,6 +81,7 @@ proc handleCmdLine*() =
   var outdir = ""
   var action = ""
   var isMain = false
+  var native = false
   var appType = appConsole
   for kind, key, val in getopt():
     case kind
@@ -105,6 +107,8 @@ proc handleCmdLine*() =
         outdir = val
       of "ismain":
         isMain = true
+      of "native":
+        native = true
       of "app":
         case normalize(val)
         of "console": appType = appConsole
@@ -125,7 +129,7 @@ proc handleCmdLine*() =
   else:
     case action
     of "c":
-      expand files[0], bits, bigEndian, flags, isMain, outdir, appType
+      expand files[0], bits, bigEndian, flags, isMain, outdir, appType, native
     of "d":
       deadCodeElimination(files, outdir)
     of "dl":
