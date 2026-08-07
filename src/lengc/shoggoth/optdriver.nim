@@ -26,22 +26,10 @@ import scalarizer                              # runScalarize (object → field 
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
-import branchprune                             # runBranchPrune (constant-branch removal)
-import condelim                                # runCondElim (repeated-assert folding)
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
 const ArithRules = staticRead("rules/arith.rewrite.nif")
-
-proc skipCondElim(suffix: string): bool =
-  ## Debug kill-switch: CONDELIM=off disables the pass; CONDELIM_SKIP is a
-  ## comma-separated list of module-suffix prefixes to exclude (bisection).
-  if getEnv("CONDELIM") == "off": return true
-  let skips = getEnv("CONDELIM_SKIP")
-  if skips.len > 0:
-    for part in skips.split(','):
-      if part.len > 0 and suffix.startsWith(part): return true
-  false
 
 type
   Stats* = object
@@ -64,8 +52,7 @@ proc extractModuleSuffix(filename: string): string =
 
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                  params: Cursor = default(Cursor); eng: Engine = nil;
-                  ceShared: ptr CondElimShared = nil) =
+                  params: Cursor = default(Cursor); eng: Engine = nil) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported. The suffix is made unique per body (`st.bodies` is the body's
   ## index in the module): the passes name synthesized temps `<kind>.<n>.<suffix>`
@@ -80,21 +67,6 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # as untouchable) and for the backends' register allocation.
   if eng != nil:
     runRewritesFix(eng, buf)
-    # The engine folds conditions the inliner's literal arguments made
-    # constant (`(eq (nil) (nil))` → `(true)`, `(not (true))` → `(false)`);
-    # condelim folds conditions a DIVERGING guard already established (the
-    # inlined accessors' repeated assert/bounds clusters); pruning then
-    # deletes everything the two decided. This trio is what makes inlining
-    # a WIN instead of dead ballast — and a spliced `if c != nil: …c.f…`
-    # with `c := nil` must lose its ill-typed `(deref (nil))` arm before a
-    # typed backend (arkham) sees it. One refold after a prune catches
-    # expressions the deleted branches fed.
-    var pruned = false
-    if not skipCondElim(suffix):
-      pruned = runCondElim(buf, m, summaries, ceShared)
-    if runBranchPrune(buf): pruned = true
-    if pruned:
-      runRewritesFix(eng, buf)
   # SROA first: fold field projections off inline constructors (`T(f: a).f` → `a`),
   # then explode non-escaping local objects into per-field scalars; copy
   # propagation then cleans up the resulting scalar copies and dead stores, so the
@@ -107,7 +79,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil; ceShared: ptr CondElimShared = nil) =
+                 eng: Engine = nil) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
@@ -133,7 +105,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng, ceShared)
+        optimizeBody(body, suffix, st, summaries, m, d.params, eng)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -147,7 +119,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng, ceShared)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng)
       dest.closeTag()
   else:
     dest.addSubtree n
@@ -159,10 +131,9 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   ## `m` is the module type context for the alias pass (nil ⇒ coarse aliasing);
   ## `eng` the structural rewrite engine (nil ⇒ the rewriter stage is skipped).
   var summaries = collectFunctionSummaries(src)   # once per module; cse runs per body
-  var ceShared = initCondElimShared()             # callee classifications, module-wide
   result = createTokenBuf(src.len + src.len div 8, src.pool, src.tags)
   var n = src.beginRead()
-  rebuildTree(result, n, suffix, st, addr summaries, m, eng, addr ceShared)
+  rebuildTree(result, n, suffix, st, addr summaries, m, eng)
 
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
@@ -191,9 +162,6 @@ proc processFile*(input, output: string; verify = false): Stats =
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
   var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng)
   checkWellFormed(optimized)
-  when defined(condelimStats):
-    stderr.writeLine "condelim ", suffix, ": guards=", ceGuardsSeen,
-                     " learned=", ceGuardsLearned, " folds=", ceFolds
   writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
   if verify:
     var back = parseFromFile(output, 4000, sharedTags = createLengTagPool())
