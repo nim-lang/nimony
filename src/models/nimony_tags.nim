@@ -311,7 +311,7 @@ type
     MagicP = (ord(MagicTagId), "magic")  ## `magic` pragma; argument is the magic's name as string literal or ident (e.g. `"Bool"`, `HoleyEnum`)
     ImportcP = (ord(ImportcTagId), "importc")  ## `importc` pragma
     ImportcppP = (ord(ImportcppTagId), "importcpp")  ## `importcpp` pragma
-    DynlibP = (ord(DynlibTagId), "dynlib")  ## `dynlib` pragma
+    DynlibP = (ord(DynlibTagId), "dynlib")  ## `dynlib` pragma; on a Leng decl: static import library of an `importc` proc (native backend): the declaration binds through the image's import table instead of a runtime loader stub
     ExportcP = (ord(ExportcTagId), "exportc")  ## `exportc` pragma
     HeaderP = (ord(HeaderTagId), "header")  ## `header` pragma
     ThreadvarP = (ord(ThreadvarTagId), "threadvar")  ## `threadvar` pragma

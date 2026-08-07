@@ -178,6 +178,12 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKey genPragmas, "nodecl", pinfo
   if prag.header != StrId(0):
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
+  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
+    # `dynlib` on an importc proc means a STATIC import on the native backend:
+    # the decl carries its library as a `(dynlib "…")` pragma — arkham binds it
+    # through the image's import table. The C/LLVM backends ignore the pragma
+    # (they use the runtime-loader lowering in `trProc` instead).
+    dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   # Translate gfld to fld for NIFC (NIFC only knows fld):
@@ -1054,12 +1060,18 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     skip n
   takeParRi dest, n, procStart
   swap dst, dest
-  if prag.flags * {MagicP, DynlibP} != {} or isGeneric:
+  # On the native backend a `dynlib` importc proc IS emitted — as a static
+  # import decl carrying a `(dynlib …)` pragma (see `externPragmas`) that
+  # arkham binds through the image's import table. The C/LLVM backends keep
+  # the runtime-loader lowering below, which replaces the declaration by a
+  # function-pointer global *of the same symbol*, so there the declaration
+  # must not be emitted or the two would collide.
+  if MagicP in prag.flags or isGeneric or (not c.nativeBackend and DynlibP in prag.flags):
     discard "do not add to dest"
   else:
     dest.add dst
 
-  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
+  if not c.nativeBackend and prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
     # `{.push dynlib: ...}` applies the pragma to *every* proc in scope,
     # including inline helpers that have bodies. Those don't need dynamic
     # symbol loading, and worse, their `prag.extern` is `StrId(0)` which
@@ -2688,7 +2700,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n, TraverseAll
         swap dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2703,6 +2715,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     strLitBuf: createTokenBuf(),
     bits: bits,
     bigEndian: bigEndian,
+    nativeBackend: native,
     localDeclCounters: 1000,
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits)
