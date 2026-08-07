@@ -14,6 +14,7 @@ import ../core/slots
 import ../core/backend
 import ./poll
 import std/[tables, ticketlocks]
+import std/syncio
 
 const MaxIoEvents = 64
 
@@ -26,31 +27,17 @@ var
 # and constants are hand-written ABI transcriptions. EPERM/EBADF are 1/9 on
 # every Linux ABI (asm-generic, shared by amd64/arm64/i386; musl agrees).
 const
-  epollErrPerm = cint(1)   # EPERM
-  epollErrBadFd = cint(9)  # EBADF
+  EPERM = cint(1)
+  EBADF = cint(9)
 
-proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
-  ## glibc's and musl's address-returning errno accessor (same pattern as
-  ## std/posix). Read immediately after a failing epoll_ctl, no intervening
-  ## call, to classify the failure.
-
-proc reportResidualFailure(msg: string) =
-  ## A residual epoll_ctl failure (both the primary op and its fallback
-  ## failed on a live pollable fd) — report on stderr with the errno number.
-  ## Rides the panic path's `writeErr` (raw fd 2, no stdio); a private
-  ## bare-importc `write` here would collide with the <unistd.h> prototype
-  ## that this module's usleep/close header imports pull into the TU.
-  writeErr(msg & " (errno " & $errnoLocation()[] & ")\n")
-
-proc fdNotPollable(): bool {.inline.} =
+proc fdNotPollable(res: cint): bool {.inline.} =
   ## True when a failed epoll_ctl means the fd is no longer a live pollable
   ## descriptor we own: EPERM (a non-pollable type — a regular file, e.g. a socket
   ## fd closed by its transfer and its number reused by one of the process's file
   ## opens before this arm ran) or EBADF (already closed). Skipping such an fd is
   ## correct — it carries no real transfer, so not watching it can't stall one —
   ## and avoids error spam under multi-threaded handler resumption.
-  let e = errnoLocation()[]
-  result = e == epollErrPerm or e == epollErrBadFd
+  result = res == EPERM or res == EBADF
 
 proc epollReArm(fd: cint; mask: int) {.nimcall.} =
   var ev {.noinit.}: EpollEvent
@@ -69,18 +56,20 @@ proc epollReArm(fd: cint; mask: int) {.nimcall.} =
     alreadyRegistered = registeredFds.getOrDefault(fd, false)
     registeredFds[fd] = true
   let op = if alreadyRegistered: EPOLL_CTL_MOD else: EPOLL_CTL_ADD
-  if epoll_ctl(epollFd, op, fd, addr ev) != 0 and op == EPOLL_CTL_ADD:
+  var res = epoll_ctl(epollFd, op, fd, addr ev)
+  if res != 0 and op == EPOLL_CTL_ADD:
     # Lost the race with a concurrent submit on the same fd that already
     # ADD'ed it (or the fd was previously registered and evicted from our
     # bookkeeping some other way) — fall back to MOD once.
-    if not fdNotPollable():
+    if not fdNotPollable(res):
       # Not a stale/non-pollable fd → a genuine ADD-vs-MOD race (the slot's
       # `registered` flag is advisory across workers). ADD on an already-present
       # fd → EEXIST; fall back to MOD so the fd ends up armed with the current
       # mask instead of staying a fired (disarmed) oneshot — that stall loses the
       # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
-      if epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev) != 0:
-        reportResidualFailure("ioring: epoll ADD+MOD both failed")
+      res = epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev)
+      if res != 0:
+        stderr.writeLine("ioring: epoll ADD+MOD both failed: " & $res)
 
 proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
