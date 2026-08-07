@@ -61,6 +61,7 @@ Command:
 
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
+  --os:NAME                 target operating system (default: the host's)
   --outdir:DIR              (d only) write .c.nif outputs to DIR
   --isMain                  mark the file as the main module
   --native                  target the native backend (arkham+nifasm, no C)
@@ -83,6 +84,7 @@ proc handleCmdLine*() =
   var isMain = false
   var native = false
   var appType = appConsole
+  var isWindows = defined(windows)
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -103,6 +105,10 @@ proc handleCmdLine*() =
         of "be": bigEndian = true
         of "le": bigEndian = false
         else: quit "invalid value for --cpu; expected 'be' or 'le'"
+      of "os":
+        # Only the Windows/not-Windows distinction reaches the code generator:
+        # a Windows entry point receives no argc/argv/envp (see `genMainProc`).
+        isWindows = normalize(val) == "windows"
       of "outdir":
         outdir = val
       of "ismain":
@@ -129,7 +135,7 @@ proc handleCmdLine*() =
   else:
     case action
     of "c":
-      expand files[0], bits, bigEndian, flags, isMain, outdir, appType, native
+      expand files[0], bits, bigEndian, flags, isMain, outdir, appType, native, isWindows
     of "d":
       deadCodeElimination(files, outdir)
     of "dl":

@@ -2,18 +2,29 @@
 when defined(nimony):
   import strutils
 
-  var
-    nifcArgc {.importc: "cmdCount".}: int32
-    nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
+  when defined(windows):
+    # Windows hands a process entry point no `argv` at all — the command line
+    # sits behind `GetCommandLineW` as one unsplit UTF-16 string. `std/cmdline`
+    # is what asks for it and applies the OS's documented splitting rules, so
+    # take the arguments from there: this parser and `paramStr`/`paramCount`
+    # must not disagree about where the arguments are.
+    import cmdline
+    export paramStr, paramCount
+  else:
+    # Everywhere else the entry point receives a C-style `argv`, which the
+    # generated `main` parks in the `cmdCount`/`cmdLine` globals.
+    var
+      nifcArgc {.importc: "cmdCount".}: int32
+      nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
 
-  proc paramStr*(i: int): string =
-    if i < nifcArgc and i >= 0:
-      result = borrowCStringUnsafe(nifcArgv[i])
-    else:
-      result = ""
+    proc paramStr*(i: int): string =
+      if i < nifcArgc and i >= 0:
+        result = borrowCStringUnsafe(nifcArgv[i])
+      else:
+        result = ""
 
-  proc paramCount*(): int =
-    result = nifcArgc-1
+    proc paramCount*(): int =
+      result = nifcArgc-1
 
 else:
   from os import paramStr, paramCount

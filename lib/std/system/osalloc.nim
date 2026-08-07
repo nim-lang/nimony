@@ -166,13 +166,14 @@ elif defined(windows) and not defined(StandaloneHeapSize):
     MEM_DECOMMIT = 0x4000'i32
     MEM_RELEASE = 0x8000'i32
 
+  # `dynlib` = static import library on every backend (see `system/exits`).
   proc virtualAlloc(lpAddress: pointer, dwSize: int, flAllocationType,
                     flProtect: int32): pointer {.
-                    stdcall, importc: "VirtualAlloc".}
+                    stdcall, importc: "VirtualAlloc", dynlib: "kernel32".}
 
   proc virtualFree(lpAddress: pointer, dwSize: int,
                    dwFreeType: int32): cint {.stdcall,
-                   importc: "VirtualFree".}
+                   importc: "VirtualFree", dynlib: "kernel32".}
 
   proc osAllocPages(size: int): pointer {.inline.} =
     result = virtualAlloc(nil, size, MEM_RESERVE or MEM_COMMIT,

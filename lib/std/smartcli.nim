@@ -54,3 +54,8 @@ proc cliInvalidValue*(spec, optionName, value: string) {.noreturn.} =
   cliFail(spec, "invalid value for " & optionName & ": " & value)
 
 template cliapp*(spec: string): untyped {.plugin: "deps/smartcli".}
+
+template cliapp*(spec: string; args: seq[string]): untyped {.plugin: "deps/smartcli".}
+  ## Parses `args` instead of the process command line. `args` holds the
+  ## arguments only — no program name — exactly like the sequence overload of
+  ## `parseopt.initOptParser`, which is what the generated parser calls.

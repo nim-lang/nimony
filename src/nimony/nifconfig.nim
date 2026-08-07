@@ -111,14 +111,6 @@ type
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
 
-proc arkhamArch*(config: NifConfig): string =
-  case config.targetCPU
-  of cpuAmd64, cpuI386:
-    if config.targetOS == osWindows: "win_x64" else: "x64"
-  of cpuArm64, cpuArm:
-    if config.targetOS == osLinux: "linux_arm64" else: "arm64"
-  else: "x64"  # only x64/arm64 are supported targets; default to host-class x64
-
 proc initNifConfig*(baseDir: sink string): NifConfig =
   result = NifConfig(
     baseDir: baseDir,

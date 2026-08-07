@@ -78,6 +78,54 @@ proc extractVersionedBasename*(s: string): string =
     dec i
   return ""
 
+proc derivedName*(stem, tag: string): string =
+  ## The `identifier.<number>` half of a symbol the compiler mints ALONGSIDE
+  ## another one — a closure's environment type, a class's vtable, a coroutine's
+  ## frame. `stem` is the originating symbol minus its module suffix, and the
+  ## caller appends the module it wants the result to live in:
+  ##
+  ##   derivedName("outer.0", "env")        == "outer`env.0"
+  ##   derivedName("gen.12.Iaaaa", "coro")  == "gen.12.Iaaaa`coro.0"
+  ##
+  ## The tag goes INTO the identifier rather than becoming a dotted segment of
+  ## its own, because the two shapes say different things. nif-spec.md gives a
+  ## global symbol as `<ident>.<disamb>.<moduleSuffix>` OR
+  ## `<ident>.<disamb>.<key>.<moduleSuffix>`, "where `key` usually is the result
+  ## from a generic instantiation". The `key` slot answers WHICH instantiation of
+  ## `<ident>.<disamb>` this is — and because every module needing that
+  ## instantiation derives the same key independently, `<ident>.<disamb>.<key>` is
+  ## meaningful across module boundaries. That is exactly what lets a backend
+  ## collapse the copies each importing module emits: DCE's
+  ## `resolveSymbolConflicts`, `lengcgen`'s content-hashed
+  ## `strlit.0.I<hash>.<mod>`, and nifasm's COMDAT merge all key on it.
+  ##
+  ## `env`, `coro`, `vt` are not keys — they name a ROLE, and the entity they name
+  ## is private to one module. Put in the key slot they promise a cross-module
+  ## identity they do not have, and two modules that each close over a variable in
+  ## a proc named `outer` both claim `outer.0.env`. That is not a hypothetical:
+  ## one module's closure read its captures out of the other's layout — see
+  ## tests/nimony/closures/tenv_name_clash.nim.
+  ##
+  ## The backtick keeps the result out of the Nim-spellable namespace, matching
+  ## the `` `f `` of a lifted local. It is inserted before the trailing version so
+  ## the disambiguation number keeps its place; a stem that does not end in one
+  ## (a keyed stem ends in its key) gets a fresh `.0` instead, which keeps both
+  ## distinguishing parts — stem and tag — inside the identifier where they
+  ## belong.
+  ##
+  ## Only a version at the very END counts, and that restriction is the whole
+  ## point rather than an implementation detail: the result must be an UNKEYED
+  ## global symbol. Scanning back past a later segment to find a number would
+  ## leave that segment sitting in the key slot — `("gen.12.Iaaaa", "coro")` would
+  ## come back as `gen`coro.12.Iaaaa`, a keyed name again, and one that has
+  ## silently adopted the ORIGINAL symbol's key as its own cross-module identity.
+  var i = stem.len - 1
+  while i > 0 and stem[i] in {'0'..'9'}: dec i
+  if i > 0 and i < stem.len - 1 and stem[i] == '.':
+    result = substr(stem, 0, i-1) & "`" & tag & substr(stem, i)
+  else:
+    result = stem & "`" & tag & ".0"
+
 proc isInstantiation*(s: string): bool =
   # abc.12.Iabcdefghi.mod2
   var i = s.len - 2
@@ -174,6 +222,20 @@ when isMainModule:
   let sn = splitSymName("abc.12.Mod132a3bc")
   assert sn.name == "abc.12"
   assert sn.module == "Mod132a3bc"
+
+  assert derivedName("outer.0", "env") == "outer`env.0"
+  assert derivedName("abc.12", "vt") == "abc`vt.12"
+  # An instantiation stem ends in its key, not in a version: the tag and a fresh
+  # number are appended so the key stays inside the identifier.
+  assert derivedName("gen.12.Iaaaa", "coro") == "gen.12.Iaaaa`coro.0"
+  # Whatever a caller appends its module to, the result must NOT read back as an
+  # instantiation — that is the whole point of the exercise.
+  assert not isInstantiation(derivedName("outer.0", "env") & ".mymod")
+  assert not isInstantiation(derivedName("gen.12.Iaaaa", "coro") & ".mymod")
+  assert isInstantiation("gen.12.Iaaaa.mymod")
+  # ...and the module suffix must still be recoverable.
+  assert extractModule(derivedName("gen.12.Iaaaa", "coro") & ".mymod") == "mymod"
+  assert extractModule(derivedName("outer.0", "env") & ".mymod") == "mymod"
 
   let mp = splitModulePath("abc/def.2.nif")
   assert mp.dir == "abc"
