@@ -1992,7 +1992,23 @@ proc trRaise(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi(n.endInfo)
 
 proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  # We only deal with the control flow here.
+  # We only deal with the control flow here. A `try` with handlers lowers to
+  # a FLAT goto sequence:
+  #
+  #   <try body>            # every raise inside became (jmp `exlab.N)
+  #   <finally>             # normal path only, see below
+  #   (jmp `exend.N)
+  #   (stmts (lab :`exlab.N) <handler>)
+  #   (lab :`exend.N)
+  #
+  # The handler must skip the normal path's finally — its own finally already
+  # ran at the raise site (finally statements are duplicated before every
+  # `raise`) — and the explicit jmp says so directly. The former shape parked
+  # the handler in a false-guarded `(elif)` of an `(if)` for the same effect,
+  # and every consumer paid for the pretense: arkham emitted a real
+  # materialize-and-`cmp 0` for a guard it cannot know is dead, and every
+  # branch-pruning pass needed a label-pinning rule to keep it from deleting
+  # a "dead" arm a jmp enters (see `branchPinned` in intramodinliner).
   let info = n.info
   let tryStart = n
   n = sub(n)
@@ -2010,44 +2026,51 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     hasExcept = true
   trStmt c, dest, n
 
-  if hasExcept:
-    dest.addParLe IfS, n.info
-
+  # The except clauses precede the finally in the tree, but the flat form
+  # emits the normal path (the finally) first: park their cursors, return
+  # for them after. A `raise` inside a handler or the finally must propagate
+  # PAST this try, not loop back to its own handler label, so the label is
+  # popped before either is translated.
+  var handlers: seq[Cursor] = @[]
   while n.substructureKind == ExceptU:
-    let lab = tryLab
-    dest.copyIntoKind ElifU, n.info:
-      dest.addParPair(FalseX, n.info)
-      dest.copyIntoKind StmtsS, n.info:
-        dest.addParLe("lab", n.info)
-        dest.addSymDef(lab, n.info)
-        dest.addParRi()
-        n.into:
-          if n.stmtKind == LetS:
-            trStmt c, dest, n
-          else:
-            skip n # skip `T`
-          # A `raise` (typed or bare) inside an except handler must propagate
-          # PAST this try, not loop back to its own handler label. Temporarily
-          # pop the label for the duration of the handler body so any nested
-          # `raise` uses the next outer label (or `return`).
-          c.exceptLabels.shrink oldLen
-          trStmt c, dest, n
-          c.exceptLabels.add tryLab
+    handlers.add n
+    skip n
   c.exceptLabels.shrink oldLen
 
   # Since we duplicated the finally statements before every `raise` statement we
   # know that when control flow reaches here, no error was raised. Hence we do not
   # need to add logic to re-raise an exception here.
   if n.substructureKind == FinU:
-    if hasExcept:
-      dest.addParLe ElseU, n.info
     n.into:
       trStmt c, dest, n
-    if hasExcept:
-      dest.addParRi()
-  n = tryStart; skip n
+
   if hasExcept:
+    let endLab = pool.syms.getOrIncl("`exend." & $getTmpId(c))
+    dest.addParLe("jmp", info)
+    dest.addSymUse(endLab, info)
     dest.addParRi()
+    for i in 0 ..< handlers.len:
+      var h = handlers[i]
+      let hinfo = h.info
+      dest.copyIntoKind StmtsS, hinfo:
+        if i == 0:
+          dest.addParLe("lab", hinfo)
+          dest.addSymDef(tryLab, hinfo)
+          dest.addParRi()
+        h.into:
+          if h.stmtKind == LetS:
+            trStmt c, dest, h
+          else:
+            skip h # skip `T`
+          trStmt c, dest, h
+      if i < handlers.len - 1:
+        dest.addParLe("jmp", hinfo)
+        dest.addSymUse(endLab, hinfo)
+        dest.addParRi()
+    dest.addParLe("lab", info)
+    dest.addSymDef(endLab, info)
+    dest.addParRi()
+  n = tryStart; skip n
 
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner) =
   case n.kind
