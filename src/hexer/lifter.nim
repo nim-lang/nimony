@@ -464,10 +464,37 @@ proc unravelObjFieldsForward(c: var LiftingCtx; n: var Cursor; paramA, paramB: T
         # copy the selector before case stmt, but destroy after case stmt
         unravelObjField c, selector, paramA, paramB, depth
 
-      c.dest.addParLe CaseU, info
-
       var selectorField = takeLocal(n, SkipFinalParRi)
       let dest = accessObjField(c, paramA, selectorField.name)
+
+      if c.op == attachedWasMoved:
+        # `=wasMoved` is called on memory that is not necessarily initialized:
+        # a proc's `result` slot receives `=wasMoved` followed by `=destroy`
+        # before its first assignment (see `some[T]` in `std/opt`). Dispatching
+        # on the discriminant READS that garbage, in BOTH hooks. The pair is
+        # self-neutralizing only while the two loads agree — `=wasMoved` clears
+        # the payload of whatever branch it read, so the `=destroy` behind it
+        # finds an empty one. Nothing guarantees they agree: an uninitialized
+        # load is `undef`, and the optimizer may materialize it independently
+        # per use. `=wasMoved` reading None while `=destroy` reads Some frees a
+        # `string` that was never constructed. So SELECT the branch instead of
+        # reading it: write the discriminant, then let the dispatch below clear
+        # exactly that branch. Every op a `=wasMoved` emits is a pure write, so
+        # the result is a valid, trivially-destroyable value either way.
+        var firstBranch = n
+        if firstBranch.substructureKind == OfU:
+          var ranges = sub(firstBranch)
+          if ranges.substructureKind == RangesU:
+            var val = sub(ranges)
+            # `of lo..hi` lists a `range` node rather than a plain value; the
+            # low bound selects the same branch and is a value we can assign.
+            if val.substructureKind == RangeU:
+              val = sub(val)
+            copyIntoKind c.dest, AsgnS, c.info:
+              copyTree c.dest, dest
+              copyTree c.dest, val
+
+      c.dest.addParLe CaseU, info
       c.dest.add dest
 
       while n.hasMore:

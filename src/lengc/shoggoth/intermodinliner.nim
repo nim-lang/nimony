@@ -9,10 +9,12 @@
 
 ## Inter-module inliner for generated NIFC.
 ##
-## Hexer's `intramodinliner` annotates each `.inline` proc's pragma with a
-## threshold followed by per-parameter weights (see `intramodinliner`'s
-## `computeInlineInfo`). This pass consumes those annotations and splices
-## qualifying calls at NIFC level — both same-module and cross-module:
+## The inlining policy lives in `intramodinliner.computeInlineInfo` and is
+## derived from each proc's body at module-load time (tiny bodies always
+## inline, `.noinline` never, bigger bodies go through the per-call-site
+## weighted-score heuristic; the `.inline` annotation is ignored). This pass
+## applies that policy and splices qualifying calls at NIFC level — both
+## same-module and cross-module:
 ## cross-module bodies are taken from the callee module's post-DCE `.c.nif`,
 ## picked up via `intramodinliner`'s lazy foreign-module loader (`xnifDir` plus
 ## a one-level-up search, so the main module's copy inside
@@ -113,8 +115,9 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
   ## `xnifDir` is set — `lookupBody` resolves the callee's module via the
   ## symbol name (`extractModule`) and lazy-loads the foreign `.c.nif`.
   ##
-  ## There is no size cap on the callee: `.inline` means the programmer asked
-  ## for it, so it is honoured whatever the body costs.
+  ## The size-driven policy (`computeInlineInfo`) bounds what gets spliced:
+  ## the bodies measured here are the post-flattening `.c.nif` bodies, i.e.
+  ## exactly what a splice would copy.
   var ctx = initInlinerCtx(suffix, addr buf,
                            xnifDir = xnifDir,
                            maxDepth = 4,
@@ -127,6 +130,7 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
   trIntra(ctx, dest, n)
   result = dest.len != originalLen
   buf = ensureMove(dest)
+  when defined(inlinerStats): dumpInlinerStats(suffix)
 
 # ---- self-tests ----------------------------------------------------------
 

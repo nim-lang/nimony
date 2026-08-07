@@ -33,6 +33,12 @@ type
     kind*: LengSym
     extern*: StrId          ## importc/exportc name, cached (frequently queried)
     isImport*: bool         ## true for importc/importcpp, false for exportc-only
+    bareImport*: bool       ## `importc` with neither `header` nor `nodecl`: the
+                            ## C backend declares it itself, under its MANGLED
+                            ## name with an `__asm__` label, so the declaration
+                            ## can never collide with a header prototype for the
+                            ## same libc identifier in the same TU (splices move
+                            ## such references into arbitrary modules)
 
   NifProgram = object
     mods: Table[string, ForeignModule]   ## module suffix -> lazily-opened module
@@ -93,9 +99,12 @@ proc externName*(s: SymId; n: Cursor): StrId =
     result = p.strings.getOrIncl(base)
 
 proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
-                   isImport: var bool): StrId =
+                   isImport: var bool; bareImport: var bool): StrId =
   result = StrId(0)
   isImport = false
+  bareImport = false
+  var sawImportC = false
+  var sawHeaderish = false
   n.into:  # enter the toplevel (type/proc/var/…)
     if n.kind != SymbolDef:
       raiseAssert "Expected SymbolDef after toplevel declaration"
@@ -110,6 +119,10 @@ proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
             result = externName(symId, n)
             if pk in {ImportcP, ImportcppP}:
               isImport = true
+            if pk == ImportcP:
+              sawImportC = true
+          elif pk in {HeaderP, NodeclP}:
+            sawHeaderish = true
           skip n
     elif n.kind == DotToken:
       discard "ok"
@@ -117,6 +130,7 @@ proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
       raiseAssert "pragmas not at the correct position"
     while n.hasMore:
       skip n
+  bareImport = sawImportC and not sawHeaderish
 
 proc registerTypeBody(c: var MainModule; declPos: Cursor) =
   ## Map a `(type …)` decl's body position to the decl, so `tracebackTypeC` can
@@ -138,19 +152,20 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
       let sk = pos.symKind
       var extern = StrId(0)
       var isImport = false
+      var bareImport = false
       var n = pos
       case sk
       of TypeY:
         c.types.add pos
         registerTypeBody(c, pos)
-        extern = extractExtern(c, n, 1, isImport)
+        extern = extractExtern(c, n, 1, isImport, bareImport)
       of ProcY:
-        extern = extractExtern(c, n, 3, isImport)
+        extern = extractExtern(c, n, 3, isImport, bareImport)
       of VarY, ConstY, GvarY, TvarY:
-        extern = extractExtern(c, n, 1, isImport)
+        extern = extractExtern(c, n, 1, isImport, bareImport)
       else: discard
       c.defs[s] = Definition(pos: pos, kind: sk, extern: extern,
-                             isImport: isImport)
+                             isImport: isImport, bareImport: bareImport)
       c.requestedForeignSyms.add pos
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
@@ -178,8 +193,10 @@ proc processToplevelDecl(c: var MainModule; n: var Cursor; kind: LengSym;
   let decl = n
   let s = firstChild(decl).symId
   var isImport = false
-  let extern = extractExtern(c, n, pragmasAt, isImport)
-  c.defs[s] = Definition(pos: decl, kind: kind, extern: extern, isImport: isImport)
+  var bareImport = false
+  let extern = extractExtern(c, n, pragmasAt, isImport, bareImport)
+  c.defs[s] = Definition(pos: decl, kind: kind, extern: extern,
+                         isImport: isImport, bareImport: bareImport)
 
 proc detectToplevelDecls(c: var MainModule) =
   var n = cursorAt(c.src, 0)
