@@ -95,7 +95,7 @@ type
 
   InnerSqeCmd* {.union.} = object
     addr3* {.importc: "addr3".}: nil pointer
-    pad2* {.importc: "__pad2".}: array[1, uint64]
+    pad2* {.importc: "__pad2".}: array[2, uint64]
     cmd* {.importc: "cmd".}: uint8
   
   Op* {.size: sizeof(uint8).} = enum
