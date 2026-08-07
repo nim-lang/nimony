@@ -152,6 +152,11 @@ proc traverseObjectBody(m: var MainModule; o: var TypeOrder; t: Cursor) =
         elif n.typeKind in {ObjectT, UnionT}: # anonymous object/union
           traverseObjectBody(m, o, n)  # recurse into the anonymous subtree
           skip n                        # advance past it
+        elif isUnionBranch(n):          # discriminated union branch
+          let b = asUnionBranch(n)
+          if b.body.typeKind == ObjectT:
+            traverseObjectBody(m, o, b.body)
+          skip n
         else:
           error m, "unexpected node inside object: ", n
           skip n
@@ -541,6 +546,20 @@ proc genObjectOrUnionBody(c: var GeneratedCode; n: var Cursor) =
           genObjectOrUnionBody(c, n)
           c.add CurlyRi
           c.add Semicolon
+        elif isUnionBranch(n):
+          # A discriminated-union branch. C has no variant concept, so the
+          # `(ranges ...)` are ignored and only the payload is emitted - the
+          # same anonymous struct this branch produced before the branches
+          # were tagged. A field-less branch emits nothing, as before.
+          let b = asUnionBranch(n)
+          if b.body.typeKind == ObjectT:
+            var body = b.body
+            c.add AnonStruct
+            c.add CurlyLe
+            genObjectOrUnionBody(c, body)
+            c.add CurlyRi
+            c.add Semicolon
+          skip n
         else:
           error c.m, "expected `fld` but got: ", n
           skip n

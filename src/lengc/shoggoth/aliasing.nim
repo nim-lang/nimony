@@ -67,6 +67,19 @@ proc pointerBearing(m: var MainModule; typ: Cursor; depth = 0): bool =
         if body.substructureKind == FldU:
           let fld = takeFieldDecl(body)
           if pointerBearing(m, fld.typ, depth+1): return true
+        elif isUnionBranch(body):
+          # A discriminated-union branch holds its fields in a payload object.
+          # Skipping it would report a variant whose only pointer lives in a
+          # branch as pointer-free - an *under*-merge, which is exactly the
+          # unsound direction for this analysis (a missed invalidation).
+          let b = takeUnionBranch(body)
+          if b.body.typeKind == ObjectT and pointerBearing(m, b.body, depth+1):
+            return true
+        elif body.typeKind in {ObjectT, UnionT}:
+          # Anonymous object/union nested in this body. Same reasoning: the
+          # `skip` below would hide any pointer inside it.
+          if pointerBearing(m, body, depth+1): return true
+          skip body
         else:
           skip body
   of NoType:
