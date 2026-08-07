@@ -113,12 +113,11 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
     discard localQueue.submit()
   except ErrorCode as e:
     quit "fatal: bug: submit cannot fail: " & $e
-  let waitNr = if timeoutMs > 0: 1'u else: 0'u
   const batchSize = 64
   var cqes = newSeq[Cqe](batchSize)
   var n: int = 0
   try:
-    n = localQueue.copyCqes(cqes, waitNr)
+    n = localQueue.copyCqes(cqes)
   except ErrorCode as e:
     quit "fatal: bug: copyCqes cannot fail: " & $e
   if n <= 0:
