@@ -41,48 +41,16 @@ type
     L: TicketLock
     head, tail, count: int
     data: array[StripeSize, Task]
-
-  ReactorProc* = proc(timeoutMs: int): bool {.closure.}
-    ## Polls one I/O backend once; returns true if it delivered anything.
-    ## `std/ioring` registers one of these per `Ring` via `registerReactor`.
+proc poolPollIo*(timeoutMs: int): bool {.nimcall.} =
+  ## Polls one I/O backend once; returns true if it delivered anything.
+  ## `std/ioring` registers one of these.
+  result = false
 
 var
   stripes: array[StripeCount, Stripe]
   workers: array[WorkerCount, RawThread]
   stopFlag: bool # accessed atomically
-  reactors: seq[ReactorProc]
-  reactorsLock: TicketLock
-
-proc registerReactor*(r: ReactorProc) =
-  ## Register an I/O backend to be polled by every worker's idle loop (and by
-  ## `parWait`). Lets independent subsystems (e.g. several `std/ioring`
-  ## `Ring`s) share one `Pool` — and its worker threads — instead of each
-  ## spinning up its own, which previously meant every `Ring` (and `parfor`'s
-  ## own pool) duplicated `WorkerCount` OS threads contending over the same
-  ## physical cores. Safe to call concurrently; registration is expected to
-  ## be rare (typically once per `Ring`), so a lock here costs nothing on the
-  ## hot path (`poll`, below, only takes the lock to snapshot the list).
-  withLock reactorsLock:
-    reactors.add(r)
-
-proc poolPollIo*(timeoutMs: int): bool =
-  ## Poll every registered I/O backend once and dispatch ready handlers on
-  ## the calling thread. `timeoutMs` bounds how long the *first* reactor may
-  ## block waiting for an event (`0` = non-blocking peek); subsequent
-  ## reactors in the same call are polled non-blockingly so that N
-  ## registered backends don't add up to N*timeoutMs of latency. Returns
-  ## true if any handler fired. Safe to call from any thread (oneshot
-  ## semantics: each event goes to exactly one caller) — used both by the
-  ## worker loop and by `parWait` so a thread blocked on a join can still
-  ## advance the I/O its parked chunks are waiting on.
-  result = false
-  var snapshot: seq[ReactorProc]
-  withLock reactorsLock:
-    if reactors.len == 0: return false
-    snapshot = reactors
-  for i, r in snapshot:
-    if r(if i == 0: timeoutMs else: 0):
-      result = true
+  gReactor*: proc(timeoutMs: int): bool {.nimcall.} = poolPollIo
 
 # --- Submit / dequeue ---
 
@@ -179,7 +147,7 @@ proc workerLoop(arg: pointer) {.nimcall.} =
     #    each continuation, re-submitting any that yield more work.
     let busy = drainOnce(threadIdx)
     # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
-    let eventFired = poolPollIo(if busy: 0.cint else: 1.cint)
+    let eventFired = gReactor(if busy: 0.cint else: 1.cint)
     if not eventFired and not busy:
       const timeoutMs = 1
       when defined(windows):

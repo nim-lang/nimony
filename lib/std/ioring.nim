@@ -21,17 +21,17 @@ export backend.BackendRelays, backend.CqSize
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
 
+proc poll(timeoutMs: int): bool {.nimcall.} =
+  backendRelays.poll(timeoutMs)
+
 proc initIoRing*() =
   gSlots = SlotArena()
   gSlots.init()
   gCq = newSeq[IoCompletion](CqSize)
   gNextSeq = 1
   initPlatformBackend()
+  gReactor = poll
   initPool()
-  registerReactor(proc(timeoutMs: int): bool {.closure.} =
-    if atomicLoad(gClosed, moRelaxed): return false
-    backendRelays.poll(timeoutMs)
-  )
 
 proc shutdown*() =
   atomicStore(gClosed, true, moRelaxed)
