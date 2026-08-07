@@ -718,7 +718,7 @@ proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
     b.addKeyw "input"
     b.addKeyw "output"
 
-proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool; checkFlags: string) =
+proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool; checkFlags: string; native: bool) =
   let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
@@ -726,6 +726,7 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool; 
     b.addStrLit "c"
     b.addStrLit "--bits:" & $bits
     b.addStrLit cpuFlag
+    if native: b.addStrLit "--native"
     # Forward the active check modes so nifcgen injects only the requested
     # runtime checks (e.g. `--boundchecks:off` ⇒ no `nimUcheckB` in `(at …)`).
     # A bare `--flags` means "no checks" (e.g. `-d:danger`): with a trailing
@@ -979,7 +980,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addKeyw "output"
 
     # Command for hexer
-    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian, c.config.checkFlags)
+    defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian,
+                    c.config.checkFlags, c.config.backend == backendNative)
 
     # Command for C/LLVM compiler (object files)
     b.withTree "cmd":
@@ -1686,7 +1688,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
       b.addKeyw "args"
       b.addKeyw "input"
 
-    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian, config.checkFlags)
+    defineHexerCmds(b, findTool("hexer"), config.bits, platform.CPU[config.targetCPU].endian == bigEndian,
+                    config.checkFlags, config.backend == backendNative)
 
     b.withTree "cmd":
       b.addSymbolDef "cc"
