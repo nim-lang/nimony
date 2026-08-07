@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3628             )
+(.indexat 4020             )
 (stmts@,2,tests/nimony/nosystem/ttemplate.nim
  (type@2,1 :int.0.
   (i 64).
@@ -105,10 +105,10 @@
     (i@A,~5 64).@A,~5)
    (var@4 :x.5 . . string.0.sysvq0asl "abc"@4)
    (asgn@7,1 result.1~7
-    (expr@N,~4
+    (expr@W,Y,__crucial\00plus.0.tte5tld8n\01tests/nimony/nosystem/ttemplate.nim\0134\00tests/nimony/nosystem/ttemplate.nim
      (add@2
       (i~I,~2 64)4~I,4
-      (expr~2
+      (expr@W,Y,__crucial\00plus.0.tte5tld8n\01tests/nimony/nosystem/ttemplate.nim\0134\00plus.0.tte5tld8n\01tests/nimony/nosystem/ttemplate.nim\0134\00tests/nimony/nosystem/ttemplate.nim
        (add@2
         (i~I,~2 64)2~A,4 89~7,4)))))
    (asgn@2,2 x.5~2 "34"@2)
@@ -139,7 +139,7 @@
  (glet@4,l :val.0. . .
   (i 64)123@6)
  (discard@,m
-  (expr@U,~3
+  (expr@U,l,__crucial\00conv.0.tte5tld8n\01tests/nimony/nosystem/ttemplate.nim\0147\00tests/nimony/nosystem/ttemplate.nim
    (conv@1
     (u~I,3 64)val.0.~C,3)))
  (comment@F,E untyped.0. typedesc.0.@I int.0.@1,G int.0.@1,G int.0.~2,G int.0.@5,I int.0.@5,I int.0.~2,I int.0.~3,K int.0.@6,K int.0.@5,V int.0.@5,A float.0.@4,B plus.0.@8,M plus.0.@,M uint.0.~2,Y conv.0.@3,Y)
@@ -179,10 +179,10 @@
  (x \2B.0. 165)
  (h plus.0. 170)
  (h foo.0. 183)
- (h overloaded.0. 434)
+ (h overloaded.0. 717)
  (x uint.0. 228)
  (h conv.0. 66)
  (h@D,j T.3. 43)
  (h val.0. 127)
- (h MyGeneric.0.Iu9y0wv. 313)
+ (h MyGeneric.0.Iu9y0wv. 422)
  (h MyGeneric.0.I1hdb4b1. 136))

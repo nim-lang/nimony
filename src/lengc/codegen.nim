@@ -196,7 +196,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   ## (mangled symbol plus embedded line info), which says nothing a reader wants.
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   # `Error: `, not the `[Error] ` of the rendering `error` above: this is a
   # user-facing diagnostic, and that is the spelling every other user-facing
@@ -210,7 +210,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg

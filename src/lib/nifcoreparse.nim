@@ -25,6 +25,11 @@ import stringviews
 import lineinfos  # for `==`(FileId) used by NifLineInfo's structural `==`
 
 export nifcore
+import comesfrom
+# Travels with the reader for the same reason it travels with the pool API:
+# any consumer of a line-info filename may need `realFile` to strip the
+# template-expansion provenance the front end forged into it.
+export comesfrom
 
 type
   Parent = tuple[file: FileId; line, col: int32]

@@ -31,6 +31,12 @@
 
 import std / assertions
 import nifcore
+import comesfrom
+# Template-expansion provenance rides in the line-info filename, so every
+# consumer of a filename may need to strip it (`realFile`). Plain string
+# handling with no NIF dependency of its own; re-exported here so it travels
+# with the pool API rather than being imported separately everywhere.
+export comesfrom
 # Re-export nifcore verbatim except the two helpers whose shim versions below
 # thread the global pool. `kind`/`NifKind`/its members are re-exported AS-IS:
 # the sem port uses nifcore's own kind model directly (`TagLit`, `StrLit`,

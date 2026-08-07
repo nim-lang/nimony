@@ -109,7 +109,10 @@ proc infoToStr*(info: NifLineInfo): string =
   if not info.isValid:
     result = "???"
   else:
-    result = pool.filenames[info.file].shortenDir()
+    # `realFile`: expanded code carries a forged filename recording where it came
+    # from (see `comesfrom`'s `CrucialPrefix`). A user-facing message wants the
+    # actual source path, not the provenance chain.
+    result = realFile(pool.filenames[info.file]).shortenDir()
     result.add "(" & $info.line & ", " & $(info.col+1) & ")"
 
 proc reportErrorsRec(r: var Reporter; n: var Cursor; errTag: TagId; count: var int) =
