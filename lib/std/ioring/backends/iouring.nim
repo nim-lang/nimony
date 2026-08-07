@@ -98,18 +98,17 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
     release(deferred.lock)
     inc drained
     let op = gSlots.addrSlot(entry.slotIdx)
-    if not op.inUse or op.fd != entry.fd:
-      continue
-    var sqe: nil ptr Sqe
-    try:
-      sqe = localQueue.getSqe()
-    except ErrorCode as e:
-      stderr.writeLine("ioring: failed to get sqe: " & $e)
-      break
-    if sqe == nil:
-      break
-    sqe.userData = cast[pointer](uint(entry.slotIdx))
-    fillSqe(sqe, op)
+    if op.inUse and op.fd == entry.fd:
+      var sqe: nil ptr Sqe
+      try:
+        sqe = localQueue.getSqe()
+      except ErrorCode as e:
+        stderr.writeLine("ioring: failed to get sqe: " & $e)
+        break
+      if sqe == nil:
+        break
+      sqe.userData = cast[pointer](uint(entry.slotIdx))
+      fillSqe(sqe, op)
   try:
     discard localQueue.submit()
   except ErrorCode as e:

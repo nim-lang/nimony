@@ -47,34 +47,34 @@ when defined(posix):
     # O(k) in the number of ops on this fd, via the intrusive per-fd list,
     # instead of an O(MaxOps) scan of the whole arena.
     for j in a.slotsForFd(fd):
-      if not a.slots[j].inUse: continue
-      let s = addr a.slots[j]
-      case s.kind
-      of opRead:
-        if (firedEvents and EvRead) == 0: continue
-        let r = posixRead(fd, s.buf, s.len)
-        complete(j, if r >= 0: r else: -1)
-      of opWrite:
-        if (firedEvents and EvWrite) == 0: continue
-        let r = posixWrite(fd, s.buf, s.len)
-        complete(j, if r >= 0: r else: -1)
-      of opAccept:
-        if (firedEvents and EvRead) == 0: continue
-        var addrLen = s.acceptLen
-        let clientFd = posixAccept(fd, addr s.acceptAddr, addr addrLen)
-        complete(j, if clientFd >= 0: clientFd else: -1)
+      if a.slots[j].inUse:
+        let s = addr a.slots[j]
+        case s.kind
+        of opRead:
+          if (firedEvents and EvRead) != 0:
+            let r = posixRead(fd, s.buf, s.len)
+            complete(j, if r >= 0: r else: -1)
+        of opWrite:
+          if (firedEvents and EvWrite) != 0:
+            let r = posixWrite(fd, s.buf, s.len)
+            complete(j, if r >= 0: r else: -1)
+        of opAccept:
+          if (firedEvents and EvRead) != 0:
+            var addrLen = s.acceptLen
+            let clientFd = posixAccept(fd, addr s.acceptAddr, addr addrLen)
+            complete(j, if clientFd >= 0: clientFd else: -1)
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
     var armMask = 0
     var stillPending = false
     for j in a.slotsForFd(fd):
-      if not a.slots[j].inUse: continue
-      stillPending = true
-      let sk = a.slots[j].kind
-      if sk == opRead or sk == opAccept:
-        armMask = armMask or EvRead
-      if sk == opWrite:
-        armMask = armMask or EvWrite
+      if a.slots[j].inUse:
+        stillPending = true
+        let sk = a.slots[j].kind
+        if sk == opRead or sk == opAccept:
+          armMask = armMask or EvRead
+        if sk == opWrite:
+          armMask = armMask or EvWrite
     if stillPending:
       reArmEvent(fd, armMask)
     # else: nothing left for this fd; the backend already consumed the
