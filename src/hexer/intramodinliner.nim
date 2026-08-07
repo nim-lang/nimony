@@ -1406,6 +1406,296 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   calleeSym = cSym
   result = 1
 
+# ---- Splice-time branch pruning ----
+
+type
+  CondVal = enum
+    condUnknown, condFalse, condTrue
+
+proc negated(v: CondVal): CondVal =
+  case v
+  of condTrue: condFalse
+  of condFalse: condTrue
+  of condUnknown: condUnknown
+
+proc litSame(a, b: Cursor): CondVal =
+  ## Literal identity over the operand kinds `isSubstitutableArg` splices;
+  ## anything else — including mixed literal kinds — stays `condUnknown`.
+  if a.kind == IntLit and b.kind == IntLit:
+    (if a.intVal == b.intVal: condTrue else: condFalse)
+  elif a.kind == UIntLit and b.kind == UIntLit:
+    (if a.uintVal == b.uintVal: condTrue else: condFalse)
+  elif a.kind == CharLit and b.kind == CharLit:
+    (if a.charLit == b.charLit: condTrue else: condFalse)
+  elif a.isTagLit and b.isTagLit and
+       a.exprKind in {NilC, TrueC, FalseC} and
+       b.exprKind in {NilC, TrueC, FalseC}:
+    (if a.exprKind == b.exprKind: condTrue else: condFalse)
+  else:
+    condUnknown
+
+proc condVal(n: Cursor): CondVal =
+  ## What a guard evaluates to once argument substitution made it literal:
+  ## `(neq (nil) (nil))` from a spliced `if c != nil` with `c := nil`, or the
+  ## `(not (eq …))` a nested `!=` forwarder splice leaves behind. `and`/`or`
+  ## fold only when BOTH operands decide, so no operand whose evaluation the
+  ## fold would discard is ever left unjudged.
+  result = condUnknown
+  if not n.isTagLit: return
+  case n.exprKind
+  of TrueC: result = condTrue
+  of FalseC: result = condFalse
+  of NotC:
+    let arg = n.childCursor
+    if arg.hasMore:
+      result = negated(condVal(arg))
+  of EqC, NeqC:
+    let a = n.childCursor
+    if a.hasMore:
+      var b = a
+      skip b
+      if b.hasMore:
+        let same = litSame(a, b)
+        result = (if n.exprKind == EqC: same else: negated(same))
+  of AndC, OrC:
+    let a = n.childCursor
+    if a.hasMore:
+      var b = a
+      skip b
+      if b.hasMore:
+        let l = condVal(a)
+        let r = condVal(b)
+        if l != condUnknown and r != condUnknown:
+          if n.exprKind == AndC:
+            result = (if l == condTrue and r == condTrue: condTrue else: condFalse)
+          else:
+            result = (if l == condTrue or r == condTrue: condTrue else: condFalse)
+  else: discard
+
+type
+  PruneCtx = object
+    symUses: Table[SymId, int]  ## splice-wide Symbol use counts, for label
+                                ## pinning; left empty when the splice holds
+                                ## no `(lab …)` at all (the common case)
+
+proc hasLabelDef(n: Cursor): bool =
+  ## Any `(lab …)` in the subtree — the trigger for building the pinning
+  ## context at all.
+  if not n.isTagLit: return false
+  if n.stmtKind == LabS: return true
+  result = false
+  var it = n.childCursor
+  while it.hasMore:
+    if hasLabelDef(it): return true
+    skip it
+
+proc collectSymUses(c: var Cursor; uses: var Table[SymId, int]) =
+  case c.kind
+  of Symbol:
+    uses.mgetOrPut(c.symId, 0) += 1
+    inc c
+  of TagLit:
+    c.into:
+      while c.hasMore:
+        collectSymUses(c, uses)
+  else:
+    inc c
+
+proc collectBranchLabels(c: var Cursor; localUses: var Table[SymId, int];
+                         defs: var seq[SymId]) =
+  case c.kind
+  of Symbol:
+    localUses.mgetOrPut(c.symId, 0) += 1
+    inc c
+  of TagLit:
+    if c.stmtKind == LabS:
+      var lc = c
+      inc lc                              # into the lab: at the symbol def
+      if lc.kind == SymbolDef: defs.add lc.symId
+    c.into:
+      while c.hasMore:
+        collectBranchLabels(c, localUses, defs)
+  else:
+    inc c
+
+proc hasAnyDef(n: Cursor): bool =
+  ## Any SymbolDef in the subtree: a `(lab :L)` someone may jump to, or a
+  ## `(var :v …)` declaration later reachable code may reference. Either
+  ## makes a dead statement unsafe to drop.
+  case n.kind
+  of SymbolDef:
+    result = true
+  of TagLit:
+    result = false
+    var it = n.childCursor
+    while it.hasMore:
+      if hasAnyDef(it): return true
+      skip it
+  else:
+    result = false
+
+proc branchPinned(px: PruneCtx; branch: Cursor): bool =
+  ## Does the branch define a `(lab :name)` some OUTSIDE code jumps to? Such
+  ## a branch is reachable however its guard folds: hexer's try/except
+  ## lowering parks the handler in an `(elif (false) (stmts (lab :`exlab.N)
+  ## …))` entered only via `(jmp …)` from the try body, so "guard is (false)"
+  ## does NOT mean "dead" for it. A label whose every use sits INSIDE the
+  ## branch (this inliner's own returnLabel: `(jmp L)` + trailing `(lab :L)`
+  ## in the same spliced body) pins nothing — the branch takes the label and
+  ## its jumps with it. Compares the branch's own use counts against the
+  ## splice-wide ones collected up front.
+  var localUses = initTable[SymId, int]()
+  var defs: seq[SymId] = @[]
+  var c = branch
+  collectBranchLabels(c, localUses, defs)
+  for L in defs:
+    if px.symUses.getOrDefault(L, 0) > localUses.getOrDefault(L, 0):
+      return true                         # someone outside jumps in
+  false
+
+proc emitPruned(px: PruneCtx; dest: var TokenBuf; n: var Cursor) =
+  ## Copy one subtree, deleting every `(elif …)` arm whose guard `condVal`
+  ## decided. This is a CORRECTNESS duty, not an optimization: the false arm
+  ## of a spliced body may no longer type-check at all — `if c != nil: …c.f…`
+  ## inlined with `c := nil` keeps a `(deref (nil))` there — and a typed
+  ## backend (arkham) must never see it, so the splice that manufactured the
+  ## constant guard deletes the arm too. An `(elif (true) …)` arm demotes to
+  ## the `if`'s final `(else …)` (the arms after it can never run); an `if`
+  ## with no live arm left contributes its `else` body, or nothing. A pinned
+  ## branch (see `branchPinned`) bails the whole `if` out to a verbatim copy.
+  case n.kind
+  of TagLit:
+    if n.stmtKind == IfS:
+      # Peek pass over the arms: what survives? The cursors index into the
+      # buffer `n` reads, which outlives the re-emit below.
+      var kept: seq[Cursor] = @[]         # elifs with undecided guards
+      var taken = default(Cursor)         # first `(true)` elif, or the else
+      var takenIsElif = false
+      var haveTaken = false
+      var dropped = false                 # anything decided at all?
+      var bailout = false                 # a to-be-dropped branch is pinned
+      var probe = n
+      probe.into:
+        while probe.hasMore:
+          let sk = probe.substructureKind
+          if haveTaken:
+            # Dead branch after a taken one — droppable only when no outside
+            # code jumps into it.
+            if px.branchPinned(probe): bailout = true
+            dropped = true
+          elif sk == ElifU:
+            case condVal(probe.childCursor)
+            of condTrue:
+              taken = probe; takenIsElif = true; haveTaken = true; dropped = true
+            of condFalse:
+              if px.branchPinned(probe): bailout = true
+              dropped = true
+            of condUnknown:
+              kept.add probe
+          elif sk == ElseU:
+            taken = probe; takenIsElif = false; haveTaken = true
+          else:
+            kept.add probe                # unexpected shape: keep verbatim
+          skip probe
+      if bailout or not dropped:
+        # Nothing decided at this level: keep the `if`, but still recurse
+        # into the branch bodies (they may contain prunable ifs).
+        dest.addParLe(n.cursorTagId, n.info)
+        n.into:
+          while n.hasMore:
+            emitPruned(px, dest, n)
+        dest.addParRi()
+        return
+      if kept.len == 0:
+        # No undecided elifs before the taken branch: the whole `if`
+        # collapses to the taken branch's body (or to nothing).
+        if haveTaken:
+          var b = taken
+          b.into:
+            if takenIsElif and b.hasMore: skip b    # past the guard
+            while b.hasMore:
+              emitPruned(px, dest, b)
+        skip n
+        return
+      # Some undecided elifs survive: rebuild the `if` from them, a taken
+      # `(true)` elif demoted to the terminal `(else …)`.
+      dest.addParLe(n.cursorTagId, n.info)
+      for arm in kept:
+        var a = arm
+        dest.addParLe(a.cursorTagId, a.info)
+        a.into:
+          while a.hasMore:
+            emitPruned(px, dest, a)
+        dest.addParRi()
+      if haveTaken:
+        let btag = (if takenIsElif: TagId(ElseU) else: taken.cursorTagId)
+        dest.addParLe(btag, taken.info)
+        var b = taken
+        b.into:
+          if takenIsElif and b.hasMore: skip b      # past the guard
+          while b.hasMore:
+            emitPruned(px, dest, b)
+        dest.addParRi()
+      dest.addParRi()
+      skip n
+    elif n.stmtKind in {StmtsS, ScopeS}:
+      # Drop UNREACHABLE statements: after an unconditional `(jmp …)`/`(ret …)`
+      # nothing executes until the next `(lab …)`, so def-free statements in
+      # between are dead. The value-splice epilogue produces exactly this —
+      # a callee whose every path returns via `(asgn dest X) (jmp RL)` leaves
+      # the trailing `dest = result` self-copy dead with `result` never
+      # written — and a typed backend verifier rightly rejects the dead read.
+      # A statement that defines anything is kept and ends the dead region
+      # (something can jump into it and fall out of it).
+      dest.addParLe(n.cursorTagId, n.info)
+      var unreachable = false
+      n.into:
+        while n.hasMore:
+          let sk = n.stmtKind
+          if sk == LabS:
+            unreachable = false
+            dest.takeTree n
+          elif unreachable and not hasAnyDef(n):
+            skip n                          # dead: drop
+          else:
+            if unreachable: unreachable = false
+            emitPruned(px, dest, n)
+            if sk in {JmpS, RetS}: unreachable = true
+      dest.addParRi()
+    elif n.stmtKind == NoStmt and n.substructureKind == NoSub:
+      # An expression subtree cannot contain statements, hence no `if` arms.
+      dest.takeTree n
+    else:
+      dest.addParLe(n.cursorTagId, n.info)
+      n.into:
+        while n.hasMore:
+          emitPruned(px, dest, n)
+      dest.addParRi()
+  else:
+    dest.takeTree n
+
+proc prunedInto(dest: var TokenBuf; expanded: var TokenBuf) =
+  ## Emit every top-level subtree of `expanded` into `dest` with the decided
+  ## `if` arms deleted (`emitPruned`). The label-pinning use counts are built
+  ## only when the splice contains a `(lab …)` at all — the common splice has
+  ## none and skips that walk.
+  var px = PruneCtx(symUses: initTable[SymId, int]())
+  var scan = beginRead(expanded)
+  var labs = false
+  while scan.hasMore:
+    if hasLabelDef(scan): labs = true
+    skip scan
+  endRead(scan)
+  if labs:
+    var uc = beginRead(expanded)
+    while uc.hasMore:
+      collectSymUses(uc, px.symUses)
+    endRead(uc)
+  var pruner = beginRead(expanded)
+  while pruner.hasMore:
+    emitPruned(px, dest, pruner)
+  endRead(pruner)
+
 # ---- Same-module inliner pass (called from hexer.nim) ----
 
 proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
@@ -1440,12 +1730,18 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             if nEmitted > 0:
               if calleeSym != SymId(0):
                 c.inProgress.incl calleeSym
+              # Nested splices first, into a scratch buffer; THEN prune the
+              # branches the substituted arguments decided — only after the
+              # nested walk are inlined guards (`!=` forwarders) reduced to
+              # the literal comparisons `condVal` can judge.
+              var expanded = createTokenBuf(spliced.len)
               var inner = beginRead(spliced)
               for _ in 0 ..< nEmitted:
-                trIntra(c, dest, inner)
+                trIntra(c, expanded, inner)
               endRead(inner)
               if calleeSym != SymId(0):
                 c.inProgress.excl calleeSym
+              prunedInto(dest, expanded)
               continue
           if n.isTagLit and n.stmtKind == VarS:
             # `(var :tmp T (call …))` immediately guarding an `if` — fold the
@@ -1456,11 +1752,13 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             let nEmitted = trySpliceCond(c, spliced, n, condCallee)
             if nEmitted > 0:
               c.inProgress.incl condCallee
+              var expanded = createTokenBuf(spliced.len)
               var inner = beginRead(spliced)
               for _ in 0 ..< nEmitted:
-                trIntra(c, dest, inner)
+                trIntra(c, expanded, inner)
               endRead(inner)
               c.inProgress.excl condCallee
+              prunedInto(dest, expanded)
               continue
           trIntra(c, dest, n)
       dest.addParRi()
@@ -1501,11 +1799,13 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
           let nEmitted = trySpliceVarInit(c, spliced, n)
           if nEmitted > 0:
             c.inProgress.incl calleeSym
+            var expanded = createTokenBuf(spliced.len)
             var inner = beginRead(spliced)
             for _ in 0 ..< nEmitted:
-              trIntra(c, dest, inner)
+              trIntra(c, expanded, inner)
             endRead(inner)
             c.inProgress.excl calleeSym
+            prunedInto(dest, expanded)
             return
       dest.addParLe(n.cursorTagId, n.info)
       into n:
