@@ -34,6 +34,9 @@ type
     sizeofCache*: SizeofCache  ## shared size-by-symbol memoization
     bits*: int
     bigEndian*: bool
+    nativeBackend*: bool  ## targeting arkham+nifasm (no C): a `dynlib` importc
+                          ## proc becomes a STATIC import carrying a `(dynlib …)`
+                          ## pragma instead of runtime loader stubs.
 
     breaks*: seq[SymId] # how to translate `break`
     continues*: seq[SymId] # how to translate `continue`

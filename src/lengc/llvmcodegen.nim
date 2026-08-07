@@ -591,6 +591,10 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
       of NodeclP:
         result.flags.incl NodeclP
         skip n
+      of DynlibP:
+        # Static-import library annotation for the NATIVE backend (arkham);
+        # meaningless for LLVM output — the linker resolves the symbol.
+        skip n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.kind == StrLit:
