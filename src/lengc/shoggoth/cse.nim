@@ -33,7 +33,7 @@
 ## through-pointer/field store (drops everything), or a call whose alias-aware
 ## summary says it may write the graph of one of the entry's symbols.
 
-import std / [tables, sets, hashes, assertions, strutils, formatfloat]
+import std / [tables, sets, hashes, assertions, strutils, formatfloat, os]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/pragmaKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
@@ -41,6 +41,24 @@ import trackers, patchsets
 import aliasing                               # intra-proc Steensgaard alias classes
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # getType — to skip value-CSE of aggregates
+
+let cseAggWords = try: parseInt(getEnv("SHOG_CSE_AGG").string) except ValueError: 0
+  ## TEMPORARY: value-CSE an all-scalar object of at most this many fields
+  ## (0 = today's behaviour: never value-CSE an aggregate).
+
+let cseLCA = getEnv("SHOG_CSE_LCA").string == "1"
+  ## TEMPORARY: when the first occurrence sits in a SIBLING `(scope …)` rather
+  ## than an enclosing block, hoist the temp to the least common anchor instead
+  ## of giving up. Restricted to `(scope)` anchors, which are unconditional
+  ## blocks, so the hoisted load executes exactly when the original did.
+
+let cseOptimistic = getEnv("SHOG_CSE_OPTIMISTIC").string == "1"
+  ## TEMPORARY, UNSOUND: treat a callee with no summary (i.e. defined in another
+  ## module) as read-only, to measure the upper bound of cross-module summaries.
+
+let cseTrace = getEnv("SHOG_CSE_TRACE").string
+  ## TEMPORARY instrumentation: echo the decision for every candidate whose
+  ## hash key contains this substring.
 
 const AddressCSE = false
   ## Address-CSE caches `&location` (as a held pointer temp) so repeated read/write
@@ -372,9 +390,13 @@ proc invalidateForCall(c: var Context; call: Cursor) =
   ## `writesGlobal` in the summary, handled below.
   var summary = FunctionSummary()
   if not callSummary(c, call, summary):
+    if cseOptimistic:
+      return                     # EXPERIMENT ONLY (unsound): assume read-only
+    if cseTrace.len > 0: echo "[cse] CLEARALL: no summary for ", toString(child0(call))
     clearCache c                 # unknown callee: assume it writes any memory
     return
   if summary.writesGlobal or summary.callsUnknown:
+    if cseTrace.len > 0: echo "[cse] CLEARALL: writesGlobal/callsUnknown ", toString(child0(call))
     clearCache c                 # may write through a global → any memory
     return
 
@@ -529,6 +551,25 @@ type
     ltcAggregate   ## object/union/array — caching copies the whole thing
     ltcUnknown     ## type navigation failed (`(err)` sentinel)
 
+proc scalarFieldCount(objBody: Cursor): int =
+  ## Number of fields in `(object . (fld …) …)` when every field is a scalar
+  ## (an integer/float/bool/char/pointer), else -1. A `seq` descriptor is
+  ## `{len: int, data: ptr T}` — two registers, not "the whole object".
+  result = 0
+  var n = objBody
+  n.into:
+    if n.hasMore: skip n                # the parent/base slot
+    while n.hasMore:
+      if n.substructureKind != FldU: return -1
+      inc result
+      n.into:
+        if n.hasMore: skip n            # :name
+        if n.hasMore: skip n            # exported marker
+        if n.hasMore:
+          if n.typeKind in {ObjectT, UnionT, ArrayT, FlexarrayT}: return -1
+          skip n                        # type
+        while n.hasMore: skip n         # pragmas / value
+
 proc classifyLoad(c: var Context; n: Cursor): LoadTypeClass =
   ## Classify the value loaded by `n` for value-CSE eligibility. Needs the type
   ## context; without it (`m == nil`, e.g. the self-tests) we assume scalar.
@@ -544,7 +585,10 @@ proc classifyLoad(c: var Context; n: Cursor): LoadTypeClass =
   ## value-CSE such a load.
   if c.m == nil: return ltcScalar
   let t = getType(c.m[], n)             # navigates nominal → object/array body
-  if t.typeKind in {ObjectT, UnionT, ArrayT}: ltcAggregate
+  if t.typeKind in {ObjectT, UnionT, ArrayT}:
+    if cseAggWords > 0 and t.typeKind == ObjectT and scalarFieldCount(t) in 1..cseAggWords:
+      return ltcScalar
+    ltcAggregate
   elif t.kind == TagLit and t.typeKind == NoType: ltcUnknown
   else: ltcScalar
 
@@ -589,8 +633,12 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   # whose type cannot be navigated is never CSE'd (in either mode): the materialized
   # temp's inferred type would be `(err)` and break the C backend.
   let cls = classifyLoad(c, lvalueCur)
+  if cseTrace.len > 0 and key.contains(cseTrace):
+    echo "[cse] ", key, "  cls=", cls, "  writeTarget=", key in c.writeTargets,
+         "  isAddrOf=", isAddrOf
   if cls == ltcUnknown: return false
   if key notin c.writeTargets and cls == ltcAggregate:
+    if cseTrace.len > 0 and key.contains(cseTrace): echo "[cse]   -> DECLINE aggregate"
     return false
   let addrMode = key in c.writeTargets
   when not AddressCSE:
@@ -602,12 +650,15 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   let usePos = cursorToPosition(c.orig[], n)          # node to rewrite
   let lvaluePos = cursorToPosition(c.orig[], lvalueCur)  # `L`, what the decl caches
   let entry = c.cache[key]
+  let tracing = cseTrace.len > 0 and key.contains(cseTrace)
   if not entry.hasFirst:
+    if tracing: echo "[cse]   -> FIRST (no cache entry: fresh or invalidated), curStmt=", c.curStmt
     if c.curStmt < 0: return false         # no enclosing statement → nowhere to hoist
     let stmtPos = c.currentStmtPos
     if stmtPos >= 0 and cursorAt(c.orig[], stmtPos).stmtKind in {WhileS, LoopS}:
       # Loop-condition candidate: hoisting before the loop would compute a stale
       # pre-loop value every iteration. Don't CSE here.
+      if tracing: echo "[cse]   -> DECLINE loop-condition"
       return false
     c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: lvaluePos,
                                firstUsePos: usePos, firstIsAddrOf: isAddrOf,
@@ -619,11 +670,27 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   # But the decl lives in the first occurrence's block, so this use must lie
   # inside that same block (its anchor stack a prefix of ours) or the temp would
   # be out of scope. If not, skip — a later occurrence in the right block may match.
+  var lcaHoist = -1
   block:
     let a = entry.anchorStack
-    if a.len > c.stmtStack.len: return false
-    for i in 0 ..< a.len:
-      if a[i] != c.stmtStack[i]: return false
+    if tracing: echo "[cse]   -> SECOND, anchor=", a.len, " cur=", c.stmtStack.len
+    var k = 0
+    while k < a.len and k < c.stmtStack.len and a[k] == c.stmtStack[k]: inc k
+    if k < a.len:
+      # The first occurrence is in a SIBLING block. Its temp would be out of
+      # scope here — unless every anchor it is nested under from the divergence
+      # down is a plain `(scope …)`, in which case the decl can be hoisted to
+      # just before that outermost differing scope and both occurrences see it.
+      if not cseLCA:
+        if tracing: echo "[cse]   -> DECLINE anchor mismatch at ", k
+        return false
+      for i in k ..< a.len:
+        if cursorAt(c.orig[], a[i]).stmtKind != ScopeS:
+          if tracing: echo "[cse]   -> DECLINE non-scope anchor at ", i
+          return false
+      lcaHoist = a[k]
+      if tracing: echo "[cse]   -> LCA hoist to ", lcaHoist
+  if tracing: echo "[cse]   -> ACCEPT (materialize temp)"
   # A use's rewrite form: an address-of occurrence yields the bare address temp;
   # any other occurrence under address-CSE is an lvalue → `(deref t)`; value-CSE
   # is always bare.
@@ -635,12 +702,13 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     tempName = c.materialized.getOrDefault(fp)
     var pd = c.pending.getOrDefault(fp)
     pd.usePositions.add (usePos, derefThis)
+    if lcaHoist >= 0 and lcaHoist < pd.hoistPos: pd.hoistPos = lcaHoist
     c.pending[fp] = pd
   else:
     tempName = freshTempName(c)
     c.materialized[fp] = tempName
     c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
-                                hoistPos: entry.firstStmtPos,
+                                hoistPos: (if lcaHoist >= 0: lcaHoist else: entry.firstStmtPos),
                                 usePositions: @[(entry.firstUsePos, derefFirst),
                                                 (usePos, derefThis)])
   result = true
