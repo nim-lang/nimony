@@ -194,6 +194,12 @@ proc extractSpecNode(n: NifCursor): NifCursor =
   if result.exprKind == SufX:
     result = firstChild(result)
 
+proc extractArgsNode(n: NifCursor): NifCursor =
+  ## The second `cliapp` argument — the explicit command line — or a cursor
+  ## with nothing left to read when `cliapp` was called with the spec alone.
+  result = callArgs(n)
+  skip result
+
 # (dot VALUE FIELD)
 proc emitDotExpr(dest: var NifBuilder; valueName, fieldName: string)
     {.ensuresNif: addedExpr(dest).} =
@@ -563,7 +569,8 @@ proc emitSharedCommandMissingCheck(dest: var NifBuilder; rawSpec: string; argume
 #           (of cmdShortOption (stmts SHORT_OPTION_DISPATCH)))))
 #     (if (elif (infix "<" argSlot INT) (stmts (call cliMissingArguments SPEC))))?
 #     (if (elif (infix "==" (dot result command) VERSION_ENUM) (stmts (call cliExitVersion SPEC))))?))
-proc emitParseProc(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
+proc emitParseProc(dest: var NifBuilder; rawSpec: string; spec: CliSpec;
+                   argsNode: NifCursor; hasArgs: bool)
     {.ensuresNif: addedStmt(dest).} =
   let mode = spec.positionalMode()
   dest.withTree ProcS, NoLineInfo:
@@ -580,6 +587,11 @@ proc emitParseProc(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
         dest.bindSym("OptParser")
         dest.withTree CallX, NoLineInfo:
           dest.bindSym("initOptParser")
+          # With an explicit argument list, parse that instead of the process
+          # argv — the two-argument `cliapp`. The expression is copied in
+          # verbatim, so it must stand on its own here.
+          if hasArgs:
+            dest.addSubtree(argsNode)
       if mode != pmNone:
         emitVarDeclInt dest, "argSlot", 0
       emitInitResultObject dest
@@ -639,14 +651,15 @@ proc emitParseProc(dest: var NifBuilder; rawSpec: string; spec: CliSpec)
       of pmInlineCommand:
         emitInlineCommandMissingCheck dest, rawSpec, spec
 
-proc generate(rawSpec: string; spec: CliSpec; info: LineInfo): NifBuilder =
+proc generate(rawSpec: string; spec: CliSpec; info: LineInfo;
+              argsNode: NifCursor; hasArgs: bool): NifBuilder =
   result = createTree()
   result.withTree StmtsS, info:
     result.withTree BlockS, info:
       result.addEmptyNode()
       result.withTree StmtsS, info:
         emitOptionsDecl result, spec
-        emitParseProc result, rawSpec, spec
+        emitParseProc result, rawSpec, spec, argsNode, hasArgs
         result.withTree CallS, NoLineInfo:
           result.addIdent("parseCli")
 
@@ -655,6 +668,7 @@ let specNode = extractSpecNode(root)
 if specNode.kind == StrLit:
   let rawSpec = specNode.stringValue
   let spec = parseSpec(rawSpec)
-  saveTree generate(rawSpec, spec, root.info)
+  let argsNode = extractArgsNode(root)
+  saveTree generate(rawSpec, spec, root.info, argsNode, argsNode.hasMore)
 else:
   saveTree errorTree("cliapp expects a string literal", specNode)

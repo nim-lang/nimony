@@ -1,19 +1,11 @@
 import std/[assertions, smartcli]
 
-var
-  nifcArgc {.importc: "cmdCount".}: int32
-  nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
+# The command line is handed to `cliapp` explicitly rather than faked into the
+# process argv: a Windows entry point receives no argv at all, so there is no
+# such vector to write.
 
 block:
-  nifcArgc = 3
-  let cargv = [
-    cstring"deploy",
-    cstring"status",
-    cstring"-v"
-  ]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  let options = cliapp"""Deploy v0.1
+  let options = cliapp("""Deploy v0.1
 Runs deployment tasks.
 
 Usage: deploy [options] status|run|version
@@ -26,7 +18,8 @@ Commands:
 Options:
   --mode=fast|safe  Execution mode
   -v, --verbose     Enable verbose output
-  -h, --help        Show help and exit"""
+  -h, --help        Show help and exit""",
+    @["status", "-v"])
 
   assert $options.command == "cmdStatus"
   assert options.env == ""
@@ -34,18 +27,7 @@ Options:
   assert options.verbose
 
 block:
-  nifcArgc = 6
-  let cargv = [
-    cstring"deploy",
-    cstring"run",
-    cstring"--mode=safe",
-    cstring"prod",
-    cstring"--verbose",
-    cstring"api"
-  ]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  let options = cliapp"""Deploy v0.1
+  let options = cliapp("""Deploy v0.1
 Runs deployment tasks.
 
 Usage: deploy [options] status|run|version
@@ -58,7 +40,8 @@ Commands:
 Options:
   --mode=fast|safe  Execution mode
   -v, --verbose     Enable verbose output
-  -h, --help        Show help and exit"""
+  -h, --help        Show help and exit""",
+    @["run", "--mode=safe", "prod", "--verbose", "api"])
 
   assert $options.command == "cmdRun"
   assert options.env == "prod"
@@ -67,17 +50,7 @@ Options:
   assert options.verbose
 
 block:
-  nifcArgc = 5
-  let cargv = [
-    cstring"deploy",
-    cstring"--verbose",
-    cstring"run",
-    cstring"prod",
-    cstring"api"
-  ]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  let options = cliapp"""Deploy v0.1
+  let options = cliapp("""Deploy v0.1
 Runs deployment tasks.
 
 Usage: deploy [options] status|run|version
@@ -89,7 +62,8 @@ Commands:
 
 Options:
   -v, --verbose 	Enable verbose output
-  -h, --help		Show help and exit"""
+  -h, --help		Show help and exit""",
+    @["--verbose", "run", "prod", "api"])
 
   assert $options.command == "cmdRun"
   assert options.env == "prod"

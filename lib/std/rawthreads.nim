@@ -16,28 +16,28 @@ when defined(windows):
                      lpParameter: pointer,
                      dwCreationFlags: uint32,
                      lpThreadId: var uint32): SysThread {.
-    stdcall, importc: "CreateThread", header: "<Windows.h>".}
+    stdcall, importc: "CreateThread", dynlib: "kernel32".}
 
   proc winSuspendThread(hThread: SysThread): int32 {.
-    stdcall, header: "<Windows.h>", importc: "SuspendThread".}
+    stdcall, dynlib: "kernel32", importc: "SuspendThread".}
 
   proc winResumeThread(hThread: SysThread): int32 {.
-    stdcall, header: "<Windows.h>", importc: "ResumeThread".}
+    stdcall, dynlib: "kernel32", importc: "ResumeThread".}
 
   proc waitForSingleObject(hHandle: SysThread, dwMilliseconds: int32): int32 {.
-    stdcall, header: "<Windows.h>", importc: "WaitForSingleObject".}
+    stdcall, dynlib: "kernel32", importc: "WaitForSingleObject".}
 
   proc waitForMultipleObjects*(nCount: int32,
                               lpHandles: ptr SysThread,
                               bWaitAll: int32,
                               dwMilliseconds: int32): int32 {.
-    stdcall, header: "<Windows.h>", importc: "WaitForMultipleObjects".}
+    stdcall, dynlib: "kernel32", importc: "WaitForMultipleObjects".}
 
   proc terminateThread*(hThread: SysThread, dwExitCode: int32): int32 {.
-    stdcall, header: "<Windows.h>", importc: "TerminateThread".}
+    stdcall, dynlib: "kernel32", importc: "TerminateThread".}
 
   proc setThreadAffinityMask*(hThread: SysThread, dwThreadAffinityMask: uint): uint {.
-    importc: "SetThreadAffinityMask", stdcall, header: "<windows.h>".}
+    importc: "SetThreadAffinityMask", stdcall, dynlib: "kernel32".}
 
 elif defined(genode):
   const
@@ -184,7 +184,7 @@ var threadId {.threadvar.}: int
 
 when defined(windows):
   proc getCurrentThreadId(): int32 {.
-    stdcall, header: "<Windows.h>", importc: "GetCurrentThreadId".}
+    stdcall, dynlib: "kernel32", importc: "GetCurrentThreadId".}
 
   proc getThreadId*(): int =
     ## Gets the ID of the currently running thread.

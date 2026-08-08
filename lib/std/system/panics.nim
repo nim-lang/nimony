@@ -7,11 +7,12 @@ when defined(nimNativeIo):
     # Windows stderr is a kernel32 `HANDLE`; write to it via `WriteFile`.
     type WinHandle = pointer
     const STD_ERROR_HANDLE = 0xFFFFFFF4'u32   # (DWORD)-12
+    # `dynlib` = static import library on every backend (see `system/exits`).
     proc cGetStdHandle(nStdHandle: uint32): WinHandle {.stdcall,
-      importc: "GetStdHandle".}
+      importc: "GetStdHandle", dynlib: "kernel32".}
     proc cWriteErrFile(h: WinHandle; buf: pointer; n: uint32;
                        written: ptr uint32; overlapped: pointer): int32 {.
-      stdcall, importc: "WriteFile".}
+      stdcall, importc: "WriteFile", dynlib: "kernel32".}
 
     proc writeErr*(s: string) =
       var written: uint32 = 0
