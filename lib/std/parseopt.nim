@@ -149,6 +149,7 @@ iterator getopt*(cmdLine: sink seq[string]): (CmdLineKind, string, string) {.sid
     yield (p.kind, p.key, p.val)
 
 when isMainModule:
+  import std/syncio
   proc main =
     for kind, key, val in getopt():
       echo $kind, "##", key, "##", val
