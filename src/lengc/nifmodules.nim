@@ -19,6 +19,8 @@
 ## embedded index is read at the raw-token level with no pool involvement.
 
 import std / [assertions, tables, syncio] # syncio: `quit`
+from std / os import fileExists           # NOT a whole `os` import: it exports a
+                                          # `FileId` that collides with nifcore's
 import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
@@ -142,6 +144,26 @@ proc tracebackTypeC*(c: var MainModule; n: Cursor): Cursor =
   ## *body* cursor, return its enclosing `(type …)` declaration. Returns
   ## `default(Cursor)` for an unregistered body (e.g. an anonymous inline type).
   c.typeBodyToDecl.getOrDefault(n.toUniqueId(), default(Cursor))
+
+proc canLoadForeign*(c: var MainModule; s: SymId): bool =
+  ## True when `getDeclOrNil` would find a declaration for `s` — i.e. the owning
+  ## module's file exists AND its embedded index names `s`. `getDeclOrNil`
+  ## *asserts* on either failure, which is right for a consumer that needs the
+  ## declaration to proceed; a consumer that is merely ASKING (an optimizer
+  ## looking for a function summary) needs "no" to be an answer. Warms the
+  ## module cache, so a following `getDeclOrNil` costs one table hit.
+  if c.defs.hasKey(s): return true
+  let splitted = splitSymName(c.pool.syms[s])
+  if splitted.module == "": return false
+  var m: ForeignModule
+  if c.prog.mods.hasKey(splitted.module):
+    m = getOrQuit(c.prog.mods, splitted.module)
+  else:
+    c.prog.scheme.name = splitted.module
+    if not fileExists($c.prog.scheme): return false
+    m = openForeignModule($c.prog.scheme)
+    c.prog.mods[splitted.module] = m
+  result = hasDecl(m, $splitted)
 
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
