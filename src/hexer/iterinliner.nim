@@ -196,13 +196,35 @@ proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, Sy
   ## Used by `inlineLoopBody` to buffer a for-stmt before handing it to
   ## `transformForStmt`, so that nested for-stmts inside are inlined fresh
   ## (with distinct labels) on every yield expansion of the outer iterator.
+  ##
+  ## Field-identity positions — `(dot obj FIELD …)` selectors and `(kv
+  ## FIELD value)` keys — are copied verbatim, NOT substituted: sem's
+  ## `name.N` numbering is per module, so a foreign type's field sym can
+  ## be the same interned string as a local this mapping renames (e.g.
+  ## field `writes.0` of another module's object vs. the first local
+  ## `writes` in this one).
   case c.kind
   of TagLit:
-    dest.addParLe(c.cursorTagId, c.info)
-    c.into:
-      while c.hasMore:
-        copyWithMapping(dest, c, mapping)
-      dest.addParRi(c.endInfo)
+    if c.exprKind in {DotX, DdotX}:
+      dest.addParLe(c.cursorTagId, c.info)
+      c.into:
+        copyWithMapping(dest, c, mapping) # object expression
+        while c.hasMore:
+          dest.takeTree c # field selector + optional depth/access token
+        dest.addParRi(c.endInfo)
+    elif c.substructureKind == KvU:
+      dest.addParLe(c.cursorTagId, c.info)
+      c.into:
+        dest.takeTree c # field name
+        while c.hasMore:
+          copyWithMapping(dest, c, mapping)
+        dest.addParRi(c.endInfo)
+    else:
+      dest.addParLe(c.cursorTagId, c.info)
+      c.into:
+        while c.hasMore:
+          copyWithMapping(dest, c, mapping)
+        dest.addParRi(c.endInfo)
   of Symbol:
     let s = c.symId
     if mapping.hasKey(s):
