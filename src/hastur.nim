@@ -27,7 +27,10 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
+                       `nifbench` is the NIF micro-benchmark suite (src/nifbench),
+                       built with host Nim so it can be compared against the same
+                       source built by `nimony c` and `nimony n`.
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -1697,6 +1700,16 @@ proc buildNifmake(showProgress = false) =
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
 
+proc buildNifbench*(showProgress = false) =
+  ## The host-Nim build of `nifbench`, which is the BASELINE column: the point
+  ## of the tool is to compile the same source with `nim c`, `nimony c` and
+  ## `nimony n` and diff the per-phase timings, so this one has to exist for
+  ## the other two to mean anything. Kept out of `all` — it is a measuring
+  ## instrument, not part of the toolchain.
+  exec nimcPrefix() & "src/nifbench/nifbench.nim", showProgress
+  let exe = "nifbench".addFileExt(ExeExt)
+  robustMoveFile "src/nifbench/" & exe, binDir() / exe
+
 proc buildValidator*(showProgress = false) =
   exec nimcPrefix() & "src/validator/validator.nim", showProgress
   let exe = "validator".addFileExt(ExeExt)
@@ -2853,6 +2866,8 @@ proc handleCmdLine =
       buildHexer(showProgress)
     of "nifmake":
       buildNifmake(showProgress)
+    of "nifbench":
+      buildNifbench(showProgress)
     of "nj":
       buildNj(showProgress)
     of "vl":
