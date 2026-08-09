@@ -22,7 +22,6 @@ import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcor
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import induction_variables                     # runInductionVariables (live pass)
 import cse                                     # runCSE + collectFunctionSummaries
-import bce                                     # runBCE (redundant index-check elimination)
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
@@ -77,10 +76,9 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   runScalarize(buf, bodySuffix, m)
   runCopyProp(buf, params)
   runInductionVariables(buf, bodySuffix, m)
-  # Before CSE: deleting a dominated guard also deletes its `s.len` load, which
-  # is one fewer expression for CSE to cache and one fewer live temp.
-  st.checksRemoved += runBCE(buf, m)
-  runCSE(buf, bodySuffix, summaries, m)
+  # CSE also deletes index checks a dominating identical check already made:
+  # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
+  st.checksRemoved += runCSE(buf, bodySuffix, summaries, m)
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
