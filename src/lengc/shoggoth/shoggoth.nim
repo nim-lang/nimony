@@ -90,4 +90,4 @@ when defined(cseSummaryStats):
                    " foreignMissing=", cse.gForeignMissing,
                    " noReturnSaved=", cse.gNoReturnSaved,
                    " clearUnknown=", cse.gClearUnknown,
-                   " clearGlobal=", cse.gClearGlobal
+                   " clearGlobal=", cse.gClearGlobal, " entriesKeptAcrossCalls=", cse.gEntriesKept

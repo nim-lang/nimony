@@ -82,6 +82,7 @@ type
 when defined(cseSummaryStats):
   var gCallsSeen*, gForeignFound*, gForeignMissing*, gNoReturnSaved*: int
   var gClearUnknown*, gClearGlobal*: int
+  var gEntriesKept*: int
 
 proc paramMayWrite(s: FunctionSummary; idx: int): bool {.inline.} =
   if s.callsUnknown: return true
@@ -151,6 +152,9 @@ type
                                        # assignment target → those are address-
                                        # CSE'd (`(deref t)`), not value-CSE'd
     addrTaken: HashSet[SymId]
+    bodyLocals: HashSet[SymId]      ## symbols declared by a `(var …)` in THIS body —
+                                    ## strictly less than `localDefPos`, which also holds
+                                    ## `gvar`/`tvar` (globals a callee CAN reach)
     patchset: Patchset
     synth: seq[TokenBuf]
     stmtStack: seq[int]
@@ -183,6 +187,7 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           pending: initTable[int, PendingDecl](),
           writeTargets: initHashSet[string](),
           addrTaken: initHashSet[SymId](),
+          bodyLocals: initHashSet[SymId](),
           patchset: initPatchset(orig),
           synth: @[],
           stmtStack: @[],
@@ -329,6 +334,53 @@ proc expressionTouchesClass(c: var Context; cur: Cursor;
   else:
     return false
 
+proc escapedClassReps(c: var Context): HashSet[SymId] =
+  ## Alias-class representatives of every symbol whose ADDRESS has escaped so far.
+  ## Incremental on purpose: an `addr x` that appears LATER in the body cannot have
+  ## reached a callee we are invalidating for now.
+  result = initHashSet[SymId]()
+  for s in c.addrTaken: result.incl c.aa.find(s)
+
+proc unreachableByCallee(c: var Context; exprCur: Cursor;
+                         escaped: HashSet[SymId]): bool =
+  ## True when NO callee — not even one that writes globals or calls unknown code
+  ## — can reach the memory `exprCur` reads.
+  ##
+  ## A callee reaches exactly three things: globals (and their graphs), the graphs
+  ## of the arguments it was passed, and addresses that escaped to it earlier. A
+  ## local declared in THIS body whose address has never been taken is in none of
+  ## them: not a global, not reachable through any pointer (none can point at it),
+  ## and passable only BY VALUE, which copies it. Arguments therefore need no
+  ## separate test — an argument that could expose the local would have had to take
+  ## its address, which `addrTaken` records.
+  ##
+  ## The alias class is consulted because the partition is coarse (field- and
+  ## level-insensitive: `x = *p` unifies `x` with `p` itself): if anything sharing
+  ## the local's class has escaped, we must assume the local has too.
+  var roots: seq[SymId] = @[]
+  accessRoots(exprCur, roots)
+  if roots.len == 0: return false          # nothing to reason about → conservative
+  for s in roots:
+    if s notin c.bodyLocals: return false  # a param/global/unknown: assume reachable
+    if s in c.addrTaken: return false
+    if c.aa.find(s) in escaped: return false
+  result = true
+
+proc clearCacheReachable(c: var Context) =
+  ## The blanket `clearCache` a call used to do, minus the entries the callee
+  ## provably cannot reach. This is the difference between "a call happened, drop
+  ## everything" and using the summaries we compute.
+  var toClear: seq[string] = @[]
+  let escaped = escapedClassReps(c)
+  for key, entry in c.cache.pairs:
+    if not entry.hasFirst: continue
+    if not unreachableByCallee(c, cursorAt(c.orig[], entry.firstExprPos), escaped):
+      toClear.add key
+    else:
+      when defined(cseSummaryStats): inc gEntriesKept
+  for key in toClear:
+    c.cache[key] = default(CachedEntry)
+
 proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
   ## Drop every cached entry that reads memory in one of the alias classes,
   ## except the entry keyed `exempt` (the address temp of the exact location a
@@ -350,7 +402,9 @@ proc invalidateForStore(c: var Context; lhs: Cursor) =
   ## temp of `lhs` itself survives: writing a location does not move its address.
   let s = rootOf(lhs)
   if s == SymId(0):
-    clearCache c                 # indeterminate target → conservative
+    # Indeterminate store target: it goes THROUGH a pointer, and no pointer can
+    # point at a local whose address was never taken. Same reasoning as a call.
+    clearCacheReachable c
     return
   var reps = initHashSet[SymId]()
   reps.incl c.aa.find(s)
@@ -509,15 +563,15 @@ proc invalidateForCall(c: var Context; call: Cursor) =
   var summary = FunctionSummary()
   if not callSummary(c, call, summary):
     when defined(cseSummaryStats): inc gClearUnknown
-    clearCache c                 # unknown callee: assume it writes any memory
-    return
+    clearCacheReachable c        # unknown callee: assume it writes any memory IT
+    return                       # CAN REACH — which is not a non-escaped local
   if summary.noReturn:
     when defined(cseSummaryStats): inc gNoReturnSaved
     return                       # control never comes back: nothing after this
                                  # call can observe anything it wrote
   if summary.writesGlobal or summary.callsUnknown:
     when defined(cseSummaryStats): inc gClearGlobal
-    clearCache c                 # may write through a global → any memory
+    clearCacheReachable c        # may write through a global → any REACHABLE memory
     return
 
   # Pass 1: per-actual root symbol, the partition classes the callee may write,
@@ -938,7 +992,7 @@ proc trExpr(c: var Context; n: var Cursor) =
   else:
     inc n
 
-proc trVar(c: var Context; n: var Cursor) =
+proc trVar(c: var Context; n: var Cursor; isBodyLocal: bool) =
   let declPos = cursorToPosition(c.orig[], n)
   var nameStart = default(Cursor)
   var typeStart = default(Cursor)
@@ -962,6 +1016,7 @@ proc trVar(c: var Context; n: var Cursor) =
     # cached load above the declaration of a local it reads (which would emit a
     # use of an out-of-scope symbol).
     c.localDefPos[nameStart.symId] = declPos
+    if isBodyLocal: c.bodyLocals.incl nameStart.symId
     if c.m != nil and not cursorIsNil(typeStart) and typeStart.kind != DotToken:
       c.m[].registerLocal(nameStart.symId, typeStart)
   # Var decls don't write existing symbols; nothing to invalidate.
@@ -1113,7 +1168,8 @@ proc tr(c: var Context; n: var Cursor) =
     if pushed:
       c.stmtStack.add cursorToPosition(c.orig[], n)
     case sk
-    of VarS, GvarS, TvarS, ConstS: trVar(c, n)
+    of VarS, ConstS:               trVar(c, n, isBodyLocal = true)
+    of GvarS, TvarS:               trVar(c, n, isBodyLocal = false)
     of AsgnS, StoreS:              trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
     of IfS:                        trIf(c, n)
