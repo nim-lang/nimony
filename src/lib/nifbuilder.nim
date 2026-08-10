@@ -168,18 +168,6 @@ proc escape(b: var Builder; c: char) =
 
 template needsEscape(c: char): bool = c < ' ' or c in ControlChars
 
-template scanChars(s: string; body: untyped) =
-  ## Walk `s`'s bytes through ONE raw payload pointer, binding each to `c`.
-  ## `s[i]` is a bounds-checked call the native backend does not inline — 2.7M
-  ## of them per emitted module, 34 instructions each — and every one of these
-  ## loops only ever reads forward.
-  let sLenX = s.len
-  if sLenX > 0:
-    let srcX = readRawData(s)
-    for iX in 0 ..< sLenX:
-      let c {.inject.} = srcX[iX]
-      body
-
 proc addRaw*(b: var Builder; s: string) =
   put b, s
 
@@ -268,7 +256,7 @@ proc addSymbolDefRetIsGlobal*(b: var Builder; s: string; dottedSuffix = ""): boo
 proc addStrLit*(b: var Builder; s: string) =
   addSep b
   b.put '"'
-  scanChars(s):
+  for c in s:
     if needsEscape c:
       b.escape c
     else:
@@ -392,7 +380,7 @@ proc attachLineInfo*(b: var Builder; col, line: int32; file = "") =
     b.addLineDiff line, emitZero = false
   if file.len > 0:
     b.put ','
-    scanChars(file):
+    for c in file:
       if c.needsEscape:
         b.escape c
       else:
@@ -410,7 +398,7 @@ proc attachComment*(b: var Builder; s: string) =
   ## whitespace allowed before the `#`.
   drainPending b
   b.put '#'
-  scanChars(s):
+  for c in s:
     if c.needsEscape:
       b.escape c
     else:

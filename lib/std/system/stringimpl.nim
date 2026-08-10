@@ -179,6 +179,39 @@ func readRawData*(s {.byref.}: string; start = 0): ptr UncheckedArray[char]
   else:
     result = cast[ptr UncheckedArray[char]](cast[uint](inlinePtr(s)) + uint(start))
 
+# ---- iteration ----
+
+iterator items*(s: string): char {.inline.} =
+  ## Walks `s`'s bytes.
+  ##
+  ## Without this overload `for c in s` binds to `openArray.items` through an
+  ## implicit `string`→`openArray` conversion, and then pays a bounds-checked
+  ## `a[i]` per byte — a call the native backend does not inline, ~34
+  ## instructions each, millions of them per emitted module. Resolving the
+  ## payload pointer ONCE and indexing it raw is the whole win; the bound is
+  ## `0 ..< len(s)` either way, so no check is being skipped, only hoisted.
+  ##
+  ## As with `readRawData`, the pointer is captured up front: growing `s` from
+  ## inside the loop body can reallocate it and invalidate the walk. That was
+  ## already true of the `openArray` view this replaces.
+  let n = len(s)
+  if n > 0:
+    let p = readRawData(s)
+    var i = 0
+    while i < n:
+      yield p[i]
+      inc i
+
+iterator pairs*(s: string): (int, char) {.inline.} =
+  ## `items` with the index, on the same single payload pointer.
+  let n = len(s)
+  if n > 0:
+    let p = readRawData(s)
+    var i = 0
+    while i < n:
+      yield (i, p[i])
+      inc i
+
 # ---- lifecycle hooks ----
 
 func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
