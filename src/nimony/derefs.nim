@@ -224,30 +224,13 @@ proc validBorrowsFrom(c: var Context; n: Cursor): bool =
     else:
       break
   if n.isSymbol:
-    let sk = c.typeCache.fetchSymKind(n.symId)
-    if sk == ParamY and n.symId == c.r.firstParam:
+    if c.typeCache.fetchSymKind(n.symId) == ParamY and n.symId == c.r.firstParam:
       # There is a difference between
       # proc forward(x: var int): var int = x
       # and
       # proc access(x: Table): var int = x[].field[0]
       # and we do not try to hide it!
       result = c.r.firstParamKind in {MutT, OutT, LentT} or someIndirection
-    elif sk in {GvarY, GletY, ConstY}:
-      # A global outlives every borrow of it, so its lifetime cannot be the
-      # thing that goes wrong — unlike a local, which the rule above exists to
-      # exclude. This is what lets an accessor fall back to a module-level
-      # default and still return `lent`:
-      #
-      #   proc pool*(c: Cursor): lent Pool =
-      #     if c.owner != nil and c.owner.pool != nil: return c.owner.pool
-      #     return fallbackPool
-      #
-      # KNOWN HOLE, and the same one Nim itself has: reassigning the global
-      # while a borrow of it is live can free the old referent. Tying the borrow
-      # to the first parameter does not actually close that either — the caller
-      # can mutate through another path just the same — so this is the existing
-      # trade extended to a strictly longer-lived root, not a new one.
-      result = true
     else:
       result = false
   else:

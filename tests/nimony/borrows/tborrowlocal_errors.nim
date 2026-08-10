@@ -1,6 +1,7 @@
-# Borrowing from a global is allowed (see `tborrowglobal.nim`) because a global
-# outlives every borrow of it. Borrowing from a LOCAL is NOT: this pins down that
-# the relaxation stayed narrow.
+# A borrow must be rooted in the proc's FIRST PARAMETER. Nothing else qualifies —
+# not a local, and not a global either: a global's lifetime outlives the borrow,
+# but reassigning it under a live borrow still frees the referent, so the root
+# rule stays where it is. This pins down the local case.
 
 type Box = ref object
   v: int
