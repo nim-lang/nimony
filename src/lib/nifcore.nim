@@ -430,8 +430,22 @@ proc `=dup`*(src: Cursor): Cursor {.nodestroy, inline.} =
 
 # ── Cursor primitives ────────────────────────────────────────────────────
 
+const nifcoreChecks* = defined(nifcoreChecks)
+  ## Internal cursor invariants (`load`, `kind`) are checked only when this is
+  ## explicitly requested, NOT under plain `-d:release`.
+  ##
+  ## `load` is the single most executed routine in the whole toolchain — every
+  ## `kind`, `tokenWidth`, `combinedPayload` and literal decode bottoms out in
+  ## it. Its two-condition assert was more than the check: it made `load`'s NIFC
+  ## body 131 tokens, over the inliner's 100-token bound, so `load` AND its
+  ## callers stayed real calls — 28 instructions for `kind`, whose body is two.
+  ## The invariant it guards (a cursor is non-nil and has tokens left) is an
+  ## internal one: a violation is a nifcore bug, and every walk re-establishes it
+  ## structurally. Build with `-d:nifcoreChecks` to get it back.
+
 proc load*(c: Cursor): NifToken {.inline.} =
-  assert c.p != nil and c.rem > 0
+  when nifcoreChecks:
+    assert c.p != nil and c.rem > 0
   c.p[]
 
 template peekAhead(c: Cursor; offset: int): NifToken =
@@ -463,22 +477,43 @@ proc tokenWidth*(c: Cursor): int {.inline.} =
   ## Chains are unbounded in principle; in practice the writers in
   ## nifcore emit at most 2 suffixes (enough to cover int64/float64 /
   ## 47-bit jumps / 55-bit pool ids). The hot path — no suffix at all
-  ## — is one peek + one branch, same as the prior single-suffix code.
+  ## — is one peek + one branch.
+  ##
+  ## Written as NESTED `if`s ending in `break`s rather than a `while` over a
+  ## conjunction, and deliberately WITHOUT a `noinline` slow-path helper:
+  ##  * a conjunction whose second operand contains a call cannot be handed to
+  ##    the backend as branches, so it materialises a bool in an if/else
+  ##    diamond — 9 x86 instructions and ~90 NIFC tokens for two compares;
+  ##  * factoring the chain walk into a helper made this routine a NON-LEAF,
+  ##    and arkham then homes its locals in callee-saved registers and pushes
+  ##    them in the prologue on EVERY call, including the overwhelmingly common
+  ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
   result = 1
-  while c.rem > result and peekAhead(c, result).kind >= ExtendedSuffix:
-    inc result
+  if c.rem > 1:
+    if peekAhead(c, 1).kind >= ExtendedSuffix:
+      result = 2
+      while c.rem > result:
+        if peekAhead(c, result).kind < ExtendedSuffix: break
+        inc result
 
 proc combinedPayload*(c: Cursor): uint64 {.inline.} =
   ## Combine the kinded token's 28-bit payload with any chained
   ## ExtendedSuffix tokens. Each suffix supplies the next 28 high bits.
+  ## Same leaf-preserving shape as `tokenWidth`, and for the same reasons.
   result = uint64(c.load.uoperand)
-  var i = 1
-  var shift = PayloadBits
-  while c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift < 64'u32:
-    result = result or (uint64(peekAhead(c, i).uoperand) shl shift)
-    inc i
-    shift += PayloadBits
-  assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift >= 64'u32), "too many ExtendedSuffix tokens!"
+  if c.rem > 1:
+    if peekAhead(c, 1).kind == ExtendedSuffix:
+      var i = 1
+      var shift = PayloadBits
+      while true:
+        result = result or (uint64(peekAhead(c, i).uoperand) shl shift)
+        inc i
+        shift += PayloadBits
+        if shift >= 64'u32: break
+        if c.rem <= i: break
+        if peekAhead(c, i).kind != ExtendedSuffix: break
+      assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix),
+             "too many ExtendedSuffix tokens!"
 
 # String/sym layout (StrLit, Ident, Symbol, SymbolDef):
 #   bit 0      mode (1 = inline-short, 0 = pool ref)

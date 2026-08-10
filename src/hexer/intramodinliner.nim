@@ -546,6 +546,29 @@ proc isSubstitutableArg(c: Cursor): bool =
   of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
   else: false
 
+proc isStableAddrArg(c: Cursor): bool =
+  ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an ADDRESS,
+  ## and a named slot's address is a constant for the whole body — so unlike a
+  ## symbol's *value* this needs no alias reasoning and holds for globals and
+  ## caller params too.
+  ##
+  ## This is the `var`/`out` parameter case, and it is why it matters: `derefs`
+  ## turns `inc i` into `inc((haddr i))`, so binding the argument would leave
+  ## `(var :p (ptr T) (haddr i))` behind and every access routed through
+  ## `(deref p)`. That `(haddr i)` makes `i` address-taken, and an address-taken
+  ## local cannot live in a register — arkham pins it to a stack slot, so a
+  ## `while` loop whose counter is bumped with `inc` pays three memory operations
+  ## per iteration in a proc that had registers to spare. Substituting instead
+  ## leaves `(deref (haddr i))`, which the rewrite engine's `deref_addr` rule
+  ## folds straight back to `i` — no address survives, and the local stays
+  ## register-eligible for every later pass and both allocators.
+  ##
+  ## A compound lvalue (`(haddr (dot o f))`, `(haddr (at a i))`) is excluded: the
+  ## path would be re-evaluated at each use, and the body could write through
+  ## another pointer parameter to a symbol the path mentions.
+  if not c.isTagLit or c.exprKind notin AddrKinds: return false
+  result = c.childCursor.isSymbol
+
 proc slotRootOf(c: Cursor): SymId =
   ## Like `rootOf`, but a spine that crosses a pointer dereference targets the
   ## *pointee*, not the named slot: `(*p).f = x` writes through `p`, leaving
@@ -906,7 +929,7 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     # so the substituted symbol's value cannot change across the body. Globals
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
-    if isSubstitutableArg(arg) or
+    if isSubstitutableArg(arg) or isStableAddrArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
 

@@ -61,11 +61,11 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   ## would collide on one module-pool symbol and the C codegen — which declares
   ## each symbol once — would leave later functions' uses undeclared.
   let bodySuffix = suffix & "." & $st.bodies
-  # The structural rewriter runs FIRST: it folds the inliner's by-address residue
-  # (`(deref (addr x))` → `x` — the substituted `inc(addr i)` shape) plus the
-  # arithmetic identities. Cleaning the `addr` nodes away up front un-poisons
-  # those locals for every later pass (SROA/copyprop treat address-taken locals
-  # as untouchable) and for the backends' register allocation.
+  # The structural rewriter runs FIRST so its `deref_addr` rules fold the
+  # inliner's by-address residue — `inc i` splices as `(deref (haddr i))` — before
+  # anything else looks at the body. Removing those `addr` nodes un-poisons the
+  # locals for every later pass (SROA and copyprop treat address-taken locals as
+  # untouchable) and for both backends' register allocation.
   if eng != nil:
     runRewritesFix(eng, buf)
   # SROA first: fold field projections off inline constructors (`T(f: a).f` → `a`),
