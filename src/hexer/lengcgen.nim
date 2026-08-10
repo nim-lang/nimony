@@ -835,7 +835,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               inc n
           of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
              VarargsP, NoSideEffectP, NodestroyP, BycopyP, ByrefP,
-             InlineP, NoinlineP, NoinitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
+             InlineP, NoinlineP, AlwaysInlineP, NoinitP, InjectP, GensymP, DirtyP,
+             UntypedP, ViewP,
              InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP,
              EstablishesBorrowP:
             result.flags.incl pk
@@ -1019,6 +1020,17 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     dest.addKey genPragmas, name, pinfo
   if InlineP in prag.flags:
     dest.addKey genPragmas, "inline", pinfo
+
+  if AlwaysInlineP in prag.flags:
+    dest.addKey genPragmas, "alwaysInline", pinfo
+
+  if NoinlineP in prag.flags:
+    # Must reach the `.c.nif`: `intramodinliner.computeInlineInfo` derives the
+    # whole policy from the NIFC proc decl, so a `.noinline` that stops here is
+    # a silent no-op — and worse than a no-op, because the cold half of a
+    # deliberate hot/cold split gets spliced back into the hot wrapper, leaving
+    # a body too big for the wrapper itself to inline.
+    dest.addKey genPragmas, "noinline", pinfo
 
   if SelectanyP in prag.flags:
     dest.addKey genPragmas, "selectany", pinfo

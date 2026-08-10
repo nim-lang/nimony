@@ -60,6 +60,8 @@ type
     guardThreshold*: int
     guards*: InlineWeights
     size*: int                 ## body token count; what a splice would cost
+    forced*: bool              ## `{.alwaysInline.}`: splice regardless of size,
+                               ## score and growth budget
   ModuleAnalysis = object
     ## Hexer-stage scratch: the threshold-0 procs `analyzeModule` found, so
     ## `intraModuleInline` knows which bodies to flatten. Importers never see
@@ -71,7 +73,7 @@ type
 
 const
   DefaultInlineInfo* = InlineInfo(threshold: 100, weights: @[],
-                                  guardThreshold: 100, guards: @[])
+                                  guardThreshold: 100, guards: @[], forced: false)
   InlineTinyBound* = 100
     ## Bodies of at most this many tokens are spliced unconditionally: at that
     ## size the body is on the order of the call sequence it replaces (a
@@ -186,10 +188,12 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   ##     that grows with the body size (`max(100, size div 4)`), so only a
   ##     moderately-sized body with high-value arguments (literals feeding
   ##     conditions or index expressions) clears the bar.
-  ## The `.inline` annotation is NOT consulted — see the module docs.
+  ## `.inline` is still NOT consulted (see the module docs); `.alwaysInline` is,
+  ## and it wins over everything below.
   result = DefaultInlineInfo
   var p = procDecl
   let pd = takeProcDecl(p)
+  var forced = false
   if not pd.body.isTagLit:
     result.threshold = InlineNeverBound     # extern/no body: nothing to splice
     return
@@ -197,6 +201,8 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
     var pr = pd.pragmas
     pr.into:                            # scan all pragmas (no early break: the
       while pr.hasMore:                 # `into` epilogue needs the scope drained)
+        if pr.isTagLit and pr.pragmaKind == AlwaysInlineP:
+          forced = true
         if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP,
                                              AssemblerP}:
           # importc: the decl's `(stmts .)` "body" is a PLACEHOLDER — the real
@@ -220,7 +226,16 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   result.weights = newSeq[int](params.len)
   let size = tokenCount(pd.body)
   result.size = size
-  if size <= InlineTinyBound:
+  if forced:
+    # `{.alwaysInline.}` — no size bound, no score, like MSVC's `__forceinline`.
+    # Everything the heuristic below reasons about is a PROXY for cost; the
+    # annotation is a direct statement about it, so the proxy has no standing.
+    # `trySplice`'s `inProgress` cycle guard still applies: that is termination,
+    # not policy. `.noinline` above still wins, because a proc carrying both is
+    # a contradiction the author must resolve, and refusing is the safe reading.
+    result.threshold = 0
+    result.forced = true
+  elif size <= InlineTinyBound:
     result.threshold = 0
   else:
     result.threshold = max(DefaultInlineInfo.threshold, size div 4)
@@ -478,8 +493,14 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
   ## against the proc's `InlineInfo`.
   let info = lookupInlineInfo(c, calleeSym)
   if info.threshold >= InlineNeverBound: return false
-  if info.size > c.growthLeft: return false   # caller's growth budget is spent
+  # `argContainsConstructor` is a CORRECTNESS gate, not policy (an escaping
+  # compound literal dies with the splice's `(scope …)`), so even a forced
+  # splice has to respect it. The growth budget is the opposite — a
+  # compile-resource backstop — so `{.alwaysInline.}` overrides it and is still
+  # charged, keeping the budget honest for every ordinary decision after it.
   if argContainsConstructor(callNode): return false
+  if info.forced: return true
+  if info.size > c.growthLeft: return false   # caller's growth budget is spent
   if info.threshold == 0: return true
   let scores = computeArgScores(callNode)
   result = shouldInline(info, scores)
