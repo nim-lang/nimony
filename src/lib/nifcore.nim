@@ -49,6 +49,10 @@ when defined(nimony):
   # `ref` fields/returns are nilable here (e.g. `pool`/`tags` return nil for
   # an ownerless cursor); opt out of Nimony's strict not-nil analysis.
   {.feature: "lenientnils".}
+else:
+  # Dual-compiled: nimony builds this for the compiler, host Nim for `nifler`.
+  # `alwaysInline` is a nimony pragma; give host Nim the nearest thing it has.
+  {.pragma: alwaysInline, inline.}
 
 import std / [assertions, hashes]
 import bitabs, lineinfos
@@ -480,7 +484,14 @@ proc tokenWidth*(c: Cursor): int {.inline.} =
   ## — is one peek + one branch.
   ##
   ## Written as NESTED `if`s ending in `break`s rather than a `while` over a
-  ## conjunction, and deliberately WITHOUT a `noinline` slow-path helper:
+  ## conjunction, and deliberately WITHOUT a `noinline` slow-path helper.
+  ##
+  ## Do NOT give this one the hot/cold treatment `combinedPayload` gets, even
+  ## though the two look alike. Measured on nifbench: splitting `combinedPayload`
+  ## is −0.68 % instructions, splitting THIS is **+6.5 M (a loss)**, and doing
+  ## both is only −0.46 % — the loss here eats a third of the win there. The hot
+  ## path returns a *constant*, so the call it saves is already the cheapest kind
+  ## while the wrapper still costs a branch at all 10 M call sites. Reasons:
   ##  * a conjunction whose second operand contains a call cannot be handed to
   ##    the backend as branches, so it materialises a bool in an if/else
   ##    diamond — 9 x86 instructions and ~90 NIFC tokens for two compares;
@@ -496,24 +507,40 @@ proc tokenWidth*(c: Cursor): int {.inline.} =
         if peekAhead(c, result).kind < ExtendedSuffix: break
         inc result
 
-proc combinedPayload*(c: Cursor): uint64 {.inline.} =
+proc combinedPayloadSlow(c: Cursor): uint64 {.noinline.} =
+  ## The suffix chain walk — see `tokenWidthSlow` for why it is `.noinline`.
+  result = uint64(c.load.uoperand)
+  var i = 1
+  var shift = PayloadBits
+  while true:
+    result = result or (uint64(peekAhead(c, i).uoperand) shl shift)
+    inc i
+    shift += PayloadBits
+    if shift >= 64'u32: break
+    if c.rem <= i: break
+    if peekAhead(c, i).kind != ExtendedSuffix: break
+  assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix),
+         "too many ExtendedSuffix tokens!"
+
+proc combinedPayload*(c: Cursor): uint64 {.alwaysInline.} =
   ## Combine the kinded token's 28-bit payload with any chained
   ## ExtendedSuffix tokens. Each suffix supplies the next 28 high bits.
-  ## Same leaf-preserving shape as `tokenWidth`, and for the same reasons.
-  result = uint64(c.load.uoperand)
-  if c.rem > 1:
-    if peekAhead(c, 1).kind == ExtendedSuffix:
-      var i = 1
-      var shift = PayloadBits
-      while true:
-        result = result or (uint64(peekAhead(c, i).uoperand) shl shift)
-        inc i
-        shift += PayloadBits
-        if shift >= 64'u32: break
-        if c.rem <= i: break
-        if peekAhead(c, i).kind != ExtendedSuffix: break
-      assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix),
-             "too many ExtendedSuffix tokens!"
+  ##
+  ## HOT PATH INLINE, COLD PATH OUT OF LINE. 7.3 M calls per nifbench run at 29
+  ## instructions each, for a common case that is one load and one branch — 12
+  ## of those 29 were callee-saved pushes and pops for registers only the chain
+  ## walk uses. `{.alwaysInline.}` because the wrapper is 269 NIFC tokens once
+  ## hexer has flattened it, far past `InlineTinyBound`; `combinedPayloadSlow`
+  ## is `{.noinline.}` because otherwise it gets spliced back in here and the
+  ## wrapper stops being worth inlining. **Both pragmas are load-bearing.**
+  ## nifbench −0.68 % instructions, self-hosted compiler unchanged.
+  ##
+  ## `tokenWidth` looks like the same shape but must NOT get the same treatment
+  ## — see the measurement in its doc comment.
+  if c.rem > 1 and peekAhead(c, 1).kind == ExtendedSuffix:
+    result = combinedPayloadSlow(c)
+  else:
+    result = uint64(c.load.uoperand)
 
 # String/sym layout (StrLit, Ident, Symbol, SymbolDef):
 #   bit 0      mode (1 = inline-short, 0 = pool ref)
