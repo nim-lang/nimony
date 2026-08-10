@@ -53,6 +53,9 @@ else:
   # Dual-compiled: nimony builds this for the compiler, host Nim for `nifler`.
   # `alwaysInline` is a nimony pragma; give host Nim the nearest thing it has.
   {.pragma: alwaysInline, inline.}
+  # `assertionsEnabled` comes from nimony's `std/assertions`; host Nim spells the
+  # same question `compileOption`. (`raiseAssert` it already has, in `system`.)
+  const assertionsEnabled = compileOption("assertions")
 
 import std / [assertions, hashes]
 import bitabs, lineinfos
@@ -135,9 +138,38 @@ template toX(k: NifKind; operand: uint32): uint32 =
 
 proc dotToken*(): NifToken {.inline.} = NifToken(uint32(DotToken))
 
+# ── assertion failure helpers ────────────────────────────────────────────
+#
+# An `assert` whose message is COMPUTED (`"… " & $n.kind`) puts the string
+# building in the proc's body. The build is cold — `assert` only runs it on
+# failure — but its mere presence makes the proc a NON-LEAF, and arkham then
+# homes locals in callee-saved registers and pushes them on every call. Measured:
+# `tagLitToken`, a shift and an or, made two calls and pushed all six
+# callee-saved registers for 35 instructions per call.
+#
+# Hoisting the message into a `{.noinline, noreturn.}` proc fixes it without
+# losing a single diagnostic: arkham does not treat a `noreturn` callee as a call
+# point (see `analyser.noReturnCallees`), so the caller stays a leaf. The `when
+# assertionsEnabled` keeps `-d:danger` / `-d:noAssertions` behaviour identical to
+# the `assert` it replaces.
+
+proc failKind(what: string; k: NifKind) {.noinline, noreturn.} =
+  raiseAssert(what & $k)
+
+proc failVal(what: string; v: uint32; tail: string) {.noinline, noreturn.} =
+  raiseAssert(what & $v & tail)
+
+template checkKind(cond: bool; what: string; k: NifKind) =
+  when assertionsEnabled:
+    if not cond: failKind(what, k)
+
+template checkVal(cond: bool; what: string; v: uint32; tail: string) =
+  when assertionsEnabled:
+    if not cond: failVal(what, v, tail)
+
 proc tagLitToken*(t: TagId; jump: uint32 = 0): NifToken {.inline.} =
   let tagBits = uint32(t) and TagMask
-  assert uint32(t) == tagBits, "tag id " & $uint32(t) & " exceeds 9 bits"
+  checkVal uint32(t) == tagBits, "tag id ", uint32(t), " exceeds 9 bits"
   assert jump <= InlineJumpCap, "use ExtendedSuffix for jump > InlineJumpCap"
   NifToken(uint32(TagLit) or (tagBits shl TagShift) or (jump shl JumpShift))
 
@@ -250,23 +282,23 @@ proc encodeLineInfoWide(file: FileId; line, col: int32): uint64 {.inline.} =
 # ── TagLit field accessors (raw — don't consult the suffix) ──────────────
 
 proc rawJump(n: NifToken): uint32 {.inline.} =
-  assert n.kind == TagLit, $n.kind
+  checkKind n.kind == TagLit, "rawJump on ", n.kind
   uint32(n) shr JumpShift
 
 proc rawTag(n: NifToken): TagId {.inline.} =
-  assert n.kind == TagLit, $n.kind
+  checkKind n.kind == TagLit, "rawTag on ", n.kind
   TagId((uint32(n) shr TagShift) and TagMask)
 
 proc setJump*(n: var NifToken; j: uint32) {.inline.} =
-  assert n.kind == TagLit, $n.kind
-  assert j <= InlineJumpCap, "jump " & $j & " exceeds 19 bits"
+  checkKind n.kind == TagLit, "setJump on ", n.kind
+  checkVal j <= InlineJumpCap, "jump ", j, " exceeds 19 bits"
   let preserved = uint32(n) and ((1'u32 shl JumpShift) - 1'u32)  # kind+tag
   n = NifToken(preserved or (j shl JumpShift))
 
 proc setTag*(n: var NifToken; t: TagId) {.inline.} =
-  assert n.kind == TagLit, $n.kind
+  checkKind n.kind == TagLit, "setTag on ", n.kind
   let tagBits = uint32(t) and TagMask
-  assert uint32(t) == tagBits, "tag id " & $uint32(t) & " exceeds 9 bits"
+  checkVal uint32(t) == tagBits, "tag id ", uint32(t), " exceeds 9 bits"
   n = NifToken((uint32(n) and not (KindMask or (TagMask shl TagShift))) or
                uint32(TagLit) or (tagBits shl TagShift))
 
@@ -583,7 +615,7 @@ proc strVal*(c: Cursor; pool: Pool): string =
   ## Decode a StrLit/Ident at the cursor into a `string`. Handles the
   ## inline-short path (no pool touch) and the pool-ref path (with or
   ## without an ExtendedSuffix extending the pool id).
-  assert c.kind in {StrLit, Ident}, "strVal on " & $c.kind
+  checkKind c.kind in {StrLit, Ident}, "strVal on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     readInlineStr(payload)
@@ -597,7 +629,7 @@ proc strId*(c: Cursor; pool: Pool): StrId =
   ## A pool-ref token already carries its id, so use it directly; only an inline
   ## short string (stored in the token itself) has to be interned. Mirrors
   ## `symId` and avoids the decode-then-reintern round trip of `strings[strVal]`.
-  assert c.kind in {StrLit, Ident}, "strId on " & $c.kind
+  checkKind c.kind in {StrLit, Ident}, "strId on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     pool.strings.getOrIncl(readInlineStr(payload))
@@ -607,7 +639,7 @@ proc strId*(c: Cursor; pool: Pool): StrId =
 proc strId*(c: Cursor): StrId {.inline.} = strId(c, c.pool)
 
 proc symName*(c: Cursor; pool: Pool): string =
-  assert c.kind in {Symbol, SymbolDef}, "symName on " & $c.kind
+  checkKind c.kind in {Symbol, SymbolDef}, "symName on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     readInlineStr(payload)
@@ -620,7 +652,7 @@ proc symId*(c: Cursor; pool: Pool): SymId =
   ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
   ## A pool-ref token already carries its id, so use it directly; only an inline
   ## short name (stored in the token itself) has to be interned.
-  assert c.kind in {Symbol, SymbolDef}, "symId on " & $c.kind
+  checkKind c.kind in {Symbol, SymbolDef}, "symId on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     pool.syms.getOrIncl(readInlineStr(payload))
@@ -680,7 +712,7 @@ proc cursorTagId*(c: Cursor): TagId {.inline.} =
   assert c.kind == TagLit
   c.load.rawTag
 
-proc cursorJump*(c: Cursor): uint64 {.inline.} =
+proc cursorJump*(c: Cursor): uint64 {.alwaysInline.} =
   ## Body tokens following this TagLit. 19 bits if unsuffixed; with one
   ## ExtendedSuffix the field widens to 47 bits (further chaining would
   ## extend it further, but no plausible jump needs that). The unified
