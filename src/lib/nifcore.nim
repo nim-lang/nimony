@@ -421,17 +421,36 @@ var
   fallbackTags*: TagPool = nil
     ## Application-default tag pool, same contract as `fallbackPool`.
 
-proc pool*(c: Cursor): Pool {.inline.} =
+# `lent` on both: `Pool`/`TagPool` are `ref object`, so returning one BY VALUE is
+# an RC increment here and a matching decrement at the call site. For a
+# two-branch accessor that IS the cost — measured: `pool` compiled to 28 call
+# instructions at 45 instructions per call, 1.76 M calls per nifbench run, and
+# `tags` the same shape.
+#
+# Written as `return` statements rather than an if-EXPRESSION because a lent
+# result must be an addressable lvalue in every arm, and an if-expression is not
+# one. Borrowing from the module-level fallback additionally needs `derefs.nim`
+# to accept a global as a borrow root.
+#
+# Callers only read through the result (`c.pool.filenames[…]`,
+# `pool.syms.getOrIncl …`). One that wants to KEEP the pool past the cursor must
+# bind it to its own `Pool` and pay for that copy explicitly, which is the point.
+
+proc pool*(c: Cursor): lent Pool {.inline.} =
   ## Pool pool the cursor's underlying buffer was built against,
   ## or `fallbackPool` when the buffer carries none.
-  if c.owner != nil and c.owner.pool != nil: c.owner.pool else: fallbackPool
+  if c.owner != nil and c.owner.pool != nil:
+    return c.owner.pool
+  return fallbackPool
 
-proc tags*(c: Cursor): TagPool {.inline.} =
+proc tags*(c: Cursor): lent TagPool {.inline.} =
   ## Tag pool the cursor's underlying buffer was built against (or
   ## `fallbackTags`). Adapter code is expected to know which TagPool layout
   ## to expect, so callers typically reach for
   ## `cast[MyTag](c.cursorTagId.uint32)` instead of consulting `c.tags`.
-  if c.owner != nil and c.owner.tags != nil: c.owner.tags else: fallbackTags
+  if c.owner != nil and c.owner.tags != nil:
+    return c.owner.tags
+  return fallbackTags
 
 proc toUniqueId*(c: Cursor): int {.inline.} =
   ## A stable identity for the cursor's *position*: two cursors over the same
