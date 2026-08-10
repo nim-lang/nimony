@@ -240,6 +240,7 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags),
           checksRemoved: 0)
   result.dotBuf.addDotToken()
+          localDefPos: initTable[SymId, int]())
 
 proc currentStmtPos(c: Context): int {.inline.} =
   if c.stmtStack.len > 0: c.stmtStack[^1] else: -1
