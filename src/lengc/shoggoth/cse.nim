@@ -238,9 +238,9 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           tainted: initHashSet[SymId](),
           shortCircuit: initTable[SymId, (int, int, bool)](),
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags),
-          checksRemoved: 0)
-  result.dotBuf.addDotToken()
+          checksRemoved: 0,
           localDefPos: initTable[SymId, int]())
+  result.dotBuf.addDotToken()
 
 proc currentStmtPos(c: Context): int {.inline.} =
   if c.stmtStack.len > 0: c.stmtStack[^1] else: -1
