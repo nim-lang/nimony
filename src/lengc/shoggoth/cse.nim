@@ -238,8 +238,7 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           tainted: initHashSet[SymId](),
           shortCircuit: initTable[SymId, (int, int, bool)](),
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags),
-          checksRemoved: 0,
-          localDefPos: initTable[SymId, int]())
+          checksRemoved: 0)
   result.dotBuf.addDotToken()
 
 proc currentStmtPos(c: Context): int {.inline.} =
