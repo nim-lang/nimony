@@ -29,6 +29,9 @@
 import std / [os, strutils]
 import optdriver    # processFile / Stats — keeps its nifcore world isolated
 import patextract   # patMain — likewise nifcore-isolated
+when defined(cseSummaryStats):
+  import cse
+  import std / syncio
 
 proc runOne(input, output: string; verify, stats: bool) =
   let st = processFile(input, output, verify)
@@ -80,3 +83,11 @@ proc main =
     optimizeMain(all)
 
 main()
+
+when defined(cseSummaryStats):
+  stderr.writeLine "[cse] calls=", cse.gCallsSeen,
+                   " foreignFound=", cse.gForeignFound,
+                   " foreignMissing=", cse.gForeignMissing,
+                   " noReturnSaved=", cse.gNoReturnSaved,
+                   " clearUnknown=", cse.gClearUnknown,
+                   " clearGlobal=", cse.gClearGlobal, " entriesKeptAcrossCalls=", cse.gEntriesKept

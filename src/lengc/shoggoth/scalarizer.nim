@@ -150,12 +150,19 @@ proc runConstructorProjection*(buf: var TokenBuf) =
 type
   Candidate = object
     declPos: int                       ## position of the `(var :o …)` decl
-    typePos: int                       ## position of the `oconstr`'s type `T` (-1 ⇒ absent);
+    typePos: int                       ## position of the type `T` whose fields the scalars
+                                       ## stand for — the `oconstr`'s type operand, or (for a
+                                       ## LOAD candidate) the decl's own type slot (-1 ⇒ absent);
                                        ## `lookupField` resolves each scalar's declared type
                                        ## through it
+    loadPos: int                       ## LOAD candidate (`var o = L`, `L` a pure aggregate
+                                       ## lvalue): position of `L`. -1 ⇒ constructor candidate.
     fieldOrder: seq[SymId]             ## fields in constructor order
     valuePos: Table[SymId, int]        ## field -> position of its `kv` value
     names: Table[SymId, string]        ## field -> fresh scalar name (survivors)
+    dotPos: Table[SymId, int]          ## field -> position of a `(dot o f …)` in the body,
+                                       ## reused verbatim (field symbol + inherited-depth
+                                       ## operand) when synthesising a LOAD scalar's `L.f`
     accessed: HashSet[SymId]           ## fields actually read/written via `.`
     disqualified: bool                 ## escaped → leave the object alone
 
@@ -186,8 +193,10 @@ proc recordOconstr(c: var Context; oSym: SymId; declPos: int; oconstr: Cursor) =
     return
   var cand = Candidate(declPos: declPos,
                        typePos: -1,
+                       loadPos: -1,
                        valuePos: initTable[SymId, int](),
                        names: initTable[SymId, string](),
+                       dotPos: initTable[SymId, int](),
                        accessed: initHashSet[SymId]())
   var ok = true
   var oc = oconstr
@@ -220,6 +229,35 @@ proc recordOconstr(c: var Context; oSym: SymId; declPos: int; oconstr: Cursor) =
   if ok and cand.fieldOrder.len > 0:
     c.candidates[oSym] = cand
 
+proc isPureLvaluePath(n: Cursor): bool =
+  ## True for an lvalue built only from symbols, literals and the address-forming
+  ## operators — i.e. one we may re-evaluate once per field without duplicating a
+  ## side effect. A call anywhere inside makes it false.
+  case n.kind
+  of Symbol, IntLit, UIntLit, CharLit: result = true
+  of TagLit:
+    if n.exprKind notin {DotC, AtC, PatC, DerefC}: return false
+    result = true
+    var m = n
+    m.loopInto:
+      if not isPureLvaluePath(m): return false
+      skip m
+  else: result = false
+
+proc recordLoad(c: var Context; oSym: SymId; declPos, typePos, loadPos: int) =
+  ## Record `var oSym = L` where `L` is a pure aggregate lvalue. Unlike the
+  ## constructor form there is no per-field value list: each surviving field's
+  ## scalar is initialised from `L.f`, re-read at the SAME program point where the
+  ## whole-object copy happened, so it observes exactly the same memory.
+  if oSym in c.candidates:
+    c.candidates[oSym].disqualified = true
+    return
+  c.candidates[oSym] = Candidate(declPos: declPos, typePos: typePos, loadPos: loadPos,
+                                 valuePos: initTable[SymId, int](),
+                                 names: initTable[SymId, string](),
+                                 dotPos: initTable[SymId, int](),
+                                 accessed: initHashSet[SymId]())
+
 proc collectCandidates(c: var Context; n: Cursor) =
   if n.kind != TagLit: return
   if n.stmtKind == VarS:
@@ -227,26 +265,56 @@ proc collectCandidates(c: var Context; n: Cursor) =
     var oSym = SymId(0)
     var hasOconstr = false
     var oconstrCur = default(Cursor)
+    var declTypePos = -1
+    var loadPos = -1
     v.into:
       if v.hasMore:
         if v.kind == SymbolDef: oSym = symId(v)
         skip v                                   # name
       if v.hasMore: skip v                       # pragmas
-      if v.hasMore: skip v                       # type
+      if v.hasMore:
+        # The decl's own type slot names the object type for a LOAD candidate.
+        # An empty slot (`.`) leaves us nothing to resolve the fields through.
+        if not (v.kind == DotToken): declTypePos = cursorToPosition(c.orig[], v)
+        skip v                                   # type
       if v.hasMore:
         if v.kind == TagLit and v.exprKind == OconstrC:
           hasOconstr = true
           oconstrCur = v
+        elif declTypePos >= 0 and v.kind == TagLit and
+             v.exprKind in {DotC, AtC, PatC, DerefC} and isPureLvaluePath(v):
+          loadPos = cursorToPosition(c.orig[], v)
         skip v                                   # initializer
       while v.hasMore: skip v
-    if oSym != SymId(0) and hasOconstr:
-      recordOconstr(c, oSym, cursorToPosition(c.orig[], n), oconstrCur)
+    if oSym != SymId(0):
+      if hasOconstr:
+        recordOconstr(c, oSym, cursorToPosition(c.orig[], n), oconstrCur)
+      elif loadPos >= 0:
+        recordLoad(c, oSym, cursorToPosition(c.orig[], n), declTypePos, loadPos)
   var m = n
   m.loopInto:
     collectCandidates(c, m)
     skip m
 
 # ---- legality / use classification ---------------------------------------
+
+proc addrEscapeRoot(n: Cursor): SymId =
+  ## The symbol whose STORAGE the address expression `n` (the operand of an
+  ## `addr`/`haddr`) denotes, or 0 when the chain passes through a dereference
+  ## first. `(haddr (pat (dot o f) i))` is the address of an element of the array
+  ## `o.f` POINTS TO — not of `o`'s storage. There `o` is merely read, exactly
+  ## like any other field load, so it must not disqualify the object. Only a
+  ## chain of `dot`/`at` selections reaching `o` directly aliases `o` itself.
+  var cur = n
+  while true:
+    case cur.kind
+    of Symbol: return symId(cur)
+    of TagLit:
+      case cur.exprKind
+      of DerefC, PatC: return SymId(0)         # behind a pointer: not o's storage
+      of DotC, AtC: cur = child0(cur)
+      else: return rootOf(cur)                 # anything else: stay conservative
+    else: return SymId(0)
 
 proc classify(c: var Context; n: Cursor) =
   ## Walk the body. A candidate that appears anywhere except as the base of a
@@ -276,7 +344,7 @@ proc classify(c: var Context; n: Cursor) =
           classify(c, m)
           skip m
     of AddrC, HaddrC:
-      let r = rootOf(child0(n))                   # `addr o` / `addr o.f` escapes o
+      let r = addrEscapeRoot(child0(n))           # `addr o` / `addr o.f` escapes o
       if r != SymId(0) and r in c.candidates:
         c.candidates[r].disqualified = true
       var m = n
@@ -350,6 +418,33 @@ proc buildFieldDecl(c: var Context; name: string; value: Cursor;
   buf.closeTag()
   c.synth.add ensureMove(buf)
 
+proc buildLoadFieldDecl(c: var Context; name: string; dotNode, value: Cursor;
+                        typePos: int; f: SymId): int =
+  ## Synthesize `(var :name . <field type> (dot <L> f …))` for a LOAD candidate.
+  ## `dotNode` is one of the body's own `(dot o f …)` nodes, reused so the field
+  ## symbol and the inherited-depth operand are spelled exactly as the backend
+  ## expects; only its base `o` is swapped for the object's initializer `L`.
+  result = c.synth.len
+  var buf = createTokenBuf(24, c.orig[].pool, c.orig[].tags)
+  buf.openTag TagId(ord(VarTagId))
+  let li = rawLineInfo(dotNode)
+  if li.isValid: buf.appendLineInfo li
+  buf.addSymDef name
+  buf.addDotToken()                              # pragmas
+  emitScalarType(c, buf, typePos, f)             # declared type
+  buf.openTag dotNode.cursorTagId
+  if li.isValid: buf.appendLineInfo li
+  var d = dotNode
+  d.into:
+    if d.hasMore: skip d                         # base `o` …
+    emitRewritten(c, buf, value)                 # … replaced by `L`
+    while d.hasMore:
+      buf.addSubtree d                           # field symbol, inherited-depth int
+      skip d
+  buf.closeTag()
+  buf.closeTag()
+  c.synth.add ensureMove(buf)
+
 proc buildSymUse(c: var Context; name: string): int =
   result = c.synth.len
   var buf = createTokenBuf(2, c.orig[].pool, c.orig[].tags)
@@ -384,10 +479,19 @@ proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
     let n = beginRead(buf)
     classify(c, n)
 
+  # A LOAD candidate has no constructor field list: its fields are exactly the ones
+  # accessed, ordered by first access so the emitted decls are deterministic.
+  for (oSym, fSym, dotAt) in c.accesses:
+    if c.candidates[oSym].loadPos >= 0 and fSym notin c.candidates[oSym].valuePos:
+      c.candidates[oSym].valuePos[fSym] = c.candidates[oSym].loadPos
+      c.candidates[oSym].dotPos[fSym] = dotAt
+      c.candidates[oSym].fieldOrder.add fSym
+
   # Survivors: not escaped, and every accessed field was constructor-initialised.
   var survPairs: seq[(int, SymId)] = @[]
   for oSym, cand in c.candidates:
     if cand.disqualified: continue
+    if cand.fieldOrder.len == 0: continue    # a load nobody reads by field: leave it
     var ok = true
     for f in cand.accessed:
       if f notin cand.valuePos: ok = false; break
@@ -409,10 +513,16 @@ proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
     let declPos = c.candidates[oSym].declPos
     let fields = c.candidates[oSym].fieldOrder
     var first = true
+    let isLoad = c.candidates[oSym].loadPos >= 0
     for f in fields:
       let name = c.candidates[oSym].names[f]
       let value = cursorAt(c.orig[], c.candidates[oSym].valuePos[f])
-      let idx = buildFieldDecl(c, name, value, c.candidates[oSym].typePos, f)
+      let idx =
+        if isLoad:
+          buildLoadFieldDecl(c, name, cursorAt(c.orig[], c.candidates[oSym].dotPos[f]),
+                             value, c.candidates[oSym].typePos, f)
+        else:
+          buildFieldDecl(c, name, value, c.candidates[oSym].typePos, f)
       if first:
         c.patchset.addSubst(declPos, synthCursor(c, idx)); first = false
       else:

@@ -63,13 +63,26 @@ type
 
   FunctionSummary* = object
     writesGlobal*, readsGlobal*, callsUnknown*, raises*: bool
+    noReturn*: bool                  ## `(attr "noreturn")` — control never comes
+                                     ## back, so NOTHING after the call observes
+                                     ## anything it wrote. Not part of `(smry …)`;
+                                     ## read off the same pragmas node.
     resultCls*: uint32
     resultEscapes*: bool
     params*: seq[ParamEffect]
 
+  ForeignSummary = object
+    known: bool                      ## false = probed, genuinely has none
+    s: FunctionSummary
+
   FunctionSummaryTable* = Table[SymId, FunctionSummary]
     ## Collected once from the whole module; cse runs per body. The module and
     ## all per-body buffers share one pool, so `SymId` keys stay consistent.
+
+when defined(cseSummaryStats):
+  var gCallsSeen*, gForeignFound*, gForeignMissing*, gNoReturnSaved*: int
+  var gClearUnknown*, gClearGlobal*: int
+  var gEntriesKept*: int
 
 proc paramMayWrite(s: FunctionSummary; idx: int): bool {.inline.} =
   if s.callsUnknown: return true
@@ -139,6 +152,9 @@ type
                                        # assignment target → those are address-
                                        # CSE'd (`(deref t)`), not value-CSE'd
     addrTaken: HashSet[SymId]
+    bodyLocals: HashSet[SymId]      ## symbols declared by a `(var …)` in THIS body —
+                                    ## strictly less than `localDefPos`, which also holds
+                                    ## `gvar`/`tvar` (globals a callee CAN reach)
     patchset: Patchset
     synth: seq[TokenBuf]
     stmtStack: seq[int]
@@ -149,6 +165,9 @@ type
     tempCounter: int
     moduleSuffix: string
     summaries: ptr FunctionSummaryTable
+    foreignSummaries: Table[SymId, ForeignSummary]  ## callees from OTHER modules,
+                                    ## resolved on demand through `c.m`; negatives
+                                    ## cached too (see `callSummary`)
     aa: Aliasing                ## intra-proc alias partition of this body
     m: ptr MainModule           ## module type context; nil ⇒ no type-based skips
     localDefPos: Table[SymId, int]  ## local symbol → position of its `(var …)` decl,
@@ -168,6 +187,7 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           pending: initTable[int, PendingDecl](),
           writeTargets: initHashSet[string](),
           addrTaken: initHashSet[SymId](),
+          bodyLocals: initHashSet[SymId](),
           patchset: initPatchset(orig),
           synth: @[],
           stmtStack: @[],
@@ -175,6 +195,7 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           tempCounter: 0,
           moduleSuffix: moduleSuffix,
           summaries: summaries,
+          foreignSummaries: initTable[SymId, ForeignSummary](),
           localDefPos: initTable[SymId, int]())
 
 proc currentStmtPos(c: Context): int {.inline.} =
@@ -313,6 +334,53 @@ proc expressionTouchesClass(c: var Context; cur: Cursor;
   else:
     return false
 
+proc escapedClassReps(c: var Context): HashSet[SymId] =
+  ## Alias-class representatives of every symbol whose ADDRESS has escaped so far.
+  ## Incremental on purpose: an `addr x` that appears LATER in the body cannot have
+  ## reached a callee we are invalidating for now.
+  result = initHashSet[SymId]()
+  for s in c.addrTaken: result.incl c.aa.find(s)
+
+proc unreachableByCallee(c: var Context; exprCur: Cursor;
+                         escaped: HashSet[SymId]): bool =
+  ## True when NO callee — not even one that writes globals or calls unknown code
+  ## — can reach the memory `exprCur` reads.
+  ##
+  ## A callee reaches exactly three things: globals (and their graphs), the graphs
+  ## of the arguments it was passed, and addresses that escaped to it earlier. A
+  ## local declared in THIS body whose address has never been taken is in none of
+  ## them: not a global, not reachable through any pointer (none can point at it),
+  ## and passable only BY VALUE, which copies it. Arguments therefore need no
+  ## separate test — an argument that could expose the local would have had to take
+  ## its address, which `addrTaken` records.
+  ##
+  ## The alias class is consulted because the partition is coarse (field- and
+  ## level-insensitive: `x = *p` unifies `x` with `p` itself): if anything sharing
+  ## the local's class has escaped, we must assume the local has too.
+  var roots: seq[SymId] = @[]
+  accessRoots(exprCur, roots)
+  if roots.len == 0: return false          # nothing to reason about → conservative
+  for s in roots:
+    if s notin c.bodyLocals: return false  # a param/global/unknown: assume reachable
+    if s in c.addrTaken: return false
+    if c.aa.find(s) in escaped: return false
+  result = true
+
+proc clearCacheReachable(c: var Context) =
+  ## The blanket `clearCache` a call used to do, minus the entries the callee
+  ## provably cannot reach. This is the difference between "a call happened, drop
+  ## everything" and using the summaries we compute.
+  var toClear: seq[string] = @[]
+  let escaped = escapedClassReps(c)
+  for key, entry in c.cache.pairs:
+    if not entry.hasFirst: continue
+    if not unreachableByCallee(c, cursorAt(c.orig[], entry.firstExprPos), escaped):
+      toClear.add key
+    else:
+      when defined(cseSummaryStats): inc gEntriesKept
+  for key in toClear:
+    c.cache[key] = default(CachedEntry)
+
 proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
   ## Drop every cached entry that reads memory in one of the alias classes,
   ## except the entry keyed `exempt` (the address temp of the exact location a
@@ -334,20 +402,142 @@ proc invalidateForStore(c: var Context; lhs: Cursor) =
   ## temp of `lhs` itself survives: writing a location does not move its address.
   let s = rootOf(lhs)
   if s == SymId(0):
-    clearCache c                 # indeterminate target → conservative
+    # Indeterminate store target: it goes THROUGH a pointer, and no pointer can
+    # point at a local whose address was never taken. Same reasoning as a call.
+    clearCacheReachable c
     return
   var reps = initHashSet[SymId]()
   reps.incl c.aa.find(s)
   clobberClasses(c, reps, exempt = hashExpr(lhs))
 
-proc callSummary(c: Context; call: Cursor; summary: var FunctionSummary): bool =
+# ---- summary loader: read `(smry …)` pragmas from the buffer ---------------
+# A nifcore reader for the wire format produced by hexer/funcsummary (which
+# runs on the older nifcursors API). Keying by this buffer's own nifcore SymIds
+# keeps the table consistent with the code cse is optimizing. NOTE: never
+# `return` out of an `into`/`loopInto` body — that skips cursor restoration.
+
+proc readParamSummary(n: var Cursor; s: var FunctionSummary) =
+  n.into:
+    if n.hasMore and n.kind == IntLit:
+      let idx = int(intVal(n))
+      inc n
+      if idx >= 0:
+        while s.params.len <= idx: s.params.add ParamEffect()
+        var cls = uint32(idx)
+        if n.hasMore and n.kind == IntLit:
+          cls = uint32(intVal(n))
+          inc n
+        s.params[idx].cls = cls
+        while n.hasMore:
+          if n.kind == Ident:
+            case strVal(n)
+            of "reads": s.params[idx].reads = true
+            of "writes": s.params[idx].writes = true
+            of "slot": s.params[idx].slotWritten = true
+            of "escapes": s.params[idx].escapes = true
+            else: discard
+            inc n
+          else:
+            skip n
+    while n.hasMore: skip n         # drain so `into` sees rem == 0
+
+proc readSummary(n: var Cursor; outSummary: var FunctionSummary) =
+  outSummary = FunctionSummary()
+  var sawResult = false
+  n.into:
+    while n.hasMore:
+      if n.kind == Ident:
+        case strVal(n)
+        of "writeGlobal": outSummary.writesGlobal = true; inc n
+        of "readGlobal": outSummary.readsGlobal = true; inc n
+        of "callsUnknown": outSummary.callsUnknown = true; inc n
+        of "raises": outSummary.raises = true; inc n
+        of "resultEscapes": outSummary.resultEscapes = true; inc n
+        of "result":
+          inc n
+          if n.hasMore and n.kind == IntLit:
+            outSummary.resultCls = uint32(intVal(n))
+            sawResult = true
+            inc n
+        else: inc n
+      elif n.kind == TagLit and n.substructureKind == ParamU:
+        readParamSummary(n, outSummary)
+      else:
+        skip n
+  if not sawResult:
+    outSummary.resultCls = uint32(outSummary.params.len)
+
+proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool =
+  ## Reads a proc's `(smry …)` AND its `(attr "noreturn")`, which is a separate
+  ## pragma but the same question: what can this callee do to memory we cached?
+  ## True when either was present — a bare `noreturn` proc still deserves a table
+  ## entry, since it is the one callee that provably clobbers nothing.
+  if pragmas.kind != TagLit: return false
+  var found = false
+  var noRet = false
+  var p = pragmas
+  p.loopInto:
+    if p.kind == TagLit and p.pragmaKind == SmryP:
+      if not found:
+        var q = p
+        readSummary(q, outSummary)
+        found = true
+    elif p.kind == TagLit and p.pragmaKind == AttrP:
+      var q = p
+      q.into:
+        while q.hasMore:
+          if q.kind == StrLit and strVal(q) == "noreturn": noRet = true
+          skip q
+    skip p
+  if noRet:
+    outSummary.noReturn = true
+    found = true
+  result = found
+
+proc callSummary(c: var Context; call: Cursor; summary: var FunctionSummary): bool =
+  ## The module's own table first; then the callee's OWN module.
+  ##
+  ## `collectFunctionSummaries` only sees procs declared in the buffer being
+  ## optimized, so every cross-module call used to fall through to "unknown
+  ## callee" and clear the entire cache — 86% of all clears in a measured module,
+  ## and `panic` (in every bounds check) among them. But the summary is not
+  ## missing, only elsewhere: it is a pragma on the callee's `(proc …)` in its own
+  ## `.c.nif`, and `MainModule` already resolves foreign symbols through an
+  ## embedded index, parsing exactly that one declaration into THIS module's pool
+  ## — so the SymIds line up and nothing else is read. `canLoadForeign` keeps a
+  ## symbol we cannot resolve (an intrinsic, a syscall, a module built without an
+  ## index) an answer rather than an assertion.
+  ##
+  ## Results are memoized either way: a negative is as worth caching as a
+  ## positive, since the alternative is re-probing the index at every call site.
   if c.summaries == nil: return false
   if call.kind != TagLit: return false
   let callee = child0(call)
   if callee.kind != Symbol: return false
   let key = symId(callee)
-  if not c.summaries[].hasKey(key): return false
-  summary = c.summaries[].getOrDefault(key)
+  when defined(cseSummaryStats): inc gCallsSeen
+  if c.summaries[].hasKey(key):
+    summary = c.summaries[].getOrDefault(key)
+    return true
+  if c.m == nil: return false
+  if c.foreignSummaries.hasKey(key):
+    let e = c.foreignSummaries.getOrDefault(key)
+    if not e.known: return false
+    summary = e.s
+    return true
+  var found = false
+  var s = FunctionSummary()
+  if canLoadForeign(c.m[], key):
+    let d = getDeclOrNil(c.m[], key)
+    if d != nil and d.kind == ProcY:
+      var p = d.pos
+      let pd = takeProcDecl(p)
+      if readSummaryPragma(pd.pragmas, s): found = true
+  c.foreignSummaries[key] = ForeignSummary(known: found, s: s)
+  when defined(cseSummaryStats):
+    if found: inc gForeignFound else: inc gForeignMissing
+  if not found: return false
+  summary = s
   result = true
 
 proc invalidateForCall(c: var Context; call: Cursor) =
@@ -372,10 +562,16 @@ proc invalidateForCall(c: var Context; call: Cursor) =
   ## `writesGlobal` in the summary, handled below.
   var summary = FunctionSummary()
   if not callSummary(c, call, summary):
-    clearCache c                 # unknown callee: assume it writes any memory
-    return
+    when defined(cseSummaryStats): inc gClearUnknown
+    clearCacheReachable c        # unknown callee: assume it writes any memory IT
+    return                       # CAN REACH — which is not a non-escaped local
+  if summary.noReturn:
+    when defined(cseSummaryStats): inc gNoReturnSaved
+    return                       # control never comes back: nothing after this
+                                 # call can observe anything it wrote
   if summary.writesGlobal or summary.callsUnknown:
-    clearCache c                 # may write through a global → any memory
+    when defined(cseSummaryStats): inc gClearGlobal
+    clearCacheReachable c        # may write through a global → any REACHABLE memory
     return
 
   # Pass 1: per-actual root symbol, the partition classes the callee may write,
@@ -796,7 +992,7 @@ proc trExpr(c: var Context; n: var Cursor) =
   else:
     inc n
 
-proc trVar(c: var Context; n: var Cursor) =
+proc trVar(c: var Context; n: var Cursor; isBodyLocal: bool) =
   let declPos = cursorToPosition(c.orig[], n)
   var nameStart = default(Cursor)
   var typeStart = default(Cursor)
@@ -820,6 +1016,7 @@ proc trVar(c: var Context; n: var Cursor) =
     # cached load above the declaration of a local it reads (which would emit a
     # use of an out-of-scope symbol).
     c.localDefPos[nameStart.symId] = declPos
+    if isBodyLocal: c.bodyLocals.incl nameStart.symId
     if c.m != nil and not cursorIsNil(typeStart) and typeStart.kind != DotToken:
       c.m[].registerLocal(nameStart.symId, typeStart)
   # Var decls don't write existing symbols; nothing to invalidate.
@@ -971,7 +1168,8 @@ proc tr(c: var Context; n: var Cursor) =
     if pushed:
       c.stmtStack.add cursorToPosition(c.orig[], n)
     case sk
-    of VarS, GvarS, TvarS, ConstS: trVar(c, n)
+    of VarS, ConstS:               trVar(c, n, isBodyLocal = true)
+    of GvarS, TvarS:               trVar(c, n, isBodyLocal = false)
     of AsgnS, StoreS:              trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
     of IfS:                        trIf(c, n)
@@ -992,75 +1190,6 @@ proc tr(c: var Context; n: var Cursor) =
       discard c.stmtStack.pop()
   else:
     inc n
-
-# ---- summary loader: read `(smry …)` pragmas from the buffer ---------------
-# A nifcore reader for the wire format produced by hexer/funcsummary (which
-# runs on the older nifcursors API). Keying by this buffer's own nifcore SymIds
-# keeps the table consistent with the code cse is optimizing. NOTE: never
-# `return` out of an `into`/`loopInto` body — that skips cursor restoration.
-
-proc readParamSummary(n: var Cursor; s: var FunctionSummary) =
-  n.into:
-    if n.hasMore and n.kind == IntLit:
-      let idx = int(intVal(n))
-      inc n
-      if idx >= 0:
-        while s.params.len <= idx: s.params.add ParamEffect()
-        var cls = uint32(idx)
-        if n.hasMore and n.kind == IntLit:
-          cls = uint32(intVal(n))
-          inc n
-        s.params[idx].cls = cls
-        while n.hasMore:
-          if n.kind == Ident:
-            case strVal(n)
-            of "reads": s.params[idx].reads = true
-            of "writes": s.params[idx].writes = true
-            of "slot": s.params[idx].slotWritten = true
-            of "escapes": s.params[idx].escapes = true
-            else: discard
-            inc n
-          else:
-            skip n
-    while n.hasMore: skip n         # drain so `into` sees rem == 0
-
-proc readSummary(n: var Cursor; outSummary: var FunctionSummary) =
-  outSummary = FunctionSummary()
-  var sawResult = false
-  n.into:
-    while n.hasMore:
-      if n.kind == Ident:
-        case strVal(n)
-        of "writeGlobal": outSummary.writesGlobal = true; inc n
-        of "readGlobal": outSummary.readsGlobal = true; inc n
-        of "callsUnknown": outSummary.callsUnknown = true; inc n
-        of "raises": outSummary.raises = true; inc n
-        of "resultEscapes": outSummary.resultEscapes = true; inc n
-        of "result":
-          inc n
-          if n.hasMore and n.kind == IntLit:
-            outSummary.resultCls = uint32(intVal(n))
-            sawResult = true
-            inc n
-        else: inc n
-      elif n.kind == TagLit and n.substructureKind == ParamU:
-        readParamSummary(n, outSummary)
-      else:
-        skip n
-  if not sawResult:
-    outSummary.resultCls = uint32(outSummary.params.len)
-
-proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool =
-  if pragmas.kind != TagLit: return false
-  var found = false
-  var p = pragmas
-  p.loopInto:
-    if not found and p.kind == TagLit and p.pragmaKind == SmryP:
-      var q = p
-      readSummary(q, outSummary)
-      found = true
-    skip p
-  result = found
 
 proc collectFunctionSummaries*(buf: var TokenBuf): FunctionSummaryTable =
   ## Build the module-level summary table from each proc's `(smry …)` pragma.

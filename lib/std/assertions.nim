@@ -1,9 +1,20 @@
 import std/syncio
 
+const assertionsEnabled* = not defined(danger) and not defined(noAssertions)
+  ## Whether `assert` expands to anything at all. Follows Nim's convention:
+  ## `-d:release` KEEPS assertions, `-d:danger` removes them, and
+  ## `-d:noAssertions` removes them on its own — the last one so a build can drop
+  ## the checks without also turning off bound checks and overflow checks, which
+  ## is what you want when profiling: an `assert` costs a compare, a branch and a
+  ## string literal at every call site, and those are not what is being measured.
+
 template assert*(cond: bool; msg = "") =
-  if not cond:
-    echo "[Assertion Failure] ", msg
-    quit 1
+  when assertionsEnabled:
+    if not cond:
+      echo "[Assertion Failure] ", msg
+      quit 1
+  else:
+    discard
 
 proc raiseAssert*(msg: string) {.noreturn.} =
   echo "[Assertion Failure] ", msg
