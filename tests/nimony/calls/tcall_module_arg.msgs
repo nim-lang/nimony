@@ -1,12 +1,12 @@
 tests/nimony/calls/tcall_module_arg.nim(5, 1) Trace: instantiation from here
-lib/std/syncio.nim(485, 5) Error: Type mismatch at [position]
+lib/std/syncio.nim(496, 5) Error: Type mismatch at [position]
 write stdout, syncio
-[2] expected: string but got: (module) (declared in lib/std/syncio.nim(279, 1))
-[2] expected: bool but got: (module) (declared in lib/std/syncio.nim(285, 1))
-[2] expected: int64 but got: (module) (declared in lib/std/syncio.nim(289, 1))
-[2] expected: int32 but got: (module) (declared in lib/std/syncio.nim(295, 1))
-[2] expected: uint64 but got: (module) (declared in lib/std/syncio.nim(298, 1))
-[2] expected: uint32 but got: (module) (declared in lib/std/syncio.nim(304, 1))
-[2] (module) does not match constraint T (declared in lib/std/syncio.nim(307, 1))
-[2] expected: char but got: (module) (declared in lib/std/syncio.nim(310, 1))
-[2] expected: float64 but got: (module) (declared in lib/std/syncio.nim(317, 1))
+[2] expected: string but got: (module) (declared in lib/std/syncio.nim(290, 1))
+[2] expected: bool but got: (module) (declared in lib/std/syncio.nim(296, 1))
+[2] expected: int64 but got: (module) (declared in lib/std/syncio.nim(300, 1))
+[2] expected: int32 but got: (module) (declared in lib/std/syncio.nim(306, 1))
+[2] expected: uint64 but got: (module) (declared in lib/std/syncio.nim(309, 1))
+[2] expected: uint32 but got: (module) (declared in lib/std/syncio.nim(315, 1))
+[2] (module) does not match constraint T (declared in lib/std/syncio.nim(318, 1))
+[2] expected: char but got: (module) (declared in lib/std/syncio.nim(321, 1))
+[2] expected: float64 but got: (module) (declared in lib/std/syncio.nim(328, 1))

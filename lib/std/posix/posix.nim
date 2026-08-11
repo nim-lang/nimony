@@ -15,6 +15,29 @@ when defined(posix):
   # reference across the conditional `type` sections below.
   include posix_other
 
+  const linuxA64Raw* = defined(linux) and defined(arm64) and defined(nimNoLibc)
+    ## Linux/AArch64 on the truly freestanding backend (`nimony n`: arkham +
+    ## nifasm, no libc linked): every binding below becomes a RAW syscall (arkham
+    ## lowers a recognized `importc` name straight to `svc`), and AArch64's
+    ## asm-generic syscall table simply has no `open`, `stat`, `lstat`,
+    ## `readlink`, `mkdir`, `rmdir`, `unlink`, `rename`, `pipe`, `dup2` or `fork`
+    ## — the kernel offers only the `*at` / `*2` / `clone` forms. Where that is
+    ## true the legacy name is reimplemented here on top of the form that exists,
+    ## precisely as glibc's wrapper does.
+    ##
+    ## `nimNoLibc`, NOT `nimNativeIo`: the C backend uses the same raw-syscall
+    ## stdlib but still LINKS libc, so there the plain `open`/`stat` are real
+    ## symbols and must keep being bound directly — gating on `nimNativeIo` made
+    ## the C backend emit calls to `newfstatat`, which glibc does not export
+    ## under that name (it is `fstatat`), and every C-backend link that touched
+    ## `getFileSize` failed.
+
+  when linuxA64Raw:
+    const
+      AT_FDCWD* = cint(-100)          ## resolve a relative path against the cwd
+      AT_SYMLINK_NOFOLLOW* = cint(0x100)
+      AT_REMOVEDIR* = cint(0x200)     ## make `unlinkat` behave like `rmdir`
+
   type
     InAddrScalar* = uint32
     Sighandler* = proc (a: cint) {.noconv.}
@@ -179,6 +202,22 @@ when defined(posix):
     proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat64", sideEffect.}
     proc lstat*(a1: cstring, a2: var Stat): cint {.importc: "lstat64", sideEffect.}
     proc stat*(a1: cstring, a2: var Stat): cint {.importc: "stat64".}
+  elif linuxA64Raw:
+    # See `linuxA64Raw`: there is no `open`/`stat`/`lstat` syscall on AArch64, so
+    # each is expressed through the `*at` twin the kernel does provide. The
+    # argument shuffle is exactly what glibc's own wrappers do.
+    proc openat(dirfd: cint; path: cstring; flags: cint; mode: Mode): cint {.
+      importc: "openat", sideEffect.}
+    proc newfstatat(dirfd: cint; path: cstring; buf: var Stat; flags: cint): cint {.
+      importc: "newfstatat", sideEffect.}
+    proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.inline, sideEffect.} =
+      openat(AT_FDCWD, a1, a2, mode)
+    proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate".}
+    proc fstat*(a1: cint, a2: var Stat): cint {.importc: "fstat", sideEffect.}
+    proc lstat*(a1: cstring, a2: var Stat): cint {.inline, sideEffect.} =
+      newfstatat(AT_FDCWD, a1, a2, AT_SYMLINK_NOFOLLOW)
+    proc stat*(a1: cstring, a2: var Stat): cint {.inline, sideEffect.} =
+      newfstatat(AT_FDCWD, a1, a2, cint(0))
   else:
     proc open*(a1: cstring; a2: cint; mode: Mode = 0): cint {.importc: "open", sideEffect.}
     proc ftruncate*(a1: cint, a2: Off): cint {.importc: "ftruncate".}
@@ -264,8 +303,18 @@ when defined(posix):
 
   proc realpath*(path, resolved: cstring): cstring {.importc: "realpath", sideEffect.}
 
-  proc readlink*(a1, a2: cstring, a3: int): int {.importc: "readlink".}
-  proc symlink*(a1, a2: cstring): cint {.importc: "symlink".}
+  when linuxA64Raw:
+    proc readlinkat(dirfd: cint; path, buf: cstring; size: int): int {.
+      importc: "readlinkat".}
+    proc symlinkat(target: cstring; dirfd: cint; linkpath: cstring): cint {.
+      importc: "symlinkat".}
+    proc readlink*(a1, a2: cstring, a3: int): int {.inline.} =
+      readlinkat(AT_FDCWD, a1, a2, a3)
+    proc symlink*(a1, a2: cstring): cint {.inline.} =
+      symlinkat(a1, AT_FDCWD, a2)
+  else:
+    proc readlink*(a1, a2: cstring, a3: int): int {.importc: "readlink".}
+    proc symlink*(a1, a2: cstring): cint {.importc: "symlink".}
 
   # Directory operations
   when defined(linux):
@@ -389,9 +438,21 @@ when defined(posix):
       proc readdir*(dirp: nil ptr DIR): nil ptr Dirent {.importc: "readdir", sideEffect.}
     proc closedir*(dirp: nil ptr DIR): cint {.importc: "closedir", sideEffect.}
 
-  proc mkdir*(path: cstring, mode: Mode): cint {.importc: "mkdir", sideEffect.}
-  proc rmdir*(path: cstring): cint {.importc: "rmdir", sideEffect.}
-  proc unlink*(path: cstring): cint {.importc: "unlink", sideEffect.}
+  when linuxA64Raw:
+    proc mkdirat(dirfd: cint; path: cstring; mode: Mode): cint {.
+      importc: "mkdirat", sideEffect.}
+    proc unlinkat(dirfd: cint; path: cstring; flags: cint): cint {.
+      importc: "unlinkat", sideEffect.}
+    proc mkdir*(path: cstring, mode: Mode): cint {.inline, sideEffect.} =
+      mkdirat(AT_FDCWD, path, mode)
+    proc rmdir*(path: cstring): cint {.inline, sideEffect.} =
+      unlinkat(AT_FDCWD, path, AT_REMOVEDIR)
+    proc unlink*(path: cstring): cint {.inline, sideEffect.} =
+      unlinkat(AT_FDCWD, path, cint(0))
+  else:
+    proc mkdir*(path: cstring, mode: Mode): cint {.importc: "mkdir", sideEffect.}
+    proc rmdir*(path: cstring): cint {.importc: "rmdir", sideEffect.}
+    proc unlink*(path: cstring): cint {.importc: "unlink", sideEffect.}
 
   # POSIX d_type constants
   const
@@ -465,9 +526,25 @@ when defined(posix):
   type CChar* {.importc: "char", nodecl.} = int8
   type CCharArray* = nil ptr UncheckedArray[nil ptr CChar]
 
-  proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
-  proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
-  proc fork*(): Pid {.importc: "fork", sideEffect.}
+  when linuxA64Raw:
+    proc pipe2(a: ptr cint; flags: cint): cint {.importc: "pipe2", sideEffect.}
+    proc dup3(oldfd, newfd, flags: cint): cint {.importc: "dup3", sideEffect.}
+    # `fork()` is `clone(SIGCHLD, 0, 0, 0, 0)` — what glibc's own fork reduces to
+    # once its pthread bookkeeping is stripped. The child inherits everything and
+    # signals SIGCHLD to the parent on exit, which is what `wait4` below waits for.
+    proc clone(flags: culong; stack, parentTid, tls, childTid: nil pointer): Pid {.
+      importc: "clone", sideEffect.}
+    proc pipe*(a: ptr cint): cint {.inline, sideEffect.} = pipe2(a, cint(0))
+    proc dup2*(oldfd, newfd: cint): cint {.inline, sideEffect.} =
+      # `dup3` rejects oldfd == newfd (EINVAL) where `dup2` returns it unchanged.
+      if oldfd == newfd: oldfd else: dup3(oldfd, newfd, cint(0))
+    proc fork*(): Pid {.inline, sideEffect.} =
+      const SIGCHLD = culong(17)
+      clone(SIGCHLD, nil, nil, nil, nil)
+  else:
+    proc pipe*(a: ptr cint): cint {.importc: "pipe", sideEffect.}
+    proc dup2*(oldfd, newfd: cint): cint {.importc: "dup2", sideEffect.}
+    proc fork*(): Pid {.importc: "fork", sideEffect.}
   proc execve*(path: cstring; argv, env: CCharArray): cint {.importc: "execve", sideEffect.}
   # There is no `waitpid` Linux syscall — it is libc sugar for `wait4` with a
   # NULL `rusage`. `wait4` is exported by glibc, musl and libSystem, and

@@ -1997,6 +1997,17 @@ proc useNativeBoot(): bool =
   ## codegen plus the Linux syscall table the libc-free stdlib runs on. Its
   ## tools live in the sibling `../nativenif` checkout and are outside
   ## `build all`, so fall back to the C backend when they're missing.
+  ##
+  ## linux/arm64 is NOT here yet, and the reason is narrow: `boot` compiles every
+  ## stage `-d:release`, which turns shoggoth on, and the AArch64 backend still
+  ## MISCOMPILES the toolchain from shoggoth-optimized Leng — stage 1 builds and
+  ## links, then its nimsem reports "No pragmas found" and its hexer emits NIF
+  ## that shoggoth rejects. Everything below that opt level is green there:
+  ## `hastur native` passes in full, and a hand-driven `nimony n` boot (no
+  ## `-d:release`) reaches a byte-identical stage1 == stage2 fixed point. The
+  ## same boot at `-d:release --opt:none` — release defines, optimizer off — also
+  ## produces a working toolchain, which is what localizes the remaining bug to
+  ## arkham's handling of optimized input rather than to the syscall/ABI layer.
   when defined(linux) and defined(amd64):
     if not NativeBootReady: return false
     for tool in BootNativeTools:
