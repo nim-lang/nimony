@@ -32,7 +32,15 @@ elif defined(windows):
   import ../windows/winlean
 elif defined(posix):
   import ../posix/posix
-  proc c_rename(oldname, newname: cstring): cint {.importc: "rename".}
+  when linuxA64Raw:
+    # No `rename` syscall on AArch64 (see `linuxA64Raw`): both paths are resolved
+    # against the cwd, which is what glibc's `rename` does with `renameat`.
+    proc renameat(oldDirfd: cint; oldname: cstring;
+                  newDirfd: cint; newname: cstring): cint {.importc: "renameat".}
+    proc c_rename(oldname, newname: cstring): cint {.inline.} =
+      renameat(AT_FDCWD, oldname, AT_FDCWD, newname)
+  else:
+    proc c_rename(oldname, newname: cstring): cint {.importc: "rename".}
 
 
 
