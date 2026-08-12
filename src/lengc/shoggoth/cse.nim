@@ -32,6 +32,22 @@
 ## it reads — a write to a mentioned symbol, an `addr` of a mentioned symbol, a
 ## through-pointer/field store (drops everything), or a call whose alias-aware
 ## summary says it may write the graph of one of the entry's symbols.
+##
+## ## Second job: redundant index checks
+##
+## `hexer` lowers a `.requires` contract to `if COND: panic` at the top of the
+## callee, and `seq.[]` is `.inline`, so after inlining every element access
+## carries its own copy — `t.hashes[h]` written three times in one loop iteration
+## pays for three. `panic` does not return, so **reaching a second identical
+## guard proves the first one's condition was false**, and the second is dead.
+##
+## That lives here rather than in a pass of its own because it is the same
+## analysis: a canonical key per expression, a branch-scoped `Tracker`, and
+## "has anything since invalidated this?" — answered by the alias classes and
+## function summaries above, which is strictly more precise than a standalone
+## pass could afford. The one thing it needs that the load cache must NOT have is
+## `provenKey`, which resolves a symbol to the expression it was defined from
+## (see the comment there).
 
 import std / [tables, sets, hashes, assertions, strutils, formatfloat]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
@@ -178,10 +194,28 @@ type
                                     ## CSE: fold `a op b` only when its operands appear
                                     ## NOWHERE else (so folding kills their live ranges
                                     ## instead of adding the temp on top). See flushPending.
+    # ---- redundant index-check elimination (shares everything above) --------
+    proven: Tracker[string, int]    ## canonical guard condition → 1-based index into
+                                    ## `provenRoots`. `hexer` lowers a `.requires`
+                                    ## contract to `if COND: panic`, and `panic` does
+                                    ## not return — so reaching a second identical
+                                    ## guard PROVES the first one's condition was
+                                    ## false, and the second is dead. The fact is
+                                    ## branch-scoped and invalidated by exactly the
+                                    ## machinery the load cache uses.
+    provenRoots: seq[seq[SymId]]    ## per fact: the RESOLVED symbols it reads
+    defExpr: Table[SymId, int]      ## single-def local → position of its RHS
+    defCount: Table[SymId, int]
+    tainted: HashSet[SymId]         ## address taken, or defined by an impure RHS
+    shortCircuit: Table[SymId, (int, int, bool)]
+                                    ## bool temp → (pos of A, pos of B, isAnd) for the
+                                    ## diamond hexer lowers `A and B` / `A or B` to
+    dotBuf: TokenBuf                ## a single `.` token: replaces a deleted guard
+    checksRemoved*: int
 
 proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
                    summaries: ptr FunctionSummaryTable): Context =
-  Context(orig: orig,
+  result = Context(orig: orig,
           cache: initTracker[string, CachedEntry](),
           materialized: initTable[int, string](),
           pending: initTable[int, PendingDecl](),
@@ -196,7 +230,16 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           moduleSuffix: moduleSuffix,
           summaries: summaries,
           foreignSummaries: initTable[SymId, ForeignSummary](),
-          localDefPos: initTable[SymId, int]())
+          localDefPos: initTable[SymId, int](),
+          proven: initTracker[string, int](),
+          provenRoots: @[],
+          defExpr: initTable[SymId, int](),
+          defCount: initTable[SymId, int](),
+          tainted: initHashSet[SymId](),
+          shortCircuit: initTable[SymId, (int, int, bool)](),
+          dotBuf: createTokenBuf(2, orig[].pool, orig[].tags),
+          checksRemoved: 0)
+  result.dotBuf.addDotToken()
 
 proc currentStmtPos(c: Context): int {.inline.} =
   if c.stmtStack.len > 0: c.stmtStack[^1] else: -1
@@ -246,6 +289,235 @@ proc hashExpr(c: Cursor; result: var string) =
 proc hashExpr(c: Cursor): string =
   result = ""
   hashExpr(c, result)
+
+# ---- single-def resolution (for the guard facts only) ---------------------
+# `hashExpr` above is the LOAD CACHE's notion of "the same expression" and must
+# stay purely structural: collapsing two temps there would let one temp's value
+# be reused for another's. A guard fact wants the opposite — two inlined copies
+# of `[]` bind `s.len` to their own fresh `sroa` temp each, so without resolving
+# through the definition no two copies ever compare equal. Hence a second key.
+
+const MaxResolveDepth = 8
+  ## The chains this must see through are two or three links (a `sroa` temp to a
+  ## field load); the bound just stops a pathological body.
+
+proc isPureExpr(cur: Cursor): bool =
+  ## No call, no `addr`: a value that depends only on the memory its symbols
+  ## name, so the root set below fully describes when it can change.
+  if not cur.hasMore: return true
+  case cur.kind
+  of TagLit:
+    if cur.exprKind == CallC or cur.stmtKind == CallS: return false
+    if cur.exprKind in AddrKinds: return false
+    var n = cur
+    var ok = true
+    n.loopInto:
+      if ok and not isPureExpr(n): ok = false
+      skip n
+    return ok
+  else: return true
+
+proc soleStmt(body: Cursor; res: var Cursor): bool =
+  ## Descend through nested single-statement `(stmts …)`/`(scope …)` wrappers to
+  ## the one statement they hold; hexer's scope lowering nests these several deep.
+  var cur = body
+  var guard = 0
+  while true:
+    inc guard
+    if guard > 32: return false
+    if not cur.hasMore or cur.kind != TagLit: return false
+    if cur.stmtKind notin {StmtsS, ScopeS}:
+      res = cur
+      return true
+    var inner = cur
+    var count = 0
+    var only = default(Cursor)
+    inner.loopInto:
+      inc count
+      only = inner
+      skip inner
+    if count != 1: return false
+    cur = only
+
+proc asgnTo(stmt: Cursor; target: var SymId; rhs: var Cursor): bool =
+  if not stmt.hasMore or stmt.kind != TagLit or stmt.stmtKind != AsgnS: return false
+  var lhs = child0(stmt)
+  if lhs.kind != Symbol: return false
+  target = symId(lhs)
+  rhs = lhs
+  skip rhs
+  result = rhs.hasMore
+
+proc matchShortCircuit(c: var Context; n: Cursor) =
+  ## `x = A and B` is lowered to `(if (elif A (asgn x B)) (else (asgn x false)))`,
+  ## `x = A or B` to `(if (elif A (asgn x true)) (else (asgn x B)))`. Without
+  ## recognizing this, a `.requires` written with `and`/`or` leaves its guard keyed
+  ## on an opaque bool temp with two definitions and nothing ever matches.
+  if n.stmtKind != IfS: return
+  var arms = n
+  var count = 0
+  var condA = default(Cursor)
+  var thenBody = default(Cursor)
+  var elseBody = default(Cursor)
+  var haveElse = false
+  var bad = false
+  arms.loopInto:
+    case arms.substructureKind
+    of ElifU:
+      inc count
+      var b = arms
+      var i = 0
+      b.loopInto:
+        if i == 0: condA = b
+        elif i == 1: thenBody = b
+        inc i
+        skip b
+      if i != 2: bad = true
+    of ElseU:
+      haveElse = true
+      var b = arms
+      var i = 0
+      b.loopInto:
+        if i == 0: elseBody = b
+        inc i
+        skip b
+      if i != 1: bad = true
+    else: bad = true
+    skip arms
+  if bad or count != 1 or not haveElse: return
+  var tStmt = default(Cursor)
+  var eStmt = default(Cursor)
+  if not soleStmt(thenBody, tStmt): return
+  if not soleStmt(elseBody, eStmt): return
+  var tSym = SymId(0)
+  var eSym = SymId(0)
+  var tRhs = default(Cursor)
+  var eRhs = default(Cursor)
+  if not asgnTo(tStmt, tSym, tRhs): return
+  if not asgnTo(eStmt, eSym, eRhs): return
+  if tSym != eSym or tSym == SymId(0): return
+  if not isPureExpr(condA): return
+  if eRhs.kind == TagLit and eRhs.exprKind == FalseC and isPureExpr(tRhs):
+    c.shortCircuit[tSym] = (cursorToPosition(c.orig[], condA),
+                            cursorToPosition(c.orig[], tRhs), true)
+  elif tRhs.kind == TagLit and tRhs.exprKind == TrueC and isPureExpr(eRhs):
+    c.shortCircuit[tSym] = (cursorToPosition(c.orig[], condA),
+                            cursorToPosition(c.orig[], eRhs), false)
+
+proc preScanDefs(c: var Context; start: Cursor) =
+  ## One walk recording, per local, how many times it is DEFINED and by what.
+  if not start.hasMore or start.kind != TagLit: return
+  let sk = start.stmtKind
+  if sk == VarS:
+    var n = start
+    var nameSym = SymId(0)
+    var i = 0
+    var rhs = default(Cursor)
+    var have = false
+    n.loopInto:
+      if i == 0 and n.kind == SymbolDef: nameSym = symId(n)
+      elif i == 3:
+        rhs = n; have = true
+      inc i
+      skip n
+    if nameSym != SymId(0):
+      # `(var :x . T .)` is a DECLARATION, not a definition: the value arrives in
+      # a later `(asgn x …)`, which hexer emits for every scope-lowered temp. To
+      # count the decl would make all of them look multiply-defined.
+      if have and rhs.hasMore and rhs.kind != DotToken:
+        c.defCount[nameSym] = c.defCount.getOrDefault(nameSym) + 1
+        if isPureExpr(rhs):
+          c.defExpr[nameSym] = cursorToPosition(c.orig[], rhs)
+        else:
+          c.tainted.incl nameSym
+  elif sk == AsgnS:
+    var lhs = child0(start)
+    var rhs = lhs
+    skip rhs
+    let root = rootOf(lhs)
+    if root != SymId(0):
+      c.defCount[root] = c.defCount.getOrDefault(root) + 1
+      if lhs.kind == Symbol and rhs.hasMore and isPureExpr(rhs):
+        c.defExpr[root] = cursorToPosition(c.orig[], rhs)
+      else:
+        c.tainted.incl root
+  elif sk == IfS:
+    matchShortCircuit(c, start)
+  elif start.exprKind in AddrKinds:
+    let a = rootOf(child0(start))
+    if a != SymId(0): c.tainted.incl a
+  var n = start
+  n.loopInto:
+    preScanDefs(c, n)
+    skip n
+
+proc resolvable(c: Context; s: SymId): bool {.inline.} =
+  s notin c.tainted and c.defCount.getOrDefault(s) == 1 and c.defExpr.hasKey(s)
+
+proc isDiamond(c: Context; s: SymId): bool {.inline.} =
+  ## The two arms of the diamond are the symbol's only definitions.
+  s notin c.tainted and c.shortCircuit.hasKey(s) and
+    c.defCount.getOrDefault(s) == 2
+
+proc provenKey(c: var Context; cur: Cursor; result: var string; depth = 0) =
+  ## `hashExpr`, but a symbol normalizes to the expression it was DEFINED from.
+  case cur.kind
+  of Symbol:
+    let s = symId(cur)
+    if depth < MaxResolveDepth and c.isDiamond(s):
+      let (pa, pb, isAnd) = c.shortCircuit[s]
+      result.add (if isAnd: "(&" else: "(|")
+      var a = cursorAt(c.orig[], pa)
+      provenKey(c, a, result, depth + 1)
+      result.add ' '
+      var b = cursorAt(c.orig[], pb)
+      provenKey(c, b, result, depth + 1)
+      result.add ')'
+    elif depth < MaxResolveDepth and c.resolvable(s):
+      var d = cursorAt(c.orig[], c.defExpr[s])
+      provenKey(c, d, result, depth + 1)
+    else:
+      result.add 'S'; result.add symName(cur)
+  of TagLit:
+    result.add '('
+    result.addInt int cursorTagId(cur)
+    var n = cur
+    n.loopInto:
+      result.add ' '
+      provenKey(c, n, result, depth)
+      skip n
+    result.add ')'
+  else:
+    hashExpr(cur, result)
+
+proc provenKey(c: var Context; cur: Cursor): string =
+  result = ""
+  provenKey(c, cur, result)
+
+proc collectResolvedRoots(c: var Context; cur: Cursor; acc: var seq[SymId];
+                          depth = 0) =
+  ## The symbols the NORMALIZED key reads — invalidation must track those, not
+  ## the temps the resolution saw through.
+  if not cur.hasMore: return
+  case cur.kind
+  of Symbol:
+    let s = symId(cur)
+    if s notin acc: acc.add s
+    if depth < MaxResolveDepth and c.isDiamond(s):
+      let (pa, pb, _) = c.shortCircuit[s]
+      var a = cursorAt(c.orig[], pa)
+      collectResolvedRoots(c, a, acc, depth + 1)
+      var b = cursorAt(c.orig[], pb)
+      collectResolvedRoots(c, b, acc, depth + 1)
+    elif depth < MaxResolveDepth and c.resolvable(s):
+      var d = cursorAt(c.orig[], c.defExpr[s])
+      collectResolvedRoots(c, d, acc, depth + 1)
+  of TagLit:
+    var n = cur
+    n.loopInto:
+      collectResolvedRoots(c, n, acc, depth)
+      skip n
+  else: discard
 
 # ---- subtree inspection ---------------------------------------------------
 
@@ -301,6 +573,13 @@ proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
 proc markAddrTaken(c: var Context; s: SymId; exempt = "")
 proc clearCache(c: var Context)
 
+proc dropProvenMentioning(c: var Context; target: SymId) =
+  if target == SymId(0): return
+  var toClear: seq[string] = @[]
+  for key, idx in c.proven.pairs:
+    if idx > 0 and target in c.provenRoots[idx-1]: toClear.add key
+  for key in toClear: c.proven[key] = 0
+
 proc invalidateMentioning(c: var Context; target: SymId; exempt = "") =
   ## Drop every cached entry whose expression mentions `target` (its value/address
   ## may have changed). `exempt` keeps one key alive: taking `&L` marks `L`'s root
@@ -315,6 +594,7 @@ proc invalidateMentioning(c: var Context; target: SymId; exempt = "") =
       toClear.add key
   for key in toClear:
     c.cache[key] = default(CachedEntry)
+  dropProvenMentioning(c, target)
 
 proc expressionTouchesClass(c: var Context; cur: Cursor;
                             reps: HashSet[SymId]): bool =
@@ -341,6 +621,17 @@ proc escapedClassReps(c: var Context): HashSet[SymId] =
   result = initHashSet[SymId]()
   for s in c.addrTaken: result.incl c.aa.find(s)
 
+proc rootsUnreachableByCallee(c: var Context; roots: seq[SymId];
+                              escaped: HashSet[SymId]): bool =
+  ## The root-list form of `unreachableByCallee` — the guard facts carry their
+  ## resolved roots directly, so they answer the same question without a cursor.
+  if roots.len == 0: return false          # nothing to reason about → conservative
+  for s in roots:
+    if s notin c.bodyLocals: return false  # a param/global/unknown: assume reachable
+    if s in c.addrTaken: return false
+    if c.aa.find(s) in escaped: return false
+  result = true
+
 proc unreachableByCallee(c: var Context; exprCur: Cursor;
                          escaped: HashSet[SymId]): bool =
   ## True when NO callee — not even one that writes globals or calls unknown code
@@ -359,12 +650,7 @@ proc unreachableByCallee(c: var Context; exprCur: Cursor;
   ## the local's class has escaped, we must assume the local has too.
   var roots: seq[SymId] = @[]
   accessRoots(exprCur, roots)
-  if roots.len == 0: return false          # nothing to reason about → conservative
-  for s in roots:
-    if s notin c.bodyLocals: return false  # a param/global/unknown: assume reachable
-    if s in c.addrTaken: return false
-    if c.aa.find(s) in escaped: return false
-  result = true
+  result = rootsUnreachableByCallee(c, roots, escaped)
 
 proc clearCacheReachable(c: var Context) =
   ## The blanket `clearCache` a call used to do, minus the entries the callee
@@ -380,6 +666,11 @@ proc clearCacheReachable(c: var Context) =
       when defined(cseSummaryStats): inc gEntriesKept
   for key in toClear:
     c.cache[key] = default(CachedEntry)
+  var dropFacts: seq[string] = @[]
+  for key, idx in c.proven.pairs:
+    if idx > 0 and not rootsUnreachableByCallee(c, c.provenRoots[idx-1], escaped):
+      dropFacts.add key
+  for key in dropFacts: c.proven[key] = 0
 
 proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
   ## Drop every cached entry that reads memory in one of the alias classes,
@@ -394,6 +685,14 @@ proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
       toClear.add key
   for key in toClear:
     c.cache[key] = default(CachedEntry)
+  var dropFacts: seq[string] = @[]
+  for key, idx in c.proven.pairs:
+    if idx == 0: continue
+    for s in c.provenRoots[idx-1]:
+      if c.aa.find(s) in reps:
+        dropFacts.add key
+        break
+  for key in dropFacts: c.proven[key] = 0
 
 proc invalidateForStore(c: var Context; lhs: Cursor) =
   ## A store through a pointer/field writes the location `lhs`. Drop only the
@@ -694,14 +993,14 @@ proc addSubstPatch(c: var Context; pos: int; synthIdx: int) =
 
 # ---- branch-state forwarding ----------------------------------------------
 
-proc openBranches(c: var Context) = c.cache.openBranches()
-proc openBranch(c: var Context) = c.cache.openBranch()
-proc openFinalBranch(c: var Context) = c.cache.openFinalBranch()
-proc closeBranch(c: var Context) = c.cache.closeBranch()
-proc closeBranches(c: var Context) = c.cache.closeBranches()
-proc gotoLabel(c: var Context; L: LabelId) = c.cache.gotoLabel L
-proc landLabel(c: var Context; L: LabelId) = c.cache.landLabel L
-proc clearCache(c: var Context) = c.cache.clearAll()
+proc openBranches(c: var Context) = (c.cache.openBranches(); c.proven.openBranches())
+proc openBranch(c: var Context) = (c.cache.openBranch(); c.proven.openBranch())
+proc openFinalBranch(c: var Context) = (c.cache.openFinalBranch(); c.proven.openFinalBranch())
+proc closeBranch(c: var Context) = (c.cache.closeBranch(); c.proven.closeBranch())
+proc closeBranches(c: var Context) = (c.cache.closeBranches(); c.proven.closeBranches())
+proc gotoLabel(c: var Context; L: LabelId) = (c.cache.gotoLabel L; c.proven.gotoLabel L)
+proc landLabel(c: var Context; L: LabelId) = (c.cache.landLabel L; c.proven.landLabel L)
+proc clearCache(c: var Context) = (c.cache.clearAll(); c.proven.clearAll())
 
 proc markAddrTaken(c: var Context; s: SymId; exempt = "") =
   if s in c.addrTaken: return
@@ -1145,6 +1444,51 @@ proc trBreakOrRet(c: var Context; n: var Cursor) =
   skip n
   clearCache c
 
+proc callIsNoReturn(c: var Context; call: Cursor): bool =
+  ## Reuses `callSummary`'s resolution — module table, then the callee's own
+  ## `.c.nif` through `c.m` — and its memoization, negatives included.
+  var s = default(FunctionSummary)
+  result = callSummary(c, call, s) and s.noReturn
+
+proc guardCondition(c: var Context; n: Cursor; cond: var Cursor): bool =
+  ## `n` is `(if (elif COND (stmts (call NORETURN …))))` — one branch, no `else`,
+  ## the arm a single call that never returns. Such a statement ASSERTS `not COND`
+  ## for everything it dominates. Yields COND.
+  if n.stmtKind != IfS: return false
+  var arm = n
+  var count = 0
+  var body = default(Cursor)
+  var got = default(Cursor)
+  var bad = false
+  arm.loopInto:
+    inc count
+    if arm.substructureKind != ElifU: bad = true
+    else:
+      var b = arm
+      var i = 0
+      b.loopInto:
+        if i == 0: got = b
+        elif i == 1: body = b
+        inc i
+        skip b
+      if i != 2: bad = true
+    skip arm
+  if bad or count != 1: return false
+  if not body.hasMore or body.stmtKind != StmtsS: return false
+  var sc = body
+  var stmts = 0
+  var theCall = default(Cursor)
+  sc.loopInto:
+    inc stmts
+    theCall = sc
+    skip sc
+  if stmts != 1: return false
+  if not theCall.hasMore or theCall.kind != TagLit: return false
+  if theCall.stmtKind != CallS: return false
+  if not callIsNoReturn(c, theCall): return false
+  cond = got
+  result = true
+
 proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
   # An anchor is a statement that forms a nested lexical scope — a C `{…}` block:
   # a temp hoisted at the first occurrence's statement must not be reused by an
@@ -1172,7 +1516,23 @@ proc tr(c: var Context; n: var Cursor) =
     of GvarS, TvarS:               trVar(c, n, isBodyLocal = false)
     of AsgnS, StoreS:              trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
-    of IfS:                        trIf(c, n)
+    of IfS:
+      var gcond = default(Cursor)
+      if guardCondition(c, n, gcond):
+        let key = provenKey(c, gcond)
+        if c.proven[key] > 0:
+          # A dominating guard already tested this and did not panic.
+          c.patchset.addSubst(cursorToPosition(c.orig[], n), cursorAt(c.dotBuf, 0))
+          inc c.checksRemoved
+          skip n
+        else:
+          var roots: seq[SymId] = @[]
+          collectResolvedRoots(c, gcond, roots)
+          c.provenRoots.add ensureMove(roots)
+          c.proven[key] = c.provenRoots.len     # 1-based: 0 means "not proven"
+          trIf(c, n)                            # still a normal `if` for the cache
+      else:
+        trIf(c, n)
     of CaseS:                      trCase(c, n)
     of WhileS, LoopS:              trLoop(c, n)
     of JmpS:                       trJmp(c, n)
@@ -1247,7 +1607,7 @@ proc collectWriteTargets(c: var Context; n: var Cursor) =
 
 proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
              summaries: ptr FunctionSummaryTable = nil;
-             m: ptr MainModule = nil) =
+             m: ptr MainModule = nil): int {.discardable.} =
   ## Two-phase CSE for a single proc `buf` (a Leng body has no nested procs).
   ## `summaries` is the module-level table from `collectFunctionSummaries` run
   ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
@@ -1259,12 +1619,16 @@ proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
   block:
     var wn = beginRead(buf)
     collectWriteTargets(ctx, wn)  # identify write-target / addr-of'd lvalues
+  block:
+    let dn = beginRead(buf)
+    preScanDefs(ctx, dn)          # single-def map: the guard facts' key resolution
   var n = beginRead(buf)
   tr(ctx, n)
   flushPending(ctx)               # emit deferred temp decls at their final positions
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
+  result = ctx.checksRemoved
 
 # ---- self-tests ----------------------------------------------------------
 

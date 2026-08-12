@@ -14,6 +14,7 @@
   (rule (IF (or (false) X))            (DO X))
   (rule (IF (not (not X)))             (DO X))
   (rule (IF (deref (addr X)))          (DO X))
+  (rule (IF (deref (haddr X)))         (DO X))
   (rule (IF (eq (nil) (nil)))          (DO (true)))
   (rule (IF (neq (nil) (nil)))         (DO (false)))
   (rule (IF (not (true)))              (DO (false)))

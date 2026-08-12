@@ -1,0 +1,1 @@
+tests/nimony/borrows/tborrowlocal_errors.nim(11, 10) Error: cannot borrow from localOnly

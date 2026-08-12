@@ -135,21 +135,53 @@ proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cu
       pragmas = n
     takeTree dest, n
 
+proc emitRequiresGuard(c: var Context; dest: var TokenBuf; cond: Cursor;
+                      msg: string; info: NifLineInfo) =
+  dest.copyIntoKind IfS, info:
+    dest.copyIntoKind ElifU, info:
+      dest.copyIntoKind NotX, info:
+        var n = cond
+        tr(c, dest, n)
+      dest.copyIntoKind StmtsS, info:
+        dest.copyIntoKind CallS, info:
+          dest.addSymUse pool.syms.getOrIncl("panic.0." & SystemModuleSuffix), info
+          dest.addStrLit msg, info
+
+proc emitRequires(c: var Context; dest: var TokenBuf; cond: Cursor;
+                  where: string; info: NifLineInfo) =
+  ## `.requires: a and b` becomes TWO guards, not one guard on a conjunction.
+  ##
+  ## `panic` does not return, so `if not a: panic` followed by `if not b: panic`
+  ## is exactly equivalent — but it costs a compare and a branch each, where the
+  ## conjunction costs a *materialized boolean*: the short-circuit lowering
+  ## builds `x` in a diamond (`setle`, `and 1`, `jmp`, `mov 0`) and then
+  ## re-tests it (`cmp x, 0; jne`). Measured on the x64 back end that is 11
+  ## instructions on the fast path against gcc's 2, and it is on the fast path
+  ## of EVERY `seq[int]` index check — the single biggest item in the 44 % of
+  ## the hot loop these checks cost
+  ## ([[destination_measured_bounds_checks_not_inlining]]).
+  ##
+  ## Splitting also lets the redundant-guard pass (`shoggoth/bce`) match the
+  ## conjuncts independently, which one opaque bool temp never allowed.
+  if cond.exprKind == AndX:
+    var a = cond
+    inc a
+    var b = a
+    skip b
+    emitRequires(c, dest, a, where, info)
+    emitRequires(c, dest, b, where, info)
+  else:
+    # Each half reports only the half that failed, which is strictly better
+    # diagnostics than naming the whole conjunction.
+    emitRequiresGuard(c, dest, cond,
+                      where & ": " & asNimCode(cond) & " [AssertionDefect]\n", info)
+
 proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
   if not cursorIsNil(pragmas) and BoundCheck in c.activeChecks:
     let req = extractPragma(pragmas, RequiresP)
     if not cursorIsNil(req):
       let info = req.info
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind NotX, info:
-            var n = req
-            tr(c, dest, n)
-          dest.copyIntoKind StmtsS, info:
-            dest.copyIntoKind CallS, info:
-              dest.addSymUse pool.syms.getOrIncl("panic.0." & SystemModuleSuffix), info
-              let msg = infoToStr(pragmas.info) & ": " & asNimCode(req) & " [AssertionDefect]\n"
-              dest.addStrLit msg, info
+      emitRequires(c, dest, req, infoToStr(pragmas.info), info)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()

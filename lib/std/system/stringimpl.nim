@@ -87,6 +87,86 @@ func isOom*(s: string): bool {.inline.} =
   ## True if `s` is the OOM marker (set by string ops on allocation failure).
   s.bytes == OomBytes
 
+# ---- hashing ----
+#
+# `std/hashes` cannot see this representation and `system` cannot import
+# `std/hashes`, so the mixing steps are restated here. THEY MUST STAY IN LOCK-STEP
+# WITH `hashes.!&` AND `hashes.!$` — `hash(string)` is just an inline shim for
+# `hashStr`, and two different mixes would silently split every table.
+
+template hashMix(h: uint; val: uint): uint =
+  ## The `!&` step of `std/hashes`.
+  var r = h + val
+  r = r + (r shl 10)
+  r = r xor (r shr 6)
+  r
+
+template hashFinish(h: uint): uint =
+  ## The `!$` step of `std/hashes`.
+  var r = h + h shl 3
+  r = r xor (r shr 11)
+  r = r + r shl 15
+  r
+
+template dropSlen(w: uint): uint =
+  ## Shift `slen` out of the `bytes` word, leaving char 0 in the position
+  ## `nextChar` reads. Byte 0 of `bytes` is `slen`, so the chars sit at memory
+  ## offsets 1.. — ascending bits little-endian, descending big-endian (the
+  ## packing `lengcgen.genStringLit` emits).
+  when defined(bigEndian): w shl 8
+  else: w shr 8
+
+template nextChar(v: var uint): uint =
+  ## Take the leading char out of `v` and advance it. A CONSTANT shift by 8, not
+  ## `w shr (8*i)`: a variable shift needs CL on x86 (and denies the allocator that
+  ## register for the whole live range), which costs more than the byte load this
+  ## is replacing. Measured — the variable-shift version was *slower* than reading
+  ## the payload.
+  when defined(bigEndian):
+    let c = v shr uint((sizeof(uint) - 1) * 8)
+    v = v shl 8
+    c
+  else:
+    let c = v and 0xFF'u
+    v = v shr 8
+    c
+
+func hashStr*(s {.byref.}: string): uint {.inline, noSideEffect, raises: [], tags: [].} =
+  ## Hash of `s`'s bytes. The VALUE is exactly what mixing the chars one at a time
+  ## produces — only the fetch is different, and that is the whole point:
+  ##
+  ## the first `AlwaysAvail` chars of EVERY string live in the `bytes` word. Short
+  ## and medium strings store them there outright; long and static ones keep a
+  ## synced prefix cache there (the invariant `cmpStringPtrs` already leans on, and
+  ## which `genStringLit` establishes even for a literal). So the head of the hash
+  ## is a handful of shifts over one word that the ABI hands us — no `readRawData`
+  ## call, no branch on the tier, and no per-byte loads. Only a string longer than
+  ## `AlwaysAvail` touches memory at all, and only for its tail.
+  let w = s.bytes
+  let sl = ssLenOf(w)                     # pure register op
+  result = 0'u
+  var i = 0
+  if sl <= AlwaysAvail:
+    # Wholly inside the word: no length to compute, no tier to branch on, no
+    # pointer, no memory touched at all.
+    var v = dropSlen(w)
+    while i < sl:
+      result = hashMix(result, nextChar(v))
+      inc i
+  else:
+    # Medium (8..PayloadSize) or one of the two long sentinels. Kept as a plain
+    # payload walk ON PURPOSE: hashing the first `AlwaysAvail` chars out of the
+    # word here and only the tail through the pointer MEASURED SLOWER — the head
+    # savings are real per byte, but they are swamped by the extra prologue (five
+    # callee-saved pushes instead of two) and the second loop's setup, while the
+    # tail still dominates for the symbol-length strings that actually get hashed.
+    let n = if sl > PayloadSize: s.more.fullLen else: sl
+    let p = rawData(s)
+    while i < n:
+      result = hashMix(result, uint(p[i]))
+      inc i
+  result = hashFinish(result)
+
 # ---- read-only raw data API (public, safe for external callers) ----
 
 func readRawData*(s {.byref.}: string; start = 0): ptr UncheckedArray[char]
@@ -98,6 +178,39 @@ func readRawData*(s {.byref.}: string; start = 0): ptr UncheckedArray[char]
     result = cast[ptr UncheckedArray[char]](cast[uint](addr s.more.data[0]) + uint(start))
   else:
     result = cast[ptr UncheckedArray[char]](cast[uint](inlinePtr(s)) + uint(start))
+
+# ---- iteration ----
+
+iterator items*(s: string): char {.inline.} =
+  ## Walks `s`'s bytes.
+  ##
+  ## Without this overload `for c in s` binds to `openArray.items` through an
+  ## implicit `string`→`openArray` conversion, and then pays a bounds-checked
+  ## `a[i]` per byte — a call the native backend does not inline, ~34
+  ## instructions each, millions of them per emitted module. Resolving the
+  ## payload pointer ONCE and indexing it raw is the whole win; the bound is
+  ## `0 ..< len(s)` either way, so no check is being skipped, only hoisted.
+  ##
+  ## As with `readRawData`, the pointer is captured up front: growing `s` from
+  ## inside the loop body can reallocate it and invalidate the walk. That was
+  ## already true of the `openArray` view this replaces.
+  let n = len(s)
+  if n > 0:
+    let p = readRawData(s)
+    var i = 0
+    while i < n:
+      yield p[i]
+      inc i
+
+iterator pairs*(s: string): (int, char) {.inline.} =
+  ## `items` with the index, on the same single payload pointer.
+  let n = len(s)
+  if n > 0:
+    let p = readRawData(s)
+    var i = 0
+    while i < n:
+      yield (i, p[i])
+      inc i
 
 # ---- lifecycle hooks ----
 

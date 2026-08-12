@@ -60,6 +60,8 @@ type
     guardThreshold*: int
     guards*: InlineWeights
     size*: int                 ## body token count; what a splice would cost
+    forced*: bool              ## `{.alwaysInline.}`: splice regardless of size,
+                               ## score and growth budget
   ModuleAnalysis = object
     ## Hexer-stage scratch: the threshold-0 procs `analyzeModule` found, so
     ## `intraModuleInline` knows which bodies to flatten. Importers never see
@@ -71,7 +73,7 @@ type
 
 const
   DefaultInlineInfo* = InlineInfo(threshold: 100, weights: @[],
-                                  guardThreshold: 100, guards: @[])
+                                  guardThreshold: 100, guards: @[], forced: false)
   InlineTinyBound* = 100
     ## Bodies of at most this many tokens are spliced unconditionally: at that
     ## size the body is on the order of the call sequence it replaces (a
@@ -186,10 +188,12 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   ##     that grows with the body size (`max(100, size div 4)`), so only a
   ##     moderately-sized body with high-value arguments (literals feeding
   ##     conditions or index expressions) clears the bar.
-  ## The `.inline` annotation is NOT consulted — see the module docs.
+  ## `.inline` is still NOT consulted (see the module docs); `.alwaysInline` is,
+  ## and it wins over everything below.
   result = DefaultInlineInfo
   var p = procDecl
   let pd = takeProcDecl(p)
+  var forced = false
   if not pd.body.isTagLit:
     result.threshold = InlineNeverBound     # extern/no body: nothing to splice
     return
@@ -197,6 +201,8 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
     var pr = pd.pragmas
     pr.into:                            # scan all pragmas (no early break: the
       while pr.hasMore:                 # `into` epilogue needs the scope drained)
+        if pr.isTagLit and pr.pragmaKind == AlwaysInlineP:
+          forced = true
         if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP,
                                              AssemblerP}:
           # importc: the decl's `(stmts .)` "body" is a PLACEHOLDER — the real
@@ -220,7 +226,16 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
   result.weights = newSeq[int](params.len)
   let size = tokenCount(pd.body)
   result.size = size
-  if size <= InlineTinyBound:
+  if forced:
+    # `{.alwaysInline.}` — no size bound, no score, like MSVC's `__forceinline`.
+    # Everything the heuristic below reasons about is a PROXY for cost; the
+    # annotation is a direct statement about it, so the proxy has no standing.
+    # `trySplice`'s `inProgress` cycle guard still applies: that is termination,
+    # not policy. `.noinline` above still wins, because a proc carrying both is
+    # a contradiction the author must resolve, and refusing is the safe reading.
+    result.threshold = 0
+    result.forced = true
+  elif size <= InlineTinyBound:
     result.threshold = 0
   else:
     result.threshold = max(DefaultInlineInfo.threshold, size div 4)
@@ -478,8 +493,14 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
   ## against the proc's `InlineInfo`.
   let info = lookupInlineInfo(c, calleeSym)
   if info.threshold >= InlineNeverBound: return false
-  if info.size > c.growthLeft: return false   # caller's growth budget is spent
+  # `argContainsConstructor` is a CORRECTNESS gate, not policy (an escaping
+  # compound literal dies with the splice's `(scope …)`), so even a forced
+  # splice has to respect it. The growth budget is the opposite — a
+  # compile-resource backstop — so `{.alwaysInline.}` overrides it and is still
+  # charged, keeping the budget honest for every ordinary decision after it.
   if argContainsConstructor(callNode): return false
+  if info.forced: return true
+  if info.size > c.growthLeft: return false   # caller's growth budget is spent
   if info.threshold == 0: return true
   let scores = computeArgScores(callNode)
   result = shouldInline(info, scores)
@@ -545,6 +566,29 @@ proc isSubstitutableArg(c: Cursor): bool =
   of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
   of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
   else: false
+
+proc isStableAddrArg(c: Cursor): bool =
+  ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an ADDRESS,
+  ## and a named slot's address is a constant for the whole body — so unlike a
+  ## symbol's *value* this needs no alias reasoning and holds for globals and
+  ## caller params too.
+  ##
+  ## This is the `var`/`out` parameter case, and it is why it matters: `derefs`
+  ## turns `inc i` into `inc((haddr i))`, so binding the argument would leave
+  ## `(var :p (ptr T) (haddr i))` behind and every access routed through
+  ## `(deref p)`. That `(haddr i)` makes `i` address-taken, and an address-taken
+  ## local cannot live in a register — arkham pins it to a stack slot, so a
+  ## `while` loop whose counter is bumped with `inc` pays three memory operations
+  ## per iteration in a proc that had registers to spare. Substituting instead
+  ## leaves `(deref (haddr i))`, which the rewrite engine's `deref_addr` rule
+  ## folds straight back to `i` — no address survives, and the local stays
+  ## register-eligible for every later pass and both allocators.
+  ##
+  ## A compound lvalue (`(haddr (dot o f))`, `(haddr (at a i))`) is excluded: the
+  ## path would be re-evaluated at each use, and the body could write through
+  ## another pointer parameter to a symbol the path mentions.
+  if not c.isTagLit or c.exprKind notin AddrKinds: return false
+  result = c.childCursor.isSymbol
 
 proc slotRootOf(c: Cursor): SymId =
   ## Like `rootOf`, but a spine that crosses a pointer dereference targets the
@@ -906,7 +950,7 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     # so the substituted symbol's value cannot change across the body. Globals
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
-    if isSubstitutableArg(arg) or
+    if isSubstitutableArg(arg) or isStableAddrArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
 

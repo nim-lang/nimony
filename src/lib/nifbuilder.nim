@@ -6,6 +6,12 @@
 
 ## Support code for generating NIF code.
 
+when defined(nimony):
+  # The write cursor (`Builder.raw`) is a raw payload pointer that is nil between
+  # `finish` and the next `reserve`; the nil analysis cannot follow that through
+  # `beginStore`. Same reason `bif` sets it.
+  {.feature: "lenientnils".}
+
 import std / [assertions, syncio, formatfloat, math]
 from std / strutils import endsWith
 import vfs
@@ -21,6 +27,16 @@ type
                     ## (real disk, in-memory cache, sandbox-rejected, …) is
                     ## decided by the active VFS relays at close time.
     buffer: string
+      ## Storage, NOT the result: `buffer.len` is the *capacity*, `offs` is how
+      ## much of it is written. `finish` truncates it back to `offs`.
+    raw: ptr UncheckedArray[char]
+      ## Write cursor into `buffer`'s payload. Kept in the object because the
+      ## alternative — `buffer.add c` per byte — cost 54 instructions per output
+      ## byte natively (a call, a COW check, a capacity check and an inline-cache
+      ## sync), which was the single biggest item in the `emit` benchmark. The
+      ## pointer is stable across moves of the Builder because `reserve` keeps
+      ## the string in its *long* (heap) representation; see `MinCapacity`.
+    cap: int
     mode: Mode
     writeMode: FileWriteMode
     compact: bool
@@ -28,7 +44,47 @@ type
     nesting: int
     offs: int
 
+const
+  MinCapacity = 64
+    ## Also the reason `raw` is safe: a string this long is heap-allocated, so
+    ## its payload address does not move when the Builder object does.
+
 proc `=copy`(dest: var Builder; src: Builder) {.error.}
+
+# `beginStore`/`endStore` are the Nimony bulk-write API: resize without zeroing,
+# then sync the SSO inline prefix cache. Host Nim has neither, so shim them
+# privately (a `*`-exported shim would collide with `bif`'s copy in modules that
+# import both).
+when defined(nimony):
+  proc grabBuf(s: var string; newLen: int): ptr UncheckedArray[char] {.inline.} =
+    beginStore(s, newLen, 0)
+  proc syncBuf(s: var string) {.inline.} = endStore(s)
+else:
+  proc grabBuf(s: var string; newLen: int): ptr UncheckedArray[char] {.inline.} =
+    s.setLen(newLen)
+    cast[ptr UncheckedArray[char]](addr s[0])
+  proc syncBuf(s: var string) {.inline.} = discard
+  proc readRawData(s: string): ptr UncheckedArray[char] {.inline.} =
+    if s.len == 0: nil
+    else: cast[ptr UncheckedArray[char]](addr s[0])
+
+proc reserve(b: var Builder; extra: int) =
+  ## Make room for `extra` more bytes. Grows geometrically and re-acquires the
+  ## cursor, which the resize may have invalidated.
+  if b.offs + extra > b.cap:
+    var newCap = max(b.cap * 2, MinCapacity)
+    while newCap < b.offs + extra: newCap = newCap * 2
+    b.raw = grabBuf(b.buffer, newCap)
+    b.cap = newCap
+
+proc finish(b: var Builder) =
+  ## Cut the storage back to what was actually written and re-sync the SSO
+  ## prefix cache, so `buffer` is a valid `string` again. Must run before
+  ## anything reads `buffer` as a string (`extract`, `close`).
+  b.buffer.setLen b.offs
+  syncBuf b.buffer
+  b.cap = b.offs
+  b.raw = nil
 
 proc open*(filename: string; compact = false; writeMode: FileWriteMode = AlwaysWrite): Builder =
   ## Opens a new builder attached to some output path. Writes are
@@ -37,13 +93,15 @@ proc open*(filename: string; compact = false; writeMode: FileWriteMode = AlwaysW
   ## bytes to the existing file and skips the write (preserving mtime)
   ## when they match — useful for tools whose output should not bump
   ## downstream mtimes when nothing actually changed (e.g. nifler).
-  Builder(buffer: "", mode: UsesFile, writeMode: writeMode,
-          compact: compact, filename: filename)
+  result = Builder(buffer: "", mode: UsesFile, writeMode: writeMode,
+                   compact: compact, filename: filename)
+  reserve(result, MinCapacity)
 
 proc open*(sizeHint: int; compact = false): Builder =
   ## Opens a new builder with the intent to keep the produced
   ## code in memory.
-  Builder(buffer: newStringOfCap(sizeHint), mode: UsesMem, compact: compact)
+  result = Builder(buffer: "", mode: UsesMem, compact: compact)
+  reserve(result, max(sizeHint, MinCapacity))
 
 proc attachedToFile*(b: Builder): bool {.inline.} = b.mode == UsesFile
 
@@ -53,10 +111,12 @@ proc extract*(b: sink Builder): string =
   when not defined(showBroken):
     assert b.nesting == 0, "unpaired '(' or ')'" & $b.nesting
   assert b.mode == UsesMem, "cannot extract from a file"
+  finish b
   result = move(b.buffer)
 
 proc close*(b: var Builder) =
   if b.mode == UsesFile:
+    finish b
     if b.writeMode == OnlyIfChanged and vfsExists(b.filename) and
         vfsRead(b.filename) == b.buffer:
       discard
@@ -65,29 +125,35 @@ proc close*(b: var Builder) =
   when not defined(showBroken):
     assert b.nesting == 0, "unpaired '(' or ')'"
 
-proc putPending(b: var Builder; s: string) =
-  b.buffer.add s
-  b.offs += s.len
+proc put(b: var Builder; s: string) =
+  let n = s.len
+  if n > 0:
+    reserve b, n
+    copyMem(cast[pointer](addr b.raw[b.offs]), cast[pointer](readRawData(s)), n)
+    b.offs += n
+
+template put(b: var Builder; s: char) =
+  ## A TEMPLATE, not an `{.inline.}` proc: at ~5.7M calls per emitted module
+  ## this is the most executed routine in the builder, and a call costs 28
+  ## instructions around a body of three. Nothing here evaluates `b` in a way
+  ## that repeating it could matter — every call site passes the builder
+  ## variable itself.
+  if b.offs >= b.cap: reserve b, 1
+  b.raw[b.offs] = s
+  b.offs += 1
+
+proc putPending(b: var Builder; s: string) {.inline.} = put(b, s)
 
 proc drainPending(b: var Builder) =
   ## No-op kept for source compatibility; both modes now buffer in
   ## memory until `close`.
   discard
 
-proc put(b: var Builder; s: string) =
-  b.buffer.add s
-  b.offs += s.len
-
-proc put(b: var Builder; s: char) =
-  b.buffer.add s
-  b.offs += 1
-
 proc undoWhitespace(b: var Builder) =
-  var i = b.buffer.len - 1
-  while i >= 0 and b.buffer[i] in {' ', '\n'}:
+  var i = b.offs - 1
+  while i >= 0 and b.raw[i] in {' ', '\n'}:
     dec i
-    b.offs -= 1
-  b.buffer.setLen i+1
+  b.offs = i+1
 
 
 const
@@ -111,12 +177,12 @@ proc addSep(b: var Builder) =
   ## sign-byte to act as an implicit separator, so adjacent atoms at top
   ## level (e.g. `"foo"123u`) would otherwise glue together — emit a space
   ## even when nesting is zero.
-  if b.buffer.len == 0:
+  if b.offs == 0:
     discard
-  elif b.buffer[b.buffer.len-1] in {'\n', ' ', '(', ')'}:
+  elif b.raw[b.offs-1] in {'\n', ' ', '(', ')'}:
     discard "no separator required"
   else:
-    b.putPending " "
+    b.put ' '
 
 proc addNumber*(b: var Builder; s: string) =
   addSep b
@@ -126,14 +192,16 @@ proc addNumber*(b: var Builder; s: string) =
 
 proc addIdent*(b: var Builder; s: string) =
   addSep b
-  if s.len > 0:
-    let c = s[0]
-    if c < ' ' or c in {'.', '0'..'9', '+', '-', '~'} or c.needsEscape:
-      b.escape c
+  let sLen = s.len
+  if sLen > 0:
+    let src = readRawData(s)
+    let c0 = src[0]
+    if c0 < ' ' or c0 in {'.', '0'..'9', '+', '-', '~'} or c0.needsEscape:
+      b.escape c0
     else:
-      b.put c
-    for i in 1..<s.len:
-      let c = s[i]
+      b.put c0
+    for i in 1..<sLen:
+      let c = src[i]
       if c < ' ' or (c in ControlChars+{'.'}):
         b.escape c
       else:
@@ -143,13 +211,14 @@ proc addSymbolImpl(b: var Builder; s: string; len: int): int {.inline.} =
   ## Returns the number of dots in the symbol.
   result = 0
   if s.len > 0:
-    let c = s[0]
-    if c in {'.', '0'..'9', '+', '-', '~'} or c.needsEscape:
-      b.escape c
+    let src = readRawData(s)
+    let c0 = src[0]
+    if c0 in {'.', '0'..'9', '+', '-', '~'} or c0.needsEscape:
+      b.escape c0
     else:
-      b.put c
+      b.put c0
     for i in 1..<len:
-      let c = s[i]
+      let c = src[i]
       # Symbols imported from C can have a space like "struct foo".
       if c == ' ' or c.needsEscape:
         b.escape c
@@ -187,7 +256,7 @@ proc addSymbolDefRetIsGlobal*(b: var Builder; s: string; dottedSuffix = ""): boo
 proc addStrLit*(b: var Builder; s: string) =
   addSep b
   b.put '"'
-  for c in s.items:
+  for c in s:
     if needsEscape c:
       b.escape c
     else:
@@ -215,8 +284,7 @@ proc addIntLit*(b: var Builder; i: int64) =
 proc addUIntLit*(b: var Builder; u: uint64) =
   addSep b
   b.put $u
-  b.buffer.add 'u'
-  b.offs += 1
+  b.put 'u'
 
 proc attachLineInfo*(b: var Builder; col, line: int32; file = "")
 
@@ -245,11 +313,14 @@ proc addFloatLit*(b: var Builder; f: float; col: int32 = 0; line: int32 = 0; fil
     b.put "-0.0"
     if hasInfo: b.attachLineInfo(col, line, file)
   of fcNormal, fcSubnormal, fcZero:
-    let myLen = b.buffer.len
-    b.buffer.addFloat f
-    for i in myLen ..< b.buffer.len:
-      if b.buffer[i] == 'e': b.buffer[i] = 'E'
-    b.offs += b.buffer.len - myLen
+    # Format into a scratch string: the builder's storage is capacity-sized, so
+    # `addFloat` cannot append to it directly.
+    var tmp = ""
+    tmp.addFloat f
+    let myLen = b.offs
+    b.put tmp
+    for i in myLen ..< b.offs:
+      if b.raw[i] == 'e': b.raw[i] = 'E'
     if hasInfo: b.attachLineInfo(col, line, file)
 
 
@@ -309,7 +380,7 @@ proc attachLineInfo*(b: var Builder; col, line: int32; file = "") =
     b.addLineDiff line, emitZero = false
   if file.len > 0:
     b.put ','
-    for c in file.items:
+    for c in file:
       if c.needsEscape:
         b.escape c
       else:
@@ -327,7 +398,7 @@ proc attachComment*(b: var Builder; s: string) =
   ## whitespace allowed before the `#`.
   drainPending b
   b.put '#'
-  for c in s.items:
+  for c in s:
     if c.needsEscape:
       b.escape c
     else:
@@ -411,7 +482,7 @@ proc patchIndexAt*(b: var Builder; patchPos: int; indexAt: int) =
   var s = ""
   s.addInt indexAt
   for i in 0..<s.len:
-    b.buffer[patchPos + i] = s[i]
+    b.raw[patchPos + i] = s[i]
 
 proc offset*(b: Builder): int {.inline.} =
   ## Returns the current offset for index generation. The produced value might point to

@@ -8,17 +8,21 @@ const assertionsEnabled* = not defined(danger) and not defined(noAssertions)
   ## is what you want when profiling: an `assert` costs a compare, a branch and a
   ## string literal at every call site, and those are not what is being measured.
 
-template assert*(cond: bool; msg = "") =
-  when assertionsEnabled:
-    if not cond:
-      echo "[Assertion Failure] ", msg
-      quit 1
-  else:
-    discard
-
 proc raiseAssert*(msg: string) {.noreturn.} =
   echo "[Assertion Failure] ", msg
   quit 1
+
+template assert*(cond: bool; msg = "") =
+  when assertionsEnabled:
+    # The failure path is a single `noreturn` CALL, never inlined code. Expanding
+    # `echo`+`quit` at every site added ~30 instructions of cold code to procs
+    # whose hot body is two — which bloats the image, wrecks I-cache density and
+    # (worse) pushes tiny accessors like `nifcore.kind` over the inliner's size
+    # cap, so they stay real calls forever.
+    if not cond:
+      raiseAssert(msg)
+  else:
+    discard
 
 template assertRc*[T](r: ref T; expected: int; tag: string = "") =
   ## Diagnostic for ref-count tracking. `r` is a `ref T`, internally a

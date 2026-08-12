@@ -532,6 +532,14 @@ proc condNodeSafe(n: Cursor): bool =
   case n.kind
   of TagLit:
     if n.exprKind in CallKinds: return false
+    if n.exprKind == CastX:
+      # A passthrough copies the subtree VERBATIM, so it also skips whatever
+      # else the current goal rewrites. `LowerCasts` binds a cast's source and
+      # result to variables (`trCast`) and the NIFC backends rely on it — a
+      # `cast[float64](x)` that slips through unlowered reaches arkham as a
+      # float bit-reinterpret it cannot emit. Casts are rare in conditions, so
+      # just decline the passthrough for them.
+      return false
     if n.exprKind == ExprX:
       # A single-son `(expr val)` is a transparent wrapper — e.g. the `!=`
       # template expands to `(expr (not (== x y)))`, which is pure. Walk into
@@ -549,6 +557,17 @@ proc condNodeSafe(n: Cursor): bool =
     result = true
   else:
     result = true
+
+const
+  CondPassthroughGoals = {ElimExprs, TowardsFinalIr, LowerCasts}
+    ## Goals whose consumer compiles a condition with a *two-target* condition
+    ## compiler, i.e. can turn `a and b` straight into branches. finalir has
+    ## `Cx`; NIFC has C's `&&`/`||` (gcc) and arkham's `emitCondE` (native).
+    ## For those, materialising a bool here is pure loss: `assert p != nil and
+    ## rem > 0` became a temp + an if/else diamond + a re-test — ~90 NIFC tokens
+    ## and 9 x86 instructions where two compare-and-branches suffice. It also
+    ## inflated tiny accessors (`nifcore.load`, `kind`) past the inliner's
+    ## 100-token bound, so they stayed real calls.
 
 proc condPassthroughSafe(n: Cursor): bool =
   ## True if an `and`/`or` condition subtree contains only short-circuit nodes
@@ -586,20 +605,38 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
+  if n.exprKind in {AndX, OrX, NotX, ExprX} and c.goal in CondPassthroughGoals and
+     condPassthroughSafe(n):
+    # Hand the short-circuit tree to the backend untouched. This has to happen
+    # in the FIRST xelim run too (`ElimExprs`): the later `LowerCasts` run never
+    # sees an `and`, because xelim1 has already turned it into a bool temp.
+    # Safe for the passes in between (duplifier/destroyer) precisely because
+    # `condPassthroughSafe` admits no calls and no statement-expressions, so
+    # there is nothing for the mover to sink into the wrong branch — the case
+    # the `isComplex` comment above warns about is an `and` in a *value*
+    # position, which still gets the bool-temp lowering.
+    #
+    # `NotX`/`ExprX` are in the trigger set because that is how the condition
+    # actually arrives: `assert p != nil and rem > 0` is `(not (and (expr …)
+    # (expr …)))`, and matching only `AndX` never fires. A pure `not`/`expr`
+    # tree with no `and` inside copies verbatim, which is what the fall-through
+    # did anyway.
+    takeStrippingTrivialExpr(tar.t, n)
+    return
   if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
     case n.exprKind
     of AndX:
       # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` and
       # `TowardsFinalIr` mode we still want the binding/hoisting path inside
       # `trAnd`'s `isComplex` branch, but never the cfvar form.
-      if c.goal == TowardsFinalIr and condPassthroughSafe(n):
+      if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
         takeStrippingTrivialExpr(tar.t, n)
       elif mustUseLabel:
         trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
-      if c.goal == TowardsFinalIr and condPassthroughSafe(n):
+      if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
         takeStrippingTrivialExpr(tar.t, n)
       elif mustUseLabel:
         trCondOr c, dest, n, tar
