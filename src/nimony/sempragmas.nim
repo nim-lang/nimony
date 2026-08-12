@@ -351,7 +351,8 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       crucial.size = int(readonlyCursorAt(dest, valueStart).intVal)
     dest.addParRi()
   of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP, BorrowP,
-     NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP, NoinitP,
+     NoSideEffectP, NodestroyP, BycopyP, ByrefP, InlineP, NoinlineP,
+     AlwaysInlineP, NoinitP,
      InjectP, GensymP, DirtyP, UntypedP, SideEffectP, BaseP, ClosureP, PassiveP, IncompleteStructP:
     crucial.flags.incl pk
     dest.addParLe(pk, n.info)
