@@ -505,7 +505,7 @@ proc kind*(c: Cursor): NifKind {.inline.} =
   ## sits *after* it and is only consulted when extended bits are needed.
   c.load.kind
 
-proc tokenWidth*(c: Cursor): int {.inline.} =
+proc tokenWidth*(c: Cursor): int {.alwaysInline.} =
   ## Tokens occupied by the head of the current value — the kinded
   ## token plus any consecutive `ExtendedSuffix` tokens chained behind
   ## it. NOT including a TagLit's body.
@@ -531,6 +531,20 @@ proc tokenWidth*(c: Cursor): int {.inline.} =
   ##    and arkham then homes its locals in callee-saved registers and pushes
   ##    them in the prologue on EVERY call, including the overwhelmingly common
   ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
+  ##
+  ## `{.alwaysInline.}` rather than `{.inline.}`: at 262 asm-NIF tokens this sits
+  ## above `InlineTinyBound`, so the size heuristic never took it, and it is the
+  ## one shape that pays — scalar in, scalar out, few live values, so the callee's
+  ## push/pop and call/ret vanish and the caller adds no spill traffic. Measured
+  ## on nimsem (128-invocation `check`, `-d:danger`): 55.320 G → 55.035 G Ir,
+  ## **−0.51 %**, for +4 KB of image.
+  ##
+  ## The two neighbours that looked like the same shape on nifbench do NOT
+  ## survive this measurement — do not annotate them: `inc` on top of this one is
+  ## −0.36 % (i.e. it gives back a third of the win, while nifbench said it added
+  ## to it), and `rawLineInfo` is **+0.22 %, a loss** — it returns an aggregate
+  ## and holds ~20 live values, so the push/pop it removes comes straight back as
+  ## frame traffic in every caller.
   result = 1
   if c.rem > 1:
     if peekAhead(c, 1).kind >= ExtendedSuffix:

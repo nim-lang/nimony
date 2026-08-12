@@ -11,6 +11,11 @@ import ".." / lib / [stringviews, symparser]
 import ".." / models / [tags, nimony_tags, callconv_tags]
 export nimony_tags, callconv_tags
 
+when not defined(nimony):
+  # `alwaysInline` is a nimony proc pragma; give host Nim the nearest thing it
+  # has. (nifcore carries the same shim, but a user pragma is not re-exported.)
+  {.pragma: alwaysInline, inline.}
+
 template tagEnum*(c: Cursor): TagEnum =
   ## Safe on any cursor position: atoms and scope ends yield `InvalidTagId`
   ## (same contract as nifcdecl.tagEnumOf).
@@ -60,12 +65,13 @@ proc substructureKind*(c: Cursor): NimonyOther {.inline.} =
   else:
     result = NoSub
 
-proc typeKind*(c: Cursor): NimonyType {.inline.} =
+proc typeKind*(c: Cursor): NimonyType {.alwaysInline.} =
+  ## `tagEnum` is a template that re-tests `isTagLit`, so spelling it twice
+  ## cost three `isTagLit` and two `cursorTagId` where one of each does — the
+  ## Leng sibling in `nifcdecl` already hoists it.
   if c.isTagLit:
-    if rawTagIsNimonyType(tagEnum(c)):
-      result = cast[NimonyType](tagEnum(c))
-    else:
-      result = NoType
+    let e = cast[TagEnum](cursorTagId(c))
+    result = if rawTagIsNimonyType(e): cast[NimonyType](e) else: NoType
   elif c.isDotToken:
     result = VoidT
   else:
