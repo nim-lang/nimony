@@ -34,13 +34,17 @@ proc genericTypeName*(key, modname: string): string =
 proc extractModule*(s: string): string =
   # From "abc.12.Mod132a3bc" extract "Mod132a3bc".
   # From "abc.12" extract "".
+  # From "abc.12.13Mod" extract "13Mod"
   var i = s.len - 2
+  var isModule = false
   while i > 0:
     if s[i] == '.':
-      if s[i+1] in {'0'..'9'}:
-        return ""
-      else:
+      if isModule:
         return substr(s, i+1)
+      break
+    elif s[i] notin {'0'..'9'}:
+      isModule = true
+
     dec i
   return ""
 
