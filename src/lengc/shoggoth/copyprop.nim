@@ -72,6 +72,8 @@
 ##   is a LABEL and is not.
 
 import std / [tables, sets, hashes, assertions, os, syncio]
+when defined(nimony):
+  import std / envvars   # host Nim's `os` re-exports it; Nimony's does not
 when not defined(nimony):
   import std / exitprocs
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
@@ -137,18 +139,22 @@ var gDeleted = 0      ## decls deleted as dead
 proc note(k: MissKind) {.inline.} =
   if statsOn: inc gStats[k]
 
-proc dumpCopyPropStats() {.noconv.} =
-  if not statsOn: return
-  stderr.writeLine "COPYPROP_STATS pid=" & $getCurrentProcessId() &
-    " recorded(var-sym-init)=" & $gStats[mkVarSymInit] &
-    " recorded(asgn-copy)=" & $gStats[mkAsgnCopy] &
-    " scope-blocked=" & $gStats[mkScopeBlocked] &
-    " var-no-init=" & $gStats[mkVarNoInit] &
-    " src-not-local=" & $gStats[mkSrcNotLocal] &
-    " ret-value-walked=" & $gStats[mkRetOperand] &
-    " substitutions=" & $gSubst & " decls-deleted=" & $gDeleted
-
+# Counting is dual-compiled (it is one `inc` behind a flag); REPORTING is host
+# Nim only. `getCurrentProcessId` and `addExitProc` have no counterpart in the
+# bootstrap stdlib, and an exit hook is exactly what a Nimony-built shoggoth
+# would not have to hang the dump off anyway.
 when not defined(nimony):
+  proc dumpCopyPropStats() {.noconv.} =
+    if not statsOn: return
+    stderr.writeLine "COPYPROP_STATS pid=" & $getCurrentProcessId() &
+      " recorded(var-sym-init)=" & $gStats[mkVarSymInit] &
+      " recorded(asgn-copy)=" & $gStats[mkAsgnCopy] &
+      " scope-blocked=" & $gStats[mkScopeBlocked] &
+      " var-no-init=" & $gStats[mkVarNoInit] &
+      " src-not-local=" & $gStats[mkSrcNotLocal] &
+      " ret-value-walked=" & $gStats[mkRetOperand] &
+      " substitutions=" & $gSubst & " decls-deleted=" & $gDeleted
+
   if statsOn: addExitProc dumpCopyPropStats
 
 # ---- context --------------------------------------------------------------
@@ -199,20 +205,29 @@ proc prop(c: var Context; s: SymId): var SymProps {.inline.} =
   ## deletion candidate") so a plain default is the right zero value.
   mgetOrPut(c.syms, s, SymProps(declPos: -1))
 
+# The three queries below read a record that may not exist yet. `withValue` is
+# the one-lookup form for that, but it does not exist in the bootstrap (Nimony)
+# stdlib, and `getOrDefault` is no substitute either: `SymProps` holds a `string`
+# and a `seq`, so returning it by value would deep-copy both on every query.
+# `hasKey` plus a by-`var` accessor costs a second hash and copies nothing.
+when defined(nimony):
+  template known(c: var Context; s: SymId): untyped = getOrQuit(c.syms, s)
+else:
+  template known(c: var Context; s: SymId): untyped = c.syms[s]
+
 proc isLocalSym(c: var Context; s: SymId): bool {.inline.} =
-  c.syms.withValue(s, v): return v.isLocal
-  false
+  c.syms.hasKey(s) and c.known(s).isLocal
 
 proc isAddrTaken(c: var Context; s: SymId): bool {.inline.} =
-  c.syms.withValue(s, v): return v.addrTaken
-  false
+  c.syms.hasKey(s) and c.known(s).addrTaken
 
 proc propagatable(c: var Context; s: SymId): bool {.inline.} =
   ## A symbol whose VALUE may be carried to another name: a local or parameter
   ## whose own storage is never addressed, so only a direct assignment to it can
   ## change it (a call cannot, which is what makes `trCallStmt` invalidate nothing).
-  c.syms.withValue(s, v): return v.isLocal and not v.addrTaken
-  false
+  if not c.syms.hasKey(s): return false
+  let p = addr c.known(s)
+  result = p.isLocal and not p.addrTaken
 
 proc resolve(c: Context; s: SymId): SymId =
   ## Chase `s` to the root of its copy chain. Bindings are stored flat (resolved

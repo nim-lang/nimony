@@ -138,6 +138,18 @@ iterator getopt*(): (CmdLineKind, string, string) {.sideEffect.} =
     if p.kind == cmdEnd: break
     yield (p.kind, p.key, p.val)
 
+iterator getopt*(p: var OptParser): (CmdLineKind, string, string) {.sideEffect.} =
+  ## Iterate over an *already constructed* parser. Nim's `std/parseopt` has this
+  ## overload and code written against it (`var p = initOptParser(args)` followed
+  ## by `for kind, key, val in getopt(p)`) is the common shape, so it must exist
+  ## here too. `{.sideEffect.}` because `next` reads the process argv whenever the
+  ## parser was not given an explicit command line.
+  p.pos = 0
+  while true:
+    next(p)
+    if p.kind == cmdEnd: break
+    yield (p.kind, p.key, p.val)
+
 iterator getopt*(cmdLine: sink seq[string]): (CmdLineKind, string, string) {.sideEffect.} =
   ## Same as the no-argument `getopt`, but parses `cmdLine` instead of the
   ## process argv. Useful for re-parsing options collected from an `.args`

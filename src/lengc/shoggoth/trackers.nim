@@ -58,6 +58,13 @@
 
 import std / [tables, sets, hashes, assertions]
 
+# For `Keyable`: under Nimony it is the enforcing concept from `system` that
+# `Table`/`HashSet` demand of a key type, and a generic that hands `K` on to a
+# `Table[K, V]` field must carry the constraint or it does not typecheck at all.
+# Under host Nim the shim makes it a universal-match typeclass, so the same
+# source stays valid there.
+include ".." / ".." / "lib" / compat2
+
 when defined(nimony):
   # `Tracker[K, V]` uses `default(V)` and `==(V, V)` over an unconstrained
   # generic parameter. nimony eagerly semchecks generic bodies and can't yet
@@ -74,7 +81,7 @@ func `==`*(a, b: LabelId): bool {.borrow.}
 func hash*(a: LabelId): Hash {.borrow.}
 
 type
-  LogEntry[K, V] = object
+  LogEntry[K: Keyable, V] = object
     key: K
     prev, next: V
 
@@ -95,7 +102,7 @@ type
                           ## the join folds an implicit empty branch in so
                           ## inner-branch bindings can't leak past the group.
 
-  Tracker*[K, V] = object
+  Tracker*[K: Keyable, V] = object
     base: Table[K, V]                 ## current view (non-default entries only)
     log: seq[LogEntry[K, V]]          ## append-only journal of writes
     groups: seq[SibGroup]             ## stack of open `openBranches` scopes
@@ -108,18 +115,18 @@ type
                                       ## `closeBranch`, the branch is dropped
                                       ## from the join instead of folded in.
 
-proc initTracker*[K, V](): Tracker[K, V] =
+proc initTracker*[K: Keyable, V](): Tracker[K, V] =
   Tracker[K, V]()
 
 # ---- table-like surface ----------------------------------------------------
 
-proc `[]`*[K, V](t: Tracker[K, V]; k: K): V {.inline.} =
+proc `[]`*[K: Keyable, V](t: Tracker[K, V]; k: K): V {.inline.} =
   t.base.getOrDefault(k)
 
-proc contains*[K, V](t: Tracker[K, V]; k: K): bool {.inline.} =
+proc contains*[K: Keyable, V](t: Tracker[K, V]; k: K): bool {.inline.} =
   k in t.base
 
-proc `[]=`*[K, V](t: var Tracker[K, V]; k: K; v: V) =
+proc `[]=`*[K: Keyable, V](t: var Tracker[K, V]; k: K; v: V) =
   ## Set `k` to `v`. Writing `default(V)` removes the entry. Writing the
   ## value the key already holds is a no-op (no log entry is appended).
   let prev = t.base.getOrDefault(k)
@@ -130,11 +137,11 @@ proc `[]=`*[K, V](t: var Tracker[K, V]; k: K; v: V) =
   else:
     t.base[k] = v
 
-iterator pairs*[K, V](t: Tracker[K, V]): (K, V) =
+iterator pairs*[K: Keyable, V](t: Tracker[K, V]): (K, V) =
   for k, v in t.base.pairs:
     yield (k, v)
 
-proc clearAll*[K, V](t: var Tracker[K, V]) =
+proc clearAll*[K: Keyable, V](t: var Tracker[K, V]) =
   ## Drop every tracked value to `default(V)`, logging each write so the
   ## change is undoable inside an enclosing sibling.
   var keys = newSeqOfCap[K](t.base.len)
@@ -144,7 +151,7 @@ proc clearAll*[K, V](t: var Tracker[K, V]) =
 
 # ---- internal helpers ------------------------------------------------------
 
-proc revertFrom[K, V](t: var Tracker[K, V]; start: int) =
+proc revertFrom[K: Keyable, V](t: var Tracker[K, V]; start: int) =
   ## Restore `base` to its state at log index `start` by walking the slice
   ## backward and replaying `prev` values. Does not shrink the log.
   for i in countdown(t.log.high, start):
@@ -154,7 +161,7 @@ proc revertFrom[K, V](t: var Tracker[K, V]; start: int) =
     else:
       t.base[e.key] = e.prev
 
-proc finalValues[K, V](t: Tracker[K, V]; lo, hi: int): Table[K, V] =
+proc finalValues[K: Keyable, V](t: Tracker[K, V]; lo, hi: int): Table[K, V] =
   ## Last-write-wins map for log[lo ..< hi]. Computed by a backward walk.
   result = initTable[K, V]()
   for i in countdown(hi - 1, lo):
@@ -162,7 +169,7 @@ proc finalValues[K, V](t: Tracker[K, V]; lo, hi: int): Table[K, V] =
     if e.key notin result:
       result[e.key] = e.next
 
-proc consumeOpenSibling[K, V](t: var Tracker[K, V]) =
+proc consumeOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
   ## If we are inside an open sibling, drop it: revert its writes and discard
   ## its log slice so it does NOT contribute to the enclosing `closeBranches`.
   ## A consumed sibling reaches no join along the fall-through edge. Shared by
@@ -192,11 +199,11 @@ proc consumeOpenSibling[K, V](t: var Tracker[K, V]) =
 # inner-scope sym, a `wasMoved` bit, …) can't leak past the construct as if
 # the branch always executed.
 
-proc openBranches*[K, V](t: var Tracker[K, V]) =
+proc openBranches*[K: Keyable, V](t: var Tracker[K, V]) =
   t.groups.add SibGroup(sibStarts: @[], sibOpen: false, curSibStart: 0,
                         exhaustive: false)
 
-proc markDiverged*[K, V](t: var Tracker[K, V]) =
+proc markDiverged*[K: Keyable, V](t: var Tracker[K, V]) =
   ## The walker reached an unconditional `return` / `raise` / `break`: the
   ## current straight-line path leaves the enclosing block. The flag is sticky
   ## (further statements on this path are dead) and is read by `closeBranch`,
@@ -206,18 +213,18 @@ proc markDiverged*[K, V](t: var Tracker[K, V]) =
   ## the walker never has to compute or thread divergence itself.
   t.pathDiverged = true
 
-proc diverged*[K, V](t: Tracker[K, V]): bool {.inline.} =
+proc diverged*[K: Keyable, V](t: Tracker[K, V]): bool {.inline.} =
   ## Whether the current path has diverged (see `markDiverged`).
   t.pathDiverged
 
-proc openBranch*[K, V](t: var Tracker[K, V]) =
+proc openBranch*[K: Keyable, V](t: var Tracker[K, V]) =
   assert t.groups.len > 0, "openBranch outside any openBranches"
   assert not t.groups[^1].sibOpen, "previous branch not closed"
   t.groups[^1].sibOpen = true
   t.groups[^1].curSibStart = t.log.len
   t.pathDiverged = false               # each branch is a fresh path
 
-proc openFinalBranch*[K, V](t: var Tracker[K, V]) =
+proc openFinalBranch*[K: Keyable, V](t: var Tracker[K, V]) =
   ## Like `openBranch`, but marks the enclosing group as exhaustive — at
   ## least one branch always runs. Pass this for the `else` / wildcard `of`
   ## arm so `closeBranches` doesn't fold in an implicit empty branch.
@@ -225,7 +232,7 @@ proc openFinalBranch*[K, V](t: var Tracker[K, V]) =
   t.groups[^1].exhaustive = true
   openBranch(t)
 
-proc closeBranch*[K, V](t: var Tracker[K, V]) =
+proc closeBranch*[K: Keyable, V](t: var Tracker[K, V]) =
   ## End the current branch.
   ##
   ## - If the path diverged (`markDiverged`), the branch reaches no join:
@@ -249,7 +256,7 @@ proc closeBranch*[K, V](t: var Tracker[K, V]) =
   t.groups[^1].sibStarts.add start
   t.groups[^1].sibOpen = false
 
-proc maybeAddImplicitEmptyBranch[K, V](t: var Tracker[K, V]) =
+proc maybeAddImplicitEmptyBranch[K: Keyable, V](t: var Tracker[K, V]) =
   ## Internal: called from the close-branches paths. When the group is *not*
   ## exhaustive (no `openFinalBranch` was issued) and at least one branch
   ## reached the join, fold in an empty implicit branch — the "no branch
@@ -263,7 +270,7 @@ proc maybeAddImplicitEmptyBranch[K, V](t: var Tracker[K, V]) =
   openBranch(t)
   closeBranch(t)
 
-proc closeBranches*[K, V](t: var Tracker[K, V]) =
+proc closeBranches*[K: Keyable, V](t: var Tracker[K, V]) =
   ## Merge all fall-through branches of the innermost group into one delta
   ## and apply it to the enclosing scope.
   assert t.groups.len > 0, "closeBranches without openBranches"
@@ -332,7 +339,7 @@ proc closeBranches*[K, V](t: var Tracker[K, V]) =
 
 # ---- additive join (set-union for HashSet values) -------------------------
 
-proc closeBranchesAdditive*[K, T](t: var Tracker[K, HashSet[T]]) =
+proc closeBranchesAdditive*[K: Keyable, T: Keyable](t: var Tracker[K, HashSet[T]]) =
   ## Alternative to `closeBranches`: at the join, each cell's post-state is
   ## the **union** of all contributing branches' final sets (and the pre-
   ## group base value for branches that did not touch the cell). Use when
@@ -386,14 +393,14 @@ proc closeBranchesAdditive*[K, T](t: var Tracker[K, HashSet[T]]) =
 
 # ---- forward jumps and labels ---------------------------------------------
 
-proc snapshotCurrent[K, V](t: Tracker[K, V]): Table[K, V] =
+proc snapshotCurrent[K: Keyable, V](t: Tracker[K, V]): Table[K, V] =
   ## A snapshot of `base`'s non-default entries — the absolute state at this
   ## program point.
   result = initTable[K, V]()
   for k, v in t.base.pairs:
     result[k] = v
 
-proc gotoLabel*[K, V](t: var Tracker[K, V]; L: LabelId) =
+proc gotoLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId) =
   ## The current branch jumps to `L`. Stash an absolute snapshot of the
   ## current state under `L`, then consume the open sibling (its state has
   ## been routed to `L`, so it must not also fall through to the join). The
@@ -402,7 +409,7 @@ proc gotoLabel*[K, V](t: var Tracker[K, V]; L: LabelId) =
   t.consumeOpenSibling()
   t.pathDiverged = true
 
-proc landLabel*[K, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1) =
+proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1) =
   ## Merge every incoming snapshot of `L` with the current fall-through
   ## state. If `arity >= 0`, assert it matches the number of `gotoLabel`
   ## calls that targeted `L` (the fall-through path is counted separately).
