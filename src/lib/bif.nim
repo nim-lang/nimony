@@ -107,6 +107,13 @@ when not defined(nimony):
       else: cast[ptr UncheckedArray[char]](addr(s[start]))
   when not declared(endStore):
     proc endStore*(s: var string) {.inline.} = discard
+  when not declared(AlwaysAvail):
+    const AlwaysAvail* = sizeof(uint) - 1
+      ## How many chars the SSO prefix cache mirrors — i.e. how far into a
+      ## string a bulk write has to reach before `endStore` has nothing to sync.
+      ## Host Nim's `endStore` shim above is a no-op, so the value is only ever
+      ## used to make the guard at `appendRaw` compile; nimony gets the real one
+      ## from `system/stringimpl`.
 
 const
   UnusedNameTag* = "unusedname"
@@ -292,9 +299,11 @@ proc appendRaw(s: var string; p: pointer; n: int) =
   if n > 0:
     let old = s.len
     copyMem(cast[pointer](beginStore(s, old + n, old)), p, n)
-    # Writing at `old` is past the 7-byte inline prefix once the string is long,
-    # so `endStore` would recopy a prefix that did not change.
-    if old < 8:
+    # `endStore` re-syncs the inline prefix cache, which mirrors chars
+    # 0 .. AlwaysAvail-1. A write starting at or past that is invisible to the
+    # cache, so the sync is pure cost — and it dominated the bif writer, whose
+    # appends are overwhelmingly to an already-long string.
+    if old < AlwaysAvail:
       endStore(s)
 
 proc appendU64(s: var string; x: uint64) =
