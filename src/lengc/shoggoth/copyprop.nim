@@ -197,17 +197,49 @@ proc invalidate(c: var Context; s: SymId) =
 proc isEligible(c: Context; s: SymId): bool {.inline.} =
   s != SymId(0) and s in c.localDefs and s notin c.addrTaken
 
+const LiteralSnapshots = false
+  ## The `litOf` tracker (snapshot a leaf literal into an alias, so it survives a
+  ## later write to the symbol that held those bits) MISCOMPILES at `-d:release`.
+  ## Repro, self-contained, wrong on BOTH backends and correct with copyprop off:
+  ##
+  ##   func cw(s, sub: string; start: int): bool =
+  ##     if sub.len == 0: return true
+  ##     if sub.len > s.len - start: return false
+  ##     for i in 0 ..< sub.len:
+  ##       if s[i+start] != sub[i]: return false
+  ##     return true
+  ##   proc run(s: string; reps: openArray[(string, string)]): string =
+  ##     result = ""
+  ##     var i = 0
+  ##     while i < s.len:
+  ##       var hit = false
+  ##       for repl in reps.items:
+  ##         if repl[0].len > 0 and cw(s, repl[0], i):
+  ##           result.add repl[1]; inc(i, repl[0].len); hit = true; break
+  ##       if not hit:
+  ##         result.add s[i]; inc(i)
+  ##   run("${p}/x", [("${p}", "/A")])   # "${p}/x", want "/A/x"
+  ##
+  ## The callee's early `return`s are what it takes — the same body written with
+  ## `result = …; break` is correct. That is `strutils.continuesWith`, so
+  ## `multiReplace` replaces NOTHING, so `semos.replaceSubs` never expands
+  ## `${path}`, so a `-d:release` self-host dies on a `lib/vendor/...` path that
+  ## should have been `<root>/vendor/...`. It is NOT the join: forcing `clearAll`
+  ## at every `(lab)` does not fix it, and neither does disabling DSE — only
+  ## dropping the snapshots does. Symbol copy propagation is unaffected and stays
+  ## on. Re-enable together with a fix and a test.
+
 proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
   ## Record that `dest` now holds `src`'s value. A leaf literal is snapshotted
   ## (survives a later write to a symbol that happened to hold the same bits);
   ## a symbol copy lasts until either side is assigned.
   if not c.isEligible(dest): return
-  if isLeafLit(src):
+  if LiteralSnapshots and isLeafLit(src):
     c.litOf[dest] = cursorToPosition(c.orig[], src) + 1
     c.copyOf[dest] = SymId(0)
   elif src.kind == Symbol:
     let root = resolve(c, symId(src))
-    let lp = c.litOf[root]
+    let lp = (if LiteralSnapshots: c.litOf[root] else: 0)
     if lp != 0:
       # Snapshot the literal; independent of the source from here on.
       c.litOf[dest] = lp
