@@ -75,6 +75,12 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   runConstructorProjection(buf)
   runScalarize(buf, bodySuffix, m)
   runCopyProp(buf, params)
+  # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
+  # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
+  # after those substitutions actually fold. Cheap: the DFA walk is linear
+  # and a miss is a no-op.
+  if eng != nil:
+    runRewritesFix(eng, buf)
   runInductionVariables(buf, bodySuffix, m)
   # CSE also deletes index checks a dominating identical check already made:
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).

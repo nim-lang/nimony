@@ -24,14 +24,29 @@
 ## leaf. That precise "does this call clobber what I read?" question is answered
 ## by the alias-aware function summaries (`invalidateForCall`).
 ##
+## ## Loop-invariant code motion
+##
+## A load (or cheap arith) whose operands are not written in a loop — and that
+## no in-loop store/call can clobber — is hoisted to the loop's pre-header
+## (insert-before the `(while)` / `(loop)`). A single occurrence in the body
+## still counts: the loop is the reuse. The load must also **execute every
+## iteration** of that loop: a field load behind `if` / `case` / `try`, or
+## inside an inner loop, stays put. Hoisting `a.more.fullLen` out of
+## `if aslen > PayloadSize` segfaults when `a` is a short string (`more ==
+## nil`). Variant expressions (an index the body increments, a field a store
+## aliases) stay inside, with the existing lazy CSE. The same write/alias/
+## summary reasoning as invalidation decides invariance; an unknown call is
+## assumed to clobber anything it can reach.
+##
 ## Candidates: any memory load — `(dot …)`, `(at …)`, `(deref …)`, `(pat …)`.
 ## An assignment's LHS is a write target, not a value, so it is never cached;
 ## `addr` operands (e.g. `var`-parameter arguments) are likewise left alone.
 ##
 ## Invalidation: a cached entry is dropped when an event can change the memory
 ## it reads — a write to a mentioned symbol, an `addr` of a mentioned symbol, a
-## through-pointer/field store (drops everything), or a call whose alias-aware
-## summary says it may write the graph of one of the entry's symbols.
+## through-pointer/field store (class-based; a forging `cast` makes through-
+## pointer stores unknown), or a call whose alias-aware summary says it may
+## write the graph of one of the entry's symbols.
 ##
 ## ## Second job: redundant index checks
 ##
@@ -121,6 +136,14 @@ proc child0(c: Cursor): Cursor {.inline.} =
 # ---- context --------------------------------------------------------------
 
 type
+  LoopFrame = object
+    pos: int                    ## token position of the `(while)` / `(loop)` —
+                                ## `addInsert` there is the pre-header
+    writes: HashSet[SymId]      ## symbols assigned in the loop
+    memStoreRoots: HashSet[SymId] ## `rootOf` of through-pointer stores;
+                                  ## `SymId(0)` = indeterminate store
+    callPos: seq[int]           ## `(call …)` nodes, for summary-based clobber
+
   CachedEntry = object
     hasFirst: bool       # a first occurrence has been recorded
     firstExprPos: int    # position in `orig` of the first occurrence's LVALUE `L`
@@ -212,6 +235,8 @@ type
                                     ## diamond hexer lowers `A and B` / `A or B` to
     dotBuf: TokenBuf                ## a single `.` token: replaces a deleted guard
     checksRemoved*: int
+    loopStack: seq[LoopFrame]   ## enclosing loops, outermost first; LICM reads
+                                ## this to hoist invariant loads to a pre-header
 
 proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
                    summaries: ptr FunctionSummaryTable): Context =
@@ -238,7 +263,8 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           tainted: initHashSet[SymId](),
           shortCircuit: initTable[SymId, (int, int, bool)](),
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags),
-          checksRemoved: 0)
+          checksRemoved: 0,
+          loopStack: @[])
   result.dotBuf.addDotToken()
 
 proc currentStmtPos(c: Context): int {.inline.} =
@@ -649,7 +675,7 @@ proc unreachableByCallee(c: var Context; exprCur: Cursor;
   ## level-insensitive: `x = *p` unifies `x` with `p` itself): if anything sharing
   ## the local's class has escaped, we must assume the local has too.
   var roots: seq[SymId] = @[]
-  accessRoots(exprCur, roots)
+  accessRoots(exprCur, roots, c.m)
   result = rootsUnreachableByCallee(c, roots, escaped)
 
 proc clearCacheReachable(c: var Context) =
@@ -694,11 +720,31 @@ proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
         break
   for key in dropFacts: c.proven[key] = 0
 
+proc goesThroughPointer(lhs: Cursor): bool =
+  ## True if the lvalue is reached through a deref/index — not a stack field.
+  var n = lhs
+  while n.kind == TagLit:
+    case n.exprKind
+    of DerefC, PatC: return true
+    of DotC, AtC, AddrC, HaddrC:
+      n = child0(n)
+    of ConvC, CastC:
+      inc n
+      skip n
+    else:
+      return false
+  result = false
+
 proc invalidateForStore(c: var Context; lhs: Cursor) =
   ## A store through a pointer/field writes the location `lhs`. Drop only the
   ## cached loads whose chain may alias it — i.e. read memory in the same alias
   ## class as `lhs`'s base — instead of clearing the whole cache. The *address*
   ## temp of `lhs` itself survives: writing a location does not move its address.
+  ## A forging `cast` makes every through-pointer store an unknown write: the
+  ## pointee is outside the partition.
+  if c.aa.forged and goesThroughPointer(lhs):
+    clearCacheReachable c
+    return
   let s = rootOf(lhs)
   if s == SymId(0):
     # Indeterminate store target: it goes THROUGH a pointer, and no pointer can
@@ -911,6 +957,135 @@ proc invalidateForCall(c: var Context; call: Cursor) =
       reps.incl c.aa.find(argSyms[i])
   clobberClasses(c, reps)
 
+# ---- loop-invariant code motion ------------------------------------------
+
+proc preScanLoop(c: Context; start: Cursor; frame: var LoopFrame) =
+  ## Collect assignments, through-pointer stores, and calls in `start` (the loop).
+  if not start.hasMore: return
+  if start.kind != TagLit: return
+  let sk = start.stmtKind
+  let ek = start.exprKind
+  if sk in {AsgnS, StoreS}:
+    var lhs = child0(start)
+    if sk == StoreS: skip lhs
+    if lhs.kind == Symbol:
+      frame.writes.incl symId(lhs)
+    else:
+      if c.aa.forged and goesThroughPointer(lhs):
+        frame.memStoreRoots.incl SymId(0)
+      else:
+        frame.memStoreRoots.incl rootOf(lhs)
+  if sk == CallS or ek == CallC:
+    frame.callPos.add cursorToPosition(c.orig[], start)
+  var n = start
+  n.loopInto:
+    preScanLoop(c, n, frame)
+    skip n
+
+proc callWouldClobber(c: var Context; call, expr: Cursor): bool =
+  ## True if `call` would drop a cache entry for `expr` (same reasoning as
+  ## `invalidateForCall`, without mutating the cache).
+  result = false
+  var summary = FunctionSummary()
+  if not callSummary(c, call, summary):
+    return not unreachableByCallee(c, expr, escapedClassReps(c))
+  if summary.noReturn: return false
+  if summary.writesGlobal or summary.callsUnknown:
+    return not unreachableByCallee(c, expr, escapedClassReps(c))
+  var argSyms: seq[SymId] = @[]
+  var writtenClasses = initHashSet[uint32]()
+  var argIndex = 0
+  var ca = call
+  ca.into:
+    if ca.hasMore: skip ca
+    while ca.hasMore:
+      let s = rootOf(ca)
+      argSyms.add s
+      if paramMayWrite(summary, argIndex):
+        let cls = if argIndex < summary.params.len: summary.params[argIndex].cls
+                  else: uint32(argIndex)
+        writtenClasses.incl cls
+      skip ca
+      inc argIndex
+  if writtenClasses.len == 0: return false
+  var reps = initHashSet[SymId]()
+  for s in c.addrTaken: reps.incl c.aa.find(s)
+  for i in 0 ..< argSyms.len:
+    if argSyms[i] == SymId(0): continue
+    let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
+    if cls in writtenClasses:
+      reps.incl c.aa.find(argSyms[i])
+  result = expressionTouchesClass(c, expr, reps)
+
+proc invariantIn(c: var Context; expr: Cursor; frame: LoopFrame): bool =
+  ## True when `expr` is a loop invariant of `frame`: no mentioned symbol is
+  ## assigned, no in-loop store aliases it, no in-loop call clobbers it.
+  if expressionMentionsAny(expr, frame.writes): return false
+  for s in frame.memStoreRoots:
+    if s == SymId(0):
+      if not unreachableByCallee(c, expr, escapedClassReps(c)): return false
+    else:
+      var one = initHashSet[SymId]()
+      one.incl c.aa.find(s)
+      if expressionTouchesClass(c, expr, one): return false
+  for pos in frame.callPos:
+    if callWouldClobber(c, cursorAt(c.orig[], pos), expr): return false
+  result = true
+
+proc controlDependentIn(c: Context; loopPos: int): bool =
+  ## True when the current statement sits under an `if`/`case`/`try` or an
+  ## inner loop nested in `loopPos`. Those regions may not run on a given
+  ## iteration (or inner trip count), so a load from there must not move to
+  ## `loopPos`'s pre-header.
+  result = false
+  var under = false
+  for p in c.stmtStack:
+    if p == loopPos:
+      under = true
+      continue
+    if not under: continue
+    let sk = cursorAt(c.orig[], p).stmtKind
+    if sk in {IfS, CaseS, TryS, OnerrS, WhileS, LoopS}:
+      return true
+
+proc licmHoistPos(c: var Context; expr: Cursor): int =
+  ## Outermost enclosing loop that `expr` is invariant in **and** executes
+  ## every iteration of, or -1. An outer miss resets: invariance in an inner
+  ## loop does not survive an outer body that writes the same location, and
+  ## a load in an inner loop / branch is not a must-execute of the outer.
+  result = -1
+  for frame in c.loopStack:
+    if invariantIn(c, expr, frame) and not controlDependentIn(c, frame.pos):
+      if result < 0: result = frame.pos
+    else:
+      result = -1
+
+proc anchorsForHoist(c: Context; loopPos: int): seq[int] =
+  ## Anchor stack of the pre-header: enclosing blocks minus the loop we insert
+  ## before (and any inner loops nested under it).
+  result = c.stmtStack
+  while result.len > 0:
+    let p = result[^1]
+    let sk = cursorAt(c.orig[], p).stmtKind
+    if sk in {WhileS, LoopS}:
+      discard result.pop()
+      if p == loopPos: break
+    else:
+      break
+
+proc dropVariantCache(c: var Context; frame: LoopFrame) =
+  ## Keep cache entries that are invariant in `frame`; drop the rest. Replaces
+  ## a blanket `clearCache` at loop entry so a pre-loop load can be reused
+  ## inside (and after) a loop that does not clobber it.
+  var toClear: seq[string] = @[]
+  for key, entry in c.cache.pairs:
+    if not entry.hasFirst: continue
+    let expr = cursorAt(c.orig[], entry.firstExprPos)
+    if not invariantIn(c, expr, frame):
+      toClear.add key
+  for key in toClear:
+    c.cache[key] = default(CachedEntry)
+
 # ---- synthesis ------------------------------------------------------------
 
 proc synthBuf(c: var Context; cap: int): TokenBuf =
@@ -1097,17 +1272,36 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   let usePos = cursorToPosition(c.orig[], n)          # node to rewrite
   let lvaluePos = cursorToPosition(c.orig[], lvalueCur)  # `L`, what the decl caches
   let entry = c.cache[key]
+  let derefThis = addrMode and not isAddrOf
   if not entry.hasFirst:
-    if c.curStmt < 0: return false         # no enclosing statement → nowhere to hoist
-    let stmtPos = c.currentStmtPos
-    if stmtPos >= 0 and cursorAt(c.orig[], stmtPos).stmtKind in {WhileS, LoopS}:
-      # Loop-condition candidate: hoisting before the loop would compute a stale
-      # pre-loop value every iteration. Don't CSE here.
-      return false
+    let invHoist = licmHoistPos(c, lvalueCur)
+    if invHoist < 0:
+      if c.curStmt < 0: return false         # no enclosing statement → nowhere to hoist
+      let stmtPos = c.currentStmtPos
+      if stmtPos >= 0 and cursorAt(c.orig[], stmtPos).stmtKind in {WhileS, LoopS}:
+        # Variant load in the loop condition: hoisting before the loop would
+        # compute a stale pre-loop value every iteration. Don't CSE here.
+        return false
+      c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: lvaluePos,
+                                 firstUsePos: usePos, firstIsAddrOf: isAddrOf,
+                                 firstStmtPos: c.curStmt, anchorStack: c.stmtStack)
+      return false                           # recorded only — not yet a temp
+    # Loop-invariant: the pre-header dominates every iteration. Memory loads
+    # materialize on the first occurrence (the loop is the reuse); cheap arith
+    # stays lazy so a single `a+b` in the body does not grow a live range.
     c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: lvaluePos,
                                firstUsePos: usePos, firstIsAddrOf: isAddrOf,
-                               firstStmtPos: c.curStmt, anchorStack: c.stmtStack)
-    return false                           # recorded only — not yet a temp
+                               firstStmtPos: invHoist,
+                               anchorStack: anchorsForHoist(c, invHoist))
+    if lvalueCur.kind == TagLit and lvalueCur.exprKind in {DotC, AtC, DerefC, PatC}:
+      let fp = lvaluePos
+      let tempName = freshTempName(c)
+      c.materialized[fp] = tempName
+      c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
+                                  hoistPos: invHoist,
+                                  usePositions: @[(usePos, derefThis)])
+      return true
+    return false
   # Second-or-later occurrence. The cache is flow-sensitive and intersects at
   # branch joins, so this occurrence is dominated by the first; the first's
   # enclosing statement is therefore a valid, dominating decl site — no widening.
@@ -1122,7 +1316,6 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   # A use's rewrite form: an address-of occurrence yields the bare address temp;
   # any other occurrence under address-CSE is an lvalue → `(deref t)`; value-CSE
   # is always bare.
-  let derefThis = addrMode and not isAddrOf
   let derefFirst = addrMode and not entry.firstIsAddrOf
   let fp = entry.firstExprPos
   var tempName: string
@@ -1261,16 +1454,15 @@ proc trExpr(c: var Context; n: var Cursor) =
         while n.hasMore: trExpr(c, n)
       invalidateForCall(c, call)
     of DotC, AtC, DerefC, PatC:
-      # A memory load. A materialized occurrence (2nd+) is replaced by a temp so
-      # we stop; otherwise recurse into the index/value children but NOT the base
-      # — the base is a location/aggregate, not a value worth caching (caching
-      # `(deref b)` would copy the whole object).
+      # A memory load. A materialized occurrence (2nd+, or a loop-invariant first)
+      # is replaced by a temp so we stop; otherwise recurse into every child —
+      # including the base, so `(at (dot keys data) h)` still CSE's the invariant
+      # `keys.data` pointer when the indexed load itself is not invariant.
       if handleCandidate(c, n):
         skip n
       else:
-        n.into:
-          if n.hasMore: skip n             # base
-          while n.hasMore: trExpr(c, n)    # indices / value children
+        n.loopInto:
+          trExpr(c, n)
     of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC,
        BitandC, BitorC, BitxorC, NegC, BitnotC:
       # Cheap pure arithmetic. A repeated `a op b` is CSE'd on its 2nd occurrence
@@ -1414,19 +1606,28 @@ proc trLoopBody(c: var Context; n: var Cursor) =
     skip n
 
 proc trLoop(c: var Context; n: var Cursor) =
-  var writes = initHashSet[SymId]()
+  let loopPos = cursorToPosition(c.orig[], n)
+  var frame = LoopFrame(pos: loopPos,
+                        writes: initHashSet[SymId](),
+                        memStoreRoots: initHashSet[SymId](),
+                        callPos: @[])
+  preScanLoop(c, n, frame)
   var addrs = initHashSet[SymId]()
-  preScanWrites(n, writes, addrs)
+  preScanWrites(n, frame.writes, addrs)
   for s in addrs: markAddrTaken(c, s)
+
+  c.loopStack.add frame
+  c.proven.clearAll()
+  dropVariantCache(c, frame)
 
   openBranches c
   openBranch c
   closeBranch c
   openBranch c
-  clearCache c
   trLoopBody(c, n)
   closeBranch c
   closeBranches c
+  discard c.loopStack.pop()
 
 proc trJmp(c: var Context; n: var Cursor) =
   let probe = child0(n)
@@ -1676,9 +1877,13 @@ when isMainModule:
       "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) (call side.0.M) (asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
 
   block index_write_prevents_cse:
-    # `i = 5` reassigns the index the load mentions → no reuse → unchanged.
-    assertUnchanged(
-      "(stmts (asgn y.0.M (at (deref (deref pp.0.M)) i.0.M)) (asgn i.0.M 5) (asgn z.0.M (at (deref (deref pp.0.M)) i.0.M)))")
+    # `i = 5` reassigns the index the load mentions → the `at` is not reused.
+    # The base pointer `(deref (deref pp))` does not mention `i`, so it IS
+    # CSE'd (walking the base of a failed `at` candidate).
+    chk(
+      "(stmts (asgn y.0.M (at (deref (deref pp.0.M)) i.0.M)) (asgn i.0.M 5) (asgn z.0.M (at (deref (deref pp.0.M)) i.0.M)))",
+      "(stmts (var :`cse.1 . . (deref (deref pp.0.M))) " &
+      "(asgn y.0.M (at `cse.1 i.0.M)) (asgn i.0.M 5) (asgn z.0.M (at `cse.1 i.0.M)))")
 
   block unrelated_asgn_does_not_invalidate:
     chk(
@@ -1704,6 +1909,33 @@ when isMainModule:
       "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
       "(asgn (dot (deref pp.0.M) g.0.M) v.0.M) " &
       "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
+
+  block pointer_field_store_aliases_source:
+    # `x.obj = y; x.obj.a = 3` mutates y when `obj` is a pointer. The store
+    # through `x.obj` must kill a cached load of `y.a` (same alias class).
+    assertUnchanged(
+      "(stmts (asgn r.0.M (dot (deref y.0.M) a.0.M)) " &
+      "(asgn (dot x.0.M obj.0.M) y.0.M) " &
+      "(asgn (dot (deref (dot x.0.M obj.0.M)) a.0.M) 3) " &
+      "(asgn s.0.M (dot (deref y.0.M) a.0.M)))")
+
+  block forging_cast_store_clears_reachable:
+    # `cast[ptr T](4000)` forges an untracked pointer. A store through it may
+    # hit anything a callee could, so a load through `pp` (not a body-local)
+    # must not CSE across it.
+    assertUnchanged(
+      "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn (dot (deref (cast (ptr (i +32)) 4000)) a.0.M) 3) " &
+      "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
+
+  block cast_byte_does_not_kill_cse:
+    # Narrowing `cast[byte]` is a value pun, not a forged pointer.
+    chk(
+      "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn z.0.M (cast (u +8) v.0.M)) " &
+      "(asgn a.0.M (dot (deref (deref pp.0.M)) fld.0.M)))",
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M (cast (u +8) v.0.M)) (asgn a.0.M `cse.1))")
 
   when AddressCSE:
     block lvalue_write_target_address_cse:
@@ -1737,11 +1969,91 @@ when isMainModule:
       "(asgn y.0.M `cse.1) " &
       "(if (elif c.0.M (asgn z.0.M `cse.1)) (else (asgn a.0.M `cse.1))))")
 
-  block loop_prevents_cse_across:
-    # A loop body may run any number of times, so the cache is cleared across it
-    # → the pre- and post-loop loads don't share → unchanged.
+  block loop_invariant_reused_across:
+    # Empty loop does not clobber `pp.fld`, so the pre- and post-loop loads
+    # share a temp (LICM keeps invariant cache entries across the loop).
+    chk(
+      "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) (while c.0.M (stmts)) (asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))",
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (while c.0.M (stmts)) (asgn z.0.M `cse.1))")
+
+  block loop_store_prevents_cse_across:
+    # A store through `pp` in the body aliases the load → cache dropped at
+    # loop entry → pre- and post-loop loads do not share.
     assertUnchanged(
-      "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) (while c.0.M (stmts)) (asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
+      "(stmts (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(while c.0.M (stmts (asgn (dot (deref (deref pp.0.M)) g.0.M) v.0.M))) " &
+      "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
+
+  block loop_invariant_load_hoisted:
+    # Two identical loads in the body, nothing writes them → one temp before
+    # the `while` (pre-header), both uses rewritten.
+    chk(
+      "(stmts (while c.0.M (stmts " &
+      "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))",
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(while c.0.M (stmts (asgn y.0.M `cse.1) (asgn z.0.M `cse.1))))")
+
+  block loop_invariant_single_load_hoisted:
+    # A single occurrence still hoists: the loop is the reuse.
+    chk(
+      "(stmts (while c.0.M (stmts " &
+      "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn i.0.M (add (i 64) i.0.M 1)))))",
+      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(while c.0.M (stmts (asgn y.0.M `cse.1) " &
+      "(asgn i.0.M (add (i 64) i.0.M 1)))))")
+
+  block loop_variant_index_base_hoisted:
+    # `a[i]` mentions `i`, which the body writes, so the indexed load stays in
+    # the loop. The base pointer does not mention `i` → hoisted to the pre-header.
+    chk(
+      "(stmts (while c.0.M (stmts " &
+      "(asgn y.0.M (at (deref (deref pp.0.M)) i.0.M)) " &
+      "(asgn z.0.M (at (deref (deref pp.0.M)) i.0.M)) " &
+      "(asgn i.0.M (add (i 64) i.0.M 1)))))",
+      "(stmts (var :`cse.1 . . (deref (deref pp.0.M))) " &
+      "(while c.0.M (stmts (asgn y.0.M (at `cse.1 i.0.M)) " &
+      "(asgn z.0.M (at `cse.1 i.0.M)) " &
+      "(asgn i.0.M (add (i 64) i.0.M 1)))))")
+
+  block loop_unknown_call_not_hoisted:
+    # Unknown callee in the body may clobber `pp` → not invariant.
+    assertUnchanged(
+      "(stmts (while c.0.M (stmts " &
+      "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(call side.0.M) " &
+      "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))")
+
+  block loop_guarded_load_not_hoisted:
+    # Behind `if`: the pointer may be nil when the guard is false. Must not
+    # move to the pre-header (intern of a short string vs `a.more.fullLen`).
+    assertUnchanged(
+      "(stmts (while c.0.M (stmts " &
+      "(if (elif g.0.M (asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))))")
+
+  block loop_guarded_load_cse_in_branch:
+    # Two loads in the same arm still share a temp; the decl stays in the arm.
+    chk(
+      "(stmts (while c.0.M (stmts " &
+      "(if (elif g.0.M (stmts " &
+      "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M))))))))",
+      "(stmts (while c.0.M (stmts " &
+      "(if (elif g.0.M (stmts " &
+      "(var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1)))))))")
+
+  block loop_nested_hoists_to_inner:
+    # Invariant in both loops, but the inner may run zero times → only the
+    # inner pre-header is a must-execute region relative to the load.
+    chk(
+      "(stmts (while c.0.M (stmts (while d.0.M (stmts " &
+      "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))))",
+      "(stmts (while c.0.M (stmts " &
+      "(var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(while d.0.M (stmts (asgn y.0.M `cse.1))))))")
 
   # ---- alias-aware call invalidation via partition summaries ----
   # Module-level: `f` writes only its parameter 0's graph (class 0). cse runs on

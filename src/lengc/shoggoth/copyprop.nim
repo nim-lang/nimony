@@ -35,47 +35,28 @@
 ## * A flow-sensitive `copyOf: SymId -> SymId` (a branch-aware `Tracker`) records
 ##   that `y` currently holds the same value as `x`. At a value-use of `y` we
 ##   rewrite the token to `x`. The source is resolved to its *root* at bind time,
-##   so chains (`z = y = x`) collapse to `z -> x` directly.
-## * A copy is established BOTH at a binding `(var :y . T x)` and at a store
-##   `(asgn y x)`. The store form is not an afterthought — it is the shape that
-##   matters. hexer's intra-module inliner never emits `var y = x`: an inlined
-##   body may return from several points, so its result temp is declared WITHOUT
-##   an initializer and the value arrives by assignment before the body's return
-##   label. Modelling only the binding form left the pass firing on 244 copies per
-##   nifbench build while 845 store-form copies went past it.
-## * An assignment to a symbol `s` (or a field/through-pointer store whose base is
-##   `s`) invalidates `s` as a copy (its value changed) and every alias `k` with
-##   `copyOf[k] == s` (the source moved). Calls invalidate nothing — see above.
-##   At a store that both invalidates and establishes, the new source is resolved
-##   BEFORE the invalidation: `invalidate(y)` clears every entry whose *value* is
-##   `y`, which would otherwise drop the chain being read.
-## * A copy is only recorded when the source is declared no deeper than the
-##   destination. `(scope …)` is a REAL scope — the C backend emits `{ }` for it
-##   and arkham frees its locals' registers at the close — so substituting a
-##   symbol declared inside one into a use that outlives it would name a dead
-##   variable. For a well-formed assignment both operands are live at that point,
-##   so equal depth means the same scope and the guard is exact, not merely safe.
-## * **Dead store elimination.** A symbol is dead when every READ of it was
-##   rewritten away. `uses` counts bare-symbol assignment targets too — and those
-##   are never substituted (`trAsgn` leaves the LHS alone) — so the test is
-##   `substituted == uses - writes`. For a dead symbol: every side-effect-free
-##   store to it (`(asgn y <leaf>)`) is deleted, and its declaration too, but the
-##   declaration only when *all* of its stores were such stores, since a surviving
-##   `y = f()` still needs `y` to exist. An initializer-less decl counts as a
-##   deletion candidate for exactly this reason — the inliner's result temps are
-##   all of that shape, and a leftover unused decl would still take a register.
-##   A surviving un-rewritten read — the base of a field store, an `addr` operand,
-##   a read past an invalidation — keeps `substituted` below the read count and
-##   nothing is deleted. Deletions are replaced by an empty `.` statement (a no-op
-##   in the statement list).
-## * `(ret x)`'s operand is a value and is walked like any other read. `break`'s
-##   is a LABEL and is not.
+##   so chains (`z = y = x`) collapse to `z -> x` directly. Bindings come from
+##   both `var y = x` **and** `y = x` (assignment-shaped copies are what inlining
+##   actually produces).
+## * A parallel `litOf` tracker snapshots leaf literals (`y = 5`, `y = (true)`).
+##   A snapshot is a value, not an alias: it survives a later write to the
+##   symbol that happened to hold those bits at bind time (`var x = 5; var y = x;
+##   x = 6; use y` → `use 5`).
+## * An assignment to a local's **storage** invalidates that local as a copy
+##   (its value changed) and every alias `k` with `copyOf[k] == s`. A
+##   through-pointer store (`(*p).f = v`) writes the pointee, not `p` — `p` is
+##   only read, so copies of `p` stay valid. Calls invalidate nothing — see above.
+## * On an assignment LHS, the storage spine is not substituted (`&y` ≠ `&x`
+##   even when `y == x`), but a `deref`/`pat` breaks that spine: `(*p2).f = v`
+##   with `p2 = p` rewrites to `(*p).f = v`.
+## * **Dead store elimination** of the now-useless `var y = x` / `y = x` (and of
+##   any pure leaf-initialised local that ends up unused) falls out for free: a
+##   local binding to a side-effect-free leaf is a deletion candidate, and we
+##   delete it iff every *read* was rewritten away (`subst + pureWrites == uses`).
+##   A surviving un-rewritten use — an impure reassignment, an `addr` operand,
+##   or a read past an invalidation — keeps the decl. Deleted stmts become `.`.
 
-import std / [tables, sets, hashes, assertions, os, syncio]
-when defined(nimony):
-  import std / envvars   # host Nim's `os` re-exports it; Nimony's does not
-when not defined(nimony):
-  import std / exitprocs
+import std / [tables, sets, hashes, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import trackers, patchsets
@@ -114,120 +95,76 @@ proc addrRootOf(c: Cursor): SymId =
 const LeafKinds = {Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit}
   ## Side-effect-free initializers a dead local binding may be deleted with.
 
-# ---- COPYPROP_STATS -------------------------------------------------------
-# `COPYPROP_STATS=1` makes each process print, at exit, how many copy relations
-# the pass established and how many it DECLINED, bucketed by why. The pass is
-# cheap to write and easy to fool: it is only worth what it fires on, and the
-# only way to know that is to count. Per-process totals; the build is
-# multi-process, so sum them (`| awk`) or run `-j1`.
+proc isLeafLit(n: Cursor): bool {.inline.} =
+  ## A side-effect-free literal we can snapshot: atoms and `(true)`/`(false)`.
+  ## `(suf 7 "i64")` is how hexer writes a typed integer literal after inlining;
+  ## treating it as a non-leaf left `var size = 7i64; memcpy(..., size)` as a
+  ## runtime memcpy of a register — the 7-byte string-prefix sync never unrolled.
+  ## Not `(nil)`: substituting `nil` into a pointer use like `(deref p)` /
+  ## `(dot (deref p) f)` drops p's pointee type, and arkham then sees a field
+  ## access on `(void)`. Not a `Symbol` — that is a copy source.
+  case n.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
+  of TagLit:
+    if n.exprKind in {TrueC, FalseC}: true
+    elif n.exprKind == SufC:
+      var t = n; inc t
+      isLeafLit(t)
+    else: false
+  else: false
 
-type
-  MissKind = enum
-    mkVarSymInit,      ## recorded at a decl:   `(var :y . T x)`
-    mkAsgnCopy,        ## recorded at a store:  `(asgn y x)`
-    mkScopeBlocked,    ## `(asgn y x)` declined: `x` is declared in a deeper `(scope …)`
-    mkVarNoInit,       ## `(var :y . T .)` — nothing to learn AT THE DECL (the inliner's
-                       ## shape; the value arrives by a later `asgn`)
-    mkSrcNotLocal,     ## source is not a propagatable local/param
-    mkRetOperand       ## `(ret x)` with a local `x` — a value use inside a return
-
-var statsOn = existsEnv("COPYPROP_STATS")
-var gStats: array[MissKind, int]
-var gSubst = 0        ## symbol uses actually rewritten
-var gDeleted = 0      ## decls deleted as dead
-
-proc note(k: MissKind) {.inline.} =
-  if statsOn: inc gStats[k]
-
-# Counting is dual-compiled (it is one `inc` behind a flag); REPORTING is host
-# Nim only. `getCurrentProcessId` and `addExitProc` have no counterpart in the
-# bootstrap stdlib, and an exit hook is exactly what a Nimony-built shoggoth
-# would not have to hang the dump off anyway.
-when not defined(nimony):
-  proc dumpCopyPropStats() {.noconv.} =
-    if not statsOn: return
-    stderr.writeLine "COPYPROP_STATS pid=" & $getCurrentProcessId() &
-      " recorded(var-sym-init)=" & $gStats[mkVarSymInit] &
-      " recorded(asgn-copy)=" & $gStats[mkAsgnCopy] &
-      " scope-blocked=" & $gStats[mkScopeBlocked] &
-      " var-no-init=" & $gStats[mkVarNoInit] &
-      " src-not-local=" & $gStats[mkSrcNotLocal] &
-      " ret-value-walked=" & $gStats[mkRetOperand] &
-      " substitutions=" & $gSubst & " decls-deleted=" & $gDeleted
-
-  if statsOn: addExitProc dumpCopyPropStats
+proc writtenRoot(c: Cursor): SymId =
+  ## The local whose STORAGE this lvalue writes. A through-pointer store
+  ## (`(*p).f = v`, `p[i] = v`) writes the pointee, not `p` — `p` is only
+  ## read, so copies of `p` stay valid. Mirrors `addrRootOf`.
+  var n = c
+  while true:
+    case n.kind
+    of Symbol: return symId(n)
+    of TagLit:
+      case n.exprKind
+      of DerefC, PatC: return SymId(0)     # through-pointer: the pointee, not the var
+      of DotC, AtC: inc n                   # object field / array index: base is 1st child
+      of ConvC, CastC:
+        inc n; skip n                       # `(conv/cast Type operand)` — skip the type
+      else: return rootOf(n)                # unmodelled spine: stay conservative
+    else: return SymId(0)
 
 # ---- context --------------------------------------------------------------
 
 type
-  SymProps = object
-    ## Everything the pass knows about one symbol. ONE table keyed by `SymId`
-    ## rather than a table (or set) per attribute: every site that touches a
-    ## symbol wants several of these at once, and this pass runs on every proc
-    ## body of every module in every build, so seven hash lookups per symbol
-    ## touch is not a rounding error.
-    name: string                     ## textual name, for synthesizing a substitution
-    uses: int                        ## every `Symbol` token, reads AND bare-symbol writes
-    writes: int                      ## occurrences as a BARE-symbol assignment target.
-                                     ## `preScan` counts those in `uses` too, but a write
-                                     ## is never substituted (`trAsgn` deliberately leaves
-                                     ## the LHS alone), so the "every use was rewritten
-                                     ## away" test must compare against `uses - writes`.
-                                     ## `(asgn (dot y f) …)` is NOT counted: there `y` is
-                                     ## read as a base, and correctly keeps `y` alive.
-    substituted: int                 ## uses we rewrote away
-    declPos: int                     ## position of a DELETABLE decl, else -1
-    declDepth: int                   ## `(scope …)` nesting depth of the declaration
-    isLocal: bool                    ## declared by a local `(var …)`, or a parameter
-    addrTaken: bool                  ## its own storage is addressed somewhere
-    pureAsgns: seq[int]              ## positions of `(asgn y <leaf>)` — a store with no
-                                     ## side effect, hence deletable once `y` is dead
-
   Context = object
     orig: ptr TokenBuf
-    copyOf: Tracker[SymId, SymId]    ## y -> x: y currently aliases x
-    syms: Table[SymId, SymProps]
+    copyOf: Tracker[SymId, SymId]      ## y -> x: y currently aliases x
+    litOf: Tracker[SymId, int]         ## y -> (litPos+1): y currently holds that leaf
+    addrTaken: HashSet[SymId]          ## syms whose address is taken anywhere
+    localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
+    useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
+    substCount: Table[SymId, int]      ## uses we rewrote away per sym
+    writeSites: Table[SymId, seq[int]] ## pure (leaf/symbol RHS) write positions
+    names: Table[SymId, string]        ## sym -> its textual name (for synthesis)
+    delCandidates: Table[SymId, int]   ## deletable local binding -> its decl pos
+    scopeDecls: seq[seq[SymId]]        ## locals declared at each open `(scope)`
     patchset: Patchset
     synth: seq[TokenBuf]
-    dotBuf: TokenBuf                 ## a single `.` token: replaces a dead decl/store
+    dotBuf: TokenBuf                   ## a single `.` token: replaces a dead decl
 
 proc createContext(orig: ptr TokenBuf): Context =
   result = Context(orig: orig,
           copyOf: initTracker[SymId, SymId](),
-          syms: initTable[SymId, SymProps](),
+          litOf: initTracker[SymId, int](),
+          addrTaken: initHashSet[SymId](),
+          localDefs: initHashSet[SymId](),
+          useCount: initTable[SymId, int](),
+          substCount: initTable[SymId, int](),
+          writeSites: initTable[SymId, seq[int]](),
+          names: initTable[SymId, string](),
+          delCandidates: initTable[SymId, int](),
+          scopeDecls: @[@[]],
           patchset: initPatchset(orig),
           synth: @[],
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))
   result.dotBuf.addDotToken()
-
-proc prop(c: var Context; s: SymId): var SymProps {.inline.} =
-  ## The symbol's record, created on first touch. `declPos` starts at -1 ("not a
-  ## deletion candidate") so a plain default is the right zero value.
-  mgetOrPut(c.syms, s, SymProps(declPos: -1))
-
-# The three queries below read a record that may not exist yet. `withValue` is
-# the one-lookup form for that, but it does not exist in the bootstrap (Nimony)
-# stdlib, and `getOrDefault` is no substitute either: `SymProps` holds a `string`
-# and a `seq`, so returning it by value would deep-copy both on every query.
-# `hasKey` plus a by-`var` accessor costs a second hash and copies nothing.
-when defined(nimony):
-  template known(c: var Context; s: SymId): untyped = getOrQuit(c.syms, s)
-else:
-  template known(c: var Context; s: SymId): untyped = c.syms[s]
-
-proc isLocalSym(c: var Context; s: SymId): bool {.inline.} =
-  c.syms.hasKey(s) and c.known(s).isLocal
-
-proc isAddrTaken(c: var Context; s: SymId): bool {.inline.} =
-  c.syms.hasKey(s) and c.known(s).addrTaken
-
-proc propagatable(c: var Context; s: SymId): bool {.inline.} =
-  ## A symbol whose VALUE may be carried to another name: a local or parameter
-  ## whose own storage is never addressed, so only a direct assignment to it can
-  ## change it (a call cannot, which is what makes `trCallStmt` invalidate nothing).
-  if not c.syms.hasKey(s): return false
-  let p = addr c.known(s)
-  result = p.isLocal and not p.addrTaken
 
 proc resolve(c: Context; s: SymId): SymId =
   ## Chase `s` to the root of its copy chain. Bindings are stored flat (resolved
@@ -245,26 +182,64 @@ proc resolve(c: Context; s: SymId): SymId =
 # ---- invalidation ---------------------------------------------------------
 
 proc invalidate(c: var Context; s: SymId) =
-  ## `s` was written: it is no longer a copy of anything, and every alias whose
-  ## source is `s` is now stale.
+  ## `s` was written: it is no longer a copy of anything and no longer holds
+  ## a snapshotted literal. Every alias whose source is `s` is now stale as a
+  ## *symbol* copy; a literal snapshot on the alias is independent and stays.
   if s == SymId(0): return
   c.copyOf[s] = SymId(0)
+  c.litOf[s] = 0
   var toClear: seq[SymId] = @[]
   for k, v in c.copyOf.pairs:
     if v == s: toClear.add k
   for k in toClear:
     c.copyOf[k] = SymId(0)
 
+proc isEligible(c: Context; s: SymId): bool {.inline.} =
+  s != SymId(0) and s in c.localDefs and s notin c.addrTaken
+
+proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
+  ## Record that `dest` now holds `src`'s value. A leaf literal is snapshotted
+  ## (survives a later write to a symbol that happened to hold the same bits);
+  ## a symbol copy lasts until either side is assigned.
+  if not c.isEligible(dest): return
+  if isLeafLit(src):
+    c.litOf[dest] = cursorToPosition(c.orig[], src) + 1
+    c.copyOf[dest] = SymId(0)
+  elif src.kind == Symbol:
+    let root = resolve(c, symId(src))
+    let lp = c.litOf[root]
+    if lp != 0:
+      # Snapshot the literal; independent of the source from here on.
+      c.litOf[dest] = lp
+      c.copyOf[dest] = SymId(0)
+    elif c.isEligible(root) and root != dest:
+      c.copyOf[dest] = root
+      c.litOf[dest] = 0
+    else:
+      c.copyOf[dest] = SymId(0)
+      c.litOf[dest] = 0
+  else:
+    c.copyOf[dest] = SymId(0)
+    c.litOf[dest] = 0
+
 # ---- branch-state forwarding (same surface as cse.nim) --------------------
 
-proc openBranches(c: var Context) = c.copyOf.openBranches()
-proc openBranch(c: var Context) = c.copyOf.openBranch()
-proc openFinalBranch(c: var Context) = c.copyOf.openFinalBranch()
-proc closeBranch(c: var Context) = c.copyOf.closeBranch()
-proc closeBranches(c: var Context) = c.copyOf.closeBranches()
-proc gotoLabel(c: var Context; L: LabelId) = c.copyOf.gotoLabel L
-proc landLabel(c: var Context; L: LabelId) = c.copyOf.landLabel L
-proc clearAll(c: var Context) = c.copyOf.clearAll()
+proc openBranches(c: var Context) =
+  c.copyOf.openBranches(); c.litOf.openBranches()
+proc openBranch(c: var Context) =
+  c.copyOf.openBranch(); c.litOf.openBranch()
+proc openFinalBranch(c: var Context) =
+  c.copyOf.openFinalBranch(); c.litOf.openFinalBranch()
+proc closeBranch(c: var Context) =
+  c.copyOf.closeBranch(); c.litOf.closeBranch()
+proc closeBranches(c: var Context) =
+  c.copyOf.closeBranches(); c.litOf.closeBranches()
+proc gotoLabel(c: var Context; L: LabelId) =
+  c.copyOf.gotoLabel L; c.litOf.gotoLabel L
+proc landLabel(c: var Context; L: LabelId) =
+  c.copyOf.landLabel L; c.litOf.landLabel L
+proc clearAll(c: var Context) =
+  c.copyOf.clearAll(); c.litOf.clearAll()
 
 # ---- substitution synthesis -----------------------------------------------
 
@@ -273,11 +248,41 @@ proc substituteSym(c: var Context; n: Cursor; root: SymId) =
   let pos = cursorToPosition(c.orig[], n)
   let idx = c.synth.len
   var buf = createTokenBuf(2, c.orig[].pool, c.orig[].tags)
-  buf.addSymUse c.prop(root).name
+  buf.addSymUse c.names.getOrDefault(root)
   c.synth.add ensureMove(buf)
   c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
-  c.prop(symId(n)).substituted += 1
-  if statsOn: inc gSubst
+  c.substCount.mgetOrPut(symId(n), 0) += 1
+
+proc substituteLit(c: var Context; n: Cursor; litPos: int) =
+  ## Rewrite the `Symbol` token at `n` to the snapshotted leaf at `litPos`.
+  let pos = cursorToPosition(c.orig[], n)
+  c.patchset.addSubst(pos, cursorAt(c.orig[], litPos))
+  c.substCount.mgetOrPut(symId(n), 0) += 1
+
+proc trySubstitute(c: var Context; n: Cursor) =
+  ## Prefer a snapshotted literal, then a symbol copy.
+  let s = symId(n)
+  let root = resolve(c, s)
+  var lp = c.litOf[s]
+  if lp == 0: lp = c.litOf[root]
+  if lp != 0:
+    substituteLit(c, n, lp - 1)
+  elif root != s:
+    substituteSym(c, n, root)
+
+proc enterScope(c: var Context) {.inline.} =
+  c.scopeDecls.add @[]
+
+proc leaveScope(c: var Context) =
+  ## A `(scope)` is a real Leng lifetime. Substituting an inner local into a
+  ## use after that scope closes extends the inner name past its kill — arkham
+  ## then reuses the register. Drop every copy sourced from a local declared
+  ## here; the outer destination keeps its own storage and later uses stay
+  ## as that outer name. Literal snapshots are values, not names, and survive
+  ## (`invalidate` does not clear an alias's `litOf`).
+  for s in c.scopeDecls[^1]:
+    invalidate(c, s)
+  c.scopeDecls.setLen c.scopeDecls.len - 1
 
 # ---- main traversal -------------------------------------------------------
 
@@ -288,10 +293,7 @@ proc trAddrOperand(c: var Context; n: var Cursor)   # forward
 proc trExpr(c: var Context; n: var Cursor) =
   case n.kind
   of Symbol:
-    let s = symId(n)
-    let root = resolve(c, s)
-    if root != s:
-      substituteSym(c, n, root)
+    trySubstitute(c, n)
     inc n
   of TagLit:
     case n.exprKind
@@ -372,33 +374,23 @@ proc trVar(c: var Context; n: var Cursor) =
   var nameSym = SymId(0)
   n.into:
     if n.hasMore:
-      if n.kind == SymbolDef: nameSym = symId(n)
+      if n.kind == SymbolDef:
+        nameSym = symId(n)
+        if isLocal: c.scopeDecls[^1].add nameSym
       skip n                             # name
     if n.hasMore: skip n                 # pragmas
     if n.hasMore: skip n                 # type
     if n.hasMore:
       let initStart = n
       let initKind = initStart.kind
-      let initSym = if initKind == Symbol: symId(initStart) else: SymId(0)
       trExpr(c, n)                       # propagate inside the initializer
-      if isLocal and nameSym != SymId(0) and not c.isAddrTaken(nameSym):
-        # Record the copy relation for a plain local-symbol initializer.
-        if initSym != SymId(0) and c.propagatable(initSym) and
-           c.prop(initSym).declDepth <= c.prop(nameSym).declDepth:
-          c.copyOf[nameSym] = resolve(c, initSym)
-          note mkVarSymInit
-        elif initKind == DotToken:
-          note mkVarNoInit
-        elif initSym != SymId(0):
-          note mkSrcNotLocal
-        # Deletable if its initializer is a side-effect-free leaf: dead once all
-        # its uses are rewritten away (copy) or it was never used (pure store).
-        # An initializer-LESS decl qualifies too — the inliner's result temps are
-        # all of that shape (`(var :y . T .)` plus a later `asgn`), and once every
-        # read of `y` is rewritten away and every store to it deleted, the bare
-        # decl is an unused variable that would still take a register.
-        if initKind in LeafKinds or initKind == DotToken:
-          c.prop(nameSym).declPos = defPos
+      if isLocal and nameSym != SymId(0) and nameSym notin c.addrTaken:
+        bindCopy(c, nameSym, initStart)
+        # Deletable if its initializer is a side-effect-free leaf or empty:
+        # dead once all its reads are rewritten away (copy) or it was never
+        # used (pure store).
+        if initKind in LeafKinds or initKind == DotToken or isLeafLit(initStart):
+          c.delCandidates[nameSym] = defPos
     while n.hasMore: skip n
 
 proc trAsgn(c: var Context; n: var Cursor) =
@@ -415,40 +407,23 @@ proc trAsgn(c: var Context; n: var Cursor) =
   # `asgn` is `(asgn dest src)`; `store` is `(store src dest)` (reversed).
   let lhs = if isStore: second else: first
   let rhs = if isStore: first else: second
-  if haveSecond:
+  let haveLhs = if isStore: haveSecond else: haveFirst
+  let haveRhs = if isStore: haveFirst else: haveSecond
+  if haveRhs:
     var r = rhs
     trExpr(c, r)                         # propagate inside the value
-  # The write target's base symbol changed value — invalidate it (and its
-  # aliases). We deliberately do NOT substitute inside the LHS: its base names a
-  # storage location, and aliasing two locals' *values* does not alias their
-  # storage.
-  let haveLhs = if isStore: haveSecond else: haveFirst
-  # A bare-symbol target that is propagatable: the statement may establish a copy
-  # and may itself become deletable. This is the shape hexer's inliner emits —
-  # it declares the inlined body's result temp WITHOUT an initializer (the body
-  # may return from several points, so the value arrives by assignment before the
-  # return label), so `trVar` above never sees a copy to record.
-  var newSrc = SymId(0)
-  if haveLhs and haveSecond and lhs.kind == Symbol and c.propagatable(symId(lhs)):
-    let l = symId(lhs)
-    if rhs.kind == Symbol and c.propagatable(symId(rhs)) and
-       c.prop(symId(rhs)).declDepth <= c.prop(l).declDepth:
-      # Resolve BEFORE invalidating: `invalidate(l)` clears every entry whose
-      # VALUE is `l`, which would otherwise silently drop the chain we are about
-      # to read (`y = x` where `x` was itself recorded as a copy of `y`).
-      newSrc = resolve(c, symId(rhs))
-      note mkAsgnCopy
-    elif rhs.kind == Symbol and c.propagatable(symId(rhs)):
-      note mkScopeBlocked
-    elif rhs.kind == Symbol:
-      note mkSrcNotLocal
-    if rhs.kind in LeafKinds:
-      # No side effect in the value, so the whole store dies with `l`.
-      c.prop(l).pureAsgns.add asgnPos
   if haveLhs:
-    invalidate(c, rootOf(lhs))
-  if newSrc != SymId(0) and newSrc != symId(lhs):
-    c.copyOf[symId(lhs)] = newSrc
+    var l = lhs
+    # Storage spine is not substituted (`y = …` still writes `y`); a deref
+    # breaks the spine, so `(*p2).f = v` with `p2 = p` rewrites `p2` → `p`.
+    trAddrOperand(c, l)
+    invalidate(c, writtenRoot(lhs))
+    if lhs.kind == Symbol:
+      let dest = symId(lhs)
+      if haveRhs and (isLeafLit(rhs) or rhs.kind == Symbol):
+        c.writeSites.mgetOrPut(dest, @[]).add asgnPos
+      if haveRhs:
+        bindCopy(c, dest, rhs)
 
 proc trCallStmt(c: var Context; n: var Cursor) =
   n.into:
@@ -501,13 +476,14 @@ proc trCase(c: var Context; n: var Cursor) =
     closeBranches c
 
 proc collectWrites(start: Cursor; writes: var HashSet[SymId]) =
-  ## Base symbol of every `asgn`/`store` target in the subtree at `start`.
+  ## Storage root of every `asgn`/`store` target in the subtree at `start`.
+  ## Through-pointer stores do not count as writes to the pointer.
   if not start.hasMore or start.kind != TagLit: return
   let sk = start.stmtKind
   if sk in {AsgnS, StoreS}:
     var lhs = child0(start)
     if sk == StoreS: skip lhs            # dest is the 2nd child
-    let root = rootOf(lhs)
+    let root = writtenRoot(lhs)
     if root != SymId(0): writes.incl root
   var n = start
   n.loopInto:
@@ -559,21 +535,17 @@ proc trLab(c: var Context; n: var Cursor) =
   skip n
 
 proc trBreakOrRet(c: var Context; n: var Cursor) =
-  ## `clearAll` afterwards is right — nothing on this path follows. Skipping the
-  ## node WHOLESALE was not: `(ret x)`'s operand is a VALUE, so a copy has to be
-  ## substituted into it like any other read, and while it was skipped `preScan`
-  ## still counted that `Symbol` in `uses` — so `substituted == uses - writes`
-  ## could never hold for a local that appears in a `ret`, and its decl could
-  ## never be deleted either. Only `ret` is walked: `break`'s operand is a LABEL,
-  ## and substituting a symbol there would rewrite the jump target.
-  if n.stmtKind == RetS:
-    if statsOn:
-      let v = child0(n)
-      if v.kind == Symbol and c.isLocalSym(symId(v)): note mkRetOperand
+  ## `(ret x)` / `(raise x)` carry a VALUE, and it is read like any other — an
+  ## inlined body's result temp is very often returned straight back, so skipping
+  ## the operand left the pass blind to exactly the shape inlining produces.
+  ## `(break L)` carries a LABEL, which must never be substituted.
+  if n.stmtKind in {RetS, RaiseS}:
     n.into:
-      while n.hasMore: trExpr(c, n)
+      if n.hasMore and n.kind != DotToken: trExpr(c, n)
+      while n.hasMore: skip n
   else:
     skip n
+  # Nothing after the transfer is reachable from here; the state is dead.
   clearAll c
 
 proc tr(c: var Context; n: var Cursor) =
@@ -590,7 +562,12 @@ proc tr(c: var Context; n: var Cursor) =
     of JmpS:                       trJmp(c, n)
     of LabS:                       trLab(c, n)
     of BreakS, RetS, RaiseS:       trBreakOrRet(c, n)
-    of StmtsS, ScopeS:
+    of ScopeS:
+      enterScope c
+      n.loopInto:
+        tr(c, n)
+      leaveScope c
+    of StmtsS:
       n.loopInto:
         tr(c, n)
     else:
@@ -600,53 +577,28 @@ proc tr(c: var Context; n: var Cursor) =
 
 # ---- pre-pass: addr-taken, local decls, use counts, names -----------------
 
-const
-  BlockOpeningStmts = {ScopeS, IfS, IteS, ItecS, WhileS, LoopS, CaseS, TryS}
-    ## Statements whose sub-statements the backends put in a **nested scope**: the
-    ## C generator writes `{ … }` around every `elif`/`else` body, every `while`
-    ## and `loop` body and every `case` branch, exactly as it does for a `(scope)`.
-    ## A `(stmts)` is NOT one of them — `genStmt` walks straight through it — so it
-    ## is only a scope when one of these opened it, which is what nesting the depth
-    ## here says. Missing them declared a variable inside an `if` branch at the same
-    ## depth as one in the proc body, and `hasHook` in hexer's lifter then compiled
-    ## to a `return X60Qx_79;` naming a variable declared inside a brace that had
-    ## already closed.
-
-proc preScan(c: var Context; n: Cursor; depth = 0) =
+proc preScan(c: var Context; n: Cursor) =
   case n.kind
   of Symbol:
     let s = symId(n)
-    let p = addr c.prop(s)
-    p.name = symName(n)
-    p.uses += 1
+    c.names[s] = symName(n)
+    c.useCount.mgetOrPut(s, 0) += 1
   of SymbolDef:
-    c.prop(symId(n)).name = symName(n)
+    c.names[symId(n)] = symName(n)
   of TagLit:
     if n.stmtKind == VarS:
       let nameCur = child0(n)
       if nameCur.kind == SymbolDef:
-        let p = addr c.prop(symId(nameCur))
-        p.isLocal = true
-        p.declDepth = depth
-    if n.stmtKind in {AsgnS, StoreS}:
-      # A bare-symbol assignment target: a WRITE, though `preScan` also counts it
-      # as a `Symbol` token above. `(asgn (dot y f) …)` is deliberately NOT counted
-      # — that `y` is read as a base, is never substituted, and so correctly keeps
-      # `y` from ever looking dead.
-      var lhs = child0(n)
-      if n.stmtKind == StoreS: skip lhs      # `(store src dest)` — dest is 2nd
-      if lhs.kind == Symbol:
-        c.prop(symId(lhs)).writes += 1
+        c.localDefs.incl symId(nameCur)
     if n.exprKind in AddrKinds:
       # Only a local whose OWN storage is addressed is excluded from copy prop. An
       # `addr((*p).f)` addresses the pointee (computed from p's value), so `p` stays
       # propagatable — `addrRootOf` stops at the `deref`/`pat` and returns SymId(0).
       let s = addrRootOf(child0(n))
-      if s != SymId(0): c.prop(s).addrTaken = true
-    let inner = if n.stmtKind in BlockOpeningStmts: depth + 1 else: depth
+      if s != SymId(0): c.addrTaken.incl s
     var m = n
     m.loopInto:
-      preScan(c, m, inner)
+      preScan(c, m)
       skip m
   else:
     discard
@@ -669,10 +621,10 @@ proc registerParams(c: var Context; params: Cursor) =
     if p.kind == TagLit and p.substructureKind == ParamU:
       let nameCur = child0(p)
       if nameCur.kind == SymbolDef:
-        let p = addr c.prop(symId(nameCur))
-        p.isLocal = true
-        p.name = symName(nameCur)
-        p.declDepth = 0                  # a parameter outlives every body scope
+        let s = symId(nameCur)
+        c.localDefs.incl s
+        c.names[s] = symName(nameCur)
+        c.scopeDecls[0].add s
     skip p
 
 proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor)) =
@@ -686,22 +638,17 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor)) =
     preScan(ctx, pn)
   var n = beginRead(buf)
   tr(ctx, n)
-  # Dead-store / dead-binding elimination. A symbol is dead when every READ of it
-  # was rewritten away — `uses` counts bare-symbol writes too, and those are never
-  # substituted, so the test is against `uses - writes`. A surviving un-rewritten
-  # read (a base of a field store, an `addr` operand, a read past an invalidation)
-  # keeps `substituted` below it and everything here is skipped.
-  #
-  # Then: every side-effect-free store to it dies, and its DECL dies too — but the
-  # decl only when *all* of its stores were such stores (`pureAsgns.len == writes`),
-  # since a surviving `y = f()` still needs `y` to exist.
-  for s, p in ctx.syms.mpairs:
-    if p.substituted != p.uses - p.writes: continue
-    for pos in p.pureAsgns:
-      ctx.patchset.addSubst(pos, cursorAt(ctx.dotBuf, 0))
-    if p.declPos >= 0 and p.pureAsgns.len == p.writes:
-      ctx.patchset.addSubst(p.declPos, cursorAt(ctx.dotBuf, 0))
-      if statsOn: inc gDeleted
+  # Delete every candidate decl whose every read was rewritten away (or which
+  # had no reads) and which has no impure writes left. Pure `y = x` / `y = 5`
+  # assignments to a now-dead local go with it.
+  for s, defPos in ctx.delCandidates:
+    let uses = ctx.useCount.getOrDefault(s)
+    let subst = ctx.substCount.getOrDefault(s)
+    let sites = ctx.writeSites.getOrDefault(s)
+    if subst + sites.len == uses:
+      ctx.patchset.addSubst(defPos, cursorAt(ctx.dotBuf, 0))
+      for pos in sites:
+        ctx.patchset.addSubst(pos, cursorAt(ctx.dotBuf, 0))
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
@@ -812,60 +759,69 @@ when isMainModule:
       "(while c.0.M (stmts (asgn x.0.M (call g.0.M)))) " &
       "(call use.0.M y.0.M))")
 
-  # ---- the shapes hexer's inliner actually emits -----------------------------
-
-  block inliner_shape_decl_asgn_copy_ret:
-    # An inlined body may return from several points, so its result temp is
-    # DECLARED without an initializer and assigned before the return label. The
-    # copy into the caller's destination is therefore an `asgn`, not a `var`
-    # binding — and the last read is a `ret` operand. Both had to be handled for
-    # this to collapse at all.
+  block asgn_shaped_copy:
+    # Inlining leaves `var y; y = x; use y`, not `var y = x`.
     chk(
-      "(stmts (var :result.0.M . . .) (var :t.0.M . . .) " &
-      "(scope (asgn t.0.M (call f.0.M)) (lab :retlab.0.M)) " &
-      "(asgn result.0.M t.0.M) (ret result.0.M))",
-      "(stmts . (var :t.0.M . . .) " &
-      "(scope (asgn t.0.M (call f.0.M)) (lab :retlab.0.M)) . " &
-      "(ret t.0.M))")
-
-  block copy_into_ret_operand:
-    # `(ret y)` is a value use like any other.
-    chk(
-      "(stmts (var :x.0.M . . (call f.0.M)) (var :y.0.M . . x.0.M) (ret y.0.M))",
-      "(stmts (var :x.0.M . . (call f.0.M)) . (ret x.0.M))")
-
-  block asgn_copy_source_reassigned_blocks:
-    # The `asgn`-established copy obeys the same invalidation as a `var` one.
-    assertUnchanged(
       "(stmts (var :x.0.M . . (call f.0.M)) (var :y.0.M . . .) " &
-      "(asgn y.0.M x.0.M) (asgn x.0.M (call g.0.M)) (call use.0.M y.0.M))")
+      "(asgn y.0.M x.0.M) (call use.0.M y.0.M))",
+      "(stmts (var :x.0.M . . (call f.0.M)) . . (call use.0.M x.0.M))")
 
-  block source_in_inner_scope_blocks:
-    # A `(scope …)` is a REAL scope — the C backend emits `{ }` and arkham frees
-    # its locals' registers at the close. Substituting `inner` into a use that
-    # outlives the scope would name a dead variable, so the copy is not recorded
-    # when the source is declared deeper than the destination.
-    assertUnchanged(
-      "(stmts (var :outer.0.M . . .) " &
-      "(scope (var :inner.0.M . . (call f.0.M)) (asgn outer.0.M inner.0.M)) " &
-      "(call use.0.M outer.0.M))")
-
-  block impure_store_keeps_the_decl:
-    # `y = f()` has a side effect and cannot be deleted, so `y` must keep its decl
-    # even though the decl itself carries no initializer.
-    assertUnchanged(
-      "(stmts (var :y.0.M . . .) (asgn y.0.M (call f.0.M)) (call use.0.M y.0.M))")
-
-  block field_store_base_keeps_the_var_alive:
-    # `(asgn (dot y f) …)` READS `y` as a base and is never substituted, so `y`
-    # never looks dead and neither its decl nor the store may go.
-    assertUnchanged(
-      "(stmts (var :y.0.M . . .) (asgn (dot y.0.M fld.0.M 0) (call f.0.M)))")
-
-  block dead_pure_store_and_decl_both_go:
-    # Nothing ever reads `y`: the store is side-effect free and the decl unused.
+  block literal_copy:
+    # var y = 5; use y  →  use 5  (decl deleted)
     chk(
-      "(stmts (var :y.0.M . . .) (asgn y.0.M 42) (call use.0.M 1))",
-      "(stmts . . (call use.0.M 1))")
+      "(stmts (var :y.0.M . . 5) (call use.0.M y.0.M))",
+      "(stmts . (call use.0.M 5))")
+
+  block suffixed_int_literal_copy:
+    # hexer's typed `7i64` is `(suf 7 "i64")`, not a bare IntLit. Inlining
+    # `copyMem(..., AlwaysAvail)` produces `var size = (suf 7 "i64")` and the
+    # memcpy size must become the suf node so arkham can unroll.
+    chk(
+      "(stmts (var :y.0.M . . (suf 7 \"i64\")) (call memcpy.0.M d.0.M s.0.M y.0.M))",
+      "(stmts . (call memcpy.0.M d.0.M s.0.M (suf 7 \"i64\")))")
+
+  block literal_snapshot_survives_source_write:
+    # y captures 5 at bind time; a later write to x must not poison y.
+    # x itself then has no remaining reads, so its decl and the dead `x = 6`
+    # store are deleted too.
+    chk(
+      "(stmts (var :x.0.M . . 5) (var :y.0.M . . x.0.M) " &
+      "(asgn x.0.M 6) (call use.0.M y.0.M))",
+      "(stmts . . . (call use.0.M 5))")
+
+  block through_ptr_store_keeps_pointer_copy:
+    # `(*p).f = v` writes the pointee, not p. A copy of p stays valid, and
+    # the LHS pointer is itself a value use — substitute it.
+    chk(
+      "(stmts (var :p.0.M . . (call f.0.M)) (var :q.0.M . . p.0.M) " &
+      "(asgn (dot (deref q.0.M) fld.0.M) v.0.M) " &
+      "(call use.0.M q.0.M))",
+      "(stmts (var :p.0.M . . (call f.0.M)) . " &
+      "(asgn (dot (deref p.0.M) fld.0.M) v.0.M) " &
+      "(call use.0.M p.0.M))")
+
+  block loop_through_ptr_store_keeps_pointer_copy:
+    # Storing through p inside a loop is not a write to p.
+    chk(
+      "(stmts (var :p.0.M . . (call f.0.M)) (var :q.0.M . . p.0.M) " &
+      "(while c.0.M (stmts (asgn (deref q.0.M) v.0.M))) " &
+      "(call use.0.M q.0.M))",
+      "(stmts (var :p.0.M . . (call f.0.M)) . " &
+      "(while c.0.M (stmts (asgn (deref p.0.M) v.0.M))) " &
+      "(call use.0.M p.0.M))")
+
+  block scope_does_not_leak_inner_name:
+    # Outer `y = inner x` is a valid copy INSIDE the scope, but substituting
+    # the inner name into a use after the `(scope)` closes would outlive x's
+    # lifetime (arkham then reuses the register). Keep the outer name.
+    chk(
+      "(stmts (var :y.0.M . . .) " &
+      "(scope (stmts (var :x.0.M . . (call f.0.M)) " &
+      "(asgn y.0.M x.0.M) (call inner.0.M y.0.M))) " &
+      "(call outer.0.M y.0.M))",
+      "(stmts (var :y.0.M . . .) " &
+      "(scope (stmts (var :x.0.M . . (call f.0.M)) " &
+      "(asgn y.0.M x.0.M) (call inner.0.M x.0.M))) " &
+      "(call outer.0.M y.0.M))")
 
   echo "copyprop.nim: all self-tests passed"

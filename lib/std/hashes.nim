@@ -17,16 +17,9 @@ func `!$`*(h: Hash): Hash {.inline.} =
   result = result xor (result shr 11)
   result = result + result shl 15
 
-func hash*(s: string): Hash {.inline.} =
-  ## An inline shim for `system.hashStr`, which lives next to the SSO layout so it
-  ## can take the first `AlwaysAvail` chars straight out of the `bytes` word
-  ## instead of going through a payload pointer. This is the hottest routine in
-  ## the compiler (every pool intern hashes), and `for c in items(s)` used to cost
-  ## a `toOpenArray` conversion plus a bounds-checked `[]` per byte — 234
-  ## instructions for a ~16-byte symbol.
-  ##
-  ## `hashStr` restates `!&`/`!$` because `system` cannot import this module.
-  ## **Change one and you must change the other**, or every table splits.
+func hash*(s: string): Hash {.alwaysInline.} =
+  ## An inline shim for `system.hashStr`. The mix is `!&` / `!$` over the chars;
+  ## `hashStr` fetches the first `AlwaysAvail` of them from the `bytes` word.
   hashStr(s)
 
 func hash*(u: uint): Hash {.inline.} = u

@@ -532,7 +532,14 @@ proc tokenWidth*(c: Cursor): int {.alwaysInline.} =
   ##    them in the prologue on EVERY call, including the overwhelmingly common
   ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
   ##
-  ## `{.alwaysInline.}` rather than `{.inline.}`: at 262 asm-NIF tokens this sits
+  ## `{.alwaysInline.}` is load-bearing for the native backend. Hexer's
+  ## inliner ignores `.inline` (it only auto-splices bodies ≤ 100 tokens, and
+  ## this one is larger once `peekAhead` expands) while GCC `-O3` inlines the
+  ## `static inline` C anyway. Without the force-splice, `skip`/`inc` call
+  ## this and copy the 24-byte Cursor onto the stack for the by-value
+  ## argument — the dominant arkham-vs-GCC gap on nifbench's walk/parse.
+  ##
+  ## Measured, not assumed: at 262 asm-NIF tokens this sits
   ## above `InlineTinyBound`, so the size heuristic never took it, and it is the
   ## one shape that pays — scalar in, scalar out, few live values, so the callee's
   ## push/pop and call/ret vanish and the caller adds no spill traffic. Measured

@@ -25,7 +25,8 @@
 ##
 ## ## Legality — why this needs no aliasing / type machinery
 ##
-## We scalarize a local `var o = (oconstr …)` iff:
+## We scalarize a local `var o = (oconstr …)` or `var o = L` (`L` a pure
+## aggregate lvalue, including a whole-object copy `var o = src`) iff:
 ##
 ## 1. **Non-escaping.** `o` appears *only* as the base of a `(dot o field)`. Any
 ##    bare `o` (whole-object read, `o = x`, `(call f o)`, `(ret o)`), and any
@@ -33,22 +34,28 @@
 ##    rule also rules out objects with destructors or non-trivial copies: their
 ##    lowered `=destroy` / `=copy` appears as `addr o` / a whole-object use, so they
 ##    never survive — and the surviving fields are therefore trivially destructible.
+##    A whole-object *copy* `var tmp = src` is a LOAD, not an escape of `tmp`:
+##    `tmp.f` becomes a scalar initialised from `src.f`. That is the inliner's
+##    by-value aggregate param (`var tmp = s` for a 16-byte string).
 ##
-## 2. **Every accessed field is initialised by the constructor.** If `o.x` is read
-##    but `x` is not a `(kv x …)` of the `oconstr`, we bail. For a `case`/variant
-##    object this is exactly what protects us: reading a field of the *other*
-##    variant references a field the constructor never set, so the object is left
-##    alone. With this rule, independent per-field scalars are sound even though
-##    variant fields share storage — well-typed access never cross-reads them.
+## 2. **Every accessed field is initialised.** Constructor candidates need the
+##    field in the `(oconstr)`; LOAD candidates initialise each accessed field
+##    from `L.f` at the copy. If `o.x` is read but `x` is not a `(kv x …)` of
+##    the `oconstr`, we bail. For a `case`/variant object this is exactly what
+##    protects us: reading a field of the *other* variant references a field
+##    the constructor never set, so the object is left alone. With this rule,
+##    independent per-field scalars are sound even though variant fields share
+##    storage — well-typed access never cross-reads them.
 ##
 ## All constructor field *values* are preserved (one `var` decl each, in order), so
 ## side effects and evaluation order are unchanged; fields that end up unused become
 ## ordinary dead stores that `copyprop`/DSE clean up afterwards. Run this *before*
 ## `copyprop` so the decomposition's fresh scalar copies get propagated away.
 ##
-## Restrictions (kept deliberately simple, like `copyprop`): only `var` locals
-## whose initializer is a pure `(oconstr T (kv …)…)` of `kv` fields (a constructor
-## with an inheritance/base part is left alone); a name declared twice is skipped.
+## Restrictions (kept deliberately simple, like `copyprop`): `var` locals whose
+## initializer is a pure `(oconstr T (kv …)…)` of `kv` fields, or a pure
+## aggregate lvalue (`src`, `p.a`, …); a constructor with an inheritance/base
+## part is left alone; a name declared twice is skipped.
 
 import std / [tables, sets, hashes, assertions, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore (incl. rootOf, symId)
@@ -281,8 +288,12 @@ proc collectCandidates(c: var Context; n: Cursor) =
         if v.kind == TagLit and v.exprKind == OconstrC:
           hasOconstr = true
           oconstrCur = v
-        elif declTypePos >= 0 and v.kind == TagLit and
-             v.exprKind in {DotC, AtC, PatC, DerefC} and isPureLvaluePath(v):
+        elif declTypePos >= 0 and (
+             v.kind == Symbol or
+             (v.kind == TagLit and v.exprKind in {DotC, AtC, PatC, DerefC} and
+              isPureLvaluePath(v))):
+          # Whole-object copy `var o = src` or a field/deref path. A Symbol is
+          # the inliner's `var tmp = s` for a by-value aggregate param.
           loadPos = cursorToPosition(c.orig[], v)
         skip v                                   # initializer
       while v.hasMore: skip v
@@ -581,10 +592,21 @@ when isMainModule:
     assertUnchanged(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1))) (call use.0.M o.0.M))")
 
+  block addr_of_object_disqualifies:
+    assertUnchanged(
+      "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1))) " &
+      "(call use.0.M (addr o.0.M)))")
+
   block addr_of_field_disqualifies:
     assertUnchanged(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1))) " &
       "(call use.0.M (addr (dot o.0.M f.0.M))))")
+
+  block copy_from_symbol_load:
+    # `var o = src` (the inliner's by-value param copy). Fields come from `src.f`.
+    chk(
+      "(stmts (var :o.0.M . T.0.M src.0.M) (asgn x.0.M (dot o.0.M f.0.M)))",
+      "(stmts (var :`sroa.1.M . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa.1.M))")
 
   block uninitialised_field_access_disqualifies:
     # `o.g` is read but the constructor never set `g` (think: other variant arm).
