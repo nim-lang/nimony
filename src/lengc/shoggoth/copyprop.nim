@@ -600,6 +600,18 @@ proc tr(c: var Context; n: var Cursor) =
 
 # ---- pre-pass: addr-taken, local decls, use counts, names -----------------
 
+const
+  BlockOpeningStmts = {ScopeS, IfS, IteS, ItecS, WhileS, LoopS, CaseS, TryS}
+    ## Statements whose sub-statements the backends put in a **nested scope**: the
+    ## C generator writes `{ … }` around every `elif`/`else` body, every `while`
+    ## and `loop` body and every `case` branch, exactly as it does for a `(scope)`.
+    ## A `(stmts)` is NOT one of them — `genStmt` walks straight through it — so it
+    ## is only a scope when one of these opened it, which is what nesting the depth
+    ## here says. Missing them declared a variable inside an `if` branch at the same
+    ## depth as one in the proc body, and `hasHook` in hexer's lifter then compiled
+    ## to a `return X60Qx_79;` naming a variable declared inside a brace that had
+    ## already closed.
+
 proc preScan(c: var Context; n: Cursor; depth = 0) =
   case n.kind
   of Symbol:
@@ -631,7 +643,7 @@ proc preScan(c: var Context; n: Cursor; depth = 0) =
       # propagatable — `addrRootOf` stops at the `deref`/`pat` and returns SymId(0).
       let s = addrRootOf(child0(n))
       if s != SymId(0): c.prop(s).addrTaken = true
-    let inner = if n.stmtKind == ScopeS: depth + 1 else: depth
+    let inner = if n.stmtKind in BlockOpeningStmts: depth + 1 else: depth
     var m = n
     m.loopInto:
       preScan(c, m, inner)
