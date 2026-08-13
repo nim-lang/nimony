@@ -11,7 +11,11 @@
 const
   HeapSlen   = 255  ## slen sentinel: heap-allocated long string
   StaticSlen = 254  ## slen sentinel: static/literal long string (capImpl=0, never freed)
-  AlwaysAvail = sizeof(uint) - 1          ## inline chars that fit alongside slen in `bytes`
+  AlwaysAvail* = sizeof(uint) - 1         ## inline chars that fit alongside slen in `bytes`.
+                                          ## Exported because it is the contract of
+                                          ## `beginStore`/`endStore`: a bulk writer needs it
+                                          ## to know whether its write touched the prefix
+                                          ## cache and therefore needs the `endStore` sync.
   PayloadSize = AlwaysAvail + sizeof(pointer) - 1  ## total inline capacity (short+medium)
 
 const LongStringDataOffset = 3 * sizeof(int)  ## byte offset of LongString.data from start
@@ -729,23 +733,50 @@ func cmpStringPtrs(a, b: ptr string): int =
 
 # ---- comparison ----
 
+template prefixMask(n: int): uint =
+  ## Mask selecting the first `n` chars of a `dropSlen`'d prefix word. LE puts
+  ## char 0 in the low byte (chars ascend), BE in the high byte (they descend).
+  ## `n` is `0 .. AlwaysAvail`, so the shift never reaches the word width.
+  when defined(bigEndian):
+    not ((1'u shl uint((sizeof(uint) - n) * 8)) - 1'u)
+  else:
+    (1'u shl uint(n * 8)) - 1'u
+
 func equalStringsLong(a, b: string): bool {.noinline.} =
-  ## Length + tail after the inlined prefix / both-short checks. Does **not**
-  ## walk the prefix again (`cmpStringPtrs` would): intern already did that.
+  ## Everything the inline head could not settle: at least one operand is
+  ## medium or long. The head establishes NOTHING about the chars, so the
+  ## lengths come first and the prefix compare is capped at the logical length.
+  ##
+  ## The cap is the whole subtlety. A long string's cached prefix mirrors the
+  ## heap only for its first `fullLen` bytes — `shrink` leaves stale chars
+  ## above it — so a raw word compare reports "different" for two equal
+  ## strings (and `==` then disagrees with `hash`, which silently duplicates
+  ## `BiTable` entries instead of crashing). `cmpStringPtrs` caps for the same
+  ## reason; see its comment.
   ##
   ## Native (no libc `memcmp`): a qword mismatch is `false` immediately.
   ## Arkham's `memcmp` then byte-rescans those eight bytes to produce a signed
   ## order `==` never uses. The C backend keeps `cmpMem` (glibc SIMD).
-  let aslen = ssLenOf(a.bytes)
-  let bslen = ssLenOf(b.bytes)
+  let abytes = a.bytes
+  let bbytes = b.bytes
+  let aslen = ssLenOf(abytes)
+  let bslen = ssLenOf(bbytes)
   let la = if aslen > PayloadSize: a.more.fullLen else: aslen
   let lb = if bslen > PayloadSize: b.more.fullLen else: bslen
   if la != lb: return false
-  if la <= AlwaysAvail: return true
+  if la == 0: return true
   if aslen <= PayloadSize and bslen <= PayloadSize:
+    # Both inline: the whole `bytes` word is canonical (slen + chars 0..6), so
+    # one compare covers the prefix AND the lengths.
+    if abytes != bbytes: return false
+    if la <= AlwaysAvail: return true
     let nbits = uint(la - AlwaysAvail) * 8'u
     let mask = (1'u shl nbits) - 1'u
     return (cast[uint](a.more) and mask) == (cast[uint](b.more) and mask)
+  # At least one long: compare only the chars both caches actually mirror.
+  let pmask = prefixMask(min(la, AlwaysAvail))
+  if (dropSlen(abytes) and pmask) != (dropSlen(bbytes) and pmask): return false
+  if la <= AlwaysAvail: return true
   let ap0 = if aslen > PayloadSize:
               cast[pointer](cast[uint](addr a.more.data[0]) + uint(AlwaysAvail))
             else:
@@ -773,27 +804,26 @@ func equalStringsLong(a, b: string): bool {.noinline.} =
     cmpMem(ap0, bp0, la - AlwaysAvail) == 0
 
 func equalStrings(a, b: string): bool {.alwaysInline.} =
-  ## `{.alwaysInline.}` so intern / string-case see the prefix/len compares,
-  ## not a call. Heap / medium / mixed go to `equalStringsLong`.
+  ## `{.alwaysInline.}` so intern / string-case see the short-string compare,
+  ## not a call. Medium / long / mixed outline to `equalStringsLong`.
+  ##
+  ## The inline test is SHORT/SHORT only, deliberately. Rejecting on the raw
+  ## prefix word first would be one instruction cheaper and is WRONG: a long
+  ## string's cache is valid only up to `fullLen`, so two equal strings can
+  ## differ in it (see `equalStringsLong`).
   let abytes = a.bytes
   let bbytes = b.bytes
-  if dropSlen(abytes) != dropSlen(bbytes): return false
-  let aslen = ssLenOf(abytes)
-  let bslen = ssLenOf(bbytes)
-  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
-    return aslen == bslen
+  if ssLenOf(abytes) <= AlwaysAvail and ssLenOf(bbytes) <= AlwaysAvail:
+    return abytes == bbytes            # SWAR: one word covers slen + all chars
   equalStringsLong(a, b)
 
 func `==`*(a, b: string): bool {.alwaysInline, semantics: "string.==".} =
   ## Same body as `equalStrings` (not a call to it) so one alwaysInline splice
-  ## puts the prefix/len compares into intern.
+  ## puts the short-string compare into intern.
   let abytes = a.bytes
   let bbytes = b.bytes
-  if dropSlen(abytes) != dropSlen(bbytes): return false
-  let aslen = ssLenOf(abytes)
-  let bslen = ssLenOf(bbytes)
-  if aslen <= AlwaysAvail and bslen <= AlwaysAvail:
-    return aslen == bslen
+  if ssLenOf(abytes) <= AlwaysAvail and ssLenOf(bbytes) <= AlwaysAvail:
+    return abytes == bbytes
   equalStringsLong(a, b)
 
 func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =

@@ -81,6 +81,37 @@ proc testEq() =
 testEq()
 echo "equality ok"
 
+# ---- equality across tiers, with a STALE prefix cache ----
+# A long string keeps a copy of its first AlwaysAvail chars in the `bytes` word
+# so a comparison can start without touching the heap. `shrink` does NOT clear
+# the chars above the new length, so a heap string shortened below AlwaysAvail
+# has garbage up there — `cmpStringPtrs` caps its prefix compare at `fullLen`
+# for exactly this reason. Any comparison that reads the whole prefix word raw
+# reports two EQUAL strings as different; `==` then disagrees with `hash`, which
+# silently duplicates entries in every table instead of crashing.
+
+proc testShrunkPrefixEq() =
+  var s = "abcdefghijklmnop"      # long (16)
+  s.setLen 2                      # heap tier, fullLen 2, cache still "abcdefg"
+  assert s.len == 2
+  assert s == "ab"                # against a SHORT string of the same content
+  assert "ab" == s
+  assert not (s == "ac")
+  assert not (s == "abc")
+
+  var t = "abzzzzzzzzzzzzzz"      # long (16), same first two chars, other tail
+  t.setLen 2                      # equal content, DIFFERENT stale cache bytes
+  assert t == s                   # against another LONG string, both shrunk
+  assert s == t
+
+  var u = "abcdefghijklmnop"
+  u.setLen 6                      # still below AlwaysAvail (7)
+  assert u == "abcdef"
+  assert not (u == "abcdeg")
+
+testShrunkPrefixEq()
+echo "shrunk prefix equality ok"
+
 # ---- concatenation ----
 
 proc testConcat() =

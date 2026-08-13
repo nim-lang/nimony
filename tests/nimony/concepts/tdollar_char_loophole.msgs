@@ -9,7 +9,7 @@ $(x)
 [1] expected: int32 but got: char (declared in lib/std/system.nim(107, 1))
 [1] expected: bool but got: char (declared in lib/std/system.nim(116, 1))
 [1] char does not match constraint T (declared in lib/std/system.nim(119, 1))
-[1] expected: string but got: char (declared in lib/std/system/stringimpl.nim(989, 1))
+[1] expected: string but got: char (declared in lib/std/system/stringimpl.nim(1019, 1))
 [1] expected: float64 but got: char (declared in lib/std/system/formatfloat.nim(1561, 1))
 [1] expected: float32 but got: char (declared in lib/std/system/formatfloat.nim(1566, 1))
 tests/nimony/concepts/tdollar_char_loophole.nim(49, 15) Trace: instantiation from here

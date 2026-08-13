@@ -2,6 +2,7 @@ len ok
 add char ok
 add str ok
 equality ok
+shrunk prefix equality ok
 concat ok
 startsWith ok
 all ok
