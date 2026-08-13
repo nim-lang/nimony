@@ -29,14 +29,26 @@
 ## A load (or cheap arith) whose operands are not written in a loop — and that
 ## no in-loop store/call can clobber — is hoisted to the loop's pre-header
 ## (insert-before the `(while)` / `(loop)`). A single occurrence in the body
-## still counts: the loop is the reuse. The load must also **execute every
-## iteration** of that loop: a field load behind `if` / `case` / `try`, or
-## inside an inner loop, stays put. Hoisting `a.more.fullLen` out of
-## `if aslen > PayloadSize` segfaults when `a` is a short string (`more ==
-## nil`). Variant expressions (an index the body increments, a field a store
-## aliases) stay inside, with the existing lazy CSE. The same write/alias/
-## summary reasoning as invalidation decides invariance; an unknown call is
-## assumed to clobber anything it can reach.
+## still counts: the loop is the reuse. Three conditions, all necessary:
+##
+## 1. **Invariant** — the same write/alias/summary reasoning as invalidation;
+##    an unknown call is assumed to clobber anything it can reach. Variant
+##    expressions (an index the body increments, a field a store aliases) stay
+##    inside, with the existing lazy CSE.
+## 2. **Executes every iteration** — a load behind `if` / `case` / `try`, or
+##    inside an inner loop, stays put.
+## 3. **Safe to speculate** (`speculable`) — the pre-header runs even when the
+##    loop body never does, so a hoist evaluates the expression on a path that
+##    did not have it. Hoisting `a.more.fullLen` out of `if aslen >
+##    PayloadSize` segfaults when `a` is a short string (`more == nil`) — and a
+##    `while` that runs zero times is the same fault with no `if` to see. This
+##    pass cannot rotate a top-tested loop or prove a non-zero trip count, so
+##    it hoists only what cannot fault: field/index paths off a named base, and
+##    non-trapping arithmetic.
+##
+## Condition 3 is why a load through a pointer is not hoisted even when it is
+## perfectly invariant. Reuse of a load recorded *before* the loop is a
+## different thing and is not restricted — that evaluation already happens.
 ##
 ## Candidates: any memory load — `(dot …)`, `(at …)`, `(deref …)`, `(pat …)`.
 ## An assignment's LHS is a write target, not a value, so it is never cached;
@@ -1048,12 +1060,47 @@ proc controlDependentIn(c: Context; loopPos: int): bool =
     if sk in {IfS, CaseS, TryS, OnerrS, WhileS, LoopS}:
       return true
 
+proc speculable(n: Cursor): bool =
+  ## May `n` be evaluated on a path that would not otherwise reach it?
+  ##
+  ## A pre-header runs even when the loop body never does — a `while` is
+  ## top-tested and this pass can neither rotate it nor prove a non-zero trip
+  ## count. So a hoist is a SPECULATIVE evaluation, and the invariance test
+  ## says nothing about whether the load is *legal* to perform. Refuse:
+  ##
+  ## * `deref` / `pat` — the pointer is often exactly what the (absent) trip
+  ##   guard establishes: `a.more.fullLen` is nil for a short string, and every
+  ##   `while p != nil` probe walks off the end on the zero-trip path. This is
+  ##   the same fault `controlDependentIn` refuses for an `if`; a loop that may
+  ##   run zero times is no different.
+  ## * `div` / `mod` — traps on a zero divisor that the loop guard excluded.
+  ##
+  ## A field/index path off a NAMED base is fine: the object exists for the
+  ## whole frame, so reading it early is at worst wasted work.
+  result = true
+  if n.kind != TagLit: return
+  case n.exprKind
+  of DerefC, PatC, DivC, ModC: return false
+  else: discard
+  var r = n
+  r.loopInto:
+    if not speculable(r): return false
+    skip r
+
 proc licmHoistPos(c: var Context; expr: Cursor): int =
-  ## Outermost enclosing loop that `expr` is invariant in **and** executes
-  ## every iteration of, or -1. An outer miss resets: invariance in an inner
-  ## loop does not survive an outer body that writes the same location, and
-  ## a load in an inner loop / branch is not a must-execute of the outer.
+  ## Outermost enclosing loop that `expr` is invariant in, executes every
+  ## iteration of, **and** is safe to evaluate speculatively — or -1. An outer
+  ## miss resets: invariance in an inner loop does not survive an outer body
+  ## that writes the same location, and a load in an inner loop / branch is not
+  ## a must-execute of the outer.
+  ##
+  ## Note what is NOT gated on `speculable`: reusing a cache entry recorded
+  ## *before* the loop. That load already happens on the path into the loop, so
+  ## `dropVariantCache` keeping it across the loop is safe however it is
+  ## spelled — that path never reaches here (`handleCandidate` only consults
+  ## this when the entry has no first occurrence yet).
   result = -1
+  if not speculable(expr): return
   for frame in c.loopStack:
     if invariantIn(c, expr, frame) and not controlDependentIn(c, frame.pos):
       if result < 0: result = frame.pos
@@ -1277,10 +1324,15 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     let invHoist = licmHoistPos(c, lvalueCur)
     if invHoist < 0:
       if c.curStmt < 0: return false         # no enclosing statement → nowhere to hoist
-      let stmtPos = c.currentStmtPos
-      if stmtPos >= 0 and cursorAt(c.orig[], stmtPos).stmtKind in {WhileS, LoopS}:
-        # Variant load in the loop condition: hoisting before the loop would
-        # compute a stale pre-loop value every iteration. Don't CSE here.
+      if cursorAt(c.orig[], c.curStmt).stmtKind in {WhileS, LoopS}:
+        # The decl site IS the loop statement, so this candidate sits in the
+        # loop's CONDITION: hoisting before the loop would compute a stale
+        # pre-loop value and reuse it every iteration. Don't CSE here.
+        #
+        # `c.curStmt`, not `currentStmtPos`: the latter is the innermost hoist
+        # ANCHOR, which for a load in the loop BODY is the loop itself — and a
+        # body load's decl goes inside the body, re-evaluated per iteration,
+        # which is fine.
         return false
       c.cache[key] = CachedEntry(hasFirst: true, firstExprPos: lvaluePos,
                                  firstUsePos: usePos, firstIsAddrOf: isAddrOf,
@@ -1985,37 +2037,50 @@ when isMainModule:
       "(while c.0.M (stmts (asgn (dot (deref (deref pp.0.M)) g.0.M) v.0.M))) " &
       "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))")
 
-  block loop_invariant_load_hoisted:
-    # Two identical loads in the body, nothing writes them → one temp before
-    # the `while` (pre-header), both uses rewritten.
+  block loop_body_load_cse_stays_in_body:
+    # Two identical loads in the body share a temp — but the decl stays INSIDE
+    # the loop. Hoisting it to the pre-header would deref `pp` even when the
+    # loop runs zero times (`speculable` refuses a deref).
     chk(
       "(stmts (while c.0.M (stmts " &
       "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
       "(asgn z.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))",
-      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
-      "(while c.0.M (stmts (asgn y.0.M `cse.1) (asgn z.0.M `cse.1))))")
+      "(stmts (while c.0.M (stmts " &
+      "(var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1))))")
 
-  block loop_invariant_single_load_hoisted:
-    # A single occurrence still hoists: the loop is the reuse.
-    chk(
+  block loop_single_deref_load_not_hoisted:
+    # One occurrence, invariant, executes every iteration — and still not
+    # hoisted: the pre-header runs on the zero-trip path, where `pp` may be
+    # exactly the pointer the loop guard was protecting.
+    assertUnchanged(
       "(stmts (while c.0.M (stmts " &
       "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(asgn i.0.M (add (i 64) i.0.M 1)))))")
+
+  block loop_invariant_named_base_hoisted:
+    # A field path off a NAMED base cannot fault, so a single invariant
+    # occurrence does hoist to the pre-header.
+    chk(
+      "(stmts (while c.0.M (stmts " &
+      "(asgn y.0.M (dot (dot s.0.M a.0.M) b.0.M)) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))",
-      "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(stmts (var :`cse.1 . . (dot (dot s.0.M a.0.M) b.0.M)) " &
       "(while c.0.M (stmts (asgn y.0.M `cse.1) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))")
 
-  block loop_variant_index_base_hoisted:
-    # `a[i]` mentions `i`, which the body writes, so the indexed load stays in
-    # the loop. The base pointer does not mention `i` → hoisted to the pre-header.
+  block loop_variant_index_cse_in_body:
+    # `a[i]` mentions `i`, which the body writes AFTER both loads — so the two
+    # occurrences still share, with the decl inside the body. Not hoisted: `i`
+    # makes it loop-variant, and the deref makes it unspeculable anyway.
     chk(
       "(stmts (while c.0.M (stmts " &
       "(asgn y.0.M (at (deref (deref pp.0.M)) i.0.M)) " &
       "(asgn z.0.M (at (deref (deref pp.0.M)) i.0.M)) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))",
-      "(stmts (var :`cse.1 . . (deref (deref pp.0.M))) " &
-      "(while c.0.M (stmts (asgn y.0.M (at `cse.1 i.0.M)) " &
-      "(asgn z.0.M (at `cse.1 i.0.M)) " &
+      "(stmts (while c.0.M (stmts " &
+      "(var :`cse.1 . . (at (deref (deref pp.0.M)) i.0.M)) " &
+      "(asgn y.0.M `cse.1) (asgn z.0.M `cse.1) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))")
 
   block loop_unknown_call_not_hoisted:
@@ -2047,13 +2112,21 @@ when isMainModule:
 
   block loop_nested_hoists_to_inner:
     # Invariant in both loops, but the inner may run zero times → only the
-    # inner pre-header is a must-execute region relative to the load.
+    # inner pre-header is a must-execute region relative to the load. A named
+    # base, so it is also safe to evaluate there.
     chk(
       "(stmts (while c.0.M (stmts (while d.0.M (stmts " &
-      "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))))",
+      "(asgn y.0.M (dot (dot s.0.M a.0.M) b.0.M)))))))",
       "(stmts (while c.0.M (stmts " &
-      "(var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
+      "(var :`cse.1 . . (dot (dot s.0.M a.0.M) b.0.M)) " &
       "(while d.0.M (stmts (asgn y.0.M `cse.1))))))")
+
+  block loop_nested_deref_not_hoisted:
+    # Same shape through a pointer: neither pre-header is on a path that
+    # already dereferences `pp`.
+    assertUnchanged(
+      "(stmts (while c.0.M (stmts (while d.0.M (stmts " &
+      "(asgn y.0.M (dot (deref (deref pp.0.M)) fld.0.M)))))))")
 
   # ---- alias-aware call invalidation via partition summaries ----
   # Module-level: `f` writes only its parameter 0's graph (class 0). cse runs on
