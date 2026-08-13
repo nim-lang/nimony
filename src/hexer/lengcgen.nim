@@ -518,6 +518,26 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
         ForcallU, DeferexpansionU, NeedtypesU, NoSub:
       error "illformed AST inside object: ", n
 
+proc pointerTag(n: Cursor): string =
+  ## Which Leng pointer a `ptr`/`var`/`lent` node becomes: `aptr` when it points at
+  ## an `UncheckedArray[T]`, `ptr` otherwise.
+  ##
+  ## Leng distinguishes the two — `ptr` addresses ONE object, `aptr` an array of
+  ## them — and only `aptr` may be indexed or have an offset added to it. That is
+  ## exactly the distinction Nim already draws between `ptr T` and
+  ## `ptr UncheckedArray[T]`, so the tag is a rename, not a judgement call.
+  ##
+  ## Without this every pointer left here as `ptr`, and since the `UarrayT` arm of
+  ## `trType` erases the `UncheckedArray` layer under `IsPointerOf`, a
+  ## `ptr UncheckedArray[T]` came out indistinguishable from a `ptr T`. Arithmetic
+  ## on one then produced `(add (ptr T) …)`, which no Leng backend can lower: nifasm
+  ## rejects arithmetic on a single-object pointer outright, and lengc's C output
+  ## reads it as scaled C pointer arithmetic. `aptr` was never emitted anywhere in
+  ## hexer, so the well-typed form was unreachable.
+  var probe = n
+  probe = sub(probe)
+  result = (if probe.typeKind == UarrayT: "aptr" else: "ptr")
+
 proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   case n.kind
   of DotToken:
@@ -583,7 +603,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         skip n
     of MutT, LentT:
       let ptrPos = dest.len
-      dest.addParLe("ptr", n.info)
+      dest.addParLe(pointerTag(n), n.info)
       let ptrStart = n
       n = sub(n)
       if isViewType(n):
@@ -595,7 +615,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
           trType c, dest, n, {IsPointerOf}
         takeParRi dest, n, ptrStart
     of PtrT, OutT:
-      dest.addParLe("ptr", n.info)
+      dest.addParLe(pointerTag(n), n.info)
       let ptrStart = n
       n = sub(n)
       trType c, dest, n, {IsPointerOf}
@@ -632,7 +652,10 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       skipNilAnnotation n
       takeParRi dest, n, ptrStart
     of CstringT:
-      dest.addParLe("ptr", n.info)
+      # `(aptr (c 8))`, not `(ptr (c 8))`: a cstring is indexed (`s[i]`, and every
+      # scan in std/strings walks it), which is what Leng's `aptr` means — a pointer
+      # to an array of elements. `ptr` addresses ONE object and may not be indexed.
+      dest.addParLe("aptr", n.info)
       dest.addParLe($CharT, n.info)
       dest.addIntLit(8, n.info)
       dest.addParRi()
