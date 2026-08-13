@@ -7,6 +7,8 @@
 #    distribution, for details about the copyright.
 #
 
+import std/times
+
 ##[
 The `std/monotimes` module implements monotonic timestamps. A monotonic
 timestamp represents the time that has passed since some system defined
@@ -127,17 +129,17 @@ func ticks*(t: MonoTime): int64 =
 func `$`*(t: MonoTime): string =
   $t.ticks
 
-# func `-`*(a, b: MonoTime): Duration =
-#   ## Returns the difference between two `MonoTime` timestamps as a `Duration`.
-#   initDuration(nanoseconds = (a.ticks - b.ticks))
+func `-`*(a, b: MonoTime): Duration =
+  ## Returns the difference between two `MonoTime` timestamps as a `Duration`.
+  initDuration(nanoseconds = (a.ticks - b.ticks))
 
-# func `+`*(a: MonoTime, b: Duration): MonoTime =
-#   ## Increases `a` by `b`.
-#   MonoTime(ticks: a.ticks + b.inNanoseconds)
+func `+`*(a: MonoTime, b: Duration): MonoTime =
+  ## Increases `a` by `b`.
+  MonoTime(ticks: a.ticks + b.inNanoseconds)
 
-# func `-`*(a: MonoTime, b: Duration): MonoTime =
-#   ## Reduces `a` by `b`.
-#   MonoTime(ticks: a.ticks - b.inNanoseconds)
+func `-`*(a: MonoTime, b: Duration): MonoTime =
+  ## Reduces `a` by `b`.
+  MonoTime(ticks: a.ticks - b.inNanoseconds)
 
 func `<`*(a, b: MonoTime): bool =
   ## Returns true if `a` happened before `b`.
