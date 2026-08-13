@@ -572,11 +572,38 @@ proc isStableDerefArg(c: Cursor): bool =
   ## as `(deref ptrParam)`, and binding that to a fresh `(var :p T (deref S))`
   ## copies the whole object (24 bytes for `Cursor`) before an inlined
   ## `tokenWidth`/`cursorJump` reads two fields. Substituting instead turns
-  ## those uses into `(dot (deref S) f)` — one load, no copy. Safe for the
-  ## same reason `isStableAddrArg` is: the inlined body cannot assign the
-  ## caller's pointer (that would have put the param in `assigned`).
+  ## those uses into `(dot (deref S) f)` — one load, no copy.
+  ##
+  ## This is NOT safe for the reason `isStableAddrArg` is. That one substitutes
+  ## an ADDRESS, which is constant for the whole body. This substitutes a
+  ## by-value param, whose value is a SNAPSHOT taken at the call: every use
+  ## must see the entry value. Re-reading `S[]` at each use is only equivalent
+  ## when nothing in the body can write that memory — which is why the caller
+  ## must also pass `bodyIsPointerPure`. (`assigned` is not enough: it only
+  ## catches the body assigning the *pointer*, not the pointee.)
   if not c.isTagLit or c.exprKind != DerefC: return false
   result = c.childCursor.isSymbol
+
+proc bodyIsPointerPure(c: Cursor; bodySyms: Table[SymId, SymId]): bool =
+  ## True when nothing in `c` can change memory the CALLER can also reach: no
+  ## calls, and every store target is a bare symbol declared inside the body
+  ## (its own locals and params — `bodySyms` is the rename table, seeded from
+  ## every `SymbolDef` in the body). A store through a pointer, into a field,
+  ## or into a global could all be the same object a `(deref S)` argument
+  ## names, so any of those forfeits the substitution.
+  if not c.isTagLit: return true
+  if c.stmtKind == CallS or c.exprKind == CallC: return false
+  if c.stmtKind in {AsgnS, StoreS}:
+    var dst = c.childCursor
+    if c.stmtKind == StoreS: skip dst          # `(store value dest)` — dest is 2nd
+    if not dst.isSymbol: return false
+    if not bodySyms.hasKey(dst.symId): return false
+  result = true
+  var n = c
+  n.into:
+    while n.hasMore:
+      if not bodyIsPointerPure(n, bodySyms): return false
+      skip n
 
 proc isStableAddrArg(c: Cursor): bool =
   ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an ADDRESS,
@@ -950,6 +977,9 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
   var assigned = initHashSet[SymId]()
   var addrTaken = initHashSet[SymId]()
   scanParamUsage(body, paramSet, assigned, addrTaken)
+  # Computed lazily: only a `(deref S)` argument needs it, and it walks the
+  # whole body.
+  var derefOk = -1
   for i in 0 ..< pSyms.len:
     if pSyms[i] in assigned or pSyms[i] in addrTaken:
       continue                               # slot mutated / addr observed → copy
@@ -961,9 +991,17 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     # so the substituted symbol's value cannot change across the body. Globals
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
-    if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
+    if isSubstitutableArg(arg) or isStableAddrArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
+    elif isStableDerefArg(arg):
+      # A by-value param bound to `(deref S)`: substituting re-reads the
+      # caller's memory at every use instead of the entry snapshot, so it needs
+      # the body to be unable to write that memory.
+      if derefOk < 0:
+        derefOk = if bodyIsPointerPure(body, rename): 1 else: 0
+      if derefOk == 1:
+        result.subst[pSyms[i]] = arg
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
                     rename: var Table[SymId, SymId]) =
