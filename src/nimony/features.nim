@@ -9,7 +9,6 @@ type
   Feature* = enum ## A feature is a language mode that is purely frontend-related.
                   ## A `CheckMode` is something Hexer needs to know about too.
     InvalidFeature
-    ResemChoiceFeature
     UntypedFeature
     CanRaiseFeature
     LenientConvertersFeature
@@ -42,7 +41,8 @@ proc normalizeFeatureName(s: string): string =
 
 proc parseFeatures*(s: string): set[Feature] =
   case normalizeFeatureName(s)
-  of "resemchoice": {ResemChoiceFeature}
+  # No "resemchoice": re-resolving an `ochoice` against the expansion site is
+  # what makes an open symbol open, so it is unconditional now, not a mode.
   of "untyped": {UntypedFeature}
   of "canraise": {CanRaiseFeature}
   of "lenientconverters": {LenientConvertersFeature}

@@ -103,13 +103,7 @@ proc printProcs(nifFile, nameSubstr: string) =
             var n = c
             inc n                               # first child = the name def
             if n.kind == SymbolDef: name = symName(n, buf.pool)
-          # `nameSubstr in name` is what this wants to say, but `in` is a system
-          # template expanding to `contains(y, x)`, and Nimony resolves that in
-          # system's scope plus this module's *own* declarations — not its
-          # imports. So `strutils.contains` is invisible there even though a
-          # direct `contains(name, nameSubstr)` on this line resolves fine.
-          # Restore the `in` spelling once that open-symbol binding is fixed.
-          if nameSubstr.len == 0 or find(name, nameSubstr) >= 0:
+          if nameSubstr.len == 0 or nameSubstr in name:
             var one = createTokenBuf(c.subtreeWidth, buf.pool, buf.tags)
             var cc = c
             copyStripLineInfo(one, cc)
