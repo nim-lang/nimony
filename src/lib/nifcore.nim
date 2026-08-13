@@ -505,7 +505,7 @@ proc kind*(c: Cursor): NifKind {.inline.} =
   ## sits *after* it and is only consulted when extended bits are needed.
   c.load.kind
 
-proc tokenWidth*(c: Cursor): int {.inline.} =
+proc tokenWidth*(c: Cursor): int {.alwaysInline.} =
   ## Tokens occupied by the head of the current value — the kinded
   ## token plus any consecutive `ExtendedSuffix` tokens chained behind
   ## it. NOT including a TagLit's body.
@@ -531,6 +531,13 @@ proc tokenWidth*(c: Cursor): int {.inline.} =
   ##    and arkham then homes its locals in callee-saved registers and pushes
   ##    them in the prologue on EVERY call, including the overwhelmingly common
   ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
+  ##
+  ## `{.alwaysInline.}` is load-bearing for the native backend. Hexer's
+  ## inliner ignores `.inline` (it only auto-splices bodies ≤ 100 tokens, and
+  ## this one is larger once `peekAhead` expands) while GCC `-O3` inlines the
+  ## `static inline` C anyway. Without the force-splice, `skip`/`inc` call
+  ## this and copy the 24-byte Cursor onto the stack for the by-value
+  ## argument — the dominant arkham-vs-GCC gap on nifbench's walk/parse.
   result = 1
   if c.rem > 1:
     if peekAhead(c, 1).kind >= ExtendedSuffix:
