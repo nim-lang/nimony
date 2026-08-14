@@ -1192,7 +1192,11 @@ const
     "tests/nimony/cps/tsuspend",
     "tests/nimony/cps/tsuspend_resume",
     "tests/nimony/cps/tparkstate",
-    "tests/nimony/cps/ttry"
+    "tests/nimony/cps/ttry",
+    # A `const` set is read straight out of read-only data, so its membership
+    # test is an indexed load from a GLOBAL — a shape the C backend never sees a
+    # register problem in and arkham got wrong twice. Native-only by nature.
+    "tests/nimony/sets/tconstsetscan"
   ]
 
 proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =

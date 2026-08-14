@@ -56,13 +56,20 @@ const
 proc getAttachedOp(symId: SymId; attachedOp: var AttachedOp): bool =
   var name = pool.syms[symId]
   extractBasename(name)
+  # A specialized hook is minted by `lifter.generateHookName` as
+  # `=<hookName>_<typeKey>`, so cut the type key off. `hookName` also spells
+  # the op in lower case, hence the second spelling of `wasmoved`/`sinkh`
+  # below. Without both, every specialized hook was invisible here.
+  var i = 0
+  while i < name.len and name[i] != '_': inc i
+  if i < name.len: name.setLen i
 
   attachedOp = case name
     of "=destroy": attachedDestroy
-    of "=wasMoved": attachedWasMoved
+    of "=wasMoved", "=wasmoved": attachedWasMoved
     of "=trace": attachedTrace
     of "=copy": attachedCopy
-    of "=sink": attachedSink
+    of "=sink", "=sinkh": attachedSink
     of "=dup": attachedDup
     else: return false
   result = true
