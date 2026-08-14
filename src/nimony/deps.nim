@@ -1415,15 +1415,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           # resolution), so list those as dependency inputs to order them before
           # this module's codegen. Only input[0] (this module's lengcInput)
           # reaches arkham's command line (the `arkham` cmd uses `(input)`).
-          #
-          # The dependencies' `.asm.nif` are inputs too — not because arkham reads
-          # them, but because arkham writes a `<module>.clobbers.nif` beside each one
-          # and reads its IMPORTS' copies to decide which registers survive a call
-          # (callsite-specific clobber lists). Without this edge the summaries would
-          # be present or absent depending on how nifmake happened to schedule the
-          # batch, and the generated code — hence the boot's byte-identical stage
-          # comparison — would depend on that. It costs parallelism along an import
-          # chain and buys reproducibility.
           b.withTree "do":
             b.addIdent "arkham"
             b.withTree "input":
@@ -1434,10 +1425,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
               if not seenDeps.containsOrIncl(depNif):
                 b.withTree "input":
                   b.addStrLit depNif
-              let depAsm = c.config.asmFile(c.nodes[depIdx].files[0], backend)
-              if not seenDeps.containsOrIncl(depAsm):
-                b.withTree "input":
-                  b.addStrLit depAsm
             b.withTree "output":
               b.addStrLit c.config.asmFile(v.files[0], backend)
         else:
