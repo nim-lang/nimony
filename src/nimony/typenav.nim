@@ -209,23 +209,26 @@ proc skipToObjectBody(n: Cursor): Cursor =
     else:
       break
 
-proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
+proc fieldDecl(c: var TypeCache; n: var Cursor; fld: SymId): Local =
+  ## Find `fld`'s declaration in an object body, inheritance and case
+  ## sections included. Not-found is signalled by `result.typ` being the
+  ## nil cursor (a found `(fld …)` always carries a type).
   if n.substructureKind in {FldU, GfldU}:
     let decl = takeLocal(n, SkipFinalParRi)
     if decl.name.isSymbolDef and decl.name.symId == fld:
-      result = decl.typ
+      result = decl
     else:
-      result = default(Cursor)
+      result = default(Local)
   elif n.substructureKind == StmtsU:
     n.into:
       while n.hasMore:
-        result = typeOfField(c, n, fld)
-        if not cursorIsNil(result): return result
-    result = default(Cursor)
+        result = fieldDecl(c, n, fld)
+        if not cursorIsNil(result.typ): return result
+    result = default(Local)
   elif n.substructureKind == CaseU:
     n.into:
-      result = typeOfField(c, n, fld) # selector field
-      if not cursorIsNil(result): return result
+      result = fieldDecl(c, n, fld) # selector field
+      if not cursorIsNil(result.typ): return result
       while n.hasMore:
         case n.substructureKind
         of OfU:
@@ -233,19 +236,19 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
             skip n, SkipValue # ranges
             n.into:                                # (stmts ...)
               while n.hasMore:
-                result = typeOfField(c, n, fld)
-                if not cursorIsNil(result): return result
+                result = fieldDecl(c, n, fld)
+                if not cursorIsNil(result.typ): return result
         of ElseU:
           n.into:
             n.into:                                # (stmts ...)
               while n.hasMore:
-                result = typeOfField(c, n, fld)
-                if not cursorIsNil(result): return result
+                result = fieldDecl(c, n, fld)
+                if not cursorIsNil(result.typ): return result
         else:
           skip n
-    result = default(Cursor)
+    result = default(Local)
   else:
-    result = default(Cursor)
+    result = default(Local)
     let tk = n.typeKind
     if tk in {ObjectT, TupleT}:
       var baseObj = default(Cursor)
@@ -254,17 +257,27 @@ proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
           baseObj = n
           skip n # inheritance
         while n.hasMore:
-          result = typeOfField(c, n, fld)
-          if not cursorIsNil(result): return result
+          result = fieldDecl(c, n, fld)
+          if not cursorIsNil(result.typ): return result
       if not cursorIsNil(baseObj):
         var b = skipToObjectBody baseObj
-        result = typeOfField(c, b, fld)
+        result = fieldDecl(c, b, fld)
     else:
       skip n # empty sum type body
+
+proc typeOfField(c: var TypeCache; n: var Cursor; fld: SymId): Cursor =
+  fieldDecl(c, n, fld).typ
 
 proc lookupField*(c: var TypeCache; typ: Cursor; fld: SymId): Cursor =
   var body = skipToObjectBody(typ)
   result = typeOfField(c, body, fld)
+
+proc lookupFieldDecl*(c: var TypeCache; typ: Cursor; fld: SymId): Local =
+  ## Like `lookupField`, but the whole declaration — for callers that need
+  ## more than the type (e.g. the field's pragmas). `result.typ` is the nil
+  ## cursor when the field is absent.
+  var body = skipToObjectBody(typ)
+  result = fieldDecl(c, body, fld)
 
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor
 
