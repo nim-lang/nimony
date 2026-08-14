@@ -87,6 +87,8 @@ type
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
+    nifcacheFromCli*: bool # `--nimcache` was given explicitly; config files
+                           # must not override it
     bits*: int
     compat*: bool
     targetCPU*: TSystemCPU
@@ -173,6 +175,15 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       c.into:
         if c.isIntLit:
           result.compat = bool(c.intVal)
+        while c.hasMore: skip c
+    of "nimcache":
+      # emitted by `nifler config` under `dirs` from the legacy `nim.cfg`
+      # hierarchy; empty when no config file set it
+      c.into:
+        if c.isStringLit:
+          let path = pool.strings[c.strId]
+          if path.len > 0 and not result.nifcacheFromCli:
+            result.nifcachePath = path
         while c.hasMore: skip c
     else:
       c.into:

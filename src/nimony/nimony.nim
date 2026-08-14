@@ -70,6 +70,8 @@ Options:
   --stats                   after build, print total LOC and module count
                             across the dep graph
   --nimcache:PATH           set the path used for generated files
+                            (default `nimcache`; in --compat mode a `nimcache`
+                            entry from the `nim.cfg` hierarchy is honored)
   -o, --out:PATH            write the executable to PATH (overrides the
                             default `<nimcache>/<modhash>/<basename>.exe`).
                             Splits into directory + filename like Nim;
