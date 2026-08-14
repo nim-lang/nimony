@@ -8,16 +8,27 @@
 #
 
 ## Alias-aware function summaries shared by late Hexer passes and the Leng
-## optimizer (CSE). A summary is a Steensgaard-style partition of the
-## parameters, the result and an implicit "outside" world, plus per-class
-## may-read / may-write effects. It is *bounded in space by the arity* of the
-## proc: independent of the body size.
+## optimizer (CSE). A summary partitions the parameters, the result and an
+## implicit "outside" world, plus per-element may-read / may-write effects.
+## It is *bounded in space by the arity* of the proc: independent of the body
+## size.
+##
+## Effects are directed: `obj.field = x` writes `obj` and reads `x` (it does
+## not by itself write `x`). Identity still joins partition classes, including
+## when the dest is a field or deref: after `x.obj = y` with `obj` a pointer,
+## `x.obj.a = 3` mutates `y`, so `x` and `y` must share a class. A projection
+## that is not an identity (`return obj.field` of a value, `x = f(a, b)`)
+## does not join. A `cast` to a pointer-bearing type from a value that does
+## not carry pointer identity (`cast[ptr T](4000)`, `cast[ptr T](intParam)`)
+## forges an untracked pointee: the proc is `writeGlobal`/`readGlobal`.
+## Pointer-to-pointer casts, `cast[ptr T](addr x)`, and value puns
+## (`cast[byte](v)`) are not forging.
 ##
 ## The wire format is NIF, for example:
 ## `(smry raises (param 0 0 writes slot) (param 1 0 reads) result 2)`
 ## means: may raise; params 0 and 1 are in the same partition class 0 (they may
-## alias); param 0 is written and its slot reassigned; param 1 is read; the
-## result is its own fresh class (`2 == params.len`). See `doc/tags.md`.
+## alias via identity); param 0 is written and its slot reassigned; param 1 is
+## read; the result is its own fresh class (`2 == params.len`). See `doc/tags.md`.
 
 import std / [assertions, tables]
 include ".." / lib / nifprelude
@@ -26,8 +37,10 @@ import ".." / lengc / [leng_model]
 
 type
   ParamEffect* = object
-    cls*: uint32        ## partition class id; params sharing a `cls` may alias.
-                        ## Canonical = smallest interface index in the class.
+    cls*: uint32        ## partition class id; params sharing a `cls` may alias
+                        ## via pointer/object identity (including identity stored
+                        ## into a field/deref). Canonical = smallest interface
+                        ## index in the class.
     reads*: bool        ## call may read through this param's reachable graph
     writes*: bool       ## call may write through this param's reachable graph
     slotWritten*: bool  ## `var` param whose own binding is reassigned (not just
@@ -66,12 +79,18 @@ proc paramDirectEscapes*(s: FunctionSummary; idx: int): bool {.inline.} =
   result = idx >= 0 and idx < s.params.len and s.params[idx].escapes
 
 # ---------------------------------------------------------------------------
-# Extraction: a lightweight, sound (over-approximating) Steensgaard partition.
+# Extraction: directed (Andersen-style) flow into a bounded interface.
 # Interface elements are indexed 0..nParams: params are 0..nParams-1 and the
 # result is `nParams`. `cls` values are the canonical (smallest) element index
 # of a class; the result element being the largest index can never become a
-# class root, so a param's `cls` is always a param index.
+# class root, so a param's `cls` is always a param index. Classes merge on
+# identity copies (`p = q`, `return p`, and `obj.field = p` / `p[] = q` of
+# an identity — a pointer cell then names that graph). Value projections
+# (`return obj.field`, `x = f(a, b)`) do not join.
 # ---------------------------------------------------------------------------
+
+const
+  OutsideElem = -1                 ## untracked symbol: a global / unknown graph
 
 type
   CallFact = object
@@ -98,6 +117,7 @@ proc ufFind(u: var seq[int]; x: int): int =
   result = r
 
 proc ufUnion(u: var seq[int]; a, b: int) =
+  if a < 0 or b < 0 or a >= u.len or b >= u.len: return
   let ra = ufFind(u, a)
   let rb = ufFind(u, b)
   if ra != rb:
@@ -105,12 +125,17 @@ proc ufUnion(u: var seq[int]; a, b: int) =
     else: u[ra] = rb
 
 proc markReadElem(a: var ProcAnalysis; e: int) =
-  if e >= 0 and e < a.nParams: a.reads[e] = true
-  else: a.readsGlobal = true        # reading the result graph or unknown memory
+  if e < 0:
+    a.readsGlobal = true        # reading a global / unknown graph
+  elif e < a.nParams:
+    a.reads[e] = true
+  # e == nParams: reading this proc's result local, not a global
 
 proc markWriteElem(a: var ProcAnalysis; e: int; slot = false) =
-  if e < 0 or e == a.nParams:
-    a.writesGlobal = true          # write through unknown memory or the result graph
+  if e < 0:
+    a.writesGlobal = true       # write through a global / unknown graph
+  elif e == a.nParams:
+    discard                     # write through this proc's result — not a global
   else:
     a.writes[e] = true
     if slot: a.slotW[e] = true
@@ -118,6 +143,128 @@ proc markWriteElem(a: var ProcAnalysis; e: int; slot = false) =
 proc markEscapeElem(a: var ProcAnalysis; e: int) =
   if e < 0: a.callsUnknown = true
   elif e <= a.nParams: a.escapes[e] = true
+
+proc firstChild(c: Cursor): Cursor {.inline.} =
+  result = c
+  inc result
+
+proc typeMayHoldPointer(typ: Cursor; depth = 0): bool =
+  ## Structural stand-in for aliasing.pointerBearing without a type navigator.
+  ## Named types (Symbol) are treated as pointer-bearing (conservative).
+  if depth > 12: return true
+  case typ.typeKind
+  of IT, UT, FT, CT, BoolT, EnumT, VoidT:
+    result = false
+  of PtrT, AptrT, ProctypeT, FlexarrayT:
+    result = true
+  of ArrayT:
+    result = typeMayHoldPointer(firstChild(typ), depth+1)
+  of ObjectT, UnionT:
+    result = false
+    var body = typ
+    body.into:
+      if typ.typeKind == ObjectT and body.kind == Symbol:
+        if typeMayHoldPointer(body, depth+1): return true
+        inc body
+      while body.hasMore:
+        if body.substructureKind == FldU:
+          let fld = takeFieldDecl(body)
+          if typeMayHoldPointer(fld.typ, depth+1): return true
+        else:
+          skip body
+  else:
+    result = true                  # Symbol / unknown
+
+proc sourceMayBePointer(n: Cursor): bool =
+  ## True unless `n` is provably a pointer-free value. Integer casts and
+  ## pointer arithmetic still carry the inner pointer's identity.
+  var n = n
+  while n.kind == TagLit and n.exprKind == ParC:
+    n = n.childCursor
+  case n.kind
+  of Symbol, SymbolDef:
+    result = true                  # no types: a symbol might be a pointer
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
+    result = false
+  of TagLit:
+    case n.exprKind
+    of AddrC, HaddrC, DerefC, PatC, NilC, CallC:
+      result = true
+    of TrueC, FalseC, InfC, NeginfC, NanC, SizeofC, AlignofC, OffsetofC:
+      result = false
+    of ConvC, CastC:
+      var inner = n
+      inc inner
+      skip inner
+      result = sourceMayBePointer(inner)
+    of DotC, AtC:
+      result = sourceMayBePointer(n.childCursor)
+    of AddC, SubC, BitandC, BitorC, BitxorC:
+      result = false
+      var r = n
+      var idx = 0
+      r.into:
+        while r.hasMore:
+          if idx > 0 and sourceMayBePointer(r): return true
+          inc idx
+          skip r
+    else:
+      result = true
+  else:
+    result = false
+
+proc isForgingCast(n: Cursor): bool =
+  if n.kind != TagLit or n.exprKind != CastC: return false
+  var t = firstChild(n)
+  var inner = t
+  skip inner
+  result = typeMayHoldPointer(t) and not sourceMayBePointer(inner)
+
+proc unwrapConv(n: Cursor): Cursor =
+  ## Strip `(conv)`/`(baseobj)`/`(par)` wrappers, and non-forging `(cast)`,
+  ## so the head is the underlying value. A forging cast is not identity.
+  result = n
+  while result.kind == TagLit:
+    case result.exprKind
+    of ConvC:
+      inc result
+      skip result                # type
+    of CastC:
+      if isForgingCast(result): break
+      inc result
+      skip result
+    of BaseobjC:
+      inc result
+      skip result                # type
+      skip result                # inheritance-depth
+    of ParC:
+      result = result.childCursor
+    else:
+      break
+
+proc isIdentityExpr(n: Cursor): bool =
+  ## True when `n` names an existing graph (`p`, `addr p`) rather than a
+  ## projection or computed value. Used to decide whether a copy should join
+  ## partition classes.
+  var n = unwrapConv(n)
+  while n.kind == TagLit and n.exprKind in {AddrC, HaddrC}:
+    n = unwrapConv(n.childCursor)
+  result = n.kind == Symbol
+
+proc isTrackedSym(a: ProcAnalysis; s: SymId): bool {.inline.} =
+  s != SymId(0) and (a.paramLookup.hasKey(s) or a.localRoots.hasKey(s))
+
+proc baseSymOf(n: Cursor): SymId =
+  ## Innermost symbol of an lvalue path, or `SymId(0)` if the path is computed.
+  var n = unwrapConv(n)
+  while n.kind == TagLit:
+    case n.exprKind
+    of DotC, DerefC, PatC, AtC, AddrC, HaddrC, ParC:
+      n = unwrapConv(n.childCursor)
+    else:
+      return SymId(0)
+  if n.kind == Symbol: result = n.symId
+  else: result = SymId(0)
 
 proc collectParamSyms(params: Cursor): seq[SymId] =
   result = @[]
@@ -143,15 +290,25 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
       result.add a.paramLookup.getOrQuit(n.symId)
     elif a.localRoots.hasKey(n.symId):
       result = a.localRoots.getOrQuit(n.symId)
+    else:
+      result.add OutsideElem     # global / unknown symbol
   of TagLit:
     case n.exprKind
     of DotC, DerefC, PatC, AtC, AddrC, HaddrC:
       result = exprRoots(a, n.childCursor)
-    of ConvC, CastC:
+    of ConvC:
       var r = n
       inc r
       skip r                 # skip the type operand
       result = exprRoots(a, r)
+    of CastC:
+      if isForgingCast(n):
+        result = @[]         # untracked pointee, not the inner integer
+      else:
+        var r = n
+        inc r
+        skip r
+        result = exprRoots(a, r)
     of BaseobjC:
       var r = n
       inc r
@@ -159,7 +316,11 @@ proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
       skip r                 # inheritance-depth intlit
       result = exprRoots(a, r)
     of CallC:
-      # Steensgaard "select": the result may alias any pointer argument.
+      # Conservative "select": without the callee's summary yet, a pointer
+      # result may be one of the arguments. Value results (bool, int) still
+      # get these roots, but `handleRet` / slot rebind refuse to *join classes*
+      # on a non-identity expression, so `return f(a, b)` does not make the
+      # result alias `a`.
       var r = n
       r = sub(r)  # throwaway copy; no leaveScope needed
       skip r                 # callee
@@ -189,7 +350,10 @@ proc handleLocalDecl(a: var ProcAnalysis; n: var Cursor) =
   let initStart = lastChildStart(n)
   let roots = exprRoots(a, initStart)
   if sym != SymId(0):
-    a.localRoots[sym] = roots
+    # Only an identity init (`var x = p`) lets x name p's graph. A field
+    # load, call, or computed value is a fresh copy.
+    if isIdentityExpr(initStart): a.localRoots[sym] = roots
+    else: a.localRoots[sym] = @[]
   for e in roots: markReadElem(a, e)
   var ic = initStart
   walkStmt(a, ic)            # capture nested calls / addr in the initializer
@@ -208,19 +372,36 @@ proc handleAssign(a: var ProcAnalysis; n: var Cursor; reversed: bool) =
   let destBareSym = destStart.kind == Symbol
 
   if destBareSym and a.paramLookup.hasKey(destStart.symId):
+    # Slot rebind of a param: `p = …`. Writes p's binding, not p's old pointee
+    # graph. Join classes only on identity (`p = q`), never on `p = obj.field`.
     let e = a.paramLookup.getOrQuit(destStart.symId)
     markWriteElem(a, e, slot = true)
-    for r in valRoots: ufUnion(a.uf, e, r)
+    if isIdentityExpr(valStart):
+      for r in valRoots: ufUnion(a.uf, e, r)
   elif destBareSym:
-    a.localRoots[destStart.symId] = valRoots   # rebind local to value's graph
+    # Copy into a local. Only an identity (`x = y`) rebinds x to y's graph;
+    # `x = obj.field` / `x = f(a, b)` is a fresh copy — otherwise returning
+    # that local would join every argument of f via the result element.
+    if not a.localRoots.hasKey(destStart.symId):
+      a.writesGlobal = true
+    if isIdentityExpr(valStart): a.localRoots[destStart.symId] = valRoots
+    else: a.localRoots[destStart.symId] = @[]
   else:
+    # Store through dest: `obj.field = x`, `p[] = x`, `a[i] = x`.
+    # Writes dest's object; reads x. If x is an identity, the cell now
+    # names x's graph: `x.obj = y` then `x.obj.a = 3` mutates y.
     let destRoots = exprRoots(a, destStart)
     if destRoots.len == 0:
-      a.writesGlobal = true                    # write through unknown memory
+      # Empty roots: a fresh stack local (result, or a not-yet-aliased var)
+      # vs. a computed / untracked address. Only the latter is a global write.
+      if not isTrackedSym(a, baseSymOf(destStart)):
+        a.writesGlobal = true
     else:
       for e in destRoots:
         markWriteElem(a, e)
-        for r in valRoots: ufUnion(a.uf, e, r) # new heap edge dest -> val
+      if isIdentityExpr(valStart):
+        for e in destRoots:
+          for r in valRoots: ufUnion(a.uf, e, r)
     var dc = destStart
     walkStmt(a, dc)                            # index exprs / nested calls in dest
 
@@ -234,8 +415,10 @@ proc handleRet(a: var ProcAnalysis; n: var Cursor) =
   c = sub(c)  # throwaway copy; no leaveScope needed
   if c.hasMore and c.kind != DotToken:
     let roots = exprRoots(a, c)
+    if isIdentityExpr(c):
+      for r in roots:
+        ufUnion(a.uf, a.nParams, r)            # result aliases a returned identity
     for r in roots:
-      ufUnion(a.uf, a.nParams, r)              # result aliases the returned graph
       markReadElem(a, r)
     var rc = c
     walkStmt(a, rc)
@@ -294,6 +477,9 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
     if n.exprKind in AddrKinds:
       let escRoots = exprRoots(a, n.childCursor)
       for r in escRoots: markEscapeElem(a, r)
+    elif n.exprKind == CastC and isForgingCast(n):
+      a.writesGlobal = true
+      a.readsGlobal = true
     n.loopInto:
       walkStmt(a, n)
 
@@ -353,19 +539,17 @@ proc applyCallee(a: var ProcAnalysis; call: CallFact; callee: FunctionSummary) =
     let pe = callee.params[k]
     let roots = if k < call.argRoots.len: call.argRoots[k] else: newSeq[int]()
     if pe.writes or pe.slotWritten:
-      if roots.len == 0: a.writesGlobal = true
-      else:
-        for r in roots: markWriteElem(a, r, pe.slotWritten)
+      for r in roots: markWriteElem(a, r, pe.slotWritten)
     if pe.reads:
-      if roots.len == 0: a.readsGlobal = true
-      else:
-        for r in roots: markReadElem(a, r)
+      for r in roots: markReadElem(a, r)
     if pe.escapes:
       if roots.len == 0: a.callsUnknown = true
       else:
         for r in roots: markEscapeElem(a, r)
-    # union caller actuals the callee placed in one class
+    # Union caller actuals the callee placed in one class (identity aliases
+    # only — the callee no longer merges classes on field store/load).
     for r in roots:
+      if r < 0: continue
       if byCls.hasKey(pe.cls): ufUnion(a.uf, byCls.getOrQuit(pe.cls), r)
       else: byCls[pe.cls] = r
 
@@ -576,3 +760,132 @@ proc annotateFunctionSummaries*(buf: var TokenBuf) =
   var dest = createTokenBuf(buf.len + buf.len div 16)
   annotateSummaries(dest, n, summaries)
   buf = ensureMove(dest)
+
+when isMainModule:
+  proc summaryOf(src: string): FunctionSummary =
+    var buf = parseFromBuffer("(stmts " & src & ")", "M")
+    var n = beginRead(buf)
+    n.into:
+      doAssert n.stmtKind == ProcS
+      result = computeFunctionSummary(n)
+      skip n
+
+  proc twoParams(body: string): FunctionSummary =
+    summaryOf("""
+      (proc :f.0
+        (params
+          (param :obj.0 . . . .)
+          (param :x.0 . . . .))
+        . . (stmts """ & body & "))")
+
+  block field_store_writes_obj_not_x:
+    # `obj.field = x` writes obj, reads x. x is not itself written, but an
+    # identity in a field cell joins the graphs (`x.obj = y` then `x.obj.a`
+    # mutates y).
+    let s = twoParams("(asgn (dot obj.0 fld.0) x.0)")
+    doAssert not s.writesGlobal
+    doAssert not s.readsGlobal
+    doAssert s.params.len == 2
+    doAssert s.params[0].writes
+    doAssert s.params[0].reads
+    doAssert not s.params[0].slotWritten
+    doAssert s.params[1].reads
+    doAssert not s.params[1].writes
+    doAssert s.params[0].cls == s.params[1].cls
+    doAssert int(s.resultCls) == 2
+
+  block pointer_field_store_then_write_through:
+    # `x.obj = y; x.obj.a = 3` writes y's graph (same class as x).
+    let s = twoParams("""
+      (asgn (dot obj.0 fld.0) x.0)
+      (asgn (dot (deref (dot obj.0 fld.0)) a.0) 3)""")
+    doAssert s.params[0].writes
+    doAssert s.params[0].cls == s.params[1].cls
+
+  block field_load_copies_into_slot:
+    # `x = obj.field` reads obj, rebinds x's slot, does not write obj, does
+    # not put them in the same class.
+    let s = twoParams("(asgn x.0 (dot obj.0 fld.0))")
+    doAssert not s.writesGlobal
+    doAssert s.params[0].reads
+    doAssert not s.params[0].writes
+    doAssert s.params[1].slotWritten
+    doAssert not s.params[1].writes or s.params[1].slotWritten
+    doAssert s.params[0].cls != s.params[1].cls
+
+  block field_load_into_local_is_readonly:
+    let s = twoParams("""
+      (var :tmp.0 . . . .)
+      (asgn tmp.0 (dot obj.0 fld.0))""")
+    doAssert not s.writesGlobal
+    doAssert s.params[0].reads
+    doAssert not s.params[0].writes
+    doAssert not s.params[1].writes
+    doAssert not s.params[1].slotWritten
+    doAssert isReadOnly(s)
+
+  block identity_copy_joins_classes:
+    let s = twoParams("(asgn obj.0 x.0)")
+    doAssert s.params[0].slotWritten
+    doAssert s.params[1].reads
+    doAssert s.params[0].cls == s.params[1].cls
+
+  block result_field_store_is_not_global:
+    let s = summaryOf("""
+      (proc :f.0
+        (params (param :x.0 . . . .))
+        . . (stmts
+          (var :result.0 . . . .)
+          (asgn (dot result.0 fld.0) x.0)
+          (ret result.0)))""")
+    doAssert not s.writesGlobal
+    doAssert s.params[0].reads
+    doAssert not s.params[0].writes
+    doAssert int(s.resultCls) == 1
+
+  block return_field_does_not_join_result:
+    let s = twoParams("(ret (dot obj.0 fld.0))")
+    doAssert s.params[0].reads
+    doAssert not s.params[0].writes
+    doAssert int(s.resultCls) == 2
+
+  block return_identity_joins_result:
+    let s = twoParams("(ret obj.0)")
+    doAssert s.params[0].reads
+    doAssert int(s.resultCls) == 0
+
+  block return_call_does_not_join_args:
+    # `return f(obj, x)` must not put obj and x in one class just because both
+    # were arguments of a (possibly bool-returning) call.
+    let s = twoParams("(ret (call g.0 obj.0 x.0))")
+    doAssert s.params[0].cls != s.params[1].cls
+    doAssert int(s.resultCls) == 2
+
+  block forging_int_to_ptr_is_alias_unsafe:
+    # `cast[ptr T](4000)` forges a pointer to untracked memory.
+    let s = twoParams("(asgn obj.0 (cast (ptr (i +32)) 4000))")
+    doAssert s.writesGlobal
+    doAssert s.readsGlobal
+
+  block cast_byte_is_not_unsafe:
+    let s = twoParams("(asgn x.0 (cast (u +8) obj.0))")
+    doAssert not s.writesGlobal
+    doAssert not s.readsGlobal
+
+  block cast_ptr_from_addr_is_not_unsafe:
+    let s = twoParams("(asgn obj.0 (cast (ptr (i +32)) (addr x.0)))")
+    doAssert not s.writesGlobal
+    doAssert s.params[0].cls == s.params[1].cls
+
+  block cast_ptr_pun_joins:
+    let s = twoParams("(asgn obj.0 (cast (ptr (i +32)) x.0))")
+    doAssert not s.writesGlobal
+    doAssert s.params[0].cls == s.params[1].cls
+
+  block cast_ptr_arith_is_not_unsafe:
+    # `cast[ptr T](cast[uint](p) + n)` is pointer arithmetic, not a forge.
+    let s = twoParams(
+      "(asgn obj.0 (cast (ptr (i +32)) (add (u +64) (cast (u +64) x.0) 8)))")
+    doAssert not s.writesGlobal
+
+  echo "ok"

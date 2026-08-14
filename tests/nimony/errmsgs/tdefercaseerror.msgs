@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tdefercaseerror.nim(16, 3) Error: not all cases are covered; missing: {kC}

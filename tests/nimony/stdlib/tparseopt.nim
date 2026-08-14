@@ -191,3 +191,20 @@ block:
   assert p.val ==  "qwe"
   next(p)
   assert p.kind == cmdEnd
+
+block getopt_over_a_parser:
+  # Nim's `getopt(p: var OptParser)` overload: build the parser yourself, then
+  # iterate it. Without it, `for kind, key, val in getopt(p)` fails overload
+  # resolution and the follow-on error is a misleading "not all cases are
+  # covered" on the `case kind` inside the loop.
+  var p = initOptParser(@["--abc:12", "arg0", "-a"])
+  var kinds: seq[CmdLineKind] = @[]
+  var keys: seq[string] = @[]
+  var vals: seq[string] = @[]
+  for kind, key, val in getopt(p):
+    kinds.add kind
+    keys.add key
+    vals.add val
+  assert kinds == @[cmdLongOption, cmdArgument, cmdShortOption]
+  assert keys == @["abc", "arg0", "a"]
+  assert vals == @["12", "", ""]

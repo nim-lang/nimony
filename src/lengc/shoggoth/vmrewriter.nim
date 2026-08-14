@@ -30,7 +30,26 @@
 ## rule set). Kleene/variadic patterns are future work.
 
 import std / [assertions, tables, algorithm]
+when defined(nimony):
+  import std / syncio   # `quit` lives here under Nimony; host Nim has it in `system`
+  {.feature: "lenientnils".}   # `Engine` is a `ref` the driver passes as nil, and
+                               # an unregistered `PredProc` is a nil closure
 import ".." / ".." / "lib" / nifcoreparse  # re-exports nifcore
+# For `getOrQuit`: Nimony's `Table.[]` raises `KeyError`, and every lookup
+# below is already guarded by an `in` test or an `assert`. `getOrQuit` is the
+# non-raising spelling of "the key is there"; the shim provides it under Nim.
+include ".." / ".." / "lib" / compat2
+
+proc fail(msg: string) {.noreturn.} =
+  ## Every rejection below is a defect in the *rule file* or a pattern shape the
+  ## engine does not implement — decided while compiling a `staticRead` rule set,
+  ## i.e. the same for every run of the binary. Nothing has ever caught them: the
+  ## `ValueError` these used to raise walked straight out of `main`, so the
+  ## observable behaviour was already "print and die with a non-zero status".
+  ## Spelling that as `quit` says so, and keeps the engine out of Nimony's
+  ## `{.raises.}` model, which would otherwise go viral from `newEngine` through
+  ## every caller for a diagnostic that never returns.
+  quit "vmrewriter: " & msg
 
 type
   RuleTok = enum
@@ -190,7 +209,7 @@ proc ruleTok(e: Engine; c: Cursor): RuleTok =
 
 proc allocReg(e: Engine; rule: var Rule; name: string): int =
   let s = e.pool.syms.getOrIncl(name)
-  if s in rule.capIndex: return rule.capIndex[s]
+  if s in rule.capIndex: return getOrQuit(rule.capIndex, s)
   result = e.numRegs
   inc e.numRegs
   rule.capIndex[s] = result
@@ -221,7 +240,7 @@ proc compilePat(e: Engine; rule: var Rule; c: var Cursor; pat: var TokenBuf) =
       let childName = metaChildName(c)
       let s = e.pool.syms.getOrIncl(childName)
       assert s in rule.capIndex, "(same " & childName & "): not bound"
-      emitMeta(pat, e.metaSame, rule.capIndex[s])
+      emitMeta(pat, e.metaSame, getOrQuit(rule.capIndex, s))
       skip c
     else:                                  # concrete tag -> Open
       pat.openTag cursorTagId(c)
@@ -232,7 +251,7 @@ proc compilePat(e: Engine; rule: var Rule; c: var Cursor; pat: var TokenBuf) =
   of Ident:
     let nm = strVal(c)
     let s = e.pool.syms.getOrIncl(nm)
-    if s in rule.capIndex: emitMeta(pat, e.metaSame, rule.capIndex[s])
+    if s in rule.capIndex: emitMeta(pat, e.metaSame, getOrQuit(rule.capIndex, s))
     else:                  emitMeta(pat, e.metaWild, allocReg(e, rule, nm))
     inc c
   of IntLit:
@@ -242,7 +261,7 @@ proc compilePat(e: Engine; rule: var Rule; c: var Cursor; pat: var TokenBuf) =
   of Symbol:
     pat.addSymUse symName(c); inc c
   else:
-    raise newException(ValueError, "unsupported pattern token: " & $c.kind)
+    fail "unsupported pattern token: " & $c.kind
 
 # ---- reading a compiled pattern node off a cursor -------------------------
 
@@ -261,7 +280,7 @@ proc patKindOf(e: Engine; c: Cursor): PatKind =
     elif t == e.metaSame:   pkSame
     else:                   pkOpen
   else:
-    raise newException(ValueError, "bad pattern node: " & $c.kind)
+    fail "bad pattern node: " & $c.kind
 
 proc patReg(c: Cursor): int =
   ## The register stored as the `IntLit` child of a meta node.
@@ -288,6 +307,18 @@ proc childCursors(node: Cursor): seq[Cursor] =
 # ---- subset construction --------------------------------------------------
 
 type Item = tuple[entry, idx: int]
+
+proc cmpItem(x, y: Item): int =
+  ## The canonical order on an item set. `buildScopeDFA` keys its state table on
+  ## the *sorted* item seq, so this is what makes two orderings of the same set
+  ## one state. Written out because Nimony's `algorithm.sort` has no
+  ## `system.cmp` default overload — the comparator is always explicit there.
+  ## `entry`/`idx` are small array indices, so the subtraction cannot overflow.
+  result = x.entry - y.entry
+  if result == 0: result = x.idx - y.idx
+
+proc cmpRuleId(x, y: int): int = x - y
+  ## Likewise for the accept list, whose elements are rule ids.
 
 proc patMatchesDisc(e: Engine; p: Cursor; d: Disc):
     tuple[m, descend: bool; g: GuardKind; greg: int] =
@@ -320,28 +351,39 @@ proc patMatchesDisc(e: Engine; p: Cursor; d: Disc):
   of pkSame:
     (true, false, gkSame, patReg(p))    # runtime subtreeEqual
 
-proc buildScopeDFA(e: Engine; entries: seq[ScopeEntry]): int =
-  var dfa = Dfa()
-  var ids = initTable[seq[Item], int]()
-  var worklist: seq[seq[Item]] = @[]
+type ScopeBuild = object
+  ## The three pieces of subset-construction state, in one object so `getState`
+  ## can be a plain proc. It used to be a nested proc closing over three locals;
+  ## Nimony wants such a capture spelled `{.closure.}`, and an explicit `var`
+  ## parameter is both cheaper and clearer about what it mutates.
+  dfa: Dfa
+  ids: Table[seq[Item], int]     ## canonical (sorted) item set -> state id
+  worklist: seq[seq[Item]]
 
-  proc getState(items0: seq[Item]): int =
-    var items = items0
-    sort items
-    if items in ids: return ids[items]
-    result = dfa.states.len
-    ids[items] = result
-    dfa.states.add DState()
-    worklist.add items
+proc getState(b: var ScopeBuild; items0: seq[Item]): int =
+  ## The state for this item set, minting one on first sight. Sorting is what
+  ## makes the set canonical, so two orderings map to the same state.
+  var items = items0
+  sort(items, cmpItem)
+  result = b.ids.getOrDefault(items, -1)
+  if result >= 0: return
+  result = b.dfa.states.len
+  b.ids[items] = result
+  b.dfa.states.add DState()
+  b.worklist.add items
+
+proc buildScopeDFA(e: Engine; entries: seq[ScopeEntry]): int =
+  var b = ScopeBuild(dfa: Dfa(), ids: initTable[seq[Item], int](), worklist: @[])
 
   var startItems: seq[Item] = @[]
-  for i in 0 ..< entries.len: startItems.add (i, 0)
-  discard getState(startItems)
+  for i in 0 ..< entries.len: startItems.add (entry: i, idx: 0)
+  discard getState(b, startItems)
 
   var wi = 0
-  while wi < worklist.len:
-    let items = worklist[wi]
-    let sid = ids[items]
+  while wi < b.worklist.len:
+    let items = b.worklist[wi]
+    let sid = b.ids.getOrDefault(items, -1)
+    assert sid >= 0, "worklist item without a state"
     var st = DState()
 
     # accepts (items past their last sibling) + collect live (non-end) items
@@ -351,7 +393,7 @@ proc buildScopeDFA(e: Engine; entries: seq[ScopeEntry]): int =
         st.accepts.add entries[it.entry].ruleId
       else:
         live.add it
-    sort st.accepts
+    sort(st.accepts, cmpRuleId)
 
     # gather discriminators present among live items' next patterns
     var intVals: seq[int64] = @[]
@@ -397,19 +439,17 @@ proc buildScopeDFA(e: Engine; entries: seq[ScopeEntry]): int =
         else: dyns.add (it, Guard(kind: r.g, reg: r.greg))
 
       if opens.len > 0 and (statics.len > 0 or dyns.len > 0):
-        raise newException(ValueError,
-          "merge not supported: Open competes with Wild/Pure/Same at one position")
+        fail "merge not supported: Open competes with Wild/Pure/Same at one position"
 
       var bucket = Bucket(disc: d)
       if opens.len > 0:
         if opens.len > 1:
-          raise newException(ValueError,
-            "merge not supported: multiple distinct Open patterns at one position")
+          fail "merge not supported: multiple distinct Open patterns at one position"
         let it = opens[0]
         let p = entries[it.entry].siblings[it.idx]
         let childDFA = buildScopeDFA(e, @[ScopeEntry(ruleId: entries[it.entry].ruleId,
                                                      siblings: childCursors(p))])
-        let dest = getState(@[(it.entry, it.idx + 1)])
+        let dest = getState(b, @[(entry: it.entry, idx: it.idx + 1)])
         bucket.refines.add Refine(guards: @[], writes: @[], descend: true,
                                   childDFA: childDFA, dest: dest)
       else:
@@ -428,16 +468,16 @@ proc buildScopeDFA(e: Engine; entries: seq[ScopeEntry]): int =
             let p = entries[it.entry].siblings[it.idx]
             let r = patCapReg(e, p)
             if r >= 0: writes.add r
-            destItems.add (it.entry, it.idx + 1)
-          let dest = getState(destItems)
+            destItems.add (entry: it.entry, idx: it.idx + 1)
+          let dest = getState(b, destItems)
           bucket.refines.add Refine(guards: guards, writes: writes,
                                     descend: false, childDFA: -1, dest: dest)
       st.buckets.add bucket
 
-    dfa.states[sid] = st
+    b.dfa.states[sid] = st
     inc wi
 
-  e.dfas.add dfa
+  e.dfas.add ensureMove(b.dfa)
   result = e.dfas.len - 1
 
 # ---- rule parsing ---------------------------------------------------------
@@ -458,7 +498,14 @@ proc parseRule(e: Engine; c: Cursor) =
           assert l.kind == TagLit and ruleTok(e, l) == rtOther,
             "IF root must be a concrete tag"
           rule.rootTag = cursorTagId(l)
-          compilePat(e, rule, l, rule.patBuf)   # emits (rootTag <kids…>) into patBuf
+          # `compilePat(e, rule, l, rule.patBuf)` would hand the same object in
+          # twice as a mutable argument — legal in Nim, rejected by Nimony's
+          # alias check, and genuinely ambiguous. Compile into a fresh buffer
+          # and install it: `compilePat` only ever appends to the destination it
+          # is handed, so nothing is lost by not starting from `rule.patBuf`.
+          var pat = createTokenBuf(16, e.pool, e.tags)
+          compilePat(e, rule, l, pat)           # emits (rootTag <kids…>)
+          rule.patBuf = ensureMove(pat)
         compiled = true
         skip rc
       of rtDo:
@@ -483,13 +530,13 @@ proc parseRule(e: Engine; c: Cursor) =
                 let s = e.pool.syms.getOrIncl(argName)
                 assert s in rule.capIndex,
                   "(WHEN …) references unbound name: " & argName
-                slots.add rule.capIndex[s]
+                slots.add getOrQuit(rule.capIndex, s)
                 call.inc
             rule.sideConds.add SideCond(pred: predTag, slots: slots)
             skip wc
         skip rc
       else:
-        raise newException(ValueError, "unknown rule section: " & tagNameOf(rc))
+        fail "unknown rule section: " & tagNameOf(rc)
   assert compiled, "rule missing (IF …)"
   assert haveRhs, "rule missing (DO …)"
   e.rules.add ensureMove(rule)
@@ -506,7 +553,7 @@ proc parseRules(e: Engine) =
   of rtRule:
     parseRule(e, c)
   else:
-    raise newException(ValueError, "rule file: expected (rules …) or (rule …)")
+    fail "rule file: expected (rules …) or (rule …)"
 
 proc finalizeRules(e: Engine) =
   ## Take cursors into each rule's (now-immutable) patBuf. Done after all rules
@@ -632,7 +679,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
   of Ident:
     let s = t.pool.syms.getOrIncl(strVal(t))
     assert s in capIndex, "DO references unbound name: " & strVal(t)
-    dest.addSubtree caps[capIndex[s]]
+    dest.addSubtree caps[getOrQuit(capIndex, s)]
     inc t
   of IntLit:   dest.addIntLit intVal(t);   dest.appendLineInfo info; inc t
   of UIntLit:  dest.addUIntLit uintVal(t); dest.appendLineInfo info; inc t
@@ -646,7 +693,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
       let childName = metaChildName(t)
       let s = t.pool.syms.getOrIncl(childName)
       assert s in capIndex, "DO meta references unbound name: " & childName
-      dest.addSubtree caps[capIndex[s]]
+      dest.addSubtree caps[getOrQuit(capIndex, s)]
       skip t
     else:
       dest.openTag cursorTagId(t)
@@ -656,7 +703,7 @@ proc emitRhs(e: Engine; t: var Cursor; dest: var TokenBuf; caps: seq[Cursor];
           emitRhs(e, t, dest, caps, capIndex, info)
       dest.closeTag()
   else:
-    raise newException(ValueError, "unsupported DO token: " & $t.kind)
+    fail "unsupported DO token: " & $t.kind
 
 # ---- driver ---------------------------------------------------------------
 
@@ -676,7 +723,7 @@ proc tryRulesAt(e: Engine; node: Cursor; dest: var TokenBuf): bool =
       var args: seq[Cursor] = @[]
       for s in sc.slots: args.add caps[s]
       let p = e.preds.getOrDefault(sc.pred)
-      if p.isNil or not p(args):
+      if p == nil or not p(args):
         ok = false
         break
     if ok:
@@ -765,13 +812,13 @@ proc rebuildCanon(e: Engine; src: var Cursor; dest: var TokenBuf;
   of Symbol:
     let s = e.pool.syms.getOrIncl(symName(src))
     if s in map:
-      dest.addSymUse map[s]; dest.appendLineInfo rawLineInfo(src); inc src
+      dest.addSymUse getOrQuit(map, s); dest.appendLineInfo rawLineInfo(src); inc src
     else:
       dest.addSubtree src; skip src
   of SymbolDef:
     let s = e.pool.syms.getOrIncl(symName(src))
     if s in map:
-      dest.addSymDef map[s]; dest.appendLineInfo rawLineInfo(src); inc src
+      dest.addSymDef getOrQuit(map, s); dest.appendLineInfo rawLineInfo(src); inc src
     else:
       dest.addSubtree src; skip src
   else:

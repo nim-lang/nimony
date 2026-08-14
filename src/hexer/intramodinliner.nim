@@ -567,6 +567,17 @@ proc isSubstitutableArg(c: Cursor): bool =
   of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
   else: false
 
+proc isStableDerefArg(c: Cursor): bool =
+  ## `(deref S)` for a bare local/param symbol. Hexer passes by-value objects
+  ## as `(deref ptrParam)`, and binding that to a fresh `(var :p T (deref S))`
+  ## copies the whole object (24 bytes for `Cursor`) before an inlined
+  ## `tokenWidth`/`cursorJump` reads two fields. Substituting instead turns
+  ## those uses into `(dot (deref S) f)` — one load, no copy. Safe for the
+  ## same reason `isStableAddrArg` is: the inlined body cannot assign the
+  ## caller's pointer (that would have put the param in `assigned`).
+  if not c.isTagLit or c.exprKind != DerefC: return false
+  result = c.childCursor.isSymbol
+
 proc isStableAddrArg(c: Cursor): bool =
   ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an ADDRESS,
   ## and a named slot's address is a constant for the whole body — so unlike a
@@ -950,7 +961,7 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     # so the substituted symbol's value cannot change across the body. Globals
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
-    if isSubstitutableArg(arg) or isStableAddrArg(arg) or
+    if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
 
