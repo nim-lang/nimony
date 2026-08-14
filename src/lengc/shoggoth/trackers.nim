@@ -37,17 +37,21 @@
 ## for each branch:
 ##   t.openBranch()
 ##   ...walk branch body...
-##   t.closeBranch()         # or t.gotoLabel(L) if the branch ends in a jump
+##   t.closeBranch()         # ALWAYS — even if the body ended in a jump
 ## t.closeBranches()
 ## ```
 ##
 ## ## Forward jumps and labels
 ##
-## A branch that ends in `jmp L` calls `gotoLabel L` instead of
-## `closeBranch`; its delta is stashed under `L` and dropped from the
-## current sibling group's contribution. When the walker reaches the matching
-## `lab L`, it calls `landLabel L`, which folds the stashed deltas plus the
-## current fall-through state together with the same intersection rule.
+## A `jmp L` inside a branch calls `gotoLabel L`: its state is stashed under
+## `L` and rewound off the fall-through edge. `closeBranch` is still due at the
+## end of the branch body — `gotoLabel` is *not* a replacement for it, because
+## the jump need not end the branch. When the walker reaches the matching
+## `lab L`, it calls `landLabel L`, which folds the stashed deltas together
+## (plus the current fall-through state, when the path has not diverged) with
+## the same intersection rule, and makes the path live again. A branch may
+## therefore contain `… jmp L … lab L …` and go on contributing to the join —
+## which is exactly what an inlined callee with early `return`s looks like.
 ##
 ## ## Loops
 ##
@@ -169,16 +173,24 @@ proc finalValues[K: Keyable, V](t: Tracker[K, V]; lo, hi: int): Table[K, V] =
     if e.key notin result:
       result[e.key] = e.next
 
-proc consumeOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
-  ## If we are inside an open sibling, drop it: revert its writes and discard
-  ## its log slice so it does NOT contribute to the enclosing `closeBranches`.
-  ## A consumed sibling reaches no join along the fall-through edge. Shared by
-  ## `gotoLabel` (state routes to a label instead) and `closeBranch` on a
-  ## diverged path (state reaches no join at all).
+proc rewindOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
+  ## Revert and discard the current sibling's writes, but leave the sibling
+  ## **open** and restart its slice at the current log end. The state routed
+  ## away (to a label, or off the end of the block) is gone from the
+  ## fall-through edge, yet the sibling can still accumulate writes: a `lab`
+  ## landing *inside* the same branch revives the path, and everything it
+  ## writes from there on does reach the enclosing join.
   if t.groups.len > 0 and t.groups[^1].sibOpen:
     let start = t.groups[^1].curSibStart
     t.revertFrom start
     t.log.setLen start
+
+proc consumeOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
+  ## `rewindOpenSibling` plus closing the sibling, so it does NOT contribute to
+  ## the enclosing `closeBranches` at all. Used by `closeBranch` on a diverged
+  ## path: the branch is over and it reached no join.
+  rewindOpenSibling(t)
+  if t.groups.len > 0:
     t.groups[^1].sibOpen = false
 
 # ---- branch-group operations ----------------------------------------------
@@ -189,7 +201,7 @@ proc consumeOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
 #   for each branch:
 #     openBranch t          # or `openFinalBranch t` on an else / wildcard `of`
 #     ...walk branch body...
-#     closeBranch t         # or `gotoLabel t L` if the branch ended in `jmp`
+#     closeBranch t         # ALWAYS (an embedded `gotoLabel` does not replace it)
 #   closeBranches t
 #
 # `openFinalBranch` is `openBranch` plus a flag that tells `closeBranches`
@@ -242,10 +254,11 @@ proc closeBranch*[K: Keyable, V](t: var Tracker[K, V]) =
   ##   `return`/`raise`/`break` as well as to fully-diverging inner constructs.
   ## - Otherwise keep its writes in the log so `closeBranches` can merge them.
   ##
-  ## If the branch is already closed it terminated via `gotoLabel` (an embedded
-  ## `jmp`), which consumed it; treat the call as a no-op. This lets walkers
-  ## call `closeBranch` structurally after every branch body without first
-  ## detecting how the body ended.
+  ## An embedded `gotoLabel` does not close the sibling — it only rewinds it
+  ## (see `rewindOpenSibling`), so a `lab` landing later in the same branch can
+  ## revive the path and go on contributing. Divergence, not sibling state, is
+  ## what decides here: a branch that jumped away and never landed still has
+  ## `pathDiverged` set and is consumed by the first arm above.
   assert t.groups.len > 0, "closeBranch outside any openBranches"
   if not t.groups[^1].sibOpen: return
   if t.pathDiverged:
@@ -402,11 +415,20 @@ proc snapshotCurrent[K: Keyable, V](t: Tracker[K, V]): Table[K, V] =
 
 proc gotoLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId) =
   ## The current branch jumps to `L`. Stash an absolute snapshot of the
-  ## current state under `L`, then consume the open sibling (its state has
-  ## been routed to `L`, so it must not also fall through to the join). The
+  ## current state under `L`, then *rewind* the open sibling: its state has
+  ## been routed to `L`, so it must not also fall through to the join. The
   ## path after an unconditional jump is diverged.
+  ##
+  ## It rewinds rather than *consumes* because the branch is not necessarily
+  ## over: an inlined callee with early `return`s lowers to
+  ## `… (jmp ret) … (lab ret) …` **inside one branch**, and the `lab` makes the
+  ## path live again. Closing the sibling here left every write after that
+  ## `lab` unattributed — `closeBranch` then found the sibling already closed
+  ## and returned without reverting them, so they leaked past the whole
+  ## `if`/`case` as if they were unconditional. That is how a `result = x`
+  ## in one arm survived a join with `result = false` in the other.
   t.labels.mgetOrPut(L, @[]).add t.snapshotCurrent()
-  t.consumeOpenSibling()
+  t.rewindOpenSibling()
   t.pathDiverged = true
 
 proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1) =
@@ -418,8 +440,14 @@ proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1
   if arity >= 0:
     assert incomings.len == arity,
       "landLabel: expected " & $arity & " jumps, got " & $incomings.len
-  # The current straight-line state is itself one incoming path.
-  incomings.add t.snapshotCurrent()
+  # The current straight-line state is itself one incoming path — unless the
+  # path already diverged (we got here right after a `jmp`/`ret`/`raise`), in
+  # which case the fall-through edge does not exist and its state is stale.
+  # Folding it in anyway is sound but needlessly lossy: for the `(jmp L)
+  # (lab L)` pair that ends every inlined callee, the "fall-through" is the
+  # pre-jump state that `gotoLabel` has already rewound.
+  if not t.pathDiverged:
+    incomings.add t.snapshotCurrent()
 
   # Keys touched by any incoming.
   var touched = initHashSet[K]()
@@ -533,6 +561,7 @@ when isMainModule:
     t.openBranch()
     t[1] = true
     t.gotoLabel L                    # branch 0 jumps with 1=true
+    t.closeBranch()                  # still due: the jump did not close it
     t.openFinalBranch()
     t[1] = true
     t.closeBranch()                  # branch 1 falls through with 1=true
@@ -548,6 +577,7 @@ when isMainModule:
     t.openBranch()
     t[1] = true
     t.gotoLabel L                    # branch 0 jumps with 1=true
+    t.closeBranch()                  # still due: the jump did not close it
     t.openFinalBranch()
     t[2] = true                      # branch 1 has 2 but not 1
     t.closeBranch()
@@ -660,5 +690,52 @@ when isMainModule:
     t.closeBranches()
     doAssert t[2] == true            # only the live outer-else contributes
     doAssert t[1] == false           # dead branch's write excluded
+
+  block lab_inside_branch_revives_it:
+    # The inlined-callee shape: one branch contains `… jmp L … lab L … more`.
+    # The `lab` makes the path live again, so everything written after it is
+    # still a branch write and must be merged — not leaked past the join.
+    #
+    #   if c:  r = 1; jmp L; lab L; out = r     # out becomes 1 here
+    #   else:  out = 2
+    #   use out                                 # → NO agreement, out is unknown
+    var t = initTracker[int, int]()
+    let L = LabelId(7)
+    const R = 1
+    const Outp = 2
+    t.openBranches()
+    t.openBranch()
+    t[R] = 11
+    t.gotoLabel L                    # routes {R: 11} to L, rewinds the sibling
+    t.landLabel L, arity = 1         # lands back inside the SAME branch
+    doAssert t[R] == 11, "the jump's own snapshot must reach its label"
+    t[Outp] = 11
+    t.closeBranch()                  # the branch is live: it contributes
+    t.openFinalBranch()
+    t[Outp] = 22
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t[Outp] == 0, "11 vs 22 must not survive the join"
+    doAssert t[R] == 0, "a write before the jump is still branch-local"
+
+  block jump_out_of_branch_still_drops_it:
+    # Same machinery, no landing: the branch really did leave, so its writes
+    # (including the ones before the jump) stay out of the join.
+    var t = initTracker[int, int]()
+    let L = LabelId(8)
+    t.openBranches()
+    t.openBranch()
+    t[1] = 11
+    t.gotoLabel L
+    t.closeBranch()                  # diverged → consumed
+    t.openFinalBranch()
+    t[2] = 22
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t[1] == 0
+    doAssert t[2] == 22               # only the live branch contributes
+    t.landLabel L, arity = 1
+    doAssert t[1] == 0                # jump had 1=11, fall-through had 2=22
+    doAssert t[2] == 0
 
   echo "trackers.nim: all self-tests passed"
