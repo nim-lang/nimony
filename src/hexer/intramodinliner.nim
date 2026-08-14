@@ -550,6 +550,11 @@ type
     rename: Table[SymId, SymId]      ## original param/local sym -> fresh sym
     subst: Table[SymId, Cursor]      ## read-only param sym -> argument subtree
                                      ## to splice at uses (no copy emitted)
+    convMem: ref TokenBuf            ## owns the `(conv T (nil))` subtrees built
+                                     ## for substituted nil literals; `subst`
+                                     ## cursors point into it (`ref` so the
+                                     ## Bindings value can be copied/moved
+                                     ## without invalidating them)
     dropDecl: SymId                  ## the callee's RESULT local (every `(ret X)`
                                      ## returns it): renamed to the splice
                                      ## destination, so its `(var …)` decl folds
@@ -562,6 +567,12 @@ proc isSubstitutableArg(c: Cursor): bool =
   ## spliced at every use instead of bound to a parameter copy. (Symbol args are
   ## NOT included: the inliner cannot prove the caller's variable is unmodified
   ## during the body without alias info.)
+  ##
+  ## `(nil)` is substitutable but NOT spliced bare: it is the one
+  ## type-polymorphic literal, and raw it loses the type the
+  ## `(var :p <type> = arg)` copy would have carried — a dead deref of it in
+  ## an inlined `=dup` hook then renders as untyped C. `bindingsFor` wraps it
+  ## in the parameter's declared type, `(conv T (nil))`, instead.
   case c.kind
   of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
   of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
@@ -1045,6 +1056,7 @@ proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
       skip m
 
 proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
+                 pTypes: seq[Cursor];
                  body: Cursor; rename: Table[SymId, SymId]): Bindings =
   ## Bundle the param→fresh-sym rename with the set of params that can be
   ## replaced by their argument value (read-only, not addr-taken, substitutable
@@ -1059,6 +1071,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
   # argument stable across the splice — the fact the refusals below could not
   # establish. Computed once per call site, and only when it can pay off.
   var uses = initTable[SymId, int]()
+  var nilParams: seq[int] = @[]
   var callerReadOnly = false
   when PathArgSubstitution:
     var anyPathArg = false
@@ -1081,7 +1094,9 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
     # so the substituted symbol's value cannot change across the body. Globals
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
-    if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
+    if arg.isTagLit and arg.exprKind == NilC:
+      nilParams.add i                        # typed below, after the loop
+    elif isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
     elif callerReadOnly and isPurePathArg(arg) and
@@ -1092,6 +1107,26 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       # engine's `deref_addr` rule folds back to `(dot o f)` — the same reason
       # `isStableAddrArg` exists, now without the bare-symbol restriction.
       result.subst[pSyms[i]] = arg
+  if nilParams.len > 0:
+    # A bare `(nil)` is the one type-polymorphic literal: spliced raw it
+    # loses the type the `(var :p <type> = arg)` copy would have carried, and
+    # a dead nil-guarded deref in an inlined `=dup` hook then renders as
+    # untyped C (`(*NIM_NIL).field`), which does not compile. Give it the
+    # parameter's declared type instead so the substitution — and the guard
+    # folding it enables — is kept. Cursors are taken only after every
+    # append: growing the buffer may move its storage.
+    new(result.convMem)
+    result.convMem[] = createTokenBuf(nilParams.len * 8)
+    var offsets: seq[int] = @[]
+    for i in nilParams:
+      let arg = argCursors[i]
+      offsets.add result.convMem[].len
+      result.convMem[].addParLe TagId(ConvC), arg.info
+      result.convMem[].addSubtree pTypes[i]
+      result.convMem[].addSubtree arg
+      result.convMem[].addParRi()
+    for j in 0 ..< nilParams.len:
+      result.subst[pSyms[nilParams[j]]] = cursorAt(result.convMem[], offsets[j])
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
                     rename: var Table[SymId, SymId]) =
@@ -1189,7 +1224,7 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  let bnd = bindingsFor(c, pSyms, argCursors, pd.body, rename)
+  let bnd = bindingsFor(c, pSyms, argCursors, pTypes, pd.body, rename)
 
   dest.addParLe TagId(ScopeS), info
 
@@ -1309,7 +1344,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  var bnd = bindingsFor(c, pSyms, argCursors, pd.body, rename)
+  var bnd = bindingsFor(c, pSyms, argCursors, pTypes, pd.body, rename)
   bnd.dropDecl = resultLocal
 
   dest.addParLe TagId(ScopeS), info
@@ -1560,7 +1595,7 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  let bnd = bindingsFor(c, pSyms, argCursors, pd.body, rename)
+  let bnd = bindingsFor(c, pSyms, argCursors, pTypes, pd.body, rename)
   for i in 0 ..< pSyms.len:
     if not bnd.subst.hasKey(pSyms[i]): return 0
 
@@ -1601,9 +1636,32 @@ proc negated(v: CondVal): CondVal =
   of condFalse: condTrue
   of condUnknown: condUnknown
 
-proc litSame(a, b: Cursor): CondVal =
+proc unwrapLitConv(n: Cursor): Cursor =
+  ## Look through `(conv T (nil))` — and ONLY that shape: it is what
+  ## `bindingsFor` splices for a substituted nil argument, and a conv of nil
+  ## to any valid target type is still nil, so folding through it is sound.
+  ##
+  ## Deliberately narrow: `cast` stays opaque, and so do `true`/`false` —
+  ## unwrapping those hands bare cross-kind literals to `litSame`, whose
+  ## kind-inequality arm would then misfold `cast[pointer](false) == nil`
+  ## (both are zero, different tags) and delete the wrong branch.
+  result = n
+  var guard = 4
+  while guard > 0 and result.isTagLit and result.exprKind == ConvC:
+    dec guard
+    var inner = result
+    inc inner                  # into the conv: the type
+    skip inner                 # -> operand
+    if inner.isTagLit and inner.exprKind == NilC:
+      result = inner
+    else:
+      break
+
+proc litSame(aIn, bIn: Cursor): CondVal =
   ## Literal identity over the operand kinds `isSubstitutableArg` splices;
   ## anything else — including mixed literal kinds — stays `condUnknown`.
+  let a = unwrapLitConv(aIn)
+  let b = unwrapLitConv(bIn)
   if a.kind == IntLit and b.kind == IntLit:
     (if a.intVal == b.intVal: condTrue else: condFalse)
   elif a.kind == UIntLit and b.kind == UIntLit:
@@ -1624,10 +1682,12 @@ proc condVal(n: Cursor): CondVal =
   ## fold only when BOTH operands decide, so no operand whose evaluation the
   ## fold would discard is ever left unjudged.
   result = condUnknown
+  let n = unwrapLitConv(n)
   if not n.isTagLit: return
   case n.exprKind
   of TrueC: result = condTrue
   of FalseC: result = condFalse
+  of NilC: result = condFalse    # a bare nil guard is a false truth-test
   of NotC:
     let arg = n.childCursor
     if arg.hasMore:
