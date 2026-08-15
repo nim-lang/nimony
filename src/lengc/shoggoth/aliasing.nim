@@ -25,9 +25,14 @@
 ## value it transfers can actually carry a pointer: copying a machine-word scalar
 ## (`outparam.x = intParam`) creates no path between the two graphs. So `connect`
 ## consults the type navigator (`typenav.getType`) for the transferred value's
-## type and skips the union when that type is pointer-free. This is sound — we
-## only ever skip when *provably* no pointer flows; an unresolved/unknown type is
-## treated conservatively as pointer-bearing, so we still never miss an
+## type and skips the union when that type is pointer-free. Leng is nominal —
+## nearly every declared type is a `Symbol` — so the navigator is what makes this
+## test worth anything: it follows the symbol to the object body and walks the
+## fields, rather than calling every named type pointer-bearing. When the
+## navigator cannot recompute a type at all it answers with its `(err)`
+## sentinel, and `transfersPointer` falls back to the expression's own shape.
+## This is sound — we only ever skip when *provably* no pointer flows; anything
+## still unresolved is treated as pointer-bearing, so we never miss an
 ## invalidation (under-merging would). Over-merging the rest only loses CSE.
 ##
 ## **`cast` vs `conv`.** `(conv)` is a typed conversion of the same value and
@@ -45,6 +50,7 @@ import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / nifmodules                      # MainModule (type context)
 import ".." / typenav                         # getType / navigateToObjectBody / scopes
+import ".." / pointerbearing                  # the shared "can this hold a pointer?" test
 
 type
   Aliasing* = object
@@ -55,93 +61,6 @@ proc firstChild(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
 
-# ---- type-based pointer test ----------------------------------------------
-
-proc pointerBearing(m: ptr MainModule; typ: Cursor; depth = 0): bool =
-  ## True if a value of `typ` may hold a pointer, so copying it can create
-  ## aliasing. Pointer-free scalars return false; an unresolved/unknown type
-  ## returns true (conservative — never miss an alias). `m == nil` skips
-  ## named-type resolution (Symbol → true).
-  if depth > 12 or cursorIsNil(typ): return true
-  case typ.typeKind
-  of IT, UT, FT, CT, BoolT, EnumT, VoidT:
-    result = false
-  of PtrT, AptrT, ProctypeT, FlexarrayT:
-    result = true
-  of ArrayT:
-    result = pointerBearing(m, firstChild(typ), depth+1)   # element type
-  of ObjectT, UnionT:
-    result = false
-    var body = typ
-    body.into:
-      if typ.typeKind == ObjectT and body.kind == Symbol:   # base type
-        if pointerBearing(m, body, depth+1): return true
-        inc body
-      while body.hasMore:
-        if body.substructureKind == FldU:
-          let fld = takeFieldDecl(body)
-          if pointerBearing(m, fld.typ, depth+1): return true
-        else:
-          skip body
-  of NoType:
-    if typ.kind == Symbol:
-      if m == nil: return true
-      let nb = navigateToObjectBody(m[], typ)
-      result = nb.kind == Symbol or pointerBearing(m, nb, depth+1)  # unresolved -> true
-    else:
-      result = true
-  else:
-    result = true   # err / params / anything unexpected -> conservative
-
-proc sourceMayBePointer(m: ptr MainModule; n: Cursor): bool =
-  ## True unless `n` is provably a pointer-free value. `(cast[uint](p))` and
-  ## `(add (cast[uint](p)) n)` still carry `p`'s identity, even though their
-  ## static type is an integer — pointer arithmetic is not forging.
-  var n = n
-  while n.kind == TagLit and n.exprKind == ParC:
-    n = firstChild(n)
-  case n.kind
-  of Symbol, SymbolDef:
-    if m != nil: result = pointerBearing(m, getType(m[], n))
-    else: result = true                 # no types: a symbol might be a pointer
-  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
-    result = false
-  of TagLit:
-    case n.exprKind
-    of AddrC, HaddrC, DerefC, PatC, NilC, CallC:
-      result = true
-    of TrueC, FalseC, InfC, NeginfC, NanC, SizeofC, AlignofC, OffsetofC:
-      result = false
-    of ConvC, CastC:
-      var inner = n
-      inc inner
-      skip inner                        # type; bits may still be a pointer
-      result = sourceMayBePointer(m, inner)
-    of DotC, AtC:
-      if m != nil: result = pointerBearing(m, getType(m[], n))
-      else: result = sourceMayBePointer(m, firstChild(n))
-    of AddC, SubC, BitandC, BitorC, BitxorC:
-      result = false
-      var r = n
-      var idx = 0
-      r.loopInto:
-        # idx 0 is the result type; only operands can carry pointer identity.
-        if idx > 0 and not result and sourceMayBePointer(m, r): result = true
-        inc idx
-        skip r
-    else:
-      if m != nil: result = pointerBearing(m, getType(m[], n))
-      else: result = true
-  else:
-    result = false
-
-proc isForgingCast(m: ptr MainModule; c: Cursor): bool =
-  ## `cast[ptr T](non-pointer)`: the pointee is outside every tracked graph.
-  if c.kind != TagLit or c.exprKind != CastC: return false
-  var t = firstChild(c)
-  var inner = t
-  skip inner
-  result = pointerBearing(m, t) and not sourceMayBePointer(m, inner)
 
 proc find*(a: var Aliasing; x: SymId): SymId =
   var r = x
@@ -234,7 +153,7 @@ proc connect(a: var Aliasing; m: ptr MainModule; destStart, srcStart: Cursor) =
   noteForging(a, m, srcStart)
   if isForgingCast(m, srcStart):
     return
-  if m != nil and not pointerBearing(m, getType(m[], srcStart)):
+  if m != nil and not transfersPointer(m, srcStart):
     return
   var dr, sr: seq[SymId] = @[]
   accessRoots(destStart, dr, m)
@@ -283,7 +202,13 @@ proc walk(a: var Aliasing; m: ptr MainModule; n: var Cursor) =
         skip c                     # type
       if c.hasMore:
         initStart = c
-        haveInit = true
+        # An omitted initializer is a `.` in the value slot: `var x: T` binds no
+        # value at all, so there is nothing to connect. Treating it as an
+        # initializer used to hand `connect` a DotToken, whose type is the
+        # `(err)` sentinel — a "may hold a pointer" verdict on a copy that does
+        # not exist. It joined nothing (a `.` contributes no roots), but it was
+        # the single largest source of conservative answers in the pass.
+        haveInit = initStart.kind != DotToken
         while c.hasMore: skip c
     # Register the local's type so later `getType` can resolve uses of it
     # (mirrors how the C backend drives the typenav scopes).

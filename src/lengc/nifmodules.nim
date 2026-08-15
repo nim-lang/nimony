@@ -58,6 +58,13 @@ type
     filename*: string
     config*: ConfigRef
     mem*: seq[TokenBuf]                  ## intermediate results (computed types)
+    noForeign*: bool                     ## sibling modules are off limits: this
+                                         ## context was built by a pass that runs
+                                         ## *before* the `.c.nif`s it would open
+                                         ## exist (see `fromBuffer`). A foreign
+                                         ## symbol then resolves to nil rather
+                                         ## than to whatever a previous build
+                                         ## happened to leave on disk.
     builtinTypes*: Table[string, Cursor]
     current*: TypeScope
     defs: Table[SymId, Definition]
@@ -167,6 +174,7 @@ proc canLoadForeign*(c: var MainModule; s: SymId): bool =
 
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
+    if c.noForeign: return nil
     let splitted = splitSymName(c.pool.syms[s])
     if splitted.module == "": return nil
     let pos = loadForeign(c, splitted)
@@ -220,8 +228,12 @@ proc processToplevelDecl(c: var MainModule; n: var Cursor; kind: LengSym;
   c.defs[s] = Definition(pos: decl, kind: kind, extern: extern,
                          isImport: isImport, bareImport: bareImport)
 
-proc detectToplevelDecls(c: var MainModule) =
-  var n = cursorAt(c.src, 0)
+proc scanToplevelDecls(c: var MainModule; start: Cursor) =
+  ## Register every toplevel declaration reachable from `start`. The cursors
+  ## stored in `c.defs` / `c.types` point into whatever buffer `start` came
+  ## from, so that buffer must outlive `c` — for `load` it is `c.src`, for
+  ## `fromBuffer` it is the caller's.
+  var n = start
   if n.kind != TagLit: return
   # the src buffer starts with a (stmts …) wrapper; walk its children.
   n.into:
@@ -242,6 +254,28 @@ proc detectToplevelDecls(c: var MainModule) =
             skip n
       else:
         inc n
+
+proc detectToplevelDecls(c: var MainModule) =
+  scanToplevelDecls(c, cursorAt(c.src, 0))
+
+proc fromBuffer*(buf: var TokenBuf; filename: string): MainModule =
+  ## A type context over a module that is already in memory, for a pass that
+  ## *produces* the `.c.nif` rather than reading one back (hexer's function
+  ## summarizer). `buf` is borrowed, not copied: `c.src` stays empty and every
+  ## registered declaration points into the caller's buffer, which must
+  ## therefore outlive the result and must not be reallocated while it is used.
+  ##
+  ## Foreign symbols do NOT resolve here (`noForeign`): the sibling `.c.nif` a
+  ## lookup would open is a *later* output of the same build, so whether it is
+  ## on disk depends on scheduling — and an optimizer whose answers depend on
+  ## build order is worse than one that is uniformly conservative. Callers that
+  ## need imported types answer them from a source that is a declared input.
+  result = MainModule(current: TypeScope(locals: initTable[SymId, Cursor]()),
+                      filename: filename, noForeign: true,
+                      prog: NifProgram(scheme: splitModulePath(filename)))
+  result.pool = buf.pool
+  result.tags = buf.tags
+  scanToplevelDecls(result, cursorAt(buf, 0))
 
 type
   DensifyRemap = object
