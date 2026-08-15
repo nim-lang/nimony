@@ -550,6 +550,17 @@ type
     rename: Table[SymId, SymId]      ## original param/local sym -> fresh sym
     subst: Table[SymId, Cursor]      ## read-only param sym -> argument subtree
                                      ## to splice at uses (no copy emitted)
+    nilType: Table[SymId, Cursor]    ## param sym whose argument is a bare
+                                     ## `(nil)` -> the param's declared type.
+                                     ## `nil` is the one type-polymorphic
+                                     ## literal: the `(var :p T (nil))` binding
+                                     ## this substitution replaces is what gave
+                                     ## it a type, so the splice has to carry
+                                     ## one itself or the use site inherits an
+                                     ## untyped nil — a `(dot (deref (nil)) f)`
+                                     ## reaches the C backend as
+                                     ## `(*NIM_NIL).f`, which has no type to
+                                     ## take a member of. See nimony#2317.
     dropDecl: SymId                  ## the callee's RESULT local (every `(ret X)`
                                      ## returns it): renamed to the splice
                                      ## destination, so its `(var …)` decl folds
@@ -692,6 +703,20 @@ proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
   if not isLocalName(pool.syms[resultSym]): return SymId(0)
   result = resultSym
 
+proc emitSubst(dest: var TokenBuf; bnd: Bindings; s: SymId; info: NifLineInfo) =
+  ## Splice a substituted parameter's argument. A bare `(nil)` is re-typed on
+  ## the way in: `(conv <paramType> (nil))` binds it to the type the eliminated
+  ## `(var :p <paramType> (nil))` used to give it, so every downstream consumer
+  ## still sees a typed pointer.
+  let arg = bnd.subst.getOrQuit(s)
+  if bnd.nilType.hasKey(s):
+    dest.addParLe(TagId(ConvC), info)
+    dest.addSubtree bnd.nilType.getOrQuit(s)
+    dest.addSubtree arg
+    dest.addParRi()
+  else:
+    dest.addSubtree arg
+
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
                  bnd: Bindings) =
   ## Copy `body` (one subtree) into `dest`, applying `rename` to every
@@ -714,8 +739,7 @@ proc emitRenamed(dest: var TokenBuf; body: var Cursor;
     inc body
   of Symbol:
     if bnd.subst.hasKey(body.symId):
-      var s = bnd.subst.getOrQuit(body.symId)
-      dest.addSubtree s
+      emitSubst(dest, bnd, body.symId, body.info)
     elif bnd.rename.hasKey(body.symId):
       dest.addSymUse bnd.rename.getOrQuit(body.symId), body.info
     else:
@@ -779,8 +803,7 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
     inc body
   of Symbol:
     if bnd.subst.hasKey(body.symId):
-      var s = bnd.subst.getOrQuit(body.symId)
-      dest.addSubtree s
+      emitSubst(dest, bnd, body.symId, body.info)
     elif bnd.rename.hasKey(body.symId):
       dest.addSymUse bnd.rename.getOrQuit(body.symId), body.info
     else:
@@ -939,12 +962,18 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   dest.addParRi()
   dest.addParRi()                           # close (scope …)
 
-proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
+proc isBareNil(c: Cursor): bool {.inline.} =
+  ## `(nil)` with nothing around it. `(conv T (nil))` already carries a type
+  ## and needs no help; only the bare literal does.
+  c.isTagLit and c.exprKind == NilC
+
+proc bindingsFor(pSyms: seq[SymId]; pTypes: seq[Cursor]; argCursors: seq[Cursor];
                  body: Cursor; rename: Table[SymId, SymId]): Bindings =
   ## Bundle the param→fresh-sym rename with the set of params that can be
   ## replaced by their argument value (read-only, not addr-taken, substitutable
   ## argument) — those need no `(var :p = arg)` copy.
-  result = Bindings(rename: rename, subst: initTable[SymId, Cursor]())
+  result = Bindings(rename: rename, subst: initTable[SymId, Cursor](),
+                    nilType: initTable[SymId, Cursor]())
   var paramSet = initHashSet[SymId]()
   for s in pSyms: paramSet.incl s
   var assigned = initHashSet[SymId]()
@@ -964,6 +993,10 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
+      # Keep the substitution — dropping it would cost the whole inline for
+      # `f(nil)` — but remember the type to re-attach at each use.
+      if isBareNil(arg) and i < pTypes.len and not pTypes[i].isDotToken:
+        result.nilType[pSyms[i]] = pTypes[i]
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
                     rename: var Table[SymId, SymId]) =
@@ -1061,7 +1094,7 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  let bnd = bindingsFor(pSyms, pTypes, argCursors, pd.body, rename)
 
   dest.addParLe TagId(ScopeS), info
 
@@ -1181,7 +1214,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  var bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  var bnd = bindingsFor(pSyms, pTypes, argCursors, pd.body, rename)
   bnd.dropDecl = resultLocal
 
   dest.addParLe TagId(ScopeS), info
@@ -1432,7 +1465,7 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  let bnd = bindingsFor(pSyms, pTypes, argCursors, pd.body, rename)
   for i in 0 ..< pSyms.len:
     if not bnd.subst.hasKey(pSyms[i]): return 0
 
@@ -1473,9 +1506,29 @@ proc negated(v: CondVal): CondVal =
   of condFalse: condTrue
   of condUnknown: condUnknown
 
-proc litSame(a, b: Cursor): CondVal =
+proc litOperand(c: Cursor): Cursor =
+  ## The literal a guard operand really is. A substituted `nil` splices as
+  ## `(conv T (nil))` (see `emitSubst`), and that wrapper must not hide the
+  ## literal from the fold below — `if c != nil` with `c := nil` is exactly the
+  ## guard that makes `f(nil)` inlinable, and leaving it unresolved keeps a
+  ## `(deref (conv T (nil)))` in the spliced body.
+  ##
+  ## Only the value-preserving literals are unwrapped: a `conv` around `(nil)`,
+  ## `(true)` or `(false)` supplies a type and nothing else, whereas
+  ## `(conv (i +8) 300)` genuinely changes what it wraps.
+  result = c
+  while result.isTagLit and result.exprKind == ConvC:
+    var inner = result
+    inc inner
+    skip inner                             # type operand
+    if not (inner.isTagLit and inner.exprKind in {NilC, TrueC, FalseC}): break
+    result = inner
+
+proc litSame(a0, b0: Cursor): CondVal =
   ## Literal identity over the operand kinds `isSubstitutableArg` splices;
   ## anything else — including mixed literal kinds — stays `condUnknown`.
+  let a = litOperand(a0)
+  let b = litOperand(b0)
   if a.kind == IntLit and b.kind == IntLit:
     (if a.intVal == b.intVal: condTrue else: condFalse)
   elif a.kind == UIntLit and b.kind == UIntLit:
