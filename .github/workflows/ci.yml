@@ -198,22 +198,12 @@ jobs:
           cd nimony
           nim c -r src/hastur --release native
 
-      - name: Build the native backend (Windows amd64)
-        # Windows boots natively too. arkham's `win_x64` target emits a PE whose
-        # imports bind per dll, so this bootstrap runs with no C compiler and no
-        # libc in the loop — and the C toolchain is exactly what makes this the
-        # slowest job in the matrix (`hastur boot` measured 601s of a 1917s run;
-        # the same three stages take ~60s natively).
-        #
-        # `build native` rather than `native`: the curated native suite has a
-        # Windows row of its own (`NativeTestDirsWindows`) and four of its
-        # `tests/nimony/stdlib` entries are still native gaps there, so what this
-        # step owes `tests/boot` is only the two tools — which is also what makes
-        # `useNativeBoot` pick the native path below.
-        if: runner.os == 'Windows' && matrix.target.cpu == 'amd64'
-        run: |
-          cd nimony
-          nim c -r src/hastur --release build native
+      # A `build native` step used to sit here so `tests/boot` would boot Windows
+      # through arkham + nifasm — no MinGW, no libc, 61s of stages against 601s.
+      # It was green under Wine and red on the runner, so it is out again until
+      # someone has a diagnosis; `useNativeBoot` keeps the path one
+      # `HASTUR_NATIVE_BOOT=1` away, and with no arkham in `bin/` it would not
+      # take it anyway.
 
       - name: Run bootstrap
         # `hastur tests/boot` is the same suite the tree walk would have reached;

@@ -2158,12 +2158,26 @@ proc useNativeBoot(): bool =
   ## produces a working toolchain, which is what localizes the remaining bug to
   ## arkham's handling of optimized input rather than to the syscall/ABI layer.
   ##
-  ## windows/amd64 joins linux/amd64: arkham's win_x64 target emits a PE that
-  ## imports what it needs per dll, so a native boot there needs no MinGW and no
-  ## libc — which is the point, because the C compiler and the process tree
-  ## around it are what make the Windows job the slowest in the matrix.
-  when (defined(linux) or defined(windows)) and defined(amd64):
+  ## windows/amd64 is BEHIND `HASTUR_NATIVE_BOOT`, not on by default, and the
+  ## distance between those two is a lesson about the harness rather than about
+  ## the backend. arkham's win_x64 target emits a PE that imports what it needs
+  ## per dll, so a native boot there needs no MinGW and no libc — worth having,
+  ## since the C compiler and the process tree around it are what make the
+  ## Windows job the slowest in the matrix (601s of a 1917s run, against 61s for
+  ## the same three stages natively). That 61s was measured under WINE, which is
+  ## as close as this repo's tooling gets to Windows locally, and it is not close
+  ## enough: the same three stages fail on the real thing (`boot
+  ## windows-amd64`, runs 31878520624 and 31879168391 — cause not yet known,
+  ## the PE's own headers are ASLR-correct, with DIR64 fixups where the emitter
+  ## says they belong). Set the variable to boot natively there and find out;
+  ## flip the default once a real Windows runner has been seen green.
+  when defined(linux) and defined(amd64):
     if not NativeBootReady: return false
+    for tool in BootNativeTools:
+      if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
+    result = true
+  elif defined(windows) and defined(amd64):
+    if not NativeBootReady or getEnv("HASTUR_NATIVE_BOOT").len == 0: return false
     for tool in BootNativeTools:
       if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
     result = true
