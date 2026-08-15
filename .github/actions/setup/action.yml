@@ -49,10 +49,17 @@ runs:
         submodules: false
 
     - name: Checkout nativenif (sibling of nimony)
+      # Which COMMIT is decided by `nimony/nativenif.commit`, not here: hastur
+      # checks the pin out before it builds arkham/nifasm from this tree. Hence
+      # `fetch-depth: 0` — the default shallow clone stops at the tip of the
+      # default branch, so a pin that is one commit behind (or on another
+      # branch) would not be in the object store and hastur would have to fetch
+      # it back. The repo is small; a full clone is cheaper than that round trip.
       uses: actions/checkout@v7
       with:
         repository: nim-lang/nativenif
         path: nativenif
+        fetch-depth: 0
         submodules: false
 
     - name: Install Linux dependency (Linux)
