@@ -1680,6 +1680,20 @@ proc syncNativenif() =
          NativenifCommitFile, " pin (", pin, ")"
     return
 
+  # A checkout sitting on a BRANCH is someone's working tree, and committing a
+  # fix there is exactly what makes it stop being dirty — so the guard above
+  # would hand it straight to the `git checkout` below and build the arkham that
+  # fix was replacing. Leave it be and say so. CI is the one place that must
+  # enforce the pin regardless: its checkout is on the default branch too, and a
+  # pin deliberately BEHIND that branch is the whole point of pinning.
+  let (branch, branchCode) = gitIn(NativenifDir, "symbolic-ref --quiet --short HEAD")
+  if branchCode == 0 and branch.strip.len > 0 and getEnv("CI").len == 0:
+    echo "[deps] WARNING: ", NativenifDir, " is on branch '", branch.strip, "' at ", head
+    echo "[deps] WARNING: leaving it there; ", NativenifCommitFile, " pins ", pin
+    echo "[deps] to build the pin instead: git -C ", NativenifDir,
+         " checkout --detach ", pin
+    return
+
   # A checkout that never had the pin — a shallow CI clone of the default
   # branch, or a tree that has not fetched in a while. Ask for the commit by
   # name first: github.com serves any SHA reachable from a ref, which is the
