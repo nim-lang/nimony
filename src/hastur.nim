@@ -72,7 +72,7 @@ Commands:
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
-  update deps          re-pin `nativenif.commit` — the sibling nativenif
+  update deps          re-pin `src/nativenif.commit` — the sibling nativenif
                        commit arkham and nifasm are built from — to whatever
                        `../nativenif` currently has checked out. Every other
                        command PUTS nativenif on that commit before building
@@ -1625,7 +1625,7 @@ proc nativeToolPrefix(): string =
 # pin existed it was whatever each machine happened to have checked out. That
 # is not a hypothetical: a native-suite failure could mean a real gap, a
 # nativenif commit newer than the one the tests were recorded against, or a
-# local branch someone was mid-way through. `nativenif.commit` makes it one
+# local branch someone was mid-way through. `src/nativenif.commit` makes it one
 # answer, recorded in this repo and moved deliberately by `hastur update deps`.
 
 const
@@ -1633,7 +1633,10 @@ const
     ## Sibling checkout arkham + nifasm live in. Their committed `nim.cfg`s
     ## reach back here through `../../../nimony/src/lib`, so the layout — and
     ## this repo's directory name — is already load-bearing.
-  NativenifCommitFile = "nativenif.commit"
+  NativenifCommitFile = "src/nativenif.commit"
+    ## Under `src/` with the rest of what a build is made of — and so a change to
+    ## it invalidates the CI artifact cache, whose key hashes `src/**`. Read
+    ## relative to the project root, which is where every hastur command runs.
 
 proc pinnedNativenifCommit(): string =
   ## The pin is read at RUNTIME, not compiled in: a `slurp`ed copy would let the
@@ -1680,6 +1683,20 @@ proc syncNativenif() =
          NativenifCommitFile, " pin (", pin, ")"
     return
 
+  # A checkout sitting on a BRANCH is someone's working tree, and committing a
+  # fix there is exactly what makes it stop being dirty — so the guard above
+  # would hand it straight to the `git checkout` below and build the arkham that
+  # fix was replacing. Leave it be and say so. CI is the one place that must
+  # enforce the pin regardless: its checkout is on the default branch too, and a
+  # pin deliberately BEHIND that branch is the whole point of pinning.
+  let (branch, branchCode) = gitIn(NativenifDir, "symbolic-ref --quiet --short HEAD")
+  if branchCode == 0 and branch.strip.len > 0 and getEnv("CI").len == 0:
+    echo "[deps] WARNING: ", NativenifDir, " is on branch '", branch.strip, "' at ", head
+    echo "[deps] WARNING: leaving it there; ", NativenifCommitFile, " pins ", pin
+    echo "[deps] to build the pin instead: git -C ", NativenifDir,
+         " checkout --detach ", pin
+    return
+
   # A checkout that never had the pin — a shallow CI clone of the default
   # branch, or a tree that has not fetched in a while. Ask for the commit by
   # name first: github.com serves any SHA reachable from a ref, which is the
@@ -1707,7 +1724,7 @@ proc syncNativenif() =
     quit "hastur: cannot check out " & pin & " in " & NativenifDir & ":\n" & coOut
 
 proc updateDepsCmd() =
-  ## `hastur update deps`: re-pin `nativenif.commit` to whatever `../nativenif`
+  ## `hastur update deps`: re-pin `src/nativenif.commit` to whatever `../nativenif`
   ## has checked out right now. The one sanctioned way to move the pin, so that
   ## "the native backend needs a newer arkham" is a reviewable one-line diff
   ## next to the test results that needed it.
@@ -1807,7 +1824,7 @@ proc buildArkham(showProgress = false) =
   ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
   ## sibling-relative `nim.cfg`. We assume the checkout exists (the `dist/`
-  ## auto-clone is a later step) and put it on the `nativenif.commit` pin
+  ## auto-clone is a later step) and put it on the `src/nativenif.commit` pin
   ## first. arkham's own `nim.cfg` already sets `--outdir:bin`; we pass it
   ## explicitly so the result is deterministic regardless of the current
   ## directory.
@@ -2140,8 +2157,27 @@ proc useNativeBoot(): bool =
   ## same boot at `-d:release --opt:none` — release defines, optimizer off — also
   ## produces a working toolchain, which is what localizes the remaining bug to
   ## arkham's handling of optimized input rather than to the syscall/ABI layer.
+  ##
+  ## windows/amd64 is BEHIND `HASTUR_NATIVE_BOOT`, not on by default, and the
+  ## distance between those two is a lesson about the harness rather than about
+  ## the backend. arkham's win_x64 target emits a PE that imports what it needs
+  ## per dll, so a native boot there needs no MinGW and no libc — worth having,
+  ## since the C compiler and the process tree around it are what make the
+  ## Windows job the slowest in the matrix (601s of a 1917s run, against 61s for
+  ## the same three stages natively). That 61s was measured under WINE, which is
+  ## as close as this repo's tooling gets to Windows locally, and it is not close
+  ## enough: the same three stages fail on the real thing (`boot
+  ## windows-amd64`, runs 31878520624 and 31879168391 — cause not yet known,
+  ## the PE's own headers are ASLR-correct, with DIR64 fixups where the emitter
+  ## says they belong). Set the variable to boot natively there and find out;
+  ## flip the default once a real Windows runner has been seen green.
   when defined(linux) and defined(amd64):
     if not NativeBootReady: return false
+    for tool in BootNativeTools:
+      if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
+    result = true
+  elif defined(windows) and defined(amd64):
+    if not NativeBootReady or getEnv("HASTUR_NATIVE_BOOT").len == 0: return false
     for tool in BootNativeTools:
       if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
     result = true
@@ -3036,20 +3072,23 @@ proc handleCmdLine =
     # the sibling `../nativenif`; nifmake drives the `n` pipeline).
     #
     # The front end is rebuilt HERE and not left to whatever `bin/` happens to
-    # hold, because this command is the one that runs against a `bin/` nobody
-    # else refreshed: CI's `boot` job runs `hastur native` BEFORE its `build all`
-    # (arkham/nifasm must be current before `tests/boot` picks the native path),
-    # and the shared host-Nim artifact cache is restored through a `restore-keys:`
-    # prefix — so a commit that changes `src/**` misses the exact key and still
-    # gets the PREVIOUS commit's `bin/` handed to it. That combination ran the
-    # new closure tests of #2292 against the pre-#2292 hexer and reported eight
-    # "native gap" failures against a front end that had never seen them.
-    buildNifler()
-    buildNimonyToolchain()
-    buildNifmake()
-    buildShoggoth()
-    buildArkham()
-    buildNifasm()
+    # hold. The shared host-Nim artifact cache is restored through a
+    # `restore-keys:` prefix, so a commit that changes `src/**` misses the exact
+    # key and still gets the PREVIOUS commit's `bin/` handed to it — which is how
+    # the new closure tests of #2292 came to be run against the pre-#2292 hexer
+    # and reported as eight "native gap" failures.
+    #
+    # nimsem/nimony/hexer and not `nifler`: those three share `programs.nim` and
+    # ARE what a native run exercises, while nifler is the tier-0 Nim parser in
+    # front of them — and the most expensive tool in the tree by a distance
+    # (28s cold, more than the three together). `build all` covers it, in this
+    # same job for CI and via `tests/setup.hastur` for a tree walk.
+    if not skipBuild:
+      buildNimonyToolchain()
+      buildNifmake()
+      buildShoggoth()
+      buildArkham()
+      buildNifasm()
     nativetests(overwrite)
   of "lengc":
     buildLengc()
