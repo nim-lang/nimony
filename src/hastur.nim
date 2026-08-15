@@ -2140,7 +2140,12 @@ proc useNativeBoot(): bool =
   ## same boot at `-d:release --opt:none` — release defines, optimizer off — also
   ## produces a working toolchain, which is what localizes the remaining bug to
   ## arkham's handling of optimized input rather than to the syscall/ABI layer.
-  when defined(linux) and defined(amd64):
+  ##
+  ## windows/amd64 joins linux/amd64: arkham's win_x64 target emits a PE that
+  ## imports what it needs per dll, so a native boot there needs no MinGW and no
+  ## libc — which is the point, because the C compiler and the process tree
+  ## around it are what make the Windows job the slowest in the matrix.
+  when (defined(linux) or defined(windows)) and defined(amd64):
     if not NativeBootReady: return false
     for tool in BootNativeTools:
       if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
@@ -3044,12 +3049,13 @@ proc handleCmdLine =
     # gets the PREVIOUS commit's `bin/` handed to it. That combination ran the
     # new closure tests of #2292 against the pre-#2292 hexer and reported eight
     # "native gap" failures against a front end that had never seen them.
-    buildNifler()
-    buildNimonyToolchain()
-    buildNifmake()
-    buildShoggoth()
-    buildArkham()
-    buildNifasm()
+    if not skipBuild:
+      buildNifler()
+      buildNimonyToolchain()
+      buildNifmake()
+      buildShoggoth()
+      buildArkham()
+      buildNifasm()
     nativetests(overwrite)
   of "lengc":
     buildLengc()
