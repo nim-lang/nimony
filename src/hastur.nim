@@ -72,6 +72,13 @@ Commands:
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
+  update deps          re-pin `nativenif.commit` — the sibling nativenif
+                       commit arkham and nifasm are built from — to whatever
+                       `../nativenif` currently has checked out. Every other
+                       command PUTS nativenif on that commit before building
+                       it (a dirty nativenif tree is left alone, with a
+                       warning). The file is read at run time; an empty or
+                       absent one means "build whatever is checked out".
   install              write activation script(s) at the project root that
                        prepend the toolchain dirs to `$PATH` for the current
                        shell. On Windows, also download MinGW+LLVM (gcc,
@@ -1192,7 +1199,11 @@ const
     "tests/nimony/cps/tsuspend",
     "tests/nimony/cps/tsuspend_resume",
     "tests/nimony/cps/tparkstate",
-    "tests/nimony/cps/ttry"
+    "tests/nimony/cps/ttry",
+    # A `const` set is read straight out of read-only data, so its membership
+    # test is an indexed load from a GLOBAL — a shape the C backend never sees a
+    # register problem in and arkham got wrong twice. Native-only by nature.
+    "tests/nimony/sets/tconstsetscan"
   ]
 
 proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
@@ -1608,6 +1619,122 @@ proc nativeToolPrefix(): string =
   (if nativeToolsDebug: "nim c " else: "nim c -d:release ") &
     "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
 
+# ---- the pinned `nativenif` dependency -------------------------------------
+# arkham and nifasm are built from a SIBLING repo, so "which nativenif" is an
+# input to every native build the same way a source file is — and until this
+# pin existed it was whatever each machine happened to have checked out. That
+# is not a hypothetical: a native-suite failure could mean a real gap, a
+# nativenif commit newer than the one the tests were recorded against, or a
+# local branch someone was mid-way through. `nativenif.commit` makes it one
+# answer, recorded in this repo and moved deliberately by `hastur update deps`.
+
+const
+  NativenifDir = "../nativenif"
+    ## Sibling checkout arkham + nifasm live in. Their committed `nim.cfg`s
+    ## reach back here through `../../../nimony/src/lib`, so the layout — and
+    ## this repo's directory name — is already load-bearing.
+  NativenifCommitFile = "nativenif.commit"
+
+proc pinnedNativenifCommit(): string =
+  ## The pin is read at RUNTIME, not compiled in: a `slurp`ed copy would let the
+  ## file and the binary disagree, so `git checkout <pin>` and `hastur update
+  ## deps` would go on enforcing and reporting whatever commit the binary was
+  ## last built from — silently, and worst on a stale `bin/hastur`, which is the
+  ## exact failure mode this pin exists to end. Missing or empty file means "no
+  ## pin": build whatever is checked out, the escape hatch for bisecting
+  ## nativenif itself.
+  if fileExists(NativenifCommitFile): readFile(NativenifCommitFile).strip
+  else: ""
+
+proc gitIn(dir, args: string): (string, int) =
+  execCmdEx("git -C " & dir.quoteShell & " " & args)
+
+var nativenifChecked = false
+
+proc syncNativenif() =
+  ## Put `../nativenif` on the pinned commit before anything is built from it.
+  ##
+  ## Never at the cost of uncommitted work: a dirty tree is left alone with a
+  ## warning, because the person who dirtied it is precisely the person who
+  ## wants arkham built from THEIR edits. A clean tree gets detached onto the
+  ## pin (the branch that was there is still a `git switch -` away).
+  if nativenifChecked: return
+  nativenifChecked = true
+  let pin = pinnedNativenifCommit()
+  if pin.len == 0: return
+  if not dirExists(NativenifDir):
+    quit "hastur: " & NativenifDir & " not found; clone nim-lang/nativenif " &
+         "next to this repo (it holds arkham + nifasm)"
+  let (headOut, headCode) = gitIn(NativenifDir, "rev-parse HEAD")
+  if headCode != 0:
+    echo "[deps] ", NativenifDir, " is not a git checkout; building it as it is"
+    return
+  let head = headOut.strip
+  if head == pin: return
+
+  let (dirty, dirtyCode) = gitIn(NativenifDir, "status --porcelain --untracked-files=no")
+  if dirtyCode != 0 or dirty.strip.len > 0:
+    echo "[deps] WARNING: ", NativenifDir, " has uncommitted changes — leaving it at ",
+         head
+    echo "[deps] WARNING: arkham/nifasm are built from YOUR tree, not from the ",
+         NativenifCommitFile, " pin (", pin, ")"
+    return
+
+  # A checkout that never had the pin — a shallow CI clone of the default
+  # branch, or a tree that has not fetched in a while. Ask for the commit by
+  # name first: github.com serves any SHA reachable from a ref, which is the
+  # cheapest way to get exactly the one object we are after.
+  if gitIn(NativenifDir, "cat-file -e " & pin & "^{commit}")[1] != 0:
+    echo "[deps] fetching ", pin, " into ", NativenifDir
+    if gitIn(NativenifDir, "fetch --no-tags origin " & pin)[1] != 0:
+      # A server that refuses the object by name (git's default for anything
+      # but github.com: `uploadpack.allowReachableSHA1InWant`) still serves the
+      # refs, but on a shallow clone their history stops above the pin — so
+      # deepen, or fetching the branch tips would not bring it either.
+      let shallow = gitIn(NativenifDir, "rev-parse --is-shallow-repository")[0].strip
+      discard gitIn(NativenifDir,
+                    if shallow == "true": "fetch --no-tags --unshallow origin"
+                    else: "fetch --no-tags origin")
+    let (missing, missingCode) = gitIn(NativenifDir, "cat-file -e " & pin & "^{commit}")
+    if missingCode != 0:
+      quit "hastur: " & NativenifCommitFile & " pins " & pin &
+           ", which " & NativenifDir & " cannot fetch:\n" & missing &
+           "\nIs the commit pushed? `hastur update deps` re-pins to the local HEAD."
+
+  echo "[deps] nativenif: ", head, " -> ", pin, " (pinned by ", NativenifCommitFile, ")"
+  let (coOut, coCode) = gitIn(NativenifDir, "checkout --detach --quiet " & pin)
+  if coCode != 0:
+    quit "hastur: cannot check out " & pin & " in " & NativenifDir & ":\n" & coOut
+
+proc updateDepsCmd() =
+  ## `hastur update deps`: re-pin `nativenif.commit` to whatever `../nativenif`
+  ## has checked out right now. The one sanctioned way to move the pin, so that
+  ## "the native backend needs a newer arkham" is a reviewable one-line diff
+  ## next to the test results that needed it.
+  if not dirExists(NativenifDir):
+    quit "hastur update deps: " & NativenifDir & " not found"
+  let (headOut, headCode) = gitIn(NativenifDir, "rev-parse HEAD")
+  if headCode != 0:
+    quit "hastur update deps: " & NativenifDir & " is not a git checkout"
+  let head = headOut.strip
+
+  let (dirty, _) = gitIn(NativenifDir, "status --porcelain --untracked-files=no")
+  if dirty.strip.len > 0:
+    echo "[deps] WARNING: ", NativenifDir, " has uncommitted changes; ", head,
+         " does NOT include them"
+  let (remotes, remotesCode) = gitIn(NativenifDir, "branch --remotes --contains " & head)
+  if remotesCode != 0 or remotes.strip.len == 0:
+    echo "[deps] WARNING: ", head, " is on no remote branch — push it, ",
+         "or CI cannot fetch the pin"
+
+  let pin = pinnedNativenifCommit()
+  if head == pin:
+    echo "[deps] ", NativenifCommitFile, " already pins ", head
+    return
+  writeFile(NativenifCommitFile, head & "\n")
+  echo "[deps] ", NativenifCommitFile, ": ",
+       (if pin.len > 0: pin else: "(unpinned)"), " -> ", head
+
 proc validatePassesFlag(): string =
   ## Enable the phase-aware IR validator only when running on CI. GitHub Actions
   ## (and most other CI providers) set `CI=true` in the environment, so we key
@@ -1680,15 +1807,20 @@ proc buildArkham(showProgress = false) =
   ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
   ## sibling-relative `nim.cfg`. We assume the checkout exists (the `dist/`
-  ## auto-clone is a later step). arkham's own `nim.cfg` already sets
-  ## `--outdir:bin`; we pass it explicitly so the result is deterministic
-  ## regardless of the current directory.
-  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/arkham/arkham.nim", showProgress
+  ## auto-clone is a later step) and put it on the `nativenif.commit` pin
+  ## first. arkham's own `nim.cfg` already sets `--outdir:bin`; we pass it
+  ## explicitly so the result is deterministic regardless of the current
+  ## directory.
+  syncNativenif()
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
+       "/src/arkham/arkham.nim", showProgress
 
 proc buildNifasm(showProgress = false) =
   ## `nifasm` (asm-NIF -> static, libc-free ELF/Mach-O/PE executable; also the
   ## linker) — sibling repo, same assume-exists arrangement as `buildArkham`.
-  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
+  syncNativenif()
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
+       "/src/nifasm/nifasm.nim", showProgress
 
 proc buildHexer*(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
@@ -2803,11 +2935,16 @@ proc handleCmdLine =
     walkRoots(["tests", "examples"], forward, overwrite)
 
   of "tiers":
-    buildNimony()
+    # `buildNimonyToolchain`, not `buildNimony`: every module on the tier list is
+    # compiled by driving nimsem and hexer, so rebuilding the driver alone would
+    # check current sources against whichever nimsem/hexer `bin/` was left with.
+    buildNimonyToolchain()
     tierTests()
 
   of "boot":
-    if not skipBuild: buildNimony()
+    # Same reason, one step further: `bin0/` is a COPY of `bin/`, so a stale
+    # nimsem or hexer there is what every later stage is grown from.
+    if not skipBuild: buildNimonyToolchain()
     var bootArgs = ""
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
@@ -2897,6 +3034,19 @@ proc handleCmdLine =
     # Run the curated native-backend regression set through `nimony n`. Build the
     # front end AND the C-free native toolchain (arkham + nifasm + shoggoth live in
     # the sibling `../nativenif`; nifmake drives the `n` pipeline).
+    #
+    # The front end is rebuilt HERE and not left to whatever `bin/` happens to
+    # hold, because this command is the one that runs against a `bin/` nobody
+    # else refreshed: CI's `boot` job runs `hastur native` BEFORE its `build all`
+    # (arkham/nifasm must be current before `tests/boot` picks the native path),
+    # and the shared host-Nim artifact cache is restored through a `restore-keys:`
+    # prefix — so a commit that changes `src/**` misses the exact key and still
+    # gets the PREVIOUS commit's `bin/` handed to it. That combination ran the
+    # new closure tests of #2292 against the pre-#2292 hexer and reported eight
+    # "native gap" failures against a front end that had never seen them.
+    buildNifler()
+    buildNimonyToolchain()
+    buildNifmake()
     buildShoggoth()
     buildArkham()
     buildNifasm()
@@ -2946,6 +3096,11 @@ proc handleCmdLine =
       if dirExists(root):
         for f in walkDirRec(root):
           if isGeneratedTestFile(f) and f.endsWith(".nim"): removeFile f
+  of "update":
+    # `update deps` rather than a bare `update`, because the sibling repos are
+    # not the only thing this could come to re-pin.
+    if args.len == 1 and args[0] == "deps": updateDepsCmd()
+    else: writeHelp()
   of "install":
     runInstall(args)
   of "sync":
