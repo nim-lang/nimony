@@ -89,7 +89,6 @@ type
       ## (typenav cannot type `(envp ...)` nodes, so `genCall` resolves a
       ## capture-rewritten callee's type through this instead)
     env: CurrentEnv
-    hasClosures: bool
     coroCtx: coro_transform.Context
       ## Shadow `coro_transform.Context` used to drive `.closure` iter
       ## state-machine generation. We loan our `typeCache` to it via
@@ -110,7 +109,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc isClosureIterDecl(n: Cursor): bool =
   ## True if `n` is at an `(iterator :sym …)` whose pragmas carry
-  ## `.closure`. Used by pass 1 (set `hasClosures`) and pass 2 (route
+  ## `.closure`. Used by pass 1 and pass 2 (route
   ## to `transformClosureIter`).
   if n.stmtKind != IteratorS: return false
   var m = n
@@ -147,9 +146,6 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeTree dest, n # export marker
     takeTree dest, n # pragmas
     let typ = n
-    if isClosure(typ):
-      # closure proc or iterator type transformed in `treProcType` proc
-      c.hasClosures = true
     tr(c, dest, n)
     c.typeCache.registerLocal(name, kind, typ, n)
     tr(c, dest, n)  # value
@@ -170,7 +166,6 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       elif i == ProcPragmasPos:
         if hasPragma(n, ClosureP):
           c.escapes.incl symId
-          c.hasClosures = true
       if i == ParamsPos:
         takeInto dest, n:
           while n.hasMore:
@@ -204,49 +199,10 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId; isCursor = false
     c.localToEnv[(typ, local)] = EnvField(objType: typ, field: result, typ: localTyp, isCursor: isCursor)
     c.envFieldType[result] = localTyp
 
-proc maybeMarkForeignClosureUse(c: var Context; s: SymId) =
-  ## Pass 2 must run in modules that merely USE foreign closure values —
-  ## calling, storing or comparing them. The consumer side of the
-  ## closure ABI (tuple projections at call sites, closure-typed local
-  ## decls) is pass 2's rewrite, but every `hasClosures` trigger so far
-  ## keys on module-LOCAL closure declarations, so a pure consumer never
-  ## ran it and emitted a direct call against the producer's tuple ABI.
-  ## Foreign decls are canonicalized to the lifted tuple at load
-  ## (canonForeignDecl); match that or a still-raw `.closure` shape.
-  if c.hasClosures: return
-  let m = extractModule(pool.syms[s])
-  if m == "" or m == c.thisModuleSuffix: return
-  let res = tryLoadSym(s)
-  if res.status != LacksNothing: return
-  case res.decl.symKind
-  of ProcY, FuncY, ConverterY, MethodY:
-    if procHasPragma(res.decl, ClosureP):
-      c.hasClosures = true
-  of GvarY, TvarY, GletY, TletY, VarY, LetY, ConstY:
-    let typ = asLocal(res.decl).typ
-    if procHasPragma(typ, ClosureP) or isLiftedClosureTuple(typ):
-      c.hasClosures = true
-  of NoSym, ParamY, ResultY, CursorY, PatternvarY, TypevarY, StaticTypevarY,
-     EfldY, FldY, GfldY, IteratorY, MacroY, TemplateY, TypeY, BlockY,
-     ModuleY, CchoiceY:
-    discard
-
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
-    if not c.hasClosures:
-      # Calling a closure VALUE through any expression — a foreign object's
-      # field (`window.closeCallback()`), an array element, a deref — needs
-      # pass 2's tuple-projection rewrite even when this module declares no
-      # closures of its own. The module-wide pre-scan only sees this
-      # module's decls; foreign closure types surface here via typenav
-      # (foreign decls arrive through canonForeignDecl, so the lifted
-      # tuple shape counts too).
-      let calleeTyp = c.typeCache.getType(n, {SkipAliases})
-      if isClosure(calleeTyp) or isLiftedClosureTuple(calleeTyp):
-        c.hasClosures = true
     if n.kind == Symbol and
         c.typeCache.getLocalInfo(n.symId).kind notin {ParamY, LetY, VarY, ResultY}:
-      maybeMarkForeignClosureUse(c, n.symId)
       # if a closure proc is called, we don't want to see it as "escaping".
       # But when the callee is a LOCAL holding a closure value, it must still
       # go through `tr`: a cross-proc use in call position is a capture like
@@ -273,7 +229,6 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let isIter = n.hasMore and itertypeNeedsTuple(n)
     let isCloseable = n.hasMore and (isIter or procHasPragma(n, ClosureP))
     if isIter:
-      c.hasClosures = true
       dest.copyIntoKind TupconstrX, info:
         # rewrite the inner itertype to its wrapper-shape tuple
         emitIterTupleTypeFromParams(dest, n, info)
@@ -282,7 +237,6 @@ proc trNil(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.addParPair NilX, info
     elif isCloseable:
       # nil closure must be a tuple:
-      c.hasClosures = true
       dest.copyIntoKind TupconstrX, info:
         dest.takeTree n # type
         if n.hasMore: skip n # might have another nil value
@@ -299,7 +253,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
      IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree dest, n
   of Symbol:
-    maybeMarkForeignClosureUse(c, n.symId)
     let loc = c.typeCache.getLocalInfo(n.symId)
     # CursorY included: a captured `{.cursor.}` local must ALSO be hoisted into
     # the environment. Omitting it left the closure body referencing the outer
@@ -372,19 +325,14 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n        # typevars
         takeTree dest, n        # pragmas
         if typeSym != SymId(0) and itertypeNeedsTuple(n):
-          c.hasClosures = true
           emitIterTupleTypeFromParams(dest, n, n.info)
           publishIt = true
         while n.hasMore: takeTree dest, n
       if publishIt:
         programs.publish(typeSym, dest, typeStart)
     of IteratorS:
-      # `.closure` iter decls are owned by lambdalifting now (pass 2
-      # generates the state machine via coro_transform). Set
-      # `hasClosures` so pass 2 fires for this module even when
-      # there's no other closure pressure.
-      if isClosureIterDecl(n):
-        c.hasClosures = true
+      # `.closure` iter decls are owned by lambdalifting (pass 2
+      # generates the state machine via coro_transform).
       takeTree dest, n
     of MacroS, TemplateS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
@@ -420,7 +368,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
           while n.hasMore:
             takeTree dest, n       # optional inheritance depth / access token
       of ToClosureX:
-        c.hasClosures = true
         trSons(c, dest, n)
       of ErrX, SufX, AtX, DerefX, PatX, ParX, AddrX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
@@ -762,7 +709,6 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # duplifier/destroyer time and hooks line up with cps's wrapper-proc
     # emission. `.closure` and `.passive` iters share the same tuple shape;
     # they differ only at the cps trampoline level.
-    c.hasClosures = true
     emitIterTupleTypeFromParams(dest, n, n.info)
   elif isClosure(n):
     # type is really a tuple:
@@ -1621,33 +1567,16 @@ proc elimLambdas*(pass: var Pass) =
     hooks: lambdaHooks(),
     nextTemp: pass.nextTemp         # nested njvl runs continue the xelim counter
   )
-  # Module-wide pre-scan: ANY `(closure)` pragma anywhere — a proc decl,
-  # a proctype alias body, an object field, a parameter type — means
-  # pass 2 must run. The per-shape triggers in pass 1 cannot see closure
-  # types tucked into decl BODIES (e.g. `EngineCallback = proc()
-  # {.closure.}` in a module with no other closure pressure): without
-  # pass 2 the alias body stays a raw fnptr in this module's artifacts
-  # while consumers — which load decls through `canonForeignDecl` —
-  # type the same field as the lifted tuple.
-  # Raw token scan over the module buffer (NOT a cursor walk: NIF27 bounded
-  # cursors elide ParRi in sealed subtrees, so depth counting overruns).
-  block scanClosure:
-    for i in 0 ..< pass.buf.len:
-      let t = pass.buf[i]
-      if t.kind == TagLit and t.tagId.int == ord(ClosureP):
-        c.hasClosures = true
-        break scanClosure
   c.typeCache.openScope()
   tr c, pass.dest, n
   c.typeCache.closeScope()
 
   # second pass: generate environments and rewrite closure types/symbols.
-  # Triggered by captures OR any closure-proc declaration / closure-typed nil:
-  # pass 1's `trNil` wraps `(nil ClosureProc)` in a `tupconstr`, and `trProc`
-  # marks `.closure` procs whose usages need tuple wrappers — both require
-  # pass 2 to rewrite the surrounding proctypes/calls so types and values agree.
-  if c.localToEnv.len > 0 or c.hasClosures:
-    # some closure usage has been found, so we need to generate environments
+  # Runs UNCONDITIONALLY: closure pressure can arrive from anywhere — a decl
+  # body alias, a foreign closure value called through a field, a
+  # closure-typed nil — and every detection scheme tried here missed one of
+  # them. On a closure-free module the pass is a near-identity walk.
+  if true:
     c.typeCache.openScope()
     let cap = pass.dest.len
     var oldDest = move pass.dest
