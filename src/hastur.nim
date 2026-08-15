@@ -72,7 +72,7 @@ Commands:
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
-  update deps          re-pin `nativenif.commit` — the sibling nativenif
+  update deps          re-pin `src/nativenif.commit` — the sibling nativenif
                        commit arkham and nifasm are built from — to whatever
                        `../nativenif` currently has checked out. Every other
                        command PUTS nativenif on that commit before building
@@ -1625,7 +1625,7 @@ proc nativeToolPrefix(): string =
 # pin existed it was whatever each machine happened to have checked out. That
 # is not a hypothetical: a native-suite failure could mean a real gap, a
 # nativenif commit newer than the one the tests were recorded against, or a
-# local branch someone was mid-way through. `nativenif.commit` makes it one
+# local branch someone was mid-way through. `src/nativenif.commit` makes it one
 # answer, recorded in this repo and moved deliberately by `hastur update deps`.
 
 const
@@ -1633,7 +1633,10 @@ const
     ## Sibling checkout arkham + nifasm live in. Their committed `nim.cfg`s
     ## reach back here through `../../../nimony/src/lib`, so the layout — and
     ## this repo's directory name — is already load-bearing.
-  NativenifCommitFile = "nativenif.commit"
+  NativenifCommitFile = "src/nativenif.commit"
+    ## Under `src/` with the rest of what a build is made of — and so a change to
+    ## it invalidates the CI artifact cache, whose key hashes `src/**`. Read
+    ## relative to the project root, which is where every hastur command runs.
 
 proc pinnedNativenifCommit(): string =
   ## The pin is read at RUNTIME, not compiled in: a `slurp`ed copy would let the
@@ -1721,7 +1724,7 @@ proc syncNativenif() =
     quit "hastur: cannot check out " & pin & " in " & NativenifDir & ":\n" & coOut
 
 proc updateDepsCmd() =
-  ## `hastur update deps`: re-pin `nativenif.commit` to whatever `../nativenif`
+  ## `hastur update deps`: re-pin `src/nativenif.commit` to whatever `../nativenif`
   ## has checked out right now. The one sanctioned way to move the pin, so that
   ## "the native backend needs a newer arkham" is a reviewable one-line diff
   ## next to the test results that needed it.
@@ -1821,7 +1824,7 @@ proc buildArkham(showProgress = false) =
   ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
   ## sibling-relative `nim.cfg`. We assume the checkout exists (the `dist/`
-  ## auto-clone is a later step) and put it on the `nativenif.commit` pin
+  ## auto-clone is a later step) and put it on the `src/nativenif.commit` pin
   ## first. arkham's own `nim.cfg` already sets `--outdir:bin`; we pass it
   ## explicitly so the result is deterministic regardless of the current
   ## directory.
