@@ -64,7 +64,7 @@ proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
     while true:
       let strId = t.keys[h]
       if not isFilled(strId): break
-      if v == t.vals[idToIdx t.keys[h]]: return strId
+      if v == t.vals[idToIdx strId]: return strId
       h = nextTry(h, maxHash(t))
   return Id(0)
 
@@ -77,7 +77,7 @@ template getOrInclImpl() {.maybeDirty.} =
     while true:
       let strId = t.keys[h]
       if not isFilled(strId): break
-      if v == t.vals[idToIdx t.keys[h]]: return strId
+      if v == t.vals[idToIdx strId]: return strId
       h = nextTry(h, maxHash(t))
     # not found, we need to insert it:
     if mustRehash(t.keys.len, t.vals.len):

@@ -19,6 +19,11 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, programs]
 from ".." / lengc / leng_model import takeProcDecl
+# `lab`/`jmp` are Leng-only tags, so `nimony_model.stmtKind` reports `NoStmt`
+# for them. Compare raw tag ids instead of routing them through a `StmtKind`.
+# Qualified-only: `LengStmt` shares field names such as `CallS` with
+# `NimonyStmt`, so an unqualified import would be ambiguous.
+from ".." / models / leng_tags import nil
 import ".." / lib / symparser
 import passes
 
@@ -42,6 +47,7 @@ type
     somethingTodo: bool
     inFinally: int
     toDelete: IntSet
+    jmpTargets: IntSet
     source: ptr TokenBuf
 
 const
@@ -50,13 +56,20 @@ const
 proc getAttachedOp(symId: SymId; attachedOp: var AttachedOp): bool =
   var name = pool.syms[symId]
   extractBasename(name)
+  # A specialized hook is minted by `lifter.generateHookName` as
+  # `=<hookName>_<typeKey>`, so cut the type key off. `hookName` also spells
+  # the op in lower case, hence the second spelling of `wasmoved`/`sinkh`
+  # below. Without both, every specialized hook was invisible here.
+  var i = 0
+  while i < name.len and name[i] != '_': inc i
+  if i < name.len: name.setLen i
 
   attachedOp = case name
     of "=destroy": attachedDestroy
-    of "=wasMoved": attachedWasMoved
+    of "=wasMoved", "=wasmoved": attachedWasMoved
     of "=trace": attachedTrace
     of "=copy": attachedCopy
-    of "=sink": attachedSink
+    of "=sink", "=sinkh": attachedSink
     of "=dup": attachedDup
     else: return false
   result = true
@@ -118,6 +131,37 @@ proc returnStmt(b: var BasicBlock) =
   while it != nil:
     it.wasMovedLocs.setLen 0
     it = it.parent
+
+proc joinStmt(b: var BasicBlock) =
+  ## A label that some `jmp` targets is a join: the other predecessors need
+  ## not have run the pending `=wasMoved` calls, so nothing survives it.
+  var it = addr(b)
+  while it != nil:
+    it.wasMovedLocs.setLen 0
+    it = it.parent
+
+proc labelOf(n: Cursor): SymId =
+  ## The label of a `(lab :L)` or the target of a `(jmp L)`.
+  result = NoLabel
+  if n.isTagLit:
+    var it = n
+    it = sub(it)  # throwaway copy; bounds the peek under vpr
+    if it.kind in {Symbol, SymbolDef}:
+      result = it.symId
+
+proc collectJmpTargets(targets: var IntSet; n: var Cursor) =
+  case n.kind
+  of TagLit:
+    if n.cursorTagId == TagId(leng_tags.JmpS):
+      let lab = labelOf(n)
+      if lab != NoLabel: targets.incl int(lab)
+      skip n
+    else:
+      n.into:
+        while n.hasMore and n.kind != EofToken:
+          collectJmpTargets(targets, n)
+  else:
+    inc n
 
 proc invalidateWasMoved(c: var BasicBlock; x: Cursor) =
   var i = 0
@@ -227,15 +271,39 @@ proc analyse(c: var Con; b: var BasicBlock; n: var Cursor) =
           callPos: cursorToPosition(c.source[], n),
           target: peelComparableArg(callArg)
         )
+        # Do not descend into the children of `=wasMoved`/`=destroy`. Their
+        # argument *is* the location being tracked, and the `Symbol` case
+        # counts every occurrence as a use and calls `invalidateWasMoved` —
+        # so descending deleted the entry that was just added, one line above,
+        # and no pair could ever be found.
+        skip n
+        return
       of attachedDestroy:
         if c.inFinally > 0 and (b.hasReturn or b.hasBreak):
           discard
         else:
           c.wasMovedDestroyPair b, n, callArg
+        skip n
+        return
       of attachedSink:
         reverse = true
       of attachedDup, attachedCopy, attachedTrace:
         discard
+
+    # `jmp`/`lab` carry the control flow that `try`/`return`/`break` had before
+    # Leng lowering. They are Leng-only tags, so the `stmtKind` dispatch below
+    # sees `NoStmt` and would walk them as plain statements — which lets a
+    # `=wasMoved` pair with a `=destroy` that a jump can reach without it.
+    let tag = n.cursorTagId
+    if tag == TagId(leng_tags.JmpS):
+      returnStmt(b)
+      skip n
+      return
+    if tag == TagId(leng_tags.LabS):
+      if c.jmpTargets.contains(int(labelOf(n))):
+        joinStmt(b)
+      skip n
+      return
 
     case n.stmtKind
     of AsgnS:
@@ -351,8 +419,11 @@ proc optimizeArc*(pass: var Pass) =
     somethingTodo: false,
     inFinally: 0,
     toDelete: initIntSet(),
+    jmpTargets: initIntSet(),
     source: addr pass.buf
   )
+  var targetScan = pass.n
+  collectJmpTargets(c.jmpTargets, targetScan)
   var b = BasicBlock(
     wasMovedLocs: @[],
     kind: BbOther,

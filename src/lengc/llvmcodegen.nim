@@ -631,7 +631,7 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
       of InlineP:
         result.flags.incl pk
         skip n
-      of NoinlineP:
+      of AlwaysInlineP, NoinlineP:
         result.flags.incl pk
         skip n
       of AttrP:

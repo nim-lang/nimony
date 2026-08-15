@@ -49,10 +49,17 @@ runs:
         submodules: false
 
     - name: Checkout nativenif (sibling of nimony)
+      # Which COMMIT is decided by `nimony/src/nativenif.commit`, not here: hastur
+      # checks the pin out before it builds arkham/nifasm from this tree. Hence
+      # `fetch-depth: 0` — the default shallow clone stops at the tip of the
+      # default branch, so a pin that is one commit behind (or on another
+      # branch) would not be in the object store and hastur would have to fetch
+      # it back. The repo is small; a full clone is cheaper than that round trip.
       uses: actions/checkout@v7
       with:
         repository: nim-lang/nativenif
         path: nativenif
+        fetch-depth: 0
         submodules: false
 
     - name: Install Linux dependency (Linux)
@@ -211,7 +218,11 @@ runs:
           nimony/bin
           ~/.cache/nim
           ~/nimcache
-        key: hastur-release-${{ runner.os }}-${{ inputs.cpu }}-${{ inputs.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims') }}
+        # `src/nativenif.commit` is in the key for the same reason the sources
+        # are: `bin/` holds arkham and nifasm, and which nativenif commit they
+        # were built from is an input to them. Without it a re-pin would restore
+        # the previous commit's pair.
+        key: hastur-release-${{ runner.os }}-${{ inputs.cpu }}-${{ inputs.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims', 'nimony/src/nativenif.commit') }}
         restore-keys: |
           hastur-release-${{ runner.os }}-${{ inputs.cpu }}-${{ inputs.nim_branch }}-
 

@@ -292,7 +292,10 @@ proc appendRaw(s: var string; p: pointer; n: int) =
   if n > 0:
     let old = s.len
     copyMem(cast[pointer](beginStore(s, old + n, old)), p, n)
-    endStore(s)
+    # Writing at `old` is past the 7-byte inline prefix once the string is long,
+    # so `endStore` would recopy a prefix that did not change.
+    if old < 8:
+      endStore(s)
 
 proc appendU64(s: var string; x: uint64) =
   var v = x
@@ -531,7 +534,9 @@ proc rVarint(r: var BifReader): uint64 =
 proc rStr(r: var BifReader): string =
   let n = int rVarint(r)
   assert r.pos + n <= r.size, "bif: truncated string"
-  result = newString(n)
+  # `newString(n)` zeros the payload that we immediately overwrite; GCC DSE's
+  # that store, arkham emits both. `newStringOfCap` reserves without zeroing.
+  result = newStringOfCap(n)
   if n > 0:
     copyMem(cast[pointer](beginStore(result, n)), cast[pointer](r.base + uint(r.pos)), n)
     endStore(result)

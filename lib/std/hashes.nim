@@ -17,11 +17,10 @@ func `!$`*(h: Hash): Hash {.inline.} =
   result = result xor (result shr 11)
   result = result + result shl 15
 
-func hash*(s: string): Hash =
-  result = 0'u
-  for c in items(s):
-    result = result !& uint(c)
-  result = !$result
+func hash*(s: string): Hash {.alwaysInline.} =
+  ## An inline shim for `system.hashStr`. The mix is `!&` / `!$` over the chars;
+  ## `hashStr` fetches the first `AlwaysAvail` of them from the `bytes` word.
+  hashStr(s)
 
 func hash*(u: uint): Hash {.inline.} = u
 when not defined(nimony):

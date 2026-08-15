@@ -1,12 +1,12 @@
 import std/[assertions, parseopt]
 
-var
-  nifcArgc {.importc: "cmdCount".}: int32
-  nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
+# The parsing rules are exercised through `initOptParser(seq[string])`, which
+# takes an explicit argument list. Poking the process argv the entry point
+# received is not portable: on Windows there is none — `std/cmdline` asks
+# `GetCommandLineW` and splits it itself. Only the first block, which needs no
+# arguments, goes through the real process vector.
 
 block:
-  nifcArgc = 1
-
   assert paramCount() == 0
 
   var p = initOptParser()
@@ -15,13 +15,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 2
-  const cargv = [cstring"exe", cstring"a"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 1
-
-  var p = initOptParser()
+  var p = initOptParser(@["a"])
   next(p)
   assert p.kind == cmdArgument
   assert p.key == "a"
@@ -30,13 +24,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 2
-  const cargv = [cstring"exe", cstring"xyz"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 1
-
-  var p = initOptParser()
+  var p = initOptParser(@["xyz"])
   next(p)
   assert p.kind == cmdArgument
   assert p.key == "xyz"
@@ -45,13 +33,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 3
-  const cargv = [cstring"exe", cstring"abc", cstring"def"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 2
-
-  var p = initOptParser()
+  var p = initOptParser(@["abc", "def"])
   next(p)
   assert p.kind == cmdArgument
   assert p.key == "abc"
@@ -64,13 +46,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 2
-  const cargv = [cstring"exe", cstring"-a"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 1
-
-  var p = initOptParser()
+  var p = initOptParser(@["-a"])
   next(p)
   assert p.kind == cmdShortOption
   assert p.key == "a"
@@ -79,13 +55,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 2
-  const cargv = [cstring"exe", cstring"-abc:12"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 1
-
-  var p = initOptParser()
+  var p = initOptParser(@["-abc:12"])
   next(p)
   assert p.kind == cmdShortOption
   assert p.key == "a"
@@ -102,13 +72,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 3
-  const cargv = [cstring"exe", cstring"-a", cstring"-b"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 2
-
-  var p = initOptParser()
+  var p = initOptParser(@["-a", "-b"])
   next(p)
   assert p.kind == cmdShortOption
   assert p.key == "a"
@@ -121,13 +85,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 3
-  const cargv = [cstring"exe", cstring"-ab:", cstring"12"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 2
-
-  var p = initOptParser()
+  var p = initOptParser(@["-ab:", "12"])
   next(p)
   assert p.kind == cmdShortOption
   assert p.key == "a"
@@ -140,13 +98,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 4
-  const cargv = [cstring"exe", cstring"-a=12", cstring"-b=", "c"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 3
-
-  var p = initOptParser()
+  var p = initOptParser(@["-a=12", "-b=", "c"])
   next(p)
   assert p.kind == cmdShortOption
   assert p.key == "a"
@@ -159,13 +111,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 2
-  const cargv = [cstring"exe", cstring"--a"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 1
-
-  var p = initOptParser()
+  var p = initOptParser(@["--a"])
   next(p)
   assert p.kind == cmdLongOption
   assert p.key == "a"
@@ -174,13 +120,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 2
-  const cargv = [cstring"exe", cstring"--abc"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 1
-
-  var p = initOptParser()
+  var p = initOptParser(@["--abc"])
   next(p)
   assert p.kind == cmdLongOption
   assert p.key == "abc"
@@ -189,13 +129,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 2
-  const cargv = [cstring"exe", cstring"--abc:12"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 1
-
-  var p = initOptParser()
+  var p = initOptParser(@["--abc:12"])
   next(p)
   assert p.kind == cmdLongOption
   assert p.key == "abc"
@@ -204,13 +138,7 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 4
-  const cargv = [cstring"exe", cstring"--abc=123", cstring"--def=", cstring"xyz"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 3
-
-  var p = initOptParser()
+  var p = initOptParser(@["--abc=123", "--def=", "xyz"])
   next(p)
   assert p.kind == cmdLongOption
   assert p.key == "abc"
@@ -223,13 +151,8 @@ block:
   assert p.kind == cmdEnd
 
 block:
-  nifcArgc = 9
-  const cargv = [cstring"exe", cstring"--abc", cstring"-aaa", cstring"arg0", cstring"--foo:bar", cstring"arg1", cstring"-a:1", cstring"--xyz=", cstring"qwe"]
-  nifcArgv = cast[ptr UncheckedArray[cstring]](cargv.addr)
-
-  assert paramCount() == 8
-
-  var p = initOptParser()
+  var p = initOptParser(@["--abc", "-aaa", "arg0", "--foo:bar", "arg1", "-a:1",
+                          "--xyz=", "qwe"])
   next(p)
   assert p.kind == cmdLongOption
   assert p.key == "abc"
@@ -268,3 +191,20 @@ block:
   assert p.val ==  "qwe"
   next(p)
   assert p.kind == cmdEnd
+
+block getopt_over_a_parser:
+  # Nim's `getopt(p: var OptParser)` overload: build the parser yourself, then
+  # iterate it. Without it, `for kind, key, val in getopt(p)` fails overload
+  # resolution and the follow-on error is a misleading "not all cases are
+  # covered" on the `case kind` inside the loop.
+  var p = initOptParser(@["--abc:12", "arg0", "-a"])
+  var kinds: seq[CmdLineKind] = @[]
+  var keys: seq[string] = @[]
+  var vals: seq[string] = @[]
+  for kind, key, val in getopt(p):
+    kinds.add kind
+    keys.add key
+    vals.add val
+  assert kinds == @[cmdLongOption, cmdArgument, cmdShortOption]
+  assert keys == @["abc", "arg0", "a"]
+  assert vals == @["12", "", ""]

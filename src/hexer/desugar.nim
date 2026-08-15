@@ -21,6 +21,9 @@ type
     tempUseBufStack: seq[TokenBuf]
     activeChecks: set[CheckMode]
     pending: TokenBuf
+    hoisted: TokenBuf
+      ## module-level `const`s minted for set literals; emitted before the
+      ## module body so the C backend sees them declared before their uses
     bits: int  ## target `int` width, handed to the const evaluator
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo): SymId =
@@ -135,21 +138,53 @@ proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cu
       pragmas = n
     takeTree dest, n
 
+proc emitRequiresGuard(c: var Context; dest: var TokenBuf; cond: Cursor;
+                      msg: string; info: NifLineInfo) =
+  dest.copyIntoKind IfS, info:
+    dest.copyIntoKind ElifU, info:
+      dest.copyIntoKind NotX, info:
+        var n = cond
+        tr(c, dest, n)
+      dest.copyIntoKind StmtsS, info:
+        dest.copyIntoKind CallS, info:
+          dest.addSymUse pool.syms.getOrIncl("panic.0." & SystemModuleSuffix), info
+          dest.addStrLit msg, info
+
+proc emitRequires(c: var Context; dest: var TokenBuf; cond: Cursor;
+                  where: string; info: NifLineInfo) =
+  ## `.requires: a and b` becomes TWO guards, not one guard on a conjunction.
+  ##
+  ## `panic` does not return, so `if not a: panic` followed by `if not b: panic`
+  ## is exactly equivalent — but it costs a compare and a branch each, where the
+  ## conjunction costs a *materialized boolean*: the short-circuit lowering
+  ## builds `x` in a diamond (`setle`, `and 1`, `jmp`, `mov 0`) and then
+  ## re-tests it (`cmp x, 0; jne`). Measured on the x64 back end that is 11
+  ## instructions on the fast path against gcc's 2, and it is on the fast path
+  ## of EVERY `seq[int]` index check — the single biggest item in the 44 % of
+  ## the hot loop these checks cost
+  ## ([[destination_measured_bounds_checks_not_inlining]]).
+  ##
+  ## Splitting also lets the redundant-guard pass (`shoggoth/bce`) match the
+  ## conjuncts independently, which one opaque bool temp never allowed.
+  if cond.exprKind == AndX:
+    var a = cond
+    inc a
+    var b = a
+    skip b
+    emitRequires(c, dest, a, where, info)
+    emitRequires(c, dest, b, where, info)
+  else:
+    # Each half reports only the half that failed, which is strictly better
+    # diagnostics than naming the whole conjunction.
+    emitRequiresGuard(c, dest, cond,
+                      where & ": " & asNimCode(cond) & " [AssertionDefect]\n", info)
+
 proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
   if not cursorIsNil(pragmas) and BoundCheck in c.activeChecks:
     let req = extractPragma(pragmas, RequiresP)
     if not cursorIsNil(req):
       let info = req.info
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind NotX, info:
-            var n = req
-            tr(c, dest, n)
-          dest.copyIntoKind StmtsS, info:
-            dest.copyIntoKind CallS, info:
-              dest.addSymUse pool.syms.getOrIncl("panic.0." & SystemModuleSuffix), info
-              let msg = infoToStr(pragmas.info) & ": " & asNimCode(req) & " [AssertionDefect]\n"
-              dest.addStrLit msg, info
+      emitRequires(c, dest, req, infoToStr(pragmas.info), info)
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
@@ -259,6 +294,55 @@ proc genSetElem(c: var Context; dest: var TokenBuf; n: var Cursor) =
   addUIntTypedOp dest, CastX, -1, n.info:
     tr(c, dest, n)
 
+proc isConstSym(n: Cursor): bool =
+  ## Does `n` name a `const`? Such a symbol survives any side effect the other
+  ## operand of a set op might have, so it never needs to be snapshotted.
+  result = false
+  if n.kind == Symbol:
+    let res = tryLoadSym(n.symId)
+    if res.status == LacksNothing:
+      result = asLocal(res.decl).kind == ConstY
+
+proc isLiteralSet(n: Cursor): bool =
+  ## Is `n` the `(aconstr <type> <lit>...)` that `genSetConstr` emits for a set
+  ## literal whose elements were all known at compile time?
+  result = false
+  if n.kind == TagLit and n.exprKind == AconstrX:
+    var it = n
+    it = sub(it)  # throwaway copy; bounds the walk under vpr
+    skip it       # the type
+    result = true
+    while it.hasMore:
+      if it.kind notin {IntLit, UIntLit, CharLit}:
+        return false
+      inc it
+
+proc hoistConstSet(c: var Context; n: Cursor; info: NifLineInfo): SymId =
+  ## Turn a constant set literal into a module-level `const` and return its
+  ## symbol. Left inline the literal is bound to a local, so every evaluation of
+  ## the enclosing set op rebuilds all of its bytes on the stack — 32 stores for
+  ## a `set[char]` — only to read a single one of them back.
+  # `<name>.<disambiguator>.<module-suffix>`, the shape nif-spec.md gives every
+  # global symbol — same as `lengcgen`'s `Dl.<lib>.<n>.<main>`. Spelling the
+  # suffix out is not optional just because the writer elides it again for the
+  # module that owns the symbol: a reader expands a trailing-dot name with the
+  # suffix of the file IT is reading, so the elided form is only ever a
+  # serialization of a name that was complete in the pool. Interning the elided
+  # form instead would collide with any other module's `setlit.0.` that a later
+  # `tryLoadSym` pulls into the same pool.
+  let s = "`setlit." & $c.counter & "." & c.thisModuleSuffix
+  inc c.counter
+  result = pool.syms.getOrIncl(s)
+  var typ = n
+  typ = sub(typ)  # throwaway copy; bounds the peek under vpr
+  c.hoisted.addParLe("const", info)
+  c.hoisted.addSymDef result, info
+  c.hoisted.addDotToken() # export
+  c.hoisted.addDotToken() # pragmas
+  c.hoisted.addSubtree typ
+  c.hoisted.addSubtree n
+  c.hoisted.addParRi()
+
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let kind = n.exprKind
@@ -285,18 +369,32 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let cType = cursorAt(argsBuf, typeStart)
   let aOrig = cursorAt(argsBuf, aStart)
   let bOrig = cursorAt(argsBuf, bStart)
-  let useTemp = needsTemp(aOrig) or needsTemp(bOrig)
+  # `b` is a scalar, but `a` is a whole set, so lifting it copies every byte —
+  # 32 of them for a `set[char]`, which the expansion below then reads at a
+  # single index. A constant set needs no copy at all: it cannot change under
+  # `b`'s evaluation and re-reading it is free, so keep it in read-only data,
+  # hoisting a bare literal to a `const` to get it there.
+  let aIsConst = isConstSym(aOrig) or isLiteralSet(aOrig)
+  let liftB = needsTemp(bOrig) or (needsTemp(aOrig) and not aIsConst)
+  let liftA = not aIsConst and (needsTemp(aOrig) or needsTemp(bOrig))
+  let useTemp = liftA or liftB
   let oldBufStackLen = c.tempUseBufStack.len
-  let a: Cursor
-  let b: Cursor
+  var a: Cursor
+  var b = bOrig
+  if aIsConst and isLiteralSet(aOrig):
+    let s = hoistConstSet(c, aOrig, info)
+    c.tempUseBufStack.add createTokenBuf(4)
+    c.tempUseBufStack[^1].addSymUse(s, info)
+    a = beginRead(c.tempUseBufStack[^1])
+  else:
+    a = aOrig
   if useTemp:
     dest.addParLe(ExprX, info)
     # lift both so (n, (n = 123; n)) works
-    a = liftTemp(c, dest, aOrig, typ, info)
-    b = liftTemp(c, dest, bOrig, if kind == InsetX: c.typeCache.builtins.uintType else: typ, info)
-  else:
-    a = aOrig
-    b = bOrig
+    if liftA:
+      a = liftTemp(c, dest, aOrig, typ, info)
+    if liftB:
+      b = liftTemp(c, dest, bOrig, if kind == InsetX: c.typeCache.builtins.uintType else: typ, info)
   var err = false
   let size = int asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
@@ -463,7 +561,9 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
       bug("unreachable")
   if useTemp:
     dest.addParRi()
-    c.tempUseBufStack.shrink(oldBufStackLen)
+  # unconditional: a hoisted set literal parks its symbol use on this stack even
+  # when nothing was lifted
+  c.tempUseBufStack.shrink(oldBufStackLen)
 
 proc genCard(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -1177,7 +1277,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
 
 proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), bits: pass.bits)
+  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), hoisted: createTokenBuf(), bits: pass.bits)
   c.typeCache.openScope()
   # Process the root `(stmts` manually (mirroring trSons' copyInto) but
   # keep it OPEN until `pending` has been appended: an emitted close
@@ -1185,11 +1285,19 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   # is elided), so the old "close, shrink away, re-close" dance is
   # impossible.
   assert n.stmtKind == StmtsS
-  pass.dest.addParLe(n.cursorTagId, n.info)
+  let rootTag = n.cursorTagId
+  let rootInfo = n.info
+  # The body is built aside so the `const`s hoisted out of it can be emitted
+  # ahead of it: a `const` the C backend meets only after the function reading
+  # it is a use before declaration.
+  var body = createTokenBuf()
   n.into:
     while n.hasMore:
-      tr c, pass.dest, n, isTopScope = true
+      tr c, body, n, isTopScope = true
 
+  pass.dest.addParLe(rootTag, rootInfo)
+  pass.dest.add c.hoisted
+  pass.dest.add body
   pass.dest.add c.pending
   pass.dest.addParRi()
 

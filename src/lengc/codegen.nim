@@ -353,7 +353,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
       of InlineP:
         result.flags.incl pk
         skip n
-      of NoinlineP:
+      of AlwaysInlineP, NoinlineP:
         result.flags.incl pk
         skip n
       of AttrP:
@@ -367,11 +367,20 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
   else:
     error c.m, "expected proc pragmas but got: ", n
 
-proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo): string =
+proc isBareImportProc(prag: PragmaInfo): bool {.inline.} =
+  ## `importc` proc with neither `header` nor `nodecl`: declared by US, under
+  ## its mangled name + `__asm__` label (collision-proof against header
+  ## prototypes for the same libc identifier — see `mangleSym`).
+  ImportcP in prag.flags and {HeaderP, NodeclP} * prag.flags == {}
+
+proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo;
+               isProc = false): string =
   if n.kind == SymbolDef:
     let lit = n.symId
     if {ImportcP, ImportcppP, ExportcP} * prag.flags != {}:
-      if prag.extern != StrId(0):
+      if isProc and isBareImportProc(prag):
+        result = mangleToC(c.m.pool.syms[lit])
+      elif prag.extern != StrId(0):
         result = c.m.pool.strings[prag.extern]
       else:
         result = c.m.pool.syms[lit]
@@ -654,7 +663,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.add Comma
     if prag.attr != StrId(0):
       c.add "__attribute__((" & c.m.pool.strings[prag.attr] & ")) "
-    name = genSymDef(c, prc.name, prag)
+    name = genSymDef(c, prc.name, prag, isProc = true)
     c.add ParRi
   else:
     if prc.returnType.kind == DotToken:
@@ -664,7 +673,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.add Space
     if prag.attr != StrId(0):
       c.add "__attribute__((" & c.m.pool.strings[prag.attr] & ")) "
-    name = genSymDef(c, prc.name, prag)
+    name = genSymDef(c, prc.name, prag, isProc = true)
 
   c.add ParLe
 
@@ -684,6 +693,20 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
     c.code.setLen signatureBegin
   elif InlineP notin prag.flags and (isExtern or {ImportcP, ImportcppP} * prag.flags != {}):
     # External/imported function without body - just prototype
+    if isBareImportProc(prag):
+      # Bind the mangled identifier to the real symbol. The identifier never
+      # collides with a header's prototype for the same libc function, which
+      # matters since inliner splices carry bare-importc references into
+      # arbitrary modules (measured: `write` vs <unistd.h> in threads/cps).
+      var asmName = ""
+      if prag.extern != StrId(0):
+        asmName = c.m.pool.strings[prag.extern]
+      else:
+        asmName = c.m.pool.syms[prc.name.symId]
+        extractBasename(asmName)
+      c.add " __asm__(NIM_ASM_PREFIX "
+      c.add makeCString(asmName)
+      c.add ")"
     for i in signatureBegin ..< c.code.len:
       c.protos.add c.code[i]
     c.protos.add Token Semicolon

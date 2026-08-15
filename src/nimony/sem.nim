@@ -5398,10 +5398,14 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
     of FieldsX, FieldpairsX, InternalFieldPairsX:
       takeTree dest, it.n
     of OchoiceX, CchoiceX:
-      if ResemChoiceFeature in c.features:
-        semSymChoice c, dest, it
-      else:
-        takeTree dest, it.n
+      # An `ochoice` is an *open* symbol: a name that a template or generic body
+      # left unresolved on purpose, so it must be resolved again here, against
+      # the scope we are expanding into. Only re-adding the def-site candidates
+      # (what skipping this did) makes the choice closed, and then a template
+      # like system's `in` — `contains(y, x)` — can never see a `contains` the
+      # *caller* imported: `sub in str` failed while `contains(str, sub)` on the
+      # same line resolved. `cchoice` stays closed; that is what `bind` is for.
+      semSymChoice c, dest, it
     of HaddrX, HderefX:
       takeInto dest, it.n:
         # this is exactly what we need here as these operators have the same

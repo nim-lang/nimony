@@ -59,6 +59,12 @@ const
     ## tuple's env slot so iter values have the same `(ref RootObj)`
     ## shape as closure procs.
   EnvParamName* = "`this.0"
+  ClosureEnvParamName* = "`ep.0"
+    ## The env param appended to a lowered closure signature (distinct from the
+    ## coroutine's `this.0` env above). Lives here — like `RootObjName` and the
+    ## wrapper-signature shape — so lambdalifting's pass-2 lowering and any other
+    ## pass that must emit the identical env slot (e.g. a cross-module foreign-decl
+    ## canonicalizer) stay in lock-step off one definition.
   FnFieldName* = "fn.0"
   EnvFieldName* = "env.0"
   CallerFieldName* = "caller.0"
@@ -68,6 +74,23 @@ const
   CallerParamName* = "`caller.0"
   AllocFrameProcName* = "allocFrame.0." & SystemModuleSuffix
   DeallocFrameProcName* = "deallocFrame.0." & SystemModuleSuffix
+
+proc addClosureEnvParam*(dest: var TokenBuf; info: NifLineInfo; envTyp: SymId) =
+  ## Emit the trailing env `(param)` of a lowered closure signature. `envTyp == 0`
+  ## uses the generic `(ref RootObj)` slot shared with iter values; a concrete env
+  ## type uses a `(ptr)` (NIFC needs the pointer type here, with a cast in the body).
+  dest.copyIntoKind ParamU, info:
+    dest.addSymDef pool.syms.getOrIncl(ClosureEnvParamName), info
+    dest.addDotToken() # no export marker
+    dest.addDotToken() # no pragmas
+    if envTyp == SymId(0):
+      dest.copyIntoKind RefT, info:
+        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+    else:
+      # to keep NIFC's type system happy we need a ptr type here
+      # and then a cast in the body!
+      dest.copyIntoKind PointerT, info: discard
+    dest.addDotToken() # no default value
 
 type
   EnvField* = object
@@ -179,13 +202,13 @@ proc coroNameStem*(procId: SymId): string =
   splitSymName(pool.syms[procId]).name
 
 proc coroTypeForProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(coroNameStem(procId) & ".coro." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "coro") & "." & c.thisModuleSuffix)
 
 proc coroWrapperProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(coroNameStem(procId) & ".init." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "init") & "." & c.thisModuleSuffix)
 
 proc stateToProcName*(c: Context; sym: SymId; state: int): SymId =
-  result = pool.syms.getOrIncl(coroNameStem(sym) & ".s" & $state & "." & c.thisModuleSuffix)
+  result = pool.syms.getOrIncl(derivedName(coroNameStem(sym), "s" & $state) & "." & c.thisModuleSuffix)
 
 proc localToFieldname*(c: var Context; local: SymId): SymId =
   var name = pool.syms[local]
@@ -205,14 +228,14 @@ proc coroWrapperForExternIter*(iterSym: SymId): SymId =
   ## generic instances so two instantiations don't collide on a single
   ## wrapper.
   let split = splitSymName(pool.syms[iterSym])
-  result = pool.syms.getOrIncl(split.name & ".init." & split.module)
+  result = pool.syms.getOrIncl(derivedName(split.name, "init") & "." & split.module)
 
 proc coroTypeForExternIter*(iterSym: SymId): SymId =
   ## Same idea as `coroWrapperForExternIter` but for the coroutine
   ## frame type — uses the iter's OWN module suffix so cross-module
   ## iter values reference the right `.coro` type.
   let split = splitSymName(pool.syms[iterSym])
-  result = pool.syms.getOrIncl(split.name & ".coro." & split.module)
+  result = pool.syms.getOrIncl(derivedName(split.name, "coro") & "." & split.module)
 
 proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
   ## Publish a placeholder signature for an iter's init wrapper so
@@ -234,7 +257,7 @@ proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
   let split = splitSymName(pool.syms[iterSym])
   if split.module != moduleSuffix:
     return  # foreign iter — wrapper published by its own module
-  let wrapperSym = pool.syms.getOrIncl(split.name & ".init." & split.module)
+  let wrapperSym = pool.syms.getOrIncl(derivedName(split.name, "init") & "." & split.module)
   if tryLoadSym(wrapperSym).status == LacksNothing:
     return  # already published (e.g. by an earlier corofor for the
             # same iter, or by a previous compile)

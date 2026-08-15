@@ -178,11 +178,12 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
     dest.addKey genPragmas, "nodecl", pinfo
   if prag.header != StrId(0):
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
-  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
-    # `dynlib` on an importc proc means a STATIC import on the native backend:
-    # the decl carries its library as a `(dynlib "…")` pragma — arkham binds it
-    # through the image's import table. The C/LLVM backends ignore the pragma
-    # (they use the runtime-loader lowering in `trProc` instead).
+  if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {} and
+      c.nativeBackend and c.dynlibIsStaticImport:
+    # Only the native Windows target carries the library name into Leng, because
+    # only it has to build the import table itself. Every other combination
+    # either has a linker to do that or uses the runtime loader — see
+    # `dynlibIsStaticImport` for the whole matrix.
     dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -517,6 +518,26 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
         ForcallU, DeferexpansionU, NeedtypesU, NoSub:
       error "illformed AST inside object: ", n
 
+proc pointerTag(n: Cursor): string =
+  ## Which Leng pointer a `ptr`/`var`/`lent` node becomes: `aptr` when it points at
+  ## an `UncheckedArray[T]`, `ptr` otherwise.
+  ##
+  ## Leng distinguishes the two — `ptr` addresses ONE object, `aptr` an array of
+  ## them — and only `aptr` may be indexed or have an offset added to it. That is
+  ## exactly the distinction Nim already draws between `ptr T` and
+  ## `ptr UncheckedArray[T]`, so the tag is a rename, not a judgement call.
+  ##
+  ## Without this every pointer left here as `ptr`, and since the `UarrayT` arm of
+  ## `trType` erases the `UncheckedArray` layer under `IsPointerOf`, a
+  ## `ptr UncheckedArray[T]` came out indistinguishable from a `ptr T`. Arithmetic
+  ## on one then produced `(add (ptr T) …)`, which no Leng backend can lower: nifasm
+  ## rejects arithmetic on a single-object pointer outright, and lengc's C output
+  ## reads it as scaled C pointer arithmetic. `aptr` was never emitted anywhere in
+  ## hexer, so the well-typed form was unreachable.
+  var probe = n
+  probe = sub(probe)
+  result = (if probe.typeKind == UarrayT: "aptr" else: "ptr")
+
 proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
   case n.kind
   of DotToken:
@@ -582,7 +603,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
         skip n
     of MutT, LentT:
       let ptrPos = dest.len
-      dest.addParLe("ptr", n.info)
+      dest.addParLe(pointerTag(n), n.info)
       let ptrStart = n
       n = sub(n)
       if isViewType(n):
@@ -594,7 +615,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
           trType c, dest, n, {IsPointerOf}
         takeParRi dest, n, ptrStart
     of PtrT, OutT:
-      dest.addParLe("ptr", n.info)
+      dest.addParLe(pointerTag(n), n.info)
       let ptrStart = n
       n = sub(n)
       trType c, dest, n, {IsPointerOf}
@@ -631,7 +652,10 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       skipNilAnnotation n
       takeParRi dest, n, ptrStart
     of CstringT:
-      dest.addParLe("ptr", n.info)
+      # `(aptr (c 8))`, not `(ptr (c 8))`: a cstring is indexed (`s[i]`, and every
+      # scan in std/strings walks it), which is what Leng's `aptr` means — a pointer
+      # to an array of elements. `ptr` addresses ONE object and may not be indexed.
+      dest.addParLe("aptr", n.info)
       dest.addParLe($CharT, n.info)
       dest.addIntLit(8, n.info)
       dest.addParRi()
@@ -834,7 +858,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               inc n
           of NodeclP, SelectanyP, ThreadvarP, GlobalP, DiscardableP, NoreturnP,
              VarargsP, NoSideEffectP, NodestroyP, BycopyP, ByrefP,
-             InlineP, NoinlineP, NoinitP, InjectP, GensymP, DirtyP, UntypedP, ViewP,
+             InlineP, NoinlineP, AlwaysInlineP, NoinitP, InjectP, GensymP, DirtyP,
+             UntypedP, ViewP,
              InheritableP, PureP, AcyclicP, ClosureP, PackedP, UnionP, IncompleteStructP,
              EstablishesBorrowP:
             result.flags.incl pk
@@ -972,7 +997,6 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   let procStart = n
   n = sub(n)
   let (s, sinfo) = getSymDef(c, n)
-
   let newSym = s
   dest.addSymDef(s, sinfo)
 
@@ -1008,6 +1032,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     trParams c, dest, n
 
   let pinfo = n.info
+  let procRaises = hasPragma(n, RaisesP)
   let prag = parsePragmas(c, dest, n)
 
   var genPragmas = openGenPragmas()
@@ -1019,6 +1044,17 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if InlineP in prag.flags:
     dest.addKey genPragmas, "inline", pinfo
 
+  if AlwaysInlineP in prag.flags:
+    dest.addKey genPragmas, "alwaysInline", pinfo
+
+  if NoinlineP in prag.flags:
+    # Must reach the `.c.nif`: `intramodinliner.computeInlineInfo` derives the
+    # whole policy from the NIFC proc decl, so a `.noinline` that stops here is
+    # a silent no-op — and worse than a no-op, because the cold half of a
+    # deliberate hot/cold split gets spliced back into the hot wrapper, leaving
+    # a body too big for the wrapper itself to inline.
+    dest.addKey genPragmas, "noinline", pinfo
+
   if SelectanyP in prag.flags:
     dest.addKey genPragmas, "selectany", pinfo
 
@@ -1029,6 +1065,21 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if AssemblerP in prag.flags:
     dest.addKey genPragmas, "assembler", pinfo
+
+  if NoreturnP in prag.flags and not procRaises:
+    # Leng has no noreturn pragma of its own; carry the fact as the existing
+    # `(attr "noreturn")`. The C backend renders it `__attribute__((noreturn))`
+    # (a codegen win in its own right), arkham skips unknown pragmas, and the
+    # optimizer's condition-elimination pass reads it to learn facts from the
+    # fall-through of assert/panic guards.
+    #
+    # NOT for `.raises` procs: under goto exceptions a raising "noreturn" proc
+    # (raiseOSError) RETURNS at the Leng level — it hands back an error code
+    # for the caller to propagate. Telling C it never returns made gcc delete
+    # the callers' error paths (a stage-2 boot miscompile), and it would
+    # mislead the fall-through learning the same way. Only a proc that
+    # genuinely diverges — exits or aborts — may carry the attribute.
+    dest.addKeyVal genPragmas, "attr", pool.strings.getOrIncl("noreturn"), pinfo
 
   closeGenPragmas dest, genPragmas
 
@@ -1044,18 +1095,17 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
     skip n
   takeParRi dest, n, procStart
   swap dst, dest
-  # On the native backend a `dynlib` importc proc IS emitted — as a static
-  # import decl carrying a `(dynlib …)` pragma (see `externPragmas`) that
-  # arkham binds through the image's import table. The C/LLVM backends keep
-  # the runtime-loader lowering below, which replaces the declaration by a
-  # function-pointer global *of the same symbol*, so there the declaration
-  # must not be emitted or the two would collide.
-  if MagicP in prag.flags or isGeneric or (not c.nativeBackend and DynlibP in prag.flags):
+  # A `dynlib` importc proc IS declared unless the runtime loader is taking it
+  # over: that lowering replaces the declaration by a function-pointer global
+  # *of the same symbol*, so emitting both would collide. Where the symbol is a
+  # static import instead — the native image's own import table, or a linker
+  # resolving it from the import library — the declaration is what carries it.
+  if MagicP in prag.flags or isGeneric or (c.usesRuntimeDynlibLoader and DynlibP in prag.flags):
     discard "do not add to dest"
   else:
     dest.add dst
 
-  if not c.nativeBackend and prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
+  if c.usesRuntimeDynlibLoader and prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {}:
     # `{.push dynlib: ...}` applies the pragma to *every* proc in scope,
     # including inline helpers that have bodies. Those don't need dynamic
     # symbol loading, and worse, their `prag.extern` is `StrId(0)` which
@@ -1976,7 +2026,23 @@ proc trRaise(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi(n.endInfo)
 
 proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  # We only deal with the control flow here.
+  # We only deal with the control flow here. A `try` with handlers lowers to
+  # a FLAT goto sequence:
+  #
+  #   <try body>            # every raise inside became (jmp `exlab.N)
+  #   <finally>             # normal path only, see below
+  #   (jmp `exend.N)
+  #   (stmts (lab :`exlab.N) <handler>)
+  #   (lab :`exend.N)
+  #
+  # The handler must skip the normal path's finally — its own finally already
+  # ran at the raise site (finally statements are duplicated before every
+  # `raise`) — and the explicit jmp says so directly. The former shape parked
+  # the handler in a false-guarded `(elif)` of an `(if)` for the same effect,
+  # and every consumer paid for the pretense: arkham emitted a real
+  # materialize-and-`cmp 0` for a guard it cannot know is dead, and every
+  # branch-pruning pass needed a label-pinning rule to keep it from deleting
+  # a "dead" arm a jmp enters (see `branchPinned` in intramodinliner).
   let info = n.info
   let tryStart = n
   n = sub(n)
@@ -1994,44 +2060,51 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     hasExcept = true
   trStmt c, dest, n
 
-  if hasExcept:
-    dest.addParLe IfS, n.info
-
+  # The except clauses precede the finally in the tree, but the flat form
+  # emits the normal path (the finally) first: park their cursors, return
+  # for them after. A `raise` inside a handler or the finally must propagate
+  # PAST this try, not loop back to its own handler label, so the label is
+  # popped before either is translated.
+  var handlers: seq[Cursor] = @[]
   while n.substructureKind == ExceptU:
-    let lab = tryLab
-    dest.copyIntoKind ElifU, n.info:
-      dest.addParPair(FalseX, n.info)
-      dest.copyIntoKind StmtsS, n.info:
-        dest.addParLe("lab", n.info)
-        dest.addSymDef(lab, n.info)
-        dest.addParRi()
-        n.into:
-          if n.stmtKind == LetS:
-            trStmt c, dest, n
-          else:
-            skip n # skip `T`
-          # A `raise` (typed or bare) inside an except handler must propagate
-          # PAST this try, not loop back to its own handler label. Temporarily
-          # pop the label for the duration of the handler body so any nested
-          # `raise` uses the next outer label (or `return`).
-          c.exceptLabels.shrink oldLen
-          trStmt c, dest, n
-          c.exceptLabels.add tryLab
+    handlers.add n
+    skip n
   c.exceptLabels.shrink oldLen
 
   # Since we duplicated the finally statements before every `raise` statement we
   # know that when control flow reaches here, no error was raised. Hence we do not
   # need to add logic to re-raise an exception here.
   if n.substructureKind == FinU:
-    if hasExcept:
-      dest.addParLe ElseU, n.info
     n.into:
       trStmt c, dest, n
-    if hasExcept:
-      dest.addParRi()
-  n = tryStart; skip n
+
   if hasExcept:
+    let endLab = pool.syms.getOrIncl("`exend." & $getTmpId(c))
+    dest.addParLe("jmp", info)
+    dest.addSymUse(endLab, info)
     dest.addParRi()
+    for i in 0 ..< handlers.len:
+      var h = handlers[i]
+      let hinfo = h.info
+      dest.copyIntoKind StmtsS, hinfo:
+        if i == 0:
+          dest.addParLe("lab", hinfo)
+          dest.addSymDef(tryLab, hinfo)
+          dest.addParRi()
+        h.into:
+          if h.stmtKind == LetS:
+            trStmt c, dest, h
+          else:
+            skip h # skip `T`
+          trStmt c, dest, h
+      if i < handlers.len - 1:
+        dest.addParLe("jmp", hinfo)
+        dest.addSymUse(endLab, hinfo)
+        dest.addParRi()
+    dest.addParLe("lab", info)
+    dest.addSymDef(endLab, info)
+    dest.addParRi()
+  n = tryStart; skip n
 
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner) =
   case n.kind
@@ -2375,128 +2448,141 @@ proc genInitProcEnd(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) 
   dest.addParRi() # stmts (body)
   dest.addParRi() # proc
 
-proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
+proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
+                 isWindows: bool) =
   ## Generate cmdCount/cmdLine globals and a C main() wrapper for the main module.
   ## The gvars get exportc pragmas so NIFC defines them with the expected C names.
   ## Symbol names must contain dots to be recognized as Symbol tokens (not Ident) in NIF.
+  ##
+  ## Windows is the exception: a process entry point there receives no `argc`,
+  ## `argv` or `envp` — the OS keeps the command line as one unsplit UTF-16
+  ## string behind `GetCommandLineW` and the environment as a block behind
+  ## `GetEnvironmentStringsW`. So `main` takes no parameters and the process
+  ## vectors are not emitted at all; `std/cmdline` and `std/envvars` ask the
+  ## Windows API for those two directly instead.
   let initSym = pool.syms.getOrIncl(initProcName(c.main))
 
-  # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
-  # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
   let ccharSym = pool.syms.getOrIncl("`cchar.0." & c.main)
-  dest.addParLe("type", rootInfo)
-  dest.addSymDef(ccharSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("importc", rootInfo)
-  dest.addStrLit("char", rootInfo)
-  dest.addParRi() # importc
-  dest.addParLe("nodecl", rootInfo)
-  dest.addParRi() # nodecl
-  dest.addParRi() # pragmas
-  dest.addParLe("i", rootInfo) # body: (i 8)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # i
-  dest.addParRi() # type
-
-  # (gvar :cmdCount (pragmas (exportc "cmdCount")) (i 32) .)
   let cmdCountSym = pool.syms.getOrIncl("`cmdCount.0." & c.main)
-  dest.addParLe("gvar", rootInfo)
-  dest.addSymDef(cmdCountSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("exportc", rootInfo)
-  dest.addStrLit("cmdCount", rootInfo)
-  dest.addParRi() # exportc
-  dest.addParRi() # pragmas
-  dest.addParLe("i", rootInfo)
-  dest.addIntLit(32, rootInfo)
-  dest.addParRi() # i
-  dest.addDotToken() # no init value
-  dest.addParRi() # gvar
-
-  # (gvar :cmdLine (pragmas (exportc "cmdLine")) (ptr (ptr cchar)) .)
   let cmdLineSym = pool.syms.getOrIncl("`cmdLine.0." & c.main)
-  dest.addParLe("gvar", rootInfo)
-  dest.addSymDef(cmdLineSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("exportc", rootInfo)
-  dest.addStrLit("cmdLine", rootInfo)
-  dest.addParRi() # exportc
-  dest.addParRi() # pragmas
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addDotToken() # no init value
-  dest.addParRi() # gvar
-
-  # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
-  # The environment block (`char **`), written by `main` from its 3rd parameter.
-  # Distinct from libc's `environ` ON PURPOSE: this same gvar is emitted for the C
-  # backend too (codegen is shared), and an exportc `environ` would clash with
-  # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
-  # `nimEnviron` instead under `-d:nimNativeIo` (on the C backend it's dead — those
-  # modules keep using libc's `environ`). The native nifasm entry passes the
-  # kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
   let nimEnvironSym = pool.syms.getOrIncl("`nimEnviron.0." & c.main)
-  dest.addParLe("gvar", rootInfo)
-  dest.addSymDef(nimEnvironSym, rootInfo)
-  dest.addParLe("pragmas", rootInfo)
-  dest.addParLe("exportc", rootInfo)
-  dest.addStrLit("nimEnviron", rootInfo)
-  dest.addParRi() # exportc
-  dest.addParRi() # pragmas
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addDotToken() # no init value
-  dest.addParRi() # gvar
-
-  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar))) (param :envp . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
-  let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
   let argcSym = pool.syms.getOrIncl("`argc.0." & c.main)
   let argvSym = pool.syms.getOrIncl("`argv.0." & c.main)
   let envpSym = pool.syms.getOrIncl("`envp.0." & c.main)
+
+  if not isWindows:
+    # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
+    # instead of NC8 (unsigned char). The C standard requires char** for main's argv.
+    dest.addParLe("type", rootInfo)
+    dest.addSymDef(ccharSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("importc", rootInfo)
+    dest.addStrLit("char", rootInfo)
+    dest.addParRi() # importc
+    dest.addParLe("nodecl", rootInfo)
+    dest.addParRi() # nodecl
+    dest.addParRi() # pragmas
+    dest.addParLe("i", rootInfo) # body: (i 8)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # i
+    dest.addParRi() # type
+
+    # (gvar :cmdCount (pragmas (exportc "cmdCount")) (i 32) .)
+    dest.addParLe("gvar", rootInfo)
+    dest.addSymDef(cmdCountSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("exportc", rootInfo)
+    dest.addStrLit("cmdCount", rootInfo)
+    dest.addParRi() # exportc
+    dest.addParRi() # pragmas
+    dest.addParLe("i", rootInfo)
+    dest.addIntLit(32, rootInfo)
+    dest.addParRi() # i
+    dest.addDotToken() # no init value
+    dest.addParRi() # gvar
+
+    # (gvar :cmdLine (pragmas (exportc "cmdLine")) (ptr (ptr cchar)) .)
+    dest.addParLe("gvar", rootInfo)
+    dest.addSymDef(cmdLineSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("exportc", rootInfo)
+    dest.addStrLit("cmdLine", rootInfo)
+    dest.addParRi() # exportc
+    dest.addParRi() # pragmas
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addDotToken() # no init value
+    dest.addParRi() # gvar
+
+    # (gvar :nimEnviron (pragmas (exportc "nimEnviron")) (ptr (ptr cchar)) .)
+    # The environment block (`char **`), written by `main` from its 3rd parameter.
+    # Distinct from libc's `environ` ON PURPOSE: this same gvar is emitted for the C
+    # backend too (codegen is shared), and an exportc `environ` would clash with
+    # libc's. The libc-free backend has no `environ`, so std/envvars + std/posix read
+    # `nimEnviron` instead under `-d:nimNativeIo` (on the C backend it's dead — those
+    # modules keep using libc's `environ`). The native nifasm entry passes the
+    # kernel-provided env pointer as main's 3rd arg, mirroring argc/argv.
+    dest.addParLe("gvar", rootInfo)
+    dest.addSymDef(nimEnvironSym, rootInfo)
+    dest.addParLe("pragmas", rootInfo)
+    dest.addParLe("exportc", rootInfo)
+    dest.addStrLit("nimEnviron", rootInfo)
+    dest.addParRi() # exportc
+    dest.addParRi() # pragmas
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addDotToken() # no init value
+    dest.addParRi() # gvar
+
+  # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar))) (param :envp . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
+  # On Windows the params list is empty — nothing is handed to the entry point
+  # there, so there is nothing to name.
+  let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
   dest.addParLe("proc", rootInfo)
   dest.addSymDef(mainSym, rootInfo)
   # params
   dest.addParLe("params", rootInfo)
-  # (param :argc . (i 32))
-  dest.addParLe("param", rootInfo)
-  dest.addSymDef(argcSym, rootInfo)
-  dest.addDotToken()
-  dest.addParLe("i", rootInfo)
-  dest.addIntLit(32, rootInfo)
-  dest.addParRi() # i
-  dest.addParRi() # param
-  # (param :argv . (ptr (ptr cchar)))
-  dest.addParLe("param", rootInfo)
-  dest.addSymDef(argvSym, rootInfo)
-  dest.addDotToken()
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addSymUse(ccharSym, rootInfo)
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addParRi() # param
-  # (param :envp . (ptr (ptr cchar)))  — the environment block (3rd C-main arg)
-  dest.addParLe("param", rootInfo)
-  dest.addSymDef(envpSym, rootInfo)
-  dest.addDotToken()
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addSymUse(ccharSym, rootInfo)
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addParRi() # param
+  if not isWindows:
+    # (param :argc . (i 32))
+    dest.addParLe("param", rootInfo)
+    dest.addSymDef(argcSym, rootInfo)
+    dest.addDotToken()
+    dest.addParLe("i", rootInfo)
+    dest.addIntLit(32, rootInfo)
+    dest.addParRi() # i
+    dest.addParRi() # param
+    # (param :argv . (ptr (ptr cchar)))
+    dest.addParLe("param", rootInfo)
+    dest.addSymDef(argvSym, rootInfo)
+    dest.addDotToken()
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addSymUse(ccharSym, rootInfo)
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addParRi() # param
+    # (param :envp . (ptr (ptr cchar)))  — the environment block (3rd C-main arg)
+    dest.addParLe("param", rootInfo)
+    dest.addSymDef(envpSym, rootInfo)
+    dest.addDotToken()
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addSymUse(ccharSym, rootInfo)
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addParRi() # param
   dest.addParRi() # params
   # return type: (i 32)
   dest.addParLe("i", rootInfo)
@@ -2510,53 +2596,66 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo) =
   dest.addParRi() # pragmas
   # body
   dest.addParLe("stmts", rootInfo)
-  # (asgn cmdCount argc)
-  dest.addParLe("asgn", rootInfo)
-  dest.addSymUse(cmdCountSym, rootInfo)
-  dest.addSymUse(argcSym, rootInfo)
-  dest.addParRi() # asgn
-  # (asgn cmdLine argv)
-  dest.addParLe("asgn", rootInfo)
-  dest.addSymUse(cmdLineSym, rootInfo)
+  if not isWindows:
+    # (asgn cmdCount argc)
+    dest.addParLe("asgn", rootInfo)
+    dest.addSymUse(cmdCountSym, rootInfo)
+    dest.addSymUse(argcSym, rootInfo)
+    dest.addParRi() # asgn
+    # (asgn cmdLine argv)
+    dest.addParLe("asgn", rootInfo)
+    dest.addSymUse(cmdLineSym, rootInfo)
 
-  dest.addParLe("cast", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
+    dest.addParLe("cast", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
 
-  dest.addSymUse(argvSym, rootInfo)
-  dest.addParRi() # asgn
+    dest.addSymUse(argvSym, rootInfo)
+    dest.addParRi() # cast
 
-  dest.addParRi() # asgn
-  # (asgn nimEnviron (cast (ptr (ptr cchar)) envp))
-  dest.addParLe("asgn", rootInfo)
-  dest.addSymUse(nimEnvironSym, rootInfo)
-  dest.addParLe("cast", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("ptr", rootInfo)
-  dest.addParLe("c", rootInfo)
-  dest.addIntLit(8, rootInfo)
-  dest.addParRi() # c 8
-  dest.addParRi() # inner ptr
-  dest.addParRi() # outer ptr
-  dest.addSymUse(envpSym, rootInfo)
-  dest.addParRi() # cast
-  dest.addParRi() # asgn
+    dest.addParRi() # asgn
+    # (asgn nimEnviron (cast (ptr (ptr cchar)) envp))
+    dest.addParLe("asgn", rootInfo)
+    dest.addSymUse(nimEnvironSym, rootInfo)
+    dest.addParLe("cast", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("ptr", rootInfo)
+    dest.addParLe("c", rootInfo)
+    dest.addIntLit(8, rootInfo)
+    dest.addParRi() # c 8
+    dest.addParRi() # inner ptr
+    dest.addParRi() # outer ptr
+    dest.addSymUse(envpSym, rootInfo)
+    dest.addParRi() # cast
+    dest.addParRi() # asgn
   # (call ini.0.modname)
   dest.addParLe("call", rootInfo)
   dest.addSymUse(initSym, rootInfo)
   dest.addParRi() # call
-  # (call nimFlushStdStreams) — flush buffered std streams on normal exit, so
-  # output is not lost when `main` returns without going through `quit`. A
-  # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo).
-  dest.addParLe("call", rootInfo)
-  dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
-  dest.addParRi() # call
-  # (ret 0)
+  if c.nativeBackend:
+    # Native image: terminate through system's `cExit(0)` — a DECLARED
+    # cross-module call that flushes the std streams and then reaches
+    # `ExitProcess` (windows) / `_exit` (linux) via the ordinary import
+    # path. The backend synthesizes no process-exit of its own, so it needs
+    # no OS-specific import knowledge for the entry.
+    dest.addParLe("call", rootInfo)
+    dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "cExit")), rootInfo)
+    dest.addIntLit(0, rootInfo)
+    dest.addParRi() # call
+  else:
+    # (call nimFlushStdStreams) — flush buffered std streams on normal exit, so
+    # output is not lost when `main` returns without going through `quit`. A
+    # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo).
+    dest.addParLe("call", rootInfo)
+    dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
+    dest.addParRi() # call
+  # (ret 0) — unreachable on the native path (`cExit` is noreturn), kept for a
+  # well-formed proc body; the C `main` returns normally.
   dest.addParLe("ret", rootInfo)
   dest.addIntLit(0, rootInfo)
   dest.addParRi() # ret
@@ -2684,7 +2783,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n, TraverseAll
         swap dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows)) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2700,6 +2799,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     bits: bits,
     bigEndian: bigEndian,
     nativeBackend: native,
+    isWindows: isWindows,
     localDeclCounters: 1000,
     activeChecks: flags,
     liftingCtx: createLiftingCtx(mp.name, bits)
@@ -2746,7 +2846,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
   genInitProcEnd(c, cdest, rootInfo)
 
   if isMain and appType in {appConsole, appGui}:
-    genMainProc(c, cdest, rootInfo)
+    genMainProc(c, cdest, rootInfo, isWindows)
 
   # the module's close was consumed by `trToplevel`
   let destfileName = c.dir / c.main & ".x.nif"

@@ -11,8 +11,20 @@
 ##
 ## Restrictions in this first cook:
 ##   - statement-position calls only (call as a direct stmts child);
-##   - single-return procs only (no `(ret …)` mid-body);
-##   - `.inline` pragma callees only (threshold == 0 in `InlineInfo`).
+##   - single-return procs only (no `(ret …)` mid-body).
+##
+## The inlining POLICY is size-driven, not annotation-driven (see
+## `computeInlineInfo`): a body of at most `InlineTinyBound` tokens is always
+## spliced — that covers forwarders, accessors and hooks whether or not the
+## author wrote `.inline` — a `.noinline` proc never is, and anything bigger
+## goes through the per-call-site weighted-score heuristic (`shouldInline`)
+## whose threshold grows with the body size, so a big body needs ever juicier
+## arguments (literals feeding conditions) to be worth its bulk. The
+## `.inline` annotation itself is deliberately IGNORED here: it keeps its
+## emission meaning (body shipped to importers, `static inline` in C) but no
+## longer forces the splice, so an ill-considered `.inline` on a fat proc
+## cannot blow the program up anymore, and a proc nobody thought to annotate
+## still inlines when it is trivially cheap.
 ##
 ## Two passes share this machinery, one per pipeline stage, and each stays in
 ## the file format of its stage:
@@ -22,10 +34,12 @@
 ##     is the one that crosses module borders: `loadForeign` lazy-loads the
 ##     callee's `.c.nif`.
 ##
-## Either way the body and the callee's `(inline THRESHOLD w…)` pragma
-## annotation come out of the same file; the annotation is what
-## `intraModuleInline` wrote at the hexer stage. There is no size cap:
-## `.inline` is honoured whatever the body costs.
+## Either way the decision is derived from the same file the body comes out
+## of: `indexProcBodies` measures each proc right after the module is parsed,
+## so what is scored is exactly what would be spliced (hexer's flattening of
+## tiny bodies happens *before* the `.c.nif` is written — a proc that grows
+## past the bound by having its own callees spliced into it is re-measured,
+## and demoted, by every importer).
 ##
 ## The splice introduces a `(scope …)` block, declares one fresh `(var)`
 ## per parameter initialised from the argument, renames every local in
@@ -45,17 +59,43 @@ type
     weights*: InlineWeights
     guardThreshold*: int
     guards*: InlineWeights
+    size*: int                 ## body token count; what a splice would cost
+    forced*: bool              ## `{.alwaysInline.}`: splice regardless of size,
+                               ## score and growth budget
   ModuleAnalysis = object
-    ## Hexer-stage scratch: what `analyzeModule` computes so
-    ## `annotateInlinePragmas` can write it into the procs. Importers never
-    ## see this type — they read the annotation back with `readInlinePragma`.
+    ## Hexer-stage scratch: the threshold-0 procs `analyzeModule` found, so
+    ## `intraModuleInline` knows which bodies to flatten. Importers never see
+    ## this type — they re-derive the same information from the `.c.nif` they
+    ## parse anyway (`indexProcBodies`).
     ## (Not exported: `dce1` has an unrelated `ModuleAnalysis` and both
     ## modules are imported together by `pipeline`.)
     inlineInfo: Table[SymId, InlineInfo]
 
 const
   DefaultInlineInfo* = InlineInfo(threshold: 100, weights: @[],
-                                  guardThreshold: 100, guards: @[])
+                                  guardThreshold: 100, guards: @[], forced: false)
+  InlineTinyBound* = 100
+    ## Bodies of at most this many tokens are spliced unconditionally: at that
+    ## size the body is on the order of the call sequence it replaces (a
+    ## forwarder, an accessor with its assert, a hook's nil-test-and-call), so
+    ## inlining cannot lose. Measured evidence for the value: capping splices
+    ## at 100 tokens on a full nimsem build shrank the optimized IR 6x and the
+    ## binary 4x while the produced compiler ran slightly FASTER — beyond this
+    ## size, inlining pays icache, not wins.
+  InlineNeverBound* = 10000
+    ## Thresholds at or above this mean "never" (`.noinline`).
+  InlineWeightCap* = 150
+    ## Ceiling for a single parameter's weight. The weight walk adds the use
+    ## context's value per occurrence, so an uncapped weight grows with the
+    ## body — and since the threshold also grows with the body (`size div 4`),
+    ## the two cancel and ANY body whose params appear in conditions more than
+    ## ~once per 100 tokens would inline at every call site. The benefit of
+    ## substituting one argument does not scale with body size (folding a
+    ## branch is worth the branch, not the whole proc), so the estimate must
+    ## not either: with the cap, a body of size S needs on the order of
+    ## S/(4*150) max-weight literal arguments to inline — big bodies need
+    ## several genuinely decisive arguments, huge bodies effectively never
+    ## qualify.
 
 proc shouldInline*(info: InlineInfo; argScores: openArray[int]): bool =
   var sum = 0
@@ -64,40 +104,149 @@ proc shouldInline*(info: InlineInfo; argScores: openArray[int]): bool =
       sum += (info.weights[i] * score) div 100
   result = sum >= info.threshold
 
-proc readInlinePragma*(pragmas: Cursor; outInfo: var InlineInfo): bool =
-  ## Recover the `InlineInfo` `intraModuleInline` wrote into the proc's own
-  ## `.inline` pragma as `(inline THRESHOLD w…)`. Exactly the transport
-  ## `funcsummary`'s `(smry …)` uses and `readSummaryPragma` reads back: the
-  ## per-proc information travels *with the proc*, so an importer recovers it
-  ## from the same module file it already parsed for the body — no sidecar
-  ## section, and no way for the two to disagree.
-  ##
-  ## Returns false when the proc has no `.inline` pragma, which leaves the
-  ## caller's `DefaultInlineInfo` (threshold 100) in place.
-  if not pragmas.isTagLit: return false
-  result = false
-  var p = pragmas
-  p.peekInto:                               # early-out on the first `.inline`
+proc collectParamSyms(params: Cursor): seq[SymId] =
+  result = @[]
+  if not params.isTagLit: return @[]
+  var p = params
+  p.into:
     while p.hasMore:
-      if p.isTagLit and p.pragmaKind == InlineP:
-        # `.inline` alone already means threshold 0 ("always"); the annotation
-        # overrides that and appends one weight per parameter.
-        outInfo = InlineInfo(threshold: 0, weights: @[],
-                             guardThreshold: DefaultInlineInfo.guardThreshold,
-                             guards: @[])
-        var seenThreshold = false
-        p.into:
-          while p.hasMore:
-            if p.kind == IntLit:
-              if not seenThreshold:
-                outInfo.threshold = int(p.intVal)
-                seenThreshold = true
-              else:
-                outInfo.weights.add int(p.intVal)
-            skip p
-        result = true
-        break
+      if p.substructureKind == ParamU:
+        var q = p
+        inc q
+        if q.isSymbolDef:
+          result.add q.symId
       skip p
+
+proc hasVarargsParam(params: Cursor): bool =
+  ## A `(varargs)` parameter cannot be bound to a `(var …)` at a splice site
+  ## (the type has no size), so such procs are never inlined.
+  result = false
+  if not params.isTagLit: return false
+  var p = params
+  p.into:
+    while p.hasMore:
+      if p.substructureKind == ParamU:
+        var q = p
+        inc q                       # into the param: at the name
+        if q.isSymbolDef:
+          inc q                     # past name
+          skip q                    # past pragmas
+          if q.typeKind == VarargsT: result = true
+      skip p
+
+proc weightOfUse(n: Cursor): int =
+  case n.exprKind
+  of EqC, NeqC, LeC, LtC: 30
+  of AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
+     BitandC, BitorC, BitxorC, BitnotC, NegC,
+     AndC, OrC, NotC: 20
+  of AtC, PatC: 40
+  of CallC: 10
+  else:
+    case n.stmtKind
+    of IfS, WhileS, CaseS, IteS, ItecS, LoopS: 50
+    of CallS: 10
+    else: 0
+
+proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
+                       weights: var seq[int]; inherited: int) =
+  case n.kind
+  of Symbol:
+    if params.hasKey(n.symId):
+      weights[params.getOrQuit(n.symId)] += inherited
+    inc n
+  of TagLit:
+    let w = max(inherited, weightOfUse(n))
+    n.into:
+      while n.hasMore:
+        walkInlineWeights(n, params, weights, w)
+  else:
+    inc n
+
+proc tokenCountAux(n: var Cursor): int =
+  case n.kind
+  of TagLit:
+    result = 1
+    n.into:
+      while n.hasMore:
+        result += tokenCountAux(n)
+  else:
+    result = 1
+    inc n
+
+proc tokenCount(n: Cursor): int =
+  ## Tokens in the subtree rooted at `n` (closing parens not counted — they
+  ## may be virtual anyway). A stable cost measure for the policy below.
+  var c = n
+  result = tokenCountAux(c)
+
+proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
+  ## The whole inlining policy, derived from the proc decl itself:
+  ##   - no body / `.noinline` → never (an `InlineNeverBound` threshold);
+  ##   - body ≤ `InlineTinyBound` tokens → always (threshold 0);
+  ##   - anything bigger → the weighted-score heuristic, with a threshold
+  ##     that grows with the body size (`max(100, size div 4)`), so only a
+  ##     moderately-sized body with high-value arguments (literals feeding
+  ##     conditions or index expressions) clears the bar.
+  ## `.inline` is still NOT consulted (see the module docs); `.alwaysInline` is,
+  ## and it wins over everything below.
+  result = DefaultInlineInfo
+  var p = procDecl
+  let pd = takeProcDecl(p)
+  var forced = false
+  if not pd.body.isTagLit:
+    result.threshold = InlineNeverBound     # extern/no body: nothing to splice
+    return
+  if pd.pragmas.isTagLit:
+    var pr = pd.pragmas
+    pr.into:                            # scan all pragmas (no early break: the
+      while pr.hasMore:                 # `into` epilogue needs the scope drained)
+        if pr.isTagLit and pr.pragmaKind == AlwaysInlineP:
+          forced = true
+        if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP,
+                                             AssemblerP}:
+          # importc: the decl's `(stmts .)` "body" is a PLACEHOLDER — the real
+          # code is external. Splicing it deletes the call (measured: memfiles
+          # inlined posix `open`'s empty shell and never called open(2)).
+          # assembler: the body is machine-level (register-pinned locals, 1:1
+          # instructions) — meaningless spliced into ordinary code, and the
+          # splice strands `{.register.}` pragmas where no backend accepts
+          # them (measured: tcbackend's firstBit spliced + DCE'd, so the C
+          # backend saw a bare register-pinned local instead of rejecting the
+          # assembler proc).
+          result.threshold = InlineNeverBound
+        skip pr
+  if result.threshold >= InlineNeverBound:
+    return
+  if hasVarargsParam(pd.params):
+    result.threshold = InlineNeverBound
+    return
+
+  let params = collectParamSyms(pd.params)
+  result.weights = newSeq[int](params.len)
+  let size = tokenCount(pd.body)
+  result.size = size
+  if forced:
+    # `{.alwaysInline.}` — no size bound, no score, like MSVC's `__forceinline`.
+    # Everything the heuristic below reasons about is a PROXY for cost; the
+    # annotation is a direct statement about it, so the proxy has no standing.
+    # `trySplice`'s `inProgress` cycle guard still applies: that is termination,
+    # not policy. `.noinline` above still wins, because a proc carrying both is
+    # a contradiction the author must resolve, and refusing is the safe reading.
+    result.threshold = 0
+    result.forced = true
+  elif size <= InlineTinyBound:
+    result.threshold = 0
+  else:
+    result.threshold = max(DefaultInlineInfo.threshold, size div 4)
+    var lookup = initTable[SymId, int]()
+    for i, s in params:
+      lookup[s] = i
+    if lookup.len > 0:
+      var body = pd.body
+      walkInlineWeights(body, lookup, result.weights, 0)
+      for w in mitems(result.weights):
+        w = min(w, InlineWeightCap)
 
 type
   ForeignModule* = object
@@ -114,6 +263,16 @@ type
     src: ptr TokenBuf                       # the module's parsed buffer
     xnifDir: string                         # directory holding the `.c.nif`s
     maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
+    growthLeft*: int
+      # Remaining tokens the proc currently being walked may gain from
+      # splices. Set per top-level `(proc …)` from `growthBudget` (a caller
+      # may roughly double), decremented by each committed splice — including
+      # the splices `trIntra` performs while re-walking spliced content, so a
+      # depth-N cascade draws from the same pot. This is the hard backstop
+      # that keeps program growth linear no matter what the per-call
+      # heuristic thinks: without it a chain of individually-approved
+      # splices compounds multiplicatively (measured: 8.4x IR blowup and
+      # multi-GB hexer RSS on nimsem).
     foreign: Table[string, ref ForeignModule]
       # Cached cross-module bodies. `ref` so growing the table doesn't
       # invalidate cursors that point into a previously-fetched buffer.
@@ -141,17 +300,26 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
              ownInfo: initTable[SymId, InlineInfo](),
              xnifDir: xnifDir,
              maxDepth: maxDepth,
+             growthLeft: high(int),
              counterPrefix: counterPrefix,
              foreign: initTable[string, ref ForeignModule](),
              inProgress: initHashSet[SymId]())
 
+proc growthBudget*(bodySize: int): int =
+  ## How many spliced tokens a proc of `bodySize` may absorb: it may about
+  ## double, and small procs get a floor so a forwarder can still swallow a
+  ## couple of tiny callees.
+  max(1000, bodySize)
+
 proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
                      infos: var Table[SymId, InlineInfo]) =
   ## Walks the top-level `(stmts …)` and records `(proc :sym …)` decls
-  ## by sym → byte offset into `buf`, along with the `(inline THRESHOLD w…)`
-  ## annotation each inlinable proc carries in its pragmas. Reading the
-  ## annotation costs nothing extra here — we are already at the decl and
-  ## `takeProcDecl` only skips subtrees, it does not walk the body.
+  ## by sym → byte offset into `buf`, along with each proc's `InlineInfo`,
+  ## computed right here from the body we are indexing (`computeInlineInfo`
+  ## walks it once — a linear pass over a buffer we just parsed anyway). No
+  ## pragma transport is involved, so own-module and foreign bodies go
+  ## through the identical policy, and the size that is scored is the size
+  ## of the exact body a splice would copy.
   var n = beginRead(buf)
   if n.stmtKind == StmtsS:
     n.into:
@@ -160,10 +328,9 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
           let nameCur = n.childCursor            # the (proc :sym …) name child
           if nameCur.isSymbolDef:
             bodies[nameCur.symId] = cursorToPosition(buf, n)
-            var probe = n
-            let d = takeProcDecl(probe)
-            var info = DefaultInlineInfo
-            if readInlinePragma(d.pragmas, info):
+            let info = computeInlineInfo(n)
+            if info.threshold == 0 or
+               (info.threshold < InlineNeverBound and info.weights.len > 0):
               infos[nameCur.symId] = info
         skip n
 
@@ -220,11 +387,9 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   if not loadForeign(c, modul): return false
   let fm = c.foreign.getOrQuit(modul)
   if calleeSym notin fm.bodies: return false
-  # No size cap: `.inline` is the programmer saying "inline this", and the
-  # only bodies that reach here are the ones that carry it (a proc without
-  # the pragma keeps `DefaultInlineInfo`, threshold 100 with no weights, and
-  # `shouldInlineCall` declines it). Refusing a body for being big would make
-  # `.inline` mean "inline if the compiler feels like it".
+  # No further vetting here: the only bodies that reach this point already
+  # passed `shouldInlineCall`, i.e. the size-driven policy in
+  # `computeInlineInfo` (tiny → always, big → scored, `.noinline` → never).
   outCur = cursorAt(fm.buf, fm.bodies.getOrQuit(calleeSym))
   result = true
 
@@ -291,85 +456,59 @@ proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
   result = c.foreign.getOrQuit(modul).inlineInfo.getOrDefault(calleeSym,
                                                               DefaultInlineInfo)
 
+proc argContainsConstructor(callNode: Cursor): bool =
+  ## `(oconstr/aconstr …)` anywhere in an argument. The C backend renders an
+  ## address-taken aggregate constructor as a block-scope compound literal;
+  ## a splice wraps its param bindings in a `(scope …)` — a C block — cutting
+  ## that literal's lifetime short whenever its address escapes the splice
+  ## (measured: `static Shape[N]` params — the openArray built over
+  ## `&(Shape){…}.bounds` read dead stack after the scope closed). Until the
+  ## splicer hoists such temporaries out of its scope, decline the site.
+  proc walk(n: var Cursor): bool =
+    case n.kind
+    of TagLit:
+      if n.exprKind in {OconstrC, AconstrC}:
+        skip n
+        return true
+      result = false
+      n.into:
+        while n.hasMore:
+          if walk(n): result = true
+    else:
+      result = false
+      inc n
+  var a = callNode
+  result = false
+  a.into:
+    skip a                                # past the callee sym
+    while a.hasMore:
+      if walk(a): result = true
+
 proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
                       callNode: Cursor): bool =
   ## Decides whether to splice a call to `calleeSym` at this call site.
-  ## `.inline` (threshold 0) always wins; `.noinline` (threshold
-  ## ≥ 10000) always loses; everything else goes through the per-call
-  ## weighted-score heuristic against the proc's `InlineInfo`.
+  ## Tiny bodies (threshold 0) always win; `.noinline` / bodiless procs
+  ## (threshold ≥ `InlineNeverBound`, or no stored info at all) always lose;
+  ## everything else goes through the per-call weighted-score heuristic
+  ## against the proc's `InlineInfo`.
   let info = lookupInlineInfo(c, calleeSym)
+  if info.threshold >= InlineNeverBound: return false
+  # `argContainsConstructor` is a CORRECTNESS gate, not policy (an escaping
+  # compound literal dies with the splice's `(scope …)`), so even a forced
+  # splice has to respect it. The growth budget is the opposite — a
+  # compile-resource backstop — so `{.alwaysInline.}` overrides it and is still
+  # charged, keeping the budget honest for every ordinary decision after it.
+  if argContainsConstructor(callNode): return false
+  if info.forced: return true
+  if info.size > c.growthLeft: return false   # caller's growth budget is spent
   if info.threshold == 0: return true
-  if info.threshold >= 10000: return false
   let scores = computeArgScores(callNode)
   result = shouldInline(info, scores)
 
-proc collectParamSyms(params: Cursor): seq[SymId] =
-  result = @[]
-  if not params.isTagLit: return @[]
-  var p = params
-  p.into:
-    while p.hasMore:
-      if p.substructureKind == ParamU:
-        var q = p
-        inc q
-        if q.isSymbolDef:
-          result.add q.symId
-      skip p
-
-proc weightOfUse(n: Cursor): int =
-  case n.exprKind
-  of EqC, NeqC, LeC, LtC: 30
-  of AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
-     BitandC, BitorC, BitxorC, BitnotC, NegC,
-     AndC, OrC, NotC: 20
-  of AtC, PatC: 40
-  of CallC: 10
-  else:
-    case n.stmtKind
-    of IfS, WhileS, CaseS, IteS, ItecS, LoopS: 50
-    of CallS: 10
-    else: 0
-
-proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
-                       weights: var seq[int]; inherited: int) =
-  case n.kind
-  of Symbol:
-    if params.hasKey(n.symId):
-      weights[params.getOrQuit(n.symId)] += inherited
-    inc n
-  of TagLit:
-    let w = max(inherited, weightOfUse(n))
-    n.into:
-      while n.hasMore:
-        walkInlineWeights(n, params, weights, w)
-  else:
-    inc n
-
-proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
-  result = DefaultInlineInfo
-  var p = procDecl
-  let pd = takeProcDecl(p)
-  let params = collectParamSyms(pd.params)
-  result.weights = newSeq[int](params.len)
-
-  var hasInline = false
-  if pd.pragmas.isTagLit:
-    var pr = pd.pragmas
-    pr.into:                            # scan all pragmas (no early break: the
-      while pr.hasMore:                 # `into` epilogue needs the scope drained)
-        if pr.isTagLit and pr.pragmaKind == InlineP:
-          hasInline = true
-        skip pr
-  if not hasInline:
-    return
-
-  result.threshold = 0
-  var lookup = initTable[SymId, int]()
-  for i, s in params:
-    lookup[s] = i
-  if lookup.len > 0 and pd.body.isTagLit:
-    var body = pd.body
-    walkInlineWeights(body, lookup, result.weights, 0)
+proc chargeSplice(c: var InlinerCtx; calleeSym: SymId) =
+  ## Book the committed splice against the current caller's growth budget.
+  let size = lookupInlineInfo(c, calleeSym).size
+  c.growthLeft = max(0, c.growthLeft - max(size, 1))
 
 proc analyzeModule(buf: var TokenBuf): ModuleAnalysis =
   result = ModuleAnalysis(inlineInfo: initTable[SymId, InlineInfo]())
@@ -427,6 +566,40 @@ proc isSubstitutableArg(c: Cursor): bool =
   of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
   of TagLit: c.exprKind in {TrueC, FalseC, NilC, InfC, NeginfC, NanC}
   else: false
+
+proc isStableDerefArg(c: Cursor): bool =
+  ## `(deref S)` for a bare local/param symbol. Hexer passes by-value objects
+  ## as `(deref ptrParam)`, and binding that to a fresh `(var :p T (deref S))`
+  ## copies the whole object (24 bytes for `Cursor`) before an inlined
+  ## `tokenWidth`/`cursorJump` reads two fields. Substituting instead turns
+  ## those uses into `(dot (deref S) f)` — one load, no copy. Safe for the
+  ## same reason `isStableAddrArg` is: the inlined body cannot assign the
+  ## caller's pointer (that would have put the param in `assigned`).
+  if not c.isTagLit or c.exprKind != DerefC: return false
+  result = c.childCursor.isSymbol
+
+proc isStableAddrArg(c: Cursor): bool =
+  ## `(haddr L)` / `(addr L)` for a bare symbol `L`. The argument is an ADDRESS,
+  ## and a named slot's address is a constant for the whole body — so unlike a
+  ## symbol's *value* this needs no alias reasoning and holds for globals and
+  ## caller params too.
+  ##
+  ## This is the `var`/`out` parameter case, and it is why it matters: `derefs`
+  ## turns `inc i` into `inc((haddr i))`, so binding the argument would leave
+  ## `(var :p (ptr T) (haddr i))` behind and every access routed through
+  ## `(deref p)`. That `(haddr i)` makes `i` address-taken, and an address-taken
+  ## local cannot live in a register — arkham pins it to a stack slot, so a
+  ## `while` loop whose counter is bumped with `inc` pays three memory operations
+  ## per iteration in a proc that had registers to spare. Substituting instead
+  ## leaves `(deref (haddr i))`, which the rewrite engine's `deref_addr` rule
+  ## folds straight back to `i` — no address survives, and the local stays
+  ## register-eligible for every later pass and both allocators.
+  ##
+  ## A compound lvalue (`(haddr (dot o f))`, `(haddr (at a i))`) is excluded: the
+  ## path would be re-evaluated at each use, and the body could write through
+  ## another pointer parameter to a symbol the path mentions.
+  if not c.isTagLit or c.exprKind notin AddrKinds: return false
+  result = c.childCursor.isSymbol
 
 proc slotRootOf(c: Cursor): SymId =
   ## Like `rootOf`, but a spine that crosses a pointer dereference targets the
@@ -788,7 +961,7 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     # so the substituted symbol's value cannot change across the body. Globals
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
-    if isSubstitutableArg(arg) or
+    if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
       result.subst[pSyms[i]] = arg
 
@@ -817,6 +990,26 @@ proc seedRenameFromBody(c: var InlinerCtx; body: Cursor;
   if not body.isTagLit: return
   var n = body
   seedRenameWalk(c, n, rename)
+
+when defined(inlinerStats):
+  import std / [algorithm, syncio]
+  var inlinerStats*: Table[string, tuple[count, tokens: int]]
+
+  proc recordSplice(calleeSym: SymId; tokens: int) =
+    let nm = pool.syms[calleeSym]
+    var e = inlinerStats.getOrDefault(nm)
+    inc e.count
+    e.tokens += tokens
+    inlinerStats[nm] = e
+
+  proc dumpInlinerStats*(label: string) =
+    var rows: seq[(int, int, string)] = @[]
+    for k, v in inlinerStats:
+      rows.add (v.tokens, v.count, k)
+    rows.sort(SortOrder.Descending)
+    stderr.writeLine "--- inliner stats " & label & " ---"
+    for (t, cnt, k) in rows:
+      stderr.writeLine $t & "\t" & $cnt & "\t" & k
 
 proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   ## If `n` points at a `(call f arg…)` statement we can inline, emit
@@ -893,6 +1086,8 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   # Advance the caller's cursor past the original call.
   n = entry
   skip n
+  chargeSplice c, calleeSym
+  when defined(inlinerStats): recordSplice(calleeSym, dest.len)
   result = 1                               # one `(scope …)` emitted
 
 proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
@@ -1011,6 +1206,8 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   # Advance past the original var decl.
   n = entry
   skip n
+  chargeSplice c, calleeSym
+  when defined(inlinerStats): recordSplice(calleeSym, dest.len)
   result = 2                               # `(var …)` + `(scope …)`
 
 # ---- Condition-splice: inline body straight into an `if`/`elif` guard ----
@@ -1260,8 +1457,220 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   n = entry
   skip n                                   # past var
   skip n                                   # past if
+  chargeSplice c, cSym
   calleeSym = cSym
   result = 1
+
+# ---- Splice-time branch pruning ----
+
+type
+  CondVal = enum
+    condUnknown, condFalse, condTrue
+
+proc negated(v: CondVal): CondVal =
+  case v
+  of condTrue: condFalse
+  of condFalse: condTrue
+  of condUnknown: condUnknown
+
+proc litSame(a, b: Cursor): CondVal =
+  ## Literal identity over the operand kinds `isSubstitutableArg` splices;
+  ## anything else — including mixed literal kinds — stays `condUnknown`.
+  if a.kind == IntLit and b.kind == IntLit:
+    (if a.intVal == b.intVal: condTrue else: condFalse)
+  elif a.kind == UIntLit and b.kind == UIntLit:
+    (if a.uintVal == b.uintVal: condTrue else: condFalse)
+  elif a.kind == CharLit and b.kind == CharLit:
+    (if a.charLit == b.charLit: condTrue else: condFalse)
+  elif a.isTagLit and b.isTagLit and
+       a.exprKind in {NilC, TrueC, FalseC} and
+       b.exprKind in {NilC, TrueC, FalseC}:
+    (if a.exprKind == b.exprKind: condTrue else: condFalse)
+  else:
+    condUnknown
+
+proc condVal(n: Cursor): CondVal =
+  ## What a guard evaluates to once argument substitution made it literal:
+  ## `(neq (nil) (nil))` from a spliced `if c != nil` with `c := nil`, or the
+  ## `(not (eq …))` a nested `!=` forwarder splice leaves behind. `and`/`or`
+  ## fold only when BOTH operands decide, so no operand whose evaluation the
+  ## fold would discard is ever left unjudged.
+  result = condUnknown
+  if not n.isTagLit: return
+  case n.exprKind
+  of TrueC: result = condTrue
+  of FalseC: result = condFalse
+  of NotC:
+    let arg = n.childCursor
+    if arg.hasMore:
+      result = negated(condVal(arg))
+  of EqC, NeqC:
+    let a = n.childCursor
+    if a.hasMore:
+      var b = a
+      skip b
+      if b.hasMore:
+        let same = litSame(a, b)
+        result = (if n.exprKind == EqC: same else: negated(same))
+  of AndC, OrC:
+    let a = n.childCursor
+    if a.hasMore:
+      var b = a
+      skip b
+      if b.hasMore:
+        let l = condVal(a)
+        let r = condVal(b)
+        if l != condUnknown and r != condUnknown:
+          if n.exprKind == AndC:
+            result = (if l == condTrue and r == condTrue: condTrue else: condFalse)
+          else:
+            result = (if l == condTrue or r == condTrue: condTrue else: condFalse)
+  else: discard
+
+proc hasAnyDef(n: Cursor): bool =
+  ## Any SymbolDef in the subtree: a `(lab :L)` someone may jump to, or a
+  ## `(var :v …)` declaration later reachable code may reference. Either
+  ## makes a dead statement unsafe to drop.
+  case n.kind
+  of SymbolDef:
+    result = true
+  of TagLit:
+    result = false
+    var it = n.childCursor
+    while it.hasMore:
+      if hasAnyDef(it): return true
+      skip it
+  else:
+    result = false
+
+proc emitPruned(dest: var TokenBuf; n: var Cursor) =
+  ## Copy one subtree, deleting every `(elif …)` arm whose guard `condVal`
+  ## decided. This is a CORRECTNESS duty, not an optimization: the false arm
+  ## of a spliced body may no longer type-check at all — `if c != nil: …c.f…`
+  ## inlined with `c := nil` keeps a `(deref (nil))` there — and a typed
+  ## backend (arkham) must never see it, so the splice that manufactured the
+  ## constant guard deletes the arm too. An `(elif (true) …)` arm demotes to
+  ## the `if`'s final `(else …)` (the arms after it can never run); an `if`
+  ## with no live arm left contributes its `else` body, or nothing.
+  ##
+  ## A decided arm may be deleted with its labels: a jmp into a sibling
+  ## branch is not part of the final IR (try/except lowers to a FLAT goto
+  ## sequence), so any `(lab …)` inside the arm is jumped to only from
+  ## inside it — this inliner's own returnLabel pattern — and the arm takes
+  ## the label and its jumps with it.
+  case n.kind
+  of TagLit:
+    if n.stmtKind == IfS:
+      # Peek pass over the arms: what survives? The cursors index into the
+      # buffer `n` reads, which outlives the re-emit below.
+      var kept: seq[Cursor] = @[]         # elifs with undecided guards
+      var taken = default(Cursor)         # first `(true)` elif, or the else
+      var takenIsElif = false
+      var haveTaken = false
+      var dropped = false                 # anything decided at all?
+      var probe = n
+      probe.into:
+        while probe.hasMore:
+          let sk = probe.substructureKind
+          if haveTaken:
+            dropped = true                # dead branch after a taken one
+          elif sk == ElifU:
+            case condVal(probe.childCursor)
+            of condTrue:
+              taken = probe; takenIsElif = true; haveTaken = true; dropped = true
+            of condFalse:
+              dropped = true
+            of condUnknown:
+              kept.add probe
+          elif sk == ElseU:
+            taken = probe; takenIsElif = false; haveTaken = true
+          else:
+            kept.add probe                # unexpected shape: keep verbatim
+          skip probe
+      if not dropped:
+        # Nothing decided at this level: keep the `if`, but still recurse
+        # into the branch bodies (they may contain prunable ifs).
+        dest.addParLe(n.cursorTagId, n.info)
+        n.into:
+          while n.hasMore:
+            emitPruned(dest, n)
+        dest.addParRi()
+        return
+      if kept.len == 0:
+        # No undecided elifs before the taken branch: the whole `if`
+        # collapses to the taken branch's body (or to nothing).
+        if haveTaken:
+          var b = taken
+          b.into:
+            if takenIsElif and b.hasMore: skip b    # past the guard
+            while b.hasMore:
+              emitPruned(dest, b)
+        skip n
+        return
+      # Some undecided elifs survive: rebuild the `if` from them, a taken
+      # `(true)` elif demoted to the terminal `(else …)`.
+      dest.addParLe(n.cursorTagId, n.info)
+      for arm in kept:
+        var a = arm
+        dest.addParLe(a.cursorTagId, a.info)
+        a.into:
+          while a.hasMore:
+            emitPruned(dest, a)
+        dest.addParRi()
+      if haveTaken:
+        let btag = (if takenIsElif: TagId(ElseU) else: taken.cursorTagId)
+        dest.addParLe(btag, taken.info)
+        var b = taken
+        b.into:
+          if takenIsElif and b.hasMore: skip b      # past the guard
+          while b.hasMore:
+            emitPruned(dest, b)
+        dest.addParRi()
+      dest.addParRi()
+      skip n
+    elif n.stmtKind in {StmtsS, ScopeS}:
+      # Drop UNREACHABLE statements: after an unconditional `(jmp …)`/`(ret …)`
+      # nothing executes until the next `(lab …)`, so def-free statements in
+      # between are dead. The value-splice epilogue produces exactly this —
+      # a callee whose every path returns via `(asgn dest X) (jmp RL)` leaves
+      # the trailing `dest = result` self-copy dead with `result` never
+      # written — and a typed backend verifier rightly rejects the dead read.
+      # A statement that defines anything is kept and ends the dead region
+      # (something can jump into it and fall out of it).
+      dest.addParLe(n.cursorTagId, n.info)
+      var unreachable = false
+      n.into:
+        while n.hasMore:
+          let sk = n.stmtKind
+          if sk == LabS:
+            unreachable = false
+            dest.takeTree n
+          elif unreachable and not hasAnyDef(n):
+            skip n                          # dead: drop
+          else:
+            if unreachable: unreachable = false
+            emitPruned(dest, n)
+            if sk in {JmpS, RetS}: unreachable = true
+      dest.addParRi()
+    elif n.stmtKind == NoStmt and n.substructureKind == NoSub:
+      # An expression subtree cannot contain statements, hence no `if` arms.
+      dest.takeTree n
+    else:
+      dest.addParLe(n.cursorTagId, n.info)
+      n.into:
+        while n.hasMore:
+          emitPruned(dest, n)
+      dest.addParRi()
+  else:
+    dest.takeTree n
+
+proc prunedInto(dest: var TokenBuf; expanded: var TokenBuf) =
+  ## Emit every top-level subtree of `expanded` into `dest` with the decided
+  ## `if` arms deleted (`emitPruned`).
+  var pruner = beginRead(expanded)
+  while pruner.hasMore:
+    emitPruned(dest, pruner)
+  endRead(pruner)
 
 # ---- Same-module inliner pass (called from hexer.nim) ----
 
@@ -1297,12 +1706,18 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             if nEmitted > 0:
               if calleeSym != SymId(0):
                 c.inProgress.incl calleeSym
+              # Nested splices first, into a scratch buffer; THEN prune the
+              # branches the substituted arguments decided — only after the
+              # nested walk are inlined guards (`!=` forwarders) reduced to
+              # the literal comparisons `condVal` can judge.
+              var expanded = createTokenBuf(spliced.len)
               var inner = beginRead(spliced)
               for _ in 0 ..< nEmitted:
-                trIntra(c, dest, inner)
+                trIntra(c, expanded, inner)
               endRead(inner)
               if calleeSym != SymId(0):
                 c.inProgress.excl calleeSym
+              prunedInto(dest, expanded)
               continue
           if n.isTagLit and n.stmtKind == VarS:
             # `(var :tmp T (call …))` immediately guarding an `if` — fold the
@@ -1313,11 +1728,13 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
             let nEmitted = trySpliceCond(c, spliced, n, condCallee)
             if nEmitted > 0:
               c.inProgress.incl condCallee
+              var expanded = createTokenBuf(spliced.len)
               var inner = beginRead(spliced)
               for _ in 0 ..< nEmitted:
-                trIntra(c, dest, inner)
+                trIntra(c, expanded, inner)
               endRead(inner)
               c.inProgress.excl condCallee
+              prunedInto(dest, expanded)
               continue
           trIntra(c, dest, n)
       dest.addParRi()
@@ -1325,6 +1742,22 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
       # `(var :tmp <pragmas> <type> (call …))` is the bound form `xelim`
       # and the new nifcgen complex-init path emit; route it through the
       # var-init splice. Other locals copy verbatim.
+      if sk == ProcS:
+        # Entering a proc decl: give it its own growth budget, sized from its
+        # body, and restore the enclosing one afterwards (procs are top-level
+        # in NIFC, but the restore keeps this correct either way).
+        var probe = n
+        let pd = takeProcDecl(probe)
+        let bodySize = (if pd.body.isTagLit: tokenCount(pd.body) else: 0)
+        let savedGrowth = c.growthLeft
+        c.growthLeft = growthBudget(bodySize)
+        dest.addParLe(n.cursorTagId, n.info)
+        into n:
+          while n.hasMore:
+            trIntra(c, dest, n)
+        dest.addParRi()
+        c.growthLeft = savedGrowth
+        return
       if sk == VarS:
         var probe = n
         inc probe
@@ -1342,11 +1775,13 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
           let nEmitted = trySpliceVarInit(c, spliced, n)
           if nEmitted > 0:
             c.inProgress.incl calleeSym
+            var expanded = createTokenBuf(spliced.len)
             var inner = beginRead(spliced)
             for _ in 0 ..< nEmitted:
-              trIntra(c, dest, inner)
+              trIntra(c, expanded, inner)
             endRead(inner)
             c.inProgress.excl calleeSym
+            prunedInto(dest, expanded)
             return
       dest.addParLe(n.cursorTagId, n.info)
       into n:
@@ -1362,81 +1797,22 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
   else:
     dest.takeTree n
 
-proc emitPragmasWithInlineInfo(dest: var TokenBuf; pragmas: Cursor; info: InlineInfo) =
-  var p = pragmas
-  if not p.isTagLit:
-    dest.addSubtree p
-    return
-
-  dest.addParLe(p.cursorTagId, p.info)
-  p.into:
-    while p.hasMore:
-      if p.isTagLit and p.pragmaKind == InlineP:
-        dest.addParLe(p.cursorTagId, p.info)
-        p.into:
-          dest.addIntLit info.threshold, p.endInfo
-          for w in info.weights:
-            dest.addIntLit w, p.endInfo
-          while p.hasMore:
-            skip p
-        dest.addParRi()
-      else:
-        dest.takeTree p
-  dest.addParRi()
-
-proc annotateInlinePragmas(dest: var TokenBuf; n: var Cursor;
-                           infos: Table[SymId, InlineInfo]) =
-  case n.kind
-  of TagLit:
-    if n.stmtKind == ProcS:
-      let tag = n.cursorTagId
-      let info = n.info
-      let d = takeProcDecl(n)
-      dest.addParLe(tag, info)
-      dest.addSubtree d.name
-      let sym = d.name.symId
-      dest.addSubtree d.params
-      dest.addSubtree d.returnType
-      if infos.hasKey(sym):
-        emitPragmasWithInlineInfo(dest, d.pragmas, infos.getOrQuit(sym))
-      else:
-        dest.addSubtree d.pragmas
-      dest.addSubtree d.body
-      dest.addParRi()
-    else:
-      dest.addParLe(n.cursorTagId, n.info)
-      n.into:
-        while n.hasMore:
-          annotateInlinePragmas(dest, n, infos)
-      dest.addParRi()
-  else:
-    dest.takeTree n
-
-proc annotateInlinePragmas(buf: var TokenBuf; infos: Table[SymId, InlineInfo]) =
-  if infos.len == 0: return
-  var n = beginRead(buf)
-  var dest = createTokenBuf(buf.len)
-  annotateInlinePragmas(dest, n, infos)
-  buf = ensureMove(dest)
-
 proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
   ## Same-module inliner pass run as the last step of hexer's `expand`, so
-  ## the `.x.nif` we publish has each `.inline` proc body already cascaded
+  ## the `.x.nif` we publish has each tiny proc body already cascaded
   ## against its same-module callees. An importer then pulls a flat body, and
   ## the cascade is walked once per module here instead of once per importer.
+  ## A body that grows past `InlineTinyBound` by this flattening is simply
+  ## re-measured — and demoted to the scored tier — by whoever parses the
+  ## published file (`indexProcBodies`), so the flattening cannot compound:
+  ## what importers splice is what they measured.
   ##
-  ## Measured on nimsem (126 modules), that redundancy is worth little: the
-  ## chains that matter run *across* modules (`nifcore` → `nifpools`), which
-  ## no same-module flattening can pre-expand, so the inter-module pass still
-  ## needs its depth and its cost is unchanged. Keep the numbers in mind
-  ## before spending anything more here — full rebuild 18.66s → 18.87s,
-  ## nimsem-on-system.nim 80ms → 81ms, binary −4KB.
-  ##
-  ## Also writes each `.inline` proc's computed `InlineInfo` into its own
-  ## pragma (`(inline THRESHOLD w…)`). That annotation is what importers read
-  ## back — see `readInlinePragma` — so no sidecar has to carry it. It is
-  ## written *before* the splice because the splice reads it back: `ownInfo`
-  ## is filled from the pragmas by `collectProcBodies`.
+  ## Measured on nimsem (126 modules), the flattening redundancy is worth
+  ## little: the chains that matter run *across* modules (`nifcore` →
+  ## `nifpools`), which no same-module flattening can pre-expand, so the
+  ## inter-module pass still needs its depth and its cost is unchanged. Keep
+  ## the numbers in mind before spending anything more here — full rebuild
+  ## 18.66s → 18.87s, nimsem-on-system.nim 80ms → 81ms, binary −4KB.
   ##
   ## `xnifDir` stays empty here on purpose. This module's own `.x.nif` is
   ## pre-DCE, so its generic instances and hexer-minted types still carry the
@@ -1445,13 +1821,13 @@ proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
   ## thing, while one copied *across* modules would not. Cross-module splicing
   ## therefore waits for the `.c.nif` (`shoggoth`'s inter-module pass).
   let ma = analyzeModule(buf)
-  annotateInlinePragmas(buf, ma.inlineInfo)
   if ma.inlineInfo.len == 0: return
 
   # Only the `.inline` bodies are flattened, not every call site in the module:
   # a call site here is one the importer's own pass would splice anyway, and
   # doing it twice only inflates the `.x.nif` everything downstream reads.
-  var ctx = initInlinerCtx(moduleSuffix, addr buf, counterPrefix = "h")
+  var ctx = initInlinerCtx(moduleSuffix, addr buf, maxDepth = 4,
+                           counterPrefix = "h")
   collectProcBodies(ctx)
   var dest = createTokenBuf(buf.len + buf.len div 16)
   var n = beginRead(buf)
@@ -1470,6 +1846,7 @@ proc intraModuleInline*(moduleSuffix: string; buf: var TokenBuf) =
         dest.addSubtree d.returnType
         dest.addSubtree d.pragmas
         var body = d.body
+        ctx.growthLeft = growthBudget(tokenCount(body))
         trIntra(ctx, dest, body)
         dest.addParRi()
       else:

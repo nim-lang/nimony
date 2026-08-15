@@ -1,13 +1,28 @@
 import std/syncio
 
-template assert*(cond: bool; msg = "") =
-  if not cond:
-    echo "[Assertion Failure] ", msg
-    quit 1
+const assertionsEnabled* = not defined(danger) and not defined(noAssertions)
+  ## Whether `assert` expands to anything at all. Follows Nim's convention:
+  ## `-d:release` KEEPS assertions, `-d:danger` removes them, and
+  ## `-d:noAssertions` removes them on its own — the last one so a build can drop
+  ## the checks without also turning off bound checks and overflow checks, which
+  ## is what you want when profiling: an `assert` costs a compare, a branch and a
+  ## string literal at every call site, and those are not what is being measured.
 
 proc raiseAssert*(msg: string) {.noreturn.} =
   echo "[Assertion Failure] ", msg
   quit 1
+
+template assert*(cond: bool; msg = "") =
+  when assertionsEnabled:
+    # The failure path is a single `noreturn` CALL, never inlined code. Expanding
+    # `echo`+`quit` at every site added ~30 instructions of cold code to procs
+    # whose hot body is two — which bloats the image, wrecks I-cache density and
+    # (worse) pushes tiny accessors like `nifcore.kind` over the inliner's size
+    # cap, so they stay real calls forever.
+    if not cond:
+      raiseAssert(msg)
+  else:
+    discard
 
 template assertRc*[T](r: ref T; expected: int; tag: string = "") =
   ## Diagnostic for ref-count tracking. `r` is a `ref T`, internally a

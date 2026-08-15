@@ -8,7 +8,7 @@ when defined(windows):
     else:
       {.link: "../icons/hastur_icon.o".}
 
-import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm, typedthreads, locks]
+import std / [syncio, assertions, parseopt, strutils, times, os, osproc, algorithm, typedthreads, locks, sets]
 when defined(windows):
   import std/winlean
 else:
@@ -27,7 +27,10 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
+                       `nifbench` is the NIF micro-benchmark suite (src/nifbench),
+                       built with host Nim so it can be compared against the same
+                       source built by `nimony c` and `nimony n`.
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -69,6 +72,13 @@ Commands:
                        If no file is provided `bug.nim` is used.
   rep                  repeat the last failing tool command from the session.
   record <file> <tout> track the results to make it part of the test suite.
+  update deps          re-pin `src/nativenif.commit` — the sibling nativenif
+                       commit arkham and nifasm are built from — to whatever
+                       `../nativenif` currently has checked out. Every other
+                       command PUTS nativenif on that commit before building
+                       it (a dirty nativenif tree is left alone, with a
+                       warning). The file is read at run time; an empty or
+                       absent one means "build whatever is checked out".
   install              write activation script(s) at the project root that
                        prepend the toolchain dirs to `$PATH` for the current
                        shell. On Windows, also download MinGW+LLVM (gcc,
@@ -1109,13 +1119,55 @@ proc joinedDirCmd(dir: string; overwrite: bool; forward: string) =
 # explicit whitelist of what is known to run correctly natively — a regression
 # guard: a native miscompile that diverges from the (spec-pinned) result is caught.
 # Grow it as the backend gains features (the same record-what-works philosophy as
-# the rest of hastur). `NativeTestDirs` are directories that pass IN FULL (negative
-# `.msgs` tests auto-skipped); `NativeTestFiles` are individual passers from
-# otherwise-partial directories.
+# the rest of hastur). `NativeTestDirs` are directories that pass apart from the
+# files `NativeTestSkip` names (negative `.msgs` tests auto-skipped too);
+# `NativeTestFiles` are individual passers from otherwise-partial directories.
 const
   NativeTestDirs = [
     "tests/nimony/arc",        # full ARC suite — byte-identical to the C backend
     "tests/nimony/closures"
+  ]
+
+  NativeTestDirsWindows = [
+    # Windows grew a native target later than the other hosts, so what it is known
+    # to run correctly is recorded separately until a run elsewhere confirms the
+    # same — the whole point of this file is that it states OBSERVED results, and
+    # these were observed on Windows. Fold an entry into `NativeTestDirs` once it
+    # has been seen green on Linux/macOS too.
+    #
+    # `tests/nimony/stdlib`: 45 of its 53 pass; the rest are in `NativeTestSkip`.
+    # This is the suite that covers the process vectors the Windows entry point
+    # does not receive (`tcmdline`, `tenvvars`, `tos`) — the reason it is worth
+    # running natively at all rather than only through the C backend.
+    "tests/nimony/stdlib"
+  ]
+
+  NativeTestSkip = [
+    # Files a `NativeTestDir` does not cover yet, with the reason each fails. All
+    # but the last PASS through the C backend, so each of those is a gap in the
+    # native path rather than in the test — which is what makes them worth naming
+    # individually instead of dropping the directory.
+    #
+    # A libc math/stdio extern with a FLOAT parameter. Win64 indexes its SSE
+    # argument registers positionally (an xmm slot burns the GPR of the same
+    # position), which arkham's ABI planner does not model — `emitWinExtproc`
+    # rejects it rather than guess. Moot until the freestanding target has a libc
+    # to bind these to at all.
+    "tests/nimony/stdlib/tcomplex",     # sqrtf
+    "tests/nimony/stdlib/tmath",        # frexp
+    "tests/nimony/stdlib/tstrutils",    # snprintf
+    # `mov` of a `bool` into an `(i 64)` result: nifasm's widening rule admits
+    # int→int only, so a bool source is a type error. Arch-neutral.
+    "tests/nimony/stdlib/thashes",
+    # Compiles and links, but the result diverges from the spec-pinned output —
+    # a native MISCOMPILE (all three are green on the C backend). Undiagnosed.
+    "tests/nimony/stdlib/tbitops",
+    "tests/nimony/stdlib/tencodings",
+    "tests/nimony/stdlib/trandom",
+    # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
+    # fails to run ("vfs: open failed"), and the C backend fails it identically,
+    # so nothing here would fix it.
+    "tests/nimony/stdlib/ttypetraits"
   ]
   NativeTestFiles = [
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
@@ -1147,7 +1199,11 @@ const
     "tests/nimony/cps/tsuspend",
     "tests/nimony/cps/tsuspend_resume",
     "tests/nimony/cps/tparkstate",
-    "tests/nimony/cps/ttry"
+    "tests/nimony/cps/ttry",
+    # A `const` set is read straight out of read-only data, so its membership
+    # test is an indexed load from a GLOBAL — a shape the C backend never sees a
+    # register problem in and arkham got wrong twice. Native-only by nature.
+    "tests/nimony/sets/tconstsetscan"
   ]
 
 proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
@@ -1180,11 +1236,20 @@ proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
       failure c, file, outputSpec, testProgramOutput
 
 proc nativetests(overwrite: bool) =
-  ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`)
-  ## through `nimony n`. Requires the sibling `../nativenif` checkout (arkham/nifasm).
+  ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`,
+  ## plus `NativeTestDirsWindows` on Windows, minus `NativeTestSkip`) through
+  ## `nimony n`. Requires the sibling `../nativenif` checkout (arkham/nifasm).
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
-  for dir in NativeTestDirs:
+  # `walkDir` joins with the platform separator onto a forward-slashed constant, so
+  # its paths come back mixed (`tests/nimony/stdlib\tbitops.nim` on Windows) and can
+  # only be compared to the skip list once both sides are spelled one way.
+  proc slashed(p: string): string = p.replace('\\', '/')
+  var skip = initHashSet[string]()
+  for f in NativeTestSkip: skip.incl slashed(f.addFileExt(".nim"))
+  var dirs: seq[string] = @NativeTestDirs
+  when defined(windows): dirs.add @NativeTestDirsWindows
+  for dir in dirs:
     var files: seq[string] = @[]
     for x in walkDir(dir):
       # `_hastur_joined.nim` is the C-backend runner's own build artifact, left
@@ -1192,7 +1257,7 @@ proc nativetests(overwrite: bool) =
       # the native result depend on whether that run happened, and reported the
       # joined program's arkham gaps against whichever test was added last.
       if x.kind == pcFile and x.path.endsWith(".nim") and
-         not isGeneratedTestFile(x.path):
+         not isGeneratedTestFile(x.path) and slashed(x.path) notin skip:
         files.add x.path
     sort files
     for f in files: nativeTestFile c, f, overwrite
@@ -1554,6 +1619,139 @@ proc nativeToolPrefix(): string =
   (if nativeToolsDebug: "nim c " else: "nim c -d:release ") &
     "--warningAsError:ProveInit:off --warningAsError:Uninit:off "
 
+# ---- the pinned `nativenif` dependency -------------------------------------
+# arkham and nifasm are built from a SIBLING repo, so "which nativenif" is an
+# input to every native build the same way a source file is — and until this
+# pin existed it was whatever each machine happened to have checked out. That
+# is not a hypothetical: a native-suite failure could mean a real gap, a
+# nativenif commit newer than the one the tests were recorded against, or a
+# local branch someone was mid-way through. `src/nativenif.commit` makes it one
+# answer, recorded in this repo and moved deliberately by `hastur update deps`.
+
+const
+  NativenifDir = "../nativenif"
+    ## Sibling checkout arkham + nifasm live in. Their committed `nim.cfg`s
+    ## reach back here through `../../../nimony/src/lib`, so the layout — and
+    ## this repo's directory name — is already load-bearing.
+  NativenifCommitFile = "src/nativenif.commit"
+    ## Under `src/` with the rest of what a build is made of — and so a change to
+    ## it invalidates the CI artifact cache, whose key hashes `src/**`. Read
+    ## relative to the project root, which is where every hastur command runs.
+
+proc pinnedNativenifCommit(): string =
+  ## The pin is read at RUNTIME, not compiled in: a `slurp`ed copy would let the
+  ## file and the binary disagree, so `git checkout <pin>` and `hastur update
+  ## deps` would go on enforcing and reporting whatever commit the binary was
+  ## last built from — silently, and worst on a stale `bin/hastur`, which is the
+  ## exact failure mode this pin exists to end. Missing or empty file means "no
+  ## pin": build whatever is checked out, the escape hatch for bisecting
+  ## nativenif itself.
+  if fileExists(NativenifCommitFile): readFile(NativenifCommitFile).strip
+  else: ""
+
+proc gitIn(dir, args: string): (string, int) =
+  execCmdEx("git -C " & dir.quoteShell & " " & args)
+
+var nativenifChecked = false
+
+proc syncNativenif() =
+  ## Put `../nativenif` on the pinned commit before anything is built from it.
+  ##
+  ## Never at the cost of uncommitted work: a dirty tree is left alone with a
+  ## warning, because the person who dirtied it is precisely the person who
+  ## wants arkham built from THEIR edits. A clean tree gets detached onto the
+  ## pin (the branch that was there is still a `git switch -` away).
+  if nativenifChecked: return
+  nativenifChecked = true
+  let pin = pinnedNativenifCommit()
+  if pin.len == 0: return
+  if not dirExists(NativenifDir):
+    quit "hastur: " & NativenifDir & " not found; clone nim-lang/nativenif " &
+         "next to this repo (it holds arkham + nifasm)"
+  let (headOut, headCode) = gitIn(NativenifDir, "rev-parse HEAD")
+  if headCode != 0:
+    echo "[deps] ", NativenifDir, " is not a git checkout; building it as it is"
+    return
+  let head = headOut.strip
+  if head == pin: return
+
+  let (dirty, dirtyCode) = gitIn(NativenifDir, "status --porcelain --untracked-files=no")
+  if dirtyCode != 0 or dirty.strip.len > 0:
+    echo "[deps] WARNING: ", NativenifDir, " has uncommitted changes — leaving it at ",
+         head
+    echo "[deps] WARNING: arkham/nifasm are built from YOUR tree, not from the ",
+         NativenifCommitFile, " pin (", pin, ")"
+    return
+
+  # A checkout sitting on a BRANCH is someone's working tree, and committing a
+  # fix there is exactly what makes it stop being dirty — so the guard above
+  # would hand it straight to the `git checkout` below and build the arkham that
+  # fix was replacing. Leave it be and say so. CI is the one place that must
+  # enforce the pin regardless: its checkout is on the default branch too, and a
+  # pin deliberately BEHIND that branch is the whole point of pinning.
+  let (branch, branchCode) = gitIn(NativenifDir, "symbolic-ref --quiet --short HEAD")
+  if branchCode == 0 and branch.strip.len > 0 and getEnv("CI").len == 0:
+    echo "[deps] WARNING: ", NativenifDir, " is on branch '", branch.strip, "' at ", head
+    echo "[deps] WARNING: leaving it there; ", NativenifCommitFile, " pins ", pin
+    echo "[deps] to build the pin instead: git -C ", NativenifDir,
+         " checkout --detach ", pin
+    return
+
+  # A checkout that never had the pin — a shallow CI clone of the default
+  # branch, or a tree that has not fetched in a while. Ask for the commit by
+  # name first: github.com serves any SHA reachable from a ref, which is the
+  # cheapest way to get exactly the one object we are after.
+  if gitIn(NativenifDir, "cat-file -e " & pin & "^{commit}")[1] != 0:
+    echo "[deps] fetching ", pin, " into ", NativenifDir
+    if gitIn(NativenifDir, "fetch --no-tags origin " & pin)[1] != 0:
+      # A server that refuses the object by name (git's default for anything
+      # but github.com: `uploadpack.allowReachableSHA1InWant`) still serves the
+      # refs, but on a shallow clone their history stops above the pin — so
+      # deepen, or fetching the branch tips would not bring it either.
+      let shallow = gitIn(NativenifDir, "rev-parse --is-shallow-repository")[0].strip
+      discard gitIn(NativenifDir,
+                    if shallow == "true": "fetch --no-tags --unshallow origin"
+                    else: "fetch --no-tags origin")
+    let (missing, missingCode) = gitIn(NativenifDir, "cat-file -e " & pin & "^{commit}")
+    if missingCode != 0:
+      quit "hastur: " & NativenifCommitFile & " pins " & pin &
+           ", which " & NativenifDir & " cannot fetch:\n" & missing &
+           "\nIs the commit pushed? `hastur update deps` re-pins to the local HEAD."
+
+  echo "[deps] nativenif: ", head, " -> ", pin, " (pinned by ", NativenifCommitFile, ")"
+  let (coOut, coCode) = gitIn(NativenifDir, "checkout --detach --quiet " & pin)
+  if coCode != 0:
+    quit "hastur: cannot check out " & pin & " in " & NativenifDir & ":\n" & coOut
+
+proc updateDepsCmd() =
+  ## `hastur update deps`: re-pin `src/nativenif.commit` to whatever `../nativenif`
+  ## has checked out right now. The one sanctioned way to move the pin, so that
+  ## "the native backend needs a newer arkham" is a reviewable one-line diff
+  ## next to the test results that needed it.
+  if not dirExists(NativenifDir):
+    quit "hastur update deps: " & NativenifDir & " not found"
+  let (headOut, headCode) = gitIn(NativenifDir, "rev-parse HEAD")
+  if headCode != 0:
+    quit "hastur update deps: " & NativenifDir & " is not a git checkout"
+  let head = headOut.strip
+
+  let (dirty, _) = gitIn(NativenifDir, "status --porcelain --untracked-files=no")
+  if dirty.strip.len > 0:
+    echo "[deps] WARNING: ", NativenifDir, " has uncommitted changes; ", head,
+         " does NOT include them"
+  let (remotes, remotesCode) = gitIn(NativenifDir, "branch --remotes --contains " & head)
+  if remotesCode != 0 or remotes.strip.len == 0:
+    echo "[deps] WARNING: ", head, " is on no remote branch — push it, ",
+         "or CI cannot fetch the pin"
+
+  let pin = pinnedNativenifCommit()
+  if head == pin:
+    echo "[deps] ", NativenifCommitFile, " already pins ", head
+    return
+  writeFile(NativenifCommitFile, head & "\n")
+  echo "[deps] ", NativenifCommitFile, ": ",
+       (if pin.len > 0: pin else: "(unpinned)"), " -> ", head
+
 proc validatePassesFlag(): string =
   ## Enable the phase-aware IR validator only when running on CI. GitHub Actions
   ## (and most other CI providers) set `CI=true` in the environment, so we key
@@ -1626,15 +1824,20 @@ proc buildArkham(showProgress = false) =
   ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
   ## sibling-relative `nim.cfg`. We assume the checkout exists (the `dist/`
-  ## auto-clone is a later step). arkham's own `nim.cfg` already sets
-  ## `--outdir:bin`; we pass it explicitly so the result is deterministic
-  ## regardless of the current directory.
-  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/arkham/arkham.nim", showProgress
+  ## auto-clone is a later step) and put it on the `src/nativenif.commit` pin
+  ## first. arkham's own `nim.cfg` already sets `--outdir:bin`; we pass it
+  ## explicitly so the result is deterministic regardless of the current
+  ## directory.
+  syncNativenif()
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
+       "/src/arkham/arkham.nim", showProgress
 
 proc buildNifasm(showProgress = false) =
   ## `nifasm` (asm-NIF -> static, libc-free ELF/Mach-O/PE executable; also the
   ## linker) — sibling repo, same assume-exists arrangement as `buildArkham`.
-  exec nativeToolPrefix() & "--outdir:" & binDir() & " ../nativenif/src/nifasm/nifasm.nim", showProgress
+  syncNativenif()
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
+       "/src/nifasm/nifasm.nim", showProgress
 
 proc buildHexer*(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
@@ -1645,6 +1848,16 @@ proc buildNifmake(showProgress = false) =
   exec nimcPrefix() & "src/nifmake/nifmake.nim", showProgress
   let exe = "nifmake".addFileExt(ExeExt)
   robustMoveFile "src/nifmake/" & exe, binDir() / exe
+
+proc buildNifbench*(showProgress = false) =
+  ## The host-Nim build of `nifbench`, which is the BASELINE column: the point
+  ## of the tool is to compile the same source with `nim c`, `nimony c` and
+  ## `nimony n` and diff the per-phase timings, so this one has to exist for
+  ## the other two to mean anything. Kept out of `all` — it is a measuring
+  ## instrument, not part of the toolchain.
+  exec nimcPrefix() & "src/nifbench/nifbench.nim", showProgress
+  let exe = "nifbench".addFileExt(ExeExt)
+  robustMoveFile "src/nifbench/" & exe, binDir() / exe
 
 proc buildValidator*(showProgress = false) =
   exec nimcPrefix() & "src/validator/validator.nim", showProgress
@@ -1781,20 +1994,38 @@ proc buildNimonyToolchain(showProgress = false) =
   buildNimony(showProgress)
   buildHexer(showProgress)
 
+proc asmNifTarget(asmFile: string): string =
+  ## The target arkham compiled for, read off the `(arch …)` its asm-NIF opens
+  ## with (`x64`, `win_x64`, `arm64`, `linux_arm64`). Taken from the OUTPUT rather
+  ## than re-derived from `hostOS`/`hostCPU` so the golden can never be filed under
+  ## a target the file was not actually generated for.
+  let s = readFile(asmFile)
+  let i = s.find("(arch ")
+  if i < 0: return ""
+  let j = s.find(')', i)
+  if j < 0: return ""
+  result = s[i + len("(arch ") .. j - 1].strip
+
 proc runNativeCodegenTests*(dir: string; overwrite: bool) =
   ## Custom runner for `tests/nativecg`: a golden suite over the C-free native
   ## backend's *emitted machine code*. For each `.nim` it
   ##   1. compiles with `nimony n --opt:speed` (so the shoggoth inliner/optimizer
   ##      that feeds the native path actually runs),
   ##   2. goldens arkham's `<main>.asm.nif` (the typed assembler NIF) against a
-  ##      checked-in `<test>.asm.nif`, and
-  ##   3. runs the linked libc-free ELF, checking `.output` / `.exitcode`.
+  ##      checked-in `<test>.<target>.asm.nif`, and
+  ##   3. runs the linked libc-free executable, checking `.output` / `.exitcode`.
   ##
   ## The asm-NIF is byte-stable for a fixed *relative* test path — module
   ## suffixes are derived from the relative path, and a module's own symbols
   ## carry no suffix — so the golden is portable across checkouts/machines as
   ## long as hastur is invoked from the repo root (which it always is). No
   ## normalization is needed.
+  ##
+  ## It is NOT portable across TARGETS, though — machine code is the point of the
+  ## suite. So the golden is per-target (`tinlinecond.x64.asm.nif`,
+  ## `tinlinecond.win_x64.asm.nif`, …), named for the `(arch …)` arkham actually
+  ## emitted. A target with no checked-in golden yet fails as a missing file;
+  ## `--overwrite` writes it, which is how a new one is added.
   ##
   ## Requires the sibling `../nativenif` checkout (arkham/nifasm), exactly like
   ## the `native` subcommand; the directory is `hastur.mode = skip` so the
@@ -1833,7 +2064,11 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
     if not asmFile.fileExists():
       failure c, file, "arkham asm.nif", "missing: " & asmFile
       continue
-    diffFiles(c, file, file.changeFileExt(".asm.nif"), asmFile, overwrite)
+    let target = asmNifTarget(asmFile)
+    if target.len == 0:
+      failure c, file, "arkham asm.nif with an (arch …)", "no target in: " & asmFile
+      continue
+    diffFiles(c, file, file.changeFileExt(target & ".asm.nif"), asmFile, overwrite)
     # 2) Behavioural check: the linked ELF must run and match .output/.exitcode.
     let exe = generatedExeFile(file)
     if not exe.fileExists():
@@ -1897,24 +2132,52 @@ proc bootCarryTools(): seq[string] =
   result = @BootCarryTools
   if bootNative: result.add BootNativeTools
 
-const NativeBootReady = false
-  ## OFF until nativenif master carries arkham's register-allocator fixes.
-  ## The inter-module inliner honours `.inline` without a size cap, so a
-  ## `.inline` cascade can hand arkham a basic block whose live set exceeds
-  ## what its allocator can place, and stage 1 dies with "no staging register
-  ## available for a spill in proc semBodyCheckBody". That is an arkham bug —
-  ## it must spill, not give up — and it is fixed on nativenif's `araq-oor`
-  ## ("make the transient staging picks total"), not yet on the master CI
-  ## checks out. Flip this back to `true` once it is there; the C-backend boot
-  ## below is the whole self-host gate meanwhile.
+const NativeBootReady = true
+  ## Requires a nativenif checkout whose arkham holds each emit step's demand
+  ## inside the transient-register budget (the `semBodyCheckBody` staging
+  ## exhaustion: binFold's pick-before-premat, emitCondValue2's early result
+  ## hold, and a staging pick blind to a free temp pool). When stage 1 dies
+  ## with "no staging register available", rebuild arkham/nifasm from a
+  ## nativenif master that carries those fixes — or flip this back to `false`
+  ## and the C-backend boot below is the whole self-host gate meanwhile.
 
 proc useNativeBoot(): bool =
   ## linux/amd64 is the platform the native backend is complete on: x86-64
   ## codegen plus the Linux syscall table the libc-free stdlib runs on. Its
   ## tools live in the sibling `../nativenif` checkout and are outside
   ## `build all`, so fall back to the C backend when they're missing.
+  ##
+  ## linux/arm64 is NOT here yet, and the reason is narrow: `boot` compiles every
+  ## stage `-d:release`, which turns shoggoth on, and the AArch64 backend still
+  ## MISCOMPILES the toolchain from shoggoth-optimized Leng — stage 1 builds and
+  ## links, then its nimsem reports "No pragmas found" and its hexer emits NIF
+  ## that shoggoth rejects. Everything below that opt level is green there:
+  ## `hastur native` passes in full, and a hand-driven `nimony n` boot (no
+  ## `-d:release`) reaches a byte-identical stage1 == stage2 fixed point. The
+  ## same boot at `-d:release --opt:none` — release defines, optimizer off — also
+  ## produces a working toolchain, which is what localizes the remaining bug to
+  ## arkham's handling of optimized input rather than to the syscall/ABI layer.
+  ##
+  ## windows/amd64 is BEHIND `HASTUR_NATIVE_BOOT`, not on by default, and the
+  ## distance between those two is a lesson about the harness rather than about
+  ## the backend. arkham's win_x64 target emits a PE that imports what it needs
+  ## per dll, so a native boot there needs no MinGW and no libc — worth having,
+  ## since the C compiler and the process tree around it are what make the
+  ## Windows job the slowest in the matrix (601s of a 1917s run, against 61s for
+  ## the same three stages natively). That 61s was measured under WINE, which is
+  ## as close as this repo's tooling gets to Windows locally, and it is not close
+  ## enough: the same three stages fail on the real thing (`boot
+  ## windows-amd64`, runs 31878520624 and 31879168391 — cause not yet known,
+  ## the PE's own headers are ASLR-correct, with DIR64 fixups where the emitter
+  ## says they belong). Set the variable to boot natively there and find out;
+  ## flip the default once a real Windows runner has been seen green.
   when defined(linux) and defined(amd64):
     if not NativeBootReady: return false
+    for tool in BootNativeTools:
+      if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
+    result = true
+  elif defined(windows) and defined(amd64):
+    if not NativeBootReady or getEnv("HASTUR_NATIVE_BOOT").len == 0: return false
     for tool in BootNativeTools:
       if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
     result = true
@@ -2708,11 +2971,16 @@ proc handleCmdLine =
     walkRoots(["tests", "examples"], forward, overwrite)
 
   of "tiers":
-    buildNimony()
+    # `buildNimonyToolchain`, not `buildNimony`: every module on the tier list is
+    # compiled by driving nimsem and hexer, so rebuilding the driver alone would
+    # check current sources against whichever nimsem/hexer `bin/` was left with.
+    buildNimonyToolchain()
     tierTests()
 
   of "boot":
-    if not skipBuild: buildNimony()
+    # Same reason, one step further: `bin0/` is a COPY of `bin/`, so a stale
+    # nimsem or hexer there is what every later stage is grown from.
+    if not skipBuild: buildNimonyToolchain()
     var bootArgs = ""
     for a in items(args):
       if bootArgs.len > 0: bootArgs.add ' '
@@ -2782,6 +3050,8 @@ proc handleCmdLine =
       buildHexer(showProgress)
     of "nifmake":
       buildNifmake(showProgress)
+    of "nifbench":
+      buildNifbench(showProgress)
     of "nj":
       buildNj(showProgress)
     of "vl":
@@ -2800,9 +3070,25 @@ proc handleCmdLine =
     # Run the curated native-backend regression set through `nimony n`. Build the
     # front end AND the C-free native toolchain (arkham + nifasm + shoggoth live in
     # the sibling `../nativenif`; nifmake drives the `n` pipeline).
-    buildShoggoth()
-    buildArkham()
-    buildNifasm()
+    #
+    # The front end is rebuilt HERE and not left to whatever `bin/` happens to
+    # hold. The shared host-Nim artifact cache is restored through a
+    # `restore-keys:` prefix, so a commit that changes `src/**` misses the exact
+    # key and still gets the PREVIOUS commit's `bin/` handed to it — which is how
+    # the new closure tests of #2292 came to be run against the pre-#2292 hexer
+    # and reported as eight "native gap" failures.
+    #
+    # nimsem/nimony/hexer and not `nifler`: those three share `programs.nim` and
+    # ARE what a native run exercises, while nifler is the tier-0 Nim parser in
+    # front of them — and the most expensive tool in the tree by a distance
+    # (28s cold, more than the three together). `build all` covers it, in this
+    # same job for CI and via `tests/setup.hastur` for a tree walk.
+    if not skipBuild:
+      buildNimonyToolchain()
+      buildNifmake()
+      buildShoggoth()
+      buildArkham()
+      buildNifasm()
     nativetests(overwrite)
   of "lengc":
     buildLengc()
@@ -2849,6 +3135,11 @@ proc handleCmdLine =
       if dirExists(root):
         for f in walkDirRec(root):
           if isGeneratedTestFile(f) and f.endsWith(".nim"): removeFile f
+  of "update":
+    # `update deps` rather than a bare `update`, because the sibling repos are
+    # not the only thing this could come to re-pin.
+    if args.len == 1 and args[0] == "deps": updateDepsCmd()
+    else: writeHelp()
   of "install":
     runInstall(args)
   of "sync":

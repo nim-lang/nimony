@@ -138,7 +138,18 @@ when defined(nimNativeIo):
     # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}
     proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "read".}
-    proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
+    when defined(linux) and defined(arm64) and defined(nimNoLibc):
+      # AArch64's asm-generic syscall table has no `open` — only `openat` (see
+      # `linuxA64Raw` in std/posix, whose `nimNoLibc` gate this mirrors). Same
+      # shuffle glibc's own `open` does; kept local so syncio stays independent
+      # of std/posix.
+      proc sysOpenat(dirfd: cint; path: cstring; flags: cint; mode: cint): cint {.
+        importc: "openat".}
+      proc sysOpen(path: cstring; flags: cint; mode: cint = 0o666'i32): cint {.inline.} =
+        const AT_FDCWD = cint(-100)
+        sysOpenat(AT_FDCWD, path, flags, mode)
+    else:
+      proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
     proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
     proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
 

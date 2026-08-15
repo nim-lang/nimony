@@ -35,18 +35,26 @@
 ## * A flow-sensitive `copyOf: SymId -> SymId` (a branch-aware `Tracker`) records
 ##   that `y` currently holds the same value as `x`. At a value-use of `y` we
 ##   rewrite the token to `x`. The source is resolved to its *root* at bind time,
-##   so chains (`z = y = x`) collapse to `z -> x` directly.
-## * An assignment to a symbol `s` (or a field/through-pointer store whose base is
-##   `s`) invalidates `s` as a copy (its value changed) and every alias `k` with
-##   `copyOf[k] == s` (the source moved). Calls invalidate nothing — see above.
-## * **Dead store elimination** of the now-useless `var y = x` (and of any pure
-##   leaf-initialised local that ends up unused) falls out for free: a local
-##   binding to a side-effect-free leaf is a deletion candidate, and we delete it
-##   iff *every* use of the bound symbol was rewritten away (`substituted == total
-##   uses`). A surviving un-rewritten use — a reassignment LHS, an `addr` operand,
-##   or a read past an invalidation — keeps `substituted < total`, so the decl
-##   stays. The deleted decl is replaced by an empty `.` statement (a no-op in the
-##   statement list).
+##   so chains (`z = y = x`) collapse to `z -> x` directly. Bindings come from
+##   both `var y = x` **and** `y = x` (assignment-shaped copies are what inlining
+##   actually produces).
+## * A parallel `litOf` tracker snapshots leaf literals (`y = 5`, `y = (true)`).
+##   A snapshot is a value, not an alias: it survives a later write to the
+##   symbol that happened to hold those bits at bind time (`var x = 5; var y = x;
+##   x = 6; use y` → `use 5`).
+## * An assignment to a local's **storage** invalidates that local as a copy
+##   (its value changed) and every alias `k` with `copyOf[k] == s`. A
+##   through-pointer store (`(*p).f = v`) writes the pointee, not `p` — `p` is
+##   only read, so copies of `p` stay valid. Calls invalidate nothing — see above.
+## * On an assignment LHS, the storage spine is not substituted (`&y` ≠ `&x`
+##   even when `y == x`), but a `deref`/`pat` breaks that spine: `(*p2).f = v`
+##   with `p2 = p` rewrites to `(*p).f = v`.
+## * **Dead store elimination** of the now-useless `var y = x` / `y = x` (and of
+##   any pure leaf-initialised local that ends up unused) falls out for free: a
+##   local binding to a side-effect-free leaf is a deletion candidate, and we
+##   delete it iff every *read* was rewritten away (`subst + pureWrites == uses`).
+##   A surviving un-rewritten use — an impure reassignment, an `addr` operand,
+##   or a read past an invalidation — keeps the decl. Deleted stmts become `.`.
 
 import std / [tables, sets, hashes, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
@@ -87,18 +95,56 @@ proc addrRootOf(c: Cursor): SymId =
 const LeafKinds = {Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit}
   ## Side-effect-free initializers a dead local binding may be deleted with.
 
+proc isLeafLit(n: Cursor): bool {.inline.} =
+  ## A side-effect-free literal we can snapshot: atoms and `(true)`/`(false)`.
+  ## `(suf 7 "i64")` is how hexer writes a typed integer literal after inlining;
+  ## treating it as a non-leaf left `var size = 7i64; memcpy(..., size)` as a
+  ## runtime memcpy of a register — the 7-byte string-prefix sync never unrolled.
+  ## Not `(nil)`: substituting `nil` into a pointer use like `(deref p)` /
+  ## `(dot (deref p) f)` drops p's pointee type, and arkham then sees a field
+  ## access on `(void)`. Not a `Symbol` — that is a copy source.
+  case n.kind
+  of IntLit, UIntLit, FloatLit, CharLit, StrLit: true
+  of TagLit:
+    if n.exprKind in {TrueC, FalseC}: true
+    elif n.exprKind == SufC:
+      var t = n; inc t
+      isLeafLit(t)
+    else: false
+  else: false
+
+proc writtenRoot(c: Cursor): SymId =
+  ## The local whose STORAGE this lvalue writes. A through-pointer store
+  ## (`(*p).f = v`, `p[i] = v`) writes the pointee, not `p` — `p` is only
+  ## read, so copies of `p` stay valid. Mirrors `addrRootOf`.
+  var n = c
+  while true:
+    case n.kind
+    of Symbol: return symId(n)
+    of TagLit:
+      case n.exprKind
+      of DerefC, PatC: return SymId(0)     # through-pointer: the pointee, not the var
+      of DotC, AtC: inc n                   # object field / array index: base is 1st child
+      of ConvC, CastC:
+        inc n; skip n                       # `(conv/cast Type operand)` — skip the type
+      else: return rootOf(n)                # unmodelled spine: stay conservative
+    else: return SymId(0)
+
 # ---- context --------------------------------------------------------------
 
 type
   Context = object
     orig: ptr TokenBuf
     copyOf: Tracker[SymId, SymId]      ## y -> x: y currently aliases x
+    litOf: Tracker[SymId, int]         ## y -> (litPos+1): y currently holds that leaf
     addrTaken: HashSet[SymId]          ## syms whose address is taken anywhere
     localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
     useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
     substCount: Table[SymId, int]      ## uses we rewrote away per sym
+    writeSites: Table[SymId, seq[int]] ## pure (leaf/symbol RHS) write positions
     names: Table[SymId, string]        ## sym -> its textual name (for synthesis)
     delCandidates: Table[SymId, int]   ## deletable local binding -> its decl pos
+    scopeDecls: seq[seq[SymId]]        ## locals declared at each open `(scope)`
     patchset: Patchset
     synth: seq[TokenBuf]
     dotBuf: TokenBuf                   ## a single `.` token: replaces a dead decl
@@ -106,12 +152,15 @@ type
 proc createContext(orig: ptr TokenBuf): Context =
   result = Context(orig: orig,
           copyOf: initTracker[SymId, SymId](),
+          litOf: initTracker[SymId, int](),
           addrTaken: initHashSet[SymId](),
           localDefs: initHashSet[SymId](),
           useCount: initTable[SymId, int](),
           substCount: initTable[SymId, int](),
+          writeSites: initTable[SymId, seq[int]](),
           names: initTable[SymId, string](),
           delCandidates: initTable[SymId, int](),
+          scopeDecls: @[@[]],
           patchset: initPatchset(orig),
           synth: @[],
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))
@@ -133,26 +182,64 @@ proc resolve(c: Context; s: SymId): SymId =
 # ---- invalidation ---------------------------------------------------------
 
 proc invalidate(c: var Context; s: SymId) =
-  ## `s` was written: it is no longer a copy of anything, and every alias whose
-  ## source is `s` is now stale.
+  ## `s` was written: it is no longer a copy of anything and no longer holds
+  ## a snapshotted literal. Every alias whose source is `s` is now stale as a
+  ## *symbol* copy; a literal snapshot on the alias is independent and stays.
   if s == SymId(0): return
   c.copyOf[s] = SymId(0)
+  c.litOf[s] = 0
   var toClear: seq[SymId] = @[]
   for k, v in c.copyOf.pairs:
     if v == s: toClear.add k
   for k in toClear:
     c.copyOf[k] = SymId(0)
 
+proc isEligible(c: Context; s: SymId): bool {.inline.} =
+  s != SymId(0) and s in c.localDefs and s notin c.addrTaken
+
+proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
+  ## Record that `dest` now holds `src`'s value. A leaf literal is snapshotted
+  ## (survives a later write to a symbol that happened to hold the same bits);
+  ## a symbol copy lasts until either side is assigned.
+  if not c.isEligible(dest): return
+  if isLeafLit(src):
+    c.litOf[dest] = cursorToPosition(c.orig[], src) + 1
+    c.copyOf[dest] = SymId(0)
+  elif src.kind == Symbol:
+    let root = resolve(c, symId(src))
+    let lp = c.litOf[root]
+    if lp != 0:
+      # Snapshot the literal; independent of the source from here on.
+      c.litOf[dest] = lp
+      c.copyOf[dest] = SymId(0)
+    elif c.isEligible(root) and root != dest:
+      c.copyOf[dest] = root
+      c.litOf[dest] = 0
+    else:
+      c.copyOf[dest] = SymId(0)
+      c.litOf[dest] = 0
+  else:
+    c.copyOf[dest] = SymId(0)
+    c.litOf[dest] = 0
+
 # ---- branch-state forwarding (same surface as cse.nim) --------------------
 
-proc openBranches(c: var Context) = c.copyOf.openBranches()
-proc openBranch(c: var Context) = c.copyOf.openBranch()
-proc openFinalBranch(c: var Context) = c.copyOf.openFinalBranch()
-proc closeBranch(c: var Context) = c.copyOf.closeBranch()
-proc closeBranches(c: var Context) = c.copyOf.closeBranches()
-proc gotoLabel(c: var Context; L: LabelId) = c.copyOf.gotoLabel L
-proc landLabel(c: var Context; L: LabelId) = c.copyOf.landLabel L
-proc clearAll(c: var Context) = c.copyOf.clearAll()
+proc openBranches(c: var Context) =
+  c.copyOf.openBranches(); c.litOf.openBranches()
+proc openBranch(c: var Context) =
+  c.copyOf.openBranch(); c.litOf.openBranch()
+proc openFinalBranch(c: var Context) =
+  c.copyOf.openFinalBranch(); c.litOf.openFinalBranch()
+proc closeBranch(c: var Context) =
+  c.copyOf.closeBranch(); c.litOf.closeBranch()
+proc closeBranches(c: var Context) =
+  c.copyOf.closeBranches(); c.litOf.closeBranches()
+proc gotoLabel(c: var Context; L: LabelId) =
+  c.copyOf.gotoLabel L; c.litOf.gotoLabel L
+proc landLabel(c: var Context; L: LabelId) =
+  c.copyOf.landLabel L; c.litOf.landLabel L
+proc clearAll(c: var Context) =
+  c.copyOf.clearAll(); c.litOf.clearAll()
 
 # ---- substitution synthesis -----------------------------------------------
 
@@ -166,6 +253,37 @@ proc substituteSym(c: var Context; n: Cursor; root: SymId) =
   c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
   c.substCount.mgetOrPut(symId(n), 0) += 1
 
+proc substituteLit(c: var Context; n: Cursor; litPos: int) =
+  ## Rewrite the `Symbol` token at `n` to the snapshotted leaf at `litPos`.
+  let pos = cursorToPosition(c.orig[], n)
+  c.patchset.addSubst(pos, cursorAt(c.orig[], litPos))
+  c.substCount.mgetOrPut(symId(n), 0) += 1
+
+proc trySubstitute(c: var Context; n: Cursor) =
+  ## Prefer a snapshotted literal, then a symbol copy.
+  let s = symId(n)
+  let root = resolve(c, s)
+  var lp = c.litOf[s]
+  if lp == 0: lp = c.litOf[root]
+  if lp != 0:
+    substituteLit(c, n, lp - 1)
+  elif root != s:
+    substituteSym(c, n, root)
+
+proc enterScope(c: var Context) {.inline.} =
+  c.scopeDecls.add @[]
+
+proc leaveScope(c: var Context) =
+  ## A `(scope)` is a real Leng lifetime. Substituting an inner local into a
+  ## use after that scope closes extends the inner name past its kill — arkham
+  ## then reuses the register. Drop every copy sourced from a local declared
+  ## here; the outer destination keeps its own storage and later uses stay
+  ## as that outer name. Literal snapshots are values, not names, and survive
+  ## (`invalidate` does not clear an alias's `litOf`).
+  for s in c.scopeDecls[^1]:
+    invalidate(c, s)
+  c.scopeDecls.setLen c.scopeDecls.len - 1
+
 # ---- main traversal -------------------------------------------------------
 
 proc tr(c: var Context; n: var Cursor)   # forward
@@ -175,10 +293,7 @@ proc trAddrOperand(c: var Context; n: var Cursor)   # forward
 proc trExpr(c: var Context; n: var Cursor) =
   case n.kind
   of Symbol:
-    let s = symId(n)
-    let root = resolve(c, s)
-    if root != s:
-      substituteSym(c, n, root)
+    trySubstitute(c, n)
     inc n
   of TagLit:
     case n.exprKind
@@ -259,28 +374,28 @@ proc trVar(c: var Context; n: var Cursor) =
   var nameSym = SymId(0)
   n.into:
     if n.hasMore:
-      if n.kind == SymbolDef: nameSym = symId(n)
+      if n.kind == SymbolDef:
+        nameSym = symId(n)
+        if isLocal: c.scopeDecls[^1].add nameSym
       skip n                             # name
     if n.hasMore: skip n                 # pragmas
     if n.hasMore: skip n                 # type
     if n.hasMore:
       let initStart = n
       let initKind = initStart.kind
-      let initSym = if initKind == Symbol: symId(initStart) else: SymId(0)
       trExpr(c, n)                       # propagate inside the initializer
       if isLocal and nameSym != SymId(0) and nameSym notin c.addrTaken:
-        # Record the copy relation for a plain local-symbol initializer.
-        if initSym != SymId(0) and initSym in c.localDefs and
-           initSym notin c.addrTaken:
-          c.copyOf[nameSym] = resolve(c, initSym)
-        # Deletable if its initializer is a side-effect-free leaf: dead once all
-        # its uses are rewritten away (copy) or it was never used (pure store).
-        if initKind in LeafKinds:
+        bindCopy(c, nameSym, initStart)
+        # Deletable if its initializer is a side-effect-free leaf or empty:
+        # dead once all its reads are rewritten away (copy) or it was never
+        # used (pure store).
+        if initKind in LeafKinds or initKind == DotToken or isLeafLit(initStart):
           c.delCandidates[nameSym] = defPos
     while n.hasMore: skip n
 
 proc trAsgn(c: var Context; n: var Cursor) =
   let isStore = n.stmtKind == StoreS
+  let asgnPos = cursorToPosition(c.orig[], n)
   var first, second = default(Cursor)
   var haveFirst, haveSecond = false
   n.into:
@@ -292,16 +407,23 @@ proc trAsgn(c: var Context; n: var Cursor) =
   # `asgn` is `(asgn dest src)`; `store` is `(store src dest)` (reversed).
   let lhs = if isStore: second else: first
   let rhs = if isStore: first else: second
-  if haveSecond:
+  let haveLhs = if isStore: haveSecond else: haveFirst
+  let haveRhs = if isStore: haveFirst else: haveSecond
+  if haveRhs:
     var r = rhs
     trExpr(c, r)                         # propagate inside the value
-  # The write target's base symbol changed value — invalidate it (and its
-  # aliases). We deliberately do NOT substitute inside the LHS: its base names a
-  # storage location, and aliasing two locals' *values* does not alias their
-  # storage.
-  let haveLhs = if isStore: haveSecond else: haveFirst
   if haveLhs:
-    invalidate(c, rootOf(lhs))
+    var l = lhs
+    # Storage spine is not substituted (`y = …` still writes `y`); a deref
+    # breaks the spine, so `(*p2).f = v` with `p2 = p` rewrites `p2` → `p`.
+    trAddrOperand(c, l)
+    invalidate(c, writtenRoot(lhs))
+    if lhs.kind == Symbol:
+      let dest = symId(lhs)
+      if haveRhs and (isLeafLit(rhs) or rhs.kind == Symbol):
+        c.writeSites.mgetOrPut(dest, @[]).add asgnPos
+      if haveRhs:
+        bindCopy(c, dest, rhs)
 
 proc trCallStmt(c: var Context; n: var Cursor) =
   n.into:
@@ -354,13 +476,14 @@ proc trCase(c: var Context; n: var Cursor) =
     closeBranches c
 
 proc collectWrites(start: Cursor; writes: var HashSet[SymId]) =
-  ## Base symbol of every `asgn`/`store` target in the subtree at `start`.
+  ## Storage root of every `asgn`/`store` target in the subtree at `start`.
+  ## Through-pointer stores do not count as writes to the pointer.
   if not start.hasMore or start.kind != TagLit: return
   let sk = start.stmtKind
   if sk in {AsgnS, StoreS}:
     var lhs = child0(start)
     if sk == StoreS: skip lhs            # dest is the 2nd child
-    let root = rootOf(lhs)
+    let root = writtenRoot(lhs)
     if root != SymId(0): writes.incl root
   var n = start
   n.loopInto:
@@ -412,7 +535,17 @@ proc trLab(c: var Context; n: var Cursor) =
   skip n
 
 proc trBreakOrRet(c: var Context; n: var Cursor) =
-  skip n
+  ## `(ret x)` / `(raise x)` carry a VALUE, and it is read like any other — an
+  ## inlined body's result temp is very often returned straight back, so skipping
+  ## the operand left the pass blind to exactly the shape inlining produces.
+  ## `(break L)` carries a LABEL, which must never be substituted.
+  if n.stmtKind in {RetS, RaiseS}:
+    n.into:
+      if n.hasMore and n.kind != DotToken: trExpr(c, n)
+      while n.hasMore: skip n
+  else:
+    skip n
+  # Nothing after the transfer is reachable from here; the state is dead.
   clearAll c
 
 proc tr(c: var Context; n: var Cursor) =
@@ -429,7 +562,12 @@ proc tr(c: var Context; n: var Cursor) =
     of JmpS:                       trJmp(c, n)
     of LabS:                       trLab(c, n)
     of BreakS, RetS, RaiseS:       trBreakOrRet(c, n)
-    of StmtsS, ScopeS:
+    of ScopeS:
+      enterScope c
+      n.loopInto:
+        tr(c, n)
+      leaveScope c
+    of StmtsS:
       n.loopInto:
         tr(c, n)
     else:
@@ -483,8 +621,10 @@ proc registerParams(c: var Context; params: Cursor) =
     if p.kind == TagLit and p.substructureKind == ParamU:
       let nameCur = child0(p)
       if nameCur.kind == SymbolDef:
-        c.localDefs.incl symId(nameCur)
-        c.names[symId(nameCur)] = symName(nameCur)
+        let s = symId(nameCur)
+        c.localDefs.incl s
+        c.names[s] = symName(nameCur)
+        c.scopeDecls[0].add s
     skip p
 
 proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor)) =
@@ -498,11 +638,17 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor)) =
     preScan(ctx, pn)
   var n = beginRead(buf)
   tr(ctx, n)
-  # Delete every candidate decl all of whose uses were rewritten away (or which
-  # had no uses at all). A surviving un-rewritten use keeps subst < total.
+  # Delete every candidate decl whose every read was rewritten away (or which
+  # had no reads) and which has no impure writes left. Pure `y = x` / `y = 5`
+  # assignments to a now-dead local go with it.
   for s, defPos in ctx.delCandidates:
-    if ctx.substCount.getOrDefault(s) == ctx.useCount.getOrDefault(s):
+    let uses = ctx.useCount.getOrDefault(s)
+    let subst = ctx.substCount.getOrDefault(s)
+    let sites = ctx.writeSites.getOrDefault(s)
+    if subst + sites.len == uses:
       ctx.patchset.addSubst(defPos, cursorAt(ctx.dotBuf, 0))
+      for pos in sites:
+        ctx.patchset.addSubst(pos, cursorAt(ctx.dotBuf, 0))
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
@@ -612,5 +758,94 @@ when isMainModule:
       "(stmts (var :x.0.M . . (call f.0.M)) (var :y.0.M . . x.0.M) " &
       "(while c.0.M (stmts (asgn x.0.M (call g.0.M)))) " &
       "(call use.0.M y.0.M))")
+
+  block asgn_shaped_copy:
+    # Inlining leaves `var y; y = x; use y`, not `var y = x`.
+    chk(
+      "(stmts (var :x.0.M . . (call f.0.M)) (var :y.0.M . . .) " &
+      "(asgn y.0.M x.0.M) (call use.0.M y.0.M))",
+      "(stmts (var :x.0.M . . (call f.0.M)) . . (call use.0.M x.0.M))")
+
+  block literal_copy:
+    # var y = 5; use y  →  use 5  (decl deleted)
+    chk(
+      "(stmts (var :y.0.M . . 5) (call use.0.M y.0.M))",
+      "(stmts . (call use.0.M 5))")
+
+  block suffixed_int_literal_copy:
+    # hexer's typed `7i64` is `(suf 7 "i64")`, not a bare IntLit. Inlining
+    # `copyMem(..., AlwaysAvail)` produces `var size = (suf 7 "i64")` and the
+    # memcpy size must become the suf node so arkham can unroll.
+    chk(
+      "(stmts (var :y.0.M . . (suf 7 \"i64\")) (call memcpy.0.M d.0.M s.0.M y.0.M))",
+      "(stmts . (call memcpy.0.M d.0.M s.0.M (suf 7 \"i64\")))")
+
+  block literal_snapshot_survives_source_write:
+    # y captures 5 at bind time; a later write to x must not poison y.
+    # x itself then has no remaining reads, so its decl and the dead `x = 6`
+    # store are deleted too.
+    chk(
+      "(stmts (var :x.0.M . . 5) (var :y.0.M . . x.0.M) " &
+      "(asgn x.0.M 6) (call use.0.M y.0.M))",
+      "(stmts . . . (call use.0.M 5))")
+
+  block through_ptr_store_keeps_pointer_copy:
+    # `(*p).f = v` writes the pointee, not p. A copy of p stays valid, and
+    # the LHS pointer is itself a value use — substitute it.
+    chk(
+      "(stmts (var :p.0.M . . (call f.0.M)) (var :q.0.M . . p.0.M) " &
+      "(asgn (dot (deref q.0.M) fld.0.M) v.0.M) " &
+      "(call use.0.M q.0.M))",
+      "(stmts (var :p.0.M . . (call f.0.M)) . " &
+      "(asgn (dot (deref p.0.M) fld.0.M) v.0.M) " &
+      "(call use.0.M p.0.M))")
+
+  block loop_through_ptr_store_keeps_pointer_copy:
+    # Storing through p inside a loop is not a write to p.
+    chk(
+      "(stmts (var :p.0.M . . (call f.0.M)) (var :q.0.M . . p.0.M) " &
+      "(while c.0.M (stmts (asgn (deref q.0.M) v.0.M))) " &
+      "(call use.0.M q.0.M))",
+      "(stmts (var :p.0.M . . (call f.0.M)) . " &
+      "(while c.0.M (stmts (asgn (deref p.0.M) v.0.M))) " &
+      "(call use.0.M p.0.M))")
+
+  block scope_does_not_leak_inner_name:
+    # Outer `y = inner x` is a valid copy INSIDE the scope, but substituting
+    # the inner name into a use after the `(scope)` closes would outlive x's
+    # lifetime (arkham then reuses the register). Keep the outer name.
+    chk(
+      "(stmts (var :y.0.M . . .) " &
+      "(scope (stmts (var :x.0.M . . (call f.0.M)) " &
+      "(asgn y.0.M x.0.M) (call inner.0.M y.0.M))) " &
+      "(call outer.0.M y.0.M))",
+      "(stmts (var :y.0.M . . .) " &
+      "(scope (stmts (var :x.0.M . . (call f.0.M)) " &
+      "(asgn y.0.M x.0.M) (call inner.0.M x.0.M))) " &
+      "(call outer.0.M y.0.M))")
+
+  block inlined_callee_with_early_returns:
+    # THE miscompile the literal snapshots were disabled for. An inlined callee
+    # with early `return`s lowers to `… (jmp ret) … (lab ret) …` *inside* one
+    # branch; the `lab` revives that branch. `(asgn r x)` after it is a branch
+    # write like any other and must not survive the join with the else arm's
+    # `(asgn r (false))` — substituting `(false)` into the following `if` was
+    # `multiReplace` silently replacing nothing.
+    assertUnchanged(
+      "(stmts (var :r.0.M . . .) (var :v.0.M . . (call f.0.M)) " &
+      "(if (elif c.0.M (stmts " &
+      "(jmp ret.0.M) (lab :ret.0.M) (asgn r.0.M v.0.M))) " &
+      "(else (stmts (asgn r.0.M (false))))) " &
+      "(if (elif r.0.M (call use.0.M))))")
+
+  block jump_out_of_branch_still_isolated:
+    # Same machinery, but the branch really leaves: the `lab` is *after* the
+    # `if`, so the else arm's `(false)` still may not escape the join.
+    assertUnchanged(
+      "(stmts (var :r.0.M . . .) " &
+      "(if (elif c.0.M (stmts (asgn r.0.M (true)) (jmp ret.0.M))) " &
+      "(else (stmts (asgn r.0.M (false))))) " &
+      "(lab :ret.0.M) " &
+      "(if (elif r.0.M (call use.0.M))))")
 
   echo "copyprop.nim: all self-tests passed"

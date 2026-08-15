@@ -23,6 +23,16 @@ type
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
+proc takeUnexpectedChild(dest: var TokenBuf; n: var Cursor) =
+  ## A child of an `if`/`case` that is not an `elif`/`of`/`else`. That is not
+  ## hypothetical: `sem` appends its diagnostics as extra children of the very
+  ## node they are about — `checkExhaustiveness` puts `(err "not all cases are
+  ## covered")` after the last `of` — and this pass still runs over the erroneous
+  ## tree. Skipping the rest with a `break` left those children unconsumed, so
+  ## `copyInto`'s balance assertion fired and the compiler died on an assertion
+  ## instead of printing the diagnostic. Copy it through and keep walking.
+  dest.takeTree n
+
 proc wrapDeferScope(dest: var TokenBuf; beforeBody: int;
                     defers: var seq[TokenBuf]; info: NifLineInfo) =
   ## Collect-then-wrap: nifcore's sealed model can't insert unbalanced opens,
@@ -119,7 +129,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
             copyInto dest, n: # else
               trBlock c, dest, n
           else:
-            break
+            takeUnexpectedChild dest, n
     of CaseS:
       copyInto dest, n: # case
         trStmt c, dest, n # subject
@@ -137,7 +147,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
             copyInto dest, n: # else
               trBlock c, dest, n
           else:
-            break
+            takeUnexpectedChild dest, n
     of ForS:
       copyInto dest, n: # for
         trStmt c, dest, n # iterator

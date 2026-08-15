@@ -49,6 +49,13 @@ when defined(nimony):
   # `ref` fields/returns are nilable here (e.g. `pool`/`tags` return nil for
   # an ownerless cursor); opt out of Nimony's strict not-nil analysis.
   {.feature: "lenientnils".}
+else:
+  # Dual-compiled: nimony builds this for the compiler, host Nim for `nifler`.
+  # `alwaysInline` is a nimony pragma; give host Nim the nearest thing it has.
+  {.pragma: alwaysInline, inline.}
+  # `assertionsEnabled` comes from nimony's `std/assertions`; host Nim spells the
+  # same question `compileOption`. (`raiseAssert` it already has, in `system`.)
+  const assertionsEnabled = compileOption("assertions")
 
 import std / [assertions, hashes]
 import bitabs, lineinfos
@@ -131,9 +138,38 @@ template toX(k: NifKind; operand: uint32): uint32 =
 
 proc dotToken*(): NifToken {.inline.} = NifToken(uint32(DotToken))
 
+# ── assertion failure helpers ────────────────────────────────────────────
+#
+# An `assert` whose message is COMPUTED (`"… " & $n.kind`) puts the string
+# building in the proc's body. The build is cold — `assert` only runs it on
+# failure — but its mere presence makes the proc a NON-LEAF, and arkham then
+# homes locals in callee-saved registers and pushes them on every call. Measured:
+# `tagLitToken`, a shift and an or, made two calls and pushed all six
+# callee-saved registers for 35 instructions per call.
+#
+# Hoisting the message into a `{.noinline, noreturn.}` proc fixes it without
+# losing a single diagnostic: arkham does not treat a `noreturn` callee as a call
+# point (see `analyser.noReturnCallees`), so the caller stays a leaf. The `when
+# assertionsEnabled` keeps `-d:danger` / `-d:noAssertions` behaviour identical to
+# the `assert` it replaces.
+
+proc failKind(what: string; k: NifKind) {.noinline, noreturn.} =
+  raiseAssert(what & $k)
+
+proc failVal(what: string; v: uint32; tail: string) {.noinline, noreturn.} =
+  raiseAssert(what & $v & tail)
+
+template checkKind(cond: bool; what: string; k: NifKind) =
+  when assertionsEnabled:
+    if not cond: failKind(what, k)
+
+template checkVal(cond: bool; what: string; v: uint32; tail: string) =
+  when assertionsEnabled:
+    if not cond: failVal(what, v, tail)
+
 proc tagLitToken*(t: TagId; jump: uint32 = 0): NifToken {.inline.} =
   let tagBits = uint32(t) and TagMask
-  assert uint32(t) == tagBits, "tag id " & $uint32(t) & " exceeds 9 bits"
+  checkVal uint32(t) == tagBits, "tag id ", uint32(t), " exceeds 9 bits"
   assert jump <= InlineJumpCap, "use ExtendedSuffix for jump > InlineJumpCap"
   NifToken(uint32(TagLit) or (tagBits shl TagShift) or (jump shl JumpShift))
 
@@ -246,23 +282,23 @@ proc encodeLineInfoWide(file: FileId; line, col: int32): uint64 {.inline.} =
 # ── TagLit field accessors (raw — don't consult the suffix) ──────────────
 
 proc rawJump(n: NifToken): uint32 {.inline.} =
-  assert n.kind == TagLit, $n.kind
+  checkKind n.kind == TagLit, "rawJump on ", n.kind
   uint32(n) shr JumpShift
 
 proc rawTag(n: NifToken): TagId {.inline.} =
-  assert n.kind == TagLit, $n.kind
+  checkKind n.kind == TagLit, "rawTag on ", n.kind
   TagId((uint32(n) shr TagShift) and TagMask)
 
 proc setJump*(n: var NifToken; j: uint32) {.inline.} =
-  assert n.kind == TagLit, $n.kind
-  assert j <= InlineJumpCap, "jump " & $j & " exceeds 19 bits"
+  checkKind n.kind == TagLit, "setJump on ", n.kind
+  checkVal j <= InlineJumpCap, "jump ", j, " exceeds 19 bits"
   let preserved = uint32(n) and ((1'u32 shl JumpShift) - 1'u32)  # kind+tag
   n = NifToken(preserved or (j shl JumpShift))
 
 proc setTag*(n: var NifToken; t: TagId) {.inline.} =
-  assert n.kind == TagLit, $n.kind
+  checkKind n.kind == TagLit, "setTag on ", n.kind
   let tagBits = uint32(t) and TagMask
-  assert uint32(t) == tagBits, "tag id " & $uint32(t) & " exceeds 9 bits"
+  checkVal uint32(t) == tagBits, "tag id ", uint32(t), " exceeds 9 bits"
   n = NifToken((uint32(n) and not (KindMask or (TagMask shl TagShift))) or
                uint32(TagLit) or (tagBits shl TagShift))
 
@@ -357,7 +393,13 @@ type
     savedRem: int
     bodyLen: int
 
-template decRcAndFree(owner: CursorOwner) =
+proc decRcAndFree(owner: CursorOwner) =
+  ## A proc, NOT a template and deliberately NOT `.inline`: this is the cold
+  ## free path behind every `=destroy`/`=dup` hook. As a template it was
+  ## expanded into the hooks' bodies, so the (correctly) `.inline` hooks
+  ## dragged the whole ORC free machinery into every splice site — the single
+  ## largest source of backend IR blowup. As an out-of-line proc the hooks
+  ## splice as the few tokens they read as: a nil test and a call.
   dec owner.rc
   if owner.rc == 0:
     if owner.data != nil: dealloc(owner.data)
@@ -424,8 +466,22 @@ proc `=dup`*(src: Cursor): Cursor {.nodestroy, inline.} =
 
 # ── Cursor primitives ────────────────────────────────────────────────────
 
+const nifcoreChecks* = defined(nifcoreChecks)
+  ## Internal cursor invariants (`load`, `kind`) are checked only when this is
+  ## explicitly requested, NOT under plain `-d:release`.
+  ##
+  ## `load` is the single most executed routine in the whole toolchain — every
+  ## `kind`, `tokenWidth`, `combinedPayload` and literal decode bottoms out in
+  ## it. Its two-condition assert was more than the check: it made `load`'s NIFC
+  ## body 131 tokens, over the inliner's 100-token bound, so `load` AND its
+  ## callers stayed real calls — 28 instructions for `kind`, whose body is two.
+  ## The invariant it guards (a cursor is non-nil and has tokens left) is an
+  ## internal one: a violation is a nifcore bug, and every walk re-establishes it
+  ## structurally. Build with `-d:nifcoreChecks` to get it back.
+
 proc load*(c: Cursor): NifToken {.inline.} =
-  assert c.p != nil and c.rem > 0
+  when nifcoreChecks:
+    assert c.p != nil and c.rem > 0
   c.p[]
 
 template peekAhead(c: Cursor; offset: int): NifToken =
@@ -449,7 +505,7 @@ proc kind*(c: Cursor): NifKind {.inline.} =
   ## sits *after* it and is only consulted when extended bits are needed.
   c.load.kind
 
-proc tokenWidth*(c: Cursor): int {.inline.} =
+proc tokenWidth*(c: Cursor): int {.alwaysInline.} =
   ## Tokens occupied by the head of the current value — the kinded
   ## token plus any consecutive `ExtendedSuffix` tokens chained behind
   ## it. NOT including a TagLit's body.
@@ -457,22 +513,87 @@ proc tokenWidth*(c: Cursor): int {.inline.} =
   ## Chains are unbounded in principle; in practice the writers in
   ## nifcore emit at most 2 suffixes (enough to cover int64/float64 /
   ## 47-bit jumps / 55-bit pool ids). The hot path — no suffix at all
-  ## — is one peek + one branch, same as the prior single-suffix code.
+  ## — is one peek + one branch.
+  ##
+  ## Written as NESTED `if`s ending in `break`s rather than a `while` over a
+  ## conjunction, and deliberately WITHOUT a `noinline` slow-path helper.
+  ##
+  ## Do NOT give this one the hot/cold treatment `combinedPayload` gets, even
+  ## though the two look alike. Measured on nifbench: splitting `combinedPayload`
+  ## is −0.68 % instructions, splitting THIS is **+6.5 M (a loss)**, and doing
+  ## both is only −0.46 % — the loss here eats a third of the win there. The hot
+  ## path returns a *constant*, so the call it saves is already the cheapest kind
+  ## while the wrapper still costs a branch at all 10 M call sites. Reasons:
+  ##  * a conjunction whose second operand contains a call cannot be handed to
+  ##    the backend as branches, so it materialises a bool in an if/else
+  ##    diamond — 9 x86 instructions and ~90 NIFC tokens for two compares;
+  ##  * factoring the chain walk into a helper made this routine a NON-LEAF,
+  ##    and arkham then homes its locals in callee-saved registers and pushes
+  ##    them in the prologue on EVERY call, including the overwhelmingly common
+  ##    no-suffix path. That cost more than the loop it removed (`parse` +8%).
+  ##
+  ## `{.alwaysInline.}` is load-bearing for the native backend. Hexer's
+  ## inliner ignores `.inline` (it only auto-splices bodies ≤ 100 tokens, and
+  ## this one is larger once `peekAhead` expands) while GCC `-O3` inlines the
+  ## `static inline` C anyway. Without the force-splice, `skip`/`inc` call
+  ## this and copy the 24-byte Cursor onto the stack for the by-value
+  ## argument — the dominant arkham-vs-GCC gap on nifbench's walk/parse.
+  ##
+  ## Measured, not assumed: at 262 asm-NIF tokens this sits
+  ## above `InlineTinyBound`, so the size heuristic never took it, and it is the
+  ## one shape that pays — scalar in, scalar out, few live values, so the callee's
+  ## push/pop and call/ret vanish and the caller adds no spill traffic. Measured
+  ## on nimsem (128-invocation `check`, `-d:danger`): 55.320 G → 55.035 G Ir,
+  ## **−0.51 %**, for +4 KB of image.
+  ##
+  ## The two neighbours that looked like the same shape on nifbench do NOT
+  ## survive this measurement — do not annotate them: `inc` on top of this one is
+  ## −0.36 % (i.e. it gives back a third of the win, while nifbench said it added
+  ## to it), and `rawLineInfo` is **+0.22 %, a loss** — it returns an aggregate
+  ## and holds ~20 live values, so the push/pop it removes comes straight back as
+  ## frame traffic in every caller.
   result = 1
-  while c.rem > result and peekAhead(c, result).kind >= ExtendedSuffix:
-    inc result
+  if c.rem > 1:
+    if peekAhead(c, 1).kind >= ExtendedSuffix:
+      result = 2
+      while c.rem > result:
+        if peekAhead(c, result).kind < ExtendedSuffix: break
+        inc result
 
-proc combinedPayload*(c: Cursor): uint64 {.inline.} =
-  ## Combine the kinded token's 28-bit payload with any chained
-  ## ExtendedSuffix tokens. Each suffix supplies the next 28 high bits.
+proc combinedPayloadSlow(c: Cursor): uint64 {.noinline.} =
+  ## The suffix chain walk — see `tokenWidthSlow` for why it is `.noinline`.
   result = uint64(c.load.uoperand)
   var i = 1
   var shift = PayloadBits
-  while c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift < 64'u32:
+  while true:
     result = result or (uint64(peekAhead(c, i).uoperand) shl shift)
     inc i
     shift += PayloadBits
-  assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix and shift >= 64'u32), "too many ExtendedSuffix tokens!"
+    if shift >= 64'u32: break
+    if c.rem <= i: break
+    if peekAhead(c, i).kind != ExtendedSuffix: break
+  assert not (c.rem > i and peekAhead(c, i).kind == ExtendedSuffix),
+         "too many ExtendedSuffix tokens!"
+
+proc combinedPayload*(c: Cursor): uint64 {.alwaysInline.} =
+  ## Combine the kinded token's 28-bit payload with any chained
+  ## ExtendedSuffix tokens. Each suffix supplies the next 28 high bits.
+  ##
+  ## HOT PATH INLINE, COLD PATH OUT OF LINE. 7.3 M calls per nifbench run at 29
+  ## instructions each, for a common case that is one load and one branch — 12
+  ## of those 29 were callee-saved pushes and pops for registers only the chain
+  ## walk uses. `{.alwaysInline.}` because the wrapper is 269 NIFC tokens once
+  ## hexer has flattened it, far past `InlineTinyBound`; `combinedPayloadSlow`
+  ## is `{.noinline.}` because otherwise it gets spliced back in here and the
+  ## wrapper stops being worth inlining. **Both pragmas are load-bearing.**
+  ## nifbench −0.68 % instructions, self-hosted compiler unchanged.
+  ##
+  ## `tokenWidth` looks like the same shape but must NOT get the same treatment
+  ## — see the measurement in its doc comment.
+  if c.rem > 1 and peekAhead(c, 1).kind == ExtendedSuffix:
+    result = combinedPayloadSlow(c)
+  else:
+    result = uint64(c.load.uoperand)
 
 # String/sym layout (StrLit, Ident, Symbol, SymbolDef):
 #   bit 0      mode (1 = inline-short, 0 = pool ref)
@@ -515,7 +636,7 @@ proc strVal*(c: Cursor; pool: Pool): string =
   ## Decode a StrLit/Ident at the cursor into a `string`. Handles the
   ## inline-short path (no pool touch) and the pool-ref path (with or
   ## without an ExtendedSuffix extending the pool id).
-  assert c.kind in {StrLit, Ident}, "strVal on " & $c.kind
+  checkKind c.kind in {StrLit, Ident}, "strVal on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     readInlineStr(payload)
@@ -529,7 +650,7 @@ proc strId*(c: Cursor; pool: Pool): StrId =
   ## A pool-ref token already carries its id, so use it directly; only an inline
   ## short string (stored in the token itself) has to be interned. Mirrors
   ## `symId` and avoids the decode-then-reintern round trip of `strings[strVal]`.
-  assert c.kind in {StrLit, Ident}, "strId on " & $c.kind
+  checkKind c.kind in {StrLit, Ident}, "strId on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     pool.strings.getOrIncl(readInlineStr(payload))
@@ -539,7 +660,7 @@ proc strId*(c: Cursor; pool: Pool): StrId =
 proc strId*(c: Cursor): StrId {.inline.} = strId(c, c.pool)
 
 proc symName*(c: Cursor; pool: Pool): string =
-  assert c.kind in {Symbol, SymbolDef}, "symName on " & $c.kind
+  checkKind c.kind in {Symbol, SymbolDef}, "symName on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     readInlineStr(payload)
@@ -552,7 +673,7 @@ proc symId*(c: Cursor; pool: Pool): SymId =
   ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
   ## A pool-ref token already carries its id, so use it directly; only an inline
   ## short name (stored in the token itself) has to be interned.
-  assert c.kind in {Symbol, SymbolDef}, "symId on " & $c.kind
+  checkKind c.kind in {Symbol, SymbolDef}, "symId on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
     pool.syms.getOrIncl(readInlineStr(payload))
@@ -612,7 +733,7 @@ proc cursorTagId*(c: Cursor): TagId {.inline.} =
   assert c.kind == TagLit
   c.load.rawTag
 
-proc cursorJump*(c: Cursor): uint64 {.inline.} =
+proc cursorJump*(c: Cursor): uint64 {.alwaysInline.} =
   ## Body tokens following this TagLit. 19 bits if unsuffixed; with one
   ## ExtendedSuffix the field widens to 47 bits (further chaining would
   ## extend it further, but no plausible jump needs that). The unified

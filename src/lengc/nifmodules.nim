@@ -19,6 +19,8 @@
 ## embedded index is read at the raw-token level with no pool involvement.
 
 import std / [assertions, tables, syncio] # syncio: `quit`
+from std / os import fileExists           # NOT a whole `os` import: it exports a
+                                          # `FileId` that collides with nifcore's
 import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
@@ -33,6 +35,12 @@ type
     kind*: LengSym
     extern*: StrId          ## importc/exportc name, cached (frequently queried)
     isImport*: bool         ## true for importc/importcpp, false for exportc-only
+    bareImport*: bool       ## `importc` with neither `header` nor `nodecl`: the
+                            ## C backend declares it itself, under its MANGLED
+                            ## name with an `__asm__` label, so the declaration
+                            ## can never collide with a header prototype for the
+                            ## same libc identifier in the same TU (splices move
+                            ## such references into arbitrary modules)
 
   NifProgram = object
     mods: Table[string, ForeignModule]   ## module suffix -> lazily-opened module
@@ -93,9 +101,12 @@ proc externName*(s: SymId; n: Cursor): StrId =
     result = p.strings.getOrIncl(base)
 
 proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
-                   isImport: var bool): StrId =
+                   isImport: var bool; bareImport: var bool): StrId =
   result = StrId(0)
   isImport = false
+  bareImport = false
+  var sawImportC = false
+  var sawHeaderish = false
   n.into:  # enter the toplevel (type/proc/var/…)
     if n.kind != SymbolDef:
       raiseAssert "Expected SymbolDef after toplevel declaration"
@@ -110,6 +121,10 @@ proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
             result = externName(symId, n)
             if pk in {ImportcP, ImportcppP}:
               isImport = true
+            if pk == ImportcP:
+              sawImportC = true
+          elif pk in {HeaderP, NodeclP}:
+            sawHeaderish = true
           skip n
     elif n.kind == DotToken:
       discard "ok"
@@ -117,6 +132,7 @@ proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
       raiseAssert "pragmas not at the correct position"
     while n.hasMore:
       skip n
+  bareImport = sawImportC and not sawHeaderish
 
 proc registerTypeBody(c: var MainModule; declPos: Cursor) =
   ## Map a `(type …)` decl's body position to the decl, so `tracebackTypeC` can
@@ -129,6 +145,26 @@ proc tracebackTypeC*(c: var MainModule; n: Cursor): Cursor =
   ## `default(Cursor)` for an unregistered body (e.g. an anonymous inline type).
   c.typeBodyToDecl.getOrDefault(n.toUniqueId(), default(Cursor))
 
+proc canLoadForeign*(c: var MainModule; s: SymId): bool =
+  ## True when `getDeclOrNil` would find a declaration for `s` — i.e. the owning
+  ## module's file exists AND its embedded index names `s`. `getDeclOrNil`
+  ## *asserts* on either failure, which is right for a consumer that needs the
+  ## declaration to proceed; a consumer that is merely ASKING (an optimizer
+  ## looking for a function summary) needs "no" to be an answer. Warms the
+  ## module cache, so a following `getDeclOrNil` costs one table hit.
+  if c.defs.hasKey(s): return true
+  let splitted = splitSymName(c.pool.syms[s])
+  if splitted.module == "": return false
+  var m: ForeignModule
+  if c.prog.mods.hasKey(splitted.module):
+    m = getOrQuit(c.prog.mods, splitted.module)
+  else:
+    c.prog.scheme.name = splitted.module
+    if not fileExists($c.prog.scheme): return false
+    m = openForeignModule($c.prog.scheme)
+    c.prog.mods[splitted.module] = m
+  result = hasDecl(m, $splitted)
+
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
     let splitted = splitSymName(c.pool.syms[s])
@@ -138,19 +174,20 @@ proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
       let sk = pos.symKind
       var extern = StrId(0)
       var isImport = false
+      var bareImport = false
       var n = pos
       case sk
       of TypeY:
         c.types.add pos
         registerTypeBody(c, pos)
-        extern = extractExtern(c, n, 1, isImport)
+        extern = extractExtern(c, n, 1, isImport, bareImport)
       of ProcY:
-        extern = extractExtern(c, n, 3, isImport)
+        extern = extractExtern(c, n, 3, isImport, bareImport)
       of VarY, ConstY, GvarY, TvarY:
-        extern = extractExtern(c, n, 1, isImport)
+        extern = extractExtern(c, n, 1, isImport, bareImport)
       else: discard
       c.defs[s] = Definition(pos: pos, kind: sk, extern: extern,
-                             isImport: isImport)
+                             isImport: isImport, bareImport: bareImport)
       c.requestedForeignSyms.add pos
     else:
       raiseAssert "Expected SymbolDef after toplevel declaration"
@@ -178,8 +215,10 @@ proc processToplevelDecl(c: var MainModule; n: var Cursor; kind: LengSym;
   let decl = n
   let s = firstChild(decl).symId
   var isImport = false
-  let extern = extractExtern(c, n, pragmasAt, isImport)
-  c.defs[s] = Definition(pos: decl, kind: kind, extern: extern, isImport: isImport)
+  var bareImport = false
+  let extern = extractExtern(c, n, pragmasAt, isImport, bareImport)
+  c.defs[s] = Definition(pos: decl, kind: kind, extern: extern,
+                         isImport: isImport, bareImport: bareImport)
 
 proc detectToplevelDecls(c: var MainModule) =
   var n = cursorAt(c.src, 0)

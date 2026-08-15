@@ -2,18 +2,29 @@
 when defined(nimony):
   import strutils
 
-  var
-    nifcArgc {.importc: "cmdCount".}: int32
-    nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
+  when defined(windows):
+    # Windows hands a process entry point no `argv` at all — the command line
+    # sits behind `GetCommandLineW` as one unsplit UTF-16 string. `std/cmdline`
+    # is what asks for it and applies the OS's documented splitting rules, so
+    # take the arguments from there: this parser and `paramStr`/`paramCount`
+    # must not disagree about where the arguments are.
+    import cmdline
+    export paramStr, paramCount
+  else:
+    # Everywhere else the entry point receives a C-style `argv`, which the
+    # generated `main` parks in the `cmdCount`/`cmdLine` globals.
+    var
+      nifcArgc {.importc: "cmdCount".}: int32
+      nifcArgv {.importc: "cmdLine".}: ptr UncheckedArray[cstring]
 
-  proc paramStr*(i: int): string =
-    if i < nifcArgc and i >= 0:
-      result = borrowCStringUnsafe(nifcArgv[i])
-    else:
-      result = ""
+    proc paramStr*(i: int): string =
+      if i < nifcArgc and i >= 0:
+        result = borrowCStringUnsafe(nifcArgv[i])
+      else:
+        result = ""
 
-  proc paramCount*(): int =
-    result = nifcArgc-1
+    proc paramCount*(): int =
+      result = nifcArgc-1
 
 else:
   from os import paramStr, paramCount
@@ -127,6 +138,18 @@ iterator getopt*(): (CmdLineKind, string, string) {.sideEffect.} =
     if p.kind == cmdEnd: break
     yield (p.kind, p.key, p.val)
 
+iterator getopt*(p: var OptParser): (CmdLineKind, string, string) {.sideEffect.} =
+  ## Iterate over an *already constructed* parser. Nim's `std/parseopt` has this
+  ## overload and code written against it (`var p = initOptParser(args)` followed
+  ## by `for kind, key, val in getopt(p)`) is the common shape, so it must exist
+  ## here too. `{.sideEffect.}` because `next` reads the process argv whenever the
+  ## parser was not given an explicit command line.
+  p.pos = 0
+  while true:
+    next(p)
+    if p.kind == cmdEnd: break
+    yield (p.kind, p.key, p.val)
+
 iterator getopt*(cmdLine: sink seq[string]): (CmdLineKind, string, string) {.sideEffect.} =
   ## Same as the no-argument `getopt`, but parses `cmdLine` instead of the
   ## process argv. Useful for re-parsing options collected from an `.args`
@@ -138,6 +161,7 @@ iterator getopt*(cmdLine: sink seq[string]): (CmdLineKind, string, string) {.sid
     yield (p.kind, p.key, p.val)
 
 when isMainModule:
+  import std/syncio
   proc main =
     for kind, key, val in getopt():
       echo $kind, "##", key, "##", val
