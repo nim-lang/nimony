@@ -3055,16 +3055,18 @@ proc handleCmdLine =
     # the sibling `../nativenif`; nifmake drives the `n` pipeline).
     #
     # The front end is rebuilt HERE and not left to whatever `bin/` happens to
-    # hold, because this command is the one that runs against a `bin/` nobody
-    # else refreshed: CI's `boot` job runs `hastur native` BEFORE its `build all`
-    # (arkham/nifasm must be current before `tests/boot` picks the native path),
-    # and the shared host-Nim artifact cache is restored through a `restore-keys:`
-    # prefix — so a commit that changes `src/**` misses the exact key and still
-    # gets the PREVIOUS commit's `bin/` handed to it. That combination ran the
-    # new closure tests of #2292 against the pre-#2292 hexer and reported eight
-    # "native gap" failures against a front end that had never seen them.
+    # hold. The shared host-Nim artifact cache is restored through a
+    # `restore-keys:` prefix, so a commit that changes `src/**` misses the exact
+    # key and still gets the PREVIOUS commit's `bin/` handed to it — which is how
+    # the new closure tests of #2292 came to be run against the pre-#2292 hexer
+    # and reported as eight "native gap" failures.
+    #
+    # nimsem/nimony/hexer and not `nifler`: those three share `programs.nim` and
+    # ARE what a native run exercises, while nifler is the tier-0 Nim parser in
+    # front of them — and the most expensive tool in the tree by a distance
+    # (28s cold, more than the three together). `build all` covers it, in this
+    # same job for CI and via `tests/setup.hastur` for a tree walk.
     if not skipBuild:
-      buildNifler()
       buildNimonyToolchain()
       buildNifmake()
       buildShoggoth()

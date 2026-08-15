@@ -165,6 +165,22 @@ jobs:
           cpu: ${{ matrix.target.cpu }}
           nim_branch: ${{ matrix.target.nim_branch }}
 
+      - name: Build the toolchain
+        # `tests/boot/setup.nim` requires a fully populated `bin/`, and a directly
+        # named suite does not run `tests/setup.hastur` (which is what builds it
+        # during a tree walk) — so the build is its own command here.
+        #
+        # FIRST, ahead of the native steps: the cache is restored through a
+        # `restore-keys:` prefix, so a commit touching `src/**` still gets the
+        # PREVIOUS commit's `bin/` handed to it, and every step after this one
+        # would otherwise be reading tools older than the sources it is testing.
+        # `hastur native` rebuilds what it exercises itself, but not the whole
+        # tier-0 layer beneath it (nifler above all — 28s cold, the priciest tool
+        # in the tree, and one this job builds here regardless).
+        run: |
+          cd nimony
+          nim c -r src/hastur --release build all
+
       - name: Run native backend tests (Linux amd64)
         # The native path emits a static, libc-free x86-64 ELF — only meaningful on
         # Linux amd64. `hastur native` builds the front end + arkham/nifasm (from the
@@ -201,11 +217,7 @@ jobs:
 
       - name: Run bootstrap
         # `hastur tests/boot` is the same suite the tree walk would have reached;
-        # naming it directly is what lets the other job skip it. The toolchain
-        # build is a separate command because `tests/boot/setup.nim` requires a
-        # fully populated `bin/`, and a directly named suite does not run
-        # `tests/setup.hastur` (which is what builds it during a tree walk).
+        # naming it directly is what lets the other job skip it.
         run: |
           cd nimony
-          nim c -r src/hastur --release build all
           nim c -r src/hastur --release tests/boot
