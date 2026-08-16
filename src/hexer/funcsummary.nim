@@ -94,18 +94,14 @@ proc paramDirectEscapes*(s: FunctionSummary; idx: int): bool {.inline.} =
 #
 # The one thing that context deliberately cannot do here is load a *sibling*
 # module: those `.c.nif`s are later outputs of the same build, so whether one is
-# on disk depends on scheduling (hence `noForeign`). Imported types are the
+# on disk depends on scheduling (hence `noForeign`). Imported symbols are the
 # common case, not an exotic one — `string` alone accounts for most type slots
-# in a typical module — and answering "conservative" for them would mean a
-# program optimizes worse purely because it was split across modules. So the
-# fallback is not a shrug: `pointertypes` resolves the symbol through the same
-# on-demand `.s.idx.nif` loader every other hexer pass uses and answers from the
-# *Nimony* declaration, which IS a declared input of this run.
-#
-# What survives both — an `importc` type with no body, an omitted (`.`) type
-# slot — stays conservative: we only ever answer "no pointer" when the type says
-# so *provably*. Under-merging would be unsound (a missed invalidation);
-# over-merging only costs CSE.
+# in a typical module — so they are not guessed at either: `pointertypes` reads
+# the symbol's *Nimony* declaration through the same on-demand `.s.nif` loader
+# every other hexer pass uses. That covers imported types, imported globals and
+# fields of imported objects alike, and it is the answer, not a fallback — there
+# is no case in which this pass shrugs and calls something pointer-bearing
+# because it could not find a declaration.
 # ---------------------------------------------------------------------------
 
 proc buildTypeEnv*(buf: var TokenBuf): MainModule =
@@ -120,17 +116,19 @@ proc exprMayHoldPointer(env: var MainModule; n: Cursor): bool {.inline.} =
   ## the type question — "can copying this value create a path into another
   ## graph?" — and is what gates class merging. It is deliberately NOT the
   ## identity question `sourceMayBePointer` answers.
-  transfersPointer(addr env, n, nimonyTypeMayHoldPointer)
+  transfersPointer(addr env, n, nimonyMayHoldPointer, nimonyFieldMayHoldPointer)
 
 proc sourceMayBePointer(env: var MainModule; n: Cursor): bool {.inline.} =
   ## True unless `n` is provably a value carrying no pointer *identity*.
   ## `(cast[uint](p))` and `(add (cast[uint](p)) n)` still carry `p`'s identity
   ## even though their static type is an integer, so the operands are followed
   ## rather than the type — pointer arithmetic is not forging.
-  pointerbearing.sourceMayBePointer(addr env, n, nimonyTypeMayHoldPointer)
+  pointerbearing.sourceMayBePointer(addr env, n, nimonyMayHoldPointer,
+                                    nimonyFieldMayHoldPointer)
 
 proc isForgingCast(env: var MainModule; n: Cursor): bool {.inline.} =
-  pointerbearing.isForgingCast(addr env, n, nimonyTypeMayHoldPointer)
+  pointerbearing.isForgingCast(addr env, n, nimonyMayHoldPointer,
+                              nimonyFieldMayHoldPointer)
 
 # ---------------------------------------------------------------------------
 # Extraction: directed (Andersen-style) flow into a bounded interface.
@@ -337,17 +335,28 @@ proc lastChildStart(n: Cursor): Cursor =
     result = c
     skip c
 
+proc registerDeclType(env: var MainModule; n: Cursor) =
+  ## Put a local declaration's type into the typenav scope, so a later use of
+  ## the symbol has one. Every local kind has to be registered, not just `var`:
+  ## an unregistered symbol has no type to recompute, and this pass does not
+  ## have a "then assume the worst" branch to fall into.
+  var c = n
+  inc c
+  if c.kind != SymbolDef: return
+  let sym = c.symId
+  var t = c
+  if t.hasMore: skip t             # name
+  if t.hasMore: skip t             # pragmas
+  if t.hasMore and t.kind != DotToken:
+    registerLocal(env, sym, t)
+
 proc handleLocalDecl(a: var ProcAnalysis; env: var MainModule; n: var Cursor) =
   var c = n
   inc c
   let sym = if c.kind == SymbolDef: c.symId else: SymId(0)
   # Register the local's declared type before anything asks about a use of it
   # (mirrors how the C backend and the alias pass drive the typenav scopes).
-  var t = c
-  if t.hasMore: skip t             # name
-  if t.hasMore: skip t             # pragmas
-  if sym != SymId(0) and t.hasMore and t.kind != DotToken:
-    registerLocal(env, sym, t)
+  registerDeclType(env, n)
   let initStart = lastChildStart(n)
   let roots = exprRoots(a, env, initStart)
   if sym != SymId(0):
@@ -476,6 +485,12 @@ proc walkStmt(a: var ProcAnalysis; env: var MainModule; n: var Cursor) =
     a.raises = true
     n.loopInto:
       walkStmt(a, env, n)
+  of GvarS, TvarS, ConstS:
+    # Not routed through `handleLocalDecl` — a global's effects are the `else`
+    # walk's business — but its type still has to reach the scope.
+    registerDeclType(env, n)
+    n.loopInto:
+      walkStmt(a, env, n)
   of ScopeS:                        # explicit lexical scope: its locals end here
     openScope(env)
     n.loopInto:
@@ -514,6 +529,7 @@ proc computeProcAnalysis(procDecl: Cursor; env: var MainModule): ProcAnalysis =
   result.escapes = newSeq[bool](paramSyms.len + 1)
   for i, s in paramSyms: result.paramLookup[s] = i
   if d.body.isTagLit:
+    if d.name.kind == SymbolDef: setPointerTypeContext(pool.syms[d.name.symId])
     # The params' types live in a scope of their own, exactly as `optdriver`
     # opens one around each body it optimizes.
     openScope(env)
@@ -785,23 +801,6 @@ proc annotateFunctionSummaries*(buf: var TokenBuf) =
   buf = ensureMove(dest)
 
 when isMainModule:
-  proc summaryOf(src: string): FunctionSummary =
-    var buf = parseFromBuffer("(stmts " & src & ")", "M")
-    var env = buildTypeEnv(buf)
-    var n = beginRead(buf)
-    n.into:
-      doAssert n.stmtKind == ProcS
-      result = computeFunctionSummary(n, env)
-      skip n
-
-  proc twoParams(body: string): FunctionSummary =
-    summaryOf("""
-      (proc :f.0
-        (params
-          (param :obj.0 . .)
-          (param :x.0 . .))
-        . . (stmts """ & body & "))")
-
   proc summaryIn(src: string; name: string): FunctionSummary =
     ## The module path: `src` is a whole `(stmts …)` body, so its `(type …)`
     ## declarations become the type environment — this is what
@@ -813,6 +812,22 @@ when isMainModule:
     let s = pool.syms.getOrIncl(name)
     doAssert summaries.hasKey(s), "no summary for " & name
     result = summaries.getOrQuit(s)
+
+  const PairTypes = """
+    (type :Cell.0 . (object . (fld :a.0 . (i +32))))
+    (type :Node.0 . (object . (fld :fld.0 . (ptr Cell.0))))"""
+
+  proc twoParams(body: string): FunctionSummary =
+    ## `obj` is an object with a pointer field and `x` a pointer of that field's
+    ## type — the shape the identity and effect rules below are about. Types are
+    ## declared, not omitted: an untyped slot is not valid Leng, and the pass
+    ## reports one rather than guessing what it might have held.
+    summaryIn(PairTypes & """
+      (proc :f.0
+        (params
+          (param :obj.0 . Node.0)
+          (param :x.0 . (ptr Cell.0)))
+        . . (stmts """ & body & "))", "f.0")
 
   const ScalarTypes = """
     (type :Point.0 . (object . (fld :px.0 . (f +64)) (fld :py.0 . (f +64))))
@@ -864,12 +879,11 @@ when isMainModule:
     let s = typedPair("Ptrs.0", "Ptrs.0", "(asgn obj.0 x.0)")
     doAssert s.params[0].cls == s.params[1].cls
 
-  block unloadable_type_stays_conservative:
-    # A type declared neither here nor in a module whose sem output can be
-    # read must still be assumed pointer-bearing — and asking must not be
-    # fatal, which is what `pointertypes.moduleIsReadable` guards.
-    let s = typedPair("Foreign.0.Other", "Foreign.0.Other", "(asgn obj.0 x.0)")
-    doAssert s.params[0].cls == s.params[1].cls
+  # There is no `unloadable type` case to test: an imported symbol is resolved
+  # from its own module's `.s.nif` (`pointertypes`), and one that cannot be is a
+  # hard error, not a conservative answer. The imported path needs a real sem
+  # output to exercise, so it is covered by running the pass over every module
+  # of the test suite rather than by a snippet here.
 
   block scalar_field_store_does_not_join:
     # `obj.px = x` writes obj and reads the float x, but stores no identity.
@@ -984,13 +998,13 @@ when isMainModule:
     doAssert s.params[0].cls == s.params[1].cls
 
   block result_field_store_is_not_global:
-    let s = summaryOf("""
+    let s = summaryIn(PairTypes & """
       (proc :f.0
-        (params (param :x.0 . .))
+        (params (param :x.0 . (ptr Cell.0)))
         . . (stmts
-          (var :result.0 . . . .)
+          (var :result.0 . Node.0 .)
           (asgn (dot result.0 fld.0) x.0)
-          (ret result.0)))""")
+          (ret result.0)))""", "f.0")
     doAssert not s.writesGlobal
     doAssert s.params[0].reads
     doAssert not s.params[0].writes

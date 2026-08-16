@@ -265,7 +265,11 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
       else:
         result = createIntegralType(c, "(err)")
     of DerefC:
-      let x = getTypeImpl(c, firstChild(n))
+      # `navigateToObjectBody` like every other case above: the operand's type
+      # is usually nominal (`(var :p . PNode.0.M)`), and asking `typeKind` of a
+      # `Symbol` answers `NoType`, so without resolving it first a deref through
+      # any named pointer type would come back `(err)`.
+      let x = navigateToObjectBody(c, getTypeImpl(c, firstChild(n)))
       if x.typeKind == PtrT:
         result = firstChild(x)
       else:
