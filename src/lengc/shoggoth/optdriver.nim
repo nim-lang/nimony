@@ -24,6 +24,8 @@ import induction_variables                     # runInductionVariables (live pas
 import cse                                     # runCSE + collectFunctionSummaries
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
+import unswitch                                # runUnswitch (loop unswitching)
+import boolthread                              # runBoolThread (bool-diamond jump threading)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 import vectorizer                             # runVectorizer (map loops -> AdvSIMD (instr ...))
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
@@ -78,6 +80,17 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   runConstructorProjection(buf)
   runScalarize(buf, bodySuffix, m)
   runCopyProp(buf, params)
+  # Hoist loop-invariant `if` conditions out of small loops by duplicating them
+  # (loop unswitching): an inlined string accessor's SSO test runs once instead
+  # of per character. AFTER copyprop so propagated copies make structurally
+  # identical conditions actually identical; BEFORE boolthread so both loop
+  # copies get their bool diamonds threaded.
+  runUnswitch(buf, bodySuffix)
+  # Thread the bool-accumulator diamonds hexer's short-circuit lowering left
+  # behind (`x = cond-per-branch; if x: …` → direct jumps). AFTER copyprop so
+  # collapsed bool copies expose their reading `if`; BEFORE the rewriter so a
+  # threaded guard condition still gets its arithmetic folds.
+  runBoolThread(buf, bodySuffix)
   # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
   # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
   # after those substitutions actually fold. Cheap: the DFA walk is linear
