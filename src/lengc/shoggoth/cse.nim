@@ -70,6 +70,7 @@ import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/pragmaKind, tag
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import trackers, patchsets
 import aliasing                               # intra-proc Steensgaard alias classes
+import accesspaths                            # root :: selector paths (doc/cse.md)
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # getType — to skip value-CSE of aggregates
 
@@ -82,6 +83,20 @@ const AddressCSE = false
   ## in the allocator hot path (9 held pointers in rawAlloc). Value-CSE of genuine
   ## loads stays on (a load is a real memory access worth factoring); the write-target
   ## aggregate-skip at `handleCandidate` still holds with an empty `writeTargets`.
+
+const
+  PathStoreInvalidation* = not defined(cseTypeInvalidation)
+    ## Invalidate on a store by comparing ACCESS PATHS (`doc/cse.md`), not by
+    ## comparing the alias classes of every symbol the entry mentions.
+  PathCallInvalidation* = not defined(cseTypeInvalidation)
+    ## The same for the clobber step of a call whose summary is known.
+  ##
+  ## `-d:cseTypeInvalidation` restores both to the type/alias-class analysis
+  ## exactly as `master` has it — the reference the path rules are measured
+  ## against, and the fallback if they ever cost more than they save. Everything
+  ## the type-based analysis needs (`aliasing`, `pointerBearing`, the summary
+  ## partition) is untouched and still built in both modes; only which of the two
+  ## answers the invalidation question changes.
 
 # ---- function summaries (alias-aware; pure data, mirrors hexer/funcsummary) -
 # These are read from `(smry …)` pragmas in the buffer by the nifcore loader
@@ -114,6 +129,12 @@ when defined(cseSummaryStats):
   var gCallsSeen*, gForeignFound*, gForeignMissing*, gNoReturnSaved*: int
   var gClearUnknown*, gClearGlobal*: int
   var gEntriesKept*: int
+  var gPathTests*, gPathSavedStore*, gPathSavedCall*: int
+    ## How often the PATH rule kept a cache entry the alias partition alone
+    ## would have dropped — i.e. how much work `doc/cse.md`'s rule 1 is doing on
+    ## real input. Zero here means the two analyses agree everywhere, which is a
+    ## result about the input (SROA has already scalarized the local objects
+    ## whose sibling fields the path rule separates), not about the rule.
 
 proc paramMayWrite(s: FunctionSummary; idx: int): bool {.inline.} =
   if s.callsUnknown: return true
@@ -208,6 +229,14 @@ type
                                     ## resolved on demand through `c.m`; negatives
                                     ## cached too (see `callSummary`)
     aa: Aliasing                ## intra-proc alias partition of this body
+    pathScratch: seq[AccessPath]    ## reused by the path invalidator so that
+                                    ## describing an entry allocates nothing
+    paramSyms: HashSet[SymId]       ## this proc's parameters. For the path rules
+                                    ## they count as locals: a DIRECT path rooted
+                                    ## at a by-value param names the callee's own
+                                    ## copy, and a `var`/`out` param is a pointer,
+                                    ## so a read through it is an INDIRECT path
+                                    ## and never takes the direct branch anyway
     m: ptr MainModule           ## module type context; nil ⇒ no type-based skips
     localDefPos: Table[SymId, int]  ## local symbol → position of its `(var …)` decl,
                                     ## so a cached load is never hoisted above the
@@ -698,6 +727,18 @@ proc clearCacheReachable(c: var Context) =
       dropFacts.add key
   for key in dropFacts: c.proven[key] = 0
 
+proc dropFactsInClasses(c: var Context; reps: HashSet[SymId]) =
+  ## The guard facts carry resolved ROOTS, not paths, so they keep the
+  ## alias-class rule in both modes — identical to `master` either way.
+  var dropFacts: seq[string] = @[]
+  for key, idx in c.proven.pairs:
+    if idx == 0: continue
+    for s in c.provenRoots[idx-1]:
+      if c.aa.find(s) in reps:
+        dropFacts.add key
+        break
+  for key in dropFacts: c.proven[key] = 0
+
 proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
   ## Drop every cached entry that reads memory in one of the alias classes,
   ## except the entry keyed `exempt` (the address temp of the exact location a
@@ -711,14 +752,129 @@ proc clobberClasses(c: var Context; reps: HashSet[SymId]; exempt = "") =
       toClear.add key
   for key in toClear:
     c.cache[key] = default(CachedEntry)
-  var dropFacts: seq[string] = @[]
-  for key, idx in c.proven.pairs:
-    if idx == 0: continue
-    for s in c.provenRoots[idx-1]:
-      if c.aa.find(s) in reps:
-        dropFacts.add key
-        break
-  for key in dropFacts: c.proven[key] = 0
+  dropFactsInClasses(c, reps)
+
+# ---- path-based invalidation (doc/cse.md) ---------------------------------
+
+proc reachableByPointer(c: var Context; root: SymId;
+                        escaped: HashSet[SymId]): bool =
+  ## Can any pointer in this body name `root`'s storage? Only if the address of
+  ## `root` (or of something its alias class was merged with) has been taken, or
+  ## if it is not a local of this body at all — a global or a parameter is
+  ## reachable from outside by construction. This is `unreachableByCallee`'s
+  ## argument, applied to one root instead of to a whole expression.
+  if root == SymId(0): return true
+  if root notin c.bodyLocals and root notin c.paramSyms: return true
+  if root in c.addrTaken: return true
+  result = c.aa.find(root) in escaped
+
+proc classesMayAlias(c: var Context; a, b: SymId): bool {.inline.} =
+  ## `master`'s answer: the intra-proc alias partition, which is what the type
+  ## information feeds. Unknown roots alias everything.
+  if a == SymId(0) or b == SymId(0): return true
+  result = c.aa.find(a) == c.aa.find(b)
+
+proc mayOverlap(c: var Context; p, w: AccessPath;
+                escaped: HashSet[SymId]): bool =
+  ## Can a write to `w` change what a read of `p` reads?
+  ##
+  ## Two independent over-approximations, and an entry only dies when BOTH say
+  ## it may: the path rule (this proc) and the alias partition
+  ## (`classesMayAlias`). Intersecting two sound answers stays sound, and it is
+  ## what keeps this at least as precise as `master` everywhere — the partition
+  ## carries the case paths deliberately refuse to decide (two unrelated
+  ## pointers), the paths carry the case the partition is blind to (two fields
+  ## of one object).
+  if not p.known or not w.known: return true
+  var byPath: bool
+  if w.isDirect:
+    if p.isDirect:
+      # Both name storage directly: distinct roots are distinct storage, and
+      # within one root it is the prefix test. `o.x = 1` leaves `o.y` alone.
+      byPath = directOverlap(p, w)
+    else:
+      # `p` reads through a pointer; it can only land on `w`'s storage if that
+      # storage is something a pointer can name at all.
+      byPath = reachableByPointer(c, w.root, escaped)
+  else:
+    if p.isDirect:
+      byPath = reachableByPointer(c, p.root, escaped)
+    else:
+      # Two indirect paths: nothing in the path distinguishes two pointers
+      # (`doc/cse.md`, lesson 4), so this is where the partition answers.
+      byPath = true
+  result = byPath and classesMayAlias(c, p.root, w.root)
+
+proc expressionOverlaps(c: var Context; cur: Cursor; w: AccessPath;
+                        escaped: HashSet[SymId]): bool =
+  ## Does any path the expression READS overlap the written path?
+  c.pathScratch.setLen 0
+  collectReadPaths(cur, c.pathScratch)
+  if c.pathScratch.len == 0: return true      # described nothing → conservative
+  for i in 0 ..< c.pathScratch.len:
+    if mayOverlap(c, c.pathScratch[i], w, escaped): return true
+  result = false
+
+proc callClobbersEntry(c: var Context; cur: Cursor; written: seq[AccessPath];
+                       reps: HashSet[SymId]; escaped: HashSet[SymId]): bool =
+  ## Rule 4 of `doc/cse.md`, for a call whose summary is known and which writes
+  ## neither a global nor through an unknown callee. What it can still write is
+  ## the written arguments' own locations, and the memory reachable THROUGH them
+  ## — which is indirect memory this analysis does not name. So a read survives
+  ## when it is direct, rooted where no pointer can reach, and disjoint from
+  ## every written argument.
+  c.pathScratch.setLen 0
+  collectReadPaths(cur, c.pathScratch)
+  if c.pathScratch.len == 0: return true
+  for i in 0 ..< c.pathScratch.len:
+    let p = c.pathScratch[i]
+    if not p.known: return true
+    # `reps` is `master`'s answer (the classes of the written actuals plus the
+    # escaped ones); as in `mayOverlap`, a kill needs both analyses to agree.
+    if p.root != SymId(0) and c.aa.find(p.root) notin reps: continue
+    if p.isIndirect: return true
+    if reachableByPointer(c, p.root, escaped): return true
+    for w in written:
+      if mayOverlap(c, p, w, escaped): return true
+  result = false
+
+proc clobberForCall(c: var Context; written: seq[AccessPath];
+                    reps: HashSet[SymId]) =
+  var toClear: seq[string] = @[]
+  let escaped = escapedClassReps(c)
+  for key, entry in c.cache.pairs:
+    if not entry.hasFirst: continue
+    let exprCur = cursorAt(c.orig[], entry.firstExprPos)
+    let killed = callClobbersEntry(c, exprCur, written, reps, escaped)
+    when defined(cseSummaryStats):
+      if not killed and expressionTouchesClass(c, exprCur, reps):
+        inc gPathSavedCall
+    if killed:
+      toClear.add key
+  for key in toClear:
+    c.cache[key] = default(CachedEntry)
+  dropFactsInClasses(c, reps)
+
+proc clobberPath(c: var Context; w: AccessPath; exempt = "") =
+  ## Drop every cached load a write to `w` may have changed.
+  var toClear: seq[string] = @[]
+  let escaped = escapedClassReps(c)
+  when defined(cseSummaryStats):
+    var reps = initHashSet[SymId]()
+    reps.incl c.aa.find(w.root)
+  for key, entry in c.cache.pairs:
+    if not entry.hasFirst: continue
+    if key == exempt: continue
+    let exprCur = cursorAt(c.orig[], entry.firstExprPos)
+    let killed = expressionOverlaps(c, exprCur, w, escaped)
+    when defined(cseSummaryStats):
+      inc gPathTests
+      if not killed and expressionTouchesClass(c, exprCur, reps):
+        inc gPathSavedStore
+    if killed:
+      toClear.add key
+  for key in toClear:
+    c.cache[key] = default(CachedEntry)
 
 proc goesThroughPointer(lhs: Cursor): bool =
   ## True if the lvalue is reached through a deref/index — not a stack field.
@@ -753,7 +909,19 @@ proc invalidateForStore(c: var Context; lhs: Cursor) =
     return
   var reps = initHashSet[SymId]()
   reps.incl c.aa.find(s)
-  clobberClasses(c, reps, exempt = hashExpr(lhs))
+  when PathStoreInvalidation:
+    # Same event, described as a path: the loads it can reach are the ones whose
+    # own paths overlap it (prefix either way), plus — when the written storage
+    # is something a pointer can name — the loads that go through a pointer.
+    # The guard facts keep the class rule.
+    let w = pathOfLvalue(lhs)
+    if not w.known:
+      clobberClasses(c, reps, exempt = hashExpr(lhs))
+    else:
+      clobberPath(c, w, exempt = hashExpr(lhs))
+      dropFactsInClasses(c, reps)
+  else:
+    clobberClasses(c, reps, exempt = hashExpr(lhs))
 
 # ---- summary loader: read `(smry …)` pragmas from the buffer ---------------
 # A nifcore reader for the wire format produced by hexer/funcsummary (which
@@ -923,6 +1091,7 @@ proc invalidateForCall(c: var Context; call: Cursor) =
   # and mark escaping pointer args as addr-taken. Iterate with `into` so the
   # scope is bounded to the call's own children (nifcore has no ParRi).
   var argSyms: seq[SymId] = @[]
+  var argPaths: seq[AccessPath] = @[]
   var writtenClasses = initHashSet[uint32]()
   var argIndex = 0
   var ca = call
@@ -931,6 +1100,7 @@ proc invalidateForCall(c: var Context; call: Cursor) =
     while ca.hasMore:
       let s = rootOf(ca)
       argSyms.add s
+      argPaths.add pathOfLvalue(ca)   # `(haddr x.f)` ⇒ the path `x.f`
       if s != SymId(0) and argIndex < summary.params.len and
          summary.params[argIndex].escapes:
         markAddrTaken(c, s)
@@ -955,7 +1125,19 @@ proc invalidateForCall(c: var Context; call: Cursor) =
     let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
     if cls in writtenClasses:
       reps.incl c.aa.find(argSyms[i])
-  clobberClasses(c, reps)
+  when PathCallInvalidation:
+    # The same summary, read as paths: which ARGUMENTS the callee may write.
+    # A parameter the callee placed in a written partition class counts too —
+    # it may have aliased them internally — which is the class information doing
+    # the job it is actually good at (relating parameters to each other), while
+    # the paths decide what in THIS body those arguments can reach.
+    var written: seq[AccessPath] = @[]
+    for i in 0 ..< argPaths.len:
+      let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
+      if cls in writtenClasses: written.add argPaths[i]
+    clobberForCall(c, written, reps)
+  else:
+    clobberClasses(c, reps)
 
 # ---- loop-invariant code motion ------------------------------------------
 
@@ -1806,9 +1988,22 @@ proc collectWriteTargets(c: var Context; n: var Cursor) =
 
 # ---- public entry --------------------------------------------------------
 
+proc registerParams(c: var Context; params: Cursor) =
+  ## The proc's parameters, which the body alone does not show (the driver hands
+  ## CSE the body only). They matter to the path rules exactly as `bodyLocals`
+  ## does — see `Context.paramSyms`.
+  if not params.hasMore or params.kind != TagLit: return
+  var p = params
+  p.loopInto:
+    if p.kind == TagLit and p.substructureKind == ParamU:
+      let nameCur = child0(p)
+      if nameCur.kind == SymbolDef: c.paramSyms.incl symId(nameCur)
+    skip p
+
 proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
              summaries: ptr FunctionSummaryTable = nil;
-             m: ptr MainModule = nil): int {.discardable.} =
+             m: ptr MainModule = nil;
+             params: Cursor = default(Cursor)): int {.discardable.} =
   ## Two-phase CSE for a single proc `buf` (a Leng body has no nested procs).
   ## `summaries` is the module-level table from `collectFunctionSummaries` run
   ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
@@ -1817,6 +2012,7 @@ proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
   var ctx = createContext(addr buf, moduleSuffix, summaries)
   ctx.m = m                          # type context: skip value-CSE of aggregates
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
+  registerParams(ctx, params)
   block:
     var wn = beginRead(buf)
     collectWriteTargets(ctx, wn)  # identify write-target / addr-of'd lvalues
@@ -1901,6 +2097,42 @@ when isMainModule:
       "(stmts (var :`cse.1 . . (dot (deref (deref pp.0.M)) fld.0.M)) " &
       "(asgn y.0.M `cse.1) (asgn (dot (deref (deref qq.0.M)) g.0.M) v.0.M) " &
       "(asgn z.0.M `cse.1))")
+
+  when PathStoreInvalidation:
+    block sibling_field_store_survives:
+      # `x.other = v` cannot change `x.fld`: same root, but the selector lists
+      # diverge at the first step (`doc/cse.md`, rule 1). The alias partition
+      # knows only roots, so this is the case paths add.
+      chk(
+        "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) " &
+        "(asgn (dot x.0.M other.0.M) v.0.M) " &
+        "(asgn z.0.M (dot x.0.M fld.0.M)))",
+        "(stmts (var :`cse.1 . . (dot x.0.M fld.0.M)) " &
+        "(asgn y.0.M `cse.1) (asgn (dot x.0.M other.0.M) v.0.M) " &
+        "(asgn z.0.M `cse.1))")
+  else:
+    block sibling_field_store_kills:
+      # Same input under `-d:cseTypeInvalidation`: the entry mentions `x`, whose
+      # class the store writes, so it dies and nothing is reused.
+      assertUnchanged(
+        "(stmts (asgn y.0.M (dot x.0.M fld.0.M)) " &
+        "(asgn (dot x.0.M other.0.M) v.0.M) " &
+        "(asgn z.0.M (dot x.0.M fld.0.M)))")
+
+  block prefix_store_kills:
+    # A write to `x.a` changes every read below it — `x.a.b` has it as a prefix.
+    assertUnchanged(
+      "(stmts (asgn y.0.M (dot (dot x.0.M a.0.M) b.0.M)) " &
+      "(asgn (dot x.0.M a.0.M) v.0.M) " &
+      "(asgn z.0.M (dot (dot x.0.M a.0.M) b.0.M)))")
+
+  block indices_collapse:
+    # `arr[j] = v` kills a cached `arr[i]`: indices are collapsed to one `Elem`
+    # step, so two elements of one array always overlap.
+    assertUnchanged(
+      "(stmts (asgn y.0.M (at arr.0.M i.0.M)) " &
+      "(asgn (at arr.0.M j.0.M) v.0.M) " &
+      "(asgn z.0.M (at arr.0.M i.0.M)))")
 
   block store_aliasing_prevents_cse:
     # Same shape as `store_disjoint_survives` but the store is through `pp` (same

@@ -91,3 +91,6 @@ when defined(cseSummaryStats):
                    " noReturnSaved=", cse.gNoReturnSaved,
                    " clearUnknown=", cse.gClearUnknown,
                    " clearGlobal=", cse.gClearGlobal, " entriesKeptAcrossCalls=", cse.gEntriesKept
+  stderr.writeLine "[cse] pathTests=", cse.gPathTests,
+                   " pathSavedStore=", cse.gPathSavedStore,
+                   " pathSavedCall=", cse.gPathSavedCall
