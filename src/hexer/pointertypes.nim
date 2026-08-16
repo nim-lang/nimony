@@ -27,9 +27,10 @@
 ## belongs to another module has been through sem and has a declaration in that
 ## module's `.s.nif`; a lookup that fails is a bug in this resolver or in the
 ## build graph, and it says so rather than degrading into lost optimization.
-## The single exception is a symbol with no module at all — a temporary an
-## earlier lowering introduced — which has no declaration anywhere to read; see
-## `nimonyMayHoldPointer`.
+## Nor is there an exception for a symbol with no module at all: a local is not
+## this module's question. Its type is registered in the summary walk's own
+## scope, `typenav` reads it from there, and a local that reached here would
+## mean the caller peeled past a step it could have resolved.
 ##
 ## The traversal deliberately mirrors `nimony/sizeof.getSize` — same
 ## nominal-resolution loop, same object/case/tuple walk, same `(inheritable)`
@@ -96,7 +97,7 @@ proc declOf(s: SymId): Cursor =
   ## exists and is reachable through the module index.
   if extractModule(pool.syms[s]).len == 0:
     quit "hexer/pointertypes: " & pool.syms[s] & " is a local symbol; it names no " &
-         "module to load a declaration from" & ctx()
+         "module to load a declaration from — its type is in the walk's scope" & ctx()
   if not moduleIsReadable(s):
     quit "hexer/pointertypes: no `.s.nif` for the module declaring " & pool.syms[s] & ctx()
   let sym = tryLoadSym(s)
@@ -239,9 +240,6 @@ proc nimonyFieldMayHoldPointer*(owner: SymId; field: string): bool {.nimcall.} =
   ## The `pointerbearing.ForeignFieldResolver` `funcsummary` installs.
   fieldMayHoldPointer(owner, field, 0)
 
-proc isLocalSym(s: SymId): bool {.inline.} =
-  extractModule(pool.syms[s]).len == 0
-
 proc nimonyMayHoldPointer*(s: SymId): bool {.nimcall.} =
   ## The `pointerbearing.ForeignSymResolver` `funcsummary` installs. Called for
   ## every symbol whose declaration is not in the Leng buffer being annotated —
@@ -251,17 +249,11 @@ proc nimonyMayHoldPointer*(s: SymId): bool {.nimcall.} =
   ##
   ## `s` may name a type or a value (a global, a constant, a field): the
   ## declaration says which, and a value is answered from its declared type.
+  ##
+  ## A *local* never gets here: it carries no module, so `declOf` reports it
+  ## rather than inventing an answer. Its type is in the summary walk's own
+  ## scope, and that is where it is read (`typenav`) — see `declOf`.
   if gCache.hasKey(s): return gCache.getOrQuit(s)
-  if isLocalSym(s):
-    # A *local* — a temporary an earlier lowering introduced. It has no module,
-    # so there is no declaration anywhere to load: unlike an imported symbol,
-    # this is not a question the Nimony side can answer. Reaching here means the
-    # summary walk saw a use before (or without) the `(var …)` that declares it,
-    # so the honest answer is that its identity is unknown to this pass. Narrow
-    # and rare — it is a gap in the walk, not in the type information — but it
-    # is the one place left that does not follow from a declaration.
-    gCache[s] = true
-    return true
   let decl = declOf(s)
   let sk = symKind(decl)
   if sk == TypeY:

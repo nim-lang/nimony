@@ -83,21 +83,22 @@ proc resolveField(m: ptr MainModule; owner: SymId; fld: Cursor;
          " and no resolver to ask"
   result = resolveFld(owner, symName(m, fld.symId))
 
-proc rootSymOf(n: Cursor): Cursor =
-  ## Peel an lvalue path down to the symbol it is rooted at: `(dot (at g i) f)`
-  ## roots at `g`. A path that roots at something other than a symbol (a call, a
-  ## literal) comes back as that expression.
+proc selectionBase(n: Cursor; found: var bool): Cursor =
+  ## The operand an access path selects *within*: `(at a i)` → `a`,
+  ## `(dot o f)` → `o`. One step, not all the way down to the root symbol —
+  ## every step in a path has its own type and its own way of being resolved,
+  ## and skipping past them throws that away.
+  found = n.kind == TagLit
   result = n
-  var guard = 0
-  while result.kind == TagLit and guard < MaxDepth:
-    inc guard
-    case result.exprKind
-    of DotC, AtC, PatC, DerefC, ParC, ConvC, CastC, BaseobjC:
-      var c = result
-      inc c
-      if result.exprKind in {ConvC, CastC, BaseobjC}: skip c   # type operand
-      result = c
-    else: break
+  if not found: return
+  case n.exprKind
+  of DotC, AtC, PatC, DerefC, ParC:
+    result = firstChild(n)
+  of ConvC, CastC, BaseobjC:
+    result = firstChild(n)
+    skip result                    # the type operand
+  else:
+    found = false
 
 proc pointerBearing*(m: ptr MainModule; typ: Cursor;
                      resolve: ForeignSymResolver = nil;
@@ -154,7 +155,7 @@ proc pointerBearing*(m: ptr MainModule; typ: Cursor;
     # type (see `sourceMayBePointer`), so arriving here means one did not.
     quit "pointerbearing: not a type tag: (" & tagName(m, typ) & ")"
 
-proc rootMayBePointer(m: ptr MainModule; n: Cursor;
+proc baseMayBePointer(m: ptr MainModule; n: Cursor;
                       resolve: ForeignSymResolver;
                       resolveFld: ForeignFieldResolver): bool
 
@@ -207,11 +208,11 @@ proc sourceMayBePointer*(m: ptr MainModule; n: Cursor;
       elif not isUnknownType(ot):
         result = pointerBearing(m, ot, resolve, resolveFld)
       else:
-        result = rootMayBePointer(m, n, resolve, resolveFld)
+        result = baseMayBePointer(m, n, resolve, resolveFld)
     of AtC:
       if m == nil: return sourceMayBePointer(m, firstChild(n), resolve, resolveFld)
       let t = getType(m[], n)
-      result = if isUnknownType(t): rootMayBePointer(m, n, resolve, resolveFld)
+      result = if isUnknownType(t): baseMayBePointer(m, n, resolve, resolveFld)
                else: pointerBearing(m, t, resolve, resolveFld)
     of AddC, SubC, BitandC, BitorC, BitxorC:
       result = false
@@ -226,26 +227,35 @@ proc sourceMayBePointer*(m: ptr MainModule; n: Cursor;
     else:
       if m == nil: return true
       let t = getType(m[], n)
-      result = if isUnknownType(t): rootMayBePointer(m, n, resolve, resolveFld)
+      result = if isUnknownType(t): baseMayBePointer(m, n, resolve, resolveFld)
                else: pointerBearing(m, t, resolve, resolveFld)
   else:
     result = false
 
-proc rootMayBePointer(m: ptr MainModule; n: Cursor;
+proc baseMayBePointer(m: ptr MainModule; n: Cursor;
                       resolve: ForeignSymResolver;
                       resolveFld: ForeignFieldResolver): bool =
   ## The answer for an access path whose own type the navigator could not
-  ## recompute, taken from the declaration of the value it is rooted at.
+  ## recompute, taken from the value it selects within.
   ##
-  ## This is a *bound*, not a guess: `g[i].f` is part of `g`, so if `g`'s
-  ## declared type holds no pointer then neither does any projection of it. It
-  ## is needed because a Leng path can step through a field that lowering
-  ## introduced, which has no counterpart in the declaration the root resolves
-  ## to — the declaration is still the whole truth about the root's value, just
-  ## not sliceable at that offset.
-  let root = rootSymOf(n)
-  if root.kind in {Symbol, SymbolDef}: resolveSym(m, root.symId, resolve, resolveFld)
-  else: sourceMayBePointer(m, root, resolve, resolveFld)
+  ## This is a *bound*, not a guess: `a[i]` is part of `a`, so if `a` holds no
+  ## pointer then neither does any element of it. It is needed because a Leng
+  ## path can step through a field or an index that lowering introduced, which
+  ## the declaring module's type does not name at that offset — but the value
+  ## being selected within is still fully described.
+  ##
+  ## One step, then straight back into `sourceMayBePointer`: the base is where
+  ## the type information actually is. `(at (dot (deref p) a) i)` on an imported
+  ## object resolves as "the field `a` of `p`'s pointee type", which the field
+  ## resolver answers exactly — while peeling all the way to `p` in one go would
+  ## instead ask about a *local*, which no declaration describes because a local
+  ## does not have one to load.
+  var found = false
+  let base = selectionBase(n, found)
+  if not found:
+    quit "pointerbearing: cannot type (" & tagName(m, n) & ") and it selects " &
+         "within nothing"
+  result = sourceMayBePointer(m, base, resolve, resolveFld)
 
 proc transfersPointer*(m: ptr MainModule; n: Cursor;
                        resolve: ForeignSymResolver = nil;
