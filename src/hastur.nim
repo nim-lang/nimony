@@ -31,6 +31,10 @@ Commands:
                        `nifbench` is the NIF micro-benchmark suite (src/nifbench),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
+                       `all` builds arkham + nifasm too when the sibling
+                       `../nativenif` is checked out, and says so when it is not;
+                       `native` (arkham + nifasm + shoggoth) asks for them by
+                       name and errors out instead.
   tiers                compile every module on the bootstrap list with nimony.
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
@@ -129,6 +133,12 @@ Options:
                         does not change what a plain local run covers.
   --native-debug        build arkham + nifasm unoptimized (they default to
                         -d:release); for `-d:arkhamDbgSym` / gdb toolchain work
+  --boot-backend:auto|c|native
+                        which backend `boot` compiles the stages with. `auto`
+                        (default) is per-host: `nimony n` where the native
+                        backend is complete and arkham/nifasm are in bin/,
+                        `nimony c` otherwise. The other two force it, which is
+                        how the two are timed against each other.
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
                         mimalloc plays nicely with valgrind, then run a
                         valgrind smoke test on the bootstrapped binary.
@@ -1586,6 +1596,16 @@ var bootRelease = true
 var bootNative = false
   ## Compile the stages with the C-free native backend (`nimony n` → arkham +
   ## nifasm)? Decided by `useNativeBoot` at the start of `bootCmd`.
+
+type BootBackend = enum
+  bbAuto,   ## whatever `useNativeBoot` says for this host — the default
+  bbC,      ## force `nimony c`
+  bbNative  ## force `nimony n`, and fail loudly when it is not available
+
+var bootBackend = bbAuto
+  ## `--boot-backend:`. Exists so the two paths can be MEASURED against each
+  ## other on a host where the native one is automatic: without it, timing the
+  ## C boot on linux/amd64 means hiding `bin/arkham` from hastur.
 var debugBuild = false
 var nativeToolsDebug = false
 
@@ -1838,6 +1858,28 @@ proc buildNifasm(showProgress = false) =
   syncNativenif()
   exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
        "/src/nifasm/nifasm.nim", showProgress
+
+proc buildNativeTools(showProgress = false) =
+  ## arkham + nifasm for `build all`. They are part of the toolchain now — a
+  ## native boot and every `nimony n` need them in `bin/`, and leaving them to a
+  ## separate opt-in command meant each caller had to remember (CI did not, and
+  ## the Windows bootstrap of #2325 quietly kept using the C backend for it).
+  ##
+  ## Two hosts do not get them, and both say so instead of failing the build:
+  ## there is no native target for a 32-bit host, and the sibling checkout is
+  ## something a plain `git clone` of this repo does not bring. Asking for them
+  ## by name (`build native`, `build arkham`, `hastur native`) still goes
+  ## straight at `buildArkham`, which quits when the sibling is missing — an
+  ## explicit request deserves an error, a blanket `all` does not.
+  when defined(cpu64):
+    if dirExists(NativenifDir):
+      buildArkham(showProgress)
+      buildNifasm(showProgress)
+    else:
+      echo "[build] ", NativenifDir, " not found — skipping arkham + nifasm; ",
+           "`nimony n` and a native boot need it (clone nim-lang/nativenif next to this repo)"
+  else:
+    echo "[build] no native backend target for this host — skipping arkham + nifasm"
 
 proc buildHexer*(showProgress = false) =
   exec nimcPrefix() & "src/hexer/hexer.nim", showProgress
@@ -2141,11 +2183,20 @@ const NativeBootReady = true
   ## nativenif master that carries those fixes — or flip this back to `false`
   ## and the C-backend boot below is the whole self-host gate meanwhile.
 
+proc missingNativeTools(): seq[string] =
+  ## Which of `BootNativeTools` are not in `bin/`. They come from the sibling
+  ## `../nativenif`, so a checkout that never had it has neither.
+  result = @[]
+  for tool in BootNativeTools:
+    if not fileExists(binDir() / tool.addFileExt(ExeExt)): result.add tool
+
 proc useNativeBoot(): bool =
   ## linux/amd64 is the platform the native backend is complete on: x86-64
   ## codegen plus the Linux syscall table the libc-free stdlib runs on. Its
-  ## tools live in the sibling `../nativenif` checkout and are outside
-  ## `build all`, so fall back to the C backend when they're missing.
+  ## tools come from the sibling `../nativenif` checkout, which `build all`
+  ## builds when it is there — so fall back to the C backend when they're
+  ## missing, and say so (`bootBackendLine`) rather than let a missing sibling
+  ## look like a slow C boot.
   ##
   ## linux/arm64 is NOT here yet, and the reason is narrow: `boot` compiles every
   ## stage `-d:release`, which turns shoggoth on, and the AArch64 backend still
@@ -2157,13 +2208,41 @@ proc useNativeBoot(): bool =
   ## same boot at `-d:release --opt:none` — release defines, optimizer off — also
   ## produces a working toolchain, which is what localizes the remaining bug to
   ## arkham's handling of optimized input rather than to the syscall/ABI layer.
+  ##
+  ## windows/amd64 is in as of #2325: arkham's win_x64 target emits a PE that
+  ## imports what it needs per dll, so a native boot there needs no MinGW and no
+  ## libc — which is what makes the Windows job the slowest in the matrix (601s
+  ## of stages against 61s natively).
   when (defined(linux) or defined(windows)) and defined(amd64):
-    if not NativeBootReady: return false
-    for tool in BootNativeTools:
-      if not fileExists(binDir() / tool.addFileExt(ExeExt)): return false
-    result = true
+    result = NativeBootReady and missingNativeTools().len == 0
   else:
     result = false
+
+proc bootBackendLine(withValgrind: bool): string =
+  ## One line naming the backend `boot` is about to use, and — when it is not the
+  ## native one — why. The fallback used to be silent, which reads as "the native
+  ## path is enabled and slow" instead of "the native path was never reached":
+  ## #2325 turned windows/amd64 on and the boot went on emitting `nimony c`
+  ## because nothing had built arkham into `bin/`.
+  if bootNative:
+    return "[boot] backend: native (`nimony n`: arkham + nifasm)" &
+           (if bootBackend == bbNative: " — forced by --boot-backend:native" else: "")
+  result = "[boot] backend: C (`nimony c`)"
+  if bootBackend == bbC:
+    return result & " — forced by --boot-backend:c"
+  when (defined(linux) or defined(windows)) and defined(amd64):
+    if withValgrind:
+      result.add " — --valgrind cannot see the native heap"
+    elif not NativeBootReady:
+      result.add " — NativeBootReady is off"
+    else:
+      let missing = missingNativeTools()
+      if missing.len > 0:
+        result.add " — " & missing.join(", ") & " missing from " & binDir() &
+                   "; `hastur build all` builds them when " & NativenifDir &
+                   " is checked out"
+  else:
+    result.add " — no native backend target for this host"
 
 proc bootSourceFor(tool: string): string =
   case tool
@@ -2435,7 +2514,11 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
       quit "boot: " & exe & " not found; run `hastur build all` first"
   # valgrind cannot see the native backend's static, libc-free `mmap` heap, so
   # `--valgrind` (and thus `selfcheck`) always boots through the C backend.
-  bootNative = not withValgrind and useNativeBoot()
+  bootNative = not withValgrind and bootBackend != bbC and useNativeBoot()
+  if bootBackend == bbNative and not bootNative:
+    quit "boot: --boot-backend:native is not available here: " &
+         bootBackendLine(withValgrind)
+  echo bootBackendLine(withValgrind)
   for tool in bootCarryTools():
     let exe = binDir() / tool.addFileExt(ExeExt)
     if not fileExists(exe):
@@ -2916,6 +2999,16 @@ proc handleCmdLine =
         bootRelease = false
       of "valgrind":
         withValgrind = true
+      of "boot-backend", "bootbackend":
+        # Which backend `boot` compiles the stages with. `auto` (the default)
+        # is `useNativeBoot`; the other two are for measuring one against the
+        # other, which is otherwise impossible on a host where the native path
+        # is the automatic one.
+        case val.normalize
+        of "auto": bootBackend = bbAuto
+        of "c": bootBackend = bbC
+        of "native", "n": bootBackend = bbNative
+        else: writeHelp()
       of "forward":
         # Accumulate so callers can layer flags — `--forward:--cc:clang
         # --forward:--passL:-fuse-ld=lld` reaches nimony as both options
@@ -3003,6 +3096,7 @@ proc handleCmdLine =
       buildValidator(showProgress)
       buildDagon(showProgress)
       buildPnak(showProgress)
+      buildNativeTools(showProgress)
     of "nifler":
       buildNifler(showProgress)
     of "nimony":
@@ -3022,8 +3116,9 @@ proc handleCmdLine =
     of "native":
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
       # the sibling `../nativenif`) plus shoggoth (the opt-gated Leng optimizer
-      # that also feeds the native path). Kept out of the default `all` build so
-      # the sibling-repo dependency stays opt-in.
+      # that also feeds the native path). `all` builds these three too; this
+      # spelling is the one that rebuilds JUST them, and errors out rather than
+      # skip when the sibling checkout is missing.
       buildArkham(showProgress)
       buildNifasm(showProgress)
       buildShoggoth(showProgress)
