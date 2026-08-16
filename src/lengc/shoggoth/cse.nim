@@ -64,7 +64,7 @@
 ## `provenKey`, which resolves a symbol to the expression it was defined from
 ## (see the comment there).
 
-import std / [tables, sets, hashes, assertions, strutils, formatfloat]
+import std / [tables, sets, hashes, assertions, strutils, formatfloat, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/pragmaKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
@@ -1394,7 +1394,18 @@ proc flushPending(c: var Context) =
   ## Because the rewrites are applied here (not eagerly), dropping leaves the
   ## original expressions untouched and correct.
   var symReadsReady = false
-  for fp, pd in c.pending:
+  # In first-occurrence order, not `Table` order. Two temps that hoist to the
+  # SAME position are inserted in the order this loop reaches them, so iterating
+  # the table directly made the emitted order a function of `int` hashing over
+  # token positions — and token positions move whenever anything upstream
+  # changes the token count (line-info density, say), silently reshuffling the
+  # output of a pass that did the same work. Program order is the one order that
+  # is a property of the input.
+  var order = newSeqOfCap[int](c.pending.len)
+  for fp in c.pending.keys: order.add fp
+  sort order
+  for fp in order:
+    let pd = c.pending[fp]
     if pd.hoistPos < 0: continue
     let firstCur = cursorAt(c.orig[], pd.exprPos)
     if pd.hoistPos <= latestLocalDef(c, firstCur):
