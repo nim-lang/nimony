@@ -84,7 +84,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   runInductionVariables(buf, bodySuffix, m)
   # CSE also deletes index checks a dominating identical check already made:
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
-  st.checksRemoved += runCSE(buf, bodySuffix, summaries, m)
+  st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
