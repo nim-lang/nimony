@@ -625,25 +625,37 @@ proc slotRootOf(c: Cursor): SymId =
     else: return SymId(0)
 
 proc scanParamUsage(c: Cursor; params: HashSet[SymId];
-                    assigned, addrTaken: var HashSet[SymId]) =
+                    assigned, addrTaken: var HashSet[SymId];
+                    opaqueEffects: var bool) =
   ## Record which parameters have their *slot* reassigned (a bare `p = …`) or
   ## their *slot* address taken (`addr p`) anywhere in the body — those cannot
   ## be replaced by their argument value. Writes and address-of that go
   ## *through* the pointer (`(*p).f = …`, `addr (*p)`) leave the slot's value
   ## and address intact, so `slotRootOf` deliberately ignores them.
+  ##
+  ## `opaqueEffects` reports whether the body could write memory the scan
+  ## cannot attribute to a named local slot: a store whose destination root is
+  ## a through-pointer/unmodelled lvalue (`slotRootOf` = 0), or any call
+  ## (whose callee may write through captured pointers). While it stays false,
+  ## the body provably reads — never writes — everything reachable through an
+  ## address it takes, which is what lets an ADDRESS-TAKEN read-only param
+  ## still be substituted by a caller lvalue (see `bindingsFor`).
   if not c.isTagLit: return
   if c.stmtKind in {AsgnS, StoreS}:
     var dst = c.childCursor
     if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
     let s = slotRootOf(dst)
     if s in params: assigned.incl s
+    elif s == SymId(0): opaqueEffects = true # through-pointer / unmodelled store
   elif c.exprKind in AddrKinds:
     let s = slotRootOf(c.childCursor)
     if s in params: addrTaken.incl s
+  elif c.exprKind == CallC or c.stmtKind == CallS:
+    opaqueEffects = true                     # callee may write through pointers
   var n = c
   n.into:
     while n.hasMore:
-      scanParamUsage(n, params, assigned, addrTaken)
+      scanParamUsage(n, params, assigned, addrTaken, opaqueEffects)
       skip n
 
 proc scanRets(n: var Cursor; resultSym: var SymId; found, ok: var bool) =
@@ -949,11 +961,29 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
   for s in pSyms: paramSet.incl s
   var assigned = initHashSet[SymId]()
   var addrTaken = initHashSet[SymId]()
-  scanParamUsage(body, paramSet, assigned, addrTaken)
+  var opaqueEffects = false
+  scanParamUsage(body, paramSet, assigned, addrTaken, opaqueEffects)
   for i in 0 ..< pSyms.len:
-    if pSyms[i] in assigned or pSyms[i] in addrTaken:
-      continue                               # slot mutated / addr observed → copy
+    if pSyms[i] in assigned:
+      continue                               # slot mutated → copy
     let arg = argCursors[i]
+    if pSyms[i] in addrTaken:
+      # The body takes the param's ADDRESS — but if it provably never writes
+      # through any pointer (`opaqueEffects` false: no store the scan can't
+      # attribute to a named local slot, and no call), everything reachable
+      # through that address is only READ, so the copy and the caller's own
+      # slot are indistinguishable and the copy can go. This is the SSO string
+      # case: `hashStr`/`[]`/`==` take `haddr s` purely to reach the packed
+      # bytes, and binding forced a whole-string copy per call PLUS an
+      # address-taken stack object that poisoned copyprop/CSE around every
+      # call site. The argument must be a bare LOCAL lvalue: `(haddr arg)` is
+      # spliced verbatim, so a literal or compound is unusable, and a global
+      # is excluded because the body may assign a global directly (that write
+      # targets a named slot, so it does not set `opaqueEffects`) — a local
+      # cannot be written by any means the scan admits.
+      if not opaqueEffects and arg.isSymbol and isLocalName(pool.syms[arg.symId]):
+        result.subst[pSyms[i]] = arg
+      continue                               # else: address observed → copy
     # A read-only param (value-stable per `scanParamUsage`) may be replaced by
     # its argument at every use instead of bound to a fresh `(var)` copy.
     # Pool are always stable. A bare *local* symbol is stable too: the

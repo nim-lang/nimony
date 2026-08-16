@@ -113,6 +113,68 @@ proc isLeafLit(n: Cursor): bool {.inline.} =
     else: false
   else: false
 
+proc isStableAddrExpr(c: Cursor; deps: var seq[SymId]): bool =
+  ## `(haddr L)` / `(addr L)` over a *stable spine*: a projection chain whose
+  ## address is computed from slot VALUES alone — symbols, field offsets,
+  ## constant or symbol indices, a `deref`/`pat` step through a pointer symbol.
+  ## Evaluating such an expression reads no memory beyond the named slots in
+  ## `deps`, so the address stays valid exactly as long as none of `deps` is
+  ## assigned — the invalidation copyprop already tracks. This is the compound
+  ## sibling of the inliner's bare-symbol `isStableAddrArg`: `inc st.tags`
+  ## splices as `(var :p (ptr T) (haddr (dot (deref st) tags)))` and the temp
+  ## must be propagated here for the rewriter's `deref_addr` rule to fold it.
+  if c.kind != TagLit or c.exprKind notin AddrKinds: return false
+  proc spine(n: var Cursor; deps: var seq[SymId]): bool =
+    ## Consume exactly one value node; false on any shape whose evaluation
+    ## could read memory or have effects.
+    case n.kind
+    of Symbol:
+      deps.add symId(n)
+      skip n
+      result = true
+    of IntLit, UIntLit:
+      skip n
+      result = true
+    of TagLit:
+      case n.exprKind
+      of DotC:
+        result = true
+        n.into:
+          if n.hasMore: result = spine(n, deps)   # base
+          while n.hasMore: skip n                 # field selector, inheritance
+      of DerefC:
+        result = false
+        n.into:
+          if n.hasMore: result = spine(n, deps)   # pointer value: a slot read
+          while n.hasMore:
+            skip n
+            result = false
+      of AtC, PatC:
+        result = false
+        n.into:
+          if n.hasMore: result = spine(n, deps)   # base
+          if n.hasMore:                           # index is a value too
+            if not spine(n, deps): result = false
+          while n.hasMore:
+            skip n
+            result = false
+      of ConvC, CastC:
+        result = false
+        n.into:
+          if n.hasMore: skip n                    # the type
+          if n.hasMore: result = spine(n, deps)
+          while n.hasMore:
+            skip n
+            result = false
+      else:
+        skip n
+        result = false
+    else:
+      inc n
+      result = false
+  var op = child0(c)
+  result = spine(op, deps)
+
 proc writtenRoot(c: Cursor): SymId =
   ## The local whose STORAGE this lvalue writes. A through-pointer store
   ## (`(*p).f = v`, `p[i] = v`) writes the pointee, not `p` — `p` is only
@@ -137,6 +199,9 @@ type
     orig: ptr TokenBuf
     copyOf: Tracker[SymId, SymId]      ## y -> x: y currently aliases x
     litOf: Tracker[SymId, int]         ## y -> (litPos+1): y currently holds that leaf
+    addrOf: Tracker[SymId, int]        ## p -> (addrPos+1): p holds that stable `(haddr …)`
+    addrDeps: Table[int, seq[SymId]]   ## addrPos -> spine symbols the address depends on
+    pinned: HashSet[SymId]             ## spine symbols a snapshot may splice: never delete
     addrTaken: HashSet[SymId]          ## syms whose address is taken anywhere
     localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
     useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
@@ -153,6 +218,9 @@ proc createContext(orig: ptr TokenBuf): Context =
   result = Context(orig: orig,
           copyOf: initTracker[SymId, SymId](),
           litOf: initTracker[SymId, int](),
+          addrOf: initTracker[SymId, int](),
+          addrDeps: initTable[int, seq[SymId]](),
+          pinned: initHashSet[SymId](),
           addrTaken: initHashSet[SymId](),
           localDefs: initHashSet[SymId](),
           useCount: initTable[SymId, int](),
@@ -188,11 +256,20 @@ proc invalidate(c: var Context; s: SymId) =
   if s == SymId(0): return
   c.copyOf[s] = SymId(0)
   c.litOf[s] = 0
+  c.addrOf[s] = 0
   var toClear: seq[SymId] = @[]
   for k, v in c.copyOf.pairs:
     if v == s: toClear.add k
   for k in toClear:
     c.copyOf[k] = SymId(0)
+  # An address snapshot is a value computed from its spine symbols' slots;
+  # a write to any of them recomputes to a DIFFERENT address, so unlike a
+  # literal snapshot it does not survive.
+  toClear.setLen 0
+  for k, v in c.addrOf.pairs:
+    if v != 0 and s in c.addrDeps.getOrDefault(v - 1): toClear.add k
+  for k in toClear:
+    c.addrOf[k] = 0
 
 proc isEligible(c: Context; s: SymId): bool {.inline.} =
   s != SymId(0) and s in c.localDefs and s notin c.addrTaken
@@ -202,6 +279,7 @@ proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
   ## (survives a later write to a symbol that happened to hold the same bits);
   ## a symbol copy lasts until either side is assigned.
   if not c.isEligible(dest): return
+  c.addrOf[dest] = 0
   if isLeafLit(src):
     c.litOf[dest] = cursorToPosition(c.orig[], src) + 1
     c.copyOf[dest] = SymId(0)
@@ -221,25 +299,44 @@ proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
   else:
     c.copyOf[dest] = SymId(0)
     c.litOf[dest] = 0
+    # The inliner's by-address residue: `var p = (haddr LVAL)` for a compound
+    # LVAL (`inc st.tags`). Snapshot the address expression when its spine is
+    # stable (every spine symbol a non-addr-taken local/param): substituting it
+    # into `(deref p)` re-forms `(deref (haddr LVAL))`, which the rewrite
+    # engine's `deref_addr` rule then folds back to the plain lvalue.
+    var deps: seq[SymId] = @[]
+    if isStableAddrExpr(src, deps):
+      var ok = true
+      for d in deps:
+        if not c.isEligible(d):
+          ok = false
+          break
+      if ok:
+        let pos = cursorToPosition(c.orig[], src)
+        c.addrOf[dest] = pos + 1
+        c.addrDeps[pos] = deps
+        # The spliced copies keep reading the spine symbols, but `useCount`
+        # was taken before splicing — never delete their decls.
+        for d in deps: c.pinned.incl d
 
 # ---- branch-state forwarding (same surface as cse.nim) --------------------
 
 proc openBranches(c: var Context) =
-  c.copyOf.openBranches(); c.litOf.openBranches()
+  c.copyOf.openBranches(); c.litOf.openBranches(); c.addrOf.openBranches()
 proc openBranch(c: var Context) =
-  c.copyOf.openBranch(); c.litOf.openBranch()
+  c.copyOf.openBranch(); c.litOf.openBranch(); c.addrOf.openBranch()
 proc openFinalBranch(c: var Context) =
-  c.copyOf.openFinalBranch(); c.litOf.openFinalBranch()
+  c.copyOf.openFinalBranch(); c.litOf.openFinalBranch(); c.addrOf.openFinalBranch()
 proc closeBranch(c: var Context) =
-  c.copyOf.closeBranch(); c.litOf.closeBranch()
+  c.copyOf.closeBranch(); c.litOf.closeBranch(); c.addrOf.closeBranch()
 proc closeBranches(c: var Context) =
-  c.copyOf.closeBranches(); c.litOf.closeBranches()
+  c.copyOf.closeBranches(); c.litOf.closeBranches(); c.addrOf.closeBranches()
 proc gotoLabel(c: var Context; L: LabelId) =
-  c.copyOf.gotoLabel L; c.litOf.gotoLabel L
+  c.copyOf.gotoLabel L; c.litOf.gotoLabel L; c.addrOf.gotoLabel L
 proc landLabel(c: var Context; L: LabelId) =
-  c.copyOf.landLabel L; c.litOf.landLabel L
+  c.copyOf.landLabel L; c.litOf.landLabel L; c.addrOf.landLabel L
 proc clearAll(c: var Context) =
-  c.copyOf.clearAll(); c.litOf.clearAll()
+  c.copyOf.clearAll(); c.litOf.clearAll(); c.addrOf.clearAll()
 
 # ---- substitution synthesis -----------------------------------------------
 
@@ -260,13 +357,17 @@ proc substituteLit(c: var Context; n: Cursor; litPos: int) =
   c.substCount.mgetOrPut(symId(n), 0) += 1
 
 proc trySubstitute(c: var Context; n: Cursor) =
-  ## Prefer a snapshotted literal, then a symbol copy.
+  ## Prefer a snapshotted literal, then a snapshotted address, then a symbol copy.
   let s = symId(n)
   let root = resolve(c, s)
   var lp = c.litOf[s]
   if lp == 0: lp = c.litOf[root]
+  var ap = c.addrOf[s]
+  if ap == 0: ap = c.addrOf[root]
   if lp != 0:
     substituteLit(c, n, lp - 1)
+  elif ap != 0:
+    substituteLit(c, n, ap - 1)     # splices the whole `(haddr …)` subtree
   elif root != s:
     substituteSym(c, n, root)
 
@@ -388,8 +489,9 @@ proc trVar(c: var Context; n: var Cursor) =
         bindCopy(c, nameSym, initStart)
         # Deletable if its initializer is a side-effect-free leaf or empty:
         # dead once all its reads are rewritten away (copy) or it was never
-        # used (pure store).
-        if initKind in LeafKinds or initKind == DotToken or isLeafLit(initStart):
+        # used (pure store). A snapshotted stable address is pure too.
+        if initKind in LeafKinds or initKind == DotToken or
+           isLeafLit(initStart) or c.addrOf[nameSym] != 0:
           c.delCandidates[nameSym] = defPos
     while n.hasMore: skip n
 
@@ -420,9 +522,11 @@ proc trAsgn(c: var Context; n: var Cursor) =
     invalidate(c, writtenRoot(lhs))
     if lhs.kind == Symbol:
       let dest = symId(lhs)
-      if haveRhs and (isLeafLit(rhs) or rhs.kind == Symbol):
-        c.writeSites.mgetOrPut(dest, @[]).add asgnPos
       if haveRhs:
+        var depsIgnored: seq[SymId] = @[]
+        if isLeafLit(rhs) or rhs.kind == Symbol or
+           isStableAddrExpr(rhs, depsIgnored):
+          c.writeSites.mgetOrPut(dest, @[]).add asgnPos
         bindCopy(c, dest, rhs)
 
 proc trCallStmt(c: var Context; n: var Cursor) =
@@ -642,6 +746,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor)) =
   # had no reads) and which has no impure writes left. Pure `y = x` / `y = 5`
   # assignments to a now-dead local go with it.
   for s, defPos in ctx.delCandidates:
+    if s in ctx.pinned: continue   # an address snapshot's spliced copies read it
     let uses = ctx.useCount.getOrDefault(s)
     let subst = ctx.substCount.getOrDefault(s)
     let sites = ctx.writeSites.getOrDefault(s)
@@ -823,6 +928,47 @@ when isMainModule:
       "(scope (stmts (var :x.0.M . . (call f.0.M)) " &
       "(asgn y.0.M x.0.M) (call inner.0.M x.0.M))) " &
       "(call outer.0.M y.0.M))")
+
+  block addr_snapshot_inlined_inc:
+    # The inliner's by-address residue for a COMPOUND lvalue: `inc st.tags`
+    # splices as a pointer temp. Substitute the address into both derefs
+    # (the rewriter later folds `(deref (haddr …))`) and delete the temp.
+    chk(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(asgn (deref p.0.M) (add (i 64) (deref p.0.M) 1)))",
+      "(stmts (var :st.0.M . . (call f.0.M)) . " &
+      "(asgn (deref (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(add (i 64) (deref (haddr (dot (deref st.0.M) tags.0.M 0))) 1)))")
+
+  block addr_snapshot_spine_write_blocks:
+    # The spine symbol is reassigned between binding and use: the address
+    # would differ, so the use may not be substituted (and the decl stays).
+    assertUnchanged(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(asgn st.0.M (call g.0.M)) " &
+      "(asgn (deref p.0.M) 1))")
+
+  block addr_snapshot_loop_spine_write_blocks:
+    # Same across a loop back-edge: st is written in the body, so the
+    # snapshot cannot be carried into it.
+    assertUnchanged(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(while c.0.M (stmts " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(asgn st.0.M (call g.0.M)) " &
+      "(asgn (deref p.0.M) 1))))")
+
+  block addr_snapshot_pins_spine_local:
+    # q's only counted read sits inside the snapshot; splicing duplicates it,
+    # so q's decl must survive even though that read is "rewritten away".
+    chk(
+      "(stmts (var :q.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (deref q.0.M))) " &
+      "(asgn (deref p.0.M) 1))",
+      "(stmts (var :q.0.M . . (call f.0.M)) . " &
+      "(asgn (deref (haddr (deref q.0.M))) 1))")
 
   block inlined_callee_with_early_returns:
     # THE miscompile the literal snapshots were disabled for. An inlined callee
