@@ -43,7 +43,7 @@
 ##   --csv           emit `name,ns,units,unit-name` instead of a table
 
 import std / [assertions, syncio, monotimes, parseopt, strutils, tables]
-import ".." / lib / [nifcore, nifcoreparse, bif]
+import ".." / src / lib / [nifcore, nifcoreparse, bif]
 
 # The `bif` bench needs a scratch file, and that is the one place where the two
 # stdlibs disagree: Nimony puts `removeFile` in `std/dirs` over a distinct
