@@ -133,6 +133,12 @@ Options:
                         does not change what a plain local run covers.
   --native-debug        build arkham + nifasm unoptimized (they default to
                         -d:release); for `-d:arkhamDbgSym` / gdb toolchain work
+  --boot-backend:auto|c|native
+                        which backend `boot` compiles the stages with. `auto`
+                        (default) is per-host: `nimony n` where the native
+                        backend is complete and arkham/nifasm are in bin/,
+                        `nimony c` otherwise. The other two force it, which is
+                        how the two are timed against each other.
   --valgrind            for `boot`: build with -DMI_TRACK_VALGRIND=1 so
                         mimalloc plays nicely with valgrind, then run a
                         valgrind smoke test on the bootstrapped binary.
@@ -1590,6 +1596,16 @@ var bootRelease = true
 var bootNative = false
   ## Compile the stages with the C-free native backend (`nimony n` → arkham +
   ## nifasm)? Decided by `useNativeBoot` at the start of `bootCmd`.
+
+type BootBackend = enum
+  bbAuto,   ## whatever `useNativeBoot` says for this host — the default
+  bbC,      ## force `nimony c`
+  bbNative  ## force `nimony n`, and fail loudly when it is not available
+
+var bootBackend = bbAuto
+  ## `--boot-backend:`. Exists so the two paths can be MEASURED against each
+  ## other on a host where the native one is automatic: without it, timing the
+  ## C boot on linux/amd64 means hiding `bin/arkham` from hastur.
 var debugBuild = false
 var nativeToolsDebug = false
 
@@ -2209,8 +2225,11 @@ proc bootBackendLine(withValgrind: bool): string =
   ## #2325 turned windows/amd64 on and the boot went on emitting `nimony c`
   ## because nothing had built arkham into `bin/`.
   if bootNative:
-    return "[boot] backend: native (`nimony n`: arkham + nifasm)"
+    return "[boot] backend: native (`nimony n`: arkham + nifasm)" &
+           (if bootBackend == bbNative: " — forced by --boot-backend:native" else: "")
   result = "[boot] backend: C (`nimony c`)"
+  if bootBackend == bbC:
+    return result & " — forced by --boot-backend:c"
   when (defined(linux) or defined(windows)) and defined(amd64):
     if withValgrind:
       result.add " — --valgrind cannot see the native heap"
@@ -2495,7 +2514,10 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
       quit "boot: " & exe & " not found; run `hastur build all` first"
   # valgrind cannot see the native backend's static, libc-free `mmap` heap, so
   # `--valgrind` (and thus `selfcheck`) always boots through the C backend.
-  bootNative = not withValgrind and useNativeBoot()
+  bootNative = not withValgrind and bootBackend != bbC and useNativeBoot()
+  if bootBackend == bbNative and not bootNative:
+    quit "boot: --boot-backend:native is not available here: " &
+         bootBackendLine(withValgrind)
   echo bootBackendLine(withValgrind)
   for tool in bootCarryTools():
     let exe = binDir() / tool.addFileExt(ExeExt)
@@ -2977,6 +2999,16 @@ proc handleCmdLine =
         bootRelease = false
       of "valgrind":
         withValgrind = true
+      of "boot-backend", "bootbackend":
+        # Which backend `boot` compiles the stages with. `auto` (the default)
+        # is `useNativeBoot`; the other two are for measuring one against the
+        # other, which is otherwise impossible on a host where the native path
+        # is the automatic one.
+        case val.normalize
+        of "auto": bootBackend = bbAuto
+        of "c": bootBackend = bbC
+        of "native", "n": bootBackend = bbNative
+        else: writeHelp()
       of "forward":
         # Accumulate so callers can layer flags — `--forward:--cc:clang
         # --forward:--passL:-fuse-ld=lld` reaches nimony as both options
