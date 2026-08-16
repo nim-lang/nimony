@@ -624,6 +624,61 @@ proc slotRootOf(c: Cursor): SymId =
       else: return rootOf(n)                  # unmodelled spine: stay conservative
     else: return SymId(0)
 
+const PathArgSubstitution* = not defined(inlinerNoPathSubst)
+  ## Substitute a compound-lvalue or global argument into the splice when the
+  ## callee body provably writes nothing the caller can observe
+  ## (`bodyIsCallerReadOnly`). `-d:inlinerNoPathSubst` restores the older, purely
+  ## shape-based rule (literals, `(haddr S)`, `(deref S)`, bare locals) as the
+  ## A/B reference.
+
+const MaxPathSubstUses = 2
+  ## How often a substituted *path* argument may appear in the body. Unlike a
+  ## bare symbol, a path is re-evaluated at each use (`(dot o f)` is a load), so
+  ## substituting it at many sites trades one copy for many loads. Two keeps the
+  ## win — the `var`-parameter case is one or two uses — without that trade.
+  ## (`cse` would re-fold the repeats, but it only runs under `--opt`.)
+
+proc countParamUses(c: Cursor; params: HashSet[SymId]; uses: var Table[SymId, int]) =
+  case c.kind
+  of Symbol:
+    if c.symId in params: uses[c.symId] = uses.getOrDefault(c.symId) + 1
+  of TagLit:
+    var n = c
+    n.into:
+      while n.hasMore:
+        countParamUses(n, params, uses)
+        skip n
+  else: discard
+
+proc isPurePathArg(c: Cursor): bool =
+  ## Is the argument an lvalue path — symbols, fields, indices, derefs, casts —
+  ## with no call and no constructor in it? Such an expression can be spliced at
+  ## a use site and re-evaluated there, PROVIDED nothing writes what it reads;
+  ## that second half is `bodyIsCallerReadOnly`'s job.
+  case c.kind
+  of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+    result = true
+  of TagLit:
+    case c.exprKind
+    of DotC, AtC, DerefC, PatC, AddrC, HaddrC, ConvC, CastC, BaseobjC, ParC:
+      result = true
+      var n = c
+      n.into:
+        while n.hasMore:
+          if not isPurePathArg(n): result = false
+          skip n
+    else:
+      result = false
+  else:
+    result = false
+
+proc writeTargetIsLocalSlot(dst: Cursor): bool =
+  ## True when the written lvalue is a plain slot of a symbol this body owns:
+  ## no deref/index-through-pointer step (`slotRootOf` answers 0 for those), and
+  ## a *local* name, since assigning a global is visible to the caller.
+  let s = slotRootOf(dst)
+  result = s != SymId(0) and isLocalName(pool.syms[s])
+
 proc scanParamUsage(c: Cursor; params: HashSet[SymId];
                     assigned, addrTaken: var HashSet[SymId]) =
   ## Record which parameters have their *slot* reassigned (a bare `p = …`) or
@@ -939,7 +994,57 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   dest.addParRi()
   dest.addParRi()                           # close (scope …)
 
-proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
+proc calleeIsNoReturn(c: var InlinerCtx; calleeSym: SymId): bool =
+  ## `(attr "noreturn")` on the callee — `lengcgen` carries Nimony's noreturn
+  ## that way. Control never comes back, so nothing such a call writes can be
+  ## observed by a later use in the body that called it. `panic` is the case
+  ## that matters: every lowered bounds check contains one.
+  var decl = default(Cursor)
+  if not lookupBody(c, calleeSym, decl): return false
+  var p = decl
+  let pd = takeProcDecl(p)
+  if not pd.pragmas.isTagLit: return false
+  var pr = pd.pragmas
+  pr.into:
+    while pr.hasMore:
+      if pr.isTagLit and pr.pragmaKind == AttrP:
+        var a = pr
+        inc a
+        if a.kind == StrLit and pool.strings[a.strId] == "noreturn": return true
+      skip pr
+  result = false
+
+proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
+  ## Can this body change ANY memory its caller can observe?
+  ##
+  ## It cannot when every write goes to a plain slot of one of its own locals
+  ## (never through a pointer, never to a global) and every call it makes is one
+  ## that does not return. Such a body leaves every caller-side expression
+  ## exactly as it found it — so an argument that is a pure path
+  ## (`isPurePathArg`) has the same value at every use site inside the splice,
+  ## and can be substituted instead of copied into a parameter.
+  ##
+  ## This is the fact the two "cannot prove it without alias info" refusals in
+  ## `isSubstitutableArg` / `isStableAddrArg` were missing. It is answered from
+  ## the body about to be spliced — no summaries, no types, no alias partition.
+  if not body.isTagLit: return false
+  result = true
+  var n = body
+  if n.stmtKind in {AsgnS, StoreS}:
+    var dst = n.childCursor
+    if n.stmtKind == StoreS: skip dst        # `(store value dest)`
+    if not writeTargetIsLocalSlot(dst): return false
+  elif n.stmtKind == CallS or n.exprKind == CallC:
+    var callee = n.childCursor
+    if callee.kind != Symbol: return false
+    if not calleeIsNoReturn(c, callee.symId): return false
+  var m = n
+  m.into:
+    while m.hasMore:
+      if not bodyIsCallerReadOnly(c, m): return false
+      skip m
+
+proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
                  body: Cursor; rename: Table[SymId, SymId]): Bindings =
   ## Bundle the param→fresh-sym rename with the set of params that can be
   ## replaced by their argument value (read-only, not addr-taken, substitutable
@@ -950,6 +1055,21 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
   var assigned = initHashSet[SymId]()
   var addrTaken = initHashSet[SymId]()
   scanParamUsage(body, paramSet, assigned, addrTaken)
+  # A body that cannot write anything the caller sees makes every pure PATH
+  # argument stable across the splice — the fact the refusals below could not
+  # establish. Computed once per call site, and only when it can pay off.
+  var uses = initTable[SymId, int]()
+  var callerReadOnly = false
+  when PathArgSubstitution:
+    var anyPathArg = false
+    for i in 0 ..< pSyms.len:
+      if pSyms[i] notin assigned and pSyms[i] notin addrTaken and
+         not argCursors[i].isSymbol and isPurePathArg(argCursors[i]):
+        anyPathArg = true
+        break
+    if anyPathArg:
+      callerReadOnly = bodyIsCallerReadOnly(c, body)
+      if callerReadOnly: countParamUses(body, paramSet, uses)
   for i in 0 ..< pSyms.len:
     if pSyms[i] in assigned or pSyms[i] in addrTaken:
       continue                               # slot mutated / addr observed → copy
@@ -963,6 +1083,14 @@ proc bindingsFor(pSyms: seq[SymId]; argCursors: seq[Cursor];
     # whereas the copy captured its entry value.
     if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
        (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
+      result.subst[pSyms[i]] = arg
+    elif callerReadOnly and isPurePathArg(arg) and
+         uses.getOrDefault(pSyms[i]) <= MaxPathSubstUses:
+      # A compound lvalue (`(haddr (dot o f))`, `(at a i)`) or a global: stable
+      # here because this body writes nothing the caller can observe. Splicing
+      # it leaves `(deref (haddr (dot o f)))` at the use, which the rewrite
+      # engine's `deref_addr` rule folds back to `(dot o f)` — the same reason
+      # `isStableAddrArg` exists, now without the bare-symbol restriction.
       result.subst[pSyms[i]] = arg
 
 proc seedRenameWalk(c: var InlinerCtx; n: var Cursor;
@@ -1061,7 +1189,7 @@ proc trySplice*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): int =
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  let bnd = bindingsFor(c, pSyms, argCursors, pd.body, rename)
 
   dest.addParLe TagId(ScopeS), info
 
@@ -1181,7 +1309,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  var bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  var bnd = bindingsFor(c, pSyms, argCursors, pd.body, rename)
   bnd.dropDecl = resultLocal
 
   dest.addParLe TagId(ScopeS), info
@@ -1432,7 +1560,7 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   for i in 0 ..< pSyms.len:
     argCursors.add ac
     skip ac
-  let bnd = bindingsFor(pSyms, argCursors, pd.body, rename)
+  let bnd = bindingsFor(c, pSyms, argCursors, pd.body, rename)
   for i in 0 ..< pSyms.len:
     if not bnd.subst.hasKey(pSyms[i]): return 0
 

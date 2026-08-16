@@ -163,6 +163,11 @@ type
     writes: HashSet[SymId]      ## symbols assigned in the loop
     memStoreRoots: HashSet[SymId] ## `rootOf` of through-pointer stores;
                                   ## `SymId(0)` = indeterminate store
+    memStorePaths: seq[AccessPath] ## the same stores as PATHS, in the same
+                                   ## order they were seen. Invariance asks the
+                                   ## question `invalidateForStore` asks, so it
+                                   ## gets the same two answers intersected
+                                   ## (`doc/cse.md`)
     callPos: seq[int]           ## `(call …)` nodes, for summary-based clobber
 
   CachedEntry = object
@@ -1155,8 +1160,10 @@ proc preScanLoop(c: Context; start: Cursor; frame: var LoopFrame) =
     else:
       if c.aa.forged and goesThroughPointer(lhs):
         frame.memStoreRoots.incl SymId(0)
+        frame.memStorePaths.add unknownPath()
       else:
         frame.memStoreRoots.incl rootOf(lhs)
+        frame.memStorePaths.add pathOfLvalue(lhs)
   if sk == CallS or ek == CallC:
     frame.callPos.add cursorToPosition(c.orig[], start)
   var n = start
@@ -1175,6 +1182,7 @@ proc callWouldClobber(c: var Context; call, expr: Cursor): bool =
   if summary.writesGlobal or summary.callsUnknown:
     return not unreachableByCallee(c, expr, escapedClassReps(c))
   var argSyms: seq[SymId] = @[]
+  var argPaths: seq[AccessPath] = @[]
   var writtenClasses = initHashSet[uint32]()
   var argIndex = 0
   var ca = call
@@ -1183,6 +1191,7 @@ proc callWouldClobber(c: var Context; call, expr: Cursor): bool =
     while ca.hasMore:
       let s = rootOf(ca)
       argSyms.add s
+      argPaths.add pathOfLvalue(ca)
       if paramMayWrite(summary, argIndex):
         let cls = if argIndex < summary.params.len: summary.params[argIndex].cls
                   else: uint32(argIndex)
@@ -1197,19 +1206,51 @@ proc callWouldClobber(c: var Context; call, expr: Cursor): bool =
     let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
     if cls in writtenClasses:
       reps.incl c.aa.find(argSyms[i])
-  result = expressionTouchesClass(c, expr, reps)
+  when PathCallInvalidation:
+    # Hoisting must ask the question invalidation asks, or LICM would leave a
+    # load in the loop that the cache would have kept across the same call.
+    var written: seq[AccessPath] = @[]
+    for i in 0 ..< argPaths.len:
+      let cls = if i < summary.params.len: summary.params[i].cls else: uint32(i)
+      if cls in writtenClasses: written.add argPaths[i]
+    result = callClobbersEntry(c, expr, written, reps, escapedClassReps(c))
+  else:
+    result = expressionTouchesClass(c, expr, reps)
+
+proc storeInLoopClobbersByClass(c: var Context; expr: Cursor;
+                                frame: LoopFrame): bool =
+  ## `master`'s invariance test: an in-loop store kills the expression when its
+  ## root's alias class touches it, at root granularity.
+  for s in frame.memStoreRoots:
+    if s == SymId(0):
+      if not unreachableByCallee(c, expr, escapedClassReps(c)): return true
+    else:
+      var one = initHashSet[SymId]()
+      one.incl c.aa.find(s)
+      if expressionTouchesClass(c, expr, one): return true
+  result = false
+
+proc storeInLoopClobbers(c: var Context; expr: Cursor; frame: LoopFrame): bool =
+  ## Does any store in the loop reach `expr`? The path answer, intersected with
+  ## the alias classes inside `mayOverlap` — the same rule the cache uses for a
+  ## store, so a loop that writes `o.b` stops holding a load of `o.a` down.
+  let escaped = escapedClassReps(c)
+  for i in 0 ..< frame.memStorePaths.len:
+    let w = frame.memStorePaths[i]
+    if not w.known:
+      if not unreachableByCallee(c, expr, escaped): return true
+    elif expressionOverlaps(c, expr, w, escaped):
+      return true
+  result = false
 
 proc invariantIn(c: var Context; expr: Cursor; frame: LoopFrame): bool =
   ## True when `expr` is a loop invariant of `frame`: no mentioned symbol is
   ## assigned, no in-loop store aliases it, no in-loop call clobbers it.
   if expressionMentionsAny(expr, frame.writes): return false
-  for s in frame.memStoreRoots:
-    if s == SymId(0):
-      if not unreachableByCallee(c, expr, escapedClassReps(c)): return false
-    else:
-      var one = initHashSet[SymId]()
-      one.incl c.aa.find(s)
-      if expressionTouchesClass(c, expr, one): return false
+  when PathStoreInvalidation:
+    if storeInLoopClobbers(c, expr, frame): return false
+  else:
+    if storeInLoopClobbersByClass(c, expr, frame): return false
   for pos in frame.callPos:
     if callWouldClobber(c, cursorAt(c.orig[], pos), expr): return false
   result = true
@@ -2249,6 +2290,31 @@ when isMainModule:
       "(while c.0.M (stmts (asgn y.0.M (at `cse.1 i.0.M)) " &
       "(asgn z.0.M (at `cse.1 i.0.M)) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))")
+
+  when PathStoreInvalidation:
+    block loop_sibling_field_store_hoists:
+      # The loop writes `o.b`; a load of `o.a` is still invariant, so it moves to
+      # the pre-header. At root granularity the store holds it in the loop.
+      chk(
+        "(stmts (while c.0.M (stmts " &
+        "(asgn y.0.M (dot o.0.M a.0.M)) " &
+        "(asgn (dot o.0.M b.0.M) 7))))",
+        "(stmts (var :`cse.1 . . (dot o.0.M a.0.M)) " &
+        "(while c.0.M (stmts (asgn y.0.M `cse.1) " &
+        "(asgn (dot o.0.M b.0.M) 7))))")
+  else:
+    block loop_sibling_field_store_blocks_hoist:
+      assertUnchanged(
+        "(stmts (while c.0.M (stmts " &
+        "(asgn y.0.M (dot o.0.M a.0.M)) " &
+        "(asgn (dot o.0.M b.0.M) 7))))")
+
+  block loop_prefix_store_not_hoisted:
+    # The loop writes `o.a` itself → the load of `o.a.f` is not invariant.
+    assertUnchanged(
+      "(stmts (while c.0.M (stmts " &
+      "(asgn y.0.M (dot (dot o.0.M a.0.M) f.0.M)) " &
+      "(asgn (dot o.0.M a.0.M) 7))))")
 
   block loop_unknown_call_not_hoisted:
     # Unknown callee in the body may clobber `pp` → not invariant.

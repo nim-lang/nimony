@@ -278,6 +278,48 @@ the cheaper description of the problem, but on *this* workload they do not yet
 pay for themselves — the case for them is the type machinery they let the summary
 producer drop, not a speed-up here.
 
+## Where else the same question is asked
+
+Most of the pipeline asks no memory-disambiguation question at all — constant
+folding, the rewrite engine and constructor projection are syntax; `copyprop`
+deliberately propagates only symbols and literals of non-addr-taken locals, so
+"a call cannot touch a non-addr-taken local" is its whole theory; `scalarizer`'s
+eligibility test is a path *shape* predicate that needs no overlap. Two places do
+ask it, and both now use the rules above.
+
+**LICM** (`cse.invariantIn`) asks exactly the store question, so it gets exactly
+the store answer: `LoopFrame` carries the in-loop stores as paths, and a loop
+that writes `o.b` no longer holds a load of `o.a` down. Its call test
+(`callWouldClobber`) uses the call rule for the same reason — hoisting must not
+be stricter than invalidation, or a load stays in the loop that the cache would
+have kept across the same call.
+
+**The inliner** (`hexer/intramodinliner`) was blocked on this question by name:
+`isSubstitutableArg` excluded symbol arguments because "the inliner cannot prove
+the caller's variable is unmodified during the body without alias info", and
+`isStableAddrArg` excluded compound lvalues because "the body could write through
+another pointer parameter to a symbol the path mentions". Both facts come from
+the body it is about to splice, so no alias info is needed at all:
+`bodyIsCallerReadOnly` asks whether every write goes to a plain slot of one of
+the body's own locals (never through a pointer, never to a global) and whether
+every call it makes is `noreturn` — `panic`, which every lowered bounds check
+contains, is why that exemption matters. When it holds, the body cannot change
+anything the caller can observe, so any pure path argument has the same value at
+every use site and is substituted instead of copied into a parameter. Capped at
+`MaxPathSubstUses` uses, since a path (unlike a symbol) is re-evaluated per use.
+
+Measured over 12 `nimsem` modules: 10 change, and the emitted Leng shrinks by
+13KB — 9, 24 and 6 parameter copies gone in the three largest.
+`-d:inlinerNoPathSubst` restores the old rule.
+
+**`induction_variables`** turned out to ask no aliasing question — `addr arr[0]`
+is the address of stable storage — but it never checked that the *base* is one.
+`typenav` admits `(at …)` on `ptr`/`aptr`/`flexarray` too, where the hoisted
+address is the base's *value*, so a loop that rebinds it would leave the pointer
+walking the old buffer. `baseIsStable` now proves the base is an array, or else
+requires it to be unassigned, not address-taken, and free of calls in the loop.
+(A `(store …)` write-target bug — the first child is the *source* — went with it.)
+
 ## Still to do
 
 1. Rewrite the summary producer in `hexer/funcsummary.nim` in path vocabulary —

@@ -87,6 +87,14 @@ proc loopBodyCursor(loopCursor: Cursor): Cursor =
     skip result                              # past cond
   else: discard
 
+proc writeTargetOf(start: Cursor): Cursor =
+  ## The lvalue a statement writes: `(asgn dest src)` → `dest`, but
+  ## `(store src dest)` → the SECOND child. Reading the first child for both
+  ## looked at the *source* of a `store` and missed its target.
+  result = start
+  inc result                                 # past the tag
+  if start.stmtKind == StoreS: skip result   # past the source
+
 proc countWritesOf(start: Cursor; sym: SymId; counter: var int) =
   ## Counts Symbol-LHS assignments to `sym` anywhere in the subtree at `start`,
   ## including nested loops.
@@ -94,8 +102,7 @@ proc countWritesOf(start: Cursor; sym: SymId; counter: var int) =
   case start.kind
   of TagLit:
     if start.stmtKind in {AsgnS, StoreS}:
-      var lhs = start
-      inc lhs
+      let lhs = writeTargetOf(start)
       if lhs.kind == Symbol and symId(lhs) == sym:
         inc counter
     var n = start
@@ -130,6 +137,57 @@ proc scanBody(c: var Context; n: Cursor;
   m.loopInto:
     scanBody(c, m, candidates, addrTaken)
     skip m
+
+type
+  LoopFacts = object
+    ## What the loop does to the symbols an access is rooted at. Collected once
+    ## per loop; used to decide whether the hoisted `addr base[0]` stays valid
+    ## for the whole loop (see `baseIsStable`).
+    assigned: HashSet[SymId]   ## symbol-LHS writes anywhere in the loop
+    addrTaken: HashSet[SymId]  ## `(addr S)` / `(haddr S)` anywhere in the loop
+    hasCall: bool              ## a callee can rebind a global or an escaped local
+
+proc collectLoopFacts(n: Cursor; f: var LoopFacts) =
+  if not n.hasMore or n.kind != TagLit: return
+  if n.stmtKind in {AsgnS, StoreS}:
+    let lhs = writeTargetOf(n)
+    if lhs.kind == Symbol: f.assigned.incl symId(lhs)
+  if n.stmtKind == CallS or n.exprKind == CallC: f.hasCall = true
+  if n.exprKind in AddrKinds:
+    var probe = n
+    inc probe
+    while probe.hasMore:
+      if probe.kind == Symbol:
+        f.addrTaken.incl symId(probe)
+        break
+      elif probe.kind == TagLit:
+        inc probe
+      else:
+        inc probe
+  var m = n
+  m.loopInto:
+    collectLoopFacts(m, f)
+    skip m
+
+proc baseIsStable(c: var Context; base: Cursor; f: LoopFacts): bool =
+  ## Is `addr base[0]` — the address this rewrite hoists out of the loop — the
+  ## same on every iteration?
+  ##
+  ## For an ARRAY base it always is: the address is the variable's own storage,
+  ## which no assignment moves (`arr = other` copies *into* it) and no callee can
+  ## relocate. That is the case this pass was written for.
+  ##
+  ## For a POINTER-like base (`ptr`/`aptr`/`flexarray`, all of which `typenav`
+  ## admits under `(at …)`) the hoisted address IS the base's value, so a loop
+  ## that rebinds it — directly, through a taken address, or through a callee
+  ## that can reach it — would leave the pointer walking the old buffer. The
+  ## same holds when the type does not resolve at all: unproven is not proven.
+  if base.kind != Symbol: return false
+  if c.m != nil:
+    let t = navigateToObjectBody(c.m[], getType(c.m[], base))
+    if t.typeKind == ArrayT: return true
+  let s = symId(base)
+  result = s notin f.assigned and s notin f.addrTaken and not f.hasCall
 
 proc findIV(c: var Context; body: Cursor): tuple[ivSym: SymId, incPos: int, found: bool] =
   ## Identifies the loop body's induction variable (exactly one
@@ -251,8 +309,14 @@ proc transformLoop(c: var Context; n: var Cursor) =
   if ivInfo.found:
     var accesses: seq[AccessInfo] = @[]
     collectAccesses(c, body, ivInfo.ivSym, accesses)
+    var facts = LoopFacts(assigned: initHashSet[SymId](),
+                          addrTaken: initHashSet[SymId]())
+    collectLoopFacts(body, facts)
     var arrToP = initTable[SymId, string]()
     for acc in accesses:
+      var base = acc.atCursor
+      inc base                               # past `(at` → the base
+      if not baseIsStable(c, base, facts): continue
       var p: string
       if acc.arrSym in arrToP:
         p = arrToP[acc.arrSym]
@@ -390,6 +454,28 @@ when isMainModule:
 
   block no_iv_no_transform:
     assertUnchanged("(stmts (while c.0.M (stmts (asgn x.0.M 1))))")
+
+  block base_reassigned_in_loop:
+    # The hoisted `addr arr[0]` is only the loop-invariant address of a stable
+    # storage if `arr` is an array. Here the type does not resolve (no module
+    # context), and the loop rebinds `arr`, so the rewrite would leave the
+    # pointer walking the old buffer.
+    assertUnchanged(
+      "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) " &
+      "(asgn arr.0.M other.0.M) (asgn i.0.M (add (i 32) i.0.M 1)))))")
+
+  block call_in_loop_with_unresolved_base:
+    # Same reasoning one step removed: a callee can rebind a global or an escaped
+    # local. With a resolved ARRAY type this transforms as before — the address
+    # of an array variable is not something a callee can move.
+    assertUnchanged(
+      "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) " &
+      "(call f.0.M) (asgn i.0.M (add (i 32) i.0.M 1)))))")
+
+  block base_addr_taken_in_loop:
+    assertUnchanged(
+      "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) " &
+      "(call f.0.M (addr arr.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
 
   block iv_written_twice_disqualifies:
     assertUnchanged(
