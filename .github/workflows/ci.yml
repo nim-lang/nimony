@@ -170,40 +170,26 @@ jobs:
         # named suite does not run `tests/setup.hastur` (which is what builds it
         # during a tree walk) — so the build is its own command here.
         #
-        # FIRST, ahead of the native steps: the cache is restored through a
-        # `restore-keys:` prefix, so a commit touching `src/**` still gets the
-        # PREVIOUS commit's `bin/` handed to it, and every step after this one
-        # would otherwise be reading tools older than the sources it is testing.
-        # `hastur native` rebuilds what it exercises itself, but not the whole
-        # tier-0 layer beneath it (nifler above all — 28s cold, the priciest tool
-        # in the tree, and one this job builds here regardless).
+        # `build all` includes arkham + nifasm (from the sibling `../nativenif`
+        # checked out by the setup action), which is what a native boot needs in
+        # `bin/`. WHICH backend the bootstrap then takes is `useNativeBoot`'s
+        # call, in Nim, per host — nothing here selects it. It matters that this
+        # step runs at all, though: the artifact cache is restored through a
+        # `restore-keys:` prefix, so a commit touching `src/**` gets the PREVIOUS
+        # commit's `bin/` handed to it and would otherwise boot stale tools.
         run: |
           cd nimony
           nim c -r src/hastur --release build all
 
       - name: Run native backend tests (Linux amd64)
-        # The native path emits a static, libc-free x86-64 ELF — only meaningful on
-        # Linux amd64. `hastur native` builds the front end + arkham/nifasm (from the
-        # sibling `../nativenif` checked out above) and runs the curated regression
-        # set (full ARC suite + closures + cps) through `nimony n`.
-        #
-        # It lives in THIS job, and before the bootstrap, because arkham/nifasm are
-        # the only tools in `bin/` that `build all` does not produce (they come from
-        # the sibling repo), so the shared cache restores them from an older run
-        # keyed only on `nimony/src/**` — a nativenif change does not invalidate it.
-        # `tests/boot` boots natively whenever they are present, so without this
-        # step first it would boot with a stale arkham.
+        # The curated native regression set (full ARC suite + closures + cps)
+        # through `nimony n`. Only Linux amd64 has a recorded pass list to hold it
+        # to; `NativeTestDirsWindows` exists but has never been run on a real
+        # runner, so Windows gets the native BOOT first and this later.
         if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         run: |
           cd nimony
           nim c -r src/hastur --release native
-
-      # A `build native` step used to sit here so `tests/boot` would boot Windows
-      # through arkham + nifasm — no MinGW, no libc, 61s of stages against 601s.
-      # It was green under Wine and red on the runner, so it is out again until
-      # someone has a diagnosis; `useNativeBoot` keeps the path one
-      # `HASTUR_NATIVE_BOOT=1` away, and with no arkham in `bin/` it would not
-      # take it anyway.
 
       - name: Run bootstrap
         # `hastur tests/boot` is the same suite the tree walk would have reached;
