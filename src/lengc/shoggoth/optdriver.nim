@@ -155,17 +155,15 @@ proc processFile*(input, output: string; verify = false): Stats =
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
   var st = Stats()
-  # 1. Whole-module inter-module inlining runs first, in the nifcursors world
-  #    (via the bridge); the result comes back as a NIF string.
+  # 1. Whole-module inter-module inlining runs first, in the global-pool world
+  #    (via the bridge); the module comes back as a buffer in that namespace.
   var imiChanged = false
-  let imiNif = runImi(input, suffix, splitFile(input).dir, imiChanged)
+  var src = runImi(input, suffix, splitFile(input).dir, imiChanged)
   if imiChanged: inc st.intermodChanged
-  # 2. Load the module as a typenav context (for type-precise aliasing), and
-  #    reparse the (post-inlining) body into nifcore SHARING that context's pool
-  #    so symbol ids line up between the type context and the optimization buffer.
-  var typeCtx = load(input)
-  var src = parseFromBuffer(imiNif, suffix, 4000,
-                            sharedPool = typeCtx.pool, sharedTags = typeCtx.tags)
+  # 2. Load the module as a typenav context (for type-precise aliasing) INTO
+  #    that same namespace, so symbol ids line up between the type context and
+  #    the optimization buffer without re-interning either of them.
+  var typeCtx = load(input, sharedPool = src.pool, sharedTags = src.tags)
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
