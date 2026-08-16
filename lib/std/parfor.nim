@@ -18,20 +18,6 @@
 
 import std / [atomics, threadpool]
 
-const
-  ParDefaultChunks* = WorkerCount
-    ## Default number of chunks when the `||` loop does not pass an explicit
-    ## `chunkSize`. One chunk per worker keeps scheduling overhead low while
-    ## saturating the pool.
-
-  ParMaxChunks* = StripeCount * StripeSize
-    ## Soft ceiling on concurrent chunk runners, = the pool queue capacity.
-    ## `submit` is non-lossy (it caller-runs once the queue is full), so going
-    ## over this no longer deadlocks — but the excess chunks would then run
-    ## inline on the submitting thread, serialising them. Capping the chunk
-    ## count here keeps every chunk genuinely pool-scheduled; `parGrain`
-    ## coarsens a too-fine grain to stay within it.
-
 type
   Workload* = enum
     ## A hint about a parallel `for` body's typical cost, so the join can pick
@@ -78,6 +64,18 @@ proc parGrain*(iters, chunkSize: int): int =
   ## derives a grain that yields about `ParDefaultChunks` chunks (one per
   ## worker), adapting to the machine. Always `>= 1` for a non-empty range, so a
   ## chunk is never empty.
+  let
+    ParDefaultChunks = workerCount
+      ## Default number of chunks when the `||` loop does not pass an explicit
+      ## `chunkSize`. One chunk per worker keeps scheduling overhead low while
+      ## saturating the pool.
+    ParMaxChunks = StripeCount * StripeSize
+      ## Soft ceiling on concurrent chunk runners, = the pool queue capacity.
+      ## `submit` is non-lossy (it caller-runs once the queue is full), so going
+      ## over this no longer deadlocks — but the excess chunks would then run
+      ## inline on the submitting thread, serialising them. Capping the chunk
+      ## count here keeps every chunk genuinely pool-scheduled; `parGrain`
+      ## coarsens a too-fine grain to stay within it.
   if iters <= 0: return 0
   # Smallest grain that keeps `ceil(iters/grain) <= ParMaxChunks`.
   let minGrain = (iters + ParMaxChunks - 1) div ParMaxChunks   # ceil
