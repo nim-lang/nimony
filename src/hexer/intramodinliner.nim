@@ -1499,19 +1499,240 @@ proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
   else:
     return false
 
+proc containsCall(n: Cursor): bool =
+  ## Any `(call …)` in the subtree. The diamond fold below must not move a
+  ## call into expression position: hexer guarantees the backends never see
+  ## nested calls, and folding one into an `and`/`or` operand would also make
+  ## its effects conditional.
+  case n.kind
+  of TagLit:
+    if n.stmtKind == CallS: return true
+    var it = n.childCursor
+    while it.hasMore:
+      if containsCall(it): return true
+      skip it
+    result = false
+  else:
+    result = false
+
+proc soleStmtOf(branch: Cursor; outStmt: var Cursor): bool =
+  ## Peel `(stmts …)`/`(scope …)` wrappers containing exactly one child until
+  ## a single plain statement remains — xelim wraps the `else` arm of its
+  ## `and`/`or` lowering in several nested one-statement `stmts`.
+  var b = branch
+  while b.isTagLit and b.stmtKind in {StmtsS, ScopeS}:
+    var cnt = 0
+    var only = default(Cursor)
+    var it = b
+    it.into:
+      while it.hasMore:
+        inc cnt
+        if cnt == 1: only = it
+        skip it
+    if cnt != 1: return false
+    b = only
+  outStmt = b
+  result = true
+
+proc asgnOf(s: Cursor; lhs: var SymId; rhs: var Cursor): bool =
+  ## Matches `(asgn v X)` with a bare symbol LHS.
+  if not s.isTagLit or s.stmtKind != AsgnS: return false
+  var a = s.childCursor
+  if not a.hasMore or not a.isSymbol: return false
+  lhs = a.symId
+  skip a
+  if not a.hasMore: return false
+  rhs = a
+  result = true
+
+type
+  CondRecon = object
+    declared: HashSet[SymId]     ## uninitialized temps declared in the body
+    defIdx: Table[SymId, int]    ## temp -> index of its value in `bufs`
+    bufs: seq[TokenBuf]          ## reconstructed value expression per temp
+    consumed: HashSet[SymId]     ## temps whose value was spliced already
+
+proc substInto(r: var CondRecon; dest: var TokenBuf; n: Cursor): bool =
+  ## Copy the expression at `n`, splicing each reconstructed temp's value at
+  ## its (single) use. A second use would duplicate the expression and a use
+  ## of a declared-but-valueless temp would dangle once the decls are
+  ## dropped — both abort the fold.
+  case n.kind
+  of Symbol:
+    let s = n.symId
+    if r.defIdx.hasKey(s):
+      if s in r.consumed: return false
+      r.consumed.incl s
+      var rd = beginRead(r.bufs[r.defIdx.getOrQuit(s)])
+      dest.addSubtree rd
+      endRead rd
+      result = true
+    elif s in r.declared:
+      result = false
+    else:
+      dest.addSubtree n
+      result = true
+  of TagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    var it = n.childCursor
+    while it.hasMore:
+      if not substInto(r, dest, it): return false
+      skip it
+    dest.addParRi()
+    result = true
+  else:
+    dest.addSubtree n
+    result = true
+
+proc reconstructCondExpr(body: Cursor; synth: var TokenBuf): bool =
+  ## Inverse of xelim's *value-position* `and`/`or` lowering. A source-level
+  ## `result = a and b and c` reaches NIFC as a chain of boolean diamonds
+  ##
+  ##   (var :t1 . (bool) .) …
+  ##   (if (elif A (stmts (asgn t1 B))) (else …(asgn t1 (false))…))
+  ##   (if (elif t1 (stmts (asgn t2 C))) (else …(asgn t2 (false))…))
+  ##   (asgn result t2)
+  ##   (ret result)
+  ##
+  ## This folds the chain back into the expression `(and (and A B) C)`
+  ## (`(or …)` for the then-arm-`(true)` variant), written into `synth`.
+  ## Sound because each diamond IS its `and`/`or`: the arm value is evaluated
+  ## under exactly the condition the operator gives it, and each temp is
+  ## consumed exactly once at the program point where it was read. Call-bearing
+  ## bodies are rejected wholesale (a call must not migrate into an
+  ## expression), so re-ordering concerns reduce to pure reads, which commute.
+  if containsCall(body): return false
+  # Peel single-child stmts/scope wrappers, then collect the statement list.
+  var b = body
+  while b.isTagLit and b.stmtKind in {StmtsS, ScopeS}:
+    var cnt = 0
+    var only = default(Cursor)
+    var it = b
+    it.into:
+      while it.hasMore:
+        inc cnt
+        if cnt == 1: only = it
+        skip it
+    if cnt != 1: break
+    b = only
+  if not b.isTagLit or b.stmtKind notin {StmtsS, ScopeS}: return false
+  var stmts: seq[Cursor] = @[]
+  var overlong = false
+  var itl = b
+  itl.into:
+    while itl.hasMore:
+      if stmts.len >= 16: overlong = true
+      else: stmts.add itl
+      skip itl
+  if overlong or stmts.len < 2: return false
+
+  var r = CondRecon()
+  var done = false
+  for i in 0 ..< stmts.len:
+    if done: return false                  # statements after the ret
+    let s = stmts[i]
+    if not s.isTagLit: return false
+    case s.stmtKind
+    of VarS:
+      var p = s
+      inc p                                # past `var` tag
+      if not p.isSymbolDef: return false
+      let v = p.symId
+      if not isLocalName(pool.syms[v]): return false
+      inc p                                # past name
+      skip p                               # past pragmas
+      skip p                               # past type
+      if not p.isDotToken: return false    # initialized decls: not this shape
+      r.declared.incl v
+    of IfS:
+      # Exactly `(elif COND THEN) (else ELSE)`, both arms a single
+      # `(asgn v X)` on the same declared, not-yet-valued temp.
+      var arms = 0
+      var badArm = false
+      var theElif = default(Cursor)
+      var theElse = default(Cursor)
+      var f = s
+      f.into:
+        while f.hasMore:
+          inc arms
+          if arms == 1 and f.isTagLit and f.substructureKind == ElifU:
+            theElif = f
+          elif arms == 2 and f.isTagLit and f.substructureKind == ElseU:
+            theElse = f
+          else:
+            badArm = true
+          skip f
+      if badArm or arms != 2: return false
+      let cond = theElif.childCursor
+      var thenBody = cond
+      skip thenBody                        # past the condition, on the arm body
+      var thenStmt = default(Cursor)
+      var elseStmt = default(Cursor)
+      if not soleStmtOf(thenBody, thenStmt): return false
+      if not soleStmtOf(theElse.childCursor, elseStmt): return false
+      var v1 = SymId(0)
+      var v2 = SymId(0)
+      var x = default(Cursor)
+      var y = default(Cursor)
+      if not asgnOf(thenStmt, v1, x): return false
+      if not asgnOf(elseStmt, v2, y): return false
+      if v1 != v2 or v1 notin r.declared or r.defIdx.hasKey(v1): return false
+      var nb = createTokenBuf(16)
+      if y.isTagLit and y.exprKind == FalseC:
+        # `if P: v = X else: v = false`  ≡  v = P and X
+        nb.addParLe(TagId(AndC), s.info)
+        if not substInto(r, nb, cond): return false
+        if not substInto(r, nb, x): return false
+        nb.addParRi()
+      elif x.isTagLit and x.exprKind == TrueC:
+        # `if P: v = true else: v = Y`  ≡  v = P or Y
+        nb.addParLe(TagId(OrC), s.info)
+        if not substInto(r, nb, cond): return false
+        if not substInto(r, nb, y): return false
+        nb.addParRi()
+      else:
+        return false
+      r.defIdx[v1] = r.bufs.len
+      r.bufs.add ensureMove(nb)
+    of AsgnS:
+      var v = SymId(0)
+      var x = default(Cursor)
+      if not asgnOf(s, v, x): return false
+      if v notin r.declared or r.defIdx.hasKey(v): return false
+      var nb = createTokenBuf(8)
+      if not substInto(r, nb, x): return false
+      r.defIdx[v] = r.bufs.len
+      r.bufs.add ensureMove(nb)
+    of RetS:
+      let v = s.childCursor
+      if not v.hasMore or v.kind == DotToken: return false
+      if not substInto(r, synth, v): return false
+      done = true
+    else:
+      return false
+  if not done: return false
+  # Every reconstructed temp must have been consumed: an unconsumed one would
+  # silently drop its evaluation.
+  for k in r.defIdx.keys:
+    if k notin r.consumed: return false
+  # Keep reconstructed guards small — this exists to fuse accessor-sized
+  # chains, not to inline whole predicates into a condition.
+  result = synth.len <= 96
+
 proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
                     calleeSym: var SymId): int =
   ## Fuse xelim's condition-temp lowering back into the guard when the call
   ## inlines to a single expression. Matches the *adjacent* pair
   ##
   ##   (var :tmp <pragmas> <type> (call f arg…))
-  ##   (if (elif tmp BODY) …rest…)
+  ##   (if (elif tmp BODY) …rest…)          — or (elif (not tmp) BODY)
   ##
-  ## where `f`'s body is exactly `result = X`, every parameter is
+  ## where `f`'s body is exactly `result = X` (or a foldable `and`/`or`
+  ## diamond chain, see `reconstructCondExpr`), every parameter is
   ## substitutable, and `tmp` is read as that first `elif`'s condition and
   ## nowhere else in its scope. It then emits
   ##
-  ##   (if (elif X' BODY) …rest…)
+  ##   (if (elif X' BODY) …rest…)           — X' negated if the guard was
   ##
   ## dropping the temp entirely, so arkham's `emitCond2` fuses the compare
   ## into the branch (`cmp; jcc`) instead of materialising a boolean and
@@ -1545,7 +1766,17 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   if not nextCur.isTagLit or nextCur.stmtKind != IfS: return 0
   let firstElif = nextCur.childCursor
   if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
-  let condCur = firstElif.childCursor
+  var condCur = firstElif.childCursor
+  # The guard may be the temp itself or its negation — xelim's two-target
+  # condition compiler guards early exits with `(not tmp)`. `not` evaluates
+  # its operand unconditionally, so splicing X under it is as sound as the
+  # bare-symbol case; the negation is re-emitted around the spliced X.
+  var negatedGuard = false
+  if condCur.isTagLit and condCur.exprKind == NotC:
+    let inner = condCur.childCursor
+    if inner.hasMore and inner.isSymbol:
+      condCur = inner
+      negatedGuard = true
   if not condCur.isSymbol or condCur.symId != tmpSym: return 0
   # The definition is about to disappear, so `tmp` must be read here and
   # nowhere else. A local's reads live between its declaration and the end of
@@ -1581,9 +1812,15 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
       inc argCount
   if argCount != pSyms.len: return 0
 
-  # Body must reduce to a single returned expression `result = X`.
+  # Body must reduce to a single returned expression `result = X` — either
+  # directly, or by folding a chain of xelim's value-position `and`/`or`
+  # diamonds back into one boolean expression (`reconstructCondExpr`).
   var retVal = default(Cursor)
-  if not effectiveReturnExpr(pd.body, retVal): return 0
+  var synth = createTokenBuf(32)
+  var useSynth = false
+  if not effectiveReturnExpr(pd.body, retVal):
+    if reconstructCondExpr(pd.body, synth): useSynth = true
+    else: return 0
 
   # Bind params; require *every* param substitutable so the whole inline
   # collapses to `X` with no `(var :p = arg)` prologue to emit before the if.
@@ -1607,8 +1844,17 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
     var elifn = ifOpener
     dest.addParLe(elifn.cursorTagId, elifn.info)   # copy `(elif` opener
     elifn.into:
-      emitRenamed(dest, retVal, bnd)       # X' replaces the tmp condition
-      skip elifn                           # drop the original tmp condition
+      if negatedGuard:
+        dest.addParLe(TagId(NotC), elifn.info)
+      if useSynth:
+        var rv = beginRead(synth)
+        emitRenamed(dest, rv, bnd)         # folded X' replaces the condition
+        endRead rv
+      else:
+        emitRenamed(dest, retVal, bnd)     # X' replaces the tmp condition
+      if negatedGuard:
+        dest.addParRi()
+      skip elifn                           # drop the original tmp/(not tmp) condition
       while elifn.hasMore:
         dest.takeTree elifn                # elif body verbatim
     dest.addParRi()                        # close (elif …)
