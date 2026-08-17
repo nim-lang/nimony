@@ -87,6 +87,7 @@ type
     typeCache: TypeCache
     thisModuleSuffix: string
     goal: Goal
+    usedCxLabels: seq[SymId]
 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -603,6 +604,156 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
   else:
     dest.takeTree n
 
+# ---- threaded short-circuit conditions --------------------------------------
+#
+# A condition with a top-level `and`/`or` that is NOT `condPassthroughSafe`
+# (some leaf has effects, so the backend's two-target compiler cannot take the
+# tree verbatim) used to be lowered by `trAnd`/`trOr` into a bool-temp diamond:
+#
+#   (var :x (bool) .)
+#   (if (elif COND1 (asgn x (true))) (else … (asgn x COND2)))
+#   (if (elif x THEN) (else ELSE))
+#
+# which pays a materialised bool, a re-test, and — on the native backend — a
+# register, in exactly the hot per-char-loop shapes where it hurts most
+# (shoggoth's boolthread.nim existed only to undo it on NIFC). Instead we
+# compile the condition here with the two-target condition compiler `Cx` of
+# doc/final_ir.md, spelled with the constructs this level already has: a
+# labeled `(block :L …)` is the merge label and `(break L)` the forward jump
+# (lengcgen lowers them 1:1 to NIFC `lab`/`jmp`). Each leaf is evaluated as an
+# ordinary statement at its own program point, so short-circuiting is
+# preserved, effectful leaves keep the statement position that the inliner,
+# duplifier and destroyer rely on, and no bool ever materialises:
+#
+#   (block :Lend
+#     (block :Lelse
+#       [leaf pre-stmts] (if (elif (not COND1) (stmts (break Lelse))))
+#       [leaf pre-stmts] (if (elif (not COND2) (stmts (break Lelse))))
+#       THEN
+#       (break Lend))
+#     ELSE)
+
+proc hasTopShortCircuit(n: Cursor): bool =
+  ## Is there an `and`/`or` at the top of a condition, looking through the
+  ## transparent wrappers `not`, `par` and `(expr … val)` (last son)?
+  result = false
+  var n = n
+  while true:
+    if n.kind != TagLit: return false
+    case n.exprKind
+    of AndX, OrX:
+      return true
+    of NotX, ParX:
+      n = sub(n)
+    of ExprX:
+      var probe = sub(n)
+      var last = probe
+      while probe.hasMore:
+        last = probe
+        skip probe
+      n = last
+    else:
+      return false
+
+proc wantsCondThreading(n: Cursor; goal: Goal): bool =
+  goal in CondPassthroughGoals and hasTopShortCircuit(n) and
+    not condPassthroughSafe(n)
+
+proc freshCxLabel(c: var Context): SymId =
+  let s = "`cx." & $c.counter & "." & c.thisModuleSuffix
+  inc c.counter
+  result = pool.syms.getOrIncl(s)
+
+proc emitBreakTo(c: var Context; dest: var TokenBuf; lab: SymId; info: NifLineInfo) =
+  c.usedCxLabels.add lab
+  copyIntoKind dest, BreakS, info:
+    dest.addSymUse lab, info
+
+proc genCondJump(c: var Context; dest: var TokenBuf; n: var Cursor;
+                 trueL, falseL, fallL: SymId)
+
+proc genCondWrapped(c: var Context; dest: var TokenBuf; n: var Cursor;
+                    trueL, falseL, wrapL: SymId) =
+  ## `Cx` with the fall-through position at `wrapL`; the `(block :wrapL …)`
+  ## wrapper is emitted only if some leaf actually breaks to it.
+  let info = n.info
+  var seg = createTokenBuf(30)
+  genCondJump(c, seg, n, trueL, falseL, wrapL)
+  if wrapL in c.usedCxLabels:
+    copyIntoKind dest, BlockS, info:
+      dest.addSymDef wrapL, info
+      copyIntoKind dest, StmtsS, info:
+        dest.add seg
+  else:
+    dest.add seg
+
+proc genCondJump(c: var Context; dest: var TokenBuf; n: var Cursor;
+                 trueL, falseL, fallL: SymId) =
+  ## `Cx(cond)(trueL, falseL)`: `and` chains on the false target, `or` on the
+  ## true target, `not` swaps them. `fallL` names the label the emitted code
+  ## falls through to, so one branch of every leaf test is elided.
+  case n.exprKind
+  of AndX:
+    n.into:
+      let z = freshCxLabel(c)
+      genCondWrapped c, dest, n, z, falseL, z   # left; true falls into right
+      genCondJump c, dest, n, trueL, falseL, fallL
+  of OrX:
+    n.into:
+      let z = freshCxLabel(c)
+      genCondWrapped c, dest, n, trueL, z, z    # left; false falls into right
+      genCondJump c, dest, n, trueL, falseL, fallL
+  of NotX:
+    n.into:
+      genCondJump c, dest, n, falseL, trueL, fallL
+  of ParX:
+    n.into:
+      genCondJump c, dest, n, trueL, falseL, fallL
+  of ExprX:
+    n.into:
+      while n.hasMore:
+        if not isLastSon(n):
+          trStmt c, dest, n
+        else:
+          genCondJump c, dest, n, trueL, falseL, fallL
+  of TrueX:
+    let info = n.info
+    if trueL != fallL: emitBreakTo c, dest, trueL, info
+    skip n
+  of FalseX:
+    let info = n.info
+    if falseL != fallL: emitBreakTo c, dest, falseL, info
+    skip n
+  else:
+    # a leaf: evaluate it here — its pre-statements land at exactly this
+    # program point, which is what keeps short-circuiting intact — and emit
+    # the guarded transfer.
+    let info = n.info
+    var tar = Target(m: IsEmpty)
+    trExpr c, dest, n, tar
+    if falseL == fallL:
+      copyIntoKind dest, IfS, info:
+        copyIntoKind dest, ElifU, info:
+          dest.addTarget tar
+          copyIntoKind dest, StmtsS, info:
+            emitBreakTo c, dest, trueL, info
+    elif trueL == fallL:
+      copyIntoKind dest, IfS, info:
+        copyIntoKind dest, ElifU, info:
+          copyIntoKind dest, NotX, info:
+            dest.addTarget tar
+          copyIntoKind dest, StmtsS, info:
+            emitBreakTo c, dest, falseL, info
+    else:
+      copyIntoKind dest, IfS, info:
+        copyIntoKind dest, ElifU, info:
+          dest.addTarget tar
+          copyIntoKind dest, StmtsS, info:
+            emitBreakTo c, dest, trueL, info
+        copyIntoKind dest, ElseU, info:
+          copyIntoKind dest, StmtsS, info:
+            emitBreakTo c, dest, falseL, info
+
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
   assert tar.m == IsEmpty
   if n.exprKind in {AndX, OrX, NotX, ExprX} and c.goal in CondPassthroughGoals and
@@ -677,9 +828,10 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
   var toClose = 0
   var ifs = 0
+  var prevThreaded = false
   n.into:
     while n.hasMore:
-      if ifs >= 1:
+      if ifs >= 1 and not prevThreaded:
         dest.addParLe ElseU, info
         dest.addParLe StmtsS, info
         inc toClose, 2
@@ -687,22 +839,53 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       let info = n.info
       case n.substructureKind
       of ElifU:
-        var t0 = Target(m: IsEmpty)
-        n.into:
-          trCond c, dest, n, t0, c.goal == TowardsNjvl
-
-          dest.addParLe(head.cursorTagId, head.info)
-          inc toClose
-          inc ifs
-
-          copyIntoKind dest, ElifU, info:
-            dest.addTarget t0
-            #copyIntoKind dest, StmtsS, info:
-            if tar.m != IsIgnored:
+        if head.stmtKind == IfS and wantsCondThreading(n.childCursor, c.goal):
+          # Effectful short-circuit condition: compile it with the two-target
+          # condition compiler instead of a bool-temp diamond (see above).
+          # Anything following this elif (further elifs, the else) is the
+          # false path and lands after the `:elseL` block, inside `:endL`.
+          var after = n
+          skip after
+          let hasFollow = after.hasMore
+          let endL = freshCxLabel(c)
+          let elseL = freshCxLabel(c)
+          let thenL = freshCxLabel(c)
+          n.into:
+            if hasFollow:
+              dest.addParLe BlockS, info
+              dest.addSymDef endL, info
+              dest.addParLe StmtsS, info
+              inc toClose, 2
+            copyIntoKind dest, BlockS, info:
+              dest.addSymDef elseL, info
               copyIntoKind dest, StmtsS, info:
-                trExprInto c, dest, n, tmp
-            else:
-              trStmt c, dest, n
+                genCondWrapped c, dest, n, thenL, elseL, thenL
+                if tar.m != IsIgnored:
+                  trExprInto c, dest, n, tmp
+                else:
+                  trStmt c, dest, n
+                if hasFollow:
+                  emitBreakTo c, dest, endL, info
+          inc ifs
+          prevThreaded = true
+        else:
+          var t0 = Target(m: IsEmpty)
+          n.into:
+            trCond c, dest, n, t0, c.goal == TowardsNjvl
+
+            dest.addParLe(head.cursorTagId, head.info)
+            inc toClose
+            inc ifs
+
+            copyIntoKind dest, ElifU, info:
+              dest.addTarget t0
+              #copyIntoKind dest, StmtsS, info:
+              if tar.m != IsIgnored:
+                copyIntoKind dest, StmtsS, info:
+                  trExprInto c, dest, n, tmp
+              else:
+                trStmt c, dest, n
+          prevThreaded = false
       of ElseU:
         n.into:
           if tar.m != IsIgnored:
@@ -805,6 +988,21 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
+  if wantsCondThreading(n.childCursor, c.goal):
+    # An effectful short-circuit guard becomes final_ir.md's leading-guard
+    # loop: `(block :exitL (while (true) Cx(cond)(fall, exitL) BODY))` —
+    # guard-false jumps straight out of the loop, no bool-temp diamond.
+    let exitL = freshCxLabel(c)
+    let thenL = freshCxLabel(c)
+    copyIntoKind dest, BlockS, info:
+      dest.addSymDef exitL, info
+      copyIntoKind dest, StmtsS, info:
+        dest.copyInto n:
+          dest.copyIntoKind TrueX, info: discard
+          copyIntoKind dest, StmtsS, info:
+            genCondWrapped c, dest, n, thenL, exitL, thenL
+            trStmt c, dest, n
+    return
   dest.copyInto n:
     if isComplex(n, c.goal):
       dest.copyIntoKind TrueX, info: discard
