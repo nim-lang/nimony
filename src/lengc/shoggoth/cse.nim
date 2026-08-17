@@ -125,6 +125,16 @@ type
     ## Collected once from the whole module; cse runs per body. The module and
     ## all per-body buffers share one pool, so `SymId` keys stay consistent.
 
+  SummaryResolver* = object
+    ## Callee `SymId` → `FunctionSummary`: the module's own table first, then
+    ## the callee's own module through `m` (`canLoadForeign`/`getDeclOrNil`),
+    ## memoized either way — a negative is as worth caching as a positive.
+    ## Extracted from `callSummary` so other passes (copyprop's read-only
+    ## addr-taken classification) share the exact resolution and trust model.
+    summaries*: ptr FunctionSummaryTable
+    m*: ptr MainModule
+    cache: Table[SymId, ForeignSummary]
+
 when defined(cseSummaryStats):
   var gCallsSeen*, gForeignFound*, gForeignMissing*, gNoReturnSaved*: int
   var gClearUnknown*, gClearGlobal*: int
@@ -136,10 +146,22 @@ when defined(cseSummaryStats):
     ## result about the input (SROA has already scalarized the local objects
     ## whose sibling fields the path rule separates), not about the rule.
 
-proc paramMayWrite(s: FunctionSummary; idx: int): bool {.inline.} =
+proc paramMayWrite*(s: FunctionSummary; idx: int): bool {.inline.} =
   if s.callsUnknown: return true
   if idx < 0 or idx >= s.params.len: return true
   result = s.params[idx].writes or s.params[idx].slotWritten
+
+proc paramEscapes*(s: FunctionSummary; idx: int): bool {.inline.} =
+  ## Whether the callee lets pointers into this param's graph out. Conservative
+  ## on out-of-range actuals (varargs) and unknown callees.
+  if s.callsUnknown: return true
+  if idx < 0 or idx >= s.params.len: return true
+  result = s.params[idx].escapes
+
+proc initSummaryResolver*(summaries: ptr FunctionSummaryTable;
+                          m: ptr MainModule): SummaryResolver =
+  SummaryResolver(summaries: summaries, m: m,
+                  cache: initTable[SymId, ForeignSummary]())
 
 # ---- nifcore helpers ------------------------------------------------------
 
@@ -229,10 +251,8 @@ type
                                 ## every store/decl preceding it in that block
     tempCounter: int
     moduleSuffix: string
-    summaries: ptr FunctionSummaryTable
-    foreignSummaries: Table[SymId, ForeignSummary]  ## callees from OTHER modules,
-                                    ## resolved on demand through `c.m`; negatives
-                                    ## cached too (see `callSummary`)
+    resolver: SummaryResolver       ## module table + foreign-module fallback,
+                                    ## memoized (see `resolveCallee`)
     aa: Aliasing                ## intra-proc alias partition of this body
     pathScratch: seq[AccessPath]    ## reused by the path invalidator so that
                                     ## describing an entry allocates nothing
@@ -287,8 +307,7 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           curStmt: -1,
           tempCounter: 0,
           moduleSuffix: moduleSuffix,
-          summaries: summaries,
-          foreignSummaries: initTable[SymId, ForeignSummary](),
+          resolver: initSummaryResolver(summaries, nil),
           localDefPos: initTable[SymId, int](),
           proven: initTracker[string, int](),
           provenRoots: @[],
@@ -1012,7 +1031,8 @@ proc readSummaryPragma*(pragmas: Cursor; outSummary: var FunctionSummary): bool 
     found = true
   result = found
 
-proc callSummary(c: var Context; call: Cursor; summary: var FunctionSummary): bool =
+proc resolveCallee*(r: var SummaryResolver; key: SymId;
+                    summary: var FunctionSummary): bool =
   ## The module's own table first; then the callee's OWN module.
   ##
   ## `collectFunctionSummaries` only sees procs declared in the buffer being
@@ -1028,35 +1048,37 @@ proc callSummary(c: var Context; call: Cursor; summary: var FunctionSummary): bo
   ##
   ## Results are memoized either way: a negative is as worth caching as a
   ## positive, since the alternative is re-probing the index at every call site.
-  if c.summaries == nil: return false
-  if call.kind != TagLit: return false
-  let callee = child0(call)
-  if callee.kind != Symbol: return false
-  let key = symId(callee)
-  when defined(cseSummaryStats): inc gCallsSeen
-  if c.summaries[].hasKey(key):
-    summary = c.summaries[].getOrDefault(key)
+  if r.summaries == nil: return false
+  if r.summaries[].hasKey(key):
+    summary = r.summaries[].getOrDefault(key)
     return true
-  if c.m == nil: return false
-  if c.foreignSummaries.hasKey(key):
-    let e = c.foreignSummaries.getOrDefault(key)
+  if r.m == nil: return false
+  if r.cache.hasKey(key):
+    let e = r.cache.getOrDefault(key)
     if not e.known: return false
     summary = e.s
     return true
   var found = false
   var s = FunctionSummary()
-  if canLoadForeign(c.m[], key):
-    let d = getDeclOrNil(c.m[], key)
+  if canLoadForeign(r.m[], key):
+    let d = getDeclOrNil(r.m[], key)
     if d != nil and d.kind == ProcY:
       var p = d.pos
       let pd = takeProcDecl(p)
       if readSummaryPragma(pd.pragmas, s): found = true
-  c.foreignSummaries[key] = ForeignSummary(known: found, s: s)
+  r.cache[key] = ForeignSummary(known: found, s: s)
   when defined(cseSummaryStats):
     if found: inc gForeignFound else: inc gForeignMissing
   if not found: return false
   summary = s
   result = true
+
+proc callSummary(c: var Context; call: Cursor; summary: var FunctionSummary): bool =
+  if call.kind != TagLit: return false
+  let callee = child0(call)
+  if callee.kind != Symbol: return false
+  when defined(cseSummaryStats): inc gCallsSeen
+  result = resolveCallee(c.resolver, symId(callee), summary)
 
 proc invalidateForCall(c: var Context; call: Cursor) =
   ## A cached entry is a `loadsAPointer` address chain whose value depends on
@@ -2052,6 +2074,7 @@ proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
   ## nil falls back to the coarse, type-agnostic alias partition.
   var ctx = createContext(addr buf, moduleSuffix, summaries)
   ctx.m = m                          # type context: skip value-CSE of aggregates
+  ctx.resolver.m = m                 # foreign-summary fallback resolves through it
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
   registerParams(ctx, params)
   block:

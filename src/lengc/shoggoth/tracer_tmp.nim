@@ -11,7 +11,6 @@ import induction_variables
 import cse
 import scalarizer
 import copyprop
-import boolthread
 import imi_bridge
 import vmrewriter
 import ".." / nifmodules
@@ -49,10 +48,8 @@ proc optimizeBodyTraced(buf: var TokenBuf; suffix: string; bodies: int;
   if traced: dump("constructorProjection", buf)
   runScalarize(buf, bodySuffix, m)
   if traced: dump("scalarize", buf)
-  runCopyProp(buf, params)
+  runCopyProp(buf, params, summaries, m)
   if traced: dump("copyProp", buf)
-  runBoolThread(buf, bodySuffix)
-  if traced: dump("boolThread", buf)
   if eng != nil:
     runRewritesFix(eng, buf)
     if traced: dump("rewriter#2", buf)
