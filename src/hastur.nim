@@ -1210,6 +1210,11 @@ const
     "tests/nimony/cps/tsuspend_resume",
     "tests/nimony/cps/tparkstate",
     "tests/nimony/cps/ttry",
+    # The native backend is the only one that HAS a stack trace: it walks nifasm's
+    # own per-proc table, seeded by a `{.naked.}` proc. Running it here is what
+    # checks the three halves agree — the table nifasm lays down, the two
+    # intrinsics arkham lowers, and the walk in `lib/std/stacktraces`.
+    "tests/nimony/stacktraces/tstacktrace",
     # A `const` set is read straight out of read-only data, so its membership
     # test is an indexed load from a GLOBAL — a shape the C backend never sees a
     # register problem in and arkham got wrong twice. Native-only by nature.

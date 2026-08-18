@@ -212,6 +212,22 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       toPragmaArgs()
       if hasParRi:
         while n.hasMore: skip n
+  of NakedP:
+    # `{.naked.}` — no prologue, no epilogue. Like `assembler` (which it may only
+    # accompany) the machine-level checking belongs to the back end; sem records
+    # the flag and forwards the tag.
+    crucial.flags.incl pk
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, "`naked` pragma is only allowed on routines"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+    else:
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
   of RegisterP:
     # `{.register: "rdi".}` on a parameter, result or local. Which register names
     # exist, and whether the annotation is consistent with the proc's ABI, is a
