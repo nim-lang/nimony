@@ -836,9 +836,9 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.extern = n.strId
               result.flags.incl pk
               inc n
-          of AssemblerP, StackP:
-            # `(assembler)` on a proc, `(stack)` on a local: bare markers,
-            # forwarded as-is.
+          of AssemblerP, NakedP, StackP:
+            # `(assembler)`/`(naked)` on a proc, `(stack)` on a local: bare
+            # markers, forwarded as-is.
             result.flags.incl pk
             skip n
           of RegisterP:
@@ -1065,6 +1065,9 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if AssemblerP in prag.flags:
     dest.addKey genPragmas, "assembler", pinfo
+
+  if NakedP in prag.flags:
+    dest.addKey genPragmas, "naked", pinfo
 
   if NoreturnP in prag.flags and not procRaises:
     # Leng has no noreturn pragma of its own; carry the fact as the existing

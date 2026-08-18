@@ -102,6 +102,10 @@ type
     AtomicClearOp
     AtomicThreadFenceOp
     AtomicSignalFenceOp
+    # ── the machine facts a stack walk needs (`lib/std/stacktraces`). Both are
+    #    portable rows: the CONCEPT is target-neutral, the instruction is not.
+    StackPointerOp
+    TraceTableOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -224,7 +228,8 @@ const
     "AtomicLoad", "AtomicStore", "AtomicExchange", "AtomicCompareExchange",
     "AtomicFetchAdd", "AtomicFetchSub", "AtomicFetchAnd", "AtomicFetchOr",
     "AtomicFetchXor", "AtomicAddFetch", "AtomicSubFetch",
-    "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence"]
+    "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
+    "StackPointer", "TraceTable"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
   InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
@@ -511,10 +516,30 @@ const
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,  # AtomicSignalFence
                  params: AtomFence, roles: AllIn, ret: ptVoid,
-                 widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {})
+                 widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
+
+    # ── stack walking ──────────────────────────────────────────────────────
+    # `StackPointer` reads SP into a register. `efPure` is not a shrug: SP is
+    # CONSTANT between a proc's prologue and its epilogue (`arkham/design.md`),
+    # so within one body the value really does not change, and CSE-ing two reads
+    # of it is exact rather than merely harmless. The interesting caller is a
+    # `{.naked.}` proc, which has no prologue at all — there SP still points at
+    # the return address the `call` pushed, and that is the seed of a stack walk.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 0,  # StackPointer
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # `TraceTable` is the address of the per-proc metadata nifasm lays down at the
+    # end of `.text` (`nifasm/tracetable.nim`): the same code ranges and CFA
+    # offsets `.eh_frame` carries, in a form the running program can read without
+    # a DWARF interpreter. A link-time constant, hence `efPure`. x86-64 only for
+    # now — the table is emitted on every target, but only the x86-64 walk is
+    # written and tested (`lib/std/stacktraces`).
+    IntrinsicRow(cls: icPortable, targets: {tgX64}, arity: 0,         # TraceTable
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = AtomicSignalFenceOp
+const LastIntrinsicOp* = TraceTableOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -579,6 +604,14 @@ proc isVoidResult*(r: IntrinsicRow): bool {.inline.} =
   ## whole content is in `effects`, and it is `effects` that keeps such a row alive.
   ## The back ends need this to know NOT to home a result register for the node.
   r.ret == ptVoid and r.defs == {} and r.inoutOperand < 0
+
+proc isMachineQuery*(op: IntrinsicOp): bool {.inline.} =
+  ## A row that reads a machine or link-time fact instead of computing on
+  ## operands: no sources, a pointer result, and a lowering that is one
+  ## instruction with nothing to place. The back ends need the distinction
+  ## because every other zero-operand row is a FLAG read, whose result cannot be
+  ## materialised at all — these produce an ordinary register value.
+  op in {StackPointerOp, TraceTableOp}
 
 proc isAtomic*(op: IntrinsicOp): bool {.inline.} =
   ## An atomic row. The back ends lower these as a self-contained instruction
