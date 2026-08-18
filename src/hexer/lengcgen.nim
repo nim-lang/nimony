@@ -836,9 +836,9 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.extern = n.strId
               result.flags.incl pk
               inc n
-          of AssemblerP, StackP:
-            # `(assembler)` on a proc, `(stack)` on a local: bare markers,
-            # forwarded as-is.
+          of AssemblerP, NakedP, StackP:
+            # `(assembler)`/`(naked)` on a proc, `(stack)` on a local: bare
+            # markers, forwarded as-is.
             result.flags.incl pk
             skip n
           of RegisterP:
@@ -1065,6 +1065,9 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if AssemblerP in prag.flags:
     dest.addKey genPragmas, "assembler", pinfo
+
+  if NakedP in prag.flags:
+    dest.addKey genPragmas, "naked", pinfo
 
   if NoreturnP in prag.flags and not procRaises:
     # Leng has no noreturn pragma of its own; carry the fact as the existing
@@ -1787,7 +1790,16 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX:
       error c, "BUG: not eliminated: ", n
       #skip n
-    of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
+    of NilX:
+      # `(nil T)` — the frontend types every `nil` (see `trNil` in derefs.nim)
+      # and the type slot is a TYPE, not an expression. Keep it: it is what
+      # tells `intramodinliner`, which substitutes a literal argument at each
+      # use, what the pointer it splices actually is.
+      takeInto dest, n:
+        if n.hasMore:
+          trType(c, dest, n)
+          while n.hasMore: skip n   # the closure form's trailing nil environment
+    of AtX, PatX, ParX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:

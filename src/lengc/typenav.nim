@@ -281,7 +281,14 @@ proc getTypeImpl(c: var MainModule; n: Cursor): Cursor =
     of ParC:
       result = getTypeImpl(c, firstChild(n))
     of NilC:
-      result = createIntegralType(c, "(ptr (void))")
+      # `(nil T)` — the frontend types every `nil` it emits, so use that type.
+      # Only a `nil` some backend pass synthesized is still untyped, and for
+      # those `void*` remains the honest answer.
+      let t = firstChild(n)
+      if t.hasMore:
+        result = t
+      else:
+        result = createIntegralType(c, "(ptr (void))")
     of SufC:
       result = createIntegralType(c, "(err)")
       var a = firstChild(n)

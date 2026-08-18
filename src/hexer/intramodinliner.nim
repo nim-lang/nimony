@@ -204,7 +204,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
         if pr.isTagLit and pr.pragmaKind == AlwaysInlineP:
           forced = true
         if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP,
-                                             AssemblerP}:
+                                             AssemblerP, NakedP}:
           # importc: the decl's `(stmts .)` "body" is a PLACEHOLDER — the real
           # code is external. Splicing it deletes the call (measured: memfiles
           # inlined posix `open`'s empty shell and never called open(2)).
