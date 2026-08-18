@@ -13,7 +13,7 @@ type
     PatX = (ord(PatTagId), "pat")  ## pointer indexing operation
     ParX = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrX = (ord(AddrTagId), "addr")  ## address of operation
-    NilX = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
+    NilX = (ord(NilTagId), "nil")  ## nil pointer value; `T` is the pointer type it stands for. `nil` is the one type-polymorphic literal, so the frontend types every `ptr`/`ref`/`pointer`/`cstring` one (`derefs.nim`) and `T` survives into Leng; only a `nil` a later pass synthesizes is bare. A closure `nil` carries the proc type plus `X`, a nil environment
     InfX = (ord(InfTagId), "inf")  ## positive infinity floating point value
     NeginfX = (ord(NeginfTagId), "neginf")  ## negative infinity floating point value
     NanX = (ord(NanTagId), "nan")  ## NaN floating point value
@@ -255,7 +255,7 @@ proc rawTagIsNimonyType*(raw: TagEnum): bool {.inline.} =
 type
   NimonyOther* = enum
     NoSub
-    NilU = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
+    NilU = (ord(NilTagId), "nil")  ## nil pointer value; `T` is the pointer type it stands for. `nil` is the one type-polymorphic literal, so the frontend types every `ptr`/`ref`/`pointer`/`cstring` one (`derefs.nim`) and `T` survives into Leng; only a `nil` a later pass synthesizes is bare. A closure `nil` carries the proc type plus `X`, a nil environment
     NotnilU = (ord(NotnilTagId), "notnil")  ## `not nil` pointer annotation
     UncheckedU = (ord(UncheckedTagId), "unchecked")  ## `unchecked` pointer annotation (derefs do not require nil checking)
     KvU = (ord(KvTagId), "kv")  ## key-value pair; optional INTLIT indicates field is in an inherited object

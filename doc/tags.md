@@ -8,7 +8,7 @@
 | `(pat X X)`            | LengExpr, NimonyExpr | pointer indexing operation |
 | `(par X)`              | LengExpr, NimonyExpr, NiflerKind | syntactic parenthesis |
 | `(addr X)`; `(addr X (cppref)?)`  | LengExpr, NimonyExpr, NiflerKind | address of operation |
-| `(nil T? X?)`          | LengExpr, NimonyExpr, NimonyOther, NiflerKind | nil pointer value; closure `nil` carries the proc type and a nil environment |
+| `(nil T? X?)`          | LengExpr, NimonyExpr, NimonyOther, NiflerKind | nil pointer value; `T` is the pointer type it stands for. `nil` is the one type-polymorphic literal, so the frontend types every `ptr`/`ref`/`pointer`/`cstring` one (`derefs.nim`) and `T` survives into Leng; only a `nil` a later pass synthesizes is bare. A closure `nil` carries the proc type plus `X`, a nil environment |
 | `(notnil)`             | NimonyOther | `not nil` pointer annotation |
 | `(unchecked)`          | NimonyOther | `unchecked` pointer annotation (derefs do not require nil checking) |
 | `(inf T?)`             | LengExpr, NimonyExpr | positive infinity floating point value |
