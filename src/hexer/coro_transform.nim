@@ -191,24 +191,26 @@ proc coroTrSons*(c: var Context; dest: var TokenBuf; n: var Cursor)
 # Naming helpers
 # ---------------------------------------------------------------------
 
-proc coroNameStem*(procId: SymId): string =
-  ## Returns the symbol's full name minus its trailing module suffix.
-  ## Unlike `extractVersionedBasename`, this preserves any intermediate
-  ## `I<hash>` segment for generic instances — necessary because two
-  ## different instantiations (e.g. `gen.12.Iaaaa.mod` and
-  ## `gen.12.Ibbbb.mod`) would otherwise produce identical stem
-  ## `"gen.12"` and collide on every synthesised wrapper / coro-type /
-  ## state-proc / field name.
-  splitSymName(pool.syms[procId]).name
+proc coroSuffix(c: Context; split: SplittedSymName): string =
+  ## Coro helpers (`coro`/`init`/`s<state>`) are generated once, by the
+  ## module that DEFINES the proc — mangle with that module's suffix, not
+  ## the transforming module's. Local syms are stored bare (`pingpong.0`),
+  ## so an empty `split.module` means this module is the defining one.
+  if split.module.len > 0: split.module else: c.thisModuleSuffix
 
 proc coroTypeForProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "coro") & "." & c.thisModuleSuffix)
+  ## `split.name` keeps the `I<hash>` segment so generic instances don't
+  ## collide; the suffix rule mirrors `coroTypeForExternIter`.
+  let split = splitSymName(pool.syms[procId])
+  result = pool.syms.getOrIncl(derivedName(split.name, "coro") & "." & coroSuffix(c, split))
 
 proc coroWrapperProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "init") & "." & c.thisModuleSuffix)
+  let split = splitSymName(pool.syms[procId])
+  result = pool.syms.getOrIncl(derivedName(split.name, "init") & "." & coroSuffix(c, split))
 
 proc stateToProcName*(c: Context; sym: SymId; state: int): SymId =
-  result = pool.syms.getOrIncl(derivedName(coroNameStem(sym), "s" & $state) & "." & c.thisModuleSuffix)
+  let split = splitSymName(pool.syms[sym])
+  result = pool.syms.getOrIncl(derivedName(split.name, "s" & $state) & "." & coroSuffix(c, split))
 
 proc localToFieldname*(c: var Context; local: SymId): SymId =
   var name = pool.syms[local]
@@ -305,6 +307,66 @@ proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
     buf.copyIntoKind ClosureP, info: discard
   buf.addDotToken() # effects
   buf.addDotToken() # body — empty, cps replaces with the real body
+  buf.addParRi() # close proc
+  programs.publish(wrapperSym, buf, SemcheckSignatures)
+
+proc publishForeignPassiveWrapper*(c: Context; procSym: SymId) =
+  ## A `.passive` proc's `init` wrapper is published by the DEFINING
+  ## module's hexer run; a caller in another module cannot `tryLoadSym` it
+  ## (the sem index never contains it) and fails downstream type queries.
+  ## So publish a placeholder signature for the foreign wrapper into this
+  ## process, as `publishWrapperSignature` does for same-module closure
+  ## iters; the real body still comes from the defining module. A passive
+  ## wrapper is not a closure, so no `(closure)` pragma.
+  let split = splitSymName(pool.syms[procSym])
+  if split.module.len == 0 or split.module == c.thisModuleSuffix:
+    return # local proc: published in-process by generateCoroutineHelpers
+  let wrapperSym = coroWrapperProc(c, procSym)
+  if tryLoadSym(wrapperSym).status == LacksNothing:
+    return # already published
+  let res = tryLoadSym(procSym)
+  if res.status != LacksNothing:
+    return # can't recover the signature; leave it to fail loudly downstream
+  let fn = asRoutine(res.decl)
+  let info = NoLineInfo
+
+  var buf = createTokenBuf(40)
+  buf.addParLe ProcS, info
+  buf.addSymDef wrapperSym, info
+  buf.addDotToken() # exported
+  buf.addDotToken() # pattern
+  buf.addDotToken() # typevars
+  buf.copyIntoKind ParamsU, info:
+    var p = fn.params
+    if p.kind != DotToken:
+      p = sub(p) # peek walk, never left
+      while p.hasMore:
+        assert p.substructureKind == ParamU
+        takeInto buf, p:
+          buf.takeTree p # name
+          buf.takeTree p # exported
+          buf.takeTree p # pragmas
+          buf.takeTree p # type
+          buf.takeTree p # default value
+    var ret = fn.retType
+    if not isVoidType(ret):
+      buf.copyIntoKind ParamU, info:
+        buf.addSymDef pool.syms.getOrIncl(ResultParamName), info
+        buf.addDotToken() # export
+        buf.addDotToken() # pragmas
+        buf.copyIntoKind PtrT, info:
+          buf.takeTree ret
+        buf.addDotToken() # default value
+    buf.copyIntoKind ParamU, info:
+      buf.addSymDef pool.syms.getOrIncl(CallerParamName), info
+      buf.addDotToken() # export
+      buf.addDotToken() # pragmas
+      buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      buf.addDotToken() # default value
+  buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
+  buf.addDotToken() # pragmas — passive wrapper is not a closure
+  buf.addDotToken() # effects
+  buf.addDotToken() # body — empty, defining module supplies the real one
   buf.addParRi() # close proc
   programs.publish(wrapperSym, buf, SemcheckSignatures)
 
