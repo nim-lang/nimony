@@ -102,6 +102,19 @@ type
     AtomicClearOp
     AtomicThreadFenceOp
     AtomicSignalFenceOp
+    # ── AdvSIMD/NEON vector rows (`{.instruction.}`, AArch64). The shoggoth
+    #    vectorizer synthesizes their declarations and emits `(instr …)`
+    #    applications; user code can also declare them. The vector VALUE type is
+    #    the opaque `(f 128)` (see `ptVec128`); lane meaning rides the opcode
+    #    plus its trailing lane-bits literal.
+    FldrqOp      # vec = fldrq(p: pointer; off: int)  — 16-byte load  [p+off]
+    FstrqOp      # fstrq(p: pointer; off: int; v: vec) — 16-byte store [p+off]
+    VfaddOp      # vec = vfadd(a, b: vec; lanebits)   — lane-wise fp add
+    VfsubOp      # vec = vfsub(a, b: vec; lanebits)
+    VfmulOp      # vec = vfmul(a, b: vec; lanebits)
+    VfmlaOp      # vec = vfmla(acc, a, b: vec; lanebits) — fused acc + a*b; the
+                 # result is tied to `acc` (the machine op accumulates in place)
+    VdupOp       # vec = vdup(x: F; lanebits)         — broadcast x to every lane
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -168,6 +181,22 @@ type
     ptWeak       ## `AtomicCompareExchange`'s `weak` flag: a `bool` that says a
                  ## spurious failure is acceptable. v1 reads none either — both
                  ## lowerings are the strong form, which is always a legal answer.
+    ptVec128     ## a 128-bit SIMD register value, spelled `(f 128)` in Leng: an
+                 ## opaque bag of bits whose LANE interpretation lives entirely in
+                 ## the opcode (and its trailing lane-bits operand), exactly as it
+                 ## does in the machine's register file. Only the vector rows below
+                 ## use it, and only the native back ends lower them.
+    ptFloatW     ## `(f W)` — a scalar float binding the width variable (the lane
+                 ## width a `vdup` broadcast replicates).
+    ptAnyPtr     ## any pointer (`ptr`/`aptr` of anything): a vector load/store's
+                 ## address operand. The ACCESS width is the instruction's own 16
+                 ## bytes — deliberately not derived from the pointee, matching the
+                 ## hardware (and `movdqu`'s documented behavior in nifasm).
+    ptLaneBits   ## the trailing lane-width knob of the vector rows: an int LITERAL
+                 ## (32 or 64) the back end reads at the call site to pick the
+                 ## `.4s`/`.2d` arrangement. Like `ptMemOrder` it is not evaluated —
+                 ## see `evaluatedOperands` — but unlike it, the back end DOES read
+                 ## its literal value.
 
 const
   MaxOperands* = 6
@@ -224,7 +253,9 @@ const
     "AtomicLoad", "AtomicStore", "AtomicExchange", "AtomicCompareExchange",
     "AtomicFetchAdd", "AtomicFetchSub", "AtomicFetchAnd", "AtomicFetchOr",
     "AtomicFetchXor", "AtomicAddFetch", "AtomicSubFetch",
-    "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence"]
+    "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
+    # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
+    "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
   InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
@@ -247,6 +278,16 @@ const
     ## it — the one atomic with an output that is not the result.
   AtomFlag = [ptRawPtr, ptMemOrder, ptNone, ptNone, ptNone, ptNone]
   AtomFence = [ptMemOrder, ptNone, ptNone, ptNone, ptNone, ptNone]
+
+  # ── vector operand shapes ────────────────────────────────────────────────
+  VecLoad = [ptAnyPtr, ptAnyInt, ptNone, ptNone, ptNone, ptNone]
+    ## `(address, byte offset)` — the offset is an int literal folded into the
+    ## instruction's addressing mode (a multiple of 16), so an unrolled loop
+    ## needs no extra pointer bumps.
+  VecStore = [ptAnyPtr, ptAnyInt, ptVec128, ptNone, ptNone, ptNone]
+  VecBin = [ptVec128, ptVec128, ptLaneBits, ptNone, ptNone, ptNone]
+  VecFma = [ptVec128, ptVec128, ptVec128, ptLaneBits, ptNone, ptNone]
+  VecDup = [ptFloatW, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
 
   AllArith = {mfZF, mfCF, mfSF, mfOF, mfPF}
     ## What an x86 arithmetic/compare instruction leaves defined. `test` clears CF
@@ -511,10 +552,40 @@ const
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,  # AtomicSignalFence
                  params: AtomFence, roles: AllIn, ret: ptVoid,
-                 widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {})
+                 widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
+
+    # ── AdvSIMD/NEON (AArch64) ─────────────────────────────────────────────
+    # All pinned: one machine instruction each, named by its nifasm tag. The
+    # loads/stores carry their memory effect so nothing reorders or deletes
+    # them; the arithmetic is pure and CSE-eligible like any other value.
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # fldrq
+                 params: VecLoad, roles: AllIn, ret: ptVec128,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efReads}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # fstrq
+                 params: VecStore, roles: AllIn, ret: ptVoid,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efWrites}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # vfadd
+                 params: VecBin, roles: AllIn, ret: ptVec128,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # vfsub
+                 params: VecBin, roles: AllIn, ret: ptVec128,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # vfmul
+                 params: VecBin, roles: AllIn, ret: ptVec128,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # `tie: 0` — the machine op accumulates IN PLACE (fmla Vd += Vn*Vm), so the
+    # result must land where operand 0 lives. The vectorizer spells every use as
+    # `(asgn acc (instr vfmla acc a b bits))`, which satisfies the tie with no
+    # copy; the a64 back end asserts it rather than inserting a 128-bit move.
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 4,           # vfmla
+                 params: VecFma, roles: AllIn, ret: ptVec128,
+                 widths: {32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # vdup
+                 params: VecDup, roles: AllIn, ret: ptVec128,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = AtomicSignalFenceOp
+const LastIntrinsicOp* = VdupOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -554,8 +625,10 @@ proc isFlagWrite*(r: IntrinsicRow): bool {.inline.} =
   ## happens to define flags — not a flag instruction.
   r.ret == ptVoid and r.defs != {} and r.inoutOperand < 0
 
-const IgnoredPats* = {ptMemOrder, ptWeak}
-  ## Operand patterns v1 does not read. See `evaluatedOperands`.
+const IgnoredPats* = {ptMemOrder, ptWeak, ptLaneBits}
+  ## Operand patterns the back ends do not EVALUATE into a register. See
+  ## `evaluatedOperands`. (`ptLaneBits` is still READ — as a literal, at the
+  ## call site — it just never needs a register.)
 
 proc evaluatedOperands*(r: IntrinsicRow): int =
   ## How many LEADING operands a back end must actually evaluate. Everything past

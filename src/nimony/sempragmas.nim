@@ -636,6 +636,14 @@ proc intBitsOf(c: var SemContext; typ: Cursor): int =
     inc bits
     if bits.kind == IntLit: result = typebits(bits.load)
 
+proc floatBitsOf(typ: Cursor): int =
+  ## Bit width of `(f N)`, or -1 for anything else.
+  result = -1
+  if typ.kind == TagLit and typ.typeKind == FloatT:
+    var bits = typ
+    inc bits
+    if bits.kind == IntLit: result = typebits(bits.load)
+
 proc matchAtomicCell(c: var SemContext; typ: Cursor;
                      w: var int; widths: set[uint8]): bool =
   ## The type an atomic operates ON: `ptValW`, and the pointee of `ptPtrW`.
@@ -722,6 +730,25 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
     # enumeration" and gains a real check; today such a check would only forbid
     # spellings that behave identically.
     result = true
+  of ptVec128:
+    # The opaque 128-bit SIMD value, spelled `(f 128)`: a bag of bits whose lane
+    # meaning lives in the opcode. Never binds `W` — the lane width is the
+    # trailing `ptLaneBits` literal, not a property of the value's type.
+    result = floatBitsOf(typ) == 128
+  of ptFloatW:
+    let bits = floatBitsOf(typ)
+    if bits <= 0 or uint8(bits) notin widths:
+      result = false
+    else:
+      if w == 0: w = bits
+      result = w == bits
+  of ptAnyPtr:
+    # `aptr` is a Leng-level spelling; the frontend's pointer kinds are these two.
+    result = typ.kind == TagLit and typ.typeKind in {PtrT, PointerT}
+  of ptLaneBits:
+    # An int the back end reads as a LITERAL (32/64) at the call site; the
+    # declared parameter type is any integer.
+    result = intBitsOf(c, typ) > 0
 
 proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
                               paramsAt: int; op: IntrinsicOp): string =
