@@ -652,7 +652,19 @@ proc hasTopShortCircuit(n: Cursor): bool =
         last = probe
         skip probe
       n = last
-    else:
+    of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX, NanX,
+       FalseX, TrueX, XorX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX,
+       BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+       BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX,
+       CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX,
+       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX,
+       DconvX, CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
+       AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
+       UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+       DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX,
+       PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
+       EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX,
+       InternalFieldPairsX, FailedX, IsX, EnvpX, ToClosureX:
       return false
 
 proc wantsCondThreading(n: Cursor; goal: Goal): bool =
@@ -724,7 +736,19 @@ proc genCondJump(c: var Context; dest: var TokenBuf; n: var Cursor;
     let info = n.info
     if falseL != fallL: emitBreakTo c, dest, falseL, info
     skip n
-  else:
+  of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, AddrX, NilX, InfX, NeginfX, NanX,
+     XorX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX, CurlyX,
+     CurlyatX, KvX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX, BitorX,
+     BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX,
+     OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
+     TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
+     InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX,
+     BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX, FieldsX,
+     FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+     DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX,
+     XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
+     WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+     EnvpX, ToClosureX:
     # a leaf: evaluate it here — its pre-statements land at exactly this
     # program point, which is what keeps short-circuiting intact — and emit
     # the guarded transfer.
