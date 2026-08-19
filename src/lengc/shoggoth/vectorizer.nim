@@ -188,6 +188,33 @@ proc floatLeafBits(n: Cursor): int =
     let (ok, bits, _) = sufFloatLit(n)
     result = if ok: bits else: 0
 
+type
+  LocalKind = enum
+    ## Every local the loop grammar admits plays exactly ONE role.
+    lkNone            ## not a loop-body local
+    lkPtrPending      ## `(var :P (ptr (f W)) .)` — declared, not yet bound
+    lkPtrBound        ## … after its `(asgn P (haddr (pat BASE I)))`
+    lkIndex           ## `(var :I (i 64) idx-expr)`
+    lkValue           ## `(var :E (f W) lane-tree)`
+
+  LocalInfo = object
+    kind: LocalKind
+    bits: int         ## ptr temps: the pointee's element width
+
+  Matcher = object
+    ## The loop matcher's shared state, threaded as `m` through the match
+    ## procs below — the match-side sibling of `Emitter`. `locals` is the one
+    ## sym → role map; `assigned` the body's write set (so absence from it
+    ## means loop-invariant).
+    plan: LoopPlan
+    assigned: HashSet[SymId]
+    locals: Table[SymId, LocalInfo]
+    pendingPtrs: int  ## how many locals are still lkPtrPending
+    sawStore, sawInc: bool
+
+proc roleOf(m: Matcher; s: SymId): LocalKind =
+  getOrDefault(m.locals, s).kind              # absent → lkNone
+
 proc matchWhileHead(loop: Cursor; ivSym: var SymId; bound: var Cursor): bool =
   ## `(while (lt [T] iv n) body)` — `n` a symbol or int literal.
   result = false
@@ -229,12 +256,11 @@ proc matchIvInc(n: Cursor; ivSym: SymId): bool =
               skip e
               result = not e.hasMore
 
-proc matchIndexExpr(e0: Cursor; ivSym: SymId; assigned: HashSet[SymId];
-                    ix: var VecIndex): bool =
+proc matchIndexExpr(m: Matcher; e0: Cursor; ix: var VecIndex): bool =
   ## `iv` | `(add T inv iv)` | `(add T iv inv)` — inv an invariant symbol or
   ## an int literal.
   var e = e0
-  if e.kind == Symbol and symId(e) == ivSym:
+  if e.kind == Symbol and symId(e) == m.plan.ivSym:
     ix.invSym = SymId(0)
     ix.invLit = 0
     result = true
@@ -247,10 +273,10 @@ proc matchIndexExpr(e0: Cursor; ivSym: SymId; assigned: HashSet[SymId];
     for which in 0 ..< 2:
       if not (operandsOk and c.hasMore):
         operandsOk = false
-      elif c.kind == Symbol and symId(c) == ivSym and not sawIv:
+      elif c.kind == Symbol and symId(c) == m.plan.ivSym and not sawIv:
         sawIv = true
         skip c
-      elif c.kind == Symbol and symId(c) notin assigned and not sawInv:
+      elif c.kind == Symbol and symId(c) notin m.assigned and not sawInv:
         ix.invSym = symId(c)
         sawInv = true
         skip c
@@ -291,23 +317,21 @@ proc knownIndex(plan: LoopPlan; isym: SymId): int =
   for i in 0 ..< plan.indexes.len:
     if plan.indexes[i].sym == isym: result = i
 
-proc matchPatLval(n: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
-                  acc: var VecAccess): bool =
+proc matchPatLval(m: Matcher; n: Cursor; acc: var VecAccess): bool =
   ## `(pat BASE I)` with invariant BASE and known index local I.
   result = false
   if n.kind == TagLit and n.exprKind == PatC:
     var pc = sub(n)
     if pc.hasMore:
       acc.baseCur = pc
-      if invariantBase(pc, assigned):
+      if invariantBase(pc, m.assigned):
         skip pc
         if pc.hasMore and pc.kind == Symbol:
-          acc.idx = knownIndex(plan, symId(pc))
+          acc.idx = knownIndex(m.plan, symId(pc))
           skip pc
           result = acc.idx >= 0 and not pc.hasMore
 
-proc matchGuardCmp(nc: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
-                   g: var VecGuard): bool =
+proc matchGuardCmp(m: Matcher; nc: Cursor; g: var VecGuard): bool =
   ## `(lt I len)` (len an invariant path) or `(le 0 I)` over a known index
   ## local I.
   result = false
@@ -319,19 +343,18 @@ proc matchGuardCmp(nc: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
         let isym = symId(cc)
         skip cc
         if cc.hasMore:
-          g = VecGuard(kind: gLtLen, idx: knownIndex(plan, isym), lenCur: cc)
-          let invariantLen = invariantBase(cc, assigned)
+          g = VecGuard(kind: gLtLen, idx: knownIndex(m.plan, isym), lenCur: cc)
+          let invariantLen = invariantBase(cc, m.assigned)
           skip cc
           result = invariantLen and g.idx >= 0 and not cc.hasMore
     elif cc.hasMore and cc.kind == IntLit and intVal(cc) == 0:
       skip cc
       if cc.hasMore and cc.kind == Symbol:
-        g = VecGuard(kind: gLeZero, idx: knownIndex(plan, symId(cc)))
+        g = VecGuard(kind: gLeZero, idx: knownIndex(m.plan, symId(cc)))
         skip cc
         result = g.idx >= 0 and not cc.hasMore
 
-proc matchGuard(n: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
-                g: var VecGuard): bool =
+proc matchGuard(m: Matcher; n: Cursor; g: var VecGuard): bool =
   ## `(if (elif (not COND) (stmts (call sym …))))` where COND is
   ## `(lt I len)` or `(le 0 I)` over a known index local. The action's contents
   ## are irrelevant: the vector path only runs when the condition is FALSE for
@@ -345,7 +368,7 @@ proc matchGuard(n: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
       # a single `elif`, no `else`; the condition is `(not CMP)`
       if not c.hasMore and e.hasMore and e.kind == TagLit and e.exprKind == NotC:
         var nc = sub(e)
-        if matchGuardCmp(nc, plan, assigned, g):
+        if matchGuardCmp(m, nc, g):
           skip nc
           if not nc.hasMore:                  # the `(not …)` has one child
             skip e                            # past the condition
@@ -365,14 +388,13 @@ proc matchGuard(n: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
       db.addSubtree n
       echo "  guard reject: ", toString(db)
 
-proc pureLaneTree(n: Cursor; assigned: HashSet[SymId];
-                  valueSyms: HashSet[SymId]; ptrSyms: HashSet[SymId]): bool =
-  ## leaves: `(deref P)` (P a bound pointer temp), invariant scalar symbols,
+proc pureLaneTree(m: Matcher; n: Cursor): bool =
+  ## leaves: `(deref P)` (P a pointer temp), invariant scalar symbols,
   ## value locals, float literals; interior: binary `add`/`sub`/`mul`.
   case n.kind
   of FloatLit: result = true
   of Symbol:
-    result = symId(n) in valueSyms or symId(n) notin assigned
+    result = m.roleOf(symId(n)) == lkValue or symId(n) notin m.assigned
   of TagLit:
     if sufFloatLit(n).ok:
       result = true
@@ -380,7 +402,8 @@ proc pureLaneTree(n: Cursor; assigned: HashSet[SymId];
       case n.exprKind
       of DerefC:
         var c = sub(n)
-        result = c.hasMore and c.kind == Symbol and symId(c) in ptrSyms
+        result = c.hasMore and c.kind == Symbol and
+                 m.roleOf(symId(c)) in {lkPtrPending, lkPtrBound}
         if result:
           skip c
           result = not c.hasMore
@@ -391,7 +414,7 @@ proc pureLaneTree(n: Cursor; assigned: HashSet[SymId];
         result = true
         while c.hasMore:
           inc arity
-          if not pureLaneTree(c, assigned, valueSyms, ptrSyms): result = false
+          if not pureLaneTree(m, c): result = false
           skip c
         if arity != 2: result = false
       else: result = false
@@ -421,12 +444,10 @@ proc scanLitBits(n: Cursor; bits: var int; conflict: var bool) =
       scanLitBits(cc, bits, conflict)
       skip cc
 
-proc matchVarStmt(n: Cursor; plan: var LoopPlan; assigned: HashSet[SymId];
-                  pendingPtr: var HashSet[SymId]; ptrBits: var Table[SymId, int];
-                  valueSyms, ptrSyms: var HashSet[SymId]): bool =
+proc matchVarStmt(m: var Matcher; n: Cursor): bool =
   ## One of the three local kinds the loop grammar allows: a pointer temp
   ## `(var :P (ptr (f W)) .)`, an index local `(var :I (i 64) idx-expr)` or a
-  ## value local `(var :E (f W) pure-lane-tree)`.
+  ## value local `(var :E (f W) pure-lane-tree)`. Records the local's role.
   result = false
   var d = sub(n)
   if d.hasMore and d.kind == SymbolDef:
@@ -444,59 +465,55 @@ proc matchVarStmt(n: Cursor; plan: var LoopPlan; assigned: HashSet[SymId];
           if b.kind == IntLit: bits = int(intVal(b))
         skip d                                # past the type
         if bits in {32, 64} and (not d.hasMore or d.kind == DotToken):
-          pendingPtr.incl nm
-          ptrBits[nm] = bits
-          ptrSyms.incl nm
+          m.locals[nm] = LocalInfo(kind: lkPtrPending, bits: bits)
+          inc m.pendingPtrs
           result = true
       elif d.kind == TagLit and d.typeKind == IT:
         skip d                                # past the type
         var ix = VecIndex(sym: nm)
-        if d.hasMore and d.kind != DotToken and
-           matchIndexExpr(d, plan.ivSym, assigned, ix):
-          plan.indexes.add ix
+        if d.hasMore and d.kind != DotToken and matchIndexExpr(m, d, ix):
+          m.plan.indexes.add ix
+          m.locals[nm] = LocalInfo(kind: lkIndex)
           result = true
       elif d.kind == TagLit and d.typeKind == FT:
         var b = d
         inc b
         let bits = if b.kind == IntLit: int(intVal(b)) else: 0
         skip d                                # past the type
-        if d.hasMore and d.kind != DotToken and
-           pureLaneTree(d, assigned, valueSyms, ptrSyms) and
-           (plan.elemBits == 0 or bits == plan.elemBits):
-          plan.elemBits = bits
-          plan.values.add VecValue(sym: nm, rhsCur: d)
-          valueSyms.incl nm
+        if d.hasMore and d.kind != DotToken and pureLaneTree(m, d) and
+           (m.plan.elemBits == 0 or bits == m.plan.elemBits):
+          m.plan.elemBits = bits
+          m.plan.values.add VecValue(sym: nm, rhsCur: d)
+          m.locals[nm] = LocalInfo(kind: lkValue)
           result = true
 
-proc matchPtrBind(a0: Cursor; p: SymId; plan: var LoopPlan;
-                  assigned: HashSet[SymId]; ptrBits: Table[SymId, int];
-                  pendingPtr: var HashSet[SymId]): bool =
+proc matchPtrBind(m: var Matcher; a0: Cursor; p: SymId): bool =
   ## The rhs of `(asgn P (haddr (pat BASE I)))` — bind the pointer temp.
   result = false
   var a = a0
   if a.hasMore and a.kind == TagLit and a.exprKind == HaddrC:
     var h = sub(a)
     var acc = VecAccess(ptrSym: p)
-    if h.hasMore and matchPatLval(h, plan, assigned, acc):
+    if h.hasMore and matchPatLval(m, h, acc):
       skip h
-      let bits = ptrBits[p]
-      if not h.hasMore and (plan.elemBits == 0 or bits == plan.elemBits):
-        plan.elemBits = bits
-        plan.accesses.add acc
-        pendingPtr.excl p
+      let bits = m.locals[p].bits
+      if not h.hasMore and (m.plan.elemBits == 0 or bits == m.plan.elemBits):
+        m.plan.elemBits = bits
+        m.plan.accesses.add acc
+        m.locals[p].kind = lkPtrBound
+        dec m.pendingPtrs
         result = true
 
-proc matchStore(a0: Cursor; plan: var LoopPlan; assigned: HashSet[SymId];
-                valueSyms, ptrSyms: HashSet[SymId]): bool =
+proc matchStore(m: var Matcher; a0: Cursor): bool =
   ## `(asgn (pat BASE I) pure-lane-tree)` — the ONE store.
   result = false
   var a = a0
   var acc = VecAccess(ptrSym: SymId(0))
-  if matchPatLval(a, plan, assigned, acc):
+  if matchPatLval(m, a, acc):
     skip a                                    # past the lvalue
-    if a.hasMore and pureLaneTree(a, assigned, valueSyms, ptrSyms):
-      plan.store = acc
-      plan.storeSrc = a
+    if a.hasMore and pureLaneTree(m, a):
+      m.plan.store = acc
+      m.plan.storeSrc = a
       skip a
       result = not a.hasMore
 
@@ -505,31 +522,24 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
   ## rejects — the pass must understand EVERYTHING it vectorizes.
   when defined(vecDbg): echo "vectorizer: trying a while loop"
   result = false
+  var m = Matcher()
   var bound = default(Cursor)
-  if matchWhileHead(loop, plan.ivSym, bound):
-    plan.boundCur = bound
+  if matchWhileHead(loop, m.plan.ivSym, bound):
+    m.plan.boundCur = bound
     var body = loop
     inc body                                  # past `(while`
     skip body                                 # past the condition
 
-    var assigned = initHashSet[SymId]()
-    collectAssigned(body, assigned)
-    assigned.incl plan.ivSym
-    if not (bound.kind == Symbol and symId(bound) in assigned):
+    collectAssigned(body, m.assigned)
+    m.assigned.incl m.plan.ivSym
+    if not (bound.kind == Symbol and symId(bound) in m.assigned):
       var stmts: seq[Cursor] = @[]
       flattenStmts(body, stmts)
 
       # the iv itself is a valid access index (`c[iv]` — the fill loops); its
       # displacement is zero
-      plan.indexes.add VecIndex(sym: plan.ivSym, invSym: SymId(0), invLit: 0)
-
-      var pendingPtr = initHashSet[SymId]()   # declared, not yet bound
-      var ptrBits = initTable[SymId, int]()
-      var valueSyms = initHashSet[SymId]()
-      var ptrSyms = initHashSet[SymId]()
-      var sawStore = false
-      var sawInc = false
-      plan.elemBits = 0
+      m.plan.indexes.add VecIndex(sym: m.plan.ivSym, invSym: SymId(0),
+                                  invLit: 0)
 
       var ok = true
       var si = 0
@@ -537,35 +547,33 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
         let n = stmts[si]
         if n.kind != TagLit:
           ok = false
-        elif sawInc:
+        elif m.sawInc:
           # only inert labels may trail the increment (inliner returnLabels)
           ok = n.stmtKind == LabS
         else:
           case n.stmtKind
           of VarS:
-            ok = matchVarStmt(n, plan, assigned, pendingPtr, ptrBits,
-                              valueSyms, ptrSyms)
+            ok = matchVarStmt(m, n)
           of AsgnS:
-            if matchIvInc(n, plan.ivSym):
-              sawInc = true
+            if matchIvInc(n, m.plan.ivSym):
+              m.sawInc = true
             else:
               var a = sub(n)
               if not a.hasMore:
                 ok = false
-              elif a.kind == Symbol and symId(a) in pendingPtr:
+              elif a.kind == Symbol and m.roleOf(symId(a)) == lkPtrPending:
                 let p = symId(a)
                 skip a
-                ok = matchPtrBind(a, p, plan, assigned, ptrBits, pendingPtr)
+                ok = matchPtrBind(m, a, p)
               elif a.kind == TagLit and a.exprKind == PatC:
-                ok = not sawStore and
-                     matchStore(a, plan, assigned, valueSyms, ptrSyms)
-                sawStore = ok
+                ok = not m.sawStore and matchStore(m, a)
+                m.sawStore = ok
               else:
                 ok = false
           of IfS:
             var g = VecGuard(idx: -1)
-            ok = matchGuard(n, plan, assigned, g)
-            if ok: plan.guards.add g
+            ok = matchGuard(m, n, g)
+            if ok: m.plan.guards.add g
           of LabS:
             discard   # inliner residue; jumps would appear as stmts and reject
           else:
@@ -580,15 +588,18 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
       # literal leaves imply a width too (the zero-fill loop has ONLY
       # literals); unify it with the access-implied one
       var litConflict = false
-      for v in plan.values: scanLitBits(v.rhsCur, plan.elemBits, litConflict)
-      if sawStore: scanLitBits(plan.storeSrc, plan.elemBits, litConflict)
-      result = ok and not litConflict and sawStore and sawInc and
-               plan.elemBits in {32, 64} and pendingPtr.len == 0
+      for v in m.plan.values:
+        scanLitBits(v.rhsCur, m.plan.elemBits, litConflict)
+      if m.sawStore: scanLitBits(m.plan.storeSrc, m.plan.elemBits, litConflict)
+      result = ok and not litConflict and m.sawStore and m.sawInc and
+               m.plan.elemBits in {32, 64} and m.pendingPtrs == 0
+      if result:
+        swap(plan, m.plan)
       when defined(vecDbg):
         if ok and not result:
-          echo "vectorizer reject: final (store=", sawStore, " inc=", sawInc,
-               " bits=", plan.elemBits, " pending=", pendingPtr.len,
-               " litConflict=", litConflict, ")"
+          echo "vectorizer reject: final (store=", m.sawStore, " inc=",
+               m.sawInc, " bits=", m.plan.elemBits, " pending=",
+               m.pendingPtrs, " litConflict=", litConflict, ")"
     else:
       when defined(vecDbg): echo "vectorizer reject: bound assigned in loop"
   else:
