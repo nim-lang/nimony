@@ -115,6 +115,8 @@ type
     VfmlaOp      # vec = vfmla(acc, a, b: vec; lanebits) — fused acc + a*b; the
                  # result is tied to `acc` (the machine op accumulates in place)
     VdupOp       # vec = vdup(x: F; lanebits)         — broadcast x to every lane
+    VaddvOp      # F = vaddv(v: vec; lanebits)        — horizontal fp add of every
+                 # lane into a scalar (the reduction epilogue)
     # ── the machine facts a stack walk needs (`lib/std/stacktraces`). Both are
     #    portable rows: the CONCEPT is target-neutral, the instruction is not.
     StackPointerOp
@@ -259,7 +261,7 @@ const
     "AtomicFetchXor", "AtomicAddFetch", "AtomicSubFetch",
     "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
-    "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup",
+    "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
     "StackPointer", "TraceTable"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
@@ -293,6 +295,7 @@ const
   VecBin = [ptVec128, ptVec128, ptLaneBits, ptNone, ptNone, ptNone]
   VecFma = [ptVec128, ptVec128, ptVec128, ptLaneBits, ptNone, ptNone]
   VecDup = [ptFloatW, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
+  VecHAdd = [ptVec128, ptLaneBits, ptNone, ptNone, ptNone, ptNone]
 
   AllArith = {mfZF, mfCF, mfSF, mfOF, mfPF}
     ## What an x86 arithmetic/compare instruction leaves defined. `test` clears CF
@@ -587,6 +590,9 @@ const
                  widths: {32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # vdup
                  params: VecDup, roles: AllIn, ret: ptVec128,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # vaddv
+                 params: VecHAdd, roles: AllIn, ret: ptFloatW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
 
     # ── stack walking ──────────────────────────────────────────────────────

@@ -25,7 +25,10 @@
 ##   `(asgn P (haddr (pat BASE I)))`, `BASE` an invariant lvalue path;
 ## * value locals `(var :E (f W) rhs)` with `rhs` a pure tree over
 ##   `(deref P)`, invariant scalars and float literals with `add`/`sub`/`mul`;
-## * exactly ONE store `(asgn (pat BASE I) src)`;
+## * exactly ONE store `(asgn (pat BASE I) src)`, and/or accumulator updates
+##   `(asgn S (add [T] S tree))` — S a scalar float local of the enclosing proc
+##   (declared by a `(var …)` in this body, its address never taken, verified
+##   by a whole-body scan) and `tree` a pure lane tree not mentioning S;
 ## * the increment `(asgn iv (add T iv 1))` as the final statement.
 ##
 ## ## What is emitted — loop versioning, no semantic assumptions
@@ -54,6 +57,14 @@
 ## see `lib/intrinsics.nim`. `vfmla` accumulates in place (`tie: 0`), so it is
 ## only fused onto an iteration-fresh accumulator and spelled
 ## `(asgn acc (instr vfmla acc a b bits))`.
+##
+## An accumulator update gets an `(f 128)` PARTIAL-SUM local per unroll slot,
+## started at all-zero lanes; the scalar S is untouched by the vector loop and
+## receives the lane sums ONCE at its end, via `vaddv` (horizontal add):
+## `S = S + vaddv(acc)`. This is the one deliberate semantic deviation of the
+## pass: lane-splitting a float sum reorders its additions, so the rounding
+## can differ from the scalar loop's left-to-right order. The remainder still
+## runs the original loop, in the original order.
 
 import std / [tables, sets, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
@@ -85,16 +96,22 @@ type
     sym: SymId              ## the scalar value local
     rhsCur: Cursor          ## its pure defining tree
 
+  VecReduction = object
+    sym: SymId              ## the loop-carried scalar accumulator
+    treeCur: Cursor         ## the pure lane tree added to it each iteration
+
   LoopPlan = object
     ivSym: SymId
     boundCur: Cursor        ## `n` — invariant symbol or int literal
     elemBits: int           ## 32 or 64; uniform across every access
+    hasStore: bool
     indexes: seq[VecIndex]
     accesses: seq[VecAccess]  ## the loads
     store: VecAccess
     storeSrc: Cursor
     guards: seq[VecGuard]
     values: seq[VecValue]
+    reductions: seq[VecReduction]
 
   Context = object
     orig: ptr TokenBuf
@@ -517,6 +534,81 @@ proc matchStore(m: var Matcher; a0: Cursor): bool =
       skip a
       result = not a.hasMore
 
+proc matchReduction(m: var Matcher; a0: Cursor; s: SymId): bool =
+  ## The rhs of `(asgn S rhs)` for an outer scalar S: `(add [T] S tree)` or
+  ## `(add [T] tree S)` with `tree` a pure lane tree — a sum accumulation.
+  ## Every OTHER use of S in the loop rejects on its own: S is in `assigned`,
+  ## so it is not an invariant leaf, not an index and not part of a base.
+  result = false
+  var a = a0
+  if a.hasMore and a.kind == TagLit and a.exprKind == AddC:
+    var c = sub(a)
+    var bitsOk = true
+    if c.kind == TagLit and c.typeKind != NoType:
+      # the add's type child, when present, must be the loop's float element
+      # type — an integer type here is an integer reduction, which these
+      # float instructions cannot carry
+      if c.typeKind == FT:
+        var b = c
+        inc b
+        let bits = if b.kind == IntLit: int(intVal(b)) else: 0
+        if m.plan.elemBits == 0 and bits in {32, 64}:
+          m.plan.elemBits = bits
+        bitsOk = bits == m.plan.elemBits
+      else:
+        bitsOk = false
+      skip c
+    if bitsOk and c.hasMore:
+      let x = c
+      skip c
+      if c.hasMore:
+        let y = c
+        skip c
+        if not c.hasMore:
+          var tree = default(Cursor)
+          var found = false
+          if x.kind == Symbol and symId(x) == s:
+            tree = y
+            found = true
+          elif y.kind == Symbol and symId(y) == s:
+            tree = x
+            found = true
+          if found and pureLaneTree(m, tree):
+            m.plan.reductions.add VecReduction(sym: s, treeCur: tree)
+            result = true
+
+proc scanAccUses(n: Cursor; s: SymId; bits: int;
+                 declOk, addrTaken: var bool) =
+  if n.hasMore and n.kind == TagLit:
+    if n.stmtKind == VarS:
+      var d = sub(n)
+      if d.hasMore and d.kind == SymbolDef and symId(d) == s:
+        inc d                                 # past the name
+        skip d                                # pragmas
+        if d.hasMore and d.kind == TagLit and d.typeKind == FT:
+          var b = d
+          inc b
+          if b.kind == IntLit and int(intVal(b)) == bits: declOk = true
+    elif n.exprKind in {HaddrC, AddrC}:
+      var c = sub(n)
+      if c.hasMore and c.kind == Symbol and symId(c) == s: addrTaken = true
+    var m = n
+    m.loopInto:
+      scanAccUses(m, s, bits, declOk, addrTaken)
+      skip m
+
+proc accSafeLocal(c: var Context; s: SymId; bits: int): bool =
+  ## The vector loop keeps a reduction's partial sums in registers and writes
+  ## the scalar ONCE, after — so nothing may observe or alias the scalar
+  ## through memory mid-loop. Sufficient and checkable: S is declared by a
+  ## `(var :S … (f bits) …)` in this body (a proc-local — not a param, not a
+  ## global another module could point into) and no `(haddr S)`/`(addr S)`
+  ## appears anywhere in it.
+  var declOk = false
+  var addrTaken = false
+  scanAccUses(cursorAt(c.orig[], 0), s, bits, declOk, addrTaken)
+  result = declOk and not addrTaken
+
 proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
   ## Match the whole canonical loop; fill `plan`. Any unexpected statement
   ## rejects — the pass must understand EVERYTHING it vectorizes.
@@ -568,6 +660,11 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
               elif a.kind == TagLit and a.exprKind == PatC:
                 ok = not m.sawStore and matchStore(m, a)
                 m.sawStore = ok
+              elif a.kind == Symbol and m.roleOf(symId(a)) == lkNone:
+                # an outer scalar: only a sum accumulation is admitted
+                let s = symId(a)
+                skip a
+                ok = matchReduction(m, a, s)
               else:
                 ok = false
           of IfS:
@@ -591,15 +688,27 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
       for v in m.plan.values:
         scanLitBits(v.rhsCur, m.plan.elemBits, litConflict)
       if m.sawStore: scanLitBits(m.plan.storeSrc, m.plan.elemBits, litConflict)
-      result = ok and not litConflict and m.sawStore and m.sawInc and
+      for r in m.plan.reductions:
+        scanLitBits(r.treeCur, m.plan.elemBits, litConflict)
+      m.plan.hasStore = m.sawStore
+      result = ok and not litConflict and
+               (m.sawStore or m.plan.reductions.len > 0) and m.sawInc and
                m.plan.elemBits in {32, 64} and m.pendingPtrs == 0
+      # every accumulator must still be an OUTER scalar (no later `(var :S …)`
+      # in the body claimed it a role) and provably register-private
+      var ri = 0
+      while result and ri < m.plan.reductions.len:
+        result = m.roleOf(m.plan.reductions[ri].sym) == lkNone and
+                 accSafeLocal(c, m.plan.reductions[ri].sym, m.plan.elemBits)
+        inc ri
       if result:
         swap(plan, m.plan)
       when defined(vecDbg):
         if ok and not result:
-          echo "vectorizer reject: final (store=", m.sawStore, " inc=",
-               m.sawInc, " bits=", m.plan.elemBits, " pending=",
-               m.pendingPtrs, " litConflict=", litConflict, ")"
+          echo "vectorizer reject: final (store=", m.sawStore, " reds=",
+               m.plan.reductions.len, " inc=", m.sawInc, " bits=",
+               m.plan.elemBits, " pending=", m.pendingPtrs, " litConflict=",
+               litConflict, ")"
     else:
       when defined(vecDbg): echo "vectorizer reject: bound assigned in loop"
   else:
@@ -740,14 +849,16 @@ type
     vf, bits: int
     tempCounter: int
     moduleSuffix: string
-    iFldrq, iFstrq, iVfadd, iVfsub, iVfmul, iVfmla, iVdup: string
+    iFldrq, iFstrq, iVfadd, iVfsub, iVfmul, iVfmla, iVdup, iVaddv: string
     ptrs: seq[UniquePtr]    ## unique access points (loads + store)
     ptrOfAccess: Table[SymId, int]  ## load ptr temp → ptrs index
-    storePtr: int
+    storePtr: int           ## -1 when the loop only reduces
     bcSyms: Table[SymId, string]    ## invariant scalar → broadcast local
     bcLits: Table[int64, string]    ## float bit pattern → broadcast local
     valueSet: HashSet[SymId]
     valueVec: Table[SymId, string]  ## value local → its `(f 128)` local
+    accNames: seq[array[2, string]] ## per reduction: partial sum per slot
+    unrolled: bool
 
 proc freshName(e: var Emitter; kind: string): string =
   inc e.tempCounter
@@ -830,6 +941,46 @@ proc vecBin(e: var Emitter; op, aName, bName: string): string =
 
 proc isMulTree(n: Cursor): bool =
   n.kind == TagLit and n.exprKind == MulC
+
+proc countSymUses(n: Cursor; s: SymId; count: var int) =
+  if n.kind == Symbol:
+    if symId(n) == s: inc count
+  elif n.kind == TagLit:
+    var c = sub(n)
+    while c.hasMore:
+      countSymUses(c, s, count)
+      skip c
+
+proc addAccDecl(e: var Emitter; name: string) =
+  ## `(var :acc . (f 128) (instr vdup 0.0 bits))` — an all-zero-lane start;
+  ## the scalar accumulator stays untouched until after the vector loop.
+  e.b.addVarDeclHead name
+  e.b.addF(128)
+  e.b.openTag tid(InstrTagId)
+  e.b.addSymUse e.iVdup
+  if e.bits == 32:
+    e.b.openTag tid(SufTagId)
+    e.b.addFloatLit 0.0
+    e.b.addStrLit "f32"
+    e.b.closeTag()
+  else:
+    e.b.addFloatLit 0.0
+  e.b.addIntLit int64(e.bits)
+  e.b.closeTag()
+  e.b.closeTag()                              # var
+
+proc accUpdate(e: var Emitter; accN, op: string; opnds: openArray[string]) =
+  ## `(asgn acc (instr OP acc opnds… bits))` — accumulate in place, the
+  ## spelling both `vfmla`'s tie and `vfadd`'s in-place write accept.
+  e.b.openTag tid(AsgnTagId)
+  e.b.addSymUse accN
+  e.b.openTag tid(InstrTagId)
+  e.b.addSymUse op
+  e.b.addSymUse accN
+  for o in opnds: e.b.addSymUse o
+  e.b.addIntLit int64(e.bits)
+  e.b.closeTag()
+  e.b.closeTag()
 
 proc vecEval(e: var Emitter; n: Cursor; fresh: var bool): string =
   ## Lane-wise evaluation; returns the name of the `(f 128)` local holding the
@@ -915,7 +1066,10 @@ proc emitSlot(e: var Emitter; byteOff: int) =
   ## loads): correct because the `vecok` disjointness/identity guarantees make
   ## every same-iteration store range distinct from every load range except
   ## the same-address case, which reads its own slot's offset — and the OOO
-  ## core overlaps the independent slots on its own.
+  ## core overlaps the independent slots on its own. A slot's vector temps
+  ## (loads and op temps) are dead at its end, and the planer's early-free
+  ## returns their SIMD registers before the next slot's declarations — only
+  ## the partial-sum accumulators outlive a slot.
   for k in 0 ..< e.ptrs.len:
     if e.ptrs[k].hasLoad:
       e.ptrs[k].loadName = e.freshName("l")
@@ -933,14 +1087,35 @@ proc emitSlot(e: var Emitter; byteOff: int) =
     var fresh = false
     let nm = vecEval(e, e.plan.values[vi].rhsCur, fresh)
     e.valueVec[e.plan.values[vi].sym] = nm
-  var srcFresh = false
-  let srcName = vecEval(e, e.plan.storeSrc, srcFresh)
-  e.b.openTag tid(InstrTagId)
-  e.b.addSymUse e.iFstrq
-  e.b.addSymUse e.ptrs[e.storePtr].name
-  e.b.addIntLit int64(byteOff)
-  e.b.addSymUse srcName
-  e.b.closeTag()
+  # the accumulator updates: each slot owns its own partial-sum local, so the
+  # unrolled slots carry independent dependency chains
+  let slot = byteOff div 16
+  for ri in 0 ..< e.plan.reductions.len:
+    let t = e.plan.reductions[ri].treeCur
+    if isMulTree(t):
+      # acc += a*b, fused: (asgn acc (instr vfmla acc a b bits))
+      var mc = sub(t)
+      skipOptType mc
+      let ma = mc
+      skip mc
+      let mb = mc
+      var fA, fB = false
+      let aN = vecEval(e, ma, fA)
+      let bN = vecEval(e, mb, fB)
+      e.accUpdate(e.accNames[ri][slot], e.iVfmla, [aN, bN])
+    else:
+      var fT = false
+      let tN = vecEval(e, t, fT)
+      e.accUpdate(e.accNames[ri][slot], e.iVfadd, [tN])
+  if e.plan.hasStore:
+    var srcFresh = false
+    let srcName = vecEval(e, e.plan.storeSrc, srcFresh)
+    e.b.openTag tid(InstrTagId)
+    e.b.addSymUse e.iFstrq
+    e.b.addSymUse e.ptrs[e.storePtr].name
+    e.b.addIntLit int64(byteOff)
+    e.b.addSymUse srcName
+    e.b.closeTag()
 
 proc emitVecLoop(e: var Emitter; unrollCount: int) =
   ## `while iv + unroll*VF - 1 < n: <slots>; bump pointers; iv += unroll*VF`
@@ -971,14 +1146,37 @@ proc emitVecLoop(e: var Emitter; unrollCount: int) =
   e.b.closeTag()                              # stmts (vector body)
   e.b.closeTag()                              # while
 
-proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf =
+proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf =
   ## Build the whole replacement `(stmts …)` tree.
+  var plan = plan0
+
+  # ── a single-use value local that IS a reduction's whole tree is inlined ──
+  # (the hexer materializes `s += a[i]*b[i]` as `e = a*b; s += e`; inlining
+  # exposes the mul to the fmla fusion and keeps the dead `e` out of the slot)
+  for ri in 0 ..< plan.reductions.len:
+    let t = plan.reductions[ri].treeCur
+    if t.kind == Symbol:
+      let vs = symId(t)
+      var vi = -1
+      for i in 0 ..< plan.values.len:
+        if plan.values[i].sym == vs: vi = i
+      if vi >= 0:
+        var uses = 0
+        for v in plan.values: countSymUses(v.rhsCur, vs, uses)
+        if plan.hasStore: countSymUses(plan.storeSrc, vs, uses)
+        for r in plan.reductions: countSymUses(r.treeCur, vs, uses)
+        if uses == 1:
+          plan.reductions[ri].treeCur = plan.values[vi].rhsCur
+          for j in vi ..< plan.values.len - 1: plan.values[j] = plan.values[j+1]
+          plan.values.setLen plan.values.len - 1
+
   var e = Emitter(plan: plan, vf: 128 div plan.elemBits, bits: plan.elemBits,
                   tempCounter: c.tempCounter, moduleSuffix: c.moduleSuffix,
                   iFldrq: "fldrq." & c.vecSuffix, iFstrq: "fstrq." & c.vecSuffix,
                   iVfadd: "vfadd." & c.vecSuffix, iVfsub: "vfsub." & c.vecSuffix,
                   iVfmul: "vfmul." & c.vecSuffix, iVfmla: "vfmla." & c.vecSuffix,
-                  iVdup: "vdup." & c.vecSuffix, storePtr: -1,
+                  iVdup: "vdup." & c.vecSuffix, iVaddv: "vaddv." & c.vecSuffix,
+                  storePtr: -1,
                   ptrOfAccess: initTable[SymId, int](),
                   bcSyms: initTable[SymId, string](),
                   bcLits: initTable[int64, string](),
@@ -991,11 +1189,12 @@ proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf 
     let k = uniquePtr(e, acc)
     e.ptrs[k].hasLoad = true
     e.ptrOfAccess[acc.ptrSym] = k
-  e.storePtr = uniquePtr(e, plan.store)
+  if plan.hasStore: e.storePtr = uniquePtr(e, plan.store)
 
   # deref counts, for the fmla in-place fusion rule
   for v in plan.values: countDerefs(e, v.rhsCur)
-  countDerefs(e, plan.storeSrc)
+  if plan.hasStore: countDerefs(e, plan.storeSrc)
+  for r in plan.reductions: countDerefs(e, r.treeCur)
 
   let okName = e.freshName("ok")
 
@@ -1020,10 +1219,12 @@ proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf 
   e.b.openTag tid(StmtsTagId)
   e.b.openTag tid(ScopeTagId)
 
-  # runtime disjointness of every loading access point vs the store's
+  # runtime disjointness of every loading access point vs the store's — a
+  # pure reduction has no store, so nothing to check (its accumulators live
+  # in registers; `accSafeLocal` proved memory cannot observe them)
   var djNames: seq[string] = @[]
   for k in 0 ..< e.ptrs.len:
-    if k != e.storePtr and e.ptrs[k].hasLoad:
+    if e.storePtr >= 0 and k != e.storePtr and e.ptrs[k].hasLoad:
       # dj = &A[hi] <= &S[lo];  if not dj: dj = &S[hi] <= &A[lo] — the ranges
       # are [inv+iv, inv+n); every address is an inlined expression.
       let dj = e.freshName("dj")
@@ -1115,7 +1316,12 @@ proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf 
   # broadcasts for the invariant scalar / literal leaves
   for v in plan.values: e.valueSet.incl v.sym
   for v in plan.values: collectBroadcasts(e, v.rhsCur)
-  collectBroadcasts(e, plan.storeSrc)
+  if plan.hasStore: collectBroadcasts(e, plan.storeSrc)
+  for r in plan.reductions: collectBroadcasts(e, r.treeCur)
+
+  # partial-sum names up front — the dry-run slot below references slot 0's
+  for ri in 0 ..< plan.reductions.len:
+    e.accNames.add [e.freshName("acc"), e.freshName("acc")]
 
   # ── unroll decision, from EXACT per-slot register pressure ──
   # Dry-run one slot into a throwaway buffer: every `(f 128)` local a slot
@@ -1134,11 +1340,35 @@ proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf 
     perSlot = e.tempCounter - before
     swap(e.b, scratch)                        # scratch (and its decls) discarded
 
-  if 2 * perSlot + e.bcSyms.len + e.bcLits.len <= 6:
+  # a partial-sum local is loop-live like a broadcast, one per slot in use
+  e.unrolled = 2 * perSlot + e.bcSyms.len + e.bcLits.len +
+               2 * plan.reductions.len <= 6
+  for ri in 0 ..< plan.reductions.len:
+    e.addAccDecl(e.accNames[ri][0])
+    if e.unrolled: e.addAccDecl(e.accNames[ri][1])
+  if e.unrolled:
     emitVecLoop(e, 2)
   # the single-width loop: the main loop when not unrolled, the ≤1-iteration
   # mid-remainder when unrolled
   emitVecLoop(e, 1)
+
+  # fold each reduction's lanes into its scalar, ONCE:
+  # `(asgn S (add (f W) S (instr vaddv acc bits)))`
+  for ri in 0 ..< plan.reductions.len:
+    if e.unrolled:
+      e.accUpdate(e.accNames[ri][0], e.iVfadd, [e.accNames[ri][1]])
+    e.b.openTag tid(AsgnTagId)
+    e.b.addSymUse plan.reductions[ri].sym
+    e.b.openTag tid(AddTagId)
+    e.b.addF(e.bits)
+    e.b.addSymUse plan.reductions[ri].sym
+    e.b.openTag tid(InstrTagId)
+    e.b.addSymUse e.iVaddv
+    e.b.addSymUse e.accNames[ri][0]
+    e.b.addIntLit int64(e.bits)
+    e.b.closeTag()                            # instr
+    e.b.closeTag()                            # add
+    e.b.closeTag()                            # asgn
 
   e.b.closeTag()                              # scope
   e.b.closeTag()                              # stmts (vecok branch)
@@ -1180,7 +1410,7 @@ proc tr(c: var Context; n: var Cursor) =
 
 const VecIntrinsics* = [
   ("fldrq", 2), ("fstrq", 3), ("vfadd", 3), ("vfsub", 3), ("vfmul", 3),
-  ("vfmla", 4), ("vdup", 2)]
+  ("vfmla", 4), ("vdup", 2), ("vaddv", 2)]
 
 proc addVecIntrinsicDecls*(dest: var TokenBuf; vecSuffix: string) =
   ## The `{.instruction.}` declarations the emitted `(instr …)` applications
@@ -1212,7 +1442,7 @@ proc addVecIntrinsicDecls*(dest: var TokenBuf; vecSuffix: string) =
         dest.addIntLit 128
         dest.closeTag()
       elif (tag in ["vfadd", "vfsub", "vfmul"] and i < 2) or
-           (tag == "vfmla" and i < 3):
+           (tag == "vfmla" and i < 3) or (tag == "vaddv" and i == 0):
         dest.openTag tid(FTagId)
         dest.addIntLit 128
         dest.closeTag()
@@ -1226,7 +1456,8 @@ proc addVecIntrinsicDecls*(dest: var TokenBuf; vecSuffix: string) =
       dest.addDotToken()                      # void result
     else:
       dest.openTag tid(FTagId)
-      dest.addIntLit 128
+      # `vaddv` is the one row that produces a SCALAR (the lane sum)
+      dest.addIntLit (if tag == "vaddv": 64 else: 128)
       dest.closeTag()
     dest.openTag tid(PragmasTagId)
     dest.openTag tid(InstructionTagId)
@@ -1309,8 +1540,63 @@ when isMainModule:
     doAssert s.count("(instr fstrq.vec.M") == 3, s
     doAssert s.count("(while") == 3, s
 
-  block reject_reduction:
-    # s = s + a[i] — loop-carried scalar: must NOT vectorize
+  block sum_reduction:
+    # s = s + b[i] — a loop-carried scalar accumulator, no store
+    var buf = parse("""
+(stmts
+ (var :s.0 . (f 64) 0.0)
+ (while (lt i.0 n.0)
+  (stmts
+   (var :p.0 . (ptr (f 64)) .)
+   (var :ix.0 . (i 64) i.0)
+   (if (elif (not (lt ix.0 (dot b.0 len.0 0))) (stmts (call panic.0))))
+   (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
+   (asgn s.0 (add (f 64) s.0 (deref p.0)))
+   (asgn i.0 (add (i 64) i.0 1)))))""")
+    doAssert runVectorizer(buf, "M", "vec.M")
+    let s = toString(buf)
+    doAssert s.contains("(instr vaddv.vec.M"), s
+    doAssert s.contains("(instr vdup.vec.M"), "zero-lane start expected: " & s
+    doAssert not s.contains("fstrq"), "no store expected: " & s
+    doAssert not s.contains("vec.dj."), "no disjointness check expected: " & s
+    # 1 load per slot + 2 partial sums fits the pool → unrolled main loop +
+    # single-width mid-remainder + the scalar original
+    doAssert s.count("(while") == 3, s
+    doAssert s.count("(instr fldrq.vec.M") == 3, s
+    # the lanes fold into the scalar exactly ONCE
+    doAssert s.count("(instr vaddv.vec.M") == 1, s
+
+  block dot_reduction:
+    # s += a[i]*b[i], the hexer shape: e = a*b; s = s + e — the single-use
+    # value local must inline into the reduction and fuse to vfmla
+    var buf = parse("""
+(stmts
+ (var :s.0 . (f 64) 0.0)
+ (while (lt i.0 n.0)
+  (stmts
+   (var :p.0 . (ptr (f 64)) .)
+   (var :ix.0 . (i 64) i.0)
+   (asgn p.0 (haddr (pat (dot a.0 data.0 0) ix.0)))
+   (var :q.0 . (ptr (f 64)) .)
+   (var :ix.1 . (i 64) i.0)
+   (asgn q.0 (haddr (pat (dot b.0 data.0 0) ix.1)))
+   (var :e.0 . (f 64) (mul (f 64) (deref p.0) (deref q.0)))
+   (asgn s.0 (add (f 64) s.0 e.0))
+   (asgn i.0 (add (i 64) i.0 1)))))""")
+    doAssert runVectorizer(buf, "M", "vec.M")
+    let s = toString(buf)
+    doAssert s.contains("(instr vfmla.vec.M"), "fused multiply-add expected: " & s
+    doAssert not s.contains("(instr vfmul.vec.M"),
+      "the mul must fold into the fmla: " & s
+    doAssert s.count("(instr vaddv.vec.M") == 1, s
+    # 2 loads per slot + 2 partial sums → still unrolls
+    doAssert s.count("(while") == 3, s
+    doAssert s.count("(instr fldrq.vec.M") == 6, s
+    doAssert s.count("(instr vfmla.vec.M") == 3, s
+
+  block reject_undeclared_acc:
+    # s = s + b[i] with NO `(var :s.0 …)` in the body: a param or global —
+    # not provably register-private, must NOT vectorize
     var buf = parse("""
 (stmts
  (while (lt i.0 n.0)
@@ -1319,6 +1605,35 @@ when isMainModule:
    (var :ix.0 . (i 64) i.0)
    (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
    (asgn s.0 (add (f 64) s.0 (deref p.0)))
+   (asgn i.0 (add (i 64) i.0 1)))))""")
+    doAssert not runVectorizer(buf, "M", "vec.M")
+
+  block reject_addr_taken_acc:
+    # the accumulator's address escapes — memory could observe it mid-loop
+    var buf = parse("""
+(stmts
+ (var :s.0 . (f 64) 0.0)
+ (call sink.0 (haddr s.0))
+ (while (lt i.0 n.0)
+  (stmts
+   (var :p.0 . (ptr (f 64)) .)
+   (var :ix.0 . (i 64) i.0)
+   (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
+   (asgn s.0 (add (f 64) s.0 (deref p.0)))
+   (asgn i.0 (add (i 64) i.0 1)))))""")
+    doAssert not runVectorizer(buf, "M", "vec.M")
+
+  block reject_product_reduction:
+    # s = s * b[i] — not a sum; no lane-fold instruction carries it
+    var buf = parse("""
+(stmts
+ (var :s.0 . (f 64) 1.0)
+ (while (lt i.0 n.0)
+  (stmts
+   (var :p.0 . (ptr (f 64)) .)
+   (var :ix.0 . (i 64) i.0)
+   (asgn p.0 (haddr (pat (dot b.0 data.0 0) ix.0)))
+   (asgn s.0 (mul (f 64) s.0 (deref p.0)))
    (asgn i.0 (add (i 64) i.0 1)))))""")
     doAssert not runVectorizer(buf, "M", "vec.M")
 
