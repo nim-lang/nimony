@@ -5168,6 +5168,10 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       of CoroforS:
         buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
         skip it.n
+      of LabS, JmpS:
+        buildErr c, dest, it.n.info, "`" & $stmtKind(it.n) &
+          "` is a hexer-internal shape and must not appear in source"
+        skip it.n
       of VarS:
         localSigGuard c:
           semLocal c, dest, it, VarY

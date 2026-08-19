@@ -741,7 +741,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
           return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
-        of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
+        of StmtsS, ScopeS, BlockS, ContinueS, BreakS, LabS, JmpS:
+          # `lab`/`jmp` cannot actually reach here: `controlflow.trJmp`/`trLab`
+          # consume them into the goto instructions this walker reads.
           inc pc
           inc nested
         of PragmaxS:
@@ -933,7 +935,8 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
-     BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
+     BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS,
+     LabS, JmpS, NoStmt:
     c.toplevelStmts.takeTree n
 
 proc analyzeContracts*(input: var TokenBuf): TokenBuf =
