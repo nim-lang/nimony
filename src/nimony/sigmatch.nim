@@ -2412,10 +2412,10 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
           # explicitly given value for a value parameter, e.g. `Matrix[3, 4, int]`
           if not bindStaticTypevar(m, v, typevar.typ, e):
             m.error ConstraintMismatch, typevar.typ, e
-        elif notATypeArg(e):
-          m.error ExplicitGenericArgNotAType, typevar.typ, e
         elif matchesConstraint(m, v, e):
           m.inferred[v] = e
+        elif notATypeArg(e):
+          m.error ExplicitGenericArgNotAType, typevar.typ, e
         else:
           assert typevar.kind == TypevarY
           m.error ConstraintMismatch, typevar.typ, e
