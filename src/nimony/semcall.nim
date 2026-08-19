@@ -533,6 +533,13 @@ proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
+proc anyArgTypeIsError(cs: CallState): bool =
+  ## True when an argument already carries an `(err)` type, i.e. semchecking it
+  ## failed and reported a diagnostic of its own.
+  for a in cs.args:
+    if a.typ.typeKind == ErrT: return true
+  result = false
+
 proc buildCallSource(buf: var TokenBuf; cs: CallState; callee: Cursor) =
   case cs.source
   of RegularCall:
@@ -1248,6 +1255,18 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.args.len != 0: # just to be safe
         errorMsg.add " for type "
         errorMsg.add typeToString(cs.args[0].typ)
+    elif m.len > 0 and anyArgTypeIsError(cs):
+      # Every candidate failed only because an argument is already erroneous;
+      # the diagnostic was reported where that argument was produced. Emit a
+      # message-less `(err …)` — `reportErrors` counts it (so the module still
+      # fails) but prints nothing — instead of dumping the whole overload set
+      # on top of an error the user has already been shown. Otherwise a single
+      # bad operand turns into one `expected: <candidate> but got: <type error>`
+      # line per candidate, eleven of them for `*` alone.
+      dest.buildTree ErrT, cs.callNodeInfo:
+        dest.addSubtree erroredN
+        dest.addStrLit("", cs.callNodeInfo)
+      return
     elif m.len > 0:
       errorMsg = "Type mismatch at [position]\n"
       errorMsg.add asNimCode erroredN
