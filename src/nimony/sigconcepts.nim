@@ -28,12 +28,19 @@ proc conceptTargetNeedsStrictCheck*(a: Cursor): bool =
   ## legacy acceptance until full requirement matching is complete.
   if a.isDotToken:
     return false
-  if a.isSymbol:
-    let res = tryLoadSym(a.symId)
-    if res.status == LacksNothing and res.decl.symKind == TypevarY:
-      return false
   var t = a
   if t.isSymbol:
+    let res = tryLoadSym(t.symId)
+    if res.status != LacksNothing or res.decl.symKind == TypevarY:
+      return false
+    if res.decl.stmtKind != TypeS:
+      # `a` names something that is not a type declaration at all — e.g. a
+      # template parameter still sitting in type position while a template
+      # body is semchecked generically (`symKind == ParamY`). Stay lenient
+      # instead of asserting in `typeImpl`; the caller reports the real
+      # "not a type" diagnostic. (An instantiation with a concrete type
+      # binds the symbol to a genuine type and never reaches this branch.)
+      return false
     t = typeImpl(t.symId)
   t.typeKind == DistinctT
 
