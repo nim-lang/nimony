@@ -259,7 +259,7 @@ const
     "AtomicFetchXor", "AtomicAddFetch", "AtomicSubFetch",
     "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
-    "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup"]
+    "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup",
     "StackPointer", "TraceTable"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
@@ -587,7 +587,7 @@ const
                  widths: {32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # vdup
                  params: VecDup, roles: AllIn, ret: ptVec128,
-                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
 
     # ── stack walking ──────────────────────────────────────────────────────
     # `StackPointer` reads SP into a register. `efPure` is not a shrug: SP is
