@@ -109,10 +109,6 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix, vecSuffix: string): Context
   Context(orig: orig, patchset: initPatchset(orig), synth: @[],
           tempCounter: 0, moduleSuffix: moduleSuffix, vecSuffix: vecSuffix)
 
-proc freshName(c: var Context; kind: string): string =
-  inc c.tempCounter
-  result = "vec." & kind & "." & $c.tempCounter & "." & c.moduleSuffix
-
 # ── small tree utilities ────────────────────────────────────────────────────
 
 proc sameTree(a, b: Cursor): bool =
@@ -396,6 +392,20 @@ proc flattenStmts(n: Cursor; stmts: var seq[Cursor]) =
   else:
     stmts.add n
 
+proc scanLitBits(n: Cursor; bits: var int; conflict: var bool) =
+  ## Unify `bits` with the element width every literal leaf of `n` implies.
+  let lb = floatLeafBits(n)
+  if lb != 0:
+    if bits == 0: bits = lb
+    elif bits != lb: conflict = true
+    return
+  if n.kind == TagLit and n.exprKind in {AddC, SubC, MulC}:
+    var cc = sub(n)
+    skipOptType cc
+    while cc.hasMore:
+      scanLitBits(cc, bits, conflict)
+      skip cc
+
 proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
   ## Match the whole canonical loop; fill `plan`. Any unexpected statement
   ## rejects — the pass must understand EVERYTHING it vectorizes.
@@ -552,18 +562,6 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
 
   # literal leaves imply a width too (the zero-fill loop has ONLY literals);
   # unify it with the access-implied one
-  proc scanLitBits(n: Cursor; bits: var int; conflict: var bool) =
-    let lb = floatLeafBits(n)
-    if lb != 0:
-      if bits == 0: bits = lb
-      elif bits != lb: conflict = true
-      return
-    if n.kind == TagLit and n.exprKind in {AddC, SubC, MulC}:
-      var cc = sub(n)
-      skipOptType cc
-      while cc.hasMore:
-        scanLitBits(cc, bits, conflict)
-        skip cc
   var litConflict = false
   for v in plan.values: scanLitBits(v.rhsCur, plan.elemBits, litConflict)
   if sawStore: scanLitBits(plan.storeSrc, plan.elemBits, litConflict)
@@ -578,9 +576,6 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
            " bits=", plan.elemBits, " pending=", pendingPtr.len, ")"
 
 # ── synthesis ───────────────────────────────────────────────────────────────
-
-proc synthBuf(c: var Context; cap: int): TokenBuf =
-  createTokenBuf(cap, c.orig[].pool, c.orig[].tags)
 
 template tid(x: untyped): TagId = TagId(ord(x))
 
@@ -602,17 +597,14 @@ proc addBoolLit(b: var TokenBuf; v: bool) =
   b.openTag(if v: tid(TrueTagId) else: tid(FalseTagId))
   b.closeTag()
 
-proc addIdxExpr(b: var TokenBuf; ix: VecIndex; plan: LoopPlan; tail: proc ()) =
-  ## `inv + <tail()>`, or plain `<tail()>` when the displacement is zero.
-  if ix.invSym == SymId(0) and ix.invLit == 0:
-    tail()
-  else:
-    b.openTag tid(AddTagId)
-    b.addI64()
-    if ix.invSym != SymId(0): b.addSymUse ix.invSym
-    else: b.addIntLit ix.invLit
-    tail()
-    b.closeTag()
+type
+  IdxTail = enum
+    ## The three iteration points an emitted index expression is evaluated at.
+    ## An enum instead of a `tail: proc ()` parameter: every call site would
+    ## otherwise allocate a closure per emitted expression.
+    tailIv            ## `… + iv` — the current (first covered) iteration
+    tailBound         ## `… + n` — one past the last covered iteration
+    tailBoundMinus1   ## `… + (n - 1)` — the last covered iteration
 
 proc addIvUse(b: var TokenBuf; plan: LoopPlan) =
   b.addSymUse plan.ivSym
@@ -620,13 +612,35 @@ proc addIvUse(b: var TokenBuf; plan: LoopPlan) =
 proc addBoundUse(b: var TokenBuf; plan: LoopPlan) =
   b.addSubtree plan.boundCur
 
-proc addVarDecl(b: var TokenBuf; name: string; typ: proc (); init: proc ()) =
+proc addIdxTail(b: var TokenBuf; plan: LoopPlan; tail: IdxTail) =
+  case tail
+  of tailIv: b.addIvUse plan
+  of tailBound: b.addBoundUse plan
+  of tailBoundMinus1:
+    b.openTag tid(SubTagId)
+    b.addI64()
+    b.addBoundUse plan
+    b.addIntLit 1
+    b.closeTag()
+
+proc addIdxExpr(b: var TokenBuf; ix: VecIndex; plan: LoopPlan; tail: IdxTail) =
+  ## `inv + <tail>`, or plain `<tail>` when the displacement is zero.
+  if ix.invSym == SymId(0) and ix.invLit == 0:
+    b.addIdxTail(plan, tail)
+  else:
+    b.openTag tid(AddTagId)
+    b.addI64()
+    if ix.invSym != SymId(0): b.addSymUse ix.invSym
+    else: b.addIntLit ix.invLit
+    b.addIdxTail(plan, tail)
+    b.closeTag()
+
+proc addVarDeclHead(b: var TokenBuf; name: string) =
+  ## Opens `(var :name .` — the caller adds the type and the initializer and
+  ## closes the tag.
   b.openTag tid(VarTagId)
   b.addSymDef name
   b.addDotToken()
-  typ()
-  init()
-  b.closeTag()
 
 proc addRunCond(b: var TokenBuf; plan: LoopPlan; vf: int) =
   ## `(lt (add (i 64) iv VF-1) n)`
@@ -639,25 +653,9 @@ proc addRunCond(b: var TokenBuf; plan: LoopPlan; vf: int) =
   b.addBoundUse plan
   b.closeTag()
 
-proc addCastU64(b: var TokenBuf; inner: proc ()) =
-  b.openTag tid(CastTagId)
-  b.openTag tid(UTagId)
-  b.addIntLit 64
-  b.closeTag()
-  inner()
-  b.closeTag()
-
-proc addHaddrPat(b: var TokenBuf; base: Cursor; idxName: string) =
-  b.openTag tid(HaddrTagId)
-  b.openTag tid(PatTagId)
-  b.addSubtree base
-  b.addSymUse idxName
-  b.closeTag()
-  b.closeTag()
-
 proc addHaddrPatE(b: var TokenBuf; base: Cursor; ix: VecIndex; plan: LoopPlan;
-                  tail: proc ()) =
-  ## `(haddr (pat BASE inv+<tail()>))` — the index inlined as an expression,
+                  tail: IdxTail) =
+  ## `(haddr (pat BASE inv+<tail>))` — the index inlined as an expression,
   ## so no one-shot index local claims a register home (mmTiled64's six-deep
   ## nest ran the allocator dry on those).
   b.openTag tid(HaddrTagId)
@@ -665,6 +663,21 @@ proc addHaddrPatE(b: var TokenBuf; base: Cursor; ix: VecIndex; plan: LoopPlan;
   b.addSubtree base
   b.addIdxExpr(ix, plan, tail)
   b.closeTag()
+  b.closeTag()
+
+proc addCmpAddrs(b: var TokenBuf; plan: LoopPlan;
+                 baseX: Cursor; ixX: VecIndex; tailX: IdxTail;
+                 baseY: Cursor; ixY: VecIndex; tailY: IdxTail) =
+  ## `(le (cast (u 64) (haddr (pat X …))) (cast (u 64) (haddr (pat Y …))))`
+  b.openTag tid(LeTagId)
+  for which in 0 ..< 2:
+    b.openTag tid(CastTagId)
+    b.openTag tid(UTagId)
+    b.addIntLit 64
+    b.closeTag()
+    if which == 0: b.addHaddrPatE(baseX, ixX, plan, tailX)
+    else: b.addHaddrPatE(baseY, ixY, plan, tailY)
+    b.closeTag()
   b.closeTag()
 
 type
@@ -679,118 +692,327 @@ type
 proc sameIndexInfo(a, b: VecIndex): bool =
   a.invSym == b.invSym and (a.invSym != SymId(0) or a.invLit == b.invLit)
 
-proc emitReplacement(plan: LoopPlan; loopCur: Cursor; orig: ptr TokenBuf;
-                     moduleSuffix, vecSuffix: string;
-                     tempCounter0: int; tempCounterOut: var int): TokenBuf =
-  ## Build the whole replacement `(stmts …)` tree. A plain-value signature so
-  ## the nested emission closures can capture what they need (a `var Context`
-  ## parameter cannot be captured).
-  let vf = 128 div plan.elemBits
-  let bits = plan.elemBits
-  var tempCounter = tempCounter0
-  proc freshName(kind: string): string =
-    inc tempCounter
-    "vec." & kind & "." & $tempCounter & "." & moduleSuffix
-  var b = createTokenBuf(256, orig[].pool, orig[].tags)
+type
+  Emitter = object
+    ## Everything `emitReplacement` and the top-level emission procs below
+    ## share. One flat object threaded as `e: var Emitter` instead of nested
+    ## procs: closure environments would be heap-allocated per matched loop —
+    ## and per emitted expression for callback-taking helpers.
+    b: TokenBuf             ## the replacement tree under construction
+    plan: LoopPlan
+    vf, bits: int
+    tempCounter: int
+    moduleSuffix: string
+    iFldrq, iFstrq, iVfadd, iVfsub, iVfmul, iVfmla, iVdup: string
+    ptrs: seq[UniquePtr]    ## unique access points (loads + store)
+    ptrOfAccess: Table[SymId, int]  ## load ptr temp → ptrs index
+    storePtr: int
+    bcSyms: Table[SymId, string]    ## invariant scalar → broadcast local
+    bcLits: Table[int64, string]    ## float bit pattern → broadcast local
+    valueSet: HashSet[SymId]
+    valueVec: Table[SymId, string]  ## value local → its `(f 128)` local
+
+proc freshName(e: var Emitter; kind: string): string =
+  inc e.tempCounter
+  result = "vec." & kind & "." & $e.tempCounter & "." & e.moduleSuffix
+
+proc uniquePtr(e: var Emitter; acc: VecAccess): int =
+  for i in 0 ..< e.ptrs.len:
+    if sameTree(e.ptrs[i].baseCur, acc.baseCur) and
+       sameIndexInfo(e.ptrs[i].idx, e.plan.indexes[acc.idx]):
+      return i
+  e.ptrs.add UniquePtr(name: e.freshName("p"), baseCur: acc.baseCur,
+                       idx: e.plan.indexes[acc.idx])
+  result = e.ptrs.len - 1
+
+proc countDerefs(e: var Emitter; n: Cursor) =
+  ## Total `(deref P)` occurrences per access point, for the fmla in-place
+  ## fusion rule.
+  if n.kind == Symbol:
+    if symId(n) in e.ptrOfAccess:
+      inc e.ptrs[e.ptrOfAccess[symId(n)]].derefCount
+  elif n.kind == TagLit:
+    var x = sub(n)
+    while x.hasMore:
+      countDerefs(e, x)
+      skip x
+
+proc addBroadcastDecl(e: var Emitter; leaf: Cursor): string =
+  ## `(var :bc.N . (f 128) (instr vdup LEAF bits))`; returns the local's name.
+  result = e.freshName("bc")
+  e.b.addVarDeclHead result
+  e.b.addF(128)
+  e.b.openTag tid(InstrTagId)
+  e.b.addSymUse e.iVdup
+  e.b.addSubtree leaf
+  e.b.addIntLit int64(e.bits)
+  e.b.closeTag()
+  e.b.closeTag()                              # var
+
+proc collectBroadcasts(e: var Emitter; n: Cursor) =
+  ## Broadcast declarations for the invariant scalar / literal leaves.
+  case n.kind
+  of Symbol:
+    let s = symId(n)
+    if s notin e.valueSet and s notin e.bcSyms:
+      let nm = addBroadcastDecl(e, n)
+      e.bcSyms[s] = nm
+  of FloatLit:
+    let key = cast[int64](floatVal(n))
+    if key notin e.bcLits:
+      let nm = addBroadcastDecl(e, n)
+      e.bcLits[key] = nm
+  of TagLit:
+    let (isSuf, _, sinner) = sufFloatLit(n)
+    if isSuf:
+      let key = cast[int64](floatVal(sinner))
+      if key notin e.bcLits:
+        let nm = addBroadcastDecl(e, n)       # the WHOLE (suf …), typed f32
+        e.bcLits[key] = nm
+      return
+    if n.exprKind in {AddC, SubC, MulC}:
+      var cc = sub(n)
+      skipOptType cc
+      while cc.hasMore:
+        collectBroadcasts(e, cc)
+        skip cc
+    # `(deref P)` contributes nothing
+  else: discard
+
+proc vecBin(e: var Emitter; op, aName, bName: string): string =
+  result = e.freshName("t")
+  e.b.addVarDeclHead result
+  e.b.addF(128)
+  e.b.openTag tid(InstrTagId)
+  e.b.addSymUse op
+  e.b.addSymUse aName
+  e.b.addSymUse bName
+  e.b.addIntLit int64(e.bits)
+  e.b.closeTag()
+  e.b.closeTag()                              # var
+
+proc isMulTree(n: Cursor): bool =
+  n.kind == TagLit and n.exprKind == MulC
+
+proc vecEval(e: var Emitter; n: Cursor; fresh: var bool): string =
+  ## Lane-wise evaluation; returns the name of the `(f 128)` local holding the
+  ## value. `fresh` reports whether that local is iteration-fresh (mutable, so
+  ## an enclosing fmla may accumulate into it in place).
+  case n.kind
+  of Symbol:
+    fresh = false                              # a named value may be multi-use
+    let s = symId(n)
+    if s in e.valueVec:
+      result = e.valueVec[s]
+    else:
+      result = e.bcSyms[s]
+  of FloatLit:
+    fresh = false
+    result = e.bcLits[cast[int64](floatVal(n))]
+  of TagLit:
+    let (isSuf, _, sinner) = sufFloatLit(n)
+    if isSuf:
+      fresh = false
+      return e.bcLits[cast[int64](floatVal(sinner))]
+    case n.exprKind
+    of DerefC:
+      var cc = sub(n)
+      let k = e.ptrOfAccess[symId(cc)]
+      fresh = e.ptrs[k].derefCount == 1
+      result = e.ptrs[k].loadName
+    of AddC, SubC, MulC:
+      let kind = n.exprKind
+      var cc = sub(n)
+      skipOptType cc
+      let lhs = cc
+      skip cc
+      let rhs = cc
+      if kind == AddC and (isMulTree(lhs) or isMulTree(rhs)):
+        # fused multiply-add: acc + a*b, when acc is iteration-fresh
+        let mulSide = if isMulTree(rhs): rhs else: lhs
+        let accSide = if isMulTree(rhs): lhs else: rhs
+        var mc = sub(mulSide)
+        skipOptType mc
+        let ma = mc
+        skip mc
+        let mb = mc
+        var fA, fB, fAcc = false
+        let aN = vecEval(e, ma, fA)
+        let bN = vecEval(e, mb, fB)
+        let accN = vecEval(e, accSide, fAcc)
+        if fAcc:
+          # (asgn acc (instr vfmla acc a b bits)) — in place, no copy
+          e.b.openTag tid(AsgnTagId)
+          e.b.addSymUse accN
+          e.b.openTag tid(InstrTagId)
+          e.b.addSymUse e.iVfmla
+          e.b.addSymUse accN
+          e.b.addSymUse aN
+          e.b.addSymUse bN
+          e.b.addIntLit int64(e.bits)
+          e.b.closeTag()
+          e.b.closeTag()
+          fresh = true
+          return accN
+        let mN = vecBin(e, e.iVfmul, aN, bN)
+        fresh = true
+        return vecBin(e, e.iVfadd, mN, accN)
+      var fL, fR = false
+      let lN = vecEval(e, lhs, fL)
+      let rN = vecEval(e, rhs, fR)
+      fresh = true
+      result = case kind
+               of AddC: vecBin(e, e.iVfadd, lN, rN)
+               of SubC: vecBin(e, e.iVfsub, lN, rN)
+               else: vecBin(e, e.iVfmul, lN, rN)
+    else:
+      raiseAssert "vectorizer: unexpected lane tree"
+  else:
+    raiseAssert "vectorizer: unexpected lane leaf"
+
+proc emitSlot(e: var Emitter; byteOff: int) =
+  ## One vector-width strip of the loop body: fresh loads at `byteOff`, the
+  ## lane-wise computation, and the store back at `byteOff`. An unrolled
+  ## iteration emits the slots SEQUENTIALLY (slot 0's store precedes slot 1's
+  ## loads): correct because the `vecok` disjointness/identity guarantees make
+  ## every same-iteration store range distinct from every load range except
+  ## the same-address case, which reads its own slot's offset — and the OOO
+  ## core overlaps the independent slots on its own.
+  for k in 0 ..< e.ptrs.len:
+    if not e.ptrs[k].hasLoad: continue
+    e.ptrs[k].loadName = e.freshName("l")
+    # (var :l (f 128) (instr fldrq p byteOff))
+    e.b.addVarDeclHead e.ptrs[k].loadName
+    e.b.addF(128)
+    e.b.openTag tid(InstrTagId)
+    e.b.addSymUse e.iFldrq
+    e.b.addSymUse e.ptrs[k].name
+    e.b.addIntLit int64(byteOff)
+    e.b.closeTag()
+    e.b.closeTag()                            # var
+  e.valueVec.clear()
+  for vi in 0 ..< e.plan.values.len:
+    var fresh = false
+    let nm = vecEval(e, e.plan.values[vi].rhsCur, fresh)
+    e.valueVec[e.plan.values[vi].sym] = nm
+  var srcFresh = false
+  let srcName = vecEval(e, e.plan.storeSrc, srcFresh)
+  e.b.openTag tid(InstrTagId)
+  e.b.addSymUse e.iFstrq
+  e.b.addSymUse e.ptrs[e.storePtr].name
+  e.b.addIntLit int64(byteOff)
+  e.b.addSymUse srcName
+  e.b.closeTag()
+
+proc emitVecLoop(e: var Emitter; unrollCount: int) =
+  ## `while iv + unroll*VF - 1 < n: <slots>; bump pointers; iv += unroll*VF`
+  let step = unrollCount * e.vf
+  e.b.openTag tid(WhileTagId)
+  e.b.addRunCond(e.plan, step)
+  e.b.openTag tid(StmtsTagId)
+  for u in 0 ..< unrollCount:
+    emitSlot(e, u * 16)
+  for k in 0 ..< e.ptrs.len:
+    e.b.openTag tid(AsgnTagId)
+    e.b.addSymUse e.ptrs[k].name
+    e.b.openTag tid(AddrTagId)
+    e.b.openTag tid(PatTagId)
+    e.b.addSymUse e.ptrs[k].name
+    e.b.addIntLit int64(step)
+    e.b.closeTag()
+    e.b.closeTag()
+    e.b.closeTag()
+  e.b.openTag tid(AsgnTagId)
+  e.b.addSymUse e.plan.ivSym
+  e.b.openTag tid(AddTagId)
+  e.b.addI64()
+  e.b.addIvUse e.plan
+  e.b.addIntLit int64(step)
+  e.b.closeTag()
+  e.b.closeTag()
+  e.b.closeTag()                              # stmts (vector body)
+  e.b.closeTag()                              # while
+
+proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf =
+  ## Build the whole replacement `(stmts …)` tree.
+  var e = Emitter(plan: plan, vf: 128 div plan.elemBits, bits: plan.elemBits,
+                  tempCounter: c.tempCounter, moduleSuffix: c.moduleSuffix,
+                  iFldrq: "fldrq." & c.vecSuffix, iFstrq: "fstrq." & c.vecSuffix,
+                  iVfadd: "vfadd." & c.vecSuffix, iVfsub: "vfsub." & c.vecSuffix,
+                  iVfmul: "vfmul." & c.vecSuffix, iVfmla: "vfmla." & c.vecSuffix,
+                  iVdup: "vdup." & c.vecSuffix, storePtr: -1,
+                  ptrOfAccess: initTable[SymId, int](),
+                  bcSyms: initTable[SymId, string](),
+                  bcLits: initTable[int64, string](),
+                  valueSet: initHashSet[SymId](),
+                  valueVec: initTable[SymId, string]())
+  e.b = createTokenBuf(256, c.orig[].pool, c.orig[].tags)
 
   # ── unique access points; map every access (loads + store) onto one ──
-  var ptrs: seq[UniquePtr] = @[]
-  var ptrOfAccess = initTable[SymId, int]()   # load ptr temp → ptrs index
-  var storePtr = -1
-  proc uniquePtr(acc: VecAccess): int =
-    for i in 0 ..< ptrs.len:
-      if sameTree(ptrs[i].baseCur, acc.baseCur) and
-         sameIndexInfo(ptrs[i].idx, plan.indexes[acc.idx]):
-        return i
-    ptrs.add UniquePtr(name: freshName("p"), baseCur: acc.baseCur,
-                       idx: plan.indexes[acc.idx])
-    ptrs.len - 1
   for acc in plan.accesses:
-    let k = uniquePtr(acc)
-    ptrs[k].hasLoad = true
-    ptrOfAccess[acc.ptrSym] = k
-  storePtr = uniquePtr(plan.store)
+    let k = uniquePtr(e, acc)
+    e.ptrs[k].hasLoad = true
+    e.ptrOfAccess[acc.ptrSym] = k
+  e.storePtr = uniquePtr(e, plan.store)
 
   # deref counts, for the fmla in-place fusion rule
-  proc countDerefs(n: Cursor) =
-    if n.kind == Symbol:
-      if symId(n) in ptrOfAccess:
-        inc ptrs[ptrOfAccess[symId(n)]].derefCount
-    elif n.kind == TagLit:
-      var x = sub(n)
-      while x.hasMore:
-        countDerefs(x)
-        skip x
-  for v in plan.values: countDerefs(v.rhsCur)
-  countDerefs(plan.storeSrc)
+  for v in plan.values: countDerefs(e, v.rhsCur)
+  countDerefs(e, plan.storeSrc)
 
-  let okName = freshName("ok")
-  let iFldrq = "fldrq." & vecSuffix
-  let iFstrq = "fstrq." & vecSuffix
-  let iVfadd = "vfadd." & vecSuffix
-  let iVfsub = "vfsub." & vecSuffix
-  let iVfmul = "vfmul." & vecSuffix
-  let iVfmla = "vfmla." & vecSuffix
-  let iVdup = "vdup." & vecSuffix
+  let okName = e.freshName("ok")
 
-  b.openTag tid(StmtsTagId)
+  e.b.openTag tid(StmtsTagId)
   let info = rawLineInfo(loopCur)
-  if info.isValid: b.appendLineInfo info
+  if info.isValid: e.b.appendLineInfo info
 
   # ── vecok = false ──
-  b.addVarDecl(okName, proc () = b.addBoolType(), proc () = b.addBoolLit(false))
+  e.b.addVarDeclHead okName
+  e.b.addBoolType()
+  e.b.addBoolLit(false)
+  e.b.closeTag()                              # var
 
   # ── the versioning block ──
   # Everything inside lives in a `(scope …)`: the lo/hi/worst-case index
   # temps are one-shot, and without the scope their register homes stay
   # claimed for the whole proc — enough to run the allocator dry in a
   # six-deep loop nest (mmTiled64).
-  b.openTag tid(IfTagId)
-  b.openTag tid(ElifTagId)
-  b.addRunCond(plan, vf)
-  b.openTag tid(StmtsTagId)
-  b.openTag tid(ScopeTagId)
+  e.b.openTag tid(IfTagId)
+  e.b.openTag tid(ElifTagId)
+  e.b.addRunCond(plan, e.vf)
+  e.b.openTag tid(StmtsTagId)
+  e.b.openTag tid(ScopeTagId)
 
   # runtime disjointness of every loading access point vs the store's
   var djNames: seq[string] = @[]
-  for k in 0 ..< ptrs.len:
-    if k == storePtr or not ptrs[k].hasLoad: continue
+  for k in 0 ..< e.ptrs.len:
+    if k == e.storePtr or not e.ptrs[k].hasLoad: continue
     # dj = &A[hi] <= &S[lo];  if not dj: dj = &S[hi] <= &A[lo] — the ranges
     # are [inv+iv, inv+n); every address is an inlined expression.
-    let dj = freshName("dj")
+    let dj = e.freshName("dj")
     djNames.add dj
-    let kIdx = ptrs[k].idx
-    let sIdx = ptrs[storePtr].idx
-    let kBase = ptrs[k].baseCur
-    let sBase = ptrs[storePtr].baseCur
-    template cmpAddrs(baseX: Cursor; ixX: VecIndex; endX: bool;
-                      baseY: Cursor; ixY: VecIndex; endY: bool) =
-      b.openTag tid(LeTagId)
-      b.addCastU64(proc () = b.addHaddrPatE(baseX, ixX, plan, proc () =
-        if endX: b.addBoundUse(plan) else: b.addIvUse(plan)))
-      b.addCastU64(proc () = b.addHaddrPatE(baseY, ixY, plan, proc () =
-        if endY: b.addBoundUse(plan) else: b.addIvUse(plan)))
-      b.closeTag()
-    b.addVarDecl(dj, proc () = b.addBoolType(), proc () =
-      cmpAddrs(kBase, kIdx, true, sBase, sIdx, false))
-    b.openTag tid(IfTagId)
-    b.openTag tid(ElifTagId)
-    b.openTag tid(NotTagId)
-    b.addSymUse dj
-    b.closeTag()
-    b.openTag tid(StmtsTagId)
-    b.openTag tid(AsgnTagId)
-    b.addSymUse dj
-    cmpAddrs(sBase, sIdx, true, kBase, kIdx, false)
-    b.closeTag()                              # asgn
-    b.closeTag()                              # stmts
-    b.closeTag()                              # elif
-    b.closeTag()                              # if
+    let kIdx = e.ptrs[k].idx
+    let sIdx = e.ptrs[e.storePtr].idx
+    let kBase = e.ptrs[k].baseCur
+    let sBase = e.ptrs[e.storePtr].baseCur
+    e.b.addVarDeclHead dj
+    e.b.addBoolType()
+    e.b.addCmpAddrs(plan, kBase, kIdx, tailBound, sBase, sIdx, tailIv)
+    e.b.closeTag()                            # var
+    e.b.openTag tid(IfTagId)
+    e.b.openTag tid(ElifTagId)
+    e.b.openTag tid(NotTagId)
+    e.b.addSymUse dj
+    e.b.closeTag()
+    e.b.openTag tid(StmtsTagId)
+    e.b.openTag tid(AsgnTagId)
+    e.b.addSymUse dj
+    e.b.addCmpAddrs(plan, sBase, sIdx, tailBound, kBase, kIdx, tailIv)
+    e.b.closeTag()                            # asgn
+    e.b.closeTag()                            # stmts
+    e.b.closeTag()                            # elif
+    e.b.closeTag()                            # if
 
-  # worst-case index locals for the hoisted guards. The chain below is driven
-  # by DATA, not deferred closures — loop-body closures share one environment
-  # slot per captured variable across iterations, so the last guard's cursors
-  # would clobber every earlier one's.
+  # the hoisted guards' worst-case conditions, one nested `if` per condition
   type CondSpec = object
     isDj: bool
     kind: GuardKind
@@ -807,277 +1029,55 @@ proc emitReplacement(plan: LoopPlan; loopCur: Cursor; orig: ptr TokenBuf;
   # an inlined expression: `lt` guards peak at the LAST covered iteration
   # (index = inv + (n-1)), `le 0` guards at the FIRST (index = inv + iv).
   for spec in conds:
-    b.openTag tid(IfTagId)
-    b.openTag tid(ElifTagId)
+    e.b.openTag tid(IfTagId)
+    e.b.openTag tid(ElifTagId)
     if spec.isDj:
-      b.addSymUse spec.gv
+      e.b.addSymUse spec.gv
     elif spec.kind == gLtLen:
-      b.openTag tid(LtTagId)
-      b.addIdxExpr(plan.indexes[spec.gidx], plan, proc () =
-        b.openTag tid(SubTagId)
-        b.addI64()
-        b.addBoundUse(plan)
-        b.addIntLit 1
-        b.closeTag())
-      b.addSubtree spec.lenCur
-      b.closeTag()
+      e.b.openTag tid(LtTagId)
+      e.b.addIdxExpr(plan.indexes[spec.gidx], plan, tailBoundMinus1)
+      e.b.addSubtree spec.lenCur
+      e.b.closeTag()
     else:
-      b.openTag tid(LeTagId)
-      b.addIntLit 0
-      b.addIdxExpr(plan.indexes[spec.gidx], plan, proc () = b.addIvUse(plan))
-      b.closeTag()
-    b.openTag tid(StmtsTagId)
-  b.openTag tid(AsgnTagId)
-  b.addSymUse okName
-  b.addBoolLit(true)
-  b.closeTag()
+      e.b.openTag tid(LeTagId)
+      e.b.addIntLit 0
+      e.b.addIdxExpr(plan.indexes[spec.gidx], plan, tailIv)
+      e.b.closeTag()
+    e.b.openTag tid(StmtsTagId)
+  e.b.openTag tid(AsgnTagId)
+  e.b.addSymUse okName
+  e.b.addBoolLit(true)
+  e.b.closeTag()
   for spec in conds:
-    b.closeTag()                              # stmts
-    b.closeTag()                              # elif
-    b.closeTag()                              # if
+    e.b.closeTag()                            # stmts
+    e.b.closeTag()                            # elif
+    e.b.closeTag()                            # if
 
-  b.closeTag()                                # scope
-  b.closeTag()                                # stmts (versioning block)
-  b.closeTag()                                # elif
-  b.closeTag()                                # if (runnable check)
+  e.b.closeTag()                              # scope
+  e.b.closeTag()                              # stmts (versioning block)
+  e.b.closeTag()                              # elif
+  e.b.closeTag()                              # if (runnable check)
 
   # ── if vecok: preamble + vector loop ──
-  b.openTag tid(IfTagId)
-  b.openTag tid(ElifTagId)
-  b.addSymUse okName
-  b.openTag tid(StmtsTagId)
-  b.openTag tid(ScopeTagId)
+  e.b.openTag tid(IfTagId)
+  e.b.openTag tid(ElifTagId)
+  e.b.addSymUse okName
+  e.b.openTag tid(StmtsTagId)
+  e.b.openTag tid(ScopeTagId)
 
   # running pointers, their entry index inlined
-  for k in 0 ..< ptrs.len:
-    let kk = k
-    b.addVarDecl(ptrs[k].name,
-      proc () =
-        b.openTag tid(PtrTagId)
-        b.addF(bits)
-        b.closeTag(),
-      proc () = b.addHaddrPatE(ptrs[kk].baseCur, ptrs[kk].idx, plan,
-                               proc () = b.addIvUse(plan)))
+  for k in 0 ..< e.ptrs.len:
+    e.b.addVarDeclHead e.ptrs[k].name
+    e.b.openTag tid(PtrTagId)
+    e.b.addF(e.bits)
+    e.b.closeTag()
+    e.b.addHaddrPatE(e.ptrs[k].baseCur, e.ptrs[k].idx, plan, tailIv)
+    e.b.closeTag()                            # var
 
   # broadcasts for the invariant scalar / literal leaves
-  var bcSyms = initTable[SymId, string]()
-  var bcLits = initTable[int64, string]()     # keyed by the float's bit pattern
-  var valueSet = initHashSet[SymId]()
-  for v in plan.values: valueSet.incl v.sym
-  proc collectBroadcasts(n: Cursor) =
-    case n.kind
-    of Symbol:
-      let s = symId(n)
-      if s notin valueSet and s notin bcSyms:
-        let nm = freshName("bc")
-        bcSyms[s] = nm
-        let leaf = n
-        b.addVarDecl(nm,
-          proc () = b.addF(128),
-          proc () =
-            b.openTag tid(InstrTagId)
-            b.addSymUse iVdup
-            b.addSubtree leaf
-            b.addIntLit int64(bits)
-            b.closeTag())
-    of FloatLit:
-      let key = cast[int64](floatVal(n))
-      if key notin bcLits:
-        let nm = freshName("bc")
-        bcLits[key] = nm
-        let leaf = n
-        b.addVarDecl(nm,
-          proc () = b.addF(128),
-          proc () =
-            b.openTag tid(InstrTagId)
-            b.addSymUse iVdup
-            b.addSubtree leaf
-            b.addIntLit int64(bits)
-            b.closeTag())
-    of TagLit:
-      let (isSuf, _, sinner) = sufFloatLit(n)
-      if isSuf:
-        let key = cast[int64](floatVal(sinner))
-        if key notin bcLits:
-          let nm = freshName("bc")
-          bcLits[key] = nm
-          let leaf = n                        # copy the WHOLE (suf …), typed f32
-          b.addVarDecl(nm,
-            proc () = b.addF(128),
-            proc () =
-              b.openTag tid(InstrTagId)
-              b.addSymUse iVdup
-              b.addSubtree leaf
-              b.addIntLit int64(bits)
-              b.closeTag())
-        return
-      if n.exprKind in {AddC, SubC, MulC}:
-        var cc = sub(n)
-        skipOptType cc
-        while cc.hasMore:
-          collectBroadcasts(cc)
-          skip cc
-      # `(deref P)` contributes nothing
-    else: discard
-  for v in plan.values: collectBroadcasts(v.rhsCur)
-  collectBroadcasts(plan.storeSrc)
-
-  # lane-wise evaluation; returns the name of the `(f 128)` local holding the
-  # value plus whether that local is iteration-fresh (mutable for fmla fusion)
-  var valueVec = initTable[SymId, string]()
-  proc vecBin(op: string; aName, bName: string): string =
-    result = freshName("t")
-    let an = aName
-    let bn = bName
-    let opn = op
-    b.addVarDecl(result,
-      proc () = b.addF(128),
-      proc () =
-        b.openTag tid(InstrTagId)
-        b.addSymUse opn
-        b.addSymUse an
-        b.addSymUse bn
-        b.addIntLit int64(bits)
-        b.closeTag())
-  proc isMulTree(n: Cursor): bool =
-    n.kind == TagLit and n.exprKind == MulC
-  proc vecEval(n: Cursor; fresh: var bool): string =
-    case n.kind
-    of Symbol:
-      let s = symId(n)
-      if s in valueVec:
-        fresh = false                          # a named value may be multi-use
-        result = valueVec[s]
-      else:
-        fresh = false
-        result = bcSyms[s]
-    of FloatLit:
-      fresh = false
-      result = bcLits[cast[int64](floatVal(n))]
-    of TagLit:
-      let (isSuf, _, sinner) = sufFloatLit(n)
-      if isSuf:
-        fresh = false
-        return bcLits[cast[int64](floatVal(sinner))]
-      case n.exprKind
-      of DerefC:
-        var cc = sub(n)
-        let k = ptrOfAccess[symId(cc)]
-        fresh = ptrs[k].derefCount == 1
-        result = ptrs[k].loadName
-      of AddC, SubC, MulC:
-        let kind = n.exprKind
-        var cc = sub(n)
-        skipOptType cc
-        let lhs = cc
-        skip cc
-        let rhs = cc
-        if kind == AddC and (isMulTree(lhs) or isMulTree(rhs)):
-          # fused multiply-add: acc + a*b, when acc is iteration-fresh
-          let mulSide = if isMulTree(rhs): rhs else: lhs
-          let accSide = if isMulTree(rhs): lhs else: rhs
-          var mc = sub(mulSide)
-          skipOptType mc
-          let ma = mc
-          skip mc
-          let mb = mc
-          var fA, fB, fAcc = false
-          let aN = vecEval(ma, fA)
-          let bN = vecEval(mb, fB)
-          let accN = vecEval(accSide, fAcc)
-          if fAcc:
-            # (asgn acc (instr vfmla acc a b bits)) — in place, no copy
-            b.openTag tid(AsgnTagId)
-            b.addSymUse accN
-            b.openTag tid(InstrTagId)
-            b.addSymUse iVfmla
-            b.addSymUse accN
-            b.addSymUse aN
-            b.addSymUse bN
-            b.addIntLit int64(bits)
-            b.closeTag()
-            b.closeTag()
-            fresh = true
-            return accN
-          let mN = vecBin(iVfmul, aN, bN)
-          fresh = true
-          return vecBin(iVfadd, mN, accN)
-        var fL, fR = false
-        let lN = vecEval(lhs, fL)
-        let rN = vecEval(rhs, fR)
-        fresh = true
-        result = case kind
-                 of AddC: vecBin(iVfadd, lN, rN)
-                 of SubC: vecBin(iVfsub, lN, rN)
-                 else: vecBin(iVfmul, lN, rN)
-      else:
-        raiseAssert "vectorizer: unexpected lane tree"
-    else:
-      raiseAssert "vectorizer: unexpected lane leaf"
-
-  proc emitSlot(byteOff: int) =
-    ## One vector-width strip of the loop body: fresh loads at `byteOff`, the
-    ## lane-wise computation, and the store back at `byteOff`. An unrolled
-    ## iteration emits the slots SEQUENTIALLY (slot 0's store precedes slot 1's
-    ## loads): correct because the `vecok` disjointness/identity guarantees make
-    ## every same-iteration store range distinct from every load range except
-    ## the same-address case, which reads its own slot's offset — and the OOO
-    ## core overlaps the independent slots on its own.
-    for k in 0 ..< ptrs.len:
-      if not ptrs[k].hasLoad: continue
-      ptrs[k].loadName = freshName("l")
-      let kk = k
-      let off = byteOff
-      b.addVarDecl(ptrs[k].loadName,
-        proc () = b.addF(128),
-        proc () =
-          b.openTag tid(InstrTagId)
-          b.addSymUse iFldrq
-          b.addSymUse ptrs[kk].name
-          b.addIntLit int64(off)
-          b.closeTag())
-    valueVec.clear()
-    for v in plan.values:
-      var fresh = false
-      let nm = vecEval(v.rhsCur, fresh)
-      valueVec[v.sym] = nm
-    var srcFresh = false
-    let srcName = vecEval(plan.storeSrc, srcFresh)
-    b.openTag tid(InstrTagId)
-    b.addSymUse iFstrq
-    b.addSymUse ptrs[storePtr].name
-    b.addIntLit int64(byteOff)
-    b.addSymUse srcName
-    b.closeTag()
-
-  proc emitVecLoop(unrollCount: int) =
-    ## `while iv + unroll*VF - 1 < n: <slots>; bump pointers; iv += unroll*VF`
-    let step = unrollCount * vf
-    b.openTag tid(WhileTagId)
-    b.addRunCond(plan, step)
-    b.openTag tid(StmtsTagId)
-    for u in 0 ..< unrollCount:
-      emitSlot(u * 16)
-    for k in 0 ..< ptrs.len:
-      b.openTag tid(AsgnTagId)
-      b.addSymUse ptrs[k].name
-      b.openTag tid(AddrTagId)
-      b.openTag tid(PatTagId)
-      b.addSymUse ptrs[k].name
-      b.addIntLit int64(step)
-      b.closeTag()
-      b.closeTag()
-      b.closeTag()
-    b.openTag tid(AsgnTagId)
-    b.addSymUse plan.ivSym
-    b.openTag tid(AddTagId)
-    b.addI64()
-    b.addIvUse plan
-    b.addIntLit int64(step)
-    b.closeTag()
-    b.closeTag()
-    b.closeTag()                              # stmts (vector body)
-    b.closeTag()                              # while
+  for v in plan.values: e.valueSet.incl v.sym
+  for v in plan.values: collectBroadcasts(e, v.rhsCur)
+  collectBroadcasts(e, plan.storeSrc)
 
   # ── unroll decision, from EXACT per-slot register pressure ──
   # Dry-run one slot into a throwaway buffer: every `(f 128)` local a slot
@@ -1089,34 +1089,31 @@ proc emitReplacement(plan: LoopPlan; loopCur: Cursor; orig: ptr TokenBuf;
   # to get a register home is a loud compile error by design.
   var perSlot = 0
   block:
-    var scratch = createTokenBuf(64, orig[].pool, orig[].tags)
-    swap(b, scratch)
-    let before = tempCounter
-    emitSlot(0)
-    perSlot = tempCounter - before
-    swap(b, scratch)                          # scratch (and its decls) discarded
+    var scratch = createTokenBuf(64, c.orig[].pool, c.orig[].tags)
+    swap(e.b, scratch)
+    let before = e.tempCounter
+    emitSlot(e, 0)
+    perSlot = e.tempCounter - before
+    swap(e.b, scratch)                        # scratch (and its decls) discarded
 
-  if 2 * perSlot + bcSyms.len + bcLits.len <= 6:
-    emitVecLoop(2)
+  if 2 * perSlot + e.bcSyms.len + e.bcLits.len <= 6:
+    emitVecLoop(e, 2)
   # the single-width loop: the main loop when not unrolled, the ≤1-iteration
   # mid-remainder when unrolled
-  emitVecLoop(1)
+  emitVecLoop(e, 1)
 
-  b.closeTag()                                # scope
-  b.closeTag()                                # stmts (vecok branch)
-  b.closeTag()                                # elif
-  b.closeTag()                                # if vecok
+  e.b.closeTag()                              # scope
+  e.b.closeTag()                              # stmts (vecok branch)
+  e.b.closeTag()                              # elif
+  e.b.closeTag()                              # if vecok
 
   # the ORIGINAL loop: remainder + fallback, untouched
-  b.addSubtree loopCur
+  e.b.addSubtree loopCur
 
-  b.closeTag()                                # the replacement (stmts …)
-  tempCounterOut = tempCounter
-  # `b` lives in the emission closures' environment, so it cannot be moved out
-  # directly; swap it into a plain local first (TokenBuf has no `=copy`).
-  var res = createTokenBuf(0, orig[].pool, orig[].tags)
-  swap(res, b)
-  result = ensureMove(res)
+  e.b.closeTag()                              # the replacement (stmts …)
+  c.tempCounter = e.tempCounter
+  result = createTokenBuf(0, c.orig[].pool, c.orig[].tags)
+  swap(result, e.b)
 
 # ── main traversal ──────────────────────────────────────────────────────────
 
@@ -1128,10 +1125,7 @@ proc tr(c: var Context; n: var Cursor) =
       var plan = LoopPlan()
       if matchLoop(c, n, plan):
         let pos = cursorToPosition(c.orig[], n)
-        var cnt = c.tempCounter
-        var nb = emitReplacement(plan, n, c.orig, c.moduleSuffix, c.vecSuffix,
-                                 c.tempCounter, cnt)
-        c.tempCounter = cnt
+        var nb = emitReplacement(c, plan, n)
         let idx = c.synth.len
         c.synth.add ensureMove(nb)
         c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
