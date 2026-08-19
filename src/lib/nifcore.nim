@@ -946,6 +946,11 @@ proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
   ## tag namespace — adapters typically create their own fresh
   ## `TagPool` per buffer so `cast[Enum](c.cursorTagId.uint32)` lines
   ## up with the adapter's enum ordinals.
+  # `cap == 0` must NOT reach `alloc(0)`: Nim's allocator maps a zero-sized
+  # request to size class 0, which hands the SAME address to every caller and
+  # (on Nim <= 2.2.x) releases the whole page on the first `dealloc` — every
+  # other live zero-cap buffer is then a dangling pointer into a recycled page.
+  let cap = max(cap, 1)
   result = TokenBuf(
     data: cast[Storage](alloc(sizeof(NifToken) * cap)),
     len: 0, cap: cap,
@@ -1007,7 +1012,9 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
       decRcAndFree(b.owner)
       b.owner = nil
     else:
-      let newData = cast[Storage](alloc(sizeof(NifToken) * b.cap))
+      # `max(.., 1)`: never `alloc(0)` — see `createTokenBuf`. A borrowed
+      # zero-token block (`adoptForeignTokens(_, 0)`) reaches this with cap 0.
+      let newData = cast[Storage](alloc(sizeof(NifToken) * max(b.cap, 1)))
       copyMem(newData, b.data, sizeof(NifToken) * b.len)
       decRcAndFree(b.owner)
       b.owner = nil
