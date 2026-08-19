@@ -25,6 +25,7 @@ import cse                                     # runCSE + collectFunctionSummari
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
+import vectorizer                             # runVectorizer (map loops -> AdvSIMD (instr ...))
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
@@ -35,6 +36,7 @@ type
   Stats* = object
     procs*, bodies*, intermodChanged*: int
     checksRemoved*: int
+    vectorized*: int
 
 proc extractModuleSuffix(filename: string): string =
   ## Pure copy of `nifreader.extractModuleSuffix` (basename up to the first
@@ -53,7 +55,8 @@ proc extractModuleSuffix(filename: string): string =
 
 proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                  params: Cursor = default(Cursor); eng: Engine = nil) =
+                  params: Cursor = default(Cursor); eng: Engine = nil;
+                  vectorize = false) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
   ## are ported. The suffix is made unique per body (`st.bodies` is the body's
   ## index in the module): the passes name synthesized temps `<kind>.<n>.<suffix>`
@@ -85,10 +88,17 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # CSE also deletes index checks a dominating identical check already made:
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
   st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
+  # The vectorizer runs LAST: its emitted `(instr ...)` applications are final
+  # (selection-final by the tag's contract) and no later pass needs to look at
+  # them; the scalar remainder loop it leaves behind was already optimized by
+  # everything above.
+  if vectorize and getEnv("SHOGGOTH_NO_VECTORIZE").len == 0:
+    if runVectorizer(buf, bodySuffix, "vec." & suffix):
+      inc st.vectorized
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
-                 eng: Engine = nil) =
+                 eng: Engine = nil; vectorize = false) =
   ## Copy the tree/token at `n` into `dest`, replacing each proc body with its
   ## optimized version. `dest` shares `n`'s pool+tags, so `addSubtree` is a
   ## bulk, line-info-preserving copy; reopened tags re-stamp their own info.
@@ -114,7 +124,7 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
           m[].registerParams(d.params)
         var body = createTokenBuf(64, dest.pool, dest.tags)
         body.addSubtree d.body
-        optimizeBody(body, suffix, st, summaries, m, d.params, eng)
+        optimizeBody(body, suffix, st, summaries, m, d.params, eng, vectorize)
         if m != nil: m[].closeScope()
         var rb = body.beginRead()
         dest.addSubtree rb
@@ -128,21 +138,37 @@ proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stat
       if li.isValid: dest.appendLineInfo li
       n.into:
         while n.hasMore:
-          rebuildTree(dest, n, suffix, st, summaries, m, eng)
+          rebuildTree(dest, n, suffix, st, summaries, m, eng, vectorize)
       dest.closeTag()
   else:
     dest.addSubtree n
     inc n
 
 proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
-                     m: ptr MainModule = nil; eng: Engine = nil): TokenBuf =
+                     m: ptr MainModule = nil; eng: Engine = nil;
+                     vectorize = false): TokenBuf =
   ## Rebuild the single module-level root tree (`(stmts …)`), optimizing bodies.
   ## `m` is the module type context for the alias pass (nil ⇒ coarse aliasing);
-  ## `eng` the structural rewrite engine (nil ⇒ the rewriter stage is skipped).
+  ## `eng` the structural rewrite engine (nil ⇒ the rewriter stage is skipped);
+  ## `vectorize` enables the AdvSIMD loop vectorizer (native AArch64 only).
   var summaries = collectFunctionSummaries(src)   # once per module; cse runs per body
   result = createTokenBuf(src.len + src.len div 8, src.pool, src.tags)
   var n = src.beginRead()
-  rebuildTree(result, n, suffix, st, addr summaries, m, eng)
+  if vectorize and n.kind == TagLit and n.stmtKind == StmtsS:
+    # Open the root by hand so the vectorizer's intrinsic declarations can be
+    # appended INSIDE it once every body is processed.
+    let tag = n.cursorTagId
+    let li = rawLineInfo(n)
+    result.openTag tag
+    if li.isValid: result.appendLineInfo li
+    n.into:
+      while n.hasMore:
+        rebuildTree(result, n, suffix, st, addr summaries, m, eng, vectorize)
+    if st.vectorized > 0:
+      addVecIntrinsicDecls(result, "vec." & suffix)
+    result.closeTag()
+  else:
+    rebuildTree(result, n, suffix, st, addr summaries, m, eng, vectorize)
 
 proc checkWellFormed(buf: var TokenBuf) =
   ## Drain every top-level tree to exhaustion; `skip` would crash on a
@@ -150,7 +176,8 @@ proc checkWellFormed(buf: var TokenBuf) =
   var n = buf.beginRead()
   while n.hasMore: skip n
 
-proc processFile*(input, output: string; verify = false): Stats =
+proc processFile*(input, output: string; verify = false;
+                  vectorize = false): Stats =
   ## Optimize one NIFC file. Seeds the tag pool so `cursorTagId` aligns with the
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
@@ -169,7 +196,7 @@ proc processFile*(input, output: string; verify = false): Stats =
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
-  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng)
+  var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vectorize)
   checkWellFormed(optimized)
   writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
   if verify:

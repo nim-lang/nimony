@@ -983,6 +983,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addSymbolDef "optimize"
         b.addStrLit shoggoth
         b.addStrLit "c"
+        if native and platform.CPU[c.config.targetCPU].name == "arm64":
+          # the AdvSIMD loop vectorizer: emits (instr ...) rows only the
+          # native AArch64 backend lowers, so it is strictly target-gated.
+          # (The flag is part of the command line, so nifmake's cache key
+          # separates vectorized .oc.nif files from C-backend ones.)
+          b.addStrLit "--vectorize"
         b.addKeyw "input"
         b.addKeyw "output"
 
