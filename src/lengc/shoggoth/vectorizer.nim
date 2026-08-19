@@ -116,43 +116,48 @@ proc sameTree(a, b: Cursor): bool =
   ## than a flat token walk: `inc` advances by a token's full width (line-info
   ## suffixes included) while `subtreeWidth` counts slots, so a flat walk
   ## overruns on real, line-info-carrying files.
-  if a.kind != b.kind: return false
-  case a.kind
-  of TagLit:
-    if a.cursorTagId != b.cursorTagId: return false
-    var x = sub(a)
-    var y = sub(b)
-    while x.hasMore and y.hasMore:
-      if not sameTree(x, y): return false
-      skip x
-      skip y
-    result = x.hasMore == y.hasMore
-  of Symbol, SymbolDef:
-    result = symId(a) == symId(b)
-  of IntLit, UIntLit:
-    result = intVal(a) == intVal(b)
-  of FloatLit:
-    result = floatVal(a) == floatVal(b)
+  if a.kind != b.kind:
+    result = false
   else:
-    result = true
+    case a.kind
+    of TagLit:
+      if a.cursorTagId != b.cursorTagId:
+        result = false
+      else:
+        var x = sub(a)
+        var y = sub(b)
+        result = true
+        while result and x.hasMore and y.hasMore:
+          result = sameTree(x, y)
+          skip x
+          skip y
+        result = result and x.hasMore == y.hasMore
+    of Symbol, SymbolDef:
+      result = symId(a) == symId(b)
+    of IntLit, UIntLit:
+      result = intVal(a) == intVal(b)
+    of FloatLit:
+      result = floatVal(a) == floatVal(b)
+    else:
+      result = true
 
 proc collectAssigned(n: Cursor; assigned: var HashSet[SymId]) =
   ## Every symbol the subtree writes: `asgn`/`store` targets and every `var`
   ## declaration. Anything in this set is NOT loop-invariant.
-  if not n.hasMore or n.kind != TagLit: return
-  if n.stmtKind in {AsgnS, StoreS}:
-    var lhs = n
-    inc lhs
-    if n.stmtKind == StoreS: skip lhs
-    if lhs.kind == Symbol: assigned.incl symId(lhs)
-  elif n.stmtKind in {VarS, GvarS, TvarS, ConstS}:
-    var d = n
-    inc d
-    if d.kind == SymbolDef: assigned.incl symId(d)
-  var m = n
-  m.loopInto:
-    collectAssigned(m, assigned)
-    skip m
+  if n.hasMore and n.kind == TagLit:
+    if n.stmtKind in {AsgnS, StoreS}:
+      var lhs = n
+      inc lhs
+      if n.stmtKind == StoreS: skip lhs
+      if lhs.kind == Symbol: assigned.incl symId(lhs)
+    elif n.stmtKind in {VarS, GvarS, TvarS, ConstS}:
+      var d = n
+      inc d
+      if d.kind == SymbolDef: assigned.incl symId(d)
+    var m = n
+    m.loopInto:
+      collectAssigned(m, assigned)
+      skip m
 
 # ── matching ────────────────────────────────────────────────────────────────
 
@@ -177,46 +182,52 @@ proc sufFloatLit(n: Cursor): tuple[ok: bool; bits: int; inner: Cursor] =
 proc floatLeafBits(n: Cursor): int =
   ## The element width a literal leaf implies: 64 for a bare float literal,
   ## the suffix's width for a `(suf …)`; 0 for non-literals.
-  if n.kind == FloatLit: return 64
-  let (ok, bits, _) = sufFloatLit(n)
-  if ok: bits else: 0
+  if n.kind == FloatLit:
+    result = 64
+  else:
+    let (ok, bits, _) = sufFloatLit(n)
+    result = if ok: bits else: 0
 
 proc matchWhileHead(loop: Cursor; ivSym: var SymId; bound: var Cursor): bool =
   ## `(while (lt [T] iv n) body)` — `n` a symbol or int literal.
+  result = false
   var c = sub(loop)
-  if not c.hasMore or c.kind != TagLit or c.exprKind != LtC: return false
-  var e = sub(c)
-  skipOptType e
-  if e.kind != Symbol: return false
-  ivSym = symId(e)
-  skip e
-  if not e.hasMore or e.kind notin {Symbol, IntLit}: return false
-  bound = e
-  skip e
-  result = not e.hasMore
+  if c.hasMore and c.kind == TagLit and c.exprKind == LtC:
+    var e = sub(c)
+    skipOptType e
+    if e.kind == Symbol:
+      ivSym = symId(e)
+      skip e
+      if e.hasMore and e.kind in {Symbol, IntLit}:
+        bound = e
+        skip e
+        result = not e.hasMore
 
 proc matchIvInc(n: Cursor; ivSym: SymId): bool =
   ## `(asgn iv (add T iv 1))`, the `1` possibly `(conv T 1)`-wrapped.
-  if n.stmtKind != AsgnS: return false
-  var c = sub(n)
-  if c.kind != Symbol or symId(c) != ivSym: return false
-  skip c
-  if not c.hasMore or c.kind != TagLit or c.exprKind != AddC: return false
-  var e = sub(c)
-  skipOptType e
-  if e.kind != Symbol or symId(e) != ivSym: return false
-  skip e
-  if not e.hasMore: return false
-  if e.kind == TagLit and e.exprKind in {ConvC, CastC}:
-    var one = sub(e)
-    skip one                                  # the target type
-    if not one.hasMore or one.kind != IntLit or intVal(one) != 1: return false
-    skip one
-    if one.hasMore: return false
-  elif e.kind != IntLit or intVal(e) != 1:
-    return false
-  skip e
-  result = not e.hasMore
+  result = false
+  if n.stmtKind == AsgnS:
+    var c = sub(n)
+    if c.kind == Symbol and symId(c) == ivSym:
+      skip c
+      if c.hasMore and c.kind == TagLit and c.exprKind == AddC:
+        var e = sub(c)
+        skipOptType e
+        if e.kind == Symbol and symId(e) == ivSym:
+          skip e
+          if e.hasMore:
+            var isOne = false
+            if e.kind == TagLit and e.exprKind in {ConvC, CastC}:
+              var one = sub(e)
+              skip one                        # the target type
+              if one.hasMore and one.kind == IntLit and intVal(one) == 1:
+                skip one
+                isOne = not one.hasMore
+            elif e.kind == IntLit and intVal(e) == 1:
+              isOne = true
+            if isOne:
+              skip e
+              result = not e.hasMore
 
 proc matchIndexExpr(e0: Cursor; ivSym: SymId; assigned: HashSet[SymId];
                     ix: var VecIndex): bool =
@@ -226,27 +237,33 @@ proc matchIndexExpr(e0: Cursor; ivSym: SymId; assigned: HashSet[SymId];
   if e.kind == Symbol and symId(e) == ivSym:
     ix.invSym = SymId(0)
     ix.invLit = 0
-    return true
-  if e.kind != TagLit or e.exprKind != AddC: return false
-  var c = sub(e)
-  skipOptType c
-  var sawIv = false
-  var sawInv = false
-  for which in 0 ..< 2:
-    if not c.hasMore: return false
-    if c.kind == Symbol and symId(c) == ivSym and not sawIv:
-      sawIv = true
-    elif c.kind == Symbol and symId(c) notin assigned and not sawInv:
-      ix.invSym = symId(c)
-      sawInv = true
-    elif c.kind == IntLit and not sawInv:
-      ix.invSym = SymId(0)
-      ix.invLit = intVal(c)
-      sawInv = true
-    else:
-      return false
-    skip c
-  result = sawIv and sawInv and not c.hasMore
+    result = true
+  elif e.kind == TagLit and e.exprKind == AddC:
+    var c = sub(e)
+    skipOptType c
+    var sawIv = false
+    var sawInv = false
+    var operandsOk = true
+    for which in 0 ..< 2:
+      if not (operandsOk and c.hasMore):
+        operandsOk = false
+      elif c.kind == Symbol and symId(c) == ivSym and not sawIv:
+        sawIv = true
+        skip c
+      elif c.kind == Symbol and symId(c) notin assigned and not sawInv:
+        ix.invSym = symId(c)
+        sawInv = true
+        skip c
+      elif c.kind == IntLit and not sawInv:
+        ix.invSym = SymId(0)
+        ix.invLit = intVal(c)
+        sawInv = true
+        skip c
+      else:
+        operandsOk = false
+    result = operandsOk and sawIv and sawInv and not c.hasMore
+  else:
+    result = false
 
 proc invariantBase(n: Cursor; assigned: HashSet[SymId]): bool =
   ## An lvalue path whose every mentioned symbol is loop-invariant and whose
@@ -255,32 +272,63 @@ proc invariantBase(n: Cursor; assigned: HashSet[SymId]): bool =
   of Symbol:
     result = symId(n) notin assigned
   of TagLit:
-    if n.exprKind notin {DotC, DerefC}: return false
-    var c = sub(n)
-    result = true
-    while c.hasMore:
-      if not invariantBase(c, assigned): return false
-      skip c
+    if n.exprKind in {DotC, DerefC}:
+      result = true
+      var c = sub(n)
+      while result and c.hasMore:
+        result = invariantBase(c, assigned)
+        skip c
+    else:
+      result = false
   of IntLit, UIntLit:
     result = true                             # a `dot`'s inheritance depth
   else:
     result = false
 
+proc knownIndex(plan: LoopPlan; isym: SymId): int =
+  ## `isym`'s slot in `plan.indexes`, or -1.
+  result = -1
+  for i in 0 ..< plan.indexes.len:
+    if plan.indexes[i].sym == isym: result = i
+
 proc matchPatLval(n: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
                   acc: var VecAccess): bool =
   ## `(pat BASE I)` with invariant BASE and known index local I.
-  if n.kind != TagLit or n.exprKind != PatC: return false
-  var pc = sub(n)
-  if not pc.hasMore: return false
-  acc.baseCur = pc
-  if not invariantBase(pc, assigned): return false
-  skip pc
-  if not pc.hasMore or pc.kind != Symbol: return false
-  acc.idx = -1
-  for i in 0 ..< plan.indexes.len:
-    if plan.indexes[i].sym == symId(pc): acc.idx = i
-  skip pc
-  result = acc.idx >= 0 and not pc.hasMore
+  result = false
+  if n.kind == TagLit and n.exprKind == PatC:
+    var pc = sub(n)
+    if pc.hasMore:
+      acc.baseCur = pc
+      if invariantBase(pc, assigned):
+        skip pc
+        if pc.hasMore and pc.kind == Symbol:
+          acc.idx = knownIndex(plan, symId(pc))
+          skip pc
+          result = acc.idx >= 0 and not pc.hasMore
+
+proc matchGuardCmp(nc: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
+                   g: var VecGuard): bool =
+  ## `(lt I len)` (len an invariant path) or `(le 0 I)` over a known index
+  ## local I.
+  result = false
+  if nc.hasMore and nc.kind == TagLit and nc.exprKind in {LtC, LeC}:
+    var cc = sub(nc)
+    skipOptType cc
+    if nc.exprKind == LtC:
+      if cc.hasMore and cc.kind == Symbol:
+        let isym = symId(cc)
+        skip cc
+        if cc.hasMore:
+          g = VecGuard(kind: gLtLen, idx: knownIndex(plan, isym), lenCur: cc)
+          let invariantLen = invariantBase(cc, assigned)
+          skip cc
+          result = invariantLen and g.idx >= 0 and not cc.hasMore
+    elif cc.hasMore and cc.kind == IntLit and intVal(cc) == 0:
+      skip cc
+      if cc.hasMore and cc.kind == Symbol:
+        g = VecGuard(kind: gLeZero, idx: knownIndex(plan, symId(cc)))
+        skip cc
+        result = g.idx >= 0 and not cc.hasMore
 
 proc matchGuard(n: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
                 g: var VecGuard): bool =
@@ -288,68 +336,34 @@ proc matchGuard(n: Cursor; plan: LoopPlan; assigned: HashSet[SymId];
   ## `(lt I len)` or `(le 0 I)` over a known index local. The action's contents
   ## are irrelevant: the vector path only runs when the condition is FALSE for
   ## every iteration it covers, so the call can never fire there.
-  template grej(msg: string) =
-    when defined(vecDbg):
-      echo "  guard reject: ", msg
-    return false
-  if n.stmtKind != IfS: grej "not if"
-  var c = sub(n)
-  if not c.hasMore or c.kind != TagLit or c.substructureKind != ElifU:
-    grej "no elif"
-  var e = sub(c)
-  skip c
-  if c.hasMore: grej "extra arm"              # a single `elif`, no `else`
-  if not e.hasMore or e.kind != TagLit or e.exprKind != NotC: grej "cond not (not ...)"
-  block cond:
-    var nc = sub(e)
-    if not nc.hasMore or nc.kind != TagLit or nc.exprKind notin {LtC, LeC}:
-      grej "not lt/le"
-    let isLt = nc.exprKind == LtC
-    var cc = sub(nc)
-    skipOptType cc
-    if isLt:
-      if not cc.hasMore or cc.kind != Symbol: grej "lt lhs not a symbol"
-      let isym = symId(cc)
-      skip cc
-      if not cc.hasMore: grej "lt missing rhs"
-      g = VecGuard(kind: gLtLen, idx: -1, lenCur: cc)
-      if cc.kind == Symbol:
-        if symId(cc) in assigned: grej "lt len assigned"
-      elif not invariantBase(cc, assigned):
-        when defined(vecDbg):
-          var dbgBuf = createTokenBuf(16, cc.pool, cc.tags)
-          dbgBuf.addSubtree cc
-          echo "  guard reject: lt len not invariant path: ", toString(dbgBuf)
-        return false
-      skip cc
-      if cc.hasMore: grej "lt extra operand"
-      for i in 0 ..< plan.indexes.len:
-        if plan.indexes[i].sym == isym: g.idx = i
-    else:
-      if not cc.hasMore or cc.kind != IntLit or intVal(cc) != 0: grej "le lhs not 0"
-      skip cc
-      if not cc.hasMore or cc.kind != Symbol: grej "le rhs not symbol"
-      let isym = symId(cc)
-      skip cc
-      if cc.hasMore: grej "le extra operand"
-      g = VecGuard(kind: gLeZero, idx: -1)
-      for i in 0 ..< plan.indexes.len:
-        if plan.indexes[i].sym == isym: g.idx = i
-    if g.idx < 0: grej "unknown index local"
-    skip nc
-    if nc.hasMore: grej "not-arg trailing"
-  skip e                                      # past the `(not …)` condition
-  if not e.hasMore or e.kind != TagLit or e.stmtKind != StmtsS: grej "action not stmts"
-  var act = sub(e)
-  var nCalls = 0
-  while act.hasMore:
-    if act.kind == TagLit and act.stmtKind == CallS: inc nCalls
-    else: grej "action stmt kind " & $act.stmtKind
-    skip act
-  skip e
+  result = false
+  if n.stmtKind == IfS:
+    var c = sub(n)
+    if c.hasMore and c.kind == TagLit and c.substructureKind == ElifU:
+      var e = sub(c)
+      skip c
+      # a single `elif`, no `else`; the condition is `(not CMP)`
+      if not c.hasMore and e.hasMore and e.kind == TagLit and e.exprKind == NotC:
+        var nc = sub(e)
+        if matchGuardCmp(nc, plan, assigned, g):
+          skip nc
+          if not nc.hasMore:                  # the `(not …)` has one child
+            skip e                            # past the condition
+            if e.hasMore and e.kind == TagLit and e.stmtKind == StmtsS:
+              var act = sub(e)
+              var nCalls = 0
+              var onlyCalls = true
+              while act.hasMore:
+                if act.kind == TagLit and act.stmtKind == CallS: inc nCalls
+                else: onlyCalls = false
+                skip act
+              skip e
+              result = onlyCalls and nCalls == 1 and not e.hasMore
   when defined(vecDbg):
-    if nCalls != 1 or e.hasMore: echo "  guard reject: tail calls=", nCalls
-  result = nCalls == 1 and not e.hasMore
+    if not result:
+      var db = createTokenBuf(16, n.pool, n.tags)
+      db.addSubtree n
+      echo "  guard reject: ", toString(db)
 
 proc pureLaneTree(n: Cursor; assigned: HashSet[SymId];
                   valueSyms: HashSet[SymId]; ptrSyms: HashSet[SymId]): bool =
@@ -360,25 +374,27 @@ proc pureLaneTree(n: Cursor; assigned: HashSet[SymId];
   of Symbol:
     result = symId(n) in valueSyms or symId(n) notin assigned
   of TagLit:
-    if sufFloatLit(n).ok: return true
-    case n.exprKind
-    of DerefC:
-      var c = sub(n)
-      result = c.hasMore and c.kind == Symbol and symId(c) in ptrSyms
-      if result:
-        skip c
-        result = not c.hasMore
-    of AddC, SubC, MulC:
-      var c = sub(n)
-      skipOptType c
-      var arity = 0
+    if sufFloatLit(n).ok:
       result = true
-      while c.hasMore:
-        inc arity
-        if not pureLaneTree(c, assigned, valueSyms, ptrSyms): result = false
-        skip c
-      if arity != 2: result = false
-    else: result = false
+    else:
+      case n.exprKind
+      of DerefC:
+        var c = sub(n)
+        result = c.hasMore and c.kind == Symbol and symId(c) in ptrSyms
+        if result:
+          skip c
+          result = not c.hasMore
+      of AddC, SubC, MulC:
+        var c = sub(n)
+        skipOptType c
+        var arity = 0
+        result = true
+        while c.hasMore:
+          inc arity
+          if not pureLaneTree(c, assigned, valueSyms, ptrSyms): result = false
+          skip c
+        if arity != 2: result = false
+      else: result = false
   else: result = false
 
 proc flattenStmts(n: Cursor; stmts: var seq[Cursor]) =
@@ -398,20 +414,184 @@ proc scanLitBits(n: Cursor; bits: var int; conflict: var bool) =
   if lb != 0:
     if bits == 0: bits = lb
     elif bits != lb: conflict = true
-    return
-  if n.kind == TagLit and n.exprKind in {AddC, SubC, MulC}:
+  elif n.kind == TagLit and n.exprKind in {AddC, SubC, MulC}:
     var cc = sub(n)
     skipOptType cc
     while cc.hasMore:
       scanLitBits(cc, bits, conflict)
       skip cc
 
+proc matchVarStmt(n: Cursor; plan: var LoopPlan; assigned: HashSet[SymId];
+                  pendingPtr: var HashSet[SymId]; ptrBits: var Table[SymId, int];
+                  valueSyms, ptrSyms: var HashSet[SymId]): bool =
+  ## One of the three local kinds the loop grammar allows: a pointer temp
+  ## `(var :P (ptr (f W)) .)`, an index local `(var :I (i 64) idx-expr)` or a
+  ## value local `(var :E (f W) pure-lane-tree)`.
+  result = false
+  var d = sub(n)
+  if d.hasMore and d.kind == SymbolDef:
+    let nm = symId(d)
+    inc d                                     # past the name
+    skip d                                    # pragmas
+    if d.hasMore:
+      if d.kind == TagLit and d.typeKind == PtrT:
+        # a pointer temp, bound later
+        var pt = sub(d)
+        var bits = 0
+        if pt.hasMore and pt.kind == TagLit and pt.typeKind == FT:
+          var b = pt
+          inc b
+          if b.kind == IntLit: bits = int(intVal(b))
+        skip d                                # past the type
+        if bits in {32, 64} and (not d.hasMore or d.kind == DotToken):
+          pendingPtr.incl nm
+          ptrBits[nm] = bits
+          ptrSyms.incl nm
+          result = true
+      elif d.kind == TagLit and d.typeKind == IT:
+        skip d                                # past the type
+        var ix = VecIndex(sym: nm)
+        if d.hasMore and d.kind != DotToken and
+           matchIndexExpr(d, plan.ivSym, assigned, ix):
+          plan.indexes.add ix
+          result = true
+      elif d.kind == TagLit and d.typeKind == FT:
+        var b = d
+        inc b
+        let bits = if b.kind == IntLit: int(intVal(b)) else: 0
+        skip d                                # past the type
+        if d.hasMore and d.kind != DotToken and
+           pureLaneTree(d, assigned, valueSyms, ptrSyms) and
+           (plan.elemBits == 0 or bits == plan.elemBits):
+          plan.elemBits = bits
+          plan.values.add VecValue(sym: nm, rhsCur: d)
+          valueSyms.incl nm
+          result = true
+
+proc matchPtrBind(a0: Cursor; p: SymId; plan: var LoopPlan;
+                  assigned: HashSet[SymId]; ptrBits: Table[SymId, int];
+                  pendingPtr: var HashSet[SymId]): bool =
+  ## The rhs of `(asgn P (haddr (pat BASE I)))` — bind the pointer temp.
+  result = false
+  var a = a0
+  if a.hasMore and a.kind == TagLit and a.exprKind == HaddrC:
+    var h = sub(a)
+    var acc = VecAccess(ptrSym: p)
+    if h.hasMore and matchPatLval(h, plan, assigned, acc):
+      skip h
+      let bits = ptrBits[p]
+      if not h.hasMore and (plan.elemBits == 0 or bits == plan.elemBits):
+        plan.elemBits = bits
+        plan.accesses.add acc
+        pendingPtr.excl p
+        result = true
+
+proc matchStore(a0: Cursor; plan: var LoopPlan; assigned: HashSet[SymId];
+                valueSyms, ptrSyms: HashSet[SymId]): bool =
+  ## `(asgn (pat BASE I) pure-lane-tree)` — the ONE store.
+  result = false
+  var a = a0
+  var acc = VecAccess(ptrSym: SymId(0))
+  if matchPatLval(a, plan, assigned, acc):
+    skip a                                    # past the lvalue
+    if a.hasMore and pureLaneTree(a, assigned, valueSyms, ptrSyms):
+      plan.store = acc
+      plan.storeSrc = a
+      skip a
+      result = not a.hasMore
+
 proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
   ## Match the whole canonical loop; fill `plan`. Any unexpected statement
   ## rejects — the pass must understand EVERYTHING it vectorizes.
   when defined(vecDbg): echo "vectorizer: trying a while loop"
+  result = false
   var bound = default(Cursor)
-  if not matchWhileHead(loop, plan.ivSym, bound):
+  if matchWhileHead(loop, plan.ivSym, bound):
+    plan.boundCur = bound
+    var body = loop
+    inc body                                  # past `(while`
+    skip body                                 # past the condition
+
+    var assigned = initHashSet[SymId]()
+    collectAssigned(body, assigned)
+    assigned.incl plan.ivSym
+    if not (bound.kind == Symbol and symId(bound) in assigned):
+      var stmts: seq[Cursor] = @[]
+      flattenStmts(body, stmts)
+
+      # the iv itself is a valid access index (`c[iv]` — the fill loops); its
+      # displacement is zero
+      plan.indexes.add VecIndex(sym: plan.ivSym, invSym: SymId(0), invLit: 0)
+
+      var pendingPtr = initHashSet[SymId]()   # declared, not yet bound
+      var ptrBits = initTable[SymId, int]()
+      var valueSyms = initHashSet[SymId]()
+      var ptrSyms = initHashSet[SymId]()
+      var sawStore = false
+      var sawInc = false
+      plan.elemBits = 0
+
+      var ok = true
+      var si = 0
+      while ok and si < stmts.len:
+        let n = stmts[si]
+        if n.kind != TagLit:
+          ok = false
+        elif sawInc:
+          # only inert labels may trail the increment (inliner returnLabels)
+          ok = n.stmtKind == LabS
+        else:
+          case n.stmtKind
+          of VarS:
+            ok = matchVarStmt(n, plan, assigned, pendingPtr, ptrBits,
+                              valueSyms, ptrSyms)
+          of AsgnS:
+            if matchIvInc(n, plan.ivSym):
+              sawInc = true
+            else:
+              var a = sub(n)
+              if not a.hasMore:
+                ok = false
+              elif a.kind == Symbol and symId(a) in pendingPtr:
+                let p = symId(a)
+                skip a
+                ok = matchPtrBind(a, p, plan, assigned, ptrBits, pendingPtr)
+              elif a.kind == TagLit and a.exprKind == PatC:
+                ok = not sawStore and
+                     matchStore(a, plan, assigned, valueSyms, ptrSyms)
+                sawStore = ok
+              else:
+                ok = false
+          of IfS:
+            var g = VecGuard(idx: -1)
+            ok = matchGuard(n, plan, assigned, g)
+            if ok: plan.guards.add g
+          of LabS:
+            discard   # inliner residue; jumps would appear as stmts and reject
+          else:
+            ok = false
+        when defined(vecDbg):
+          if not ok:
+            var db = createTokenBuf(8, n.pool, n.tags)
+            db.addSubtree n
+            echo "vectorizer reject at stmt ", si, ": ", toString(db)
+        inc si
+
+      # literal leaves imply a width too (the zero-fill loop has ONLY
+      # literals); unify it with the access-implied one
+      var litConflict = false
+      for v in plan.values: scanLitBits(v.rhsCur, plan.elemBits, litConflict)
+      if sawStore: scanLitBits(plan.storeSrc, plan.elemBits, litConflict)
+      result = ok and not litConflict and sawStore and sawInc and
+               plan.elemBits in {32, 64} and pendingPtr.len == 0
+      when defined(vecDbg):
+        if ok and not result:
+          echo "vectorizer reject: final (store=", sawStore, " inc=", sawInc,
+               " bits=", plan.elemBits, " pending=", pendingPtr.len,
+               " litConflict=", litConflict, ")"
+    else:
+      when defined(vecDbg): echo "vectorizer reject: bound assigned in loop"
+  else:
     when defined(vecDbg):
       var wc = sub(loop)
       if wc.hasMore:
@@ -420,160 +600,6 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
         echo "vectorizer reject: while head: ", toString(db)
       else:
         echo "vectorizer reject: while head (empty)"
-    return false
-  plan.boundCur = bound
-  var body = loop
-  inc body                                    # past `(while`
-  skip body                                   # past the condition
-
-  var assigned = initHashSet[SymId]()
-  collectAssigned(body, assigned)
-  assigned.incl plan.ivSym
-  if bound.kind == Symbol and symId(bound) in assigned:
-    when defined(vecDbg): echo "vectorizer reject: bound assigned in loop"
-    return false
-
-  var stmts: seq[Cursor] = @[]
-  flattenStmts(body, stmts)
-
-  # the iv itself is a valid access index (`c[iv]` — the fill loops); its
-  # displacement is zero
-  plan.indexes.add VecIndex(sym: plan.ivSym, invSym: SymId(0), invLit: 0)
-
-  var pendingPtr = initHashSet[SymId]()       # declared, not yet bound
-  var ptrBits = initTable[SymId, int]()
-  var valueSyms = initHashSet[SymId]()
-  var ptrSyms = initHashSet[SymId]()
-  var sawStore = false
-  var sawInc = false
-  plan.elemBits = 0
-
-  template rej(msg: string) =
-    when defined(vecDbg):
-      echo "vectorizer reject: ", msg, " at stmt ", si
-    return false
-  for si in 0 ..< stmts.len:
-    let n = stmts[si]
-    if n.kind != TagLit: rej "non-tag stmt"
-    if sawInc:
-      # only inert labels may trail the increment (inliner returnLabels)
-      if n.stmtKind == LabS: continue
-      rej "stmt after increment"
-    case n.stmtKind
-    of VarS:
-      var d = sub(n)
-      if not d.hasMore or d.kind != SymbolDef: rej "var without name"
-      let nm = symId(d)
-      inc d                                   # past the name
-      skip d                                  # pragmas
-      if not d.hasMore: return false
-      if d.kind == TagLit and d.typeKind == PtrT:
-        # `(var :P (ptr (f W)) .)` — a pointer temp, bound later
-        var pt = sub(d)
-        var bits = 0
-        if pt.hasMore and pt.kind == TagLit and pt.typeKind == FT:
-          var b = pt
-          inc b
-          if b.kind == IntLit: bits = int(intVal(b))
-        skip d                                # past the type
-        if bits notin {32, 64}: rej "ptr temp bits"
-        if d.hasMore and d.kind != DotToken: rej "initialized ptr temp"
-        pendingPtr.incl nm
-        ptrBits[nm] = bits
-        ptrSyms.incl nm
-      elif d.kind == TagLit and d.typeKind == IT:
-        skip d                                # past the type
-        if not d.hasMore or d.kind == DotToken: return false
-        var ix = VecIndex(sym: nm)
-        if not matchIndexExpr(d, plan.ivSym, assigned, ix):
-          when defined(vecDbg):
-            var db = createTokenBuf(8, d.pool, d.tags)
-            db.addSubtree d
-            echo "  index-expr reject: ", toString(db)
-          rej "index expr"
-        plan.indexes.add ix
-      elif d.kind == TagLit and d.typeKind == FT:
-        var b = d
-        inc b
-        let bits = if b.kind == IntLit: int(intVal(b)) else: 0
-        skip d                                # past the type
-        if not d.hasMore or d.kind == DotToken: return false
-        if not pureLaneTree(d, assigned, valueSyms, ptrSyms): rej "value rhs"
-        if plan.elemBits != 0 and bits != plan.elemBits: rej "mixed elem bits"
-        if plan.elemBits == 0: plan.elemBits = bits
-        plan.values.add VecValue(sym: nm, rhsCur: d)
-        valueSyms.incl nm
-      else:
-        when defined(vecDbg):
-          var db = createTokenBuf(8, n.pool, n.tags)
-          db.addSubtree n
-          echo "  var reject: ", toString(db)
-        rej "var of unhandled type"
-    of AsgnS:
-      if matchIvInc(n, plan.ivSym):
-        sawInc = true
-      else:
-        var a = sub(n)
-        if not a.hasMore: return false
-        if a.kind == Symbol and symId(a) in pendingPtr:
-          # `(asgn P (haddr (pat BASE I)))` — bind the pointer temp
-          let p = symId(a)
-          skip a
-          if not a.hasMore or a.kind != TagLit or a.exprKind != HaddrC:
-            return false
-          var h = sub(a)
-          if not h.hasMore: return false
-          var acc = VecAccess(ptrSym: p)
-          if not matchPatLval(h, plan, assigned, acc): return false
-          skip h
-          if h.hasMore: return false
-          let bits = ptrBits[p]
-          if plan.elemBits != 0 and bits != plan.elemBits: return false
-          if plan.elemBits == 0: plan.elemBits = bits
-          plan.accesses.add acc
-          pendingPtr.excl p
-        elif a.kind == TagLit and a.exprKind == PatC:
-          # the ONE store
-          if sawStore: return false
-          var acc = VecAccess(ptrSym: SymId(0))
-          if not matchPatLval(a, plan, assigned, acc): return false
-          skip a
-          if not a.hasMore: return false
-          if not pureLaneTree(a, assigned, valueSyms, ptrSyms): return false
-          plan.store = acc
-          plan.storeSrc = a
-          skip a
-          if a.hasMore: return false
-          sawStore = true
-        else:
-          when defined(vecDbg):
-            var db = createTokenBuf(8, n.pool, n.tags)
-            db.addSubtree n
-            echo "  asgn reject: ", toString(db)
-          rej "asgn shape"
-    of IfS:
-      var g = VecGuard(idx: -1)
-      if not matchGuard(n, plan, assigned, g): rej "guard shape"
-      plan.guards.add g
-    of LabS:
-      discard          # inliner residue; jumps would appear as statements and reject
-    else:
-      rej "statement kind " & $n.stmtKind
-
-  # literal leaves imply a width too (the zero-fill loop has ONLY literals);
-  # unify it with the access-implied one
-  var litConflict = false
-  for v in plan.values: scanLitBits(v.rhsCur, plan.elemBits, litConflict)
-  if sawStore: scanLitBits(plan.storeSrc, plan.elemBits, litConflict)
-  if litConflict:
-    when defined(vecDbg): echo "vectorizer reject: conflicting literal widths"
-    return false
-  result = sawStore and sawInc and plan.elemBits in {32, 64} and
-           pendingPtr.len == 0
-  when defined(vecDbg):
-    if not result:
-      echo "vectorizer reject: final (store=", sawStore, " inc=", sawInc,
-           " bits=", plan.elemBits, " pending=", pendingPtr.len, ")"
 
 # ── synthesis ───────────────────────────────────────────────────────────────
 
@@ -717,13 +743,14 @@ proc freshName(e: var Emitter; kind: string): string =
   result = "vec." & kind & "." & $e.tempCounter & "." & e.moduleSuffix
 
 proc uniquePtr(e: var Emitter; acc: VecAccess): int =
-  for i in 0 ..< e.ptrs.len:
-    if sameTree(e.ptrs[i].baseCur, acc.baseCur) and
-       sameIndexInfo(e.ptrs[i].idx, e.plan.indexes[acc.idx]):
-      return i
-  e.ptrs.add UniquePtr(name: e.freshName("p"), baseCur: acc.baseCur,
-                       idx: e.plan.indexes[acc.idx])
-  result = e.ptrs.len - 1
+  result = 0
+  while result < e.ptrs.len and
+        not (sameTree(e.ptrs[result].baseCur, acc.baseCur) and
+             sameIndexInfo(e.ptrs[result].idx, e.plan.indexes[acc.idx])):
+    inc result
+  if result == e.ptrs.len:
+    e.ptrs.add UniquePtr(name: e.freshName("p"), baseCur: acc.baseCur,
+                         idx: e.plan.indexes[acc.idx])
 
 proc countDerefs(e: var Emitter; n: Cursor) =
   ## Total `(deref P)` occurrences per access point, for the fmla in-place
@@ -769,8 +796,7 @@ proc collectBroadcasts(e: var Emitter; n: Cursor) =
       if key notin e.bcLits:
         let nm = addBroadcastDecl(e, n)       # the WHOLE (suf …), typed f32
         e.bcLits[key] = nm
-      return
-    if n.exprKind in {AddC, SubC, MulC}:
+    elif n.exprKind in {AddC, SubC, MulC}:
       var cc = sub(n)
       skipOptType cc
       while cc.hasMore:
@@ -813,60 +839,61 @@ proc vecEval(e: var Emitter; n: Cursor; fresh: var bool): string =
     let (isSuf, _, sinner) = sufFloatLit(n)
     if isSuf:
       fresh = false
-      return e.bcLits[cast[int64](floatVal(sinner))]
-    case n.exprKind
-    of DerefC:
-      var cc = sub(n)
-      let k = e.ptrOfAccess[symId(cc)]
-      fresh = e.ptrs[k].derefCount == 1
-      result = e.ptrs[k].loadName
-    of AddC, SubC, MulC:
-      let kind = n.exprKind
-      var cc = sub(n)
-      skipOptType cc
-      let lhs = cc
-      skip cc
-      let rhs = cc
-      if kind == AddC and (isMulTree(lhs) or isMulTree(rhs)):
-        # fused multiply-add: acc + a*b, when acc is iteration-fresh
-        let mulSide = if isMulTree(rhs): rhs else: lhs
-        let accSide = if isMulTree(rhs): lhs else: rhs
-        var mc = sub(mulSide)
-        skipOptType mc
-        let ma = mc
-        skip mc
-        let mb = mc
-        var fA, fB, fAcc = false
-        let aN = vecEval(e, ma, fA)
-        let bN = vecEval(e, mb, fB)
-        let accN = vecEval(e, accSide, fAcc)
-        if fAcc:
-          # (asgn acc (instr vfmla acc a b bits)) — in place, no copy
-          e.b.openTag tid(AsgnTagId)
-          e.b.addSymUse accN
-          e.b.openTag tid(InstrTagId)
-          e.b.addSymUse e.iVfmla
-          e.b.addSymUse accN
-          e.b.addSymUse aN
-          e.b.addSymUse bN
-          e.b.addIntLit int64(e.bits)
-          e.b.closeTag()
-          e.b.closeTag()
-          fresh = true
-          return accN
-        let mN = vecBin(e, e.iVfmul, aN, bN)
-        fresh = true
-        return vecBin(e, e.iVfadd, mN, accN)
-      var fL, fR = false
-      let lN = vecEval(e, lhs, fL)
-      let rN = vecEval(e, rhs, fR)
-      fresh = true
-      result = case kind
-               of AddC: vecBin(e, e.iVfadd, lN, rN)
-               of SubC: vecBin(e, e.iVfsub, lN, rN)
-               else: vecBin(e, e.iVfmul, lN, rN)
+      result = e.bcLits[cast[int64](floatVal(sinner))]
     else:
-      raiseAssert "vectorizer: unexpected lane tree"
+      case n.exprKind
+      of DerefC:
+        var cc = sub(n)
+        let k = e.ptrOfAccess[symId(cc)]
+        fresh = e.ptrs[k].derefCount == 1
+        result = e.ptrs[k].loadName
+      of AddC, SubC, MulC:
+        let kind = n.exprKind
+        var cc = sub(n)
+        skipOptType cc
+        let lhs = cc
+        skip cc
+        let rhs = cc
+        fresh = true
+        if kind == AddC and (isMulTree(lhs) or isMulTree(rhs)):
+          # fused multiply-add: acc + a*b, when acc is iteration-fresh
+          let mulSide = if isMulTree(rhs): rhs else: lhs
+          let accSide = if isMulTree(rhs): lhs else: rhs
+          var mc = sub(mulSide)
+          skipOptType mc
+          let ma = mc
+          skip mc
+          let mb = mc
+          var fA, fB, fAcc = false
+          let aN = vecEval(e, ma, fA)
+          let bN = vecEval(e, mb, fB)
+          let accN = vecEval(e, accSide, fAcc)
+          if fAcc:
+            # (asgn acc (instr vfmla acc a b bits)) — in place, no copy
+            e.b.openTag tid(AsgnTagId)
+            e.b.addSymUse accN
+            e.b.openTag tid(InstrTagId)
+            e.b.addSymUse e.iVfmla
+            e.b.addSymUse accN
+            e.b.addSymUse aN
+            e.b.addSymUse bN
+            e.b.addIntLit int64(e.bits)
+            e.b.closeTag()
+            e.b.closeTag()
+            result = accN
+          else:
+            let mN = vecBin(e, e.iVfmul, aN, bN)
+            result = vecBin(e, e.iVfadd, mN, accN)
+        else:
+          var fL, fR = false
+          let lN = vecEval(e, lhs, fL)
+          let rN = vecEval(e, rhs, fR)
+          result = case kind
+                   of AddC: vecBin(e, e.iVfadd, lN, rN)
+                   of SubC: vecBin(e, e.iVfsub, lN, rN)
+                   else: vecBin(e, e.iVfmul, lN, rN)
+      else:
+        raiseAssert "vectorizer: unexpected lane tree"
   else:
     raiseAssert "vectorizer: unexpected lane leaf"
 
@@ -879,17 +906,17 @@ proc emitSlot(e: var Emitter; byteOff: int) =
   ## the same-address case, which reads its own slot's offset — and the OOO
   ## core overlaps the independent slots on its own.
   for k in 0 ..< e.ptrs.len:
-    if not e.ptrs[k].hasLoad: continue
-    e.ptrs[k].loadName = e.freshName("l")
-    # (var :l (f 128) (instr fldrq p byteOff))
-    e.b.addVarDeclHead e.ptrs[k].loadName
-    e.b.addF(128)
-    e.b.openTag tid(InstrTagId)
-    e.b.addSymUse e.iFldrq
-    e.b.addSymUse e.ptrs[k].name
-    e.b.addIntLit int64(byteOff)
-    e.b.closeTag()
-    e.b.closeTag()                            # var
+    if e.ptrs[k].hasLoad:
+      e.ptrs[k].loadName = e.freshName("l")
+      # (var :l (f 128) (instr fldrq p byteOff))
+      e.b.addVarDeclHead e.ptrs[k].loadName
+      e.b.addF(128)
+      e.b.openTag tid(InstrTagId)
+      e.b.addSymUse e.iFldrq
+      e.b.addSymUse e.ptrs[k].name
+      e.b.addIntLit int64(byteOff)
+      e.b.closeTag()
+      e.b.closeTag()                          # var
   e.valueVec.clear()
   for vi in 0 ..< e.plan.values.len:
     var fresh = false
@@ -985,32 +1012,32 @@ proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf 
   # runtime disjointness of every loading access point vs the store's
   var djNames: seq[string] = @[]
   for k in 0 ..< e.ptrs.len:
-    if k == e.storePtr or not e.ptrs[k].hasLoad: continue
-    # dj = &A[hi] <= &S[lo];  if not dj: dj = &S[hi] <= &A[lo] — the ranges
-    # are [inv+iv, inv+n); every address is an inlined expression.
-    let dj = e.freshName("dj")
-    djNames.add dj
-    let kIdx = e.ptrs[k].idx
-    let sIdx = e.ptrs[e.storePtr].idx
-    let kBase = e.ptrs[k].baseCur
-    let sBase = e.ptrs[e.storePtr].baseCur
-    e.b.addVarDeclHead dj
-    e.b.addBoolType()
-    e.b.addCmpAddrs(plan, kBase, kIdx, tailBound, sBase, sIdx, tailIv)
-    e.b.closeTag()                            # var
-    e.b.openTag tid(IfTagId)
-    e.b.openTag tid(ElifTagId)
-    e.b.openTag tid(NotTagId)
-    e.b.addSymUse dj
-    e.b.closeTag()
-    e.b.openTag tid(StmtsTagId)
-    e.b.openTag tid(AsgnTagId)
-    e.b.addSymUse dj
-    e.b.addCmpAddrs(plan, sBase, sIdx, tailBound, kBase, kIdx, tailIv)
-    e.b.closeTag()                            # asgn
-    e.b.closeTag()                            # stmts
-    e.b.closeTag()                            # elif
-    e.b.closeTag()                            # if
+    if k != e.storePtr and e.ptrs[k].hasLoad:
+      # dj = &A[hi] <= &S[lo];  if not dj: dj = &S[hi] <= &A[lo] — the ranges
+      # are [inv+iv, inv+n); every address is an inlined expression.
+      let dj = e.freshName("dj")
+      djNames.add dj
+      let kIdx = e.ptrs[k].idx
+      let sIdx = e.ptrs[e.storePtr].idx
+      let kBase = e.ptrs[k].baseCur
+      let sBase = e.ptrs[e.storePtr].baseCur
+      e.b.addVarDeclHead dj
+      e.b.addBoolType()
+      e.b.addCmpAddrs(plan, kBase, kIdx, tailBound, sBase, sIdx, tailIv)
+      e.b.closeTag()                          # var
+      e.b.openTag tid(IfTagId)
+      e.b.openTag tid(ElifTagId)
+      e.b.openTag tid(NotTagId)
+      e.b.addSymUse dj
+      e.b.closeTag()
+      e.b.openTag tid(StmtsTagId)
+      e.b.openTag tid(AsgnTagId)
+      e.b.addSymUse dj
+      e.b.addCmpAddrs(plan, sBase, sIdx, tailBound, kBase, kIdx, tailIv)
+      e.b.closeTag()                          # asgn
+      e.b.closeTag()                          # stmts
+      e.b.closeTag()                          # elif
+      e.b.closeTag()                          # if
 
   # the hoisted guards' worst-case conditions, one nested `if` per condition
   type CondSpec = object
@@ -1118,24 +1145,25 @@ proc emitReplacement(c: var Context; plan: LoopPlan; loopCur: Cursor): TokenBuf 
 # ── main traversal ──────────────────────────────────────────────────────────
 
 proc tr(c: var Context; n: var Cursor) =
-  if not n.hasMore: return
-  case n.kind
-  of TagLit:
-    if n.stmtKind == WhileS:
-      var plan = LoopPlan()
-      if matchLoop(c, n, plan):
-        let pos = cursorToPosition(c.orig[], n)
-        var nb = emitReplacement(c, plan, n)
-        let idx = c.synth.len
-        c.synth.add ensureMove(nb)
-        c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
-        c.vectorized = true
-        skip n                                # matched: body has no inner loops
-        return
-    n.loopInto:
-      tr(c, n)
-  else:
-    inc n
+  if n.hasMore:
+    if n.kind == TagLit:
+      var matched = false
+      if n.stmtKind == WhileS:
+        var plan = LoopPlan()
+        if matchLoop(c, n, plan):
+          let pos = cursorToPosition(c.orig[], n)
+          var nb = emitReplacement(c, plan, n)
+          let idx = c.synth.len
+          c.synth.add ensureMove(nb)
+          c.patchset.addSubst(pos, cursorAt(c.synth[idx], 0))
+          c.vectorized = true
+          skip n                              # matched: body has no inner loops
+          matched = true
+      if not matched:
+        n.loopInto:
+          tr(c, n)
+    else:
+      inc n
 
 # ── public entry ────────────────────────────────────────────────────────────
 
