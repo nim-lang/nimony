@@ -323,3 +323,34 @@ Low-level thread creation.
 - `pinnedToCpu` is best-effort — some platforms (macOS) do not
   support CPU pinning.
 - Always `join` threads before the program exits.
+
+
+## stacktraces
+
+[Source](../lib/std/stacktraces.nim)
+
+`getStackTrace()` returns the call stack as one proc name per line,
+innermost frame first. `getStackTrace` itself is never listed; pass
+`skip = n` to drop that many further frames, which is what a panic
+handler wants so its own frame does not head the trace.
+
+- **Native backend only.** `stackTracesAvailable` is a `const`: true for
+  `nimony n` on amd64, false everywhere else, where `getStackTrace`
+  returns `""`. On the C backend the frames belong to the C compiler and
+  are described by its unwind tables; reading those is a different
+  implementation rather than a missing branch of this one. Branch on the
+  const rather than on the result, so the difference is visible at
+  compile time.
+- **Names, not source positions.** There is no line-number table yet, and
+  the disambiguator and module suffix a NIF symbol carries
+  (`leaf.3.stagd0hts`) are dropped — the frame *sequence* is what
+  distinguishes two procs of the same name.
+- **Inlined frames do not appear.** A proc the inliner spliced into its
+  caller has no frame to find, so the caller is what the trace names.
+  Mark a proc `{.noinline.}` if you need to see it.
+- It allocates the result string like any other proc; there is no
+  allocation-free variant yet.
+
+How it works — nifasm lays a per-proc table (code range, frame size, name)
+at the end of `.text`, and the walk is a binary search per frame. See
+`nativenif/doc/tracetable.md`.

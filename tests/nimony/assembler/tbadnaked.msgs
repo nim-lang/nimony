@@ -1,0 +1,1 @@
+tests/nimony/assembler/tbadnaked.nim(6, 19) Error: `naked` pragma is only allowed on routines

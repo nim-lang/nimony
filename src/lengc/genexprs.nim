@@ -137,7 +137,22 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
     c.add ParLe
     let starAt = c.code.len
     c.add "*"
-    genx c, n
+    # `*NIM_NIL` is a dereference of `void*` and `(*NIM_NIL).f` does not even
+    # compile. The dereference is dead code — the intra-module inliner
+    # substitutes a literal argument at every use, including uses under a
+    # guard it could not fold — but it still has to be *emitted*, so give the
+    # null the pointer type the frontend attached to it. See nimony#2317.
+    if n.exprKind == NilC and n.childCursor.hasMore:
+      var t = n.childCursor
+      c.add ParLe
+      c.add ParLe
+      genType c, t
+      c.add ParRi
+      c.add NullPtr
+      c.add ParRi
+      skip n
+    else:
+      genx c, n
     c.add ParRi
     if n.hasMore and n.typeQual == CpprefQ:
       if c.m.config.backend == backendCpp:
@@ -356,6 +371,12 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add "NIM_TRUE"
     skip n
   of NilC:
+    # A bare `NIM_NIL`, NOT a cast to the `(nil T)` type the frontend attaches.
+    # `NIM_NIL` is assignment-compatible with every pointer type, and casting
+    # would make an `{.importc.}` signature whose C spelling differs from
+    # Nimony's (`cstring` is `unsigned char*`, `strtod` wants `char**`) a hard
+    # `-Wincompatible-pointer-types` error. `genDeref` casts where C insists on
+    # knowing the pointee.
     c.add NullPtr
     skip n
   of InfC:

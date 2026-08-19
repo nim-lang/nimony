@@ -332,8 +332,9 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # `genProcDecl` then emits nothing for the declaration itself.
         result.flags.incl pk
         skip n
-      of AssemblerP:
-        # `{.assembler.}` bodies are transliterated by arkham, not compiled to C.
+      of AssemblerP, NakedP:
+        # `{.assembler.}`/`{.naked.}` bodies are transliterated by arkham, not
+        # compiled to C.
         # Routing them into a C build means assembling them separately and
         # linking the object — see `nativenif/doc/asm-c-interop.md`, which is not
         # built yet. Reject loudly rather than emit a prototype that will fail to
@@ -627,7 +628,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   var prc = takeProcDecl(n)
 
   let prag = parseProcPragmas(c, prc.pragmas)
-  if AssemblerP in prag.flags:
+  if prag.flags * {AssemblerP, NakedP} != {}:
     errorAt c.m, "the C backend cannot compile an `{.assembler.}` proc; it must " &
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
       prc.name
