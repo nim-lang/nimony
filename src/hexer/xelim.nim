@@ -1158,16 +1158,36 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if isComplex(n, c.goal) or mayBindToTemp(n):
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
-        var tar = Target(m: IsEmpty)
-        trCond c, dest, n, tar, c.goal == TowardsNjvl
-        dest.copyIntoKind IfS, info:
-          dest.copyIntoKind ElifU, info:
-            dest.addTarget tar
-            trStmt c, dest, n
-          dest.copyIntoKind ElseU, info:
-            copyIntoKind dest, StmtsS, info:
-              dest.copyIntoKind BreakS, info:
-                dest.addDotToken()
+        if wantsCondJumps(c, n):
+          # Same deal as `trIfFlat`: a short-circuit guard compiles against a
+          # jump target instead of a bool the `if` below would immediately
+          # re-test. The exit is the FALL-THROUGH and the body is behind the
+          # jump, because the only way out of a loop is `(break)` and a label
+          # cannot be placed after the body without the fall-off-the-body edge
+          # landing on it too:
+          #
+          #   Cjmp(cond)(bodyLab, true); (break); (lab bodyLab); <body>
+          #
+          # Everything stays inside the loop body's `(stmts …)`, so the jumps
+          # are the same intra-list shape `trIfFlat` emits — no transfer ever
+          # leaves the loop.
+          let bodyLab = freshLabel(c)
+          trExprToLabel c, dest, n, bodyLab, true, false
+          dest.copyIntoKind BreakS, info:
+            dest.addDotToken()
+          addLab dest, bodyLab, info
+          trStmt c, dest, n
+        else:
+          var tar = Target(m: IsEmpty)
+          trCond c, dest, n, tar, c.goal == TowardsNjvl
+          dest.copyIntoKind IfS, info:
+            dest.copyIntoKind ElifU, info:
+              dest.addTarget tar
+              trStmt c, dest, n
+            dest.copyIntoKind ElseU, info:
+              copyIntoKind dest, StmtsS, info:
+                dest.copyIntoKind BreakS, info:
+                  dest.addDotToken()
     else:
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
