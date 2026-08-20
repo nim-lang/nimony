@@ -934,56 +934,48 @@ proc trIfFlat(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
   if tar.m != IsIgnored:
     tmp = declareTemp(c, dest, n)
 
-  # Collect the arms first: the last one must not emit a `(jmp Lend)`, and
-  # without an `else` the last arm's false-target IS the end label — both need
-  # to be known before anything is written.
-  var arms: seq[TokenBuf] = @[]
-  var elseBody = createTokenBuf(1)
-  var hasElse = false
-
+  # Emitted in one streaming pass, straight into `dest`: an arm falls out of
+  # its `(scope …)` into `(jmp endLab)`, and the arm after it starts at the
+  # false label the guard jumped to. The one thing an arm needs to know about
+  # its successors is whether it *has* any: a last arm with no `else` falls
+  # straight out of the `if`, so its false edge IS the end — it can share
+  # `endLab` instead of planting a second label right next to it, and it needs
+  # no `(jmp endLab)` either. One `skip` answers that, and `skip` is O(1) (the
+  # tag token carries the subtree's jump), so the arms need neither a pre-pass
+  # over the chain nor a `TokenBuf` each to be assembled from afterwards.
   let endLab = freshLabel(c)
-  var falseLabs: seq[SymId] = @[]
+  var needEndLab = false
 
-  # Count the arms up front: without an `else`, the LAST arm's false edge lands
-  # exactly where the `if` ends, so it can share `endLab` instead of adding a
-  # second label right next to it.
-  var armCount = 0
-  var sawElse = false
-  block:
-    var probe = n
-    probe = sub(probe)
-    while probe.hasMore:
-      let sub = probe.substructureKind
-      if sub == ElifU: inc armCount
-      elif sub == ElseU: sawElse = true
-      skip probe
-  for i in 0 ..< armCount:
-    falseLabs.add (if i == armCount - 1 and not sawElse: endLab else: freshLabel(c))
-
-  var armIdx = 0
   n.into:
     while n.hasMore:
       let binfo = n.info
       case n.substructureKind
       of ElifU:
-        var armBuf = createTokenBuf(32)
-        armBuf.addParLe(ScopeS, binfo)
+        var lookahead = n
+        skip lookahead
+        let falseLab = if lookahead.hasMore: freshLabel(c) else: endLab
+        dest.addParLe(ScopeS, binfo)
         c.typeCache.openScope()
         n.into:
-          trCondJump c, armBuf, n, falseLabs[armIdx], false, conditional = false
-          trBranchBody c, armBuf, n, tar, tmp
+          trCondJump c, dest, n, falseLab, false, conditional = false
+          trBranchBody c, dest, n, tar, tmp
         c.typeCache.closeScope()
-        armBuf.addParRi()
-        arms.add ensureMove(armBuf)
-        inc armIdx
+        dest.addParRi()
+        if falseLab != endLab:
+          addJmp dest, endLab, info
+          needEndLab = true
+        addLab dest, falseLab, info
       of ElseU:
-        hasElse = true
-        elseBody.addParLe(ScopeS, binfo)
+        # Reached only through the preceding arm's false label, which was
+        # already planted; the `if` ends here, so `endLab` lands after it.
+        dest.addParLe(ScopeS, binfo)
         c.typeCache.openScope()
         n.into:
-          trBranchBody c, elseBody, n, tar, tmp
+          trBranchBody c, dest, n, tar, tmp
         c.typeCache.closeScope()
-        elseBody.addParRi()
+        dest.addParRi()
+        if needEndLab:
+          addLab dest, endLab, info
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
          TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
          StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
@@ -991,23 +983,6 @@ proc trIfFlat(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
          ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         # Bug: just copy the thing around
         takeTree dest, n
-
-  # Assemble. An arm falls out of its `(scope …)` into `(jmp endLab)`; the arm
-  # after it starts at the false label the guard jumped to. The last arm needs
-  # no `(jmp endLab)` when there is no `else`, because its false edge already
-  # *is* `endLab`.
-  var needEndLab = false
-  for i in 0 ..< arms.len:
-    dest.add arms[i]
-    let fallsToEnd = i == arms.len - 1 and not hasElse
-    if not fallsToEnd:
-      addJmp dest, endLab, info
-      needEndLab = true
-    addLab dest, falseLabs[i], info
-  if hasElse:
-    dest.add elseBody
-    if needEndLab:
-      addLab dest, endLab, info
 
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, n.endInfo
