@@ -78,10 +78,19 @@ proc isComplex(n: Cursor; goal: Goal): bool =
 
 type
   Mode = enum
-    IsEmpty, IsAppend, IsBound, IsIgnored, IsCfvar
+    IsEmpty, IsAppend, IsBound, IsIgnored, IsCfvar, IsLabel
   Target = object
+    ## Where the value of the expression `trExpr` is translating should go.
+    ## `IsCfvar` and `IsLabel` are the two control-flow modes and are duals:
+    ## `IsCfvar` *materialises* a short-circuit condition into a bool slot,
+    ## `IsLabel` compiles it against a jump target and never creates the slot
+    ## (the two-target condition compiler `Cx`, below). They are selected by
+    ## goal and never both apply — see `CondJumpGoals`.
     m: Mode
     t: TokenBuf
+    lab: SymId        ## `IsLabel`: transfer to this label…
+    jumpIfTrue: bool  ## …exactly when the expression evaluates to this…
+    conditional: bool ## …and: is this subtree one the short-circuit can skip?
   Context = object
     counter: int
     typeCache: TypeCache
@@ -768,10 +777,20 @@ proc wantsCondJumps(c: Context; n: Cursor): bool =
     condSpineHasShortCircuit(n) and
     not (c.goal in CondPassthroughGoals and condPassthroughSafe(n))
 
-proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor;
-                target: SymId; jumpIfTrue: bool; conditional = false) =
-  ## Emit statements into `dest` that transfer to `(lab target)` exactly when
-  ## `n` evaluates to `jumpIfTrue`, and fall through otherwise.
+template trExprToLabel(c: var Context; dest: var TokenBuf; n: var Cursor;
+                       labArg: SymId; jumpIfTrueArg, conditionalArg: bool) =
+  ## `trExpr` with an `IsLabel` target: emit statements into `dest` that
+  ## transfer to `(lab labArg)` exactly when `n` evaluates to `jumpIfTrueArg`,
+  ## and fall through otherwise. (The parameters carry the `Arg` suffix so they
+  ## cannot shadow the `Target` field names in the constructor below.)
+  var labelTar = Target(m: IsLabel, lab: labArg, jumpIfTrue: jumpIfTrueArg,
+                        conditional: conditionalArg)
+  trExpr c, dest, n, labelTar
+
+proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## The `IsLabel` mode of `trExpr`. `trExpr` dispatches here on its first line
+  ## and nothing else calls it, so no other `tar.m` site in this file can
+  ## observe the mode.
   ##
   ##   Cjmp(a and b)(T, true)  = Cjmp(a)(z, false); Cjmp(b)(T, true);  (lab z)
   ##   Cjmp(a and b)(F, false) = Cjmp(a)(F, false); Cjmp(b)(F, false)
@@ -783,59 +802,51 @@ proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor;
   ## operand's own pre-statements are emitted *after* the guard that can skip
   ## it, so they run only on the paths that reach it.
   ##
-  ## `conditional` says whether this subtree is one the short-circuit can skip.
-  ## The leftmost leaf of a spine always runs, so it is emitted exactly as the
-  ## old `trIf` emitted a condition — no hoisting, no extra scope. Only the
-  ## operands *behind* a guard need the treatment in the leaf branch below.
+  ## `tar.conditional` says whether this subtree is one the short-circuit can
+  ## skip. The leftmost leaf of a spine always runs, so it is emitted exactly
+  ## as the old `trIf` emitted a condition — no hoisting, no extra scope. Only
+  ## the operands *behind* a guard need the treatment in the leaf branch below.
+  ##
+  ## Everything that is not `and` / `or` / `not` is a leaf, and a leaf is just
+  ## `trExpr` into a value plus the guarded transfer — Appel's `unCx(Ex)`
+  ## coercion. That is why this dispatches with `if`/`elif` over the three
+  ## interesting kinds instead of enumerating every `ExprKind`: the fall-back
+  ## is one branch, not a second copy of `trExpr`'s dispatch that has to be
+  ## kept in sync with it.
   let info = n.info
-  case n.exprKind
-  of AndX:
+  let target = tar.lab
+  let jumpIfTrue = tar.jumpIfTrue
+  let conditional = tar.conditional
+  let k = n.exprKind
+  if k == AndX:
     if jumpIfTrue:
       let z = freshLabel(c)
       n.into:
-        trCondJump c, dest, n, z, false, conditional
-        trCondJump c, dest, n, target, true, true
+        trExprToLabel c, dest, n, z, false, conditional
+        trExprToLabel c, dest, n, target, true, true
       addLab dest, z, info
     else:
       n.into:
-        trCondJump c, dest, n, target, false, conditional
-        trCondJump c, dest, n, target, false, true
-  of OrX:
+        trExprToLabel c, dest, n, target, false, conditional
+        trExprToLabel c, dest, n, target, false, true
+  elif k == OrX:
     if jumpIfTrue:
       n.into:
-        trCondJump c, dest, n, target, true, conditional
-        trCondJump c, dest, n, target, true, true
+        trExprToLabel c, dest, n, target, true, conditional
+        trExprToLabel c, dest, n, target, true, true
     else:
       let z = freshLabel(c)
       n.into:
-        trCondJump c, dest, n, z, true, conditional
-        trCondJump c, dest, n, target, false, true
+        trExprToLabel c, dest, n, z, true, conditional
+        trExprToLabel c, dest, n, target, false, true
       addLab dest, z, info
-  of NotX:
+  elif k == NotX:
     n.into:
-      trCondJump c, dest, n, target, not jumpIfTrue, conditional
-  of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
-       InfX, NeginfX, NanX, FalseX, TrueX, XorX, NegX,
-       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
-       CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
-       ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
-       LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
-       PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX,
-       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX,
-       BaseobjX, HconvX, DconvX, CallstrlitX, InfixX, PrefixX,
-       HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
-       InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
-       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
-       DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
-       Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
-       MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
-       InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
-       SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
-    if transparentExpr(n):
-      n.into:
-        trCondJump c, dest, n, target, jumpIfTrue, conditional
-      return
+      trExprToLabel c, dest, n, target, not jumpIfTrue, conditional
+  elif transparentExpr(n):
+    n.into:
+      trExprToLabel c, dest, n, target, jumpIfTrue, conditional
+  else:
     # leaf: its pre-statements land here, then the guarded transfer
     let leafStart = n
     var t0 = Target(m: IsEmpty)
@@ -957,7 +968,7 @@ proc trIfFlat(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target
         dest.addParLe(ScopeS, binfo)
         c.typeCache.openScope()
         n.into:
-          trCondJump c, dest, n, falseLab, false, conditional = false
+          trExprToLabel c, dest, n, falseLab, false, false
           trBranchBody c, dest, n, tar, tmp
         c.typeCache.closeScope()
         dest.addParRi()
@@ -1147,16 +1158,36 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if isComplex(n, c.goal) or mayBindToTemp(n):
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
-        var tar = Target(m: IsEmpty)
-        trCond c, dest, n, tar, c.goal == TowardsNjvl
-        dest.copyIntoKind IfS, info:
-          dest.copyIntoKind ElifU, info:
-            dest.addTarget tar
-            trStmt c, dest, n
-          dest.copyIntoKind ElseU, info:
-            copyIntoKind dest, StmtsS, info:
-              dest.copyIntoKind BreakS, info:
-                dest.addDotToken()
+        if wantsCondJumps(c, n):
+          # Same deal as `trIfFlat`: a short-circuit guard compiles against a
+          # jump target instead of a bool the `if` below would immediately
+          # re-test. The exit is the FALL-THROUGH and the body is behind the
+          # jump, because the only way out of a loop is `(break)` and a label
+          # cannot be placed after the body without the fall-off-the-body edge
+          # landing on it too:
+          #
+          #   Cjmp(cond)(bodyLab, true); (break); (lab bodyLab); <body>
+          #
+          # Everything stays inside the loop body's `(stmts …)`, so the jumps
+          # are the same intra-list shape `trIfFlat` emits — no transfer ever
+          # leaves the loop.
+          let bodyLab = freshLabel(c)
+          trExprToLabel c, dest, n, bodyLab, true, false
+          dest.copyIntoKind BreakS, info:
+            dest.addDotToken()
+          addLab dest, bodyLab, info
+          trStmt c, dest, n
+        else:
+          var tar = Target(m: IsEmpty)
+          trCond c, dest, n, tar, c.goal == TowardsNjvl
+          dest.copyIntoKind IfS, info:
+            dest.copyIntoKind ElifU, info:
+              dest.addTarget tar
+              trStmt c, dest, n
+            dest.copyIntoKind ElseU, info:
+              copyIntoKind dest, StmtsS, info:
+                dest.copyIntoKind BreakS, info:
+                  dest.addDotToken()
     else:
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
@@ -1467,6 +1498,12 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # can have the dangerous `Expr` node which is the whole
   # reason for xelim's existence.
+  if tar.m == IsLabel:
+    # `Cx`: compiled against a jump target rather than materialised into a
+    # value. `trCondJump` handles the mode completely and never passes it on,
+    # so the rest of this file only ever sees the value-producing modes.
+    trCondJump c, dest, n, tar
+    return
   case n.kind
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree tar.t, n
