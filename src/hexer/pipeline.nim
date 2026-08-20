@@ -56,29 +56,32 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # Pass 1: Desugar
   desugar(pass, c.activeChecks)
 
-  # Pass 3: Lambda Lifting
+  # Pass 2: Lambda Lifting
   pass.prepareForNext("lambdalift")
   elimLambdas(pass)
 
-  # Pass 6: Inject Raising Calls (Exception Handling)
-  pass.prepareForNext("eraiser")
-  var needsXelimIgnored = false
-  injectRaisingCalls(pass, c.bits div 8, needsXelimIgnored)
-
-  # Pass 4: Lower Expressions (first time)
+  # Pass 4: Lower Expressions — establishes the statement-based normal form
+  # every later pass now PRESERVES instead of breaking and re-fixing:
+  # expression-`if`/`case`/`try` become statements, `and`/`or` become bool
+  # temps, and an impure `while` condition becomes a leading body guard. See
+  # `doc/final_ir.md`.
   pass.prepareForNext("xelim1")
   lowerExprs(pass)
 
-  # Pass 5: Inject Duplication Points
+  # Pass 4: Inject Raising Calls (Exception Handling). Emits the `canRaise`
+  # temp and its check as STATEMENTS in front of the enclosing statement, so
+  # it no longer re-introduces the `(expr (stmts ...) tmp)` nesting that used
+  # to require a second `xelim` run right after it.
+  pass.prepareForNext("eraiser")
+  injectRaisingCalls(pass, c.bits div 8)
+
+  # Pass 5: Inject Duplication Points. Like the eraiser it emits its owning
+  # temps as statements (`bindToTemp` → `c.hoisted`), which is what removed the
+  # `xelim2` run that used to sit between this pass and the destroyer.
   pass.prepareForNext("duplifier")
   injectDups(pass, c.liftingCtx)
 
-
-  # Pass 7: Lower Expressions (second time, after raises)
-  pass.prepareForNext("xelim2")
-  lowerExprs(pass)
-
-  # Pass 8: Inject Destructors (RAII/Cleanup)
+  # Pass 6: Inject Destructors (RAII/Cleanup)
   pass.prepareForNext("destroyer")
   injectDestructors(pass, c.liftingCtx)
 
@@ -104,21 +107,25 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
         stderr.writeLine "verify_arc diagnostics for ", pass.moduleSuffix, ":"
         stderr.writeLine toString(arcErrs, false)
 
+  # Pass 7: CPS transform (coroutines)
   pass.prepareForNext("cps")
   transformToCps(pass)
 
-  # Pass 9: Transform VTables (Virtual Table Backend)
+  # Pass 8: Transform VTables (Virtual Table Backend)
   var needsXelimAgain = false
   pass.prepareForNext("vtables")
   transformVTables(pass, needsXelimAgain)
 
-  # Pass 10: Inject Const Param Dereferences
+  # Pass 9: Inject Const Param Dereferences
   pass.prepareForNext("constparams")
   injectConstParamDerefs(pass, c.bits div 8, needsXelimAgain)
 
-  # Final pass: Lower expressions and casts.
-  # LowerCasts mode also lowers expressions, so this replaces
-  # the previously conditional xelim_final pass.
+  # Pass 10: the remaining REAL lowering step, not a repair pass: `LowerCasts`
+  # unnests calls (the Final-IR "calls are unnested statements" rule) and binds
+  # a cast's source and result to variables. `vtables`/`constparams` still emit
+  # `(expr (stmts ...) v)` for their temps, so this run also flattens those —
+  # converting them to the `hoisted` discipline is what would leave this pass
+  # with nothing but its own two jobs. See `doc/final_ir.md`.
   pass.prepareForNext("xelim_final")
   lowerExprs(pass, LowerCasts)
   pass.finishPass()

@@ -1959,6 +1959,27 @@ proc trBreak(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse(lab, info)
     dest.addParRi(n.endInfo)
 
+proc trLab(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(lab :L)` — a Nimony-level merge label (`xelim`'s two-target condition
+  ## compiler emits these for short-circuit chains). Leng has the very same
+  ## construct, so this is a straight copy with the symbol registered.
+  let info = n.info
+  n.into:
+    let (s, _) = getSymDef(c, n)
+    dest.addParLe("lab", info)
+    dest.addSymDef(s, info)
+    dest.addParRi()
+
+proc trJmp(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  n.into:
+    expectSym c, n
+    let lab = n.symId
+    inc n
+    dest.addParLe("jmp", info)
+    dest.addSymUse(lab, info)
+    dest.addParRi()
+
 proc trIf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # (if cond (.. then ..) (.. else ..))
   takeInto dest, n:
@@ -2125,6 +2146,8 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     inc n
   of TagLit:
     case n.stmtKind
+    of LabS: trLab c, dest, n
+    of JmpS: trJmp c, dest, n
     of NoStmt:
       if n.cursorTagId == TagId(KeepovfTagId):
         trKeepovf c, dest, n
