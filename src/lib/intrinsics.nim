@@ -562,36 +562,45 @@ const
                  params: AtomFence, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
 
-    # ── AdvSIMD/NEON (AArch64) ─────────────────────────────────────────────
-    # All pinned: one machine instruction each, named by its nifasm tag. The
-    # loads/stores carry their memory effect so nothing reorders or deletes
-    # them; the arithmetic is pure and CSE-eligible like any other value.
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # fldrq
+    # ── 128-bit vectors: AdvSIMD (AArch64) and SSE2 (x86-64) ───────────────
+    # All pinned: one machine instruction each on AArch64, named by its nifasm
+    # tag. The loads/stores carry their memory effect so nothing reorders or
+    # deletes them; the arithmetic is pure and CSE-eligible like any other value.
+    #
+    # `icPinned` is about the ROW, not the instruction count: SSE is
+    # two-address, so the x86-64 lowering of a three-register row is a copy plus
+    # the op, and `vfmla` is a multiply plus an add because SSE has no FMA (see
+    # `codegen_x64.emitVecInstr2`).
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 2,           # fldrq
                  params: VecLoad, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efReads}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # fstrq
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 3,           # fstrq
                  params: VecStore, roles: AllIn, ret: ptVoid,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efWrites}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # vfadd
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 3,           # vfadd
                  params: VecBin, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # vfsub
+    # No `tgX64`: the nifasm tag id space is 9 bits and full, so there is no id
+    # left for `subpd`/`subps`. The vectorizer's `vecSse` mode refuses any loop
+    # that would need this row (`shoggoth/vectorizer.nim`), so the gap costs a
+    # vectorization, never a compile error.
+    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,                 # vfsub
                  params: VecBin, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,           # vfmul
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 3,           # vfmul
                  params: VecBin, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     # `tie: 0` — the machine op accumulates IN PLACE (fmla Vd += Vn*Vm), so the
     # result must land where operand 0 lives. The vectorizer spells every use as
     # `(asgn acc (instr vfmla acc a b bits))`, which satisfies the tie with no
     # copy; the a64 back end asserts it rather than inserting a 128-bit move.
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 4,           # vfmla
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 4,           # vfmla
                  params: VecFma, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: 0, effects: {efPure}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # vdup
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 2,           # vdup
                  params: VecDup, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 2,           # vaddv
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 2,           # vaddv
                  params: VecHAdd, roles: AllIn, ret: ptFloatW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
 
