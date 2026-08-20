@@ -184,16 +184,6 @@ see them in their ordinary `case n.stmtKind` traversal instead of needing a
 side channel. `lengcgen.trLab`/`trJmp` then map them one-to-one onto their Leng
 counterparts.
 
-Two constraints came out of that:
-
-- **The CPS state machine also spells its states `lab`/`jmp`**, with an
-  *integer* operand (`coro_transform`, `togoto`). Those passes now dispatch on
-  the operand kind: `IntLit` is a coroutine state, a symbol is a structured
-  merge label they pass through untouched.
-- **`nj.nim` and `finalir.nim` keep their own condition lowerings.** `Cx` runs
-  only for the `ElimExprs` and `LowerCasts` goals (`CondJumpGoals`); `nj`
-  lowers a short-circuit to its cfvar (`mflag`/`jtrue`) form and its golden
-  outputs are that form, and `finalir` carries its own condition compiler.
 
 ### What a flat layout costs, and how it is paid
 
