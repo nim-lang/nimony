@@ -306,6 +306,9 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # Static-import library annotation for the NATIVE backend (arkham);
         # meaningless for C output — the linker resolves the symbol.
         skip n
+      of ConstrefP:
+        # A PARAMETER pragma; never legal on a proc.
+        error c.m, "invalid proc pragma: ", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.hasMore and n.kind == StrLit:
@@ -407,6 +410,11 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
           while n.hasMore: skip n
       of WasP:
         genWasPragma c, n
+      of ConstrefP:
+        # Provenance only (see `doc/tags.md`): the pointer stands for a
+        # by-value source parameter. Nothing to emit — it exists for
+        # `funcsummary`/the optimizer.
+        skip n
       else:
         error c.m, "invalid pragma: ", n
   else:

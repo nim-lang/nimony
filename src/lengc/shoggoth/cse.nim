@@ -106,6 +106,12 @@ type
   ParamEffect* = object
     cls*: uint32
     reads*, writes*, slotWritten*, escapes*: bool
+    constRef*: bool                  ## `(constref)`: the parameter is a pointer
+                                     ## `lengcgen` introduced for a BY-VALUE
+                                     ## source parameter. Nothing can write
+                                     ## through it — the precondition that
+                                     ## licensed the pointer, not an analysis
+                                     ## result, so it outlives `callsUnknown`.
 
   FunctionSummary* = object
     writesGlobal*, readsGlobal*, callsUnknown*, raises*: bool
@@ -147,8 +153,15 @@ when defined(cseSummaryStats):
     ## whose sibling fields the path rule separates), not about the rule.
 
 proc paramMayWrite*(s: FunctionSummary; idx: int): bool {.inline.} =
-  if s.callsUnknown: return true
+  ## `constRef` survives `callsUnknown`: that blanket is there because an
+  ## unseen callee might write through a pointer it was handed, but a by-value
+  ## source parameter can only be passed onwards by value (again `(constref)`)
+  ## or copied. It says nothing about the POINTEE — another argument may alias
+  ## the same object and be written through, which is why callers ask about
+  ## every argument position separately. See `hexer/funcsummary`.
   if idx < 0 or idx >= s.params.len: return true
+  if s.params[idx].constRef: return false
+  if s.callsUnknown: return true
   result = s.params[idx].writes or s.params[idx].slotWritten
 
 proc paramEscapes*(s: FunctionSummary; idx: int): bool {.inline.} =
@@ -972,6 +985,7 @@ proc readParamSummary(n: var Cursor; s: var FunctionSummary) =
             of "writes": s.params[idx].writes = true
             of "slot": s.params[idx].slotWritten = true
             of "escapes": s.params[idx].escapes = true
+            of "constref": s.params[idx].constRef = true
             else: discard
             inc n
           else:
