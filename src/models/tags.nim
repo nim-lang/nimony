@@ -355,6 +355,7 @@ type
     NeedtypesTagId
     AlwaysInlineTagId
     NakedTagId
+    ConstrefTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -709,5 +710,6 @@ const
     ("deferexpansion", 349),
     ("needtypes", 350),
     ("alwaysInline", 351),
-    ("naked", 352)
+    ("naked", 352),
+    ("constref", 353)
   ]

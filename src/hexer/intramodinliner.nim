@@ -680,25 +680,37 @@ proc writeTargetIsLocalSlot(dst: Cursor): bool =
   result = s != SymId(0) and isLocalName(pool.syms[s])
 
 proc scanParamUsage(c: Cursor; params: HashSet[SymId];
-                    assigned, addrTaken: var HashSet[SymId]) =
+                    assigned, addrTaken: var HashSet[SymId];
+                    opaqueEffects: var bool) =
   ## Record which parameters have their *slot* reassigned (a bare `p = …`) or
   ## their *slot* address taken (`addr p`) anywhere in the body — those cannot
   ## be replaced by their argument value. Writes and address-of that go
   ## *through* the pointer (`(*p).f = …`, `addr (*p)`) leave the slot's value
   ## and address intact, so `slotRootOf` deliberately ignores them.
+  ##
+  ## `opaqueEffects` reports whether the body could write memory the scan
+  ## cannot attribute to a named local slot: a store whose destination root is
+  ## a through-pointer/unmodelled lvalue (`slotRootOf` = 0), or any call
+  ## (whose callee may write through captured pointers). While it stays false,
+  ## the body provably reads — never writes — everything reachable through an
+  ## address it takes, which is what lets an ADDRESS-TAKEN read-only param
+  ## still be substituted by a caller lvalue (see `bindingsFor`).
   if not c.isTagLit: return
   if c.stmtKind in {AsgnS, StoreS}:
     var dst = c.childCursor
     if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
     let s = slotRootOf(dst)
     if s in params: assigned.incl s
+    elif s == SymId(0): opaqueEffects = true # through-pointer / unmodelled store
   elif c.exprKind in AddrKinds:
     let s = slotRootOf(c.childCursor)
     if s in params: addrTaken.incl s
+  elif c.exprKind == CallC or c.stmtKind == CallS:
+    opaqueEffects = true                     # callee may write through pointers
   var n = c
   n.into:
     while n.hasMore:
-      scanParamUsage(n, params, assigned, addrTaken)
+      scanParamUsage(n, params, assigned, addrTaken, opaqueEffects)
       skip n
 
 proc scanRets(n: var Cursor; resultSym: var SymId; found, ok: var bool) =
@@ -1054,10 +1066,17 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
   for s in pSyms: paramSet.incl s
   var assigned = initHashSet[SymId]()
   var addrTaken = initHashSet[SymId]()
-  scanParamUsage(body, paramSet, assigned, addrTaken)
-  # A body that cannot write anything the caller sees makes every pure PATH
-  # argument stable across the splice — the fact the refusals below could not
-  # establish. Computed once per call site, and only when it can pay off.
+  var opaqueEffects = false
+  scanParamUsage(body, paramSet, assigned, addrTaken, opaqueEffects)
+  # Two different "this body cannot disturb the caller" facts, for two
+  # different substitutions — neither implies the other:
+  #
+  # - `opaqueEffects` (above, free: it rides the same walk) is about writes
+  #   *through pointers*. It tolerates a write to a named GLOBAL slot, so the
+  #   address-taken substitution below is restricted to caller LOCALS.
+  # - `bodyIsCallerReadOnly` is about caller-observable memory at large: it
+  #   forbids the global write, but tolerates calls that do not return. That is
+  #   what a pure PATH argument needs to be stable across the splice.
   var uses = initTable[SymId, int]()
   var callerReadOnly = false
   when PathArgSubstitution:
@@ -1071,9 +1090,26 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       callerReadOnly = bodyIsCallerReadOnly(c, body)
       if callerReadOnly: countParamUses(body, paramSet, uses)
   for i in 0 ..< pSyms.len:
-    if pSyms[i] in assigned or pSyms[i] in addrTaken:
-      continue                               # slot mutated / addr observed → copy
+    if pSyms[i] in assigned:
+      continue                               # slot mutated → copy
     let arg = argCursors[i]
+    if pSyms[i] in addrTaken:
+      # The body takes the param's ADDRESS — but if it provably never writes
+      # through any pointer (`opaqueEffects` false: no store the scan can't
+      # attribute to a named local slot, and no call), everything reachable
+      # through that address is only READ, so the copy and the caller's own
+      # slot are indistinguishable and the copy can go. This is the SSO string
+      # case: `hashStr`/`[]`/`==` take `haddr s` purely to reach the packed
+      # bytes, and binding forced a whole-string copy per call PLUS an
+      # address-taken stack object that poisoned copyprop/CSE around every
+      # call site. The argument must be a bare LOCAL lvalue: `(haddr arg)` is
+      # spliced verbatim, so a literal or compound is unusable, and a global
+      # is excluded because the body may assign a global directly (that write
+      # targets a named slot, so it does not set `opaqueEffects`) — a local
+      # cannot be written by any means the scan admits.
+      if not opaqueEffects and arg.isSymbol and isLocalName(pool.syms[arg.symId]):
+        result.subst[pSyms[i]] = arg
+      continue                               # else: address observed → copy
     # A read-only param (value-stable per `scanParamUsage`) may be replaced by
     # its argument at every use instead of bound to a fresh `(var)` copy.
     # Pool are always stable. A bare *local* symbol is stable too: the
@@ -1469,13 +1505,13 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   ## inlines to a single expression. Matches the *adjacent* pair
   ##
   ##   (var :tmp <pragmas> <type> (call f arg…))
-  ##   (if (elif tmp BODY) …rest…)
+  ##   (if (elif tmp BODY) …rest…)          — or (elif (not tmp) BODY)
   ##
   ## where `f`'s body is exactly `result = X`, every parameter is
   ## substitutable, and `tmp` is read as that first `elif`'s condition and
   ## nowhere else in its scope. It then emits
   ##
-  ##   (if (elif X' BODY) …rest…)
+  ##   (if (elif X' BODY) …rest…)           — X' negated if the guard was
   ##
   ## dropping the temp entirely, so arkham's `emitCond2` fuses the compare
   ## into the branch (`cmp; jcc`) instead of materialising a boolean and
@@ -1509,7 +1545,17 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   if not nextCur.isTagLit or nextCur.stmtKind != IfS: return 0
   let firstElif = nextCur.childCursor
   if not firstElif.isTagLit or firstElif.substructureKind != ElifU: return 0
-  let condCur = firstElif.childCursor
+  var condCur = firstElif.childCursor
+  # The guard may be the temp itself or its negation — xelim's two-target
+  # condition compiler guards early exits with `(not tmp)`. `not` evaluates
+  # its operand unconditionally, so splicing X under it is as sound as the
+  # bare-symbol case; the negation is re-emitted around the spliced X.
+  var negatedGuard = false
+  if condCur.isTagLit and condCur.exprKind == NotC:
+    let inner = condCur.childCursor
+    if inner.hasMore and inner.isSymbol:
+      condCur = inner
+      negatedGuard = true
   if not condCur.isSymbol or condCur.symId != tmpSym: return 0
   # The definition is about to disappear, so `tmp` must be read here and
   # nowhere else. A local's reads live between its declaration and the end of
@@ -1571,8 +1617,12 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
     var elifn = ifOpener
     dest.addParLe(elifn.cursorTagId, elifn.info)   # copy `(elif` opener
     elifn.into:
-      emitRenamed(dest, retVal, bnd)       # X' replaces the tmp condition
-      skip elifn                           # drop the original tmp condition
+      if negatedGuard:
+        dest.addParLe(TagId(NotC), elifn.info)
+      emitRenamed(dest, retVal, bnd)     # X' replaces the tmp condition
+      if negatedGuard:
+        dest.addParRi()
+      skip elifn                           # drop the original tmp/(not tmp) condition
       while elifn.hasMore:
         dest.takeTree elifn                # elif body verbatim
     dest.addParRi()                        # close (elif …)

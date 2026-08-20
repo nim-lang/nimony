@@ -110,7 +110,7 @@ type
 
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor)
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner)
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId)
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId; constRef = false)
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string
 
 type
@@ -764,7 +764,13 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
-    trLocal(c, dest, paramCursor, ParamY, TraverseSig, SymId(0))
+    # `constRef = true`: this pointer exists only because the parameter is
+    # passed by reference for efficiency — the SOURCE parameter is by-value, so
+    # nothing may write through it. `passByConstRef` already excluded
+    # `sink`/`var`/`out`, so that is the precondition which licensed the
+    # pointer, not something anyone has to analyse. `funcsummary` reads the
+    # `(constref)` pragma back — see `paramMayWrite`.
+    trLocal(c, dest, paramCursor, ParamY, TraverseSig, SymId(0), constRef = true)
     skip n
   else:
     trLocal(c, dest, n, ParamY, TraverseSig, SymId(0))
@@ -1852,7 +1858,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     # of which can appear as a cursor head here.
     error c, "BUG: unexpected ')' or EofToken"
 
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId) =
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId; constRef = false) =
   var symKind = if tag == ResultY: VarY else: tag
   var localDecl = n
   let toPatch = dest.len
@@ -1890,6 +1896,8 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       dest.addKeyVal genPragmas, "register", prag.register, pinfo
     if StackP in prag.flags:
       dest.addKey genPragmas, "stack", pinfo
+    if constRef:
+      dest.addKey genPragmas, "constref", pinfo
     closeGenPragmas dest, genPragmas
 
     let typAt = n
