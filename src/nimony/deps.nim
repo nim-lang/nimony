@@ -983,12 +983,18 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addSymbolDef "optimize"
         b.addStrLit shoggoth
         b.addStrLit "c"
-        if native and platform.CPU[c.config.targetCPU].name == "arm64":
-          # the AdvSIMD loop vectorizer: emits (instr ...) rows only the
-          # native AArch64 backend lowers, so it is strictly target-gated.
-          # (The flag is part of the command line, so nifmake's cache key
-          # separates vectorized .oc.nif files from C-backend ones.)
-          b.addStrLit "--vectorize"
+        let cpuName = platform.CPU[c.config.targetCPU].name
+        if native and cpuName in ["arm64", "amd64"]:
+          # the 128-bit loop vectorizer: emits (instr ...) rows only the native
+          # back ends lower — AArch64 via AdvSIMD, x86-64 via SSE2 — so it stays
+          # target-gated. (The flag is part of the command line, so nifmake's
+          # cache key separates vectorized .oc.nif files from C-backend ones.)
+          # Spelled with a plain local rather than an `if` expression: nimony
+          # compiles this file, and its initialization analysis cannot prove a
+          # temp bound by a branch expression is initialized here.
+          var vecFlag = "--vectorize"
+          if cpuName == "amd64": vecFlag = "--vectorize:sse"
+          b.addStrLit vecFlag
         b.addKeyw "input"
         b.addKeyw "output"
 
