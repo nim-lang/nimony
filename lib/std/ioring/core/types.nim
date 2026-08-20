@@ -14,7 +14,6 @@ type
     result*: int
 
   OpContext* = object
-    inUse*: bool
     kind*: IoOp
     fd*: FileHandle
     seqnum*: SeqNum
@@ -24,8 +23,3 @@ type
     res*: int
     acceptAddr*: Sockaddr_storage
     acceptLen*: SockLen
-    # Intrusive doubly-linked list of every in-flight slot that shares `fd`,
-    # so a readiness event can find "all ops for this fd" in O(k) (k = ops on
-    # this fd) instead of scanning the whole arena. -1 means "no neighbour".
-    nextInFd*: int
-    prevInFd*: int

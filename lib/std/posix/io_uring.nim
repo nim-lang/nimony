@@ -701,7 +701,7 @@ proc waitReady(queue: var Queue; waitNr: uint = 0): uint32 {.raises, tags: [], i
     discard enter(queue.fd, 0.cint, waitNr.cint, cast[ptr cint](flags.addr)[], nil, 0.cint)
     result = queue.cqReady
 
-proc copyCqesToSeq(queue: var Queue; cqes: seq[Cqe]; ready: uint32) {.inline.} =
+proc copyCqesToSeq(queue: var Queue; cqes: openArray[Cqe]; ready: uint32) {.inline.} =
   var
     head = queue.cq.head[]
     tail = head + ready
@@ -736,7 +736,7 @@ proc copyCqes*(queue: var Queue; waitNr: uint = 0): seq[Cqe] {.raises, tags: [].
   newSeq[Cqe](result, ready.int)
   copyCqesToSeq(queue, result, ready)
 
-proc copyCqes*(queue: var Queue; cqes: seq[Cqe]; waitNr: uint = 0): int {.raises, tags: [].} =
+proc copyCqes*(queue: var Queue; cqes: openArray[Cqe]; waitNr: uint = 0): int {.raises, tags: [].} =
   ## same as copyCqes(queue, waitNr) but copy cqes to your array
   ## returns copied cqe count
   var ready = queue.waitReady(waitNr)

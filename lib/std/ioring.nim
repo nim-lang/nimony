@@ -21,17 +21,13 @@ export backend.BackendRelays, backend.CqSize
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
 
-proc poll(timeoutMs: int): bool {.nimcall.} =
-  backendRelays.poll(timeoutMs)
-
 proc initIoRing*() =
-  gSlots = SlotArena()
-  gSlots.init()
-  gCq = newSeq[IoCompletion](CqSize)
-  gNextSeq = 1
-  initPlatformBackend()
-  gReactor = poll
   initPool()
+  initOpQueues()
+  initSlots()
+  gCq = newSeq[IoCompletion](CqSize)
+  initPlatformBackend()
+  gReactor = backendRelays.poll
 
 proc shutdown*() =
   atomicStore(gClosed, true, moRelaxed)
@@ -43,59 +39,35 @@ proc nextSeqNum(): SeqNum =
 proc submitNop*(cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  let idx = gSlots.allocSlot(-1)
-  let op = gSlots.addrSlot(idx)
-  op.kind = opNop
-  op.fd = -1
-  op.seqnum = result
-  op.cont = cont
-  op.res = cast[int](resPtr)
-  backendRelays.submit(idx, op)
+  var op = OpContext(kind: opNop, fd: -1, seqnum: result,
+    cont: cont, res: cast[int](resPtr))
+  discard gOpQueues[threadIdx].tryEnqueue(op)
 
 proc submitRead*(fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  let idx = gSlots.allocSlot(fd)
-  let op = gSlots.addrSlot(idx)
-  op.kind = opRead
-  op.fd = fd
-  op.seqnum = result
-  op.buf = buf
-  op.len = len
-  op.cont = cont
-  op.res = cast[int](resPtr)
-  backendRelays.submit(idx, op)
+  var op = OpContext(kind: opRead, fd: fd, seqnum: result, buf: buf, len: len,
+    cont: cont, res: cast[int](resPtr))
+  discard gOpQueues[threadIdx].tryEnqueue(op)
 
 proc submitWrite*(fd: cint; buf: pointer; len: int;
-                  cont = Continuation(fn: nil, env: nil);
-                  resPtr: nil ptr int = nil): SeqNum =
+                 cont = Continuation(fn: nil, env: nil);
+                 resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  let idx = gSlots.allocSlot(fd)
-  let op = gSlots.addrSlot(idx)
-  op.kind = opWrite
-  op.fd = fd
-  op.seqnum = result
-  op.buf = buf
-  op.len = len
-  op.cont = cont
-  op.res = cast[int](resPtr)
-  backendRelays.submit(idx, op)
+  var op = OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
+    cont: cont, res: cast[int](resPtr))
+  discard gOpQueues[threadIdx].tryEnqueue(op)
 
 proc submitAccept*(listenFd: cint;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  let idx = gSlots.allocSlot(listenFd)
-  let op = gSlots.addrSlot(idx)
-  op.kind = opAccept
-  op.fd = listenFd
-  op.seqnum = result
-  op.cont = cont
-  op.res = cast[int](resPtr)
+  var op = OpContext(kind: opAccept, fd: listenFd, seqnum: result,
+    cont: cont, res: cast[int](resPtr))
   op.acceptAddr = Sockaddr_storage()
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
-  backendRelays.submit(idx, op)
+  discard gOpQueues[threadIdx].tryEnqueue(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =
   result = 0
@@ -142,15 +114,15 @@ when defined(posix):
     ## fresh fd that the OS immediately reuses for the same number cannot
     ## race with a stale registration/slot that still refers to it.
     backendRelays.forgetFd(fd)
-    let onCancel = proc(idx: int) {.closure.} =
-      let slot = addr gSlots.slots[idx]
+    for idx in gSlots[threadIdx].slotsForFd(fd):
+      let slot = addr gSlots[threadIdx].slots[idx]
       const ECancelled = -125
-      if slot.res != 0:
-        cast[ptr int](slot.res)[] = ECancelled
-      let cont = slot.cont
+      if slot.op.res != 0:
+        cast[ptr int](slot.op.res)[] = ECancelled
+      let cont = slot.op.cont
       if cont.fn != nil:
         submit(cont, int(fd))
-    gSlots.cancelAllForFd(fd, onCancel)
+      gSlots[threadIdx].freeSlot(idx)
     discard posixClose(fd)
 
 when defined(posix):

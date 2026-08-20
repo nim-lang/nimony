@@ -15,6 +15,8 @@ else:
   import windows/winlean
 # --- Configuration ---
 
+import std/stripes
+
 const
   StripeCount* = 8    ## Must be a power of 2.
   StripeSize*  = 128  ## Tasks per stripe; must be a power of 2.
@@ -35,35 +37,26 @@ proc toTask*(c: Continuation): Task {.inline.} =
 
 # --- Task queue ---
 
-type
-  Stripe = object
-    L: TicketLock
-    head, tail, count: int
-    data: array[StripeSize, Task]
 proc poolPollIo*(timeoutMs: int): bool {.nimcall.} =
   ## Polls one I/O backend once; returns true if it delivered anything.
   ## `std/ioring` registers one of these.
   result = false
 
 var
-  stripes: array[StripeCount, Stripe]
+  localQueues: array[StripeCount, FifoStripe[Task]]
+  injectQueue: FifoStripe[Task]
   workers: seq[RawThread]
   stopFlag: bool # accessed atomically
   workerCount* = 0
   gReactor*: proc(timeoutMs: int): bool {.nimcall.} = poolPollIo
+var threadIdx* {.threadvar.}: int
 
 # --- Submit / dequeue ---
 
 proc tryEnqueue(s: int; t: Task): bool {.inline.} =
   ## Push `t` onto stripe `s` if it has room; `false` when the stripe is full.
   let i = s and (StripeCount - 1)
-  stripes[i].L.acquire()
-  result = stripes[i].count < StripeSize
-  if result:
-    stripes[i].data[stripes[i].tail] = t
-    stripes[i].tail = (stripes[i].tail + 1) and (StripeSize - 1)
-    inc stripes[i].count
-  stripes[i].L.release()
+  return localQueues[i].tryEnqueue(t)
 
 proc submit*(t: Task; hint = 0) =
   ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
@@ -82,6 +75,7 @@ proc submit*(t: Task; hint = 0) =
   if tryEnqueue(h, t): return
   for off in 1 ..< StripeCount:
     if tryEnqueue(h + off, t): return
+  if injectQueue.tryEnqueue(t): return
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
   # `fn` is nil when the task completes or parks (I/O will resume a parked one).
   var c = t.con
@@ -95,15 +89,16 @@ proc submit*(c: Continuation; hint = 0) {.inline.} =
   ## Convenience: submit a bare continuation as a task.
   submit(toTask(c), hint)
 
+var dequeTicks {.threadvar.}: int
+
 proc tryBulkDequeue(stripe: int; buf: var array[BulkSize, Task]): int =
+  result = 0
   let s = stripe and (StripeCount - 1)
-  stripes[s].L.acquire()
-  result = min(stripes[s].count, BulkSize)
-  for i in 0 ..< result:
-    buf[i] = stripes[s].data[stripes[s].head]
-    stripes[s].head = (stripes[s].head + 1) and (StripeSize - 1)
-  dec stripes[s].count, result
-  stripes[s].L.release()
+  inc dequeTicks
+  if dequeTicks mod 61 == 0:
+    result = injectQueue.tryBulkDequeue(BulkSize, buf)
+  if result == 0:
+    result = localQueues[s].tryBulkDequeue(BulkSize, buf)
 
 proc drainOnce(startStripe: int): bool =
   ## Dequeue the first non-empty stripe (searching from `startStripe`, for
@@ -139,8 +134,9 @@ when defined(useMimalloc):
     ## per-worker steady state.
 
 proc workerLoop(arg: pointer) {.nimcall.} =
-  let threadIdx = cast[int](arg)
+  threadIdx = cast[int](arg)
   var idleTicks = 0
+  dequeTicks = 0
   var sinceCollect = 0
   while not atomicLoad(stopFlag, moRelaxed):
     # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
@@ -180,6 +176,9 @@ proc initPool*() =
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
     workerCount = max(1, cpuinfo.countProcessors() - 1)
+    for i in 0..<StripeCount:
+      localQueues[i].init(StripeSize)
+    injectQueue.init(StripeSize*16)
     workers.setLen(workerCount)
     for i in 0 ..< workerCount:
       try:

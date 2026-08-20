@@ -13,13 +13,15 @@ import ../core/types
 import ../core/slots
 import ../core/backend
 import ./poll
-import std/[tables, ticketlocks]
+import std/[tables, ticketlocks, threadpool]
 import std/syncio
 
-const MaxIoEvents = 64
+const
+  MaxIoEvents = 64
+  DrainBatch = 128
 
 var
-  epollFd: cint
+  epollFds: seq[cint]
   registeredFds: Table[cint, bool]
   regLock: TicketLock
 
@@ -39,7 +41,8 @@ proc fdNotPollable(res: cint): bool {.inline.} =
   ## and avoids error spam under multi-threaded handler resumption.
   result = res == EPERM or res == EBADF
 
-proc epollReArm(fd: cint; mask: int) {.nimcall.} =
+proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
+  let epollFd = epollFds[threadIdx]
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
   if (mask and EvRead) != 0:
@@ -51,10 +54,6 @@ proc epollReArm(fd: cint; mask: int) {.nimcall.} =
   # event firing, which previously made `data.ptr` an unreliable — and
   # occasionally wrong — way to recover the fd on delivery.
   ev.data.`ptr` = cast[pointer](uint(fd))
-  var alreadyRegistered: bool
-  withLock regLock:
-    alreadyRegistered = registeredFds.getOrDefault(fd, false)
-    registeredFds[fd] = true
   let op = if alreadyRegistered: EPOLL_CTL_MOD else: EPOLL_CTL_ADD
   var res = epoll_ctl(epollFd, op, fd, addr ev)
   if res != 0 and op == EPOLL_CTL_ADD:
@@ -72,32 +71,44 @@ proc epollReArm(fd: cint; mask: int) {.nimcall.} =
         stderr.writeLine("ioring: epoll ADD+MOD both failed: " & $res)
 
 proc epollPoll(timeoutMs: int): bool {.nimcall.} =
+  var buf {.noinit.}: array[DrainBatch, OpContext]
+  var n = gOpQueues[threadIdx].tryBulkDequeue(DrainBatch, buf)
+  if n > 0:
+    for i in 0..<n:
+      var alreadyRegistered = gSlots[threadIdx].hasPendingForFd(buf[i].fd)
+      let idx = gSlots[threadIdx].allocSlot(buf[i])
+      submitForPoll(idx, buf[i].addr, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-  let n = int(epoll_wait(epollFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
+  n = int(epoll_wait(epollFds[threadIdx], addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
   if n <= 0:
     return false
   for i in 0..<n:
     let fd = cint(cast[uint](ioEvents[i].data.`ptr`))
-    processFd(fd, int(ioEvents[i].events))
+    let events = ioEvents[i].events
+    var firedEvents = 0
+    if (events and EPOLLIN) != 0:
+      firedEvents = firedEvents or EvRead
+    if (events and EPOLLOUT) != 0:
+      firedEvents = firedEvents or EvWrite
+    processFd(fd, firedEvents)
   return true
 
 proc epollClose() {.nimcall.} =
-  discard close(epollFd)
+  for i in 0..<workerCount:
+    discard close(epollFds[i])
 
 proc epollForgetFd(fd: cint) {.nimcall.} =
   ## Drop bookkeeping for a fd that is being closed, so a *future* fd with
   ## the same number (POSIX recycles them) is treated as a fresh ADD rather
   ## than incorrectly reusing stale MOD state.
-  withLock regLock:
-    registeredFds.del(fd)
-  discard epoll_ctl(epollFd, EPOLL_CTL_DEL, fd, nil)
+  discard epoll_ctl(epollFds[threadIdx], EPOLL_CTL_DEL, fd, nil)
 
 proc initEpollBackendRelays*(): BackendRelays =
-  epollFd = epoll_create1(0)
-  registeredFds = initTable[cint, bool]()
+  epollFds = @[]
+  for i in 0..<workerCount:
+    epollFds.add(epoll_create1(0))
   reArmEvent = epollReArm
   result = BackendRelays(
-    submit: submitForPoll,
     poll: epollPoll,
     close: epollClose,
     forgetFd: epollForgetFd,

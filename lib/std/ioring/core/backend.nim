@@ -4,13 +4,13 @@
 
 import ./types
 import ./slots
-import std/[threadpool, ticketlocks]
+import std/[threadpool, ticketlocks, stripes, syncio]
 
 const CqSize* = 4096
+const MaxOps* = 8192
 
 type
   BackendRelays* = object
-    submit*: proc (slotIdx: int; op: ptr OpContext) {.nimcall.}
     poll*: proc (timeoutMs: int): bool {.nimcall.}
     close*: proc () {.nimcall.}
     forgetFd*: proc (fd: cint) {.nimcall.}
@@ -18,9 +18,20 @@ type
       ## closed (e.g. epoll's ADD/MOD tracking). `nil` for backends where the
       ## OS already tears this down on close (kqueue) — callers
       ## must nil-check before calling.
-      
+
+var gOpQueues*: seq[FifoStripe[OpContext]]
+proc initOpQueues*() =
+  gOpQueues = newSeq[FifoStripe[OpContext]](workerCount)
+  for q in gOpQueues:
+    q.init(MaxOps)
+
+var gSlots*: seq[SlotArena]
+proc initSlots*() =
+  gSlots = newSeq[SlotArena](workerCount)
+  for s in gSlots:
+    s.init(MaxOps)
+
 var
-  gSlots*: SlotArena
   gNextSeq*: SeqNum
   gCqLock*: TicketLock
   gCq*: seq[IoCompletion]
@@ -30,18 +41,18 @@ var
   gClosed*: bool
 
 proc complete*(slotIdx: int; res: int) =
-  let slot = addr gSlots.slots[slotIdx]
-  if slot.res != 0:
-    cast[ptr int](slot.res)[] = res
-  let cont = slot.cont
-  slot.cont = Continuation(fn: nil, env: nil)
-  gSlots.freeSlot(slotIdx)
+  let slot = addr gSlots[threadIdx].slots[slotIdx]
+  if slot.op.res != 0:
+    cast[ptr int](slot.op.res)[] = res
+  let cont = slot.op.cont
+  slot.op.cont = Continuation(fn: nil, env: nil)
+  gSlots[threadIdx].freeSlot(slotIdx)
   if cont.fn != nil:
-    submit(cont, int(slot.fd))
+    submit(cont, int(slot.op.fd))
   else:
     gCqLock.acquire()
     if gCqCount < CqSize:
-      gCq[gCqTail] = IoCompletion(id: slot.seqnum, op: slot.kind, fd: slot.fd, result: res)
+      gCq[gCqTail] = IoCompletion(id: slot.op.seqnum, op: slot.op.kind, fd: slot.op.fd, result: res)
       gCqTail = (gCqTail + 1) and (CqSize - 1)
       inc gCqCount
     gCqLock.release()
