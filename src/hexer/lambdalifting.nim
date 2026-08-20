@@ -365,7 +365,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-      NoStmt:
+      LabS, JmpS, NoStmt:
       case n.exprKind
       of CallKinds:
         trCall c, dest, n
@@ -1475,7 +1475,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-      NoStmt:
+      LabS, JmpS, NoStmt:
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)

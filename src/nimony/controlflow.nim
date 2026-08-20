@@ -61,6 +61,11 @@ type
     typeCache: TypeCache
     resultSym: SymId
     keepReturns: bool
+    pendingJmps: seq[(SymId, Label)]
+      ## Forward `(jmp L)`s that have not seen their `(lab L)` yet. `jmp` is
+      ## forward-only and scoped (see `doc/final_ir.md`), so a single forward
+      ## pass with a fixup list is a complete model: by the time `(lab L)` is
+      ## reached, every predecessor of `L` has been emitted.
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
@@ -153,6 +158,8 @@ proc patch(c: var ControlFlow; p: Label) =
   c.dest[p.int] = tok
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target)
 proc trStmt(c: var ControlFlow; n: var Cursor)
+proc trJmp(c: var ControlFlow; n: var Cursor)
+proc trLab(c: var ControlFlow; n: var Cursor)
 
 proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
@@ -674,7 +681,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
          LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
          MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
-         BreakS, ContinueS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS,
+         BreakS, ContinueS, JmpS, LabS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
          DiscardS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
@@ -761,6 +768,35 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
       c.flush aa
       c.dest.addParRi()
   control.breakInstrs.add c.jmpForw(n.endInfo)
+
+proc trJmp(c: var ControlFlow; n: var Cursor) =
+  ## `(jmp L)`: an unconditional forward transfer to `(lab L)`. Recorded as a
+  ## fixup; `trLab` patches it.
+  let info = n.info
+  n.into:
+    if n.isSymbol:
+      let lab = n.symId
+      inc n
+      c.pendingJmps.add (lab, c.jmpForw(info))
+    else:
+      bug "invalid jmp statement"
+
+proc trLab(c: var ControlFlow; n: var Cursor) =
+  ## `(lab L)`: the join every `(jmp L)` lands on. Forward-only means all of
+  ## them have already been emitted, so the join is complete right here.
+  n.into:
+    if n.isSymbolDef or n.isSymbol:
+      let lab = n.symId
+      inc n
+      var i = 0
+      while i < c.pendingJmps.len:
+        if c.pendingJmps[i][0] == lab:
+          c.patch c.pendingJmps[i][1]
+          c.pendingJmps.del i
+        else:
+          inc i
+    else:
+      bug "invalid lab statement"
 
 proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
@@ -1015,6 +1051,10 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trBreak c, n
   of ContinueS:
     trContinue c, n
+  of JmpS:
+    trJmp c, n
+  of LabS:
+    trLab c, n
   of RetS:
     trReturn c, n
   of ResultS:

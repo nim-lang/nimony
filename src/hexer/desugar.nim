@@ -1193,7 +1193,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       of MacroS, IteratorS, TemplateS, EmitS, BreakS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
         ExportS, CommentS,
-        PragmasS:
+        PragmasS, LabS, JmpS:
         takeTree dest, n
       of TypeS:
         if isTopScope:

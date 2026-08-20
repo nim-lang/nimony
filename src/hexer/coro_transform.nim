@@ -490,7 +490,11 @@ proc getNextState*(buf: TokenBuf; n: Cursor): int =
     # raw linear scan: only TagLit tokens carry a tagId (suffix/literal bits
     # alias it), and the head may carry a line-info suffix before its child
     if buf[pos].kind == TagLit and globalTags.tags[buf[pos].tagId] == "lab":
-      return int(readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos))).intVal)
+      let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
+      # Skip `xelim`'s structured merge labels: only the CPS state machine's
+      # own integer-labelled `lab` names a state (`doc/final_ir.md`).
+      if operand.kind == IntLit:
+        return int(operand.intVal)
     inc pos
   return -1
 
@@ -1053,7 +1057,11 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
-  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab":
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab" and
+     n.childCursor.kind == IntLit:
+    # Only the CPS state machine's own integer-labelled `lab` marks a state
+    # boundary. A symbol-labelled one is `xelim`'s structured merge label
+    # (`doc/final_ir.md`) and is opaque here.
     currentState = int(n.childCursor.intVal)
 
   let sk = n.stmtKind
@@ -1297,7 +1305,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
-            DeferS, NoStmt:
+            DeferS, LabS, JmpS, NoStmt:
           dest.addParLe(n.cursorTagId, n.info)
           n.into:
             while n.hasMore:
@@ -1906,7 +1914,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
         AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
         HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, NoStmt:
+        AsmS, DeferS, LabS, JmpS, NoStmt:
       case n.exprKind
       of CallKinds - {DelayX}:
         trCall c, dest, n
@@ -2060,15 +2068,26 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           else:
             case globalTags.tags[n.cursorTagId]
             of "jmp":
-              n.into:
-                gotoNextState(c, dest, int(n.intVal), n.info)
-                inc n
+              # Two different `jmp`s meet here. The CPS state machine's own
+              # carries an INTEGER state id (this pass and `togoto` produce
+              # it); the structured Nimony one carries a label SYMBOL and is
+              # `xelim`'s short-circuit lowering, which must survive to Leng
+              # untouched (`doc/final_ir.md`).
+              if n.childCursor.kind == IntLit:
+                n.into:
+                  gotoNextState(c, dest, int(n.intVal), n.info)
+                  inc n
+              else:
+                takeTree dest, n
             of "lab":
-              dest.addParRi() # close stmts
-              dest.addParRi() # close proc decl
-              n.into:
-                newLocalProc c, dest, int(n.intVal), c.procStack[^1]
-                inc n
+              if n.childCursor.kind == IntLit:
+                dest.addParRi() # close stmts
+                dest.addParRi() # close proc decl
+                n.into:
+                  newLocalProc c, dest, int(n.intVal), c.procStack[^1]
+                  inc n
+              else:
+                takeTree dest, n
             else:
               coroTrSons(c, dest, n)
   else:

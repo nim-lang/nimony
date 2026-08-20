@@ -44,7 +44,23 @@ type
   Context = object
     ptrSize, tmpCounter: int
     typeCache: TypeCache
-    needsXelim: bool
+    hoisted: TokenBuf
+      ## Statements that must run *before* the statement currently being
+      ## emitted: the `canRaise` temp of a raising call plus its
+      ## `if failed(tmp): raise tmp` check. Emitting them here — instead of
+      ## wrapping them into an `(expr (stmts ...) tmp)` in expression position —
+      ## is what keeps the eraiser's output statement-based, so no follow-up
+      ## `xelim` run is needed to flatten it again (see `doc/final_ir.md`).
+
+proc hoistTail(c: var Context; dest: var TokenBuf; pos: int) =
+  ## Move `dest[pos ..< ^0]` — a sequence of complete statements — in front of
+  ## the statement currently being translated.
+  if dest.len <= pos: return
+  var tail = cursorAt(dest, pos)
+  while tail.hasMore:
+    takeTree c.hoisted, tail
+  endRead tail
+  dest.shrink pos
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
@@ -53,7 +69,8 @@ when not defined(nimony):
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
-  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache), needsXelim: c.needsXelim)
+  var c2 = Context(ptrSize: c.ptrSize, typeCache: move(c.typeCache),
+                   hoisted: createTokenBuf(16))
 
   copyInto(dest, n):
     let isConcrete = c2.typeCache.takeRoutineHeader(dest, decl, n)
@@ -67,7 +84,6 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       takeTree dest, n
   c.typeCache = move(c2.typeCache)
-  c.needsXelim = c2.needsXelim
 
 proc addRaiseStmt(dest: var TokenBuf; target: SymId; info: NifLineInfo) =
   copyIntoKind dest, IfS, info:
@@ -135,11 +151,15 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
   # now pragmas follow:
   let canRaise = hasPragma(fnType, RaisesP)
   if canRaise and not inhibit:
-    c.needsXelim = true
     let isVoid = retType.isDotToken or retType.typeKind == VoidT
-    if not isVoid:
-      dest.addParLe(ExprX, info)
-    copyIntoKind dest, StmtsS, info:
+    let hoistPos = dest.len
+    # A void raising call is already in statement position, so its temp and
+    # check stay put, wrapped in a `(stmts ...)`. A value-returning one is an
+    # operand: its statements are hoisted in front of the enclosing statement
+    # and only the temp's name is left behind.
+    if isVoid:
+      dest.addParLe(StmtsS, info)
+    block:
       let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
       inc c.tmpCounter
       # The temp holds the call's RETURN VALUE — an owned, freshly
@@ -158,9 +178,11 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
         dest.addParRi(n.endInfo)
         n = callStart; skip n
       addRaiseStmt(dest, symId, info)
-    if not isVoid:
-      dest.addSymUse symId, info
-      dest.addParRi()
+      if isVoid:
+        dest.addParRi()
+      else:
+        hoistTail(c, dest, hoistPos)
+        dest.addSymUse symId, info
   else:
     dest.addParLe(head.tagId, info)
     while n.hasMore:
@@ -218,13 +240,29 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trScope c, dest, n
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
+      of StmtsS:
+        # The statement-insertion point: whatever `trCall` collected in
+        # `c.hoisted` while translating one statement goes in front of it.
+        # An enclosing statement's own hoists are parked across the descent.
+        var outerHoisted = createTokenBuf(16)
+        swap(outerHoisted, c.hoisted)
+        copyInto dest, n:
+          while n.hasMore:
+            let stmtStart = dest.len
+            tr c, dest, n
+            if c.hoisted.len > 0:
+              # `stmtStart` is past every still-open tag, so the splice cannot
+              # invalidate an enclosing scope's bookkeeping.
+              dest.insert(c.hoisted, stmtStart)
+              c.hoisted.shrink 0
+        swap(c.hoisted, outerHoisted)
       of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
-         ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS, StmtsS,
+         ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
          DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
          CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS,
-         MixinS, UsingS, AsmS, DeferS, NoStmt:
+         MixinS, UsingS, AsmS, DeferS, LabS, JmpS, NoStmt:
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore:
@@ -232,10 +270,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     raiseAssert "BUG: unexpected ParRi in eraiser.tr" # classic ParRi only
 
-proc injectRaisingCalls*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
+proc injectRaisingCalls*(pass: var Pass; ptrSize: int) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim)
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(),
+                  hoisted: createTokenBuf(16))
   c.typeCache.openScope()
   tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
-  needsXelim = c.needsXelim

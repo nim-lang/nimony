@@ -51,11 +51,11 @@ proc isComplex(n: Cursor; goal: Goal): bool =
       # `controlflow.nim` models them as such: it emits the operand evaluation
       # into the enclosing statement stream *before* whatever the surrounding
       # expression has accumulated so far. Every xelim run must therefore lower
-      # them, not just the final one — otherwise the duplifier (which runs
-      # between xelim1 and xelim2 and asks the mover, i.e. the control-flow
-      # graph, "is this the last read?") reasons about an evaluation order that
-      # xelim_final then contradicts by hoisting the `and`'s `if` *after* the
-      # pre-statements of earlier sibling operands.
+      # them, not just the final one — otherwise the duplifier (which asks the
+      # mover, i.e. the control-flow graph, "is this the last read?") reasons
+      # about an evaluation order that `xelim_final` then contradicts by
+      # hoisting the `and`'s `if` *after* the pre-statements of earlier sibling
+      # operands.
       #
       # Concretely, for `Obj(key: kk, selected: c and kk == sel)` the CF says
       # `kk == sel` runs first, so the mover declares `key: kk` the last read
@@ -78,10 +78,19 @@ proc isComplex(n: Cursor; goal: Goal): bool =
 
 type
   Mode = enum
-    IsEmpty, IsAppend, IsBound, IsIgnored, IsCfvar
+    IsEmpty, IsAppend, IsBound, IsIgnored, IsCfvar, IsLabel
   Target = object
+    ## Where the value of the expression `trExpr` is translating should go.
+    ## `IsCfvar` and `IsLabel` are the two control-flow modes and are duals:
+    ## `IsCfvar` *materialises* a short-circuit condition into a bool slot,
+    ## `IsLabel` compiles it against a jump target and never creates the slot
+    ## (the two-target condition compiler `Cx`, below). They are selected by
+    ## goal and never both apply — see `CondJumpGoals`.
     m: Mode
     t: TokenBuf
+    lab: SymId        ## `IsLabel`: transfer to this label…
+    jumpIfTrue: bool  ## …exactly when the expression evaluates to this…
+    conditional: bool ## …and: is this subtree one the short-circuit can skip?
   Context = object
     counter: int
     typeCache: TypeCache
@@ -664,10 +673,339 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
   else:
     trExpr c, dest, n, tar
 
+proc mayBindToTemp(n: Cursor): bool =
+  ## True when a later pass could want to bind part of `n` to a temporary.
+  ##
+  ## `condNodeSafe` already rejects calls, casts and statement-expressions. On
+  ## top of that a *constructing* expression passes `WantOwner` down to its
+  ## operands, which is what makes the duplifier bind them (`bindToTemp` /
+  ## `genLastRead`), so those count as impure here too.
+  ##
+  ## Two callers, one question. `trWhile` asks it to decide whether the loop
+  ## condition has to move into the body as a leading guard: a temp hoisted in
+  ## front of a condition still sitting in the `while`'s slot lands *outside*
+  ## the loop and is evaluated once instead of once per iteration.
+  ## `trCondJump` asks it to decide whether a condition leaf needs its own
+  ## `(scope …)`: the temp is hoisted in front of the leaf's guard, and without
+  ## the scope it would outlive the condition it belongs to.
+  if not condNodeSafe(n): return true
+  var n = n
+  case n.kind
+  of TagLit:
+    if n.exprKind in {OconstrX, NewobjX, NewrefX, AconstrX, TupconstrX,
+                      SetconstrX, TabconstrX}:
+      return true
+    n.loopInto:
+      if mayBindToTemp(n): return true
+      skip n
+    result = false
+  else:
+    result = false
+
+# ---------------------------------------------------------------------------
+# Two-target condition compiler (`Cx`)
+#
+# `doc/final_ir.md`, *Short-circuit conditions*: a short-circuit condition is
+# compiled against a pair of targets rather than materialised as a value. The
+# fall-through is one of the two targets and costs nothing, so only the other
+# one becomes a real `(jmp L)`; merges are shared `(lab L)`s rather than
+# duplicated arms, which is what keeps `(a or b) and c` linear instead of
+# exponential.
+#
+# This replaces `trAnd`/`trOr`'s bool temp for CONDITIONS. That lowering built
+#
+#   (var `x bool)
+#   (if (elif a (stmts … (asgn `x …))) (else (stmts (asgn `x false))))
+#   (if (elif `x <then>) (else <else>))
+#
+# — a store followed immediately by a re-test of the same slot, plus a second
+# diamond. Recovering the branch the source actually wrote takes jump threading
+# and a proof that `x` is dead afterwards, which is the work the optimizers
+# were being asked to redo on every `and`. `Cx` never creates the slot.
+# ---------------------------------------------------------------------------
+
+proc freshLabel(c: var Context): SymId =
+  result = pool.syms.getOrIncl("`L." & $c.counter)
+  inc c.counter
+
+proc addJmp(dest: var TokenBuf; lab: SymId; info: NifLineInfo) =
+  copyIntoKind dest, JmpS, info:
+    dest.addSymUse lab, info
+
+proc addLab(dest: var TokenBuf; lab: SymId; info: NifLineInfo) =
+  copyIntoKind dest, LabS, info:
+    dest.addSymDef lab, info
+
+proc transparentExpr(n: Cursor): bool =
+  ## `(expr val)` with exactly one son — what `!=`, `>=`, `notin`, … expand to.
+  ## A multi-son `(expr (stmts …) val)` carries statements and is a leaf.
+  if n.kind != TagLit or n.exprKind != ExprX: return false
+  var probe = n
+  probe = sub(probe) # peek only, never left
+  skip probe
+  result = not probe.hasMore
+
+proc condSpineHasShortCircuit(n: Cursor): bool =
+  ## Is there an `and`/`or` on the condition's *spine*? An `and` buried in an
+  ## operand (`f(a and b)`) is a value, not control flow, and is none of `Cx`'s
+  ## business.
+  let k = n.exprKind
+  if k in {AndX, OrX}:
+    result = true
+  elif k == NotX or (k == ExprX and transparentExpr(n)):
+    var ch = n
+    ch = sub(ch)
+    result = condSpineHasShortCircuit(ch)
+  else:
+    result = false
+
+const
+  CondJumpGoals = {ElimExprs, LowerCasts}
+    ## Goals whose consumer is the ordinary hexer→Leng pipeline. `TowardsNjvl`
+    ## is excluded because `nj.nim` lowers a short-circuit condition to its own
+    ## cfvar (`mflag`/`jtrue`) form and its golden outputs are that form;
+    ## `TowardsFinalIr` because `finalir.nim` carries its own condition
+    ## compiler and wants the `and`/`or` tree.
+
+proc wantsCondJumps(c: Context; n: Cursor): bool =
+  ## `Cx` is for exactly the conditions that used to materialise a bool: a
+  ## short-circuit spine that the backend cannot take verbatim. A spine of pure
+  ## leaves still goes to the backend as `(and …)`/`(or …)` — C's `&&`/`||` and
+  ## arkham's `emitCondE` compile it to the same branches without growing the
+  ## function past the inliner's token budget (see `CondPassthroughGoals`).
+  c.goal in CondJumpGoals and
+    condSpineHasShortCircuit(n) and
+    not (c.goal in CondPassthroughGoals and condPassthroughSafe(n))
+
+template trExprToLabel(c: var Context; dest: var TokenBuf; n: var Cursor;
+                       labArg: SymId; jumpIfTrueArg, conditionalArg: bool) =
+  ## `trExpr` with an `IsLabel` target: emit statements into `dest` that
+  ## transfer to `(lab labArg)` exactly when `n` evaluates to `jumpIfTrueArg`,
+  ## and fall through otherwise. (The parameters carry the `Arg` suffix so they
+  ## cannot shadow the `Target` field names in the constructor below.)
+  var labelTar = Target(m: IsLabel, lab: labArg, jumpIfTrue: jumpIfTrueArg,
+                        conditional: conditionalArg)
+  trExpr c, dest, n, labelTar
+
+proc trCondJump(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## The `IsLabel` mode of `trExpr`. `trExpr` dispatches here on its first line
+  ## and nothing else calls it, so no other `tar.m` site in this file can
+  ## observe the mode.
+  ##
+  ##   Cjmp(a and b)(T, true)  = Cjmp(a)(z, false); Cjmp(b)(T, true);  (lab z)
+  ##   Cjmp(a and b)(F, false) = Cjmp(a)(F, false); Cjmp(b)(F, false)
+  ##   Cjmp(a or  b)(T, true)  = Cjmp(a)(T, true);  Cjmp(b)(T, true)
+  ##   Cjmp(a or  b)(F, false) = Cjmp(a)(z, true);  Cjmp(b)(F, false); (lab z)
+  ##   Cjmp(not a) (X, p)      = Cjmp(a)(X, not p)      -- a target swap
+  ##
+  ## Short-circuiting is not a special case here, it is the layout: an
+  ## operand's own pre-statements are emitted *after* the guard that can skip
+  ## it, so they run only on the paths that reach it.
+  ##
+  ## `tar.conditional` says whether this subtree is one the short-circuit can
+  ## skip. The leftmost leaf of a spine always runs, so it is emitted exactly
+  ## as the old `trIf` emitted a condition — no hoisting, no extra scope. Only
+  ## the operands *behind* a guard need the treatment in the leaf branch below.
+  ##
+  ## Everything that is not `and` / `or` / `not` is a leaf, and a leaf is just
+  ## `trExpr` into a value plus the guarded transfer — Appel's `unCx(Ex)`
+  ## coercion. That is why this dispatches with `if`/`elif` over the three
+  ## interesting kinds instead of enumerating every `ExprKind`: the fall-back
+  ## is one branch, not a second copy of `trExpr`'s dispatch that has to be
+  ## kept in sync with it.
+  let info = n.info
+  let target = tar.lab
+  let jumpIfTrue = tar.jumpIfTrue
+  let conditional = tar.conditional
+  let k = n.exprKind
+  if k == AndX:
+    if jumpIfTrue:
+      let z = freshLabel(c)
+      n.into:
+        trExprToLabel c, dest, n, z, false, conditional
+        trExprToLabel c, dest, n, target, true, true
+      addLab dest, z, info
+    else:
+      n.into:
+        trExprToLabel c, dest, n, target, false, conditional
+        trExprToLabel c, dest, n, target, false, true
+  elif k == OrX:
+    if jumpIfTrue:
+      n.into:
+        trExprToLabel c, dest, n, target, true, conditional
+        trExprToLabel c, dest, n, target, true, true
+    else:
+      let z = freshLabel(c)
+      n.into:
+        trExprToLabel c, dest, n, z, true, conditional
+        trExprToLabel c, dest, n, target, false, true
+      addLab dest, z, info
+  elif k == NotX:
+    n.into:
+      trExprToLabel c, dest, n, target, not jumpIfTrue, conditional
+  elif transparentExpr(n):
+    n.into:
+      trExprToLabel c, dest, n, target, jumpIfTrue, conditional
+  else:
+    # leaf: its pre-statements land here, then the guarded transfer
+    let leafStart = n
+    var t0 = Target(m: IsEmpty)
+    var scoped = false
+    if not conditional:
+      # Always evaluated: emit exactly what the plain `trIf` path emitted.
+      trExpr c, dest, n, t0
+    else:
+      # Behind a guard. A `let` written INSIDE such an operand — `if k and (let
+      # cc = f(); cc != 0): use(cc)` — stays visible in the arm bodies, so its
+      # declaration has to leave the operand. `hoistDeclsFromExprX` splits it
+      # into an uninitialised decl emitted at this level and an `(asgn …)` left
+      # behind, so the *assignment* stays on the short-circuited path while the
+      # name outlives it. (This is what `trAnd`/`trOr` do to their RHS, for the
+      # same reason.)
+      var operand = createTokenBuf(16)
+      hoistDeclsFromExprX(c.typeCache, dest, operand, n)
+      var opCursor = beginRead(operand)
+      var pre = createTokenBuf(16)
+      trExpr c, pre, opCursor, t0
+      # The operand's statements get their own `(scope …)`: they are reached
+      # only on the paths that get this far, and their temporaries must die
+      # with the condition. Without it `if a or f(): …` destroyed `f()`'s
+      # result at the end of the *proc*. The scope is also the region the
+      # destroyer unwinds when the guard below jumps out of it.
+      #
+      # `mayBindToTemp`: the temporary is usually NOT produced here — the
+      # duplifier mints it later and hoists it in front of the guard statement.
+      # The scope has to be in place by then for it to land inside.
+      scoped = pre.len > 0 or mayBindToTemp(leafStart)
+      if scoped:
+        dest.addParLe(ScopeS, info)
+      dest.add pre
+    copyIntoKind dest, IfS, info:
+      copyIntoKind dest, ElifU, info:
+        if jumpIfTrue:
+          dest.addTarget t0
+        else:
+          copyIntoKind dest, NotX, info:
+            dest.addTarget t0
+        copyIntoKind dest, StmtsS, info:
+          addJmp dest, target, info
+    if scoped:
+      dest.addParRi()
+
+proc ifNeedsCondJumps(c: Context; n: Cursor): bool =
+  ## Does any arm of this `if` carry a short-circuit condition that would
+  ## otherwise materialise a bool? One is enough — the whole statement then
+  ## goes to the flat layout, which also folds the `elif` chain for free.
+  var it = n
+  it = sub(it)
+  while it.hasMore:
+    if it.substructureKind == ElifU:
+      var cond = it
+      cond = sub(cond)
+      if wantsCondJumps(c, cond): return true
+    skip it
+  result = false
+
+proc trBranchBody(c: var Context; dest: var TokenBuf; n: var Cursor;
+                  tar: Target; tmp: SymId) =
+  ## One arm's body, emitted WITHOUT a scope of its own — the caller has
+  ## already opened one that spans the arm's condition *and* its body (see
+  ## `trIfFlat`).
+  if tar.m != IsIgnored:
+    trExprInto c, dest, n, tmp
+  elif n.stmtKind == StmtsS:
+    n.into:
+      while n.hasMore:
+        trStmt c, dest, n
+  else:
+    trStmt c, dest, n
+
+proc trIfFlat(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## `if c1: B1 elif c2: B2 else: B3` laid out as
+  ##
+  ##   (scope Cjmp(c1)(L1, false) B1); (jmp Lend)
+  ##   (lab L1); (scope Cjmp(c2)(L2, false) B2); (jmp Lend)
+  ##   (lab L2); (scope B3)
+  ##   (lab Lend)
+  ##
+  ## Every merge is a shared `(lab)`, no arm is duplicated, and the `elif`
+  ## chain needs no nesting — the flat form the optimizers can read directly.
+  ##
+  ## An arm's `(scope …)` covers its **condition and its body together**, and
+  ## that is not cosmetic. A condition may declare a local (`elif (let d =
+  ## load(x); d.ok):`), and in a flat layout a declaration sits in the same
+  ## block as every other arm while only *some* paths reach it — so the
+  ## destroyer's scope-exit `=destroy` would run on a slot that was never
+  ## initialised. Entering the scope only on the paths that evaluate the
+  ## condition is what keeps declaration, initialisation and destruction on
+  ## the same set of paths. The guard's `(jmp Lnext)` leaves the scope, and
+  ## `destroyer.trJmp` unwinds it on the way out.
+  let info = n.info
+  var tmp = SymId(0)
+  if tar.m != IsIgnored:
+    tmp = declareTemp(c, dest, n)
+
+  # Emitted in one streaming pass, straight into `dest`: an arm falls out of
+  # its `(scope …)` into `(jmp endLab)`, and the arm after it starts at the
+  # false label the guard jumped to. The one thing an arm needs to know about
+  # its successors is whether it *has* any: a last arm with no `else` falls
+  # straight out of the `if`, so its false edge IS the end — it can share
+  # `endLab` instead of planting a second label right next to it, and it needs
+  # no `(jmp endLab)` either. One `skip` answers that, and `skip` is O(1) (the
+  # tag token carries the subtree's jump), so the arms need neither a pre-pass
+  # over the chain nor a `TokenBuf` each to be assembled from afterwards.
+  let endLab = freshLabel(c)
+  var needEndLab = false
+
+  n.into:
+    while n.hasMore:
+      let binfo = n.info
+      case n.substructureKind
+      of ElifU:
+        var lookahead = n
+        skip lookahead
+        let falseLab = if lookahead.hasMore: freshLabel(c) else: endLab
+        dest.addParLe(ScopeS, binfo)
+        c.typeCache.openScope()
+        n.into:
+          trExprToLabel c, dest, n, falseLab, false, false
+          trBranchBody c, dest, n, tar, tmp
+        c.typeCache.closeScope()
+        dest.addParRi()
+        if falseLab != endLab:
+          addJmp dest, endLab, info
+          needEndLab = true
+        addLab dest, falseLab, info
+      of ElseU:
+        # Reached only through the preceding arm's false label, which was
+        # already planted; the `if` ends here, so `endLab` lands after it.
+        dest.addParLe(ScopeS, binfo)
+        c.typeCache.openScope()
+        n.into:
+          trBranchBody c, dest, n, tar, tmp
+        c.typeCache.closeScope()
+        dest.addParRi()
+        if needEndLab:
+          addLab dest, endLab, info
+      of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
+         TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
+         StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
+         UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU,
+         ForcallU, DeferexpansionU, NeedtypesU, NoSub:
+        # Bug: just copy the thing around
+        takeTree dest, n
+
+  if tar.m != IsIgnored:
+    tar.t.addSymUse tmp, n.endInfo
+
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # if cond: a elif condB: b else: c
   # -->
   # if cond: a else: (if condB: b else: c)
+  if ifNeedsCondJumps(c, n):
+    trIfFlat c, dest, n, tar
+    return
+
   let info = n.info
   let head = n
   var tmp = SymId(0)
@@ -806,19 +1144,50 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   dest.copyInto n:
-    if isComplex(n, c.goal):
+    # `mayBindToTemp(n)`: an IMPURE condition becomes
+    # `while true: <cond stmts>; if cond: body else: break` — the Final-IR
+    # "loop has no condition, the condition is a leading body guard" shape
+    # (`doc/final_ir.md`). It is not cosmetic: it is what makes "hoist a
+    # sub-expression to the statement in front of it" unconditionally sound for
+    # every later pass. With the condition left in the slot, a pass that needs a
+    # temp for part of it (the duplifier's `bindToTemp`, the eraiser's
+    # `canRaise` temp) would have to hoist that temp OUT of the loop, where it
+    # is evaluated once instead of once per iteration — which is why those
+    # passes used to wrap it into an `(expr (stmts ...) tmp)` and leave the
+    # flattening to a follow-up xelim run instead.
+    if isComplex(n, c.goal) or mayBindToTemp(n):
       dest.copyIntoKind TrueX, info: discard
       copyIntoKind dest, StmtsS, info:
-        var tar = Target(m: IsEmpty)
-        trCond c, dest, n, tar, c.goal == TowardsNjvl
-        dest.copyIntoKind IfS, info:
-          dest.copyIntoKind ElifU, info:
-            dest.addTarget tar
-            trStmt c, dest, n
-          dest.copyIntoKind ElseU, info:
-            copyIntoKind dest, StmtsS, info:
-              dest.copyIntoKind BreakS, info:
-                dest.addDotToken()
+        if wantsCondJumps(c, n):
+          # Same deal as `trIfFlat`: a short-circuit guard compiles against a
+          # jump target instead of a bool the `if` below would immediately
+          # re-test. The exit is the FALL-THROUGH and the body is behind the
+          # jump, because the only way out of a loop is `(break)` and a label
+          # cannot be placed after the body without the fall-off-the-body edge
+          # landing on it too:
+          #
+          #   Cjmp(cond)(bodyLab, true); (break); (lab bodyLab); <body>
+          #
+          # Everything stays inside the loop body's `(stmts …)`, so the jumps
+          # are the same intra-list shape `trIfFlat` emits — no transfer ever
+          # leaves the loop.
+          let bodyLab = freshLabel(c)
+          trExprToLabel c, dest, n, bodyLab, true, false
+          dest.copyIntoKind BreakS, info:
+            dest.addDotToken()
+          addLab dest, bodyLab, info
+          trStmt c, dest, n
+        else:
+          var tar = Target(m: IsEmpty)
+          trCond c, dest, n, tar, c.goal == TowardsNjvl
+          dest.copyIntoKind IfS, info:
+            dest.copyIntoKind ElifU, info:
+              dest.addTarget tar
+              trStmt c, dest, n
+            dest.copyIntoKind ElseU, info:
+              copyIntoKind dest, StmtsS, info:
+                dest.copyIntoKind BreakS, info:
+                  dest.addDotToken()
     else:
       var tar = Target(m: IsEmpty)
       trExpr c, dest, n, tar
@@ -1017,7 +1386,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of MacroS, TemplateS, TypeS, EmitS, BreakS, ContinueS,
      IncludeS, ImportS, FromimportS, ImportexceptS,
      ExportS, CommentS, AssumeS, AssertS,
-     PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS:
+     PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
+     LabS, JmpS:
+    # `lab`/`jmp` are atoms for xelim: it PRODUCES them (`trCondJmp`) and never
+    # has to look inside one — the operand is a label symbol.
     takeTree dest, n
   of ScopeS, StaticstmtS:
     c.typeCache.openScope()
@@ -1126,6 +1498,12 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
 proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   # can have the dangerous `Expr` node which is the whole
   # reason for xelim's existence.
+  if tar.m == IsLabel:
+    # `Cx`: compiled against a jump target rather than materialised into a
+    # value. `trCondJump` handles the mode completely and never passes it on,
+    # so the rest of this file only ever sees the value-producing modes.
+    trCondJump c, dest, n, tar
+    return
   case n.kind
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, Symbol, SymbolDef, IntLit, UIntLit, FloatLit, CharLit, StrLit:
     takeTree tar.t, n
@@ -1197,7 +1575,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
          CommentS, DiscardS, RaiseS, UnpackdeclS, AssumeS,
          AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
          StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-         NoStmt:
+         LabS, JmpS, NoStmt:
         trExprLoop c, dest, n, tar
   else:
     bug "unexpected ')' inside"

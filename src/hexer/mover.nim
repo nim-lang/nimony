@@ -382,7 +382,9 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
         of IfS, WhenS, WhileS, ForS, CoroforS, CaseS, TryS, RaiseS,
            ExportS, IncludeS, ImportS, FromimportS, ImportexceptS, CommentS,
            PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
-           UnpackdeclS, StaticstmtS, AsmS, DeferS:
+           UnpackdeclS, StaticstmtS, AsmS, DeferS, LabS, JmpS:
+          # `lab`/`jmp` cannot reach here: `controlflow.trJmp`/`trLab` consume
+          # them into the goto instructions this walker reads.
           bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
            AssumeS, AssertS:
