@@ -24,6 +24,7 @@ import induction_variables                     # runInductionVariables (live pas
 import cse                                     # runCSE + collectFunctionSummaries
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
+import unswitch                                # runUnswitch (loop unswitching)
 import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
 import vectorizer                             # runVectorizer (map loops -> AdvSIMD (instr ...))
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
@@ -77,7 +78,12 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # later passes see simpler, scalar code.
   runConstructorProjection(buf)
   runScalarize(buf, bodySuffix, m)
-  runCopyProp(buf, params)
+  runCopyProp(buf, params, summaries, m)
+  # Hoist loop-invariant `if` conditions out of small loops by duplicating them
+  # (loop unswitching): an inlined string accessor's SSO test runs once instead
+  # of per character. AFTER copyprop so propagated copies make structurally
+  # identical conditions actually identical.
+  runUnswitch(buf, bodySuffix)
   # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
   # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
   # after those substitutions actually fold. Cheap: the DFA walk is linear
