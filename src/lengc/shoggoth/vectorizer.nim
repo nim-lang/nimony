@@ -127,11 +127,19 @@ type
     tempCounter: int
     moduleSuffix: string
     vecSuffix: string       ## suffix of the module-level intrinsic decls
+    allowSub: bool          ## may a lane tree contain `sub`? False on the SSE
+                            ## path: `vfsub` has no x86-64 lowering, because the
+                            ## nifasm tag space is full and there was no id left
+                            ## for `subpd`/`subps` (see `doc/instructions.md`).
+                            ## A loop that needs one is left to the scalar code
+                            ## rather than failing to compile.
     vectorized*: bool
 
-proc createContext(orig: ptr TokenBuf; moduleSuffix, vecSuffix: string): Context =
+proc createContext(orig: ptr TokenBuf; moduleSuffix, vecSuffix: string;
+                   allowSub: bool): Context =
   Context(orig: orig, patchset: initPatchset(orig), synth: @[],
-          tempCounter: 0, moduleSuffix: moduleSuffix, vecSuffix: vecSuffix)
+          tempCounter: 0, moduleSuffix: moduleSuffix, vecSuffix: vecSuffix,
+          allowSub: allowSub)
 
 # ── small tree utilities ────────────────────────────────────────────────────
 
@@ -1392,13 +1400,27 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
 
 # ── main traversal ──────────────────────────────────────────────────────────
 
+proc containsSub(n: Cursor): bool =
+  ## Any `sub` anywhere in the loop. Checked BEFORE planning rather than inside
+  ## the lane-tree predicates: a refusal has to leave the original loop exactly
+  ## as it was, and the cheapest place to be sure of that is before a plan
+  ## exists. Coarse on purpose — an index computation's `sub` also blocks the
+  ## loop — which only costs a vectorization on the target that cannot lower it.
+  if n.kind != TagLit: return false
+  if n.exprKind == SubC: return true
+  var it = n
+  it.loopInto:
+    if containsSub(it): return true
+    skip it
+  result = false
+
 proc tr(c: var Context; n: var Cursor) =
   if n.hasMore:
     if n.kind == TagLit:
       var matched = false
       if n.stmtKind == WhileS:
         var plan = LoopPlan()
-        if matchLoop(c, n, plan):
+        if (c.allowSub or not containsSub(n)) and matchLoop(c, n, plan):
           let pos = cursorToPosition(c.orig[], n)
           var nb = emitReplacement(c, plan, n)
           let idx = c.synth.len
@@ -1474,11 +1496,12 @@ proc addVecIntrinsicDecls*(dest: var TokenBuf; vecSuffix: string) =
     dest.addDotToken()                        # no body
     dest.closeTag()                           # proc
 
-proc runVectorizer*(buf: var TokenBuf; moduleSuffix, vecSuffix: string): bool =
+proc runVectorizer*(buf: var TokenBuf; moduleSuffix, vecSuffix: string;
+                    allowSub = true): bool =
   ## Vectorize every matching innermost loop of one proc body. Returns true
   ## when something was vectorized — the caller then appends the intrinsic
   ## declarations once per module via `addVecIntrinsicDecls`.
-  var ctx = createContext(addr buf, moduleSuffix, vecSuffix)
+  var ctx = createContext(addr buf, moduleSuffix, vecSuffix, allowSub)
   var n = beginRead(buf)
   tr(ctx, n)
   if not ctx.patchset.isEmpty:
