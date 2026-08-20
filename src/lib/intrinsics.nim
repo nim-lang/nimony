@@ -580,11 +580,7 @@ const
     IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 3,           # vfadd
                  params: VecBin, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
-    # No `tgX64`: the nifasm tag id space is 9 bits and full, so there is no id
-    # left for `subpd`/`subps`. The vectorizer's `vecSse` mode refuses any loop
-    # that would need this row (`shoggoth/vectorizer.nim`), so the gap costs a
-    # vectorization, never a compile error.
-    IntrinsicRow(cls: icPinned, targets: {tgA64}, arity: 3,                 # vfsub
+    IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 3,           # vfsub
                  params: VecBin, roles: AllIn, ret: ptVec128,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgA64, tgX64}, arity: 3,           # vfmul
