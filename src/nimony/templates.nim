@@ -99,6 +99,110 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
     discard "ParRi/close (classic) or stray suffix (nifcore)"
 
 type
+  ForgeCtx = object
+    ## State for one `forgeExpansionInfo` pass. A plain object rather than
+    ## captured locals: nimony has no closures, and this code must self-host.
+    originEntry: CrucialOrigin
+    callInfo: NifLineInfo
+    forgedOf: Table[FileId, FileId]
+
+proc forgeMapInfo(f: var ForgeCtx; li: NifLineInfo): NifLineInfo =
+  ## The provenance-carrying twin of `li`, or `li` itself when it is the call
+  ## site's own position or has no file to forge.
+  if not li.isValid or not li.file.isValid: return li
+  if li.file == f.callInfo.file and li.line == f.callInfo.line and
+     li.col == f.callInfo.col:
+    return li
+  var forged = f.forgedOf.getOrDefault(li.file)
+  if forged == FileId(0):
+    let fname = pool.filenames[li.file]
+    # Prepend, not append: a template's body is sem-checked (and so any template
+    # *it* calls is expanded) before this outer expansion is forged, so the
+    # existing chain is always the inner levels. Outermost first is what the
+    # debug backend needs to nest `inlinedAt` correctly.
+    var origins = @[f.originEntry]
+    for o in crucialOrigins(fname): origins.add o
+    forged = pool.filenames.getOrIncl(forgeCrucialFile(origins, realFile(fname)))
+    f.forgedOf[li.file] = forged
+  result = NifLineInfo(file: forged, line: li.line, col: li.col,
+                       comment: li.comment)
+
+proc forgeReemit(f: var ForgeCtx; dest: var TokenBuf; src: var Cursor) =
+  ## Rebuild the subtree at `src` into `dest` with forged line info. Info rides
+  ## as a trailing `LineInfoLit` on a head token, so it cannot be patched in
+  ## place - the tokens have to be re-emitted.
+  let info = forgeMapInfo(f, src.info)
+  case src.kind
+  of TagLit:
+    if cursorTagId(src) == nifpools.ErrT:
+      # An `(err <orig> <instantiation-dots> <msg>)` is already-reported
+      # diagnostic state, not code: its dots are the error contexts
+      # `reporters` prints as `Trace: instantiation from here`. Rewriting them
+      # duplicates the trace for a template that errors inside another
+      # expansion (`tests/nimony/templates/tinvalidrecursion.nim`).
+      dest.addSubtree src
+      skip src
+    else:
+      dest.addParLe(cursorTagId(src), info)
+      src.into:
+        while src.hasMore: forgeReemit(f, dest, src)
+      dest.addParRi()
+  of IntLit:    dest.addIntLit(intVal(src), info); inc src
+  of UIntLit:   dest.addUIntLit(uintVal(src), info); inc src
+  of FloatLit:  dest.addFloatLit(floatVal(src), info); inc src
+  of CharLit:   dest.addCharLit(charLit(src), info); inc src
+  of StrLit:    dest.addStrLit(strVal(src), info); inc src
+  of Symbol:    dest.addSymUse(src.symId, info); inc src
+  of SymbolDef: dest.addSymDef(src.symId, info); inc src
+  of DotToken:
+    # Info-carrying: `buildErr` records each instantiation context as a dot
+    # token whose line info is the call site, and `reporters` turns those into
+    # the `Trace: instantiation from here` lines. Dropping it loses them.
+    dest.addDotToken(info); inc src
+  else:
+    # Idents and anything unstructured: copy verbatim, info and all.
+    dest.addSubtree src
+    skip src
+
+proc forgeExpansionInfo*(c: var SemContext; dest: var TokenBuf; start: int;
+                         origin: SymId; declInfo: NifLineInfo;
+                         callInfo: NifLineInfo) =
+  ## Rewrite the line info of everything `dest` gained from `start` onward so
+  ## it records that the code came from expanding `origin` (#1987).
+  ##
+  ## The provenance rides in the filename rather than in a wrapper node: a token
+  ## whose file is `foo.nim` becomes
+  ## `__crucial\0<origin>\1<declfile>\1<declline>\0foo.nim`, so a debug backend
+  ## can emit a DWARF inlined frame for it while every other consumer sees
+  ## `realFile()` and is unaffected. Nesting composes: expanding a template whose
+  ## body already carries a forged name prepends onto the existing chain, so the
+  ## chain runs outermost-first and its length is the inlining depth.
+  ##
+  ## Tokens substituted in from the *call site* keep their own info: they were
+  ## written by the caller and belong to the caller's frame. They are recognised
+  ## by sitting at exactly the call's position, which is why `callInfo` is passed
+  ## in rather than derived here. Comparing only the *file* would be wrong for a
+  ## template declared in the file it is called from - the common case, and the
+  ## one `tests/llvmdebug/ttemplate_locals.nim` covers.
+  # The declaration site travels in the chain because it cannot be recovered
+  # downstream: a template decl does not survive into Leng, and the expanded
+  # code's own info points at whatever file the body came from.
+  var f = ForgeCtx(
+    originEntry: CrucialOrigin(
+      sym: pool.syms[origin],
+      declFile: (if declInfo.file.isValid: realFile(pool.filenames[declInfo.file]) else: ""),
+      declLine: declInfo.line),
+    callInfo: callInfo,
+    forgedOf: initTable[FileId, FileId]())
+
+  var src = createTokenBuf(dest.len - start)
+  for i in start ..< dest.len: src.add dest[i]
+  shrink dest, start
+
+  var n = beginRead(src)
+  while n.hasMore: forgeReemit(f, dest, n)
+
+type
   PluginOutcome* = enum
     NoPluginRan       ## the template carries no `.plugin` pragma
     PluginExpanded    ## the plugin produced a replacement tree

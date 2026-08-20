@@ -71,6 +71,9 @@ type
     diBasicTypeCache*: Table[string, int] # "i32"/"float"/… -> DIBasicType id
     compositeTypeDone*: HashSet[SymId]    # symIds with fully built DICompositeType
     globalExprs*: seq[int] # DIGlobalVariableExpression IDs for DICompileUnit globals
+    fileIdsByName*: Table[string, int]  # source path -> DIFile meta
+    inlineSpCache*: Table[string, int] # expanded routine (mangled) -> spId
+    nullSigId*: int # shared `!DISubroutineType(types: !{null})` for template SPs
 
 type
   PrimTypes* = object
@@ -124,7 +127,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   ## what is wrong in prose (the render would append the raw mangled symbol).
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   # `Error: `, not the `[Error] ` of the rendering `error` above: this is a
   # user-facing diagnostic, and that is the spelling every other user-facing
@@ -138,7 +141,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg

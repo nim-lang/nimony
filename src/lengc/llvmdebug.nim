@@ -56,6 +56,24 @@ proc genDIBasicType(c: var LLVMCode; name: string; sizeBits,
     ", encoding: " & $encoding & ")")
   c.debug.diBasicTypeCache[key] = result
 
+proc getOrCreateDIFileByName(c: var LLVMCode; path: string): int =
+  ## Get or create a DIFile metadata node for a plain source path. Keyed on the
+  ## path itself, since the declaration sites carried in a forged filename have
+  ## no `FileId` of their own.
+  let cached = c.debug.fileIdsByName.getOrDefault(path, -1)
+  if cached >= 0:
+    return cached
+  let (dir, name, ext) = splitFile(path)
+  let fullName = name & ext
+  let directory = absoluteDirOrQuit(dir)
+  result = c.addMetadata("!DIFile(filename: \"" & fullName &
+      "\", directory: \"" & directory & "\")")
+  c.debug.fileIdsByName[path] = result
+  # First real source file → create the compile unit using this file
+  if c.debug.cuId == 0:
+    c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
+      $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
+
 proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   ## Get or create a DIFile metadata node for the given FileId.
   let key = int(fid)
@@ -64,35 +82,114 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   let cached = c.debug.fileIds.getOrDefault(key, -1)
   if cached >= 0:
     return cached
-  let path = c.m.pool.filenames[fid]
-  let (dir, name, ext) = splitFile(path)
-  let fullName = name & ext
-  let directory = absoluteDirOrQuit(dir)
-  result = c.addMetadata("!DIFile(filename: \"" & fullName &
-      "\", directory: \"" & directory & "\")")
+  # A forged filename carries template-expansion provenance (`__crucial\0…`);
+  # the DIFile must name the real source, and `dbgLocationId` reads the chain
+  # separately to build the inlined frames.
+  result = getOrCreateDIFileByName(c, realFile(c.m.pool.filenames[fid]))
   c.debug.fileIds[key] = result
-  # First real source file → create the compile unit using this file
-  if c.debug.cuId == 0:
-    c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
-      $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
 
-proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
-  ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
-  if not info.isValid: return ""
+proc getOrCreateInlineSP(c: var LLVMCode; origin: CrucialOrigin;
+                         fallbackFileId, fallbackLine: int): int
+
+proc dbgLocationId(c: var LLVMCode; info: NifLineInfo): int =
+  ## Build a DILocation metadata node for the given source location and return
+  ## its id, or 0 if the location is invalid.
+  ##
+  ## When the location's filename carries expansion provenance
+  ## (`__crucial\0<outer>\0<inner>\0real.nim`, see `comesfrom`), the chain is
+  ## turned into DWARF inlined frames: one synthetic DISubprogram per expanded
+  ## routine, each location scoped to the innermost and chained outwards through
+  ## `inlinedAt` until it reaches the enclosing proc. That is what makes a
+  ## debugger show a template as an inlined frame instead of jumping into its
+  ## definition file (#1987).
+  if not info.isValid: return 0
   let rawInfo = info
-  if not rawInfo.file.isValid: return ""
+  if not rawInfo.file.isValid: return 0
   let fileId = getOrCreateDIFile(c, rawInfo.file)
-  let scopeId =
+
+  # The call site: the location this expansion was written at, in the enclosing
+  # proc. Everything the chain builds hangs off it.
+  proc scopeInProc(c: var LLVMCode; fileId: int): int =
     if fileId == c.currentProc.subprogramFileId:
       c.currentProc.subprogramId
     else:
       c.addMetadata("!DILexicalBlockFile(scope: !" &
           $c.currentProc.subprogramId &
         ", file: !" & $fileId & ", discriminator: 0)")
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+
+  let fname = c.m.pool.filenames[rawInfo.file]
+  if not isCrucialFile(fname):
+    result = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+      ", column: " & $(rawInfo.col + 1) &
+      ", scope: !" & $scopeInProc(c, fileId) & ")")
+    return
+
+  # Outermost first, so each iteration nests one level deeper. The call-site
+  # location is the same for every level: expansions carry no separate location
+  # for where each nested template was invoked, so the whole chain attributes
+  # back to the statement the outermost expansion replaced.
+  var inlinedAt = c.addMetadata("!DILocation(line: " & $rawInfo.line &
     ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $scopeId & ")")
-  result = ", !dbg !" & $locId
+    ", scope: !" & $scopeInProc(c, fileId) & ")")
+  var scopeId = 0
+  for origin in crucialOrigins(fname):
+    let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
+    if spId == 0: continue
+    if scopeId != 0:
+      # The previous level's location becomes this one's call site.
+      inlinedAt = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+        ", column: " & $(rawInfo.col + 1) &
+        ", scope: !" & $scopeId &
+        ", inlinedAt: !" & $inlinedAt & ")")
+    scopeId = spId
+  if scopeId == 0:
+    result = inlinedAt
+  else:
+    result = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+      ", column: " & $(rawInfo.col + 1) &
+      ", scope: !" & $scopeId &
+      ", inlinedAt: !" & $inlinedAt & ")")
+
+proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
+  ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
+  let locId = dbgLocationId(c, info)
+  result = if locId == 0: "" else: ", !dbg !" & $locId
+
+proc getOrCreateInlineSP(c: var LLVMCode; origin: CrucialOrigin;
+                         fallbackFileId, fallbackLine: int): int =
+  ## Get or create the synthetic DISubprogram for an expanded routine, shared by
+  ## every call site of it. Returns 0 when none can be built.
+  ##
+  ## The frame is placed at the routine's *declaration* site, which the forged
+  ## filename carries for exactly this reason: a template declaration does not
+  ## survive into Leng, and the expanded code's own line info points at whatever
+  ## file the body came from. The fallbacks cover a chain written before the
+  ## declaration site was encoded.
+  let cached = c.debug.inlineSpCache.getOrDefault(origin.sym, -1)
+  if cached >= 0: return cached
+  var fileId = fallbackFileId
+  var line = fallbackLine
+  if origin.declFile.len > 0:
+    fileId = getOrCreateDIFileByName(c, origin.declFile)
+    line = int(origin.declLine)
+  if fileId == 0: return 0
+  # A subprogram definition needs a type and a unit; the signature is opaque
+  # (`!{null}`: unknown return, no formals) because a template has neither a
+  # calling convention nor materialized parameters.
+  if c.debug.nullSigId == 0:
+    c.debug.nullSigId = c.addMetadata("!DISubroutineType(types: !{null})")
+  var isGlobal = false
+  var shortName = extractBasename(origin.sym, isGlobal)
+  if shortName.len == 0: shortName = origin.sym
+  result = c.addMetadata("distinct !DISubprogram(name: \"" &
+    shortName &
+    "\", scope: !" & $fileId &
+    ", file: !" & $fileId &
+    ", line: " & $line &
+    ", type: !" & $c.debug.nullSigId &
+    ", scopeLine: " & $line &
+    ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId & ")")
+  c.debug.inlineSpCache[origin.sym] = result
 
 proc createSubprogram(c: var LLVMCode; name: string; info: NifLineInfo): int =
   ## Create a DISubprogram metadata node for a function.
@@ -147,18 +244,35 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
     useType = genDIBasicType(c, "int " & $bits, bits, DW_ATE_signed)
   let debugName = if wasName.len > 0: wasName else: nifSymBaseName(c, symId)
   let fileId = getOrCreateDIFile(c, rawInfo.file)
+  # A variable declared inside a template expansion belongs to that template's
+  # synthetic subprogram, and its declare location must carry the matching
+  # `inlinedAt` chain: LLVM's verifier rejects a #dbg_declare whose variable
+  # scope and location scope disagree. `template t = (var x = ...)` is ordinary
+  # code, so this is required, not polish.
+  #
+  # Both come from the same place - the forged filename - so they cannot drift:
+  # the innermost origin names the SP that `dbgLocationId` will scope to.
+  let fname = c.m.pool.filenames[rawInfo.file]
+  let inFrame = isCrucialFile(fname)
+  var varScopeId = c.currentProc.subprogramId
+  if inFrame:
+    for origin in crucialOrigins(fname):
+      let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
+      if spId != 0: varScopeId = spId
   var varMetadata = "!DILocalVariable(name: \"" & debugName & "\""
   if argNo > 0:
     varMetadata.add ", arg: " & $argNo
-  varMetadata.add ", scope: !" & $c.currentProc.subprogramId &
+  varMetadata.add ", scope: !" & $varScopeId &
     ", file: !" & $fileId &
     ", line: " & $rawInfo.line &
     ", type: !" & $useType & ")"
   let varId = c.addMetadata(varMetadata)
-  c.currentProc.retainedNodes.add varId
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
-    ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $c.currentProc.subprogramId & ")")
+  if not inFrame:
+    # `retainedNodes` lists the variables scoped to *this* subprogram; one
+    # scoped to a template's synthetic SP does not belong in the proc's list.
+    c.currentProc.retainedNodes.add varId
+  let locId = dbgLocationId(c, info)
+  if locId == 0: return
   c.emitRaw "#dbg_declare(ptr " & localName & ", !" & $varId &
       ", !DIExpression(), !" & $locId & ")"
 

@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 3622             )
+(.indexat 4054             )
 (stmts@,2,tests/nimony/nosystem/tvarargs.nim
  (type@2,1 :int.0.
   (i 64).
@@ -130,7 +130,7 @@
       (ochoice write.0. write.1.)stdout.0.@6 x.4@E)))
    (cmd@,2 write.0. stdout.0.@6 '\0A'@E)))
  (gvar@4,c :someVar.0. . . string.0.sysvq0asl ""@A)
- (stmts@2,Y
+ (stmts@2,a,__crucial\00echo.0.tvah6culb\01tests/nimony/nosystem/tvarargs.nim\0135\00tests/nimony/nosystem/tvarargs.nim
   (stmts@2,1
    (cmd write.1.
     (haddr@6 stdout.0.)"a"@1,5))
@@ -142,7 +142,7 @@
     (haddr@6 stdout.0.)"b"@F,5))
   (cmd@,2 write.0.
    (haddr@6 stdout.0.)'\0A'@E))
- (stmts@2,Y
+ (stmts@2,a,__crucial\00echo.0.tvah6culb\01tests/nimony/nosystem/tvarargs.nim\0135\00tests/nimony/nosystem/tvarargs.nim
   (stmts@2,1
    (cmd write.1.
     (haddr@6 stdout.0.)"xzy"@1,7))
@@ -151,10 +151,10 @@
     (haddr@6 stdout.0.)'c'@8,7))
   (cmd@,2 write.0.
    (haddr@6 stdout.0.)'\0A'@E))
- (stmts@2,Y
+ (stmts@2,a,__crucial\00echo.0.tvah6culb\01tests/nimony/nosystem/tvarargs.nim\0135\00tests/nimony/nosystem/tvarargs.nim
   (cmd@,2 write.0.
    (haddr@6 stdout.0.)'\0A'@E))
- (stmts@2,Y
+ (stmts@2,a,__crucial\00echo.0.tvah6culb\01tests/nimony/nosystem/tvarargs.nim\0135\00tests/nimony/nosystem/tvarargs.nim
   (stmts@2,1
    (cmd write.1.
     (haddr@6 stdout.0.)someVar.0.@1,B))
