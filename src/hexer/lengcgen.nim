@@ -467,41 +467,65 @@ proc addRttiField(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   dest.addParRi() # "ptr"
   dest.addParRi() # "fld"
 
+proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag])
+
+proc trBranchRanges(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## Copy the `(ranges ...)` selector list of an `of` branch. Shared by the
+  ## `case` statement (`trCase`) and the case-object lowering in `trObjFields`,
+  ## so both spell branch values identically. Note `trExpr` folds an enum
+  ## symbol to its integer value, so the output carries numbers, not names.
+  if n.isTagLit and n.substructureKind == RangesU:
+    takeInto dest, n:            # (ranges ...)
+      while n.hasMore:
+        if n.isTagLit and n.substructureKind == RangeU:
+          takeInto dest, n:      # (range lo hi)
+            while n.hasMore:
+              trExpr c, dest, n
+        else:
+          trExpr c, dest, n
+  else:
+    trExpr c, dest, n
+
+proc trBranchBody(c: var EContext; dest: var TokenBuf; n: var Cursor;
+                  flags: set[TypeFlag]) =
+  ## Emit a branch's fields as an anonymous object, or `.` when the branch
+  ## declares none (`of x: nil`). The empty form still records that the
+  ## discriminant values of this branch are legal.
+  assert n.stmtKind == StmtsS
+  n.into:
+    if n.exprKind == NilX:
+      skip n
+      dest.addDotToken
+    else:
+      dest.addParLe("object", n.endInfo)
+      dest.addDotToken  # base type
+      trObjFields(c, dest, n, flags)
+      dest.addParRi # end of object
+
 proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag]) =
   while n.hasMore:
     case n.substructureKind
     of FldU, GfldU:
       trField(c, dest, n, flags)
     of CaseU:
-      # XXX for now counts each case object field as separate
+      # A case object becomes a *discriminated* union: the selector is emitted
+      # as an ordinary field and the branches keep the `(ranges ...)` that
+      # select them, so debug info can map a discriminant value to its branch
+      # (see `doc/leng-spec.md`, UnionBranch). The discriminator is found
+      # positionally by consumers - it is the `fld` emitted immediately before
+      # the `union`, which the two statements below establish.
       n.into:
         trField(c, dest, n, flags)
         dest.addParLe("union", n.info)
         while n.hasMore:
           case n.substructureKind
           of OfU:
-            n.into:
-              skip n
-              assert n.stmtKind == StmtsS
-              n.into:
-                if n.exprKind == NilX:
-                  skip n
-                else:
-                  dest.addParLe("object", n.endInfo)
-                  dest.addDotToken  # base type
-                  trObjFields(c, dest, n, flags)
-                  dest.addParRi # end of object
+            takeInto dest, n:      # (of ...)
+              trBranchRanges c, dest, n
+              trBranchBody c, dest, n, flags
           of ElseU:
-            n.into:
-              assert n.stmtKind == StmtsS
-              n.into:
-                if n.exprKind == NilX:
-                  skip n
-                else:
-                  dest.addParLe("object", n.endInfo)
-                  dest.addDotToken  # base type
-                  trObjFields(c, dest, n, flags)
-                  dest.addParRi # end of object
+            takeInto dest, n:      # (else ...)
+              trBranchBody c, dest, n, flags
           of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
               TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
               CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
@@ -1991,21 +2015,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       case n.substructureKind
       of OfU:
         takeInto dest, n:
-          if n.isTagLit and n.substructureKind == RangesU:
-            n.into:
-              dest.add "ranges", n.endInfo
-              while n.hasMore:
-                if n.isTagLit and n.substructureKind == RangeU:
-                  n.into:
-                    dest.add "range", n.endInfo
-                    while n.hasMore:
-                      trExpr c, dest, n
-                    dest.addParRi(n.endInfo)
-                else:
-                  trExpr c, dest, n
-              dest.addParRi(n.endInfo)
-          else:
-            trExpr c, dest, n
+          trBranchRanges c, dest, n
           trStmt c, dest, n
       of ElseU:
         takeInto dest, n:

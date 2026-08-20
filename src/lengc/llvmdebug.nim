@@ -410,8 +410,57 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
 
 # ---- Composite type (struct / union) ----------------------------------
 
-proc genDIUnionType(c: var LLVMCode; n: var Cursor): int
-proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int
+proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType = default(Cursor)): int
+proc genDIAnonObject(c: var LLVMCode; n: var Cursor; name = ""): int
+
+proc enumFieldName(c: var LLVMCode; enumType: Cursor; value: int64): string =
+  ## Map a discriminant value back to its enum field name. `lengcgen` folds enum
+  ## symbols to plain integers when it copies a branch's `(ranges ...)`, so the
+  ## name has to be recovered from the selector's own `(enum ...)` declaration,
+  ## which sits in the same module.
+  result = ""
+  if cursorIsNil(enumType): return
+  var t = enumType
+  if t.kind == Symbol:
+    let d = c.m.getDeclOrNil(t.symId)
+    if d == nil or d.kind != TypeY: return
+    t = asTypeDecl(d.pos).body
+  if t.typeKind != EnumT: return
+  t.into:
+    skip t  # underlying integer type
+    while t.hasMore:
+      if t.substructureKind == EfldU and result.len == 0:
+        var f = t
+        f.into:
+          if f.kind == SymbolDef:
+            let nameSym = f.symId
+            inc f
+            var v = int64(0)
+            if f.kind == IntLit: v = intVal(f)
+            elif f.kind == UIntLit: v = int64(uintVal(f))
+            if v == value:
+              result = nifSymBaseName(c, nameSym)
+          while f.hasMore: skip f
+      skip t
+
+proc branchName(c: var LLVMCode; b: UnionBranch; selectorType: Cursor): string =
+  ## Name a union branch after the first discriminant value that selects it.
+  ## An `else` branch has no `ranges` to name it after, but leaving it unnamed
+  ## reproduces the very problem this is fixing, so it gets the literal name.
+  result = ""
+  if cursorIsNil(b.ranges) or b.ranges.substructureKind != RangesU:
+    return "else"
+  var r = b.ranges
+  r.into:
+    if r.hasMore:
+      var v = r
+      if v.substructureKind == RangeU:  # `(range lo hi)`: name after `lo`
+        v = v.childCursor
+      if v.kind == IntLit:
+        result = enumFieldName(c, selectorType, intVal(v))
+      elif v.kind == UIntLit:
+        result = enumFieldName(c, selectorType, int64(uintVal(v)))
+    while r.hasMore: skip r
 
 proc diElemsList(members: seq[int]): string =
   result = ""
@@ -449,12 +498,14 @@ proc addFieldMember(c: var LLVMCode; fd: FieldDecl; members: var seq[int];
   fieldOffset += fieldSize
 
 proc addUnionMember(c: var LLVMCode; n: var Cursor; members: var seq[int];
-                    fieldOffset: var int) =
+                    fieldOffset: var int; selectorType: Cursor) =
   ## Add the embedded union ``n`` (UnionT) as a single member whose baseType
   ## is an anonymous DICompositeType union. Consumes ``n``.
+  ## ``selectorType`` is the discriminator field's type for a case object, used
+  ## to name each branch after the enum value that selects it.
   let uSize = typeSizeBits(c, n)
   let uAlign = typeAlignBits(c, n)
-  let udi = genDIUnionType(c, n)
+  let udi = genDIUnionType(c, n, selectorType)
   if uAlign > 0:
     fieldOffset = ((fieldOffset + uAlign - 1) div uAlign) * uAlign
   if udi != 0:
@@ -468,13 +519,16 @@ proc addUnionMember(c: var LLVMCode; n: var Cursor; members: var seq[int];
     members.add c.addMetadata(mStr)
   fieldOffset += uSize
 
-proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int =
-  ## Generate an anonymous DICompositeType struct for an inline object body.
+proc genDIAnonObject(c: var LLVMCode; n: var Cursor; name = ""): int =
+  ## Generate a DICompositeType struct for an inline object body. ``name`` is
+  ## set for a case object's branch payload so a debugger can print which
+  ## branch it is looking at; otherwise the struct stays anonymous.
   var members: seq[int] = @[]
   var fieldOffset = 0
   let oSize = typeSizeBits(c, n)
   let oAlign = typeAlignBits(c, n)
   let kind = n.typeKind
+  var selectorType = default(Cursor)
   n.into:
     if kind == ObjectT:
       if n.kind == DotToken: inc n
@@ -482,19 +536,28 @@ proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int =
     while n.hasMore:
       if n.substructureKind == FldU:
         var fd = takeFieldDecl(n)
+        selectorType = fd.typ   # a union sees the field just before it
         addFieldMember(c, fd, members, fieldOffset)
       elif n.typeKind == UnionT:
-        addUnionMember(c, n, members, fieldOffset)
+        addUnionMember(c, n, members, fieldOffset, selectorType)
       else:
         skip n
-  result = c.addMetadata("!DICompositeType(tag: DW_TAG_structure_type" &
-    ", elements: !{" & diElemsList(members) & "}" &
+  var s = "!DICompositeType(tag: DW_TAG_structure_type"
+  if name.len > 0:
+    s.add ", name: \"" & name & "\""
+  s.add ", elements: !{" & diElemsList(members) & "}" &
     ", size: " & $oSize &
-    ", align: " & $oAlign & ")")
+    ", align: " & $oAlign & ")"
+  result = c.addMetadata(s)
 
-proc genDIUnionType(c: var LLVMCode; n: var Cursor): int =
+proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType = default(Cursor)): int =
   ## Generate an anonymous DICompositeType union for an inline union body.
   ## Each branch (nested object / field) becomes an overlapping member.
+  ##
+  ## For a case object the branches arrive tagged (`(of RANGES BODY)`), and each
+  ## member is named after the enum value that selects it. Without those names
+  ## a debugger prints the branches as unnamed members, which is what
+  ## nim-lang/nimony#2068 reports.
   var members: seq[int] = @[]
   let uSize = typeSizeBits(c, n)
   let uAlign = typeAlignBits(c, n)
@@ -514,6 +577,21 @@ proc genDIUnionType(c: var LLVMCode; n: var Cursor): int =
         if ndi != 0:
           members.add c.addMetadata("!DIDerivedType(tag: DW_TAG_member" &
             ", baseType: !" & $ndi & ")")
+      elif isUnionBranch(n):
+        let b = asUnionBranch(n)
+        if b.body.typeKind == ObjectT:
+          let bname = branchName(c, b, selectorType)
+          var body = b.body
+          let bdi = genDIAnonObject(c, body, bname)
+          if bdi != 0:
+            var mStr = "!DIDerivedType(tag: DW_TAG_member"
+            if bname.len > 0:
+              mStr.add ", name: \"" & bname & "\""
+            mStr.add ", baseType: !" & $bdi &
+              ", size: " & $typeSizeBits(c, b.body) &
+              ", align: " & $typeAlignBits(c, b.body) & ")"
+            members.add c.addMetadata(mStr)
+        skip n
       else:
         skip n
   result = c.addMetadata("!DICompositeType(tag: DW_TAG_union_type" &
@@ -579,12 +657,17 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
             ", offset: 0, flags: 0)")
         inc body
 
+    var selectorType = default(Cursor)
     while body.hasMore:
       if body.substructureKind == FldU:
         var fd = takeFieldDecl(body)
+        # A case object's discriminator is the field directly before the union
+        # (an invariant of `lengcgen.trObjFields`), so remembering the last
+        # field is enough to name the branches.
+        selectorType = fd.typ
         addFieldMember(c, fd, members, fieldOffset)
       elif body.typeKind == UnionT:
-        addUnionMember(c, body, members, fieldOffset)
+        addUnionMember(c, body, members, fieldOffset, selectorType)
       elif body.typeKind == ObjectT:
         skip body
       else:
