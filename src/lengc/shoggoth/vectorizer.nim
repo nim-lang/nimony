@@ -114,9 +114,10 @@ type
     reductions: seq[VecReduction]
 
   VecMode* = enum
-    ## Which 128-bit target the emitted `(instr …)` rows are for. They differ in
-    ## one respect only: `vfsub` has no x86-64 lowering, because the nifasm tag
-    ## id space is 9 bits and full — there was no id left for `subpd`/`subps`.
+    ## Which 128-bit target the emitted `(instr …)` rows are for. The rows are
+    ## target-neutral and both modes currently emit exactly the same ones — the
+    ## mode names the back end that will lower them, which is where the two will
+    ## diverge (a wider AVX2 lane count has nothing to say to AdvSIMD).
     vecOff, vecNeon, vecSse
 
   Context = object

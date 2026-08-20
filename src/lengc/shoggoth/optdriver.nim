@@ -100,8 +100,7 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # them; the scalar remainder loop it leaves behind was already optimized by
   # everything above.
   if vecMode != vecOff and getEnv("SHOGGOTH_NO_VECTORIZE").len == 0:
-    if runVectorizer(buf, bodySuffix, "vec." & suffix,
-                     allowSub = vecMode == vecNeon):
+    if runVectorizer(buf, bodySuffix, "vec." & suffix):
       inc st.vectorized
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
@@ -159,9 +158,8 @@ proc optimizeModule*(src: var TokenBuf; suffix: string; st: var Stats;
   ## `m` is the module type context for the alias pass (nil ⇒ coarse aliasing);
   ## `eng` the structural rewrite engine (nil ⇒ the rewriter stage is skipped);
   ## `vecMode` enables the 128-bit loop vectorizer: `vecNeon` on native
-  ## AArch64, `vecSse` on native x86-64. The two differ in one respect — `vfsub`
-  ## has no x86-64 lowering (no nifasm tag id was left for `subpd`/`subps`), so
-  ## `vecSse` leaves any loop containing a `sub` to the scalar code.
+  ## AArch64, `vecSse` on native x86-64. Both emit the same target-neutral rows
+  ## today; the mode names the back end that lowers them.
   var summaries = collectFunctionSummaries(src)   # once per module; cse runs per body
   result = createTokenBuf(src.len + src.len div 8, src.pool, src.tags)
   var n = src.beginRead()
