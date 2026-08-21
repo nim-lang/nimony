@@ -69,7 +69,7 @@ proc parGrain*(iters, chunkSize: int): int =
       ## Default number of chunks when the `||` loop does not pass an explicit
       ## `chunkSize`. One chunk per worker keeps scheduling overhead low while
       ## saturating the pool.
-    ParMaxChunks = StripeCount * StripeSize
+    ParMaxChunks = workerCount * StripeSize
       ## Soft ceiling on concurrent chunk runners, = the pool queue capacity.
       ## `submit` is non-lossy (it caller-runs once the queue is full), so going
       ## over this no longer deadlocks — but the excess chunks would then run
