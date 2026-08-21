@@ -20,6 +20,16 @@ proc bits(x: float32): uint32 = cast[uint32](x)
 
 proc viaCall(dst: var float32; v: float32) = dst = v
 
+proc roundTrip(v: float32): float32 {.noinline.} = v
+
+type FBox = object
+  f: float32
+  n: int
+
+var gScalar: float32 = 1.5'f32
+var gArr: array[2, float32] = [1.5'f32, 2.5'f32]
+var gBox = FBox(f: 1.5'f32, n: 0)
+
 proc main =
   # A float32 literal stored through an out-of-line call. Needs a real call: a
   # small proc is inlined and the literal folded, which is why `seq[float32]`'s
@@ -70,6 +80,44 @@ proc main =
   var dacc = 0.0
   for i in 0 ..< d.len: dacc = dacc + d[i]
   assert cast[uint64](dacc) == cast[uint64](7.0)
+
+  # A float32 passed BY VALUE to an out-of-line call. The argument register is
+  # the destination whose width the literal's bit pattern comes from, and it
+  # was hardcoded to 8 bytes on both targets.
+  assert bits(roundTrip(7.5'f32)) == bits(7.5'f32)
+
+  # Initializers, not just stores. An `aconstr` element and a float global each
+  # decide a width of their own, and each defaulted to 64 independently of the
+  # stores above — so a fix to the store paths alone leaves these reading 0.0.
+  assert bits(gScalar) == bits(1.5'f32)
+  gScalar = 3.5'f32
+  assert bits(gScalar) == bits(3.5'f32)
+  assert bits(gArr[0]) == bits(1.5'f32)
+  assert bits(gBox.f) == bits(1.5'f32)
+
+  var localArr: array[2, float32] = [1.5'f32, 2.5'f32]
+  assert bits(localArr[0]) == bits(1.5'f32)
+  assert bits(localArr[1]) == bits(2.5'f32)
+
+  var fromLit: seq[float32] = @[1.5'f32, 2.5'f32]
+  assert bits(fromLit[0]) == bits(1.5'f32)
+
+  # An object field's default inside a constructor, which is the width a
+  # synthesized `oconstr` — a coroutine frame's, say — depends on.
+  var box = FBox(f: 1.5'f32, n: 0)
+  assert bits(box.f) == bits(1.5'f32)
+  box.f = 7.5'f32
+  assert bits(box.f) == bits(7.5'f32)
+
+  # Comparison against a LITERAL. Here the compare instruction already had the
+  # right width, so the literal operand — the only one with no type to read a
+  # width from — was compared as the wrong half of a double.
+  var cmpV = 3.0'f32
+  assert cmpV > 2.9'f32
+  assert cmpV < 3.1'f32
+  assert cmpV == 3.0'f32
+  var cmpOther = 2.9'f32
+  assert cmpV > cmpOther     # the variable-operand form, which always worked
 
   echo "float32 ok"
 
