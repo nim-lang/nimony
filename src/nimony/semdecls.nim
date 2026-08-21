@@ -715,9 +715,12 @@ proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isG
   c.typeHooks.getOrQuit(obj).a[attachedOp] = symId
 
 proc getHookName(symId: SymId): string =
-  result = pool.syms[symId]
-  extractBasename(result)
-  #result = result.normalize
+  if symId == SymId(0):
+    result = ""
+  else:
+    result = pool.syms[symId]
+    extractBasename(result)
+    #result = result.normalize
 
 proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: NifLineInfo): TypeCursor =
   let params = getParamsType(c, dest, beforeParams)
@@ -1055,7 +1058,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       c.openScope() # open parameter scope
       let beforeGenericParams = dest.len
       semGenericParams c, dest, it.n
-      if c.visOwner.len == outerVisOwner:
+      if c.visOwner.len == outerVisOwner and status != ErrNoIdent:
         # Not a generic instantiation (`semGenericParams` pushes ORIGIN's module
         # for those). A routine's body is written in the module that declares
         # the routine, so that is what its field accesses must be judged
@@ -1086,6 +1089,17 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         extractBasename(name)
         # go up a scope for the parameter scope:
         c.currentScope.up.addOverloadable(pool.strings.getOrIncl(name), s)
+      if symId != SymId(0) and kind in {ProcY, FuncY} and {ImportcP, ImportcppP} * crucial.flags == {}:
+        var name = pool.syms[symId]
+        extractBasename(name)
+        if name == ">" or name == ">=" or name == "!=":
+          let op1 = if name == "!=": "==" elif name == ">": "<" else: "<="
+          let msg = if pass == checkConceptProc:
+                      "If a type has `" & op1 & "`, it automatically has `" & name & "`."
+                    else:
+                      "define `" & op1 & "` instead of `" & name & "` to implement user defined comparison operator. " &
+                      "it allows you to use `" & name & "` automatically."
+          buildErrAt c, dest, beforeName, msg
       # An intrinsic's signature is unified against its row here, where the
       # params and the return type are already in `dest`. The message lands in
       # the `effects` slot — the one routine slot that already accepts an
@@ -1150,7 +1164,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       c.routine = c.routine.parent
   if newName == NoSymId:
     producesVoid c, dest, info, it.typ
-  publish c, dest, symId, declStart
+  if symId != SymId(0):
+    publish c, dest, symId, declStart
 
   if kind == MacroY and pass == checkBody:
     let macroDecl = cursorAt(dest, declStart)

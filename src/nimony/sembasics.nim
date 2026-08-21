@@ -489,6 +489,9 @@ proc declareOverloadableSym*(c: var SemContext; dest: var TokenBuf; it: var Item
       status = OkExistingFresh
     result = (it.n.symId, status)
     dest.takeTree it.n
+  elif it.n.isTagLit and it.n.cursorTagId == nifpools.ErrT:
+    dest.takeTree it.n
+    result = (SymId(0), ErrNoIdent)
   else:
     let lit = takeIdent(it.n)
     if lit == StrId(0):
