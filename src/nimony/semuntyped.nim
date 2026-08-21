@@ -300,7 +300,7 @@ proc semTemplType(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
   of IntT, FloatT, CharT, BoolT, UIntT, NiltT, AutoT,
       SymkindT, UntypedT, TypedT, CstringT, PointerT, TypekindT, OrdinalT,
       PtrT, RefT, MutT, OutT, LentT, SinkT, NotT, UarrayT,
-      StaticT, TypedescT, SetT, OrT, AndT, TupleT, ArrayT, RangetypeT, VarargsT,
+      StaticT, TypedescT, SetT, OrT, AndT, TupleT, ClosureTupleT, ArrayT, RangetypeT, VarargsT,
       InvokeT, ErrT:
     semTemplBodySons c, dest, n
   of ObjectT:

@@ -1006,7 +1006,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of ConceptT:
       gconcept(g, n, c)
 
-    of TupleT:
+    of TupleT, ClosureTupleT:
+      # A `ClosureTupleT` only ever shows up in hexer-stage diagnostics; render
+      # it like the plain tuple it is laid out as.
       n.into:
         put(g, tkTuple, "tuple")
         put(g, tkBracketLe, "[")

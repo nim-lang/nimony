@@ -320,7 +320,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let isPassiveProc = nk == ProctypeT and procHasPragma(n, PassiveP)
     # An itertype is a coroutine-shaped value type. `.closure` iter values
     # carry a captured environment, so they lower to a
-    # `(tuple <wrapper-proctype> (ref RootObj))` — same runtime shape as
+    # `(closureTuple <wrapper-proctype> (ref RootObj))` — same runtime shape as
     # closure procs. `.passive` iters have NO environment (their wrapper
     # always allocates a fresh frame, see `generateCoroutineHelpers`), so
     # — exactly like a `.passive` proc — they lower to a bare wrapper
@@ -330,8 +330,8 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if isPassiveProc or isClosureIterType or isPassiveIterType:
       var info = n.info
       if isClosureIterType:
-        # open the (tuple … (ref RootObj)) wrapper
-        dest.addParLe TupleT, info
+        # open the (closureTuple … (ref RootObj)) wrapper
+        dest.addParLe ClosureTupleT, info
       var ptStart = default(Cursor)
       if isPassiveProc:
         dest.addParLe(n.cursorTagId, n.info)  # proctype tag (passive proc)

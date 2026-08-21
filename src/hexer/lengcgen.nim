@@ -431,7 +431,7 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
     dest.addDotToken()
     case k
-    of TupleT:
+    of TupleT, ClosureTupleT:
       trTupleBody c, dest, body
     of ArrayT:
       trArrayBody c, dest, body
@@ -666,7 +666,10 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
     of StaticT, SinkT, DistinctT:
       n.into:
         trType c, dest, n, flags
-    of TupleT:
+    of TupleT, ClosureTupleT:
+      # `(closureTuple fn env)` is laid out exactly like the plain tuple it
+      # replaced; only the mangled key differs, so it gets its own generated
+      # struct decl.
       trAsNamedType c, dest, n
     of ObjectT:
       let isUnion = IsUnion in flags

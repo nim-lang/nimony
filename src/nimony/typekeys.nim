@@ -46,7 +46,7 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
         while c.hasMore:
           mangleImpl b, c, mm
       b.endTree()
-    elif c.typeKind == TupleT:
+    elif c.typeKind in TupleTypes:
       b.addTree(tag)
       c.into:
         while c.hasMore:
