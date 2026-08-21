@@ -191,24 +191,32 @@ proc coroTrSons*(c: var Context; dest: var TokenBuf; n: var Cursor)
 # Naming helpers
 # ---------------------------------------------------------------------
 
-proc coroNameStem*(procId: SymId): string =
-  ## Returns the symbol's full name minus its trailing module suffix.
-  ## Unlike `extractVersionedBasename`, this preserves any intermediate
-  ## `I<hash>` segment for generic instances — necessary because two
-  ## different instantiations (e.g. `gen.12.Iaaaa.mod` and
-  ## `gen.12.Ibbbb.mod`) would otherwise produce identical stem
-  ## `"gen.12"` and collide on every synthesised wrapper / coro-type /
-  ## state-proc / field name.
-  splitSymName(pool.syms[procId]).name
+proc coroHelperName*(routineSym: SymId; tag, fallbackSuffix: string): SymId =
+  ## Mint the name of a coroutine helper (`coro` frame type, `init` wrapper,
+  ## `s<state>` state proc) derived from `routineSym`.
+  ##
+  ## The suffix is the DEFINING module's, never the transforming module's:
+  ## the helpers are generated once, by the module that declares the routine,
+  ## so a caller in another module has to arrive at the same name for the two
+  ## to link up. `fallbackSuffix` covers a bare symbol (no module segment),
+  ## which is what a symbol this pass minted itself looks like.
+  ##
+  ## `splitSymName(...).name` — not `extractVersionedBasename` — because it
+  ## preserves an intermediate `I<hash>` segment: two instantiations of one
+  ## generic (`gen.12.Iaaaa.mod`, `gen.12.Ibbbb.mod`) would otherwise share
+  ## the stem `gen.12` and collide on every helper name.
+  let split = splitSymName(pool.syms[routineSym])
+  let module = if split.module.len > 0: split.module else: fallbackSuffix
+  result = pool.syms.getOrIncl(derivedName(split.name, tag) & "." & module)
 
 proc coroTypeForProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "coro") & "." & c.thisModuleSuffix)
+  coroHelperName(procId, "coro", c.thisModuleSuffix)
 
 proc coroWrapperProc*(c: Context; procId: SymId): SymId =
-  result = pool.syms.getOrIncl(derivedName(coroNameStem(procId), "init") & "." & c.thisModuleSuffix)
+  coroHelperName(procId, "init", c.thisModuleSuffix)
 
 proc stateToProcName*(c: Context; sym: SymId; state: int): SymId =
-  result = pool.syms.getOrIncl(derivedName(coroNameStem(sym), "s" & $state) & "." & c.thisModuleSuffix)
+  coroHelperName(sym, "s" & $state, c.thisModuleSuffix)
 
 proc localToFieldname*(c: var Context; local: SymId): SymId =
   var name = pool.syms[local]
@@ -221,49 +229,48 @@ proc localToFieldname*(c: var Context; local: SymId): SymId =
   result = pool.syms.getOrIncl(name)
 
 proc coroWrapperForExternIter*(iterSym: SymId): SymId =
-  ## Mangle the closure iterator's init-wrapper symbol using the
-  ## iterator's OWN module suffix (which may differ from the current
-  ## module's). The wrapper is defined in the same module that declared
-  ## the iterator. `splitSymName` preserves the `I<hash>` segment for
-  ## generic instances so two instantiations don't collide on a single
-  ## wrapper.
-  let split = splitSymName(pool.syms[iterSym])
-  result = pool.syms.getOrIncl(derivedName(split.name, "init") & "." & split.module)
+  ## Context-free spelling of `coroWrapperProc` for lambdalifting, which
+  ## holds its own `Context` type and so cannot pass ours. Same name, same
+  ## rule — the iterator's own module suffix.
+  coroHelperName(iterSym, "init", "")
 
 proc coroTypeForExternIter*(iterSym: SymId): SymId =
-  ## Same idea as `coroWrapperForExternIter` but for the coroutine
-  ## frame type — uses the iter's OWN module suffix so cross-module
-  ## iter values reference the right `.coro` type.
-  let split = splitSymName(pool.syms[iterSym])
-  result = pool.syms.getOrIncl(derivedName(split.name, "coro") & "." & split.module)
+  ## Context-free spelling of `coroTypeForProc`; see above.
+  coroHelperName(iterSym, "coro", "")
 
-proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
-  ## Publish a placeholder signature for an iter's init wrapper so
-  ## downstream passes (eraiser / duplifier / destroyer) can resolve
-  ## the wrapper's type via `tryLoadSym` BEFORE cps generates the
-  ## actual wrapper body.
+proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
+  ## Publish a placeholder signature for a coroutine's `init` wrapper so
+  ## downstream passes (eraiser / duplifier / destroyer / constparams) can
+  ## resolve its type via `tryLoadSym` even though no wrapper DECL exists in
+  ## this process. Hexer-generated symbols never enter a module's sem index,
+  ## which is the one thing both callers are up against:
   ##
-  ## Lambdalifting calls this when it expands a `.closure` iter
-  ## corofor into a trampoline that references the wrapper sym. Only
-  ## same-module iters need this — cross-module iters already have
-  ## their wrapper published by the iter's owning module's compile.
+  ##  * lambdalifting expands a same-module `.closure` iter corofor into a
+  ##    trampoline that names the wrapper before cps has emitted it;
+  ##  * cps compiles a call to a FOREIGN `.passive` proc, whose wrapper the
+  ##    DEFINING module's hexer run emits — there is no later point in *this*
+  ##    run at which it becomes loadable.
   ##
-  ## The published signature shape is the same as what
-  ## `generateCoroutineHelpers` emits: original iter params, then
-  ## `(param result (ptr T))` if non-void, then
-  ## `(param caller Continuation)`, return type `Continuation`,
-  ## pragmas `(closure)`. Body is empty (`.`); cps's emission later
-  ## overrides this with the real body via `publishSignature` again.
-  let split = splitSymName(pool.syms[iterSym])
-  if split.module != moduleSuffix:
-    return  # foreign iter — wrapper published by its own module
-  let wrapperSym = pool.syms.getOrIncl(derivedName(split.name, "init") & "." & split.module)
+  ## `tryLoadSym` on the wrapper is the whole guard. A module-suffix test
+  ## would be wrong in both directions: the foreign case is exactly the one
+  ## that needs publishing, and the same-module case is already covered by
+  ## the wrapper resolving once cps has emitted it.
+  ##
+  ## The shape mirrors what `generateCoroutineHelpers` emits: original params,
+  ## then `(param result (ptr T))` if non-void, then
+  ## `(param caller Continuation)`, return type `Continuation`, and the
+  ## routine's OWN pragmas — copied, not synthesized, because a foreign
+  ## wrapper's placeholder is never replaced by the real signature in this
+  ## process and `constparams.trCall` reads `raises` off it to decide whether
+  ## the call returns an `(ErrorCode, T)` tuple. Body is empty (`.`); for a
+  ## same-module routine cps's `publishSignature` overwrites this entry.
+  let wrapperSym = coroHelperName(routineSym, "init", moduleSuffix)
   if tryLoadSym(wrapperSym).status == LacksNothing:
-    return  # already published (e.g. by an earlier corofor for the
-            # same iter, or by a previous compile)
+    return  # already published: an earlier call, or cps's own emission
 
-  let res = tryLoadSym(iterSym)
-  assert res.status == LacksNothing, "iter sym not loaded: " & pool.syms[iterSym]
+  let res = tryLoadSym(routineSym)
+  if res.status != LacksNothing:
+    return  # signature unrecoverable; let the downstream lookup fail loudly
   let fn = asRoutine(res.decl)
   let info = NoLineInfo
 
@@ -301,8 +308,7 @@ proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
       buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
       buf.addDotToken() # default value
   buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
-  buf.copyIntoKind PragmasU, info:
-    buf.copyIntoKind ClosureP, info: discard
+  buf.addSubtree fn.pragmas
   buf.addDotToken() # effects
   buf.addDotToken() # body — empty, cps replaces with the real body
   buf.addParRi() # close proc
