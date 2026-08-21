@@ -34,6 +34,17 @@ proc tryEnqueue*[T: HasDefault](s: var FifoStripe[T]; item: T): bool =
     inc s.count
   s.lock.release()
 
+proc tryBulkEnqueue*[T: HasDefault](s: var FifoStripe[T]; items: openArray[T]): int =
+  ## Enqueue as many leading items of `items` (in order) as fit under one lock
+  ## acquisition; returns how many were taken.
+  s.lock.acquire()
+  result = min(items.len, s.data.len - s.count)
+  for i in 0 ..< result:
+    s.data[s.tail] = items[i]
+    s.tail = (s.tail + 1) and (s.data.len - 1)
+  inc s.count, result
+  s.lock.release()
+
 proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: var openArray[T]): int =
   s.lock.acquire()
   result = min(s.count, min(bulkSize, buf.len))
