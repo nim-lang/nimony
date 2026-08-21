@@ -121,6 +121,9 @@ type
     #    portable rows: the CONCEPT is target-neutral, the instruction is not.
     StackPointerOp
     TraceTableOp
+    # ── the valgrind client request (`lib/std/valgrind`). Portable in the same
+    #    sense: every target has the mechanism, none spells it the same way.
+    VgClientRequestOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -262,7 +265,7 @@ const
     "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
-    "StackPointer", "TraceTable"]
+    "StackPointer", "TraceTable", "VgClientRequest"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
   InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
@@ -618,10 +621,42 @@ const
     # written and tested (`lib/std/stacktraces`).
     IntrinsicRow(cls: icPortable, targets: {tgX64}, arity: 0,         # TraceTable
                  params: NoOps, roles: AllIn, ret: ptRawPtr,
-                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {})
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+
+    # ── valgrind ───────────────────────────────────────────────────────────
+    # One request to valgrind, made the only way valgrind accepts one: a fixed
+    # sequence of instructions that is architecturally a NO-OP, which valgrind's
+    # JIT recognizes and replaces. Running natively it does nothing at all — which
+    # is why the whole mechanism costs an unvalgrinded program only the handful of
+    # bytes it never notices executing.
+    #
+    # The operand is a pointer to the 6-word request block (`request, arg1..arg5`)
+    # valgrind reads; the result is what valgrind hands back, or 0 when nothing
+    # intercepted the sequence. So `0` means "not running under valgrind" for every
+    # request, and every request that returns nothing interesting simply ignores it.
+    # No `default` operand for that reason: the caller-supplied default the C macro
+    # takes is always 0 here, and passing it would only add a register to shuffle.
+    #
+    # NOT `efPure`: pure would make it CSE-able and DCE-able, and a request deleted
+    # for having no result is a request not made. The memory effects are real too —
+    # valgrind READS the block — and `efBarrier` is what keeps the surrounding
+    # allocator stores on the correct side of it, which is the entire point at a
+    # `FREELIKE_BLOCK` (the free-list link must not sink past the request that
+    # declares the block dead).
+    #
+    # AArch64 only for now: the sequence is written and tested there (`nimony n` on
+    # linux/arm64). x86-64 has the same mechanism — `rol rdi,{3,13,61,51}` +
+    # `xchg rbx,rbx`, args in rax — and wants the same row with `tgX64` added once
+    # its lowering is written and RUN, exactly as `TraceTable` above is waiting on
+    # its AArch64 half.
+    IntrinsicRow(cls: icPortable, targets: {tgA64}, arity: 1,   # VgClientRequest
+                 params: [ptRawPtr, ptNone, ptNone, ptNone, ptNone, ptNone],
+                 roles: AllIn, ret: ptUIntW,
+                 widths: {64'u8}, tie: -1,
+                 effects: {efReads, efWrites, efBarrier}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = TraceTableOp
+const LastIntrinsicOp* = VgClientRequestOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.

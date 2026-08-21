@@ -63,6 +63,12 @@ Commands:
                        the built-in nimony runner, recursively. This is the
                        general entry point — point it at any suite.
   all                  run the whole suite: `<tests>` + `<examples>`.
+  nativevalgrind       run the native regression set with `-d:valgrind`, under
+                       memcheck, and demand that memcheck reports nothing. This
+                       is what says the allocator's heap instrumentation
+                       (`lib/std/system/valgrind.nim`) describes the heap
+                       truthfully rather than plausibly. Linux/AArch64 for now,
+                       which is where `VgClientRequest` has a lowering.
   native               run the curated native-backend regression set through
                        `nimony n` (arkham + nifasm, from the sibling
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
@@ -1192,6 +1198,16 @@ const
     # lowering still "passes" single-threaded unless the test reads back the value
     # the CAS observed.
     "tests/nimony/intrinsics/tatomics",
+    # The valgrind client request. Native-only by nature: under the C backend the
+    # mechanism is valgrind's own headers around mimalloc, so there is no row to
+    # lower and the test compiles to its `echo` alone. What it checks here is the
+    # property the C path never has to have — that the request sequence is inert
+    # on real hardware, and leaves every live register where it found it.
+    "tests/nimony/intrinsics/tvalgrind",
+    # `float32` at every width-sensitive spot. Native-relevant by nature: the C
+    # backend gets the widths from C's own type system, so this only ever fails on
+    # a backend that has to derive them itself.
+    "tests/nimony/types/tfloat32",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",
@@ -1225,6 +1241,101 @@ const
     "tests/nimony/sets/tconstsetscan"
   ]
 
+when defined(linux):
+  var nativeElfShapeChecked = false
+    ## The shape check below is an invariant of nifasm's ELF writer, not of any one
+    ## test, so it runs once per suite — on the first native binary produced.
+
+  proc u16(s: string; at: int): int =
+    int(uint8(s[at])) or (int(uint8(s[at+1])) shl 8)
+
+  proc u32(s: string; at: int): int =
+    var r = 0
+    for i in countdown(3, 0): r = (r shl 8) or int(uint8(s[at+i]))
+    result = r
+
+  proc u64(s: string; at: int): uint64 =
+    result = 0'u64
+    for i in countdown(7, 0): result = (result shl 8) or uint64(uint8(s[at+i]))
+
+  proc checkNativeElfShape(c: var TestCounters; file, exe: string) =
+    ## The three properties that make a nifasm image DEBUGGABLE, asserted against the
+    ## bytes rather than against the writer that produced them.
+    ##
+    ## All three were absent once, and the way they failed is why this is a test:
+    ## nothing crashed and no test went red. The image merged code and data into one
+    ## R+W+X segment, which valgrind's ELF reader — it classifies a mapping as the
+    ## text map only when it is R+X and NOT writable — declined to read at all, so
+    ## every frame of every report came back as `???` and valgrind looked like it
+    ## simply had nothing to say about native binaries. `.eh_frame` sat outside every
+    ## PT_LOAD, which valgrind treats as a FATAL debug-info error, taking `.symtab`
+    ## down with it. A regression here costs no test and one very confusing week.
+    if nativeElfShapeChecked: return
+    nativeElfShapeChecked = true
+    var img = ""
+    try: img = readFile(exe)
+    except IOError, OSError: return
+    if img.len < 64 or not img.startsWith("\x7FELF"): return
+    if uint8(img[4]) != 2'u8 or uint8(img[5]) != 1'u8: return  # ELF64 little-endian only
+
+    const PtLoad = 1
+    const (PfX, PfW, PfR) = (1, 2, 4)
+    let phoff = int(u64(img, 32))
+    let phentsize = u16(img, 54)
+    let phnum = u16(img, 56)
+    var loads: seq[(uint64, uint64, int)] = @[]   # vaddr, memsz, flags
+    var rxText = false
+    for i in 0 ..< phnum:
+      let at = phoff + i * phentsize
+      if at + phentsize > img.len: return
+      if u32(img, at) != PtLoad: continue
+      let flags = u32(img, at + 4)
+      let vaddr = u64(img, at + 16)
+      let memsz = u64(img, at + 40)
+      if memsz == 0: continue
+      loads.add (vaddr, memsz, flags)
+      if (flags and PfW) != 0 and (flags and PfX) != 0:
+        failure c, file, "no writable+executable PT_LOAD (W^X)",
+          "segment at 0x" & toHex(vaddr, 8) & " is R+W+X"
+        return
+      if (flags and PfX) != 0 and (flags and PfW) == 0 and (flags and PfR) != 0:
+        rxText = true
+    if not rxText:
+      failure c, file, "a readable+executable, non-writable PT_LOAD",
+        "none of the " & $loads.len & " PT_LOADs is R+X and not writable"
+      return
+
+    # `.eh_frame` must be SHF_ALLOC and land inside one of those PT_LOADs.
+    const ShfAlloc = 2'u64
+    let shoff = int(u64(img, 40))
+    let shentsize = u16(img, 58)
+    let shnum = u16(img, 60)
+    let shstrndx = u16(img, 62)
+    if shoff == 0 or shnum == 0: return          # stripped: nothing to check
+    let strBase = int(u64(img, shoff + shstrndx * shentsize + 24))
+    for i in 0 ..< shnum:
+      let at = shoff + i * shentsize
+      if at + shentsize > img.len: return
+      let nameOff = strBase + u32(img, at)
+      if nameOff >= img.len: return
+      var name = ""
+      var k = nameOff
+      while k < img.len and img[k] != '\0': name.add img[k]; inc k
+      if name != ".eh_frame": continue
+      let shFlags = u64(img, at + 8)
+      let shAddr = u64(img, at + 16)
+      let shSize = u64(img, at + 32)
+      if shSize == 0: return                     # built with `--no-debug-info`
+      if (shFlags and ShfAlloc) == 0 or shAddr == 0:
+        failure c, file, ".eh_frame is SHF_ALLOC with a real sh_addr",
+          "sh_flags=0x" & toHex(shFlags, 4) & " sh_addr=0x" & toHex(shAddr, 8)
+        return
+      for (vaddr, memsz, _) in loads:
+        if shAddr >= vaddr and shAddr + shSize <= vaddr + memsz: return
+      failure c, file, ".eh_frame inside a PT_LOAD",
+        "sh_addr=0x" & toHex(shAddr, 8) & " is in none of the loaded segments"
+      return
+
 proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
   let msgs = file.changeFileExt(".msgs")
   if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
@@ -1239,6 +1350,8 @@ proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
   if not exe.fileExists():
     failure c, file, "native executable", "missing: " & exe
     return
+  when defined(linux):
+    checkNativeElfShape c, file, exe
   let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
   var output = file.changeFileExt(".output")
   if testProgramExitCode != 0:
@@ -1253,6 +1366,82 @@ proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
       if overwrite:
         writeFile(output, testProgramOutput)
       failure c, file, outputSpec, testProgramOutput
+
+proc nativeValgrindTestFile(c: var TestCounters; file: string) =
+  ## One native test built with `-d:valgrind` and run under memcheck.
+  ##
+  ## Two things are asserted, and the second is the one worth the runtime: that
+  ## the program still prints what it should, and that memcheck has NOTHING to
+  ## say about it. The heap instrumentation lives in the allocator, so a mistake
+  ## in it is not a wrong answer anywhere — it is a false report, arriving in
+  ## whatever unrelated program someone was debugging, looking exactly like the
+  ## bug they were hunting. The only way to know the instrumentation is honest is
+  ## to run a corpus that is known good and demand silence.
+  let msgs = file.changeFileExt(".msgs")
+  if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+    return
+  inc c.total
+  let (compilerOutput, compilerExitCode) = execNimonyNative("-d:valgrind " & quoteShell(file))
+  if compilerExitCode != 0:
+    failure c, file, "native -d:valgrind compiler exitcode 0",
+      removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+    return
+  let exe = file.generatedExeFile()
+  if not exe.fileExists():
+    failure c, file, "native executable", "missing: " & exe
+    return
+  # `-q` so only real findings appear, and `--error-exitcode` so the verdict is
+  # the exit code rather than something to parse out of the log.
+  let (vgOutput, vgExitCode) = osproc.execCmdEx(
+      "valgrind --error-exitcode=99 --leak-check=no -q " & quoteShell(exe))
+  if vgExitCode == 99:
+    failure c, file, "no valgrind findings", vgOutput
+    return
+  let output = file.changeFileExt(".output")
+  if output.fileExists():
+    let outputSpec = readFile(output).strip
+    if outputSpec != vgOutput.strip:
+      failure c, file, outputSpec, vgOutput
+
+const NativeValgrindSkip: array[0, string] = [
+  # Empty. A test belongs here when it runs correctly under `hastur native` but
+  # memcheck reports a real defect in it that is NOT the allocator
+  # instrumentation's doing — with the reason spelled out, as
+  # `tclosure_iter_string` had before its two causes were fixed (`allocFrame`
+  # now uses `alloc0`, and the coroutine frame's `oconstr` is total).
+]
+
+proc nativeValgrindTests() =
+  ## The native regression set again, this time with the allocator telling
+  ## valgrind what it is doing (`lib/std/system/valgrind.nim`). Same corpus as
+  ## `nativetests`, so what it adds is purely the memcheck verdict.
+  if not hasValgrind:
+    echo "0 / 0 native valgrind tests (valgrind not installed)"
+    return
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  proc slashed(p: string): string = p.replace('\\', '/')
+  var skip = initHashSet[string]()
+  for f in NativeTestSkip: skip.incl slashed(f.addFileExt(".nim"))
+  for f in NativeValgrindSkip: skip.incl slashed(f.addFileExt(".nim"))
+  var dirs: seq[string] = @NativeTestDirs
+  when defined(windows): dirs.add @NativeTestDirsWindows
+  for dir in dirs:
+    var files: seq[string] = @[]
+    for x in walkDir(dir):
+      if x.kind == pcFile and x.path.endsWith(".nim") and
+         not isGeneratedTestFile(x.path) and slashed(x.path) notin skip:
+        files.add x.path
+    sort files
+    for f in files: nativeValgrindTestFile c, f
+  for f in NativeTestFiles:
+    if slashed(f.addFileExt(".nim")) in skip: continue
+    nativeValgrindTestFile c, f.addFileExt(".nim")
+  reportFailures c
+  echo c.total - c.failures, " / ", c.total, " native valgrind tests successful in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some native valgrind tests failed."
 
 proc nativetests(overwrite: bool) =
   ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`,
@@ -3175,6 +3364,20 @@ proc handleCmdLine =
       buildArkham()
       buildNifasm()
     nativetests(overwrite)
+
+  of "nativevalgrind":
+    # The same corpus as `native`, built with `-d:valgrind` and run under
+    # memcheck. Separate command rather than part of `native` because it is a
+    # different question (is the ALLOCATOR's story to valgrind true?) at maybe
+    # twenty times the runtime — memcheck's interpretation is not cheap.
+    if not skipBuild:
+      buildNimonyToolchain()
+      buildNifmake()
+      buildShoggoth()
+      buildArkham()
+      buildNifasm()
+    nativeValgrindTests()
+
   of "lengc":
     buildLengc()
 
