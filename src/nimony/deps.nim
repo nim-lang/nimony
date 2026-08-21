@@ -1281,18 +1281,18 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # reaches the command line; the rest are found via the embedded index).
         b.withTree "do":
           b.addIdent "ithaqua"
-          template wasmInput(f: FilePair): string =
+          proc wasmInput(c: DepContext; f: FilePair; backend: string; useOptimizer: bool): string =
             # under the optimizer the whole module set switches to `.oc.nif`
             # together — ithaqua derives sibling filenames from the MAIN
             # input's extension, exactly like arkham's native chain.
-            if useOptimizer: c.config.optimizedFile(f, backend)
-            else: c.config.lengcFile(f, backend)
-          let mainCNif = wasmInput(c.rootNode.files[0])
+            if useOptimizer: result = c.config.optimizedFile(f, backend)
+            else: result = c.config.lengcFile(f, backend)
+          let mainCNif = wasmInput(c, c.rootNode.files[0], backend, useOptimizer)
           b.withTree "input":
             b.addStrLit mainCNif
           objFiles.incl mainCNif
           for v in c.nodes:
-            let cn = wasmInput(v.files[0])
+            let cn = wasmInput(c, v.files[0], backend, useOptimizer)
             if not objFiles.containsOrIncl(cn):
               b.withTree "input":
                 b.addStrLit cn
