@@ -135,14 +135,17 @@ type
     ##   activated. It tells the parent (e.g. trIf) that the then-branch ended
     ##   with a leaving statement, enabling else exploitation for the no-else case.
     ## - `reenableOnLeave` records guards that were deactivated during else
-    ##   exploitation and must be re-enabled when the basic block closes.
-    ##   Each entry `(idx, cond)` is validated: the guard at `idx` must still
-    ##   have `cond` as its condition (guards are a stack, so this can go stale
-    ##   if guards were removed).
+    ##   exploitation and must be re-enabled when their else branch closes.
+    ##   Each entry `(idx, cond, atDepth)` is validated: the guard at `idx` must
+    ##   still have `cond` as its condition (guards are a stack, so this can go
+    ##   stale if guards were removed). `atDepth` is the `openElseBranches` value
+    ##   of the entry's else branch, so a partial close (down to a borrowed
+    ##   guard's snapshot) re-enables exactly the guards of the branches it
+    ##   closed.
     openElseBranches: int
     leavesWith: int # index to the innermost guard that we activated or -1
     hasParLe: bool
-    reenableOnLeave: seq[(int, SymId)]
+    reenableOnLeave: seq[(int, SymId, int)]
 
   CurrentProc = object
     mode: ExceptionMode
@@ -191,20 +194,32 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
     dest.addParRi()
   c.typeCache.closeScope()
 
-proc closeBasicBlock(c: var Context; b: var BasicBlock; dest: var TokenBuf) =
-  ## Close all else branches opened by else exploitation within this block.
-  ## Post-condition: openElseBranches == 0 and all borrowed guards are returned.
-  while b.openElseBranches > 0:
+proc closeElseBranches(c: var Context; b: var BasicBlock; dest: var TokenBuf; downTo: int) =
+  ## Close else branches opened by else exploitation until only `downTo` remain.
+  ## A borrowed guard ite must call this with its snapshot of `openElseBranches`
+  ## before `maybeCloseGuard`: branches opened inside the guard would otherwise
+  ## swallow the guard's `) . )` — the dot lands as a bogus fourth child of the
+  ## exploited ite and the guard ite loses its own else slot.
+  while b.openElseBranches > downTo:
     dest.addParRi() # close `else` branch (stmts)
     dest.addParRi() # close ite
     dec b.openElseBranches
-  assert b.openElseBranches == 0
-  for (idx, cond) in b.reenableOnLeave:
-    if idx < c.current.guards.len and
-        cond == c.current.guards[idx].cond:
-      # Re-enable the guard that was deactivated during else exploitation.
-      # The guard was "borrowed" by openElseBranch — we return it here.
-      c.current.guards[idx].active = true
+  for i in countdown(b.reenableOnLeave.len - 1, 0):
+    let (idx, cond, atDepth) = b.reenableOnLeave[i]
+    if atDepth > downTo:
+      if idx < c.current.guards.len and
+          cond == c.current.guards[idx].cond:
+        # Re-enable the guard that was deactivated during else exploitation.
+        # The guard was "borrowed" by openElseBranch — we return it here.
+        # Statements can no longer flow into the closed branch, so subsequent
+        # code must be guarded again.
+        c.current.guards[idx].active = true
+      b.reenableOnLeave.delete(i)
+
+proc closeBasicBlock(c: var Context; b: var BasicBlock; dest: var TokenBuf) =
+  ## Close all else branches opened by else exploitation within this block.
+  ## Post-condition: openElseBranches == 0 and all borrowed guards are returned.
+  closeElseBranches(c, b, dest, 0)
 
 proc openElseBranch(b: var BasicBlock; dest: var TokenBuf; info: NifLineInfo) =
   ## Open an else branch on the current ite, deferring its closure to `closeBasicBlock`.
@@ -751,8 +766,9 @@ proc trIf(c: var Context; outerB: var BasicBlock; dest: var TokenBuf; n: var Cur
     n = ifStart; skip n
     assert b.leavesWith < c.current.guards.len, "leavesWith out of range"
     c.current.guards[b.leavesWith].active = false
-    outerB.reenableOnLeave.add ((b.leavesWith, c.current.guards[b.leavesWith].cond))
     openElseBranch outerB, dest, info
+    outerB.reenableOnLeave.add ((b.leavesWith,
+      c.current.guards[b.leavesWith].cond, outerB.openElseBranches))
   else:
     # --- Case 3: No else branch, normal completion ---
     dest.addDotToken() # no else section
@@ -872,6 +888,9 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
     let bodyStart = n # into the loop body statement list
     n = sub(n)
     while n.hasMore and breakSplitPoint >= 1:
+      if n.stmtKind == LabS:
+        # a label ends the open else branches (join point, see trGuardedStmts)
+        closeElseBranches(c, b, dest, 0)
       trGuardedStmts c, b, dest, n, false
       dec breakSplitPoint
 
@@ -888,11 +907,24 @@ proc trWhileTrue(c: var Context; dest: var TokenBuf; n: var Cursor;
 
     var b2 = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
     var g = (-1, NoSymId)
+    var elseDepthAtG = 0
     while n.hasMore:
-      if g[0] < 0: g = maybeEmitGuard(c, dest, n.info)
+      if n.stmtKind == LabS:
+        # a label ends the merged guard region and the open else branches
+        # (join point, see trGuardedStmts)
+        if g[0] >= 0:
+          closeElseBranches(c, b2, dest, elseDepthAtG)
+        maybeCloseGuard(c, dest, g, false)
+        g = (-1, NoSymId)
+        closeElseBranches(c, b2, dest, 0)
+      elif g[0] < 0:
+        g = maybeEmitGuard(c, dest, n.info)
+        if g[0] >= 0: elseDepthAtG = b2.openElseBranches
       elif g[0] < c.current.guards.len and g[1] == c.current.guards[g[0]].cond:
         c.current.guards[g[0]].active = false
       trGuardedStmts c, b2, dest, n, false
+    if g[0] >= 0:
+      closeElseBranches(c, b2, dest, elseDepthAtG)
     maybeCloseGuard(c, dest, g, false)
     closeBasicBlock c, b2, dest
     closeScope c, dest, NoLineInfo
@@ -1321,7 +1353,21 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
   ## For StmtsS, the g2 mechanism merges consecutive statements under the same guard:
   ## the guard is borrowed once (g2) and held open while all children are processed.
   ## This turns `(ite (not g) a .)(ite (not g) b .)` into `(ite (not g) (a b) .)`.
+  if n.stmtKind == LabS:
+    # A label is a join point: control can arrive via a jump emitted outside
+    # any guard wrap or exploited else branch (xelim's short-circuit lowering
+    # pairs `(jmp L)` with a later `(lab L)` at the statement level), so it
+    # must never be wrapped in a guard ite — hidden join edges into a branch
+    # break the version analysis, and the coroutine transform splits guard-ite
+    # branches into separate states, which a jump cannot cross. The statement
+    # list loops close their guard wrap and exploited else branches before
+    # dispatching a label here.
+    takeTree dest, n
+    if mustCloseScope:
+      closeScope c, dest, NoLineInfo
+    return
   let g = maybeEmitGuard(c, dest, n.info)
+  let elseDepthAtG = b.openElseBranches
 
   var takeThisParRi = false
   case n.stmtKind
@@ -1336,9 +1382,21 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     # g2 borrows the innermost active guard for the ENTIRE statement list.
     # All children are emitted inside this single guard, achieving the merge.
     var g2 = (-1, NoSymId)
+    var elseDepthAtG2 = 0
+    let elseDepthAtList = b.openElseBranches
     while n.hasMore:
-      if g2[0] < 0:
+      if n.stmtKind == LabS:
+        # A label ends the merged guard region and this list's exploited
+        # else branches (join point, see above); it is emitted at the block
+        # level below.
+        if g2[0] >= 0:
+          closeElseBranches(c, b, dest, elseDepthAtG2)
+        maybeCloseGuard(c, dest, g2, false)
+        g2 = (-1, NoSymId)
+        closeElseBranches(c, b, dest, elseDepthAtList)
+      elif g2[0] < 0:
         g2 = maybeEmitGuard(c, dest, n.info)
+        if g2[0] >= 0: elseDepthAtG2 = b.openElseBranches
       elif g2[0] < c.current.guards.len and g2[1] == c.current.guards[g2[0]].cond:
         # The guard may have been re-activated by raiseGuards inside a child
         # (e.g. a VoidRaise call). Since we're still inside the g2 scope,
@@ -1346,6 +1404,8 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
         c.current.guards[g2[0]].active = false
       trGuardedStmts(c, b, dest, n, false)
     n = stmtsStart; skip n
+    if g2[0] >= 0:
+      closeElseBranches(c, b, dest, elseDepthAtG2)
     maybeCloseGuard(c, dest, g2, false)
 
   of AsgnS:
@@ -1397,6 +1457,8 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     else:
       trExpr c, dest, n
 
+  if g[0] >= 0:
+    closeElseBranches(c, b, dest, elseDepthAtG)
   maybeCloseGuard(c, dest, g, mustCloseScope)
   if takeThisParRi:
     dest.addParRi()
@@ -1420,6 +1482,9 @@ proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
   declareCfVar c, pass.dest, topFlag
   var b = BasicBlock(openElseBranches: 0, hasParLe: true, leavesWith: -1)
   while n.hasMore:
+    if n.stmtKind == LabS:
+      # a label ends the open else branches (join point, see trGuardedStmts)
+      closeElseBranches(c, b, pass.dest, 0)
     trGuardedStmts c, b, pass.dest, n, false
   closeScope c, pass.dest, n.endInfo
   closeBasicBlock c, b, pass.dest
