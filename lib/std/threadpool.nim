@@ -20,7 +20,8 @@ import std/stripes
 const
   StripeSize*  = 2048  ## Tasks per stripe; must be a power of 2.
   MaxIoEvents  = 64
-  BulkSize*    = 32   ## Max tasks drained per bulk dequeue.
+  BulkSize*    = 16   ## Max tasks drained per bulk dequeue.
+  StageSize*   = 256  ## Tasks held in a worker's private staging ring; must be a power of 2.
 
 # --- Task = Continuation + metadata ---
 
@@ -57,6 +58,9 @@ proc tryEnqueue(s: int; t: Task): bool {.inline.} =
   let i = s mod workerCount
   return localQueues[i].tryEnqueue(t)
 
+var gEnqueueMiss*: int = 0
+var gDequeueMiss*: int = 0
+
 proc submit*(t: Task; h = 0) =
   ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
   ## try the hinted stripe, then the others (absorbing bursts); if *every*
@@ -72,6 +76,7 @@ proc submit*(t: Task; h = 0) =
   ## `StripeCount*StripeSize` and no submitter ever stalls.
   if tryEnqueue(h, t): return
   for off in 1 ..< workerCount:
+    discard atomicFetchAdd(gEnqueueMiss, 1, moRelaxed)
     if tryEnqueue(h + off, t): return
   if injectQueue.tryEnqueue(t): return
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
@@ -83,12 +88,74 @@ proc submit*(t: Task; h = 0) =
     if tryEnqueue(h, toTask(next)): break
     c = next
 
+# --- Per-worker staging ring ---
+
+type
+  StagedTasks = object
+    ## A worker's private submission ring: tasks submitted with the default
+    ## hint land here (no locks; the ring is only touched by its owning
+    ## thread) and are moved into the shared stripes in bulk at the top of
+    ## the next `workerLoop` cycle. Turns bursts of resubmissions from inside
+    ## the trampoline into one lock acquisition per `BulkSize` chunk.
+    buf: array[StageSize, Task]
+    head: int  # oldest element
+    count: int
+
+var
+  staged {.threadvar.}: StagedTasks
+  isWorker {.threadvar.}: bool # only workers may stage; foreign threads must enqueue directly or their batch could never be flushed
+
+proc stageTask(t: Task): bool {.inline.} =
+  ## Push onto this worker's private ring; false when it is full.
+  if staged.count == StageSize: return false
+  staged.buf[(staged.head + staged.count) and (StageSize - 1)] = t
+  inc staged.count
+  result = true
+
+proc flushStaged(hint: int): bool =
+  ## Bulk-enqueue staged tasks into the shared stripes in FIFO order, hinted
+  ## stripe first, one lock acquisition per chunk of up to `BulkSize` tasks.
+  ## Whatever the stripes cannot absorb goes through `submit`'s caller-runs
+  ## path so the batch stays loss-free. Returns true if any task was moved.
+  result = false
+  var chunk {.noinit.}: array[BulkSize, Task]
+  while staged.count > 0:
+    result = true
+    let n = min(staged.count, BulkSize)
+    for i in 0 ..< n:
+      chunk[i] = staged.buf[staged.head]
+      staged.head = (staged.head + 1) and (StageSize - 1)
+    dec staged.count, n
+    var remaining = n
+    var off = 0
+    while remaining > 0 and off < workerCount:
+      let s = (hint + off) mod workerCount
+      let moved = localQueues[s].tryBulkEnqueue(
+        toOpenArray(chunk, n - remaining, n - 1))
+      dec remaining, moved
+      if moved == 0:
+        discard atomicFetchAdd(gEnqueueMiss, 1, moRelaxed)
+      inc off
+    while remaining > 0:
+      let t = chunk[n - remaining]
+      dec remaining
+      submit(t, hint)
+
 proc submit*(c: Continuation; hint = -1) {.inline.} =
-  ## Convenience: submit a bare continuation as a task.
-  var hint = hint
-  if hint == -1:
-    hint = threadIdx
-  submit(toTask(c), hint)
+  ## Convenience: submit a bare continuation as a task. On a worker with the
+  ## default hint, the task is first staged on the private lock-free ring and
+  ## handed to the shared stripes in bulk on the next worker cycle (see
+  ## `flushStaged`); everything else enqueues immediately.
+  if hint != -1 or not isWorker:
+    var hint = hint
+    if hint == -1:
+      hint = threadIdx
+    submit(toTask(c), hint)
+  elif not stageTask(toTask(c)):
+    # Ring full: drain it into the stripes, then stage again — after a full
+    # flush there is always room.
+    discard flushStaged(threadIdx)
+    discard stageTask(toTask(c))
 
 var dequeTicks {.threadvar.}: int
 
@@ -107,6 +174,9 @@ proc drainOnce(startStripe: int): bool =
   ## continuation that yields more work. Returns true if a batch ran. Shared by
   ## the worker loop and `pool.help`.
   var buf {.noinit.}: array[BulkSize, Task]
+  # 0. Publish staged tasks first so submissions made since the last cycle
+  #    become visible to the scan below.
+  discard flushStaged(startStripe)
   for attempt in 0 ..< workerCount:
     let n = tryBulkDequeue(startStripe + attempt, buf)
     if n > 0:
@@ -116,6 +186,8 @@ proc drainOnce(startStripe: int): bool =
         if next.fn != nil:
           submit(next, startStripe)
       return true
+    else:
+      discard atomicFetchAdd(gDequeueMiss, 1, moRelaxed)
   result = false
 
 proc poolHelp*(): bool {.inline.} =
@@ -135,6 +207,7 @@ when defined(useMimalloc):
 
 proc workerLoop(arg: pointer) {.nimcall.} =
   threadIdx = cast[int](arg)
+  isWorker = true
   var idleTicks = 0
   dequeTicks = 0
   var sinceCollect = 0
