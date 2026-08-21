@@ -40,7 +40,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / njvl / [nj, njvl_model]
-import passes
+import passes, defaultvalues
 include ".." / nimony / nif_annotations
 
 ## Note: `ContinuationName` lives in `builtintypes` (re-imported via the
@@ -106,6 +106,11 @@ type
 
   ProcContext* = object
     localToEnv*: Table[SymId, EnvField]
+    constrFields*: HashSet[SymId]
+      ## The frame fields the frame constructor already mentions, filled
+      ## in by `patchParamList`. `completeFrameConstr` defaults every
+      ## *other* field of the frame type against this set, which is what
+      ## keeps the constructor total.
     cf*: TokenBuf
     resultSym*: SymId
     counter*: int
@@ -149,6 +154,9 @@ type
 
   Context* = object
     counter*: int
+    ptrSize*: int
+      ## Target pointer size in bytes. Needed to give `int`/`uint`/`float`
+      ## a concrete width when a default value for one is synthesized.
     nextTemp*: int
       ## Continues the outer pipeline's xelim temp counter through the
       ## nested per-coroutine njvl runs (treIteratorBody) — restarting at
@@ -1326,7 +1334,53 @@ proc toGoto*(c: var Context; n: Cursor): TokenBuf =
 # coroutine routine
 # ---------------------------------------------------------------------
 
-proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
+proc completeFrameConstr(c: var Context; init: var TokenBuf) =
+  ## Close the frame constructor `patchParamList` left open, defaulting
+  ## every field it did not mention.
+  ##
+  ## `oconstr` is total — it names every field of its type — and this is
+  ## where the coroutine frame's constructor earns that. The C back end
+  ## forgives less than totality, since a designated initializer zeroes
+  ## whatever it does not mention, but the native one stores exactly the
+  ## fields the constructor lists, so a field left out here holds
+  ## whatever the frame's storage held: stack garbage for the
+  ## stack-allocated frames `cps` emits. A garbage `string` field is then
+  ## a `=destroy` reading a wild length and freeing a wild pointer.
+  ##
+  ## The fields at stake are the iterator's own locals, hoisted into the
+  ## frame — so `escapingLocals` must have run, and the predicate here is
+  ## the one `generateCoroutineType` uses to decide which locals become
+  ## fields at all. The two must agree exactly: a field the type has and
+  ## the constructor lacks is the bug above, and a field the constructor
+  ## has and the type lacks does not compile.
+  const info = NoLineInfo
+  for key, value in c.currentProc.localToEnv.pairs:
+    if (value.def != value.use or key == c.currentProc.resultSym) and
+       value.field notin c.currentProc.constrFields:
+      # The default's type has to be the field's own, and the field got
+      # its type from `coroTr` (`generateCoroutineType`) — which is not a
+      # copy: it rewrites an iterator proctype into its wrapper's
+      # signature, turning a closure tuple into a plain proc pointer. Run
+      # the same rewrite here or the constructor hands a two-word closure
+      # to a one-word field.
+      var typBuf = createTokenBuf(16)
+      var typ = value.typ
+      coroTr(c, typBuf, typ)
+      let fieldType = beginRead(typBuf)
+      init.copyIntoKind KvU, info:
+        init.addSymUse value.field, info
+        if key == c.currentProc.resultSym:
+          # The result field is a `(ptr T)`: the frame does not own the
+          # result, it points at the caller's location for it.
+          init.copyIntoKind NilX, info:
+            init.copyIntoKind PtrT, info:
+              init.addSubtree fieldType
+        else:
+          addDefaultValue(init, fieldType, info, c.ptrSize)
+  init.addParRi() # object constructor
+  init.addParRi() # assignment
+
+proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; iter: Cursor; sym: SymId) =
   # Transform the proc body via the NJ pass to get structured code
   # without break/continue/goto, then store just the body (without NJ
   # bookkeeping variables like mflag/jtrue/kill) in c.currentProc.cf.
@@ -1360,6 +1414,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
 
   var n = beginRead(c.currentProc.cf)
   escapingLocals(c, n)
+  completeFrameConstr(c, init)
 
   assert n.stmtKind == StmtsS
   dest.addParLe(n.cursorTagId, n.info)
@@ -1688,6 +1743,7 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
           c.hooks.trProctype(c, dest, n) # type
           dest.takeTree n # default value
 
+        c.currentProc.constrFields.incl field
         init.copyIntoKind KvU, info:
           init.addSymUse field, info
           init.addSymUse paramSym, info
@@ -1709,6 +1765,7 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
         dest.copyIntoKind PtrT, info:
           dest.copyTree retType
         dest.addDotToken() # default value
+      c.currentProc.constrFields.incl pool.syms.getOrIncl(ResultFieldName)
       init.copyIntoKind KvU, info:
         init.addSymUse pool.syms.getOrIncl(ResultFieldName), info
         init.addSymUse pool.syms.getOrIncl(ResultParamName), info
@@ -1730,9 +1787,10 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
         init.addSymUse thisParam, info
       init.addIntLit 1, info # field is in superclass
 
-  init.addParRi() # object constructor
-  init.addParRi() # assignment
-
+  # The `oconstr` and the `asgn` around it stay OPEN: the frame's local
+  # fields are not known yet — `escapingLocals` discovers them while the
+  # body is transformed — and an `oconstr` may not be closed before every
+  # field of the type is in it. `completeFrameConstr` finishes both.
   dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
 
 # ---------------------------------------------------------------------

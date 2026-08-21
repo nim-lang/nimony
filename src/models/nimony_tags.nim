@@ -27,7 +27,7 @@ type
     SizeofX = (ord(SizeofTagId), "sizeof")  ## `sizeof` operation
     AlignofX = (ord(AlignofTagId), "alignof")  ## `alignof` operation
     OffsetofX = (ord(OffsetofTagId), "offsetof")  ## `offsetof` operation
-    OconstrX = (ord(OconstrTagId), "oconstr")  ## object constructor
+    OconstrX = (ord(OconstrTagId), "oconstr")  ## object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named
     AconstrX = (ord(AconstrTagId), "aconstr")  ## array constructor
     BracketX = (ord(BracketTagId), "bracket")  ## untyped array constructor
     CurlyX = (ord(CurlyTagId), "curly")  ## untyped set constructor

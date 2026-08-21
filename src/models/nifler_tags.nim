@@ -13,7 +13,7 @@ type
     ParL = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrL = (ord(AddrTagId), "addr")  ## address of operation
     NilL = (ord(NilTagId), "nil")  ## nil pointer value; `T` is the pointer type it stands for. `nil` is the one type-polymorphic literal, so the frontend types every `ptr`/`ref`/`pointer`/`cstring` one (`derefs.nim`) and `T` survives into Leng; only a `nil` a later pass synthesizes is bare. A closure `nil` carries the proc type plus `X`, a nil environment
-    OconstrL = (ord(OconstrTagId), "oconstr")  ## object constructor
+    OconstrL = (ord(OconstrTagId), "oconstr")  ## object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named
     BracketL = (ord(BracketTagId), "bracket")  ## untyped array constructor
     CurlyL = (ord(CurlyTagId), "curly")  ## untyped set constructor
     CurlyatL = (ord(CurlyatTagId), "curlyat")  ## curly expression `a{i}`

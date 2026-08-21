@@ -1199,6 +1199,10 @@ const
     "tests/nimony/cps/tclosure_iter_body_capture",
     "tests/nimony/cps/tclosure_iter_break",
     "tests/nimony/cps/tclosure_iter_envcheck",
+    # One frame field of every kind. Native-relevant by nature: this is the
+    # backend that depends on `oconstr` being total, since it stores exactly the
+    # fields the constructor lists and zeroes nothing.
+    "tests/nimony/cps/tclosure_iter_frametypes",
     "tests/nimony/cps/tclosure_iter_string",
     "tests/nimony/cps/tclosure_iter_var",
     "tests/nimony/cps/tfirstpassive",
