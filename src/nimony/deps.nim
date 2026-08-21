@@ -685,24 +685,32 @@ proc sharedObjDir(): string =
 proc sharedObjFile(cfile: CFile): string =
   sharedObjDir() / cfile.obj
 
-proc emitFrontendArgs(b: var Builder; baseDir, commandLineArgs: string) =
-  ## Emit the shared `--base:` plus the forwarded `commandLineArgs` for a
-  ## frontend tool command (`nimsem`/`idetools`), de-duplicating as we go.
-  ## `--base:` is always written explicitly from `baseDir`, so any `--base:`
-  ## already present in `commandLineArgs` is dropped, and other exact-duplicate
-  ## args are collapsed. This matters for the nested sub-compiles that
-  ## compile-time evaluation spawns (`semos.runProgram`/`prepareEval`,
-  ## `macro_plugin`): those thread the outer `--base:`/`--nimcache:` back in via
-  ## `commandLineArgs`, which would otherwise emit `--base:X --base:X …
-  ## --nimcache:X … --nimcache:X` — an argv that no longer matches the outer
-  ## build's command for the same module.
+proc emitFrontendArgs(b: var Builder; baseDir, nifcachePath, commandLineArgs: string) =
+  ## Emit the shared `--base:` and `--nimcache:` plus the forwarded
+  ## `commandLineArgs` for a frontend tool command (`nimsem`/`idetools`),
+  ## de-duplicating as we go.
+  ## `--base:`/`--nimcache:` are always written explicitly from the config, so
+  ## any copies already present in `commandLineArgs` are dropped, and other
+  ## exact-duplicate args are collapsed. Writing `--nimcache:` from the config
+  ## also covers values that never appear on the command line (config file,
+  ## $NIMONY_NIMCACHE) — otherwise nimsem falls back to its own default and
+  ## re-parses dependencies into a second cache directory. The de-duplication
+  ## matters for the nested sub-compiles that compile-time evaluation spawns
+  ## (`semos.runProgram`/`prepareEval`, `macro_plugin`): those thread the outer
+  ## `--base:`/`--nimcache:` back in via `commandLineArgs`, which would
+  ## otherwise emit `--base:X --base:X … --nimcache:X … --nimcache:X` — an
+  ## argv that no longer matches the outer build's command for the same module.
   var seen: seq[string] = @[]
   if baseDir.len > 0:
     let baseArg = "--base:" & quoteShell(baseDir)
     b.addStrLit baseArg
     seen.add baseArg
+  let cacheArg = "--nimcache:" & quoteShell(nifcachePath)
+  b.addStrLit cacheArg
+  seen.add cacheArg
   for arg in commandLineArgs.split(' '):
-    if arg.len > 0 and not arg.startsWith("--base:") and arg notin seen:
+    if arg.len > 0 and not arg.startsWith("--base:") and
+        not arg.startsWith("--nimcache:") and arg notin seen:
       b.addStrLit arg
       seen.add arg
 
@@ -1563,6 +1571,10 @@ proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
       b.addStrLit c.config.indexFile(v.files[0], v.plugin)
 
 proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Command): string =
+  # arkham cannot yet `lea` a by-ref string param forwarded into the widened
+  # emitFrontendArgs call (boot stage 1: "Expected stack variable,
+  # thread-local, or integer offset in lea"); a stack-local copy lowers fine.
+  let commandLineArgs = commandLineArgs
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".build.nif"
   var b = nifbuilder.open(result)
   defer: b.close()
@@ -1575,7 +1587,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
       b.addStrLit c.nimsem
-      emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+      emitFrontendArgs(b, c.config.baseDir, c.config.nifcachePath, commandLineArgs)
       b.addStrLit "m"
       b.addKeyw "args"
       # Module files are passed via (args) in each (do nimsem) block
@@ -1584,7 +1596,7 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
       b.withTree "cmd":
         b.addSymbolDef "idetools"
         b.addStrLit c.nimsem
-        emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+        emitFrontendArgs(b, c.config.baseDir, c.config.nifcachePath, commandLineArgs)
         b.addStrLit "idetools"
         b.addKeyw "args"
         b.withTree "input":
@@ -1879,6 +1891,12 @@ proc buildGraph*(config: sink NifConfig; project: string;
     exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
       quoteShell(cfgNif)
     parseNifConfig cfgNif, config
+    # the config file may redirect nifcachePath; the driver's makeDir ran
+    # before parsing and only covered the old location
+    when defined(nimony):
+      onRaiseQuit createDir(path(config.nifcachePath))
+    else:
+      onRaiseQuit createDir(Path(config.nifcachePath))
 
   var c = initDepContext(config, project, nifler, false, forceRebuild, moduleFlags, cmd)
   generateCachedConfigFile c, passC, passL
