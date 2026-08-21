@@ -208,13 +208,30 @@ proc trAssign(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr c, dest, n # left hand side
     tr c, dest, n # right hand side
 
+proc trStmtList(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## The statement-insertion point: whatever `trCall` collected in
+  ## `c.hoisted` while translating one statement goes in front of it.
+  ## An enclosing statement's own hoists are parked across the descent.
+  ## Both `(stmts ...)` and `(scope ...)` are statement lists, so both must
+  ## land the hoists here: a `scope` that only recursed would push its
+  ## children's temps out to the enclosing `stmts`, in front of the very
+  ## locals they read ("could not find symbol").
+  var outerHoisted = createTokenBuf(16)
+  swap(outerHoisted, c.hoisted)
+  copyInto dest, n:
+    while n.hasMore:
+      let stmtStart = dest.len
+      tr c, dest, n
+      if c.hoisted.len > 0:
+        # `stmtStart` is past every still-open tag, so the splice cannot
+        # invalidate an enclosing scope's bookkeeping.
+        dest.insert(c.hoisted, stmtStart)
+        c.hoisted.shrink 0
+  swap(c.hoisted, outerHoisted)
+
 proc trScope(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
-  dest.addParLe(n.cursorTagId, n.info)
-  n.into:
-    while n.hasMore:
-      tr c, dest, n
-  dest.addParRi()
+  trStmtList c, dest, n
   c.typeCache.closeScope()
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -241,21 +258,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
       of StmtsS:
-        # The statement-insertion point: whatever `trCall` collected in
-        # `c.hoisted` while translating one statement goes in front of it.
-        # An enclosing statement's own hoists are parked across the descent.
-        var outerHoisted = createTokenBuf(16)
-        swap(outerHoisted, c.hoisted)
-        copyInto dest, n:
-          while n.hasMore:
-            let stmtStart = dest.len
-            tr c, dest, n
-            if c.hoisted.len > 0:
-              # `stmtStart` is past every still-open tag, so the splice cannot
-              # invalidate an enclosing scope's bookkeeping.
-              dest.insert(c.hoisted, stmtStart)
-              c.hoisted.shrink 0
-        swap(c.hoisted, outerHoisted)
+        trStmtList c, dest, n
       of CallS, CmdS, IteratorS, BlockS, EmitS, IfS, WhenS, BreakS,
          ContinueS, ForS, WhileS, CoroforS, CaseS, RetS, YldS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
