@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tcastundeclared.nim(7, 17) Error: undeclared identifier: slot
+tests/nimony/errmsgs/tcastundeclared.nim(11, 11) Error: attempt to call routine: 'x'
