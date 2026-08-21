@@ -770,7 +770,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
      FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
      DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
      InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
-     DeferS, NoStmt:
+     DeferS, LabS, JmpS, NoStmt:
     skip n
 
 proc emitVTables(c: var Context; dest: var TokenBuf) =

@@ -48,6 +48,7 @@ type
     TooFewArguments
     NameNotFound
     ParamAlreadyGiven
+    ExplicitGenericArgNotAType
 
   MatchError* = object
     info: NifLineInfo
@@ -234,6 +235,8 @@ proc getErrorMsg*(m: Match): string =
     "named argument not found"
   of ParamAlreadyGiven:
     "parameter already given"
+  of ExplicitGenericArgNotAType:
+    "not a type: " & typeToString(m.error.got)
 
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
@@ -2029,7 +2032,9 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           m.error InvalidMatch, f, arg.typ
         skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT:
+        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT,
+        ClosureTupleT:
+      # `ClosureTupleT` is a hexer-internal lowering; it never reaches sem.
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
@@ -2371,6 +2376,26 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[CallArg] =
     result.add CallArg(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     skip f
 
+proc notATypeArg(e: Cursor): bool =
+  ## True when the explicit generic argument `e` names something that is not a
+  ## type at all — most often a template parameter still sitting in type
+  ## position while a template body is semchecked generically (`symKind ==
+  ## ParamY`), as in `newSeq[F](n)` inside `template def(F: untyped)`.
+  ##
+  ## Binding a typevar to such a symbol is what used to drag the whole generic
+  ## body in behind it: `newSeq[F]` got instantiated with `T := F`, `F` became
+  ## `(err)` inside the instance, and every generic that body touches
+  ## (`capInBytes`, `memSizeInBytes`, the `seq` hooks) reported its own
+  ## `got: ptr UncheckedArray[<type error>] but wanted: …` on the way down.
+  ## Rejecting the binding here keeps the diagnostic at the call site.
+  ##
+  ## Typevars are legitimate arguments (a generic instantiated from inside
+  ## another generic), and a non-symbol argument is a structural type tree.
+  if not e.isSymbol: return false
+  let res = tryLoadSym(e.symId)
+  if res.status != LacksNothing: return false
+  result = res.decl.stmtKind != TypeS and not isTypevarLike(res.decl.symKind)
+
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
   m.tvars = default(HashSet[SymId])
   if fn.kind in RoutineKinds:
@@ -2391,6 +2416,8 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
             m.error ConstraintMismatch, typevar.typ, e
         elif matchesConstraint(m, v, e):
           m.inferred[v] = e
+        elif notATypeArg(e):
+          m.error ExplicitGenericArgNotAType, typevar.typ, e
         else:
           assert typevar.kind == TypevarY
           m.error ConstraintMismatch, typevar.typ, e

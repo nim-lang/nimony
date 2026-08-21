@@ -324,7 +324,7 @@ proc publishWrapperSignature*(iterSym: SymId; moduleSuffix: string) =
 
 proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   ## Consume an (itertype ...) tree at `n` and emit
-  ##   `(tuple (proctype . (params <orig>... (param result ptr T) (param caller Continuation)) Continuation <pragmas>) (ref RootObj))`
+  ##   `(closureTuple (proctype . (params <orig>... (param result ptr T) (param caller Continuation)) Continuation <pragmas>) (ref RootObj))`
   ## Cursor is left past the closing ParRi of the input itertype.
   ##
   ## NOTE: parameter types are copied verbatim (`takeTree`) on the
@@ -335,7 +335,7 @@ proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLi
   n.into: # past itertype tag
     if n.hasMore:
       skip n               # past nilability tag
-    dest.copyIntoKind TupleT, info:
+    dest.copyIntoKind ClosureTupleT, info:
       dest.copyIntoKind ProctypeT, info:
         dest.addDotToken() # nilability tag
         dest.copyIntoKind ParamsU, info:
@@ -397,7 +397,7 @@ proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLine
   let res = tryLoadSym(iterSym)
   assert res.status == LacksNothing, "iter sym not loaded: " & pool.syms[iterSym]
   let fn = asRoutine(res.decl)
-  dest.copyIntoKind TupleT, info:
+  dest.copyIntoKind ClosureTupleT, info:
     dest.copyIntoKind ProctypeT, info:
       dest.addDotToken() # nilability tag
       dest.copyIntoKind ParamsU, info:
@@ -447,19 +447,20 @@ proc isClosureIterSym*(s: SymId): bool =
     return hasPragma(routine.pragmas, ClosureP)
   return false
 
-proc isLiftedClosureTuple*(n: Cursor): bool =
-  ## A `(tuple <proctype …> (ref RootObj))` is the shape both closure
+proc isLiftedClosureTuple*(n: Cursor): bool {.inline.} =
+  ## `(closureTuple <proctype …> (ref RootObj))` is the shape both closure
   ## procs and closure-iter values get lifted to. If we encounter one
   ## while walking, it's already lifted — recursing into it would
   ## re-trigger the proctype rewrite and produce nested tuples.
-  if n.typeKind != TupleT: return false
-  var t = n
-  t = sub(t)  # throwaway copy; bounds the probe under vpr
-  if not t.isTagLit or t.typeKind != ProctypeT: return false
-  skip t
-  if not t.isTagLit or t.typeKind != RefT: return false
-  skip t
-  result = not t.hasMore
+  ##
+  ## The tag alone answers this, because every producer — `emitIterTupleType*`
+  ## here, lambdalifting's `treProcType` / `nonClosureToClosure` / closure-sym
+  ## path, and cps's `trProctype` — emits `ClosureTupleT`. This used to probe a
+  ## plain `(tuple …)` for "exactly a proctype then a ref", which answered a
+  ## question about *layout* where the callers all ask about *provenance*: an
+  ## ordinary `(proc (), ref RootObj)` tuple written by the user answered yes,
+  ## and any drift in the lifted element shape would silently answer no.
+  n.typeKind == ClosureTupleT
 
 # ---------------------------------------------------------------------
 # Predicates
@@ -490,7 +491,11 @@ proc getNextState*(buf: TokenBuf; n: Cursor): int =
     # raw linear scan: only TagLit tokens carry a tagId (suffix/literal bits
     # alias it), and the head may carry a line-info suffix before its child
     if buf[pos].kind == TagLit and globalTags.tags[buf[pos].tagId] == "lab":
-      return int(readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos))).intVal)
+      let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
+      # Skip `xelim`'s structured merge labels: only the CPS state machine's
+      # own integer-labelled `lab` names a state (`doc/final_ir.md`).
+      if operand.kind == IntLit:
+        return int(operand.intVal)
     inc pos
   return -1
 
@@ -1053,7 +1058,11 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
-  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab":
+  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab" and
+     n.childCursor.kind == IntLit:
+    # Only the CPS state machine's own integer-labelled `lab` marks a state
+    # boundary. A symbol-labelled one is `xelim`'s structured merge label
+    # (`doc/final_ir.md`) and is opaque here.
     currentState = int(n.childCursor.intVal)
 
   let sk = n.stmtKind
@@ -1297,7 +1306,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
-            DeferS, NoStmt:
+            DeferS, LabS, JmpS, NoStmt:
           dest.addParLe(n.cursorTagId, n.info)
           n.into:
             while n.hasMore:
@@ -1906,7 +1915,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         ExportexceptS, DiscardS, TryS, UnpackdeclS,
         AssumeS, AssertS, CallstrlitS, InfixS, PrefixS,
         HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, NoStmt:
+        AsmS, DeferS, LabS, JmpS, NoStmt:
       case n.exprKind
       of CallKinds - {DelayX}:
         trCall c, dest, n
@@ -1922,7 +1931,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # `g == nil` / `g != nil` over a closure / iter value: sem
         # emits `(hconv (pointer (nil)) g)` so NIFC can compare via a
         # pointer cast. For a `.closure` iter / closure proc the value is
-        # a `(tuple <proctype> (ref RootObj))`, so cast-to-pointer no
+        # a `(closureTuple <proctype> (ref RootObj))`, so cast-to-pointer no
         # longer typechecks — peel off the fn-slot via tupat and convert
         # that scalar instead. A `.passive` iter value is a bare wrapper
         # proctype (no tuple, see `trProctype`), so it converts to
@@ -1936,12 +1945,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skip inner           # past target type
         if inner.kind == Symbol or inner.exprKind in {TupatX, DotX}:
           let srcTyp = c.typeCache.getType(inner, {SkipAliases})
-          var isFnEnvTuple = false
-          if srcTyp.typeKind == TupleT:
-            var t = srcTyp
-            inc t
-            if t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
-              isFnEnvTuple = true
+          let isFnEnvTuple = srcTyp.typeKind == ClosureTupleT
           let isClosureIterType = srcTyp.typeKind == ItertypeT and
               not procHasPragma(srcTyp, PassiveP)
           if (isClosureIterType or isFnEnvTuple) and
@@ -2060,15 +2064,26 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           else:
             case globalTags.tags[n.cursorTagId]
             of "jmp":
-              n.into:
-                gotoNextState(c, dest, int(n.intVal), n.info)
-                inc n
+              # Two different `jmp`s meet here. The CPS state machine's own
+              # carries an INTEGER state id (this pass and `togoto` produce
+              # it); the structured Nimony one carries a label SYMBOL and is
+              # `xelim`'s short-circuit lowering, which must survive to Leng
+              # untouched (`doc/final_ir.md`).
+              if n.childCursor.kind == IntLit:
+                n.into:
+                  gotoNextState(c, dest, int(n.intVal), n.info)
+                  inc n
+              else:
+                takeTree dest, n
             of "lab":
-              dest.addParRi() # close stmts
-              dest.addParRi() # close proc decl
-              n.into:
-                newLocalProc c, dest, int(n.intVal), c.procStack[^1]
-                inc n
+              if n.childCursor.kind == IntLit:
+                dest.addParRi() # close stmts
+                dest.addParRi() # close proc decl
+                n.into:
+                  newLocalProc c, dest, int(n.intVal), c.procStack[^1]
+                  inc n
+              else:
+                takeTree dest, n
             else:
               coroTrSons(c, dest, n)
   else:

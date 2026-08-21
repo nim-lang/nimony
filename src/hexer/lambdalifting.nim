@@ -365,7 +365,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-      NoStmt:
+      LabS, JmpS, NoStmt:
       case n.exprKind
       of CallKinds:
         trCall c, dest, n
@@ -567,12 +567,7 @@ proc isClosureCoroFor(c: var Context; n: Cursor): bool =
   let typ = c.typeCache.getType(m, {SkipAliases})
   if typ.typeKind == ItertypeT and procHasPragma(typ, ClosureP):
     return true
-  if typ.typeKind == TupleT:
-    var t = typ
-    inc t  # past tuple tag
-    if t.isTagLit and t.typeKind == ProctypeT and procHasPragma(t, ClosureP):
-      return true
-  return false
+  return typ.typeKind == ClosureTupleT
 
 proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Expand `(corofor (call closure-iter args... (haddr forLoopVar)) (block ...))`
@@ -728,9 +723,9 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # they differ only at the cps trampoline level.
     emitIterTupleTypeFromParams(dest, n, n.info)
   elif isClosure(n):
-    # type is really a tuple:
+    # type is really a `(closureTuple fn env)`:
     let info = n.info
-    copyIntoKind dest, TupleT, info:
+    copyIntoKind dest, ClosureTupleT, info:
       copyIntoKind dest, ProctypeT, info:
         dest.addDotToken() # nilability tag
         let inputKind = n.typeKind
@@ -1122,7 +1117,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
   # A closure iter-value call target type can appear here in two guises:
   #   - raw `(itertype … (pragmas (closure)))` — `isClosure` matches.
-  #   - lifted `(tuple <proctype> (ref RootObj))` — `isLiftedClosureTuple`
+  #   - lifted `(closureTuple <proctype> (ref RootObj))` — `isLiftedClosureTuple`
   #     matches (when getType already follows the alias to the rewritten
   #     body). `.passive` iter values are NOT iter-value tuples; cps's
   #     `trProctype` lowers them to plain function pointers, and they
@@ -1296,7 +1291,7 @@ proc treKv(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc nonClosureToClosure(c: var Context; dest: var TokenBuf; n: var Cursor; origTyp: Cursor; info: NifLineInfo) =
   dest.copyIntoKind TupconstrX, info:
-    dest.copyIntoKind TupleT, info:
+    dest.copyIntoKind ClosureTupleT, info:
       c.toProcType(dest, origTyp)
       dest.addRootRef info
     dest.copyIntoKind CastX, info:
@@ -1367,7 +1362,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif origTyp.typeKind in RoutineTypes and isClosure(origTyp) and c.typeCache.fetchSymKind(n.symId) in RoutineKinds:
       if c.closureProcs.contains(n.symId):
         dest.copyIntoKind TupconstrX, info:
-          dest.copyIntoKind TupleT, info:
+          dest.copyIntoKind ClosureTupleT, info:
             c.toProcType(dest, origTyp)
             dest.addRootRef info
           dest.addSymUse n.symId, info
@@ -1444,7 +1439,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         takeTree dest, n        # exported
         takeTree dest, n        # typevars
         takeTree dest, n        # pragmas
-        if n.kind == TagLit and n.typeKind == TupleT and isLiftedClosureTuple(n):
+        if isLiftedClosureTuple(n):
           # already the stable lowered shape (pass 1 itertype rewrite)
           takeTree dest, n
         elif n.hasMore:
@@ -1475,7 +1470,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-      NoStmt:
+      LabS, JmpS, NoStmt:
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
@@ -1523,7 +1518,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
         KvX, NoExpr:
-        if n.typeKind == TupleT and isLiftedClosureTuple(n):
+        if isLiftedClosureTuple(n):
           # An iter-value tuple or closure-proc tuple emitted by an earlier
           # pass — don't recurse into it, otherwise treProcType would fire
           # again on the inner ProctypeT and wrap it in ANOTHER tuple. The

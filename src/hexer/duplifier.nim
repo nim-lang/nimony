@@ -61,6 +61,13 @@ type
       ## `=wasMoved` calls `genLastRead` deferred. `trConstructing` schedules
       ## them after `constr`; `trStmts` is the fallback when `constr` had no
       ## value to hang them off.
+    hoisted: TokenBuf
+      ## Statements that must run *before* the statement currently being
+      ## emitted: the temp declarations (and their setup) that `bindToTemp`
+      ## used to wrap into an `(expr (stmts ...) tmp)` in expression position.
+      ## `trStmts` splices this in front of each statement it just translated,
+      ## so the duplifier's output is already statement-based and needs no
+      ## follow-up `xelim` run to flatten it (see `doc/final_ir.md`).
 
   Expects = enum
     DontCare,
@@ -747,7 +754,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
           AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
           StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-          NoStmt:
+          LabS, JmpS, NoStmt:
         # generic statement: copy the head and recurse into the children
         copyInto c.dest, n:
           while n.hasMore: trOnlyEssentials c, n
@@ -862,30 +869,46 @@ type
     active: bool
     s: SymId
     info: NifLineInfo
+    pos: int
+      ## Where in `c.dest` the temp's statements begin. `finishOwningTemp`
+      ## moves everything from here to the end of `c.dest` into `c.hoisted`.
 
 template owningTempDefault(): OwningTemp =
-  OwningTemp(active: false, s: NoSymId, info: NoLineInfo)
+  OwningTemp(active: false, s: NoSymId, info: NoLineInfo, pos: 0)
 
 proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): OwningTemp =
+  ## Open a temporary that the value about to be emitted binds to. The decl is
+  ## written at the END of `c.dest` and `finishOwningTemp` relocates it (plus
+  ## any further statements the caller emitted for it, e.g. `trNewobj`'s OOM
+  ## check and payload assignment) into `c.hoisted`, replacing it in the
+  ## expression by a bare use of the temp. No `(expr (stmts ...) tmp)` is ever
+  ## built, so nothing downstream has to flatten one back out.
   let s = pool.syms.getOrIncl("`tmp." & $c.tmpCounter)
   inc c.tmpCounter
 
-  c.dest.addParLe ExprX, info
-  c.dest.addParLe StmtsS, info
+  result = OwningTemp(active: true, s: s, info: info, pos: c.dest.len)
 
   c.dest.addParLe kind, info
   addSymDef c.dest, s, info
   c.dest.addEmpty2 info # export marker, pragmas
   copyTree c.dest, typ
   # value is filled in by the caller!
-  result = OwningTemp(active: true, s: s, info: info)
 
-proc finishOwningTemp(dest: var TokenBuf; ow: OwningTemp) =
+proc hoistTail(c: var Context; pos: int) =
+  ## Move `c.dest[pos ..< ^0]` — a sequence of complete statements — to the
+  ## front of the statement under construction.
+  if c.dest.len <= pos: return
+  var tail = cursorAt(c.dest, pos)
+  while tail.hasMore:
+    takeTree c.hoisted, tail
+  endRead tail
+  c.dest.shrink pos
+
+proc finishOwningTemp(c: var Context; ow: OwningTemp) =
   if ow.active:
-    dest.addParRi() # finish the VarS
-    dest.addParRi()  # finish the StmtsS
-    dest.copyIntoSymUse ow.s, ow.info
-    dest.addParRi()  # finish the StmtListExpr
+    c.dest.addParRi() # finish the VarS
+    hoistTail c, ow.pos
+    c.dest.copyIntoSymUse ow.s, ow.info
 
 proc trCall(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
@@ -914,7 +937,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects)
           # do not advance formal parameter:
           fnType = previousFormalParam
       tr c, n, e2
-  finishOwningTemp c.dest, ow
+  finishOwningTemp c, ow
 
 proc trRawConstructor(c: var Context; n: var Cursor; e: Expects)
     {.ensuresNif: addedAny(c.dest).} =
@@ -969,7 +992,7 @@ proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
-  finishOwningTemp c.dest, ow
+  finishOwningTemp c, ow
 
 proc trNewobjFields(c: var Context; n: var Cursor) =
   # drains the constructor fields; the enclosing scope's close is consumed
@@ -1047,9 +1070,11 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
           tr c, n, WantOwner # process default(T) call
   n = objStart; skip n
 
-  c.dest.addParRi()  # finish the StmtsS
+  # The decl, the OOM check and the payload assignment are all plain
+  # statements: relocate them in front of the current statement and leave a
+  # bare `tmp` behind.
+  hoistTail c, ow.pos
   c.dest.copyIntoSymUse ow.s, ow.info
-  c.dest.addParRi()  # finish the StmtListExpr
 
 proc genLastRead(c: var Context; n: var Cursor; typ: Cursor)
     {.ensuresNif: addedAny(c.dest).} =
@@ -1084,9 +1109,8 @@ proc genLastRead(c: var Context; n: var Cursor; typ: Cursor)
         copyIntoKind c.dest, HaddrX, info:
           copyTree c.dest, ex
 
-  c.dest.addParRi() # finish the StmtList
+  hoistTail c, ow.pos
   c.dest.copyIntoSymUse ow.s, ow.info
-  c.dest.addParRi() # finish the StmtListExpr
 
 proc trLocationNonOwner(c: var Context; n: var Cursor) =
   if n.isTagLit and n.exprKind == DotX:
@@ -1254,12 +1278,30 @@ proc trTry(c: var Context; n: var Cursor)
 proc trStmts(c: var Context; n: var Cursor) {.ensuresNif: addedAny(c.dest).} =
   ## Statement position is where a deferred move goes when the expression it
   ## came out of had no value to bind it to — see `trConstructing`.
+  ##
+  ## It is also the statement-insertion point that lets this pass stay
+  ## statement-based: whatever `bindToTemp` collected in `c.hoisted` while
+  ## translating one statement is spliced in front of that statement here.
+  ## The enclosing statement's own hoists are parked across the descent (a
+  ## `(if cond (stmts ...))` accumulates the condition's temps *before* the
+  ## body is walked, and those belong in front of the `if`, not in front of
+  ## the body's first statement).
+  var outerHoisted = createTokenBuf(16)
+  swap(outerHoisted, c.hoisted)
   takeInto c.dest, n:
     while n.hasMore:
+      let stmtStart = c.dest.len
       tr c, n, WantNonOwner
+      if c.hoisted.len > 0:
+        # `stmtStart` is past every still-open tag, so the splice cannot
+        # invalidate an enclosing scope's bookkeeping: `closeTag` recomputes
+        # the jump from the buffer length it sees at close time.
+        c.dest.insert(c.hoisted, stmtStart)
+        c.hoisted.shrink 0
       for i in 0 ..< c.pendingMoves.len:
         c.dest.add c.pendingMoves[i]
       c.pendingMoves.setLen 0
+  swap(c.hoisted, outerHoisted)
 
 proc bindPendingMoves(c: var Context; start: int; typ: Cursor; info: NifLineInfo) =
   ## Re-wrap the constructing expression `c.dest[start ..< ^0]` holds into
@@ -1398,7 +1440,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         c.typeCache.closeScope()
       of StmtsS:
         trStmts c, n
-      of BreakS, ContinueS, MacroS, TemplateS:
+      of BreakS, ContinueS, LabS, JmpS, MacroS, TemplateS:
         # Macros are compiled into out-of-process plugins by `nimony`
         # itself; templates are expanded at call-sites. Neither has a
         # body that participates in the regular lowering pipeline, so
@@ -1528,7 +1570,8 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
 proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, typeCache: createTypeCache(),
-    dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix)
+    dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix,
+    hoisted: createTokenBuf(16))
   c.typeCache.openScope()
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]

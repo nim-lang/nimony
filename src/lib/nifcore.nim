@@ -330,6 +330,27 @@ type
 
   TagPool* = ref object
     tags*: BiTable[TagId, string]
+      ## Tag spelling ⇔ id, and NOT bounded by the 9-bit tag field: ids past
+      ## `TagMask` are perfectly legal, they just cost a second token to spell
+      ## (see `escapeTag`).
+    escapeTag*: TagId
+      ## The **escape tag** of this adapter, or `0` if it has none.
+      ##
+      ## A tag id is 9 bits in the token (`TagBits`), so the first 511 tags cost
+      ## one token. That is ample for a language vocabulary and hopeless for an
+      ## instruction set: nativenif alone spells 282 machine mnemonics, and each
+      ## further target (Cortex-M, RISC-V) wants a few hundred more.
+      ##
+      ## Rather than cap the pool there, an adapter may nominate one tag as the
+      ## escape: an id that does not fit is then stored as `(<escapeTag> <id> …)`,
+      ## the id carried by an ordinary inline `IntLit` first child. `openTag`
+      ## does that itself and the serializers undo it, so the NIF *text* is
+      ## unchanged, the binary token format is unchanged, and the pool is
+      ## effectively unbounded. Only the ids past `TagMask` pay the extra token.
+      ##
+      ## What an adapter DOES have to know is that an escaped node's id is not
+      ## `cursorTagId` (ask `resolvedTagId`) and that its operands start one
+      ## token later.
 
 proc newPool*(): Pool =
   Pool(strings:   initBiTable[StrId, string](),
@@ -341,12 +362,20 @@ proc newTagPool*(): TagPool =
   ## Adapters whose enum has ordinal 0 as the first real value bridge
   ## the gap with a `+/- 1` shim in their `tagId` / `myKind` helpers
   ## (see jsonnif/htmlnif).
-  TagPool(tags: initBiTable[TagId, string]())
+  TagPool(tags: initBiTable[TagId, string](), escapeTag: TagId(0))
 
 proc registerTag*(tp: TagPool; tag: string): TagId =
   ## Intern a tag string. Adapters call this in enum-ordinal order at
   ## startup so the returned TagId equals the enum ordinal (1-based).
   tp.tags.getOrIncl(tag)
+
+const
+  FirstEscapeId* = TagMask + 1'u32
+    ## The first tag id that no longer fits the 9-bit tag field, hence the first
+    ## one an adapter must spell through its `escapeTag`. Registering tags is
+    ## otherwise unaffected: `registerTag` keeps counting.
+
+template hasEscapes*(tp: TagPool): bool = tp.escapeTag != TagId(0)
 
 proc createTags*[E: enum](): TagPool =
   ## One-shot tag-pool builder for an adapter's enum. Registers every
@@ -849,6 +878,25 @@ proc sub*(c: Cursor): Cursor =
   result = c
   discard enterScope(result)
 
+proc isEscapedTag*(c: Cursor): bool {.inline.} =
+  ## Is the node at `c` spelled through its adapter's escape tag — i.e. does its
+  ## real id sit in a leading `IntLit` child, one token in front of the operands?
+  let tp = c.tags
+  result = tp != nil and tp.escapeTag != TagId(0) and c.load.kind == TagLit and
+           c.cursorTagId == tp.escapeTag and
+           (let body = sub(c); body.hasMore and body.load.kind == IntLit)
+
+proc resolvedTagId*(c: Cursor): TagId =
+  ## The tag id of the node at `c`, undoing the escape. Equal to `cursorTagId`
+  ## for everything that fits the 9-bit field, which is every tag of an adapter
+  ## that declares no escape space — so this is the accessor to reach for, and
+  ## `cursorTagId` the one for when you truly mean the token.
+  if isEscapedTag(c):
+    let body = sub(c)
+    result = TagId(uint32(intVal(body)))
+  else:
+    result = c.cursorTagId
+
 template into*(c: var Cursor; body: untyped) =
   ## Enters the current `TagLit`, runs `body`, then restores the outer bounds.
   ## `body` must consume every child.
@@ -946,6 +994,11 @@ proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
   ## tag namespace — adapters typically create their own fresh
   ## `TagPool` per buffer so `cast[Enum](c.cursorTagId.uint32)` lines
   ## up with the adapter's enum ordinals.
+  # `cap == 0` must NOT reach `alloc(0)`: Nim's allocator maps a zero-sized
+  # request to size class 0, which hands the SAME address to every caller and
+  # (on Nim <= 2.2.x) releases the whole page on the first `dealloc` — every
+  # other live zero-cap buffer is then a dangling pointer into a recycled page.
+  let cap = max(cap, 1)
   result = TokenBuf(
     data: cast[Storage](alloc(sizeof(NifToken) * cap)),
     len: 0, cap: cap,
@@ -1007,7 +1060,9 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
       decRcAndFree(b.owner)
       b.owner = nil
     else:
-      let newData = cast[Storage](alloc(sizeof(NifToken) * b.cap))
+      # `max(.., 1)`: never `alloc(0)` — see `createTokenBuf`. A borrowed
+      # zero-token block (`adoptForeignTokens(_, 0)`) reaches this with cap 0.
+      let newData = cast[Storage](alloc(sizeof(NifToken) * max(b.cap, 1)))
       copyMem(newData, b.data, sizeof(NifToken) * b.len)
       decRcAndFree(b.owner)
       b.owner = nil
@@ -1271,11 +1326,32 @@ proc addFloatLit*(b: var TokenBuf; v: float64) =
 
 # ── Open / close tags (the only mutations that touch `openTags`) ─────────
 
+proc openTagEscaped(b: var TokenBuf; t: TagId) =
+  ## Slow path of `openTag`: a tag id past the 9-bit field, spelled
+  ## `(<escapeTag> <id> …)` — see `TagPool.escapeTag`. The id is an ordinary
+  ## child, so `closeTag`'s jump counts it and every cursor walk works
+  ## unchanged; what an adapter must know is that operands start one token
+  ## later.
+  assert b.tags != nil and b.tags.escapeTag != TagId(0),
+    "tag id " & $uint32(t) & " exceeds the 9-bit tag field and this tag pool " &
+    "declares no escape tag"
+  ensureCap(b)
+  b.openTags.add b.len
+  b.data[b.len] = tagLitToken(b.tags.escapeTag, 0)
+  inc b.len
+  b.addIntLit int64(uint32(t))
+
 proc openTag*(b: var TokenBuf; t: TagId) {.inline.} =
   ## Begin a new tagged subtree. The matching `closeTag` patches the
   ## emitted TagLit's jump in place (or splices in an `ExtendedSuffix`
   ## right after the TagLit if the body overflows the 19-bit jump field).
+  ##
+  ## An id past `TagMask` does not fit the token and goes through the adapter's
+  ## escape tag instead; callers never have to sort the two apart.
   if b.owner != nil: prepareMutation(b)
+  if uint32(t) >= FirstEscapeId:
+    openTagEscaped(b, t)
+    return
   ensureCap(b)
   b.openTags.add b.len
   b.data[b.len] = tagLitToken(t, 0)

@@ -110,7 +110,7 @@ type
 
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor)
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner)
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId)
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId; constRef = false)
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string
 
 type
@@ -431,7 +431,7 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
     dest.addDotToken()
     case k
-    of TupleT:
+    of TupleT, ClosureTupleT:
       trTupleBody c, dest, body
     of ArrayT:
       trArrayBody c, dest, body
@@ -666,7 +666,10 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
     of StaticT, SinkT, DistinctT:
       n.into:
         trType c, dest, n, flags
-    of TupleT:
+    of TupleT, ClosureTupleT:
+      # `(closureTuple fn env)` is laid out exactly like the plain tuple it
+      # replaced; only the mangled key differs, so it gets its own generated
+      # struct decl.
       trAsNamedType c, dest, n
     of ObjectT:
       let isUnion = IsUnion in flags
@@ -764,7 +767,13 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
-    trLocal(c, dest, paramCursor, ParamY, TraverseSig, SymId(0))
+    # `constRef = true`: this pointer exists only because the parameter is
+    # passed by reference for efficiency — the SOURCE parameter is by-value, so
+    # nothing may write through it. `passByConstRef` already excluded
+    # `sink`/`var`/`out`, so that is the precondition which licensed the
+    # pointer, not something anyone has to analyse. `funcsummary` reads the
+    # `(constref)` pragma back — see `paramMayWrite`.
+    trLocal(c, dest, paramCursor, ParamY, TraverseSig, SymId(0), constRef = true)
     skip n
   else:
     trLocal(c, dest, n, ParamY, TraverseSig, SymId(0))
@@ -836,9 +845,9 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.extern = n.strId
               result.flags.incl pk
               inc n
-          of AssemblerP, StackP:
-            # `(assembler)` on a proc, `(stack)` on a local: bare markers,
-            # forwarded as-is.
+          of AssemblerP, NakedP, StackP:
+            # `(assembler)`/`(naked)` on a proc, `(stack)` on a local: bare
+            # markers, forwarded as-is.
             result.flags.incl pk
             skip n
           of RegisterP:
@@ -1065,6 +1074,9 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if AssemblerP in prag.flags:
     dest.addKey genPragmas, "assembler", pinfo
+
+  if NakedP in prag.flags:
+    dest.addKey genPragmas, "naked", pinfo
 
   if NoreturnP in prag.flags and not procRaises:
     # Leng has no noreturn pragma of its own; carry the fact as the existing
@@ -1787,7 +1799,16 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX:
       error c, "BUG: not eliminated: ", n
       #skip n
-    of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
+    of NilX:
+      # `(nil T)` — the frontend types every `nil` (see `trNil` in derefs.nim)
+      # and the type slot is a TYPE, not an expression. Keep it: it is what
+      # tells `intramodinliner`, which substitutes a literal argument at each
+      # use, what the pointer it splices actually is.
+      takeInto dest, n:
+        if n.hasMore:
+          trType(c, dest, n)
+          while n.hasMore: skip n   # the closure form's trailing nil environment
+    of AtX, PatX, ParX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
@@ -1840,7 +1861,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     # of which can appear as a cursor head here.
     error c, "BUG: unexpected ')' or EofToken"
 
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId) =
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId; constRef = false) =
   var symKind = if tag == ResultY: VarY else: tag
   var localDecl = n
   let toPatch = dest.len
@@ -1878,6 +1899,8 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       dest.addKeyVal genPragmas, "register", prag.register, pinfo
     if StackP in prag.flags:
       dest.addKey genPragmas, "stack", pinfo
+    if constRef:
+      dest.addKey genPragmas, "constref", pinfo
     closeGenPragmas dest, genPragmas
 
     let typAt = n
@@ -1946,6 +1969,27 @@ proc trBreak(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.addParLe("jmp", info)
       dest.addSymUse(lab, info)
     dest.addParRi(n.endInfo)
+
+proc trLab(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(lab :L)` — a Nimony-level merge label (`xelim`'s two-target condition
+  ## compiler emits these for short-circuit chains). Leng has the very same
+  ## construct, so this is a straight copy with the symbol registered.
+  let info = n.info
+  n.into:
+    let (s, _) = getSymDef(c, n)
+    dest.addParLe("lab", info)
+    dest.addSymDef(s, info)
+    dest.addParRi()
+
+proc trJmp(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  n.into:
+    expectSym c, n
+    let lab = n.symId
+    inc n
+    dest.addParLe("jmp", info)
+    dest.addSymUse(lab, info)
+    dest.addParRi()
 
 proc trIf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # (if cond (.. then ..) (.. else ..))
@@ -2113,6 +2157,8 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     inc n
   of TagLit:
     case n.stmtKind
+    of LabS: trLab c, dest, n
+    of JmpS: trJmp c, dest, n
     of NoStmt:
       if n.cursorTagId == TagId(KeepovfTagId):
         trKeepovf c, dest, n

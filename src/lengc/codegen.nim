@@ -306,6 +306,9 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # Static-import library annotation for the NATIVE backend (arkham);
         # meaningless for C output — the linker resolves the symbol.
         skip n
+      of ConstrefP:
+        # A PARAMETER pragma; never legal on a proc.
+        error c.m, "invalid proc pragma: ", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.hasMore and n.kind == StrLit:
@@ -332,8 +335,9 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # `genProcDecl` then emits nothing for the declaration itself.
         result.flags.incl pk
         skip n
-      of AssemblerP:
-        # `{.assembler.}` bodies are transliterated by arkham, not compiled to C.
+      of AssemblerP, NakedP:
+        # `{.assembler.}`/`{.naked.}` bodies are transliterated by arkham, not
+        # compiled to C.
         # Routing them into a C build means assembling them separately and
         # linking the object — see `nativenif/doc/asm-c-interop.md`, which is not
         # built yet. Reject loudly rather than emit a prototype that will fail to
@@ -406,6 +410,11 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
           while n.hasMore: skip n
       of WasP:
         genWasPragma c, n
+      of ConstrefP:
+        # Provenance only (see `doc/tags.md`): the pointer stands for a
+        # by-value source parameter. Nothing to emit — it exists for
+        # `funcsummary`/the optimizer.
+        skip n
       else:
         error c.m, "invalid pragma: ", n
   else:
@@ -627,7 +636,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   var prc = takeProcDecl(n)
 
   let prag = parseProcPragmas(c, prc.pragmas)
-  if AssemblerP in prag.flags:
+  if prag.flags * {AssemblerP, NakedP} != {}:
     errorAt c.m, "the C backend cannot compile an `{.assembler.}` proc; it must " &
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
       prc.name

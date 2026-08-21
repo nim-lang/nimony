@@ -1164,7 +1164,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         of ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT,
             ConverterT, MethodT, MacroT, TemplateT, ObjectT,
             EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT,
-            PtrT, ArrayT, VarargsT, StaticT, TupleT, OnumT,
+            PtrT, ArrayT, VarargsT, StaticT, TupleT, ClosureTupleT, OnumT,
             AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT,
             ConceptT, DistinctT, ItertypeT, RangetypeT, UarrayT,
             AutoT, SymkindT, TypekindT, TypedescT, UntypedT,
@@ -1193,7 +1193,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       of MacroS, IteratorS, TemplateS, EmitS, BreakS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
         ExportS, CommentS,
-        PragmasS:
+        PragmasS, LabS, JmpS:
         takeTree dest, n
       of TypeS:
         if isTopScope:

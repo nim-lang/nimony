@@ -1275,7 +1275,8 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       n = routineStart; skip n
     of InvokeT:
       semInvoke c, dest, n
-    of ErrT:
+    of ErrT, ClosureTupleT:
+      # `ClosureTupleT` is a hexer-internal lowering and never reaches sem.
       takeTree dest, n
   of DotToken:
     if context in {InReturnTypeDecl, InGenericConstraint}:

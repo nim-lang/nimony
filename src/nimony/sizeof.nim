@@ -219,7 +219,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     let size0 = bitsetSizeInBytes(n.childCursor)
     let size1 = int asSigned(size0, c.overflow)
     update c, size1, 1
-  of TupleT:
+  of TupleT, ClosureTupleT:
     if c.strict:
       # mark as invalid as we pretend to not to know the alignment the backend ends up using etc.
       c.overflow = true

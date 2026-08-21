@@ -8,7 +8,7 @@
 | `(pat X X)`            | LengExpr, NimonyExpr | pointer indexing operation |
 | `(par X)`              | LengExpr, NimonyExpr, NiflerKind | syntactic parenthesis |
 | `(addr X)`; `(addr X (cppref)?)`  | LengExpr, NimonyExpr, NiflerKind | address of operation |
-| `(nil T? X?)`          | LengExpr, NimonyExpr, NimonyOther, NiflerKind | nil pointer value; closure `nil` carries the proc type and a nil environment |
+| `(nil T? X?)`          | LengExpr, NimonyExpr, NimonyOther, NiflerKind | nil pointer value; `T` is the pointer type it stands for. `nil` is the one type-polymorphic literal, so the frontend types every `ptr`/`ref`/`pointer`/`cstring` one (`derefs.nim`) and `T` survives into Leng; only a `nil` a later pass synthesizes is bare. A closure `nil` carries the proc type plus `X`, a nil environment |
 | `(notnil)`             | NimonyOther | `not nil` pointer annotation |
 | `(unchecked)`          | NimonyOther | `unchecked` pointer annotation (derefs do not require nil checking) |
 | `(inf T?)`             | LengExpr, NimonyExpr | positive infinity floating point value |
@@ -98,8 +98,8 @@
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
 | `(of (ranges ...) S)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement |
-| `(lab D)` | LengStmt, LengSym, NjvlKind | label, target of a `jmp` instruction |
-| `(jmp Y)` | LengStmt, NjvlKind | jump/goto instruction |
+| `(lab D)` | LengStmt, LengSym, NimonyStmt, NimonySym, NjvlKind | label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge |
+| `(jmp Y)` | LengStmt, NimonyStmt, NjvlKind | jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals |
 | `(ret .X)` | LengStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |
@@ -185,6 +185,7 @@
 | `(except .Y X)` | NimonyOther, NiflerKind | except subsection |
 | `(fin S)` | NimonyOther, NiflerKind | finally subsection |
 | `(tuple (fld ...)* <or> T*)` | NimonyType, NiflerKind | `tuple` type |
+| `(closureTuple T T)` | NimonyType | internal lifted-closure tuple type: `(closureTuple <proctype> (ref RootObj))`. Structurally a two-element tuple — a function pointer plus its environment — but tagged distinctly so lambda lifting and the coroutine transform can recognize an *already lifted* closure/iterator value by its tag instead of by probing a plain `(tuple ...)`. Produced by `hexer`'s `lambdalifting`/`coro_transform`/`cps` only; `lengcgen` lowers it to an ordinary Leng `(tuple ...)` |
 | `(onum (efld...)*)` | NimonyType | enum with holes type |
 | `(anum (efld...)*)` | NimonyType | sum type discriminator enum ("auto enum") |
 | `(ref T (unchecked)?)` | NimonyType, NiflerKind | `ref` type; the `(unchecked)` pragma relaxes nil checking on deref |
@@ -351,6 +352,8 @@
 | `(deferexpansion)` | NimonyOther | emitted by a template *plugin* as its entire output to say "I cannot answer while the argument still contains type variables — ask me again after instantiation". The compiler then parks the sem-checked call in the tree as `(at <template> <args>…)` instead of replacing it with an expansion — `(at …)` because that is the only unresolved type application a type slot accepts. `subsGenericProc` substitutes into it like any other type, and the instantiation's re-sem turns it back into a call, which drives the plugin again with concrete types. Rejected (a hard error) when no argument contains a generic parameter, which is what makes the retry well-founded |
 | `(needtypes SYM+)` | NimonyOther | emitted by a template *plugin* as its entire output to ask the compiler for the declarations of the named symbols. The compiler appends them to the plugin's second input (`loadTypeDefinitions()`) and runs the plugin again. This is how a plugin resolves a nominal type: it arrives in the main input as an opaque `Symbol`, and a plugin runs in its own process with no way to look it up. Only what is asked for is shipped, so a plugin that never asks pays nothing. Requesting a symbol that was already provided is a hard error, which is what bounds the loop |
 | `(alwaysInline)` | LengPragma, NimonyPragma | the `{.alwaysInline.}` proc pragma: splice this proc at every call site, unconditionally — no size bound, no per-call-site score. Unlike `(inline)`, which is an *emission* annotation the inlining policy deliberately ignores, this one overrides the policy. It is the author asserting what a token count cannot see: typically "my hot path is two instructions and the bulk is a cold tail behind a `(noinline)` callee". Only the recursion guard still applies — that is termination, not heuristics |
+| `(naked)` | NimonyPragma, LengPragma | the `{.naked.}` **proc pragma** (no children): emit NO prologue and NO epilogue — the proc never touches SP, so on entry SP still points straight at the return address the `call` pushed. That is the one thing an ordinary proc cannot observe about its caller, and it is what lets `getStackTrace` seed a stack walk with a frame it did not create. Only legal together with `(assembler)`: without a frame there is nowhere to spill, so every location must already be declared. The back end (arkham) owns the checking |
+| `(constref)` | LengPragma | **parameter** pragma marking a pointer that `lengcgen.maybeByConstRef` introduced for a source-level BY-VALUE parameter (`sizeof.passByConstRef`, which excludes `sink`/`var`/`out`). It records provenance, and the useful consequence is that nothing writes through this pointer — not because the body was analysed, but because that is the precondition under which passing by reference was legal at all. `funcsummary` therefore keeps such a parameter's `writes` effect clear even when the body sets `callsUnknown`, which otherwise forces every parameter to "may write". **Not** a claim that the pointee is immutable: another alias may write the same object (`f(x, addr x)`, or a global the callee mutates), so it must never license moving a load across an unrelated store |
 
 ### unpackflat, unpacktup, unpackdecl
 

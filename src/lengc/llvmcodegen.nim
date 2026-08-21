@@ -595,6 +595,9 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         # Static-import library annotation for the NATIVE backend (arkham);
         # meaningless for LLVM output — the linker resolves the symbol.
         skip n
+      of ConstrefP:
+        # A PARAMETER pragma; never legal on a proc.
+        error c.m, "invalid proc pragma: ", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.kind == StrLit:
@@ -617,7 +620,7 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         # nothing to emit for the declaration itself.
         result.flags.incl pk
         skip n
-      of AssemblerP, RegisterP, StackP:
+      of AssemblerP, NakedP, RegisterP, StackP:
         # `{.assembler.}` bodies are arkham's; the location pins are assertions
         # inside one. See the C backend's `parseProcPragmas` for the reasoning.
         result.flags.incl pk
@@ -662,6 +665,11 @@ proc genParamPragmasLLVM(c: var LLVMCode; n: var Cursor) =
       case n.pragmaKind
       of AttrP, WasP:
         skip n
+      of ConstrefP:
+        # Provenance only (see `doc/tags.md`): the pointer stands for a
+        # by-value source parameter. Nothing to emit — it exists for
+        # `funcsummary`/the optimizer.
+        skip n
       else:
         error c.m, "invalid pragma: ", n
   else:
@@ -689,7 +697,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     c.currentProc = oldProc
     c.currentBlockIdx = oldBlock
     return
-  if AssemblerP in prag.flags:
+  if prag.flags * {AssemblerP, NakedP} != {}:
     # Same reasoning as the C backend (see its `genProcDecl`): an `{.assembler.}`
     # body names machine registers and promises a one-to-one instruction mapping,
     # which no IR-level backend can honour. Refuse it by name instead of emitting

@@ -7,8 +7,8 @@ type
     NoVTag
     StoreV = (ord(StoreTagId), "store")  ## `asgn` with reversed operands that reflects evaluation order
     ContinueV = (ord(ContinueTagId), "continue")  ## `continue` statement
-    LabV = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction
-    JmpV = (ord(JmpTagId), "jmp")  ## jump/goto instruction
+    LabV = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
+    JmpV = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
     IteV = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
     ItecV = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
     LoopV = (ord(LoopTagId), "loop")  ## `loop` components are (before-cond, cond, loop-body, after)
