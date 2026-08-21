@@ -186,6 +186,15 @@ proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
       let info = req.info
       emitRequires(c, dest, req, infoToStr(pragmas.info), info)
 
+proc isCoroutine(n: Cursor): bool =
+  ## Does this `(iterator …)` decl survive as a real routine? `.closure` and
+  ## `.passive` become state machines (`coro_transform`); everything else is
+  ## inlined away by `elimForLoops` before this pass. The test mirrors the one
+  ## `transformCoroutineDecl` makes.
+  let r = asRoutine(n)
+  result = r.kind == IteratorY and
+           (hasPragma(r.pragmas, ClosureP) or hasPragma(r.pragmas, PassiveP))
+
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
   let decl = n
@@ -1190,7 +1199,24 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         trLocal c, dest, n
       of ProcS, FuncS, MethodS, ConverterS:
         trProc c, dest, n
-      of MacroS, IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+      of IteratorS:
+        # An INLINE iterator's decl is dead by the time desugar runs —
+        # `elimForLoops` spliced its body into each caller before this pass, and
+        # what is left reaches no back end — so lowering it would be wasted work,
+        # which is why iterators sat with the macros and templates below.
+        #
+        # A COROUTINE iterator is not that. `.closure` (and `.passive`) survive as
+        # real routines: lambdalifting and cps turn the body into a state machine
+        # and it goes all the way to `lengcgen`. Skipping it meant nothing ever
+        # lowered the constructs desugar owns, so a `set` literal in a closure
+        # iterator reached the back end as a live `(setconstr …)` and died there
+        # ("BUG: not eliminated"). The same held for every other form this pass is
+        # responsible for — set operations, `card`, `incl`/`excl`.
+        if isCoroutine(n):
+          trProc c, dest, n
+        else:
+          takeTree dest, n
+      of MacroS, TemplateS, EmitS, BreakS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
         ExportS, CommentS,
         PragmasS, LabS, JmpS:

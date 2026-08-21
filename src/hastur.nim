@@ -1219,6 +1219,11 @@ const
     # backend that depends on `oconstr` being total, since it stores exactly the
     # fields the constructor lists and zeroes nothing.
     "tests/nimony/cps/tclosure_iter_frametypes",
+    # Sets in a closure iterator, in both representations (word-sized and the
+    # 32-byte array). Worth running natively because the big-set path builds
+    # its value through `zeroMem` plus per-element stores rather than a
+    # literal, which is a different shape for the back end than the C one.
+    "tests/nimony/cps/tclosure_iter_sets",
     "tests/nimony/cps/tclosure_iter_string",
     "tests/nimony/cps/tclosure_iter_var",
     "tests/nimony/cps/tfirstpassive",
