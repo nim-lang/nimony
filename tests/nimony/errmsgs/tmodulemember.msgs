@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tmodulemember.nim(9, 11) Error: undeclared identifier in module: 'nosuchproc'
+tests/nimony/errmsgs/tmodulemember.nim(10, 11) Error: undeclared identifier in module: 'nosuchvalue'
+tests/nimony/errmsgs/tmodulemember.nim(11, 11) Error: undeclared identifier in module: 'localOnly'
