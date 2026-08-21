@@ -1124,6 +1124,15 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
       result = MatchedDotSym
       dest.shrink exprStart
       let s = semQualifiedIdent(c, dest, moduleSym, fieldName, info)
+      if s.kind == NoSym:
+        # A module qualifier has no UFCS fallback, so a miss is a hard failure
+        # and every caller gets to say "undeclared identifier in module".
+        # `AllowUndeclared` (how `a.b(x)` stays open for `b(a, x)`) must not
+        # suppress it: leaving the bare identifier behind made overload
+        # resolution fail later with no name left to report, i.e. the
+        # "undeclared identifier: ''" of nim-lang/nimony#2308.
+        dest.shrink exprStart
+        return FailedDot
       semExprSym c, dest, it, s, exprStart, flags
       return
     let t = skipModifier(lhs.typ)

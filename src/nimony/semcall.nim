@@ -1433,9 +1433,18 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     let dotState = tryBuiltinDot(c, dest, cs.fn, lhs, fieldName, dotInfo,
                                   dotFlags, dotAccessToken)
     if dotState == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
+      # `m.nosuchproc(...)`: a module qualifier has no UFCS fallback, so the
+      # miss is simply an error. Report it and leave instead of running the
+      # rest of the call machinery on an `(err ...)` callee, which buries this
+      # message under "cannot call expression of type auto" (#2308).
       dest.shrink dotStart
+      swap dest, cs.dest
+      closeArgsScope c, cs, merge = false
       buildErr c, dest, dotInfo, "undeclared identifier in module: '" &
                  pool.strings[fieldName] & "'"
+      it.n = cs.scope; skip it.n
+      it.typ = c.types.autoType
+      return
     elif dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDotField and cs.fn.typ.typeKind notin RoutineTypes):
