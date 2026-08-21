@@ -1332,6 +1332,69 @@ proc toGoto*(c: var Context; n: Cursor): TokenBuf =
 # coroutine routine
 # ---------------------------------------------------------------------
 
+proc rewriteCrossStateJumps(n: var Cursor; dest: var TokenBuf; states: Table[SymId, int]) =
+  if n.kind == TagLit:
+    let tag = globalTags.tags[n.cursorTagId]
+    if tag == "lab" or tag == "jmp":
+      let op = n.childCursor
+      if op.kind in {Symbol, SymbolDef} and states.hasKey(op.symId):
+        let state = states.getOrDefault(op.symId)
+        if tag == "lab":
+          emitJump dest, state, n.info # preserve the fall-through edge
+          emitLabel dest, state, n.info
+        else:
+          emitJump dest, state, n.info
+        skip n
+        return
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        rewriteCrossStateJumps(n, dest, states)
+    dest.addParRi()
+  else:
+    takeTree dest, n
+
+proc repairCrossStateJumps(c: var Context) =
+  ## xelim's short-circuit lowering pairs `(jmp :L)` statements with a later
+  ## `(lab :L)`: structured control flow that must stay within one CPS state.
+  ## When a suspension point sits between them, the goto conversion has put an
+  ## integer state label in between, so the jump would have to cross a
+  ## state-proc boundary — impossible once the states are separate procs.
+  ## Convert such pairs to the state machine's own integer labels: the jump
+  ## becomes a state transition, and the converted label gets a fall-through
+  ## jump in front of it, mirroring `trGoto`'s emitJump/emitLabel pattern.
+  ## Must run before `escapingLocals` so locals that now cross a state
+  ## boundary are moved into the frame.
+  template buf: TokenBuf = c.currentProc.cf
+  var seg = 0
+  var labSeg = initTable[SymId, int]()
+  var jmps: seq[(SymId, int)] = @[]
+  var pos = 0
+  while pos < buf.len:
+    if buf[pos].kind == TagLit:
+      let tag = globalTags.tags[buf[pos].tagId]
+      if tag == "lab" or tag == "jmp":
+        let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
+        if operand.kind == IntLit:
+          if tag == "lab": inc seg
+        elif operand.kind in {Symbol, SymbolDef}:
+          if tag == "lab":
+            labSeg[operand.symId] = seg
+          else:
+            jmps.add (operand.symId, seg)
+    inc pos
+  var states = initTable[SymId, int]()
+  for (s, jseg) in jmps:
+    if labSeg.getOrDefault(s, jseg) != jseg and not states.hasKey(s):
+      states[s] = c.currentProc.labelCounter
+      inc c.currentProc.labelCounter
+  if states.len == 0: return
+  var dest = createTokenBuf(buf.len + 16)
+  var n = beginRead(buf)
+  while n.hasMore:
+    rewriteCrossStateJumps(n, dest, states)
+  c.currentProc.cf = ensureMove dest
+
 proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: Cursor; sym: SymId) =
   # Transform the proc body via the NJ pass to get structured code
   # without break/continue/goto, then store just the body (without NJ
@@ -1359,6 +1422,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: TokenBuf; iter: 
     c.currentProc.cf = ensureMove bodyBuf
 
   c.currentProc.cf = toGoto(c, beginRead(c.currentProc.cf))
+  repairCrossStateJumps(c)
   when defined(logPasses):
     echo "========= GOTO ======="
     echo c.currentProc.cf.toString(false)
