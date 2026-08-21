@@ -250,7 +250,7 @@ proc fieldDecl(c: var TypeCache; n: var Cursor; fld: SymId): Local =
   else:
     result = default(Local)
     let tk = n.typeKind
-    if tk in {ObjectT, TupleT}:
+    if tk in {ObjectT} + TupleTypes:
       var baseObj = default(Cursor)
       n.into:
         if tk == ObjectT:
@@ -287,7 +287,7 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   inc n # into tuple
   var tupType = getTypeImpl(c, n, flags)
   tupType = skipModifier(tupType)
-  if tupType.typeKind == TupleT:
+  if tupType.typeKind in TupleTypes:
     skip n # skip tuple expression
     if n.isIntLit:
       var idx = n.intVal

@@ -216,6 +216,12 @@ const
   ConvKinds* = {HconvX, ConvX, DconvX, CastX}
   TypeclassKinds* = {ConceptT, TypekindT, OrdinalT, OrT, AndT, NotT}
   RoutineTypes* = {ProcT, FuncT, IteratorT, TemplateT, MacroT, ConverterT, MethodT, ProctypeT, ItertypeT}
+  TupleTypes* = {TupleT, ClosureTupleT}
+    ## Both tags have the *same* structure — a flat list of (optionally
+    ## `(kv name T)`-wrapped) element types — so every pass that only cares
+    ## about the layout (hooks, sizeof, mangling, codegen) matches on this set.
+    ## Only lambda lifting and the coroutine transform tell them apart; see
+    ## `ClosureTupleT`.
 
 proc addParLe*[T: enum](dest: var TokenBuf; kind: T; info = NoLineInfo) =
   ## Open a tag from a kind enum (TypeKind/StmtKind/… all share TagEnum

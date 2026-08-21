@@ -255,7 +255,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     result = isTrivial(c, typ.childCursor)
   of ObjectT:
     result = isTrivialObjectBody(c, typ)
-  of TupleT:
+  of TupleT, ClosureTupleT:
     var tup = typ
     tup = sub(tup)  # throwaway copy; bounds the walk under vpr
     while tup.hasMore:
@@ -383,7 +383,7 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   case typ.typeKind
   of PtrT:
     bug "ptr T should have been a 'trivial' type"
-  of ObjectT, DistinctT, TupleT, ArrayT, RefT:
+  of ObjectT, DistinctT, TupleT, ClosureTupleT, ArrayT, RefT:
     result = requestLifting(c, c.op, orig)
   else:
     result = NoSymId
@@ -616,7 +616,7 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
 
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
-  assert n.typeKind == TupleT
+  assert n.typeKind in TupleTypes
   var n = n
   n = sub(n)  # throwaway copy; bounds the walk under vpr
   var idx = 0
@@ -837,7 +837,7 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     # actually calls that hook. The plain field-recursion produced an empty
     # body for such types and silently moved the buffer.
     unravel(c, typ.childCursor, paramA, paramB)
-  of TupleT:
+  of TupleT, ClosureTupleT:
     unravelTuple c, typ, paramA, paramB
   of ArrayT:
     unravelArray c, typ, paramA, paramB

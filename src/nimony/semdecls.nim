@@ -63,7 +63,7 @@ proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Ite
     typecheck(c, dest, lastSonInfo, it.typ, c.routine.returnType)
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
      TypedT, CstringT, PointerT, OrdinalT:
     commonType c, dest, it, beforeLastSon, c.routine.returnType
@@ -1445,7 +1445,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
             semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
         of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
            TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
-           StaticT, TupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+           StaticT, TupleT, ClosureTupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
            DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
            UntypedT, TypedT, CstringT, PointerT, OrdinalT:
           semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name

@@ -2032,7 +2032,9 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           m.error InvalidMatch, f, arg.typ
         skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT:
+        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT,
+        ClosureTupleT:
+      # `ClosureTupleT` is a hexer-internal lowering; it never reaches sem.
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
