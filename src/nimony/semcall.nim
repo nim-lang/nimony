@@ -980,6 +980,15 @@ proc inferTypevarsFromExpected(c: var SemContext; m: var Match; expected: TypeCu
     m.inferred = rtMatch.inferred
 
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
+  # Everything the candidate collection below writes to `dest` is a
+  # DIAGNOSTIC ("attempt to call routine", a symchoice element that cannot be
+  # loaded, ...) and every one of them falls through to the error tail, which
+  # emits an error tree of its own. Two trees out of one `semExpr` breaks its
+  # one-expression contract: `(cast T (err ...) (err ...))` then has three
+  # children and the next reader trips over the unconsumed rest
+  # (nim-lang/nimony#2301). So remember where the diagnostics start and move
+  # them out of `dest` once the candidate set is known.
+  let errStart = dest.len
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
     else: emptyNode(c)
@@ -1045,6 +1054,17 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       return
     else:
       buildErr c, dest, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
+  # From here on exactly one tree is appended to `dest`: the call, or a single
+  # `(err ...)`. `earlyErr` keeps the first diagnostic so the error tail can
+  # still report it instead of its generic fallback. It stays a `default`
+  # buffer on the overwhelmingly common path where nothing errored — that
+  # costs no allocation, while `createTokenBuf` always allocates storage plus
+  # a literals and a tag pool.
+  var earlyErr = default(TokenBuf)
+  if dest.len > errStart:
+    earlyErr = createTokenBuf(4)
+    earlyErr.addSubtree readonlyCursorAt(dest, errStart)
+    dest.shrink errStart
   var idx = pickBestMatch(c, m, cs.flags)
 
   if idx < 0:
@@ -1277,6 +1297,15 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           let res = tryLoadSym(m[i].fn.sym)
           if res.status == LacksNothing:
             errorMsg.add " (declared in " & res.decl.info.infoToStr & ")"
+    elif earlyErr.len > 0:
+      # A precise diagnostic was already produced while collecting candidates
+      # (typically "attempt to call routine: 'x'" for a non-callable symbol).
+      # Use it as the callee of the reconstructed source instead of claiming
+      # the name is undeclared — it is declared, just not callable.
+      var calleeN = beginRead(earlyErr)
+      buildCallSource dest, cs, calleeN
+      endRead calleeN
+      return
     else:
       errorMsg = "undeclared identifier: '"
       if cs.fnName != StrId(0):
