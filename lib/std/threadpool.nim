@@ -18,10 +18,9 @@ else:
 import std/stripes
 
 const
-  StripeCount* = 8    ## Must be a power of 2.
-  StripeSize*  = 128  ## Tasks per stripe; must be a power of 2.
+  StripeSize*  = 2048  ## Tasks per stripe; must be a power of 2.
   MaxIoEvents  = 64
-  BulkSize*    = 16   ## Max tasks drained per bulk dequeue.
+  BulkSize*    = 32   ## Max tasks drained per bulk dequeue.
 
 # --- Task = Continuation + metadata ---
 
@@ -43,7 +42,7 @@ proc poolPollIo*(timeoutMs: int): bool {.nimcall.} =
   result = false
 
 var
-  localQueues: array[StripeCount, FifoStripe[Task]]
+  localQueues: seq[FifoStripe[Task]]
   injectQueue: FifoStripe[Task]
   workers: seq[RawThread]
   stopFlag: bool # accessed atomically
@@ -55,10 +54,10 @@ var threadIdx* {.threadvar.}: int
 
 proc tryEnqueue(s: int; t: Task): bool {.inline.} =
   ## Push `t` onto stripe `s` if it has room; `false` when the stripe is full.
-  let i = s and (StripeCount - 1)
+  let i = s mod workerCount
   return localQueues[i].tryEnqueue(t)
 
-proc submit*(t: Task; hint = 0) =
+proc submit*(t: Task; h = 0) =
   ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
   ## try the hinted stripe, then the others (absorbing bursts); if *every*
   ## stripe is full, run the continuation inline — trampolining it on the
@@ -71,9 +70,8 @@ proc submit*(t: Task; hint = 0) =
   ## Caller-runs instead guarantees forward progress (a producer that outruns
   ## the pool simply does the work), so the queue stays bounded at
   ## `StripeCount*StripeSize` and no submitter ever stalls.
-  let h = hint and (StripeCount - 1)
   if tryEnqueue(h, t): return
-  for off in 1 ..< StripeCount:
+  for off in 1 ..< workerCount:
     if tryEnqueue(h + off, t): return
   if injectQueue.tryEnqueue(t): return
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
@@ -85,15 +83,18 @@ proc submit*(t: Task; hint = 0) =
     if tryEnqueue(h, toTask(next)): break
     c = next
 
-proc submit*(c: Continuation; hint = 0) {.inline.} =
+proc submit*(c: Continuation; hint = -1) {.inline.} =
   ## Convenience: submit a bare continuation as a task.
+  var hint = hint
+  if hint == -1:
+    hint = threadIdx
   submit(toTask(c), hint)
 
 var dequeTicks {.threadvar.}: int
 
 proc tryBulkDequeue(stripe: int; buf: var array[BulkSize, Task]): int =
   result = 0
-  let s = stripe and (StripeCount - 1)
+  let s = stripe mod workerCount
   inc dequeTicks
   if dequeTicks mod 61 == 0:
     result = injectQueue.tryBulkDequeue(BulkSize, buf)
@@ -106,15 +107,14 @@ proc drainOnce(startStripe: int): bool =
   ## continuation that yields more work. Returns true if a batch ran. Shared by
   ## the worker loop and `pool.help`.
   var buf {.noinit.}: array[BulkSize, Task]
-  for attempt in 0 ..< StripeCount:
-    let s = (startStripe + attempt) and (StripeCount - 1)
-    let n = tryBulkDequeue(s, buf)
+  for attempt in 0 ..< workerCount:
+    let n = tryBulkDequeue(startStripe + attempt, buf)
     if n > 0:
       for i in 0 ..< n:
         let c = buf[i].con
         let next = c.fn(c.env)
         if next.fn != nil:
-          submit(next, s)
+          submit(next, startStripe)
       return true
   result = false
 
@@ -176,7 +176,8 @@ proc initPool*() =
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
     workerCount = max(1, cpuinfo.countProcessors() - 1)
-    for i in 0..<StripeCount:
+    localQueues = newSeq[FifoStripe[Task]](workerCount)
+    for i in 0..<workerCount:
       localQueues[i].init(StripeSize)
     injectQueue.init(StripeSize*16)
     workers.setLen(workerCount)
