@@ -408,7 +408,8 @@ proc transformToCps*(pass: var Pass) =
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl(),
-    hooks: passiveHooks(), nextTemp: pass.nextTemp)
+    hooks: passiveHooks(), nextTemp: pass.nextTemp,
+    ptrSize: pass.bits div 8)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   c.coroTypes.addParLe(n.cursorTagId, n.info) # the `(stmts` open tag
