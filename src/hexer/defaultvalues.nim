@@ -199,7 +199,7 @@ proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSiz
       error "cannot determine the first value of enum type: ", typ
     else:
       dest.addIntLit(lo, info)
-  of PtrT, RefT, RoutineTypes, CstringT, PointerT, NiltT:
+  of PtrT, RefT, RoutineTypes, CstringT, PointerT, NiltT, MutT, OutT, LentT:
     addNil(dest, typ, info)
   of SetT:
     var err = false
@@ -254,7 +254,7 @@ proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSiz
     dest.addSubtree typ
     addDefaultValue(dest, impl.childCursor, info, ptrSize)
     dest.addParRi()
-  of MutT, OutT, LentT, SinkT, StaticT:
+  of SinkT, StaticT:
     addDefaultValue(dest, impl.childCursor, info, ptrSize)
   else:
     error "cannot build a default value for type: ", typ
