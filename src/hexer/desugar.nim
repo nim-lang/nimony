@@ -738,9 +738,23 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # not constant
     genSetConstrRuntime(c, dest, n)
   of 1, 2, 4, 8:
-    # hopefully this is correct?
+    # A word-sized set IS its bit pattern, so the constant folds to one unsigned
+    # literal — SUFFIXED with the set's own width. Unsuffixed, the literal is
+    # polymorphic and everything downstream has to guess: `xelim`'s `declareTemp`
+    # asks `getType` for the type of the `if` expression it is hoisting, gets `u64`
+    # off a bare `2u`, and declares a `u64` temp for a `set[RoutineProp]` that is one
+    # byte wide. C narrows that on assignment without a word, so the C backend never
+    # saw it; nifasm types its registers and rejected the `(mov props.0 (u 8) <-
+    # x.16 (u 64))` it became — `derefs.trProcDecl`'s
+    # `if …: {IsNoSideEffect} else: {}`, which is what kept `nimony.nim` off the
+    # native bootstrap ladder. The suffix is how sem writes literals in
+    # `defaults.nim`, and how `hexer/defaultvalues` writes its zeros.
+    let width = bytes.len * 8
     bytes.setLen(8)
+    dest.addParLe(SufX, info)
     dest.addUIntLit(cast[ptr uint64](addr bytes[0])[], info)
+    dest.addStrLit("u" & $width, info)
+    dest.addParRi()
     skip n
   else:
     dest.addParLe(AconstrX, info)
