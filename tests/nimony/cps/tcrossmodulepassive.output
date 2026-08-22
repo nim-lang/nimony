@@ -1,0 +1,7 @@
+driver start
+ping
+inner a
+inner b
+pong
+sum: 5
+driver end

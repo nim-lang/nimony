@@ -127,6 +127,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
           let callStart = n
           n = sub(n)
           if n.kind == Symbol and typ.childCursor.kind == SymbolDef:
+            publishWrapperSignature(n.symId, c.thisModuleSuffix)
             dest.addSymUse coroWrapperProc(c, n.symId), info
             inc n
           else:
@@ -220,6 +221,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
       let callStart = n
       n = sub(n)
       if n.kind == Symbol and typ.childCursor.kind == SymbolDef:
+        publishWrapperSignature(n.symId, c.thisModuleSuffix)
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
