@@ -35,7 +35,16 @@ Commands:
                        `../nativenif` is checked out, and says so when it is not;
                        `native` (arkham + nifasm + shoggoth) asks for them by
                        name and errors out instead.
-  tiers                compile every module on the bootstrap list with nimony.
+  tiers [native]       compile every module on the bootstrap list with nimony.
+                       `native` uses `nimony n` (arkham + nifasm) instead of
+                       `nimony c`: the list is a walk of the bootstrap DAG from
+                       the leaves up, so it attributes each native gap to the
+                       smallest module that reaches it — which `boot` cannot do,
+                       since it compiles three whole tools and reports only the
+                       first that died. Nothing fails fast: the run ends with one
+                       line per distinct diagnostic and the modules reaching it.
+                       `--forward:` is appended to every compile (e.g.
+                       `--forward:-d:release`).
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
                        host-Nim-built toolchain; `binN/` is `binN-1/`'s
@@ -1208,6 +1217,14 @@ const
     # backend gets the widths from C's own type system, so this only ever fails on
     # a backend that has to derive them itself.
     "tests/nimony/types/tfloat32",
+    # More arguments than the ABI has argument registers, with the parameter shapes
+    # that give a stack-passed one a stack HOME (a `var seq` written through, an
+    # object read after a call). Native-relevant by nature: the C compiler owns
+    # argument passing under `nimony c`, so only a backend that marshals arguments
+    # itself can fail this — arkham's AArch64 prologue used to abort on it outright
+    # (">8 integer params (stack TODO)"), which is what kept `nimony.nim` off the
+    # native bootstrap ladder.
+    "tests/nimony/calls/tstackparams",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",
@@ -2197,32 +2214,105 @@ const RunnableBootstrapModules = [
   "src/lib/argsfinder.nim",
 ]
 
-proc tierTests() =
-  ## Compile every module on `BootstrapModules` with `bin/nimony c`. Fails
+const BootNativeTools = ["arkham", "nifasm"]
+  ## Carried too for a native boot: `nimony n` reaches them through `findTool`,
+  ## i.e. relative to the running nimony, so without them in `binN/` stage N
+  ## would silently drive `bin/`'s copies.
+
+proc missingNativeTools(): seq[string] =
+  ## Which of `BootNativeTools` are not in `bin/`. They come from the sibling
+  ## `../nativenif`, so a checkout that never had it has neither.
+  result = @[]
+  for tool in BootNativeTools:
+    if not fileExists(binDir() / tool.addFileExt(ExeExt)): result.add tool
+
+proc firstDiagnostic(output: string): string =
+  ## The one line of a failed compile worth grouping failures by. Prefer a real
+  ## diagnostic over the `FAILURE: <nifmake command line>` trailer, which names a
+  ## per-module cache path and so is different for every module that shares a
+  ## cause. Then drop the position tail arkham and nifasm append — ` at ??? (…)`
+  ## and ` in proc <sym>` — for the same reason: one arkham assertion reached by
+  ## six modules is one gap, and six spellings of it is a work list that lies
+  ## about its own length.
+  result = ""
+  for line in output.splitLines():
+    let s = line.strip()
+    if s.len == 0: continue
+    if "Error" in s or "error" in s or "AssertionDefect" in s or s.startsWith("[Error]"):
+      result = s
+      break
+    if result.len == 0 and not s.startsWith("FAILURE:"): result = s
+  if result.len == 0: result = "(no diagnostic)"
+  let at = result.find(" at ???")
+  if at >= 0: result.setLen at
+  let inProc = result.find(" in proc ")
+  if inProc >= 0: result.setLen inProc
+
+proc tierTests(native = false; extraArgs = "") =
+  ## Compile every module on `BootstrapModules` with `bin/nimony`. Fails
   ## fast on the first regression so the offending module is obvious. On
   ## Windows the list collapses to the Tier 20 tip (`nimony.nim`) — its
   ## import set already covers every other entry, so the redundant per-leaf
   ## compiles are pure CI cost; Linux/macOS still cover every leaf.
+  ##
+  ## `native` drives `nimony n` (arkham + nifasm) rather than `nimony c`, which
+  ## is what makes this list the ladder for bringing a new native target up.
+  ## `boot` compiles three whole tools at once and reports the first of them that
+  ## died, so a target with several independent gaps shows up as one opaque
+  ## "stage 1 (nimsem) failed"; the tier list is a walk of the same DAG from the
+  ## leaves upwards, so each gap is attributed to the SMALLEST module that
+  ## reaches it and the ones that are already fine are named as such. Every
+  ## module is attempted — no fail-fast — because the point of a bring-up run is
+  ## the whole work list, not its first entry. Windows keeps its collapse to the
+  ## tip either way: it is a CI cost decision, and a tip-only native run still
+  ## reports every gap, just without attributing them.
   let nimony = binDir() / "nimony".addFileExt(ExeExt)
   if not fileExists(nimony):
     quit "bootstrap: " & nimony & " not found; run `hastur build nimony` first"
+  if native:
+    let missing = missingNativeTools()
+    if missing.len > 0:
+      quit "tiers native: " & missing.join(", ") & " not in " & binDir() &
+           "; `hastur build native` builds them from " & NativenifDir
   let modules =
     when defined(windows): @["src/nimony/nimony.nim"]
     else: @BootstrapModules
+  let backend = if native: "n" else: "c"
   let t0 = epochTime()
   var failed: seq[string] = @[]
+  # Keyed by the first diagnostic line, so N modules tripping one arkham
+  # assertion read as one gap with N witnesses rather than N separate failures.
+  var gaps: seq[(string, seq[string])] = @[]
   for m in modules:
     removeDir "nimcache"
-    let subcmd = if m in RunnableBootstrapModules: " c -r " else: " c "
-    let (output, ec) = execCmdEx(nimony.quoteShell & subcmd & m.quoteShell)
+    var cmd = nimony.quoteShell & " " & backend
+    if m in RunnableBootstrapModules: cmd.add " -r"
+    if extraArgs.len > 0: cmd.add " " & extraArgs
+    cmd.add " " & m.quoteShell
+    let (output, ec) = execCmdEx(cmd)
     if ec == 0:
       echo "OK   ", m
     else:
       echo "FAIL ", m
       echo output
       failed.add m
+      let first = firstDiagnostic(output)
+      var seen = false
+      for i in 0 ..< gaps.len:
+        if gaps[i][0] == first:
+          gaps[i][1].add m
+          seen = true
+          break
+      if not seen: gaps.add (first, @[m])
   echo failed.len, " / ", modules.len, " bootstrap regressions in ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if gaps.len > 0:
+    # The work list: one line per distinct diagnostic, with the modules that
+    # reach it. Fixing the top entry is what moves the most tiers at once.
+    echo "distinct failure modes (", gaps.len, "):"
+    for (diag, mods) in gaps:
+      echo "  * ", diag
+      echo "    reached by: ", mods.join(", ")
   if failed.len > 0:
     quit "FAILURE: bootstrap regression(s): " & failed.join(", ")
   else:
@@ -2368,10 +2458,6 @@ const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "s
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
-const BootNativeTools = ["arkham", "nifasm"]
-  ## Carried too for a native boot: `nimony n` reaches them through `findTool`,
-  ## i.e. relative to the running nimony, so without them in `binN/` stage N
-  ## would silently drive `bin/`'s copies.
 
 proc bootCarryTools(): seq[string] =
   result = @BootCarryTools
@@ -2386,13 +2472,6 @@ const NativeBootReady = true
   ## nativenif master that carries those fixes — or flip this back to `false`
   ## and the C-backend boot below is the whole self-host gate meanwhile.
 
-proc missingNativeTools(): seq[string] =
-  ## Which of `BootNativeTools` are not in `bin/`. They come from the sibling
-  ## `../nativenif`, so a checkout that never had it has neither.
-  result = @[]
-  for tool in BootNativeTools:
-    if not fileExists(binDir() / tool.addFileExt(ExeExt)): result.add tool
-
 proc useNativeBoot(): bool =
   ## linux/amd64 is the platform the native backend is complete on: x86-64
   ## codegen plus the Linux syscall table the libc-free stdlib runs on. Its
@@ -2401,16 +2480,26 @@ proc useNativeBoot(): bool =
   ## missing, and say so (`bootBackendLine`) rather than let a missing sibling
   ## look like a slow C boot.
   ##
-  ## linux/arm64 is NOT here yet, and the reason is narrow: `boot` compiles every
-  ## stage `-d:release`, which turns shoggoth on, and the AArch64 backend still
-  ## MISCOMPILES the toolchain from shoggoth-optimized Leng — stage 1 builds and
-  ## links, then its nimsem reports "No pragmas found" and its hexer emits NIF
-  ## that shoggoth rejects. Everything below that opt level is green there:
-  ## `hastur native` passes in full, and a hand-driven `nimony n` boot (no
-  ## `-d:release`) reaches a byte-identical stage1 == stage2 fixed point. The
-  ## same boot at `-d:release --opt:none` — release defines, optimizer off — also
-  ## produces a working toolchain, which is what localizes the remaining bug to
-  ## arkham's handling of optimized input rather than to the syscall/ABI layer.
+  ## linux/arm64 is NOT here yet, but it is close and what remains is named. The old
+  ## reading — one MISCOMPILE of shoggoth-optimized Leng, everything below
+  ## `-d:release` green — was stale; as of 2026-08-22 the honest statement is that
+  ## `hastur tiers native --forward:-d:release` compiles 26 of the 27 bootstrap
+  ## modules and stops on ONE:
+  ##
+  ##   * `src/nimony/nimony.nim`: "Unknown or invalid symbol: sourceDir.1" out of
+  ##     `semos.runEval`. A `string` parameter — a 16-byte by-value aggregate — got a
+  ##     register PAIR for a home, and the body then takes its ADDRESS, which a pair
+  ##     has none of. The allocator has to give an address-taken aggregate parameter a
+  ##     stack home (`plan.aliasable` already tracks which ones those are); the
+  ##     emitter cannot repair it after the fact. In `../nativenif`, not in nimony.
+  ##
+  ## Three others were on this list and are fixed (see the tier ladder for how each
+  ## was attributed): arkham's ">8 integer params (stack TODO)", nifasm's
+  ## `(i 64)`-versus-`(stackoff nil)` on a spilled `nil`, and `(u 8)`-versus-`(u 64)`
+  ## on a word-sized set literal that `desugar` emitted unsuffixed.
+  ##
+  ## `--boot-backend:native` forces the path wherever arkham and nifasm are built,
+  ## which is how the above was measured and how it stays measurable.
   ##
   ## windows/amd64 is in as of #2325: arkham's win_x64 target emits a PE that
   ## imports what it needs per dll, so a native boot there needs no MinGW and no
@@ -2717,10 +2806,23 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
       quit "boot: " & exe & " not found; run `hastur build all` first"
   # valgrind cannot see the native backend's static, libc-free `mmap` heap, so
   # `--valgrind` (and thus `selfcheck`) always boots through the C backend.
-  bootNative = not withValgrind and bootBackend != bbC and useNativeBoot()
-  if bootBackend == bbNative and not bootNative:
-    quit "boot: --boot-backend:native is not available here: " &
-         bootBackendLine(withValgrind)
+  # `--boot-backend:native` FORCES: the only thing that can stop it is not having
+  # arkham and nifasm to run. It used to defer to `useNativeBoot` as well, which
+  # made the flag useless on exactly the hosts it is needed on — a host where the
+  # native path is off is a host where someone is trying to turn it ON, and
+  # "not available here" told them nothing they could act on. `--valgrind` still
+  # wins, because memcheck cannot see the native heap at all.
+  if bootBackend == bbNative:
+    if withValgrind:
+      quit "boot: --boot-backend:native and --valgrind are exclusive: " &
+           bootBackendLine(withValgrind)
+    let missing = missingNativeTools()
+    if missing.len > 0:
+      quit "boot: --boot-backend:native needs " & missing.join(", ") & " in " &
+           binDir() & "; `hastur build native` builds them from " & NativenifDir
+    bootNative = true
+  else:
+    bootNative = not withValgrind and bootBackend != bbC and useNativeBoot()
   echo bootBackendLine(withValgrind)
   for tool in bootCarryTools():
     let exe = binDir() / tool.addFileExt(ExeExt)
@@ -3251,8 +3353,17 @@ proc handleCmdLine =
     # `buildNimonyToolchain`, not `buildNimony`: every module on the tier list is
     # compiled by driving nimsem and hexer, so rebuilding the driver alone would
     # check current sources against whichever nimsem/hexer `bin/` was left with.
-    buildNimonyToolchain()
-    tierTests()
+    if not skipBuild: buildNimonyToolchain()
+    # `hastur tiers native` walks the same list through `nimony n`. Spelled as a
+    # positional rather than reusing `--boot-backend:`, which names what `boot`
+    # does and would read as a flag with no effect here.
+    var tiersNative = false
+    for a in items(args):
+      case a.normalize
+      of "native", "n": tiersNative = true
+      of "c": tiersNative = false
+      else: quit "tiers: unknown argument " & a & " (expected `native` or `c`)"
+    tierTests(tiersNative, forward)
 
   of "boot":
     # Same reason, one step further: `bin0/` is a COPY of `bin/`, so a stale
