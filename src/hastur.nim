@@ -2480,21 +2480,39 @@ proc useNativeBoot(): bool =
   ## missing, and say so (`bootBackendLine`) rather than let a missing sibling
   ## look like a slow C boot.
   ##
-  ## linux/arm64 is NOT here yet, but it is close and what remains is named. The old
-  ## reading — one MISCOMPILE of shoggoth-optimized Leng, everything below
-  ## `-d:release` green — was stale; as of 2026-08-22 the honest statement is that
-  ## `hastur tiers native --forward:-d:release` compiles 26 of the 27 bootstrap
-  ## modules and stops on ONE:
+  ## linux/arm64 SELF-HOSTS natively now, but not at the opt level `boot` defaults to,
+  ## so it stays off `auto`. `hastur tiers native --forward:-d:release` is 27/27, and
+  ## `--boot-backend:native` reaches a byte-identical stage1==stage2==stage3 fixed
+  ## point in ~175s (against ~650s through C) at BOTH the default opt level and
+  ## `-d:release --opt:none`. What fails is `-d:release` proper, and it is one bug:
   ##
-  ##   * `src/nimony/nimony.nim`: "Unknown or invalid symbol: sourceDir.1" out of
-  ##     `semos.runEval`. A `string` parameter — a 16-byte by-value aggregate — got a
-  ##     register PAIR for a home, and the body then takes its ADDRESS, which a pair
-  ##     has none of. The allocator has to give an address-taken aggregate parameter a
-  ##     stack home (`plan.aliasable` already tracks which ones those are); the
-  ##     emitter cannot repair it after the fact. In `../nativenif`, not in nimony.
+  ##   * shoggoth's INTER-MODULE INLINER (`imi`) is the trigger —
+  ##     `SHOGGOTH_DISABLE=imi hastur boot --boot-backend:native` reaches the fixed
+  ##     point with everything else on. It is not what is WRONG, though: the Leng it
+  ##     produces is sound (no write to the symbol in question), it is just denser,
+  ##     and the density drains arkham's register pools.
   ##
-  ## Three others were on this list and are fixed (see the tier ladder for how each
-  ## was attributed): arkham's ">8 integer params (stack TODO)", nifasm's
+  ##     Under that pressure `takeHeld`'s second chance hands out a register that
+  ##     hosts a live PARAMETER. It judges a callee-saved register by `rb.isBound`,
+  ##     deliberately bypassing the `regHoldsHome` union (too conservative for an
+  ##     ordinary local, whose scopes are disjoint) — but a plain scalar/pointer
+  ##     parameter's home is never `rb`-bound, so it is invisible to that test and
+  ##     gets clobbered mid-proc. Measured directly in `nifconfig.isDefined`: the
+  ##     `config` pointer reads `cpu=15 os=4` at entry and `cpu=0 os=0` three
+  ##     conditions later, and the run dies in `platform.OS[targetOS]` with
+  ##     "index out of bounds: 0 notin 1..34".
+  ##
+  ##     Reserving parameter homes (x64 does exactly this, via `rawHomeRegs`) is the
+  ##     right shape and is NOT enough on its own: it takes the tier ladder from 27/27
+  ##     to 23/27, because the procs that reach the second chance then have nothing
+  ##     left to hand out ("out of registers for a global base address"). The fix has
+  ##     to come with somewhere for the displaced parameter to go — emit-time
+  ##     demotion to a `(s)` slot, the twin of the allocator's `demoteToStack`, which
+  ##     the late-binding home lookup already makes possible.
+  ##
+  ## Four other gaps closed on the way here, each attributed by the tier ladder:
+  ## arkham's ">8 integer params (stack TODO)", a stack-passed by-value aggregate
+  ## whose home is a register PAIR having no address to marshal from, nifasm's
   ## `(i 64)`-versus-`(stackoff nil)` on a spilled `nil`, and `(u 8)`-versus-`(u 64)`
   ## on a word-sized set literal that `desugar` emitted unsuffixed.
   ##
