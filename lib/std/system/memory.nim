@@ -111,8 +111,10 @@ else:
 
   template sysAssert(cond, msg: untyped) = discard
 
-  proc raiseOutOfMem() {.noinline.} =
-    # Reached only when the OS itself refuses to map pages; nothing to recover.
+  proc raiseOutOfMem() {.noinline, noreturn.} =
+    # Reached only when the OS itself refuses to map pages; nothing to
+    # recover. `noreturn` so init provers don't require `result` on the
+    # unreachable fall-through (the standalone osalloc arm hits this).
     cAbort()
 
   template `+!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) + x)
