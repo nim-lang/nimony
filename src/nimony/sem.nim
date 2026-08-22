@@ -2901,6 +2901,22 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
     # the diagnostic should point at the `case` statement anyway:
     checkExhaustiveness c, dest, info, selectorType, seen
 
+  # `of`* `else`? is the whole grammar this pass implements, but nifler parses
+  # every branch form Nim's `case` admits — including the `elif` chain Nim allows
+  # after the `of`s. Anything still unconsumed here used to be dropped WITHOUT a
+  # diagnostic: the `of` loop stopped at the first `elif`, the `else` test then
+  # saw an `elif` and declined, and the close below sealed a `case` missing every
+  # branch from the `elif` onwards. That is a compiler silently deleting code —
+  # a `case`+`elif` in `hexer/coro_transform` compiled clean and produced a hexer
+  # whose `coroTr` had lost its default branch, which broke the self-host. Say so
+  # instead. (Supporting the form — desugaring the tail into an `if` inside the
+  # `else` — is a separate change; erroring is what keeps it from being silent.)
+  while it.n.hasMore:
+    let what = if it.n.substructureKind == ElifU: "`elif`" else: "this"
+    buildErr c, dest, it.n.info,
+      what & " branch in a `case` is not supported; use `else:` with a nested `if`"
+    skip it.n
+
   dest.addParRi(it.n.endInfo)
   it.n = caseStart; skip it.n
   if typeKind(it.typ) == AutoT:

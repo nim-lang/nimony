@@ -2142,22 +2142,28 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
                   inc n
               else:
                 takeTree dest, n
-            elif n.substructureKind == KvU:
-              # `(kv FIELD value)` object-constructor pair: the key is a
-              # field identity, not a value use. It can share a SymId with a
-              # lifted local of the same spelling — sem's `name.N` numbering
-              # makes that ordinary — and running it through `coroTr` would
-              # replace the field name with a frame access, leaving lengc to
-              # report "expected field name but got: (dot …)". Take the key
-              # verbatim and rewrite only the value(s). This is the `DotX` /
-              # `DdotX` selector guard above in its other position, and the
-              # twin of `lambdalifting`'s `trKv` / `treKv`. A `KvX` table key
-              # IS a real value use, so it stays in `coroTrSons`.
-              copyInto dest, n:
-                dest.takeTree n # key (field identity — never rewrite)
-                while n.hasMore:
-                  coroTr(c, dest, n)
             else:
-              coroTrSons(c, dest, n)
+              # NOT an `elif` branch of the `case` above: nimony's own `case`
+              # takes `of` and `else` and nothing else, so an `elif` here is
+              # dropped on the floor — which is exactly how this guard, written
+              # as one, silently unmade `coroTr` in the self-hosted hexer. See
+              # `semCaseImpl`, which now rejects the form instead.
+              if n.substructureKind == KvU:
+                # `(kv FIELD value)` object-constructor pair: the key is a
+                # field identity, not a value use. It can share a SymId with a
+                # lifted local of the same spelling — sem's `name.N` numbering
+                # makes that ordinary — and running it through `coroTr` would
+                # replace the field name with a frame access, leaving lengc to
+                # report "expected field name but got: (dot …)". Take the key
+                # verbatim and rewrite only the value(s). This is the `DotX` /
+                # `DdotX` selector guard above in its other position, and the
+                # twin of `lambdalifting`'s `trKv` / `treKv`. A `KvX` table key
+                # IS a real value use, so it stays in `coroTrSons`.
+                copyInto dest, n:
+                  dest.takeTree n # key (field identity — never rewrite)
+                  while n.hasMore:
+                    coroTr(c, dest, n)
+              else:
+                coroTrSons(c, dest, n)
   else:
     bug "unexpected ')' inside"
