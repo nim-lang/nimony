@@ -2489,26 +2489,22 @@ proc useNativeBoot(): bool =
   ##   * shoggoth's INTER-MODULE INLINER (`imi`) is the trigger —
   ##     `SHOGGOTH_DISABLE=imi hastur boot --boot-backend:native` reaches the fixed
   ##     point with everything else on. It is not what is WRONG, though: the Leng it
-  ##     produces is sound (no write to the symbol in question), it is just denser,
-  ##     and the density drains arkham's register pools.
+  ##     produces is sound, it is just denser, and the density drains arkham's
+  ##     register pools until a latent emitter bug becomes reachable.
   ##
-  ##     Under that pressure `takeHeld`'s second chance hands out a register that
-  ##     hosts a live PARAMETER. It judges a callee-saved register by `rb.isBound`,
-  ##     deliberately bypassing the `regHoldsHome` union (too conservative for an
-  ##     ordinary local, whose scopes are disjoint) — but a plain scalar/pointer
-  ##     parameter's home is never `rb`-bound, so it is invisible to that test and
-  ##     gets clobbered mid-proc. Measured directly in `nifconfig.isDefined`: the
-  ##     `config` pointer reads `cpu=15 os=4` at entry and `cpu=0 os=0` three
-  ##     conditions later, and the run dies in `platform.OS[targetOS]` with
-  ##     "index out of bounds: 0 notin 1..34".
+  ##     The FIRST such bug is fixed (nativenif 2b3d6c0): the emitter's last-resort
+  ##     register draws handed out live PARAMETER homes, which are never `rb`-bound
+  ##     and so were invisible to the liveness test those draws use.
   ##
-  ##     Reserving parameter homes (x64 does exactly this, via `rawHomeRegs`) is the
-  ##     right shape and is NOT enough on its own: it takes the tier ladder from 27/27
-  ##     to 23/27, because the procs that reach the second chance then have nothing
-  ##     left to hand out ("out of registers for a global base address"). The fix has
-  ##     to come with somewhere for the displaced parameter to go — emit-time
-  ##     demotion to a `(s)` slot, the twin of the allocator's `demoteToStack`, which
-  ##     the late-binding home lookup already makes possible.
+  ##     What is left is a second, older one — the same reproducer fails identically
+  ##     on the commit before that fix, it was simply queued behind it. It is down to
+  ##     ONE command rather than a three-tool boot stage: a natively built hexer
+  ##     running `hexer c <system>.s.nif` trips the empty `assert idx >= 0` in
+  ##     `Table.getOrQuit`, i.e. `rawGet` fails to find a key that is present.
+  ##     `ARKHAM_NO_FORWARD`, `ARKHAM_NO_CALLERSAVE` and disabling `ArgResident` each
+  ##     leave it unchanged, so it is none of those three; it is a Heisenbug — adding
+  ##     an `echo` to the failing proc makes it go away — which says register
+  ##     allocation rather than a logic error.
   ##
   ## Four other gaps closed on the way here, each attributed by the tier ladder:
   ## arkham's ">8 integer params (stack TODO)", a stack-passed by-value aggregate
