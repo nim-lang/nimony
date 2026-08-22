@@ -1217,6 +1217,13 @@ const
     # backend gets the widths from C's own type system, so this only ever fails on
     # a backend that has to derive them itself.
     "tests/nimony/types/tfloat32",
+    # Indexing an array of AGGREGATES and reading one field of the element: the
+    # element stride and the access width are different numbers, which AArch64's
+    # register-offset addressing cannot express (`[Xn, Xm, LSL #k]` scales by the
+    # ACCESS width, not by an arbitrary amount). Native-relevant by nature — the C
+    # compiler owns addressing under `nimony c`. It read `arr[i div 2]` for a 4-byte
+    # field, which is what kept `-d:release` off the native self-host.
+    "tests/nimony/calls/tindexednarrowfield",
     # More arguments than the ABI has argument registers, with the parameter shapes
     # that give a stack-passed one a stack HOME (a `var seq` written through, an
     # object read after a call). Native-relevant by nature: the C compiler owns
@@ -2480,46 +2487,34 @@ proc useNativeBoot(): bool =
   ## missing, and say so (`bootBackendLine`) rather than let a missing sibling
   ## look like a slow C boot.
   ##
-  ## linux/arm64 SELF-HOSTS natively now, but not at the opt level `boot` defaults to,
-  ## so it stays off `auto`. `hastur tiers native --forward:-d:release` is 27/27, and
-  ## `--boot-backend:native` reaches a byte-identical stage1==stage2==stage3 fixed
-  ## point in ~175s (against ~650s through C) at BOTH the default opt level and
-  ## `-d:release --opt:none`. What fails is `-d:release` proper, and it is one bug:
+  ## linux/arm64 is IN, as of 2026-08-22. `hastur tiers native --forward:-d:release`
+  ## is 27/27 and `--boot-backend:native` reaches a byte-identical
+  ## stage1==stage2==stage3 fixed point in ~405s, against ~650s through the C backend.
   ##
-  ##   * shoggoth's INTER-MODULE INLINER (`imi`) is the trigger —
-  ##     `SHOGGOTH_DISABLE=imi hastur boot --boot-backend:native` reaches the fixed
-  ##     point with everything else on. It is not what is WRONG, though: the Leng it
-  ##     produces is sound, it is just denser, and the density drains arkham's
-  ##     register pools until a latent emitter bug becomes reachable.
+  ## What had held it back was never the syscall/ABI layer. In order of discovery, and
+  ## each one attributed by the tier ladder rather than by staring at a boot stage:
+  ## arkham's ">8 integer params (stack TODO)"; a stack-marshalled by-value aggregate
+  ## whose home is a register PAIR, which has no address to marshal from; a spilled
+  ## `nil` declared `(s) (nil)` where the slot is storage and wants `(ptr void)`; a
+  ## word-sized set constant `desugar` emitted unsuffixed, so `xelim` typed its temp
+  ## `u64` and the native backend rejected the narrowing the C one performs silently;
+  ## the emitter's last-resort register draws handing out live PARAMETER homes, which
+  ## are never `rb`-bound and so were invisible to the liveness test they use; and
+  ## finally nifasm encoding an element STRIDE into AArch64's register-offset scale
+  ## bit, which can only mean "the access width" — `(dot (at arrayOfTuples i) fld)`
+  ## read `arr[i div 2]`.
   ##
-  ##     The FIRST such bug is fixed (nativenif 2b3d6c0): the emitter's last-resort
-  ##     register draws handed out live PARAMETER homes, which are never `rb`-bound
-  ##     and so were invisible to the liveness test those draws use.
-  ##
-  ##     What is left is a second, older one — the same reproducer fails identically
-  ##     on the commit before that fix, it was simply queued behind it. It is down to
-  ##     ONE command rather than a three-tool boot stage: a natively built hexer
-  ##     running `hexer c <system>.s.nif` trips the empty `assert idx >= 0` in
-  ##     `Table.getOrQuit`, i.e. `rawGet` fails to find a key that is present.
-  ##     `ARKHAM_NO_FORWARD`, `ARKHAM_NO_CALLERSAVE` and disabling `ArgResident` each
-  ##     leave it unchanged, so it is none of those three; it is a Heisenbug — adding
-  ##     an `echo` to the failing proc makes it go away — which says register
-  ##     allocation rather than a logic error.
-  ##
-  ## Four other gaps closed on the way here, each attributed by the tier ladder:
-  ## arkham's ">8 integer params (stack TODO)", a stack-passed by-value aggregate
-  ## whose home is a register PAIR having no address to marshal from, nifasm's
-  ## `(i 64)`-versus-`(stackoff nil)` on a spilled `nil`, and `(u 8)`-versus-`(u 64)`
-  ## on a word-sized set literal that `desugar` emitted unsuffixed.
-  ##
-  ## `--boot-backend:native` forces the path wherever arkham and nifasm are built,
-  ## which is how the above was measured and how it stays measurable.
+  ## Only the last two needed `-d:release`, and only because shoggoth's inter-module
+  ## inliner supplies the register pressure that reaches them; neither was the
+  ## inliner's fault. `SHOGGOTH_DISABLE=<pass,…>` is what separated those questions.
   ##
   ## windows/amd64 is in as of #2325: arkham's win_x64 target emits a PE that
   ## imports what it needs per dll, so a native boot there needs no MinGW and no
   ## libc — which is what makes the Windows job the slowest in the matrix (601s
   ## of stages against 61s natively).
-  when (defined(linux) or defined(windows)) and defined(amd64):
+  when defined(linux) and (defined(amd64) or defined(arm64)):
+    result = NativeBootReady and missingNativeTools().len == 0
+  elif defined(windows) and defined(amd64):
     result = NativeBootReady and missingNativeTools().len == 0
   else:
     result = false
@@ -2536,7 +2531,8 @@ proc bootBackendLine(withValgrind: bool): string =
   result = "[boot] backend: C (`nimony c`)"
   if bootBackend == bbC:
     return result & " — forced by --boot-backend:c"
-  when (defined(linux) or defined(windows)) and defined(amd64):
+  when (defined(linux) and (defined(amd64) or defined(arm64))) or
+       (defined(windows) and defined(amd64)):
     if withValgrind:
       result.add " — --valgrind cannot see the native heap"
     elif not NativeBootReady:
