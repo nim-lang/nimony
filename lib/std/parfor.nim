@@ -136,7 +136,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## runners — but the spread still avoids needlessly caller-running chunks on
   ## the submitting thread and balances load. Re-exported so the `||` plugin
   ## only needs symbols visible through `import std/parfor`.
-  submit(c, hint)
+  submit(c, -1)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}
