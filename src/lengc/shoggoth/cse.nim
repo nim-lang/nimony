@@ -252,6 +252,11 @@ type
                                        # assignment target → those are address-
                                        # CSE'd (`(deref t)`), not value-CSE'd
     addrTaken: HashSet[SymId]
+    guardDepth: int                 ## >0 while walking an operand of `(and …)`/`(or …)`
+                                    ## that the FIRST operand guards. Such a
+                                    ## sub-expression does not run whenever its enclosing
+                                    ## statement does, so it may not define a hoist point
+                                    ## — see `handleCandidate`.
     bodyLocals: HashSet[SymId]      ## symbols declared by a `(var …)` in THIS body —
                                     ## strictly less than `localDefPos`, which also holds
                                     ## `gvar`/`tvar` (globals a callee CAN reach)
@@ -1533,6 +1538,11 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
   let entry = c.cache[key]
   let derefThis = addrMode and not isAddrOf
   if not entry.hasFirst:
+    # A guarded occurrence may not become the FIRST: every hoist site below is
+    # derived from it (the enclosing statement, or a loop pre-header) and neither
+    # dominates a short-circuited operand. Reusing an ALREADY dominating temp from
+    # inside a guard stays fine, which is why this only rejects the first.
+    if c.guardDepth > 0: return false
     let invHoist = licmHoistPos(c, lvalueCur)
     if invHoist < 0:
       if c.curStmt < 0: return false         # no enclosing statement → nowhere to hoist
@@ -1722,6 +1732,22 @@ proc trExpr(c: var Context; n: var Cursor) =
       else:
         n.loopInto:
           trExpr(c, n)
+    of AndC, OrC:
+      # SHORT-CIRCUIT. Only the first operand is unconditional; the rest run just
+      # when it decides they do. Walking them like ordinary children let a load in
+      # the second operand become a CSE candidate whose decl was then hoisted to
+      # the enclosing STATEMENT — i.e. above the very test that guards it.
+      # `c.owner != nil and c.owner.p != nil` turned into "load c.owner.p; if
+      # c.owner != nil and that load was non-nil", which dereferences nil.
+      var first = true
+      n.loopInto:
+        if first:
+          trExpr(c, n)
+          first = false
+        else:
+          inc c.guardDepth
+          trExpr(c, n)
+          dec c.guardDepth
     of AddC, SubC, MulC, DivC, ModC, ShlC, ShrC,
        BitandC, BitorC, BitxorC, NegC, BitnotC:
       # Cheap pure arithmetic. A repeated `a op b` is CSE'd on its 2nd occurrence
