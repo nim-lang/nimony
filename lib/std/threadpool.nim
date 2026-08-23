@@ -266,7 +266,7 @@ proc initPool*() =
     workers.setLen(workerCount)
     for i in 0 ..< workerCount:
       try:
-        create workers[i], workerLoop, cast[pointer](i)
+        create workers[i], workerLoop, cast[pointer](i), i
       except:
         discard
     atomicStore(poolState, 2, moRelease)
