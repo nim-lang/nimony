@@ -1192,6 +1192,185 @@ proc collectTailSites(buf: var TokenBuf; n: Cursor;
   for k in kids:
     collectTailSites(buf, k, sites)
 
+proc tailStmtOf(n: Cursor; res: var Cursor): bool =
+  ## The last real statement of `n`, seen through the nested `(stmts …)`/`(scope …)`
+  ## wrappers hexer's scope lowering leaves behind. False when a wrapper is empty.
+  var cur = n
+  var guard = 0
+  while cur.kind == TagLit and cur.stmtKind in {StmtsS, ScopeS} and guard < 64:
+    inc guard
+    var last = cur
+    var found = false
+    var it = cur
+    it.into:
+      while it.hasMore:
+        if it.kind != DotToken:
+          last = it
+          found = true
+        skip it
+    if not found: return false
+    cur = last
+  res = cur
+  result = true
+
+proc branchBodies(ifNode: Cursor; bodies: var seq[Cursor]): bool =
+  ## Every arm's body. False unless there IS an `else`: without one a path leaves
+  ## the `if` having assigned nothing, and sinking would delete the `ret` it still
+  ## needed. A malformed arm answers false too.
+  var hasElse = false
+  var ok = true
+  var it = ifNode
+  it.into:
+    while it.hasMore:
+      let k = it
+      case k.substructureKind
+      of ElifU:
+        var b = k.childCursor
+        skip b                                    # the condition
+        if b.hasMore: bodies.add b
+        else: ok = false
+      of ElseU:
+        var b = k.childCursor
+        if b.hasMore: (bodies.add b; hasElse = true)
+        else: ok = false
+      else: ok = false
+      skip it
+  result = ok and hasElse and bodies.len > 0
+
+proc sinkableAsgn(n: Cursor; sym: SymId; valueOut: var Cursor): bool =
+  ## `(asgn sym E)` exactly — and `E` reported. A third child means some shape we
+  ## do not model, so it is not one.
+  if n.kind != TagLit or n.stmtKind != AsgnS: return false
+  var c = n.childCursor
+  if c.kind != Symbol or c.symId != sym: return false
+  skip c
+  if not c.hasMore: return false
+  valueOut = c
+  skip c
+  result = not c.hasMore
+
+proc collectSinkSites(buf: var TokenBuf; n: Cursor;
+                      sites: var seq[tuple[retPos, declPos: int; values: seq[int];
+                                           asgns: seq[int]]]) =
+  ## Find `(var :r T .) … (if …every arm tail-assigns r…) (ret r)`.
+  if n.kind != TagLit: return
+  var kids: seq[Cursor] = @[]
+  var it = n
+  it.into:
+    while it.hasMore:
+      kids.add it
+      skip it
+  if n.stmtKind in {StmtsS, ScopeS}:
+    for i in 0 ..< kids.len:
+      let r = kids[i]
+      if r.kind != TagLit or r.stmtKind != RetS: continue
+      var rc = r.childCursor
+      if rc.kind != Symbol: continue
+      let sym = rc.symId
+      skip rc
+      if rc.hasMore: continue
+      # The `ret` must END the list. Anything after it is unreachable today, but
+      # this rewrite deletes the `ret`, and deleting it in front of live code would
+      # let control run on.
+      var k = i + 1
+      while k < kids.len and kids[k].kind == DotToken: inc k
+      if k < kids.len: continue
+      # the previous statement must be a total `if`
+      var j = i - 1
+      while j >= 0 and kids[j].kind == DotToken: dec j
+      if j < 0 or kids[j].kind != TagLit or kids[j].stmtKind != IfS: continue
+      var bodies: seq[Cursor] = @[]
+      if not branchBodies(kids[j], bodies): continue
+      var values: seq[int] = @[]
+      var asgns: seq[int] = @[]
+      var allTail = true
+      for b in bodies:
+        var ls = default(Cursor)
+        var v = default(Cursor)
+        if not tailStmtOf(b, ls) or not sinkableAsgn(ls, sym, v):
+          allTail = false
+          break
+        asgns.add cursorToPosition(buf, ls)
+        values.add cursorToPosition(buf, v)
+      if not allTail: continue
+      # `r`'s DECL must be a sibling here: that is what makes this list its whole
+      # scope, so counting mentions within it is complete — and what lets the decl
+      # go with the rewrite. It must be initializer-free, or deleting it would drop
+      # whatever the initializer did.
+      var declPos = -1
+      for q in 0 ..< kids.len:
+        let d = kids[q]
+        if d.kind != TagLit or d.stmtKind != VarS: continue
+        var dc = d.childCursor
+        if dc.kind != SymbolDef or dc.symId != sym: continue
+        skip dc                                   # name
+        if not dc.hasMore: break
+        skip dc                                   # pragmas
+        if not dc.hasMore: break
+        skip dc                                   # type
+        if dc.hasMore and dc.kind == DotToken: declPos = cursorToPosition(buf, d)
+        break
+      if declPos < 0: continue
+      # …and nothing may mention `r` but the arms' assignments and this `ret`.
+      if countReads(n, sym) != asgns.len + 1: continue
+      sites.add (cursorToPosition(buf, r), declPos, values, asgns)
+  for c in kids:
+    collectSinkSites(buf, c, sites)
+
+proc sinkReturns*(buf: var TokenBuf) =
+  ## Push `(ret r)` down into the arms of the `if` that produced `r`:
+  ##
+  ##   (var :r T .)                          (if (elif c (stmts … (ret E1)))
+  ##   (if (elif c (stmts … (asgn r E1)))        (else (stmts … (ret E2))))
+  ##       (else (stmts … (asgn r E2))))
+  ##   (ret r)
+  ##
+  ## Two things come of it. `r` disappears — one local and one copy per site, the
+  ## same shape of win as forwarding a callee's result through its tail copy. And a
+  ## call that was the arm's own tail becomes ADJACENT to a `ret`, which is exactly
+  ## the condition `foldTailCalls` needs, so the tail-call encoding reaches a shape
+  ## it otherwise never sees: in nimsem that is 339 sites and 111 arms, against the
+  ## 10 tail calls the adjacent form finds on its own.
+  ##
+  ## Every arm must tail-assign `r` and there must be an `else`, or some path would
+  ## leave the `if` and fall into a `ret` this rewrite has deleted. The duplication
+  ## is free on both backends: each `ret` was already a branch to one shared
+  ## epilogue, and each arm already ended in a branch out of the `if`.
+  ##
+  ## Runs BEFORE `foldTailCalls` and as its own patch round, because that pass has
+  ## to see the sunk shape to fold it.
+  var sites: seq[tuple[retPos, declPos: int; values: seq[int]; asgns: seq[int]]] = @[]
+  block:
+    var root = beginRead(buf)
+    while root.hasMore:
+      collectSinkSites(buf, root, sites)
+      skip root
+    endRead root
+  if sites.len == 0: return
+  var scratch = createTokenBuf(sites.len * 16 + 4, buf.pool, buf.tags)
+  var dotBuf = createTokenBuf(2, buf.pool, buf.tags)
+  dotBuf.addDotToken()
+  var starts: seq[seq[int]] = @[]
+  for s in sites:
+    var here: seq[int] = @[]
+    for vp in s.values:
+      here.add scratch.len
+      var vc = cursorAt(buf, vp)
+      scratch.openTag TagId(RetS)
+      scratch.addSubtree vc
+      scratch.closeTag()
+      endRead vc
+    starts.add here
+  var patch = initPatchset(addr buf)
+  for si in 0 ..< sites.len:
+    let s = sites[si]
+    patch.addSubst(s.retPos, cursorAt(dotBuf, 0))
+    patch.addSubst(s.declPos, cursorAt(dotBuf, 0))
+    for ai in 0 ..< s.asgns.len:
+      patch.addSubst(s.asgns[ai], cursorAt(scratch, starts[si][ai]))
+  var nb = patch.apply()
+  buf = ensureMove(nb)
+
 proc foldTailCalls*(buf: var TokenBuf) =
   ## `(var :t T (call …)) (ret t)` -> `(ret (call …))` — the shape a backend reads
   ## as "this call is in tail position", so it can branch instead of call-and-return.
@@ -1271,6 +1450,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
+  sinkReturns(buf)
   foldTailCalls(buf)
 
 # ---- self-tests -----------------------------------------------------------
