@@ -1213,6 +1213,11 @@ const
     # property the C path never has to have — that the request sequence is inert
     # on real hardware, and leaves every live register where it found it.
     "tests/nimony/intrinsics/tvalgrind",
+    # `div`/`mod` by a constant power of two, which arkham strength-reduces to a
+    # shift (and, for a signed dividend, a round-toward-zero bias). Native-relevant
+    # by nature: under `nimony c` the C compiler owns that rewrite, so only a
+    # backend doing its own can round the wrong way on a negative dividend.
+    "tests/nimony/basicarith/tdivmodpow2",
     # `float32` at every width-sensitive spot. Native-relevant by nature: the C
     # backend gets the widths from C's own type system, so this only ever fails on
     # a backend that has to derive them itself.
