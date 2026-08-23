@@ -35,7 +35,16 @@ Commands:
                        `../nativenif` is checked out, and says so when it is not;
                        `native` (arkham + nifasm + shoggoth) asks for them by
                        name and errors out instead.
-  tiers                compile every module on the bootstrap list with nimony.
+  tiers [native]       compile every module on the bootstrap list with nimony.
+                       `native` uses `nimony n` (arkham + nifasm) instead of
+                       `nimony c`: the list is a walk of the bootstrap DAG from
+                       the leaves up, so it attributes each native gap to the
+                       smallest module that reaches it — which `boot` cannot do,
+                       since it compiles three whole tools and reports only the
+                       first that died. Nothing fails fast: the run ends with one
+                       line per distinct diagnostic and the modules reaching it.
+                       `--forward:` is appended to every compile (e.g.
+                       `--forward:-d:release`).
   boot [options]       Self-host the *full* nimony toolchain (nimony,
                        nimsem, hexer). `bin0/` is a fresh copy of the
                        host-Nim-built toolchain; `binN/` is `binN-1/`'s
@@ -63,6 +72,12 @@ Commands:
                        the built-in nimony runner, recursively. This is the
                        general entry point — point it at any suite.
   all                  run the whole suite: `<tests>` + `<examples>`.
+  nativevalgrind       run the native regression set with `-d:valgrind`, under
+                       memcheck, and demand that memcheck reports nothing. This
+                       is what says the allocator's heap instrumentation
+                       (`lib/std/system/valgrind.nim`) describes the heap
+                       truthfully rather than plausibly. Linux/AArch64 for now,
+                       which is where `VgClientRequest` has a lowering.
   native               run the curated native-backend regression set through
                        `nimony n` (arkham + nifasm, from the sibling
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
@@ -1192,6 +1207,36 @@ const
     # lowering still "passes" single-threaded unless the test reads back the value
     # the CAS observed.
     "tests/nimony/intrinsics/tatomics",
+    # The valgrind client request. Native-only by nature: under the C backend the
+    # mechanism is valgrind's own headers around mimalloc, so there is no row to
+    # lower and the test compiles to its `echo` alone. What it checks here is the
+    # property the C path never has to have — that the request sequence is inert
+    # on real hardware, and leaves every live register where it found it.
+    "tests/nimony/intrinsics/tvalgrind",
+    # `div`/`mod` by a constant power of two, which arkham strength-reduces to a
+    # shift (and, for a signed dividend, a round-toward-zero bias). Native-relevant
+    # by nature: under `nimony c` the C compiler owns that rewrite, so only a
+    # backend doing its own can round the wrong way on a negative dividend.
+    "tests/nimony/basicarith/tdivmodpow2",
+    # `float32` at every width-sensitive spot. Native-relevant by nature: the C
+    # backend gets the widths from C's own type system, so this only ever fails on
+    # a backend that has to derive them itself.
+    "tests/nimony/types/tfloat32",
+    # Indexing an array of AGGREGATES and reading one field of the element: the
+    # element stride and the access width are different numbers, which AArch64's
+    # register-offset addressing cannot express (`[Xn, Xm, LSL #k]` scales by the
+    # ACCESS width, not by an arbitrary amount). Native-relevant by nature — the C
+    # compiler owns addressing under `nimony c`. It read `arr[i div 2]` for a 4-byte
+    # field, which is what kept `-d:release` off the native self-host.
+    "tests/nimony/calls/tindexednarrowfield",
+    # More arguments than the ABI has argument registers, with the parameter shapes
+    # that give a stack-passed one a stack HOME (a `var seq` written through, an
+    # object read after a call). Native-relevant by nature: the C compiler owns
+    # argument passing under `nimony c`, so only a backend that marshals arguments
+    # itself can fail this — arkham's AArch64 prologue used to abort on it outright
+    # (">8 integer params (stack TODO)"), which is what kept `nimony.nim` off the
+    # native bootstrap ladder.
+    "tests/nimony/calls/tstackparams",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",
@@ -1199,6 +1244,15 @@ const
     "tests/nimony/cps/tclosure_iter_body_capture",
     "tests/nimony/cps/tclosure_iter_break",
     "tests/nimony/cps/tclosure_iter_envcheck",
+    # One frame field of every kind. Native-relevant by nature: this is the
+    # backend that depends on `oconstr` being total, since it stores exactly the
+    # fields the constructor lists and zeroes nothing.
+    "tests/nimony/cps/tclosure_iter_frametypes",
+    # Sets in a closure iterator, in both representations (word-sized and the
+    # 32-byte array). Worth running natively because the big-set path builds
+    # its value through `zeroMem` plus per-element stores rather than a
+    # literal, which is a different shape for the back end than the C one.
+    "tests/nimony/cps/tclosure_iter_sets",
     "tests/nimony/cps/tclosure_iter_string",
     "tests/nimony/cps/tclosure_iter_var",
     "tests/nimony/cps/tfirstpassive",
@@ -1221,6 +1275,101 @@ const
     "tests/nimony/sets/tconstsetscan"
   ]
 
+when defined(linux):
+  var nativeElfShapeChecked = false
+    ## The shape check below is an invariant of nifasm's ELF writer, not of any one
+    ## test, so it runs once per suite — on the first native binary produced.
+
+  proc u16(s: string; at: int): int =
+    int(uint8(s[at])) or (int(uint8(s[at+1])) shl 8)
+
+  proc u32(s: string; at: int): int =
+    var r = 0
+    for i in countdown(3, 0): r = (r shl 8) or int(uint8(s[at+i]))
+    result = r
+
+  proc u64(s: string; at: int): uint64 =
+    result = 0'u64
+    for i in countdown(7, 0): result = (result shl 8) or uint64(uint8(s[at+i]))
+
+  proc checkNativeElfShape(c: var TestCounters; file, exe: string) =
+    ## The three properties that make a nifasm image DEBUGGABLE, asserted against the
+    ## bytes rather than against the writer that produced them.
+    ##
+    ## All three were absent once, and the way they failed is why this is a test:
+    ## nothing crashed and no test went red. The image merged code and data into one
+    ## R+W+X segment, which valgrind's ELF reader — it classifies a mapping as the
+    ## text map only when it is R+X and NOT writable — declined to read at all, so
+    ## every frame of every report came back as `???` and valgrind looked like it
+    ## simply had nothing to say about native binaries. `.eh_frame` sat outside every
+    ## PT_LOAD, which valgrind treats as a FATAL debug-info error, taking `.symtab`
+    ## down with it. A regression here costs no test and one very confusing week.
+    if nativeElfShapeChecked: return
+    nativeElfShapeChecked = true
+    var img = ""
+    try: img = readFile(exe)
+    except IOError, OSError: return
+    if img.len < 64 or not img.startsWith("\x7FELF"): return
+    if uint8(img[4]) != 2'u8 or uint8(img[5]) != 1'u8: return  # ELF64 little-endian only
+
+    const PtLoad = 1
+    const (PfX, PfW, PfR) = (1, 2, 4)
+    let phoff = int(u64(img, 32))
+    let phentsize = u16(img, 54)
+    let phnum = u16(img, 56)
+    var loads: seq[(uint64, uint64, int)] = @[]   # vaddr, memsz, flags
+    var rxText = false
+    for i in 0 ..< phnum:
+      let at = phoff + i * phentsize
+      if at + phentsize > img.len: return
+      if u32(img, at) != PtLoad: continue
+      let flags = u32(img, at + 4)
+      let vaddr = u64(img, at + 16)
+      let memsz = u64(img, at + 40)
+      if memsz == 0: continue
+      loads.add (vaddr, memsz, flags)
+      if (flags and PfW) != 0 and (flags and PfX) != 0:
+        failure c, file, "no writable+executable PT_LOAD (W^X)",
+          "segment at 0x" & toHex(vaddr, 8) & " is R+W+X"
+        return
+      if (flags and PfX) != 0 and (flags and PfW) == 0 and (flags and PfR) != 0:
+        rxText = true
+    if not rxText:
+      failure c, file, "a readable+executable, non-writable PT_LOAD",
+        "none of the " & $loads.len & " PT_LOADs is R+X and not writable"
+      return
+
+    # `.eh_frame` must be SHF_ALLOC and land inside one of those PT_LOADs.
+    const ShfAlloc = 2'u64
+    let shoff = int(u64(img, 40))
+    let shentsize = u16(img, 58)
+    let shnum = u16(img, 60)
+    let shstrndx = u16(img, 62)
+    if shoff == 0 or shnum == 0: return          # stripped: nothing to check
+    let strBase = int(u64(img, shoff + shstrndx * shentsize + 24))
+    for i in 0 ..< shnum:
+      let at = shoff + i * shentsize
+      if at + shentsize > img.len: return
+      let nameOff = strBase + u32(img, at)
+      if nameOff >= img.len: return
+      var name = ""
+      var k = nameOff
+      while k < img.len and img[k] != '\0': name.add img[k]; inc k
+      if name != ".eh_frame": continue
+      let shFlags = u64(img, at + 8)
+      let shAddr = u64(img, at + 16)
+      let shSize = u64(img, at + 32)
+      if shSize == 0: return                     # built with `--no-debug-info`
+      if (shFlags and ShfAlloc) == 0 or shAddr == 0:
+        failure c, file, ".eh_frame is SHF_ALLOC with a real sh_addr",
+          "sh_flags=0x" & toHex(shFlags, 4) & " sh_addr=0x" & toHex(shAddr, 8)
+        return
+      for (vaddr, memsz, _) in loads:
+        if shAddr >= vaddr and shAddr + shSize <= vaddr + memsz: return
+      failure c, file, ".eh_frame inside a PT_LOAD",
+        "sh_addr=0x" & toHex(shAddr, 8) & " is in none of the loaded segments"
+      return
+
 proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
   let msgs = file.changeFileExt(".msgs")
   if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
@@ -1235,6 +1384,8 @@ proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
   if not exe.fileExists():
     failure c, file, "native executable", "missing: " & exe
     return
+  when defined(linux):
+    checkNativeElfShape c, file, exe
   let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
   var output = file.changeFileExt(".output")
   if testProgramExitCode != 0:
@@ -1249,6 +1400,82 @@ proc nativeTestFile(c: var TestCounters; file: string; overwrite: bool) =
       if overwrite:
         writeFile(output, testProgramOutput)
       failure c, file, outputSpec, testProgramOutput
+
+proc nativeValgrindTestFile(c: var TestCounters; file: string) =
+  ## One native test built with `-d:valgrind` and run under memcheck.
+  ##
+  ## Two things are asserted, and the second is the one worth the runtime: that
+  ## the program still prints what it should, and that memcheck has NOTHING to
+  ## say about it. The heap instrumentation lives in the allocator, so a mistake
+  ## in it is not a wrong answer anywhere — it is a false report, arriving in
+  ## whatever unrelated program someone was debugging, looking exactly like the
+  ## bug they were hunting. The only way to know the instrumentation is honest is
+  ## to run a corpus that is known good and demand silence.
+  let msgs = file.changeFileExt(".msgs")
+  if msgs.fileExists() and readFile(msgs).contains(ErrorKeyword):
+    return
+  inc c.total
+  let (compilerOutput, compilerExitCode) = execNimonyNative("-d:valgrind " & quoteShell(file))
+  if compilerExitCode != 0:
+    failure c, file, "native -d:valgrind compiler exitcode 0",
+      removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
+    return
+  let exe = file.generatedExeFile()
+  if not exe.fileExists():
+    failure c, file, "native executable", "missing: " & exe
+    return
+  # `-q` so only real findings appear, and `--error-exitcode` so the verdict is
+  # the exit code rather than something to parse out of the log.
+  let (vgOutput, vgExitCode) = osproc.execCmdEx(
+      "valgrind --error-exitcode=99 --leak-check=no -q " & quoteShell(exe))
+  if vgExitCode == 99:
+    failure c, file, "no valgrind findings", vgOutput
+    return
+  let output = file.changeFileExt(".output")
+  if output.fileExists():
+    let outputSpec = readFile(output).strip
+    if outputSpec != vgOutput.strip:
+      failure c, file, outputSpec, vgOutput
+
+const NativeValgrindSkip: array[0, string] = [
+  # Empty. A test belongs here when it runs correctly under `hastur native` but
+  # memcheck reports a real defect in it that is NOT the allocator
+  # instrumentation's doing — with the reason spelled out, as
+  # `tclosure_iter_string` had before its two causes were fixed (`allocFrame`
+  # now uses `alloc0`, and the coroutine frame's `oconstr` is total).
+]
+
+proc nativeValgrindTests() =
+  ## The native regression set again, this time with the allocator telling
+  ## valgrind what it is doing (`lib/std/system/valgrind.nim`). Same corpus as
+  ## `nativetests`, so what it adds is purely the memcheck verdict.
+  if not hasValgrind:
+    echo "0 / 0 native valgrind tests (valgrind not installed)"
+    return
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  proc slashed(p: string): string = p.replace('\\', '/')
+  var skip = initHashSet[string]()
+  for f in NativeTestSkip: skip.incl slashed(f.addFileExt(".nim"))
+  for f in NativeValgrindSkip: skip.incl slashed(f.addFileExt(".nim"))
+  var dirs: seq[string] = @NativeTestDirs
+  when defined(windows): dirs.add @NativeTestDirsWindows
+  for dir in dirs:
+    var files: seq[string] = @[]
+    for x in walkDir(dir):
+      if x.kind == pcFile and x.path.endsWith(".nim") and
+         not isGeneratedTestFile(x.path) and slashed(x.path) notin skip:
+        files.add x.path
+    sort files
+    for f in files: nativeValgrindTestFile c, f
+  for f in NativeTestFiles:
+    if slashed(f.addFileExt(".nim")) in skip: continue
+    nativeValgrindTestFile c, f.addFileExt(".nim")
+  reportFailures c
+  echo c.total - c.failures, " / ", c.total, " native valgrind tests successful in ",
+       formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some native valgrind tests failed."
 
 proc nativetests(overwrite: bool) =
   ## Run the native-backend regression set (`NativeTestDirs` + `NativeTestFiles`,
@@ -1999,32 +2226,105 @@ const RunnableBootstrapModules = [
   "src/lib/argsfinder.nim",
 ]
 
-proc tierTests() =
-  ## Compile every module on `BootstrapModules` with `bin/nimony c`. Fails
+const BootNativeTools = ["arkham", "nifasm"]
+  ## Carried too for a native boot: `nimony n` reaches them through `findTool`,
+  ## i.e. relative to the running nimony, so without them in `binN/` stage N
+  ## would silently drive `bin/`'s copies.
+
+proc missingNativeTools(): seq[string] =
+  ## Which of `BootNativeTools` are not in `bin/`. They come from the sibling
+  ## `../nativenif`, so a checkout that never had it has neither.
+  result = @[]
+  for tool in BootNativeTools:
+    if not fileExists(binDir() / tool.addFileExt(ExeExt)): result.add tool
+
+proc firstDiagnostic(output: string): string =
+  ## The one line of a failed compile worth grouping failures by. Prefer a real
+  ## diagnostic over the `FAILURE: <nifmake command line>` trailer, which names a
+  ## per-module cache path and so is different for every module that shares a
+  ## cause. Then drop the position tail arkham and nifasm append — ` at ??? (…)`
+  ## and ` in proc <sym>` — for the same reason: one arkham assertion reached by
+  ## six modules is one gap, and six spellings of it is a work list that lies
+  ## about its own length.
+  result = ""
+  for line in output.splitLines():
+    let s = line.strip()
+    if s.len == 0: continue
+    if "Error" in s or "error" in s or "AssertionDefect" in s or s.startsWith("[Error]"):
+      result = s
+      break
+    if result.len == 0 and not s.startsWith("FAILURE:"): result = s
+  if result.len == 0: result = "(no diagnostic)"
+  let at = result.find(" at ???")
+  if at >= 0: result.setLen at
+  let inProc = result.find(" in proc ")
+  if inProc >= 0: result.setLen inProc
+
+proc tierTests(native = false; extraArgs = "") =
+  ## Compile every module on `BootstrapModules` with `bin/nimony`. Fails
   ## fast on the first regression so the offending module is obvious. On
   ## Windows the list collapses to the Tier 20 tip (`nimony.nim`) — its
   ## import set already covers every other entry, so the redundant per-leaf
   ## compiles are pure CI cost; Linux/macOS still cover every leaf.
+  ##
+  ## `native` drives `nimony n` (arkham + nifasm) rather than `nimony c`, which
+  ## is what makes this list the ladder for bringing a new native target up.
+  ## `boot` compiles three whole tools at once and reports the first of them that
+  ## died, so a target with several independent gaps shows up as one opaque
+  ## "stage 1 (nimsem) failed"; the tier list is a walk of the same DAG from the
+  ## leaves upwards, so each gap is attributed to the SMALLEST module that
+  ## reaches it and the ones that are already fine are named as such. Every
+  ## module is attempted — no fail-fast — because the point of a bring-up run is
+  ## the whole work list, not its first entry. Windows keeps its collapse to the
+  ## tip either way: it is a CI cost decision, and a tip-only native run still
+  ## reports every gap, just without attributing them.
   let nimony = binDir() / "nimony".addFileExt(ExeExt)
   if not fileExists(nimony):
     quit "bootstrap: " & nimony & " not found; run `hastur build nimony` first"
+  if native:
+    let missing = missingNativeTools()
+    if missing.len > 0:
+      quit "tiers native: " & missing.join(", ") & " not in " & binDir() &
+           "; `hastur build native` builds them from " & NativenifDir
   let modules =
     when defined(windows): @["src/nimony/nimony.nim"]
     else: @BootstrapModules
+  let backend = if native: "n" else: "c"
   let t0 = epochTime()
   var failed: seq[string] = @[]
+  # Keyed by the first diagnostic line, so N modules tripping one arkham
+  # assertion read as one gap with N witnesses rather than N separate failures.
+  var gaps: seq[(string, seq[string])] = @[]
   for m in modules:
     removeDir "nimcache"
-    let subcmd = if m in RunnableBootstrapModules: " c -r " else: " c "
-    let (output, ec) = execCmdEx(nimony.quoteShell & subcmd & m.quoteShell)
+    var cmd = nimony.quoteShell & " " & backend
+    if m in RunnableBootstrapModules: cmd.add " -r"
+    if extraArgs.len > 0: cmd.add " " & extraArgs
+    cmd.add " " & m.quoteShell
+    let (output, ec) = execCmdEx(cmd)
     if ec == 0:
       echo "OK   ", m
     else:
       echo "FAIL ", m
       echo output
       failed.add m
+      let first = firstDiagnostic(output)
+      var seen = false
+      for i in 0 ..< gaps.len:
+        if gaps[i][0] == first:
+          gaps[i][1].add m
+          seen = true
+          break
+      if not seen: gaps.add (first, @[m])
   echo failed.len, " / ", modules.len, " bootstrap regressions in ",
        formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if gaps.len > 0:
+    # The work list: one line per distinct diagnostic, with the modules that
+    # reach it. Fixing the top entry is what moves the most tiers at once.
+    echo "distinct failure modes (", gaps.len, "):"
+    for (diag, mods) in gaps:
+      echo "  * ", diag
+      echo "    reached by: ", mods.join(", ")
   if failed.len > 0:
     quit "FAILURE: bootstrap regression(s): " & failed.join(", ")
   else:
@@ -2170,10 +2470,6 @@ const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "s
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
-const BootNativeTools = ["arkham", "nifasm"]
-  ## Carried too for a native boot: `nimony n` reaches them through `findTool`,
-  ## i.e. relative to the running nimony, so without them in `binN/` stage N
-  ## would silently drive `bin/`'s copies.
 
 proc bootCarryTools(): seq[string] =
   result = @BootCarryTools
@@ -2188,13 +2484,6 @@ const NativeBootReady = true
   ## nativenif master that carries those fixes — or flip this back to `false`
   ## and the C-backend boot below is the whole self-host gate meanwhile.
 
-proc missingNativeTools(): seq[string] =
-  ## Which of `BootNativeTools` are not in `bin/`. They come from the sibling
-  ## `../nativenif`, so a checkout that never had it has neither.
-  result = @[]
-  for tool in BootNativeTools:
-    if not fileExists(binDir() / tool.addFileExt(ExeExt)): result.add tool
-
 proc useNativeBoot(): bool =
   ## linux/amd64 is the platform the native backend is complete on: x86-64
   ## codegen plus the Linux syscall table the libc-free stdlib runs on. Its
@@ -2203,22 +2492,34 @@ proc useNativeBoot(): bool =
   ## missing, and say so (`bootBackendLine`) rather than let a missing sibling
   ## look like a slow C boot.
   ##
-  ## linux/arm64 is NOT here yet, and the reason is narrow: `boot` compiles every
-  ## stage `-d:release`, which turns shoggoth on, and the AArch64 backend still
-  ## MISCOMPILES the toolchain from shoggoth-optimized Leng — stage 1 builds and
-  ## links, then its nimsem reports "No pragmas found" and its hexer emits NIF
-  ## that shoggoth rejects. Everything below that opt level is green there:
-  ## `hastur native` passes in full, and a hand-driven `nimony n` boot (no
-  ## `-d:release`) reaches a byte-identical stage1 == stage2 fixed point. The
-  ## same boot at `-d:release --opt:none` — release defines, optimizer off — also
-  ## produces a working toolchain, which is what localizes the remaining bug to
-  ## arkham's handling of optimized input rather than to the syscall/ABI layer.
+  ## linux/arm64 is IN, as of 2026-08-22. `hastur tiers native --forward:-d:release`
+  ## is 27/27 and `--boot-backend:native` reaches a byte-identical
+  ## stage1==stage2==stage3 fixed point in ~405s, against ~650s through the C backend.
+  ##
+  ## What had held it back was never the syscall/ABI layer. In order of discovery, and
+  ## each one attributed by the tier ladder rather than by staring at a boot stage:
+  ## arkham's ">8 integer params (stack TODO)"; a stack-marshalled by-value aggregate
+  ## whose home is a register PAIR, which has no address to marshal from; a spilled
+  ## `nil` declared `(s) (nil)` where the slot is storage and wants `(ptr void)`; a
+  ## word-sized set constant `desugar` emitted unsuffixed, so `xelim` typed its temp
+  ## `u64` and the native backend rejected the narrowing the C one performs silently;
+  ## the emitter's last-resort register draws handing out live PARAMETER homes, which
+  ## are never `rb`-bound and so were invisible to the liveness test they use; and
+  ## finally nifasm encoding an element STRIDE into AArch64's register-offset scale
+  ## bit, which can only mean "the access width" — `(dot (at arrayOfTuples i) fld)`
+  ## read `arr[i div 2]`.
+  ##
+  ## Only the last two needed `-d:release`, and only because shoggoth's inter-module
+  ## inliner supplies the register pressure that reaches them; neither was the
+  ## inliner's fault. `SHOGGOTH_DISABLE=<pass,…>` is what separated those questions.
   ##
   ## windows/amd64 is in as of #2325: arkham's win_x64 target emits a PE that
   ## imports what it needs per dll, so a native boot there needs no MinGW and no
   ## libc — which is what makes the Windows job the slowest in the matrix (601s
   ## of stages against 61s natively).
-  when (defined(linux) or defined(windows)) and defined(amd64):
+  when defined(linux) and (defined(amd64) or defined(arm64)):
+    result = NativeBootReady and missingNativeTools().len == 0
+  elif defined(windows) and defined(amd64):
     result = NativeBootReady and missingNativeTools().len == 0
   else:
     result = false
@@ -2235,7 +2536,8 @@ proc bootBackendLine(withValgrind: bool): string =
   result = "[boot] backend: C (`nimony c`)"
   if bootBackend == bbC:
     return result & " — forced by --boot-backend:c"
-  when (defined(linux) or defined(windows)) and defined(amd64):
+  when (defined(linux) and (defined(amd64) or defined(arm64))) or
+       (defined(windows) and defined(amd64)):
     if withValgrind:
       result.add " — --valgrind cannot see the native heap"
     elif not NativeBootReady:
@@ -2519,10 +2821,23 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
       quit "boot: " & exe & " not found; run `hastur build all` first"
   # valgrind cannot see the native backend's static, libc-free `mmap` heap, so
   # `--valgrind` (and thus `selfcheck`) always boots through the C backend.
-  bootNative = not withValgrind and bootBackend != bbC and useNativeBoot()
-  if bootBackend == bbNative and not bootNative:
-    quit "boot: --boot-backend:native is not available here: " &
-         bootBackendLine(withValgrind)
+  # `--boot-backend:native` FORCES: the only thing that can stop it is not having
+  # arkham and nifasm to run. It used to defer to `useNativeBoot` as well, which
+  # made the flag useless on exactly the hosts it is needed on — a host where the
+  # native path is off is a host where someone is trying to turn it ON, and
+  # "not available here" told them nothing they could act on. `--valgrind` still
+  # wins, because memcheck cannot see the native heap at all.
+  if bootBackend == bbNative:
+    if withValgrind:
+      quit "boot: --boot-backend:native and --valgrind are exclusive: " &
+           bootBackendLine(withValgrind)
+    let missing = missingNativeTools()
+    if missing.len > 0:
+      quit "boot: --boot-backend:native needs " & missing.join(", ") & " in " &
+           binDir() & "; `hastur build native` builds them from " & NativenifDir
+    bootNative = true
+  else:
+    bootNative = not withValgrind and bootBackend != bbC and useNativeBoot()
   echo bootBackendLine(withValgrind)
   for tool in bootCarryTools():
     let exe = binDir() / tool.addFileExt(ExeExt)
@@ -3053,8 +3368,17 @@ proc handleCmdLine =
     # `buildNimonyToolchain`, not `buildNimony`: every module on the tier list is
     # compiled by driving nimsem and hexer, so rebuilding the driver alone would
     # check current sources against whichever nimsem/hexer `bin/` was left with.
-    buildNimonyToolchain()
-    tierTests()
+    if not skipBuild: buildNimonyToolchain()
+    # `hastur tiers native` walks the same list through `nimony n`. Spelled as a
+    # positional rather than reusing `--boot-backend:`, which names what `boot`
+    # does and would read as a flag with no effect here.
+    var tiersNative = false
+    for a in items(args):
+      case a.normalize
+      of "native", "n": tiersNative = true
+      of "c": tiersNative = false
+      else: quit "tiers: unknown argument " & a & " (expected `native` or `c`)"
+    tierTests(tiersNative, forward)
 
   of "boot":
     # Same reason, one step further: `bin0/` is a COPY of `bin/`, so a stale
@@ -3171,6 +3495,20 @@ proc handleCmdLine =
       buildArkham()
       buildNifasm()
     nativetests(overwrite)
+
+  of "nativevalgrind":
+    # The same corpus as `native`, built with `-d:valgrind` and run under
+    # memcheck. Separate command rather than part of `native` because it is a
+    # different question (is the ALLOCATOR's story to valgrind true?) at maybe
+    # twenty times the runtime — memcheck's interpretation is not cheap.
+    if not skipBuild:
+      buildNimonyToolchain()
+      buildNifmake()
+      buildShoggoth()
+      buildArkham()
+      buildNifasm()
+    nativeValgrindTests()
+
   of "lengc":
     buildLengc()
 

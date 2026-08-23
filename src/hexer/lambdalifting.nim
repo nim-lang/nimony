@@ -1580,7 +1580,8 @@ proc elimLambdas*(pass: var Pass) =
     coroTypes: createTokenBuf(10),
     continuationProcImpl: coro_transform.generateContinuationProcImpl(),
     hooks: lambdaHooks(),
-    nextTemp: pass.nextTemp         # nested njvl runs continue the xelim counter
+    nextTemp: pass.nextTemp,        # nested njvl runs continue the xelim counter
+    ptrSize: pass.bits div 8
   )
   c.typeCache.openScope()
   tr c, pass.dest, n

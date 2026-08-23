@@ -556,6 +556,34 @@ type
                                      ## to an assignment (or vanishes) and the
                                      ## ret's `dest = result'` self-copy is
                                      ## elided. SymId(0) = no forwarding.
+    dropDecl2: SymId                 ## the local the result was copied FROM in a
+                                     ## `(asgn result L) (ret result)` tail — renamed
+                                     ## to the destination as well, so its decl folds
+                                     ## away too and the copy becomes a self-assign
+                                     ## that `emitRenamed` drops. See `tailCopySource`.
+
+proc isForwarded(bnd: Bindings; nameSlot: Cursor): bool {.inline.} =
+  ## Is `nameSlot` (a `(var :NAME …)`'s name slot) one of the callee locals whose
+  ## storage the splice destination took over? Both such decls fold away.
+  nameSlot.isSymbolDef and
+    ((bnd.dropDecl != SymId(0) and nameSlot.symId == bnd.dropDecl) or
+     (bnd.dropDecl2 != SymId(0) and nameSlot.symId == bnd.dropDecl2))
+
+proc isSelfAsgn(bnd: Bindings; n: Cursor): bool =
+  ## `(asgn A B)` where A and B are bare symbols that RENAME to the same one — the
+  ## residue of forwarding both ends of the callee's `result = tmp` tail copy to the
+  ## destination. A self-assignment of a plain symbol has no effect and no side
+  ## effect, so dropping it is unconditional.
+  if not n.isTagLit or n.stmtKind != AsgnS: return false
+  var a = n.childCursor
+  if not a.isSymbol: return false
+  let lhs = bnd.rename.getOrDefault(a.symId, a.symId)
+  skip a
+  if not a.isSymbol: return false
+  let rhs = bnd.rename.getOrDefault(a.symId, a.symId)
+  skip a
+  if a.hasMore: return false                 # a 3rd child: not the shape
+  result = lhs == rhs
 
 proc isSubstitutableArg(c: Cursor): bool =
   ## A literal or nullary constant — stable across the whole body, so it can be
@@ -759,6 +787,82 @@ proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
   if not isLocalName(pool.syms[resultSym]): return SymId(0)
   result = resultSym
 
+proc countSymUses(n: Cursor; sym: SymId): int =
+  ## Count `Symbol` (use, not `SymbolDef`) occurrences of `sym` within the
+  ## single subtree rooted at `n` (which may be a leaf token).
+  result = 0
+  if n.isSymbol:
+    if n.symId == sym: result = 1
+    return
+  if not n.isTagLit:
+    return
+  var it = n
+  it.into:
+    while it.hasMore:
+      case it.kind
+      of Symbol:
+        if it.symId == sym: inc result
+        inc it
+      of TagLit:
+        result += countSymUses(it, sym)
+        skip it
+      else:
+        inc it
+
+proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
+  ## The local `L` in a body whose LAST two statements are
+  ##
+  ##   (asgn resultSym L)
+  ##   (ret resultSym)
+  ##
+  ## and which mentions `resultSym` nowhere else. `L`'s storage can then be the
+  ## splice destination just as `resultSym`'s is: it is written where `L` is
+  ## written and read only to feed the return.
+  ##
+  ## This shape is not exotic, it is what every one-expression accessor lowers to
+  ## — nimsem binds the expression to a temp and assigns that to the implicit
+  ## `result`, so `nifcore.kind` arrives as `(var :x …) (asgn x <expr>) (asgn result
+  ## x) (ret result)`. Forwarding only `result` leaves the copy, and the copy is a
+  ## whole extra register: `c.kind` reached its `case` through `and3 x24, …` /
+  ## `mov x22, x24`, in every inlined accessor in the program.
+  ##
+  ## Deliberately narrow. Requiring the copy to be the tail — with the ret its only
+  ## other mention — is what makes the substitution provable without dataflow: on
+  ## that shape `resultSym` is written exactly once and read exactly once, and both
+  ## statements disappear into the destination.
+  if not body.isTagLit or body.stmtKind != StmtsS: return SymId(0)
+  var prev = default(Cursor)
+  var last = default(Cursor)
+  var n = 0
+  var b = body
+  b.into:
+    while b.hasMore:
+      prev = last
+      last = b
+      inc n
+      skip b
+  if n < 2: return SymId(0)                  # no `(asgn …)` before the `(ret …)`
+  # last must be `(ret resultSym)`
+  if not last.isTagLit or last.stmtKind != RetS: return SymId(0)
+  var r = last.childCursor
+  if not r.isSymbol or r.symId != resultSym: return SymId(0)
+  skip r
+  if r.hasMore: return SymId(0)
+  # the one before must be `(asgn resultSym L)`
+  if not prev.isTagLit or prev.stmtKind != AsgnS: return SymId(0)
+  var a = prev.childCursor
+  if not a.isSymbol or a.symId != resultSym: return SymId(0)
+  skip a
+  if not a.isSymbol: return SymId(0)
+  let src = a.symId
+  skip a
+  if a.hasMore: return SymId(0)
+  if src == resultSym or src in pSyms: return SymId(0)
+  if not isLocalName(pool.syms[src]): return SymId(0)
+  # `resultSym` must be mentioned nowhere but those two statements.
+  if countSymUses(body, resultSym) != 2: return SymId(0)
+  result = src
+
 proc emitRenamed(dest: var TokenBuf; body: var Cursor;
                  bnd: Bindings) =
   ## Copy `body` (one subtree) into `dest`, applying `rename` to every
@@ -875,25 +979,27 @@ proc emitRenamedWithRet(dest: var TokenBuf; body: var Cursor;
       dest.addSymUse returnLabel, info
       dest.addParRi()
       return
-    if bnd.dropDecl != SymId(0) and body.stmtKind == VarS:
-      var probe = body
-      inc probe                             # past the `var` tag
-      if probe.isSymbolDef and probe.symId == bnd.dropDecl:
-        # The callee's result var: its storage IS the splice destination
-        # (renamed), so the decl folds away — an initializer becomes a plain
-        # assignment to the destination.
-        let vinfo = body.info
-        into body:
-          skip body                         # name
-          skip body                         # pragmas
-          skip body                         # type
-          if body.hasMore and not body.isDotToken:
-            dest.addParLe TagId(AsgnS), vinfo
-            dest.addSymUse targetSym, vinfo
-            emitRenamed(dest, body, bnd)    # the initializer expression
-            dest.addParRi()
-          while body.hasMore: skip body     # drain (`.` initializer / extras)
-        return
+    if body.stmtKind == VarS and bnd.isForwarded(body.childCursor):
+      # The callee's result var (or the local its tail copies from): its storage IS
+      # the splice destination (renamed), so the decl folds away — an initializer
+      # becomes a plain assignment to the destination.
+      let vinfo = body.info
+      into body:
+        skip body                           # name
+        skip body                           # pragmas
+        skip body                           # type
+        if body.hasMore and not body.isDotToken:
+          dest.addParLe TagId(AsgnS), vinfo
+          dest.addSymUse targetSym, vinfo
+          emitRenamed(dest, body, bnd)      # the initializer expression
+          dest.addParRi()
+        while body.hasMore: skip body       # drain (`.` initializer / extras)
+      return
+    if bnd.isSelfAsgn(body):
+      # `(asgn L L)` after renaming — both sides forwarded to the destination. The
+      # copy the forwarding collapsed; emitting it would be a `dest = dest` store.
+      skip body
+      return
     if body.substructureKind == KvU:
       # See `emitRenamed`: field-name slot of `(kv …)` is verbatim to
       # avoid collisions with body-locals that share the field name.
@@ -1323,8 +1429,15 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   # copyprop cannot clean (it is assignment-shaped under control flow), so it
   # must not be produced in the first place.
   let resultLocal = resultLocalOf(pd.body, pSyms)
+  var tailCopy = SymId(0)
   if resultLocal != SymId(0):
     rename[resultLocal] = tmpSym
+    # …and through the `result = tmp` tail copy, when the body ends in one: the
+    # temp is the destination too, so the copy collapses to nothing (see
+    # `tailCopySource`).
+    tailCopy = tailCopySource(pd.body, resultLocal, pSyms)
+    if tailCopy != SymId(0):
+      rename[tailCopy] = tmpSym
 
   let info = entry.info
 
@@ -1347,6 +1460,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
     skip ac
   var bnd = bindingsFor(c, pSyms, argCursors, pd.body, rename)
   bnd.dropDecl = resultLocal
+  bnd.dropDecl2 = tailCopy
 
   dest.addParLe TagId(ScopeS), info
 
@@ -1375,28 +1489,6 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   result = 2                               # `(var …)` + `(scope …)`
 
 # ---- Condition-splice: inline body straight into an `if`/`elif` guard ----
-
-proc countSymUses(n: Cursor; sym: SymId): int =
-  ## Count `Symbol` (use, not `SymbolDef`) occurrences of `sym` within the
-  ## single subtree rooted at `n` (which may be a leaf token).
-  result = 0
-  if n.isSymbol:
-    if n.symId == sym: result = 1
-    return
-  if not n.isTagLit:
-    return
-  var it = n
-  it.into:
-    while it.hasMore:
-      case it.kind
-      of Symbol:
-        if it.symId == sym: inc result
-        inc it
-      of TagLit:
-        result += countSymUses(it, sym)
-        skip it
-      else:
-        inc it
 
 proc effectiveReturnExpr(body: Cursor; outVal: var Cursor): bool =
   ## True when `body` computes a single value with no side effect other than

@@ -1,0 +1,2 @@
+tests/nimony/casestmt/tcaseelif.nim(17, 3) Error: `elif` branch in a `case` is not supported; use `else:` with a nested `if`
+tests/nimony/casestmt/tcaseelif.nim(19, 3) Error: this branch in a `case` is not supported; use `else:` with a nested `if`

@@ -75,6 +75,16 @@ func zeroMem*(dest: pointer; size: int) {.inline.} =
   c_memset(dest, 0, csize_t size)
 
 when not defined(nimNativeAlloc):
+  # NOTE: `-d:valgrind` does nothing here. It instruments the NATIVE allocator
+  # (`system/valgrind.nim`), and this build uses mimalloc, whose heap valgrind
+  # already understands through mimalloc's own `-DMI_TRACK_VALGRIND=1`.
+  #
+  # This ought to be a `{.error.}` — a flag that silently produces a build which
+  # looks instrumented and tracks nothing is the worst of both. Nimony rejects a
+  # standalone `{.error.}` pragma inside the `system` include chain
+  # ("unsupported pragma"), so the check cannot live here yet. `hastur
+  # nativevalgrind`, which is how the flag is meant to be reached, always
+  # compiles through `nimony n` and so cannot land in this branch.
   include mimalloc
 else:
   # ----------------------------------------------------------------------

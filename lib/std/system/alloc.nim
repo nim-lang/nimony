@@ -11,6 +11,7 @@
 {.push profiler:off.}
 
 include osalloc
+include valgrind
 
 template track(op, address, size) {.untyped.} =
   when defined(memTracker):
@@ -175,6 +176,28 @@ type
     heapLinks: HeapLinks
     when defined(nimTypeNames):
       allocCounter, deallocCounter: int
+
+template withFreeCell(f, body: untyped) {.untyped.} =
+  ## Run `body` with the `FreeCell` header of `f` temporarily visible to valgrind.
+  ##
+  ## Every cell on a free list is a block this allocator has already declared dead
+  ## (`vgFreeLike`), so valgrind holds it inaccessible — which is the whole point,
+  ## since that is what catches a use-after-free. But the free list itself LIVES in
+  ## those dead cells: the `next` link is written over the block's first bytes. So
+  ## the allocator is the one program that must legitimately touch freed memory,
+  ## and without this the very first `dealloc` would report an invalid write
+  ## against the allocator rather than against any bug.
+  ##
+  ## The window is `sizeof(FreeCell)` wide and no wider, so a use-after-free
+  ## anywhere past the link is still caught, and it closes again immediately.
+  ## `mimalloc` solves the identical problem the identical way — see
+  ## `mi_block_set_nextx` in `vendor/mimalloc/include/mimalloc/internal.h`.
+  when vgTracking:
+    vgMakeMemDefined(f, sizeof(FreeCell))
+    body
+    vgMakeMemNoAccess(f, sizeof(FreeCell))
+  else:
+    body
 
 template smallChunkOverhead(): untyped = sizeof(SmallChunk)
 template bigChunkOverhead(): untyped = sizeof(BigChunk)
@@ -809,7 +832,14 @@ when UseDestructors:
         result.next = nil
 
   proc addToSharedFreeList(c: PSmallChunk; f: ptr FreeCell; size: int) {.inline.} =
-    atomicPrepend c.owner.sharedFreeLists[size], f
+    # `f` is a cell of a foreign thread's chunk, already declared free by the
+    # `vgFreeLike` at the top of `rawDealloc`; `atomicPrepend` writes its `next`.
+    # The window goes here and not inside `atomicPrepend`, which is shared with
+    # the big-chunk lists — those links live in the chunk HEADER, outside any
+    # block valgrind knows about, and wrapping them would be describing memory
+    # that was never handed out.
+    withFreeCell(f):
+      atomicPrepend c.owner.sharedFreeLists[size], f
 
   const MaxSteps = 20
 
@@ -826,7 +856,10 @@ when UseDestructors:
         # The cell is foreign, potentially even from a foreign thread.
         # It must block the current chunk from being freed, as doing so would leak memory.
         c.foreignCells = c.foreignCells + 1'i32
-      it = it.next
+      # Walking a list threaded through freed cells: each `next` has to be made
+      # visible for the read that follows it.
+      withFreeCell(it):
+        it = it.next
     # By not adjusting the foreign chunk we reserve space in it to prevent deallocation
     c.free = c.free + int32(total)
     dec(a.occ, total)
@@ -935,8 +968,10 @@ proc rawAlloc(a: var MemRegion, requestedSize: int, alignment: int = 0): pointer
         # There are free cells available, prefer them over the accumulator
         result = c.freeList
         when not UseDestructors:
-          sysAssert(c.freeList.zeroField == 0, "rawAlloc 8")
-        c.freeList = c.freeList.next
+          withFreeCell(c.freeList):
+            sysAssert(c.freeList.zeroField == 0, "rawAlloc 8")
+        withFreeCell(c.freeList):
+          c.freeList = c.freeList.next
         if cast[PSmallChunk](pageAddr(result)) != c:
           # This cell isn't a blocker for the current chunk's deallocation anymore
           c.foreignCells = c.foreignCells - 1'i32
@@ -995,6 +1030,29 @@ proc rawAlloc(a: var MemRegion, requestedSize: int, alignment: int = 0): pointer
   when logAlloc: cprintf("var pointer_%p = alloc(%ld) # %p\n", result, requestedSize, addr a)
   when defined(heaptrack):
     heaptrack_malloc(result, requestedSize)
+  # The USABLE size, not `requestedSize` — the same number `allocatedSize` will
+  # report for this pointer.
+  #
+  # Reporting the request instead is the tighter bound and it is wrong here, which
+  # a run of the arc suite says plainly: `seq` takes its capacity from
+  # `allocatedSize` (`capInBytes` in `seqimpl.nim`), so a seq asked for 26 bytes
+  # and given a 32-byte cell will use all 32 — legitimately, because the allocator
+  # told it it could. Describing the block as 26 bytes turns every one of those
+  # writes into "0 bytes after a block of size 26". That is four false reports in
+  # the arc suite and, worse, four reports that look exactly like the buffer
+  # overrun someone would be hunting.
+  #
+  # So the block valgrind knows about is the block the runtime is entitled to use.
+  # mimalloc reports the same number for the same reason (`mi_usable_size`, see
+  # `vendor/mimalloc/include/mimalloc/track.h`). The cost is that an overrun
+  # inside the rounding slack is invisible — which is the same thing `rzB = 0`
+  # already costs, and has the same fix: pad the cells in this build.
+  when vgTracking:
+    block:
+      let vgChunk = pageAddr(result)
+      var vgUsable = vgChunk.size
+      if not isSmallChunk(vgChunk): vgUsable = vgUsable -% bigChunkOverhead()
+      vgMallocLike(result, vgUsable, 0, false)
 
 proc rawAlloc0(a: var MemRegion, requestedSize: int): pointer =
   result = rawAlloc(a, requestedSize)
@@ -1005,6 +1063,11 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
     inc(a.deallocCounter)
   when defined(heaptrack):
     heaptrack_free(p)
+  # Announced here, at the top, rather than once the bookkeeping below is done:
+  # THIS is the stack that freed the block, and it is the stack a later
+  # use-after-free report has to name. Everything below that touches the cell's
+  # own bytes goes through `withFreeCell`.
+  vgFreeLike(p, 0)
   #sysAssert(isAllocatedPtr(a, p), "rawDealloc: no allocated pointer")
   sysAssert(allocInv(a), "rawDealloc: begin")
   var c = pageAddr(p)
@@ -1025,8 +1088,9 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
                 s == 0, "rawDealloc 3")
       when not UseDestructors:
         #echo("setting to nil: ", $cast[int](addr(f.zeroField)))
-        sysAssert(f.zeroField != 0, "rawDealloc 1")
-        f.zeroField = 0
+        withFreeCell(f):
+          sysAssert(f.zeroField != 0, "rawDealloc 1")
+          f.zeroField = 0
       when overwriteFree:
         # set to 0xff to check for usage after free bugs:
         nimSetMem(cast[pointer](cast[int](p) +% sizeof(FreeCell)), -1'i32,
@@ -1039,12 +1103,14 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
         # Put the cell into the active chunk,
         #  may prevent a queue of available chunks from forming in a.freeSmallChunks[s shr MemAlignShift].
         #  This queue would otherwise waste memory in the form of free cells until we return to those chunks.
-        f.next = activeChunk.freeList
+        withFreeCell(f):
+          f.next = activeChunk.freeList
         activeChunk.freeList = f # lend the cell
         activeChunk.free = activeChunk.free + int32(s) # By not adjusting the current chunk's capacity it is prevented from being freed
         activeChunk.foreignCells = activeChunk.foreignCells + 1'i32 # The cell is now considered foreign from the perspective of the active chunk
       else:
-        f.next = c.freeList
+        withFreeCell(f):
+          f.next = c.freeList
         c.freeList = f
         if c.free < s:
           # The chunk could not have been active as it didn't have enough space to give
@@ -1086,6 +1152,35 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
     # set to 0xff to check for usage after free bugs:
     when overwriteFree: nimSetMem(p, -1'i32, c.size -% bigChunkOverhead())
     when logAlloc: cprintf("dealloc(pointer_%p) # BIG %p\n", p, c.owner)
+    # A big chunk goes back to the CHUNK allocator, which owns the whole range
+    # again — and that layer writes wherever it likes in it. `splitChunk2` lays a
+    # new header down at an interior page boundary; coalescing reads its
+    # neighbours' headers. Those are page-aligned addresses anywhere inside what
+    # was just a user block, so leaving the range inaccessible reports the
+    # allocator's own bookkeeping as a use-after-free (it did: `splitChunk2`
+    # writing 4064 bytes into a freed 8152-byte block, in `trepro_typecache_uaf`).
+    #
+    # Handing the range back is the honest description, and it costs exactly one
+    # thing, stated plainly: a use-after-free on a BIG block is not caught. The
+    # accounting is untouched — the `vgFreeLike` above already recorded the free —
+    # so leaks and double-frees on big blocks are still found, and small cells,
+    # which is where strings, seqs and refs almost always live, keep full
+    # use-after-free detection through `withFreeCell`.
+    #
+    # Doing better means bracketing the chunk layer's header traffic the way
+    # `withFreeCell` brackets the free lists. That is a bigger and much easier to
+    # get subtly wrong change, and an incomplete one produces false reports that
+    # look precisely like the bug someone would be hunting.
+    #
+    # DEFINED and not UNDEFINED: the chunk header in this range is real data the
+    # allocator wrote and is about to read back (`c.size`, `c.owner`, the
+    # `prevSize` links coalescing walks). Calling it undefined says "addressable
+    # but meaningless", which turns the very next `rawDealloc` into "conditional
+    # jump depends on uninitialised value". Nothing is lost by this: a block
+    # carved out of the chunk later is marked undefined again by its own
+    # `vgMallocLike`, so reads of genuinely uninitialised freshly-allocated memory
+    # are still caught.
+    vgMakeMemDefined(c, c.size)
     when UseDestructors:
       if c.owner == addr(a):
         deallocBigChunk(a, cast[PBigChunk](c))
