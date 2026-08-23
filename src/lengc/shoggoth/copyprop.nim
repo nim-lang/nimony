@@ -1128,6 +1128,110 @@ proc registerParams(c: var Context; params: Cursor) =
         c.scopeDecls[0].add s
     skip p
 
+# ---- tail-call encoding ---------------------------------------------------
+
+proc countReads(n: Cursor; sym: SymId): int =
+  ## `Symbol` (read) occurrences of `sym` in one subtree. A `SymbolDef` is a decl,
+  ## not a read, and does not count.
+  case n.kind
+  of Symbol:
+    result = (if n.symId == sym: 1 else: 0)
+  of TagLit:
+    result = 0
+    var it = n
+    it.into:
+      while it.hasMore:
+        result += countReads(it, sym)
+        skip it
+  else: result = 0
+
+proc collectTailSites(buf: var TokenBuf; n: Cursor;
+                      sites: var seq[tuple[varPos, retPos, initPos: int]]) =
+  ## Find `(var :t T (call …))` immediately followed by `(ret t)`.
+  ##
+  ## ADJACENCY is the whole soundness argument. A statement between the call and
+  ## the return is exactly what makes this not a tail call — a `=destroy` of a
+  ## local, say, needs the frame the callee would inherit. Only `.` holes are
+  ## skipped: copyprop leaves those where it deleted a binding and they are not
+  ## statements. The temp must have no other read, so folding it into the `ret`
+  ## drops it entirely.
+  if n.kind != TagLit: return
+  var kids: seq[Cursor] = @[]
+  var it = n
+  it.into:
+    while it.hasMore:
+      kids.add it
+      skip it
+  if n.stmtKind in {StmtsS, ScopeS}:
+    for i in 0 ..< kids.len:
+      let v = kids[i]
+      if v.kind != TagLit or v.stmtKind != VarS: continue
+      var vc = v.childCursor
+      if vc.kind != SymbolDef: continue
+      let t = vc.symId
+      skip vc                                   # name
+      if not vc.hasMore: continue
+      skip vc                                   # pragmas
+      if not vc.hasMore: continue
+      skip vc                                   # type
+      if not vc.hasMore: continue
+      let init = vc
+      if init.kind != TagLit or init.exprKind != CallC: continue
+      var j = i + 1
+      while j < kids.len and kids[j].kind == DotToken: inc j
+      if j >= kids.len: continue
+      let r = kids[j]
+      if r.kind != TagLit or r.stmtKind != RetS: continue
+      var rc = r.childCursor
+      if rc.kind != Symbol or rc.symId != t: continue
+      skip rc
+      if rc.hasMore: continue                   # `(ret t …)` with extras: not the shape
+      if countReads(n, t) != 1: continue        # the `ret` must be its only read
+      sites.add (cursorToPosition(buf, v), cursorToPosition(buf, r),
+                 cursorToPosition(buf, init))
+  for k in kids:
+    collectTailSites(buf, k, sites)
+
+proc foldTailCalls*(buf: var TokenBuf) =
+  ## `(var :t T (call …)) (ret t)` -> `(ret (call …))` — the shape a backend reads
+  ## as "this call is in tail position", so it can branch instead of call-and-return.
+  ##
+  ## Runs on the ALREADY-propagated buffer: by then copyprop has collapsed nimsem's
+  ## `result` variable away, so a proc whose body is one call arrives here as
+  ## exactly those two statements. It needs nothing a pass of its own would set up
+  ## — adjacency answers the soundness question and the read count is one local
+  ## scan — which is why it lives here rather than in a pass of its own.
+  ##
+  ## The C backend needs no help with this: `genstmts` already renders `(ret X)` as
+  ## `return X;`, so the fold just hands the C compiler `return f(a);`.
+  var sites: seq[tuple[varPos, retPos, initPos: int]] = @[]
+  block:
+    var root = beginRead(buf)
+    while root.hasMore:
+      collectTailSites(buf, root, sites)
+      skip root
+    endRead root
+  if sites.len == 0: return
+  # Build every replacement FIRST, then take the cursors: `cursorAt` marks the
+  # buffer shared, so a later add copies it — one copy instead of one per site.
+  var scratch = createTokenBuf(sites.len * 8 + 4, buf.pool, buf.tags)
+  var dotBuf = createTokenBuf(2, buf.pool, buf.tags)
+  dotBuf.addDotToken()
+  var starts: seq[int] = @[]
+  for s in sites:
+    starts.add scratch.len
+    var ic = cursorAt(buf, s.initPos)
+    scratch.openTag TagId(RetS)
+    scratch.addSubtree ic
+    scratch.closeTag()
+    endRead ic
+  var patch = initPatchset(addr buf)
+  for k in 0 ..< sites.len:
+    patch.addSubst(sites[k].varPos, cursorAt(dotBuf, 0))
+    patch.addSubst(sites[k].retPos, cursorAt(scratch, starts[k]))
+  var nb = patch.apply()
+  buf = ensureMove(nb)
+
 proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
                   summaries: ptr FunctionSummaryTable = nil;
                   m: ptr MainModule = nil) =
@@ -1167,6 +1271,7 @@ proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
   if not ctx.patchset.isEmpty:
     var newBuf = ctx.patchset.apply()
     buf = ensureMove(newBuf)
+  foldTailCalls(buf)
 
 # ---- self-tests -----------------------------------------------------------
 
