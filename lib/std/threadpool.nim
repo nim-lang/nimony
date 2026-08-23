@@ -47,6 +47,7 @@ type
     dequeueMiss*: uint
     tasksSubmited*: uint
     tasksHandled*: uint
+    tasksStealed*: uint
 
 var
   workerMetrics*: seq[WorkerMetrics]
@@ -191,6 +192,8 @@ proc drainOnce(startStripe: int): bool =
         if next.fn != nil:
           submit(next, startStripe)
       workerMetrics[threadIdx].tasksHandled += n.uint
+      if attempt != 0:
+        workerMetrics[threadIdx].tasksStealed += n.uint
       return true
     else:
       workerMetrics[threadIdx].dequeueMiss += 1
