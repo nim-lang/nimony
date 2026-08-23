@@ -19,8 +19,7 @@ import std/stripes
 
 const
   StripeSize*  = 2048  ## Tasks per stripe; must be a power of 2.
-  MaxIoEvents  = 64
-  BulkSize*    = 16   ## Max tasks drained per bulk dequeue.
+  BulkSize*    = 32   ## Max tasks drained per bulk dequeue.
   StageSize*   = 256  ## Tasks held in a worker's private staging ring; must be a power of 2.
 
 # --- Task = Continuation + metadata ---
@@ -42,7 +41,15 @@ proc poolPollIo*(timeoutMs: int): bool {.nimcall.} =
   ## `std/ioring` registers one of these.
   result = false
 
+type
+  WorkerMetrics* {.align: 64.} = object
+    enqueueMiss*: uint
+    dequeueMiss*: uint
+    tasksSubmited*: uint
+    tasksHandled*: uint
+
 var
+  workerMetrics*: seq[WorkerMetrics]
   localQueues: seq[FifoStripe[Task]]
   injectQueue: FifoStripe[Task]
   workers: seq[RawThread]
@@ -58,9 +65,6 @@ proc tryEnqueue(s: int; t: Task): bool {.inline.} =
   let i = s mod workerCount
   return localQueues[i].tryEnqueue(t)
 
-var gEnqueueMiss*: int = 0
-var gDequeueMiss*: int = 0
-
 proc submit*(t: Task; h = 0) =
   ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
   ## try the hinted stripe, then the others (absorbing bursts); if *every*
@@ -74,9 +78,10 @@ proc submit*(t: Task; h = 0) =
   ## Caller-runs instead guarantees forward progress (a producer that outruns
   ## the pool simply does the work), so the queue stays bounded at
   ## `StripeCount*StripeSize` and no submitter ever stalls.
+  workerMetrics[threadIdx].tasksSubmited += 1
   if tryEnqueue(h, t): return
   for off in 1 ..< workerCount:
-    discard atomicFetchAdd(gEnqueueMiss, 1, moRelaxed)
+    workerMetrics[threadIdx].enqueueMiss += 1
     if tryEnqueue(h + off, t): return
   if injectQueue.tryEnqueue(t): return
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
@@ -134,7 +139,7 @@ proc flushStaged(hint: int): bool =
         toOpenArray(chunk, n - remaining, n - 1))
       dec remaining, moved
       if moved == 0:
-        discard atomicFetchAdd(gEnqueueMiss, 1, moRelaxed)
+        workerMetrics[threadIdx].enqueueMiss += 1
       inc off
     while remaining > 0:
       let t = chunk[n - remaining]
@@ -185,9 +190,10 @@ proc drainOnce(startStripe: int): bool =
         let next = c.fn(c.env)
         if next.fn != nil:
           submit(next, startStripe)
+      workerMetrics[threadIdx].tasksHandled += n.uint
       return true
     else:
-      discard atomicFetchAdd(gDequeueMiss, 1, moRelaxed)
+      workerMetrics[threadIdx].dequeueMiss += 1
   result = false
 
 proc poolHelp*(): bool {.inline.} =
@@ -249,6 +255,7 @@ proc initPool*() =
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
     workerCount = max(1, cpuinfo.countProcessors() - 1)
+    workerMetrics = newSeq[WorkerMetrics](workerCount)
     localQueues = newSeq[FifoStripe[Task]](workerCount)
     for i in 0..<workerCount:
       localQueues[i].init(StripeSize)
