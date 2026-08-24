@@ -104,8 +104,8 @@ type
     AtomicSignalFenceOp
     # ── the spin-wait hint (`{.intrinsic: "CpuRelax".}`). Portable in the same
     #    sense the fences are: every target has the mechanism and no two spell it
-    #    alike — `pause` on x86-64, `yield` on AArch64, nothing at all on a
-    #    target that has neither. Deliberately NOT one of the atomics above
+    #    alike — `pause` on x86-64, `yield` on both Arm profiles, nothing at all
+    #    on a target that has neither. Deliberately NOT one of the atomics above
     #    (`isAtomic` is an ordinal range, and this row shares none of their
     #    machinery): it moves no data, touches no cell and orders nothing. It is
     #    a hint to the core that the loop around it is waiting on another core.
@@ -147,6 +147,13 @@ type
     #    reaches them rather than something it can compute.
     HeapStartOp
     HeapSizeOp
+    # ── the region the startup code was told to LEAVE ALONE. Everything else in
+    #    RAM is established at reset — `.data` copied in, `.bss` zeroed — and a
+    #    reboot counter or a crash record is exactly the thing that must not be:
+    #    it is written by the run that failed and read by the run after it.
+    #    Survives a warm reset, not a power cycle.
+    NoinitStartOp
+    NoinitSizeOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -298,7 +305,8 @@ const
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
     "StackPointer", "TraceTable", "VgClientRequest",
-    "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize"]
+    "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize",
+    "NoinitStart", "NoinitSize"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
   InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
@@ -628,7 +636,7 @@ const
     # hammers the bus. `efBarrier` is also the honest description of what the
     # instruction is FOR: it stands inside a loop that re-reads a lock word, and
     # hoisting that read above it would turn the loop into an infinite one.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 0,  # CpuRelax
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 0,  # CpuRelax
                  params: NoOps, roles: AllIn, ret: ptVoid,
                  widths: {}, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
 
@@ -742,10 +750,19 @@ const
                  widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # HeapSize
                  params: NoOps, roles: AllIn, ret: ptUIntW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # ── the region kept back from the startup code ──
+    # `efPure` for the same reason as the heap rows: both are constants the link
+    # fixed. What LIVES there is not pure, but these two only name the place.
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # NoinitStart
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # NoinitSize
+                 params: NoOps, roles: AllIn, ret: ptUIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = HeapSizeOp
+const LastIntrinsicOp* = NoinitSizeOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
