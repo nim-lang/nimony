@@ -206,33 +206,46 @@ elif defined(embedded) or defined(StandaloneHeapSize):
   # because the magics are missing), so that arm was not merely unreachable — the
   # identifier is undeclared, and naming it in the condition is an ERROR even
   # when an earlier `or` operand already decided the branch.
-  # A plain const: `{.intdefine.}` is a Nim pragma nimony has no reading of, and
-  # naming it here was an error the moment this branch became reachable. Sizing
-  # the heap from the command line wants `-d:` support that does not exist yet.
-  const StandaloneHeapSize: int = 1024 * PageSize
-  var
-    theHeap: array[StandaloneHeapSize div sizeof(float64), float64] # 'float64' for alignment
-    bumpPointer = cast[int](addr theHeap)
+  # The heap is the one the BOARD LAYOUT reserved, not a `.bss` array standing in
+  # for it. An array would be a second answer to "how much RAM may the allocator
+  # have?" — the layout file already says, and it says it where the stacks and the
+  # globals are sized too, so the three cannot silently add up to more than the
+  # part has. `heapStart`/`heapSize` are link-time constants the image writer
+  # patches in (`nifasm`'s `(heapstart)`/`(heapsize)`).
+  proc heapStart(): pointer {.intrinsic: "HeapStart".}
+  proc heapSize(): uint {.intrinsic: "HeapSize".}
 
-  proc osAllocPages(size: int): pointer {.inline.} =
-    if size+bumpPointer < cast[int](addr theHeap) + sizeof(theHeap):
+  var bumpPointer = 0
+
+  proc heapLimit(): int {.inline.} =
+    cast[int](heapStart()) + int(heapSize())
+
+  proc bumpFrom(size: int): pointer {.inline.} =
+    ## The shared arm. `nil` when the request does not fit, which is the whole
+    ## difference between the two callers below.
+    if bumpPointer == 0: bumpPointer = cast[int](heapStart())
+    if size >= 0 and bumpPointer + size <= heapLimit():
       result = cast[pointer](bumpPointer)
       inc bumpPointer, size
     else:
-      raiseOutOfMem()
+      result = nil
+
+  proc osAllocPages(size: int): pointer {.inline.} =
+    result = bumpFrom(size)
+    if result == nil: raiseOutOfMem()
 
   proc osTryAllocPages(size: int): pointer {.inline.} =
     # `nil` on failure is the whole difference between this and `osAllocPages`,
     # and the branch did not say it: with no `else`, `result` was whatever the
     # slot held. Nim zero-initialises it and hid the bug; nimony's
     # initialisation analysis refuses to prove it and found it.
-    if size+bumpPointer < cast[int](addr theHeap) + sizeof(theHeap):
-      result = cast[pointer](bumpPointer)
-      inc bumpPointer, size
-    else:
-      result = nil
+    result = bumpFrom(size)
 
   proc osDeallocPages(p: pointer, size: int) {.inline.} =
+    # A bump allocator can only give back the LAST thing it handed out; anything
+    # else stays lost until reset. That is the trade a firmware image makes for a
+    # page allocator with no bookkeeping of its own, and `alloc.nim` recycles
+    # within its own chunks regardless.
     if bumpPointer-size == cast[int](p):
       dec bumpPointer, size
 
