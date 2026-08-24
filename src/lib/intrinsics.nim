@@ -139,6 +139,13 @@ type
     #    reaches them rather than something it can compute.
     HeapStartOp
     HeapSizeOp
+    # ── the region the startup code was told to LEAVE ALONE. Everything else in
+    #    RAM is established at reset — `.data` copied in, `.bss` zeroed — and a
+    #    reboot counter or a crash record is exactly the thing that must not be:
+    #    it is written by the run that failed and read by the run after it.
+    #    Survives a warm reset, not a power cycle.
+    NoinitStartOp
+    NoinitSizeOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -289,7 +296,8 @@ const
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
     "StackPointer", "TraceTable", "VgClientRequest",
-    "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize"]
+    "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize",
+    "NoinitStart", "NoinitSize"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
   InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
@@ -721,10 +729,19 @@ const
                  widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
     IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # HeapSize
                  params: NoOps, roles: AllIn, ret: ptUIntW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # ── the region kept back from the startup code ──
+    # `efPure` for the same reason as the heap rows: both are constants the link
+    # fixed. What LIVES there is not pure, but these two only name the place.
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # NoinitStart
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # NoinitSize
+                 params: NoOps, roles: AllIn, ret: ptUIntW,
                  widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = HeapSizeOp
+const LastIntrinsicOp* = NoinitSizeOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
