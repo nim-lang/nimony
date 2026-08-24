@@ -462,6 +462,23 @@ proc tags*(c: Cursor): TagPool {.inline.} =
   ## `cast[MyTag](c.cursorTagId.uint32)` instead of consulting `c.tags`.
   if c.owner != nil and c.owner.tags != nil: c.owner.tags else: fallbackTags
 
+proc escapeTagOf*(c: Cursor): TagId {.inline.} =
+  ## The adapter's escape tag, or `TagId(0)` when it declares none — which is
+  ## also what a cursor with no tag pool at all answers, since "no escape space"
+  ## is exactly what `TagId(0)` means.
+  ##
+  ## Exists to be read WITHOUT `tags`. `tags` returns the pool BY VALUE, and a
+  ## `ref` returned by value is an owned temporary: ARC pairs every call with an
+  ## incRef and a decRef, and the decRef has to carry the pool's whole destructor
+  ## behind it — a `BiTable` of strings — so the one-line accessor lowers to
+  ## several thousand tokens of Leng and stops being inlinable at all. On nifbench
+  ## `tags` plus that destructor cost more than `skip` and `symId` together, for a
+  ## pool that outlives the program. Reading the field through the raw owner
+  ## pointer takes no reference and reaches no hook.
+  if c.owner != nil and c.owner.tags != nil: c.owner.tags.escapeTag
+  elif fallbackTags != nil: fallbackTags.escapeTag
+  else: TagId(0)
+
 proc toUniqueId*(c: Cursor): int {.inline.} =
   ## A stable identity for the cursor's *position*: two cursors over the same
   ## buffer at the same token share it, distinct positions differ. Suitable as a
@@ -672,7 +689,16 @@ proc strVal*(c: Cursor; pool: Pool): string =
   else:
     pool.strings[StrId(combinedPayload(c) shr 1)]
 
-proc strVal*(c: Cursor): string {.inline.} = strVal(c, c.pool)
+# The one-argument accessors below spell the pool lookup out rather than calling
+# `pool(c)`. `pool` returns the pool BY VALUE, and a `ref` returned by value is an
+# owned temporary — ARC pairs the call with an incRef and a decRef, and the decRef
+# carries the `Pool`'s whole destructor (three `BiTable`s) behind it, for a pool
+# that outlives the program. Passed as an ARGUMENT the same field is borrowed and
+# costs nothing, so the branch is written here where the value is consumed
+# immediately. Same reasoning as `escapeTagOf`; measured together on nifbench.
+proc strVal*(c: Cursor): string {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: strVal(c, c.owner.pool)
+  else: strVal(c, fallbackPool)
 
 proc strId*(c: Cursor; pool: Pool): StrId =
   ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
@@ -686,7 +712,9 @@ proc strId*(c: Cursor; pool: Pool): StrId =
   else:
     StrId(combinedPayload(c) shr 1)
 
-proc strId*(c: Cursor): StrId {.inline.} = strId(c, c.pool)
+proc strId*(c: Cursor): StrId {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: strId(c, c.owner.pool)
+  else: strId(c, fallbackPool)
 
 proc symName*(c: Cursor; pool: Pool): string =
   checkKind c.kind in {Symbol, SymbolDef}, "symName on ", c.kind
@@ -696,7 +724,9 @@ proc symName*(c: Cursor; pool: Pool): string =
   else:
     pool.syms[SymId(combinedPayload(c) shr 1)]
 
-proc symName*(c: Cursor): string {.inline.} = symName(c, c.pool)
+proc symName*(c: Cursor): string {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: symName(c, c.owner.pool)
+  else: symName(c, fallbackPool)
 
 proc symId*(c: Cursor; pool: Pool): SymId =
   ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
@@ -709,7 +739,9 @@ proc symId*(c: Cursor; pool: Pool): SymId =
   else:
     SymId(combinedPayload(c) shr 1)
 
-proc symId*(c: Cursor): SymId {.inline.} = symId(c, c.pool)
+proc symId*(c: Cursor): SymId {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: symId(c, c.owner.pool)
+  else: symId(c, fallbackPool)
 
 # Int/UInt/Float: pure-inline via chainable ExtendedSuffix.
 #
@@ -881,9 +913,9 @@ proc sub*(c: Cursor): Cursor =
 proc isEscapedTag*(c: Cursor): bool {.inline.} =
   ## Is the node at `c` spelled through its adapter's escape tag — i.e. does its
   ## real id sit in a leading `IntLit` child, one token in front of the operands?
-  let tp = c.tags
-  result = tp != nil and tp.escapeTag != TagId(0) and c.load.kind == TagLit and
-           c.cursorTagId == tp.escapeTag and
+  let esc = escapeTagOf(c)
+  result = esc != TagId(0) and c.load.kind == TagLit and
+           c.cursorTagId == esc and
            (let body = sub(c); body.hasMore and body.load.kind == IntLit)
 
 proc resolvedTagId*(c: Cursor): TagId =
@@ -1509,30 +1541,52 @@ proc peekPastEnd*(n: Cursor): Cursor =
   result = n
   result.rem = high(int)
 
+proc sharesPools*(c: Cursor; p: Pool; t: TagPool): bool {.inline.} =
+  ## `p == c.pool and t == c.tags`, WITHOUT materializing either of the cursor's
+  ## pools. `pool`/`tags` return a `ref` by value, which is an owned temporary —
+  ## an incRef, a decRef, and the pool's whole destructor behind the decRef — so
+  ## the fast-path test in `addSubtree`, whose entire job is to compare two
+  ## pointers, was paying for two of those per copied subtree. Read through the
+  ## raw owner pointer instead: as `==` operands both sides are borrowed paths.
+  ## The `nil` fallbacks are what `pool`/`tags` answer, spelled out.
+  (if c.owner != nil and c.owner.pool != nil: p == c.owner.pool
+   else: p == fallbackPool) and
+  (if c.owner != nil and c.owner.tags != nil: t == c.owner.tags
+   else: t == fallbackTags)
+
 # ── Subtree copy ─────────────────────────────────────────────────────────
 
-proc reinternLineInfo(dest: var TokenBuf; c: Cursor): NifLineInfo =
+proc reinternLineInfo(dest: var TokenBuf; c: Cursor;
+                      srcPool: Pool): NifLineInfo =
   ## Map the source head's trailing line info into `dest`'s pools — the filename
   ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
+  ##
+  ## Takes the source pool rather than asking `c` for it: as a parameter the ref
+  ## is borrowed, while `c.pool` would return an owned temporary and pay an
+  ## incRef/decRef — twice, here — per token copied. See `sharesPools`.
   ensurePools(dest)
   let li = rawLineInfo(c)
   if not li.isValid: return NoNifLineInfo
-  let fname = if c.pool != nil: c.pool.filenames[li.file] else: ""
+  let fname = if srcPool != nil: srcPool.filenames[li.file] else: ""
   var comment = StrId(0)
-  if uint32(li.comment) != 0'u32 and c.pool != nil:
-    comment = dest.pool.strings.getOrIncl(c.pool.strings[li.comment])
+  if uint32(li.comment) != 0'u32 and srcPool != nil:
+    comment = dest.pool.strings.getOrIncl(srcPool.strings[li.comment])
   result = NifLineInfo(file: dest.pool.filenames.getOrIncl(fname),
                        line: li.line, col: li.col, comment: comment)
 
-proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
+proc addAcrossPools(dest: var TokenBuf; c: var Cursor;
+                    srcPool: Pool; srcTags: TagPool) =
   ## Internal: copy one value (atom or whole TagLit subtree) from `c`
   ## into `dest`, re-interning literals (via the literals pool), tag names
   ## (via the tag pool) and line-info filenames. Recurses through children.
   ## The trailing `LineInfoLit` is part of the head's width (skipped by
   ## `c.inc`), so it is re-emitted explicitly via `appendLineInfo`.
-  let srcPool = c.pool
-  let srcTags = c.tags
-  let destLi = reinternLineInfo(dest, c)
+  ##
+  ## The source pools are THREADED, not re-read: they are the same for every node
+  ## of one subtree, and `let srcPool = c.pool` at each level cost an owned `ref`
+  ## — an incRef, a decRef, and the pool's destructor behind the decRef — per
+  ## token. The public wrapper below reads them once.
+  let destLi = reinternLineInfo(dest, c, srcPool)
   case c.kind
   of TagLit:
     let tagStr = srcTags.tags[c.cursorTagId]
@@ -1541,7 +1595,7 @@ proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
     dest.appendLineInfo destLi          # right after the tag head
     c.into:
       while c.hasMore:
-        addAcrossPools(dest, c)
+        addAcrossPools(dest, c, srcPool, srcTags)
     dest.closeTag()
   of StrLit:    dest.addStrLit  strVal(c, srcPool);  dest.appendLineInfo destLi; c.inc
   of IntLit:    dest.addIntLit  intVal(c);           dest.appendLineInfo destLi; c.inc
@@ -1564,7 +1618,7 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) =
   ## both tag pools match, this is a single bulk `copyMem`; otherwise
   ## the source's literals and tag names are re-interned into `dest`'s
   ## pools token-by-token. Callers don't need to know which case applies.
-  if dest.pool == c.pool and dest.tags == c.tags:
+  if sharesPools(c, dest.pool, dest.tags):
     let n = subtreeWidth(c)
     if dest.owner != nil: prepareMutation(dest)
     if dest.len + n > dest.cap:
@@ -1574,8 +1628,14 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) =
     dest.len += n
   else:
     assert c.pool != nil and c.tags != nil
-    var c = c
-    addAcrossPools(dest, c)
+    # Read the source pools ONCE for the whole subtree and hand them down; see
+    # `addAcrossPools`. These two are still owned locals — a mutable `c` may not
+    # be passed alongside anything read out of it — but that is now one
+    # incRef/decRef pair per SUBTREE where it used to be one per token.
+    let srcPool = c.pool
+    let srcTags = c.tags
+    var cc = c
+    addAcrossPools(dest, cc, srcPool, srcTags)
 
 proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
   ## Append a closed buffer that shares `dest`'s literal and tag pools.
