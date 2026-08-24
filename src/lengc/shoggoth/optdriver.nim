@@ -29,6 +29,7 @@ import imi_bridge                             # runImi (inter-module inliner, vi
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
+import tailcalls                              # runTailCalls (the tail-call encoding)
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
@@ -46,7 +47,7 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## vectorize.
+  ## vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -119,13 +120,27 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
   if passOn("cse"):
     st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
-  # The vectorizer runs LAST: its emitted `(instr ...)` applications are final
-  # (selection-final by the tag's contract) and no later pass needs to look at
-  # them; the scalar remainder loop it leaves behind was already optimized by
-  # everything above.
+  # The vectorizer runs last of the passes that OPTIMIZE: its emitted
+  # `(instr ...)` applications are final (selection-final by the tag's contract)
+  # and no later pass needs to look at them; the scalar remainder loop it leaves
+  # behind was already optimized by everything above. Only the encoding passes
+  # below follow it, and they rewrite `ret`s, which it never emits.
   if vecMode != vecOff and passOn("vectorize"):
     if runVectorizer(buf, bodySuffix, "vec." & suffix):
       inc st.vectorized
+  # The tail-call encoding runs after EVERYTHING, the vectorizer included.
+  # `(ret (call …))` deliberately violates the Leng rule that calls are bound and
+  # do not nest: it is a directive to the backend ("do the tail call"), not an
+  # expression. Minting it last is what keeps every pass above from having to
+  # tolerate a nested call, and it is also when the most tails exist — each pass
+  # above can only expose more. Its two rewrites share a walk and a grammar but
+  # answer different questions when a build breaks — sinking changes
+  # control-flow shape, folding changes stack discipline — so they are one pass
+  # under two disable names.
+  var tailRules: set[TailRule] = {}
+  if passOn("sinkret"): tailRules.incl trSink
+  if passOn("tailcall"): tailRules.incl trFold
+  if tailRules != {}: runTailCalls(buf, tailRules)
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
