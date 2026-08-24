@@ -39,15 +39,19 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
           tr n, a, newOwner
     else:
       if n.substructureKind == PragmasU:
-        # Check if this pragma section contains exportc
-        # If so, mark the owner as a root (exportc symbols are entry points)
-        var hasExportc = false
+        # Check if this pragma section contains exportc or interrupt.
+        # If so, mark the owner as a root: both name entry points nothing in the
+        # program calls. An `{.interrupt.}` handler is reached ONLY through the
+        # interrupt table, which the back end builds after this pass runs — so
+        # without this it is unreachable by construction, gets deleted, and the
+        # failure is a device that silently never responds to the interrupt.
+        var isEntryPoint = false
         n.into:
           while n.hasMore:
-            if n.isTagLit and n.pragmaKind == ExportcP:
-              hasExportc = true
+            if n.isTagLit and n.pragmaKind in {ExportcP, InterruptP}:
+              isEntryPoint = true
             tr n, a, owner
-        if hasExportc and owner != SymId(0):
+        if isEntryPoint and owner != SymId(0):
           a.roots.incl(owner)
       else:
         let isFld = n.substructureKind == FldU

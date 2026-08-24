@@ -124,6 +124,21 @@ type
     # ── the valgrind client request (`lib/std/valgrind`). Portable in the same
     #    sense: every target has the mechanism, none spells it the same way.
     VgClientRequestOp
+    # ── volatile access (`lib/std/volatile`). One load, one store, at exactly
+    #    the pointee's width, that no pass may duplicate, elide, reorder against
+    #    another volatile, or fold. This is MMIO: reading a status register is
+    #    how you learn something changed, and writing a command register is the
+    #    something that happens — so the value is beside the point and the ACCESS
+    #    is the whole content.
+    VolatileLoadOp
+    VolatileStoreOp
+    # ── the heap a bare-metal image was GIVEN (`lib/std/system/osalloc`). Two
+    #    link-time facts: a hosted program asks its OS for pages, and a firmware
+    #    image has whatever the board layout reserved for it and not one byte
+    #    more. The numbers are the image writer's, so the row is how the runtime
+    #    reaches them rather than something it can compute.
+    HeapStartOp
+    HeapSizeOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -140,6 +155,14 @@ type
   IntrinsicTarget* = enum
     tgX64        ## x86-64
     tgA64        ## AArch64
+    tgThumbM     ## Thumb-2 / Cortex-M. New, and so far claimed only by the
+                 ## volatile rows: every other row predates the target, and
+                 ## arkham's Arm emitter has been reading `tgA64` for both Arm
+                 ## targets. That proxy is now wrong for anything a row marks
+                 ## explicitly, so `codegen_arm` asks for the target it is
+                 ## actually emitting. Nothing regressed when it started to:
+                 ## every fixture that reaches an `(instr …)` was already in
+                 ## `cortexMUnsupported` for an unrelated reason.
 
   OperandRole* = enum
     roIn         ## a pure source
@@ -265,7 +288,8 @@ const
     "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
-    "StackPointer", "TraceTable", "VgClientRequest"]
+    "StackPointer", "TraceTable", "VgClientRequest",
+    "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize"]
 
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
   InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
@@ -288,6 +312,14 @@ const
     ## it — the one atomic with an output that is not the result.
   AtomFlag = [ptRawPtr, ptMemOrder, ptNone, ptNone, ptNone, ptNone]
   AtomFence = [ptMemOrder, ptNone, ptNone, ptNone, ptNone, ptNone]
+
+  # ── volatile operand shapes ──────────────────────────────────────────────
+  # The atomic shapes minus the memory order, which is the whole difference in
+  # the signature and most of the difference in meaning: an atomic says how this
+  # access is ordered against every other thread's, a volatile says only that the
+  # access HAPPENS, exactly once, at exactly this width.
+  VolLoad = [ptPtrW, ptNone, ptNone, ptNone, ptNone, ptNone]
+  VolStore = [ptPtrW, ptValW, ptNone, ptNone, ptNone, ptNone]
 
   # ── vector operand shapes ────────────────────────────────────────────────
   VecLoad = [ptAnyPtr, ptAnyInt, ptNone, ptNone, ptNone, ptNone]
@@ -320,6 +352,20 @@ const
   AtomRead = {efReads, efBarrier}
   AtomWrite = {efWrites, efBarrier}
   AtomModify = {efReads, efWrites, efBarrier}
+
+  # NOT `efBarrier`, and that is the point of having separate rows rather than
+  # reusing the atomics. C orders volatile accesses against EACH OTHER and says
+  # nothing about their order against ordinary memory, and it is not a fence: a
+  # peripheral write does not flush a store buffer. Reading `efBarrier` here
+  # would promise both. Where a device genuinely needs ordering against ordinary
+  # memory, that is `dmb`/`dsb`, which are their own instructions.
+  #
+  # `efReads`/`efWrites` are what keeps them from being deleted or duplicated.
+  # The volatile-against-volatile order is not in this column at all — it is not
+  # a property either row could state about itself — and lives in the pass (see
+  # shoggoth's `intrinsicEffects`).
+  VolRead = {efReads}
+  VolWrite = {efWrites}
 
   IntrinsicRows*: array[IntrinsicOp, IntrinsicRow] = [
     # The `NoIntrinsicOp` placeholder. Every field is spelled out: this file also
@@ -653,10 +699,32 @@ const
                  params: [ptRawPtr, ptNone, ptNone, ptNone, ptNone, ptNone],
                  roles: AllIn, ret: ptUIntW,
                  widths: {64'u8}, tie: -1,
-                 effects: {efReads, efWrites, efBarrier}, uses: {}, defs: {})
+                 effects: {efReads, efWrites, efBarrier}, uses: {}, defs: {}),
+    # ── volatile ──
+    # `W` stays unbound at the declaration exactly as the atomics' does: these are
+    # generic over the cell type and the width is read off the POINTEE at the call
+    # site. That is also the only width the access may use — a `volatileLoad` of a
+    # 64-bit cell on a 32-bit target is two loads, which is two accesses, which is
+    # not what was asked for. The back end refuses it rather than lowering it.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 1,
+                 params: VolLoad, roles: AllIn, ret: ptValW,   # VolatileLoad
+                 widths: IntWidths, tie: -1, effects: VolRead, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 2,
+                 params: VolStore, roles: AllIn, ret: ptVoid,  # VolatileStore
+                 widths: IntWidths, tie: -1, effects: VolWrite, uses: {}, defs: {}),
+    # ── the reserved heap ──
+    # `efPure`: both are constants the link fixed, so hoisting one out of a loop
+    # or folding two into one is exactly right. Cortex-M only — every other target
+    # here is hosted and gets its pages from an OS.
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # HeapStart
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # HeapSize
+                 params: NoOps, roles: AllIn, ret: ptUIntW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = VgClientRequestOp
+const LastIntrinsicOp* = HeapSizeOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -744,3 +812,9 @@ proc hasInoutOperand*(r: IntrinsicRow): bool =
   result = false
   for i in 0 ..< r.arity:
     if r.roles[i] == roInout: return true
+
+proc isVolatile*(op: IntrinsicOp): bool {.inline.} =
+  ## A volatile access. Two of them may not be reordered against each other, may
+  ## not be merged, and may not be deleted — a rule about the PAIR, so it cannot
+  ## live in either row's `effects` and is enforced where ordering is decided.
+  op == VolatileLoadOp or op == VolatileStoreOp

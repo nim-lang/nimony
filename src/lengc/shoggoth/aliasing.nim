@@ -108,7 +108,9 @@ proc sourceMayBePointer(m: ptr MainModule; n: Cursor): bool =
     result = false
   of TagLit:
     case n.exprKind
-    of AddrC, HaddrC, DerefC, PatC, NilC, CallC:
+    of AddrC, HaddrC, DerefC, PatC, NilC, CallC, InstrC:
+      # `InstrC` for the same reason as `CallC`: a `volatileLoad` of a `ptr ptr T`
+      # cell yields a pointer, and nothing about the node says otherwise.
       result = true
     of TrueC, FalseC, InfC, NeginfC, NanC, SizeofC, AlignofC, OffsetofC:
       result = false
@@ -197,7 +199,9 @@ proc accessRoots*(c: Cursor; roots: var seq[SymId]; m: ptr MainModule = nil) =
       skip r                                    # type
       skip r                                    # inheritance-depth intlit
       accessRoots(r, roots, m)
-    of CallC:
+    of CallC, InstrC:
+      # An intrinsic's pointer operand escapes exactly as a call's does — that is
+      # what `volatileStore(dest, x)` is.
       var r = c
       r.into:                                   # bounded to the call's children
         if r.hasMore: skip r                    # callee

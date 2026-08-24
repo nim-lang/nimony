@@ -1,0 +1,1 @@
+tests/nimony/assembler/tbadinterruptloc.nim(3, 19) Error: `interrupt` pragma is only allowed on routines

@@ -127,18 +127,13 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
   )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
-  result = false
-  let cpu = platform.nameToCPU(symbol)
-  if cpu != cpuNone:
-    config.targetCPU = cpu
-    result = true
+  result = platform.findCPU(symbol, config.targetCPU)
 
 proc setTargetOS*(config: var NifConfig; symbol: string): bool =
-  result = false
-  let os = platform.nameToOS(symbol)
-  if os != osNone:
-    config.targetOS = os
-    result = true
+  # `findOS`, not `nameToOS`: the first enum value is the bare-metal target now
+  # (`osEmbedded`), so a typo must still be rejected rather than quietly
+  # selecting it.
+  result = platform.findOS(symbol, config.targetOS)
 
 proc parseConfig(c: Cursor; result: var NifConfig) =
   ## Interprets the single tree at `c`; unknown tags are searched
@@ -209,6 +204,9 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     result = true
   else:
     case symbol.normalize
+    # `arm` is what code that predates the `arm32` rename says, and what code
+    # shared with Nim says. The canonical name moved; the predicate did not.
+    of "arm": result = config.targetCPU == cpuArm
     of "x86": result = config.targetCPU == cpuI386
     of "itanium": result = config.targetCPU == cpuIa64
     of "x8664": result = config.targetCPU == cpuAmd64

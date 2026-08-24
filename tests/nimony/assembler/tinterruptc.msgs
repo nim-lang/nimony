@@ -1,0 +1,1 @@
+tests/nimony/assembler/tinterruptc.nim(6, 6) Error: the C backend has no interrupt table to install an `{.interrupt.}` handler in; use `{.exportc: "...".}` to bind one by name against a startup file, or compile it with arkham

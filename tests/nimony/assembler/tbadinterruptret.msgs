@@ -1,0 +1,1 @@
+tests/nimony/assembler/tbadinterruptret.nim(4, 1) Error: an `interrupt` handler returns to the interrupted code, not to a caller, so it must not return a value
