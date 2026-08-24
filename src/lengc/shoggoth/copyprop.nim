@@ -440,11 +440,12 @@ proc trExpr(c: var Context; n: var Cursor) =
       # copy `p2 = p` whose only uses are `&((*p2)…)`.
       n.into:
         while n.hasMore: trAddrOperand(c, n)
-    of CallC:
+    of CallC, InstrC:
       n.into:
         if n.hasMore: skip n             # callee
         while n.hasMore: trExpr(c, n)    # args
-      # A call cannot touch a non-addr-taken local, so nothing to invalidate.
+      # Neither a call nor an intrinsic can touch a non-addr-taken local, so
+      # nothing to invalidate.
     of DotC:
       # `(dot OBJ FIELD inheritance)`: only OBJ is a value expression. FIELD is a
       # field-selector symbol — NEVER a value read. A local var can share a field's
@@ -921,7 +922,7 @@ proc scanStabCall(c: var Context; sc: var StabScan; n: var Cursor;
                 not paramEscapes(smry, idx)):
           sc.valueEscaped.incl symId(n)
         skip n
-      elif n.kind == TagLit and n.exprKind != CallC and
+      elif n.kind == TagLit and n.exprKind notin {CallC, InstrC} and
            pointerCompRoots(c, sc, n, roots):
         for root in roots:
           var ok = known and not paramMayWrite(smry, idx)
@@ -966,7 +967,10 @@ proc scanStabExpr(c: var Context; sc: var StabScan; n: var Cursor) =
       if root != SymId(0): sc.addrTainted.incl root
       flagSyms(sc, n)
       skip n
-    of CallC:
+    of CallC, InstrC:
+      # An intrinsic that writes through a pointer operand is as much a reason to
+      # stop propagating a copy as a call is; one that does not costs only the
+      # propagation it would have allowed.
       scanStabCall(c, sc, n, SymId(0), resultDropped = false)
     of ConvC, CastC:
       flagSyms(sc, n)                     # pointer laundering — conservative
