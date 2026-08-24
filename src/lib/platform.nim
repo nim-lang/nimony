@@ -36,7 +36,19 @@ type
                    props: TInfoOSProps]
 
 const
-  OS*: array[succ(low(TSystemOS))..high(TSystemOS), TInfoOS] = [
+  OS*: array[low(TSystemOS)..high(TSystemOS), TInfoOS] = [
+     (name: "none",
+      # BARE METAL: no OS to ask for anything, which is a real target and not the
+      # absence of one. `standalone` is Nim's name for a related but different
+      # arrangement (a hosted-ish freestanding build with a `panicoverride`), and
+      # nothing here offers that, so it would be the wrong word.
+      #
+      # `osNone` used to be the not-found sentinel of `nameToOS`, which is why it
+      # had no entry. `findOS` carries that answer in its result now.
+      parDir: "..", dllFrmt: "lib$1.so", altDirSep: "/",
+      objExt: ".o", newLine: "\x0A", pathSep: ":", dirSep: "/",
+      scriptExt: ".sh", curDir: ".", exeExt: "", extSep: ".",
+      props: {}),
      (name: "DOS",
       parDir: "..", dllFrmt: "$1.dll", altDirSep: "/", objExt: ".obj",
       newLine: "\x0D\x0A", pathSep: ";", dirSep: "\\", scriptExt: ".bat",
@@ -228,7 +240,11 @@ const
     (name: "amd64", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64), # a.k.a. x86_64, covers both amd and intel
     (name: "mips", intSize: 32, endian: bigEndian, floatSize: 64, bit: 32),
     (name: "mipsel", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
-    (name: "arm", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
+    # `arm32`, not `arm`: alongside `arm64` the bare word never says which it is,
+    # and this is the name the target triple is spelled with (`--cpu:arm32
+    # --os:none` is the bare-metal Cortex-M target). `defined(arm)` still holds —
+    # see `isDefined`'s alias table — and `--cpu:arm` is still accepted.
+    (name: "arm32", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
     (name: "arm64", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64),
     (name: "js", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
     (name: "nimvm", intSize: 32, endian: bigEndian, floatSize: 64, bit: 32),
@@ -245,14 +261,33 @@ const
     (name: "e2k", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64),
     (name: "loongarch64", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64)]
 
-proc nameToOS*(name: string): TSystemOS =
-  for i in succ(osNone)..high(TSystemOS):
+proc findOS*(name: string; res: var TSystemOS): bool =
+  ## `true` and sets `res` when `name` is an OS this compiler knows.
+  ##
+  ## Separate from `nameToOS` because `osNone` is now a TARGET (bare metal), so
+  ## "returned osNone" no longer means "no match" — and conflating the two would
+  ## make every typo silently select bare metal.
+  for i in low(TSystemOS)..high(TSystemOS):
     if cmpIgnoreStyle(name, OS[i].name) == 0:
-      return i
-  result = osNone
+      res = i
+      return true
+  result = false
 
-proc nameToCPU*(name: string): TSystemCPU =
+proc nameToOS*(name: string): TSystemOS =
+  if not findOS(name, result): result = osNone
+
+proc findCPU*(name: string; res: var TSystemCPU): bool =
+  ## `true` and sets `res` when `name` is a CPU this compiler knows. `arm` is
+  ## accepted for `arm32`: the canonical name changed, the spelling people have
+  ## already written did not.
   for i in succ(cpuNone)..high(TSystemCPU):
     if cmpIgnoreStyle(name, CPU[i].name) == 0:
-      return i
-  result = cpuNone
+      res = i
+      return true
+  if cmpIgnoreStyle(name, "arm") == 0:
+    res = cpuArm
+    return true
+  result = false
+
+proc nameToCPU*(name: string): TSystemCPU =
+  if not findCPU(name, result): result = cpuNone

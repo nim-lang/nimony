@@ -197,8 +197,19 @@ elif defined(windows) and not defined(StandaloneHeapSize):
         rawQuit 1
     #VirtualFree(p, size, MEM_DECOMMIT)
 
-elif hostOS == "standalone" or defined(StandaloneHeapSize):
-  const StandaloneHeapSize {.intdefine.}: int = 1024 * PageSize
+elif defined(none) or defined(StandaloneHeapSize):
+  # `defined(none)` is `--os:none`: bare metal, where there is no OS to ask for
+  # pages and the heap is whatever the image reserved for itself.
+  #
+  # This used to read `hostOS == "standalone"`. Nimony does not expose `hostOS`
+  # (see `nifconfig`, which derives its own `hostCPU`/`hostOS` consts precisely
+  # because the magics are missing), so that arm was not merely unreachable — the
+  # identifier is undeclared, and naming it in the condition is an ERROR even
+  # when an earlier `or` operand already decided the branch.
+  # A plain const: `{.intdefine.}` is a Nim pragma nimony has no reading of, and
+  # naming it here was an error the moment this branch became reachable. Sizing
+  # the heap from the command line wants `-d:` support that does not exist yet.
+  const StandaloneHeapSize: int = 1024 * PageSize
   var
     theHeap: array[StandaloneHeapSize div sizeof(float64), float64] # 'float64' for alignment
     bumpPointer = cast[int](addr theHeap)
@@ -211,9 +222,15 @@ elif hostOS == "standalone" or defined(StandaloneHeapSize):
       raiseOutOfMem()
 
   proc osTryAllocPages(size: int): pointer {.inline.} =
+    # `nil` on failure is the whole difference between this and `osAllocPages`,
+    # and the branch did not say it: with no `else`, `result` was whatever the
+    # slot held. Nim zero-initialises it and hid the bug; nimony's
+    # initialisation analysis refuses to prove it and found it.
     if size+bumpPointer < cast[int](addr theHeap) + sizeof(theHeap):
       result = cast[pointer](bumpPointer)
       inc bumpPointer, size
+    else:
+      result = nil
 
   proc osDeallocPages(p: pointer, size: int) {.inline.} =
     if bumpPointer-size == cast[int](p):

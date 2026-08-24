@@ -121,8 +121,11 @@ else:
 
   template sysAssert(cond, msg: untyped) = discard
 
-  proc raiseOutOfMem() {.noinline.} =
+  proc raiseOutOfMem() {.noinline, noreturn.} =
     # Reached only when the OS itself refuses to map pages; nothing to recover.
+    # `noreturn` because `cAbort` is, and saying so is what lets a caller whose
+    # only other arm assigns `result` be proved to initialise it — which is how
+    # the bare-metal `osAllocPages` typechecks at all.
     cAbort()
 
   template `+!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) + x)
