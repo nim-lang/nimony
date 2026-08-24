@@ -228,6 +228,26 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       toPragmaArgs()
       if hasParRi:
         while n.hasMore: skip n
+  of InterruptP:
+    # `{.interrupt: "SysTick".}` — this routine handles the named vector. WHICH
+    # names a part has is a target question, arkham's exactly as for `register`
+    # below; what sem owns is the shape, checked in `interruptSignatureError`
+    # once the params and the return type are known.
+    crucial.flags.incl pk
+    let pinfo = n.info
+    if not kind.isRoutine:
+      buildErr c, dest, pinfo, "`interrupt` pragma is only allowed on routines"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+    else:
+      dest.addParLe(pk, pinfo)
+      toPragmaArgs()
+      if hasParRi and n.hasMore:
+        semConstStrExprIgnoreTopLevel c, dest, n
+      else:
+        buildErr c, dest, pinfo, "`interrupt` pragma takes a vector name"
+      dest.addParRi()
   of RegisterP:
     # `{.register: "rdi".}` on a parameter, result or local. Which register names
     # exist, and whether the annotation is consistent with the proc's ABI, is a
@@ -817,6 +837,34 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
       if not matchPat(c, row.ret, ret, w, row.widths):
         result = "the result type of `" & opName & "` does not match the " &
                  "instruction's destination"
+  endRead n
+
+proc interruptSignatureError*(dest: var TokenBuf; paramsAt: int): string =
+  ## The mismatch message for `{.interrupt: "…".}`, or "" when the declaration
+  ## is the shape a handler must have. Read through cursors only and emitted by
+  ## the caller into the `effects` slot, for the same reason
+  ## `intrinsicSignatureError` is.
+  ##
+  ## The rule is not a target's: hardware enters a handler with no arguments and
+  ## with nowhere to put a result, on every part that has a vector table. A
+  ## parameter would be read from whatever the interrupted code left in r0, and a
+  ## result would be written into a register the hardware restores on the way out
+  ## — neither is a diagnosable failure at run time, so both are refused here.
+  result = ""
+  var n = cursorAt(dest, paramsAt)
+  if n.substructureKind == ParamsU:
+    var p = sub(n)
+    if p.hasMore:
+      result = "an `interrupt` handler is entered by hardware, which passes no " &
+               "arguments, so it must take no parameters"
+    endRead n
+    if result.len > 0: return
+    n = cursorAt(dest, paramsAt)
+  var ret = n
+  skip ret                           # past the (params …) → the return type
+  if not ret.isDotToken:
+    result = "an `interrupt` handler returns to the interrupted code, not to a " &
+             "caller, so it must not return a value"
   endRead n
 
 proc semAssumeAssert*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: StmtKind) =

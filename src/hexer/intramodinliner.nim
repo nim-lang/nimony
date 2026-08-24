@@ -204,7 +204,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
         if pr.isTagLit and pr.pragmaKind == AlwaysInlineP:
           forced = true
         if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP,
-                                             AssemblerP, NakedP}:
+                                             AssemblerP, NakedP, InterruptP}:
           # importc: the decl's `(stmts .)` "body" is a PLACEHOLDER — the real
           # code is external. Splicing it deletes the call (measured: memfiles
           # inlined posix `open`'s empty shell and never called open(2)).
@@ -214,6 +214,10 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
           # them (measured: tcbackend's firstBit spliced + DCE'd, so the C
           # backend saw a bare register-pinned local instead of rejecting the
           # assembler proc).
+          # interrupt: the proc IS a vector-table entry, so it must keep an
+          # address of its own. Splicing it into some ordinary caller (which
+          # would have to have called it explicitly) leaves the table pointing
+          # at whatever survived.
           result.threshold = InlineNeverBound
         skip pr
   if result.threshold >= InlineNeverBound:

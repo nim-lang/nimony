@@ -344,6 +344,14 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # link with no explanation.
         result.flags.incl pk
         skip n
+      of InterruptP:
+        # A vector-table entry, and a C build has no vector table to install it
+        # in. Emitting the function anyway would compile and link and simply
+        # never be reached — a device that does not respond to the interrupt,
+        # with nothing at the failure site to say why. `{.exportc: "…".}` is
+        # what binds a handler by name against a vendor startup file.
+        result.flags.incl pk
+        skip n
       of RegisterP, StackP:
         # Location pins. They are assertions inside an `{.assembler.}` proc
         # (rejected above) and allocator hints outside one; C has no way to
@@ -639,6 +647,11 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   if prag.flags * {AssemblerP, NakedP} != {}:
     errorAt c.m, "the C backend cannot compile an `{.assembler.}` proc; it must " &
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
+      prc.name
+  if InterruptP in prag.flags:
+    errorAt c.m, "the C backend has no vector table to install an `{.interrupt.}` " &
+      "handler in; use `{.exportc: \"...\".}` to bind one by name against a " &
+      "startup file, or compile it with arkham",
       prc.name
   if prag.flags * {InstructionP, IntrinsicP} != {}:
     # No C declaration: an intrinsic has no definition to link against, and

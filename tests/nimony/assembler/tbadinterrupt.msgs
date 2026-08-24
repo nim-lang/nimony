@@ -1,0 +1,1 @@
+tests/nimony/assembler/tbadinterrupt.nim(5, 1) Error: an `interrupt` handler is entered by hardware, which passes no arguments, so it must take no parameters
