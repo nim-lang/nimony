@@ -3,10 +3,12 @@
 # Repro:   bin/nimony c -r -d:danger tests/nimony/opt/topt_tailcall_shape.nim
 # Expected (see .output): 13 10 55 x 3 4
 #
-# The fold is in copyprop (`foldTailCalls`), which by then has already collapsed
-# `result` away, so a proc whose body is one call arrives as exactly those two
-# statements. What this test pins is that folding does not change what any of
-# them COMPUTES — including the two shapes that must not fold at all:
+# The fold is `trFold` in `tailcalls.runTailCalls`, the last pass of
+# `optimizeBody`. Copyprop
+# has long since collapsed `result` away by then, so a proc whose body is one
+# call arrives as exactly those two statements. What this test pins is that
+# folding does not change what any of them COMPUTES — including the two shapes
+# that must not fold at all:
 #
 #   `tailWithLocal` has a `=destroy` of a live local between the call and the
 #   return, which is exactly what makes it not a tail call; the fold's adjacency
@@ -14,9 +16,9 @@
 #   `twoReads` reads the temp twice, so folding it into the `ret` would drop a
 #   read; the one-read rule excludes it.
 #
-# `tailCond` (a call in one branch, the return outside) is not adjacent either
-# and stays as it is — recorded here so a later branch-sinking change has to
-# come past this test with the answer unchanged.
+# `tailCond` (a call in one branch, the return outside) is not adjacent on its
+# own; the `trSink` round is what makes it so. It is kept here so both rounds of
+# the encoding are pinned by both tests, with the answer unchanged either way.
 
 import std / syncio
 

@@ -10,8 +10,9 @@
 #
 # `r` disappears with the rewrite — one local and one copy per site — and a call
 # that was an arm's own tail becomes ADJACENT to a `ret`, which is what
-# `foldTailCalls` needs. In nimsem that is 339 sites and 111 tail calls, against
-# the 10 the adjacent form finds on its own.
+# the fold needs — `trSink` then `trFold`, the two rounds of `runTailCalls` in
+# `shoggoth/tailcalls.nim`. In nimsem that is 339 sites and 111 tail calls, against the 10
+# the adjacent form finds on its own.
 #
 # `count` is the reason to care beyond code size: sunk, its recursive arm is a
 # tail call, so it runs in constant stack. Unsunk it is two million frames and
