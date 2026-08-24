@@ -1,8 +1,13 @@
 # B0 gate: the wasm heap GROWS on demand (memory.grow provider) — this
-# allocates well past the module's initial linear-memory reservation. The
-# native oracle runs the same program inside its fixed 128 MB standalone
-# heap, so the total stays under that: 6 × 8 MB seqs = 48 MB live, touched
-# at both ends to prove the pages are real.
+# allocates well past the module's initial linear-memory reservation.
+# 6 × 8 MB seqs = 48 MB live, touched at both ends to prove the pages are real.
+#
+# The native oracle does NOT use the standalone heap, and an earlier version of
+# this comment said it did — it claimed the 48 MB was sized to stay under "its
+# fixed 128 MB standalone heap". `nimony n` defines `nimNativeAlloc` /
+# `nimNativeIo`, not `standalone`, so the native leg allocates the ordinary way
+# and that constant is unreachable from here. The figure is sized for the WASM
+# leg alone; nothing about it is a native constraint.
 import std/syncio
 
 when defined(wasm32):
