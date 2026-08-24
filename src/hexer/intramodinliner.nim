@@ -214,7 +214,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
           # them (measured: tcbackend's firstBit spliced + DCE'd, so the C
           # backend saw a bare register-pinned local instead of rejecting the
           # assembler proc).
-          # interrupt: the proc IS a vector-table entry, so it must keep an
+          # interrupt: the proc IS a interrupt-table entry, so it must keep an
           # address of its own. Splicing it into some ordinary caller (which
           # would have to have called it explicitly) leaves the table pointing
           # at whatever survived.

@@ -345,7 +345,7 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         result.flags.incl pk
         skip n
       of InterruptP:
-        # A vector-table entry, and a C build has no vector table to install it
+        # An interrupt-table entry, and a C build has no such table to install it
         # in. Emitting the function anyway would compile and link and simply
         # never be reached — a device that does not respond to the interrupt,
         # with nothing at the failure site to say why. `{.exportc: "…".}` is
@@ -649,7 +649,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
       prc.name
   if InterruptP in prag.flags:
-    errorAt c.m, "the C backend has no vector table to install an `{.interrupt.}` " &
+    errorAt c.m, "the C backend has no interrupt table to install an `{.interrupt.}` " &
       "handler in; use `{.exportc: \"...\".}` to bind one by name against a " &
       "startup file, or compile it with arkham",
       prc.name

@@ -846,7 +846,7 @@ proc interruptSignatureError*(dest: var TokenBuf; paramsAt: int): string =
   ## `intrinsicSignatureError` is.
   ##
   ## The rule is not a target's: hardware enters a handler with no arguments and
-  ## with nowhere to put a result, on every part that has a vector table. A
+  ## with nowhere to put a result, on every part that has a interrupt table. A
   ## parameter would be read from whatever the interrupted code left in r0, and a
   ## result would be written into a register the hardware restores on the way out
   ## — neither is a diagnosable failure at run time, so both are refused here.
