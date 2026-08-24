@@ -16,7 +16,7 @@ import std/strutils
 type
   TSystemOS* = enum # Also add OS in initialization section and alias
                     # conditionals to condsyms (end of module).
-    osNone, osDos, osWindows, osOs2, osLinux, osMorphos, osSkyos, osSolaris,
+    osEmbedded, osDos, osWindows, osOs2, osLinux, osMorphos, osSkyos, osSolaris,
     osIrix, osNetbsd, osFreebsd, osOpenbsd, osDragonfly, osCrossos, osAix, osPalmos, osQnx,
     osAmiga, osAtari, osNetware, osMacos, osMacosx, osIos, osHaiku, osAndroid, osVxWorks
     osGenode, osJS, osNimVM, osStandalone, osNintendoSwitch, osFreeRTOS, osZephyr,
@@ -37,14 +37,19 @@ type
 
 const
   OS*: array[low(TSystemOS)..high(TSystemOS), TInfoOS] = [
-     (name: "none",
+     (name: "embedded",
       # BARE METAL: no OS to ask for anything, which is a real target and not the
-      # absence of one. `standalone` is Nim's name for a related but different
-      # arrangement (a hosted-ish freestanding build with a `panicoverride`), and
-      # nothing here offers that, so it would be the wrong word.
+      # absence of one.
       #
-      # `osNone` used to be the not-found sentinel of `nameToOS`, which is why it
-      # had no entry. `findOS` carries that answer in its result now.
+      # Not `standalone`: that is Nim's name for a related but different
+      # arrangement (a hosted-ish freestanding build with a `panicoverride`), and
+      # nothing here offers that, so it would be the wrong word. Not `none`
+      # either — the name becomes a `defined()` symbol, and `defined(none)` says
+      # nothing about what is being built and reads like a mistake wherever it
+      # appears. `defined(embedded)` says it.
+      #
+      # This slot used to be `osNone`, the not-found sentinel of `nameToOS`, which
+      # is why it had no entry. `findOS` carries that answer in its result now.
       parDir: "..", dllFrmt: "lib$1.so", altDirSep: "/",
       objExt: ".o", newLine: "\x0A", pathSep: ":", dirSep: "/",
       scriptExt: ".sh", curDir: ".", exeExt: "", extSep: ".",
@@ -264,9 +269,9 @@ const
 proc findOS*(name: string; res: var TSystemOS): bool =
   ## `true` and sets `res` when `name` is an OS this compiler knows.
   ##
-  ## Separate from `nameToOS` because `osNone` is now a TARGET (bare metal), so
-  ## "returned osNone" no longer means "no match" — and conflating the two would
-  ## make every typo silently select bare metal.
+  ## Separate from `nameToOS` because the first enum value is now a TARGET
+  ## (`osEmbedded`), so "returned the first one" no longer means "no match" — and
+  ## conflating the two would make every typo silently select bare metal.
   for i in low(TSystemOS)..high(TSystemOS):
     if cmpIgnoreStyle(name, OS[i].name) == 0:
       res = i
@@ -274,7 +279,12 @@ proc findOS*(name: string; res: var TSystemOS): bool =
   result = false
 
 proc nameToOS*(name: string): TSystemOS =
-  if not findOS(name, result): result = osNone
+  ## For the HOST's own name, which is always one this compiler knows. A miss here
+  ## is a bug in the `hostOS` derivation and not user input — `findOS` is what
+  ## validates a flag, and returning `osEmbedded` for a typo is exactly the
+  ## silence this split exists to prevent.
+  if not findOS(name, result):
+    quit "internal error: unknown host OS: " & name
 
 proc findCPU*(name: string; res: var TSystemCPU): bool =
   ## `true` and sets `res` when `name` is a CPU this compiler knows. `arm` is
@@ -290,4 +300,6 @@ proc findCPU*(name: string; res: var TSystemCPU): bool =
   result = false
 
 proc nameToCPU*(name: string): TSystemCPU =
-  if not findCPU(name, result): result = cpuNone
+  ## The host's CPU; same contract as `nameToOS`.
+  if not findCPU(name, result):
+    quit "internal error: unknown host CPU: " & name

@@ -197,9 +197,9 @@ elif defined(windows) and not defined(StandaloneHeapSize):
         rawQuit 1
     #VirtualFree(p, size, MEM_DECOMMIT)
 
-elif defined(none) or defined(StandaloneHeapSize):
-  # `defined(none)` is `--os:none`: bare metal, where there is no OS to ask for
-  # pages and the heap is whatever the image reserved for itself.
+elif defined(embedded) or defined(StandaloneHeapSize):
+  # `defined(embedded)` is `--os:embedded`: bare metal, where there is no OS to
+  # ask for pages and the heap is whatever the image reserved for itself.
   #
   # This used to read `hostOS == "standalone"`. Nimony does not expose `hostOS`
   # (see `nifconfig`, which derives its own `hostCPU`/`hostOS` consts precisely

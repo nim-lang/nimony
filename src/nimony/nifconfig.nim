@@ -130,8 +130,9 @@ proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
   result = platform.findCPU(symbol, config.targetCPU)
 
 proc setTargetOS*(config: var NifConfig; symbol: string): bool =
-  # `findOS`, not `nameToOS`: `osNone` is the bare-metal target now, so a typo
-  # must still be rejected rather than quietly selecting it.
+  # `findOS`, not `nameToOS`: the first enum value is the bare-metal target now
+  # (`osEmbedded`), so a typo must still be rejected rather than quietly
+  # selecting it.
   result = platform.findOS(symbol, config.targetOS)
 
 proc parseConfig(c: Cursor; result: var NifConfig) =
