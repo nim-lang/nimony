@@ -197,10 +197,64 @@ elif defined(windows) and not defined(StandaloneHeapSize):
         rawQuit 1
     #VirtualFree(p, size, MEM_DECOMMIT)
 
+elif defined(wasm32) and defined(standalone):
+  # Growing page provider over wasm linear memory (ward-bridge B0): the
+  # allocator draws pages from the END of linear memory, growing it on
+  # demand via memory.grow — no fixed reservation, so a small module
+  # stays small and a viewer's caches can budget in the hundreds of MB.
+  # An optional CEILING (set by the host at startup from device signals —
+  # D8: budgets are device-derived) turns growth failures into ordinary
+  # out-of-memory before the browser's own tab limit does it for us.
+  const WasmPageSize = 65536
+  var
+    wasmBump: int = 0        # next free byte; 64 KiB-aligned start (> PageSize)
+    heapCeiling: int = 0     # 0 = uncapped (the host's tab limit rules)
+
+  proc wasmMemorySize(): int32 {.importc: "__builtin_wasm_memory_size".}
+  proc wasmMemoryGrow(delta: int32): int32 {.importc: "__builtin_wasm_memory_grow".}
+
+  proc setWasmHeapCeiling*(bytes: int) =
+    ## Host-set upper bound on total linear memory (bytes; 0 = uncapped).
+    ## Public Nim API; apps that let the host set it export a main-module
+    ## wrapper (ithaqua export roots are main-module exportc procs only).
+    heapCeiling = bytes
+
+  proc ensureCapacity(needEnd: int): bool =
+    let haveEnd = int(wasmMemorySize()) * WasmPageSize
+    if needEnd <= haveEnd: return true
+    if heapCeiling > 0 and needEnd > heapCeiling: return false
+    let deltaPages = (needEnd - haveEnd + WasmPageSize - 1) div WasmPageSize
+    result = wasmMemoryGrow(int32(deltaPages)) >= 0
+
+  proc osAllocPages(size: int): pointer {.inline.} =
+    if wasmBump == 0:
+      # first use: start at the current end of memory (above the module's
+      # static data + shadow stack), 64 KiB-page aligned by construction
+      wasmBump = int(wasmMemorySize()) * WasmPageSize
+    if not ensureCapacity(wasmBump + size):
+      raiseOutOfMem()
+    result = cast[pointer](wasmBump)
+    inc wasmBump, size
+
+  proc osTryAllocPages(size: int): pointer {.inline.} =
+    result = nil   # explicit: nimony's init prover rejects the implicit zero
+    if wasmBump == 0:
+      wasmBump = int(wasmMemorySize()) * WasmPageSize
+    if not ensureCapacity(wasmBump + size): return nil
+    result = cast[pointer](wasmBump)
+    inc wasmBump, size
+
+  proc osDeallocPages(p: pointer, size: int) {.inline.} =
+    # bump arena: only the most recent block can be returned
+    if wasmBump - size == cast[int](p):
+      dec wasmBump, size
+
 elif defined(standalone) or defined(StandaloneHeapSize):
   # nimony has no {.intdefine.}; plain const for now (config override can
   # return as a proper -d: hook when someone needs a different heap size).
-  const StandaloneHeapSize: int = 1024 * PageSize
+  # 128 MB: generous for native-standalone test binaries (virtual .bss).
+  # The wasm32 target uses the growing memory.grow provider above.
+  const StandaloneHeapSize: int = 32768 * PageSize
   var
     theHeap: array[StandaloneHeapSize div sizeof(float64), float64] # 'float64' for alignment
     # The allocator above derives chunk headers by masking pointers down to
