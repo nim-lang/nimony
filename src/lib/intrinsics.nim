@@ -102,6 +102,14 @@ type
     AtomicClearOp
     AtomicThreadFenceOp
     AtomicSignalFenceOp
+    # ── the spin-wait hint (`{.intrinsic: "CpuRelax".}`). Portable in the same
+    #    sense the fences are: every target has the mechanism and no two spell it
+    #    alike — `pause` on x86-64, `yield` on AArch64, nothing at all on a
+    #    target that has neither. Deliberately NOT one of the atomics above
+    #    (`isAtomic` is an ordinal range, and this row shares none of their
+    #    machinery): it moves no data, touches no cell and orders nothing. It is
+    #    a hint to the core that the loop around it is waiting on another core.
+    CpuRelaxOp
     # ── AdvSIMD/NEON vector rows (`{.instruction.}`, AArch64). The shoggoth
     #    vectorizer synthesizes their declarations and emits `(instr …)`
     #    applications; user code can also declare them. The vector VALUE type is
@@ -286,6 +294,7 @@ const
     "AtomicFetchAdd", "AtomicFetchSub", "AtomicFetchAnd", "AtomicFetchOr",
     "AtomicFetchXor", "AtomicAddFetch", "AtomicSubFetch",
     "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
+    "CpuRelax",
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
     "StackPointer", "TraceTable", "VgClientRequest",
@@ -611,6 +620,18 @@ const
                  params: AtomFence, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
 
+    # ── the spin-wait hint ─────────────────────────────────────────────────
+    # No operands, no result, no flags: the whole content is `effects`, and it is
+    # `effects` that has to keep it alive. NOT `efPure` — a pure hint is one CSE
+    # is entitled to fold two of into one and DCE is entitled to delete outright,
+    # and a deleted `pause` is not a slower program but a spin loop that
+    # hammers the bus. `efBarrier` is also the honest description of what the
+    # instruction is FOR: it stands inside a loop that re-reads a lock word, and
+    # hoisting that read above it would turn the loop into an infinite one.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 0,  # CpuRelax
+                 params: NoOps, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
+
     # ── 128-bit vectors: AdvSIMD (AArch64) and SSE2 (x86-64) ───────────────
     # All pinned: one machine instruction each on AArch64, named by its nifasm
     # tag. The loads/stores carry their memory effect so nothing reorders or
@@ -799,6 +820,15 @@ proc isMachineQuery*(op: IntrinsicOp): bool {.inline.} =
   ## because every other zero-operand row is a FLAG read, whose result cannot be
   ## materialised at all — these produce an ordinary register value.
   op in {StackPointerOp, TraceTableOp}
+
+proc isNullaryVoid*(r: IntrinsicRow): bool {.inline.} =
+  ## A row with no operands AND no output of any kind: `CpuRelax`. The back ends
+  ## need it named because their operand machinery is written around
+  ## `argCurs[0]` existing — `isMachineQuery` is the same shape with a register
+  ## result and gets the same early exit for the same reason. Everything such a
+  ## row does is in `effects`, so the lowering is "emit the opcode, bind
+  ## nothing".
+  r.arity == 0 and r.isVoidResult
 
 proc isAtomic*(op: IntrinsicOp): bool {.inline.} =
   ## An atomic row. The back ends lower these as a self-contained instruction
