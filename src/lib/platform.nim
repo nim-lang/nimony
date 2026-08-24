@@ -11,7 +11,7 @@
 # Nim has been tested on this platform or that the RTL has been ported.
 # Feel free to test for your excentric platform!
 
-import std/strutils
+import std / [strutils, syncio]
 
 type
   TSystemOS* = enum # Also add OS in initialization section and alias
@@ -283,8 +283,14 @@ proc nameToOS*(name: string): TSystemOS =
   ## is a bug in the `hostOS` derivation and not user input — `findOS` is what
   ## validates a flag, and returning `osEmbedded` for a typo is exactly the
   ## silence this split exists to prevent.
-  if not findOS(name, result):
+  ##
+  ## The out-parameter goes to a LOCAL rather than straight to `result`: `result`
+  ## is not initialized on entry, and a `var` parameter must be, so handing it
+  ## over is a read of an uninitialized location whichever way `findOS` returns.
+  var res = osEmbedded
+  if not findOS(name, res):
     quit "internal error: unknown host OS: " & name
+  result = res
 
 proc findCPU*(name: string; res: var TSystemCPU): bool =
   ## `true` and sets `res` when `name` is a CPU this compiler knows. `arm` is
@@ -301,5 +307,8 @@ proc findCPU*(name: string; res: var TSystemCPU): bool =
 
 proc nameToCPU*(name: string): TSystemCPU =
   ## The host's CPU; same contract as `nameToOS`.
-  if not findCPU(name, result):
+  ## `res` is a local for the same reason as in `nameToOS`.
+  var res = cpuNone
+  if not findCPU(name, res):
     quit "internal error: unknown host CPU: " & name
+  result = res
