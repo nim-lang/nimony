@@ -74,6 +74,8 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     of "32": config.bits = 32
     of "16": config.bits = 16
     else: quit "invalid value for --bits"
+    # Pin it, so a `--cpu` on either side of this flag leaves it alone.
+    config.bitsExplicit = true
   of "cpu":
     if not config.setTargetCPU(val):
       quit "unknown CPU: " & val

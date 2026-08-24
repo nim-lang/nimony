@@ -1613,7 +1613,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   # Lengc-emitted C names clash within a single function. `pool.syms.getOrIncl`
   # is identity-by-name, so two semantically distinct temps would otherwise
   # share an identifier.
-  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, goal: goal)
+  var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind
   preRegisterRoutines(c, n)
@@ -1629,6 +1629,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
 when isMainModule:
   var owningBuf = createTokenBuf(300)
   let n = setupProgram("debug.txt", "debug.out", owningBuf)
-  var pass = initPass(move owningBuf, "main", "xelim", 64)
+  # A standalone debug driver: no target, so the host's width is stated.
+  var pass = initPass(move owningBuf, "main", "xelim", sizeof(int)*8)
   lowerExprs(pass)
   echo pass.dest.toString(false)

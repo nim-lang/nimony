@@ -275,7 +275,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc injectRaisingCalls*(pass: var Pass; ptrSize: int) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(),
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(pass.bits),
                   hoisted: createTokenBuf(16))
   c.typeCache.openScope()
   tr(c, pass.dest, n)  # Write to pass.dest

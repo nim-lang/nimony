@@ -1555,7 +1555,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
                    thisModuleSuffix: string; bits: int): TokenBuf =
-  var c = Context(typeCache: createTypeCache(),
+  var c = Context(typeCache: createTypeCache(bits),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),

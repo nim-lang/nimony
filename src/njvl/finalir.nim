@@ -772,7 +772,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
 
 proc toFinalIr*(pass: var Pass) =
-  var c = Context(counter: 0, typeCache: createTypeCache(),
+  var c = Context(counter: 0, typeCache: createTypeCache(pass.bits),
                   thisModuleSuffix: pass.moduleSuffix)
   c.openScope()
   lowerExprs(pass, TowardsFinalIr)
@@ -796,7 +796,8 @@ when isMainModule:
   let n = setupProgram(infile, infile.changeModuleExt".finalir.nif", owningBuf)
   var initialBuf = createTokenBuf(300)
   initialBuf.addSubtree(n)
-  var pass = initPass(move initialBuf, "main", "xelim_finalir", 0)
+  # A standalone debug driver: no target, so the host's width is stated.
+  var pass = initPass(move initialBuf, "main", "xelim_finalir", sizeof(int)*8)
   toFinalIr(pass)
   let output = pass.dest.toString(false)
   if paramCount() >= 2:

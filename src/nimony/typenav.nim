@@ -43,7 +43,12 @@ type
     mem: seq[TokenBuf]
     current: TypeScope
 
-proc createTypeCache*(bits: int = 64): TypeCache =
+proc createTypeCache*(bits: int): TypeCache =
+  ## `bits` is how wide `int` is on the TARGET. Mandatory on purpose: it used to
+  ## default to 64, and every caller took the default, so on a 32-bit target every
+  ## `IntLit`, every `sizeof` and every synthesized index temp was typed `(i 64)`
+  ## no matter what `--bits` said. A default here cannot be right — the host's
+  ## width is not a fact about the program being compiled.
   TypeCache(builtins: createBuiltinTypes(bits))
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;

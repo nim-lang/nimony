@@ -88,6 +88,10 @@ type
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
     bits*: int
+    bitsExplicit*: bool  ## `--bits:N` (or an `intbits` config row) was given, so
+                         ## `--cpu` must NOT overwrite it. Without this the two
+                         ## flags would resolve by ORDER, and `--bits:32 --cpu:arm32`
+                         ## and `--cpu:arm32 --bits:32` would not mean the same thing.
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
@@ -127,7 +131,14 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
   )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
+  ## The CPU also decides how wide `int` is. It is not a separate question — a
+  ## target whose `int` is not its word is a target nobody asked for — so naming
+  ## the CPU answers it, and `--bits` stays for the rare case of contradicting
+  ## the table on purpose. Before this, `--cpu:arm32` left `bits` at the HOST's
+  ## width: the whole 32-bit target was type-checked with a 64-bit `int`.
   result = platform.findCPU(symbol, config.targetCPU)
+  if result and not config.bitsExplicit:
+    config.bits = platform.CPU[config.targetCPU].intSize
 
 proc setTargetOS*(config: var NifConfig; symbol: string): bool =
   # `findOS`, not `nameToOS`: the first enum value is the bare-metal target now
@@ -163,6 +174,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       c.into:
         if c.isIntLit:
           result.bits = int c.intVal
+          result.bitsExplicit = true
         while c.hasMore: skip c
     of "compat":
       c.into:

@@ -207,7 +207,7 @@ proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: NifLineInf
   else:
     inc n
 
-proc findLocal(file: string; sym: SymId; toTrack: NifLineInfo; mode: TrackMode) =
+proc findLocal(file: string; sym: SymId; toTrack: NifLineInfo; mode: TrackMode; bits: int) =
   var buf = parseFromFile(file)
 
   var name = pool.syms[sym]
@@ -231,7 +231,7 @@ proc findLocal(file: string; sym: SymId; toTrack: NifLineInfo; mode: TrackMode) 
   c.trackMode = mode
   c.sym = sym
   c.tokenLen = name.len
-  c.typeCache = createTypeCache()
+  c.typeCache = createTypeCache(bits)
   c.typeCache.openScope()
 
   if symParent.substructureKind == FldU:
@@ -298,7 +298,7 @@ proc usages*(files: openArray[string]; config: NifConfig) =
   elif isLocalSym:
     # Set path so files are found when resolving symbols
     prog.main.dir = nifFile.splitPath.head
-    findLocal(nifFile, symId, requestedInfo, config.toTrack.mode)
+    findLocal(nifFile, symId, requestedInfo, config.toTrack.mode, config.bits)
   else:
     for file in files:
       var fbuf = parseFromFile(file)

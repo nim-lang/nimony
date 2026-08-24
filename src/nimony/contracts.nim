@@ -41,6 +41,7 @@ type
     startInstr: Cursor
     errors: TokenBuf
     procCanRaise: bool
+    bits: int                ## target `int` width, for the CF's type cache
 
 proc buildErr(c: var Context; info: NifLineInfo; msg: string) =
   when defined(debug):
@@ -840,7 +841,7 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
     c.facts.add bb.indegreeFacts[i]
 
 proc checkContracts(c: var Context; n: Cursor) =
-  c.cf = toControlflow(n)
+  c.cf = toControlflow(n, c.bits)
   c.facts = createFacts()
   #echo "CF IS ", codeListing(c.cf)
 
@@ -939,9 +940,9 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      LabS, JmpS, NoStmt:
     c.toplevelStmts.takeTree n
 
-proc analyzeContracts*(input: var TokenBuf): TokenBuf =
+proc analyzeContracts*(input: var TokenBuf; bits: int): TokenBuf =
   #let oldInfos = prepare(input)
-  var c = Context(typeCache: createTypeCache())
+  var c = Context(typeCache: createTypeCache(bits), bits: bits)
   c.typeCache.openScope()
   var n = beginRead(input)
   traverseToplevel c, n
@@ -959,7 +960,8 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parseFromFile(infile)
-    discard analyzeContracts(input)
+    # A standalone debug driver: no target, so the host's width is stated.
+    discard analyzeContracts(input, sizeof(int)*8)
     #echo toString(outp, false)
 
   main(paramStr(1))

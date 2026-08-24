@@ -52,7 +52,7 @@ type
 
 proc createInliner(thisModuleSuffix: string; ptrSize: int): Context =
   result = Context(thisRoutine: NoSymId, thisModuleSuffix: thisModuleSuffix,
-    typeCache: createTypeCache(), ptrSize: ptrSize)
+    typeCache: createTypeCache(ptrSize * 8), ptrSize: ptrSize)
 
 when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
