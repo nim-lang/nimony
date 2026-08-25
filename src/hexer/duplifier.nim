@@ -1569,9 +1569,9 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
 
 proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(lifter: lifter, typeCache: createTypeCache(),
+  var c = Context(lifter: lifter, typeCache: createTypeCache(pass.bits),
     dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix,
-    hoisted: createTokenBuf(16))
+    hoisted: createTokenBuf(16), mover: MoverContext(bits: pass.bits))
   c.typeCache.openScope()
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]

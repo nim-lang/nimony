@@ -406,7 +406,7 @@ proc passiveHooks(): Hooks =
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
-    typeCache: createTypeCache(), coroTypes: createTokenBuf(10),
+    typeCache: createTypeCache(pass.bits), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl(),
     hooks: passiveHooks(), nextTemp: pass.nextTemp,
     ptrSize: pass.bits div 8)
@@ -454,5 +454,7 @@ when isMainModule:
 
  )"""
   var buf = parseFromBuffer(inp, "slaldpees1")
-  var pass = Pass(n: beginRead(buf), dest: createTokenBuf(10), moduleSuffix: "slaldpees1")
+  # A standalone debug driver: no target, so the host's width is stated.
+  var pass = Pass(n: beginRead(buf), dest: createTokenBuf(10),
+                  moduleSuffix: "slaldpees1", bits: sizeof(int)*8)
   transformToCps(pass)

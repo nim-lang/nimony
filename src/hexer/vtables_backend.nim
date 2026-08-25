@@ -844,7 +844,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
 proc transformVTables*(pass: var Pass; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally
   var c = Context(
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(pass.bits),
     moduleSuffix: pass.moduleSuffix,
     needsXelim: needsXelim,
     getRttiSym: pool.syms.getOrIncl("getRtti.0." & SystemModuleSuffix)

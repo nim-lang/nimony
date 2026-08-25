@@ -1394,8 +1394,10 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   wrapper.addParLe StmtsS, NoLineInfo
   wrapper.copyTree iter
   wrapper.addParRi()
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0,
-                      nextTemp = c.nextTemp)
+  # `c.ptrSize` IS the target width; the 0 that stood here was invisible only
+  # while the type cache ignored what it was handed.
+  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps",
+                      c.ptrSize * 8, nextTemp = c.nextTemp)
   eliminateJumps(pass, raisesResolved = true)
   c.nextTemp = pass.nextTemp
   block extractBody:

@@ -2852,7 +2852,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     else: mp.dir
   var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
     nestedIn: @[(StmtsS, SymId(0))],
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(bits),
     pending: createTokenBuf(),
     strLitBuf: createTokenBuf(),
     bits: bits,
