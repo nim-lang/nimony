@@ -68,9 +68,6 @@ type
     current: CurrentProc
     callFirstArgs: Table[SymId, TokenBuf] ## first argument of a local's init call (for for-loop borrow tracking)
 
-proc addParLe*(dest: var TokenBuf; kind: NjvlKind; info = NoLineInfo) =
-  dest.addParLe(cast[TagId](kind), info)
-
 proc openScope(c: var Context) =
   c.typeCache.openScope()
 

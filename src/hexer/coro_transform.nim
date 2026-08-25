@@ -521,7 +521,7 @@ proc getNextState*(buf: TokenBuf; n: Cursor): int =
   while pos < buf.len:
     # raw linear scan: only TagLit tokens carry a tagId (suffix/literal bits
     # alias it), and the head may carry a line-info suffix before its child
-    if buf[pos].kind == TagLit and globalTags.tags[buf[pos].tagId] == "lab":
+    if buf[pos].kind == TagLit and buf[pos].tagId == TagId(LabS):
       let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
       # Skip `xelim`'s structured merge labels: only the CPS state machine's
       # own integer-labelled `lab` names a state (`doc/final_ir.md`).
@@ -1089,8 +1089,7 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
-  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab" and
-     n.childCursor.kind == IntLit:
+  if n.stmtKind == LabS and n.childCursor.kind == IntLit:
     # Only the CPS state machine's own integer-labelled `lab` marks a state
     # boundary. A symbol-labelled one is `xelim`'s structured merge label
     # (`doc/final_ir.md`) and is opaque here.
@@ -1191,24 +1190,24 @@ proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
 
 proc emitJump*(dest: var TokenBuf; label: int; info: NifLineInfo) =
-  dest.addParLe("jmp", info)
+  dest.addParLe(JmpS, info)
   dest.addIntLit label, info
   dest.addParRi()
 
 proc emitLabel*(dest: var TokenBuf; label: int; info: NifLineInfo) =
-  dest.addParLe("lab", info)
+  dest.addParLe(LabS, info)
   dest.addIntLit label, info
   dest.addParRi()
 
 proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc emitSymJump(dest: var TokenBuf; label: SymId; info: NifLineInfo) =
-  dest.addParLe("jmp", info)
+  dest.addParLe(JmpS, info)
   dest.addSymUse label, info
   dest.addParRi()
 
 proc emitSymLabel(dest: var TokenBuf; label: SymId; info: NifLineInfo) =
-  dest.addParLe("lab", info)
+  dest.addParLe(LabS, info)
   dest.addSymDef label, info
   dest.addParRi()
 
@@ -1349,7 +1348,7 @@ proc trTryGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let exceptStart = m
     if needsTracker:
       var h = createTokenBuf(64)
-      h.addParLe("ite", info)
+      h.addParLe IteV, info
       # NOT `(failed t)`: that tag is the eraiser's contract for a raising
       # call's own result temp, and `constparams.localsThatBecomeTuples`
       # retypes every symbol it sees under one to `(tuple ErrorCode T)`. The
@@ -1396,7 +1395,7 @@ proc trTryGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # --- whatever no handler consumed keeps travelling -------------------
   if needsTracker and not catchAll:
     var r = createTokenBuf(24)
-    r.addParLe("ite", info)
+    r.addParLe IteV, info
     r.copyIntoKind NeqX, info:
       r.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
       r.addSymUse tracker, info
@@ -1651,12 +1650,12 @@ proc toGoto*(c: var Context; n: Cursor): TokenBuf =
 
 proc rewriteCrossStateJumps(n: var Cursor; dest: var TokenBuf; states: Table[SymId, int]) =
   if n.kind == TagLit:
-    let tag = globalTags.tags[n.cursorTagId]
-    if tag == "lab" or tag == "jmp":
+    let sk = n.stmtKind
+    if sk in {LabS, JmpS}:
       let op = n.childCursor
       if op.kind in {Symbol, SymbolDef} and states.hasKey(op.symId):
         let state = states.getOrDefault(op.symId)
-        if tag == "lab":
+        if sk == LabS:
           emitJump dest, state, n.info # preserve the fall-through edge
           emitLabel dest, state, n.info
         else:
@@ -1704,17 +1703,17 @@ proc repairCrossStateJumps(c: var Context) =
     var jmps: seq[(SymId, int)] = @[]
     var pos = 0
     while pos < buf.len:
-      if buf[pos].kind == TagLit:
-        let tag = globalTags.tags[buf[pos].tagId]
-        if tag == "lab" or tag == "jmp":
-          let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
-          if operand.kind == IntLit:
-            if tag == "lab": inc seg
-          elif operand.kind in {Symbol, SymbolDef}:
-            if tag == "lab":
-              labSeg[operand.symId] = seg
-            else:
-              jmps.add (operand.symId, seg)
+      if buf[pos].kind == TagLit and
+         (buf[pos].tagId == TagId(LabS) or buf[pos].tagId == TagId(JmpS)):
+        let isLab = buf[pos].tagId == TagId(LabS)
+        let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
+        if operand.kind == IntLit:
+          if isLab: inc seg
+        elif operand.kind in {Symbol, SymbolDef}:
+          if isLab:
+            labSeg[operand.symId] = seg
+          else:
+            jmps.add (operand.symId, seg)
       inc pos
     var states = initTable[SymId, int]()
     for (s, jseg) in jmps:
@@ -2546,8 +2545,8 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if n.typeKind == ProctypeT:
             c.hooks.trProctype(c, dest, n)
           else:
-            case globalTags.tags[n.cursorTagId]
-            of "jmp":
+            case n.stmtKind
+            of JmpS:
               # Two different `jmp`s meet here. The CPS state machine's own
               # carries an INTEGER state id (this pass and `togoto` produce
               # it); the structured Nimony one carries a label SYMBOL and is
@@ -2559,7 +2558,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
                   inc n
               else:
                 takeTree dest, n
-            of "lab":
+            of LabS:
               if n.childCursor.kind == IntLit:
                 dest.addParRi() # close stmts
                 dest.addParRi() # close proc decl
