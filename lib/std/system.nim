@@ -255,10 +255,7 @@ include "system/formatfloat"
 
 include "errorcodes/errorcodes"
 
-when defined(embedded):        # one thread ⇒ a thread-local IS a global
-  var localErr*: ErrorCode
-else:
-  var localErr* {.threadvar.}: ErrorCode
+var localErr* {.threadvar.}: ErrorCode
 
 type
   ContinuationProc* = proc (coro: ptr CoroutineBase): Continuation {.nimcall.}
@@ -600,10 +597,7 @@ type
   Exception* = object of RootObj
     msg*: string
 
-when defined(embedded):        # one thread ⇒ a thread-local IS a global
-  var exc*: ref Exception
-else:
-  var exc* {.threadvar.}: ref Exception
+var exc* {.threadvar.}: ref Exception
 
 proc newException*[T](exceptn: typedesc[T]; message: string): ref T {.inline, untyped.} =
   ## Creates a heap-based exception object of type `T` for Nim 2 interop:
