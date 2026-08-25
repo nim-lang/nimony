@@ -1696,35 +1696,44 @@ proc repairCrossStateJumps(c: var Context) =
   ##
   ## Must run before `escapingLocals` so locals that now cross a state boundary
   ## are moved into the frame.
+  ##
+  ## ITERATED to a fixed point, and that is not a detail: converting a pair
+  ## PLANTS a new `(lab k)` where its label was, which is itself a new state
+  ## boundary and can split a pair that was intra-state a moment ago. #2366 is
+  ## exactly that shape — the `and` of a `while` condition and the loop's own
+  ## exit share a segment until the exit is converted, and the surviving
+  ## `goto` then names a label that moved to the next state proc.
   template buf: TokenBuf = c.currentProc.cf
-  var seg = 0
-  var labSeg = initTable[SymId, int]()
-  var jmps: seq[(SymId, int)] = @[]
-  var pos = 0
-  while pos < buf.len:
-    if buf[pos].kind == TagLit:
-      let tag = globalTags.tags[buf[pos].tagId]
-      if tag == "lab" or tag == "jmp":
-        let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
-        if operand.kind == IntLit:
-          if tag == "lab": inc seg
-        elif operand.kind in {Symbol, SymbolDef}:
-          if tag == "lab":
-            labSeg[operand.symId] = seg
-          else:
-            jmps.add (operand.symId, seg)
-    inc pos
-  var states = initTable[SymId, int]()
-  for (s, jseg) in jmps:
-    if labSeg.getOrDefault(s, jseg) != jseg and not states.hasKey(s):
-      states[s] = c.currentProc.labelCounter
-      inc c.currentProc.labelCounter
-  if states.len == 0: return
-  var dest = createTokenBuf(buf.len + 16)
-  var n = beginRead(buf)
-  while n.hasMore:
-    rewriteCrossStateJumps(n, dest, states)
-  c.currentProc.cf = ensureMove dest
+  while true:
+    var seg = 0
+    var labSeg = initTable[SymId, int]()
+    var jmps: seq[(SymId, int)] = @[]
+    var pos = 0
+    while pos < buf.len:
+      if buf[pos].kind == TagLit:
+        let tag = globalTags.tags[buf[pos].tagId]
+        if tag == "lab" or tag == "jmp":
+          let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
+          if operand.kind == IntLit:
+            if tag == "lab": inc seg
+          elif operand.kind in {Symbol, SymbolDef}:
+            if tag == "lab":
+              labSeg[operand.symId] = seg
+            else:
+              jmps.add (operand.symId, seg)
+      inc pos
+    var states = initTable[SymId, int]()
+    for (s, jseg) in jmps:
+      if labSeg.getOrDefault(s, jseg) != jseg and not states.hasKey(s):
+        states[s] = c.currentProc.labelCounter
+        inc c.currentProc.labelCounter
+    # Every round retires at least one symbolic label, so this terminates.
+    if states.len == 0: break
+    var dest = createTokenBuf(buf.len + 16)
+    var n = beginRead(buf)
+    while n.hasMore:
+      rewriteCrossStateJumps(n, dest, states)
+    c.currentProc.cf = ensureMove dest
 
 # ---------------------------------------------------------------------
 # Body lowering — produce the state-machine procs for a single
