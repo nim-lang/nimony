@@ -539,6 +539,19 @@ proc markAllUnknown(a: var ProcAnalysis) =
     a.slotW[i] = true
     a.escapes[i] = true
 
+proc isExternProc(pragmas: Cursor): bool =
+  ## A proc whose implementation lives outside the NIF world: `importc` /
+  ## `importcpp`. Its body is `(stmts .)` — an EMPTY body, not an effect-free
+  ## one, so walking it would "prove" that `time(addr x)` neither writes
+  ## through nor escapes its argument and copyprop would then keep believing
+  ## `x`'s pre-call value. There is nothing to analyse; say so.
+  if not pragmas.isTagLit: return false
+  var p = pragmas
+  result = false
+  p.loopInto:
+    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP}: return true
+    skip p
+
 proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   var p = procDecl
   let d = takeProcDecl(p)
@@ -552,7 +565,7 @@ proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   result.slotW = newSeq[bool](paramSyms.len + 1)
   result.escapes = newSeq[bool](paramSyms.len + 1)
   for i, s in paramSyms: result.paramLookup[s] = i
-  if d.body.isTagLit:
+  if d.body.isTagLit and not isExternProc(d.pragmas):
     var body = d.body
     walkStmt(result, body)
   else:
