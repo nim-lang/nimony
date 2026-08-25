@@ -158,7 +158,15 @@ else:
   include "alloc"
 
   # --- user-facing API: `func` over a per-thread global MemRegion ----------
-  var allocator {.threadvar.}: MemRegion
+  when defined(embedded):
+    # A bare-metal image has ONE thread of execution, so a thread-local here is
+    # a global — and saying that is what makes it buildable, because the target
+    # has no TLS register for the back end to reach one through. The refusal
+    # stays valuable for every other thread-local: an image that genuinely
+    # thinks it has threads is told so rather than silently given one copy.
+    var allocator: MemRegion
+  else:
+    var allocator {.threadvar.}: MemRegion
 
   func alloc*(size: int): pointer =
     ## Allocates `size` bytes of uninitialized memory.
@@ -209,8 +217,10 @@ func deallocFixed*(p: pointer) =
   dealloc(p)
 
 # --- out-of-memory handling ------------------------------------------------
-var
-  missingBytes {.threadvar.}: int
+when defined(embedded):        # one thread ⇒ a thread-local IS a global
+  var missingBytes: int
+else:
+  var missingBytes {.threadvar.}: int
 
 proc continueAfterOutOfMem*(size: int) {.nimcall.} =
   ## Default out-of-memory handler: accumulates missing bytes so runtime code can react gracefully.

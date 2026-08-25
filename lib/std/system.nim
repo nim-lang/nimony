@@ -185,6 +185,11 @@ include "system/setops"
 
 include "system/ctypes"
 
+when defined(embedded):
+  # The console of a bare-metal image, and its `exit`. Included BEFORE `exits`,
+  # which uses it, and only on the target that has no OS to ask instead.
+  include "system/semihosting"
+
 include "system/exits"
 include "system/atomintrin"
 include "system/memory"
@@ -250,7 +255,10 @@ include "system/formatfloat"
 
 include "errorcodes/errorcodes"
 
-var localErr* {.threadvar.}: ErrorCode
+when defined(embedded):        # one thread ⇒ a thread-local IS a global
+  var localErr*: ErrorCode
+else:
+  var localErr* {.threadvar.}: ErrorCode
 
 type
   ContinuationProc* = proc (coro: ptr CoroutineBase): Continuation {.nimcall.}
@@ -592,7 +600,10 @@ type
   Exception* = object of RootObj
     msg*: string
 
-var exc* {.threadvar.}: ref Exception
+when defined(embedded):        # one thread ⇒ a thread-local IS a global
+  var exc*: ref Exception
+else:
+  var exc* {.threadvar.}: ref Exception
 
 proc newException*[T](exceptn: typedesc[T]; message: string): ref T {.inline, untyped.} =
   ## Creates a heap-based exception object of type `T` for Nim 2 interop:

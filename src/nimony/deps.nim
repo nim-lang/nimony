@@ -959,6 +959,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # and errors on an unsupported combination (no silent host fallback).
         b.addStrLit "--os:" & platform.OS[c.config.targetOS].name
         b.addStrLit "--cpu:" & platform.CPU[c.config.targetCPU].name
+        # The board, when one was given. A bare-metal image has no OS to ask how
+        # much RAM it may have, so the layout file IS that answer — and arkham
+        # forwards it into the asm-NIF so nifasm places segments from the same
+        # description rather than reading the file a second time.
+        if c.config.layoutFile.len > 0:
+          b.addStrLit "--layout:" & c.config.layoutFile
         b.withTree "output":
           b.addStrLit "-o:"
         b.addKeyw "input"

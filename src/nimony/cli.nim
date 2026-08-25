@@ -101,6 +101,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.ccKey = extractCCKey(val)
   of "linker":
     config.linker = val
+  of "layout":
+    # The board description a bare-metal image is built against (see
+    # nativenif's doc/layout.md). Only the native backend can use it, and
+    # arkham is what reads it — this only carries the path there.
+    config.layoutFile = val
+    forwardArg = false
+    forwardArgLengc = false
   of "base":
     config.baseDir = val
   of "nimcache":

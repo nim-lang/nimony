@@ -785,6 +785,12 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
     # An int the back end reads as a LITERAL (32/64) at the call site; the
     # declared parameter type is any integer.
     result = intBitsOf(c, typ) > 0
+  of ptImmLit:
+    # Same shape as `ptLaneBits` and checked the same way: the DECLARATION only
+    # has to say "an integer". That the argument must be a literal is a fact
+    # about the instruction's encoding, so it is checked where the encoding is —
+    # at the call site, by the back end.
+    result = intBitsOf(c, typ) > 0
 
 proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
                               paramsAt: int; op: IntrinsicOp): string =

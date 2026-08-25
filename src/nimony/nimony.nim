@@ -69,6 +69,10 @@ Options:
                             counts on stdout (one line per nifmake call)
   --stats                   after build, print total LOC and module count
                             across the dep graph
+  --layout:FILE             native backend, bare-metal targets only: the BOARD
+                            description (memory regions, stack slots, heap) that
+                            arkham and nifasm build the image against. See
+                            nativenif's doc/layout.md
   --nimcache:PATH           set the path used for generated files
   -o, --out:PATH            write the executable to PATH (overrides the
                             default `<nimcache>/<modhash>/<basename>.exe`).
