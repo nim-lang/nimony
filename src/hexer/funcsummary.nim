@@ -539,6 +539,18 @@ proc markAllUnknown(a: var ProcAnalysis) =
     a.slotW[i] = true
     a.escapes[i] = true
 
+proc isForeignProc(pragmas: Cursor): bool =
+  ## `importc`/`importcpp`: the body is foreign, so its (empty) `(stmts …)`
+  ## placeholder must not be analyzed as if it were a real, effect-free body.
+  if not pragmas.isTagLit: return false
+  var p = pragmas
+  p.into:
+    while p.hasMore:
+      if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP}:
+        return true
+      skip p
+  result = false
+
 proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   var p = procDecl
   let d = takeProcDecl(p)
@@ -552,7 +564,7 @@ proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   result.slotW = newSeq[bool](paramSyms.len + 1)
   result.escapes = newSeq[bool](paramSyms.len + 1)
   for i, s in paramSyms: result.paramLookup[s] = i
-  if d.body.isTagLit:
+  if d.body.isTagLit and not isForeignProc(d.pragmas):
     var body = d.body
     walkStmt(result, body)
   else:
