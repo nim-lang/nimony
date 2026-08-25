@@ -185,14 +185,6 @@ type
     continuationProcImpl*: Cursor
     shouldPublish*: seq[tuple[sym: SymId, start: int]]
     coroTypes*: TokenBuf
-    synth*: seq[TokenBuf]
-      ## Statement lists `trTryGoto` builds and then re-reads through `trGoto`.
-      ## They have to OUTLIVE the walk: `trGoto`'s local-decl path registers a
-      ## local's type in the `TypeCache` as a Cursor INTO the buffer it is
-      ## reading, so a handler body that declares anything would leave the
-      ## cache pointing into a freed buffer. Growing the seq moves the
-      ## `TokenBuf` objects but not the token storage they point at, so the
-      ## cursors stay good.
     hooks*: Hooks
     awaitingSuspendPark*: bool
       ## Set by `(delay0)`; consumed by the following `(suspend)` to
@@ -1261,13 +1253,15 @@ proc trGotoScoped(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.copyIntoKind StmtsS, n.info:
       trGoto c, dest, n
 
-proc trGotoBuf(c: var Context; dest: var TokenBuf; buf: sink TokenBuf) =
+proc trGotoBuf(c: var Context; dest: var TokenBuf; buf: var TokenBuf) =
   ## Run the goto conversion over a freshly synthesized statement list so the
   ## synthesized `ite`s get the same suspension-point splitting as the ones
-  ## that came out of `finalir`. The buffer is parked in `c.synth`; see the
-  ## field's comment for why it may not die here.
-  c.synth.add ensureMove(buf)
-  var m = beginRead(c.synth[^1])
+  ## that came out of `finalir`. `buf` may die on return even though `trGoto`
+  ## registers a local's type in the `TypeCache` as a Cursor INTO it: a Cursor
+  ## holds a reference on the buffer's `CursorOwner`, so the token storage
+  ## outlives the `TokenBuf` for exactly as long as something still points at
+  ## it.
+  var m = beginRead(buf)
   while m.hasMore:
     trGoto c, dest, m
 
