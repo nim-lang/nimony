@@ -98,6 +98,11 @@ type
     toTrack*: TrackPosition
     cc*: string
     linker*: string
+    layoutFile*: string  # `--layout:FILE` — the BOARD, for a bare-metal target:
+                         # its memory regions, stack slots and heap. Forwarded to
+                         # arkham verbatim; empty on a hosted target, which has an
+                         # OS to ask for memory instead of a file that says what
+                         # the part has.
     ccKey*: string
     appType*: AppType
     backend*: Backend

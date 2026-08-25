@@ -209,8 +209,7 @@ func deallocFixed*(p: pointer) =
   dealloc(p)
 
 # --- out-of-memory handling ------------------------------------------------
-var
-  missingBytes {.threadvar.}: int
+var missingBytes {.threadvar.}: int
 
 proc continueAfterOutOfMem*(size: int) {.nimcall.} =
   ## Default out-of-memory handler: accumulates missing bytes so runtime code can react gracefully.
