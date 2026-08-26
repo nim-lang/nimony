@@ -127,11 +127,15 @@ type
       ## Inside an `except`/`fin` body, the tracker holding the exception being
       ## handled — what a bare `(raise .)` re-raises.
     loopHeads*: seq[int]
-      ## The state label of every enclosing SUSPENDING loop, innermost last.
-      ## A Final IR `(continue .)` is the loop's back-edge, so it lowers to a
-      ## `jmp` to the top of this stack. A non-suspending loop stays a single
-      ## `(loop ...)` construct and pushes nothing — its own `continue` is
-      ## translated by `coroTr`, not here.
+      ## One entry per enclosing loop, innermost last: the state label of a
+      ## SUSPENDING loop, or `KeptLoop` for one that stays a single
+      ## `(loop ...)` construct. A Final IR `(continue .)` is the back-edge of
+      ## the INNERMOST loop only, so it lowers against the top of this stack:
+      ## a `jmp` to that state label, or — for a kept loop — the marker copied
+      ## through untouched, because `coroTr` is what translates that one. A
+      ## kept loop has to push too: without an entry of its own its back-edge
+      ## would lower against the enclosing suspending loop and turn the inner
+      ## loop into a single iteration per outer round.
     kind*: RoutineKind
     isClosureIter*: bool
       ## True for `.closure` iters specifically. Drives the resume-slot
@@ -1189,6 +1193,11 @@ proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParPair FalseX, info  # initialized to false
     dest.addParRi()
 
+const
+  KeptLoop* = -1
+    ## `ProcContext.loopHeads` entry for a loop kept as a `(loop ...)`
+    ## construct: it names no state, so it is no jump target.
+
 proc emitJump*(dest: var TokenBuf; label: int; info: NifLineInfo) =
   dest.addParLe(JmpS, info)
   dest.addIntLit label, info
@@ -1413,13 +1422,19 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var info = n.info
   case n.njvlKind
   of ContinueV:
-    # The Final IR loop's sole back-edge. Inside a suspending loop it is the
-    # jump to the loop's head state, emitted by the `LoopV` case below; at the
-    # top level of a body (which the Final IR never produces) there is nothing
-    # to jump to.
-    if c.currentProc.loopHeads.len > 0:
+    # The back-edge of the INNERMOST enclosing loop. For a suspending one that
+    # is the jump to its head state, emitted by the `LoopV` case below. For a
+    # loop kept as a construct the marker stays as it is: `coroTr`'s `LoopV`
+    # case reads it to tell the loop's own tail from a source-level `continue`.
+    # At the top level of a body (which the Final IR never produces) there is
+    # nothing to jump to.
+    if c.currentProc.loopHeads.len == 0:
+      skip n
+    elif c.currentProc.loopHeads[^1] == KeptLoop:
+      dest.takeTree n
+    else:
       emitJump dest, c.currentProc.loopHeads[^1], info
-    skip n
+      skip n
   of StoreV:
     var addLabel = false
     takeInto dest, n:
@@ -1453,8 +1468,10 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # enclosing `try` and has to be redirected even though no state boundary
       # falls inside. Copying the subtree verbatim would leave it a proc exit.
       dest.addParLe(n.cursorTagId, info)
+      c.currentProc.loopHeads.add KeptLoop
       n.into:
         trGotoScoped c, dest, n
+      discard c.currentProc.loopHeads.pop()
       dest.addParRi()
   of IteV, ItecV:
     if containsSuspensionPoint(c, n):
