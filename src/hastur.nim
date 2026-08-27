@@ -564,8 +564,9 @@ const
     # MinGW bundle (`tools/wine_test.sh`, see `doc/wine_testing.md`): each of the
     # directory's tests run through `nimony n` on its own AND the whole directory
     # run as one native joined program, which is the shape the tree walk actually
-    # compiles it in and not the same question — `tests/nimony/arc` passes
-    # test-by-test but its group does not (see `NativeJoinSkip`).
+    # compiles it in and NOT the same question: five of these directories passed
+    # test-by-test and failed as a group, on three backend bugs that only a
+    # module compiled as an import can reach (see `NativeJoinSkip`).
     #
     # `tests/nimony/stdlib`: 45 of its 53 pass; the rest are in `NativeTestSkip`.
     # This is the suite that covers the process vectors the Windows entry point
@@ -597,46 +598,21 @@ const
     "tests/nimony/when"
   ]
 
-  NativeJoinSkip = [
+  NativeJoinSkip: array[0, string] = [
     # Directories whose tests each compile and run correctly through `nimony n`
-    # — they are in the lists above — but whose JOINED program does not. The
-    # tree walk compiles a group's members as IMPORTS of a generated driver
-    # rather than as main modules, and the native backend has gaps that only
-    # that shape reaches, so the group keeps the C backend while the same
-    # directory's standalone tests (and `hastur native`) stay native.
+    # — they are in the lists above — but whose JOINED program does not, so the
+    # group keeps the C backend while the same directory's standalone tests
+    # stay native.
     #
-    # Each one is a native bug with a standalone reproduction, not a property of
-    # the test; drop the entry once the backend handles it.
-    #
-    # A local assigned inside a `for` whose body is an `if`/`elif` chain with a
-    # `break` keeps its INITIAL value — the stores in the loop are lost. Both of
-    # these run a `splitFile`-shaped scan, and both print the pre-loop values:
-    #
-    #   proc g*(p: string): int =
-    #     var pathEnd = -1
-    #     var extPos = p.len
-    #     for i in countdown(p.len-1, 1):
-    #       if p[i] == '.':
-    #         if extPos == p.len: extPos = i
-    #       elif p[i] == '/':
-    #         pathEnd = i
-    #         break
-    #     echo pathEnd, " ", extPos      # 7 11 as a main module, -1 15 imported
-    #
-    # Reproduces on Linux too, so it is not a Windows story — nothing in the
-    # native suite compiles a test as an import, which is why it went unseen.
-    "tests/nimony/arc",          # tsplitfile
-    "tests/nimony/strings",      # tsplit_and_append, the same scan
-    # `ExitProcess` and `GetStdHandle` reach arkham with no import library
-    # ("names no import library; annotate ... with `dynlib`") even though
-    # `lib/std/system/panics.nim` annotates both — the binding is lost somewhere
-    # in the multi-module program, and every module in the group needs it.
-    "tests/nimony/consteval",
-    # arkham stops at a template-injected symbol in the imported module's init
-    # proc: "Unknown or invalid symbol: injectedLocal.1 … in proc `ini.0.…`"
-    # (`helper.1` for the other). The same templates are fine in a main module.
-    "tests/nimony/templates",
-    "tests/nimony/untyped"
+    # Empty, and worth keeping empty: the tree walk compiles a group's members
+    # as IMPORTS of a generated driver, and no other runner does — `hastur
+    # native` compiles every test as a MAIN module — so this list is the only
+    # place a native gap in that shape can be recorded. Five directories were
+    # here when it was written (arc, strings, consteval, templates, untyped)
+    # and all five were three backend bugs, not five: a peephole that answered
+    # its liveness question across proc boundaries, a template-gensym'd routine
+    # named with local layout, and a `dynlib` that only one backend wrote into
+    # the shared `.x.nif`. An entry belongs here only while such a bug is open.
   ]
 
   NativeTestSkip = [
@@ -744,7 +720,12 @@ const
     # A `const` set is read straight out of read-only data, so its membership
     # test is an indexed load from a GLOBAL — a shape the C backend never sees a
     # register problem in and arkham got wrong twice. Native-only by nature.
-    "tests/nimony/sets/tconstsetscan"
+    "tests/nimony/sets/tconstsetscan",
+    # The one test here whose point is WHERE its code is compiled rather than
+    # what it does: everything it checks lives in `deps/mimportshapes`, so this
+    # is the suite's only native compile of a non-main module. Every other test
+    # arrives as `--isMain`, and three bugs lived in that gap — see the test.
+    "tests/nimony/modules/timportshapes"
   ]
 
 const
