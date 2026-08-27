@@ -651,42 +651,42 @@ const
     # type, so the width is the instantiation's and the back end reads it off the
     # pointee at the call site. See `matchPat`.
 
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 2, # AtomicLoad
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2, # AtomicLoad
                  params: AtomLoad, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomRead, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicStore
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicStore
                  params: AtomRmw, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: AtomWrite, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicExchange
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicExchange
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
     # The result is the SUCCESS FLAG, not the cell's type — so `ptBool`, and the
     # observed value leaves through the `expected` pointer instead.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 6, # AtomicCompareExchange
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 6, # AtomicCompareExchange
                  params: AtomCas, roles: AllIn, ret: ptBool,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
     # The fetch-ops return the value BEFORE the update, the `*_fetch` forms the
     # value after. Two rows rather than one plus a flag: the difference is which
     # register the sequence ends up reading, which is the lowering's whole shape.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicFetchAdd
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchAdd
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicFetchSub
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchSub
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicFetchAnd
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchAnd
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicFetchOr
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchOr
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicFetchXor
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchXor
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicAddFetch
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicAddFetch
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 3, # AtomicSubFetch
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicSubFetch
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
     # `targets: {}` — neither back end lowers the flag pair yet, and `targets` is
@@ -702,10 +702,10 @@ const
     # A fence has no operand but the order and no result at all: its entire content
     # is `efBarrier`, which is what keeps it from being deleted for producing
     # nothing — the same argument `cmp`'s `defs` makes for a flag-only instruction.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 1, # AtomicThreadFence
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 1, # AtomicThreadFence
                  params: AtomFence, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 1, # AtomicSignalFence
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 1, # AtomicSignalFence
                  params: AtomFence, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
 
