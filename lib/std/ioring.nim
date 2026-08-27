@@ -18,7 +18,7 @@ import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.EvRead, types.EvWrite
-export backend.BackendRelays, backend.CqSize
+export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
 

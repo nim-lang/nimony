@@ -55,8 +55,8 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
   # IORING_OP_POLL_ADD does, instead of completing on whichever event comes
   # first. Per-direction matching for read/write ops still happens inside
   # processFd.
-  var firedFds: array[64, cint]
-  var firedMasks: array[64, int]
+  var firedFds {.noinit.}: array[64, cint]
+  var firedMasks {.noinit.}: array[64, int]
   var m = 0
   for i in 0..<n:
     let fd = cint(events[i].ident)
