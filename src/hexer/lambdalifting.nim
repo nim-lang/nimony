@@ -93,6 +93,15 @@ type
     procStack: seq[SymId]
     dest: TokenBuf
     closureProcs, createsEnv, escapes: HashSet[SymId]
+    nestedProcs: HashSet[SymId]
+      ## the routines nested inside the CURRENT lifting root (root itself
+      ## excluded). Cleared when the root is done — `closureProcs` is
+      ## module-wide, so the propagation below must not follow an edge into
+      ## an unrelated root's closure.
+    nestedRefs: seq[(SymId, SymId)]
+      ## (user, used) edges: a nested routine of the current root MENTIONING
+      ## another routine of it — in call position or as a value. Feeds
+      ## `propagateEnvNeed`.
     currentProc: ProcContext
     procEnvs: Table[SymId, ProcContext]
       ## finished roots, keyed by root sym: pass 1 deposits each root's
@@ -163,6 +172,44 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.registerLocal(name, kind, typ, n)
     tr(c, dest, n)  # value
 
+proc propagateEnvNeed(c: var Context) =
+  ## A nested routine that MENTIONS a sibling needing the environment needs
+  ## the environment too — it has to forward one it does not own:
+  ##
+  ## ```nim
+  ##   proc runIt(k: int) =
+  ##     proc isK(n: int): bool = n == k   # captures -> closure
+  ##     proc probe(n: int) = echo isK(n)  # captures NOTHING, yet needs the env
+  ##     probe(3)
+  ## ```
+  ##
+  ## Without this, `probe` got no `ep` parameter and pass 2 fell into its
+  ## "toplevel .closure proc for interop" branch and passed `nil` as `isK`'s
+  ## environment: a SIGSEGV on the first captured-variable read (#2378). A
+  ## sibling used as a VALUE (`let f = isK`) hits the same nil in the
+  ## `(fn, env)` tuple, hence `noteNestedRef` sits on the symbol use, not on
+  ## the call — same place Nim's `detectCapturedVars` treats an inner closure
+  ## reference exactly like a captured variable.
+  ##
+  ## The ROOT is deliberately not propagated to: it owns the env-local.
+  ##
+  ## Transitive (`a` uses `b` uses a capturing `c`) and order-independent (the
+  ## sibling may be declared, or become a closure, only later), hence the
+  ## fixpoint over the edges collected for the whole root. Nim instead recurses
+  ## into an unprocessed callee's body on first sight; we cannot, the body is
+  ## simply the next tree in the buffer.
+  var changed = true
+  while changed:
+    changed = false
+    for i in 0 ..< c.nestedRefs.len:
+      let (user, used) = c.nestedRefs[i]
+      if user in c.nestedProcs and used in c.nestedProcs and
+          used in c.closureProcs and user notin c.closureProcs:
+        c.closureProcs.incl user
+        changed = true
+  c.nestedRefs.shrink 0
+  c.nestedProcs = initHashSet[SymId]()
+
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   #c.typeCache.openScope(ProcScope)
   let decl = n
@@ -171,6 +218,8 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if c.procStack.len == 0:
       c.currentProc = ProcContext()   # fresh per lifting root
     c.procStack.add(symId)
+    if c.procStack.len > 1:
+      c.nestedProcs.incl symId
     var isConcrete = true # assume it is concrete
     for i in 0..<BodyPos:
       if i == ParamsPos:
@@ -193,6 +242,7 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
     discard c.procStack.pop()
     if c.procStack.len == 0:
+      propagateEnvNeed c
       c.procEnvs[symId] = move c.currentProc   # hand the root's state to pass 2
   c.typeCache.closeScope()
 
@@ -216,6 +266,13 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId; isCursor = false
     c.currentProc.localToEnv[(typ, local)] = EnvField(objType: typ, field: result, typ: localTyp, isCursor: isCursor)
     c.envFieldType[result] = localTyp
 
+proc noteNestedRef(c: var Context; used: SymId) =
+  ## Remember that the innermost nested routine mentions `used`. Whether
+  ## `used` turns out to need the environment is not known yet — it may not
+  ## even be analysed yet — so the decision is deferred to `propagateEnvNeed`.
+  if c.procStack.len > 1:
+    c.nestedRefs.add (c.procStack[c.procStack.len-1], used)
+
 proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeInto dest, n:
     if n.kind == Symbol and
@@ -225,6 +282,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # go through `tr`: a cross-proc use in call position is a capture like
       # any other and needs the envp rewrite, otherwise the enclosing proc
       # never creates an environment for it.
+      noteNestedRef c, n.symId
       dest.addSubtree n
       inc n
     while n.hasMore:
@@ -315,6 +373,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if c.procStack.len > 0:
         #c.escapes.incl n.symId
         c.escapes.incl c.procStack[0]
+      # A closure sibling used as a VALUE needs the environment just as much
+      # as one that is called; pass 2 builds its `(fn, env)` tuple from the
+      # env of whoever mentions it.
+      noteNestedRef c, n.symId
       takeTree dest, n
     else:
       takeTree dest, n
