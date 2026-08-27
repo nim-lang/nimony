@@ -274,7 +274,14 @@ proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerS
     var parentsFailed = false
     let hasParents = semConceptParents(c, dest, n, ownerSym, parentsFailed)
     if n.symKind == TypevarY:
+      let selfStart = dest.len
       takeTree dest, n
+      # Generic instantiations copy Self from the concept body; publish it so
+      # requirement signatures can resolve the instantiated Self sym.
+      var selfNode = cursorAt(dest, selfStart)
+      inc selfNode
+      if selfNode.isSymbolDef:
+        publish c, dest, selfNode.symId, selfStart
     else:
       declareConceptSelf c, dest, n.info
     let bodyInfo = n.info
