@@ -385,10 +385,14 @@ proc makeLocalSym*(c: var SemContext; result: var string) =
   result.add '.'
   result.addInt counter[]
 
-proc newSymId*(c: var SemContext; s: SymId): SymId =
+proc newSymId*(c: var SemContext; s: SymId; forceGlobal = false): SymId =
+  ## A fresh name for a copy of `s`, keeping its layout — `forceGlobal` promotes
+  ## a local-layout one because the copy lands at MODULE scope where the original
+  ## did not (a template body declares in the template's scope; expanding it at
+  ## toplevel puts the declaration in the module). See `expandTemplateImpl`.
   var isGlobal = false
   var name = extractBasename(pool.syms[s], isGlobal)
-  if isGlobal:
+  if isGlobal or forceGlobal:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
@@ -410,15 +414,37 @@ proc hasErrorSince*(dest: TokenBuf; start: int): bool =
       break
     inc i
 
-proc makeTemplateSym*(c: var SemContext; result: var string) =
+const RoutineLikeSyms* = {TypevarY, StaticTypevarY, ProcY, FuncY, ConverterY,
+                          MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}
+  ## The kinds that get GLOBAL symbol layout wherever they are written, because
+  ## the backends lift every one of them out to module scope regardless of the
+  ## scope it was declared in. `identToSym` and `makeTemplateSym` must agree on
+  ## this set or the same declaration is named two different ways depending on
+  ## whether a template introduced it.
+
+proc makeTemplateSym*(c: var SemContext; result: var string; kind: SymKind) =
   ## Make a fresh symbol for a name introduced by a template body. Templates
   ## need a separate mechanism from `makeLocalSym` so that cross-module
   ## interference can be addressed without promoting the sym to global
   ## layout — i.e. without mangling in `c.thisModuleSuffix`.
-  var counter = addr c.locals.mgetOrPut(result, -1)
-  counter[] += 1
-  result.add '.'
-  result.addInt counter[]
+  ##
+  ## Except for the kinds that are module-level declarations no matter where
+  ## they are WRITTEN. A gensym'd `proc` inside an untyped template used to come
+  ## out as `helper.1`, a local-layout name, on a declaration the backends emit
+  ## at module scope: `nifcoreparse.toModuleString` indexes a decl only when its
+  ## name says global, so nothing named it in the module's `(.index …)`, and the
+  ## module was fine to compile and impossible to IMPORT — nifasm resolves a
+  ## foreign module's decls through that index and reported "Unknown symbol:
+  ## helper.1" in the importer. A local name on a module-level decl is also two
+  ## modules' `helper.1` in one link, which is the same bug waiting for a name
+  ## collision.
+  if kind in RoutineLikeSyms:
+    c.makeGlobalSym(result)
+  else:
+    var counter = addr c.locals.mgetOrPut(result, -1)
+    counter[] += 1
+    result.add '.'
+    result.addInt counter[]
 
 type
   SymStatus* = enum
@@ -440,7 +466,7 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   if kind in {FldY, GfldY}:
     c.makeFieldSym(name)
   elif c.currentScope.kind == ToplevelScope or
-      kind in {TypevarY, StaticTypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}:
+      kind in RoutineLikeSyms:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)

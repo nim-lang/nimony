@@ -18,6 +18,11 @@ type WorkItem* = object
   path*: string
   joined*: bool
   weight*: int
+  native*: bool
+    ## Compiled by `nimony n` (see `nativelist.walkUsesNative`). The worker
+    ## decides this for itself from the same inputs; the parent needs to know
+    ## it too, because the two backends take their cache prefill from
+    ## different warmups and handing a native item the C one breaks its build.
 
 
 proc canRunParallel*(cat: Category): bool {.inline.} =
@@ -26,12 +31,20 @@ proc canRunParallel*(cat: Category): bool {.inline.} =
   ## categories use isolated per-test cache dirs and parallelize fine.
   cat notin {Compat, Basics}
 
-proc warmupSharedCache(): string =
+proc warmupSharedCache(native = false): string =
   ## Compile `tools/warmup.nim` once into `nimcache/warmup/` so each
   ## parallel test can start with system + common stdlib bundles already
   ## present. Returns the warmup cache directory, or "" on opt-out
   ## (warmup source missing or compile failed — tests still work, just
   ## without the savings).
+  ##
+  ## `native` seeds the OTHER pipeline's cache, in a directory of its own.
+  ## The two must not mix: the intermediates the C and native backends read
+  ## share file names but not content — a native compile handed the C run's
+  ## bundle of `system` gets one whose externs have lost their `dynlib`, and
+  ## arkham stops at the first of them ("`GetStdHandle` names no import
+  ## library"). So a native work item prefills from here and a C one from
+  ## there, and neither ever sees the other's files.
   const warmupSrc = "tools/warmup.nim"
   if not fileExists(warmupSrc):
     # Loud, because the fallback is silent-but-slow: without the prefill every
@@ -41,13 +54,17 @@ proc warmupSharedCache(): string =
     stderr.writeLine "warmup: " & warmupSrc &
       " missing; every test will recompile the stdlib from scratch"
     return ""
-  result = nimcacheDir / "warmup"
+  result = nimcacheDir / (if native: "warmup_native" else: "warmup")
   let nimony = toolExe("nimony")
   if not fileExists(nimony):
     stderr.writeLine "warmup: skipping, no nimony at " & nimony
     return ""
-  let cmd = nimony.quoteShell & " c --nimcache:" & result.quoteShell &
-            " " & warmupSrc.quoteShell
+  # The same command the work items are compiled with, so what lands here is
+  # exactly what they would have produced themselves (`execNimonyNative` for
+  # the native side, `execNimony`'s `c` for the other).
+  let cmd = nimony.quoteShell &
+            (if native: " n --silentMake --isMain --nimcache:" else: " c --nimcache:") &
+            result.quoteShell & " " & warmupSrc.quoteShell
   let t0 = epochTime()
   let exit = execShellCmd(cmd)
   let dt = epochTime() - t0
@@ -233,6 +250,12 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
   let hastur = getAppFilename()
   prebuildSharedObjects(forward)
   let warmupCache = warmupSharedCache()
+  # Seeded only when something in this run actually wants it: on every host but
+  # Windows no item is native, and paying for a second warmup compile there
+  # would be pure loss.
+  var anyNative = false
+  for it in items: (if it.native: anyNative = true)
+  let nativeWarmupCache = if anyNative: warmupSharedCache(native = true) else: ""
   warmupCopySeconds = 0
   let parallelStart = epochTime()
   var queue: seq[(int, WorkItem)] = @[]   # (idx, item) preserving input order
@@ -254,13 +277,22 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
     let (idx, item) = queue[head]
     inc head
     let cacheDir = nimcacheDir / ".par" / $idx
-    prefillFromWarmup(warmupCache, cacheDir)
+    prefillFromWarmup(if item.native: nativeWarmupCache else: warmupCache, cacheDir)
     var args = @[(if item.joined: "joined" else: "test"),
                  "--no-build", "--cachedir:" & cacheDir]
     # Forward the parent's resolved toolchain dir so each worker uses the
     # exact same binaries (the default is now hastur's own sibling dir, an
     # absolute path, not the literal "bin").
     args.add "--bindir:" & toolchainDir
+    # A work item's backend is settled HERE, by the parent, because the parent
+    # is what prefills the cache — and the two warmups cannot be mixed (see
+    # `warmupSharedCache`). The worker would reach the same verdict on its own
+    # for the item as planned, but not on every path through it: a joined group
+    # that diverges re-runs its members one by one, and in a group that is not
+    # all-native some of those members are individually eligible. That re-run
+    # inherits the C prefill, so it must inherit the C backend with it.
+    when defined(windows):
+      if not item.native: args.add "--native:off"
     if overwrite: args.add "--overwrite"
     if forward.len > 0: args.add "--forward:" & forward
     args.add item.path

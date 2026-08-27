@@ -84,3 +84,15 @@ proc nimonyCmdFor*(file: string; cat: Category; forward: string): string =
       result.add " "
   else:
     result.add " "
+
+proc nimonyNativeCmdFor*(forward: string): string =
+  ## The flags a NATIVE tree-walk compile takes, minus the file. Deliberately
+  ## only `--forward`'s: `execNimonyNative` already supplies
+  ## `n --silentMake --isMain`, and every flag `nimonyCmdFor` adds beyond that
+  ## names something the native path does not have (`-d:useLibc` picks the libc
+  ## stdlib for a golden `.nim.c` or a valgrind run, `--passC` a C compiler) —
+  ## which is also why `walkUsesNative` excludes the tests that need them.
+  result = ""
+  if forward.len != 0:
+    result.add forward
+    result.add ' '

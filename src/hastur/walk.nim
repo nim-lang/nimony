@@ -16,7 +16,7 @@
 ## continues.
 
 import std / [syncio, os, osproc, strutils, times, algorithm]
-import context, counters, category, joined, parallel, runner
+import context, counters, category, joined, nativelist, parallel, runner
 
 proc runSetupHastur*(dir: string) =
   ## Prep step for a built-in-runner directory: run each line of
@@ -119,12 +119,20 @@ proc collectTests*(c: var TestCounters; plan: var WalkPlan; dir, forward: string
       let members = joinMembers(dir, cat, overwrite)
       let joined = members.len >= MinJoinGroup
       if joined:
-        plan.parItems.add WorkItem(path: dir, joined: true, weight: members.len)
+        # Mirrors `joinedTest`'s own all-or-nothing rule, so the prefill the
+        # parent hands the worker is the one the worker will want.
+        var groupNative = nativeJoinable(dir)
+        if groupNative:
+          for f in members:
+            if not walkUsesNative(f, cat): groupNative = false; break
+        plan.parItems.add WorkItem(path: dir, joined: true, weight: members.len,
+                                   native: groupNative)
       for x in walkDir(dir):
         if x.kind == pcFile and x.path.endsWith(".nim") and
            not isGeneratedTestFile(x.path) and
            not (joined and joinable(x.path, cat)):
-          plan.parItems.add WorkItem(path: x.path, weight: 1)
+          plan.parItems.add WorkItem(path: x.path, weight: 1,
+                                     native: walkUsesNative(x.path, cat))
     else:
       # `Basics`/`Compat` reset the shared `nimcache/` around their loop and so
       # cannot share the pool's cache layout; serial (`--jobs:1`) runs keep the

@@ -3,7 +3,7 @@
 ## does every worker the parallel pool spawns.
 
 import std / [syncio, os, osproc, strutils, times, algorithm]
-import context, counters, category, compile, joined, parallel
+import context, counters, category, compile, joined, nativelist, parallel
 
 # ---- the `.valgrind` golden -----------------------------------------------
 
@@ -61,8 +61,11 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
   #echo "TESTING ", file
   let failuresBefore = c.failures
   inc c.total
-  let nimonycmd = nimonyCmdFor(file, cat, forward)
-  let (compilerOutput, compilerExitCode) = execNimony(nimonycmd & quoteShell(file), cat)
+  let (compilerOutput, compilerExitCode) =
+    if walkUsesNative(file, cat):
+      execNimonyNative(nimonyNativeCmdFor(forward) & quoteShell(file))
+    else:
+      execNimony(nimonyCmdFor(file, cat, forward) & quoteShell(file), cat)
 
   let msgs = file.changeFileExt(".msgs")
 
@@ -151,8 +154,21 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
     for f in files: testFile c, f, overwrite, Normal, forward
     return
 
+  # A group is compiled by ONE backend: whether that is the native one is a
+  # property of the members, not of the generated driver (which has no test
+  # sidecars of its own to look at). All-or-nothing on purpose — splitting a
+  # directory into a native group and a C group would add a whole second
+  # process tree, and the fixed cost of one of those is most of what a group
+  # costs, so the split would give the time back.
+  var native = files.len > 0 and nativeJoinable(dir)
+  if native:
+    for f in files:
+      if not walkUsesNative(f, Normal): native = false; break
   let (compilerOutput, compilerExitCode) =
-    execNimony(nimonyCmdFor(driver, Normal, forward) & quoteShell(driver), Normal)
+    if native:
+      execNimonyNative(nimonyNativeCmdFor(forward) & quoteShell(driver))
+    else:
+      execNimony(nimonyCmdFor(driver, Normal, forward) & quoteShell(driver), Normal)
   if compilerExitCode != 0:
     bail "did not compile", compilerOutput
 

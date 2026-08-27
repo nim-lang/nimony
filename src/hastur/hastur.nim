@@ -15,8 +15,8 @@ when defined(windows):
 
 import std / [assertions, parseopt, strutils, os, osproc]
 
-import context, category, joined, runner, walk, builders, deps, tiers, boot,
-       native, record, bugcmd, gitcmds
+import context, category, joined, nativelist, runner, walk, builders, deps,
+       tiers, boot, native, record, bugcmd, gitcmds
 import install
 
 const
@@ -136,6 +136,11 @@ Options:
                         so this is the big lever on Windows. A group that
                         fails is re-run test by test, so failures stay
                         attributable; `off` skips the grouping altogether.
+  --native:on|off       on WINDOWS, compile the tests `hastur native` vouches
+                        for with `nimony n` rather than `nimony c` (default
+                        on). Same assertion, no gcc and no linker behind it —
+                        the other half of the lever `--joined` pulls. Ignored
+                        on every other host.
   --cachedir:PATH       use PATH instead of `nimcache/` for intermediates
   --bindir:PATH         resolve the toolchain (nimony, lengc, …) from
                         directory PATH instead of hastur's own directory
@@ -240,6 +245,11 @@ proc handleCmdLine =
         # runner already falls back to that per group on failure; this is for
         # ruling the joining out entirely.
         joinTests = val.normalize notin ["off", "no", "false", "0"]
+      of "native":
+        # `--native:off` puts the Windows tree walk back on the C backend for
+        # the whitelisted tests it would otherwise compile with `nimony n`
+        # (see `nativelist.walkUsesNative`). Nothing anywhere else reads it.
+        walkNative = val.normalize notin ["off", "no", "false", "0"]
       of "native-debug", "nativedebug":
         # Build arkham + nifasm UNOPTIMIZED (they default to -d:release; see
         # nativeToolPrefix). For `-d:arkhamDbgSym` / gdb work on the toolchain.
