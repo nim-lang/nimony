@@ -4,7 +4,7 @@
 ## (`hastur tests/`) and passes context on argv; we reuse hastur itself as the
 ## test kit.
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"

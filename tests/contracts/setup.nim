@@ -1,7 +1,7 @@
 ## Custom runner for the contracts-IR tests: build the `contracts` tool, run
 ## it over every `.nif` input here and diff against the `.expected.nif`.
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"

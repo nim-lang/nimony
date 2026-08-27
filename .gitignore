@@ -13,7 +13,6 @@ nimcache_win/
 nimcache_wine*/
 external/
 htmldocs/
-src/hastur
 src/lengc/lengc_grammar.nim
 src/nifgram/nifgram
 src/lib/nifindexes

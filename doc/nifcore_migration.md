@@ -300,12 +300,12 @@ a bare `r.close()` can resolve to `nifbuilder.close(Builder)` — qualify it.
   `FAILURE`. Piping build output through `tail` also swallows exit codes;
   use `set -o pipefail` and a log file.
 - `hastur test <dir>` does **not** rebuild the toolchain; after source edits
-  always `nim c -r src/hastur build all` (stale binaries have eaten multiple
+  always `nim c -r src/hastur/hastur build all` (stale binaries have eaten multiple
   debug cycles, including one where a stale `bin/hexer` made native `echo`
   silently swallow output).
 - **Two hasturs sharing a tree clobber each other** (shared `nimcache/`).
   Don't run tests while boot runs.
-- `./src/hastur tests/nimony` does **not** cover the tool-test dirs
+- `./bin/hastur tests/nimony` does **not** cover the tool-test dirs
   (`tests/{nj,vl,contracts,validator,controlflow,boot,incremental,…}`); CI
   does. Two vpr bugs lived only there.
 - **nimcache pollution makes standalone repros lie**: stale dependency

@@ -18,7 +18,7 @@ cd nimony
 To build it run this command:
 
 ```
-nim c -r src/hastur build all
+nim c -r src/hastur/hastur build all
 ```
 
 

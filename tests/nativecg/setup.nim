@@ -13,7 +13,7 @@
 ## (re)generate the golden after an intended codegen change, or to add the one
 ## for a target that has none yet).
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"
