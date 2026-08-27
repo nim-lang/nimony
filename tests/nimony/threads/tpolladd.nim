@@ -1,4 +1,5 @@
 when defined(windows):
+  import std/syncio
   echo "n=1 op=opPollAdd result=3 rd=true wr=true"
   echo "m=1 op=opPollAdd result=2 wr=true"
 else:

@@ -48,10 +48,31 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
   n = int(kevent(kqFds[threadIdx], nil, 0, addr events[0], 64, addr ts))
   if n <= 0:
     return false
+  # A poll-add registers two kevents (EVFILT_READ and EVFILT_WRITE); when the
+  # fd is ready in both directions both fire in the same batch. Deliver the
+  # union per fd so a oneshot poll-add on a socket that is simultaneously
+  # readable and writable reports EvRead or EvWrite like io_uring's
+  # IORING_OP_POLL_ADD does, instead of completing on whichever event comes
+  # first. Per-direction matching for read/write ops still happens inside
+  # processFd.
+  var firedFds: array[64, cint]
+  var firedMasks: array[64, int]
+  var m = 0
   for i in 0..<n:
     let fd = cint(events[i].ident)
-    let fired = if events[i].filter == EVFILT_READ: EvRead else: EvWrite
-    processFd(fd, fired)
+    var k = 0
+    while k < m and firedFds[k] != fd:
+      inc k
+    if k == m:
+      firedFds[m] = fd
+      firedMasks[m] = if events[i].filter == EVFILT_READ: EvRead else: EvWrite
+      inc m
+    elif events[i].filter == EVFILT_READ:
+      firedMasks[k] = firedMasks[k] or EvRead
+    else:
+      firedMasks[k] = firedMasks[k] or EvWrite
+  for i in 0..<m:
+    processFd(firedFds[i], firedMasks[i])
   return true
 
 proc kqueueClose() {.nimcall.} =
