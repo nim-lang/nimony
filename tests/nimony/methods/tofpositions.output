@@ -1,0 +1,13 @@
+ok    let-bound
+ok    var-bound
+ok    proc-arg
+ok    if-condition
+ok    while-condition
+ok    middle class
+ok    own class
+echo-inline: true
+ok    not a Leaf
+ok    is a Mid
+ok    value let-bound
+ok    value proc-arg
+ok    statically exact
