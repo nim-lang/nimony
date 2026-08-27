@@ -163,6 +163,18 @@ type
     #    `{.assembler.}` body where r0/r1 can be said out loud. Its result comes
     #    back in r0, which the row cannot describe and the body simply reads.
     BkptOp
+    # ── the same protocol, RISC-V's spelling. A semihosting call there is not one
+    #    instruction but a fixed THREE — `slli x0,x0,0x1f`, `ebreak`,
+    #    `srai x0,x0,7` — whose outer two are architectural no-ops that exist only
+    #    so a debug agent can recognise the middle one as a semihosting request
+    #    rather than an ordinary breakpoint. That is why this is its own row and
+    #    not `bkpt` with a different encoding: `bkpt` takes the magic number as an
+    #    operand, and here the magic is the surrounding instructions.
+    #
+    #    Nullary and void, for the same reason `bkpt` is: the operation number and
+    #    the parameter block live in a0/a1, which an `{.assembler.}` body names out
+    #    loud, and the result comes back in a0 where the body reads it.
+    SemihostOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -346,7 +358,7 @@ const
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
     "StackPointer", "TraceTable", "VgClientRequest",
     "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize",
-    "NoinitStart", "NoinitSize", "bkpt"]
+    "NoinitStart", "NoinitSize", "bkpt", "semihost"]
 
   Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
     ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -504,7 +516,7 @@ const
     # `defs`. That is exactly why they are NOT `efPure` — a "pure" row with a void
     # result is dead by definition, and DCE would be right to delete it. The flag
     # columns are what makes a flag-only instruction non-removable.
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,
                  params: Bin, roles: AllIn, ret: ptVoid,
                  widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: -1, effects: {},
                  uses: {}, defs: AllArith),
@@ -528,16 +540,26 @@ const
     # claims each of them; AArch64's `genIteA64` implements the zero flag alone,
     # so it claims `zf`/`nz` and no more. Parity is x86-64's and stays there —
     # no Arm profile has such a bit to read.
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 0,
+    #
+    # RV32 has no condition flags AT ALL, and claims four of these anyway, which
+    # is the clearest case for reading this column as "the assembler can turn it
+    # into a branch". Its selector fuses `(cmp a b)` into the branch that consumes
+    # it — a RISC-V branch IS the comparison — so `zf`/`nz` are equality and
+    # `cf`/`nc` are the unsigned `<`/`>=` a borrow denotes. `sf` and `of` are
+    # refused by name there rather than approximated: the sign of a difference
+    # agrees with `<` only when the subtraction did not overflow, which is why
+    # AArch64's `blt` tests `N != V` and not `N`, and no RISC-V comparison
+    # produces the overflow itself.
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM}, arity: 0,
@@ -577,10 +599,19 @@ const
     # flag afterwards. Rather than fork the column, arkham's Arm `.assembler`
     # mode requires a flag read to follow its `cmp` immediately (see
     # `codegen_arm_asm.asmIf`), which is the rule that is true on both.
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # add
+    #
+    # RV32 makes the same column false in the opposite direction — it has no flags
+    # at all — and claims `add`/`sub` regardless, because `defs` is not what these
+    # rows are FOR. Reading a flag after one is already impossible there: nifasm's
+    # RV32 selector fuses `(cmp …)` into the branch that consumes it and CHECKS
+    # that nothing was emitted in between, so an `add` between a compare and its
+    # read is a named assembly-time error rather than a wrong answer. The
+    # destructive `(add D S)` spelling these rows use is what `TwoAddrForms`
+    # promises, and RV32's selector encodes it as `add rd, rd, rs`.
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,  # add
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # sub
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,  # sub
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     # AND/OR/XOR clear CF and OF and set SF/ZF/PF — all five are DEFINED.
@@ -847,10 +878,19 @@ const
     IntrinsicRow(cls: icPinned, targets: {tgThumbM}, arity: 1,     # bkpt
                  params: Imm8, roles: AllIn, ret: ptVoid,
                  widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
+                 uses: {}, defs: {}),
+    # Effects verbatim from `bkpt`, and for the identical reason: what a debug
+    # agent does on the other side is invisible from here — whether one is
+    # attached at all, what it makes of a0, and which memory it reads or writes
+    # for the operations that take a parameter block. So it reads, it writes, and
+    # nothing moves across it.
+    IntrinsicRow(cls: icPinned, targets: {tgRv32}, arity: 0,       # semihost
+                 params: NoOps, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
                  uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = BkptOp
+const LastIntrinsicOp* = SemihostOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
