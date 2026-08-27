@@ -186,6 +186,30 @@ type
                  ## a row claims Cortex-M only where the lowering was checked —
                  ## the volatile rows, and the `cmp`/flag-read rows the
                  ## `{.assembler.}` mode needs to branch.
+    tgRv32       ## RV32IMAFD, bare metal. Newest of all, and claimed on FEWER
+                 ## rows than any other target — deliberately, and by the same
+                 ## discipline `tgThumbM` states above: a row claims RV32 only
+                 ## where the lowering was checked, not wherever the ISA could in
+                 ## principle do the job.
+                 ##
+                 ## Today that is the two volatile rows, whose arkham lowering is
+                 ## written in the shared tag vocabulary and so is already
+                 ## target-neutral. What it deliberately does NOT claim, and why:
+                 ##
+                 ##  * the ATOMIC rows. RV32's `A` extension has `lr.w`/`sc.w`, so
+                 ##    the ISA is not the obstacle — arkham has no lowering for
+                 ##    them (its two are AArch64's `ldaxr`/`stlxr` and ARMv7-M's
+                 ##    `ldrex`/`strex`), and that target reserves no scratch
+                 ##    triple for one. Claiming these would emit another ISA's
+                 ##    exclusives.
+                 ##  * `HeapStart`/`HeapSize`/`NoinitStart`/`NoinitSize`. The
+                 ##    arkham side is target-neutral, but RV32's image writer
+                 ##    still takes its regions from constants rather than from a
+                 ##    `(layout …)`, so a region a board file named would not be
+                 ##    the region the image reserves.
+                 ##  * `bkpt` and `CpuRelax`, which lower to Thumb's `bkpt` and
+                 ##    Arm's `yield`. RV32 spells the first `ebreak` and has no
+                 ##    baseline spelling for the second (`pause` is Zihintpause).
 
   OperandRole* = enum
     roIn         ## a pure source
@@ -784,10 +808,10 @@ const
     # site. That is also the only width the access may use — a `volatileLoad` of a
     # 64-bit cell on a 32-bit target is two loads, which is two accesses, which is
     # not what was asked for. The back end refuses it rather than lowering it.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 1,
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 1,
                  params: VolLoad, roles: AllIn, ret: ptValW,   # VolatileLoad
                  widths: IntWidths, tie: -1, effects: VolRead, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 2,
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,
                  params: VolStore, roles: AllIn, ret: ptVoid,  # VolatileStore
                  widths: IntWidths, tie: -1, effects: VolWrite, uses: {}, defs: {}),
     # ── the reserved heap ──
