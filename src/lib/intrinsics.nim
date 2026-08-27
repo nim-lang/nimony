@@ -198,30 +198,7 @@ type
                  ## a row claims Cortex-M only where the lowering was checked —
                  ## the volatile rows, and the `cmp`/flag-read rows the
                  ## `{.assembler.}` mode needs to branch.
-    tgRv32       ## RV32IMAFD, bare metal. Newest of all, and claimed on FEWER
-                 ## rows than any other target — deliberately, and by the same
-                 ## discipline `tgThumbM` states above: a row claims RV32 only
-                 ## where the lowering was checked, not wherever the ISA could in
-                 ## principle do the job.
-                 ##
-                 ## Today that is the two volatile rows, whose arkham lowering is
-                 ## written in the shared tag vocabulary and so is already
-                 ## target-neutral. What it deliberately does NOT claim, and why:
-                 ##
-                 ##  * the ATOMIC rows. RV32's `A` extension has `lr.w`/`sc.w`, so
-                 ##    the ISA is not the obstacle — arkham has no lowering for
-                 ##    them (its two are AArch64's `ldaxr`/`stlxr` and ARMv7-M's
-                 ##    `ldrex`/`strex`), and that target reserves no scratch
-                 ##    triple for one. Claiming these would emit another ISA's
-                 ##    exclusives.
-                 ##  * `HeapStart`/`HeapSize`/`NoinitStart`/`NoinitSize`. The
-                 ##    arkham side is target-neutral, but RV32's image writer
-                 ##    still takes its regions from constants rather than from a
-                 ##    `(layout …)`, so a region a board file named would not be
-                 ##    the region the image reserves.
-                 ##  * `bkpt` and `CpuRelax`, which lower to Thumb's `bkpt` and
-                 ##    Arm's `yield`. RV32 spells the first `ebreak` and has no
-                 ##    baseline spelling for the second (`pause` is Zihintpause).
+    tgRv32       ## RV32IMAFD, bare metal.
 
   OperandRole* = enum
     roIn         ## a pure source
