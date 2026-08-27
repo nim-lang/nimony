@@ -183,11 +183,20 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
   if prag.header != StrId(0):
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
   if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {} and
-      c.nativeBackend and c.dynlibIsStaticImport:
-    # Only the native Windows target carries the library name into Leng, because
-    # only it has to build the import table itself. Every other combination
-    # either has a linker to do that or uses the runtime loader — see
-    # `dynlibIsStaticImport` for the whole matrix.
+      c.dynlibIsStaticImport:
+    # The library name goes into Leng wherever a `dynlib` means a STATIC import
+    # — see `dynlibIsStaticImport` for the whole matrix. Only the native backend
+    # reads it (it builds the import table itself); `lengc`'s C and LLVM code
+    # generators skip the pragma, because their linker resolves the symbol.
+    #
+    # Deliberately NOT `and c.nativeBackend`, which is what it used to say: a
+    # non-main module's `.x.nif` is cached ONCE per nimcache and shared by every
+    # project built there, and `nimony n` builds its compile-time plugins with
+    # `nimony c` in that same nimcache. Gating on the backend made the file's
+    # CONTENT depend on which of the two hexer runs got there first, and when the
+    # C one did, arkham refused `system`'s externs in a build that had been green
+    # a moment earlier ("`GetStdHandle` names no import library"). Whatever a
+    # shared artifact holds has to be the same for both backends.
     dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
