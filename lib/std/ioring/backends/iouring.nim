@@ -65,8 +65,14 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         sqe = localQueues[threadIdx].getSqe()
       except ErrorCode as e:
         stderr.writeLine("ioring: failed to get sqe: " & $e)
+        # Ops buf[i..<n] were dequeued but never got an SQE/slot; put them
+        # back so the next poll picks them up instead of losing them forever.
+        for k in i..<n:
+          discard gOpQueues[threadIdx].tryEnqueue(buf[k])
         break
       if sqe == nil:
+        for k in i..<n:
+          discard gOpQueues[threadIdx].tryEnqueue(buf[k])
         break
       let idx = gSlots[threadIdx].allocSlot(buf[i])
       sqe.userData = cast[pointer](uint(idx))

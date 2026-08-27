@@ -36,12 +36,25 @@ proc shutdown*() =
 proc nextSeqNum(): SeqNum =
   SeqNum(atomicFetchAdd(gNextSeq, 1'u32, moRelaxed))
 
+proc enqueueOp(op: OpContext) =
+  ## Non-lossy backpressure mirroring the task queue's "caller-runs"
+  ## (threadpool.nim:69-95). When this thread's stripe is full, help drain it
+  ## like a worker would — poll also processes completions and frees queue
+  ## slots — then retry. The op is guaranteed to be accepted, so a
+  ## continuation can never park forever on a dropped submission.
+  ##
+  ## `tryEnqueue` copies `op` by value and only consumes it on success
+  ## (stripes.nim), so retrying with the same op is safe, and polling from a
+  ## non-worker thread is the same pattern `waitCompletions` already uses.
+  while not gOpQueues[threadIdx].tryEnqueue(op):
+    discard backendRelays.poll(0)
+
 proc submitNop*(cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opNop, fd: -1, seqnum: result,
     cont: cont, res: cast[int](resPtr))
-  discard gOpQueues[threadIdx].tryEnqueue(op)
+  enqueueOp(op)
 
 proc submitRead*(fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
@@ -49,7 +62,7 @@ proc submitRead*(fd: cint; buf: pointer; len: int;
   result = nextSeqNum()
   var op = OpContext(kind: opRead, fd: fd, seqnum: result, buf: buf, len: len,
     cont: cont, res: cast[int](resPtr))
-  discard gOpQueues[threadIdx].tryEnqueue(op)
+  enqueueOp(op)
 
 proc submitWrite*(fd: cint; buf: pointer; len: int;
                  cont = Continuation(fn: nil, env: nil);
@@ -57,7 +70,7 @@ proc submitWrite*(fd: cint; buf: pointer; len: int;
   result = nextSeqNum()
   var op = OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
     cont: cont, res: cast[int](resPtr))
-  discard gOpQueues[threadIdx].tryEnqueue(op)
+  enqueueOp(op)
 
 proc submitAccept*(listenFd: cint;
                    cont = Continuation(fn: nil, env: nil);
@@ -67,7 +80,7 @@ proc submitAccept*(listenFd: cint;
     cont: cont, res: cast[int](resPtr))
   op.acceptAddr = Sockaddr_storage()
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
-  discard gOpQueues[threadIdx].tryEnqueue(op)
+  enqueueOp(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =
   result = 0

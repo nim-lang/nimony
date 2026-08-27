@@ -44,15 +44,17 @@ proc complete*(slotIdx: int; res: int) =
   let slot = addr gSlots[threadIdx].slots[slotIdx]
   if slot.op.res != 0:
     cast[ptr int](slot.op.res)[] = res
-  let cont = slot.op.cont
-  slot.op.cont = Continuation(fn: nil, env: nil)
+  let cont  = slot.op.cont
+  let fd    = slot.op.fd
+  let seqnum = slot.op.seqnum
+  let kind  = slot.op.kind
   gSlots[threadIdx].freeSlot(slotIdx)
   if cont.fn != nil:
-    submit(cont, int(slot.op.fd))
+    submit(cont, int(fd))
   else:
     gCqLock.acquire()
     if gCqCount < CqSize:
-      gCq[gCqTail] = IoCompletion(id: slot.op.seqnum, op: slot.op.kind, fd: slot.op.fd, result: res)
+      gCq[gCqTail] = IoCompletion(id: seqnum, op: kind, fd: fd, result: res)
       gCqTail = (gCqTail + 1) and (CqSize - 1)
       inc gCqCount
     gCqLock.release()
