@@ -1,7 +1,7 @@
 ## Custom runner for the pnak package-fetcher tests: build `pnak`, then run
 ## every self-contained `t*.nim` integration test here.
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"

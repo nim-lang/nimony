@@ -95,7 +95,7 @@ jobs:
         if: matrix.target.cpu == 'i386'
         run: |
           cd nimony
-          nim c -r src/hastur --release build all
+          nim c -r src/hastur/hastur --release build all
 
       - name: Run tester
         if: matrix.target.cpu != 'i386' # TODO: enables i386
@@ -179,7 +179,7 @@ jobs:
         # commit's `bin/` handed to it and would otherwise boot stale tools.
         run: |
           cd nimony
-          nim c -r src/hastur --release build all
+          nim c -r src/hastur/hastur --release build all
 
       - name: Run native backend tests (Linux amd64)
         # The curated native regression set (full ARC suite + closures + cps)
@@ -189,11 +189,11 @@ jobs:
         if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         run: |
           cd nimony
-          nim c -r src/hastur --release native
+          nim c -r src/hastur/hastur --release native
 
       - name: Run bootstrap
         # `hastur tests/boot` is the same suite the tree walk would have reached;
         # naming it directly is what lets the other job skip it.
         run: |
           cd nimony
-          nim c -r src/hastur --release tests/boot
+          nim c -r src/hastur/hastur --release tests/boot

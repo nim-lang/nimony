@@ -3,7 +3,7 @@
 ## broken `tests/check_tags` fixtures. A directory with just this file — the
 ## suite validates `src/…`, not a folder of inputs.
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"
