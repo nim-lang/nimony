@@ -29,8 +29,21 @@ type
     inferred: ptr Table[SymId, Cursor]
 
 proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
-                        e: var ExpansionContext; body: Cursor) =
+                        e: var ExpansionContext; body: Cursor;
+                        atToplevel: bool) =
   ## Expands a single tree/token of the template body into `dest`.
+  ##
+  ## `atToplevel` says that what lands here lands at MODULE scope: the call site
+  ## is toplevel and nothing between the body root and this node opened a scope.
+  ## It decides the layout of a name the body declares. A template's own body is
+  ## semchecked in the template's scope, so everything it declares that is not
+  ## routine-like got a LOCAL name there (`identToSym`), and `newSymId` keeps
+  ## whatever layout it copies — so `template t() = (let x = 1)` expanded at
+  ## module scope produced `x.1`, a local-layout name on a module-level `gvar`.
+  ## Such a decl is not indexed (`nifcoreparse.toModuleString` indexes by the
+  ## name's shape), so the module compiles and cannot be IMPORTED: nifasm reads
+  ## a foreign module's decls through that index and fails with "Unknown symbol"
+  ## on the module init that reads it.
   var body = body
   case body.kind
   of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
@@ -52,7 +65,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.addSubtree body # keep Symbol as it was
   of SymbolDef:
     let s = body.symId
-    let newDef = newSymId(c, s)
+    let newDef = newSymId(c, s, forceGlobal = atToplevel)
     e.newVars[s] = newDef
     dest.addSymDef(newDef, body.info)
   of StrLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -71,7 +84,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
       if arg.hasMore and not arg.isDotToken:
         while arg.hasMore:
           e.formalParams[vid] = arg
-          expandTemplateImpl c, dest, e, forStmt.body
+          expandTemplateImpl c, dest, e, forStmt.body, atToplevel
           skip arg
     elif body.exprKind == UnpackX:
       var un = body
@@ -90,9 +103,17 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.addParRi()
     else:
       dest.addParLe(body.cursorTagId, body.info)
+      # Module scope survives exactly two steps: a `(stmts …)` list, and the NAME
+      # of a declaration sitting in one. Everything else — a routine body, a
+      # `block`, the branches of an `if` — is a scope of its own in `identToSym`'s
+      # eyes, so a name declared under it keeps the local layout it already has.
+      let listy = body.stmtKind == StmtsS
+      var first = true
       body.into:
         while body.hasMore:
-          expandTemplateImpl c, dest, e, body
+          expandTemplateImpl c, dest, e, body,
+                             atToplevel and (listy or (first and body.kind == SymbolDef))
+          first = false
           skip body
         dest.addParRi(body.endInfo)
   else:
@@ -396,7 +417,8 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
   if templ.body.isDotToken:
     c.buildErr dest, info, "cannot expand template from prototype; possibly a recursive template call"
   else:
-    expandTemplateImpl c, dest, e, templ.body
+    expandTemplateImpl c, dest, e, templ.body,
+                       atToplevel = c.currentScope.kind == ToplevelScope
 
   for _, newVar in e.newVars:
     c.freshSyms.incl newVar

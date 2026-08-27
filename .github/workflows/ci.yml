@@ -183,9 +183,12 @@ jobs:
 
       - name: Run native backend tests (Linux amd64)
         # The curated native regression set (full ARC suite + closures + cps)
-        # through `nimony n`. Only Linux amd64 has a recorded pass list to hold it
-        # to; `NativeTestDirsWindows` exists but has never been run on a real
-        # runner, so Windows gets the native BOOT first and this later.
+        # through `nimony n`. Only Linux amd64 runs it as a step of its own:
+        # Windows reaches the same corpus from inside the tree walk instead,
+        # which compiles every whitelisted test with `nimony n` rather than
+        # `nimony c` (see `walkUsesNative` in src/hastur.nim) — there, skipping
+        # gcc and the linker is what the step is FOR, so the coverage costs no
+        # extra runner time. `NativeTestDirsWindows` is the list it reads.
         if: runner.os == 'Linux' && matrix.target.cpu == 'amd64'
         run: |
           cd nimony
