@@ -138,6 +138,10 @@ type
     register: StrId          ## `{.register: "rdi".}` — the pinned machine register of a
                              ## param / result / local. Which names exist is arkham's
                              ## question; hexer only carries the string across.
+    interrupt: StrId         ## `{.interrupt: "SysTick".}` — the exception/interrupt
+                             ## vector this proc handles. Same arrangement as
+                             ## `register`: which vectors a part HAS is arkham's
+                             ## question, so hexer only carries the name across.
 
 proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): CollectedPragmas
 
@@ -856,6 +860,12 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.register = n.strId
               result.flags.incl pk
               inc n
+          of InterruptP:
+            n.into:
+              expectStrLit c, n
+              result.interrupt = n.strId
+              result.flags.incl pk
+              inc n
           of InstructionP, IntrinsicP:
             # sem already resolved and checked the opcode; re-resolve the NAME
             # here so hexer carries the enum rather than a string.
@@ -1077,6 +1087,9 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   if NakedP in prag.flags:
     dest.addKey genPragmas, "naked", pinfo
+
+  if InterruptP in prag.flags and prag.interrupt != StrId(0):
+    dest.addKeyVal genPragmas, "interrupt", prag.interrupt, pinfo
 
   if NoreturnP in prag.flags and not procRaises:
     # Leng has no noreturn pragma of its own; carry the fact as the existing
@@ -2839,7 +2852,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     else: mp.dir
   var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
     nestedIn: @[(StmtsS, SymId(0))],
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(bits),
     pending: createTokenBuf(),
     strLitBuf: createTokenBuf(),
     bits: bits,

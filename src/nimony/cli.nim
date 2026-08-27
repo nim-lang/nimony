@@ -74,6 +74,8 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     of "32": config.bits = 32
     of "16": config.bits = 16
     else: quit "invalid value for --bits"
+    # Pin it, so a `--cpu` on either side of this flag leaves it alone.
+    config.bitsExplicit = true
   of "cpu":
     if not config.setTargetCPU(val):
       quit "unknown CPU: " & val
@@ -99,6 +101,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.ccKey = extractCCKey(val)
   of "linker":
     config.linker = val
+  of "layout":
+    # The board description a bare-metal image is built against (see
+    # nativenif's doc/layout.md). Only the native backend can use it, and
+    # arkham is what reads it — this only carries the path there.
+    config.layoutFile = val
+    forwardArg = false
+    forwardArgLengc = false
   of "base":
     config.baseDir = val
   of "nimcache":

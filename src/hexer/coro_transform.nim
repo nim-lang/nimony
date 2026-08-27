@@ -39,7 +39,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
-import ".." / njvl / [nj, njvl_model]
+import ".." / njvl / [finalir, njvl_model]
 import passes, defaultvalues
 include ".." / nimony / nif_annotations
 
@@ -104,6 +104,10 @@ type
   RoutineKind* = enum
     IsNormal, IsIterator, IsPassive
 
+  TryTarget* = object
+    tracker*: SymId   ## the `ErrorCode` local this `try` accumulates into
+    label*: SymId     ## the `(lab ...)` its handler dispatch starts at
+
   ProcContext* = object
     localToEnv*: Table[SymId, EnvField]
     constrFields*: HashSet[SymId]
@@ -115,6 +119,23 @@ type
     resultSym*: SymId
     counter*: int
     labelCounter*: int = 1
+    tryTargets*: seq[TryTarget]
+      ## The enclosing `try` regions whose BODY we are inside, innermost last.
+      ## A `raise` there is not a proc exit: it stores into that try's error
+      ## tracker and jumps to its handler dispatch label.
+    inFlight*: SymId
+      ## Inside an `except`/`fin` body, the tracker holding the exception being
+      ## handled — what a bare `(raise .)` re-raises.
+    loopHeads*: seq[int]
+      ## One entry per enclosing loop, innermost last: the state label of a
+      ## SUSPENDING loop, or `KeptLoop` for one that stays a single
+      ## `(loop ...)` construct. A Final IR `(continue .)` is the back-edge of
+      ## the INNERMOST loop only, so it lowers against the top of this stack:
+      ## a `jmp` to that state label, or — for a kept loop — the marker copied
+      ## through untouched, because `coroTr` is what translates that one. A
+      ## kept loop has to push too: without an entry of its own its back-edge
+      ## would lower against the enclosing suspending loop and turn the inner
+      ## loop into a single iteration per outer round.
     kind*: RoutineKind
     isClosureIter*: bool
       ## True for `.closure` iters specifically. Drives the resume-slot
@@ -504,7 +525,7 @@ proc getNextState*(buf: TokenBuf; n: Cursor): int =
   while pos < buf.len:
     # raw linear scan: only TagLit tokens carry a tagId (suffix/literal bits
     # alias it), and the head may carry a line-info suffix before its child
-    if buf[pos].kind == TagLit and globalTags.tags[buf[pos].tagId] == "lab":
+    if buf[pos].kind == TagLit and buf[pos].tagId == TagId(LabS):
       let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
       # Skip `xelim`'s structured merge labels: only the CPS state machine's
       # own integer-labelled `lab` names a state (`doc/final_ir.md`).
@@ -1072,8 +1093,7 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
-  if n.isTagLit and globalTags.tags[n.cursorTagId] == "lab" and
-     n.childCursor.kind == IntLit:
+  if n.stmtKind == LabS and n.childCursor.kind == IntLit:
     # Only the CPS state machine's own integer-labelled `lab` marks a state
     # boundary. A symbol-labelled one is `xelim`'s structured merge label
     # (`doc/final_ir.md`) and is opaque here.
@@ -1144,9 +1164,11 @@ proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
   return false
 
 proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Convert NJ `(mflag symdef)` / `(vflag symdef)` to a bool var
-  ## initialized to false. If the flag is lifted to the environment,
-  ## emit an assignment to the env field instead.
+  ## Convert `(mflag symdef)` / `(vflag symdef)` to a bool var initialized to
+  ## false. If the flag is lifted to the environment, emit an assignment to
+  ## the env field instead. The Final IR generates no control-flow variables
+  ## of its own; `finalir.trCfVarDecl` only passes through the ones `xelim`
+  ## already had. `jtrue` — which only `nj.nim` ever emitted — is gone with it.
   let info = n.info
   let flagStart = n  # past mflag/vflag tag
   n = sub(n)
@@ -1171,40 +1193,248 @@ proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParPair FalseX, info  # initialized to false
     dest.addParRi()
 
-proc trJtrue*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Convert NJ `(jtrue sym...)` to `(asgn sym true)` for each symbol.
-  let info = n.info
-  n.into:
-    while n.hasMore:
-      let symId = n.symId
-      let field = c.currentProc.localToEnv.getOrDefault(symId)
-      dest.addParLe AsgnS, info
-      if field.def != field.use:
-        dest.copyIntoKind DotX, info:
-          dest.copyIntoKind DerefX, info:
-            dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-          dest.addSymUse field.field, info
-      else:
-        dest.addSubtree n
-      dest.addParPair TrueX, info
-      dest.addParRi()
-      skip n
+const
+  KeptLoop* = -1
+    ## `ProcContext.loopHeads` entry for a loop kept as a `(loop ...)`
+    ## construct: it names no state, so it is no jump target.
 
 proc emitJump*(dest: var TokenBuf; label: int; info: NifLineInfo) =
-  dest.addParLe("jmp", info)
+  dest.addParLe(JmpS, info)
   dest.addIntLit label, info
   dest.addParRi()
 
 proc emitLabel*(dest: var TokenBuf; label: int; info: NifLineInfo) =
-  dest.addParLe("lab", info)
+  dest.addParLe(LabS, info)
   dest.addIntLit label, info
   dest.addParRi()
+
+proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor)
+
+proc emitSymJump(dest: var TokenBuf; label: SymId; info: NifLineInfo) =
+  dest.addParLe(JmpS, info)
+  dest.addSymUse label, info
+  dest.addParRi()
+
+proc emitSymLabel(dest: var TokenBuf; label: SymId; info: NifLineInfo) =
+  dest.addParLe(LabS, info)
+  dest.addSymDef label, info
+  dest.addParRi()
+
+proc containsRaise(n: Cursor): bool =
+  ## Can this subtree leave with an exception? After the eraiser every raising
+  ## call is already `(var tmp (call f)) (ite (failed tmp) (raise tmp))`, so a
+  ## literal `raise` node is the only way out. Conservative in the safe
+  ## direction: a `try` whose body cannot raise needs no tracker and no
+  ## handlers, which is what keeps `try: echo x finally: echo y` from
+  ## fabricating an error path a void coroutine has no frame slot for.
+  var n = n
+  if n.stmtKind == RaiseS: return true
+  linearScan n:
+    if n.stmtKind == RaiseS: return true
+  return false
+
+proc isCatchAll(exceptNode: Cursor): bool =
+  ## `except:` and `except e:` catch everything; `except SomeType:` does not.
+  ## Only a catch-all lets us drop the trailing re-raise.
+  var n = exceptNode
+  n = sub(n)
+  if not n.hasMore: return true
+  if n.isDotToken: return true
+  result = isLocal(n.symKind)
+
+proc freshTrySym(c: var Context; prefix: string): SymId =
+  result = pool.syms.getOrIncl(prefix & $c.currentProc.counter & "." & c.thisModuleSuffix)
+  inc c.currentProc.counter
+
+proc trGotoScoped(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## A *body slot* of a construct we are keeping (`ite` arm, `loop` body, a
+  ## `case` branch). Exactly one `(stmts ...)` node has to come out — the
+  ## flattening `trGoto` does for the goto stream would splice several
+  ## statements into a slot that holds one.
+  if n.stmtKind in {StmtsS, ScopeS}:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        trGoto c, dest, n
+    dest.addParRi()
+  else:
+    dest.copyIntoKind StmtsS, n.info:
+      trGoto c, dest, n
+
+proc trGotoBuf(c: var Context; dest: var TokenBuf; buf: var TokenBuf) =
+  ## Run the goto conversion over a freshly synthesized statement list so the
+  ## synthesized `ite`s get the same suspension-point splitting as the ones
+  ## that came out of `finalir`. `buf` may die on return even though `trGoto`
+  ## registers a local's type in the `TypeCache` as a Cursor INTO it: a Cursor
+  ## holds a reference on the buffer's `CursorOwner`, so the token storage
+  ## outlives the `TokenBuf` for exactly as long as something still points at
+  ## it.
+  var m = beginRead(buf)
+  while m.hasMore:
+    trGoto c, dest, m
+
+proc trRaiseGoto(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
+  ## A `raise` inside a `try` BODY is not a proc exit. Store the error code in
+  ## that try's tracker and jump to its handler dispatch. Returns false when no
+  ## `try` encloses it — then it really is a proc exit and `coroTr.trReturn`
+  ## takes it.
+  if c.currentProc.tryTargets.len == 0: return false
+  let t = c.currentProc.tryTargets[^1]
+  let info = n.info
+  let raiseStart = n
+  n = sub(n)
+  if not n.hasMore or n.isDotToken:
+    # a bare re-raise: the in-flight tracker still holds the code
+    if c.currentProc.inFlight != NoSymId and c.currentProc.inFlight != t.tracker:
+      dest.copyIntoKind AsgnS, info:
+        dest.addSymUse t.tracker, info
+        dest.addSymUse c.currentProc.inFlight, info
+  else:
+    dest.copyIntoKind AsgnS, info:
+      dest.addSymUse t.tracker, info
+      dest.takeTree n
+  emitSymJump dest, t.label, info
+  n = raiseStart; skip n
+  result = true
+
+proc trTryGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Lower `try`/`except`/`fin` to the Final IR's own vocabulary — an error
+  ## tracker plus one `(lab)` the body's `raise`s jump to:
+  ##
+  ##     (var err ErrorCode Success)
+  ##     <body>                          # `raise x` -> `err = x; jmp Lexc`
+  ##     (lab Lexc)
+  ##     (ite (neq ErrorCode err Success)         # once per `except`
+  ##          (stmts <handler> (asgn err Success)) .)
+  ##     <finally>
+  ##     (ite (neq ErrorCode err Success) (stmts (raise err)) .)   # if uncaught
+  ##
+  ## `nj.nim` expressed the same thing with a monotone guard cfvar per try and
+  ## a `jtrue` that set every guard between the `raise` and its handler, because
+  ## it had no jump to offer. With `lab`/`jmp` the "did we already leave"
+  ## question is answered positionally, so the guards — and the `(ite (not g) ...)`
+  ## wrap around every following statement that came with them — are gone.
+  ##
+  ## An `except` with a TYPE pattern is not dispatched on, exactly as `nj.nim`
+  ## did not dispatch on it: the handler runs for any error and consumes it.
+  ## Typed `except` is unfinished in the front end too (`except A, B:` does not
+  ## get past sem), so this pass is not where that gets decided.
+  let info = n.info
+  let tryStart = n
+  var body = sub(n)                     # the try body
+  var probe = body
+  skip probe                            # -> first `except` / `fin`, if any
+  let needsTracker = containsRaise(body)
+  var catchAll = false
+  var q = probe
+  while q.hasMore and q.substructureKind == ExceptU:
+    if isCatchAll(q): catchAll = true
+    skip q
+  let tracker = if needsTracker: freshTrySym(c, "´err.") else: NoSymId
+  let excLab = if needsTracker: freshTrySym(c, "´exc.") else: NoSymId
+  if needsTracker:
+    dest.copyIntoKind VarS, info:
+      dest.addSymDef tracker, info
+      dest.addDotToken()                # exported
+      dest.addDotToken()                # pragmas
+      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+      dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+
+  # --- the guarded body ------------------------------------------------
+  if needsTracker:
+    c.currentProc.tryTargets.add TryTarget(tracker: tracker, label: excLab)
+  var b = body
+  trGoto c, dest, b
+  if needsTracker:
+    discard c.currentProc.tryTargets.pop()
+    emitSymLabel dest, excLab, info
+
+  # --- the handlers ----------------------------------------------------
+  let savedInFlight = c.currentProc.inFlight
+  if needsTracker: c.currentProc.inFlight = tracker
+  var m = probe
+  while m.hasMore and m.substructureKind == ExceptU:
+    let exceptStart = m
+    if needsTracker:
+      var h = createTokenBuf(64)
+      h.addParLe IteV, info
+      # NOT `(failed t)`: that tag is the eraiser's contract for a raising
+      # call's own result temp, and `constparams.localsThatBecomeTuples`
+      # retypes every symbol it sees under one to `(tuple ErrorCode T)`. The
+      # tracker is a plain `ErrorCode`, so it asks the plain question.
+      h.copyIntoKind NeqX, info:
+        h.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+        h.addSymUse tracker, info
+        h.addSymUse pool.syms.getOrIncl(SuccessName), info
+      h.addParLe StmtsS, info
+      var e = sub(m)
+      while e.hasMore:
+        if e.stmtKind in {StmtsS, ScopeS}:
+          e.into:                       # inline the handler body
+            while e.hasMore: h.takeTree e
+        elif isLocal(e.symKind):
+          # `except err:` — bind the exception variable to the tracker
+          var d = e
+          h.addParLe LetS, e.info
+          d = sub(d)
+          h.takeTree d                  # name
+          h.takeTree d                  # export marker
+          h.takeTree d                  # pragmas
+          h.takeTree d                  # type
+          h.addSymUse tracker, e.info   # value: the code we caught
+          h.addParRi()
+          skip e
+        else:
+          skip e                        # an exception TYPE pattern: unmodelled
+      h.copyIntoKind AsgnS, info:       # handled: the error is consumed
+        h.addSymUse tracker, info
+        h.addSymUse pool.syms.getOrIncl(SuccessName), info
+      h.addParRi()                      # close `stmts`
+      h.addDotToken()                   # no else
+      h.addParRi()                      # close `ite`
+      trGotoBuf c, dest, h
+    m = exceptStart; skip m
+
+  # --- the finally, which runs on every path ---------------------------
+  if m.hasMore and m.substructureKind == FinU:
+    var f = sub(m)
+    trGoto c, dest, f
+  c.currentProc.inFlight = savedInFlight
+
+  # --- whatever no handler consumed keeps travelling -------------------
+  if needsTracker and not catchAll:
+    var r = createTokenBuf(24)
+    r.addParLe IteV, info
+    r.copyIntoKind NeqX, info:
+      r.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+      r.addSymUse tracker, info
+      r.addSymUse pool.syms.getOrIncl(SuccessName), info
+    r.copyIntoKind StmtsS, info:
+      r.copyIntoKind RaiseS, info:
+        r.addSymUse tracker, info
+    r.addDotToken()                     # no else
+    r.addParRi()
+    trGotoBuf c, dest, r
+
+  n = tryStart; skip n
 
 proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var info = n.info
   case n.njvlKind
   of ContinueV:
-    skip n
+    # The back-edge of the INNERMOST enclosing loop. For a suspending one that
+    # is the jump to its head state, emitted by the `LoopV` case below. For a
+    # loop kept as a construct the marker stays as it is: `coroTr`'s `LoopV`
+    # case reads it to tell the loop's own tail from a source-level `continue`.
+    # At the top level of a body (which the Final IR never produces) there is
+    # nothing to jump to.
+    if c.currentProc.loopHeads.len == 0:
+      skip n
+    elif c.currentProc.loopHeads[^1] == KeptLoop:
+      dest.takeTree n
+    else:
+      emitJump dest, c.currentProc.loopHeads[^1], info
+      skip n
   of StoreV:
     var addLabel = false
     takeInto dest, n:
@@ -1216,35 +1446,33 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       inc c.currentProc.labelCounter
   of LoopV:
     if containsSuspensionPoint(c, n):
-      var beforeLoopState = c.currentProc.labelCounter
+      # A Final IR `(loop (stmts BODY (continue .)))` is unconditional: there
+      # is no condition slot to rotate and no prelude to split off, because
+      # `finalir.trWhile` already turned `while cond` into a leading guard
+      # whose `else` is a `(jmp loopExit)`. So the whole construct is one
+      # state label plus a back-edge to it, and every way OUT is already a
+      # `jmp` to the `(lab loopExit)` the Final IR emitted after the loop.
+      let head = c.currentProc.labelCounter
       inc c.currentProc.labelCounter
-      var afterLoopState = c.currentProc.labelCounter
-      inc c.currentProc.labelCounter
+      emitJump dest, head, info                     # fall into the head state
+      emitLabel dest, head, info
+      c.currentProc.loopHeads.add head
       n.into:                                       # (loop ...)
-        assert n.stmtKind == StmtsS
-        var preludeBuf = createTokenBuf(16)
-        n.into:                                     # stmts_before
-          while n.hasMore and n.njvlKind in {MflagV, VflagV}:
-            dest.takeTree n                         # flag decls: once, above the loop
-          while n.hasMore:                          # rotated prelude: lowered, spliced below
-            trGoto c, preludeBuf, n
-        emitJump dest, beforeLoopState, info
-        emitLabel dest, beforeLoopState, info
-        dest.copyIntoKind IfS, info:                # loop-continue test (cond first)
-          dest.copyIntoKind ElifU, info:
-            dest.copyIntoKind NotX, info:
-              dest.takeTree n
-            dest.copyIntoKind StmtsS, info:
-              emitJump dest, afterLoopState, info
-        dest.add preludeBuf                         # prelude: each iteration, after the test
-        assert n.stmtKind == StmtsS
-        n.into:                                     # stmts_body
+        assert n.stmtKind == StmtsS, $n.kind
+        n.into:                                     # the body
           while n.hasMore:
-            trGoto c, dest, n
-        emitJump dest, beforeLoopState, info
-        emitLabel dest, afterLoopState, info
+            trGoto c, dest, n                       # `(continue .)` -> jmp head
+      discard c.currentProc.loopHeads.pop()
     else:
-      dest.takeTree n
+      # Kept as a construct, but still WALKED: a `raise` in here belongs to an
+      # enclosing `try` and has to be redirected even though no state boundary
+      # falls inside. Copying the subtree verbatim would leave it a proc exit.
+      dest.addParLe(n.cursorTagId, info)
+      c.currentProc.loopHeads.add KeptLoop
+      n.into:
+        trGotoScoped c, dest, n
+      discard c.currentProc.loopHeads.pop()
+      dest.addParRi()
   of IteV, ItecV:
     if containsSuspensionPoint(c, n):
       n.into:
@@ -1263,11 +1491,11 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skip n
         var elseCur = n
         if n.hasMore: skip n
-        # Else-branch presence: in NJVL the missing-else case can present as
-        # either a `DotToken` placeholder *or* the scope's close (when the
-        # `ite` was emitted with the else slot elided rather than explicitly
-        # filled with `.`). Treating the scope end as "no else" prevents
-        # `elseCur.into:` from asserting on a non-ParLe cursor.
+        # Else-branch presence: the missing-else case presents as a `DotToken`
+        # placeholder (`finalir.trIf`) or, for an `ite` whose else slot was
+        # elided altogether, as the scope's close. Treating the scope end as
+        # "no else" prevents `elseCur.into:` from asserting on a non-ParLe
+        # cursor.
         if elseCur.hasMore and elseCur.isTagLit:
           emitJump dest, lelse, info
           emitLabel dest, lelse, info
@@ -1282,7 +1510,15 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         emitJump dest, lend, info
         emitLabel dest, lend, info
     else:
-      dest.takeTree n
+      dest.addParLe(n.cursorTagId, info)
+      n.into:
+        dest.takeTree n                # condition: an expression, nothing to do
+        trGotoScoped c, dest, n        # then
+        if n.hasMore:
+          if n.isTagLit: trGotoScoped c, dest, n   # else
+          else: dest.takeTree n                    # `.`: no else
+        while n.hasMore: skip n
+      dest.addParRi()
   else:
     let sk = n.stmtKind
     let ek = n.exprKind
@@ -1312,12 +1548,12 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             inc c.currentProc.labelCounter
         of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
             ConverterS, MethodS, MacroS, TemplateS, TypeS,
-            BlockS, EmitS, AsgnS, ScopeS, IfS, WhenS,
-            BreakS, ContinueS, ForS, WhileS, CoroforS, CaseS,
-            RetS, YldS, StmtsS, PragmasS, PragmaxS, InclS, ExclS,
+            BlockS, EmitS, AsgnS, IfS, WhenS,
+            BreakS, ContinueS, ForS, WhileS, CoroforS,
+            RetS, YldS, PragmasS, PragmaxS, InclS, ExclS,
             IncludeS, ImportS, ImportasS, FromimportS,
             ImportexceptS, ExportS, ExportexceptS, CommentS,
-            DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS,
+            DiscardS, UnpackdeclS, AssumeS,
             AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
             StaticstmtS, BindS, MixinS, UsingS, AsmS,
             DeferS, LabS, JmpS, NoStmt:
@@ -1326,6 +1562,95 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             while n.hasMore:
               trGoto c, dest, n
           dest.addParRi()
+        of CaseS:
+          # `finalir` keeps `case` as a construct ("Format as existing"), so
+          # unlike `nj.nim` — which lowered every branch to an `ite` chain —
+          # the state machine meets it head on. A branch that suspends gets
+          # the same treatment as an `ite` arm: the dispatch keeps only the
+          # jumps, and each body is laid out flat behind its own label.
+          if containsSuspensionPoint(c, n):
+            let caseStart = n
+            let lend = c.currentProc.labelCounter
+            inc c.currentProc.labelCounter
+            var labels: seq[int] = @[]
+            var hasElse = false
+            dest.addParLe(n.cursorTagId, info)      # the dispatch: jumps only
+            n.into:
+              dest.takeTree n                       # selector
+              while n.hasMore:
+                let subK = n.substructureKind
+                if subK in {OfU, ElseU}:
+                  let l = c.currentProc.labelCounter
+                  inc c.currentProc.labelCounter
+                  labels.add l
+                  if subK == ElseU: hasElse = true
+                  dest.addParLe(n.cursorTagId, n.info)
+                  n.into:
+                    if subK == OfU: dest.takeTree n # ranges
+                    dest.copyIntoKind StmtsS, n.info:
+                      emitJump dest, l, n.info
+                    while n.hasMore: skip n
+                  dest.addParRi()
+                else:
+                  dest.takeTree n
+            dest.addParRi()
+            if not hasElse:
+              emitJump dest, lend, info             # no branch matched
+            var b = caseStart
+            b = sub(b)
+            skip b                                  # past the selector
+            var i = 0
+            while b.hasMore:
+              if b.substructureKind in {OfU, ElseU}:
+                emitLabel dest, labels[i], info
+                var body = sub(b)
+                if b.substructureKind == OfU: skip body   # ranges
+                body.into:
+                  while body.hasMore:
+                    trGoto c, dest, body
+                emitJump dest, lend, info
+                inc i
+              skip b
+            emitLabel dest, lend, info
+            n = caseStart; skip n
+          else:
+            dest.addParLe(n.cursorTagId, info)
+            n.into:
+              dest.takeTree n                       # selector
+              while n.hasMore:
+                let subK = n.substructureKind
+                if subK in {OfU, ElseU}:
+                  dest.addParLe(n.cursorTagId, n.info)
+                  n.into:
+                    if subK == OfU: dest.takeTree n # ranges
+                    trGotoScoped c, dest, n         # branch body
+                    while n.hasMore: skip n
+                  dest.addParRi()
+                else:
+                  dest.takeTree n
+            dest.addParRi()
+        of TryS:
+          trTryGoto c, dest, n
+        of RaiseS:
+          if not trRaiseGoto(c, dest, n):
+            # no enclosing `try`: a proc exit, taken by `coroTr.trReturn`
+            dest.addParLe(n.cursorTagId, n.info)
+            n.into:
+              while n.hasMore:
+                trGoto c, dest, n
+            dest.addParRi()
+        of StmtsS, ScopeS:
+          # FLATTEN. The Final IR wraps every body — an `ite` arm, a loop body,
+          # a `block` — in its own `(stmts ...)`, and the scope ends are already
+          # spelled out as `kill` instructions. The state machine's `(lab k)`
+          # closes the current state proc and opens the next one, so it can only
+          # live at the TOP level of the body: a label emitted inside a nested
+          # list would close that list's parens instead of the proc's. `nj.nim`
+          # never produced the nesting (its guard lowering flattens by
+          # construction), which is why this had no counterpart before.
+          n.into:
+            while n.hasMore:
+              trGoto c, dest, n
       else:
         dest.takeTree n
 
@@ -1333,7 +1658,92 @@ proc toGoto*(c: var Context; n: Cursor): TokenBuf =
   result = createTokenBuf(300)
   assert n.stmtKind == StmtsS, $n.kind
   var n = n
-  trGoto(c, result, n)
+  # `trGoto` flattens `(stmts ...)`, so the body's own wrapper is emitted here.
+  result.addParLe(n.cursorTagId, n.info)
+  n.into:
+    while n.hasMore:
+      trGoto(c, result, n)
+  result.addParRi()
+
+proc rewriteCrossStateJumps(n: var Cursor; dest: var TokenBuf; states: Table[SymId, int]) =
+  if n.kind == TagLit:
+    let sk = n.stmtKind
+    if sk in {LabS, JmpS}:
+      let op = n.childCursor
+      if op.kind in {Symbol, SymbolDef} and states.hasKey(op.symId):
+        let state = states.getOrDefault(op.symId)
+        if sk == LabS:
+          emitJump dest, state, n.info # preserve the fall-through edge
+          emitLabel dest, state, n.info
+        else:
+          emitJump dest, state, n.info
+        skip n
+        return
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        rewriteCrossStateJumps(n, dest, states)
+    dest.addParRi()
+  else:
+    takeTree dest, n
+
+proc repairCrossStateJumps(c: var Context) =
+  ## The Final IR's own control flow is `(jmp L)` to a later `(lab :L)`: a loop
+  ## exit, a `break`, an `if`/`elif` merge, a short-circuit `and`/`or`. Those
+  ## are *structured* transfers — they stay inside one function, and `lengcgen`
+  ## maps them straight to a C label and `goto`.
+  ##
+  ## The state machine cuts the body into one proc per `(lab k)`, so a symbolic
+  ## jump whose label ends up in a *different* state proc has no target left. A
+  ## state transition is what a cross-proc jump has to be, so convert exactly
+  ## those pairs: the jump becomes `(jmp k)` and the label gets a fall-through
+  ## `(jmp k)` in front of it, mirroring `trGoto`'s own emitJump/emitLabel
+  ## pattern so the edge that used to fall into the label still reaches it.
+  ##
+  ## Pairs that stay within one state are left alone — a `goto` is cheaper than
+  ## a trampoline bounce, and every state label that survives here is a local
+  ## the state proc must otherwise hand to the frame.
+  ##
+  ## Must run before `escapingLocals` so locals that now cross a state boundary
+  ## are moved into the frame.
+  ##
+  ## ITERATED to a fixed point, and that is not a detail: converting a pair
+  ## PLANTS a new `(lab k)` where its label was, which is itself a new state
+  ## boundary and can split a pair that was intra-state a moment ago. #2366 is
+  ## exactly that shape — the `and` of a `while` condition and the loop's own
+  ## exit share a segment until the exit is converted, and the surviving
+  ## `goto` then names a label that moved to the next state proc.
+  template buf: TokenBuf = c.currentProc.cf
+  while true:
+    var seg = 0
+    var labSeg = initTable[SymId, int]()
+    var jmps: seq[(SymId, int)] = @[]
+    var pos = 0
+    while pos < buf.len:
+      if buf[pos].kind == TagLit and
+         (buf[pos].tagId == TagId(LabS) or buf[pos].tagId == TagId(JmpS)):
+        let isLab = buf[pos].tagId == TagId(LabS)
+        let operand = readonlyCursorAt(buf, pos + tokenWidth(readonlyCursorAt(buf, pos)))
+        if operand.kind == IntLit:
+          if isLab: inc seg
+        elif operand.kind in {Symbol, SymbolDef}:
+          if isLab:
+            labSeg[operand.symId] = seg
+          else:
+            jmps.add (operand.symId, seg)
+      inc pos
+    var states = initTable[SymId, int]()
+    for (s, jseg) in jmps:
+      if labSeg.getOrDefault(s, jseg) != jseg and not states.hasKey(s):
+        states[s] = c.currentProc.labelCounter
+        inc c.currentProc.labelCounter
+    # Every round retires at least one symbolic label, so this terminates.
+    if states.len == 0: break
+    var dest = createTokenBuf(buf.len + 16)
+    var n = beginRead(buf)
+    while n.hasMore:
+      rewriteCrossStateJumps(n, dest, states)
+    c.currentProc.cf = ensureMove dest
 
 # ---------------------------------------------------------------------
 # Body lowering — produce the state-machine procs for a single
@@ -1387,16 +1797,27 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
   init.addParRi() # assignment
 
 proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; iter: Cursor; sym: SymId) =
-  # Transform the proc body via the NJ pass to get structured code
-  # without break/continue/goto, then store just the body (without NJ
-  # bookkeeping variables like mflag/jtrue/kill) in c.currentProc.cf.
+  # Lower the proc body to the FINAL IR (`doc/final_ir.md`) — `loop`/`ite`/
+  # `case`/`lab`/`jmp`, control flow entirely statement-based — and keep it in
+  # `c.currentProc.cf`. The state machine wants a body it can CUT, and the
+  # Final IR's `lab`/`jmp` is already the cut: `toGoto` only has to decide
+  # which of those transfers has to become a state transition.
+  #
+  # This used to run `nj.nim`, whose whole job is the opposite one: it
+  # ELIMINATES jumps, materialising a monotone `mflag` guard per construct and
+  # wrapping every following statement in `(ite (not g) ...)`. The state
+  # machine then had `toGoto` put the jumps back. Two inverse rewrites in a
+  # row, and the guard machinery's else-exploitation is what produced the
+  # unbalanced `ite` of #2362's sibling (see `tests/nimony/cps/treturn_or_guard.nim`).
   var wrapper = createTokenBuf(10)
   wrapper.addParLe StmtsS, NoLineInfo
   wrapper.copyTree iter
   wrapper.addParRi()
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "eliminateJumps", 0,
-                      nextTemp = c.nextTemp)
-  eliminateJumps(pass, raisesResolved = true)
+  # `c.ptrSize` IS the target width; the 0 that stood here was invisible only
+  # while the type cache ignored what it was handed.
+  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "finalir",
+                      c.ptrSize * 8, nextTemp = c.nextTemp)
+  toFinalIr(pass)
   c.nextTemp = pass.nextTemp
   block extractBody:
     var wholeResult = ensureMove(pass.dest)
@@ -1412,7 +1833,12 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
     bodyBuf.copyTree nExt
     c.currentProc.cf = ensureMove bodyBuf
 
+  when defined(logPasses):
+    echo "========= FINAL IR ======="
+    echo c.currentProc.cf.toString(false)
+    echo ""
   c.currentProc.cf = toGoto(c, beginRead(c.currentProc.cf))
+  repairCrossStateJumps(c)
   when defined(logPasses):
     echo "========= GOTO ======="
     echo c.currentProc.cf.toString(false)
@@ -2059,37 +2485,49 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
         case n.njvlKind
         of LoopV:
-          var beforeBuf = createTokenBuf(32)
-          var condBuf = createTokenBuf(16)
+          # A suspension-free Final IR `(loop (stmts BODY (continue .)))`
+          # survives into the state proc as an ordinary `while true`. The
+          # back-edge marker is the loop's own tail, so the LAST `(continue .)`
+          # is simply dropped; an earlier one is a source-level `continue` and
+          # becomes a forward `jmp` to a `(lab)` closing the body — `lengcgen`
+          # rejects `ContinueS`, and the Final IR's own label/jump pair is
+          # exactly the construct that expresses it.
           var bodyBuf = createTokenBuf(64)
           var info = n.info
+          let contLab = pool.syms.getOrIncl("´cont." & $c.currentProc.counter &
+                                            "." & c.thisModuleSuffix)
+          inc c.currentProc.counter
+          var lastJmp = -1
+          var jumps = 0
           n.into:                                 # (loop ...)
-            assert n.stmtKind == StmtsS
-            n.into:                               # stmts_before
+            assert n.stmtKind == StmtsS, $n.kind
+            n.into:                               # the body
               while n.hasMore:
-                if n.njvlKind in {MflagV, VflagV}:
-                  trMflag c, dest, n   # hoisted outside while
-                else:
-                  coroTr c, beforeBuf, n
-            coroTr c, condBuf, n
-            assert n.stmtKind == StmtsS
-            n.into:                               # stmts_body
-              while n.hasMore:
-                if n.stmtKind == ContinueS:
+                if n.njvlKind == ContinueV:
+                  lastJmp = bodyBuf.len
+                  inc jumps
+                  bodyBuf.copyIntoKind JmpS, n.info:
+                    bodyBuf.addSymUse contLab, n.info
                   skip n
                 else:
+                  lastJmp = -1
                   coroTr c, bodyBuf, n
+          if lastJmp >= 0:
+            # the trailing back-edge marker: falling off the body does it
+            bodyBuf.shrink lastJmp
+            dec jumps
           dest.addParLe WhileS, info
-          dest.add condBuf
-          dest.addParLe StmtsS, info
-          dest.add beforeBuf
-          dest.add bodyBuf
-          dest.addParRi()
+          dest.addParPair TrueX, info
+          dest.copyIntoKind StmtsS, info:
+            dest.add bodyBuf
+            if jumps > 0:
+              dest.copyIntoKind LabS, info:
+                dest.addSymDef contLab, info
           dest.addParRi()
         of IteV, ItecV:
-          # `nj.nim` can emit a trailing 4th slot (a leftover DotToken from
-          # guard-closing); drain any extra children so the closing `)` isn't
-          # left for the outer loop, which would drop the following siblings.
+          # `(ite cond then else)`, where `else` may be a bare `.`. Any further
+          # child is drained rather than left for the outer loop, which would
+          # otherwise stop at the stray token and drop the following siblings.
           var info = n.info
           n.into:
             dest.copyIntoKind IfS, info:
@@ -2102,8 +2540,6 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               skip n
         of MflagV, VflagV:
           trMflag c, dest, n
-        of JtrueV:
-          trJtrue c, dest, n
         of StoreV:
           # (store value dest) -> (asgn dest value)
           let info = n.info
@@ -2126,8 +2562,8 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if n.typeKind == ProctypeT:
             c.hooks.trProctype(c, dest, n)
           else:
-            case globalTags.tags[n.cursorTagId]
-            of "jmp":
+            case n.stmtKind
+            of JmpS:
               # Two different `jmp`s meet here. The CPS state machine's own
               # carries an INTEGER state id (this pass and `togoto` produce
               # it); the structured Nimony one carries a label SYMBOL and is
@@ -2139,7 +2575,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
                   inc n
               else:
                 takeTree dest, n
-            of "lab":
+            of LabS:
               if n.childCursor.kind == IntLit:
                 dest.addParRi() # close stmts
                 dest.addParRi() # close proc decl

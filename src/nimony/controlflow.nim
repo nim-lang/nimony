@@ -1103,8 +1103,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of CoroforS:
     trCoroFor c, n
 
-proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): TokenBuf =
-  var c = ControlFlow(typeCache: createTypeCache(), keepReturns: keepReturns)
+proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]; bits: int): TokenBuf =
+  var c = ControlFlow(typeCache: createTypeCache(bits), keepReturns: keepReturns)
   c.srcBase = n
   c.typeCache.openScope()
   let sk = n.stmtKind
@@ -1125,20 +1125,20 @@ proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): To
   result = ensureMove c.dest
   #echo "result: ", codeListing(result)
 
-proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
+proc toControlflow*(n: Cursor; bits: int; keepReturns = false): TokenBuf =
   ## Build the goto-based control-flow representation. The source-position
   ## side-channel is discarded — for callers (e.g. contracts) that only need
   ## the CF graph, not the back-mapping to the original trees.
   var srcMap: seq[int32] = @[]
-  result = toControlflowImpl(n, keepReturns, srcMap)
+  result = toControlflowImpl(n, keepReturns, srcMap, bits)
 
-proc toControlflowWithMap*(n: Cursor; srcMap: var seq[int32];
+proc toControlflowWithMap*(n: Cursor; srcMap: var seq[int32]; bits: int;
                            keepReturns = false): TokenBuf =
   ## As `toControlflow`, but also returns `srcMap`, a seq parallel to the result
   ## buffer: `srcMap[i]` is the position (relative to `n`) of the source token
   ## that produced CF token `i`, or -1 for a synthesized token. The mover inverts
   ## this to locate an `emove` operand's landing site in the CF.
-  result = toControlflowImpl(n, keepReturns, srcMap)
+  result = toControlflowImpl(n, keepReturns, srcMap, bits)
 
 proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
   # Create a sequence to track which instructions are reachable
@@ -1201,7 +1201,9 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile, outputfile: string; keepReturns: bool) =
     var input = parseFromFile(infile)
-    var cf = toControlflow(beginRead(input), keepReturns=keepReturns)
+    # A standalone debug driver: it has no target, so the host's width is the
+    # only answer available and is stated rather than defaulted to.
+    var cf = toControlflow(beginRead(input), sizeof(int)*8, keepReturns=keepReturns)
     try:
       writeFile(outputfile, codeListing(cf))
     except:

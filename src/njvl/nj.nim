@@ -1402,7 +1402,7 @@ proc trGuardedStmts(c: var Context; b: var BasicBlock; dest: var TokenBuf; n: va
     dest.addParRi()
 
 proc eliminateJumps*(pass: var Pass; raisesResolved = false) =
-  var c = Context(counter: 0, typeCache: createTypeCache(),
+  var c = Context(counter: 0, typeCache: createTypeCache(pass.bits),
                   thisModuleSuffix: pass.moduleSuffix,
                   raisesResolved: raisesResolved)
   c.openScope()
@@ -1435,7 +1435,8 @@ when isMainModule:
   let n = setupProgram(infile, infile.changeModuleExt".njvl.nif", owningBuf)
   var initialBuf = createTokenBuf(300)
   initialBuf.addSubtree(n)
-  var pass = initPass(move initialBuf, "main", "xelim_njvl", 0)
+  # A standalone debug driver: no target, so the host's width is stated.
+  var pass = initPass(move initialBuf, "main", "xelim_njvl", sizeof(int)*8)
   eliminateJumps(pass)
   let output = pass.dest.toString(false)
   if paramCount() >= 2:

@@ -1,0 +1,9 @@
+case 0
+case 1
+case else
+loop ok 1
+loop caught 3
+loop ok 4
+loopy done 4
+inner
+outer

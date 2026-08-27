@@ -295,8 +295,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       bug "Unmatched ParRi" # classic: a physical ParRi; nifcore: suffix kinds (never heads)
 
 
-proc toGoto*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(typeCache: createTypeCache())
+proc toGoto*(n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
+  var c = Context(typeCache: createTypeCache(bits))
   var n = n
   c.typeCache.openScope()
   result = createTokenBuf(300)

@@ -197,7 +197,11 @@ elif defined(genode):
   proc nimGetProcAddr(lib: LibHandle, name: cstring): ProcAddr {.exportc: "nimGetProcAddr"} =
     raiseAssert("nimGetProcAddr not implemented")
 
-elif defined(nintendoswitch) or defined(freertos) or defined(zephyr) or defined(nuttx):
+elif defined(nintendoswitch) or defined(freertos) or defined(zephyr) or
+     defined(nuttx) or defined(embedded):
+  # `defined(embedded)` is `--os:embedded`: a firmware image has no dynamic
+  # libraries and nothing to load one with, which is the same answer these
+  # targets give.
   proc nimUnloadLibrary(lib: LibHandle) =
     writeErr("nimUnLoadLibrary not implemented")
     writeErr("\n")

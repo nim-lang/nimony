@@ -185,6 +185,11 @@ include "system/setops"
 
 include "system/ctypes"
 
+when defined(embedded):
+  # The console of a bare-metal image, and its `exit`. Included BEFORE `exits`,
+  # which uses it, and only on the target that has no OS to ask instead.
+  include "system/semihosting"
+
 include "system/exits"
 include "system/atomintrin"
 include "system/memory"

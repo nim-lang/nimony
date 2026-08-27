@@ -306,13 +306,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         while n.hasMore:
           trStmt c, dest, n
 
-proc toNjvl*(n: Cursor; moduleSuffix: string): TokenBuf =
-  var c = Context(typeCache: createTypeCache(), vt: createVersionTab())
+proc toNjvl*(n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
+  var c = Context(typeCache: createTypeCache(bits), vt: createVersionTab())
   c.typeCache.openScope()
   result = createTokenBuf(300)
   var initialBuf = createTokenBuf(300)
   initialBuf.addSubtree(n)
-  var pass = initPass(move initialBuf, moduleSuffix, "xelim_njvl", 0)
+  var pass = initPass(move initialBuf, moduleSuffix, "xelim_njvl", bits)
   eliminateJumps(pass)
   var elimJumps = ensureMove(pass.dest)
   var n = beginRead(elimJumps)
@@ -331,7 +331,8 @@ when isMainModule:
   let infile = paramStr(1)
   var owningBuf = createTokenBuf(300)
   let n = setupProgram(infile, infile.changeModuleExt".njvl.nif", owningBuf)
-  let r = toNjvl(n, "main")
+  # A standalone debug driver: no target, so the host's width is stated.
+  let r = toNjvl(n, "main", sizeof(int)*8)
   let output = r.toString(false)
   if paramCount() >= 2:
     # Write to specified output file

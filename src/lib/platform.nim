@@ -11,12 +11,12 @@
 # Nim has been tested on this platform or that the RTL has been ported.
 # Feel free to test for your excentric platform!
 
-import std/strutils
+import std / [strutils, syncio]
 
 type
   TSystemOS* = enum # Also add OS in initialization section and alias
                     # conditionals to condsyms (end of module).
-    osNone, osDos, osWindows, osOs2, osLinux, osMorphos, osSkyos, osSolaris,
+    osEmbedded, osDos, osWindows, osOs2, osLinux, osMorphos, osSkyos, osSolaris,
     osIrix, osNetbsd, osFreebsd, osOpenbsd, osDragonfly, osCrossos, osAix, osPalmos, osQnx,
     osAmiga, osAtari, osNetware, osMacos, osMacosx, osIos, osHaiku, osAndroid, osVxWorks
     osGenode, osJS, osNimVM, osStandalone, osNintendoSwitch, osFreeRTOS, osZephyr,
@@ -36,7 +36,24 @@ type
                    props: TInfoOSProps]
 
 const
-  OS*: array[succ(low(TSystemOS))..high(TSystemOS), TInfoOS] = [
+  OS*: array[low(TSystemOS)..high(TSystemOS), TInfoOS] = [
+     (name: "embedded",
+      # BARE METAL: no OS to ask for anything, which is a real target and not the
+      # absence of one.
+      #
+      # Not `standalone`: that is Nim's name for a related but different
+      # arrangement (a hosted-ish freestanding build with a `panicoverride`), and
+      # nothing here offers that, so it would be the wrong word. Not `none`
+      # either — the name becomes a `defined()` symbol, and `defined(none)` says
+      # nothing about what is being built and reads like a mistake wherever it
+      # appears. `defined(embedded)` says it.
+      #
+      # This slot used to be `osNone`, the not-found sentinel of `nameToOS`, which
+      # is why it had no entry. `findOS` carries that answer in its result now.
+      parDir: "..", dllFrmt: "lib$1.so", altDirSep: "/",
+      objExt: ".o", newLine: "\x0A", pathSep: ":", dirSep: "/",
+      scriptExt: ".sh", curDir: ".", exeExt: "", extSep: ".",
+      props: {}),
      (name: "DOS",
       parDir: "..", dllFrmt: "$1.dll", altDirSep: "/", objExt: ".obj",
       newLine: "\x0D\x0A", pathSep: ";", dirSep: "\\", scriptExt: ".bat",
@@ -228,7 +245,11 @@ const
     (name: "amd64", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64), # a.k.a. x86_64, covers both amd and intel
     (name: "mips", intSize: 32, endian: bigEndian, floatSize: 64, bit: 32),
     (name: "mipsel", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
-    (name: "arm", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
+    # `arm32`, not `arm`: alongside `arm64` the bare word never says which it is,
+    # and this is the name the target triple is spelled with (`--cpu:arm32
+    # --os:none` is the bare-metal Cortex-M target). `defined(arm)` still holds —
+    # see `isDefined`'s alias table — and `--cpu:arm` is still accepted.
+    (name: "arm32", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
     (name: "arm64", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64),
     (name: "js", intSize: 32, endian: littleEndian, floatSize: 64, bit: 32),
     (name: "nimvm", intSize: 32, endian: bigEndian, floatSize: 64, bit: 32),
@@ -245,14 +266,49 @@ const
     (name: "e2k", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64),
     (name: "loongarch64", intSize: 64, endian: littleEndian, floatSize: 64, bit: 64)]
 
-proc nameToOS*(name: string): TSystemOS =
-  for i in succ(osNone)..high(TSystemOS):
+proc findOS*(name: string; res: var TSystemOS): bool =
+  ## `true` and sets `res` when `name` is an OS this compiler knows.
+  ##
+  ## Separate from `nameToOS` because the first enum value is now a TARGET
+  ## (`osEmbedded`), so "returned the first one" no longer means "no match" — and
+  ## conflating the two would make every typo silently select bare metal.
+  for i in low(TSystemOS)..high(TSystemOS):
     if cmpIgnoreStyle(name, OS[i].name) == 0:
-      return i
-  result = osNone
+      res = i
+      return true
+  result = false
 
-proc nameToCPU*(name: string): TSystemCPU =
+proc nameToOS*(name: string): TSystemOS =
+  ## For the HOST's own name, which is always one this compiler knows. A miss here
+  ## is a bug in the `hostOS` derivation and not user input — `findOS` is what
+  ## validates a flag, and returning `osEmbedded` for a typo is exactly the
+  ## silence this split exists to prevent.
+  ##
+  ## The out-parameter goes to a LOCAL rather than straight to `result`: `result`
+  ## is not initialized on entry, and a `var` parameter must be, so handing it
+  ## over is a read of an uninitialized location whichever way `findOS` returns.
+  var res = osEmbedded
+  if not findOS(name, res):
+    quit "internal error: unknown host OS: " & name
+  result = res
+
+proc findCPU*(name: string; res: var TSystemCPU): bool =
+  ## `true` and sets `res` when `name` is a CPU this compiler knows. `arm` is
+  ## accepted for `arm32`: the canonical name changed, the spelling people have
+  ## already written did not.
   for i in succ(cpuNone)..high(TSystemCPU):
     if cmpIgnoreStyle(name, CPU[i].name) == 0:
-      return i
-  result = cpuNone
+      res = i
+      return true
+  if cmpIgnoreStyle(name, "arm") == 0:
+    res = cpuArm
+    return true
+  result = false
+
+proc nameToCPU*(name: string): TSystemCPU =
+  ## The host's CPU; same contract as `nameToOS`.
+  ## `res` is a local for the same reason as in `nameToOS`.
+  var res = cpuNone
+  if not findCPU(name, res):
+    quit "internal error: unknown host CPU: " & name
+  result = res
