@@ -827,7 +827,7 @@ proc nop*(sqe: ptr Sqe): ptr Sqe =
 
 
 proc prepRw[
-  FD: FileHandle | SocketHandle,
+  FD: FileHandle | SocketHandle | int,
   ADDR: pointer | SomeNumber,
   OFF: pointer | SomeNumber,
   LEN: SomeNumber
@@ -898,23 +898,26 @@ proc connect*(sqe: ptr Sqe; sock: SocketHandle, `addr`: ptr SockAddr, addrLen: S
 proc epoll_ctl*(sqe: ptr Sqe; epfd: FileHandle; fd: FileHandle; op: uint32; ev: ptr EpollEvent): ptr Sqe =
   sqe.prepRw(OP_EPOLL_CTL, epfd, cast[pointer](ev), op, fd)
 
-# XXX: needs std/endians
+proc poll_add*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
+  ## Single-shot `OP_POLL_ADD`: completes once with the fired poll mask, then
+  ## disarms until re-armed. `pollMask` is a standard poll(2) mask (POLLIN/
+  ## POLLOUT, ...). Matches liburing's io_uring_prep_poll_add, which stores the
+  ## mask in the poll32_events field.
+  sqe.opFlags.poll32Events = pollMask
+  sqe.prepRw(OP_POLL_ADD, fd, cast[pointer](nil), 0, 0)
 
-# proc poll_add*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
-#   littleEndian32(addr result.opFlags.poll32Events, addr pollMask)
-#   sqe.prepRw(OP_POLL_ADD, fd, nil, 1, 0)
 
-# proc poll_multi*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
-#   var flags = PollFlags({POLL_ADD_MULTI})
-#   sqe.len = cast[ptr int](flags.addr)[]
-#   sqe.poll_add(fd, pollMask)
+proc poll_multi*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
+  var flags = PollFlags({POLL_ADD_MULTI})
+  sqe.len = cast[ptr int32](flags.addr)[]
+  sqe.poll_add(fd, pollMask)
 
-# proc poll_remove*(sqe: ptr Sqe; targetUserData: UserData): ptr Sqe =
-#   sqe.prepRw(OP_POLL_REMOVE, -1, target_user_data, 0, 0)
+proc poll_remove*[UserData: SomeNumber | pointer](sqe: ptr Sqe; target_user_data: UserData): ptr Sqe =
+  sqe.prepRw(OP_POLL_REMOVE, -1, target_user_data, 0, 0)
 
-# proc poll_update*(sqe: ptr Sqe; oldUserData: UserData; newUserData: UserData; pollMask: uint32, flags: uint32): ptr Sqe =
-#   littleEndian32(addr result.opFlags.poll32Events, addr pollMask)
-#   sqe.prepRw(OP_POLL_REMOVE, -1, oldUserData, int flags, cast[int](newUserData))
+proc poll_update*[UserData: SomeNumber | pointer](sqe: ptr Sqe; oldUserData: UserData; newUserData: UserData; pollMask: uint32, flags: uint32): ptr Sqe =
+  sqe.opFlags.poll32Events = pollMask
+  sqe.prepRw(OP_POLL_REMOVE, -1, oldUserData, int flags, cast[int](newUserData))
 
 
 proc recv*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: cint = 0): ptr Sqe =

@@ -17,6 +17,7 @@
 import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
+export types.EvRead, types.EvWrite
 export backend.BackendRelays, backend.CqSize
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
@@ -80,6 +81,22 @@ proc submitAccept*(listenFd: cint;
     cont: cont, res: cast[int](resPtr))
   op.acceptAddr = Sockaddr_storage()
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
+  enqueueOp(op)
+
+proc submitPollAdd*(fd: cint;
+                    cont = Continuation(fn: nil, env: nil);
+                    resPtr: nil ptr int = nil): SeqNum =
+  ## Register oneshot readiness interest in `fd` without issuing any I/O.
+  ## When the fd becomes ready (readable, writable, or both) a single
+  ## completion fires whose `op` is `opPollAdd` and whose `result` holds the
+  ## ready-direction mask (bits `EvRead` and/or `EvWrite`). Unlike
+  ## `submitRead`/`submitWrite`, no transfer is performed — the caller decides
+  ## what to do with the ready fd (e.g. libcurl's multi-socket engine). This
+  ## is oneshot: `complete` frees the slot, so re-arm by calling
+  ## `submitPollAdd` again after handling the event.
+  result = nextSeqNum()
+  var op = OpContext(kind: opPollAdd, fd: fd, seqnum: result,
+    cont: cont, res: cast[int](resPtr))
   enqueueOp(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =

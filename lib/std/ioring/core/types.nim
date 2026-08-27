@@ -1,9 +1,13 @@
 # Common types shared across all ioring layers.
 import std/posix/posix
 
+const
+  EvRead* = 1
+  EvWrite* = 2
+
 type
   IoOp* = enum
-    opNop, opRead, opWrite, opAccept
+    opNop, opRead, opWrite, opAccept, opPollAdd
 
   SeqNum* = uint32
 

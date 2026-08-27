@@ -9,10 +9,6 @@ import ../core/types
 import ../core/slots
 import ../core/backend
 
-const
-  EvRead* = 1
-  EvWrite* = 2
-
 proc noopReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} = discard
 var reArmEvent*: proc (fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} = noopReArm
 ## Registers (or re-arms, for EPOLLONESHOT-style backends) readiness
@@ -27,6 +23,10 @@ proc submitForPoll*(slotIdx: int; op: ptr OpContext; alreadyRegistered: bool = f
     mask = mask or EvRead
   if op.kind == opWrite:
     mask = mask or EvWrite
+  if op.kind == opPollAdd:
+    # Pure readiness probe: interested in either direction so the caller gets
+    # one notification per re-arm telling it which way the fd became ready.
+    mask = EvRead or EvWrite
   reArmEvent(op.fd, mask, alreadyRegistered)
 
 when defined(posix):
@@ -63,6 +63,12 @@ when defined(posix):
           var addrLen = s.op.acceptLen
           let clientFd = posixAccept(fd, addr s.op.acceptAddr, addr addrLen)
           complete(j, if clientFd >= 0: clientFd else: -1)
+      of opPollAdd:
+        # Pure readiness notification: no I/O, just report which direction(s)
+        # fired so the caller (e.g. libcurl's multi-socket engine) can decide
+        # what to do next. The slot is freed by `complete`, so the caller
+        # re-submits to re-arm (oneshot).
+        complete(j, firedEvents and (EvRead or EvWrite))
       of opNop:
         discard
     # Re-arm for whatever directions still have an op pending on this fd

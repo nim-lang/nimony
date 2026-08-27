@@ -19,6 +19,10 @@ from ./epoll import initEpollBackendRelays
 
 const
   DrainBatch = 128  ## Max deferred entries drained per poll() call.
+  # Standard poll(2) mask bits used by io_uring's OP_POLL_ADD (distinct from
+  # the internal EvRead/EvWrite flags, which never cross into the kernel).
+  POLLIN = uint32(0x0001)
+  POLLOUT = uint32(0x0004)
 
 var
   sqEntries: int
@@ -44,6 +48,11 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
       discard sqe.write(op.fd, cast[pointer](op.buf), op.len)
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
+  of opPollAdd:
+    # Single-shot readiness probe on both directions; completes with the fired
+    # poll mask, then the slot is freed so the caller re-arms with a new
+    # submitPollAdd (matching the epoll/kqueue oneshot behaviour).
+    discard sqe.poll_add(op.fd, POLLIN or POLLOUT)
   of opNop:
     discard sqe.nop()
 
@@ -89,7 +98,20 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       quit "fatal: bug: copyCqes cannot fail: " & $e
     if n > 0:
       for i in 0..<n:
-        complete(int(cqes[i].userData), int(cqes[i].res))
+        let idx = int(cqes[i].userData)
+        # For OP_POLL_ADD the kernel reports the fired mask in poll(2) form;
+        # translate it to the same internal EvRead/EvWrite flags the epoll/
+        # kqueue backends use, so the completion's `result` is consistent no
+        # matter which backend is in use.
+        var res = int(cqes[i].res)
+        if gSlots[threadIdx].slots[idx].op.kind == opPollAdd:
+          var ev = 0
+          if (uint32(res) and POLLIN) != 0:
+            ev = ev or EvRead
+          if (uint32(res) and POLLOUT) != 0:
+            ev = ev or EvWrite
+          res = ev
+        complete(idx, res)
       return true
   return false
 
