@@ -1303,6 +1303,12 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         dest.addSubtree erroredN
         dest.addStrLit("", cs.callNodeInfo)
       return
+    elif m.len > 0 and allFailedDueToCouldNotInfer(m):
+      # Orphan typevars are rejected in sigmatch, so no candidate survives
+      # pickBestMatch; keep the direct "could not infer type" diagnostic instead
+      # of the generic overload-set "Type mismatch" wrapper.
+      buildErr c, dest, cs.callNodeInfo, getErrorMsg(m[0])
+      return
     elif m.len > 0:
       errorMsg = "Type mismatch at [position]\n"
       errorMsg.add asNimCode erroredN

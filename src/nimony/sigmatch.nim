@@ -2430,6 +2430,45 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.error0 RoutineIsNotGeneric
       return
 
+proc typevarInType(n: var TypeCursor; v: SymId): bool =
+  case n.kind
+  of Symbol:
+    if n.symId == v: return true
+    inc n
+  of TagLit:
+    n.loopInto:
+      if typevarInType(n, v): return true
+  else:
+    inc n
+  false
+
+proc typevarInRoutineSignature(fn: FnCandidate; v: SymId): bool =
+  var f = fn.typ
+  if f.typeKind in RoutineTypes:
+    skipToParams f
+    assert f.substructureKind == ParamsU
+    var params = sub(f)
+    while params.hasMore:
+      let param = takeLocal(params, SkipFinalParRi)
+      var typ = param.typ
+      if typevarInType(typ, v): return true
+    skip f
+    if f.hasMore:
+      var ret = f
+      if typevarInType(ret, v): return true
+  false
+
+proc rejectUninferableTypevars(m: var Match) =
+  ## Drop generic candidates whose remaining typevars never appear in the
+  ## callable surface (params or return type). They cannot be inferred from
+  ## arguments and would otherwise tie non-generic overloads at pickBestMatch.
+  if m.err: return
+  for v in m.tvars:
+    if m.inferred.hasKey(v): continue
+    if not typevarInRoutineSignature(m.fn, v):
+      m.error0Typevar CouldNotInferTypeVar, v
+      break
+
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
@@ -2458,6 +2497,8 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
     f = paramsStart; skip f
     m.returnType = f # return type follows the parameters in the token stream
 
+  rejectUninferableTypevars(m)
+
 proc hasUnboundTypevars*(m: Match): bool =
   ## True if `m.fn`'s generic typevars (as collected by `matchTypevars`) still
   ## lack a binding after argument matching. Cheap: just consults the
@@ -2466,6 +2507,16 @@ proc hasUnboundTypevars*(m: Match): bool =
     if not m.inferred.hasKey(v):
       return true
   return false
+
+proc matchFailedOnlyDueToCouldNotInfer*(m: Match): bool =
+  result = m.err and m.error.kind == CouldNotInferTypeVar
+
+proc allFailedDueToCouldNotInfer*(m: openArray[Match]): bool =
+  if m.len == 0: return false
+  for i in 0..<m.len:
+    if not matchFailedOnlyDueToCouldNotInfer(m[i]):
+      return false
+  true
 
 proc buildTypeArgs*(m: var Match) =
   # check all type vars have a value:
