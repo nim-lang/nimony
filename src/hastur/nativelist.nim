@@ -74,7 +74,15 @@ const
     "tests/nimony/threads",
     "tests/nimony/types",
     "tests/nimony/untyped",
-    "tests/nimony/when"
+    "tests/nimony/when",
+    # Added after a full tree walk on Windows drove every native-eligible test
+    # through `nimony n` (see issue #2286): these directories passed both
+    # test-by-test and as their native joined program, same as the entries above.
+    "tests/nimony/configtest",
+    "tests/nimony/nifcore",
+    "tests/nimony/pluginpaths",
+    "tests/nimony/rtchecks",
+    "tests/nimony/scopes"
   ]
 
   NativeJoinSkip*: array[0, string] = [
