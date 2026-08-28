@@ -31,17 +31,28 @@ type
 
   SockLen* = cuint  ## socklen_t
 
-  Sockaddr_storage* {.importc: "sockaddr_storage".} = object
-  Sockaddr_in* {.importc: "sockaddr_in".} = object
-    sin_family*: cushort
-    sin_port*: cushort
-    sin_addr*: InAddr
-  InAddr* {.importc: "in_addr".} = object
+  InAddr* {.pure.} = object ## struct in_addr
     s_addr*: uint32
+
+  Sockaddr_storage* {.pure.} = object ## struct sockaddr_storage: 128 bytes,
+                                      ## 8-aligned on both ABIs. The payload is
+                                      ## opaque; only its *size* matters, and it
+                                      ## has to be right — accept(2) and
+                                      ## recvfrom(2) are handed `sizeof` this as
+                                      ## the caller's buffer length.
+    abi: array[16, uint64]
 
 when defined(linux):
   type
     TSa_Family* = uint16  ## sa_family_t
+
+    Sockaddr_in* {.pure.} = object ## struct sockaddr_in
+      sin_family*: TSa_Family
+      sin_port*: cushort         ## network byte order
+      sin_addr*: InAddr
+      sin_zero: array[8, char]   ## padding to sizeof(struct sockaddr); the
+                                 ## kernel rejects a bind(2)/connect(2) whose
+                                 ## addrlen is short of the full 16 bytes
 
     SockAddr* {.pure.} = object ## struct sockaddr
       sa_family*: TSa_Family        ## Address family (offset 0, no sa_len).
@@ -61,6 +72,13 @@ when defined(linux):
 else:
   type
     TSa_Family* = uint8  ## sa_family_t
+
+    Sockaddr_in* {.pure.} = object ## struct sockaddr_in (BSD layout with sin_len)
+      sin_len: uint8
+      sin_family*: TSa_Family
+      sin_port*: cushort         ## network byte order
+      sin_addr*: InAddr
+      sin_zero: array[8, char]
 
     SockAddr* {.pure.} = object ## struct sockaddr (BSD layout with sa_len)
       sa_len: uint8                 ## Total length of the address.

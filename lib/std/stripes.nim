@@ -10,7 +10,10 @@ proc nextPow2(x: int): int =
   result = result or (result shr 4)
   result = result or (result shr 8)
   result = result or (result shr 16)
-  result = result or (result shr 32)
+  when sizeof(int) > 4:
+    # A shift by the full width of `int` is undefined in C, so this step only
+    # exists on 64-bit targets; on 32-bit the 16-shift above already saturates.
+    result = result or (result shr 32)
   result = result + 1
 
 # --- FifoStripe: lock-based FIFO queue ---

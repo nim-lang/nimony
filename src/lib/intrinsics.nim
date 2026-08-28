@@ -129,6 +129,15 @@ type
     #    portable rows: the CONCEPT is target-neutral, the instruction is not.
     StackPointerOp
     TraceTableOp
+    # ── the size of one thread's thread-local block (`lib/std/rawthreads`). A
+    #    thread the runtime creates itself needs storage for every `{.threadvar.}`
+    #    in the program, and how many bytes that is is a LINK-time fact: nifasm
+    #    lays every module's thread-locals into one block and only then knows how
+    #    big it got. So the row answers with the ADDRESS of the number, exactly as
+    #    `TraceTable` answers with the address of the table — one `lea` against a
+    #    label the assembler owns — rather than an immediate no compilation unit
+    #    could have supplied.
+    TlsSizeOp
     # ── the valgrind client request (`lib/std/valgrind`). Portable in the same
     #    sense: every target has the mechanism, none spells it the same way.
     VgClientRequestOp
@@ -175,6 +184,21 @@ type
     #    the parameter block live in a0/a1, which an `{.assembler.}` body names out
     #    loud, and the result comes back in a0 where the body reads it.
     SemihostOp
+    # ── the raw kernel entry (`lib/std/rawthreads`). One instruction, and the
+    #    ONLY way a libc-free image can create a thread: `clone` is not callable
+    #    from compiled code, because the child resumes at the instruction after
+    #    the syscall with a DIFFERENT stack pointer — every local the surrounding
+    #    proc had is gone, and its epilogue would pop from a stack that never held
+    #    a frame. So the sequence has to be written where the stack is said out
+    #    loud, i.e. an `{.assembler, naked.}` body, and this row is what lets one
+    #    say `syscall`.
+    #
+    #    Nullary and void for the same reason `bkpt` and `semihost` are: the
+    #    number is in rax and the arguments in rdi/rsi/rdx/r10/r8/r9 because the
+    #    body put them there, and the result comes back in rax where the body
+    #    reads it. No column here can describe that, and in an `.assembler` proc
+    #    none needs to — there is no allocator to inform.
+    SyscallOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -333,9 +357,9 @@ const
     "CpuRelax",
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
-    "StackPointer", "TraceTable", "VgClientRequest",
+    "StackPointer", "TraceTable", "TlsSize", "VgClientRequest",
     "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize",
-    "NoinitStart", "NoinitSize", "bkpt", "semihost"]
+    "NoinitStart", "NoinitSize", "bkpt", "semihost", "syscall"]
 
   Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
     ## one operand, and the instruction encodes it — see `ptImmLit`.
@@ -778,6 +802,17 @@ const
     IntrinsicRow(cls: icPortable, targets: {tgX64}, arity: 0,         # TraceTable
                  params: NoOps, roles: AllIn, ret: ptRawPtr,
                  widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # `TlsSize` is the address of an 8-byte cell holding how many bytes one
+    # thread's thread-local block occupies — the same `lea`-against-a-label shape
+    # as `TraceTable`, and for the same reason: the number is only settled once
+    # every module's `{.threadvar.}`s have been laid out, which is after the last
+    # compilation unit is gone. `efPure`: a link-time constant.
+    # x86-64 only, which is where the block is a flat FS-relative region; the
+    # AArch64/Darwin thread-locals go through per-variable descriptors, where
+    # "the size of the block" is not the question a thread creator asks.
+    IntrinsicRow(cls: icPortable, targets: {tgX64}, arity: 0,         # TlsSize
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
 
     # ── valgrind ───────────────────────────────────────────────────────────
     # One request to valgrind, made the only way valgrind accepts one: a fixed
@@ -864,10 +899,25 @@ const
     IntrinsicRow(cls: icPinned, targets: {tgRv32}, arity: 0,       # semihost
                  params: NoOps, roles: AllIn, ret: ptVoid,
                  widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
+                 uses: {}, defs: {}),
+    # ── the kernel entry ──
+    # Effects as wide as the two rows above, and for a stronger reason: a syscall
+    # is every side effect there is. `efBarrier` is what keeps a store the kernel
+    # is about to read from being sunk past it, and what stops `clone`'s child
+    # from being reached by code hoisted across the instruction that created it.
+    #
+    # `defs` is empty, which is not the claim that flags survive — x86-64's
+    # `syscall` also destroys rcx and r11, and no column here can say that
+    # either. An `.assembler` body has no allocator to mislead: what the
+    # instruction costs is the author's to know, the same way it is in the
+    # asm block of any other language.
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,        # syscall
+                 params: NoOps, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
                  uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = SemihostOp
+const LastIntrinsicOp* = SyscallOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -941,7 +991,7 @@ proc isMachineQuery*(op: IntrinsicOp): bool {.inline.} =
   ## instruction with nothing to place. The back ends need the distinction
   ## because every other zero-operand row is a FLAG read, whose result cannot be
   ## materialised at all — these produce an ordinary register value.
-  op in {StackPointerOp, TraceTableOp}
+  op in {StackPointerOp, TraceTableOp, TlsSizeOp}
 
 proc isNullaryVoid*(r: IntrinsicRow): bool {.inline.} =
   ## A row with no operands AND no output of any kind: `CpuRelax`. The back ends

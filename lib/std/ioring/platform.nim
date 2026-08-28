@@ -5,7 +5,12 @@ import ./core/backend
 when defined(linux):
   const hasEpoll* = true
   const hasKqueue* = false
-  const hasIouring* = true
+  const hasIouring* = not defined(nimIoringNoUring)
+    ## `-d:nimIoringNoUring` picks the epoll backend on Linux. io_uring is the
+    ## better default, but it also *hides* the epoll path: many container
+    ## sandboxes forbid `io_uring_setup`, so the fallback is what actually runs
+    ## there and it needs to be reachable deliberately — for testing, and for
+    ## anyone who has to disable io_uring for policy reasons.
 elif defined(macosx) or defined(freebsd) or defined(netbsd) or
      defined(openbsd) or defined(dragonfly):
   const hasEpoll* = false

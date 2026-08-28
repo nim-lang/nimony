@@ -3,8 +3,6 @@
 # The global reArmEvent proc is set by each backend's init to dispatch to its
 # own platform-specific implementation.
 
-import std/threadpool
-
 import ../core/types
 import ../core/slots
 import ../core/backend
@@ -17,17 +15,33 @@ var reArmEvent*: proc (fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.}
 ## pending read *and* a pending write) sharing one epoll/kqueue
 ## registration, so the registration is keyed by fd, not by any one op.
   
-proc submitForPoll*(slotIdx: int; op: ptr OpContext; alreadyRegistered: bool = false) {.nimcall.} =
-  var mask = 0
-  if op.kind == opRead or op.kind == opAccept:
-    mask = mask or EvRead
-  if op.kind == opWrite:
-    mask = mask or EvWrite
-  if op.kind == opPollAdd:
-    # Pure readiness probe: interested in either direction so the caller gets
-    # one notification per re-arm telling it which way the fd became ready.
-    mask = EvRead or EvWrite
-  reArmEvent(op.fd, mask, alreadyRegistered)
+proc armMaskForFd*(fd: cint): int =
+  ## The union of the directions every op currently pending on `fd` waits for.
+  ##
+  ## It has to be the union, never one op's own direction: the registration is
+  ## keyed by fd, and epoll's `EPOLL_CTL_MOD` *replaces* the interest set. Arming
+  ## with just the newest op's direction therefore silently disarms the others —
+  ## `submitWrite(fd)` followed by `submitRead(fd)` would leave the fd watched
+  ## for EPOLLIN only and the pending write would never be woken.
+  result = 0
+  let lane = ioLane()
+  for j in gSlots[lane].slotsForFd(fd):
+    case gSlots[lane].slots[j].op.kind
+    of opRead, opAccept:
+      result = result or EvRead
+    of opWrite:
+      result = result or EvWrite
+    of opPollAdd:
+      # Pure readiness probe: interested in either direction so the caller gets
+      # one notification per re-arm telling it which way the fd became ready.
+      result = result or (EvRead or EvWrite)
+    of opNop:
+      discard
+
+proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
+  ## Arm `fd` for every op pending on it, including the one just allocated by
+  ## the caller (`allocSlot` has already linked it into the fd's list).
+  reArmEvent(fd, armMaskForFd(fd), alreadyRegistered)
 
 when defined(posix):
   import std / assertions
@@ -47,8 +61,9 @@ when defined(posix):
     ## actually fired has data ready / a free send buffer.
     # O(k) in the number of ops on this fd, via the intrusive per-fd list,
     # instead of an O(MaxOps) scan of the whole arena.
-    for j in gSlots[threadIdx].slotsForFd(fd):
-      let s = addr gSlots[threadIdx].slots[j]
+    let lane = ioLane()
+    for j in gSlots[lane].slotsForFd(fd):
+      let s = addr gSlots[lane].slots[j]
       case s.op.kind
       of opRead:
         if (firedEvents and EvRead) != 0:
@@ -73,17 +88,8 @@ when defined(posix):
         discard
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
-    var armMask = 0
-    var stillPending = false
-    for j in gSlots[threadIdx].slotsForFd(fd):
-      stillPending = true
-      let sk = gSlots[threadIdx].slots[j].op.kind
-      if sk == opRead or sk == opAccept:
-        armMask = armMask or EvRead
-      if sk == opWrite:
-        armMask = armMask or EvWrite
-    if stillPending:
-      reArmEvent(fd, armMask, true)
+    if gSlots[lane].hasPendingForFd(fd):
+      reArmEvent(fd, armMaskForFd(fd), true)
     # else: nothing left for this fd; the backend already consumed the
     # one-shot registration, and submit/registerEvent will re-add it the
     # next time an op targets this fd.

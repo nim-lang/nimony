@@ -212,7 +212,24 @@ const
     # what it does: everything it checks lives in `deps/mimportshapes`, so this
     # is the suite's only native compile of a non-main module. Every other test
     # arrives as `--isMain`, and three bugs lived in that gap — see the test.
-    "tests/nimony/modules/timportshapes"
+    "tests/nimony/modules/timportshapes",
+    # Threads. Native-relevant by nature and by construction: there is no libc
+    # here, so `create`/`join` are a raw `clone(2)` written in an
+    # `{.assembler, naked.}` body, a stack and thread-local block the runtime
+    # maps itself, and a futex on the kernel's `CLONE_CHILD_CLEARTID` word. None
+    # of that exists under `nimony c`, where the same source is pthreads.
+    "tests/nimony/threads/threads1",
+    # `{.threadvar.}` through its ADDRESS — an array element, an object field. A
+    # different lowering from a scalar read (the block's base has to become a
+    # value first), and the one that is silently the MAIN thread's if the base is
+    # a link-time address instead of a per-thread one.
+    "tests/nimony/threads/tthreadlocals",
+    # The pool on top of them: worker threads, work stealing, and the per-worker
+    # thread-locals (`staged` is an aggregate, i.e. the address path above).
+    "tests/nimony/threads/tpool1",
+    "tests/nimony/threads/tparfib",
+    "tests/nimony/threads/tparfor",
+    "tests/nimony/threads/tconcurrentdecref"
   ]
 
 # ── native compilation inside the tree walk ──────────────────────────────────

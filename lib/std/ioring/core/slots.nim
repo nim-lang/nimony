@@ -31,6 +31,10 @@ proc allocSlot*(a: var SlotArena, op: OpContext): int =
   if a.freelist.len > 0:
     idx = a.freelist.pop()
   else:
+    # NOTE: growing `slots` reallocates it, invalidating every pointer into the
+    # arena. The io_uring backend hands `addr slots[idx].op.acceptAddr` to the
+    # kernel, so this must stay a cold path: `MaxOps` is sized to cover the
+    # in-flight ceiling and the freelist normally satisfies every request.
     idx = a.slots.len
     a.slots.add(Slot())
   a.slots[idx] = Slot(op: op, prevInFd: -1, nextInFd: -1)
@@ -53,16 +57,32 @@ proc freeSlot*(a: var SlotArena; idx: int) =
     a.fdHeads.del(fd)
   if next >= 0:
     a.slots[next].prevInFd = prev
-  a.slots[idx] = Slot()
+  # Reset to the *unlinked* state, not to `Slot()`: the default `int` is 0,
+  # which is a valid slot index, so a zeroed `nextInFd` would make the freed
+  # slot look like it still points at slot 0. `slotsForFd` walks these links
+  # while its body frees slots, so "no neighbour" must stay -1.
+  a.slots[idx] = Slot(prevInFd: -1, nextInFd: -1)
   a.freelist.add(idx)
 
-proc hasPendingForFd*(a: SlotArena; fd: cint): bool =
+proc hasPendingForFd*(a: var SlotArena; fd: cint): bool =
+  ## `var`, like `slotsForFd`, purely to avoid copying the arena — see there.
   result = a.fdHeads.getOrDefault(fd, -1) >= 0
 
-iterator slotsForFd*(a: SlotArena; fd: cint): int =
+iterator slotsForFd*(a: var SlotArena; fd: cint): int =
   ## Yield every in-use slot index for `fd`, O(k) in the number of ops on
   ## this fd rather than O(MaxOps).
+  ##
+  ## `a` is `var` even though nothing here writes to it: the callers all pass a
+  ## seq element (`gSlots[lane].slotsForFd(...)`), and for a non-`var` parameter
+  ## that materialises a *copy* of the whole arena — `MaxOps` slots, each with a
+  ## 128-byte `Sockaddr_storage` inside, plus the `fdHeads` table — on every
+  ## call, i.e. megabytes memcpy'd per I/O event. `var` passes the arena itself.
+  ##
+  ## The body may free the slot it was handed (`complete`/`closeFd` both do),
+  ## so the successor is read *before* yielding — reading `a.slots[cur]` after
+  ## the body ran would inspect a slot that is back on the freelist.
   var cur = a.fdHeads.getOrDefault(fd, -1)
   while cur >= 0:
+    let nxt = a.slots[cur].nextInFd
     yield cur
-    cur = a.slots[cur].nextInFd
+    cur = nxt

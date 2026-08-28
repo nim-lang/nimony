@@ -19,15 +19,36 @@ type
       ## OS already tears this down on close (kqueue) — callers
       ## must nil-check before calling.
 
+proc ioLanes*(): int {.inline.} =
+  ## Number of independent I/O lanes: one per pool worker, plus one trailing
+  ## lane shared by every non-worker submitter.
+  workerCount + 1
+
+proc ioLane*(): int {.inline.} =
+  ## The lane this thread owns. Every piece of per-thread ring state (the
+  ## deferred op queue, the slot arena, the backend's poller instance) is
+  ## indexed by this and by nothing else.
+  ##
+  ## It is deliberately *not* `threadIdx`: that is a threadvar defaulting to 0,
+  ## so the main thread — which submits and polls through `waitCompletions` —
+  ## reported the same index as worker 0 and the two drove one unlocked arena
+  ## and one single-producer io_uring submission ring in parallel.
+  ##
+  ## Caveat: all non-worker threads share the trailing lane, so the ring still
+  ## supports only *one* foreign submitter at a time (the usual "main thread
+  ## drives the ring" shape). Ops submitted on that lane are drained by that
+  ## thread's own `poll`, i.e. by its `waitCompletions`/`pollCompletions` loop.
+  if isPoolWorker(): threadIdx else: workerCount
+
 var gOpQueues*: seq[FifoStripe[OpContext]]
 proc initOpQueues*() =
-  gOpQueues = newSeq[FifoStripe[OpContext]](workerCount)
+  gOpQueues = newSeq[FifoStripe[OpContext]](ioLanes())
   for q in gOpQueues:
     q.init(MaxOps)
 
 var gSlots*: seq[SlotArena]
 proc initSlots*() =
-  gSlots = newSeq[SlotArena](workerCount)
+  gSlots = newSeq[SlotArena](ioLanes())
   for s in gSlots:
     s.init(MaxOps)
 
@@ -38,17 +59,17 @@ var
   gCqHead*: int
   gCqTail*: int
   gCqCount*: int
-  gClosed*: bool
 
 proc complete*(slotIdx: int; res: int) =
-  let slot = addr gSlots[threadIdx].slots[slotIdx]
+  let lane = ioLane()
+  let slot = addr gSlots[lane].slots[slotIdx]
   if slot.op.res != 0:
     cast[ptr int](slot.op.res)[] = res
   let cont  = slot.op.cont
   let fd    = slot.op.fd
   let seqnum = slot.op.seqnum
   let kind  = slot.op.kind
-  gSlots[threadIdx].freeSlot(slotIdx)
+  gSlots[lane].freeSlot(slotIdx)
   if cont.fn != nil:
     submit(cont, int(fd))
   else:

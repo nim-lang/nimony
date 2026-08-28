@@ -20,9 +20,12 @@ export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.EvRead, types.EvWrite
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
-from std/posix/posix import Sockaddr_storage, SockLen, FileHandle, SockAddr, InAddr
+from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
+                            SockAddr, InAddr, TSa_Family
 
-proc initIoRing*() =
+var ringState: int = 0
+
+proc setupRing() =
   initPool()
   initOpQueues()
   initSlots()
@@ -30,8 +33,32 @@ proc initIoRing*() =
   initPlatformBackend()
   gReactor = backendRelays.poll
 
+proc initIoRing*() =
+  ## Bring the default ring up. **Idempotent**, and it has to be: this module
+  ## already initialises the ring at import time, so a second call — the usage
+  ## example above tells callers to make one — would otherwise re-run
+  ## `initOpQueues`/`initSlots`/`gCq = newSeq` while worker threads are live
+  ## inside `poll`, holding indices into the seqs being replaced. That is a
+  ## use-after-free plus the loss of every op in flight.
+  if atomicLoad(ringState, moAcquire) == 2: return
+  var expected = 0
+  if atomicCompareExchange(ringState, expected, 1):
+    setupRing()
+    atomicStore(ringState, 2, moRelease)
+  else:
+    while atomicLoad(ringState, moAcquire) != 2:
+      discard
+
 proc shutdown*() =
-  atomicStore(gClosed, true, moRelaxed)
+  ## Stop the pool *first*, then tear the backend down: `close` closes the
+  ## epoll/kqueue/io_uring descriptors the workers poll, so closing them while
+  ## a worker is still inside `poll` leaves it waiting on — or re-registering
+  ## against — a descriptor number the OS is free to hand to something else.
+  ##
+  ## Call it from a non-worker thread: it joins the workers, and a worker that
+  ## joins itself deadlocks. It also stops the pool for everyone (`std/parfor`
+  ## included), and the ring cannot be brought back up afterwards.
+  shutdownPool()
   backendRelays.close()
 
 proc nextSeqNum(): SeqNum =
@@ -47,7 +74,7 @@ proc enqueueOp(op: OpContext) =
   ## `tryEnqueue` copies `op` by value and only consumes it on success
   ## (stripes.nim), so retrying with the same op is safe, and polling from a
   ## non-worker thread is the same pattern `waitCompletions` already uses.
-  while not gOpQueues[threadIdx].tryEnqueue(op):
+  while not gOpQueues[ioLane()].tryEnqueue(op):
     discard backendRelays.poll(0)
 
 proc submitNop*(cont = Continuation(fn: nil, env: nil);
@@ -137,30 +164,35 @@ when defined(posix):
     ## leaking, and deregistering it from the backend before the actual
     ## close(). Previously `closeFd` only called close(2): the backend never
     ## found out (so epoll/kqueue kept a registration for a possibly-reused
-    ## fd number) and any pending slot for this fd stayed `inUse` forever —
+    ## fd number) and any pending slot for this fd stayed in use forever —
     ## a permanent slot-arena leak for every fd closed with an op in flight.
     ##
     ## Order matters: deregister from the backend *before* close(2), so a
     ## fresh fd that the OS immediately reuses for the same number cannot
     ## race with a stale registration/slot that still refers to it.
-    backendRelays.forgetFd(fd)
-    for idx in gSlots[threadIdx].slotsForFd(fd):
-      let slot = addr gSlots[threadIdx].slots[idx]
+    ##
+    ## **Scope: this thread's lane only** (see `ioLane`). Slot arenas are
+    ## per-lane and unlocked, so a fd must be closed from the same thread that
+    ## submitted its ops; ops another lane still holds for `fd` are not
+    ## cancelled here and would leak the way described above. Cancelling those
+    ## needs a cross-lane request the owning lane drains from its own `poll`
+    ## (and, on io_uring, an `IORING_OP_ASYNC_CANCEL` — the kernel still owns
+    ## the slot's buffers until it acknowledges), which this does not do yet.
+    let lane = ioLane()
+    if backendRelays.forgetFd != nil:
+      backendRelays.forgetFd(fd)
+    for idx in gSlots[lane].slotsForFd(fd):
+      let slot = addr gSlots[lane].slots[idx]
       const ECancelled = -125
       if slot.op.res != 0:
         cast[ptr int](slot.op.res)[] = ECancelled
       let cont = slot.op.cont
       if cont.fn != nil:
         submit(cont, int(fd))
-      gSlots[threadIdx].freeSlot(idx)
+      gSlots[lane].freeSlot(idx)
     discard posixClose(fd)
 
 when defined(posix):
-  type
-    Sockaddr_in* {.importc: "sockaddr_in".} = object
-      sin_family*: cushort
-      sin_port*: cushort
-      sin_addr*: InAddr
   const
     AF_INET* = 2.cint
     SOCK_STREAM* = 1.cint
@@ -185,10 +217,7 @@ when defined(posix):
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
     var addr4 = default(Sockaddr_in)
-    when defined(linux):
-      addr4.sin_family = cushort(AF_INET)
-    else:
-      addr4.sin_family = uint8(AF_INET)
+    addr4.sin_family = TSa_Family(AF_INET)
     addr4.sin_port = htons(port)
     addr4.sin_addr.s_addr = INADDR_ANY
     assert bindAddr(fd, cast[ptr SockAddr](addr addr4),
@@ -197,14 +226,4 @@ when defined(posix):
     setNonBlocking(fd)
     result = fd
 
-var ringState: int = 0
-proc initDefaultRing() =
-  if atomicLoad(ringState, moAcquire) == 2: return
-  var expected = 0
-  if atomicCompareExchange(ringState, expected, 1):
-    initIoRing()
-    atomicStore(ringState, 2, moRelease)
-  else:
-    while atomicLoad(ringState, moAcquire) != 2:
-      discard
-initDefaultRing()
+initIoRing()
