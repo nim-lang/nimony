@@ -207,9 +207,13 @@ proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: NifLineInfo
 
 proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor)
 
+type
+  ConceptParent = object
+    head: SymId
+    body: TokenBuf
+
 proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                         ownerSym: SymId; parentHeads: var seq[SymId];
-                         parentTrees: var seq[TokenBuf]; hadError: var bool) =
+                         ownerSym: SymId; parents: var seq[ConceptParent]; hadError: var bool) =
   let info = n.info
   let parentName = if n.kind == Ident: pool.strings[n.strId] else: ""
   let before = dest.len
@@ -241,13 +245,12 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     hadError = true
     c.buildErr dest, info, "concept inheritance cycle detected"
     return
-  for existing in parentHeads:
-    if existing == ps:
+  for existing in parents:
+    if existing.head == ps:
       return
-  parentHeads.add ps
-  var tree = createTokenBuf(8)
-  tree.addSubtree parentType
-  parentTrees.add tree
+  var parent = ConceptParent(head: ps, body: createTokenBuf(8))
+  parent.body.addSubtree parentType
+  parents.add parent
 
 proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                       ownerSym: SymId; hadError: var bool): bool =
@@ -255,24 +258,23 @@ proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   if n.isDotToken:
     takeTree dest, n
     return false
-  var parentHeads: seq[SymId] = @[]
-  var parentTrees: seq[TokenBuf] = @[]
+  var parents: seq[ConceptParent] = @[]
   if n.exprKind == ParX:
     n.into ParX:
       while n.hasMore:
-        semOneConceptParent c, dest, n, ownerSym, parentHeads, parentTrees, hadError
+        semOneConceptParent c, dest, n, ownerSym, parents, hadError
   else:
-    semOneConceptParent c, dest, n, ownerSym, parentHeads, parentTrees, hadError
-  if parentTrees.len == 0:
+    semOneConceptParent c, dest, n, ownerSym, parents, hadError
+  if parents.len == 0:
     dest.addDotToken()
-  elif parentTrees.len == 1:
-    dest.add parentTrees[0]
+  elif parents.len == 1:
+    dest.add parents[0].body
   else:
     dest.addParLe(AndT, info)
-    for pt in parentTrees:
-      dest.add pt
+    for p in parents:
+      dest.add p.body
     dest.addParRi()
-  result = parentHeads.len > 0
+  result = parents.len > 0
 
 proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerSym: SymId) =
   let conceptStart = dest.len
