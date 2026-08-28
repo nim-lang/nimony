@@ -12,8 +12,9 @@
 ## Also exercises Nim's shared-state iter-value semantics: `break` then
 ## resuming the same value continues where it left off.
 ##
-## Captures from the enclosing proc inside the iter body are a separate,
-## still-missing feature; this test deliberately does not capture.
+## This one deliberately does NOT capture, so it stays a test of the plain
+## returned-iter shape. Captures from the enclosing proc inside the iter
+## body live in `tclosure_iter_capture.nim` (issue #2340).
 
 import std / syncio
 

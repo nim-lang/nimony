@@ -141,6 +141,14 @@ type
       ## True for `.closure` iters specifically. Drives the resume-slot
       ## writeback at yield sites and the two-branch wrapper body.
       ## `.passive` iters use the factory model and don't set this.
+    capturedEnvField*: SymId
+      ## Set for a `.closure` iter whose body captures locals of the
+      ## ENCLOSING proc: the coro frame grows one extra field holding the
+      ## erased `(ref RootObj)` pointer to that proc's lambdalifting
+      ## environment. Whoever creates the frame (lambdalifting, at the
+      ## point where the iter VALUE is built) fills it in; every
+      ## `(envp EnvType field)` in the body reads the capture back
+      ## through it. `SymId(0)` = this iter captures nothing.
 
   TrHook* = proc (c: var Context; dest: var TokenBuf; n: var Cursor) {.nimcall.}
   TrPassiveCallHook* = proc (c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) {.nimcall.}
@@ -193,6 +201,11 @@ type
     awaitingSuspendPark*: bool
       ## Set by `(delay0)`; consumed by the following `(suspend)` to
       ## decide between real parking and a synchronous state transition.
+    pendingCapturedEnvField*: SymId
+      ## Inbox for the NEXT `transformCoroutineDecl` call: the consumer
+      ## (lambdalifting) knows whether the iter it is about to hand us
+      ## captures, we don't. Moved into `currentProc` on entry and
+      ## cleared, so a following non-capturing iter can't inherit it.
 
 proc generateContinuationProcImpl*(): Cursor =
   ## Load the `ContinuationProc` typedef body from system, returned as
@@ -266,6 +279,14 @@ proc coroWrapperForExternIter*(iterSym: SymId): SymId =
 proc coroTypeForExternIter*(iterSym: SymId): SymId =
   ## Context-free spelling of `coroTypeForProc`; see above.
   coroHelperName(iterSym, "coro", "")
+
+proc coroEnvFieldForIter*(iterSym: SymId): SymId =
+  ## The frame field holding a capturing `.closure` iter's env pointer.
+  ## Derived from the iter sym exactly like the frame type and the
+  ## wrapper, so the frame-CREATION site (lambdalifting) and the
+  ## frame-READING sites (the state machine, generated here) arrive at
+  ## the same name without having to agree on an order.
+  coroHelperName(iterSym, "cenv", "")
 
 proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
   ## Publish a placeholder signature for a coroutine's `init` wrapper so
@@ -1893,6 +1914,20 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
               coroTr c, dest, typ
             dest.addDotToken() # default value
           programs.publish(value.field, dest, beforeField)
+      if c.currentProc.capturedEnvField != SymId(0):
+        # The capture slot: erased to `(ref RootObj)` like a closure
+        # proc's env, so the frame type doesn't depend on the enclosing
+        # proc's env object and the lifter treats it as an ordinary
+        # owning ref field (the iter value keeps the env alive).
+        let beforeField = dest.len
+        copyIntoKind dest, FldU, info:
+          dest.addSymDef c.currentProc.capturedEnvField, info
+          dest.addDotToken() # exported
+          dest.addDotToken() # pragmas
+          copyIntoKind dest, RefT, info:
+            dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+          dest.addDotToken() # default value
+        programs.publish(c.currentProc.capturedEnvField, dest, beforeField)
   programs.publish(objType, dest, beforeType)
 
 proc emitFreshFrameCall(c: var Context; d: var TokenBuf; sym: SymId; params: Cursor; hasResult: bool; info: NifLineInfo) =
@@ -2251,6 +2286,11 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
     else: NoSym
   var currentProc = ProcContext(kind: IsNormal)
   swap(c.currentProc, currentProc)
+  # Take delivery of the capture slot our consumer announced for exactly
+  # this decl and clear the inbox — a following non-capturing coroutine
+  # must not inherit it.
+  c.currentProc.capturedEnvField = c.pendingCapturedEnvField
+  c.pendingCapturedEnvField = SymId(0)
   var init = createTokenBuf(20)
   let iter = n
   var paramsEnd = -1
