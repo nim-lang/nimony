@@ -1082,6 +1082,18 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     semBoolExpr c, dest, it.n
     dest.addParRi()
     closePragmaLine()
+  of ErrorP:
+    # Statement-level `{.error: "msg".}` — distinct from `{.error.}` on a routine
+    # decl (handled in `semPragma`). Classic Nim calls `localError` here; dead
+    # branches (`when false: ... else: {.error.}`) never reach this.
+    let info = it.n.info
+    toPragmaArgs()
+    let start = dest.len
+    let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
+    closePragmaLine()
+    if s != StrId(0):
+      dest.shrink start
+      buildErr c, dest, info, pool.strings[s]
   of KeepOverflowFlagP:
     if not isPragmaBlock:
       buildErr c, dest, it.n.info, "`keepOverflowFlag` pragma must be used in a pragma block"
