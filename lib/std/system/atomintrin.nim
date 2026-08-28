@@ -1,5 +1,5 @@
 ## GCC/Clang `__atomic_*` builtin layer, shared by the allocator (memory.nim)
-## and the ARC reference-counting ops (arcops.nim). Kept as a leaf include so
+## and the ARC reference-counting ops (the `--mm:atomicArc` strategy). Kept as a leaf include so
 ## both consumers see one set of declarations regardless of include order.
 
 type AtomMemModel* = distinct cint

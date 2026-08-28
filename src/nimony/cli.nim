@@ -56,6 +56,18 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     quit(if versionMsg.len > 0: versionMsg else: "No version available", QuitSuccess)
   of "compat":
     config.compat = true
+  of "mm":
+    # Stored normalized: the name is spelled in camelCase but names a file, and
+    # files stay all-lowercase (`--mm:atomicArc` -> `system/atomicarc.nim`).
+    # Rejecting separators here keeps `--mm` a strategy name and not a way to
+    # `include` an arbitrary path.
+    let name = normalize(val)
+    var valid = name.len > 0
+    for ch in name:
+      if ch notin {'a'..'z', '0'..'9'}: valid = false
+    if not valid:
+      quit "invalid value for --mm; expected a strategy name like arc or atomicArc"
+    config.mm = name
   of "path", "p":
     config.paths.add val
   of "define", "d":

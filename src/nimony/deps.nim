@@ -244,7 +244,8 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           if f1.plugin.len > 0:
             discard "ignore plugin include file, will cause an error in sem.nim"
             continue
-          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
+          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile,
+                                      c.config.expandMM(f1.path))
           # check for recursive include files:
           var isRecursive = false
           for a in c.includeStack:

@@ -152,7 +152,7 @@ else:
   # alloc.nim's dirty templates and intrusive generics carry per-routine
   # `{.untyped.}` so their bodies are checked at instantiation. We deliberately
   # do NOT enable the `untyped` feature module-wide here — it would leak into
-  # seqimpl/stringimpl/arcops and miscompile their `{.cast(noSideEffect).}`.
+  # seqimpl/stringimpl and the mm strategy and miscompile their `{.cast(noSideEffect).}`.
 
   # --- the ported allocator (alloc.nim itself `include`s osalloc) ----------
   include "alloc"

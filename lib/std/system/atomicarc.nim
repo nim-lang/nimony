@@ -1,3 +1,10 @@
+# The `atomicArc` memory management strategy: reference counting whose counter
+# updates are atomic, so a `ref` may be shared between threads. Selected by
+# `--mm:atomicArc`, the default, via `include "$MM"` in `system.nim`.
+#
+# A strategy module supplies exactly these three primitives; everything built on
+# top of them (`GC_ref`, `GC_unref`) lives in `system/refops` and is shared.
+#
 # The `__atomic_*` builtin layer (`AtomMemModel`, `ATOMIC_*`, `atomic*Fetch`,
 # `atomicLoadN`, ...) lives in `system/atomintrin`, included earlier so both
 # this module and the allocator share one set of declarations.
@@ -16,18 +23,3 @@ func arcIsUnique*(memLoc: var int): bool {.inline.} =
   ## Atomically loads the reference count and returns true if it equals 0 (no extra references).
   {.cast(noSideEffect).}:
     result = atomicLoadN(memLoc.addr, ATOMIC_ACQUIRE) == 0
-
-proc GC_ref*[T](x: ref T) {.nodestroy, inline.} =
-  ## Manually increments the reference count of `x`. Pairs with `GC_unref`.
-  ## For raw `alloc`'d memory that holds `ref` fields ARC cannot trace, this
-  ## keeps the referenced object alive past the lifetime of the `ref` variable.
-  ## `nodestroy` is essential: it suppresses the destructor the compiler would
-  ## otherwise inject on the `=dup` result, so the extra reference deliberately
-  ## leaks (no-op when `x` is nil — the `=dup` hook guards it).
-  discard `=dup`(x)
-
-proc GC_unref*[T](x: ref T) {.inline.} =
-  ## Manually decrements the reference count of `x`, freeing it at zero.
-  ## Inverse of `GC_ref`. `x` is a borrowed (non-`sink`) parameter, so the
-  ## only effect is the `=destroy` hook's `arcDec` (nil-safe).
-  `=destroy`(x)

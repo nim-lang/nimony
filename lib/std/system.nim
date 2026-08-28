@@ -205,7 +205,10 @@ include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"
 
-include "system/arcops"
+# The memory management strategy, chosen by `--mm:NAME`: `$MM` expands to
+# `system/<name>`, so a strategy is a file and needs no `when` chain here.
+include "$MM"
+include "system/refops"
 
 func newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
 func new*[T: ref](x: out T) {.inline.} = x = newConstr(T)
