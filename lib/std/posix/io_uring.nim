@@ -95,7 +95,7 @@ type
 
   InnerSqeCmd* {.union.} = object
     addr3* {.importc: "addr3".}: nil pointer
-    pad2* {.importc: "__pad2".}: array[1, uint64]
+    pad2* {.importc: "__pad2".}: array[2, uint64]
     cmd* {.importc: "cmd".}: uint8
   
   Op* {.size: sizeof(uint8).} = enum
@@ -534,27 +534,35 @@ proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.
   # if offset.ringEntries <= 0:
   #   raise ERROR_io_uring_not_initializes
 
-# XXX: is it ok that =destroy can raise error?
-proc `=destroy`(queue: Queue) {.raises, tags: [].} =
+proc teardown*(queue: var Queue) {.tags: [].} =
+  try:
+    if queue.fd != 0:
+      discard close(queue.fd)
+    if queue.cq.ring != nil:
+      uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
+    if queue.sq.ring != nil:
+      uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
+    if queue.sq.sqes != nil:
+      uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
+    if queue.params != nil:
+      # deallocShared(queue.params)
+      dealloc(queue.params)
+  except ErrorCode as e:
+    stderr.writeLine("io_uring: teardown failed: " & $e)
+  `=wasMoved`(queue)
+
+proc `=destroy`(queue: var Queue) {.tags: [].} =
   ## tear down the queue
-  if queue.fd != 0:
-    discard close(queue.fd)
-  if queue.cq.ring != nil:
-    uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
-  if queue.sq.ring != nil:
-    uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
-  if queue.sq.sqes != nil:
-    uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
-  if queue.params != nil:
-    # deallocShared(queue.params)
-    dealloc(queue.params)
+  teardown(queue)
 
-proc `=sink`(dest: var Queue, source: Queue) =
-  # avoid unmapping uring object after moving
-  copyMem(dest.addr, source.addr, sizeof Queue)
-
-proc `=copy`(dest: var Queue; source: Queue) {.error: "Queue can has only one owner".}
-
+proc `=wasMoved`(queue: var Queue) {.tags: [].} =
+  ## A Queue owns the fd, parameters, and mapped rings. Clear every owner
+  ## field after moving it so the temporary value cannot tear down the queue.
+  queue.params = nil
+  queue.fd = 0
+  queue.cq.ring = nil
+  queue.sq.ring = nil
+  queue.sq.sqes = nil
 proc isPowerOfTwo(x: int): bool = (x != 0) and ((x and (x - 1)) == 0)
 
 proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;
@@ -693,7 +701,7 @@ proc waitReady(queue: var Queue; waitNr: uint = 0): uint32 {.raises, tags: [], i
     discard enter(queue.fd, 0.cint, waitNr.cint, cast[ptr cint](flags.addr)[], nil, 0.cint)
     result = queue.cqReady
 
-proc copyCqesToSeq(queue: var Queue; cqes: seq[Cqe]; ready: uint32) {.inline.} =
+proc copyCqesToSeq(queue: var Queue; cqes: openArray[Cqe]; ready: uint32) {.inline.} =
   var
     head = queue.cq.head[]
     tail = head + ready
@@ -728,7 +736,7 @@ proc copyCqes*(queue: var Queue; waitNr: uint = 0): seq[Cqe] {.raises, tags: [].
   newSeq[Cqe](result, ready.int)
   copyCqesToSeq(queue, result, ready)
 
-proc copyCqes*(queue: var Queue; cqes: seq[Cqe]; waitNr: uint = 0): int {.raises, tags: [].} =
+proc copyCqes*(queue: var Queue; cqes: openArray[Cqe]; waitNr: uint = 0): int {.raises, tags: [].} =
   ## same as copyCqes(queue, waitNr) but copy cqes to your array
   ## returns copied cqe count
   var ready = queue.waitReady(waitNr)
@@ -819,7 +827,7 @@ proc nop*(sqe: ptr Sqe): ptr Sqe =
 
 
 proc prepRw[
-  FD: FileHandle | SocketHandle,
+  FD: FileHandle | SocketHandle | int,
   ADDR: pointer | SomeNumber,
   OFF: pointer | SomeNumber,
   LEN: SomeNumber
@@ -890,23 +898,26 @@ proc connect*(sqe: ptr Sqe; sock: SocketHandle, `addr`: ptr SockAddr, addrLen: S
 proc epoll_ctl*(sqe: ptr Sqe; epfd: FileHandle; fd: FileHandle; op: uint32; ev: ptr EpollEvent): ptr Sqe =
   sqe.prepRw(OP_EPOLL_CTL, epfd, cast[pointer](ev), op, fd)
 
-# XXX: needs std/endians
+proc poll_add*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
+  ## Single-shot `OP_POLL_ADD`: completes once with the fired poll mask, then
+  ## disarms until re-armed. `pollMask` is a standard poll(2) mask (POLLIN/
+  ## POLLOUT, ...). Matches liburing's io_uring_prep_poll_add, which stores the
+  ## mask in the poll32_events field.
+  sqe.opFlags.poll32Events = pollMask
+  sqe.prepRw(OP_POLL_ADD, fd, cast[pointer](nil), 0, 0)
 
-# proc poll_add*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
-#   littleEndian32(addr result.opFlags.poll32Events, addr pollMask)
-#   sqe.prepRw(OP_POLL_ADD, fd, nil, 1, 0)
 
-# proc poll_multi*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
-#   var flags = PollFlags({POLL_ADD_MULTI})
-#   sqe.len = cast[ptr int](flags.addr)[]
-#   sqe.poll_add(fd, pollMask)
+proc poll_multi*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
+  var flags = PollFlags({POLL_ADD_MULTI})
+  sqe.len = cast[ptr int32](flags.addr)[]
+  sqe.poll_add(fd, pollMask)
 
-# proc poll_remove*(sqe: ptr Sqe; targetUserData: UserData): ptr Sqe =
-#   sqe.prepRw(OP_POLL_REMOVE, -1, target_user_data, 0, 0)
+proc poll_remove*[UserData: SomeNumber | pointer](sqe: ptr Sqe; target_user_data: UserData): ptr Sqe =
+  sqe.prepRw(OP_POLL_REMOVE, -1, target_user_data, 0, 0)
 
-# proc poll_update*(sqe: ptr Sqe; oldUserData: UserData; newUserData: UserData; pollMask: uint32, flags: uint32): ptr Sqe =
-#   littleEndian32(addr result.opFlags.poll32Events, addr pollMask)
-#   sqe.prepRw(OP_POLL_REMOVE, -1, oldUserData, int flags, cast[int](newUserData))
+proc poll_update*[UserData: SomeNumber | pointer](sqe: ptr Sqe; oldUserData: UserData; newUserData: UserData; pollMask: uint32, flags: uint32): ptr Sqe =
+  sqe.opFlags.poll32Events = pollMask
+  sqe.prepRw(OP_POLL_REMOVE, -1, oldUserData, int flags, cast[int](newUserData))
 
 
 proc recv*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: cint = 0): ptr Sqe =
@@ -991,6 +1002,14 @@ proc link_timeout*(sqe: ptr Sqe; ts: Timespec; flags: TimeoutFlags): ptr Sqe =
 proc cancel*[T: SomeNumber | pointer](sqe: ptr Sqe; cancelUserData: T; flags: uint32): ptr Sqe =
   sqe.opFlags.cancelFlags = flags
   sqe.prepRw(OP_ASYNC_CANCEL, -1.cint, cancelUserData, 0, 0)
+
+proc cancelFd*(sqe: ptr Sqe; fd: FileHandle): ptr Sqe =
+  ## Cancel every still-in-flight op submitted against `fd` (IORING_ASYNC_CANCEL_FD),
+  ## as opposed to `cancel`, which matches a single op by its user_data. Used
+  ## when a fd is being closed so the kernel does not later complete into a
+  ## slot index that the arena has since freed and reused for something else.
+  sqe.opFlags.cancelFlags = 1'u32 shl ord(ASYNC_CANCEL_FD)
+  sqe.prepRw(OP_ASYNC_CANCEL, fd, 0, 0, 0)
 
 proc shutdown*(sqe: ptr Sqe; sockfd: FileHandle; how: uint32): ptr Sqe =
   sqe.prepRw(OP_SHUTDOWN, sockfd, 0, how.int, 0)

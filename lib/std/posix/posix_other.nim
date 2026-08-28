@@ -31,6 +31,14 @@ type
 
   SockLen* = cuint  ## socklen_t
 
+  Sockaddr_storage* {.importc: "sockaddr_storage".} = object
+  Sockaddr_in* {.importc: "sockaddr_in".} = object
+    sin_family*: cushort
+    sin_port*: cushort
+    sin_addr*: InAddr
+  InAddr* {.importc: "in_addr".} = object
+    s_addr*: uint32
+
 when defined(linux):
   type
     TSa_Family* = uint16  ## sa_family_t
