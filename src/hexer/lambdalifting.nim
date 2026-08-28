@@ -57,16 +57,13 @@ import coro_transform
 type
   EnvMode = enum
     EnvIsLocal    ## the env object/ref is a local of the proc that created it
-    EnvIsParam    ## it arrived through the lowered closure's `ep.0` param
-    EnvIsCoroField
-      ## we are inside a `.closure` iter that captures: the env pointer
-      ## lives in the iter's coroutine FRAME, put there when the iter
-      ## value was created. `s` is the frame param (`this.0`) and `field`
-      ## the slot in it, so every access is `(deref this).<field>`.
+    EnvIsParam    ## it arrived through the lowered closure's `ep.0` param —
+                  ## or, inside a capturing `.closure` iter, through the
+                  ## `ep.0 LOCAL that `preLowerIter` loads from the coro
+                  ## frame's env slot; either way `s` is the erased pointer
   CurrentEnv = object
     s: SymId
     typ: SymId
-    field: SymId  ## EnvIsCoroField only: the frame slot holding the env
     mode: EnvMode
     needsHeap: bool
 
@@ -594,13 +591,6 @@ proc untypedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv; mode=Wan
     # take the address of the parameter SLOT (ptr-to-ptr), so a nested
     # closure calling a deeper closure handed it garbage.
     dest.addSymUse env.s, info
-  of EnvIsCoroField:
-    # Same story as EnvIsParam: the frame slot holds the erased env
-    # pointer itself, so hand it on unchanged.
-    dest.copyIntoKind DotX, info:
-      dest.copyIntoKind DerefX, info:
-        dest.addSymUse env.s, info
-      dest.addSymUse env.field, info
 
 proc typedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv)
   {.ensuresNif: addedExpr(dest).} =
@@ -616,11 +606,6 @@ proc typedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv)
       dest.copyIntoKind (if env.needsHeap: RefT else: PtrT), info:
         dest.addSymUse env.typ, info
       dest.addSymUse env.s, info
-  of EnvIsCoroField:
-    dest.copyIntoKind CastX, info:
-      dest.copyIntoKind (if env.needsHeap: RefT else: PtrT), info:
-        dest.addSymUse env.typ, info
-      untypedEnv dest, info, env
 
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
@@ -636,8 +621,8 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
   ## tuple a closure PROC value gets. The env pointer cannot be handed
   ## over at the call site: `it()` is written where the value is
   ## *consumed*, which is typically another proc entirely. So it is
-  ## stored into the frame here, and the body reads it back through
-  ## `this` (see `preLowerIter`).
+  ## stored into the frame here, and the body's prologue loads it back
+  ## into its `ep.0 local (see `preLowerIter`).
   coro_transform.publishWrapperSignature(iterSym, c.thisModuleSuffix)
   let captures = c.closureProcs.contains(iterSym)
   if captures and c.currentProc.env.s == SymId(0):
@@ -728,27 +713,39 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId): TokenBuf =
   ## `(closureTuple …)` shape), contain a nested proc (to be lifted out) —
   ## and, the point of the exercise, read a local of the ENCLOSING proc.
   ##
-  ## For that last one `c.currentProc.env` is switched to `EnvIsCoroField`
-  ## for the duration: the env pointer of a capturing iter lives in its
+  ## For that last one the body is lowered exactly like a closure PROC
+  ## body (`EnvIsParam`): the env pointer of a capturing iter lives in its
   ## coroutine frame (`emitIterValue` puts it there when the iter value is
-  ## built), so an access becomes `(deref this).<envSlot>` — and `this` is
-  ## how the coroutine transform reaches the iterator's own params and
-  ## locals too, so from its side nothing here is special.
+  ## built), and the body-prologue below loads it ONCE into an `ep.0
+  ## LOCAL spelled like a closure's env param. From the coroutine
+  ## transform's side that local is nothing special either: its own
+  ## liveness pass hoists it into the frame precisely when a capture is
+  ## read after a `yield`, like any other local live across a suspension.
   result = createTokenBuf(64)
   let decl = n
+  let info = n.info
   var init = createTokenBuf(10)
   let oldEnv = c.currentProc.env
-  c.currentProc.env = CurrentEnv(s: pool.syms.getOrIncl(coro_transform.EnvParamName),
+  c.currentProc.env = CurrentEnv(s: pool.syms.getOrIncl(ClosureEnvParamName),
                                  typ: c.envTypeForProc(c.procStack[0]),
-                                 field: coro_transform.coroEnvFieldForIter(iterSym),
-                                 mode: EnvIsCoroField,
+                                 mode: EnvIsParam,
                                  needsHeap: true)
+  init.copyIntoKind VarS, info:
+    init.addSymDef c.currentProc.env.s, info
+    init.addDotToken() # no export marker
+    init.addDotToken() # no pragmas
+    init.addRootRef info
+    init.copyIntoKind DotX, info:
+      init.copyIntoKind DerefX, info:
+        init.addSymUse pool.syms.getOrIncl(coro_transform.EnvParamName), info
+      init.addSymUse coro_transform.coroEnvFieldForIter(iterSym), info
   c.procStack.add iterSym
   var isConcrete = true
   copyInto result, n:
     for i in 0..<BodyPos:
       if i == ParamsPos:
         c.typeCache.openProcScope(iterSym, decl, n)
+        c.typeCache.registerLocal(c.currentProc.env.s, VarY, default(Cursor))
         if n.substructureKind == ParamsU:
           # Parameter TYPES are copied verbatim on purpose: the iter-value
           # tuple emitters (`emitIterTupleType*`) build the wrapper's
@@ -1120,7 +1117,7 @@ proc treLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
             # stack env: typedEnv then yields `(cast (ptr EnvT) ep)` — a
             # pointer either way. Only an EnvIsLocal stack env-local IS
             # the object directly.
-            if c.currentProc.env.needsHeap or c.currentProc.env.mode != EnvIsLocal:
+            if c.currentProc.env.needsHeap or c.currentProc.env.mode == EnvIsParam:
               dest.copyIntoKind DerefX, info:
                 dest.typedEnv info, c.currentProc.env
             else:
@@ -1699,7 +1696,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # a stack env: there typedEnv yields `(cast (ptr EnvT) ep)` — a
         # pointer either way (mirrors `treLocal`'s branch).
         dest.copyIntoKind DotX, info:
-          if c.currentProc.env.needsHeap or c.currentProc.env.mode != EnvIsLocal:
+          if c.currentProc.env.needsHeap or c.currentProc.env.mode == EnvIsParam:
             dest.copyIntoKind DerefX, info:
               dest.typedEnv info, c.currentProc.env
           else:
@@ -1801,9 +1798,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
               dest.copyIntoKind CastX, info:
                 dest.copyIntoKind (if c.currentProc.env.needsHeap: RefT else: PtrT), info:
                   dest.takeTree n # type
-                # `untypedEnv`, not `env.s`: inside a capturing `.closure`
-                # iter the env pointer is a FRAME SLOT, not a symbol.
-                dest.untypedEnv info, c.currentProc.env
+                dest.addSymUse c.currentProc.env.s, info
             assert n.kind == Symbol
             dest.takeTree n # the symbol
       of TypeofX:

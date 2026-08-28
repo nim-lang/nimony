@@ -8,10 +8,11 @@
 ##     the env is bound where the iter VALUE is created, never where it is
 ##     called — `it()` is typically written in a different proc entirely.
 ##   - `preLowerIter` runs pass 2's ordinary closure lowering over the iter
-##     decl before the coroutine transform sees it, with the env in
-##     `EnvIsCoroField` mode, so a capture becomes
-##     `(deref this).<envSlot>` — the same `this` the state machine uses
-##     for the iterator's own locals.
+##     decl before the coroutine transform sees it: a body-prologue loads
+##     the frame's env slot into an `ep.0 local and the body then lowers
+##     exactly like a closure proc body (`EnvIsParam`); the coroutine
+##     transform hoists that local into the frame when a capture is read
+##     after a `yield`, like any other local live across a suspension.
 ##   - a capturing iter called DIRECTLY (`for x in nested()`) is routed
 ##     through an iter value too: the wrapper's fresh-frame branch
 ##     allocates the frame itself and could not reach our environment.
