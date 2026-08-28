@@ -20,6 +20,7 @@ import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
 import ".." / nifmodules                      # MainModule (type context, threaded through)
+import intrinsiceffects                       # is this `(instr …)` a pure value?
 import ".." / typenav                         # getNominalType — the temp's declared type
 
 type
@@ -146,13 +147,21 @@ type
     assigned: HashSet[SymId]   ## symbol-LHS writes anywhere in the loop
     addrTaken: HashSet[SymId]  ## `(addr S)` / `(haddr S)` anywhere in the loop
     hasCall: bool              ## a callee can rebind a global or an escaped local
+    m: ptr MainModule          ## to ask a row whether an `(instr …)` is pure;
+                               ## nil ⇒ every intrinsic counts as a call
 
 proc collectLoopFacts(n: Cursor; f: var LoopFacts) =
   if not n.hasMore or n.kind != TagLit: return
   if n.stmtKind in {AsgnS, StoreS}:
     let lhs = writeTargetOf(n)
     if lhs.kind == Symbol: f.assigned.incl symId(lhs)
+  # An `(instr …)` counts unless its row is `efPure`: the loop rewrites below
+  # hoist an address and assume nothing in the body wrote the memory it names, and
+  # a `volatileStore` in the loop is exactly something that did. `Ctz` and friends
+  # keep the loop rewritable, which is the whole reason this is per-row.
   if n.stmtKind == CallS or n.exprKind == CallC: f.hasCall = true
+  elif (n.stmtKind == InstrS or n.exprKind == InstrC) and
+       not (f.m != nil and instrIsPure(f.m[], n)): f.hasCall = true
   if n.exprKind in AddrKinds:
     var probe = n
     inc probe
@@ -310,7 +319,7 @@ proc transformLoop(c: var Context; n: var Cursor) =
     var accesses: seq[AccessInfo] = @[]
     collectAccesses(c, body, ivInfo.ivSym, accesses)
     var facts = LoopFacts(assigned: initHashSet[SymId](),
-                          addrTaken: initHashSet[SymId]())
+                          addrTaken: initHashSet[SymId](), m: c.m)
     collectLoopFacts(body, facts)
     var arrToP = initTable[SymId, string]()
     for acc in accesses:

@@ -337,6 +337,16 @@ proc trReturn(c: var Context; n: var Cursor) =
       c.dest.addParRi() # end of RetS
       c.dest.addParRi() # end of StmtsS
 
+proc hoistTail(c: var Context; pos: int) =
+  ## Move `c.dest[pos ..< ^0]` — a sequence of complete statements — to the
+  ## front of the statement under construction.
+  if c.dest.len <= pos: return
+  var tail = cursorAt(c.dest, pos)
+  while tail.hasMore:
+    takeTree c.hoisted, tail
+  endRead tail
+  c.dest.shrink pos
+
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
   if le.kind == Symbol or (le.exprKind in {DerefX, HderefX} and le.childCursor.kind == Symbol):
@@ -347,6 +357,13 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
     let info = le.info
     let tmp = pool.syms.getOrIncl("`lhs." & $c.tmpCounter)
     inc c.tmpCounter
+    # The decl is a plain statement and must precede whatever the right hand
+    # side hoists in front of this assignment: an RHS that moves out of a
+    # location the target's address expression still has to read (a closure
+    # capturing the env its own `=wasMoved` empties, #2357) would otherwise
+    # compute that address from the emptied location. `c.hoisted` is appended
+    # to in emission order, so hoisting the decl here keeps it in front.
+    let pos = c.dest.len
     copyIntoKind c.dest, VarS, info:
       addSymDef c.dest, tmp, info
       c.dest.addEmpty2 info # export marker, pragma
@@ -354,6 +371,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
         copyTree c.dest, typ
       copyIntoKind c.dest, AddrX, info:
         tr c, le, DontCare
+    hoistTail c, pos
 
     copyIntoKind result, DerefX, info:
       copyIntoSymUse result, tmp, info
@@ -893,16 +911,6 @@ proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): Ow
   c.dest.addEmpty2 info # export marker, pragmas
   copyTree c.dest, typ
   # value is filled in by the caller!
-
-proc hoistTail(c: var Context; pos: int) =
-  ## Move `c.dest[pos ..< ^0]` — a sequence of complete statements — to the
-  ## front of the statement under construction.
-  if c.dest.len <= pos: return
-  var tail = cursorAt(c.dest, pos)
-  while tail.hasMore:
-    takeTree c.hoisted, tail
-  endRead tail
-  c.dest.shrink pos
 
 proc finishOwningTemp(c: var Context; ow: OwningTemp) =
   if ow.active:
@@ -1569,9 +1577,9 @@ proc checkForMoveTypes(c: var Context; n: Cursor): int =
 
 proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(lifter: lifter, typeCache: createTypeCache(),
+  var c = Context(lifter: lifter, typeCache: createTypeCache(pass.bits),
     dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix,
-    hoisted: createTokenBuf(16))
+    hoisted: createTokenBuf(16), mover: MoverContext(bits: pass.bits))
   c.typeCache.openScope()
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]

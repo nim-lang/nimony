@@ -51,6 +51,22 @@ let
   pluginPool = newPool()
   pluginTags = createPluginTags()
 
+# A plugin process shares ONE pool world across every buffer in it, which is
+# exactly the case `nifcore.fallbackPool`/`fallbackTags` exist for — and this
+# API never declared it. `NifBuilder` is an alias for `TokenBuf`, so a builder
+# `createTree` did not mint (an object field, `default(...)`, a `seq` slot) has
+# nil pools; `nifcore.ensurePools` then minted a PRIVATE pool, and the first
+# `withTree` died in `openTagEscaped` — a fresh pool declares no escape tag —
+# as a bare `[Assertion Failure]` with no file and no line. Kind queries
+# dispatch on `pluginTags` *identity* too, so such a builder also read back as
+# `NoStmt`/`NoExpr` throughout.
+#
+# The compiler side gets this from `nifpools`, which plugins do not import.
+# Stating it here is what makes the API total: every shape of `NifBuilder`
+# lands in the plugin's own pools, not in a private one.
+nifcore.fallbackPool = pluginPool
+nifcore.fallbackTags = pluginTags
+
 var
   unusedNameBase = ""
   nextUnusedName = 0

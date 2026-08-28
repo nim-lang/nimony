@@ -185,6 +185,11 @@ include "system/setops"
 
 include "system/ctypes"
 
+when defined(embedded):
+  # The console of a bare-metal image, and its `exit`. Included BEFORE `exits`,
+  # which uses it, and only on the target that has no OS to ask instead.
+  include "system/semihosting"
+
 include "system/exits"
 include "system/atomintrin"
 include "system/memory"
@@ -563,7 +568,25 @@ proc typeof*(x: untyped; mode = typeOfIter): typedesc {.magic: TypeOf.}
 
 proc allocFrame*(size: int): ptr CoroutineBase =
   ## Allocates a new coroutine frame of the given size on the heap.
-  result = cast[ptr CoroutineBase](alloc(size))
+  ##
+  ## ZEROED, and that is load-bearing rather than tidy. A frame holds the
+  ## coroutine's locals, and the CPS lowering writes them with ordinary
+  ## DESTRUCTIVE assignments — `=destroy` the old value, then store the new one —
+  ## including the very first write, when there is no old value. On raw `alloc`
+  ## memory that first `=destroy` reads whatever the allocator last left there:
+  ## for a `string` it is `nimStrDestroy` branching on a garbage `slen`, and a
+  ## garbage `slen > 14` would call `dealloc` on a garbage pointer.
+  ##
+  ## Zero is a valid — and destructible — initial value for every type that can
+  ## live in a frame: a `string` reads `slen = 0` (the empty short string), a
+  ## `seq` reads `data = nil`, a `ref` reads nil, and `=destroy` on each is a
+  ## no-op. `deallocFrame` below also reads `frame.callee` before anything is
+  ## guaranteed to have written it.
+  ##
+  ## The alternative — teaching the lowering to emit an initializing store for the
+  ## first write to each frame field — is better code, and is not a prerequisite
+  ## for this being correct: it would make the memset redundant, not necessary.
+  result = cast[ptr CoroutineBase](alloc0(size))
 
 proc deallocFrame*(frame: ptr CoroutineBase) =
   ## Frees a coroutine frame previously allocated by `allocFrame`.

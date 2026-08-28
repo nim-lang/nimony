@@ -88,12 +88,21 @@ type
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
     bits*: int
+    bitsExplicit*: bool  ## `--bits:N` (or an `intbits` config row) was given, so
+                         ## `--cpu` must NOT overwrite it. Without this the two
+                         ## flags would resolve by ORDER, and `--bits:32 --cpu:arm32`
+                         ## and `--cpu:arm32 --bits:32` would not mean the same thing.
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
     toTrack*: TrackPosition
     cc*: string
     linker*: string
+    layoutFile*: string  # `--layout:FILE` — the BOARD, for a bare-metal target:
+                         # its memory regions, stack slots and heap. Forwarded to
+                         # arkham verbatim; empty on a hosted target, which has an
+                         # OS to ask for memory instead of a file that says what
+                         # the part has.
     ccKey*: string
     appType*: AppType
     backend*: Backend
@@ -127,18 +136,20 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
   )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
-  result = false
-  let cpu = platform.nameToCPU(symbol)
-  if cpu != cpuNone:
-    config.targetCPU = cpu
-    result = true
+  ## The CPU also decides how wide `int` is. It is not a separate question — a
+  ## target whose `int` is not its word is a target nobody asked for — so naming
+  ## the CPU answers it, and `--bits` stays for the rare case of contradicting
+  ## the table on purpose. Before this, `--cpu:arm32` left `bits` at the HOST's
+  ## width: the whole 32-bit target was type-checked with a 64-bit `int`.
+  result = platform.findCPU(symbol, config.targetCPU)
+  if result and not config.bitsExplicit:
+    config.bits = platform.CPU[config.targetCPU].intSize
 
 proc setTargetOS*(config: var NifConfig; symbol: string): bool =
-  result = false
-  let os = platform.nameToOS(symbol)
-  if os != osNone:
-    config.targetOS = os
-    result = true
+  # `findOS`, not `nameToOS`: the first enum value is the bare-metal target now
+  # (`osEmbedded`), so a typo must still be rejected rather than quietly
+  # selecting it.
+  result = platform.findOS(symbol, config.targetOS)
 
 proc parseConfig(c: Cursor; result: var NifConfig) =
   ## Interprets the single tree at `c`; unknown tags are searched
@@ -168,6 +179,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       c.into:
         if c.isIntLit:
           result.bits = int c.intVal
+          result.bitsExplicit = true
         while c.hasMore: skip c
     of "compat":
       c.into:
@@ -209,6 +221,9 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     result = true
   else:
     case symbol.normalize
+    # `arm` is what code that predates the `arm32` rename says, and what code
+    # shared with Nim says. The canonical name moved; the predicate did not.
+    of "arm": result = config.targetCPU == cpuArm
     of "x86": result = config.targetCPU == cpuI386
     of "itanium": result = config.targetCPU == cpuIa64
     of "x8664": result = config.targetCPU == cpuAmd64

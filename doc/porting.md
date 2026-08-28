@@ -439,11 +439,11 @@ not actually needed by the bootstrap.
 
 ## 14. Build and test
 
-The build/test driver is `bin/hastur` (built from `src/hastur.nim`).
+The build/test driver is `bin/hastur` (built from `src/hastur/hastur.nim`).
 Common invocations:
 
 ```sh
-nim c -r src/hastur build nimony       # build the toolchain
+nim c -r src/hastur/hastur build nimony       # build the toolchain
 bin/hastur build nimony                # rebuild after compiler edits
 bin/hastur test tests/nimony/<dir>/    # run a test directory
 bin/hastur test <file.nim>             # run a single test

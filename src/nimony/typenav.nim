@@ -43,7 +43,7 @@ type
     mem: seq[TokenBuf]
     current: TypeScope
 
-proc createTypeCache*(bits: int = 64): TypeCache =
+proc createTypeCache*(bits: int): TypeCache =
   TypeCache(builtins: createBuiltinTypes(bits))
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;

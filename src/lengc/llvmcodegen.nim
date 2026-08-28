@@ -620,6 +620,10 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         # nothing to emit for the declaration itself.
         result.flags.incl pk
         skip n
+      of InterruptP:
+        # No interrupt table here either; see the C backend's `parseProcPragmas`.
+        result.flags.incl pk
+        skip n
       of AssemblerP, NakedP, RegisterP, StackP:
         # `{.assembler.}` bodies are arkham's; the location pins are assertions
         # inside one. See the C backend's `parseProcPragmas` for the reasoning.
@@ -704,6 +708,11 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     # a body that silently means something else.
     errorAt c.m, "the LLVM backend cannot compile an `{.assembler.}` proc; it must " &
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
+      prc.name
+  if InterruptP in prag.flags:
+    errorAt c.m, "the LLVM backend has no interrupt table to install an " &
+      "`{.interrupt.}` handler in; use `{.exportc: \"...\".}` to bind one by name " &
+      "against a startup file, or compile it with arkham",
       prc.name
 
   let name = genSymDefLLVM(c, prc.name, prag)

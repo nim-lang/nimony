@@ -17,7 +17,7 @@
 ## per-body passes (`induction_variables`, …) are still being ported and plug
 ## into `optimizeBody`, which is currently an identity stage.
 
-import std / [os, assertions, strutils, syncio]
+import std / [os, assertions, strutils, syncio, sets]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import induction_variables                     # runInductionVariables (live pass)
@@ -29,10 +29,34 @@ import imi_bridge                             # runImi (inter-module inliner, vi
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
+import tailcalls                              # runTailCalls (the tail-call encoding)
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
 const ArithRules = staticRead("rules/arith.rewrite.nif")
+
+let disabledPasses = block:
+  ## `SHOGGOTH_DISABLE=rewrite,cse,…` turns individual optimization passes off.
+  ##
+  ## This is a BISECTION tool, not a tuning knob. When an optimized build misbehaves
+  ## the question is always "which pass", and the only way to answer it was to edit
+  ## `optimizeBody` and rebuild — per candidate, on a machine where rebuilding the
+  ## toolchain is minutes. One env var turns that into one run each, and it composes
+  ## with the boot: `SHOGGOTH_DISABLE=cse hastur boot --boot-backend:native` either
+  ## reaches a fixed point or does not. `SHOGGOTH_NO_VECTORIZE` was the same idea for
+  ## one pass; it stays, spelled `vectorize` here as well.
+  ##
+  ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
+  ## vectorize, sinkret, tailcall.
+  var res = initHashSet[string]()
+  for part in getEnv("SHOGGOTH_DISABLE").split(','):
+    let name = part.strip()
+    if name.len > 0: res.incl name
+  if getEnv("SHOGGOTH_NO_VECTORIZE").len > 0: res.incl "vectorize"
+  res
+
+template passOn(name: string): bool = name notin disabledPasses
+
 
 type
   Stats* = object
@@ -71,37 +95,52 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
   # locals for every later pass (SROA and copyprop treat address-taken locals as
   # untouchable) and for both backends' register allocation.
-  if eng != nil:
+  if eng != nil and passOn("rewrite"):
     runRewritesFix(eng, buf)
   # SROA first: fold field projections off inline constructors (`T(f: a).f` → `a`),
   # then explode non-escaping local objects into per-field scalars; copy
   # propagation then cleans up the resulting scalar copies and dead stores, so the
   # later passes see simpler, scalar code.
-  runConstructorProjection(buf)
-  runScalarize(buf, bodySuffix, m)
-  runCopyProp(buf, params, summaries, m)
+  if passOn("ctorproj"): runConstructorProjection(buf)
+  if passOn("scalarize"): runScalarize(buf, bodySuffix, m)
+  if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally
   # identical conditions actually identical.
-  runUnswitch(buf, bodySuffix)
+  if passOn("unswitch"): runUnswitch(buf, bodySuffix)
   # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
   # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
   # after those substitutions actually fold. Cheap: the DFA walk is linear
   # and a miss is a no-op.
-  if eng != nil:
+  if eng != nil and passOn("rewrite"):
     runRewritesFix(eng, buf)
-  runInductionVariables(buf, bodySuffix, m)
+  if passOn("indvars"): runInductionVariables(buf, bodySuffix, m)
   # CSE also deletes index checks a dominating identical check already made:
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
-  st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
-  # The vectorizer runs LAST: its emitted `(instr ...)` applications are final
-  # (selection-final by the tag's contract) and no later pass needs to look at
-  # them; the scalar remainder loop it leaves behind was already optimized by
-  # everything above.
-  if vecMode != vecOff and getEnv("SHOGGOTH_NO_VECTORIZE").len == 0:
+  if passOn("cse"):
+    st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
+  # The vectorizer runs last of the passes that OPTIMIZE: its emitted
+  # `(instr ...)` applications are final (selection-final by the tag's contract)
+  # and no later pass needs to look at them; the scalar remainder loop it leaves
+  # behind was already optimized by everything above. Only the encoding passes
+  # below follow it, and they rewrite `ret`s, which it never emits.
+  if vecMode != vecOff and passOn("vectorize"):
     if runVectorizer(buf, bodySuffix, "vec." & suffix):
       inc st.vectorized
+  # The tail-call encoding runs after EVERYTHING, the vectorizer included.
+  # `(ret (call …))` deliberately violates the Leng rule that calls are bound and
+  # do not nest: it is a directive to the backend ("do the tail call"), not an
+  # expression. Minting it last is what keeps every pass above from having to
+  # tolerate a nested call, and it is also when the most tails exist — each pass
+  # above can only expose more. Its two rewrites share a walk and a grammar but
+  # answer different questions when a build breaks — sinking changes
+  # control-flow shape, folding changes stack discipline — so they are one pass
+  # under two disable names.
+  var tailRules: set[TailRule] = {}
+  if passOn("sinkret"): tailRules.incl trSink
+  if passOn("tailcall"): tailRules.incl trFold
+  if tailRules != {}: runTailCalls(buf, tailRules)
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string; st: var Stats;
                  summaries: ptr FunctionSummaryTable; m: ptr MainModule;
@@ -194,7 +233,9 @@ proc processFile*(input, output: string; verify = false;
   # 1. Whole-module inter-module inlining runs first, in the nifcursors world
   #    (via the bridge); the result comes back as a NIF string.
   var imiChanged = false
-  let imiNif = runImi(input, suffix, splitFile(input).dir, imiChanged)
+  let imiNif =
+    if passOn("imi"): runImi(input, suffix, splitFile(input).dir, imiChanged)
+    else: readFile(input)
   if imiChanged: inc st.intermodChanged
   # 2. Load the module as a typenav context (for type-precise aliasing), and
   #    reparse the (post-inlining) body into nifcore SHARING that context's pool

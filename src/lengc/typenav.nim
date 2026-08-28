@@ -69,9 +69,10 @@ proc intrinsicOfCallee*(m: var MainModule; callee: Cursor;
     while n.hasMore: skip n
 
 proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
-  ## The GCC/clang builtin a *portable* opcode lowers to. Target-pinned rows
-  ## have no portable C spelling by construction and return "" — the C backend
-  ## rejects them rather than guessing an equivalent.
+  ## The C name a *portable* opcode lowers to: a GCC/clang builtin, or — for the
+  ## one row whose spelling is the C compiler's target to choose — a prelude
+  ## macro. Target-pinned rows have no portable C spelling by construction and
+  ## return "" — the C backend rejects them rather than guessing an equivalent.
   case op
   of CtzOp:      (if bits <= 32: "__builtin_ctz" else: "__builtin_ctzll")
   of ClzOp:      (if bits <= 32: "__builtin_clz" else: "__builtin_clzll")
@@ -101,6 +102,14 @@ proc cBuiltinFor*(op: IntrinsicOp; bits: int): string =
   of AtomicClearOp: "__atomic_clear"
   of AtomicThreadFenceOp: "__atomic_thread_fence"
   of AtomicSignalFenceOp: "__atomic_signal_fence"
+  # Not a `__builtin_*` but a PRELUDE macro, and it has to be: which spelling a
+  # spin hint has is a property of the C compiler's TARGET, and this side does
+  # not know it. `__builtin_ia32_pause` does not exist off x86 and there is no
+  # portable ARM equivalent to name instead, so the choice belongs in the `#if`
+  # the C compiler itself evaluates (`cprelude.NIM_CPU_RELAX`). The call shape is
+  # what matters here, and a function-like macro has exactly the one `genInstr`
+  # emits.
+  of CpuRelaxOp: "NIM_CPU_RELAX"
   else: ""
 
 proc isImportC*(m: var MainModule; n: Cursor): bool =

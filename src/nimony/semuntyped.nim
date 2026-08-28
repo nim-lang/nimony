@@ -205,7 +205,7 @@ proc addDecl(c: var UntypedCtx; dest: var TokenBuf; name, pragmas: Cursor; k: Sy
           # only guarantees per-module uniqueness via `c.locals`, so a
           # template's `var x` would collide with another module's local
           # `x.0` once both end up in the global `pool.syms`.
-          makeTemplateSym(c.c[], symName)
+          makeTemplateSym(c.c[], symName, k)
           let s = Sym(kind: k, name: pool.syms.getOrIncl(symName),
                       pos: nameStart)
           let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
@@ -234,7 +234,7 @@ proc addBareDecl(c: var UntypedCtx; dest: var TokenBuf, n: Cursor, k: SymKind, n
       if newName.kind != Symbol and not (newName.isIdent and pool.strings[newName.strId] == "_"):
         var ident = pool.strings[takeIdent(newName)]
         # See addDecl above: templates need cross-module-unique sym names.
-        makeTemplateSym(c.c[], ident)
+        makeTemplateSym(c.c[], ident, k)
         let s = Sym(kind: k, name: pool.syms.getOrIncl(ident),
                     pos: dest.len)
         let delayed = DelayedSym(status: OkNew, lit: pool.strings.getOrIncl(ident), s: s, info: info)
