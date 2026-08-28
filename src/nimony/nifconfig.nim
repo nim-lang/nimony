@@ -240,7 +240,10 @@ proc expandMM*(config: NifConfig; path: string): string =
   ## variable) rule never sees it.
   result = path
   if result.endsWith(MmPlaceholder):
-    result.shrink result.len - MmPlaceholder.len
+    when defined(nimony):
+      result.shrink result.len - MmPlaceholder.len
+    else:
+      result.setLen result.len - MmPlaceholder.len
     result.add MmDir
     result.add config.mm
 
