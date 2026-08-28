@@ -238,7 +238,11 @@ proc expandMM*(config: NifConfig; path: string): string =
   ## the selected memory management strategy: `"$MM"` -> `"system/atomicarc"`.
   ## Applied before the path is resolved, so `resolveFile`'s own `$VAR` (environment
   ## variable) rule never sees it.
-  result = path.replace(MmPlaceholder, MmDir & config.mm)
+  result = path
+  if result.endsWith(MmPlaceholder):
+    result.shrink result.len - MmPlaceholder.len
+    result.add MmDir
+    result.add config.mm
 
 proc isDefined*(config: NifConfig; symbol: string): bool =
   if symbol in config.defines:
