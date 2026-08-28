@@ -122,9 +122,10 @@ else:
   template sysAssert(cond, msg: untyped) = discard
 
   proc raiseOutOfMem() {.noinline, noreturn.} =
-    # Reached only when the OS itself refuses to map pages; nothing to
-    # recover. `noreturn` so init provers don't require `result` on the
-    # unreachable fall-through (the standalone osalloc arm hits this).
+    # Reached only when the OS itself refuses to map pages; nothing to recover.
+    # `noreturn` because `cAbort` is, and saying so is what lets a caller whose
+    # only other arm assigns `result` be proved to initialise it — which is how
+    # the bare-metal `osAllocPages` typechecks at all.
     cAbort()
 
   template `+!`(p: pointer; x: int): pointer = cast[pointer](cast[int](p) + x)
@@ -151,7 +152,7 @@ else:
   # alloc.nim's dirty templates and intrusive generics carry per-routine
   # `{.untyped.}` so their bodies are checked at instantiation. We deliberately
   # do NOT enable the `untyped` feature module-wide here — it would leak into
-  # seqimpl/stringimpl/arcops and miscompile their `{.cast(noSideEffect).}`.
+  # seqimpl/stringimpl and the mm strategy and miscompile their `{.cast(noSideEffect).}`.
 
   # --- the ported allocator (alloc.nim itself `include`s osalloc) ----------
   include "alloc"
@@ -208,8 +209,7 @@ func deallocFixed*(p: pointer) =
   dealloc(p)
 
 # --- out-of-memory handling ------------------------------------------------
-var
-  missingBytes {.threadvar.}: int
+var missingBytes {.threadvar.}: int
 
 proc continueAfterOutOfMem*(size: int) {.nimcall.} =
   ## Default out-of-memory handler: accumulates missing bytes so runtime code can react gracefully.

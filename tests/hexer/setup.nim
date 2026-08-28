@@ -1,7 +1,7 @@
 ## Custom runner for the hexer tests: build `hexer` and `lengc`, index the
 ## `.nif` inputs, lower them through hexer and run the result via lengc.
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"

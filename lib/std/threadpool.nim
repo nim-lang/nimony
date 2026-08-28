@@ -3,111 +3,24 @@
 #
 # Workers contend on independent stripes to reduce lock pressure.
 # Each worker polls I/O every iteration; the timeout doubles as idle sleep.
-# Supports epoll (Linux), kqueue (macOS/BSD), or plain sleep fallback.
 #
 # A Task wraps a Continuation plus metadata. The pool schedules Tasks;
 # the worker trampolines the inner continuation.
 
-{.feature: "lenientnils".}
+import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks, cpuinfo]
 
-import std / [atomics, rawthreads, assertions, ticketlocks]
-
-when defined(linux):
-  const hasEpoll = true
-  const hasKqueue = false
-elif defined(macosx) or defined(freebsd) or defined(netbsd) or
-     defined(openbsd) or defined(dragonfly):
-  const hasEpoll = false
-  const hasKqueue = true
+when not defined(windows):
+  import std/posix/posix
 else:
-  const hasEpoll = false
-  const hasKqueue = false
-
-const hasIoPoll* = hasEpoll or hasKqueue
-
-when not hasIoPoll:
-  when defined(windows):
-    import windows/winlean
-  else:
-    proc usleepMicroseconds(usec: cuint): cint {.importc, header: "<unistd.h>".}
-
-# --- Epoll bindings ---
-
-when hasEpoll:
-  const
-    EPOLLIN* = 0x001'u32
-    EPOLLOUT* = 0x004'u32
-    EPOLLONESHOT* = 1'u32 shl 30
-
-  type
-    EpollData {.importc: "epoll_data_t", header: "<sys/epoll.h>".} = object
-      p* {.importc: "ptr".}: pointer
-
-    EpollEvent* {.importc: "struct epoll_event", header: "<sys/epoll.h>".} = object
-      events*: uint32
-      data*: EpollData
-
-  const
-    EPOLL_CTL_ADD* = 1.cint
-    EPOLL_CTL_DEL* = 2.cint
-    EPOLL_CTL_MOD* = 3.cint
-
-  proc epoll_create1(flags: cint): cint {.importc, header: "<sys/epoll.h>".}
-  proc epoll_ctl(epfd: cint; op: cint; fd: cint; event: ptr EpollEvent): cint {.
-    importc, header: "<sys/epoll.h>".}
-  proc epoll_wait(epfd: cint; events: ptr EpollEvent; maxevents: cint;
-                  timeout: cint): cint {.importc, header: "<sys/epoll.h>".}
-
-# --- Kqueue bindings ---
-
-when hasKqueue:
-  when not declared(Time):
-    when defined(linux):
-      type Time = clong
-    else:
-      type Time = int
-
-  type
-    Timespec {.importc: "struct timespec", header: "<time.h>".} = object
-      tv_sec: Time
-      tv_nsec: clong
-
-  const
-    EVFILT_READ* = cshort(-1)
-    EVFILT_WRITE* = cshort(-2)
-    EV_ADD* = cushort(0x0001)
-    EV_DELETE* = cushort(0x0002)
-    EV_ONESHOT* = cushort(0x0010)
-    EV_ENABLE* = cushort(0x0004)
-
-  type
-    KEvent* {.importc: "struct kevent", header: "<sys/event.h>".} = object
-      ident*: csize_t     ## identifier for this event (uintptr_t)
-      filter*: cshort     ## filter for event
-      flags*: cushort     ## action flags for kqueue
-      fflags*: cuint      ## filter flag value
-      data*: int          ## filter data value
-      udata*: pointer     ## opaque user data identifier
-
-  proc kqueue*(): cint {.importc, header: "<sys/event.h>".}
-  proc kevent*(kq: cint; changelist: ptr KEvent; nchanges: cint;
-               eventlist: ptr KEvent; nevents: cint;
-               timeout: ptr Timespec): cint {.importc, header: "<sys/event.h>".}
-
-# --- Unified event mask ---
-
-const
-  EvRead*  = 1u32  ## Readable event.
-  EvWrite* = 4u32  ## Writable event.
-
+  import windows/winlean
 # --- Configuration ---
 
+import std/stripes
+
 const
-  StripeCount* = 8    ## Must be a power of 2.
-  StripeSize*  = 128  ## Tasks per stripe; must be a power of 2.
-  WorkerCount* = 8
-  MaxIoEvents  = 64
-  BulkSize*    = 16   ## Max tasks drained per bulk dequeue.
+  StripeSize*  = 2048  ## Tasks per stripe; must be a power of 2.
+  BulkSize*    = 32   ## Max tasks drained per bulk dequeue.
+  StageSize*   = 256  ## Tasks held in a worker's private staging ring; must be a power of 2.
 
 # --- Task = Continuation + metadata ---
 
@@ -123,40 +36,37 @@ proc toTask*(c: Continuation): Task {.inline.} =
 
 # --- Task queue ---
 
-type
-  Stripe = object
-    L: TicketLock
-    head, tail, count: int
-    data: array[StripeSize, Task]
+proc poolPollIo*(timeoutMs: int): bool {.nimcall.} =
+  ## Polls one I/O backend once; returns true if it delivered anything.
+  ## `std/ioring` registers one of these.
+  result = false
 
-  IoHandler* = object
-    ## Heap-allocate and pass ptr to registerFd.
-    ## Kept alive until unregisterFd is called.
-    ## Embed as the first field of a larger struct to carry per-connection state,
-    ## then cast `ptr IoHandler` back to your struct pointer inside the callback.
-    fd*: cint
-    cb*: proc (self: ptr IoHandler; events: uint32) {.nimcall.}
+type
+  WorkerMetrics* {.align: 64.} = object
+    enqueueMiss*: uint
+    dequeueMiss*: uint
+    tasksSubmited*: uint
+    tasksHandled*: uint
+    tasksStealed*: uint
 
 var
-  stripes: array[StripeCount, Stripe]
-  workers {.noinit.}: array[WorkerCount, RawThread]
-  gIoFd: cint
-  stopFlag: bool  # accessed atomically
+  workerMetrics*: seq[WorkerMetrics]
+  localQueues: seq[FifoStripe[Task]]
+  injectQueue: FifoStripe[Task]
+  workers: seq[RawThread]
+  stopFlag: bool # accessed atomically
+  workerCount* = 0
+  gReactor*: proc(timeoutMs: int): bool {.nimcall.} = poolPollIo
+var threadIdx* {.threadvar.}: int
 
 # --- Submit / dequeue ---
 
 proc tryEnqueue(s: int; t: Task): bool {.inline.} =
   ## Push `t` onto stripe `s` if it has room; `false` when the stripe is full.
-  let i = s and (StripeCount - 1)
-  stripes[i].L.acquire()
-  result = stripes[i].count < StripeSize
-  if result:
-    stripes[i].data[stripes[i].tail] = t
-    stripes[i].tail = (stripes[i].tail + 1) and (StripeSize - 1)
-    inc stripes[i].count
-  stripes[i].L.release()
+  let i = s mod workerCount
+  return localQueues[i].tryEnqueue(t)
 
-proc submit*(t: Task; hint = 0) =
+proc submit*(t: Task; h = 0) =
   ## Submit a task to the pool. **Non-lossy with "caller-runs" backpressure:**
   ## try the hinted stripe, then the others (absorbing bursts); if *every*
   ## stripe is full, run the continuation inline — trampolining it on the
@@ -169,10 +79,12 @@ proc submit*(t: Task; hint = 0) =
   ## Caller-runs instead guarantees forward progress (a producer that outruns
   ## the pool simply does the work), so the queue stays bounded at
   ## `StripeCount*StripeSize` and no submitter ever stalls.
-  let h = hint and (StripeCount - 1)
+  workerMetrics[threadIdx].tasksSubmited += 1
   if tryEnqueue(h, t): return
-  for off in 1 ..< StripeCount:
+  for off in 1 ..< workerCount:
+    workerMetrics[threadIdx].enqueueMiss += 1
     if tryEnqueue(h + off, t): return
+  if injectQueue.tryEnqueue(t): return
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
   # `fn` is nil when the task completes or parks (I/O will resume a parked one).
   var c = t.con
@@ -182,208 +94,113 @@ proc submit*(t: Task; hint = 0) =
     if tryEnqueue(h, toTask(next)): break
     c = next
 
-proc submit*(c: Continuation; hint = 0) {.inline.} =
-  ## Convenience: submit a bare continuation as a task.
-  submit(toTask(c), hint)
+# --- Per-worker staging ring ---
+
+type
+  StagedTasks = object
+    ## A worker's private submission ring: tasks submitted with the default
+    ## hint land here (no locks; the ring is only touched by its owning
+    ## thread) and are moved into the shared stripes in bulk at the top of
+    ## the next `workerLoop` cycle. Turns bursts of resubmissions from inside
+    ## the trampoline into one lock acquisition per `BulkSize` chunk.
+    buf: array[StageSize, Task]
+    head: int  # oldest element
+    count: int
+
+var
+  staged {.threadvar.}: StagedTasks
+  isWorker {.threadvar.}: bool # only workers may stage; foreign threads must enqueue directly or their batch could never be flushed
+
+proc stageTask(t: Task): bool {.inline.} =
+  ## Push onto this worker's private ring; false when it is full.
+  if staged.count == StageSize: return false
+  staged.buf[(staged.head + staged.count) and (StageSize - 1)] = t
+  inc staged.count
+  result = true
+
+proc flushStaged(hint: int): bool =
+  ## Bulk-enqueue staged tasks into the shared stripes in FIFO order, hinted
+  ## stripe first, one lock acquisition per chunk of up to `BulkSize` tasks.
+  ## Whatever the stripes cannot absorb goes through `submit`'s caller-runs
+  ## path so the batch stays loss-free. Returns true if any task was moved.
+  result = false
+  var chunk {.noinit.}: array[BulkSize, Task]
+  while staged.count > 0:
+    result = true
+    let n = min(staged.count, BulkSize)
+    for i in 0 ..< n:
+      chunk[i] = staged.buf[staged.head]
+      staged.head = (staged.head + 1) and (StageSize - 1)
+    dec staged.count, n
+    var remaining = n
+    var off = 0
+    while remaining > 0 and off < workerCount:
+      let s = (hint + off) mod workerCount
+      let moved = localQueues[s].tryBulkEnqueue(
+        toOpenArray(chunk, n - remaining, n - 1))
+      dec remaining, moved
+      if moved == 0:
+        workerMetrics[threadIdx].enqueueMiss += 1
+      inc off
+    while remaining > 0:
+      let t = chunk[n - remaining]
+      dec remaining
+      submit(t, hint)
+
+proc submit*(c: Continuation; hint = -1) {.inline.} =
+  ## Convenience: submit a bare continuation as a task. On a worker with the
+  ## default hint, the task is first staged on the private lock-free ring and
+  ## handed to the shared stripes in bulk on the next worker cycle (see
+  ## `flushStaged`); everything else enqueues immediately.
+  if hint != -1 or not isWorker:
+    var hint = hint
+    if hint == -1:
+      hint = threadIdx
+    submit(toTask(c), hint)
+  elif not stageTask(toTask(c)):
+    # Ring full: drain it into the stripes, then stage again — after a full
+    # flush there is always room.
+    discard flushStaged(threadIdx)
+    discard stageTask(toTask(c))
+
+var dequeTicks {.threadvar.}: int
 
 proc tryBulkDequeue(stripe: int; buf: var array[BulkSize, Task]): int =
-  let s = stripe and (StripeCount - 1)
-  stripes[s].L.acquire()
-  result = min(stripes[s].count, BulkSize)
-  for i in 0 ..< result:
-    buf[i] = stripes[s].data[stripes[s].head]
-    stripes[s].head = (stripes[s].head + 1) and (StripeSize - 1)
-  dec stripes[s].count, result
-  stripes[s].L.release()
+  result = 0
+  let s = stripe mod workerCount
+  inc dequeTicks
+  if dequeTicks mod 61 == 0:
+    result = injectQueue.tryBulkDequeue(BulkSize, buf)
+  if result == 0:
+    result = localQueues[s].tryBulkDequeue(BulkSize, buf)
 
 proc drainOnce(startStripe: int): bool =
   ## Dequeue the first non-empty stripe (searching from `startStripe`, for
   ## locality) and trampoline its tasks on the calling thread, re-submitting any
   ## continuation that yields more work. Returns true if a batch ran. Shared by
-  ## the worker loop and `poolHelp`.
+  ## the worker loop and `pool.help`.
   var buf {.noinit.}: array[BulkSize, Task]
-  for attempt in 0 ..< StripeCount:
-    let s = (startStripe + attempt) and (StripeCount - 1)
-    let n = tryBulkDequeue(s, buf)
+  # 0. Publish staged tasks first so submissions made since the last cycle
+  #    become visible to the scan below.
+  discard flushStaged(startStripe)
+  for attempt in 0 ..< workerCount:
+    let n = tryBulkDequeue(startStripe + attempt, buf)
     if n > 0:
       for i in 0 ..< n:
         let c = buf[i].con
         let next = c.fn(c.env)
         if next.fn != nil:
-          submit(next, s)
+          submit(next, startStripe)
+      workerMetrics[threadIdx].tasksHandled += n.uint
+      if attempt != 0:
+        workerMetrics[threadIdx].tasksStealed += n.uint
       return true
+    else:
+      workerMetrics[threadIdx].dequeueMiss += 1
   result = false
 
 proc poolHelp*(): bool {.inline.} =
-  ## Run one batch of queued tasks on the calling thread. A thread blocked on a
-  ## join (`parWait`) calls this instead of idle-spinning, so it *helps* drain
-  ## the pool — without it, nested parallel regions deadlock once every worker
-  ## is spin-waiting in a join with its sub-tasks unrun in the queue (fork-join
-  ## work-donation). Returns true if any task ran.
   drainOnce(0)
-
-# --- I/O registration ---
-
-proc ioFd*(): cint {.inline.} = gIoFd
-  ## The shared I/O poller file descriptor (epoll fd or kqueue fd).
-
-when hasEpoll:
-  # Header-free per the std/posix convention: real symbols are bare-importc'd
-  # and constants are hand-written ABI transcriptions. EPERM/EBADF are 1/9 on
-  # every Linux ABI (asm-generic, shared by amd64/arm64/i386; musl agrees).
-  const
-    epollErrPerm = cint(1)   # EPERM
-    epollErrBadFd = cint(9)  # EBADF
-
-  proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
-    ## glibc's and musl's address-returning errno accessor (same pattern as
-    ## std/posix). Read immediately after a failing epoll_ctl, no intervening
-    ## call, to classify the failure.
-
-  proc reportResidualFailure(msg: string) =
-    ## A residual epoll_ctl failure (both the primary op and its fallback
-    ## failed on a live pollable fd) — report on stderr with the errno number.
-    ## Rides the panic path's `writeErr` (raw fd 2, no stdio); a private
-    ## bare-importc `write` here would collide with the <unistd.h> prototype
-    ## that this module's usleep/close header imports pull into the TU.
-    writeErr(msg & " (errno " & $errnoLocation()[] & ")\n")
-
-  proc fdNotPollable(): bool {.inline.} =
-    ## True when a failed epoll_ctl means the fd is no longer a live pollable
-    ## descriptor we own: EPERM (a non-pollable type — a regular file, e.g. a socket
-    ## fd closed by its transfer and its number reused by one of the process's file
-    ## opens before this arm ran) or EBADF (already closed). Skipping such an fd is
-    ## correct — it carries no real transfer, so not watching it can't stall one —
-    ## and avoids error spam under multi-threaded handler resumption.
-    let e = errnoLocation()[]
-    result = e == epollErrPerm or e == epollErrBadFd
-
-proc registerFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
-  ## Register fd with the shared I/O instance.
-  ## Oneshot semantics: exactly one worker handles each fired event.
-  when hasEpoll:
-    var mask = EPOLLONESHOT
-    if (events and EvRead) != 0: mask = mask or EPOLLIN
-    if (events and EvWrite) != 0: mask = mask or EPOLLOUT
-    var ev = EpollEvent(events: mask)
-    ev.data.p = handler
-    if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
-      if not fdNotPollable():
-        # Not a stale/non-pollable fd → a genuine ADD-vs-MOD race (the slot's
-        # `registered` flag is advisory across workers). ADD on an already-present
-        # fd → EEXIST; fall back to MOD so the fd ends up armed with the current
-        # mask instead of staying a fired (disarmed) oneshot — that stall loses the
-        # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
-        if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
-          reportResidualFailure("ioring: epoll ADD+MOD both failed")
-  elif hasKqueue:
-    var kevs = default array[2, KEvent]
-    var n = 0
-    if (events and EvRead) != 0:
-      kevs[n].ident = fd.csize_t
-      kevs[n].filter = EVFILT_READ
-      kevs[n].flags = EV_ADD or EV_ONESHOT
-      kevs[n].udata = handler
-      inc n
-    if (events and EvWrite) != 0:
-      kevs[n].ident = fd.csize_t
-      kevs[n].filter = EVFILT_WRITE
-      kevs[n].flags = EV_ADD or EV_ONESHOT
-      kevs[n].udata = handler
-      inc n
-    if n > 0:
-      discard kevent(gIoFd, addr kevs[0], n.cint, nil, 0, nil)
-
-proc rearmFd*(fd: cint; handler: ptr IoHandler; events: uint32) =
-  ## Re-arm a oneshot fd after it has fired.
-  when hasEpoll:
-    var mask = EPOLLONESHOT
-    if (events and EvRead) != 0: mask = mask or EPOLLIN
-    if (events and EvWrite) != 0: mask = mask or EPOLLOUT
-    var ev = EpollEvent(events: mask)
-    ev.data.p = handler
-    if epoll_ctl(gIoFd, EPOLL_CTL_MOD, fd, addr ev) == -1:
-      # Mirror of registerFd's fallback: MOD on an fd that isn't in the set
-      # (ENOENT — e.g. armed-flag set before the racing ADD landed) → ADD.
-      if epoll_ctl(gIoFd, EPOLL_CTL_ADD, fd, addr ev) == -1:
-        # Both failed: skip a stale/non-pollable fd silently (a socket fd closed by
-        # its transfer and its number reused by a file open before this re-arm) —
-        # it's no longer a live socket we own, so not watching it can't stall a real
-        # transfer. Only a genuinely unexpected failure is worth reporting.
-        if not fdNotPollable():
-          reportResidualFailure("ioring: epoll MOD+ADD both failed")
-  elif hasKqueue:
-    var kevs = default array[2, KEvent]
-    var n = 0
-    if (events and EvRead) != 0:
-      kevs[n].ident = fd.csize_t
-      kevs[n].filter = EVFILT_READ
-      kevs[n].flags = EV_ADD or EV_ONESHOT or EV_ENABLE
-      kevs[n].udata = handler
-      inc n
-    if (events and EvWrite) != 0:
-      kevs[n].ident = fd.csize_t
-      kevs[n].filter = EVFILT_WRITE
-      kevs[n].flags = EV_ADD or EV_ONESHOT or EV_ENABLE
-      kevs[n].udata = handler
-      inc n
-    if n > 0:
-      discard kevent(gIoFd, addr kevs[0], n.cint, nil, 0, nil)
-
-proc unregisterFd*(fd: cint) =
-  when hasEpoll:
-    discard epoll_ctl(gIoFd, EPOLL_CTL_DEL, fd, nil)
-  elif hasKqueue:
-    var kevs = default array[2, KEvent]
-    kevs[0].ident = fd.csize_t
-    kevs[0].filter = EVFILT_READ
-    kevs[0].flags = EV_DELETE
-    kevs[1].ident = fd.csize_t
-    kevs[1].filter = EVFILT_WRITE
-    kevs[1].flags = EV_DELETE
-    discard kevent(gIoFd, addr kevs[0], 2, nil, 0, nil)
-
-# --- I/O polling ---
-
-proc poolPollIo*(timeoutMs: cint): bool =
-  ## Poll the shared I/O instance once and dispatch every ready handler on the
-  ## calling thread. `timeoutMs` is how long to block waiting for an event (`0`
-  ## = non-blocking peek). Returns true if at least one handler fired. Safe to
-  ## call from any thread (oneshot semantics: each event goes to exactly one
-  ## caller) — used both by the worker loop and by `parWait` so a thread blocked
-  ## on a join can still advance the I/O its parked chunks are waiting on.
-  result = false
-  when hasEpoll:
-    var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-    let n = epoll_wait(gIoFd, addr ioEvents[0], MaxIoEvents.cint, timeoutMs)
-    for i in 0 ..< n:
-      let h = cast[ptr IoHandler](ioEvents[i].data.p)
-      if h != nil:
-        h.cb(h, ioEvents[i].events)
-    result = n > 0
-  elif hasKqueue:
-    var ioEvents {.noinit.}: array[MaxIoEvents, KEvent]
-    var ts = default Timespec
-    if timeoutMs > 0:
-      ts.tv_nsec = 1_000_000  # 1 ms (we only ever pass 0 or 1)
-    let n = kevent(gIoFd, nil, 0, addr ioEvents[0], MaxIoEvents.cint, addr ts)
-    for i in 0 ..< n:
-      let h = cast[ptr IoHandler](ioEvents[i].udata)
-      if h != nil:
-        let evMask = case ioEvents[i].filter
-          of EVFILT_READ: EvRead
-          of EVFILT_WRITE: EvWrite
-          else: 0u32
-        h.cb(h, evMask)
-    result = n > 0
-  else:
-    if timeoutMs > 0:
-      when defined(windows):
-        sleep(timeoutMs.uint32)
-      else:
-        discard usleepMicroseconds(timeoutMs.uint32 * 1000'u32)
-
-# --- Worker loop ---
 
 when defined(useMimalloc):
   proc miCollect(force: bool) {.importc: "mi_collect".}
@@ -398,15 +215,26 @@ when defined(useMimalloc):
     ## per-worker steady state.
 
 proc workerLoop(arg: pointer) {.nimcall.} =
-  let threadIdx = cast[int](arg)   # index passed by value via the pointer slot (see initPool)
+  threadIdx = cast[int](arg)
+  isWorker = true
   var idleTicks = 0
+  dequeTicks = 0
   var sinceCollect = 0
   while not atomicLoad(stopFlag, moRelaxed):
     # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
     #    each continuation, re-submitting any that yield more work.
     let busy = drainOnce(threadIdx)
     # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
-    discard poolPollIo(if busy: 0.cint else: 1.cint)
+    let eventFired = gReactor(if busy: 0.cint else: 1.cint)
+    if not eventFired and not busy:
+      const timeoutMs = 1
+      when defined(windows):
+        sleep(timeoutMs.uint32)
+      else:
+        var ts = Timespec(tv_sec: Time(timeoutMs div 1000),
+                           tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
+        var rem = Timespec()
+        discard nanosleep(ts, rem)
     # 3. Reclaim this worker's cross-thread-free backlog: a forced collect
     #    after a brief idle (~8ms of 1ms polls), plus a hard periodic fallback
     #    so a worker that never goes idle still collects. force=true is what
@@ -415,10 +243,7 @@ proc workerLoop(arg: pointer) {.nimcall.} =
     #    free path — measure before assuming it needs an equivalent.)
     when defined(useMimalloc):
       inc sinceCollect
-      if busy:
-        idleTicks = 0
-      else:
-        inc idleTicks
+      if busy: idleTicks = 0 else: inc idleTicks
       if idleTicks >= 8 or sinceCollect >= 8192:
         idleTicks = 0
         sinceCollect = 0
@@ -426,34 +251,46 @@ proc workerLoop(arg: pointer) {.nimcall.} =
 
 # --- Lifecycle ---
 
+var poolState: int
+
 proc initPool*() =
-  ## Initialize the I/O poller and start worker threads.
-  when hasEpoll:
-    gIoFd = epoll_create1(0)
-    assert gIoFd >= 0, "epoll_create1 failed"
-  elif hasKqueue:
-    gIoFd = kqueue()
-    assert gIoFd >= 0, "kqueue failed"
-  for i in 0 ..< WorkerCount:
-    try:
-      # Pass the worker index BY VALUE through the pointer slot. It used to be
-      # `addr indexes[i]` into a stack-local array that dangled the moment
-      # initPool returned — run()'s sleep frame then reused that memory and the
-      # workers read garbage thread indices (valgrind: uninitialised value in
-      # tryBulkDequeue/workerLoop, origin the reused frame). No storage, no
-      # lifetime, no race.
-      create workers[i], workerLoop, cast[pointer](i)
-    except:
+  # Only `poolState` gates this; `workerCount` must NOT, because the CAS winner
+  # publishes it *before* allocating `workerMetrics`/`localQueues`/`injectQueue`.
+  # A second caller that returned on `workerCount > 0` would race ahead and index
+  # those still-empty seqs on its next `submit`.
+  if atomicLoad(poolState, moAcquire) == 2: return
+  var expected = 0
+  if atomicCompareExchange(poolState, expected, 1):
+    workerCount = max(1, cpuinfo.countProcessors() - 1)
+    workerMetrics = newSeq[WorkerMetrics](workerCount)
+    localQueues = newSeq[FifoStripe[Task]](workerCount)
+    for i in 0..<workerCount:
+      localQueues[i].init(StripeSize)
+    injectQueue.init(StripeSize*16)
+    workers.setLen(workerCount)
+    for i in 0 ..< workerCount:
+      try:
+        # 4th parameter is `stackSize` (0 = OS default); the affinity request
+        # is the 5th one.
+        create workers[i], workerLoop, cast[pointer](i), 0, i
+      except:
+        discard
+    atomicStore(poolState, 2, moRelease)
+  else:
+    while atomicLoad(poolState, moAcquire) != 2:
       discard
 
-proc poolStopped*(): bool {.inline.} =
+proc isPoolWorker*(): bool {.inline.} =
+  ## True on a thread created by `initPool`. `threadIdx` is only meaningful as
+  ## an identity on those: it is a threadvar defaulting to 0, so every foreign
+  ## thread (the main thread included) reports 0 — the same value worker 0 uses.
+  ## Anything that indexes per-thread state by `threadIdx` must ask this first.
+  isWorker
+
+proc stopped*(): bool {.inline.} =
   atomicLoad(stopFlag, moRelaxed)
 
 proc shutdownPool*() =
-  ## Signal all workers to stop and join threads.
   atomicStore(stopFlag, true, moRelaxed)
-  for i in 0 ..< WorkerCount:
+  for i in 0 ..< workerCount:
     workers[i].join()
-  when hasIoPoll:
-    proc close(fd: cint): cint {.importc, header: "<unistd.h>".}
-    discard close(gIoFd)

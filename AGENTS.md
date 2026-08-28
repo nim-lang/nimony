@@ -14,11 +14,11 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 ## Quick Debug Workflow
 
 1. Build the Nimony toolchain (Nimony + Hexer):
-   - `nim c -r src/hastur build nimony`
+   - `nim c -r src/hastur/hastur build nimony`
 2. Produce `nimcache/` artifacts:
    - `bin/nimony c mybug.nim`
    - Or use the convenience command:
-     - `nim c -r src/hastur debug mybug.nim`
+     - `nim c -r src/hastur/hastur debug mybug.nim`
 3. Inspect `nimcache/` for `.nif` artifacts (for example `.s.nif` and
    other lowered NIF files). These show the transformations across phases.
 
@@ -27,7 +27,8 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 - `src/nimony/` for semantic analysis and front-end phases.
 - `src/hexer/` for lowering passes and Leng generation steps.
 - `src/nifler/` and `src/lengc/` only when evidence points there.
-- `src/hastur.nim` for test/build tooling and command behavior.
+- `src/hastur/` for test/build tooling and command behavior (`hastur.nim` is the
+  CLI; the logic lives in its sibling modules).
 
 ## Debugging Tips
 

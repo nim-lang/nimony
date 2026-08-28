@@ -421,10 +421,11 @@ proc genVar(c: var GeneratedCode; n: var Cursor; vk: VarKind; toExtern = false; 
       genVarDecl c, n, IsConst, toExtern, useStatic
 
 proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
-  n.into:  # (keepovf …)
+  n.into:  # (keepovf <op> <dest>)
     let op = n.exprKind
     var gcc = ""
     var prefix = "__builtin_"
+    var checkable = true
     case op
     of AddC:
       gcc.add "add"
@@ -439,53 +440,69 @@ proc genKeepOverflow(c: var GeneratedCode; n: var Cursor) =
       gcc.add "mod_"
       prefix = "_Qlengc_"
     else:
-      error c.m, "expected arithmetic operation but got: ", n
-    var isLongLong = false
-    n.into:  # (add | sub | mul | … <type> lhs rhs)
-      if n.typeKind == IT:
-        gcc = prefix & "s" & gcc
-      elif n.typeKind == UT:
-        gcc = prefix & "u" & gcc
-      else:
-        error c.m, "expected integer type but got: ", n
-      n.into:  # (i bits) | (u bits)
-        if n.kind == IntLit:
-          let bits = intVal(n)
-          if bits == 64 or (bits == -1 and c.bits == 64):
-            gcc.add "ll"
-            isLongLong = true
-          inc n
+      # The operation is gone: an optimizer rewrite replaced it with something
+      # that cannot overflow. `(mul T x 1)` and `(add T x 0)` collapse to `x`,
+      # `(mul T x 0)` and `(sub T x x)` to `0`, and constant folding turns
+      # literal operands into a literal. Every rewrite that can leave a
+      # non-arithmetic node here yields a value that provably cannot overflow,
+      # so there is no check to emit: store the value and leave the flag as it
+      # was. Erroring out instead made `newSeq[T](1)` fail to compile at
+      # `-d:release`, where `(mul T 1 (sizeof T))` folds to `(sizeof T)`.
+      checkable = false
+    if not checkable:
+      var value = n
+      skip n            # the value
+      genLvalue c, n    # the destination
+      c.add AsgnOpr
+      genx c, value
+      c.add Semicolon
+    else:
+      var isLongLong = false
+      n.into:  # (add | sub | mul | … <type> lhs rhs)
+        if n.typeKind == IT:
+          gcc = prefix & "s" & gcc
+        elif n.typeKind == UT:
+          gcc = prefix & "u" & gcc
         else:
-          error c.m, "expected integer literal but got: ", n
+          error c.m, "expected integer type but got: ", n
+        n.into:  # (i bits) | (u bits)
+          if n.kind == IntLit:
+            let bits = intVal(n)
+            if bits == 64 or (bits == -1 and c.bits == 64):
+              gcc.add "ll"
+              isLongLong = true
+            inc n
+          else:
+            error c.m, "expected integer literal but got: ", n
+          while n.hasMore: skip n
+        c.currentProc.needsOverflowFlag = true
+        c.add IfKeyword
+        c.add ParLe
+        gcc.add "_overflow"
+        c.add gcc
+        c.add ParLe
+        genx c, n
+        c.add Comma
+        genx c, n
         while n.hasMore: skip n
-      c.currentProc.needsOverflowFlag = true
-      c.add IfKeyword
-      c.add ParLe
-      gcc.add "_overflow"
-      c.add gcc
-      c.add ParLe
-      genx c, n
       c.add Comma
-      genx c, n
-      while n.hasMore: skip n
-    c.add Comma
-    if isLongLong:
-      c.add "(long long int*)"
-      c.add ParLe
-    c.add Amp
-    genLvalue c, n
-    if isLongLong:
+      if isLongLong:
+        c.add "(long long int*)"
+        c.add ParLe
+      c.add Amp
+      genLvalue c, n
+      if isLongLong:
+        c.add ParRi
       c.add ParRi
-    c.add ParRi
-    c.add ParRi # end of condition
-    c.add CurlyLe
-    c.add OvfToken
-    c.add AsgnOpr
-    c.add OvfToken
-    c.add " || "
-    c.add "NIM_TRUE"
-    c.add Semicolon
-    c.add CurlyRi
+      c.add ParRi # end of condition
+      c.add CurlyLe
+      c.add OvfToken
+      c.add AsgnOpr
+      c.add OvfToken
+      c.add " || "
+      c.add "NIM_TRUE"
+      c.add Semicolon
+      c.add CurlyRi
     while n.hasMore: skip n
 
 proc genStore(c: var GeneratedCode; n: var Cursor) =

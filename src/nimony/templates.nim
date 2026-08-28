@@ -29,8 +29,21 @@ type
     inferred: ptr Table[SymId, Cursor]
 
 proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
-                        e: var ExpansionContext; body: Cursor) =
+                        e: var ExpansionContext; body: Cursor;
+                        atToplevel: bool) =
   ## Expands a single tree/token of the template body into `dest`.
+  ##
+  ## `atToplevel` says that what lands here lands at MODULE scope: the call site
+  ## is toplevel and nothing between the body root and this node opened a scope.
+  ## It decides the layout of a name the body declares. A template's own body is
+  ## semchecked in the template's scope, so everything it declares that is not
+  ## routine-like got a LOCAL name there (`identToSym`), and `newSymId` keeps
+  ## whatever layout it copies — so `template t() = (let x = 1)` expanded at
+  ## module scope produced `x.1`, a local-layout name on a module-level `gvar`.
+  ## Such a decl is not indexed (`nifcoreparse.toModuleString` indexes by the
+  ## name's shape), so the module compiles and cannot be IMPORTED: nifasm reads
+  ## a foreign module's decls through that index and fails with "Unknown symbol"
+  ## on the module init that reads it.
   var body = body
   case body.kind
   of UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
@@ -52,7 +65,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.addSubtree body # keep Symbol as it was
   of SymbolDef:
     let s = body.symId
-    let newDef = newSymId(c, s)
+    let newDef = newSymId(c, s, forceGlobal = atToplevel)
     e.newVars[s] = newDef
     dest.addSymDef(newDef, body.info)
   of StrLit, CharLit, IntLit, UIntLit, FloatLit:
@@ -71,7 +84,7 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
       if arg.hasMore and not arg.isDotToken:
         while arg.hasMore:
           e.formalParams[vid] = arg
-          expandTemplateImpl c, dest, e, forStmt.body
+          expandTemplateImpl c, dest, e, forStmt.body, atToplevel
           skip arg
     elif body.exprKind == UnpackX:
       var un = body
@@ -90,13 +103,113 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
           dest.addParRi()
     else:
       dest.addParLe(body.cursorTagId, body.info)
+      # Module scope survives exactly two steps: a `(stmts …)` list, and the NAME
+      # of a declaration sitting in one. Everything else — a routine body, a
+      # `block`, the branches of an `if` — is a scope of its own in `identToSym`'s
+      # eyes, so a name declared under it keeps the local layout it already has.
+      let listy = body.stmtKind == StmtsS
+      var first = true
       body.into:
         while body.hasMore:
-          expandTemplateImpl c, dest, e, body
+          expandTemplateImpl c, dest, e, body,
+                             atToplevel and (listy or (first and body.kind == SymbolDef))
+          first = false
           skip body
         dest.addParRi(body.endInfo)
   else:
     discard "ParRi/close (classic) or stray suffix (nifcore)"
+
+proc forgeExpansionInfo*(c: var SemContext; dest: var TokenBuf; start: int;
+                         origin: SymId; declInfo: NifLineInfo;
+                         callInfo: NifLineInfo) =
+  ## Mark what `dest` gained from `start` onward as the result of expanding
+  ## `origin` (#1987), by forging the line-info filename of the *first expanded
+  ## node's head token* - and only that one. An expansion is a single value (a
+  ## `(stmts …)` for a statement template, one expression otherwise), so that
+  ## head covers the whole body. A head whose file is `foo.nim` becomes
+  ## `__crucial\0<origin>\1<declfile>\1<declline>\0foo.nim`; the debug backend
+  ## pushes the origin onto a stack when its tree walk enters such a head and
+  ## pops it when the walk leaves, so every instruction inside gets the DWARF
+  ## inlined frame while the tokens themselves keep their real positions.
+  ## Every other consumer sees `realFile()` and is unaffected.
+  ##
+  ## Nesting composes through the walk: an inner template's expansion sits
+  ## inside the outer one's subtree and carries its own forged head. Only when
+  ## the two heads are the *same token* - a body that is nothing but a call to
+  ## another template - does a chain form, by prepending onto the head's
+  ## existing entries. Outermost first, which is what nesting `inlinedAt`
+  ## needs.
+  ##
+  ## When that head sits at exactly the call's position it is substituted
+  ## *argument* code, written by the caller and belonging to the caller's
+  ## frame, so it keeps its info and nothing is marked. That is why `callInfo`
+  ## is passed in rather than derived here. Comparing only the *file* would be
+  ## wrong for a template declared in the file it is called from - the common
+  ## case, and the one `tests/llvmdebug/ttemplate_locals.nim` covers.
+  # The declaration site travels in the entry because it cannot be recovered
+  # downstream: a template decl does not survive into Leng, and the expanded
+  # code's own info points at whatever file the body came from.
+  ## Off unless `--inlineframes:on`: every template expansion would otherwise
+  ## pay for it, and only a debug build reads the result.
+  if not c.g.config.inlineFrames: return
+  if start >= dest.len: return
+  let originSym = pool.syms[origin]
+  let originDeclFile =
+    if declInfo.file.isValid: realFile(pool.filenames[declInfo.file]) else: ""
+
+  # Info rides as a trailing `LineInfoLit` whose width can change with the
+  # `FileId`, so the head cannot be patched in place - the range is re-emitted.
+  var src = createTokenBuf(dest.len - start)
+  for i in start ..< dest.len: src.add dest[i]
+  shrink dest, start
+
+  var n = beginRead(src)
+  let li = n.info
+  var forge = li.isValid and li.file.isValid
+  if forge and li.file == callInfo.file and li.line == callInfo.line and
+     li.col == callInfo.col:
+    forge = false
+  if forge and n.kind == TagLit and cursorTagId(n) == nifpools.ErrT:
+    # An `(err <orig> <instantiation-dots> <msg>)` is already-reported
+    # diagnostic state, not code: its dots are the error contexts
+    # `reporters` prints as `Trace: instantiation from here`. Marking it
+    # duplicates the trace for a template that errors inside another
+    # expansion (`tests/nimony/templates/tinvalidrecursion.nim`).
+    forge = false
+  if forge:
+    # Prepend, not append: this head's existing chain (if any) is the inner
+    # levels, expanded before us. Outermost first is what the debug backend
+    # needs to nest `inlinedAt` correctly.
+    var forged = CrucialPrefix
+    forged.addCrucialInfo(originSym, originDeclFile, declInfo.line)
+    forged.add crucialTail(pool.filenames[li.file])
+    let info = NifLineInfo(file: pool.filenames.getOrIncl(forged),
+                           line: li.line, col: li.col, comment: li.comment)
+    case n.kind
+    of TagLit:
+      dest.addParLe(cursorTagId(n), info)
+      n.into:
+        while n.hasMore:
+          dest.addSubtree n
+          skip n
+      dest.addParRi()
+    of IntLit:    dest.addIntLit(intVal(n), info); inc n
+    of UIntLit:   dest.addUIntLit(uintVal(n), info); inc n
+    of FloatLit:  dest.addFloatLit(floatVal(n), info); inc n
+    of CharLit:   dest.addCharLit(charLit(n), info); inc n
+    of StrLit:    dest.addStrLit(strVal(n), info); inc n
+    of Symbol:    dest.addSymUse(n.symId, info); inc n
+    of SymbolDef: dest.addSymDef(n.symId, info); inc n
+    of DotToken:  dest.addDotToken(info); inc n
+    else:
+      # An Ident carries no rewritable info; nothing to mark.
+      dest.addSubtree n
+      skip n
+  # Whatever was not re-emitted above (an unforgeable head, or a second value
+  # if one ever appears) is copied through unchanged.
+  while n.hasMore:
+    dest.addSubtree n
+    skip n
 
 type
   PluginOutcome* = enum
@@ -396,7 +509,8 @@ proc expandTemplate*(c: var SemContext; dest: var TokenBuf;
   if templ.body.isDotToken:
     c.buildErr dest, info, "cannot expand template from prototype; possibly a recursive template call"
   else:
-    expandTemplateImpl c, dest, e, templ.body
+    expandTemplateImpl c, dest, e, templ.body,
+                       atToplevel = c.currentScope.kind == ToplevelScope
 
   for _, newVar in e.newVars:
     c.freshSyms.incl newVar

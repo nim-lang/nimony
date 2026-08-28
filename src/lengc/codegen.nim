@@ -196,7 +196,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   ## (mangled symbol plus embedded line info), which says nothing a reader wants.
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   # `Error: `, not the `[Error] ` of the rendering `error` above: this is a
   # user-facing diagnostic, and that is the spelling every other user-facing
@@ -210,7 +210,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
@@ -342,6 +342,14 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # linking the object — see `nativenif/doc/asm-c-interop.md`, which is not
         # built yet. Reject loudly rather than emit a prototype that will fail to
         # link with no explanation.
+        result.flags.incl pk
+        skip n
+      of InterruptP:
+        # An interrupt-table entry, and a C build has no such table to install it
+        # in. Emitting the function anyway would compile and link and simply
+        # never be reached — a device that does not respond to the interrupt,
+        # with nothing at the failure site to say why. `{.exportc: "…".}` is
+        # what binds a handler by name against a vendor startup file.
         result.flags.incl pk
         skip n
       of RegisterP, StackP:
@@ -639,6 +647,11 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   if prag.flags * {AssemblerP, NakedP} != {}:
     errorAt c.m, "the C backend cannot compile an `{.assembler.}` proc; it must " &
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
+      prc.name
+  if InterruptP in prag.flags:
+    errorAt c.m, "the C backend has no interrupt table to install an `{.interrupt.}` " &
+      "handler in; use `{.exportc: \"...\".}` to bind one by name against a " &
+      "startup file, or compile it with arkham",
       prc.name
   if prag.flags * {InstructionP, IntrinsicP} != {}:
     # No C declaration: an intrinsic has no definition to link against, and

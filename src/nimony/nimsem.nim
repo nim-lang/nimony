@@ -33,6 +33,9 @@ Options:
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
+  --mm:STRATEGY             select the memory management strategy; the name
+                            maps to `system/<strategy>.nim` in the stdlib.
+                            Possible values: atomicArc (default), arc
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)

@@ -523,7 +523,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(), needsXelim: needsXelim,
+  var c = Context(ptrSize: ptrSize, typeCache: createTypeCache(pass.bits), needsXelim: needsXelim,
     tupleVars: localsThatBecomeTuples(n))
   c.retType = c.typeCache.builtins.voidType
   c.typeCache.openScope()

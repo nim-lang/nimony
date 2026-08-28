@@ -74,6 +74,53 @@ are copy-on-write internally.
 - `setOomHandler`: By default the runtime tries to continue after
   out-of-memory. For many applications, just quitting is the more robust solution — set a handler that calls `quit`.
 
+#### Strategies (`--mm:`)
+
+`--mm:NAME` selects the strategy. `system.nim` says `include "$MM"` and the
+compiler expands `$MM` to `system/<name>`, lowercased — so `--mm:atomicArc`
+includes `lib/std/system/atomicarc.nim`. Adding a strategy is adding a file
+under `lib/std/system/`; nothing in `system.nim` enumerates them.
+
+| `--mm:` | file | notes |
+| --- | --- | --- |
+| `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
+| `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
+
+A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
+when the count reached zero) and `arcIsUnique`. What is built on top of them
+(`GC_ref` / `GC_unref`) is strategy independent and lives in `system/refops`.
+
+`--mm:NAME` also defines `gcName`, so `--mm:arc` makes `defined(gcArc)` true and
+`--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
+the cached build configuration and therefore forces a rebuild.
+
+#### The uniquely-referenced fast path
+
+`atomicArc`'s `arcDec` reads the count first and skips the atomic
+read-modify-write when it is already zero. A zero count means the caller holds
+the only reference, so there is nothing to adjudicate against another thread and
+nothing to write back into a cell that is about to be freed. See the comment on
+`arcDec` for why that is sound, and why a strategy that ever gains a collector
+must not inherit it.
+
+That makes the caller's contract load-bearing: **free the cell when `arcDec`
+returns true, or already know the count is non-zero.** A caller that discards a
+`true` leaves the count untouched rather than at -1.
+
+On `bench/gcbench.nim` (`-d:danger`, median of 31 pinned runs) the fast path is
+worth -36%, which puts atomicArc level with non-atomic `arc`:
+
+| | |
+| --- | --- |
+| `--mm:atomicArc`, `-d:nimNoAtomicArcFastPath` | 0.1334 s |
+| `--mm:atomicArc` | 0.0847 s |
+| `--mm:arc` | 0.0881 s |
+
+The worst case -- a decRef that always sees a non-zero count, so the load never
+pays off -- measures +0.1%. `-d:nimNoAtomicArcFastPath` restores the previous
+code path. The same trick does *not* belong in `arc`: measured there it is a
+2--4% loss, because a non-atomic store is cheaper than the branch that avoids it.
+
 ### Iterators
 
 - `..` is inclusive: `0..3` yields 0, 1, 2, 3.

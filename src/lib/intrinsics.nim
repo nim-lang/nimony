@@ -102,6 +102,14 @@ type
     AtomicClearOp
     AtomicThreadFenceOp
     AtomicSignalFenceOp
+    # ── the spin-wait hint (`{.intrinsic: "CpuRelax".}`). Portable in the same
+    #    sense the fences are: every target has the mechanism and no two spell it
+    #    alike — `pause` on x86-64, `yield` on both Arm profiles, nothing at all
+    #    on a target that has neither. Deliberately NOT one of the atomics above
+    #    (`isAtomic` is an ordinal range, and this row shares none of their
+    #    machinery): it moves no data, touches no cell and orders nothing. It is
+    #    a hint to the core that the loop around it is waiting on another core.
+    CpuRelaxOp
     # ── AdvSIMD/NEON vector rows (`{.instruction.}`, AArch64). The shoggoth
     #    vectorizer synthesizes their declarations and emits `(instr …)`
     #    applications; user code can also declare them. The vector VALUE type is
@@ -121,9 +129,76 @@ type
     #    portable rows: the CONCEPT is target-neutral, the instruction is not.
     StackPointerOp
     TraceTableOp
+    # ── the size of one thread's thread-local block (`lib/std/rawthreads`). A
+    #    thread the runtime creates itself needs storage for every `{.threadvar.}`
+    #    in the program, and how many bytes that is is a LINK-time fact: nifasm
+    #    lays every module's thread-locals into one block and only then knows how
+    #    big it got. So the row answers with the ADDRESS of the number, exactly as
+    #    `TraceTable` answers with the address of the table — one `lea` against a
+    #    label the assembler owns — rather than an immediate no compilation unit
+    #    could have supplied.
+    TlsSizeOp
     # ── the valgrind client request (`lib/std/valgrind`). Portable in the same
     #    sense: every target has the mechanism, none spells it the same way.
     VgClientRequestOp
+    # ── volatile access (`lib/std/volatile`). One load, one store, at exactly
+    #    the pointee's width, that no pass may duplicate, elide, reorder against
+    #    another volatile, or fold. This is MMIO: reading a status register is
+    #    how you learn something changed, and writing a command register is the
+    #    something that happens — so the value is beside the point and the ACCESS
+    #    is the whole content.
+    VolatileLoadOp
+    VolatileStoreOp
+    # ── the heap a bare-metal image was GIVEN (`lib/std/system/osalloc`). Two
+    #    link-time facts: a hosted program asks its OS for pages, and a firmware
+    #    image has whatever the board layout reserved for it and not one byte
+    #    more. The numbers are the image writer's, so the row is how the runtime
+    #    reaches them rather than something it can compute.
+    HeapStartOp
+    HeapSizeOp
+    # ── the region the startup code was told to LEAVE ALONE. Everything else in
+    #    RAM is established at reset — `.data` copied in, `.bss` zeroed — and a
+    #    reboot counter or a crash record is exactly the thing that must not be:
+    #    it is written by the run that failed and read by the run after it.
+    #    Survives a warm reset, not a power cycle.
+    NoinitStartOp
+    NoinitSizeOp
+    # ── the debugger trap (`lib/std/semihosting`). ARMv7-M's `bkpt #imm8` is how
+    #    a bare-metal image asks a debug agent for anything at all: the ARM
+    #    semihosting protocol is `bkpt #0xAB` with an operation number in r0 and
+    #    a parameter block address in r1. The ROW is just the instruction — it
+    #    has no operands but the immediate the encoding carries, and it names no
+    #    register, which is why a semihosting call is written in an
+    #    `{.assembler.}` body where r0/r1 can be said out loud. Its result comes
+    #    back in r0, which the row cannot describe and the body simply reads.
+    BkptOp
+    # ── the same protocol, RISC-V's spelling. A semihosting call there is not one
+    #    instruction but a fixed THREE — `slli x0,x0,0x1f`, `ebreak`,
+    #    `srai x0,x0,7` — whose outer two are architectural no-ops that exist only
+    #    so a debug agent can recognise the middle one as a semihosting request
+    #    rather than an ordinary breakpoint. That is why this is its own row and
+    #    not `bkpt` with a different encoding: `bkpt` takes the magic number as an
+    #    operand, and here the magic is the surrounding instructions.
+    #
+    #    Nullary and void, for the same reason `bkpt` is: the operation number and
+    #    the parameter block live in a0/a1, which an `{.assembler.}` body names out
+    #    loud, and the result comes back in a0 where the body reads it.
+    SemihostOp
+    # ── the raw kernel entry (`lib/std/rawthreads`). One instruction, and the
+    #    ONLY way a libc-free image can create a thread: `clone` is not callable
+    #    from compiled code, because the child resumes at the instruction after
+    #    the syscall with a DIFFERENT stack pointer — every local the surrounding
+    #    proc had is gone, and its epilogue would pop from a stack that never held
+    #    a frame. So the sequence has to be written where the stack is said out
+    #    loud, i.e. an `{.assembler, naked.}` body, and this row is what lets one
+    #    say `syscall`.
+    #
+    #    Nullary and void for the same reason `bkpt` and `semihost` are: the
+    #    number is in rax and the arguments in rdi/rsi/rdx/r10/r8/r9 because the
+    #    body put them there, and the result comes back in rax where the body
+    #    reads it. No column here can describe that, and in an `.assembler` proc
+    #    none needs to — there is no allocator to inform.
+    SyscallOp
 
   IntrinsicClass* = enum
     ## What kind of NAME the opcode is — fixed when the row is authored, and NOT
@@ -140,6 +215,14 @@ type
   IntrinsicTarget* = enum
     tgX64        ## x86-64
     tgA64        ## AArch64
+    tgThumbM     ## Thumb-2 / Cortex-M. Newer than most of the table: rows that
+                 ## predate the target do not claim it, and arkham's Arm emitter
+                 ## read `tgA64` for both Arm targets while no row distinguished
+                 ## them. It asks for the target it is actually emitting now, so
+                 ## a row claims Cortex-M only where the lowering was checked —
+                 ## the volatile rows, and the `cmp`/flag-read rows the
+                 ## `{.assembler.}` mode needs to branch.
+    tgRv32       ## RV32IMAFD, bare metal.
 
   OperandRole* = enum
     roIn         ## a pure source
@@ -206,6 +289,14 @@ type
                  ## `.4s`/`.2d` arrangement. Like `ptMemOrder` it is not evaluated —
                  ## see `evaluatedOperands` — but unlike it, the back end DOES read
                  ## its literal value.
+    ptImmLit     ## an operand the INSTRUCTION encodes rather than reads from a
+                 ## register: `bkpt #imm8`'s comment field. Like `ptLaneBits` it is
+                 ## never evaluated (`evaluatedOperands`) and its literal value is
+                 ## read at the call site — the difference is only what it means,
+                 ## and a row that shared `ptLaneBits` for it would be telling the
+                 ## reader it selects a lane arrangement. A non-literal argument is
+                 ## a back-end error naming the operand, because there is no
+                 ## register form to fall back to.
 
 const
   MaxOperands* = 6
@@ -263,10 +354,15 @@ const
     "AtomicFetchAdd", "AtomicFetchSub", "AtomicFetchAnd", "AtomicFetchOr",
     "AtomicFetchXor", "AtomicAddFetch", "AtomicSubFetch",
     "AtomicTestAndSet", "AtomicClear", "AtomicThreadFence", "AtomicSignalFence",
+    "CpuRelax",
     # The vector rows: THE SOURCE NAME IS THE NIFASM TAG, as everywhere above.
     "fldrq", "fstrq", "vfadd", "vfsub", "vfmul", "vfmla", "vdup", "vaddv",
-    "StackPointer", "TraceTable", "VgClientRequest"]
+    "StackPointer", "TraceTable", "TlsSize", "VgClientRequest",
+    "VolatileLoad", "VolatileStore", "HeapStart", "HeapSize",
+    "NoinitStart", "NoinitSize", "bkpt", "semihost", "syscall"]
 
+  Imm8 = [ptImmLit, ptNone, ptNone, ptNone, ptNone, ptNone]
+    ## one operand, and the instruction encodes it — see `ptImmLit`.
   AllIn = [roIn, roIn, roIn, roIn, roIn, roIn]
   InoutFirst = [roInout, roIn, roIn, roIn, roIn, roIn]  ## operand 0 read AND written
   NoOps = [ptNone, ptNone, ptNone, ptNone, ptNone, ptNone]     ## no operands at all
@@ -288,6 +384,14 @@ const
     ## it — the one atomic with an output that is not the result.
   AtomFlag = [ptRawPtr, ptMemOrder, ptNone, ptNone, ptNone, ptNone]
   AtomFence = [ptMemOrder, ptNone, ptNone, ptNone, ptNone, ptNone]
+
+  # ── volatile operand shapes ──────────────────────────────────────────────
+  # The atomic shapes minus the memory order, which is the whole difference in
+  # the signature and most of the difference in meaning: an atomic says how this
+  # access is ordered against every other thread's, a volatile says only that the
+  # access HAPPENS, exactly once, at exactly this width.
+  VolLoad = [ptPtrW, ptNone, ptNone, ptNone, ptNone, ptNone]
+  VolStore = [ptPtrW, ptValW, ptNone, ptNone, ptNone, ptNone]
 
   # ── vector operand shapes ────────────────────────────────────────────────
   VecLoad = [ptAnyPtr, ptAnyInt, ptNone, ptNone, ptNone, ptNone]
@@ -320,6 +424,20 @@ const
   AtomRead = {efReads, efBarrier}
   AtomWrite = {efWrites, efBarrier}
   AtomModify = {efReads, efWrites, efBarrier}
+
+  # NOT `efBarrier`, and that is the point of having separate rows rather than
+  # reusing the atomics. C orders volatile accesses against EACH OTHER and says
+  # nothing about their order against ordinary memory, and it is not a fence: a
+  # peripheral write does not flush a store buffer. Reading `efBarrier` here
+  # would promise both. Where a device genuinely needs ordering against ordinary
+  # memory, that is `dmb`/`dsb`, which are their own instructions.
+  #
+  # `efReads`/`efWrites` are what keeps them from being deleted or duplicated.
+  # The volatile-against-volatile order is not in this column at all — it is not
+  # a property either row could state about itself — and lives in the pass (see
+  # shoggoth's `intrinsicEffects`).
+  VolRead = {efReads}
+  VolWrite = {efWrites}
 
   IntrinsicRows*: array[IntrinsicOp, IntrinsicRow] = [
     # The `NoIntrinsicOp` placeholder. Every field is spelled out: this file also
@@ -399,10 +517,14 @@ const
     # `defs`. That is exactly why they are NOT `efPure` — a "pure" row with a void
     # result is dead by definition, and DCE would be right to delete it. The flag
     # columns are what makes a flag-only instruction non-removable.
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64}, arity: 2,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,
                  params: Bin, roles: AllIn, ret: ptVoid,
                  widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: -1, effects: {},
                  uses: {}, defs: AllArith),
+    # `test` is x86's and-without-a-destination. Arm spells the same idea `tst`,
+    # which is a DIFFERENT instruction under a different tag, so this row stays
+    # x86-64: claiming the target and emitting a `cmp` would compute another
+    # condition entirely.
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,
                  params: Bin, roles: AllIn, ret: ptVoid,
                  widths: {8'u8, 16'u8, 32'u8, 64'u8}, tie: -1, effects: {},
@@ -411,31 +533,46 @@ const
     # The reads. Zero operands, `bool` result, and a `uses` naming the one bit —
     # the third field is what distinguishes these from an ordinary predicate, and
     # what lets the rule of §6 ("legal only where it needs no materialisation") be
-    # checked without a flag type infecting the type system. `zf`/`nz` exist on
-    # both targets (AArch64's Z under another name); the rest are x86-64, which is
-    # what the nifasm `(ite …)` vocabulary offers there.
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64}, arity: 0,
+    # checked without a flag type infecting the type system.
+    #
+    # `targets` here is availability in the ASSEMBLER, not in the silicon: every
+    # Arm profile has NZCV, but a row is only true if nifasm can turn it into a
+    # branch. Cortex-M maps all eight of Arm's conditions (`condOfFlagM`), so it
+    # claims each of them; AArch64's `genIteA64` implements the zero flag alone,
+    # so it claims `zf`/`nz` and no more. Parity is x86-64's and stays there —
+    # no Arm profile has such a bit to read.
+    #
+    # RV32 has no condition flags AT ALL, and claims four of these anyway, which
+    # is the clearest case for reading this column as "the assembler can turn it
+    # into a branch". Its selector fuses `(cmp a b)` into the branch that consumes
+    # it — a RISC-V branch IS the comparison — so `zf`/`nz` are equality and
+    # `cf`/`nc` are the unsigned `<`/`>=` a borrow denotes. `sf` and `of` are
+    # refused by name there rather than approximated: the sign of a difference
+    # agrees with `<` only when the subtraction did not overflow, which is why
+    # AArch64's `blt` tests `N != V` and not `N`, and no RISC-V comparison
+    # produces the overflow itself.
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfZF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM, tgRv32}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfCF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfSF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfSF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfOF}, defs: {}),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgThumbM}, arity: 0,
                  params: NoOps, roles: AllIn, ret: ptBool,
                  widths: {}, tie: -1, effects: {}, uses: {mfOF}, defs: {}),
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,
@@ -452,37 +589,63 @@ const
     # operand 0, which is why §4.1 gives these the `ins(var d, x)` spelling. A
     # `var` parameter reaches Leng as `(haddr d)`, and that tag is exactly what
     # tells the back end "bind d's location" rather than "materialise a pointer".
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # add
+    #
+    # `defs` on these rows is x86-64's truth and only x86-64's. Arm has both a
+    # flag-setting and a non-flag-setting form of every one of them (`ADDS` vs
+    # `ADD`), and which one an assembler picks is an ENCODING decision: nifasm
+    # asks for the non-setting form, but Thumb's narrow 16-bit encoding — the one
+    # it prefers when every operand is a low register — sets the flags anyway.
+    # So on Arm the flags after an `add` depend on which registers the caller
+    # pinned, which is no basis for a `defs` column and no basis for reading a
+    # flag afterwards. Rather than fork the column, arkham's Arm `.assembler`
+    # mode requires a flag read to follow its `cmp` immediately (see
+    # `codegen_arm_asm.asmIf`), which is the rule that is true on both.
+    #
+    # RV32 makes the same column false in the opposite direction — it has no flags
+    # at all — and claims `add`/`sub` regardless, because `defs` is not what these
+    # rows are FOR. Reading a flag after one is already impossible there: nifasm's
+    # RV32 selector fuses `(cmp …)` into the branch that consumes it and CHECKS
+    # that nothing was emitted in between, so an `add` between a compare and its
+    # read is a named assembly-time error rather than a wrong answer. The
+    # destructive `(add D S)` spelling these rows use is what `TwoAddrForms`
+    # promises, and RV32's selector encodes it as `add rd, rd, rs`.
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,  # add
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # sub
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,  # sub
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     # AND/OR/XOR clear CF and OF and set SF/ZF/PF — all five are DEFINED.
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # and
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # and
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # or
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # or
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # xor
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # xor
                  params: Bin, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     # The shifts take a COUNT, not a same-width operand, hence `UnCount`. A
     # variable count must live in `cl`; v1 takes a literal, like `rol`/`ror`.
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shl
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # shl
                  params: UnCount, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # shr
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # shr
                  params: UnCount, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 2,           # sar
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 2,  # sar
                  params: UnCount, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
-    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # neg
+    IntrinsicRow(cls: icPinned, targets: {tgX64, tgA64, tgThumbM}, arity: 1,  # neg
                  params: Un, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: AllArith),
     # x86 NOT touches no flags at all — the one row here whose `defs` is empty.
+    # It stays x86-64 while its neighbours gained the Arm targets: Arm spells it
+    # `mvn`, a two-OPERAND instruction (`mvn d, s`) in nifasm's Cortex-M tag set
+    # and absent from the AArch64 one, so claiming the target would mean claiming
+    # a lowering that is a different shape on one profile and missing on the
+    # other. `inc`/`dec` stay for a plainer reason: Arm has no such instruction —
+    # it writes `add #1`, and inventing that operand is not this row's to do.
     IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 1,           # not
                  params: Un, roles: InoutFirst, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {}, uses: {}, defs: {}),
@@ -502,47 +665,52 @@ const
     # loop has no such relationship at all.
     #
     # `widths` is `IntWidths` because the machine sizes the access to the cell —
-    # `ldaxrb`/`ldaxrh` and the 8/16-bit `lock` forms all exist. Note that `W`
+    # `ldaxrb`/`ldaxrh`, `ldrexb`/`ldrexh` and the 8/16-bit `lock` forms all
+    # exist. Cortex-M is the exception at the TOP of the range rather than the
+    # bottom: ARMv7-M has no `ldrexd`, so a 64-bit cell is refused by name there
+    # (`codegen_arm.emitAtomicInstrM`) — the column cannot say "every width but
+    # one on one target", and a per-target width set would be a second place for
+    # the same fact to be wrong. Note that `W`
     # usually stays UNBOUND at the declaration: these are generic over the cell
     # type, so the width is the instantiation's and the back end reads it off the
     # pointee at the call site. See `matchPat`.
 
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 2,  # AtomicLoad
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2, # AtomicLoad
                  params: AtomLoad, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomRead, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicStore
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicStore
                  params: AtomRmw, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: AtomWrite, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicExchange
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicExchange
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
     # The result is the SUCCESS FLAG, not the cell's type — so `ptBool`, and the
     # observed value leaves through the `expected` pointer instead.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 6,  # AtomicCompareExchange
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 6, # AtomicCompareExchange
                  params: AtomCas, roles: AllIn, ret: ptBool,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
     # The fetch-ops return the value BEFORE the update, the `*_fetch` forms the
     # value after. Two rows rather than one plus a flag: the difference is which
     # register the sequence ends up reading, which is the lowering's whole shape.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchAdd
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchAdd
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchSub
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchSub
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchAnd
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchAnd
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchOr
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchOr
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicFetchXor
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicFetchXor
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicAddFetch
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicAddFetch
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 3,  # AtomicSubFetch
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 3, # AtomicSubFetch
                  params: AtomRmw, roles: AllIn, ret: ptValW,
                  widths: IntWidths, tie: -1, effects: AtomModify, uses: {}, defs: {}),
     # `targets: {}` — neither back end lowers the flag pair yet, and `targets` is
@@ -558,12 +726,24 @@ const
     # A fence has no operand but the order and no result at all: its entire content
     # is `efBarrier`, which is what keeps it from being deleted for producing
     # nothing — the same argument `cmp`'s `defs` makes for a flag-only instruction.
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,  # AtomicThreadFence
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 1, # AtomicThreadFence
                  params: AtomFence, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
-    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64}, arity: 1,  # AtomicSignalFence
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 1, # AtomicSignalFence
                  params: AtomFence, roles: AllIn, ret: ptVoid,
                  widths: IntWidths, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
+
+    # ── the spin-wait hint ─────────────────────────────────────────────────
+    # No operands, no result, no flags: the whole content is `effects`, and it is
+    # `effects` that has to keep it alive. NOT `efPure` — a pure hint is one CSE
+    # is entitled to fold two of into one and DCE is entitled to delete outright,
+    # and a deleted `pause` is not a slower program but a spin loop that
+    # hammers the bus. `efBarrier` is also the honest description of what the
+    # instruction is FOR: it stands inside a loop that re-reads a lock word, and
+    # hoisting that read above it would turn the loop into an infinite one.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM}, arity: 0,  # CpuRelax
+                 params: NoOps, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efBarrier}, uses: {}, defs: {}),
 
     # ── 128-bit vectors: AdvSIMD (AArch64) and SSE2 (x86-64) ───────────────
     # All pinned: one machine instruction each on AArch64, named by its nifasm
@@ -622,6 +802,17 @@ const
     IntrinsicRow(cls: icPortable, targets: {tgX64}, arity: 0,         # TraceTable
                  params: NoOps, roles: AllIn, ret: ptRawPtr,
                  widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # `TlsSize` is the address of an 8-byte cell holding how many bytes one
+    # thread's thread-local block occupies — the same `lea`-against-a-label shape
+    # as `TraceTable`, and for the same reason: the number is only settled once
+    # every module's `{.threadvar.}`s have been laid out, which is after the last
+    # compilation unit is gone. `efPure`: a link-time constant.
+    # x86-64 only, which is where the block is a flat FS-relative region; the
+    # AArch64/Darwin thread-locals go through per-variable descriptors, where
+    # "the size of the block" is not the question a thread creator asks.
+    IntrinsicRow(cls: icPortable, targets: {tgX64}, arity: 0,         # TlsSize
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
 
     # ── valgrind ───────────────────────────────────────────────────────────
     # One request to valgrind, made the only way valgrind accepts one: a fixed
@@ -653,10 +844,80 @@ const
                  params: [ptRawPtr, ptNone, ptNone, ptNone, ptNone, ptNone],
                  roles: AllIn, ret: ptUIntW,
                  widths: {64'u8}, tie: -1,
-                 effects: {efReads, efWrites, efBarrier}, uses: {}, defs: {})
+                 effects: {efReads, efWrites, efBarrier}, uses: {}, defs: {}),
+    # ── volatile ──
+    # `W` stays unbound at the declaration exactly as the atomics' does: these are
+    # generic over the cell type and the width is read off the POINTEE at the call
+    # site. That is also the only width the access may use — a `volatileLoad` of a
+    # 64-bit cell on a 32-bit target is two loads, which is two accesses, which is
+    # not what was asked for. The back end refuses it rather than lowering it.
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 1,
+                 params: VolLoad, roles: AllIn, ret: ptValW,   # VolatileLoad
+                 widths: IntWidths, tie: -1, effects: VolRead, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgX64, tgA64, tgThumbM, tgRv32}, arity: 2,
+                 params: VolStore, roles: AllIn, ret: ptVoid,  # VolatileStore
+                 widths: IntWidths, tie: -1, effects: VolWrite, uses: {}, defs: {}),
+    # ── the reserved heap ──
+    # `efPure`: both are constants the link fixed, so hoisting one out of a loop
+    # or folding two into one is exactly right. Cortex-M only — every other target
+    # here is hosted and gets its pages from an OS.
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # HeapStart
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # HeapSize
+                 params: NoOps, roles: AllIn, ret: ptUIntW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # ── the region kept back from the startup code ──
+    # `efPure` for the same reason as the heap rows: both are constants the link
+    # fixed. What LIVES there is not pure, but these two only name the place.
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # NoinitStart
+                 params: NoOps, roles: AllIn, ret: ptRawPtr,
+                 widths: {}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    IntrinsicRow(cls: icPortable, targets: {tgThumbM}, arity: 0,   # NoinitSize
+                 params: NoOps, roles: AllIn, ret: ptUIntW,
+                 widths: {32'u8, 64'u8}, tie: -1, effects: {efPure}, uses: {}, defs: {}),
+    # ── the debugger trap ──
+    # Everything a `bkpt` does is invisible from here: whether a debug agent is
+    # attached, what it makes of r0, and — for the semihosting operations that
+    # take a parameter block — which memory it reads or writes. So the effects are
+    # the widest honest ones. They are what keeps the instruction where the body
+    # put it: an `efPure` trap would be DCE's to delete, and one without
+    # `efReads`/`efWrites` could have a store sunk past it, which for SYS_WRITE
+    # means the agent transmits the buffer before it was filled.
+    #
+    # `defs` is empty: `bkpt` leaves NZCV alone. What it may change is r0, and no
+    # column here can say that — see the enum comment.
+    IntrinsicRow(cls: icPinned, targets: {tgThumbM}, arity: 1,     # bkpt
+                 params: Imm8, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
+                 uses: {}, defs: {}),
+    # Effects verbatim from `bkpt`, and for the identical reason: what a debug
+    # agent does on the other side is invisible from here — whether one is
+    # attached at all, what it makes of a0, and which memory it reads or writes
+    # for the operations that take a parameter block. So it reads, it writes, and
+    # nothing moves across it.
+    IntrinsicRow(cls: icPinned, targets: {tgRv32}, arity: 0,       # semihost
+                 params: NoOps, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
+                 uses: {}, defs: {}),
+    # ── the kernel entry ──
+    # Effects as wide as the two rows above, and for a stronger reason: a syscall
+    # is every side effect there is. `efBarrier` is what keeps a store the kernel
+    # is about to read from being sunk past it, and what stops `clone`'s child
+    # from being reached by code hoisted across the instruction that created it.
+    #
+    # `defs` is empty, which is not the claim that flags survive — x86-64's
+    # `syscall` also destroys rcx and r11, and no column here can say that
+    # either. An `.assembler` body has no allocator to mislead: what the
+    # instruction costs is the author's to know, the same way it is in the
+    # asm block of any other language.
+    IntrinsicRow(cls: icPinned, targets: {tgX64}, arity: 0,        # syscall
+                 params: NoOps, roles: AllIn, ret: ptVoid,
+                 widths: {}, tie: -1, effects: {efReads, efWrites, efBarrier},
+                 uses: {}, defs: {})
   ]
 
-const LastIntrinsicOp* = VgClientRequestOp
+const LastIntrinsicOp* = SyscallOp
   ## The final row. Spelled out rather than `high(IntrinsicOp)` because this file
   ## is also compiled by nimony (it bootstraps `nimsem`), which has no iteration
   ## over an enum *type* — hence the ordinal loop below too.
@@ -696,7 +957,7 @@ proc isFlagWrite*(r: IntrinsicRow): bool {.inline.} =
   ## happens to define flags — not a flag instruction.
   r.ret == ptVoid and r.defs != {} and r.inoutOperand < 0
 
-const IgnoredPats* = {ptMemOrder, ptWeak, ptLaneBits}
+const IgnoredPats* = {ptMemOrder, ptWeak, ptLaneBits, ptImmLit}
   ## Operand patterns the back ends do not EVALUATE into a register. See
   ## `evaluatedOperands`. (`ptLaneBits` is still READ — as a literal, at the
   ## call site — it just never needs a register.)
@@ -730,7 +991,16 @@ proc isMachineQuery*(op: IntrinsicOp): bool {.inline.} =
   ## instruction with nothing to place. The back ends need the distinction
   ## because every other zero-operand row is a FLAG read, whose result cannot be
   ## materialised at all — these produce an ordinary register value.
-  op in {StackPointerOp, TraceTableOp}
+  op in {StackPointerOp, TraceTableOp, TlsSizeOp}
+
+proc isNullaryVoid*(r: IntrinsicRow): bool {.inline.} =
+  ## A row with no operands AND no output of any kind: `CpuRelax`. The back ends
+  ## need it named because their operand machinery is written around
+  ## `argCurs[0]` existing — `isMachineQuery` is the same shape with a register
+  ## result and gets the same early exit for the same reason. Everything such a
+  ## row does is in `effects`, so the lowering is "emit the opcode, bind
+  ## nothing".
+  r.arity == 0 and r.isVoidResult
 
 proc isAtomic*(op: IntrinsicOp): bool {.inline.} =
   ## An atomic row. The back ends lower these as a self-contained instruction
@@ -744,3 +1014,9 @@ proc hasInoutOperand*(r: IntrinsicRow): bool =
   result = false
   for i in 0 ..< r.arity:
     if r.roles[i] == roInout: return true
+
+proc isVolatile*(op: IntrinsicOp): bool {.inline.} =
+  ## A volatile access. Two of them may not be reordered against each other, may
+  ## not be merged, and may not be deleted — a rule about the PAIR, so it cannot
+  ## live in either row's `effects` and is enforced where ordering is decided.
+  op == VolatileLoadOp or op == VolatileStoreOp

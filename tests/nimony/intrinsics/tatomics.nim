@@ -44,6 +44,19 @@ proc main =
   atomicFence(moSequentiallyConsistent)
   atomicSignalFence(moSequentiallyConsistent)
 
+  # The spin-wait hint. Nothing about it is observable — `pause` and `yield` are
+  # architecturally no-ops, which is exactly why the row can exist on every
+  # target — so what a test can check is that it compiles and that the loop it
+  # sits in still computes what it should. Worth checking on the NATIVE backend
+  # in particular: this was an `{.emit.}` of raw C, which arkham has no lowering
+  # for at all, so `cpuRelax` was the one thing in `std/atomics` a `nimony n`
+  # build could not compile.
+  var spins = 0
+  while spins < 4:
+    cpuRelax()
+    inc spins
+  assert spins == 4
+
   # A pointer cell: the same rows, an operand type that is not an integer.
   var a = Node(val: 1)
   var b = Node(val: 2)

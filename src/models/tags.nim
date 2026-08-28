@@ -356,6 +356,7 @@ type
     NeedtypesTagId
     AlwaysInlineTagId
     NakedTagId
+    InterruptTagId
     ConstrefTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
@@ -713,5 +714,6 @@ const
     ("needtypes", 351),
     ("alwaysInline", 352),
     ("naked", 353),
-    ("constref", 354)
+    ("interrupt", 354),
+    ("constref", 355)
   ]

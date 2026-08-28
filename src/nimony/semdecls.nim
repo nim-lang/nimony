@@ -1090,9 +1090,14 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       # params and the return type are already in `dest`. The message lands in
       # the `effects` slot — the one routine slot that already accepts an
       # `(err …)`, so the tree stays positionally intact.
+      # `{.interrupt.}` is checked in the same place and lands in the same slot:
+      # its rule is also about the params and the return type, and also cannot be
+      # stated until they are in `dest`.
       let intrinsicErr =
         if crucial.intrinsic != NoIntrinsicOp:
           intrinsicSignatureError(c, dest, beforeParams, crucial.intrinsic)
+        elif InterruptP in crucial.flags:
+          interruptSignatureError(dest, beforeParams)
         else:
           ""
       if it.n.isDotToken:

@@ -73,6 +73,7 @@ import aliasing                               # intra-proc Steensgaard alias cla
 import accesspaths                            # root :: selector paths (doc/cse.md)
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # getType — to skip value-CSE of aggregates
+import intrinsiceffects                       # is this `(instr …)` a pure value?
 
 const AddressCSE = false
   ## Address-CSE caches `&location` (as a held pointer temp) so repeated read/write
@@ -398,18 +399,29 @@ const MaxResolveDepth = 8
   ## The chains this must see through are two or three links (a `sroa` temp to a
   ## field load); the bound just stops a pathological body.
 
-proc isPureExpr(cur: Cursor): bool =
+proc isPureExpr(cur: Cursor; m: ptr MainModule): bool =
   ## No call, no `addr`: a value that depends only on the memory its symbols
   ## name, so the root set below fully describes when it can change.
+  ##
+  ## An `(instr …)` is pure only if its ROW says so. This used to fall through to
+  ## the `else` and answer TRUE for every intrinsic, which made two
+  ## `volatileLoad`s of one address a common subexpression — and a status
+  ## register read once and then polled forever. `efPure` is what buys the old
+  ## answer back for `Ctz`/`Clz`/`Popcount`/`Bswap`, where it was always right.
+  ##
+  ## With no module context there is nothing to resolve the callee against, so an
+  ## intrinsic is opaque: silence is not a claim of purity.
   if not cur.hasMore: return true
   case cur.kind
   of TagLit:
     if cur.exprKind == CallC or cur.stmtKind == CallS: return false
+    if cur.exprKind == InstrC or cur.stmtKind == InstrS:
+      if m == nil or not instrIsPure(m[], cur): return false
     if cur.exprKind in AddrKinds: return false
     var n = cur
     var ok = true
     n.loopInto:
-      if ok and not isPureExpr(n): ok = false
+      if ok and not isPureExpr(n, m): ok = false
       skip n
     return ok
   else: return true
@@ -493,11 +505,11 @@ proc matchShortCircuit(c: var Context; n: Cursor) =
   if not asgnTo(tStmt, tSym, tRhs): return
   if not asgnTo(eStmt, eSym, eRhs): return
   if tSym != eSym or tSym == SymId(0): return
-  if not isPureExpr(condA): return
-  if eRhs.kind == TagLit and eRhs.exprKind == FalseC and isPureExpr(tRhs):
+  if not isPureExpr(condA, c.m): return
+  if eRhs.kind == TagLit and eRhs.exprKind == FalseC and isPureExpr(tRhs, c.m):
     c.shortCircuit[tSym] = (cursorToPosition(c.orig[], condA),
                             cursorToPosition(c.orig[], tRhs), true)
-  elif tRhs.kind == TagLit and tRhs.exprKind == TrueC and isPureExpr(eRhs):
+  elif tRhs.kind == TagLit and tRhs.exprKind == TrueC and isPureExpr(eRhs, c.m):
     c.shortCircuit[tSym] = (cursorToPosition(c.orig[], condA),
                             cursorToPosition(c.orig[], eRhs), false)
 
@@ -523,7 +535,7 @@ proc preScanDefs(c: var Context; start: Cursor) =
       # count the decl would make all of them look multiply-defined.
       if have and rhs.hasMore and rhs.kind != DotToken:
         c.defCount[nameSym] = c.defCount.getOrDefault(nameSym) + 1
-        if isPureExpr(rhs):
+        if isPureExpr(rhs, c.m):
           c.defExpr[nameSym] = cursorToPosition(c.orig[], rhs)
         else:
           c.tainted.incl nameSym
@@ -534,7 +546,7 @@ proc preScanDefs(c: var Context; start: Cursor) =
     let root = rootOf(lhs)
     if root != SymId(0):
       c.defCount[root] = c.defCount.getOrDefault(root) + 1
-      if lhs.kind == Symbol and rhs.hasMore and isPureExpr(rhs):
+      if lhs.kind == Symbol and rhs.hasMore and isPureExpr(rhs, c.m):
         c.defExpr[root] = cursorToPosition(c.orig[], rhs)
       else:
         c.tainted.incl root

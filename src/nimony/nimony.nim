@@ -60,6 +60,9 @@ Options:
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
+  --mm:STRATEGY             select the memory management strategy; the name
+                            maps to `system/<strategy>.nim` in the stdlib.
+                            Possible values: atomicArc (default), arc
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
@@ -69,6 +72,10 @@ Options:
                             counts on stdout (one line per nifmake call)
   --stats                   after build, print total LOC and module count
                             across the dep graph
+  --layout:FILE             native backend, bare-metal targets only: the BOARD
+                            description (memory regions, stack slots, heap) that
+                            arkham and nifasm build the image against. See
+                            nativenif's doc/layout.md
   --nimcache:PATH           set the path used for generated files
   -o, --out:PATH            write the executable to PATH (overrides the
                             default `<nimcache>/<modhash>/<basename>.exe`).
@@ -88,6 +95,9 @@ Options:
   --opt:speed|size|none     C compiler optimization level
                             (default: -O1, opt:speed -> -O3, opt:size -> -Os,
                              opt:none -> -O0)
+  --inlineframes:on|off     record which template an expansion came from, so a
+                            debug build shows template calls as inlined frames
+                            (default: off)
   --novalidate              skip running the plugin validator on plugin sources
   --verbose                 dump NJVL IR (and other diagnostics) on contract
                             analysis failures
@@ -345,6 +355,14 @@ proc compileProgram(c: var CmdOptions) =
     # parsing — so `nimony w x.nim` works bare. Forwarded like user flags
     # because nimsem sees only its command line (appended last, so it also
     # wins over a contradictory explicit --cpu/--os).
+    #
+    # `--os:standalone`, NOT `embedded`. Both are freestanding and it is easy to
+    # read them as the same target, but they pick different stdlib arms and only
+    # one of them is wasm's. `embedded` is BARE METAL: `syncio`'s arm writes
+    # through ARM semihosting and `osalloc`'s takes the heap from nifasm's
+    # `(heapstart)`/`(heapsize)` board-layout constants — neither exists here.
+    # `standalone` falls into the raw-`write`/`read`/`open` arm instead, and
+    # those are exactly the names ithaqua resolves to the host's import set.
     discard c.config.setTargetCPU("wasm32")
     discard c.config.setTargetOS("standalone")
     c.config.bits = 32

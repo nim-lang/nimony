@@ -185,6 +185,11 @@ include "system/setops"
 
 include "system/ctypes"
 
+when defined(embedded):
+  # The console of a bare-metal image, and its `exit`. Included BEFORE `exits`,
+  # which uses it, and only on the target that has no OS to ask instead.
+  include "system/semihosting"
+
 include "system/exits"
 include "system/atomintrin"
 include "system/memory"
@@ -200,7 +205,10 @@ include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"
 
-include "system/arcops"
+# The memory management strategy, chosen by `--mm:NAME`: `$MM` expands to
+# `system/<name>`, so a strategy is a file and needs no `when` chain here.
+include "$MM"
+include "system/refops"
 
 func newConstr[T](t: typedesc[T]): T {.magic: "NewRef", nodecl.}
 func new*[T: ref](x: out T) {.inline.} = x = newConstr(T)

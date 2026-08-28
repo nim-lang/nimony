@@ -18,20 +18,6 @@
 
 import std / [atomics, threadpool]
 
-const
-  ParDefaultChunks* = WorkerCount
-    ## Default number of chunks when the `||` loop does not pass an explicit
-    ## `chunkSize`. One chunk per worker keeps scheduling overhead low while
-    ## saturating the pool.
-
-  ParMaxChunks* = StripeCount * StripeSize
-    ## Soft ceiling on concurrent chunk runners, = the pool queue capacity.
-    ## `submit` is non-lossy (it caller-runs once the queue is full), so going
-    ## over this no longer deadlocks — but the excess chunks would then run
-    ## inline on the submitting thread, serialising them. Capping the chunk
-    ## count here keeps every chunk genuinely pool-scheduled; `parGrain`
-    ## coarsens a too-fine grain to stay within it.
-
 type
   Workload* = enum
     ## A hint about a parallel `for` body's typical cost, so the join can pick
@@ -51,23 +37,15 @@ type
     remaining*: int   ## accessed atomically
 
 # --- one-time pool bootstrap ----------------------------------------------
-
-var poolState: int
-  ## 0 = uninitialised, 1 = initialising, 2 = ready. Accessed atomically so the
-  ## first parallel-for from any thread starts the pool exactly once.
+#
+# `||` shares the process-wide `std/threadpool.initPool()`. initPool is
+# a lazy singleton so subsequent calls are a no-op.
 
 proc ensureParPool*() =
-  ## Start the worker pool the first time a parallel `for` runs. Idempotent and
-  ## thread-safe: concurrent first-callers race through a CAS, the loser spins
-  ## until the winner has finished `initPool`.
-  if atomicLoad(poolState, moAcquire) == 2: return
-  var expected = 0
-  if atomicCompareExchange(poolState, expected, 1):
-    initPool()
-    atomicStore(poolState, 2, moRelease)
-  else:
-    while atomicLoad(poolState, moAcquire) != 2:
-      discard
+  ## Start the worker pool the first time a parallel `for` runs (idempotent —
+  ## `defaultPool()` is itself a lazy singleton, so subsequent calls, from
+  ## this module or any other caller of `defaultPool()`, are a no-op).
+  initPool()
 
 # --- range chunking --------------------------------------------------------
 
@@ -86,6 +64,18 @@ proc parGrain*(iters, chunkSize: int): int =
   ## derives a grain that yields about `ParDefaultChunks` chunks (one per
   ## worker), adapting to the machine. Always `>= 1` for a non-empty range, so a
   ## chunk is never empty.
+  let
+    ParDefaultChunks = workerCount
+      ## Default number of chunks when the `||` loop does not pass an explicit
+      ## `chunkSize`. One chunk per worker keeps scheduling overhead low while
+      ## saturating the pool.
+    ParMaxChunks = workerCount * StripeSize
+      ## Soft ceiling on concurrent chunk runners, = the pool queue capacity.
+      ## `submit` is non-lossy (it caller-runs once the queue is full), so going
+      ## over this no longer deadlocks — but the excess chunks would then run
+      ## inline on the submitting thread, serialising them. Capping the chunk
+      ## count here keeps every chunk genuinely pool-scheduled; `parGrain`
+      ## coarsens a too-fine grain to stay within it.
   if iters <= 0: return 0
   # Smallest grain that keeps `ceil(iters/grain) <= ParMaxChunks`.
   let minGrain = (iters + ParMaxChunks - 1) div ParMaxChunks   # ceil
@@ -136,17 +126,40 @@ proc parWait*(j: var ParJoin; workload = MixedBound) =
   ## in the event loop and the joiner just spins for the in-flight CPU work.
   while atomicLoad(j.remaining, moAcquire) > 0:
     if not poolHelp() and workload != CpuBound:
-      discard poolPollIo(0.cint)
+      # `gReactor`, not `poolPollIo`: the latter is only the do-nothing default
+      # the pool starts with. `std/ioring` installs the real backend poller into
+      # `gReactor`, so calling `poolPollIo` here would silently never advance any
+      # parked I/O and this loop would spin forever.
+      discard gReactor(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
-  ## Hand a chunk runner's continuation to the worker pool, spreading chunks
-  ## across stripes by index (`hint`, the chunk number) so a many-chunk loop
-  ## does not pile into one stripe. `threadpool.submit` is non-lossy (it
-  ## caller-runs on a full queue), so this no longer guards against dropped
-  ## runners — but the spread still avoids needlessly caller-running chunks on
-  ## the submitting thread and balances load. Re-exported so the `||` plugin
-  ## only needs symbols visible through `import std/parfor`.
-  submit(c, hint)
+  ## Hand a chunk runner's continuation to the worker pool. Re-exported so the
+  ## `||` plugin only needs symbols visible through `import std/parfor`.
+  ##
+  ## **`hint` is deliberately ignored — do not "fix" this.** The plugin passes
+  ## the chunk number, and spreading chunks across stripes by it sounds like the
+  ## better scheduling decision. It is much worse, because it changes WHICH
+  ## `threadpool.submit` runs: any hint but `-1` takes the shared stripe and one
+  ## lock acquisition per chunk, while `-1` on a worker stages the chunk on that
+  ## worker's private ring and hands a whole batch over on its next cycle. A
+  ## nested `||` submits its chunks from inside workers, so every level of a
+  ## fork-join pays that lock, and the workers end up stuck on it rather than
+  ## running the work.
+  ##
+  ## Measured (blackmius, nim-lang/nimony#2390, and reproduced here on a
+  ## `dfs(8, 8)` recursive `||`, 16.7M chunks): passing the hint 7.7s, `-1`
+  ## 0.87s — a 9x difference, and his profile showed one worker having handled
+  ## 113k of 114M tasks. Passing it only from non-workers (the main thread,
+  ## which cannot stage) does not recover it either: 3.0s, because the main
+  ## thread is a full participant through `parWait`'s `poolHelp` and its locked
+  ## submissions contend with every worker. On a flat top-level `||` — the case
+  ## the spread was supposed to help — the two are indistinguishable (45ms
+  ## either way): `submit`'s try-the-other-stripes fallback and work stealing
+  ## already balance it.
+  ##
+  ## The parameter stays because the chunk number is the plugin's to say and a
+  ## future scheduler may want it; what it is NOT is a stripe index.
+  submit(c, -1)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}

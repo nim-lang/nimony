@@ -260,7 +260,8 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           if f1.plugin.len > 0:
             discard "ignore plugin include file, will cause an error in sem.nim"
             continue
-          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
+          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile,
+                                      c.config.expandMM(f1.path))
           # check for recursive include files:
           var isRecursive = false
           for a in c.includeStack:
@@ -945,10 +946,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # The experimental Shoggoth optimizer runs only when optimization is
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
-    # (wasm: keep consuming the plain `.c.nif` for now — ithaqua's foreign
-    # module loader derives sibling filenames from the MAIN input's extension,
-    # so the whole module set must switch to `.oc.nif` together; wire that up
-    # when the optimizer matters for wasm.)
+    # The wasm backend takes the optimizer's output too (see `wasmInput`), and
+    # it takes it ALL-OR-NOTHING: ithaqua's foreign-module loader derives its
+    # sibling filenames from the MAIN input's extension, so the whole module set
+    # has to be `.oc.nif` together or none of it can be — exactly the constraint
+    # arkham's native chain lives under.
     let wasm = c.config.backend == backendWasm
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
@@ -993,6 +995,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # and errors on an unsupported combination (no silent host fallback).
         b.addStrLit "--os:" & platform.OS[c.config.targetOS].name
         b.addStrLit "--cpu:" & platform.CPU[c.config.targetCPU].name
+        # The board, when one was given. A bare-metal image has no OS to ask how
+        # much RAM it may have, so the layout file IS that answer — and arkham
+        # forwards it into the asm-NIF so nifasm places segments from the same
+        # description rather than reading the file a second time.
+        if c.config.layoutFile.len > 0:
+          b.addStrLit "--layout:" & c.config.layoutFile
         b.withTree "output":
           b.addStrLit "-o:"
         b.addKeyw "input"

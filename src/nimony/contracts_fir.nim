@@ -1819,23 +1819,23 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n
 
-proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string): TokenBuf =
+proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
   ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
   var buf = createTokenBuf(input.len)
   buf.addSubtree n
-  var pass = initPass(move buf, moduleSuffix, "xelim_finalir", 0)
+  var pass = initPass(move buf, moduleSuffix, "xelim_finalir", bits)
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; verbose = false): TokenBuf =
+proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
   ## Main entry point: lowers `input` to the Final IR and analyzes contracts.
   ## When `verbose` is true, every contract/init failure dumps the enclosing
   ## proc's IR to stderr to aid debugging.
-  var finalBuf = lowerToFinalIr(input, moduleSuffix)
+  var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
 
   var c = NjvlContext(
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(bits),
     moduleSuffix: moduleSuffix,
     tr: initFlowTracker(),
     flow: initFlowState(),
@@ -1855,6 +1855,7 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parseFromFile(infile)
-    discard analyzeContractsFinalIr(input, "main", {})
+    # A standalone debug driver: no target, so the host's width is stated.
+    discard analyzeContractsFinalIr(input, "main", {}, sizeof(int)*8)
 
   main(paramStr(1))

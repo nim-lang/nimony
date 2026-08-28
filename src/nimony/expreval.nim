@@ -163,7 +163,7 @@ proc constSourceDir(info: NifLineInfo): string =
   let fid = info.file
   try:
     if fid.isValid:
-      result = pool.filenames[fid].absolutePath().parentDir()
+      result = realFile(pool.filenames[fid]).absolutePath().parentDir()
     else:
       result = getCurrentDir()
   except:

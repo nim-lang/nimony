@@ -30,6 +30,15 @@ else:
   when defined(posix) and not (defined(macosx) or defined(bsd)):
     import posix/posix
 
+  when defined(linux) and defined(nimNoLibc):
+    type
+      CpuAffinityMask = object  ## cpu_set_t (glibc: a 1024-bit mask)
+        abi: array[16, uint64]
+    proc schedGetaffinity(pid: cint; setsize: csize_t; mask: pointer): cint {.
+      importc: "sched_getaffinity".}
+      ## Bare name, so arkham lowers it to the raw syscall. It returns the number
+      ## of BYTES written, not 0/-1 the way glibc's wrapper does.
+
   when defined(windows):
     type
       SystemInfo = object
@@ -93,6 +102,23 @@ else:
         result = sysinfo.cpuCount.int
       else:
         result = 0
+    elif defined(linux) and defined(nimNoLibc):
+      # No libc, so no `sysconf`: ask the kernel which CPUs this thread may run
+      # on and count the bits. That is also the more useful number for a thread
+      # pool — it is what `nproc` reports, and it respects a cpuset or a
+      # `taskset`, which a count of installed CPUs does not.
+      var mask = default(CpuAffinityMask)
+      let n = schedGetaffinity(0.cint, csize_t(sizeof(mask)), addr mask)
+      result = 0
+      if n > 0:
+        # `n` is how many BYTES the kernel filled in; the rest of the mask is
+        # untouched, so only those are counted.
+        let words = min(int(n) div 8, mask.abi.len)
+        for i in 0 ..< words:
+          var w = mask.abi[i]
+          while w != 0'u64:
+            inc result
+            w = w and (w - 1'u64)     # clear the lowest set bit
     else:
       result = sysconf(SC_NPROCESSORS_ONLN)
     if result < 0: result = 0
