@@ -908,9 +908,13 @@ proc poll_add*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
 
 
 proc poll_multi*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
+  ## Multishot `OP_POLL_ADD`: stays armed and completes on every readiness edge.
   var flags = PollFlags({POLL_ADD_MULTI})
-  sqe.len = cast[ptr int32](flags.addr)[]
-  sqe.poll_add(fd, pollMask)
+  result = sqe.poll_add(fd, pollMask)
+  # After `poll_add`, not before: it goes through `prepRw`, which writes
+  # `len = 0` — and `len` is exactly where the multishot flag lives, so setting
+  # it first left the SQE a plain one-shot poll.
+  result.len = cast[ptr int32](flags.addr)[]
 
 proc poll_remove*[UserData: SomeNumber | pointer](sqe: ptr Sqe; target_user_data: UserData): ptr Sqe =
   sqe.prepRw(OP_POLL_REMOVE, -1, target_user_data, 0, 0)

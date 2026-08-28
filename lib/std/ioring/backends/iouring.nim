@@ -31,7 +31,7 @@ var
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
   try:
-    for i in 0..<workerCount:
+    for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
   except ErrorCode as e:
     stderr.writeLine("ioring: failed to init io_uring queue: " & $e)
@@ -65,35 +65,39 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   # Drain is bounded (DrainBatch) so a flood of submissions cannot keep a
   # worker inside poll() forever — the outer worker loop also runs task
   # draining, and remaining deferred entries are picked up next iteration.
+  let lane = ioLane()
   var buf {.noinit.}: array[DrainBatch, OpContext]
-  var n = gOpQueues[threadIdx].tryBulkDequeue(DrainBatch, buf)
+  var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
   if n > 0:
     for i in 0..<n:
       var sqe: nil ptr Sqe
       try:
-        sqe = localQueues[threadIdx].getSqe()
+        sqe = localQueues[lane].getSqe()
       except ErrorCode as e:
         stderr.writeLine("ioring: failed to get sqe: " & $e)
         # Ops buf[i..<n] were dequeued but never got an SQE/slot; put them
         # back so the next poll picks them up instead of losing them forever.
         for k in i..<n:
-          discard gOpQueues[threadIdx].tryEnqueue(buf[k])
+          discard gOpQueues[lane].tryEnqueue(buf[k])
         break
       if sqe == nil:
         for k in i..<n:
-          discard gOpQueues[threadIdx].tryEnqueue(buf[k])
+          discard gOpQueues[lane].tryEnqueue(buf[k])
         break
-      let idx = gSlots[threadIdx].allocSlot(buf[i])
+      let idx = gSlots[lane].allocSlot(buf[i])
       sqe.userData = cast[pointer](uint(idx))
-      fillSqe(sqe, buf[i].addr)
+      # Fill from the ARENA copy, never from `buf`: an accept SQE stores
+      # `addr op.acceptAddr`/`addr op.acceptLen` and the kernel writes through
+      # those at completion time, long after this stack frame is gone.
+      fillSqe(sqe, addr gSlots[lane].slots[idx].op)
     try:
-      discard localQueues[threadIdx].submit()
+      discard localQueues[lane].submit()
     except ErrorCode as e:
       quit "fatal: bug: submit cannot fail: " & $e
-  if localQueues[threadIdx].cqReady > 0:
+  if localQueues[lane].cqReady > 0:
     var cqes {.noinit.}: array[DrainBatch, Cqe]
     try:
-      n = localQueues[threadIdx].copyCqes(cqes)
+      n = localQueues[lane].copyCqes(cqes)
     except ErrorCode as e:
       quit "fatal: bug: copyCqes cannot fail: " & $e
     if n > 0:
@@ -104,7 +108,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # kqueue backends use, so the completion's `result` is consistent no
         # matter which backend is in use.
         var res = int(cqes[i].res)
-        if gSlots[threadIdx].slots[idx].op.kind == opPollAdd:
+        if gSlots[lane].slots[idx].op.kind == opPollAdd:
           var ev = 0
           if (uint32(res) and POLLIN) != 0:
             ev = ev or EvRead

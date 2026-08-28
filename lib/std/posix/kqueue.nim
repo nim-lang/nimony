@@ -161,7 +161,8 @@ when defined(macosx) or defined(freebsd) or defined(openbsd) or
       flags*  : cushort  ## general flags
       fflags* : cuint    ## filter-specific flags
       data*   : int      ## filter-specific data  (intptr_t)
-      udata*  : pointer  ## opaque user data identifier
+      udata*  : nil pointer ## opaque user data identifier (nullable: a
+                            ## zero-initialised KEvent must be constructible)
 
   proc kqueue*(): cint {.importc: "kqueue".}
     ## Creates new queue and returns its descriptor.
@@ -185,7 +186,7 @@ else:
       flags*  : cushort
       fflags* : cuint
       data*   : int
-      udata*  : pointer
+      udata*  : nil pointer
 
   proc kqueue*(): cint = 0.cint
   proc kevent*(kqFD: cint,

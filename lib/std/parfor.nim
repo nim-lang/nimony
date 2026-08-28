@@ -126,7 +126,11 @@ proc parWait*(j: var ParJoin; workload = MixedBound) =
   ## in the event loop and the joiner just spins for the in-flight CPU work.
   while atomicLoad(j.remaining, moAcquire) > 0:
     if not poolHelp() and workload != CpuBound:
-      discard poolPollIo(0.cint)
+      # `gReactor`, not `poolPollIo`: the latter is only the do-nothing default
+      # the pool starts with. `std/ioring` installs the real backend poller into
+      # `gReactor`, so calling `poolPollIo` here would silently never advance any
+      # parked I/O and this loop would spin forever.
+      discard gReactor(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## Hand a chunk runner's continuation to the worker pool, spreading chunks
@@ -136,7 +140,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ## runners — but the spread still avoids needlessly caller-running chunks on
   ## the submitting thread and balances load. Re-exported so the `||` plugin
   ## only needs symbols visible through `import std/parfor`.
-  submit(c, -1)
+  submit(c, hint)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}

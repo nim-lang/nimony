@@ -3,8 +3,10 @@
 # subsequent (re-)arm on the same fd — including the EPOLLONESHOT re-arm
 # after each event — must use MOD, or epoll_ctl fails with EEXIST and the
 # fd is silently never re-armed again (a per-connection deadlock that is
-# easy to miss under light testing). `registeredFds` tracks which fds are
-# already known to the epoll instance so submit/re-arm pick the right verb.
+# easy to miss under light testing). Whether a fd is already known to this
+# epoll instance is derived from the slot arena (`hasPendingForFd`), so
+# submit/re-arm pick the right verb; an ADD that loses that race falls back
+# to MOD below.
 
 import ../../posix/epoll
 import ../../posix/posix
@@ -13,7 +15,6 @@ import ../core/types
 import ../core/slots
 import ../core/backend
 import ./poll
-import std/[tables, ticketlocks, threadpool]
 import std/syncio
 
 const
@@ -22,27 +23,24 @@ const
 
 var
   epollFds: seq[cint]
-  registeredFds: Table[cint, bool]
-  regLock: TicketLock
 
-# Header-free per the std/posix convention: real symbols are bare-importc'd
-# and constants are hand-written ABI transcriptions. EPERM/EBADF are 1/9 on
-# every Linux ABI (asm-generic, shared by amd64/arm64/i386; musl agrees).
-const
-  EPERM = cint(1)
-  EBADF = cint(9)
-
-proc fdNotPollable(res: cint): bool {.inline.} =
-  ## True when a failed epoll_ctl means the fd is no longer a live pollable
-  ## descriptor we own: EPERM (a non-pollable type — a regular file, e.g. a socket
-  ## fd closed by its transfer and its number reused by one of the process's file
-  ## opens before this arm ran) or EBADF (already closed). Skipping such an fd is
-  ## correct — it carries no real transfer, so not watching it can't stall one —
-  ## and avoids error spam under multi-threaded handler resumption.
-  result = res == EPERM or res == EBADF
+proc fdNotPollable(): bool {.inline.} =
+  ## True when the epoll_ctl that just failed did so because the fd is no longer
+  ## a live pollable descriptor we own: EPERM (a non-pollable type — a regular
+  ## file, e.g. a socket fd closed by its transfer and its number reused by one
+  ## of the process's file opens before this arm ran) or EBADF (already closed).
+  ## Skipping such an fd is correct — it carries no real transfer, so not
+  ## watching it can't stall one — and avoids error spam under multi-threaded
+  ## handler resumption.
+  ##
+  ## Reads `errno`, not the return value: epoll_ctl reports *every* failure as
+  ## -1 and puts the reason in errno, so comparing the result against EPERM/EBADF
+  ## never matched and the fallback below ran (and printed) for every failure.
+  let e = errno()
+  result = e == EPERM or e == EBADF
 
 proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
-  let epollFd = epollFds[threadIdx]
+  let epollFd = epollFds[ioLane()]
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
   if (mask and EvRead) != 0:
@@ -60,9 +58,10 @@ proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
     # Lost the race with a concurrent submit on the same fd that already
     # ADD'ed it (or the fd was previously registered and evicted from our
     # bookkeeping some other way) — fall back to MOD once.
-    if not fdNotPollable(res):
-      # Not a stale/non-pollable fd → a genuine ADD-vs-MOD race (the slot's
-      # `registered` flag is advisory across workers). ADD on an already-present
+    if not fdNotPollable():
+      # Not a stale/non-pollable fd → a genuine ADD-vs-MOD race (whether the fd
+      # is already registered is derived from the arena, one poll cycle behind
+      # a concurrent submit at worst). ADD on an already-present
       # fd → EEXIST; fall back to MOD so the fd ends up armed with the current
       # mask instead of staying a fired (disarmed) oneshot — that stall loses the
       # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
@@ -71,15 +70,16 @@ proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
         stderr.writeLine("ioring: epoll ADD+MOD both failed: " & $res)
 
 proc epollPoll(timeoutMs: int): bool {.nimcall.} =
+  let lane = ioLane()
   var buf {.noinit.}: array[DrainBatch, OpContext]
-  var n = gOpQueues[threadIdx].tryBulkDequeue(DrainBatch, buf)
+  var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
   if n > 0:
     for i in 0..<n:
-      var alreadyRegistered = gSlots[threadIdx].hasPendingForFd(buf[i].fd)
-      let idx = gSlots[threadIdx].allocSlot(buf[i])
-      submitForPoll(idx, buf[i].addr, alreadyRegistered)
+      let alreadyRegistered = gSlots[lane].hasPendingForFd(buf[i].fd)
+      discard gSlots[lane].allocSlot(buf[i])
+      submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-  n = int(epoll_wait(epollFds[threadIdx], addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
+  n = int(epoll_wait(epollFds[lane], addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
   if n <= 0:
     return false
   for i in 0..<n:
@@ -94,18 +94,18 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   return true
 
 proc epollClose() {.nimcall.} =
-  for i in 0..<workerCount:
+  for i in 0..<epollFds.len:
     discard close(epollFds[i])
 
 proc epollForgetFd(fd: cint) {.nimcall.} =
   ## Drop bookkeeping for a fd that is being closed, so a *future* fd with
   ## the same number (POSIX recycles them) is treated as a fresh ADD rather
   ## than incorrectly reusing stale MOD state.
-  discard epoll_ctl(epollFds[threadIdx], EPOLL_CTL_DEL, fd, nil)
+  discard epoll_ctl(epollFds[ioLane()], EPOLL_CTL_DEL, fd, nil)
 
 proc initEpollBackendRelays*(): BackendRelays =
   epollFds = @[]
-  for i in 0..<workerCount:
+  for i in 0..<ioLanes():
     epollFds.add(epoll_create1(0))
   reArmEvent = epollReArm
   result = BackendRelays(

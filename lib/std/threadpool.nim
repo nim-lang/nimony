@@ -254,7 +254,11 @@ proc workerLoop(arg: pointer) {.nimcall.} =
 var poolState: int
 
 proc initPool*() =
-  if atomicLoad(poolState, moAcquire) == 2 or workerCount > 0: return
+  # Only `poolState` gates this; `workerCount` must NOT, because the CAS winner
+  # publishes it *before* allocating `workerMetrics`/`localQueues`/`injectQueue`.
+  # A second caller that returned on `workerCount > 0` would race ahead and index
+  # those still-empty seqs on its next `submit`.
+  if atomicLoad(poolState, moAcquire) == 2: return
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
     workerCount = max(1, cpuinfo.countProcessors() - 1)
@@ -266,13 +270,22 @@ proc initPool*() =
     workers.setLen(workerCount)
     for i in 0 ..< workerCount:
       try:
-        create workers[i], workerLoop, cast[pointer](i), i
+        # 4th parameter is `stackSize` (0 = OS default); the affinity request
+        # is the 5th one.
+        create workers[i], workerLoop, cast[pointer](i), 0, i
       except:
         discard
     atomicStore(poolState, 2, moRelease)
   else:
     while atomicLoad(poolState, moAcquire) != 2:
       discard
+
+proc isPoolWorker*(): bool {.inline.} =
+  ## True on a thread created by `initPool`. `threadIdx` is only meaningful as
+  ## an identity on those: it is a threadvar defaulting to 0, so every foreign
+  ## thread (the main thread included) reports 0 — the same value worker 0 uses.
+  ## Anything that indexes per-thread state by `threadIdx` must ask this first.
+  isWorker
 
 proc stopped*(): bool {.inline.} =
   atomicLoad(stopFlag, moRelaxed)
