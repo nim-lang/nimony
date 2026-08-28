@@ -57,6 +57,18 @@ when defined(nimony):
       elif defined(ios): "ios"
       else: "linux"
 
+const
+  DefaultMM* = "atomicarc"
+    ## `--mm:atomicArc`: the default strategy. Reference counting with atomic
+    ## increments/decrements, so a `ref` may be shared between threads.
+  MmPlaceholder* = "$MM"
+    ## What `system.nim` writes instead of naming a strategy: `include "$MM"`.
+    ## Expanded by `expandMM` to the module `--mm` selected. A new strategy is
+    ## then a new file under `MmDir` and nothing else -- no `when` chain in
+    ## `system.nim` that every strategy has to be added to.
+  MmDir* = "system/"
+    ## Where the strategy modules live, relative to `system.nim`.
+
 type
   TrackMode* = enum
     TrackNone, TrackUsages, TrackDef
@@ -84,6 +96,10 @@ type
 
   NifConfig* = object
     defines*: seq[string]
+    mm*: string  ## `--mm:NAME`: the memory management strategy. Stored
+                 ## `normalize`d, because it is used as a FILENAME (`MmDir & mm`)
+                 ## and filenames stay all-lowercase, while the option is spelled
+                 ## in camelCase (`--mm:atomicArc` -> `system/atomicarc`).
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
@@ -125,6 +141,7 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     baseDir: baseDir,
     nifcachePath: "nimcache",
     defines: @["nimony"],
+    mm: DefaultMM,
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
@@ -186,6 +203,11 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
         if c.isIntLit:
           result.compat = bool(c.intVal)
         while c.hasMore: skip c
+    of "mm":
+      c.into:
+        if c.isStringLit:
+          result.mm = normalize(pool.strings[c.strId])
+        while c.hasMore: skip c
     else:
       c.into:
         while c.hasMore:
@@ -206,9 +228,17 @@ proc getOptionsAsOneString*(config: NifConfig): string =
   for i in config.defines:
     result.add(" -d:" & i)
 
+  result.add " --mm:" & config.mm
   result.add " --bits:" & $config.bits
   result.add " --cpu:" & platform.CPU[config.targetCPU].name
   result.add " --os:" & platform.OS[config.targetOS].name
+
+proc expandMM*(config: NifConfig; path: string): string =
+  ## Expands the `$MM` placeholder in an `include` path to the module implementing
+  ## the selected memory management strategy: `"$MM"` -> `"system/atomicarc"`.
+  ## Applied before the path is resolved, so `resolveFile`'s own `$VAR` (environment
+  ## variable) rule never sees it.
+  result = path.replace(MmPlaceholder, MmDir & config.mm)
 
 proc isDefined*(config: NifConfig; symbol: string): bool =
   if symbol in config.defines:
@@ -265,7 +295,10 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "staticlib": result = config.appType == appStaticLib
     of "consoleapp": result = config.appType == appConsole
     of "guiapp": result = config.appType == appGui
-    else: result = false
+    # `--mm:arc` makes `defined(gcArc)` true, `--mm:atomicArc` `defined(gcAtomicArc)`,
+    # and so on for a strategy this compiler has never heard of: `mm` is already
+    # normalized, and so is `symbol` here, so the two spellings meet.
+    else: result = config.mm.len > 0 and symbol.normalize == "gc" & config.mm
 
 when isMainModule:
   var conf = default(NifConfig)

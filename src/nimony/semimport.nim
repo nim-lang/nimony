@@ -46,7 +46,7 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     c.buildErr dest, info, "wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c.g.config.paths, getFile(info), f1.path)
+      let f2 = resolveFile(c.g.config.paths, getFile(info), c.g.config.expandMM(f1.path))
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false

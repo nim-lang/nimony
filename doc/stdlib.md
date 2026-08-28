@@ -74,6 +74,26 @@ are copy-on-write internally.
 - `setOomHandler`: By default the runtime tries to continue after
   out-of-memory. For many applications, just quitting is the more robust solution — set a handler that calls `quit`.
 
+#### Strategies (`--mm:`)
+
+`--mm:NAME` selects the strategy. `system.nim` says `include "$MM"` and the
+compiler expands `$MM` to `system/<name>`, lowercased — so `--mm:atomicArc`
+includes `lib/std/system/atomicarc.nim`. Adding a strategy is adding a file
+under `lib/std/system/`; nothing in `system.nim` enumerates them.
+
+| `--mm:` | file | notes |
+| --- | --- | --- |
+| `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
+| `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
+
+A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
+when the count reached zero) and `arcIsUnique`. What is built on top of them
+(`GC_ref` / `GC_unref`) is strategy independent and lives in `system/refops`.
+
+`--mm:NAME` also defines `gcName`, so `--mm:arc` makes `defined(gcArc)` true and
+`--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
+the cached build configuration and therefore forces a rebuild.
+
 ### Iterators
 
 - `..` is inclusive: `0..3` yields 0, 1, 2, 3.
