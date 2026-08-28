@@ -630,10 +630,27 @@ proc conceptParentsSlot*(body: Cursor): Cursor =
   skip result
   skip result
 
+proc isConceptParentInst(p: Cursor): bool {.inline.} =
+  p.typeKind == AtT or p.exprKind == AtX
+
+proc conceptParentHeadSym*(p: Cursor): SymId =
+  ## Concept symbol named by a parent slot: bare sym or `(at Concept ...)`.
+  if p.isSymbol:
+    p.symId
+  elif isConceptParentInst(p):
+    var pt = p
+    inc pt
+    if pt.isSymbol:
+      pt.symId
+    else:
+      SymId(0)
+  else:
+    SymId(0)
+
 proc conceptParentsWellFormed*(parents: Cursor): bool =
   ## False when parent sem produced an `(err ...)` node or other garbage.
   parents.kind == DotToken or parents.kind == Symbol or
-    parents.typeKind == AndT or parents.exprKind == ParX
+    parents.typeKind == AndT or isConceptParentInst(parents) or parents.exprKind == ParX
 
 proc conceptHasParents*(parents: Cursor): bool =
   conceptParentsWellFormed(parents) and not parents.isDotToken
@@ -646,11 +663,16 @@ iterator conceptParentSyms*(parents: Cursor): SymId {.sideEffect.} =
     discard
   elif p.isSymbol:
     yield p.symId
+  elif isConceptParentInst(p):
+    let h = conceptParentHeadSym(p)
+    if h != SymId(0):
+      yield h
   elif p.typeKind == AndT or p.exprKind == ParX:
     p.into:
       while p.hasMore:
-        if p.isSymbol:
-          yield p.symId
+        let h = conceptParentHeadSym(p)
+        if h != SymId(0):
+          yield h
         skip p
 
 proc conceptSelfSlot*(body: Cursor): Cursor =
