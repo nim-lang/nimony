@@ -148,6 +148,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "flags":
     # Flags are forwarded but not processed here
     discard
+  of "inlineframes":
+    # Must reach nimsem: the marking happens during template expansion, which
+    # is nimsem's job, and lengc reads the result out of the line info.
+    case normalize(val)
+    of "", "on": config.inlineFrames = true
+    of "off": config.inlineFrames = false
+    else: quit "invalid value for --inlineframes; expected on or off"
   of "novalidate":
     config.noValidate = true
   of "verbose":

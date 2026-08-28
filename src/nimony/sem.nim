@@ -1018,10 +1018,30 @@ proc visibilityModule(c: SemContext; info: NifLineInfo): string =
   ## expanded routine's module; an argument is the caller's own code and stays
   ## judged against the module being compiled. Walking outwards handles
   ## expansions nested inside expansions.
-  for i in countdown(c.visOwner.len-1, 0):
-    if c.visOwner[i].file == info.file.uint32:
-      return c.visOwner[i].module
+  ##
+  ## Comparing `FileId`s is enough unless `--inlineframes:on` forged some
+  ## filenames: a forged name is interned under its own `FileId`, so an
+  ## expansion's tokens would stop matching the owner's raw id. Only then is
+  ## the comparison lifted to the *real* file (see `comesfrom`), which costs a
+  ## string compare per frame and is why the id path stays.
   result = c.thisModuleSuffix
+  if c.visOwner.len > 0 and info.file.isValid:
+    if not c.g.config.inlineFrames:
+      var i = c.visOwner.len - 1
+      while i >= 0:
+        if c.visOwner[i].file == info.file.uint32:
+          result = c.visOwner[i].module
+          break
+        dec i
+    else:
+      let infoFile = realFile(pool.filenames[info.file])
+      var i = c.visOwner.len - 1
+      while i >= 0:
+        let ownerId = FileId(c.visOwner[i].file)
+        if ownerId.isValid and realFile(pool.filenames[ownerId]) == infoFile:
+          result = c.visOwner[i].module
+          break
+        dec i
 
 proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
                               bindings: Table[SymId, Cursor];

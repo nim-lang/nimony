@@ -11,6 +11,6 @@
 ## surface: importing the kit must not drag in a command-line parser.
 
 import context, counters, category, joined, compile, parallel, runner, walk,
-       builders, deps, tiers, boot, native, suites, incrementaltests
+       builders, deps, tiers, boot, native, llvmdebug, suites, incrementaltests
 export context, counters, category, joined, compile, parallel, runner, walk,
-       builders, deps, tiers, boot, native, suites, incrementaltests
+       builders, deps, tiers, boot, native, llvmdebug, suites, incrementaltests

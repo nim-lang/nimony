@@ -218,6 +218,14 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
     let aInfo = a.n.info
+    # make sure template body expression matches return type, mirrored with `semProcBody`:
+    # Hoisted above `semExpr` so the void case can be known before emitting:
+    # both `m.returnType` and `m.inferred` are fixed by `sigmatch` before we run.
+    let returnType =
+      if m.inferred.len == 0 or m.returnType.isDotToken:
+        m.returnType
+      else:
+        instantiateType(c, m.returnType, m.inferred)
     inc c.routine.inInst
     # An `untyped` template's body is published unresolved, so its field
     # accesses resolve HERE for the first time and must be judged against the
@@ -228,12 +236,6 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     c.visOwner.add VisOwner(module: extractModule(pool.syms[fnId]),
                             file: res.decl.info.file.uint32)
     semExpr c, dest, a, flags
-    # make sure template body expression matches return type, mirrored with `semProcBody`:
-    let returnType =
-      if m.inferred.len == 0 or m.returnType.isDotToken:
-        m.returnType
-      else:
-        instantiateType(c, m.returnType, m.inferred)
     case returnType.typeKind
     of UntypedT:
       # untyped return type ignored, maybe could be handled in commonType
@@ -244,6 +246,20 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
       commonType c, dest, a, beforeCall, returnType
     discard c.visOwner.pop()
     dec c.routine.inInst
+    # Record where this expansion came from (#1987). The provenance rides in the
+    # line-info filename of the emitted heads - `__crucial\0<fn>\0<realfile>` -
+    # so the debug backend can emit them as a DWARF inlined frame while every
+    # other consumer just sees `realFile()`.
+    #
+    # After `semExpr`, not before: a template called *inside* this body has
+    # already expanded and marked its own heads by now, so a body that is
+    # nothing but another template call prepends onto the existing chain and
+    # the order comes out outermost first, which is what nesting `inlinedAt`
+    # needs.
+    #
+    # Tokens substituted in from the call site keep their own file: they belong
+    # to the caller's frame, and are recognised by already carrying `callInfo`'s.
+    forgeExpansionInfo(c, dest, beforeCall, fnId, res.decl.info, callInfo)
     # now match to expected type:
     it.kind = a.kind
     typeofCallIs c, dest, it, beforeCall, a.typ
