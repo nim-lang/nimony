@@ -132,6 +132,11 @@ type
     checkFlags*: string  # active check modes as a `genFlags` string (e.g. "br"),
                          # forwarded to `hexer c` so nifcgen injects only the
                          # requested runtime checks (empty = none).
+    inlineFrames*: bool  # --inlineframes:on: record which template an expansion
+                         # came from, so a debug backend can emit DWARF inlined
+                         # frames for it (#1987). Off by default: it costs work
+                         # in every template expansion and only a debug build
+                         # reads it.
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol

@@ -777,6 +777,12 @@ proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
     error c.m, "not an lvalue: ", n
 
 proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
+  # Expression-producing templates are the common case (`>=` is one), so the
+  # frame has to open here too, not just on statements (#1987).
+  withExpansionFrames(c, n.info):
+    genExprBodyLLVM(c, n, result)
+
+proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue) =
   case n.exprKind
   of NoExpr:
     case n.kind

@@ -34,7 +34,7 @@ proc foundSymbol(n: Cursor; mode: TrackMode) =
       r.add "\t"
       # filename:
       r.add "\t"
-      r.add pool.filenames[info.file]
+      r.add realFile(pool.filenames[info.file])
       r.add "\t"
       r.addInt info.line
       r.add "\t"

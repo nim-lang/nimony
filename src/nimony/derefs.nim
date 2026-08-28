@@ -838,7 +838,7 @@ proc trLocal(c: var Context; n: var Cursor) =
         let u = n.info
         echo "LOCAL LEFTOVER kind=", n.kind,
           (if n.isTagLit: " tag=" & globalTags.tags[n.tagId] else: ""),
-          " at ", pool.filenames[u.file], ":", u.line, ":", u.col
+          " at ", realFile(pool.filenames[u.file]), ":", u.line, ":", u.col
 
 proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects;
                     expected: Cursor = default(Cursor)) =

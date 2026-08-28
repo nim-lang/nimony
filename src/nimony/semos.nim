@@ -340,7 +340,7 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
 proc getFile*(info: NifLineInfo): string =
   let fid = info.file
   if fid.isValid:
-    result = pool.filenames[fid]
+    result = realFile(pool.filenames[fid])
   else:
     result = ""
 
