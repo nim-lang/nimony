@@ -133,14 +133,33 @@ proc parWait*(j: var ParJoin; workload = MixedBound) =
       discard gReactor(0.cint)
 
 proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
-  ## Hand a chunk runner's continuation to the worker pool, spreading chunks
-  ## across stripes by index (`hint`, the chunk number) so a many-chunk loop
-  ## does not pile into one stripe. `threadpool.submit` is non-lossy (it
-  ## caller-runs on a full queue), so this no longer guards against dropped
-  ## runners — but the spread still avoids needlessly caller-running chunks on
-  ## the submitting thread and balances load. Re-exported so the `||` plugin
-  ## only needs symbols visible through `import std/parfor`.
-  submit(c, hint)
+  ## Hand a chunk runner's continuation to the worker pool. Re-exported so the
+  ## `||` plugin only needs symbols visible through `import std/parfor`.
+  ##
+  ## **`hint` is deliberately ignored — do not "fix" this.** The plugin passes
+  ## the chunk number, and spreading chunks across stripes by it sounds like the
+  ## better scheduling decision. It is much worse, because it changes WHICH
+  ## `threadpool.submit` runs: any hint but `-1` takes the shared stripe and one
+  ## lock acquisition per chunk, while `-1` on a worker stages the chunk on that
+  ## worker's private ring and hands a whole batch over on its next cycle. A
+  ## nested `||` submits its chunks from inside workers, so every level of a
+  ## fork-join pays that lock, and the workers end up stuck on it rather than
+  ## running the work.
+  ##
+  ## Measured (blackmius, nim-lang/nimony#2390, and reproduced here on a
+  ## `dfs(8, 8)` recursive `||`, 16.7M chunks): passing the hint 7.7s, `-1`
+  ## 0.87s — a 9x difference, and his profile showed one worker having handled
+  ## 113k of 114M tasks. Passing it only from non-workers (the main thread,
+  ## which cannot stage) does not recover it either: 3.0s, because the main
+  ## thread is a full participant through `parWait`'s `poolHelp` and its locked
+  ## submissions contend with every worker. On a flat top-level `||` — the case
+  ## the spread was supposed to help — the two are indistinguishable (45ms
+  ## either way): `submit`'s try-the-other-stripes fallback and work stealing
+  ## already balance it.
+  ##
+  ## The parameter stays because the chunk number is the plugin's to say and a
+  ## future scheduler may want it; what it is NOT is a stripe index.
+  submit(c, -1)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}
