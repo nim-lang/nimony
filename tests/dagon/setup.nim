@@ -1,7 +1,7 @@
 ## Custom runner for the dagon doc-generator tests: build `dagon`, then run
 ## every `t*.nim` here through `nimony doc` and check the `.assertions` sidecar.
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"

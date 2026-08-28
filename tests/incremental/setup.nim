@@ -3,7 +3,7 @@
 ## asserts the per-phase rebuild counts. Needs a built `bin/nimony` (the tree
 ## walk's `tests/setup.hastur` provides it).
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"
