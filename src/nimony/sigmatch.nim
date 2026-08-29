@@ -2479,11 +2479,16 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
     f = paramsStart; skip f
     m.returnType = f # return type follows the parameters in the token stream
 
-  if m.unboundTvars > 0 and not m.err:
+  if m.unboundTvars > 0 and not m.err and not m.insertedParam:
     # The arguments have had their say and the only thing that can still bind a
     # typevar is `inferTypevarsFromExpected`, which reaches them through the
-    # return type. So a typevar left over here in a routine whose return type
-    # is concrete is one that nothing will ever bind: an ORPHAN type parameter,
+    # return type — plus, when a parameter was left to its default,
+    # `addArgsInstConverters`, which instantiates that default expression and
+    # matches it against the formal (`proc foo6[T](x: T = 3)` called as
+    # `foo6()` infers `T` from the `3`). Hence `insertedParam` bows out here.
+    # So a typevar left over in a routine whose return type is concrete and
+    # whose parameters all got arguments is one that nothing will ever bind: an
+    # ORPHAN type parameter,
     # like `Z` in `func foo[Z: static int](x: float)`. It cannot be
     # instantiated, hence it is not a match at all — left in the running it
     # ties the non-generic `foo(x: float)` at `pickBestMatch` and turns a
