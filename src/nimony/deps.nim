@@ -99,11 +99,27 @@ proc asmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   ## no reindex pass is needed.
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".asm.nif"
+proc wasmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  ## ithaqua's whole-program output; the appConsole naming rules of `exeFile`
+  ## (`--out`/`--outdir` overrides, else nimcache) with a fixed `.wasm` ext.
+  let baseName = f.nimFile.splitFile.name
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  if config.outFile.len > 0 or config.outDir.len > 0:
+    let nameOnly = if config.outFile.len > 0: config.outFile else: baseName
+    let withExt =
+      if nameOnly.splitFile.ext.len > 0: nameOnly
+      else: nameOnly.addFileExt("wasm")
+    if config.outDir.len > 0: config.outDir / withExt
+    else: withExt
+  else:
+    base / baseName.addFileExt("wasm")
+
 proc genFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   case config.backend
   of backendC: config.cFile(f, backendDir)
   of backendLLVM: config.llFile(f, backendDir)
   of backendNative: config.asmFile(f, backendDir)
+  of backendWasm: config.lengcFile(f, backendDir)  # ithaqua consumes Leng directly
 proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".o"
@@ -930,6 +946,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # The experimental Shoggoth optimizer runs only when optimization is
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
+    let wasm = c.config.backend == backendWasm
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
     # A native program that uses the `.compile`/`{.build…}` pragma (in ANY module)
@@ -949,7 +966,20 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     if useOptimizer:
       shoggoth = findTool("shoggoth")
 
-    if native:
+    if wasm:
+      # Wasm backend: ithaqua is codegen AND linker in one — it reads the MAIN
+      # module's `.c.nif` and pulls every dependent module from disk through
+      # the embedded index (whole-program emission), so there is exactly one
+      # command and it runs once. Only input[0] reaches its command line.
+      b.withTree "cmd":
+        b.addSymbolDef "ithaqua"
+        b.addStrLit findTool("ithaqua")
+        b.withTree "output":
+          b.addStrLit "-o:"
+        b.withTree "input":
+          b.addIntLit 0
+          b.addIntLit 0
+    elif native:
       # Native backend: arkham (Leng -> typed asm-NIF) replaces lengc. Output is
       # passed as the single token `-o:<path>` (the colon form; `addFilename`
       # concatenates the `-o:` prefix directly onto the output path).
@@ -1247,7 +1277,27 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
 
       # Link executable
       var objFiles = initHashSet[string]()
-      if customLinkerName.len > 0 or (not native and not nativeSysLink):
+      if wasm:
+        b.withTree "do":
+          b.addIdent "ithaqua"
+          proc wasmInput(c: DepContext; f: FilePair; backend: string; useOptimizer: bool): string =
+            # under the optimizer the whole module set switches to `.oc.nif`
+            # together — ithaqua derives sibling filenames from the MAIN
+            # input's extension, exactly like arkham's native chain.
+            if useOptimizer: result = c.config.optimizedFile(f, backend)
+            else: result = c.config.lengcFile(f, backend)
+          let mainCNif = wasmInput(c, c.rootNode.files[0], backend, useOptimizer)
+          b.withTree "input":
+            b.addStrLit mainCNif
+          objFiles.incl mainCNif
+          for v in c.nodes:
+            let cn = wasmInput(c, v.files[0], backend, useOptimizer)
+            if not objFiles.containsOrIncl(cn):
+              b.withTree "input":
+                b.addStrLit cn
+          b.withTree "output":
+            b.addStrLit c.config.wasmFile(c.rootNode.files[0], backend)
+      elif customLinkerName.len > 0 or (not native and not nativeSysLink):
         # Manifest-based link. The plain C/LLVM backend links through the default
         # `link` command (== `niflink`); a `{.bundle.}` module overrides it with
         # its own tool. Either way the linker is handed a manifest NIF describing
@@ -1396,7 +1446,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        if not native:
+        if not native and not wasm:
           let obj = c.config.objFile(v.files[0], backend)
           if not objFiles.containsOrIncl(obj):
             b.withTree "do":
@@ -1428,7 +1478,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         else:
           lengcInput = c.config.lengcFile(v.files[0], backend)
 
-        if native:
+        if wasm:
+          discard  # no per-module codegen: ithaqua's single whole-program
+                   # node (see "Link executable" above) consumes the .c.nif
+        elif native:
           # arkham: per-module Leng -> typed asm-NIF. arkham additionally loads
           # imported modules' `.c.nif` on demand (cross-module type/sig
           # resolution), so list those as dependency inputs to order them before
@@ -1942,7 +1995,9 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
     # `bin/` here. Nim does the same in `prepareToWriteOutput`.
-    let exeOutPath = c.config.exeFile(c.rootNode.files[0], c.rootNode.files[0].modname)
+    var exeOutPath = c.config.exeFile(c.rootNode.files[0], c.rootNode.files[0].modname)
+    if c.config.backend == backendWasm:
+      exeOutPath = c.config.wasmFile(c.rootNode.files[0], c.rootNode.files[0].modname)
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
@@ -1981,4 +2036,11 @@ proc buildGraph*(config: sink NifConfig; project: string;
   if cmd != DoCheck:
     if cmd == DoRun:
       let backend = c.rootNode.files[0].modname
-      exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs
+      if c.config.backend == backendWasm:
+        # A .wasm module needs a host; run it under node with the standard
+        # shim (tests/ithaqua/run_wasm.js provides env.nim_write/nim_exit).
+        let shim = compilerDir() / "tests" / "ithaqua" / "run_wasm.js"
+        exec "node " & quoteShell(shim) & " " &
+             quoteShell(c.config.wasmFile(c.rootNode.files[0], backend)) & executableArgs
+      else:
+        exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs

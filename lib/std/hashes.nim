@@ -28,6 +28,13 @@ when not defined(nimony):
 
 func hash*(x: int64): Hash {.inline.} = cast[Hash](x)
 func hash*(x: int32): Hash {.inline.} = cast[Hash](int x)
+when sizeof(uint) == 4:
+  # 32-bit targets (wasm32): `uint` can't take a uint64, so provide the
+  # overload here, folding the halves so the high bits still hash. On
+  # 64-bit targets uint64 resolves to `hash(u: uint)` — declaring this
+  # there would make every `hash(uintval)` call ambiguous.
+  func hash*(x: uint64): Hash {.inline.} =
+    cast[Hash](uint32(x and 0xFFFFFFFF'u64) xor uint32(x shr 32))
 func hash*(x: char): Hash {.inline.} = Hash(x)
 func hash*(x: bool): Hash {.inline.} = Hash(x)
 func hash*(x: float64): Hash {.inline.} = cast[Hash](x + 0.0) # +0.0 normalizes -0.0

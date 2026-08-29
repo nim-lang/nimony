@@ -115,6 +115,15 @@ proc buildNifasm*(showProgress = false) =
   exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
        "/src/nifasm/nifasm.nim", showProgress
 
+proc buildIthaqua*(showProgress = false) =
+  ## `ithaqua` (Leng -> whole-program wasm32) — sibling repo, same
+  ## assume-exists arrangement as `buildArkham`. Only `hastur wasmdiff` needs
+  ## it, so it stays off the default build the way arkham/nifasm once did.
+  syncNativenif()
+  createDir binDir()
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
+       "/src/ithaqua/ithaqua.nim", showProgress
+
 proc buildNativeTools*(showProgress = false) =
   ## arkham + nifasm for `build all`. They are part of the toolchain now — a
   ## native boot and every `nimony n` need them in `bin/`, and leaving them to a

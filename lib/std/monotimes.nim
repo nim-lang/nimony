@@ -87,6 +87,15 @@ elif defined(windows):
   proc QueryPerformanceFrequency(res: var uint64) {.
     importc: "QueryPerformanceFrequency", stdcall, dynlib: "kernel32".}
 
+when defined(wasm32) and defined(standalone):
+  var gWasmTickFallback: int64 = 0
+  proc wasmMonoTicks(): int64 =
+    # Strictly-increasing counter: ordering holds, durations are ~zero. A
+    # real host clock (performance.now via an env import) arrives with the
+    # ward-bridge B6 host-imports mechanism; swapping it in here is one line.
+    inc gWasmTickFallback
+    result = gWasmTickFallback
+
 proc getMonoTime*(): MonoTime {.tags: [TimeEffect].} =
   ## Returns the current `MonoTime` timestamp.
   ##
@@ -94,7 +103,10 @@ proc getMonoTime*(): MonoTime {.tags: [TimeEffect].} =
   ## this proc calls `window.performance.now()`.
   ## See [MDN](https://developer.mozilla.org/en-US/docs/Web/API/Performance/now)
   ## for more information.
-  when defined(js):
+  when defined(wasm32) and defined(standalone):
+    # Freestanding wasm has no clock instruction; see wasmMonoTicks.
+    result = MonoTime(ticks: wasmMonoTicks())
+  elif defined(js):
     let ticks = getJsTicks()
     result = MonoTime(ticks: (ticks * 1_000_000_000).int64)
   elif defined(macosx):

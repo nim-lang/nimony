@@ -16,7 +16,7 @@ when defined(windows):
 import std / [assertions, parseopt, strutils, os, osproc]
 
 import context, category, joined, nativelist, runner, walk, builders, deps,
-       tiers, boot, native, record, bugcmd, gitcmds
+       tiers, boot, native, record, bugcmd, gitcmds, wasmdiff
 import install
 
 const
@@ -82,6 +82,11 @@ Commands:
   native               run the curated native-backend regression set through
                        `nimony n` (arkham + nifasm, from the sibling
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
+  wasmdiff             differential harness: run every `tests/ithaqua/*.nim`
+                       through BOTH the native backend (arkham, the oracle)
+                       and the wasm backend (ithaqua) and require matching
+                       stdout + exit code. Needs the sibling `../nativenif`
+                       and `node` on PATH.
   lengc                 run Leng tests.
   test <file>/<dir>    run a single test <file>, or a flat <dir> of tests.
   joined <dir>         run <dir>'s joinable tests as ONE program (see
@@ -462,6 +467,13 @@ proc handleCmdLine =
       buildArkham()
       buildNifasm()
     nativeValgrindTests()
+
+  of "wasmdiff":
+    # Differential harness: the native backend (arkham) as the executable oracle
+    # for the wasm backend (ithaqua). Builds both toolchains, then diffs stdout
+    # and exit code of every `tests/ithaqua/*.nim` fixture across the two
+    # pipelines. `wasmdiff.nim` builds what it needs itself.
+    wasmdiffCmd()
 
   of "lengc":
     buildLengc()
