@@ -841,9 +841,19 @@ proc copyCqes*(queue: var Queue; waitNr: uint = 0): seq[Cqe] {.raises, tags: [].
 proc copyCqes*(queue: var Queue; cqes: openArray[Cqe]; waitNr: uint = 0): int {.raises, tags: [].} =
   ## same as copyCqes(queue, waitNr) but copy cqes to your array
   ## returns copied cqe count
+  ##
+  ## Copies at most `cqes.len`; the rest stay in the ring for the next call,
+  ## which is what `io_uring_peek_batch_cqe(ring, cqes, count)` does with its
+  ## `count`. Without the clamp this writes `cqReady` entries into the caller's
+  ## array whatever its size — and `copyCqesToSeq` does it with `copyMem`, so a
+  ## fixed-size destination is a straight overflow the moment more completions
+  ## are ready than it can hold. That needs no unusual workload, just enough
+  ## concurrent operations: the ring's own backend passes `array[128, Cqe]`.
   var ready = queue.waitReady(waitNr)
   if ready == 0:
-    return ready.int
+    return 0
+  if ready > uint32(cqes.len):
+    ready = uint32(cqes.len)
   copyCqesToSeq(queue, cqes, ready)
   return ready.int
 
