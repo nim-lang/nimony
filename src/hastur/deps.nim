@@ -22,6 +22,11 @@ const
     ## Under `src/` with the rest of what a build is made of — and so a change to
     ## it invalidates the CI artifact cache, whose key hashes `src/**`. Read
     ## relative to the project root, which is where every hastur command runs.
+    ##
+    ## Contents: the commit hash, then whitespace, then the commit's date. The
+    ## date is READABILITY ONLY — a diff moving the pin should say *when* it
+    ## moved to without anyone running `git show` — so nothing checks it and
+    ## only the first field is ever compared.
 
 proc pinnedNativenifCommit(): string =
   ## The pin is read at RUNTIME, not compiled in: a `slurp`ed copy would let the
@@ -31,11 +36,25 @@ proc pinnedNativenifCommit(): string =
   ## exact failure mode this pin exists to end. Missing or empty file means "no
   ## pin": build whatever is checked out, the escape hatch for bisecting
   ## nativenif itself.
-  if fileExists(NativenifCommitFile): readFile(NativenifCommitFile).strip
+  ##
+  ## Everything after the first whitespace is the human-readable date (and any
+  ## other note someone leaves there): dropped here, so it can never make a pin
+  ## that matches HEAD look like one that does not.
+  if fileExists(NativenifCommitFile):
+    let content = readFile(NativenifCommitFile).strip
+    let cut = content.find({' ', '\t', '\n', '\r'})
+    if cut < 0: content else: content[0 ..< cut]
   else: ""
 
 proc gitIn(dir, args: string): (string, int) =
   execCmdEx("git -C " & dir.quoteShell & " " & args)
+
+proc commitDate(dir, commit: string): string =
+  ## Committer date of `commit`, `YYYY-MM-DD`, for the pin file's comment field.
+  ## Best-effort: a date we cannot read is simply left out rather than fatal —
+  ## nothing reads it back.
+  let (dateOut, dateCode) = gitIn(dir, "show --no-patch --format=%cd --date=short " & commit)
+  if dateCode == 0: dateOut.strip else: ""
 
 var nativenifChecked = false
 
@@ -130,12 +149,22 @@ proc updateDepsCmd*() =
          "or CI cannot fetch the pin"
 
   let pin = pinnedNativenifCommit()
+  let date = commitDate(NativenifDir, head)
+  let line = (if date.len > 0: head & " " & date else: head) & "\n"
   if head == pin:
-    echo "[deps] ", NativenifCommitFile, " already pins ", head
+    # Same commit, but the file may predate the date field (or carry a stale
+    # one, e.g. after a rebase changed the committer date): rewrite it rather
+    # than leave the comment disagreeing with the hash it annotates.
+    if not fileExists(NativenifCommitFile) or readFile(NativenifCommitFile) != line:
+      writeFile(NativenifCommitFile, line)
+      echo "[deps] ", NativenifCommitFile, ": still ", head, ", date -> ", date
+    else:
+      echo "[deps] ", NativenifCommitFile, " already pins ", head
     return
-  writeFile(NativenifCommitFile, head & "\n")
+  writeFile(NativenifCommitFile, line)
   echo "[deps] ", NativenifCommitFile, ": ",
-       (if pin.len > 0: pin else: "(unpinned)"), " -> ", head
+       (if pin.len > 0: pin else: "(unpinned)"), " -> ", head,
+       (if date.len > 0: " (" & date & ")" else: "")
 
 const BootNativeTools* = ["arkham", "nifasm"]
   ## Carried too for a native boot: `nimony n` reaches them through `findTool`,
