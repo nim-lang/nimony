@@ -803,6 +803,16 @@ proc waitReady(queue: var Queue; waitNr: uint = 0): uint32 {.raises, tags: [], i
     discard enter(queue.fd, 0.cint, waitNr.cint, {ENTER_GETEVENTS}, nil, 0.cint)
     result = queue.cqReady
 
+proc canTimedWait*(queue: var Queue): bool {.inline.} =
+  ## Whether `submitAndWait` can actually honour a deadline. `EXT_ARG` is what
+  ## carries a timespec into `io_uring_enter`, and it needs kernel 5.11+;
+  ## without it `submitAndWait` degrades to a plain submit and returns at once.
+  ##
+  ## Exposed because the difference is not an implementation detail to a poll
+  ## loop: a caller that would otherwise pace itself has to know whether this
+  ## ring will spend its budget for it or hand it straight back.
+  FEAT_EXT_ARG in queue.params.features
+
 proc submitAndWait*(queue: var Queue; waitNr: uint; timeoutNs: int64): int {.
     tags: [], discardable.} =
   ## Flush pending SQEs and, in the SAME `io_uring_enter`, wait for `waitNr`
