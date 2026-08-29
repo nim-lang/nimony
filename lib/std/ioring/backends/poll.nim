@@ -32,9 +32,10 @@ proc armMaskForFd*(fd: cint): int =
     of opWrite:
       result = result or EvWrite
     of opPollAdd:
-      # Pure readiness probe: interested in either direction so the caller gets
-      # one notification per re-arm telling it which way the fd became ready.
-      result = result or (EvRead or EvWrite)
+      # Pure readiness probe: exactly the direction(s) the caller asked for.
+      # Arming both regardless would wake a read-waiter on writability, and a
+      # oneshot op re-armed on every spurious wake is a busy loop.
+      result = result or gSlots[lane].slots[j].op.pollMask
     of opNop:
       discard
 
@@ -83,7 +84,13 @@ when defined(posix):
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide
         # what to do next. The slot is freed by `complete`, so the caller
         # re-submits to re-arm (oneshot).
-        complete(j, firedEvents and (EvRead or EvWrite))
+        #
+        # Only the directions this op asked for count. A wake for a direction
+        # it did not request leaves the slot pending, and the re-arm below
+        # keeps watching for the one it did.
+        let hit = firedEvents and s.op.pollMask
+        if hit != 0:
+          complete(j, hit)
       of opNop:
         discard
     # Re-arm for whatever directions still have an op pending on this fd

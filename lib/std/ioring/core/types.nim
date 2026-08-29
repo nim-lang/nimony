@@ -25,5 +25,11 @@ type
     len*: int
     cont*: Continuation
     res*: int
+    pollMask*: int
+      ## opPollAdd only: the direction(s) the caller actually waits for
+      ## (EvRead / EvWrite / both). Without it a readiness probe has to arm
+      ## both directions, and a caller waiting to READ is woken every time the
+      ## fd is merely WRITABLE — which, for a socket, is almost always. Since
+      ## the op is oneshot, that caller's re-arm turns into a hot spin.
     acceptAddr*: Sockaddr_storage
     acceptLen*: SockLen

@@ -110,20 +110,27 @@ proc submitAccept*(listenFd: cint;
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
   enqueueOp(op)
 
-proc submitPollAdd*(fd: cint;
+proc submitPollAdd*(fd: cint; mask = EvRead or EvWrite;
                     cont = Continuation(fn: nil, env: nil);
                     resPtr: nil ptr int = nil): SeqNum =
   ## Register oneshot readiness interest in `fd` without issuing any I/O.
-  ## When the fd becomes ready (readable, writable, or both) a single
+  ## When the fd becomes ready in one of the `mask` directions a single
   ## completion fires whose `op` is `opPollAdd` and whose `result` holds the
   ## ready-direction mask (bits `EvRead` and/or `EvWrite`). Unlike
   ## `submitRead`/`submitWrite`, no transfer is performed — the caller decides
   ## what to do with the ready fd (e.g. libcurl's multi-socket engine). This
   ## is oneshot: `complete` frees the slot, so re-arm by calling
   ## `submitPollAdd` again after handling the event.
+  ##
+  ## **Pass the direction you actually want.** The default watches both, which
+  ## is right for a probe with no preference — but a caller waiting to *read*
+  ## a socket is woken by mere writability on every arm (a connected socket is
+  ## writable nearly always), and because the op is oneshot its re-arm then
+  ## spins as fast as the loop can poll. libcurl's multi-socket engine always
+  ## states its direction (`CURL_POLL_IN`/`CURL_POLL_OUT`); pass it through.
   result = nextSeqNum()
   var op = OpContext(kind: opPollAdd, fd: fd, seqnum: result,
-    cont: cont, res: cast[int](resPtr))
+    cont: cont, res: cast[int](resPtr), pollMask: mask)
   enqueueOp(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =
