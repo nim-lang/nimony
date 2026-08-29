@@ -96,7 +96,7 @@ type
   LengType* = enum
     NoType
     ParamsT = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
-    UnionT = (ord(UnionTagId), "union")  ## first one is Leng union declaration, second one is Nimony union pragma
+    UnionT = (ord(UnionTagId), "union")  ## first two are Leng union declarations (untagged, and discriminated from a case object - see `doc/internals/leng-spec.md`), third is the Nimony union pragma
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
     ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
@@ -127,8 +127,8 @@ type
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
-    ElseU = (ord(ElseTagId), "else")  ## `else` action
-    OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
+    ElseU = (ord(ElseTagId), "else")  ## `else` action, or the default branch of a Leng discriminated `union`
+    OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement, or of a Leng discriminated `union`
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
 
 proc rawTagIsLengOther*(raw: TagEnum): bool {.inline.} =

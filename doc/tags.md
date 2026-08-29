@@ -89,7 +89,7 @@
 | `(if (elif X X)+ (else X)?)` | LengStmt, NimonyStmt, NiflerKind | if statement header |
 | `(when (elif X X)+ (else X)?)` | NimonyStmt, NimonyOther, NiflerKind | when statement header |
 | `(elif X X)` | LengOther, NimonyOther, NiflerKind | pair of (condition, action) |
-| `(else X)` | LengOther, NimonyOther, NiflerKind | `else` action |
+| `(else X)`; `(else .T)` | LengOther, NimonyOther, NiflerKind | `else` action, or the default branch of a Leng discriminated `union` |
 | `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)` |
 | `(break .Y)`; `(break)` | LengStmt, NimonyStmt, NiflerKind | `break` statement |
 | `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, NjvlKind | `continue` statement |
@@ -97,14 +97,14 @@
 | `(while X S)` | LengStmt, NimonyStmt, NiflerKind| `while` statement |
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
-| `(of (ranges ...) S)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement |
+| `(of (ranges ...) S)`; `(of (ranges ...) .T)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement, or of a Leng discriminated `union` |
 | `(lab D)` | LengStmt, LengSym, NimonyStmt, NimonySym, NjvlKind | label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge |
 | `(jmp Y)` | LengStmt, NimonyStmt, NjvlKind | jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals |
 | `(ret .X)` | LengStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |
 | `(params (param...)*)` | LengType, NimonyOther, NiflerKind | list of proc parameters, also used as a "proc type" |
-| `(union (fld ...)*)`; `(union)` | LengType, NimonyPragma | first one is Leng union declaration, second one is Nimony union pragma |
+| `(union (fld ...)*)`; `(union (of ...)+)`; `(union)` | LengType, NimonyPragma | first two are Leng union declarations (untagged, and discriminated from a case object - see `doc/internals/leng-spec.md`), third is the Nimony union pragma |
 | `(object .T (fld ...)*)` | LengType, NimonyType, NiflerKind | object type declaration |
 | `(enum (efld...)*)` | LengType, NimonyType, NiflerKind | enum type declaration |
 | `(proctype .Any (params...) T P)`; `(proctype ...)` | NimonyType, NiflerKind, LengType | Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused). |
