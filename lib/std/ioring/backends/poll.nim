@@ -7,8 +7,8 @@ import ../core/types
 import ../core/slots
 import ../core/backend
 
-proc noopReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} = discard
-var reArmEvent*: proc (fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} = noopReArm
+proc noopReArm(fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} = true
+var reArmEvent*: proc (fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} = noopReArm
 ## Registers (or re-arms, for EPOLLONESHOT-style backends) readiness
 ## interest for `fd`. Takes only `fd` and the direction mask — never a
 ## specific slot index: a fd can have several ops in flight (e.g. a
@@ -39,10 +39,22 @@ proc armMaskForFd*(fd: cint): int =
     of opNop:
       discard
 
+const ArmFailed* = -1
+  ## Completion result for an op on a fd that could not be armed — the same
+  ## value a failed read or write reports.
+
+proc failPendingForFd*(fd: cint) =
+  ## Complete every op pending on `fd`. Nothing will make them ready once the
+  ## fd cannot be armed, so otherwise they park forever.
+  let lane = ioLane()
+  for j in gSlots[lane].slotsForFd(fd):
+    complete(j, ArmFailed)
+
 proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
   ## Arm `fd` for every op pending on it, including the one just allocated by
   ## the caller (`allocSlot` has already linked it into the fd's list).
-  reArmEvent(fd, armMaskForFd(fd), alreadyRegistered)
+  if not reArmEvent(fd, armMaskForFd(fd), alreadyRegistered):
+    failPendingForFd(fd)
 
 when defined(posix):
   import std / assertions
@@ -96,7 +108,8 @@ when defined(posix):
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
     if gSlots[lane].hasPendingForFd(fd):
-      reArmEvent(fd, armMaskForFd(fd), true)
+      if not reArmEvent(fd, armMaskForFd(fd), true):
+        failPendingForFd(fd)
     # else: nothing left for this fd; the backend already consumed the
     # one-shot registration, and submit/registerEvent will re-add it the
     # next time an op targets this fd.

@@ -15,7 +15,6 @@ import ../core/types
 import ../core/slots
 import ../core/backend
 import ./poll
-import std/syncio
 
 const
   MaxIoEvents = 64
@@ -39,7 +38,7 @@ proc fdNotPollable(): bool {.inline.} =
   let e = errno()
   result = e == EPERM or e == EBADF
 
-proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
+proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} =
   let epollFd = epollFds[ioLane()]
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
@@ -54,25 +53,15 @@ proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
   ev.data.`ptr` = cast[pointer](uint(fd))
   let op = if alreadyRegistered: EPOLL_CTL_MOD else: EPOLL_CTL_ADD
   var res = epoll_ctl(epollFd, op, fd, addr ev)
-  if res != 0 and op == EPOLL_CTL_ADD:
-    # Lost the race with a concurrent submit on the same fd that already
-    # ADD'ed it (or the fd was previously registered and evicted from our
-    # bookkeeping some other way) — fall back to MOD once.
-    if not fdNotPollable():
-      # Not a stale/non-pollable fd → a genuine ADD-vs-MOD race (whether the fd
-      # is already registered is derived from the arena, one poll cycle behind
-      # a concurrent submit at worst). ADD on an already-present
-      # fd → EEXIST; fall back to MOD so the fd ends up armed with the current
-      # mask instead of staying a fired (disarmed) oneshot — that stall loses the
-      # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
-      res = epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev)
-      if res != 0:
-        # Report the ERRNO, not the return value: epoll_ctl reports every
-        # failure as -1, so "failed: -1" says nothing about which failure it
-        # was — and this branch fires only when both verbs failed on a fd we
-        # believe is live, i.e. exactly when the reason matters.
-        stderr.writeLine("ioring: epoll ADD+MOD both failed on fd " & $fd &
-                         " (errno " & $errno() & ")")
+  if res != 0 and op == EPOLL_CTL_ADD and not fdNotPollable():
+    # ADD on an already-present fd → EEXIST (the arena is one poll cycle behind
+    # a concurrent submit at worst); fall back to MOD so the fd ends up armed
+    # rather than staying a fired, disarmed oneshot.
+    res = epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev)
+  # Still failing → this fd will not deliver readiness (both verbs failed, a MOD
+  # on a registered fd failed, or it is not pollable at all: EPERM/EBADF).
+  # `submitForPoll` fails the ops waiting on it.
+  result = res == 0
 
 proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   let lane = ioLane()

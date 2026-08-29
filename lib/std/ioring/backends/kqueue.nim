@@ -17,7 +17,7 @@ const
 
 var kqFds: seq[cint]
 
-proc kqueueReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
+proc kqueueReArm(fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} =
   # EV_ADD is idempotent in kqueue (add-or-modify), unlike epoll's ADD/MOD
   # split, so there is no separate "first time vs re-arm" bookkeeping needed
   # here. `ident` (the fd) is what `kqueuePoll` reads back on delivery, not
@@ -28,16 +28,19 @@ proc kqueueReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
   # bytes — or never.
   var ev = default(KEvent)
   let kq = kqFds[ioLane()]
+  # Reported, not discarded: a failed registration means no readiness, and
+  # `submitForPoll` fails the ops waiting on it.
+  result = true
   if (mask and EvRead) != 0:
     ev.ident = uint(fd)
     ev.filter = EVFILT_READ
     ev.flags = EV_ADD or EV_ONESHOT
-    discard kevent(kq, addr ev, 1, nil, 0, nil)
+    if kevent(kq, addr ev, 1, nil, 0, nil) < 0: result = false
   if (mask and EvWrite) != 0:
     ev.ident = uint(fd)
     ev.filter = EVFILT_WRITE
     ev.flags = EV_ADD or EV_ONESHOT
-    discard kevent(kq, addr ev, 1, nil, 0, nil)
+    if kevent(kq, addr ev, 1, nil, 0, nil) < 0: result = false
 
 proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
   let lane = ioLane()
