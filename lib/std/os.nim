@@ -1,5 +1,4 @@
 import strutils
-import assertions
 import posix/posix
 import cmdline
 import envvars
