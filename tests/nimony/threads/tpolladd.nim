@@ -2,6 +2,8 @@ when defined(windows):
   import std/syncio
   echo "n=1 op=opPollAdd result=3 rd=true wr=true"
   echo "m=1 op=opPollAdd result=2 wr=true"
+  echo "k=1 fd_is_a=true result=1"
+  echo "j=1 fd_is_b=true result=1 rd=true"
 else:
   import std / [ioring, assertions, syncio]
   import std/posix/posix
@@ -39,6 +41,27 @@ else:
   let m = waitCompletions(comps)
   echo "m=", m, " op=", comps[0].op, " result=", comps[0].result,
        " wr=", (comps[0].result and EvWrite) != 0
+
+  # The mask is honoured: `b` is writable but has nothing to read, so a
+  # read-only probe on it must NOT complete. Asserting a negative without a
+  # timeout: arm the read-only probe on `b` FIRST, then arm one on `a`, which is
+  # still readable (nothing has consumed the byte above — a poll does no I/O).
+  # Exactly one completion must come back, and it must be `a`'s.
+  #
+  # Before the mask existed, opPollAdd always armed EvRead or EvWrite, so this
+  # probe fired immediately on writability — and since the op is oneshot, a
+  # caller that re-armed after each wake spun as fast as it could poll.
+  discard submitPollAdd(b, EvRead)
+  discard submitPollAdd(a, EvRead)
+  let k = waitCompletions(comps)
+  echo "k=", k, " fd_is_a=", cint(comps[0].fd) == a, " result=", comps[0].result
+
+  # …and the probe left pending on `b` fires as soon as `b` really is readable,
+  # reporting EvRead and nothing else.
+  discard send(a, msg.toCString, len(msg), MSG_NOSIGNAL)
+  let j = waitCompletions(comps)
+  echo "j=", j, " fd_is_b=", cint(comps[0].fd) == b, " result=", comps[0].result,
+       " rd=", (comps[0].result and EvRead) != 0
 
   closeFd(a)
   closeFd(b)

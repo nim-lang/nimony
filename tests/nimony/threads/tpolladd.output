@@ -1,2 +1,4 @@
 n=1 op=opPollAdd result=3 rd=true wr=true
 m=1 op=opPollAdd result=2 wr=true
+k=1 fd_is_a=true result=1
+j=1 fd_is_b=true result=1 rd=true
