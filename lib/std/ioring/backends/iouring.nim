@@ -92,10 +92,21 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       # `addr op.acceptAddr`/`addr op.acceptLen` and the kernel writes through
       # those at completion time, long after this stack frame is gone.
       fillSqe(sqe, addr gSlots[lane].slots[idx].op)
-    try:
-      discard localQueues[lane].submit()
-    except ErrorCode as e:
-      quit "fatal: bug: submit cannot fail: " & $e
+  # ONE enter per poll: flush whatever was just filled and, when the caller
+  # gave us a time budget, wait for a completion inside it.
+  #
+  # Waiting here is the whole point. Peeking at the CQ and returning empty
+  # leaves the caller to spend its budget in `nanosleep` (see
+  # `threadpool.workerLoop`) — a sleep no completion can interrupt, so every
+  # completion picks up latency bounded by the poll interval rather than being
+  # delivered when the kernel has it. epoll never had that problem because its
+  # wait IS `epoll_wait(timeoutMs)`. Measured on a write-heavy WebSocket
+  # workload before this: ~3.2x the control-reply latency of the epoll backend,
+  # uniformly across rates.
+  #
+  # Called unconditionally, not just when SQEs were filled: with nothing new to
+  # submit there is still a budget to spend waiting for work already in flight.
+  discard localQueues[lane].submitAndWait(1'u, timeoutMs.int64 * 1_000_000'i64)
   if localQueues[lane].cqReady > 0:
     var cqes {.noinit.}: array[DrainBatch, Cqe]
     try:

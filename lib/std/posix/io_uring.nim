@@ -803,6 +803,54 @@ proc waitReady(queue: var Queue; waitNr: uint = 0): uint32 {.raises, tags: [], i
     discard enter(queue.fd, 0.cint, waitNr.cint, {ENTER_GETEVENTS}, nil, 0.cint)
     result = queue.cqReady
 
+proc submitAndWait*(queue: var Queue; waitNr: uint; timeoutNs: int64): int {.
+    tags: [], discardable.} =
+  ## Flush pending SQEs and, in the SAME `io_uring_enter`, wait for `waitNr`
+  ## completions or `timeoutNs`, whichever comes first. The fused form matters:
+  ## submitting and then entering again to wait is two syscalls on the very
+  ## path a poll loop runs per iteration. (liburing spells this
+  ## `io_uring_submit_and_wait_timeout`.)
+  ##
+  ## The bounded wait is the point. `submit(waitNr = 1)` blocks with no
+  ## deadline, which a worker that must also service a task queue cannot use;
+  ## submitting and not waiting at all leaves the caller to sleep out its
+  ## interval in a sleep no completion can interrupt.
+  ##
+  ## Needs `FEAT_EXT_ARG` (kernel 5.11+) for the deadline; without it there is
+  ## no way to give `io_uring_enter` one, so this falls back to a plain submit
+  ## and the caller keeps responsibility for its own pacing.
+  let submited = queue.sqFlush
+  var flags: EnterFlags = {}
+  let mayWait = waitNr > 0'u and timeoutNs > 0'i64 and
+                FEAT_EXT_ARG in queue.params.features
+  if not mayWait:
+    let cqNeedsEnter = queue.cqNeedsEnter
+    if queue.sqNeedsEnter(submited, flags) or cqNeedsEnter:
+      if cqNeedsEnter: flags.incl(ENTER_GETEVENTS)
+      try:
+        result = enter(queue.fd, submited.cint, 0.cint,
+                       flags, nil, 0.cint)
+      except:
+        result = 0
+    else:
+      result = submited
+    return
+  discard queue.sqNeedsEnter(submited, flags)   # may set the SQPOLL wakeup bit
+  flags.incl(ENTER_GETEVENTS)
+  flags.incl(ENTER_EXT_ARG)
+  var ts = Timespec(tv_sec: Time(timeoutNs div 1_000_000_000'i64),
+                    tv_nsec: clong(timeoutNs mod 1_000_000_000'i64))
+  var arg = GeteventsArg(sigmask: 0'u64, sigmaskSz: 8'u32, pad: 0'u32,
+                         ts: cast[uint64](addr ts))
+  try:
+    result = enter(queue.fd, submited.cint, waitNr.cint,
+                   flags, addr arg, sizeof(arg).cint)
+  except:
+    # -ETIME is the ordinary "deadline passed, nothing arrived" answer and
+    # -EINTR is a signal; neither is an error worth propagating, and the caller
+    # reads `cqReady` regardless.
+    result = submited
+
 proc copyCqesToSeq(queue: var Queue; cqes: openArray[Cqe]; ready: uint32) {.inline.} =
   var
     head = queue.cq.head[]
