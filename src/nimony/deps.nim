@@ -1278,10 +1278,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # Link executable
       var objFiles = initHashSet[string]()
       if wasm:
-        # ithaqua runs ONCE on the main module's `.c.nif` and emits the final
-        # `.wasm` directly — it is the codegen and the linker. Every module's
-        # `.c.nif` is listed as an input purely for ordering (only input[0]
-        # reaches the command line; the rest are found via the embedded index).
         b.withTree "do":
           b.addIdent "ithaqua"
           proc wasmInput(c: DepContext; f: FilePair; backend: string; useOptimizer: bool): string =
