@@ -371,9 +371,7 @@ proc storeToFile*(b: var TokenBuf; f: File; dottedSuffix = "") =
 
 proc store*(b: var TokenBuf; filename: string; dottedSuffix = "") =
   ## Write `b` to `filename` in binary `.bif` form (with its symbol index).
-  var f = open(filename, fmWrite)
-  storeToFile(b, f, dottedSuffix)
-  close(f)
+  vfsWrite(filename, storeToString(b, dottedSuffix))
 
 # ── load ──────────────────────────────────────────────────────────────────
 

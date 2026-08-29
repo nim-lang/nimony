@@ -76,8 +76,32 @@ type
     AlwaysWrite,
     OnlyIfChanged
 
+# --- atomic replacement ---------------------------------------------------
+#
+# Never truncate a .nif or .bif that a reader may have mmap'd.
+
+import std / atomics
+
+when defined(windows):
+  proc osProcessId(): int32 {.importc: "GetCurrentProcessId", stdcall,
+                              dynlib: "kernel32".}
+else:
+  proc osProcessId(): int32 {.importc: "getpid".}
+
+when defined(nimony):
+  var atomicWriteCounter: int = 0
+  proc nextTempSeq(): int = atomicFetchAdd(atomicWriteCounter, 1)
+else:
+  var atomicWriteCounter: Atomic[int]
+  proc nextTempSeq(): int = atomicWriteCounter.fetchAdd(1)
+
+proc atomicTempPath*(target: string): string =
+  ## A sibling temp path for an atomic replacement of `target`
+  result = target & ".tmp." & $int(osProcessId()) & "." & $nextTempSeq()
+
 when defined(nimony):
   import std / [os, dirs, paths]
+  import std / private / oscommons
   # Nimony's stdlib procs are `.raises`. Wrap them so vfs.nim stays
   # non-raising (the rest of the compiler is wired that way).
   proc unixModTime(p: string): int64 =
@@ -91,8 +115,19 @@ when defined(nimony):
     try: removeFile(path(p)) except: discard
   proc readBytes(p: string): string =
     try: readFile(p) except: ""
+
   proc writeBytes(p, c: string) =
-    try: writeFile(p, c) except: quit "vfs: write failed: " & p
+    let tmp = atomicTempPath(p)
+    var ok = false
+    try:
+      writeFile(tmp, c)
+      ok = tryMoveFSObject(tmp, p, false)
+    except:
+      ok = false
+    if not ok:
+      try: removeFile(path(tmp)) except: discard   # no `.tmp.NNN` litter
+      quit "vfs: write failed: " & p
+
   proc fileMaybeExists(p: string): bool =
     try: fileExists(p) except: false
   proc openMmapImpl(p: string): MemFile =
@@ -107,7 +142,14 @@ else:
     toUnix(t) * nanosPerSec + int64(t.nanosecond)
   proc rmPath(path: string) = removeFile(path)
   proc readBytes(p: string): string = readFile(p)
-  proc writeBytes(p, c: string) = writeFile(p, c)
+  proc writeBytes(p, c: string) =
+    let tmp = atomicTempPath(p)
+    try:
+      writeFile(tmp, c)
+      moveFile(tmp, p)
+    except CatchableError:
+      try: removeFile(tmp) except CatchableError: discard   # no `.tmp.NNN` litter
+      raise
   proc fileMaybeExists(p: string): bool = fileExists(p)
   proc openMmapImpl(p: string): MemFile = memfiles.open(p)
 
