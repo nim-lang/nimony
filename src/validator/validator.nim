@@ -7,17 +7,28 @@
 #    distribution, for details about the copyright.
 #
 
-## Validates compiler pass source code for structural correctness.
+## Validates compiler pass and plugin source code for structural correctness.
 ##
 ## Includes all checks from `check_tags` (tag grammar conformance, exhaustive cases,
 ## preservation) plus obligation tracking for cursor/buffer variables:
 ##
 ## - Every `n: var Cursor` parameter creates a must-skip obligation
 ## - Every `skip n` without corresponding `takeTree`/`takeTree` is flagged
-## - Field access like `c.dest` is resolved via type declarations in the same module
-## - Hardcoded known types: Cursor, TokenBuf (no need for full type resolution)
 ##
-## Usage: validator <passfile.nim> [tags.md]
+## Two front ends, one being replaced by the other:
+##
+## * **semchecked** (`--nimcache:DIR`, or a `.s.nif` argument) reads what sem
+##   produced for the module, so types, callees and variables are resolved
+##   symbols. `semfacts.nim` / `semvalidator.nim`.
+## * **untyped** (a bare `.nim` argument) re-parses the source with nifler and
+##   works on identifiers. It resolves fields only within one module and cannot
+##   tell two same-named procs apart; it is kept until every check below has
+##   moved over.
+##
+## Usage: validator [--strict] [--nimcache:DIR] [--dump] <passfile.nim|module.s.nif> [tags.md]
+##
+## `--dump` prints what the semchecked front end made of the module (its procs,
+## their tracked parameters and locals) and checks nothing else.
 
 import std / [strutils, os, tables, sets, osproc, assertions, syncio, sequtils, terminal]
 include ".." / lib / nifprelude
@@ -27,6 +38,7 @@ import ".." / models / [tags, nimony_tags]
 import ".." / nimony / nimony_model
 import effect_graph
 import tags_grammar
+import semvalidator
 
 template validate(cond: bool; msg: string = "") =
   ## For the Nim compiler, `validate` is an alias for `assert`.
@@ -1171,6 +1183,39 @@ proc parseFileViaNifler(nimFile: string): TokenBuf =
   finally:
     removeFile(outFile)
 
+proc semNifForSource(nimFile, cacheDir: string): string =
+  ## Map a `.nim` source to the `.s.nif` sem produced for it, using the
+  ## `<root>.build.nif` files nifmake leaves in the cache. That mapping is
+  ## authoritative: `moduleSuffix` hashes a path made relative to the compile's
+  ## own search paths, so recomputing it here would mean replicating the exact
+  ## command line the module was built with.
+  result = ""
+  let want = absolutePath(nimFile).replace('\\', '/')
+  for x in walkDir(cacheDir, relative = true):
+    if x.kind != pcFile or not x.path.endsWith(".build.nif"): continue
+    var buf = nifcoreparse.parseFromFile(cacheDir / x.path, sharedPool = pool,
+                                         sharedTags = globalTags)
+    var n = beginRead(buf)
+    if not n.isTagLit: continue
+    n.linearScan:
+      if globalTags.tags[n.cursorTagId] == "do":
+        var c = childCursor(n)
+        var input = ""
+        var output = ""
+        while c.hasMore:
+          if c.isTagLit:
+            let tag = globalTags.tags[c.cursorTagId]
+            if tag in ["input", "output"]:
+              var v = childCursor(c)
+              if v.hasMore and v.kind == StrLit:
+                if tag == "input": input = v.strVal
+                else: output = v.strVal
+          skip c
+        if input.len > 0 and output.endsWith(".p.nif") and
+            absolutePath(input).replace('\\', '/') == want:
+          result = cacheDir / extractFilename(output).changeFileExt("").changeFileExt(".s.nif")
+          return
+
 proc main() =
   if paramCount() < 1:
     quit "Usage: validator [--strict] <passfile.nim> [tags.md]"
@@ -1179,13 +1224,41 @@ proc main() =
   # (e.g. exhaustive-case on stmtKind). Plugins pass files without --strict
   # because `else: takeTree n` pass-through is idiomatic for them.
   var strict = false
+  var cacheDir = ""
+  var dump = false
   var positional: seq[string] = @[]
   for i in 1..paramCount():
     let a = paramStr(i)
     if a == "--strict": strict = true
+    elif a.startsWith("--nimcache:"): cacheDir = a.substr("--nimcache:".len)
+    elif a == "--dump": dump = true
     else: positional.add a
   if positional.len < 1:
-    quit "Usage: validator [--strict] <passfile.nim> [tags.md]"
+    quit "Usage: validator [--strict] [--nimcache:DIR] [--dump] <passfile.nim|module.s.nif> [tags.md]"
+
+  # Semchecked front end: either the caller names the `.s.nif` outright, or it
+  # names the source and the cache sem wrote it into.
+  block semFrontEnd:
+    var semNif = ""
+    var source = ""
+    if positional[0].endsWith(".s.nif"):
+      semNif = positional[0]
+    elif cacheDir.len > 0:
+      source = positional[0]
+      if not fileExists(source):
+        quit "Cannot find source file: " & source
+      semNif = semNifForSource(source, cacheDir)
+      if semNif.len == 0:
+        quit "no semchecked NIF for " & source & " in " & cacheDir &
+             " (was it built with `nimony check --nimcache:" & cacheDir & "`?)"
+    else:
+      break semFrontEnd
+    if not fileExists(semNif):
+      quit "Cannot find semchecked NIF: " & semNif
+    let errors = validateSemModule(semNif, source, strict,
+                                   not terminal.isatty(stdout), dump)
+    if errors > 0: quit 1
+    return
 
   let passFile = positional[0]
   let tagsFile = if positional.len >= 2: positional[1]
