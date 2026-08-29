@@ -946,11 +946,6 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # The experimental Shoggoth optimizer runs only when optimization is
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
-    # The wasm backend takes the optimizer's output too (see `wasmInput`), and
-    # it takes it ALL-OR-NOTHING: ithaqua's foreign-module loader derives its
-    # sibling filenames from the MAIN input's extension, so the whole module set
-    # has to be `.oc.nif` together or none of it can be — exactly the constraint
-    # arkham's native chain lives under.
     let wasm = c.config.backend == backendWasm
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
