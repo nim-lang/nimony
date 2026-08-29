@@ -1303,6 +1303,12 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         dest.addSubtree erroredN
         dest.addStrLit("", cs.callNodeInfo)
       return
+    elif allUninstantiable(m):
+      # Not a type mismatch — the arguments matched. `sigmatch` dropped every
+      # candidate because a type parameter of it can never be bound, and that
+      # message says so precisely.
+      buildErr c, dest, cs.callNodeInfo, getErrorMsg(m[0])
+      return
     elif m.len > 0:
       errorMsg = "Type mismatch at [position]\n"
       errorMsg.add asNimCode erroredN
