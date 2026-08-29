@@ -261,12 +261,12 @@ proc addParLe*(dest: var TokenBuf; tag: string; info = NoLineInfo) {.inline.} =
   dest.addParLe(globalTags.registerTag(tag), info)
 
 template copyIntoKind*(dest: var TokenBuf; kind: TypeKind|SymKind|ExprKind|StmtKind|SubstructureKind|PragmaKind;
-                       info: NifLineInfo; body: untyped) =
+                       info: NifLineInfo; body: untyped) {.nifWrap.} =
   dest.addParLe(kind, info)
   body
   dest.addParRi()
 
-template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: NifLineInfo; body: untyped) =
+template copyIntoKinds*(dest: var TokenBuf; kinds: array[2, StmtKind]; info: NifLineInfo; body: untyped) {.nifWrap.} =
   dest.addParLe(kinds[0], info)
   dest.addParLe(kinds[1], info)
   body

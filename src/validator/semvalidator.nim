@@ -14,6 +14,12 @@
 ## `semfacts.nim`), and one judgement is new: whether a node is code the module
 ## actually contains.
 ##
+## What an operation *does* is not decided here either. `skip` advancing the
+## cursor and `takeTree` emitting what it moved over is the API's own
+## knowledge, declared with the `nifroles` pragmas on the declarations and read
+## back off them — for a proc through the callee symbol, for a template through
+## the symbol its expansion's provenance names.
+##
 ## That last one matters because sem expands templates. `n.loopInto: body` is
 ## gone by the time we see the tree; what is left is the loop `loopInto` is
 ## made of, including its own `inc n` — an advance the author never wrote and
@@ -85,68 +91,44 @@ proc writeViolation*(ctx: SemCheckContext; v: Violation) =
 # Operation classification
 # ---------------------------------------------------------------------------
 
-type
-  OpKind = enum
-    opNone            ## nothing we track
-    opAdvance         ## advances a cursor without emitting — debt
-    opBalanced        ## advances and emits — no debt
-    opStructuredRead  ## consumes structurally, fields emitted later
-    opWrap            ## opens a tree, runs a body, closes it
-    opEmit            ## emits without consuming — credit
-    opDelegate        ## hands the cursor to another pass
-
 const
-  AdvanceOps = ["skip", "inc"]
+  DelegateFallback = ["trExpr", "trStmt", "trLocal", "trProcDecl", "tr"]
+    ## The one place a name is still matched. A pass's own traversal entry
+    ## points hand the cursor on, and only the pass author can say so — with
+    ## `{.nifDelegates.}` on the declaration. Until the passes carry it, these
+    ## five names keep the compiler-pass checks working; nothing in the plugin
+    ## API is matched by name any more.
 
-  BalancedOps = ["takeTree", "takeParRi", "skipParRi",
-                 # Replacer API:
-                 "keep", "replace"]
-
-  StructuredReadOps = ["takeLocal", "takeRoutine", "asLocal", "asRoutine",
-                       "asForStmt", "takeLocalHeader", "takeRoutineHeader",
-                       # Replacer API: intentional drop
-                       "drop"]
-
-  WrapOps = ["copyInto", "copyIntoKind", "copyIntoKinds", "copyIntoUnchecked",
-             "buildTree", "withTree",
-             # traversal wrappers — templates, so they reach us as idioms
-             "into", "loopInto", "peekInto", "linearScan",
-             # Replacer API:
-             "intoLoop", "replaceHead"]
-
-  EmitOps = ["add", "addParLe", "addParRi", "addDotToken", "addSymUse", "addSymDef",
-             "addIntLit", "addStrLit", "addEmpty", "addSubtree",
-             "copyIntoSymUse", "copyTree",
-             "addIdent", "addUIntLit", "addCharLit", "addFloatLit",
-             "addEmptyNode", "addEmptyNode2", "addEmptyNode3", "addEmptyNode4"]
-
-  DelegateOps = ["trExpr", "trStmt", "trLocal", "trProcDecl", "tr"]
-
-  ## Closed set: the classic `SkipIntent` roles plus the structural `TagClass`
-  ## categories. Post-sem these arrive as resolved enum symbols, so unlike the
-  ## untyped engine we do not have to accept "any identifier" as a candidate.
   SkipIntentNames = ["SkipTag", "SkipParRi", "SkipName", "SkipExport",
                      "SkipPragmas", "SkipType", "SkipValue", "SkipGenParams",
                      "SkipEffects",
                      "SkipCond", "SkipBody", "SkipExpr", "SkipResult", "SkipFull",
                      "Anything", "AnyExpr", "AnyStmt", "AnyType"]
+    ## Closed set: the classic `SkipIntent` roles plus the structural
+    ## `TagClass` categories.
 
-proc classifyName(name: string): OpKind =
-  if name.len == 0: opNone
-  elif name in AdvanceOps: opAdvance
-  elif name in BalancedOps: opBalanced
-  elif name in StructuredReadOps: opStructuredRead
-  elif name in WrapOps: opWrap
-  elif name in EmitOps: opEmit
-  elif name in DelegateOps: opDelegate
-  else: opNone
+proc roleOf(n: Cursor; origin: NodeOrigin; idiom: string): OpRole =
+  ## What a node does, whether it survived as a call or a template expanded it
+  ## into the tree. Either way the answer comes from a declaration.
+  if origin == noIdiom:
+    result = roleOfMangled(idiom)
+  elif n.isTagLit and n.exprKind in CallKinds:
+    let callee = calleeSym(n)
+    result = roleOfSym(callee)
+    if result == roleNone and baseName(callee) in DelegateFallback:
+      result = roleDelegates
+  else:
+    result = roleNone
 
-proc opName(n: Cursor; origin: NodeOrigin; idiom: string): string =
-  ## The operation a node performs, whether it survived as a call or was
-  ## expanded into the tree by a template.
-  if origin == noIdiom: idiom
-  elif n.isTagLit and n.exprKind in CallKinds: baseName(calleeSym(n))
-  else: ""
+proc opDisplayName(n: Cursor; origin: NodeOrigin; idiom: string): string =
+  ## How to name the operation in a diagnostic.
+  if origin == noIdiom:
+    result = idiom
+    extractBasename result
+  elif n.isTagLit and n.exprKind in CallKinds:
+    result = baseName(calleeSym(n))
+  else:
+    result = ""
 
 proc hasIntentArg(n: Cursor): bool =
   ## True when a `skip`/`inc` call carries a `SkipIntent`/`TagClass`/tag-enum
@@ -178,18 +160,17 @@ proc classifyCall(p: ProcFacts; n: Cursor; origin: NodeOrigin; idiom: string): i
   ## The balance contribution of one operation: positive when the cursor moved
   ## without anything being emitted, negative when output was produced without
   ## the cursor moving, zero when the two are tied.
-  let name = opName(n, origin, idiom)
   let isCall = n.isTagLit and n.exprKind in CallKinds
-  case classifyName(name)
-  of opAdvance:
+  case roleOf(n, origin, idiom)
+  of roleAdvance:
     if isCall and hasTrackedArg(p, n, tkCursor):
       if hasIntentArg(n): return 0
       return 1
-  of opStructuredRead, opBalanced, opWrap, opDelegate:
+  of roleReads, roleBalanced, roleWrap, roleDelegates:
     return 0
-  of opEmit:
+  of roleEmits:
     if isCall and hasTrackedArg(p, n, tkTokenBuf): return -1
-  of opNone:
+  of roleNone:
     if isCall:
       let hasCur = hasTrackedArg(p, n, tkCursor)
       let hasBuf = hasTrackedArg(p, n, tkTokenBuf)
@@ -305,9 +286,8 @@ proc scanUnsafeCursorOpsIn(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
   var delegatedHere = delegated
 
   if not inLib and n.exprKind in CallKinds:
-    let name = opName(n, origin, idiom)
-    let op = classifyName(name)
-    if op == opAdvance and not hasIntentArg(n):
+    let op = roleOf(n, origin, idiom)
+    if op == roleAdvance and not hasIntentArg(n):
       block flagFirst:
         for a in callArgs(n):
           let lv = unwrapAddr(a)
@@ -315,10 +295,10 @@ proc scanUnsafeCursorOpsIn(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
             for cp in p.cursorParams:
               if lv.symId == cp:
                 ctx.addWarning n.info, p.name,
-                  "`" & name & " " & p.vars[cp].name &
+                  "`" & opDisplayName(n, origin, idiom) & " " & p.vars[cp].name &
                   "` needs a SkipIntent argument for justification"
                 break flagFirst
-    elif op notin {opAdvance, opBalanced, opWrap}:
+    elif op notin {roleAdvance, roleBalanced, roleWrap}:
       if hasTrackedArg(p, n, tkCursor):
         delegatedHere = true
 

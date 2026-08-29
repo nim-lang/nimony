@@ -32,6 +32,7 @@
 import std / assertions
 import nifcore
 import comesfrom
+import nifroles
 # Template-expansion provenance rides in the line-info filename, so every
 # consumer of a filename may need to strip it (`realFile`). Plain string
 # handling with no NIF dependency of its own; re-exported here so it travels
@@ -349,7 +350,7 @@ proc toString*(b: TokenBuf; produceLineInfo = true): string {.inline.} =
   ## reads); safe to alias an immutable buffer. Accepts both `var` and immutable.
   nifcoreparse.toString(cast[ptr TokenBuf](unsafeAddr b)[], includeLineInfo = produceLineInfo)
 
-template linearScan*(n: var Cursor; body: untyped) =
+template linearScan*(n: var Cursor; body: untyped) {.nifWrap.} =
   ## Pre-order visit of every tag (`TagLit`) node strictly inside `n`'s subtree,
   ## `n` positioned at each; `body` may `break` (leaving `n` at the match) and
   ## must not advance `n`. `inc` gives pre-order over the flat token stream
@@ -361,19 +362,19 @@ template linearScan*(n: var Cursor; body: untyped) =
         body
       inc n
 
-template copyInto*(dest: var TokenBuf; tag: TagId; info: NifLineInfo; body: untyped) =
+template copyInto*(dest: var TokenBuf; tag: TagId; info: NifLineInfo; body: untyped) {.nifWrap.} =
   addParLe(dest, tag, info)
   body
   closeTag(dest)
 
-template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: NifLineInfo; body: untyped) =
+template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: NifLineInfo; body: untyped) {.nifWrap.} =
   addParLe(dest, globalTags.registerTag(tag), info)
   body
   closeTag(dest)
 
 # ── Subtree / token moves ────────────────────────────────────────────────
 
-proc takeTree*(dest: var TokenBuf; n: var Cursor) =
+proc takeTree*(dest: var TokenBuf; n: var Cursor) {.nifBalanced.} =
   dest.addSubtree n
   skip n
 
@@ -397,12 +398,12 @@ type
     SkipResult    ## skip a result that has been handled separately
     SkipFull      ## skip an entire subtree being dropped or replaced
 
-template skip*(c: var Cursor; intent: SkipIntent) =
+template skip*(c: var Cursor; intent: SkipIntent) {.nifAdvance.} =
   ## The intent is documentation only in the nifcore port (the classic runtime
   ## predicate depended on the ParLe/ParRi model). `skip` advances one subtree.
   skip(c)
 
-template inc*(c: var Cursor; intent: SkipIntent) =
+template inc*(c: var Cursor; intent: SkipIntent) {.nifAdvance.} =
   ## As `skip(c, intent)` but advances past the head only (`inc`).
   inc c
 
@@ -410,9 +411,9 @@ type
   TagClass* = enum
     Anything, AnyExpr, AnyStmt, AnyType
 
-template skip*(c: var Cursor; expected: TagClass) = skip(c)
+template skip*(c: var Cursor; expected: TagClass) {.nifAdvance.} = skip(c)
   ## Categorical skip intent — documentation only in the nifcore port.
-template inc*(c: var Cursor; expected: TagClass) = inc c
+template inc*(c: var Cursor; expected: TagClass) {.nifAdvance.} = inc c
 
 proc consumeParRi*(c: var Cursor) {.inline.} =
   ## nifcore never materialises a close token — the scope end is implicit at

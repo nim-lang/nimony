@@ -89,18 +89,18 @@ proc sameFileName*(a, b: string): bool =
   result = x == y or x.endsWith(y) or y.endsWith(x)
 
 proc originOf*(info: NifLineInfo; moduleFile: string): (NodeOrigin, string) =
-  ## Classify one node by where its tokens were written. A template expansion
-  ## roots at a node whose filename carries provenance; the idiom is the
-  ## outermost routine in the chain, which is the one the user actually wrote.
-  ## Everything the user wrote — including a block argument nested *inside* an
-  ## expansion — keeps pointing at the module's own source, so a template body
-  ## and the code passed to it stay distinguishable.
+  ## Classify one node by where its tokens were written, and for an expansion
+  ## name the routine it came from — mangled, so it can be interned and its
+  ## declaration read. A template expansion roots at a node whose filename
+  ## carries provenance; the idiom is the outermost routine in the chain, which
+  ## is the one the author actually wrote. Everything the author wrote —
+  ## including a block argument nested *inside* an expansion — keeps pointing
+  ## at the module's own source, so a template body and the code passed to it
+  ## stay distinguishable.
   let f = fileOf(info)
   if isCrucialFile(f):
     for o in crucialOrigins(f):
-      var name = o.sym
-      extractBasename name
-      return (noIdiom, name)
+      return (noIdiom, o.sym)
     return (noIdiom, "")
   if f.len == 0 or sameFileName(f, moduleFile): (noUser, "")
   else: (noLibrary, "")
@@ -216,6 +216,84 @@ proc objectHasBufferField*(typ: SymId): bool =
       if classifyType(asLocal(n).typ) == tkTokenBuf: return true
     skip n
   false
+
+# ---------------------------------------------------------------------------
+# Roles — declared by the API, not tabulated here
+# ---------------------------------------------------------------------------
+
+type
+  OpRole* = enum
+    roleNone        ## nothing we track
+    roleAdvance     ## `{.nifAdvance.}` — moves the cursor, emits nothing
+    roleBalanced    ## `{.nifBalanced.}` — moves it and emits what it moved over
+    roleWrap        ## `{.nifWrap.}` — opens a tree, runs a body, closes it
+    roleReads       ## `{.nifReads.}` — consumes a structural unit
+    roleDelegates   ## `{.nifDelegates.}` — hands the cursor to another pass
+    roleEmits       ## emits without consuming; inferred from the signature
+
+proc roleOfPragmaName(n: string): OpRole =
+  case n
+  of "nifAdvance": roleAdvance
+  of "nifBalanced": roleBalanced
+  of "nifWrap": roleWrap
+  of "nifReads": roleReads
+  of "nifDelegates": roleDelegates
+  else: roleNone
+
+proc declaredRole(pragmas: Cursor): OpRole =
+  ## `(pragmas (pragma <sym>) (inline) …)` — a custom pragma survives sem as
+  ## the symbol it resolved to, which is why this is an identity test.
+  result = roleNone
+  if not pragmas.isTagLit or pragmas.substructureKind != PragmasU: return
+  var n = childCursor(pragmas)
+  while n.hasMore:
+    if n.isTagLit and n.pragmaKind == PragmaP:
+      var arg = childCursor(n)
+      if arg.hasMore and arg.kind == Symbol:
+        let r = roleOfPragmaName(baseName(arg.symId))
+        if r != roleNone: return r
+    skip n
+
+proc emitsBySignature(params: Cursor): bool =
+  ## A routine whose first parameter is a `var TokenBuf` and which takes no
+  ## `var Cursor` emits and nothing else. That is what the signature already
+  ## says, so the forty `add*` overloads do not each need an annotation — and
+  ## unlike a name table it cannot mistake `seq.add` for `TokenBuf.add`.
+  if not params.isTagLit or params.substructureKind != ParamsU: return false
+  var n = childCursor(params)
+  var first = true
+  var firstIsBuf = false
+  while n.hasMore:
+    if n.isTagLit and n.symKind == ParamY:
+      let typ = asLocal(n).typ
+      let tracked = classifyType(typ)
+      if tracked == tkCursor and isMutType(typ): return false
+      if first: firstIsBuf = tracked == tkTokenBuf and isMutType(typ)
+      first = false
+    skip n
+  firstIsBuf
+
+var roleCache: Table[SymId, OpRole]
+
+proc roleOfSym*(s: SymId): OpRole =
+  ## The role a routine declares, read from its declaration — reachable for a
+  ## proc through the callee symbol and for a template through the symbol its
+  ## expansion's provenance names.
+  if s == NoSymId: return roleNone
+  if roleCache.hasKey(s): return roleCache[s]
+  result = roleNone
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing and isRoutine(res.decl.symKind):
+    let r = asRoutine(res.decl)
+    result = declaredRole(r.pragmas)
+    if result == roleNone and emitsBySignature(r.params):
+      result = roleEmits
+  roleCache[s] = result
+
+proc roleOfMangled*(name: string): OpRole =
+  ## As `roleOfSym`, for a symbol that arrives as text (an expansion origin).
+  if name.len == 0: roleNone
+  else: roleOfSym(pool.syms.getOrIncl(name))
 
 # ---------------------------------------------------------------------------
 # Lvalues

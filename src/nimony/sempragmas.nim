@@ -527,8 +527,14 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, BundleP, CompileP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
-    if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0):
+    if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
+        not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
+      # `isPreservedCustomPragma` guard keeps a custom pragma *attached to* a
+      # template out of this branch: re-sem sees the attachment as `(pragma
+      # <sym>)`, which is shaped like a declaration marker with an argument,
+      # and this branch would reject it as "`pragma` takes no arguments". Only
+      # the bare `(pragma)` marker declares one.
       # body is not expanded at attachment sites — the annotation is
       # recorded as a known custom-pragma name that will be silently
       # accepted (and dropped) wherever it is later attached. Mirrors Nim's

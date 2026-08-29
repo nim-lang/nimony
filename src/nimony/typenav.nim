@@ -646,7 +646,7 @@ proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor
         break
   assert result.hasMore
 
-proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool =
+proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool {.nifReads.} =
   # returns false if the routine is generic
   result = true # assume it is concrete
   assert n.isSymbolDef, "expected SymbolDef, got: " & toString(n, false)
@@ -658,7 +658,7 @@ proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: v
       result = n.substructureKind != TypevarsU
     takeTree dest, n
 
-proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
+proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind: SymKind) {.nifReads.} =
   let name = n.symId
   takeTree dest, n # name
   takeTree dest, n # export marker
