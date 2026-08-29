@@ -351,35 +351,23 @@ proc selfExec*(c: var SemContext; file: string; moreArgs: string) =
 
 # ------------------ plugin handling --------------------------
 
-proc runValidatorOnPlugin(c: var SemContext; nf: string) =
-  ## Run the plugin validator on `nf` before compiling it. Skipped when
-  ## --novalidate was passed or when the validator binary is not available
-  ## (a fresh clone before `hastur build validator` has run).
-  if c.g.config.noValidate: return
-  let v = findTool("validator")
-  if not os.fileExists(v):
-    echo "warning: validator binary not found at ", v,
-         "; skipping plugin validation (build it with `hastur build validator` ",
-         "or pass --novalidate to silence this)"
-    return
-  exec quoteShell(v) & " " & quoteShell(nf)
-
-proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
-  ## Build a plugin's `.nim` source as an executable. Plugins import
-  ## `lib/plugins.nim` and are compiled by Nimony itself.
-  runValidatorOnPlugin(c, nf)
-  let pluginDir = nimonyDir() / "src/nimony/lib"
-  let pluginCache = exefile & "_d"
+proc makePluginCache(dir: string) =
   try:
     when defined(nimony):
-      createDir(path(pluginCache))
+      createDir(path(dir))
     else:
-      createDir(Path(pluginCache))
+      createDir(Path(dir))
   except:
-    quit "FAILURE: cannot create directory " & pluginCache
-  # `--nimcache:<pluginCache>` keeps the sub-compile's intermediate NIF
-  # artefacts in a per-plugin scratch dir so parallel test workers don't
-  # fight over `nimcache/` entries.
+    quit "FAILURE: cannot create directory " & dir
+
+proc pluginCompileCmd(c: var SemContext; cacheDir: string): string =
+  ## The invocation a plugin sub-compile shares with the sem-only run the
+  ## validator needs: the cache, the search paths and the stdlib-configuration
+  ## opt-outs. The caller appends the command and the file.
+  #
+  # `--nimcache:<cacheDir>` keeps the sub-compile's intermediate NIF artefacts
+  # in a per-plugin scratch dir so parallel test workers don't fight over
+  # `nimcache/` entries.
   #
   # Forward outer user search paths so plugin self-compilation computes the
   # same module identities for user modules. Internal Nimony library paths are
@@ -387,15 +375,16 @@ proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
   # Do not forward the raw command line: it can contain `--base`, which would
   # make plugin child compiles read caller-local nimony.paths files.
   let nimonyExe = findTool("nimony")
+  let pluginDir = nimonyDir() / "src/nimony/lib"
   let srcLibPath = nimonyDir() / "src" / "lib"
-  var cmd = quoteShell(nimonyExe) &
-    " --nimcache:" & quoteShell(pluginCache) &
+  result = quoteShell(nimonyExe) &
+    " --nimcache:" & quoteShell(cacheDir) &
     " --path:" & quoteShell(srcLibPath) &
     " --path:" & quoteShell(pluginDir)
   for path in c.g.config.paths:
     if path != stdlibDir() and path != pluginDir and path != srcLibPath:
-      cmd.add " --path:"
-      cmd.add quoteShell(path)
+      result.add " --path:"
+      result.add quoteShell(path)
   # Forward the stdlib-configuration opt-outs so the plugin is built against
   # the same stdlib variant as the module that uses it (nim-lang/nimony#2155's
   # follow-up: `-d:useLibc` did not reach plugins). An explicit allow-list, not
@@ -404,8 +393,51 @@ proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
   # forwarded: the child re-derives them from these opt-outs.
   for d in ["useLibc", "useLibcIo", "useMimalloc"]:
     if c.g.config.isDefined(d):
-      cmd.add " -d:"
-      cmd.add d
+      result.add " -d:"
+      result.add d
+
+proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
+  ## Run the plugin validator on `nf` before compiling it. Skipped when
+  ## --novalidate was passed or when the validator binary is not available
+  ## (a fresh clone before `hastur build validator` has run).
+  ##
+  ## The validator reads the *semchecked* module, so the plugin is first
+  ## semchecked into a scratch cache of its own. That cache is not the one the
+  ## build below uses: validation needs `--inlineframes:on` (the validator
+  ## recovers which template an expansion came from out of the provenance it
+  ## forges), and sharing a cache across two different flag sets would make
+  ## every plugin compile alternate between them.
+  ##
+  ## A failing sem run is not reported here. It means the plugin does not
+  ## compile, and the build that follows says so with the real diagnostics.
+  if c.g.config.noValidate: return
+  let v = findTool("validator")
+  if not os.fileExists(v):
+    echo "warning: validator binary not found at ", v,
+         "; skipping plugin validation (build it with `hastur build validator` ",
+         "or pass --novalidate to silence this)"
+    return
+  let checkCache = exefile & "_v"
+  makePluginCache checkCache
+  let checkCmd = pluginCompileCmd(c, checkCache) &
+    " --inlineframes:on check " & quoteShell(nf)
+  # Captured, not inherited: on failure the build below reports the same
+  # diagnostics, and printing them twice would only obscure them.
+  var checkCode = 0
+  try:
+    checkCode = execCmdEx(checkCmd).exitCode
+  except:
+    checkCode = -1
+  if checkCode != 0: return
+  exec quoteShell(v) & " --nimcache:" & quoteShell(checkCache) & " " & quoteShell(nf)
+
+proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
+  ## Build a plugin's `.nim` source as an executable. Plugins import
+  ## `lib/plugins.nim` and are compiled by Nimony itself.
+  runValidatorOnPlugin(c, nf, exefile)
+  let pluginCache = exefile & "_d"
+  makePluginCache pluginCache
+  var cmd = pluginCompileCmd(c, pluginCache)
   cmd.add " -o:"
   cmd.add quoteShell(exefile)
   cmd.add " c "
