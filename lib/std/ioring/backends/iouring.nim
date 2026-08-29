@@ -49,10 +49,15 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
   of opPollAdd:
-    # Single-shot readiness probe on both directions; completes with the fired
-    # poll mask, then the slot is freed so the caller re-arms with a new
-    # submitPollAdd (matching the epoll/kqueue oneshot behaviour).
-    discard sqe.poll_add(op.fd, POLLIN or POLLOUT)
+    # Single-shot readiness probe on the direction(s) the caller asked for;
+    # completes with the fired poll mask, then the slot is freed so the caller
+    # re-arms with a new submitPollAdd (matching the epoll/kqueue oneshot
+    # behaviour). Watching both regardless would spin a read-waiter on a
+    # writable socket — see submitPollAdd's docstring.
+    var pollFlags = 0'u32
+    if (op.pollMask and EvRead) != 0: pollFlags = pollFlags or POLLIN
+    if (op.pollMask and EvWrite) != 0: pollFlags = pollFlags or POLLOUT
+    discard sqe.poll_add(op.fd, pollFlags)
   of opNop:
     discard sqe.nop()
 

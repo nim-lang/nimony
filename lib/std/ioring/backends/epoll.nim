@@ -67,7 +67,12 @@ proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool) {.nimcall.} =
       # connection. (A regular-file/closed fd is skipped above; MOD can't help it.)
       res = epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev)
       if res != 0:
-        stderr.writeLine("ioring: epoll ADD+MOD both failed: " & $res)
+        # Report the ERRNO, not the return value: epoll_ctl reports every
+        # failure as -1, so "failed: -1" says nothing about which failure it
+        # was — and this branch fires only when both verbs failed on a fd we
+        # believe is live, i.e. exactly when the reason matters.
+        stderr.writeLine("ioring: epoll ADD+MOD both failed on fd " & $fd &
+                         " (errno " & $errno() & ")")
 
 proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   let lane = ioLane()
