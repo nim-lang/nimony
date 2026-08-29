@@ -13,8 +13,8 @@ var h32: uint32 = 0
 echo parseHex("0xDEAD", h32), " ", h32           # 6 57005
 echo parseHex("ff", h32), " ", h32               # 2 255
 
-# (parseBiggestFloat breaks the NATIVE backend's codegen — see
-# nativebugs/parse_float.nim)
+# (parseBiggestFloat once broke the NATIVE backend's codegen; it has its own
+# fixture now — see parse_float.nim)
 
 # skip family
 echo skipUntil("hello world", ' ')               # 5

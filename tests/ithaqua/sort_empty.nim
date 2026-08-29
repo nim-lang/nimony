@@ -1,5 +1,6 @@
-# native: SIGSEGV for ANY len<2 sort — empty and one-element both crash
-# (each standalone). wasm: prints 0 then 42.
+# `algorithm.sort` on a degenerate (len < 2) input. Was quarantined as a
+# native-backend bug: BOTH the empty and the one-element sort SIGSEGVed on the
+# native leg. Both legs agree again.
 import std/[syncio, algorithm]
 proc cmpInt(x, y: int): int = x - y
 var empty: seq[int] = @[]

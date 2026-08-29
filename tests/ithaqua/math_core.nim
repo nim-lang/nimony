@@ -12,8 +12,8 @@ echo 1.0 / 3.0
 echo 2.5 - 0.5
 echo -7.25
 echo 1e300 * 10.0                # inf territory via arithmetic
-# (float32 conversion + arithmetic are broken on the NATIVE backend — see
-# nativebugs/float32_ops.nim)
+# (float32 conversion + arithmetic were once broken on the NATIVE backend; they
+# have their own fixture now — see float32_ops.nim)
 
 # special values from runtime arithmetic (no compile-time folding surprises)
 var zero = 0.0

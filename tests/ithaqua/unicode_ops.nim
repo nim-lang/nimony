@@ -1,5 +1,7 @@
-# native: runeLen/toUpper/editDistance produce wrong values, then it dies mid-run
-# (buffered stdout lost). wasm: full correct output — see git history of tests/ithaqua/uni_text.nim.
+# std/unicode + editdistance + wordwrap over multi-byte UTF-8. Was quarantined as
+# a native-backend bug: runeLen/toUpper/editDistance produced wrong values on the
+# native leg (runeLen("café naïve") = 12 instead of 10) and the program then died
+# mid-run, losing buffered stdout. Both legs agree again.
 import std/[syncio, unicode, editdistance, wordwrap]
 
 # runes: multi-byte UTF-8 handling

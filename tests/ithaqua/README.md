@@ -17,8 +17,9 @@ before falling back to running all 18 individually anyway.
 The fixtures still run as ordinary tests in `hastur all` (unchecked output, but a
 compile and a clean exit), which is free stdlib coverage on the C backend.
 
-Two subdirectories hold quarantined one-sided failures — the sweep walks only
-the top level:
-
-* `nativebugs/` — the ORACLE is the broken side; the wasm leg is right.
-* `wasmgaps/`   — ithaqua cannot compile the construct yet; the oracle is right.
+`wasmgaps/` holds quarantined one-sided failures — the sweep walks only the top
+level — where ithaqua cannot compile the construct yet and the oracle is right.
+Its sibling `nativebugs/` (the mirror case: the ORACLE was the broken side) is
+gone, its six repros having been fixed and promoted to fixtures up here:
+`cmp_ignore_case`, `parse_float`, `rand_float`, `sort_empty`, `float32_ops` and
+`unicode_ops`.
