@@ -483,6 +483,42 @@ proc hasTrackedArg*(p: ProcFacts; n: Cursor; k: TrackedKind): bool =
     if classifyExpr(p, a) == k: return true
   false
 
+proc isDirectBuffer*(p: ProcFacts; a: Cursor): bool =
+  ## A `TokenBuf` this routine can write to *here*: a buffer variable or
+  ## parameter, or a buffer field reached explicitly (`c.dest`). Being handed
+  ## the whole context object is not it -- `error c, "…", n` passes something
+  ## that merely *contains* a buffer, which is why "has a buffer" and "emits"
+  ## are different questions.
+  let x = unwrapAddr(a)
+  if x.kind == Symbol:
+    if p.vars.hasKey(x.symId): return p.vars[x.symId].tracked == tkTokenBuf
+    return false
+  if x.isTagLit and x.exprKind in FieldAccess:
+    let fld = dotField(x)
+    if fld != NoSymId: return fieldTracked(fld) == tkTokenBuf
+  false
+
+proc movesCursor*(p: ProcFacts; n: Cursor): bool =
+  ## Whether a call could *move* a tracked cursor, as opposed to merely reading
+  ## one. `skip n` moves it; `n.info` and `getType(c.typeCache, n)` do not, and
+  ## counting those as advances makes every read look like dropped input.
+  ##
+  ## Post-sem the two are told apart by the wrapper, and the wrapper is the
+  ## opposite way round for a local and for a `var` parameter: a local handed to
+  ## a `var` parameter is `(haddr x)` while handed by value it is bare `x`; a
+  ## `var` parameter handed on is bare `n` while *read* it is `(hderef n)`.
+  ## Unwrapping both -- which is what `classifyExpr` does, and is right when the
+  ## question is merely *which* cursor an argument names -- erases exactly the
+  ## distinction this asks about.
+  for a in callArgs(n):
+    if a.kind == Symbol:
+      if p.vars.hasKey(a.symId):
+        let v = p.vars[a.symId]
+        if v.tracked == tkCursor and v.isParam and v.isMut: return true
+    elif a.isTagLit and a.exprKind in {HaddrX, AddrX}:
+      if classifyExpr(p, childCursor(a)) == tkCursor: return true
+  false
+
 # ---------------------------------------------------------------------------
 # Collecting the module's facts
 # ---------------------------------------------------------------------------

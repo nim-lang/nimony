@@ -1,5 +1,4 @@
 tests/validator_sem/ttermination.nim(17, 1) Warning: parameter `n: var Cursor` is never passed to any call [bad1]
 tests/validator_sem/ttermination.nim(12, 8) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [good2]
-tests/validator_sem/ttermination.nim(25, 8) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [bad2]
 tests/validator_sem/ttermination.nim(19, 3) Warning: loop is bounded by `n` but not every path through its body advances it [bad1]
 tests/validator_sem/ttermination.nim(24, 3) Warning: loop is bounded by `n` but not every path through its body advances it [bad2]

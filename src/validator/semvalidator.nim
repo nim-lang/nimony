@@ -156,6 +156,23 @@ template eachChild(n: Cursor; body: untyped) =
       body
       skip child
 
+proc emitsSomewhere(p: ProcFacts; n: Cursor): bool =
+  ## Whether this routine ever writes to a buffer at all.
+  ##
+  ## Only a routine that emits can *drop* input: a pure scanner --
+  ## `skipExportMarker`, `typeSymsAvailable` -- advances over a subtree and
+  ## produces nothing by design, and the obligation to reproduce that subtree
+  ## belongs to whoever called it. Such a routine still looks like a translation
+  ## pass from its signature, because the context object it is handed carries a
+  ## `TokenBuf` field it never touches.
+  if not n.isTagLit: return false
+  if n.exprKind in CallKinds:
+    for a in callArgs(n):
+      if isDirectBuffer(p, a): return true
+  eachChild(n):
+    if emitsSomewhere(p, child): return true
+  false
+
 proc classifyCall(p: ProcFacts; n: Cursor; marker: OpRole): int =
   ## The balance contribution of one operation: positive when the cursor moved
   ## without anything being emitted, negative when output was produced without
@@ -163,7 +180,7 @@ proc classifyCall(p: ProcFacts; n: Cursor; marker: OpRole): int =
   let isCall = n.isTagLit and n.exprKind in CallKinds
   case roleOf(n, marker)
   of roleAdvance:
-    if isCall and hasTrackedArg(p, n, tkCursor):
+    if isCall and movesCursor(p, n):
       if hasIntentArg(n): return 0
       return 1
   of roleReads, roleBalanced, roleWrap, roleDelegates:
@@ -172,7 +189,7 @@ proc classifyCall(p: ProcFacts; n: Cursor; marker: OpRole): int =
     if isCall and hasTrackedArg(p, n, tkTokenBuf): return -1
   of roleNone:
     if isCall:
-      let hasCur = hasTrackedArg(p, n, tkCursor)
+      let hasCur = movesCursor(p, n)
       let hasBuf = hasTrackedArg(p, n, tkTokenBuf)
       if hasCur and hasBuf: return 0    # delegated
       elif hasCur: return 1
@@ -213,10 +230,19 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
     eachChild(n):
       result += blockBalance(ctx, p, child, false)
   of IfS, CaseS:
+    # Each branch is checked on its own, and what the construct as a whole
+    # contributes to the enclosing sequence is the *least* any path through it
+    # contributes. Folding to a flat 0 instead threw away the emission of an
+    # `if` whose branches all emit, so the `inc n` that legitimately followed
+    # one -- the `dest.addSubtree n` / `inc n` pair spread over a conditional --
+    # read as an unpaired advance.
+    var lo = high(int)
+    var hasElse = false
     eachChild(n):
       if child.isTagLit:
         let branch = child.substructureKind
         if branch in {ElifU, ElseU, OfU}:
+          if branch == ElseU: hasElse = true
           var inner = childCursor(child)
           if branch in {ElifU, OfU} and inner.hasMore:
             skip inner    # condition / ranges
@@ -228,8 +254,11 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
             ctx.addWarning child.info, p.name,
               "branch advances cursor " & $b &
               " more time(s) than it emits (possible dropped input)"
-    # each branch is self-contained, so the whole `if`/`case` contributes 0
-    result = 0
+          if b < lo: lo = b
+    if n.stmtKind == IfS and not hasElse:
+      # the path that takes no branch at all contributes nothing
+      lo = min(lo, 0)
+    result = if lo == high(int): 0 else: lo
   of WhileS, ForS, BlockS, TryS:
     eachChild(n):
       discard blockBalance(ctx, p, child, false)
@@ -241,6 +270,7 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
 proc scanCursorBufferBalance(ctx: var SemCheckContext) =
   for p in ctx.m.procs:
     if not p.hasCursor or not p.hasBuffer: continue
+    if not emitsSomewhere(p, p.body): continue
     discard blockBalance(ctx, p, p.body, false)
 
 # ---------------------------------------------------------------------------
@@ -330,6 +360,7 @@ proc scanUnsafeCursorOpsIn(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
 proc scanUnsafeCursorOps(ctx: var SemCheckContext) =
   for p in ctx.m.procs:
     if not p.hasCursor or not p.hasBuffer: continue
+    if not emitsSomewhere(p, p.body): continue
     scanUnsafeCursorOpsIn(ctx, p, p.body, false, false)
 
 # ---------------------------------------------------------------------------

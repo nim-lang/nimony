@@ -1,2 +1,2 @@
-tests/validator_sem/tobligations.nim(6, 1) Warning: parameter `n: var Cursor` is never passed to any call [unusedCursor]
-tests/validator_sem/tobligations.nim(12, 6) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [droppedInput]
+tests/validator_sem/tobligations.nim(7, 1) Warning: parameter `n: var Cursor` is never passed to any call [unusedCursor]
+tests/validator_sem/tobligations.nim(13, 6) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [droppedInput]
