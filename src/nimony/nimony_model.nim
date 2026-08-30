@@ -223,7 +223,7 @@ const
     ## Only lambda lifting and the coroutine transform tell them apart; see
     ## `ClosureTupleT`.
 
-proc addParLe*[T: enum](dest: var TokenBuf; kind: T; info = NoLineInfo) =
+proc addParLe*[T: enum](dest: var TokenBuf; kind: T; info = NoLineInfo) {.nifOpens.} =
   ## Open a tag from a kind enum (TypeKind/StmtKind/… all share TagEnum
   ## ordinals). A plain `enum` constraint so `ord` type-checks (a union
   ## constraint does not admit `ord`/`uint32` under nimony's Nim-2 generics).
@@ -256,7 +256,7 @@ proc retagAt*[T: enum](dest: var TokenBuf; pos: int; kind: T; info = NoLineInfo)
   var t = dest[pos]
   setTag(t, cast[TagId](uint32(ord(kind))))
   dest[pos] = t
-proc addParLe*(dest: var TokenBuf; tag: string; info = NoLineInfo) {.inline.} =
+proc addParLe*(dest: var TokenBuf; tag: string; info = NoLineInfo) {.inline, nifOpens.} =
   ## Open a tag by name (replaces the classic `dest.add tagToken(tag)`).
   dest.addParLe(globalTags.registerTag(tag), info)
 
@@ -298,16 +298,16 @@ template takeInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.hasMore and not n.isTagLit
 
-proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.inline.} =
+proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.inline, nifEmits: Y.} =
   dest.addSymUse(s, info)
 
-proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline.} =
+proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline, nifEmits: Any.} =
   dest.add src
 
-proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline.} =
+proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline, nifEmits: Any.} =
   dest.addSubtree src
 
-proc addEmpty*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =
+proc addEmpty*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) {.nifEmits: Dot.} =
   dest.addDotToken(info)
 
 proc addEmpty2*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =

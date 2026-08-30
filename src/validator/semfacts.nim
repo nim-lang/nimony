@@ -230,6 +230,8 @@ type
     roleReads       ## `{.nifReads.}` — consumes a structural unit
     roleDelegates   ## `{.nifDelegates.}` — hands the cursor to another pass
     roleEmits       ## emits without consuming; inferred from the signature
+    roleOpens       ## `{.nifOpens.}` — opens a tree; its 2nd argument is the tag
+    roleCloses      ## `{.nifCloses.}` — closes the innermost open tree
 
 proc roleOfPragmaName(n: string): OpRole =
   case n
@@ -238,6 +240,9 @@ proc roleOfPragmaName(n: string): OpRole =
   of "nifWrap": roleWrap
   of "nifReads": roleReads
   of "nifDelegates": roleDelegates
+  of "nifOpens": roleOpens
+  of "nifCloses": roleCloses
+  of "nifEmits": roleEmits
   else: roleNone
 
 proc declaredRole(pragmas: Cursor): OpRole =
@@ -253,6 +258,32 @@ proc declaredRole(pragmas: Cursor): OpRole =
         let r = roleOfPragmaName(baseName(arg.symId))
         if r != roleNone: return r
     skip n
+
+proc pragmaArg*(pragmas: Cursor; name: string): Cursor =
+  ## The first argument of a named custom pragma on a declaration, or a nil
+  ## cursor. The arguments are preserved unchecked, so this is the raw tree the
+  ## author wrote.
+  result = default(Cursor)
+  if not pragmas.isTagLit or pragmas.substructureKind != PragmasU: return
+  var n = childCursor(pragmas)
+  while n.hasMore:
+    if n.isTagLit and n.pragmaKind == PragmaP:
+      var arg = childCursor(n)
+      if arg.hasMore and arg.kind == Symbol and baseName(arg.symId) == name:
+        skip arg
+        if arg.hasMore: return arg
+    skip n
+
+proc emittedKindOf*(s: SymId): string =
+  ## The grammar letter a `{.nifEmits: X.}` routine contributes, or "".
+  if s == NoSymId: return ""
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return ""
+  let arg = pragmaArg(asRoutine(res.decl).pragmas, "nifEmits")
+  if not arg.hasMore: ""          # no such pragma: `pragmaArg` yields a nil cursor
+  elif arg.kind == Ident: arg.strVal
+  elif arg.kind == Symbol: baseName(arg.symId)
+  else: ""
 
 proc emitsBySignature(params: Cursor): bool =
   ## A routine whose first parameter is a `var TokenBuf` and which takes no
@@ -334,21 +365,15 @@ proc dotField*(n: Cursor): SymId =
   NoSymId
 
 proc sameLvalue*(a, b: Cursor): bool =
-  ## Structural identity of two lvalues. Symbols make this exact where the
-  ## untyped engine compared rendered strings.
-  var x = unwrapAddr(a)
-  var y = unwrapAddr(b)
-  if x.kind != y.kind: return false
-  if x.kind == Symbol: return x.symId == y.symId
-  if not x.isTagLit: return false
-  if x.cursorTagId != y.cursorTagId: return false
-  var cx = childCursor(x)
-  var cy = childCursor(y)
-  while cx.hasMore and cy.hasMore:
-    if not sameLvalue(cx, cy): return false
-    skip cx
-    skip cy
-  result = not cx.hasMore and not cy.hasMore
+  ## Identity of two lvalues, once the `haddr` a `var` argument is wrapped in
+  ## is off both sides. Symbols make this exact where the untyped engine
+  ## compared rendered strings; the rest is `sameTrees`, which also settles the
+  ## literal children `(dot obj fld 0 "suffix")` carries — comparing only
+  ## symbols and tags made every field access differ from itself.
+  let x = unwrapAddr(a)
+  let y = unwrapAddr(b)
+  if not x.hasMore or not y.hasMore: return false
+  sameTrees(x, y)
 
 proc lvalueToStr*(n: Cursor; vars: Table[SymId, VarInfo]): string =
   ## Render an lvalue for a diagnostic, using the readable local names.

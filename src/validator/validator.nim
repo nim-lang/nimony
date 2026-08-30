@@ -1236,6 +1236,21 @@ proc main() =
   if positional.len < 1:
     quit "Usage: validator [--strict] [--nimcache:DIR] [--dump] <passfile.nim|module.s.nif> [tags.md]"
 
+  # The grammar is needed by both front ends, so it is resolved before either.
+  let tagsFile = if positional.len >= 2: positional[1]
+                 else:
+                   # Candidates, in order: appDir/../doc/tags.md (bin in project root),
+                   # appDir/../../doc/tags.md (bin nested one deeper), cwd/doc/tags.md.
+                   let appDir = getAppDir()
+                   var candidate = appDir / ".." / "doc" / "tags.md"
+                   if not fileExists(candidate):
+                     candidate = appDir / ".." / ".." / "doc" / "tags.md"
+                   if not fileExists(candidate):
+                     candidate = "doc/tags.md"
+                   candidate
+  if not fileExists(tagsFile):
+    quit "Cannot find tags.md at: " & tagsFile
+
   # Semchecked front end: either the caller names the `.s.nif` outright, or it
   # names the source and the cache sem wrote it into.
   block semFrontEnd:
@@ -1255,26 +1270,12 @@ proc main() =
       break semFrontEnd
     if not fileExists(semNif):
       quit "Cannot find semchecked NIF: " & semNif
-    let errors = validateSemModule(semNif, source, strict,
+    let errors = validateSemModule(semNif, source, parseTagsMd(tagsFile), strict,
                                    not terminal.isatty(stdout), dump)
     if errors > 0: quit 1
     return
 
   let passFile = positional[0]
-  let tagsFile = if positional.len >= 2: positional[1]
-                 else:
-                   # Candidates, in order: appDir/../doc/tags.md (bin in project root),
-                   # appDir/../../doc/tags.md (bin nested one deeper), cwd/doc/tags.md.
-                   let appDir = getAppDir()
-                   var candidate = appDir / ".." / "doc" / "tags.md"
-                   if not fileExists(candidate):
-                     candidate = appDir / ".." / ".." / "doc" / "tags.md"
-                   if not fileExists(candidate):
-                     candidate = "doc/tags.md"
-                   candidate
-
-  if not fileExists(tagsFile):
-    quit "Cannot find tags.md at: " & tagsFile
   if not fileExists(passFile):
     quit "Cannot find pass file: " & passFile
 

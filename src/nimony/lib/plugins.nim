@@ -72,7 +72,7 @@ var
   unusedNameBase = ""
   nextUnusedName = 0
 
-proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
+proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline, nifEmits: None.} =
   buf.appendLineInfo(info)
 
 proc isEmpty*(tree: NifBuilder): bool {.inline.} =
@@ -198,18 +198,18 @@ template withTree*(
   t.closeTag()
 
 proc openTree*(t: var NifBuilder; tag: TagId;
-               info: LineInfo = NoLineInfo) =
+               info: LineInfo = NoLineInfo) {.nifOpens.} =
   ## Opens a tree using an existing plugin-pool tag handle.
   t.openTag(tag)
   appendInfo(t, info)
 
 proc openTree*(t: var NifBuilder; tag: string;
-               info: LineInfo = NoLineInfo) =
+               info: LineInfo = NoLineInfo) {.nifOpens.} =
   ## Opens a tree using a textual tag, interning it when necessary.
   t.openTag(pluginTags.tags.getOrIncl(tag))
   appendInfo(t, info)
 
-proc closeTree*(t: var NifBuilder) =
+proc closeTree*(t: var NifBuilder) {.nifCloses.} =
   ## Seals the most recently opened tree.
   t.closeTag()
 
@@ -233,30 +233,30 @@ template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) {.nifWrap
   leavePluginScope(n, inputScope)
   t.closeTree()
 
-proc addTree*(t: var NifBuilder; child: NifBuilder) =
+proc addTree*(t: var NifBuilder; child: NifBuilder) {.nifEmits: Any.} =
   ## Appends every complete top-level value from `child`.
   t.addBufferSamePool(child)
 
 proc addSymUse*(t: var NifBuilder; s: SymId;
-                info: LineInfo = NoLineInfo) =
+                info: LineInfo = NoLineInfo) {.nifEmits: Y.} =
   ## Appends a symbol use from a plugin-pool symbol handle.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
 
 proc addSymUse*(t: var NifBuilder; s: string;
-                info: LineInfo) =
+                info: LineInfo) {.nifEmits: Y.} =
   ## Appends a symbol use from its textual name with source information.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
 
 proc addSymDef*(t: var NifBuilder; s: SymId;
-                info: LineInfo = NoLineInfo) =
+                info: LineInfo = NoLineInfo) {.nifEmits: D.} =
   ## Appends a symbol definition from a plugin-pool symbol handle.
   nifcore.addSymDef(t, s)
   appendInfo(t, info)
 
 proc addSymDef*(t: var NifBuilder; s: string;
-                info: LineInfo = NoLineInfo) =
+                info: LineInfo = NoLineInfo) {.nifEmits: D.} =
   ## Appends a symbol definition from its textual name.
   nifcore.addSymDef(t, s)
   appendInfo(t, info)
@@ -400,7 +400,7 @@ proc bindSym*(t: var NifBuilder; name: string;
   ##
   ## `name` must be a string literal — sem rejects non-literal arguments.
 
-proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
+proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) {.nifEmits: Dot.} =
   ## Appends a single empty placeholder node (`.`) to `t`.
   t.addDotToken()
   appendInfo(t, info)

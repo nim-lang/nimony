@@ -34,6 +34,7 @@ include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / models / [tags, nimony_tags]
 import ".." / nimony / [nimony_model, decls, programs]
+import tags_grammar
 import semfacts
 
 type
@@ -47,6 +48,7 @@ type
 
   SemCheckContext* = object
     m*: SemModule
+    grammar*: TagGrammar
     violations*: seq[Violation]
     strict*: bool
     noColors*: bool
@@ -168,7 +170,7 @@ proc classifyCall(p: ProcFacts; n: Cursor; origin: NodeOrigin; idiom: string): i
       return 1
   of roleReads, roleBalanced, roleWrap, roleDelegates:
     return 0
-  of roleEmits:
+  of roleEmits, roleOpens, roleCloses:
     if isCall and hasTrackedArg(p, n, tkTokenBuf): return -1
   of roleNone:
     if isCall:
@@ -478,6 +480,190 @@ proc scanForNonExhaustiveCases(ctx: var SemCheckContext) =
               skip peek
 
 # ---------------------------------------------------------------------------
+# Constructed trees: does what a routine builds conform to `doc/tags.md`?
+# ---------------------------------------------------------------------------
+#
+# Post-sem this needs no idiom recognition at all. `dest.copyIntoKind VarS,
+# info: …` is a template, so what is left in the tree is the `addParLe(dest,
+# VarS, info)` … `addParRi(dest)` it is made of — and a pass that writes that
+# pair out by hand is checked the same way, which the untyped engine cannot do
+# because it only ever looked at `copyIntoKind` call sites.
+
+type
+  OpenTree = object
+    tag: string                 ## the grammar tag, "" when not statically known
+    info: NifLineInfo
+    dest: Cursor                ## the buffer being built
+    kids: seq[ChildKind]
+    determinate: bool           ## false once something unanalysable emitted
+
+proc enumNameToTag*(name: string): string =
+  ## `VarS` -> `var`: the enum value a pass names its tag with, mapped back to
+  ## the tag `doc/tags.md` documents.
+  result = ""
+  for e in TagEnum:
+    if e == InvalidTagId: continue
+    let (tagStr, _) = TagData[e]
+    let nimName = tagStr[0].toUpperAscii & tagStr[1..^1]
+    for suffix in ["X", "S", "T", "U", "P", "Y", "H", "F", "V", "Idx", "L", "C", "Q"]:
+      if nimName & suffix == name:
+        return tagStr
+
+proc emittedChildKind(name: string): ChildKind =
+  case name
+  of "D": ckD
+  of "Y": ckY
+  of "LIT": ckLit
+  of "Dot": ckDot
+  of "Nested": ckNested
+  else: ckAny
+
+proc openedTag(n: Cursor): string =
+  ## The tag an opening call names, from its second argument. A tag computed at
+  ## runtime (a `TagId` variable, an interned string) leaves this empty and the
+  ## tree goes unchecked rather than misreported.
+  var i = 0
+  for a in callArgs(n):
+    if i == 1:
+      # `withTree` reaches `openTag` through `cast[TagId](kind)`, which changes
+      # nothing about which tag it is.
+      var t = a
+      if t.isTagLit and t.exprKind == CastX:
+        t = childCursor(t)
+        if t.hasMore: skip t      # the target type
+      if t.kind == Symbol: return enumNameToTag(baseName(t.symId))
+      return ""
+    inc i
+  ""
+
+proc userInfo(ctx: SemCheckContext; n: Cursor): NifLineInfo =
+  ## Where to point a diagnostic about `n`. A call that a template expanded
+  ## carries the template's position, but the arguments the author supplied
+  ## keep theirs — `openTag(o, cast[TagId](VarS))` has `o` sitting on the
+  ## `o.withTree VarS, info:` line the author actually wrote.
+  result = n.info
+  if originOf(result, ctx.m.file)[0] == noUser:
+    return
+  var c = n
+  if c.isTagLit:
+    c = childCursor(c)
+    while c.hasMore:
+      if originOf(c.info, ctx.m.file)[0] == noUser:
+        return c.info
+      skip c
+
+proc firstArg(n: Cursor): Cursor =
+  for a in callArgs(n):
+    return a
+  default(Cursor)
+
+proc checkOpenTree(ctx: var SemCheckContext; t: OpenTree; procName: string) =
+  ## Match one completed tree against the grammar. An indeterminate sequence is
+  ## not a violation — it is a tree this analysis could not read.
+  if not t.determinate or t.tag.len == 0: return
+  if t.tag notin ctx.grammar: return
+  var bestErrors: seq[string] = @[]
+  for spec in ctx.grammar[t.tag]:
+    let errs = tryMatchSpec(t.kids, spec)
+    if errs.len == 0: return
+    if bestErrors.len == 0 or errs.len < bestErrors.len:
+      bestErrors = errs
+  for e in bestErrors:
+    ctx.addViolation t.info, procName & " builds (" & t.tag & ")", e
+
+proc addKid(stack: var seq[OpenTree]; k: ChildKind) =
+  if stack.len > 0: stack[^1].kids.add k
+
+proc markIndeterminate(stack: var seq[OpenTree]) =
+  if stack.len > 0: stack[^1].determinate = false
+
+proc walkEmission(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
+                  stack: var seq[OpenTree])
+
+proc walkEmissionSeq(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
+                     stack: var seq[OpenTree]) =
+  eachChild(n):
+    walkEmission(ctx, p, child, stack)
+
+proc walkEmission(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
+                  stack: var seq[OpenTree]) =
+  if not n.isTagLit: return
+  if n.exprKind in CallKinds:
+    let callee = calleeSym(n)
+    case roleOfSym(callee)
+    of roleOpens:
+      stack.add OpenTree(tag: openedTag(n), info: userInfo(ctx, n),
+                         dest: firstArg(n), kids: @[], determinate: true)
+      return
+    of roleCloses:
+      if stack.len > 0:
+        let done = stack.pop()
+        checkOpenTree(ctx, done, p.name)
+        addKid(stack, ckNested)
+      return
+    else:
+      let k = emittedKindOf(callee)
+      if k == "None":
+        return                    # takes the buffer, contributes no child
+      if k.len > 0:
+        if stack.len > 0 and sameLvalue(firstArg(n), stack[^1].dest):
+          addKid(stack, emittedChildKind(k))
+        return
+      # An ordinary call that is handed the buffer emits an unknown number of
+      # children. Nothing is wrong with that; it just cannot be counted.
+      if stack.len > 0 and hasTrackedArg(p, n, tkTokenBuf):
+        markIndeterminate(stack)
+    # arguments may themselves contain emitting calls
+    for a in callArgs(n):
+      walkEmission(ctx, p, a, stack)
+    return
+
+  case n.stmtKind
+  of StmtsS:
+    walkEmissionSeq(ctx, p, n, stack)
+  of IfS, CaseS:
+    # Every branch must build the same children for the sequence to be known.
+    # Comparing them is what makes `if … : addDotToken else: addSymUse` an
+    # honest "one child of either kind" instead of two.
+    let depth = stack.len
+    let before = if depth > 0: stack[^1].kids.len else: 0
+    var first: seq[ChildKind] = @[]
+    var sawBranch = false
+    var agree = true
+    eachChild(n):
+      if child.isTagLit and child.substructureKind in {ElifU, ElseU, OfU}:
+        var inner = childCursor(child)
+        if child.substructureKind in {ElifU, OfU} and inner.hasMore:
+          skip inner
+        while inner.hasMore:
+          walkEmission(ctx, p, inner, stack)
+          skip inner
+        if stack.len != depth:
+          agree = false          # a branch left a tree open: give up on both
+        elif depth > 0:
+          let got = stack[^1].kids[before .. ^1]
+          stack[^1].kids.setLen before
+          if not sawBranch: first = got
+          elif got != first: agree = false
+          sawBranch = true
+    if depth > 0 and stack.len == depth:
+      if agree and sawBranch:
+        for k in first: stack[^1].kids.add k
+      elif sawBranch:
+        markIndeterminate(stack)
+  of WhileS, ForS:
+    # A loop emits an unknown number of times.
+    markIndeterminate(stack)
+    walkEmissionSeq(ctx, p, n, stack)
+  else:
+    walkEmissionSeq(ctx, p, n, stack)
+
+proc scanConstructedTrees(ctx: var SemCheckContext) =
+  for p in ctx.m.procs:
+    var stack: seq[OpenTree] = @[]
+    walkEmission(ctx, p, p.body, stack)
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -494,18 +680,19 @@ proc dumpFacts*(ctx: SemCheckContext) =
         echo "    ", (if v.isParam: "param " else: "local "), v.name, ": ",
              (if v.isMut: "var " else: ""), v.tracked
 
-proc validateSemModule*(nifFile, sourceFile: string; strict, noColors: bool;
-                        dump = false): int =
+proc validateSemModule*(nifFile, sourceFile: string; grammar: TagGrammar;
+                        strict, noColors: bool; dump = false): int =
   ## Runs every check over one semchecked module. Returns the number of errors
   ## (warnings do not affect the exit code).
   var owningBuf = default(TokenBuf)
-  var ctx = SemCheckContext(strict: strict, noColors: noColors)
+  var ctx = SemCheckContext(grammar: grammar, strict: strict, noColors: noColors)
   ctx.m = openSemModule(nifFile, sourceFile, owningBuf)
   if dump: dumpFacts ctx
 
   scanObligations ctx
   scanCursorBufferBalance ctx
   scanWhileTermination ctx
+  scanConstructedTrees ctx
   if strict:
     scanUnsafeCursorOps ctx
     scanForNonExhaustiveCases ctx

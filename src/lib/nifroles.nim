@@ -47,3 +47,20 @@ template nifReads*() {.pragma.}
 
 template nifDelegates*() {.pragma.}
   ## Hands the cursor to another pass, which owns the obligation from there.
+
+template nifEmits*(kind: untyped) {.pragma.}
+  ## Emits exactly one child, of the given grammar kind: `D` (SymbolDef), `Y`
+  ## (symbol or identifier), `LIT` (a literal), `Dot` (the empty placeholder)
+  ## `Any` (a whole subtree whose shape is not known here), or `None` for a
+  ## routine that is handed the buffer but adds no child of its own -- the
+  ## line-info attachment behind every atom, say, which would otherwise read as
+  ## an emission nobody can count. This is what
+  ## lets the validator reconstruct the sequence of children a routine builds
+  ## and check it against the grammar in `doc/tags.md`.
+
+template nifOpens*() {.pragma.}
+  ## Opens a tree whose tag is its second argument. What follows until the
+  ## matching `{.nifCloses.}` are that tree's children.
+
+template nifCloses*() {.pragma.}
+  ## Closes the innermost tree opened by a `{.nifOpens.}` routine.
