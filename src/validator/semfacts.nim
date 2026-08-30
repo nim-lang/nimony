@@ -516,7 +516,10 @@ proc movesCursor*(p: ProcFacts; n: Cursor): bool =
         let v = p.vars[a.symId]
         if v.tracked == tkCursor and v.isParam and v.isMut: return true
     elif a.isTagLit and a.exprKind in {HaddrX, AddrX}:
-      if classifyExpr(p, childCursor(a)) == tkCursor: return true
+      let inner = unwrapAddr(a)
+      if inner.kind == Symbol and p.vars.hasKey(inner.symId):
+        let v = p.vars[inner.symId]
+        if v.tracked == tkCursor and v.isParam: return true
   false
 
 # ---------------------------------------------------------------------------
