@@ -311,6 +311,142 @@ proc scanUnsafeCursorOps(ctx: var SemCheckContext) =
     scanUnsafeCursorOpsIn(ctx, p, p.body, false, false)
 
 # ---------------------------------------------------------------------------
+# Loop termination
+# ---------------------------------------------------------------------------
+
+proc mentionedTracked(p: ProcFacts; n: Cursor; k: TrackedKind;
+                      found: var seq[SymId]) =
+  ## Every variable of kind `k` named anywhere in a subtree, expansions
+  ## included — a `while n.hasMore` condition is `0 < n.rem` by the time we see
+  ## it, so the cursor is found by identity rather than by the spelling of the
+  ## template that tested it.
+  if n.kind == Symbol:
+    let s = n.symId
+    if p.vars.hasKey(s) and p.vars[s].tracked == k:
+      for e in found:
+        if e == s: return
+      found.add s
+  eachChild(n):
+    mentionedTracked(p, child, k, found)
+
+proc mentionsSym(n: Cursor; s: SymId): bool =
+  if n.kind == Symbol and n.symId == s: return true
+  eachChild(n):
+    if mentionsSym(child, s): return true
+  false
+
+proc mutates(n: Cursor; s: SymId; isMutParam: bool): bool =
+  ## True when the subtree hands `s`'s *location* to something, or assigns to
+  ## it — "something here could move it". It needs no list of advancing
+  ## routines and sees through template expansions, because it asks the same
+  ## question of `enterScope(c)` in an expansion as of a pass's own `tr(c, n)`.
+  ##
+  ## A `var` parameter is already a pointer at this stage, so the two cases
+  ## look different and the difference is exactly the one that matters:
+  ## handing a local over takes its address (`(haddr x)`), while handing a
+  ## `var` parameter over passes it *bare* — reading one is what carries a
+  ## wrapper, `(hderef n)`. So for a parameter the test is a bare symbol in a
+  ## direct argument slot, which `(call kind (hderef n))` is not.
+  if n.isTagLit:
+    if n.exprKind in {HaddrX, AddrX}:
+      var c = childCursor(n)
+      if c.kind == Symbol and c.symId == s: return true
+    elif n.stmtKind == AsgnS:
+      var c = childCursor(n)
+      if c.kind == Symbol and c.symId == s: return true
+    elif isMutParam and n.exprKind in CallKinds:
+      for a in callArgs(n):
+        if a.kind == Symbol and a.symId == s: return true
+  eachChild(n):
+    if mutates(child, s, isMutParam): return true
+  false
+
+proc branchesAdvance(n: Cursor; s: SymId; isMutParam: bool;
+                     branchTags: set[NimonyOther]): bool
+
+proc mustAdvance(n: Cursor; s: SymId; isMutParam: bool): bool =
+  ## Guaranteed progress on `s` along every path through `n`.
+  if not n.isTagLit: return false
+  case n.stmtKind
+  of StmtsS:
+    # sequential: one statement that always runs is enough
+    eachChild(n):
+      if mustAdvance(child, s, isMutParam): return true
+    false
+  of IfS:
+    branchesAdvance(n, s, isMutParam, {ElifU, ElseU})
+  of CaseS:
+    branchesAdvance(n, s, isMutParam, {OfU, ElseU})
+  of WhileS, ForS, TryS:
+    # a loop or a `try` may run zero times / take the handler: no guarantee
+    false
+  of BlockS:
+    var body = childCursor(n)
+    if body.hasMore: skip body   # label
+    mustAdvance(body, s, isMutParam)
+  else:
+    mutates(n, s, isMutParam)
+
+proc branchesAdvance(n: Cursor; s: SymId; isMutParam: bool;
+                     branchTags: set[NimonyOther]): bool =
+  ## Every branch advances *and* the branches are exhaustive — without an
+  ## `else` the fall-through path makes no progress.
+  var sawBranch = false
+  var hasElse = false
+  result = true
+  eachChild(n):
+    if child.isTagLit:
+      let b = child.substructureKind
+      if b in branchTags:
+        sawBranch = true
+        if b == ElseU: hasElse = true
+        var inner = childCursor(child)
+        if b in {ElifU, OfU} and inner.hasMore:
+          skip inner            # condition / ranges
+        var advanced = false
+        while inner.hasMore:
+          if mustAdvance(inner, s, isMutParam): advanced = true
+          skip inner
+        if not advanced: result = false
+  result = result and sawBranch and hasElse
+
+proc whileBody(n: Cursor): Cursor =
+  result = childCursor(n)
+  if result.hasMore: skip result    # condition
+
+proc scanWhileTermination(ctx: var SemCheckContext) =
+  ## A loop bounded by a cursor must move that cursor on every path through its
+  ## body, or it does not terminate.
+  ##
+  ## Which loops those are is decided by what the condition *mentions*, not by
+  ## how it is written: `while n.hasMore` reaches us as `0 < n.rem` because
+  ## `hasMore` is a template, and a check that matched the surface form would
+  ## simply stop seeing these loops. The counter form (`while x > 0 and …`,
+  ## lowered to a comparison against a literal) is covered by the same rule,
+  ## since `dec x` mutates `x` exactly as `skip n` moves `n`.
+  ##
+  ## Loops bounded by neither get no diagnostic. The untyped engine ends with
+  ## "termination proof not recognized" for those; post-sem that would fire on
+  ## every ordinary loop in a plugin, because the forms it recognizes are the
+  ## ones sem expands away.
+  for p in ctx.m.procs:
+    var body = p.body
+    body.linearScan:
+      # No `continue` in here: `linearScan` is a template whose loop advances
+      # after the body, so continuing it would skip that and spin forever.
+      if body.stmtKind == WhileS and originOf(body.info, ctx.m.file)[0] == noUser:
+        var cond = childCursor(body)
+        var cursors: seq[SymId] = @[]
+        mentionedTracked(p, cond, tkCursor, cursors)
+        let loopBody = whileBody(body)
+        for s in cursors:
+          let v = p.vars[s]
+          if not mustAdvance(loopBody, s, v.isParam and v.isMut):
+            ctx.addWarning body.info, p.name,
+              "loop is bounded by `" & p.vars[s].name &
+              "` but not every path through its body advances it"
+
+# ---------------------------------------------------------------------------
 # Exhaustive `case` over a tag-kind discriminator
 # ---------------------------------------------------------------------------
 
@@ -369,6 +505,7 @@ proc validateSemModule*(nifFile, sourceFile: string; strict, noColors: bool;
 
   scanObligations ctx
   scanCursorBufferBalance ctx
+  scanWhileTermination ctx
   if strict:
     scanUnsafeCursorOps ctx
     scanForNonExhaustiveCases ctx
