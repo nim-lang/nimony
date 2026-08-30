@@ -12,7 +12,8 @@ echo draws
 var r2 = initRand(42)
 echo r2.rand(999)                      # first draw again — reproducible
 
-# (rand(float) is broken on the NATIVE backend — see nativebugs/rand_float.nim)
+# (rand(float) was once broken on the NATIVE backend; it has its own fixture now
+# — see rand_float.nim)
 
 # intsets: sparse int membership (no len in nimony's IntSet; iteration order
 # is hash-dependent — stick to contains)

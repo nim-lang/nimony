@@ -61,6 +61,15 @@ type
   Match* = object
     inferred*: Table[SymId, Cursor]
     tvars: HashSet[SymId]
+    unboundTvars: int ## how many of `tvars` still lack a binding; counted down
+                      ## by `bindTypevar` as the bindings happen, so "can this
+                      ## candidate be instantiated at all?" never has to walk
+                      ## the generic parameters again. Concept probing restores
+                      ## `inferred` wholesale (`inferenceBase`), which can put a
+                      ## typevar back to unbound behind the count's back; that
+                      ## direction only makes `sigmatch` MISS a rejection —
+                      ## never invent one — and `buildTypeArgs` still catches it
+                      ## the way it always did.
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
@@ -84,6 +93,16 @@ type
 
 proc createMatch*(context: ptr SemContext): Match =
   Match(context: context, firstVarargPosition: -1, varargsEndPosition: -1)
+
+proc bindTypevar(m: var Match; fs: SymId; a: Cursor) =
+  ## Record a FRESH binding for the formal typevar `fs`. Every call site is
+  ## already inside the "not `inferred.contains(fs)`" branch, so the count is
+  ## never decremented twice for the same typevar. Typevars that are not the
+  ## candidate's own — an enclosing generic's, or the argument's under
+  ## `InferActualTypevar` — are bound but not counted, exactly as
+  ## `matchTypevars` did not count them.
+  m.inferred[fs] = a
+  if fs in m.tvars: dec m.unboundTvars
 
 proc addMissingConstraint*(m: var Match; routine: Cursor) =
   let key = asNimCode(routine, {renderNoBody})
@@ -680,7 +699,7 @@ proc bindStaticTypevar(m: var Match; fs: SymId; elemType: Cursor; a: Cursor): bo
     if pv.isNaN: return false
     let av2 = foldValueExpr(m, av)
     return not av2.isNaN and pv == av2
-  m.inferred[fs] = av
+  bindTypevar m, fs, av
   return true
 
 proc bindStaticTypevar(m: var Match; fs: SymId; a: Cursor): bool =
@@ -996,7 +1015,7 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
       var prev = m.inferred.getOrQuit(fs)
       rematchInferredTypevar(m, fs, prev, f, a, fOrig, aOrig, flags)
     elif matchesConstraint(m, fs, a):
-      m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
+      bindTypevar m, fs, a # NOTICE: Can introduce modifiers for a type var!
       inc f
       skip a
     else:
@@ -1496,7 +1515,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       # specificity probe: there the candidates already matched the real call,
       # so we measure which formal is more specialized without re-validating
       # the constraint (a concrete `int` arg need not satisfy `T`'s concept).
-      m.inferred[fs] = a
+      bindTypevar m, fs, a
     else:
       m.error ConstraintMismatch, f, a
   elif isObjectType(fs):
@@ -2398,10 +2417,12 @@ proc notATypeArg(e: Cursor): bool =
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
   m.tvars = default(HashSet[SymId])
+  m.unboundTvars = 0
   if fn.kind in RoutineKinds:
     var e = explicitTypeVars
     for v in typeVars(fn.sym):
       m.tvars.incl v
+      inc m.unboundTvars
       if e.isDotToken: discard
       elif not e.hasMore:
         m.error0Typevar MissingExplicitGenericParameter, v
@@ -2415,7 +2436,7 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
           if not bindStaticTypevar(m, v, typevar.typ, e):
             m.error ConstraintMismatch, typevar.typ, e
         elif matchesConstraint(m, v, e):
-          m.inferred[v] = e
+          bindTypevar m, v, e
         elif notATypeArg(e):
           m.error ExplicitGenericArgNotAType, typevar.typ, e
         else:
@@ -2458,14 +2479,43 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
     f = paramsStart; skip f
     m.returnType = f # return type follows the parameters in the token stream
 
+  if m.unboundTvars > 0 and not m.err and not m.insertedParam:
+    # The arguments have had their say and the only thing that can still bind a
+    # typevar is `inferTypevarsFromExpected`, which reaches them through the
+    # return type — plus, when a parameter was left to its default,
+    # `addArgsInstConverters`, which instantiates that default expression and
+    # matches it against the formal (`proc foo6[T](x: T = 3)` called as
+    # `foo6()` infers `T` from the `3`). Hence `insertedParam` bows out here.
+    # So a typevar left over in a routine whose return type is concrete and
+    # whose parameters all got arguments is one that nothing will ever bind: an
+    # ORPHAN type parameter,
+    # like `Z` in `func foo[Z: static int](x: float)`. It cannot be
+    # instantiated, hence it is not a match at all — left in the running it
+    # ties the non-generic `foo(x: float)` at `pickBestMatch` and turns a
+    # perfectly clear call into "ambiguous call" (#2392). Walking the typevars
+    # is confined to this failure path: it only serves to name the culprit.
+    if cursorIsNil(m.returnType) or not containsGenericParams(m.returnType):
+      for v in m.tvars:
+        if not m.inferred.hasKey(v):
+          m.error0Typevar CouldNotInferTypeVar, v
+          break
+
 proc hasUnboundTypevars*(m: Match): bool =
   ## True if `m.fn`'s generic typevars (as collected by `matchTypevars`) still
-  ## lack a binding after argument matching. Cheap: just consults the
-  ## `tvars`/`inferred` bookkeeping already built up, no extra lookups.
-  for v in m.tvars:
-    if not m.inferred.hasKey(v):
-      return true
-  return false
+  ## lack a binding after argument matching. Free: `bindTypevar` keeps the
+  ## count up to date as the bindings happen.
+  m.unboundTvars > 0
+
+proc allUninstantiable*(m: openArray[Match]): bool =
+  ## Every candidate was dropped for the same reason: a type parameter nothing
+  ## can bind (see the end of `sigmatch`). The overload-set "Type mismatch"
+  ## report would then bury the one fact that matters under a position marker
+  ## for an argument that matched fine, so `resolveOverloads` reports the first
+  ## candidate's "could not infer type for T" on its own instead.
+  result = m.len > 0
+  for i in 0..<m.len:
+    if not (m[i].err and m[i].error.kind == CouldNotInferTypeVar):
+      return false
 
 proc buildTypeArgs*(m: var Match) =
   # check all type vars have a value:

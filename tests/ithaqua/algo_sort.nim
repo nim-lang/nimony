@@ -43,5 +43,5 @@ sort(pairs, cmpFirst)
 for (k, v) in pairs.items:
   echo k, ":", v                       # 1:1 1:2 2:1 2:2 2:3
 
-# (sort of a len<2 seq — empty OR one-element — segfaults the NATIVE
-# backend; see nativebugs/sort_empty.nim. Re-add both here when fixed.)
+# (sort of a len<2 seq — empty OR one-element — once segfaulted the NATIVE
+# backend; it has its own fixture now — see sort_empty.nim)

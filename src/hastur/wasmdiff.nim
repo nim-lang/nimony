@@ -13,10 +13,10 @@
 ##   wasm leg:   `nimony w --out:<work>/out.wasm <f>` (hexer -> dce -> ithaqua,
 ##               orchestrated by nifmake), then `node run_wasm.js out.wasm`.
 ##
-## The oracle cuts both ways: several fixtures were quarantined under
-## `tests/ithaqua/nativebugs/` because the NATIVE leg is the one that is wrong.
-## They are kept as sources, out of the sweep, so the reproducers do not get
-## lost — see that directory's README.
+## The oracle cuts both ways: fixtures whose NATIVE leg is the wrong one get
+## quarantined too, as `tests/ithaqua/nativebugs/` once held. They are kept as
+## sources, out of the sweep, so the reproducers do not get lost; when the oracle
+## is fixed they move back up into the sweep.
 
 import std / [syncio, os, osproc, strutils, times, algorithm]
 import context, builders
@@ -69,8 +69,9 @@ proc wasmdiffCmd*() =
 
   var files: seq[string] = @[]
   for x in walkDir(dir):
-    # Top level only — `nativebugs/` and `wasmgaps/` hold quarantined repros of
-    # bugs on one side or the other and are deliberately not swept.
+    # Top level only — `wasmgaps/` (and any future `nativebugs/`) holds
+    # quarantined repros of bugs on one side or the other and is deliberately
+    # not swept.
     if x.kind == pcFile and x.path.endsWith(".nim") and
        x.path.extractFilename notin ["setup.nim", "_hastur_joined.nim"]:
       files.add x.path

@@ -24,8 +24,8 @@ echo "ab".repeat(3)                   # ababab
 echo repeat('-', 5)                   # -----
 echo "|", spaces(3), "|"
 
-# comparisons (cmpIgnoreCase breaks the NATIVE backend's register allocator —
-# see nativebugs/cmp_ignore_case.nim)
+# comparisons (cmpIgnoreCase once broke the NATIVE backend's register allocator;
+# it has its own fixture now — see cmp_ignore_case.nim)
 echo normalize("Foo_Bar")             # foobar
 
 # escape, which is `.raises`-free, still round-trips through this file. The

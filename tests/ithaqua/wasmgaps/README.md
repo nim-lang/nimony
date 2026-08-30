@@ -1,6 +1,6 @@
 # Wasm-backend (ithaqua) gap repros
 
-The mirror image of `../nativebugs/`. Each file here is a MINIMAL repro of a
+Each file here is a MINIMAL repro of a
 construct the WASM leg (`nimony w` -> ithaqua) cannot compile yet, while the
 native oracle handles it fine — so it is quarantined out of `tests/ithaqua/`
 (wasmdiff walks only the top level) until ithaqua grows the lowering.
