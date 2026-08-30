@@ -10,7 +10,7 @@
 # polled" hang.
 
 import std/[assertions, atomics, posix/posix, ticketlocks, threadpool]
-import std/syncio
+import std/syncio   # quit
 import ../../posix/io_uring
 import ../core/types
 import ../core/slots
@@ -33,9 +33,8 @@ proc tryInitLocalQueues(): bool =
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
-  except ErrorCode as e:
-    stderr.writeLine("ioring: failed to init io_uring queue: " & $e)
-    return false
+  except ErrorCode:
+    return false   # the caller falls back to the epoll backend
   return true
 
 proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
@@ -78,8 +77,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       var sqe: nil ptr Sqe
       try:
         sqe = localQueues[lane].getSqe()
-      except ErrorCode as e:
-        stderr.writeLine("ioring: failed to get sqe: " & $e)
+      except ErrorCode:
         # Ops buf[i..<n] were dequeued but never got an SQE/slot; put them
         # back so the next poll picks them up instead of losing them forever.
         for k in i..<n:
