@@ -486,11 +486,13 @@ proc loadFromFile*(f: File): BifModule =
     let dest = result.buf.growRawUninit(tokenCount)
     let bytes = tokenCount * sizeof(NifToken)
     readExact(f, dest, bytes)
-  # pools: re-intern in stored (id) order so ids 1,2,… match the token refs.
-  for _ in 1 .. nTags:    discard result.buf.tags.tags.getOrIncl(readStr(f))
-  for _ in 1 .. nStrings: discard result.buf.pool.strings.getOrIncl(readStr(f))
-  for _ in 1 .. nSyms:    discard result.buf.pool.syms.getOrIncl(readStr(f))
-  for _ in 1 .. nFiles:   discard result.buf.pool.filenames.getOrIncl(readStr(f))
+  # pools: append in stored (id) order so ids 1,2,… match the token refs. No
+  # hashing — `addOrdered` leaves the reverse index unbuilt, and `getOrIncl` (or
+  # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
+  for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(readStr(f))
+  for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(readStr(f))
+  for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(readStr(f))
+  for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(readStr(f))
   # symbol index (we are now positioned exactly at indexOffset).
   result.index = readIndex(f)
 
@@ -568,11 +570,13 @@ proc load*(filename: string): BifModule =
   assert r.pos + tokenBytes <= r.size, "bif: truncated token block"
   result.buf = adoptForeignTokens(cast[pointer](r.base + uint(r.pos)), tokenCount)
   r.pos += tokenBytes
-  # pools: re-intern in stored (id) order so ids 1,2,… match the token refs.
-  for _ in 1 .. nTags:    discard result.buf.tags.tags.getOrIncl(rStr(r))
-  for _ in 1 .. nStrings: discard result.buf.pool.strings.getOrIncl(rStr(r))
-  for _ in 1 .. nSyms:    discard result.buf.pool.syms.getOrIncl(rStr(r))
-  for _ in 1 .. nFiles:   discard result.buf.pool.filenames.getOrIncl(rStr(r))
+  # pools: append in stored (id) order so ids 1,2,… match the token refs. No
+  # hashing — `addOrdered` leaves the reverse index unbuilt, and `getOrIncl` (or
+  # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
+  for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(rStr(r))
+  for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(rStr(r))
+  for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(rStr(r))
+  for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(rStr(r))
   # symbol index (we are now positioned exactly at indexOffset).
   let nIndex = int rVarint(r)
   result.index = newSeq[IndexEntry](nIndex)
