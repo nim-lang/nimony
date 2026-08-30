@@ -425,7 +425,9 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
   # diagnostics, and printing them twice would only obscure them.
   var checkCode = 0
   try:
-    checkCode = execCmdEx(checkCmd).exitCode
+    # Positional, not `.exitCode`: nimony's own `execCmdEx` returns an unnamed
+    # tuple, and this module is compiled by nimony when it compiles itself.
+    checkCode = int(execCmdEx(checkCmd)[1])
   except:
     checkCode = -1
   if checkCode != 0: return
