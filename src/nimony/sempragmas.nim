@@ -81,6 +81,21 @@ proc customPragmaSym*(c: SemContext; name: StrId): SymId =
 proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
   name in c.customPragmaTemplates or customPragmaSym(c, name) != NoSymId
 
+proc resolveCustomPragma(c: SemContext; n: Cursor): SymId =
+  ## The `{.pragma.}` template an annotation refers to.
+  ##
+  ## A template body is semchecked in the scope the template was *declared*
+  ## in, so an annotation written there arrives already bound and must be
+  ## taken as it is: looking its name up again where the template expands is
+  ## the hygiene bug -- `std/json` wraps `nifcore.into`, so `into`'s body ends
+  ## up expanded in a module that never imported the annotation's own module,
+  ## and the name resolves to nothing there.
+  if n.kind == Symbol and symbolIsCustomPragmaTemplate(n.symId):
+    result = n.symId
+  else:
+    let name = getIdent(n)
+    result = if name != StrId(0): c.customPragmaSym(name) else: NoSymId
+
 proc isPreservedCustomPragma(n: Cursor): bool =
   ## True when `n` is a previously-preserved custom-pragma attachment
   ## `(pragma <sym>)` (the `pragma` tag with a symbol child), as opposed to the
@@ -162,7 +177,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         var read = beginRead(pragBuf[])
         while read.hasMore:
           semPragma c, dest, read, crucial, kind
-      elif name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
+      elif (let psym = c.resolveCustomPragma(n); psym != NoSymId):
         # Pragma that resolves to a `template X {.pragma.}` declaration. Unlike
         # Nim (which drops `sfCustomPragma`), preserve it as
         # `(pragma <sym> <args>)` so it survives into the serialized decl and
@@ -1245,8 +1260,7 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
   else:
-    let name = getIdent(it.n)
-    if name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
+    if (let psym = c.resolveCustomPragma(it.n); psym != NoSymId):
       # A custom pragma as a *statement*. It marks the region it stands in
       # rather than a declaration, which is what a wrapper template needs: the
       # marker is written in the template's body, so every expansion carries it
