@@ -1,1 +1,5 @@
-tests/validator_sem/tgrammar.nim(7, 3) Error: expected 5..5 children, got 1 [buildBad builds (var)]
+tests/validator_sem/tgrammar.nim(9, 3) Error: expected 5..5 children, got 1 [buildBad builds (var)]
+tests/validator_sem/tgrammar.nim(21, 3) Error: child 0: got DotToken, expected type [buildRefOfNothing builds (ref)]
+tests/validator_sem/tgrammar.nim(26, 3) Error: expected 3..3 children, got 2 [buildShortAdd builds (add)]
+tests/validator_sem/tgrammar.nim(32, 3) Error: child 0: got SymDef, expected expr [buildAsgnOfDecl builds (asgn)]
+tests/validator_sem/tgrammar.nim(32, 3) Error: child 1: got DotToken, expected expr [buildAsgnOfDecl builds (asgn)]

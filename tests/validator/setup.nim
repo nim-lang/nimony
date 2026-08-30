@@ -1,9 +1,9 @@
-## Custom runner for the validator: build `validator`, then run it over the
-## compiler pass sources (grammar/obligation checks) and the deliberately
-## broken `tests/check_tags` fixtures — both through the untyped front end —
-## and finally over `tests/validator_sem`, which exercises the semchecked one.
-## A directory with just this file: the suite validates `src/…` and a sibling
-## fixture folder, not a folder of inputs of its own.
+## Custom runner for the validator: build it and nimony, then run it over the
+## compiler pass sources (which must come back clean) and over the
+## deliberately broken `tests/validator_sem` fixtures (which must come back
+## with exactly the diagnostics they name). A directory with just this file:
+## the suite validates `src/…` and a sibling fixture folder, not a folder of
+## inputs of its own.
 import std / [os, strutils]
 import "../../src/hastur/kit"
 
@@ -13,12 +13,13 @@ proc arg(name: string): string =
     if p.startsWith(prefix): return p[prefix.len .. ^1]
   result = ""
 
+let overwrite = "--overwrite" in commandLineParams()
+
 if arg("bindir").len > 0: toolchainDir = arg("bindir")
 if arg("cachedir").len > 0: nimcacheDir = arg("cachedir")
 
+# The validator reads what sem produced, so the suite builds nimony too and
+# semchecks its inputs itself.
 buildValidator()
-validatorTests()
-# The semchecked front end needs the compiler to produce the artefacts it
-# reads, so this half of the suite depends on nimony as well.
 buildNimony()
-semValidatorTests("--overwrite" in commandLineParams())
+validatorTests(overwrite)

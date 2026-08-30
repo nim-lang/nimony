@@ -58,86 +58,76 @@ proc runNifToolTests*(tool, testDir, inputExt, expectedExt: string; overwrite: b
 # `tests/` that call `runNifToolTests` directly; their old wrapper procs and
 # subcommands are gone.
 
-proc validatorTests*() =
-  ## Run the validator over compiler pass source files to verify NIF construction
-  ## conforms to the grammar in doc/tags.md, plus obligation tracking and
-  ## while-ParRi completion checks (the latter as warnings, not errors).
-  ## Also runs fake_pass.nim which has deliberate errors and checks expected output.
-  let t0 = epochTime()
-  var c = TestCounters(total: 0, failures: 0)
-  const passFiles = [
-    "src/hexer/lambdalifting.nim",
-    "src/hexer/destroyer.nim",
-    "src/hexer/xelim.nim",
-    "src/hexer/desugar.nim",
-    "src/hexer/cps.nim",
-    "src/hexer/duplifier.nim",
-    "src/hexer/lengcgen.nim",
-    "src/hexer/eraiser.nim",
-    #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
-    "src/hexer/iterinliner.nim",
-    "src/hexer/constparams.nim",
-    "src/nimony/sem.nim",
-    "src/nimony/semdecls.nim",
-    "src/nimony/controlflow.nim",
-    "src/nimony/deferstmts.nim"]
-  for f in passFiles:
-    inc c.total
-    let (msgs, exitcode) = execLocal("validator", "--strict " & os.quoteShell(f))
-    if exitcode != 0:
-      failure c, f, "validator: no violations", msgs
-  # fake_pass.nim must produce the expected violations
-  const fakePassDir = "tests/check_tags"
-  for x in walkDir(fakePassDir, relative = true):
-    if x.kind == pcFile and x.path.endsWith(".nim"):
-      inc c.total
-      let t = fakePassDir / x.path
-      let expectedFile = t.changeFileExt(".expected")
-      let (msgs, exitcode) = execLocal("validator", "--strict " & os.quoteShell(t))
-      if not expectedFile.fileExists():
-        failure c, t, "expected file " & expectedFile & " missing", ""
-      else:
-        let expected = readFile(expectedFile).strip
-        var got = ""
-        for line in msgs.splitLines:
-          if line.contains("Error:") or line.contains("Warning:"):
-            if got.len > 0: got.add "\n"
-            got.add line
-        if got.strip.replace("\\", "/") != expected.strip.replace("\\", "/"):
-          failure c, t, expected, got
-  reportFailures c
-  echo c.total - c.failures, " / ", c.total, " validator tests successful in ",
-    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
-  if c.failures > 0:
-    quit "FAILURE: Some validator tests failed."
-  else:
-    echo "SUCCESS."
+proc semcheckInto(root, cache: string; extraArgs = ""): bool =
+  ## Produce the artefacts the validator reads: `check` stops after sem, so
+  ## this is a fraction of a build (about two seconds for the whole compiler,
+  ## and only the changed modules on a warm cache).
+  createDir cache
+  let (msgs, code) = execLocal("nimony",
+    "--nimcache:" & os.quoteShell(cache) & extraArgs &
+    " check " & os.quoteShell(root))
+  result = code == 0
+  if not result:
+    echo "FAILURE: cannot semcheck ", root, "\n", msgs
 
-proc semValidatorTests*(overwrite: bool) =
-  ## Run the validator's *semchecked* front end over `tests/validator_sem`.
+proc validatorTests*(overwrite: bool) =
+  ## Two halves, one engine.
   ##
-  ## Each fixture is a plugin source: it is semchecked into a scratch cache,
-  ## then validated, and the diagnostics are compared against its `.expected`
-  ## file. A fixture with no violations has an empty one — `tconforms` is
-  ## there precisely to catch the day the grammar check starts inventing
-  ## them.
+  ## The compiler's own passes must come back clean: the validator reads what
+  ## sem produced for each of them, so both roots are semchecked first.
+  ##
+  ## The `tests/validator_sem` fixtures must come back with exactly the
+  ## diagnostics their `.expected` files name. `tconforms.nim` is the important
+  ## one -- it builds a conforming tree and expects nothing, which is what
+  ## catches the day a check starts inventing violations.
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
-  const dir = "tests/validator_sem"
-  let cacheBase = nimcacheDir / "validator_sem"
-  for x in walkDir(dir, relative = true):
+
+  const passRoots = [
+    ("src/hexer/hexer.nim", @[
+      "src/hexer/lambdalifting.nim",
+      "src/hexer/destroyer.nim",
+      "src/hexer/xelim.nim",
+      "src/hexer/desugar.nim",
+      "src/hexer/cps.nim",
+      "src/hexer/duplifier.nim",
+      "src/hexer/lengcgen.nim",
+      "src/hexer/eraiser.nim",
+      #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
+      "src/hexer/iterinliner.nim",
+      "src/hexer/constparams.nim"]),
+    ("src/nimony/nimsem.nim", @[
+      "src/nimony/sem.nim",
+      "src/nimony/semdecls.nim",
+      "src/nimony/controlflow.nim",
+      "src/nimony/deferstmts.nim"])]
+
+  for (root, passFiles) in passRoots:
+    let cache = nimcacheDir / "validate" / splitFile(root).name
+    if not semcheckInto(root, cache):
+      inc c.total
+      failure c, root, "semchecks", "see above"
+      continue
+    for f in passFiles:
+      inc c.total
+      let (msgs, exitcode) = execLocal("validator",
+        "--strict --nimcache:" & os.quoteShell(cache) & " " & os.quoteShell(f))
+      if exitcode != 0:
+        failure c, f, "validator: no violations", msgs
+
+  const fixtureDir = "tests/validator_sem"
+  let fixtureCache = nimcacheDir / "validate" / "fixtures"
+  for x in walkDir(fixtureDir, relative = true):
     if x.kind != pcFile or not x.path.endsWith(".nim"): continue
     inc c.total
-    let src = dir / x.path
-    let cache = cacheBase / x.path.changeFileExt("")
-    createDir cache
-    let (semMsgs, semCode) = execLocal("nimony",
-      "--nimcache:" & os.quoteShell(cache) &
-      " --path:" & os.quoteShell("src/lib") &
-      " --path:" & os.quoteShell("src/nimony/lib") &
-      " check " & os.quoteShell(src))
-    if semCode != 0:
-      failure c, src, "fixture semchecks", semMsgs
+    let src = fixtureDir / x.path
+    let cache = fixtureCache / x.path.changeFileExt("")
+    # The fixtures are plugin sources, so they need the plugin API on the path
+    # exactly as a plugin sub-compile gives it.
+    if not semcheckInto(src, cache,
+        " --path:" & os.quoteShell("src/lib") &
+        " --path:" & os.quoteShell("src/nimony/lib")):
+      failure c, src, "fixture semchecks", "see above"
       continue
     let (msgs, _) = execLocal("validator",
       "--nimcache:" & os.quoteShell(cache) & " " & os.quoteShell(src))
@@ -146,7 +136,7 @@ proc semValidatorTests*(overwrite: bool) =
       if line.contains("Error:") or line.contains("Warning:"):
         # The fixture path is absolute in the diagnostics; keep the tail only.
         var l = line.replace("\\", "/")
-        let cut = l.find(dir)
+        let cut = l.find(fixtureDir)
         if cut >= 0: l = l[cut .. ^1]
         if got.len > 0: got.add "\n"
         got.add l
@@ -159,12 +149,12 @@ proc semValidatorTests*(overwrite: bool) =
       let expected = readFile(expectedFile).strip
       if got.strip != expected:
         failure c, src, expected, got
+
   reportFailures c
-  echo c.total - c.failures, " / ", c.total,
-    " sem validator tests successful in ",
+  echo c.total - c.failures, " / ", c.total, " validator tests successful in ",
     formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
   if c.failures > 0:
-    quit "FAILURE: Some sem validator tests failed."
+    quit "FAILURE: Some validator tests failed."
   else:
     echo "SUCCESS."
 
