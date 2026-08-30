@@ -487,8 +487,8 @@ proc loadFromFile*(f: File): BifModule =
     let bytes = tokenCount * sizeof(NifToken)
     readExact(f, dest, bytes)
   # pools: append in stored (id) order so ids 1,2,… match the token refs. No
-  # hashing — `addOrdered` leaves the reverse index unbuilt, and the first
-  # `getOrIncl`/`getKeyId` on the pool builds it if one ever comes.
+  # hashing — `addOrdered` leaves the reverse index unbuilt, and `getOrIncl` (or
+  # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(readStr(f))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(readStr(f))
   for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(readStr(f))
@@ -571,8 +571,8 @@ proc load*(filename: string): BifModule =
   result.buf = adoptForeignTokens(cast[pointer](r.base + uint(r.pos)), tokenCount)
   r.pos += tokenBytes
   # pools: append in stored (id) order so ids 1,2,… match the token refs. No
-  # hashing — `addOrdered` leaves the reverse index unbuilt, and the first
-  # `getOrIncl`/`getKeyId` on the pool builds it if one ever comes.
+  # hashing — `addOrdered` leaves the reverse index unbuilt, and `getOrIncl` (or
+  # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(rStr(r))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(rStr(r))
   for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(rStr(r))

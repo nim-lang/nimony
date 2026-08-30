@@ -73,6 +73,22 @@ proc rebuildIndex[Id, T](t: var BiTable[Id, T]) =
       j = nextTry(j, maxHash(t))
     t.keys[j] = Id(i + idStart)
 
+proc isIndexed*[Id, T](t: BiTable[Id, T]): bool {.inline.} =
+  ## Whether the reverse (value -> id) index exists. It does not, and only does
+  ## not, between an `addOrdered` fill and the first thing that needs it.
+  t.keys.len != 0 or t.vals.len == 0
+
+proc ensureIndexed*[Id, T](t: var BiTable[Id, T]) =
+  ## Build the reverse index if `addOrdered` left it unbuilt. Idempotent, and
+  ## free for a table that was interned into normally.
+  ##
+  ## `getOrIncl` calls this itself. `getKeyId` cannot — it takes the table
+  ## immutably and changing that would break every caller in the ecosystem for
+  ## the sake of the rare one — so a caller that looks up BY VALUE in a table
+  ## that might have been filled with `addOrdered` calls this first. Getting it
+  ## wrong is an assertion in `getKeyId`, not a wrong answer.
+  if not t.isIndexed: rebuildIndex(t)
+
 proc addOrdered*[Id, T](t: var BiTable[Id, T]; v: sink T): Id =
   ## Append `v` under the next id WITHOUT hashing it.
   ##
@@ -82,15 +98,17 @@ proc addOrdered*[Id, T](t: var BiTable[Id, T]; v: sink T): Id =
   ## and on a 68-module `--ic:on` build of the Nim compiler that was 451ms of a
   ## 637ms `load`, nearly all of it the symbol pool.
   ##
-  ## The table is still a BiTable: the first `getOrIncl`/`getKeyId` builds the
-  ## index, so a pool that does get interned into behaves exactly as before —
-  ## it just pays for the index at the point something needs it rather than
-  ## always. Callers that only ever map id -> value never pay at all.
+  ## The table is still a BiTable: `getOrIncl` builds the index on demand (and
+  ## `ensureIndexed` does it explicitly for `getKeyId`), so a pool that does get
+  ## interned into behaves exactly as before — it just pays for the index at the
+  ## point something needs it rather than always. Callers that only ever map
+  ## id -> value never pay at all.
   t.vals.add v
   result = Id(t.vals.len - 1 + idStart)
 
-proc getKeyId*[Id, T](t: var BiTable[Id, T]; v: T): Id =
-  if t.keys.len == 0 and t.vals.len > 0: rebuildIndex(t)
+proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
+  assert t.isIndexed,
+    "getKeyId on a table filled by addOrdered: call ensureIndexed first"
   let origH = hash(v)
   var h = origH and maxHash(t)
   if t.keys.len != 0:
@@ -104,7 +122,7 @@ proc getKeyId*[Id, T](t: var BiTable[Id, T]; v: T): Id =
 {.pragma: maybeDirty, dirty.}
 
 template getOrInclImpl() {.maybeDirty.} =
-  if t.keys.len == 0 and t.vals.len > 0: rebuildIndex(t)
+  ensureIndexed(t)
   let origH = hash(v)
   var h = origH and maxHash(t)
   if t.keys.len != 0:
@@ -231,7 +249,11 @@ when isMainModule:
     assert a[uint32 1] == "s0"                       # id -> value, no index yet
     assert a[uint32 5_000] == "s4999"
 
-    # first lookup builds the index; every entry must be findable
+    # `getKeyId` needs the index, and says so rather than answering wrongly
+    assert not a.isIndexed
+    a.ensureIndexed()
+    assert a.isIndexed
+    a.ensureIndexed()                                # idempotent
     assert getKeyId(a, "s0") == 1
     assert getKeyId(a, "s4999") == 5_000
     assert getKeyId(a, "nope") == 0
@@ -246,12 +268,23 @@ when isMainModule:
     assert a.vals.len == 5_001
 
   block orderedThenIncl:
-    # the same, but with `getOrIncl` as the FIRST call after the ordered fill —
-    # the other of the two paths that has to build the index
+    # `getOrIncl` builds the index itself, so it needs no `ensureIndexed`
     var b = initBiTable[uint32, string]()
     for i in 0 ..< 100: discard b.addOrdered("t" & $i)
+    assert not b.isIndexed
     assert b.getOrIncl("t42").idToIdx == 42
+    assert b.isIndexed
     assert b.vals.len == 100
     assert getKeyId(b, "t99") == 100
+
+  block indexedFromTheStart:
+    # a normally interned table is `isIndexed` throughout, so `ensureIndexed`
+    # costs it nothing and `getKeyId` never trips its assertion
+    var d = initBiTable[uint32, string]()
+    assert d.isIndexed                               # empty counts as indexed
+    discard d.getOrIncl("only")
+    assert d.isIndexed
+    d.ensureIndexed()
+    assert getKeyId(d, "only") == 1
 
   echo "success"
