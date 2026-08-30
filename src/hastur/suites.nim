@@ -93,7 +93,7 @@ proc validatorTests*(overwrite: bool) =
       "src/hexer/duplifier.nim",
       "src/hexer/lengcgen.nim",
       "src/hexer/eraiser.nim",
-      #"src/hexer/vtables_backend.nim", # TODO: tool can't track writes to different buffers yet
+      "src/hexer/vtables_backend.nim",
       "src/hexer/iterinliner.nim",
       "src/hexer/constparams.nim"]),
     ("src/nimony/nimsem.nim", @[
@@ -112,7 +112,10 @@ proc validatorTests*(overwrite: bool) =
       inc c.total
       let (msgs, exitcode) = execLocal("validator",
         "--strict --nimcache:" & os.quoteShell(cache) & " " & os.quoteShell(f))
-      if exitcode != 0:
+      # Warnings count. They are all cleared, and the way to keep them cleared
+      # is to notice the first one: either the advance is justified where it is
+      # written, or the check that flagged it is wrong and wants fixing.
+      if exitcode != 0 or msgs.contains("Warning:"):
         failure c, f, "validator: no violations", msgs
 
   const fixtureDir = "tests/validator_sem"
