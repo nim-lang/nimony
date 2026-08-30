@@ -24,10 +24,11 @@
 ##
 ## What a semchecked module *loses* is the source idiom: `copyIntoKind`,
 ## `withTree`, `linearScan` and the whole `Replacer` API are templates, already
-## expanded when we see the tree. They are recovered from the expansion
-## provenance `--inlineframes:on` forges into the line-info filename (see
-## `lib/comesfrom.nim`), which is why every module validated here must be
-## semchecked with that switch on. `originOf` is the one place that knows it.
+## expanded when we see the tree. They are recovered from the marker each of
+## those templates carries in its own body, which every expansion of it then
+## opens with -- see `markerRole`. What is left for the line info to settle is
+## only whether a node is the author's code or somebody else's, which the file
+## alone answers.
 
 import std / [tables, sets, strutils, assertions]
 include ".." / lib / nifprelude
@@ -73,8 +74,7 @@ type
 type
   NodeOrigin* = enum
     noUser        ## written in the module's own source
-    noIdiom       ## the root of a template expansion; the idiom names it
-    noLibrary     ## inside an expansion, but not itself an expansion root
+    noLibrary     ## code some other file contributed, an expansion included
 
 proc fileOf*(info: NifLineInfo): string =
   ## The raw line-info filename, provenance included.
@@ -88,22 +88,16 @@ proc sameFileName*(a, b: string): bool =
   let y = b.replace('\\', '/')
   result = x == y or x.endsWith(y) or y.endsWith(x)
 
-proc originOf*(info: NifLineInfo; moduleFile: string): (NodeOrigin, string) =
-  ## Classify one node by where its tokens were written, and for an expansion
-  ## name the routine it came from — mangled, so it can be interned and its
-  ## declaration read. A template expansion roots at a node whose filename
-  ## carries provenance; the idiom is the outermost routine in the chain, which
-  ## is the one the author actually wrote. Everything the author wrote —
-  ## including a block argument nested *inside* an expansion — keeps pointing
-  ## at the module's own source, so a template body and the code passed to it
-  ## stay distinguishable.
-  let f = fileOf(info)
-  if isCrucialFile(f):
-    for o in crucialOrigins(f):
-      return (noIdiom, o.sym)
-    return (noIdiom, "")
-  if f.len == 0 or sameFileName(f, moduleFile): (noUser, "")
-  else: (noLibrary, "")
+proc originOf*(info: NifLineInfo; moduleFile: string): NodeOrigin =
+  ## Whether a node is code the module itself contains. Everything the author
+  ## wrote — including a block argument nested *inside* a template expansion —
+  ## points at the module's own source, while a template's own statements point
+  ## at wherever it was declared, so the two stay distinguishable by file
+  ## alone. (`realFile` also settles the forged provenance filenames that
+  ## `--inlineframes:on` produces, should a module have been built with it.)
+  let f = realFile(fileOf(info))
+  if f.len == 0 or sameFileName(f, moduleFile): noUser
+  else: noLibrary
 
 # ---------------------------------------------------------------------------
 # Symbol lookups
@@ -330,10 +324,25 @@ proc roleOfSym*(s: SymId): OpRole =
       result = roleEmits
   roleCache[s] = result
 
-proc roleOfMangled*(name: string): OpRole =
-  ## As `roleOfSym`, for a symbol that arrives as text (an expansion origin).
-  if name.len == 0: roleNone
-  else: roleOfSym(pool.syms.getOrIncl(name))
+proc markerRole*(n: Cursor): OpRole =
+  ## The role a template *expansion* declares about itself.
+  ##
+  ## A wrapper writes `{.nifWrap.}` as the first statement of its body, so
+  ## every expansion of it opens with `(pragmas (pragma nifWrap))` — the marker
+  ## stands at the head of exactly the region it describes. That is the whole
+  ## mechanism: no provenance to decode, no declaration to go and read, and
+  ## nothing that depends on the module having been built with
+  ## `--inlineframes:on`.
+  result = roleNone
+  if not n.isTagLit or n.stmtKind != StmtsS: return
+  var c = childCursor(n)
+  if not c.isTagLit or c.substructureKind != PragmasU: return
+  var prag = childCursor(c)
+  if not prag.isTagLit or prag.pragmaKind != PragmaP: return
+  var arg = childCursor(prag)
+  if not arg.hasMore: return
+  if arg.kind == Symbol: result = roleOfPragmaName(baseName(arg.symId))
+  elif arg.kind == Ident: result = roleOfPragmaName(arg.strVal)
 
 # ---------------------------------------------------------------------------
 # Lvalues

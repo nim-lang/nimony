@@ -17,23 +17,24 @@
 ## an operation to the API meant editing the validator, and a pass-local proc
 ## that happened to be called `skip` was indistinguishable from this one.
 ##
-## A custom pragma survives semchecking as `(pragma <sym>)` on the declaration,
-## so the validator reads the role where it is declared — for a proc from the
-## callee symbol, for a template from the symbol its expansion's provenance
-## names. Both are exact: they are symbols, not spellings.
+## A custom pragma survives semchecking as `(pragma <sym>)`, so the validator
+## reads the role where it is declared, and reads a symbol rather than a
+## spelling. Where the pragma goes depends on what the routine is:
 ##
-## The markers sit on *declarations*, and for a template that means the
-## validator has to work out which template an expansion came from -- it does
-## so from the provenance `--inlineframes:on` forges into the line info. The
-## obvious simplification is to put the marker in the template's *body*
-## instead, so every expansion simply opens with it and no provenance is
-## needed. That works (and `sem` accepts a custom pragma as a statement for
-## it), right up to a wrapper of a wrapper: `std/json` defines its own `into`
-## around `nifcore`'s, so `nifcore.into`'s body is ultimately expanded in a
-## module that has never heard of `nifroles`, and the marker fails to resolve
-## there. Moving them needs sem to resolve a template body's pragma in the
-## scope the template was *declared* in, which is the hygiene rule it does not
-## have yet.
+## * a **proc** carries it on its declaration, and the validator reads it off
+##   the callee symbol of each call;
+## * a **template** carries it as the first statement of its *body*, so every
+##   expansion of it opens with the marker. There is no call left to read at a
+##   call site — the template is gone by the time the validator sees the tree —
+##   and the marker stands at the head of exactly the region it describes.
+##
+## The second form is what makes the roles work without `--inlineframes:on`:
+## the validator needs no expansion provenance to tell which template produced
+## a region, because the region says so itself. It relies on a template body
+## being semchecked in the scope the template was *declared* in, so the marker
+## arrives at the expansion site already bound — `std/json` wraps
+## `nifcore.into`, and `into`'s body is expanded inside modules that never
+## imported `nifroles`.
 ##
 ## Emission is deliberately *not* in this list. A routine whose first parameter
 ## is a `var TokenBuf` and which takes no cursor emits and nothing else; that

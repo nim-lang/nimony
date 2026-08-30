@@ -33,6 +33,7 @@ import std / assertions
 import nifcore
 import comesfrom
 import nifroles
+export nifroles
 # Template-expansion provenance rides in the line-info filename, so every
 # consumer of a filename may need to strip it (`realFile`). Plain string
 # handling with no NIF dependency of its own; re-exported here so it travels
@@ -350,7 +351,8 @@ proc toString*(b: TokenBuf; produceLineInfo = true): string {.inline.} =
   ## reads); safe to alias an immutable buffer. Accepts both `var` and immutable.
   nifcoreparse.toString(cast[ptr TokenBuf](unsafeAddr b)[], includeLineInfo = produceLineInfo)
 
-template linearScan*(n: var Cursor; body: untyped) {.nifWrap.} =
+template linearScan*(n: var Cursor; body: untyped) =
+  {.nifWrap.}
   ## Pre-order visit of every tag (`TagLit`) node strictly inside `n`'s subtree,
   ## `n` positioned at each; `body` may `break` (leaving `n` at the match) and
   ## must not advance `n`. `inc` gives pre-order over the flat token stream
@@ -362,12 +364,14 @@ template linearScan*(n: var Cursor; body: untyped) {.nifWrap.} =
         body
       inc n
 
-template copyInto*(dest: var TokenBuf; tag: TagId; info: NifLineInfo; body: untyped) {.nifWrap.} =
+template copyInto*(dest: var TokenBuf; tag: TagId; info: NifLineInfo; body: untyped) =
+  {.nifWrap.}
   addParLe(dest, tag, info)
   body
   closeTag(dest)
 
-template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: NifLineInfo; body: untyped) {.nifWrap.} =
+template copyIntoUnchecked*(dest: var TokenBuf; tag: string; info: NifLineInfo; body: untyped) =
+  {.nifWrap.}
   addParLe(dest, globalTags.registerTag(tag), info)
   body
   closeTag(dest)

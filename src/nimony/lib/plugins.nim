@@ -18,6 +18,7 @@ import ".." / ".." / "lib" / [bitabs, symparser]
 import ".." / ".." / "models" / [tags, nimony_tags]
 import ".." / nif_annotations
 import ".." / ".." / "lib" / nifroles
+export nifroles
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 export NifKind, SymId, TagId
 export DotToken, CharLit, StrLit, IntLit, UIntLit, FloatLit
@@ -190,7 +191,8 @@ template withTree*(
     t: var NifBuilder;
     kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
     info: LineInfo;
-    body: untyped) {.nifWrap.} =
+    body: untyped) =
+  {.nifWrap.}
   ## Emits a tagged tree around the values produced by `body`.
   t.openTag(cast[TagId](kind))
   appendInfo(t, info)
@@ -224,7 +226,8 @@ proc enterPluginScope(n: var NifCursor): nifcore.CursorScope =
 proc leavePluginScope(n: var NifCursor; scope: nifcore.CursorScope) =
   nifcore.leaveScope(n, scope)
 
-template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) {.nifWrap.} =
+template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
+  {.nifWrap.}
   ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
   assert n.kind == TagLit, "copyInto requires cursor at TagLit"
   t.openTree(n.tagId, n.info)
@@ -431,7 +434,8 @@ proc firstChild*(n: NifCursor): NifCursor {.inline.} =
 # ── Traversal templates ──────────────────────────────────────────────────
 # Pure traversal helpers for reading/analyzing a tree without producing output.
 
-template linearScan*(n: var NifCursor; body: untyped) {.nifWrap.} =
+template linearScan*(n: var NifCursor; body: untyped) =
+  {.nifWrap.}
   ## Deep-scans all `TagLit` nodes in the subtree rooted at `n`.
   ## Inside `body`, `n` is positioned at each `TagLit` node in turn.
   ## `body` must **not** advance `n` — the template handles traversal.
@@ -727,7 +731,8 @@ proc replace*(t: var Replacer; expected: NimonyType;
   t.src.skip()
   t.dest.addTree(replacement)
 
-template keepTag*(t: var Replacer; body: untyped) {.nifWrap.} =
+template keepTag*(t: var Replacer; body: untyped) =
+  {.nifWrap.}
   ## Copy the opening tag from input to output, run `body` for children,
   ## close the output node and advance past the input subtree.
   assert t.src.kind == TagLit, "keepTag requires cursor at TagLit"
@@ -743,7 +748,8 @@ template loopKeepTag*(t: var Replacer; body: untyped) =
 
 template replaceHead*(t: var Replacer;
                       tag: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
-                      info: LineInfo; body: untyped) {.nifWrap.} =
+                      info: LineInfo; body: untyped) =
+  {.nifWrap.}
   ## Like `keepTag` but emits a new tag instead of copying the input's tag.
   ## Enters the input tree via `into`, runs `body`
   ## (which must consume the children), then closes both input and output

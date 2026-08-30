@@ -59,6 +59,7 @@ else:
 
 import std / [assertions, hashes]
 import bitabs, lineinfos, nifroles
+export nifroles  # a `{.nifWrap.}` in a template body is resolved where it expands
 export bitabs  # adapters touching pool.strings / tags need getOrIncl etc.
 export lineinfos.FileId, lineinfos.NoFile, lineinfos.isValid,
        lineinfos.`==`, lineinfos.hash
@@ -929,14 +930,16 @@ proc resolvedTagId*(c: Cursor): TagId =
   else:
     result = c.cursorTagId
 
-template into*(c: var Cursor; body: untyped) {.nifWrap.} =
+template into*(c: var Cursor; body: untyped) =
+  {.nifWrap.}
   ## Enters the current `TagLit`, runs `body`, then restores the outer bounds.
   ## `body` must consume every child.
   let cursorScope = enterScope(c)
   body
   leaveScope(c, cursorScope)
 
-template loopInto*(c: var Cursor; body: untyped) {.nifWrap.} =
+template loopInto*(c: var Cursor; body: untyped) =
+  {.nifWrap.}
   into c:
     while c.hasMore: body
 
@@ -948,7 +951,8 @@ proc leaveScopePartial*(c: var Cursor; scope: CursorScope) =
   c.rem = scope.savedRem
   skip c
 
-template peekInto*(c: var Cursor; body: untyped) {.nifWrap.} =
+template peekInto*(c: var Cursor; body: untyped) =
+  {.nifWrap.}
   ## Like `into`, but `body` need not consume every child — any unconsumed
   ## remainder is skipped. Use for early-out searches over a node's children
   ## (e.g. `break` out on the first match). The finish is a single `skip`

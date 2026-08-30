@@ -402,11 +402,8 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
   ## (a fresh clone before `hastur build validator` has run).
   ##
   ## The validator reads the *semchecked* module, so the plugin is first
-  ## semchecked into a scratch cache of its own. That cache is not the one the
-  ## build below uses: validation needs `--inlineframes:on` (the validator
-  ## recovers which template an expansion came from out of the provenance it
-  ## forges), and sharing a cache across two different flag sets would make
-  ## every plugin compile alternate between them.
+  ## semchecked into a scratch cache of its own -- `check`, so the sub-compile
+  ## stops after sem and never reaches code generation.
   ##
   ## A failing sem run is not reported here. It means the plugin does not
   ## compile, and the build that follows says so with the real diagnostics.
@@ -419,8 +416,7 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
     return
   let checkCache = exefile & "_v"
   makePluginCache checkCache
-  let checkCmd = pluginCompileCmd(c, checkCache) &
-    " --inlineframes:on check " & quoteShell(nf)
+  let checkCmd = pluginCompileCmd(c, checkCache) & " check " & quoteShell(nf)
   # Captured, not inherited: on failure the build below reports the same
   # diagnostics, and printing them twice would only obscure them.
   var checkCode = 0

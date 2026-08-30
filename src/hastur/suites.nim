@@ -116,12 +116,11 @@ proc validatorTests*() =
 proc semValidatorTests*(overwrite: bool) =
   ## Run the validator's *semchecked* front end over `tests/validator_sem`.
   ##
-  ## Each fixture is a plugin source: it is semchecked into a scratch cache
-  ## with `--inlineframes:on` (the front end recovers which template an
-  ## expansion came from out of the provenance that forges), then validated,
-  ## and the diagnostics are compared against its `.expected` file. A fixture
-  ## with no violations has an empty one — `tconforms` is there precisely to
-  ## catch the day the grammar check starts inventing them.
+  ## Each fixture is a plugin source: it is semchecked into a scratch cache,
+  ## then validated, and the diagnostics are compared against its `.expected`
+  ## file. A fixture with no violations has an empty one — `tconforms` is
+  ## there precisely to catch the day the grammar check starts inventing
+  ## them.
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   const dir = "tests/validator_sem"
@@ -136,7 +135,7 @@ proc semValidatorTests*(overwrite: bool) =
       "--nimcache:" & os.quoteShell(cache) &
       " --path:" & os.quoteShell("src/lib") &
       " --path:" & os.quoteShell("src/nimony/lib") &
-      " --inlineframes:on check " & os.quoteShell(src))
+      " check " & os.quoteShell(src))
     if semCode != 0:
       failure c, src, "fixture semchecks", semMsgs
       continue

@@ -110,11 +110,11 @@ const
     ## Closed set: the classic `SkipIntent` roles plus the structural
     ## `TagClass` categories.
 
-proc roleOf(n: Cursor; origin: NodeOrigin; idiom: string): OpRole =
-  ## What a node does, whether it survived as a call or a template expanded it
-  ## into the tree. Either way the answer comes from a declaration.
-  if origin == noIdiom:
-    result = roleOfMangled(idiom)
+proc roleOf(n: Cursor; marker: OpRole): OpRole =
+  ## What a node does. An expansion says so itself, with the marker its
+  ## template carries; a call is looked up on its callee's declaration.
+  if marker != roleNone:
+    result = marker
   elif n.isTagLit and n.exprKind in CallKinds:
     let callee = calleeSym(n)
     result = roleOfSym(callee)
@@ -123,15 +123,12 @@ proc roleOf(n: Cursor; origin: NodeOrigin; idiom: string): OpRole =
   else:
     result = roleNone
 
-proc opDisplayName(n: Cursor; origin: NodeOrigin; idiom: string): string =
+proc opDisplayName(n: Cursor): string =
   ## How to name the operation in a diagnostic.
-  if origin == noIdiom:
-    result = idiom
-    extractBasename result
-  elif n.isTagLit and n.exprKind in CallKinds:
-    result = baseName(calleeSym(n))
+  if n.isTagLit and n.exprKind in CallKinds:
+    baseName(calleeSym(n))
   else:
-    result = ""
+    ""
 
 proc hasIntentArg(n: Cursor): bool =
   ## True when a `skip`/`inc` call carries a `SkipIntent`/`TagClass`/tag-enum
@@ -159,12 +156,12 @@ template eachChild(n: Cursor; body: untyped) =
       body
       skip child
 
-proc classifyCall(p: ProcFacts; n: Cursor; origin: NodeOrigin; idiom: string): int =
+proc classifyCall(p: ProcFacts; n: Cursor; marker: OpRole): int =
   ## The balance contribution of one operation: positive when the cursor moved
   ## without anything being emitted, negative when output was produced without
   ## the cursor moving, zero when the two are tied.
   let isCall = n.isTagLit and n.exprKind in CallKinds
-  case roleOf(n, origin, idiom)
+  case roleOf(n, marker)
   of roleAdvance:
     if isCall and hasTrackedArg(p, n, tkCursor):
       if hasIntentArg(n): return 0
@@ -186,12 +183,12 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
                   inLib: bool): int =
   result = 0
   if not n.isTagLit: return
-  let (origin, idiom) = originOf(n.info, ctx.m.file)
-  let nowInLib = (if origin == noUser: false else: true)
+  let marker = markerRole(n)
+  let nowInLib = originOf(n.info, ctx.m.file) != noUser
 
-  if origin == noIdiom:
-    # An expanded idiom is a leaf here, exactly as the un-expanded call was for
-    # the untyped engine: what the author wrote is one operation.
+  if marker != roleNone:
+    # An expansion is a leaf here, exactly as the un-expanded call was for the
+    # untyped engine: what the author wrote is one operation.
     #
     # The block argument inside it is therefore not balanced either — and that
     # is the one place where the untyped engine's blind spot is worth keeping
@@ -199,7 +196,7 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
     # body legitimately advances the cursor it was handed, so the debt rule
     # needs its own calibration before the walk is allowed in there.
     if not inLib:
-      return classifyCall(p, n, origin, idiom)
+      return classifyCall(p, n, marker)
     return 0
   if nowInLib:
     # Library glue between expansions: nothing here is the author's, but a
@@ -209,7 +206,7 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
     return
 
   if n.exprKind in CallKinds:
-    return classifyCall(p, n, origin, idiom)
+    return classifyCall(p, n, roleNone)
 
   case n.stmtKind
   of StmtsS:
@@ -284,12 +281,11 @@ proc scanObligations(ctx: var SemCheckContext) =
 proc scanUnsafeCursorOpsIn(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
                            delegated, inLib: bool) =
   if not n.isTagLit: return
-  let (origin, idiom) = originOf(n.info, ctx.m.file)
-  var nowInLib = (if origin == noUser: false else: true)
+  var nowInLib = originOf(n.info, ctx.m.file) != noUser
   var delegatedHere = delegated
 
   if not inLib and n.exprKind in CallKinds:
-    let op = roleOf(n, origin, idiom)
+    let op = roleOf(n, roleNone)
     if op == roleAdvance and not hasIntentArg(n):
       block flagFirst:
         for a in callArgs(n):
@@ -298,7 +294,7 @@ proc scanUnsafeCursorOpsIn(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
             for cp in p.cursorParams:
               if lv.symId == cp:
                 ctx.addWarning n.info, p.name,
-                  "`" & opDisplayName(n, origin, idiom) & " " & p.vars[cp].name &
+                  "`" & opDisplayName(n) & " " & p.vars[cp].name &
                   "` needs a SkipIntent argument for justification"
                 break flagFirst
     elif op notin {roleAdvance, roleBalanced, roleWrap}:
@@ -437,7 +433,7 @@ proc scanWhileTermination(ctx: var SemCheckContext) =
     body.linearScan:
       # No `continue` in here: `linearScan` is a template whose loop advances
       # after the body, so continuing it would skip that and spin forever.
-      if body.stmtKind == WhileS and originOf(body.info, ctx.m.file)[0] == noUser:
+      if body.stmtKind == WhileS and originOf(body.info, ctx.m.file) == noUser:
         var cond = childCursor(body)
         var cursors: seq[SymId] = @[]
         mentionedTracked(p, cond, tkCursor, cursors)
@@ -465,8 +461,7 @@ proc scanForNonExhaustiveCases(ctx: var SemCheckContext) =
     var n = p.body
     n.linearScan:
       if n.stmtKind == CaseS:
-        let (origin, _) = originOf(n.info, ctx.m.file)
-        if origin == noUser:
+        if originOf(n.info, ctx.m.file) == noUser:
           var peek = childCursor(n)
           var discr = ""
           if peek.isTagLit and peek.exprKind in CallKinds:
@@ -543,13 +538,13 @@ proc userInfo(ctx: SemCheckContext; n: Cursor): NifLineInfo =
   ## keep theirs — `openTag(o, cast[TagId](VarS))` has `o` sitting on the
   ## `o.withTree VarS, info:` line the author actually wrote.
   result = n.info
-  if originOf(result, ctx.m.file)[0] == noUser:
+  if originOf(result, ctx.m.file) == noUser:
     return
   var c = n
   if c.isTagLit:
     c = childCursor(c)
     while c.hasMore:
-      if originOf(c.info, ctx.m.file)[0] == noUser:
+      if originOf(c.info, ctx.m.file) == noUser:
         return c.info
       skip c
 
