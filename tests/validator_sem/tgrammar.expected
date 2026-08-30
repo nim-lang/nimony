@@ -1,0 +1,1 @@
+tests/validator_sem/tgrammar.nim(7, 3) Error: expected 5..5 children, got 1 [buildBad builds (var)]

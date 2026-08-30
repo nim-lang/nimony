@@ -113,6 +113,62 @@ proc validatorTests*() =
   else:
     echo "SUCCESS."
 
+proc semValidatorTests*(overwrite: bool) =
+  ## Run the validator's *semchecked* front end over `tests/validator_sem`.
+  ##
+  ## Each fixture is a plugin source: it is semchecked into a scratch cache
+  ## with `--inlineframes:on` (the front end recovers which template an
+  ## expansion came from out of the provenance that forges), then validated,
+  ## and the diagnostics are compared against its `.expected` file. A fixture
+  ## with no violations has an empty one — `tconforms` is there precisely to
+  ## catch the day the grammar check starts inventing them.
+  let t0 = epochTime()
+  var c = TestCounters(total: 0, failures: 0)
+  const dir = "tests/validator_sem"
+  let cacheBase = nimcacheDir / "validator_sem"
+  for x in walkDir(dir, relative = true):
+    if x.kind != pcFile or not x.path.endsWith(".nim"): continue
+    inc c.total
+    let src = dir / x.path
+    let cache = cacheBase / x.path.changeFileExt("")
+    createDir cache
+    let (semMsgs, semCode) = execLocal("nimony",
+      "--nimcache:" & os.quoteShell(cache) &
+      " --path:" & os.quoteShell("src/lib") &
+      " --path:" & os.quoteShell("src/nimony/lib") &
+      " --inlineframes:on check " & os.quoteShell(src))
+    if semCode != 0:
+      failure c, src, "fixture semchecks", semMsgs
+      continue
+    let (msgs, _) = execLocal("validator",
+      "--nimcache:" & os.quoteShell(cache) & " " & os.quoteShell(src))
+    var got = ""
+    for line in msgs.splitLines:
+      if line.contains("Error:") or line.contains("Warning:"):
+        # The fixture path is absolute in the diagnostics; keep the tail only.
+        var l = line.replace("\\", "/")
+        let cut = l.find(dir)
+        if cut >= 0: l = l[cut .. ^1]
+        if got.len > 0: got.add "\n"
+        got.add l
+    let expectedFile = src.changeFileExt(".expected")
+    if overwrite:
+      writeFile expectedFile, got.strip & "\n"
+    elif not expectedFile.fileExists():
+      failure c, src, "expected file " & expectedFile & " missing", got
+    else:
+      let expected = readFile(expectedFile).strip
+      if got.strip != expected:
+        failure c, src, expected, got
+  reportFailures c
+  echo c.total - c.failures, " / ", c.total,
+    " sem validator tests successful in ",
+    formatFloat(epochTime() - t0, ffDecimal, precision=2), "s."
+  if c.failures > 0:
+    quit "FAILURE: Some sem validator tests failed."
+  else:
+    echo "SUCCESS."
+
 proc execLengc*(cmd: string) =
   exec "lengc", cmd
 
