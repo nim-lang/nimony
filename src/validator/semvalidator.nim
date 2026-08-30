@@ -49,6 +49,7 @@ type
   SemCheckContext* = object
     m*: SemModule
     grammar*: TagGrammar
+    dumpTrees*: bool
     violations*: seq[Violation]
     strict*: bool
     noColors*: bool
@@ -560,6 +561,12 @@ proc firstArg(n: Cursor): Cursor =
 proc checkOpenTree(ctx: var SemCheckContext; t: OpenTree; procName: string) =
   ## Match one completed tree against the grammar. An indeterminate sequence is
   ## not a violation — it is a tree this analysis could not read.
+  if ctx.dumpTrees:
+    var kids = ""
+    for k in t.kids: kids.add kindName(k) & " "
+    echo realFile(fileOf(t.info)), "(", t.info.line, ", ", t.info.col + 1, ") ",
+      procName, ": (", (if t.tag.len > 0: t.tag else: "?"), ") ",
+      (if t.determinate: "= " & kids else: "indeterminate")
   if not t.determinate or t.tag.len == 0: return
   if t.tag notin ctx.grammar: return
   var bestErrors: seq[string] = @[]
@@ -606,8 +613,16 @@ proc walkEmission(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
       if k == "None":
         return                    # takes the buffer, contributes no child
       if k.len > 0:
-        if stack.len > 0 and sameLvalue(firstArg(n), stack[^1].dest):
-          addKid(stack, emittedChildKind(k))
+        if stack.len > 0:
+          let a = firstArg(n)
+          if sameLvalue(a, stack[^1].dest):
+            addKid(stack, emittedChildKind(k))
+          elif rootSymOf(a) == rootSymOf(stack[^1].dest):
+            # Same variable, but the two buffer expressions do not compare —
+            # `c.stack[^1]` evaluates its index afresh each time. It probably
+            # is this tree's child, and we cannot prove it, so the tree goes
+            # unchecked rather than short one.
+            markIndeterminate(stack)
         return
       # An ordinary call that is handed the buffer emits an unknown number of
       # children. Nothing is wrong with that; it just cannot be counted.
@@ -639,7 +654,14 @@ proc walkEmission(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
           walkEmission(ctx, p, inner, stack)
           skip inner
         if stack.len != depth:
-          agree = false          # a branch left a tree open: give up on both
+          # A branch opened a tree it does not close (the two arms of `if
+          # wantsEnv` each open the call node, and the close comes after they
+          # rejoin). The stack no longer describes the nesting, so every tree
+          # still open becomes unreadable and the depth is restored — leaving
+          # it would make each later close pop the wrong tree.
+          for i in 0 ..< stack.len: stack[i].determinate = false
+          if stack.len > depth: stack.setLen depth
+          agree = false
         elif depth > 0:
           let got = stack[^1].kids[before .. ^1]
           stack[^1].kids.setLen before
@@ -681,11 +703,13 @@ proc dumpFacts*(ctx: SemCheckContext) =
              (if v.isMut: "var " else: ""), v.tracked
 
 proc validateSemModule*(nifFile, sourceFile: string; grammar: TagGrammar;
-                        strict, noColors: bool; dump = false): int =
+                        strict, noColors: bool; dump = false;
+                        dumpTrees = false): int =
   ## Runs every check over one semchecked module. Returns the number of errors
   ## (warnings do not affect the exit code).
   var owningBuf = default(TokenBuf)
-  var ctx = SemCheckContext(grammar: grammar, strict: strict, noColors: noColors)
+  var ctx = SemCheckContext(grammar: grammar, strict: strict, noColors: noColors,
+                            dumpTrees: dumpTrees)
   ctx.m = openSemModule(nifFile, sourceFile, owningBuf)
   if dump: dumpFacts ctx
 

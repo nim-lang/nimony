@@ -1183,6 +1183,34 @@ proc parseFileViaNifler(nimFile: string): TokenBuf =
   finally:
     removeFile(outFile)
 
+proc includerOf(nimFile, cacheDir: string): string =
+  ## An `include`d file is semchecked as part of whoever includes it and has no
+  ## `.s.nif` of its own, so validating one means reading the includer's module
+  ## and keeping the procs that came from this file — which is exactly what
+  ## passing the source path alongside the NIF already does.
+  ##
+  ## The includes are recorded in each module's `.p.deps.nif` as
+  ## `(include <basename>)`, which is all nifler knows; two files of the same
+  ## basename in different directories would be indistinguishable here.
+  result = ""
+  let want = splitFile(nimFile).name
+  for x in walkDir(cacheDir, relative = true):
+    if x.kind != pcFile or not x.path.endsWith(".p.deps.nif"): continue
+    var buf = nifcoreparse.parseFromFile(cacheDir / x.path, sharedPool = pool,
+                                         sharedTags = globalTags)
+    var n = beginRead(buf)
+    if not n.isTagLit: continue
+    var found = false
+    n.linearScan:
+      if globalTags.tags[n.cursorTagId] == "include":
+        var c = childCursor(n)
+        if c.hasMore and (c.kind == Ident or c.kind == StrLit) and c.strVal == want:
+          found = true
+    if found:
+      let suffix = x.path.substr(0, x.path.len - ".p.deps.nif".len - 1)
+      let candidate = cacheDir / suffix & ".s.nif"
+      if fileExists(candidate): return candidate
+
 proc semNifForSource(nimFile, cacheDir: string): string =
   ## Map a `.nim` source to the `.s.nif` sem produced for it, using the
   ## `<root>.build.nif` files nifmake leaves in the cache. That mapping is
@@ -1226,12 +1254,14 @@ proc main() =
   var strict = false
   var cacheDir = ""
   var dump = false
+  var dumpTrees = false
   var positional: seq[string] = @[]
   for i in 1..paramCount():
     let a = paramStr(i)
     if a == "--strict": strict = true
     elif a.startsWith("--nimcache:"): cacheDir = a.substr("--nimcache:".len)
     elif a == "--dump": dump = true
+    elif a == "--dumptrees": dumpTrees = true
     else: positional.add a
   if positional.len < 1:
     quit "Usage: validator [--strict] [--nimcache:DIR] [--dump] <passfile.nim|module.s.nif> [tags.md]"
@@ -1263,6 +1293,8 @@ proc main() =
       if not fileExists(source):
         quit "Cannot find source file: " & source
       semNif = semNifForSource(source, cacheDir)
+      if semNif.len > 0 and not fileExists(semNif):
+        semNif = includerOf(source, cacheDir)
       if semNif.len == 0:
         quit "no semchecked NIF for " & source & " in " & cacheDir &
              " (was it built with `nimony check --nimcache:" & cacheDir & "`?)"
@@ -1271,7 +1303,7 @@ proc main() =
     if not fileExists(semNif):
       quit "Cannot find semchecked NIF: " & semNif
     let errors = validateSemModule(semNif, source, parseTagsMd(tagsFile), strict,
-                                   not terminal.isatty(stdout), dump)
+                                   not terminal.isatty(stdout), dump, dumpTrees)
     if errors > 0: quit 1
     return
 

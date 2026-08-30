@@ -29,7 +29,7 @@
 ## `lib/comesfrom.nim`), which is why every module validated here must be
 ## semchecked with that switch on. `originOf` is the one place that knows it.
 
-import std / [tables, strutils, assertions]
+import std / [tables, sets, strutils, assertions]
 include ".." / lib / nifprelude
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs]
@@ -189,11 +189,17 @@ proc classifyType*(typ: Cursor): TrackedKind {.inline.} =
 # ---------------------------------------------------------------------------
 
 var fieldCache: Table[SymId, TrackedKind]
+var moduleFields: Table[SymId, TrackedKind]
+  ## Fields of the types this module declares. A field is not a top-level
+  ## declaration, so it has no index entry of its own and `tryLoadSym` cannot
+  ## reach it — which is why `c.dest` went unrecognised until these were
+  ## collected from the module's own tree.
 
 proc fieldTracked*(fld: SymId): TrackedKind =
-  ## The tracked kind of an object field, resolved through its declaration.
-  ## Works across modules: `tryLoadSym` reads the declaring module's index.
+  ## The tracked kind of an object field: from this module's own declarations,
+  ## or across modules through the declaring module's index.
   if fld == NoSymId: return tkUnknown
+  if moduleFields.hasKey(fld): return moduleFields[fld]
   if fieldCache.hasKey(fld): return fieldCache[fld]
   result = tkUnknown
   let res = tryLoadSym(fld)
@@ -201,10 +207,14 @@ proc fieldTracked*(fld: SymId): TrackedKind =
     result = classifyType(asLocal(res.decl).typ)
   fieldCache[fld] = result
 
+var moduleBufferObjects: HashSet[SymId]
+  ## Types of this module that hold a `TokenBuf`; see `moduleFields`.
+
 proc objectHasBufferField*(typ: SymId): bool =
   ## True when `typ` is an object with a `TokenBuf` field — the pattern that
   ## makes `c: var Context` count as buffer access.
   if typ == NoSymId: return false
+  if typ in moduleBufferObjects: return true
   let res = tryLoadSym(typ)
   if res.status != LacksNothing: return false
   let decl = asTypeDecl(res.decl)
@@ -356,9 +366,15 @@ proc rootSymOf*(n: Cursor): SymId =
       return NoSymId
   NoSymId
 
+const FieldAccess* = {DotX, DdotX}
+  ## `ddot` is `dot` through a pointer. A `var` parameter *is* a pointer at
+  ## this stage, so `c.dest` inside a pass whose context is a `var Context`
+  ## comes out as `(ddot …)` — treating only `dot` as field access left every
+  ## such buffer unrecognised.
+
 proc dotField*(n: Cursor): SymId =
   ## The field symbol of a `(dot obj fld level suffix)` node.
-  if not n.isTagLit or n.exprKind != DotX: return NoSymId
+  if not n.isTagLit or n.exprKind notin FieldAccess: return NoSymId
   var c = childCursor(n)
   if c.hasMore: skip c    # the object
   if c.hasMore and c.kind == Symbol: return c.symId
@@ -382,7 +398,7 @@ proc lvalueToStr*(n: Cursor; vars: Table[SymId, VarInfo]): string =
     let s = x.symId
     if vars.hasKey(s): return vars[s].name
     return baseName(s)
-  if x.isTagLit and x.exprKind == DotX:
+  if x.isTagLit and x.exprKind in FieldAccess:
     var c = childCursor(x)
     let recv = lvalueToStr(c, vars)
     let fld = dotField(x)
@@ -407,7 +423,7 @@ proc classifyExpr*(p: ProcFacts; n: Cursor): TrackedKind =
       if objectHasBufferField(v.typ): return tkTokenBuf
       return v.tracked
     return tkUnknown
-  if x.isTagLit and x.exprKind == DotX:
+  if x.isTagLit and x.exprKind in FieldAccess:
     let fld = dotField(x)
     if fld != NoSymId: return fieldTracked(fld)
   tkUnknown
@@ -479,14 +495,47 @@ proc collectLocals(p: var ProcFacts) =
       let local = asLocal(n)
       p.addVar local.name, local.typ, isParam = false, isMut = k in MutableDecls
 
-proc collectProcs*(m: var SemModule) =
-  ## Every routine *declared in this module* — an imported generic that got
-  ## instantiated here is not the plugin author's code and is not checked.
+proc collectObjectFields(body: Cursor; hasBuf: var bool) =
+  ## Record every field of an object, variant branches included.
+  if not body.isTagLit: return
+  var n = childCursor(body)
+  while n.hasMore:
+    if n.isTagLit:
+      if n.symKind in {FldY, GfldY}:
+        let local = asLocal(n)
+        if local.name.kind == SymbolDef:
+          let k = classifyType(local.typ)
+          moduleFields[local.name.symId] = k
+          if k == tkTokenBuf: hasBuf = true
+      else:
+        collectObjectFields(n, hasBuf)   # `(case …)` in a variant object
+    skip n
+
+proc collectTypes(m: var SemModule) =
   var n = m.root
   if not n.isTagLit: return
   var c = childCursor(n)
   while c.hasMore:
-    if c.isTagLit and c.symKind in {ProcY, FuncY, IteratorY, ConverterY, MethodY}:
+    if c.isTagLit and c.symKind == TypeY:
+      let decl = asTypeDecl(c)
+      if decl.body.typeKind == ObjectT and decl.name.kind == SymbolDef:
+        var hasBuf = false
+        collectObjectFields(decl.body, hasBuf)
+        if hasBuf: moduleBufferObjects.incl decl.name.symId
+    skip c
+
+proc collectProcsIn(m: var SemModule; n: Cursor) =
+  ## Every routine *declared in this module* — an imported generic that got
+  ## instantiated here is not the plugin author's code and is not checked.
+  ##
+  ## Descends through nested statement lists: an `include` splices the included
+  ## file's declarations in behind a `(stmts)` of their own, and those are the
+  ## file's own procs, not someone else's.
+  var c = childCursor(n)
+  while c.hasMore:
+    if c.isTagLit and c.stmtKind == StmtsS:
+      collectProcsIn(m, c)
+    elif c.isTagLit and c.symKind in {ProcY, FuncY, IteratorY, ConverterY, MethodY}:
       let r = asRoutine(c, SkipInclBody)
       if r.name.kind == SymbolDef and r.body.isTagLit:
         let s = r.name.symId
@@ -506,6 +555,9 @@ proc collectProcs*(m: var SemModule) =
           m.procs.add p
     skip c
 
+proc collectProcs*(m: var SemModule) =
+  if m.root.isTagLit: collectProcsIn(m, m.root)
+
 proc openSemModule*(nifFile, sourceFile: string; owningBuf: var TokenBuf): SemModule =
   ## Load a `.s.nif` and its world: `setupProgram` registers the module and
   ## points `suffixToNif` at the same cache directory, which is what lets
@@ -515,4 +567,5 @@ proc openSemModule*(nifFile, sourceFile: string; owningBuf: var TokenBuf): SemMo
   result.suffix = prog.main.name
   if result.file.len == 0:
     result.file = realFile(fileOf(result.root.info))
+  result.collectTypes()
   result.collectProcs()
