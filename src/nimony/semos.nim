@@ -249,31 +249,41 @@ proc filenameVal*(n: var Cursor; res: var seq[ImportedFilename]; hasError: var b
           while n.hasMore:
             filenameVal(n, res, hasError, allowAs)
     of PragmaxX:
-      let orig = n
-      inc n
+      # `import (m) {.plugin: "…".}`. Dependency scanning runs before sem, so
+      # the pragma is still the parser's `(pragmas (kv plugin "…"))` -- with
+      # `plugin` an Ident -- and not the resolved `(plugin …)` that
+      # `templates.nim` reads off a semchecked routine.
+      #
+      # Every level is entered with `into` and drained before it is left. The
+      # hand-written descent this replaces walked in with bare `inc`s and then
+      # stepped over the `kv`'s close, which under nifcore is not a token:
+      # the scope simply ends, `hasMore` is `rem > 0`, and `inc` asserts
+      # `rem != 0`. So `if not n.hasMore: inc n` -- a classic `skipParRi` --
+      # crashed the compiler on every well-formed import plugin (#2408).
       let start = res.len
-      if not n.hasMore:
-        hasError = true
-      else:
-        filenameVal(n, res, hasError, allowAs)
-        var success = false
-        if n.substructureKind == PragmasU:
-          inc n
-          if n.substructureKind == KvU:
-            inc n
-            if n.isIdent and pool.strings[n.strId] == "plugin":
-              inc n
-              if n.isStringLit:
-                for i in start ..< res.len:
-                  res[i].plugin = pool.strings[n.strId]
-                  success = true
-                inc n
-                if not n.hasMore: inc n
-                else: hasError = true
-        if not success:
-          n = orig
-          skip n
+      var success = false
+      n.into:                                  # (pragmax …)
+        if not n.hasMore:
           hasError = true
+        else:
+          filenameVal(n, res, hasError, allowAs)
+          if n.substructureKind == PragmasU:
+            n.into:                            # (pragmas …)
+              if n.substructureKind == KvU:
+                n.into:                        # (kv plugin "…")
+                  if n.isIdent and pool.strings[n.strId] == "plugin":
+                    inc n
+                    if n.isStringLit:
+                      for i in start ..< res.len:
+                        res[i].plugin = pool.strings[n.strId]
+                        success = true
+                      skip n, SkipValue        # the plugin path
+                      if n.hasMore: hasError = true
+                  while n.hasMore: skip n
+              while n.hasMore: skip n
+          while n.hasMore: skip n
+      if not success:
+        hasError = true
     else:
       hasError = true
       skip n

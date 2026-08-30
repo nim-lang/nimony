@@ -388,6 +388,91 @@ proc scanObligations(ctx: var SemCheckContext) =
           "parameter `" & v.name & ": var Cursor` is never passed to any call"
 
 # ---------------------------------------------------------------------------
+# Advancing a cursor whose scope is known to be empty
+# ---------------------------------------------------------------------------
+
+proc testsRem(n: Cursor; s: SymId): bool =
+  ## Whether the subtree reads `s.rem` -- which is what `s.hasMore` becomes.
+  ## `hasMore` is a template, so it is gone by the time we see this; the test is
+  ## for the field it reads, not for a spelling.
+  if n.isTagLit and n.exprKind in FieldAccess:
+    let fld = dotField(n)
+    if fld != NoSymId and baseName(fld) == "rem":
+      let root = unwrapAddr(childCursor(n))
+      if root.kind == Symbol and root.symId == s: return true
+  eachChild(n):
+    if testsRem(child, s): return true
+  false
+
+proc assignsCursor(n: Cursor; s: SymId): bool =
+  ## `n = orig` before the advance puts the cursor somewhere else first, which
+  ## makes advancing legal again.
+  if n.isTagLit and n.stmtKind == AsgnS:
+    let lhs = unwrapAddr(childCursor(n))
+    if lhs.kind == Symbol and lhs.symId == s: return true
+  eachChild(n):
+    if assignsCursor(child, s): return true
+  false
+
+proc advancesHere(n: Cursor; s: SymId): Cursor =
+  ## The first advance of `s` on the straight-line path through `n`. Nested
+  ## conditionals and loops are not straight-line -- a `while s.hasMore` body
+  ## never runs on an empty scope -- so the walk stops at them.
+  result = default(Cursor)
+  if not n.isTagLit: return
+  if n.exprKind in CallKinds and roleOf(n, roleNone) == roleAdvance:
+    for a in callArgs(n):
+      let lv = unwrapAddr(a)
+      if lv.kind == Symbol and lv.symId == s: return n
+    return
+  if n.stmtKind in {IfS, CaseS, WhileS, ForS, TryS, BlockS}: return
+  eachChild(n):
+    let hit = advancesHere(child, s)
+    if not cursorIsNil(hit): return hit
+
+proc branchOf(n: Cursor; want: NimonyOther): Cursor =
+  result = default(Cursor)
+  eachChild(n):
+    if child.isTagLit and child.substructureKind == want: return child
+
+proc scanEmptyScopeAdvance(ctx: var SemCheckContext) =
+  ## `if not n.hasMore: inc n` cannot be right, ever.
+  ##
+  ## `hasMore` is `rem > 0` and `inc` asserts `rem != 0`, so the guard names
+  ## exactly the case in which the advance is illegal; `skip` does not assert
+  ## but walks the pointer out of the scope, which is worse. The shape is the
+  ## classic model's `skipParRi`: there, "no children left" meant "sitting on
+  ## the closing paren", and stepping over it was how you left the node.
+  ## nifcore materialises no closing token -- the scope simply ends, and `into`
+  ## leaves it -- so ported code that kept the old step crashes on the first
+  ## well-formed input that reaches it (nim-lang/nimony#2408).
+  for p in ctx.m.procs:
+    if not p.hasCursor: continue
+    var body = p.body
+    body.linearScan:
+      # No `continue` in here: see `scanWhileTermination`.
+      if body.stmtKind == IfS and originOf(body.info, ctx.m.file) == noUser:
+        let first = branchOf(body, ElifU)
+        if not cursorIsNil(first):
+          var cond = childCursor(first)
+          let negated = cond.isTagLit and cond.exprKind == NotX
+          let test = if negated: childCursor(cond) else: cond
+          # the branch that runs precisely when the scope is empty
+          let empty = if negated: first else: branchOf(body, ElseU)
+          if not cursorIsNil(empty):
+            for s, v in pairs(p.vars):
+              if v.tracked == tkCursor and testsRem(test, s):
+                var stmts = childCursor(empty)
+                if negated and stmts.hasMore: skip stmts   # past the condition
+                if not assignsCursor(stmts, s):
+                  let hit = advancesHere(stmts, s)
+                  if not cursorIsNil(hit):
+                    ctx.addViolation hit.info, p.name,
+                      "`" & opDisplayName(hit) & " " & v.name &
+                      "` runs only when `" & v.name &
+                      ".hasMore` is false, so it always advances past the end of the scope"
+
+# ---------------------------------------------------------------------------
 # Loop termination
 # ---------------------------------------------------------------------------
 
@@ -832,6 +917,7 @@ proc validateSemModule*(nifFile, sourceFile: string; grammar: TagGrammar;
   scanObligations ctx
   scanCursorBufferBalance ctx
   scanWhileTermination ctx
+  scanEmptyScopeAdvance ctx
   scanConstructedTrees ctx
   if strict:
     scanForNonExhaustiveCases ctx
