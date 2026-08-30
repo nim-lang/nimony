@@ -876,7 +876,7 @@ proc trResult(c: var ControlFlow; n: var Cursor) =
 proc trLocal(c: var ControlFlow; n: var Cursor) =
   let kind = n.symKind
   let orig = n
-  inc n
+  inc n, SkipTag
   skip n, SkipName # name
   skip n, SkipExport # export marker
   skip n, SkipPragmas # pragmas

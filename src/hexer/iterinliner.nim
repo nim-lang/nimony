@@ -56,7 +56,7 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
   of Symbol:
     let val = c.symId
     res[destSym] = val
-    inc c
+    inc c, SkipName
   else:
     var typ = local.typ
     # Fresh SymId per yield expansion
@@ -104,7 +104,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
       if c.isSymbol:
         tmpId = c.symId
         info = c.info
-        inc c
+        inc c, SkipName
       else:
         tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
@@ -874,7 +874,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         takeTree(buf, c)
         publish iterSym, buf
       else:
-        skip(c)
+        skip(c, SkipFull)
     of TemplateS:
       dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:

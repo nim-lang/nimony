@@ -1478,7 +1478,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
                      not calleeHasClosureParam(typ)
       if n.kind == Symbol:
         tmp = n.symId
-        inc n
+        inc n, SkipName
       else:
         # Expression callee: bind the (fn, env) tuple to a temp first. The
         # wrapper spans the whole call (and the nil-dispatch `if`, when it
@@ -1682,7 +1682,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
             dest.copyIntoKind NilX, info: discard
           else:
             dest.untypedEnv info, c.currentProc.env
-        inc n
+        inc n, SkipExpr
       else:
         # proc with closure pragma but doesn't capture any variables.
         # so it is actually not closure.
@@ -1702,7 +1702,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
           else:
             dest.typedEnv info, c.currentProc.env
           dest.addSymUse repWith.field, info
-        inc n
+        inc n, SkipExpr
       else:
         takeTree dest, n
   of DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, Ident, SymbolDef,

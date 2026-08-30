@@ -1200,7 +1200,7 @@ proc copyExcept(dest: var TokenBuf; n: var Cursor; excl: seq[Cursor]; i: var int
   ## Copies the subtree at `n` while dropping the subtrees listed in `excl`
   ## (which must appear in document order).
   if i < excl.len and n == excl[i]:
-    skip n
+    skip n, SkipFull
     inc i
   elif n.isTagLit:
     dest.addParLe(n.cursorTagId, n.info)

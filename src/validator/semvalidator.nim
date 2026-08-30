@@ -104,7 +104,7 @@ const
 
   SkipIntentNames = ["SkipTag", "SkipParRi", "SkipName", "SkipExport",
                      "SkipPragmas", "SkipType", "SkipValue", "SkipGenParams",
-                     "SkipEffects",
+                     "SkipEffects", "SkipStmt",
                      "SkipCond", "SkipBody", "SkipExpr", "SkipResult", "SkipFull",
                      "Anything", "AnyExpr", "AnyStmt", "AnyType"]
     ## Closed set: the classic `SkipIntent` roles plus the structural

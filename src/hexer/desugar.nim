@@ -1064,7 +1064,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
   dest.addParRi()
   while scopes.len > 0:
-    n = scopes.pop(); skip n
+    n = scopes.pop(); skip n, SkipFull
 
 proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Lower `(a, b, ...) = rhs` (LHS is `tup`/`tupconstr`) into:
@@ -1088,7 +1088,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var lhsItems: seq[Cursor] = @[]
   while n.hasMore:
     lhsItems.add n
-    skip n
+    skip n, SkipExpr
   n = lhsStart; skip n # past LHS close
 
   dest.addParLe StmtsS, info

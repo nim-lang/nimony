@@ -284,7 +284,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = sub(n)
   if n.kind == Symbol:
     let sym = n.symId
-    inc n    # skip fn symbol
+    inc n, SkipName    # the fn symbol, re-emitted below
     # Create a child coroutine and return it as a Continuation without
     # yielding. The callee's frame is heap-allocated via allocFrame.
     copyIntoKind dest, CallS, info:
@@ -302,12 +302,12 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.copyIntoKind KvU, info:
           dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
           dest.addParPair NilX, info
-    n = delayStart; skip n # skip close of delay
+    n = delayStart; skip n, SkipFull # the delay, already translated
   else:
     dest.copyIntoKind ErrT, info:
       dest.addStrLit "`delay` expects a call expression"
-    while n.hasMore: skip n # skip rest
-    n = delayStart; skip n
+    while n.hasMore: skip n, SkipFull # drop the malformed arguments
+    n = delayStart; skip n, SkipFull
 
 # ---------------------------------------------------------------------
 # Proctype / itertype shape rewrite — coroutine-shaped types get the
@@ -357,7 +357,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
             trProctype(c, dest, n)
           dest.addDotToken() # default value
       else:
-        skip n
+        skip n, SkipType
       # here we add caller param
       dest.copyIntoKind ParamU, info:
         dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
