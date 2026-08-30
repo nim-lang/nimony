@@ -10,8 +10,8 @@
 ## Parser for `doc/tags.md`.
 ##
 ## `doc/tags.md` is the single source of truth for the Nimony / NIFC grammar.
-## This module exposes the parsed form both for the source-level linter
-## (`check_tags.nim`) and the in-compiler phase validator (`phase_validator.nim`).
+## This module exposes the parsed form both for the source-level validator
+## (`validator.nim`) and the in-compiler phase validator (`phase_validator.nim`).
 ##
 ## The grammar representation is intentionally minimal: a table keyed by tag
 ## name, with a list of alternative forms. Each form is a sequence of child

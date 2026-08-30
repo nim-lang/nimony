@@ -1,0 +1,6 @@
+tests/validator_sem/tscopeend.nim(12, 6) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [pastTheEnd]
+tests/validator_sem/tscopeend.nim(21, 3) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [pastTheEndElse]
+tests/validator_sem/tscopeend.nim(26, 6) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [rewound]
+tests/validator_sem/tscopeend.nim(35, 5) Warning: branch advances cursor 1 more time(s) than it emits (possible dropped input) [drains]
+tests/validator_sem/tscopeend.nim(13, 5) Error: `inc n` runs only when `n.hasMore` is false, so it always advances past the end of the scope [pastTheEnd]
+tests/validator_sem/tscopeend.nim(22, 5) Error: `skip n` runs only when `n.hasMore` is false, so it always advances past the end of the scope [pastTheEndElse]

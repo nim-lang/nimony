@@ -157,7 +157,12 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = false
   of RetS, BreakS, ContinueS, RaiseS:
     result = true
-  else:
+  of NoStmt, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS, CursorS, PatternvarS,
+     ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
+     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, PragmasS,
+     PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
+     ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
+     BindS, MixinS, UsingS, AsmS, DeferS:
     result = false
 
 proc isNoReturn(n: Cursor): bool {.inline.} =
@@ -1755,6 +1760,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
         let b = getConstOrdinalValue(r); skip r
         if a.isNaN or b.isNaN:
           buildErr c, dest, rInfo, "expected constant ordinal value"
+          skip value   # the error path must still consume the element
         else:
           if seen.doesOverlapOrIncl(a, b):
             buildErr c, dest, rInfo, "overlapping values"
@@ -2358,15 +2364,17 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: NifLineInf
   for s in items(seen):
     total = total + s[1] - s[0] + createXint(1'i32)
 
+  # Peel the selector down to the enum declaration. This was a loop with a fuel
+  # counter, but it could never take a second hop: the only assignment to `typ`
+  # was followed by `break`, so every other path left `typ` -- and therefore the
+  # whole loop state -- exactly as it was and simply burned the fuel. An alias
+  # chain (`type A = B`) is still not followed; the `total == lengthOrd` count
+  # below is what covers those.
   var typ = selectorType
-  var counter = 20
-  while typ.isSymbol:
-    dec counter
-    if counter <= 0: break
+  if typ.isSymbol:
     let impl = getTypeSection(typ.symId)
     if impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
       typ = impl.body
-      break
 
   if typ.typeKind != HoleyEnumT:
     # quick check based on the `total` count:
@@ -3127,7 +3135,10 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
           semForLoopTupleVar c, vb, it, loopVarType
         else:
           buildErr c, vb, it.n.info, "tuple types expected, but got: " & typeToString(loopVarType)
-    else:
+    of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+       StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,
+       DeferexpansionU, NeedtypesU:
       buildErr c, vb, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
     inc c.routine.inLoop
@@ -3263,7 +3274,10 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           semForLoopTupleVar c, dest, it, iterCall.typ
         else:
           buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(iterCall.typ)
-    else:
+    of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+       StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,
+       DeferexpansionU, NeedtypesU:
       buildErr c, dest, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
 

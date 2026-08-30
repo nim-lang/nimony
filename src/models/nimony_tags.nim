@@ -353,7 +353,7 @@ type
     PureP = (ord(PureTagId), "pure")  ## `pure` pragma (currently ignored)
     FinalP = (ord(FinalTagId), "final")  ## `final` pragma
     AcyclicP = (ord(AcyclicTagId), "acyclic")  ## `acyclic` pragma (currently ignored)
-    PragmaP = (ord(PragmaTagId), "pragma")  ## `pragma` pragma
+    PragmaP = (ord(PragmaTagId), "pragma")  ## `pragma` pragma: a custom pragma attached to a declaration, naming the `{.pragma.}` template it resolved to, followed by its arguments exactly as written (they are `untyped`, so they are preserved unchecked)
     PackedP = (ord(PackedTagId), "packed")  ## `packed` pragma
     PassiveP = (ord(PassiveTagId), "passive")  ## `passive` pragma
     PushP = (ord(PushTagId), "push")  ## `push` pragma

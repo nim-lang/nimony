@@ -572,14 +572,14 @@ proc setupProgramForTesting*(dir, file, ext: string) =
   prog.main.ext = ext
   publishStringType()
 
-proc takeParRi*(dest: var TokenBuf; n: var Cursor) =
+proc takeParRi*(dest: var TokenBuf; n: var Cursor) {.nifBalanced.} =
   if not n.hasMore:
     dest.addParRi(n.endInfo)
     consumeParRi n
   else:
     bug "expected ')', but got: ", n
 
-proc skipParRi*(n: var Cursor) =
+proc skipParRi*(n: var Cursor) {.nifBalanced.} =
   if not n.hasMore:
     consumeParRi n
   else:

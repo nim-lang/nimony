@@ -176,7 +176,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
         while n.hasMore:
           tr c, dest, n
         dest.addParRi(n.endInfo)
-        n = callStart; skip n
+        n = callStart; skip n, SkipFull
       addRaiseStmt(dest, symId, info)
       if isVoid:
         dest.addParRi()
@@ -188,7 +188,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; inhibit: bool) =
     while n.hasMore:
       tr c, dest, n
     dest.addParRi(n.endInfo)
-    n = callStart; skip n
+    n = callStart; skip n, SkipFull
 
 proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let kind = n.symKind

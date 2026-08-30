@@ -547,7 +547,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
             error "expected `of` or `else` inside `case`"
         dest.addParRi # end of union
     of NilU:
-      skip n
+      skip n, SkipFull
     of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
         StaticTypevarU, EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
         ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
@@ -792,7 +792,7 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let param = asLocal(n)
   if param.typ.typeKind in {TypedescT, StaticT}:
     # do not produce any code for this as it's a compile-time parameter
-    skip n
+    skip n, SkipFull
   elif passByConstRef(param.typ, param.pragmas, c.bits div 8, c.sizeofCache) or typeprops.isInheritable(param.typ, false):
     var paramBuf = createTokenBuf()
     paramBuf.addParLe("param", n.info)
@@ -1069,7 +1069,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
           let (typevar, _) = getSymDef(c, n)
           while n.hasMore: skip n
   else:
-    skip n # generic parameters
+    skip n, SkipGenParams
 
   if isGeneric:
     # count each param as used:
@@ -1079,7 +1079,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
         n.into:                                 # (param ...)
           let (param, _) = getSymDef(c, n)
           while n.hasMore: skip n
-    skip n # skip return type
+    skip n, SkipType # return type
   else:
     trParams c, dest, n
 
@@ -1145,7 +1145,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   # body:
   if isGeneric:
-    skip n
+    skip n, SkipBody
   elif mode != TraverseSig or InlineP in prag.flags:
     trProcBody c, dest, n
   else:
@@ -1204,7 +1204,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
           let (typevar, _) = getSymDef(c, n)
           while n.hasMore: skip n               # consume rest of body (skipToEnd would eat the parri too)
   else:
-    skip n # generic parameters
+    skip n, SkipGenParams
 
   let pinfo = n.info
   let prag = parsePragmas(c, dest, n)
@@ -1218,7 +1218,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
-    skip n
+    skip n, SkipType
   else:
     var flags = {IsTypeBody}
     if NodeclP in prag.flags: flags.incl IsNodecl
@@ -1385,7 +1385,7 @@ proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   n = sub(n)
   if isLastSon(n):
     trExpr c, dest, n
-    n = exprStart; skip n
+    n = exprStart; skip n, SkipFull
   else:
     dest.addParLe(exprStart.cursorTagId, exprStart.info)
     while n.hasMore:
@@ -1763,7 +1763,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trExpr c, dest, n # inheritance depth
       if n.isStringLit:
         # drop the access-token marker; NIFC has no visibility concept.
-        skip n
+        skip n, SkipFull
       takeParRi dest, n, dotStart
     of DdotX:
       dest.addParLe("dot", n.info)
@@ -1775,7 +1775,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trFieldname c, dest, n
       trExpr c, dest, n
       if n.isStringLit:
-        skip n
+        skip n, SkipFull   # the access-token marker again
       takeParRi dest, n, dotStart
     of HaddrX, AddrX:
       if isAddrOfAconstrUarray(n):
@@ -2144,7 +2144,7 @@ proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   var handlers: seq[Cursor] = @[]
   while n.substructureKind == ExceptU:
     handlers.add n
-    skip n
+    skip n, SkipFull
   c.exceptLabels.shrink oldLen
 
   # Since we duplicated the finally statements before every `raise` statement we
@@ -2263,8 +2263,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       n = sub(n)
       if n.isStringLit or n.isDotToken:
         # eliminates discard without side effects
-        inc n
-        n = discardStart; skip n
+        n = discardStart; skip n, SkipFull
       else:
         dest.addParLe(discardToken.cursorTagId, discardToken.info)
         trExpr c, dest, n
@@ -2299,14 +2298,14 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of MacroS, TemplateS, IncludeS, FromimportS, ImportexceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
-      skip n
+      skip n, SkipFull
     of TypeS:
       moveToTopLevel(c, dest, mode):
         trTypeDecl c, dest, n, mode
     of ContinueS, WhenS:
       error c, "unreachable: ", n
     of PragmasS, AssumeS, AssertS:
-      skip n
+      skip n, SkipFull
   else:
     assert n.hasMore
     error c, "statement expected, but got: ", n

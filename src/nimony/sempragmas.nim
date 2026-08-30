@@ -81,6 +81,21 @@ proc customPragmaSym*(c: SemContext; name: StrId): SymId =
 proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
   name in c.customPragmaTemplates or customPragmaSym(c, name) != NoSymId
 
+proc resolveCustomPragma(c: SemContext; n: Cursor): SymId =
+  ## The `{.pragma.}` template an annotation refers to.
+  ##
+  ## A template body is semchecked in the scope the template was *declared*
+  ## in, so an annotation written there arrives already bound and must be
+  ## taken as it is: looking its name up again where the template expands is
+  ## the hygiene bug -- `std/json` wraps `nifcore.into`, so `into`'s body ends
+  ## up expanded in a module that never imported the annotation's own module,
+  ## and the name resolves to nothing there.
+  if n.kind == Symbol and symbolIsCustomPragmaTemplate(n.symId):
+    result = n.symId
+  else:
+    let name = getIdent(n)
+    result = if name != StrId(0): c.customPragmaSym(name) else: NoSymId
+
 proc isPreservedCustomPragma(n: Cursor): bool =
   ## True when `n` is a previously-preserved custom-pragma attachment
   ## `(pragma <sym>)` (the `pragma` tag with a symbol child), as opposed to the
@@ -162,17 +177,24 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         var read = beginRead(pragBuf[])
         while read.hasMore:
           semPragma c, dest, read, crucial, kind
-      elif name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
+      elif (let psym = c.resolveCustomPragma(n); psym != NoSymId):
         # Pragma that resolves to a `template X {.pragma.}` declaration. Unlike
-        # Nim (which drops `sfCustomPragma`), preserve it as `(pragma <sym>)`
-        # so it survives into the serialized decl and plugins can introspect it
-        # (e.g. `.linear`). Arguments are not yet supported and are dropped.
+        # Nim (which drops `sfCustomPragma`), preserve it as
+        # `(pragma <sym> <args>)` so it survives into the serialized decl and
+        # can be introspected -- by a plugin (`.linear`), or by the validator,
+        # which reads `{.ensuresNif: addedExpr(dest).}` off the declaration.
+        #
+        # The arguments are preserved exactly as written, not semchecked:
+        # `{.pragma.}` declares the template's parameters `untyped`, and the
+        # arguments are routinely not expressions at all -- `addedExpr(dest)`
+        # names a predicate of the validator's own vocabulary, and semchecking
+        # it would only report that no such proc exists.
         let info = n.info
         toPragmaArgs()
-        if hasParRi:
-          while n.hasMore: skip n
         dest.addParLe(PragmaP, info)
         dest.addSymUse(psym, info)
+        if hasParRi:
+          while n.hasMore: takeTree dest, n
         dest.addParRi()
       else:
         buildErr c, dest, n.info, "expected pragma"
@@ -527,8 +549,14 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, BundleP, CompileP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
-    if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0):
+    if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
+        not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
+      # `isPreservedCustomPragma` guard keeps a custom pragma *attached to* a
+      # template out of this branch: re-sem sees the attachment as `(pragma
+      # <sym>)`, which is shaped like a declaration marker with an argument,
+      # and this branch would reject it as "`pragma` takes no arguments". Only
+      # the bare `(pragma)` marker declares one.
       # body is not expanded at attachment sites — the annotation is
       # recorded as a known custom-pragma name that will be silently
       # accepted (and dropped) wherever it is later attached. Mirrors Nim's
@@ -1244,9 +1272,29 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
   else:
-    buildErr c, dest, it.n.info, "unsupported pragma", it.n
-    skip it.n
-    while it.n.hasMore: skip it.n
+    if (let psym = c.resolveCustomPragma(it.n); psym != NoSymId):
+      # A custom pragma as a *statement*. It marks the region it stands in
+      # rather than a declaration, which is what a wrapper template needs: the
+      # marker is written in the template's body, so every expansion carries it
+      # without the reader having to work out which template it came from.
+      #
+      # Preserved as a `(pragmas (pragma <sym> <args>))` statement. Nothing
+      # downstream has to learn anything: hexer's passes already take such a
+      # statement through untouched and lengcgen already skips it.
+      let info = it.n.info
+      toPragmaArgs()
+      dest.addParLe(PragmasS, info)
+      dest.addParLe(PragmaP, info)
+      dest.addSymUse(psym, info)
+      while it.n.hasMore: takeTree dest, it.n
+      dest.addParRi()
+      dest.addParRi()
+      closePragmaLine()
+      producesVoid c, dest, info, it.typ
+    else:
+      buildErr c, dest, it.n.info, "unsupported pragma", it.n
+      skip it.n
+      while it.n.hasMore: skip it.n
 
 proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info

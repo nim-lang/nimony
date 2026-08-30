@@ -9,14 +9,15 @@
 
 ## Annotations for compiler pass verification.
 ##
-## These pragmas are ignored by the Nim compiler but parsed by `check_tags`
-## from the nifled output to derive what each proc consumes and produces.
+## These pragmas are ignored by the Nim compiler. The validator reads them off
+## the semchecked declaration to derive what each proc consumes and produces.
 ##
 ## Usage:
 ##   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 ##     {.ensuresNif: addedExpr(dest).}
 ##
 ## Procs annotated with ensuresNif must have unique names (no overloading).
+## See `lib/nifroles.nim` for the roles that describe an operation itself.
 
 template ensuresNif*(x: untyped) {.pragma.}
 template requiresNif*(x: untyped) {.pragma.}
