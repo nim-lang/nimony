@@ -1122,7 +1122,8 @@ when defined(wasm32) and defined(standalone):
         dec i
       if carry:
         result.carry = true
-        kept = "1" & kept.substr(0, kept.len - 2)
+        kept.shrink kept.len - 2
+        kept = "1" & kept
     result.digits = kept
 
   func fmtDecimal(f: BiggestFloat, neg: bool, digits: string,
