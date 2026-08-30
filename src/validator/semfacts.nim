@@ -291,8 +291,7 @@ proc emittedKindOf*(s: SymId): string =
   if res.status != LacksNothing or not isRoutine(res.decl.symKind): return ""
   let arg = pragmaArg(asRoutine(res.decl).pragmas, "nifEmits")
   if not arg.hasMore: ""          # no such pragma: `pragmaArg` yields a nil cursor
-  elif arg.kind == Ident: arg.strVal
-  elif arg.kind == Symbol: baseName(arg.symId)
+  elif arg.kind == StrLit: arg.strVal
   else: ""
 
 proc emitsBySignature(params: Cursor): bool =

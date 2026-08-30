@@ -99,13 +99,13 @@ proc typebits*(n: NifToken): int {.inline.} =
 proc info*(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
 proc endInfo*(c: Cursor): NifLineInfo {.inline.} = rawLineInfo(c)
 
-proc emitInfo(dest: var TokenBuf; info: NifLineInfo) {.nifEmits: None.} =
+proc emitInfo(dest: var TokenBuf; info: NifLineInfo) {.nifEmits: "None".} =
   if info.isValid:
     appendLineInfo(dest, info)
 
-proc addStrLit*(dest: var TokenBuf; s: StrId; info: NifLineInfo) {.nifEmits: LIT.} =
+proc addStrLit*(dest: var TokenBuf; s: StrId; info: NifLineInfo) {.nifEmits: "LIT".} =
   nifcore.addStrLit(dest, pool.strings[s]); emitInfo(dest, info)
-proc addStrLit*(dest: var TokenBuf; s: string; info: NifLineInfo) {.nifEmits: LIT.} =
+proc addStrLit*(dest: var TokenBuf; s: string; info: NifLineInfo) {.nifEmits: "LIT".} =
   nifcore.addStrLit(dest, s); emitInfo(dest, info)
 
 # ── End-of-scope / node predicates ───────────────────────────────────────
@@ -264,7 +264,7 @@ proc addParRi*(dest: var TokenBuf; info: NifLineInfo) {.nifCloses.} = closeTag(d
 proc isUnknownToken*(c: Cursor): bool {.inline.} = hasMore(c) and load(c).kind == UnknownToken
 proc isUnknownToken*(n: NifToken): bool {.inline.} = n.kind == UnknownToken
 
-proc addUnstructured*(dest: var TokenBuf; c: Cursor) {.nifEmits: Any.} =
+proc addUnstructured*(dest: var TokenBuf; c: Cursor) {.nifEmits: "Any".} =
   ## Copy the remaining forest under `c` verbatim, preserving each subtree's
   ## suffixes (line info). Handles a sequence of top-level trees/atoms.
   var c = c
@@ -283,23 +283,23 @@ proc insert*(dest: var TokenBuf; src: Cursor; pos: int) =
 # nifcore builds an atom then attaches its line info as a trailing suffix, so
 # these are add-then-`emitInfo`, not a single info-bearing token.
 
-proc addSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.nifEmits: Y.} =
+proc addSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.nifEmits: "Y".} =
   nifcore.addSymUse(dest, s); emitInfo(dest, info)
-proc addSymDef*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.nifEmits: D.} =
+proc addSymDef*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.nifEmits: "D".} =
   nifcore.addSymDef(dest, s); emitInfo(dest, info)
-proc addDotToken*(dest: var TokenBuf; info: NifLineInfo) {.nifEmits: Dot.} =
+proc addDotToken*(dest: var TokenBuf; info: NifLineInfo) {.nifEmits: "Dot".} =
   nifcore.addDotToken(dest); emitInfo(dest, info)
-proc addIdent*(dest: var TokenBuf; s: StrId; info: NifLineInfo) {.nifEmits: Y.} =
+proc addIdent*(dest: var TokenBuf; s: StrId; info: NifLineInfo) {.nifEmits: "Y".} =
   nifcore.addIdent(dest, pool.strings[s]); emitInfo(dest, info)
-proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) {.nifEmits: Y.} =
+proc addIdent*(dest: var TokenBuf; s: string; info = NoLineInfo) {.nifEmits: "Y".} =
   nifcore.addIdent(dest, s); emitInfo(dest, info)
-proc addIntLit*(dest: var TokenBuf; v: int64; info: NifLineInfo) {.nifEmits: LIT.} =
+proc addIntLit*(dest: var TokenBuf; v: int64; info: NifLineInfo) {.nifEmits: "LIT".} =
   nifcore.addIntLit(dest, v); emitInfo(dest, info)
-proc addUIntLit*(dest: var TokenBuf; v: uint64; info: NifLineInfo) {.nifEmits: LIT.} =
+proc addUIntLit*(dest: var TokenBuf; v: uint64; info: NifLineInfo) {.nifEmits: "LIT".} =
   nifcore.addUIntLit(dest, v); emitInfo(dest, info)
-proc addFloatLit*(dest: var TokenBuf; v: float64; info: NifLineInfo) {.nifEmits: LIT.} =
+proc addFloatLit*(dest: var TokenBuf; v: float64; info: NifLineInfo) {.nifEmits: "LIT".} =
   nifcore.addFloatLit(dest, v); emitInfo(dest, info)
-proc addCharLit*(dest: var TokenBuf; v: char; info: NifLineInfo) {.nifEmits: LIT.} =
+proc addCharLit*(dest: var TokenBuf; v: char; info: NifLineInfo) {.nifEmits: "LIT".} =
   nifcore.addCharLit(dest, v); emitInfo(dest, info)
 
 proc add*(dest: var TokenBuf; src: TokenBuf) {.inline.} =

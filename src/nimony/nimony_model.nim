@@ -298,16 +298,16 @@ template takeInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.hasMore and not n.isTagLit
 
-proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.inline, nifEmits: Y.} =
+proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.inline, nifEmits: "Y".} =
   dest.addSymUse(s, info)
 
-proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline, nifEmits: Any.} =
+proc copyTree*(dest: var TokenBuf; src: TokenBuf) {.inline, nifEmits: "Any".} =
   dest.add src
 
-proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline, nifEmits: Any.} =
+proc copyTree*(dest: var TokenBuf; src: Cursor) {.inline, nifEmits: "Any".} =
   dest.addSubtree src
 
-proc addEmpty*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) {.nifEmits: Dot.} =
+proc addEmpty*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) {.nifEmits: "Dot".} =
   dest.addDotToken(info)
 
 proc addEmpty2*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =

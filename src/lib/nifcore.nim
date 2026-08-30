@@ -1240,11 +1240,11 @@ template addSuffixIfNeeded(b: var TokenBuf; payload: uint64) =
 template lowBits(x: uint32): uint32 = x and PayloadMask
 template lowBits(x: uint64): uint32 = uint32(x and uint64(PayloadMask))
 
-proc addDotToken*(b: var TokenBuf) {.inline, nifEmits: Dot.} =
+proc addDotToken*(b: var TokenBuf) {.inline, nifEmits: "Dot".} =
   ## Appends an empty dot placeholder.
   b.add dotToken()
 
-proc addCharLit*(b: var TokenBuf; c: char) {.inline, nifEmits: LIT.} =
+proc addCharLit*(b: var TokenBuf; c: char) {.inline, nifEmits: "LIT".} =
   ## Appends a character literal.
   b.add charToken(c)
 
@@ -1266,19 +1266,19 @@ template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped)
     b.add NifToken(toX(kind, lowBits(payload)))
     addSuffixIfNeeded(b, payload)
 
-proc addStrLit*(b: var TokenBuf; s: string) {.nifEmits: LIT.} =
+proc addStrLit*(b: var TokenBuf; s: string) {.nifEmits: "LIT".} =
   ## Appends a string literal, using inline storage when possible.
   addStringLike(b, StrLit, s, b.pool.strings)
 
-proc addIdent*(b: var TokenBuf; s: string) {.nifEmits: Y.} =
+proc addIdent*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
   ## Appends an identifier, using inline storage when possible.
   addStringLike(b, Ident,  s, b.pool.strings)
 
-proc addSymUse*(b: var TokenBuf; s: string) {.nifEmits: Y.} =
+proc addSymUse*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
   ## Appends a symbol use, interning `s` when it does not fit inline.
   addStringLike(b, Symbol, s, b.pool.syms)
 
-proc addSymDef*(b: var TokenBuf; s: string) {.nifEmits: D.} =
+proc addSymDef*(b: var TokenBuf; s: string) {.nifEmits: "D".} =
   ## Appends a symbol definition, interning `s` when it does not fit inline.
   addStringLike(b, SymbolDef, s, b.pool.syms)
 
@@ -1308,11 +1308,11 @@ proc internedSymToken*(p: Pool; kind: NifKind; id: SymId): NifToken =
       "symbol id " & $id & " needs an ExtendedSuffix chain: no single token fits"
     NifToken(toX(kind, uint32(id) shl 1))
 
-proc addSymDef*(b: var TokenBuf; id: SymId) {.nifEmits: D.} =
+proc addSymDef*(b: var TokenBuf; id: SymId) {.nifEmits: "D".} =
   ## Emits a symbol definition already interned in `b.pool`.
   addInternedSymbol(b, SymbolDef, id)
 
-proc addSymUse*(b: var TokenBuf; id: SymId) {.nifEmits: Y.} =
+proc addSymUse*(b: var TokenBuf; id: SymId) {.nifEmits: "Y".} =
   ## Emit a symbol already interned in `b.pool`. Short symbols remain inline;
   ## longer symbols reuse `id` without a second hash-table lookup.
   addInternedSymbol(b, Symbol, id)
@@ -1328,7 +1328,7 @@ template emitChained(b: var TokenBuf; kind: NifKind; bits: uint64) =
     if bits shr (PayloadBits * 2) != 0'u64:
       b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
-proc addIntLit*(b: var TokenBuf; v: int64) {.nifEmits: LIT.} =
+proc addIntLit*(b: var TokenBuf; v: int64) {.nifEmits: "LIT".} =
   ## Pure inline. Writer picks the shortest carrier whose SIGNED width holds `v`:
   ##   28-bit (one token)    for v in [-2^27, 2^27),
   ##   56-bit (two tokens)   for v in [-2^55, 2^55),
@@ -1348,11 +1348,11 @@ proc addIntLit*(b: var TokenBuf; v: int64) {.nifEmits: LIT.} =
     b.add extendedSuffixToken(uint32((bits shr PayloadBits) and uint64(PayloadMask)))
     b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
-proc addUIntLit*(b: var TokenBuf; v: uint64) {.nifEmits: LIT.} =
+proc addUIntLit*(b: var TokenBuf; v: uint64) {.nifEmits: "LIT".} =
   ## Appends an unsigned integer literal using the shortest token chain.
   emitChained(b, UIntLit, v)
 
-proc addFloatLit*(b: var TokenBuf; v: float64) {.nifEmits: LIT.} =
+proc addFloatLit*(b: var TokenBuf; v: float64) {.nifEmits: "LIT".} =
   ## Appends a floating-point literal using its exact bit representation.
   emitChained(b, FloatLit, cast[uint64](v))
 
@@ -1613,7 +1613,7 @@ proc addAcrossPools(dest: var TokenBuf; c: var Cursor;
   of UnknownToken, EofToken, ParLe, ParRi:
     assert false, "reader-level lexical kind cannot appear in a token buffer"
 
-proc addSubtree*(dest: var TokenBuf; c: Cursor) {.nifEmits: Any.} =
+proc addSubtree*(dest: var TokenBuf; c: Cursor) {.nifEmits: "Any".} =
   ## Copy the subtree rooted at `c` into `dest`. When both pools AND
   ## both tag pools match, this is a single bulk `copyMem`; otherwise
   ## the source's literals and tag names are re-interned into `dest`'s
@@ -1637,7 +1637,7 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) {.nifEmits: Any.} =
     var cc = c
     addAcrossPools(dest, cc, srcPool, srcTags)
 
-proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) {.nifEmits: Any.} =
+proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) {.nifEmits: "Any".} =
   ## Append a closed buffer that shares `dest`'s literal and tag pools.
   ##
   ## The source is borrowed and remains usable. Matching pools make the
@@ -1666,7 +1666,7 @@ proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) {.nifEmits: Any.} =
           src.len * sizeof(NifToken))
   dest.len += src.len
 
-proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) {.nifEmits: Any.} =
+proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) {.nifEmits: "Any".} =
   ## Append all complete top-level values from `src` to `dest`.
   ##
   ## Matching pools permit one bulk copy. Otherwise values are re-interned
