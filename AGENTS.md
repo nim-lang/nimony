@@ -1,6 +1,6 @@
 # Development Guidelines
 
-This repo is a Nim compiler reimplementation built around [NIF](https://github.com/nim-lang/nif-spec). The compilation
+This repo is a Nim compiler reimplementation built around [NIF](https://github.com/nim-lang/nifspec). The compilation
 pipeline is split into tools and phases:
 
 - Nifler: parses Nim to NIF.
