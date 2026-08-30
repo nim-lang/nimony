@@ -1245,9 +1245,30 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
   else:
-    buildErr c, dest, it.n.info, "unsupported pragma", it.n
-    skip it.n
-    while it.n.hasMore: skip it.n
+    let name = getIdent(it.n)
+    if name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
+      # A custom pragma as a *statement*. It marks the region it stands in
+      # rather than a declaration, which is what a wrapper template needs: the
+      # marker is written in the template's body, so every expansion carries it
+      # without the reader having to work out which template it came from.
+      #
+      # Preserved as a `(pragmas (pragma <sym> <args>))` statement. Nothing
+      # downstream has to learn anything: hexer's passes already take such a
+      # statement through untouched and lengcgen already skips it.
+      let info = it.n.info
+      toPragmaArgs()
+      dest.addParLe(PragmasS, info)
+      dest.addParLe(PragmaP, info)
+      dest.addSymUse(psym, info)
+      while it.n.hasMore: takeTree dest, it.n
+      dest.addParRi()
+      dest.addParRi()
+      closePragmaLine()
+      producesVoid c, dest, info, it.typ
+    else:
+      buildErr c, dest, it.n.info, "unsupported pragma", it.n
+      skip it.n
+      while it.n.hasMore: skip it.n
 
 proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info
