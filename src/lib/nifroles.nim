@@ -22,6 +22,19 @@
 ## callee symbol, for a template from the symbol its expansion's provenance
 ## names. Both are exact: they are symbols, not spellings.
 ##
+## The markers sit on *declarations*, and for a template that means the
+## validator has to work out which template an expansion came from -- it does
+## so from the provenance `--inlineframes:on` forges into the line info. The
+## obvious simplification is to put the marker in the template's *body*
+## instead, so every expansion simply opens with it and no provenance is
+## needed. That works (and `sem` accepts a custom pragma as a statement for
+## it), right up to a wrapper of a wrapper: `std/json` defines its own `into`
+## around `nifcore`'s, so `nifcore.into`'s body is ultimately expanded in a
+## module that has never heard of `nifroles`, and the marker fails to resolve
+## there. Moving them needs sem to resolve a template body's pragma in the
+## scope the template was *declared* in, which is the hygiene rule it does not
+## have yet.
+##
 ## Emission is deliberately *not* in this list. A routine whose first parameter
 ## is a `var TokenBuf` and which takes no cursor emits and nothing else; that
 ## is what its signature already says, and saying it again on each of the forty
