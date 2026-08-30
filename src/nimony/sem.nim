@@ -157,7 +157,12 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = false
   of RetS, BreakS, ContinueS, RaiseS:
     result = true
-  else:
+  of NoStmt, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS, CursorS, PatternvarS,
+     ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
+     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, PragmasS,
+     PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
+     ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
+     BindS, MixinS, UsingS, AsmS, DeferS:
     result = false
 
 proc isNoReturn(n: Cursor): bool {.inline.} =
@@ -3127,7 +3132,10 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
           semForLoopTupleVar c, vb, it, loopVarType
         else:
           buildErr c, vb, it.n.info, "tuple types expected, but got: " & typeToString(loopVarType)
-    else:
+    of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+       StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,
+       DeferexpansionU, NeedtypesU:
       buildErr c, vb, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
     inc c.routine.inLoop
@@ -3263,7 +3271,10 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           semForLoopTupleVar c, dest, it, iterCall.typ
         else:
           buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(iterCall.typ)
-    else:
+    of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+       StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,
+       DeferexpansionU, NeedtypesU:
       buildErr c, dest, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
 
