@@ -173,6 +173,24 @@ proc emitsSomewhere(p: ProcFacts; n: Cursor): bool =
     if emitsSomewhere(p, child): return true
   false
 
+type
+  AdvanceSite = object
+    ## An advance the author did not justify, remembered until we know whether
+    ## the region it sits in pays for it.
+    info: NifLineInfo
+    op, cursor: string
+
+proc advancedParam(p: ProcFacts; n: Cursor): SymId =
+  ## The cursor *parameter* an advancing call moves, if any. A cursor local to
+  ## the routine is its own business; a parameter belongs to the caller, and
+  ## dropping what it points at is what loses input.
+  result = NoSymId
+  for a in callArgs(n):
+    let lv = unwrapAddr(a)
+    if lv.kind == Symbol:
+      for cp in p.cursorParams:
+        if lv.symId == cp: return cp
+
 proc classifyCall(p: ProcFacts; n: Cursor; marker: OpRole): int =
   ## The balance contribution of one operation: positive when the cursor moved
   ## without anything being emitted, negative when output was produced without
@@ -196,8 +214,39 @@ proc classifyCall(p: ProcFacts; n: Cursor; marker: OpRole): int =
       elif hasBuf: return -1
   return 0
 
+proc neverReturns(n: Cursor): bool =
+  ## True when control cannot reach the end of `n`. Only the straight-line case
+  ## matters here: a body that is one `bug "…"` has no obligation to consume
+  ## anything, because there is no "afterwards" in which the unconsumed input
+  ## could be missed.
+  if not n.isTagLit: return false
+  if n.stmtKind in {RaiseS, RetS}: return true
+  if n.exprKind in CallKinds and isNoReturn(calleeSym(n)): return true
+  if n.stmtKind == StmtsS:
+    eachChild(n):
+      if neverReturns(child): return true
+  false
+
+proc reportRegion(ctx: var SemCheckContext; p: ProcFacts; info: NifLineInfo;
+                  excess: int; sites: seq[AdvanceSite]) =
+  ## A region that advances more often than it emits. Name the advances that
+  ## did not say why if there are any, and fall back to the region itself when
+  ## the excess came from somewhere else -- a call whose role nothing declares.
+  ##
+  ## Only the compiler's own passes are told which advance to justify, because
+  ## only they can: `SkipIntent` lives in `nifpools`, which a plugin does not
+  ## get. A plugin is told about the region and left to fix the imbalance.
+  if ctx.strict and sites.len > 0:
+    for s in sites:
+      ctx.addWarning s.info, p.name,
+        "`" & s.op & " " & s.cursor & "` needs a SkipIntent argument for justification"
+  else:
+    ctx.addWarning info, p.name,
+      "branch advances cursor " & $excess &
+      " more time(s) than it emits (possible dropped input)"
+
 proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
-                  inLib: bool): int =
+                  inLib: bool; sites: var seq[AdvanceSite]): int =
   result = 0
   if not n.isTagLit: return
   let marker = markerRole(n)
@@ -219,23 +268,29 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
     # Library glue between expansions: nothing here is the author's, but a
     # block argument nested inside it is, so keep descending.
     eachChild(n):
-      result += blockBalance(ctx, p, child, true)
+      result += blockBalance(ctx, p, child, true, sites)
     return
 
   if n.exprKind in CallKinds:
-    return classifyCall(p, n, roleNone)
+    result = classifyCall(p, n, roleNone)
+    if result > 0 and roleOf(n, roleNone) == roleAdvance and not hasIntentArg(n):
+      let cp = advancedParam(p, n)
+      if cp != NoSymId:
+        sites.add AdvanceSite(info: n.info, op: opDisplayName(n),
+                              cursor: p.vars[cp].name)
+    return
 
   case n.stmtKind
   of StmtsS:
     eachChild(n):
-      result += blockBalance(ctx, p, child, false)
+      result += blockBalance(ctx, p, child, false, sites)
   of IfS, CaseS:
-    # Each branch is checked on its own, and what the construct as a whole
-    # contributes to the enclosing sequence is the *least* any path through it
-    # contributes. Folding to a flat 0 instead threw away the emission of an
-    # `if` whose branches all emit, so the `inc n` that legitimately followed
-    # one -- the `dest.addSubtree n` / `inc n` pair spread over a conditional --
-    # read as an unpaired advance.
+    # Each branch is one region, checked on its own, and what the construct as
+    # a whole contributes to the enclosing sequence is the *least* any path
+    # through it contributes. Folding to a flat 0 instead threw away the
+    # emission of an `if` whose branches all emit, so the `inc n` that
+    # legitimately followed one -- the `dest.addSubtree n` / `inc n` pair spread
+    # over a conditional -- read as an unpaired advance.
     var lo = high(int)
     var hasElse = false
     eachChild(n):
@@ -247,31 +302,49 @@ proc blockBalance(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
           if branch in {ElifU, OfU} and inner.hasMore:
             skip inner    # condition / ranges
           var b = 0
+          var bsites: seq[AdvanceSite] = @[]
+          var dead = false
           while inner.hasMore:
-            b += blockBalance(ctx, p, inner, false)
+            b += blockBalance(ctx, p, inner, false, bsites)
+            if neverReturns(inner): dead = true
             skip inner
-          if b > 0:
-            ctx.addWarning child.info, p.name,
-              "branch advances cursor " & $b &
-              " more time(s) than it emits (possible dropped input)"
+          if b > 0 and not dead:
+            reportRegion ctx, p, child.info, b, bsites
           if b < lo: lo = b
     if n.stmtKind == IfS and not hasElse:
       # the path that takes no branch at all contributes nothing
       lo = min(lo, 0)
     result = if lo == high(int): 0 else: lo
   of WhileS, ForS, BlockS, TryS:
+    # a body is its own region: nothing after the loop pays for what it drops
+    var b = 0
+    var bsites: seq[AdvanceSite] = @[]
     eachChild(n):
-      discard blockBalance(ctx, p, child, false)
+      b += blockBalance(ctx, p, child, false, bsites)
+    if b > 0 and not neverReturns(n):
+      reportRegion ctx, p, n.info, b, bsites
     result = 0
   else:
     eachChild(n):
-      result += blockBalance(ctx, p, child, false)
+      result += blockBalance(ctx, p, child, false, sites)
 
 proc scanCursorBufferBalance(ctx: var SemCheckContext) =
+  ## Advancing over input without emitting it drops it -- unless the author
+  ## says the drop is deliberate, with a `SkipIntent` argument.
+  ##
+  ## The two halves of that are one question, asked per region: a region whose
+  ## advances are paid for by its emissions is fine however its `skip`s are
+  ## spelled, and only in a region that comes out ahead is an unjustified
+  ## advance worth pointing at. Asking it per *call* instead reported every
+  ## `dest.addSubtree n` / `inc n` pair in the compiler, and answering those
+  ## with a `SkipIntent` would have documented a drop that never happens.
   for p in ctx.m.procs:
     if not p.hasCursor or not p.hasBuffer: continue
     if not emitsSomewhere(p, p.body): continue
-    discard blockBalance(ctx, p, p.body, false)
+    var sites: seq[AdvanceSite] = @[]
+    let b = blockBalance(ctx, p, p.body, false, sites)
+    if b > 0 and not neverReturns(p.body):
+      reportRegion ctx, p, p.info, b, sites
 
 # ---------------------------------------------------------------------------
 # Obligations: a `var Cursor` parameter must reach some call
@@ -301,19 +374,6 @@ proc countCursorArgs(p: ProcFacts; n: Cursor; counts: var seq[int]) =
   eachChild(n):
     countCursorArgs(p, child, counts)
 
-proc neverReturns(n: Cursor): bool =
-  ## True when control cannot reach the end of `n`. Only the straight-line case
-  ## matters here: a body that is one `bug "…"` has no obligation to consume
-  ## anything, because there is no "afterwards" in which the unconsumed input
-  ## could be missed.
-  if not n.isTagLit: return false
-  if n.stmtKind in {RaiseS, RetS}: return true
-  if n.exprKind in CallKinds and isNoReturn(calleeSym(n)): return true
-  if n.stmtKind == StmtsS:
-    eachChild(n):
-      if neverReturns(child): return true
-  false
-
 proc scanObligations(ctx: var SemCheckContext) =
   ## A `var Cursor` parameter that is never handed to any call is a parameter
   ## whose subtree nobody consumes.
@@ -326,42 +386,6 @@ proc scanObligations(ctx: var SemCheckContext) =
         let v = p.vars[cp]
         ctx.addWarning p.info, p.name,
           "parameter `" & v.name & ": var Cursor` is never passed to any call"
-
-# ---------------------------------------------------------------------------
-# Unsafe cursor ops: a bare `skip`/`inc` on a cursor parameter
-# ---------------------------------------------------------------------------
-
-proc scanUnsafeCursorOpsIn(ctx: var SemCheckContext; p: ProcFacts; n: Cursor;
-                           delegated, inLib: bool) =
-  if not n.isTagLit: return
-  var nowInLib = originOf(n.info, ctx.m.file) != noUser
-  var delegatedHere = delegated
-
-  if not inLib and n.exprKind in CallKinds:
-    let op = roleOf(n, roleNone)
-    if op == roleAdvance and not hasIntentArg(n):
-      block flagFirst:
-        for a in callArgs(n):
-          let lv = unwrapAddr(a)
-          if lv.kind == Symbol:
-            for cp in p.cursorParams:
-              if lv.symId == cp:
-                ctx.addWarning n.info, p.name,
-                  "`" & opDisplayName(n) & " " & p.vars[cp].name &
-                  "` needs a SkipIntent argument for justification"
-                break flagFirst
-    elif op notin {roleAdvance, roleBalanced, roleWrap}:
-      if hasTrackedArg(p, n, tkCursor):
-        delegatedHere = true
-
-  eachChild(n):
-    scanUnsafeCursorOpsIn(ctx, p, child, delegatedHere, nowInLib)
-
-proc scanUnsafeCursorOps(ctx: var SemCheckContext) =
-  for p in ctx.m.procs:
-    if not p.hasCursor or not p.hasBuffer: continue
-    if not emitsSomewhere(p, p.body): continue
-    scanUnsafeCursorOpsIn(ctx, p, p.body, false, false)
 
 # ---------------------------------------------------------------------------
 # Loop termination
@@ -810,7 +834,6 @@ proc validateSemModule*(nifFile, sourceFile: string; grammar: TagGrammar;
   scanWhileTermination ctx
   scanConstructedTrees ctx
   if strict:
-    scanUnsafeCursorOps ctx
     scanForNonExhaustiveCases ctx
 
   result = 0
