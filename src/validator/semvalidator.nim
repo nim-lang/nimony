@@ -258,14 +258,37 @@ proc countCursorArgs(p: ProcFacts; n: Cursor; counts: var seq[int]) =
         for i, cp in p.cursorParams:
           if lv.symId == cp:
             counts[i] += 1
+  elif n.stmtKind == AsgnS:
+    # Writing the parameter discharges it just as passing it does: a cursor
+    # handed on inside a struct (`var it = Item(n: n); semExpr …; n = it.n`)
+    # or handed *back* as an out-parameter has moved, and this is where that
+    # shows.
+    let lv = unwrapAddr(childCursor(n))
+    if lv.kind == Symbol:
+      for i, cp in p.cursorParams:
+        if lv.symId == cp:
+          counts[i] += 1
   eachChild(n):
     countCursorArgs(p, child, counts)
+
+proc neverReturns(n: Cursor): bool =
+  ## True when control cannot reach the end of `n`. Only the straight-line case
+  ## matters here: a body that is one `bug "…"` has no obligation to consume
+  ## anything, because there is no "afterwards" in which the unconsumed input
+  ## could be missed.
+  if not n.isTagLit: return false
+  if n.stmtKind in {RaiseS, RetS}: return true
+  if n.exprKind in CallKinds and isNoReturn(calleeSym(n)): return true
+  if n.stmtKind == StmtsS:
+    eachChild(n):
+      if neverReturns(child): return true
+  false
 
 proc scanObligations(ctx: var SemCheckContext) =
   ## A `var Cursor` parameter that is never handed to any call is a parameter
   ## whose subtree nobody consumes.
   for p in ctx.m.procs:
-    if p.cursorParams.len == 0: continue
+    if p.cursorParams.len == 0 or neverReturns(p.body): continue
     var counts = newSeq[int](p.cursorParams.len)
     countCursorArgs(p, p.body, counts)
     for i, cp in p.cursorParams:
@@ -351,7 +374,9 @@ proc mutates(n: Cursor; s: SymId; isMutParam: bool): bool =
       var c = childCursor(n)
       if c.kind == Symbol and c.symId == s: return true
     elif n.stmtKind == AsgnS:
-      var c = childCursor(n)
+      # `n = sub(n)` on a `var` parameter is `(asgn (hderef n) …)`: the
+      # assignment target needs the same unwrapping an argument does.
+      var c = unwrapAddr(childCursor(n))
       if c.kind == Symbol and c.symId == s: return true
     elif isMutParam and n.exprKind in CallKinds:
       for a in callArgs(n):
@@ -361,35 +386,75 @@ proc mutates(n: Cursor; s: SymId; isMutParam: bool): bool =
   false
 
 proc branchesAdvance(n: Cursor; s: SymId; isMutParam: bool;
-                     branchTags: set[NimonyOther]): bool
+                     branchTags: set[NimonyOther]; needsElse, exitCounts: bool): bool
 
-proc mustAdvance(n: Cursor; s: SymId; isMutParam: bool): bool =
+proc firstChild(n: Cursor): Cursor =
+  ## The selector of a `case`, the condition of a `while`.
+  childCursor(n)
+
+proc condOfFirstBranch(n: Cursor): Cursor =
+  ## The condition of an `if`'s first `elif`, which runs on every path through
+  ## the `if` -- `if not isSimpleExpression(n): return` advances `n` whichever
+  ## way the test comes out.
+  result = childCursor(n)
+  if result.isTagLit and result.substructureKind == ElifU:
+    result = childCursor(result)
+  else:
+    result = default(Cursor)
+
+proc mustAdvance(n: Cursor; s: SymId; isMutParam, exitCounts: bool): bool =
   ## Guaranteed progress on `s` along every path through `n`.
+  ##
+  ## "Progress" includes leaving the loop: a path that ends in `break`, `return`
+  ## or `raise` never comes back to the condition, so it cannot be the one that
+  ## spins. `continue` is deliberately not in that set -- it goes straight back
+  ## to the condition, which is exactly the shape this check exists to catch.
+  ## `exitCounts` says whether those exits leave *the loop*; inside a nested
+  ## `block` they do not, so the flag is cleared on the way in.
   if not n.isTagLit: return false
   case n.stmtKind
   of StmtsS:
     # sequential: one statement that always runs is enough
     eachChild(n):
-      if mustAdvance(child, s, isMutParam): return true
+      if mustAdvance(child, s, isMutParam, exitCounts): return true
     false
   of IfS:
-    branchesAdvance(n, s, isMutParam, {ElifU, ElseU})
+    mutates(condOfFirstBranch(n), s, isMutParam) or
+      branchesAdvance(n, s, isMutParam, {ElifU, ElseU}, needsElse = true,
+                      exitCounts = exitCounts)
   of CaseS:
-    branchesAdvance(n, s, isMutParam, {OfU, ElseU})
-  of WhileS, ForS, TryS:
-    # a loop or a `try` may run zero times / take the handler: no guarantee
+    # A `case` that survives sem without an `else` covers every value of its
+    # selector -- sem rejects the rest with "not all cases are covered". So an
+    # exhaustively enumerated `case n.substructureKind`, which is the form this
+    # codebase requires over a tag enum, has no fall-through path to worry
+    # about, and demanding an `else` here would report every one of them.
+    mutates(firstChild(n), s, isMutParam) or
+      branchesAdvance(n, s, isMutParam, {OfU, ElseU}, needsElse = false,
+                      exitCounts = exitCounts)
+  of WhileS:
+    # the body may not run, but the condition is evaluated at least once
+    mutates(firstChild(n), s, isMutParam)
+  of ForS, TryS:
+    # the iteration may be empty / the handler may take over: no guarantee
     false
   of BlockS:
     var body = childCursor(n)
     if body.hasMore: skip body   # label
-    mustAdvance(body, s, isMutParam)
+    mustAdvance(body, s, isMutParam, exitCounts = false)
+  of BreakS, RetS, RaiseS:
+    exitCounts
   else:
+    # A `{.noreturn.}` call ends the path outright, wherever it stands, so it
+    # needs no `exitCounts`: `error "expected \`of\` or \`else\`"` closing a
+    # `case` branch is not a branch that forgot to advance the cursor.
+    if n.exprKind in CallKinds and isNoReturn(calleeSym(n)): return true
     mutates(n, s, isMutParam)
 
 proc branchesAdvance(n: Cursor; s: SymId; isMutParam: bool;
-                     branchTags: set[NimonyOther]): bool =
-  ## Every branch advances *and* the branches are exhaustive — without an
-  ## `else` the fall-through path makes no progress.
+                     branchTags: set[NimonyOther]; needsElse, exitCounts: bool): bool =
+  ## Every branch advances *and* the branches are exhaustive. What makes them
+  ## exhaustive differs: an `if` needs a written `else`, a `case` gets it from
+  ## sem (see the caller).
   var sawBranch = false
   var hasElse = false
   result = true
@@ -404,10 +469,10 @@ proc branchesAdvance(n: Cursor; s: SymId; isMutParam: bool;
           skip inner            # condition / ranges
         var advanced = false
         while inner.hasMore:
-          if mustAdvance(inner, s, isMutParam): advanced = true
+          if mustAdvance(inner, s, isMutParam, exitCounts): advanced = true
           skip inner
         if not advanced: result = false
-  result = result and sawBranch and hasElse
+  result = result and sawBranch and (hasElse or not needsElse)
 
 proc whileBody(n: Cursor): Cursor =
   result = childCursor(n)
@@ -440,7 +505,8 @@ proc scanWhileTermination(ctx: var SemCheckContext) =
         let loopBody = whileBody(body)
         for s in cursors:
           let v = p.vars[s]
-          if not mustAdvance(loopBody, s, v.isParam and v.isMut):
+          if not mustAdvance(loopBody, s, v.isParam and v.isMut,
+                             exitCounts = true):
             ctx.addWarning body.info, p.name,
               "loop is bounded by `" & p.vars[s].name &
               "` but not every path through its body advances it"

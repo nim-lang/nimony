@@ -1760,6 +1760,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
         let b = getConstOrdinalValue(r); skip r
         if a.isNaN or b.isNaN:
           buildErr c, dest, rInfo, "expected constant ordinal value"
+          skip value   # the error path must still consume the element
         else:
           if seen.doesOverlapOrIncl(a, b):
             buildErr c, dest, rInfo, "overlapping values"
@@ -2363,15 +2364,17 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: NifLineInf
   for s in items(seen):
     total = total + s[1] - s[0] + createXint(1'i32)
 
+  # Peel the selector down to the enum declaration. This was a loop with a fuel
+  # counter, but it could never take a second hop: the only assignment to `typ`
+  # was followed by `break`, so every other path left `typ` -- and therefore the
+  # whole loop state -- exactly as it was and simply burned the fuel. An alias
+  # chain (`type A = B`) is still not followed; the `total == lengthOrd` count
+  # below is what covers those.
   var typ = selectorType
-  var counter = 20
-  while typ.isSymbol:
-    dec counter
-    if counter <= 0: break
+  if typ.isSymbol:
     let impl = getTypeSection(typ.symId)
     if impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
       typ = impl.body
-      break
 
   if typ.typeKind != HoleyEnumT:
     # quick check based on the `total` count:

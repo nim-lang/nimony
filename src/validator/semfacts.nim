@@ -324,6 +324,27 @@ proc roleOfSym*(s: SymId): OpRole =
       result = roleEmits
   roleCache[s] = result
 
+var noReturnCache: Table[SymId, bool]
+
+proc isNoReturn*(s: SymId): bool =
+  ## `{.noreturn.}` on the callee's declaration. A call to one ends the path it
+  ## stands on, which is why `error "…"` as the last word of a `case` branch is
+  ## not a branch that failed to advance the cursor.
+  if s == NoSymId: return false
+  if noReturnCache.hasKey(s): return noReturnCache[s]
+  result = false
+  let res = tryLoadSym(s)
+  if res.status == LacksNothing and isRoutine(res.decl.symKind):
+    var n = asRoutine(res.decl).pragmas
+    if n.isTagLit and n.substructureKind == PragmasU:
+      var p = childCursor(n)
+      while p.hasMore:
+        if p.isTagLit and p.pragmaKind == NoreturnP:
+          result = true
+          break
+        skip p
+  noReturnCache[s] = result
+
 proc markerRole*(n: Cursor): OpRole =
   ## The role a template *expansion* declares about itself.
   ##
