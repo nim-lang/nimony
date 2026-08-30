@@ -164,15 +164,22 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
           semPragma c, dest, read, crucial, kind
       elif name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
         # Pragma that resolves to a `template X {.pragma.}` declaration. Unlike
-        # Nim (which drops `sfCustomPragma`), preserve it as `(pragma <sym>)`
-        # so it survives into the serialized decl and plugins can introspect it
-        # (e.g. `.linear`). Arguments are not yet supported and are dropped.
+        # Nim (which drops `sfCustomPragma`), preserve it as
+        # `(pragma <sym> <args>)` so it survives into the serialized decl and
+        # can be introspected -- by a plugin (`.linear`), or by the validator,
+        # which reads `{.ensuresNif: addedExpr(dest).}` off the declaration.
+        #
+        # The arguments are preserved exactly as written, not semchecked:
+        # `{.pragma.}` declares the template's parameters `untyped`, and the
+        # arguments are routinely not expressions at all -- `addedExpr(dest)`
+        # names a predicate of the validator's own vocabulary, and semchecking
+        # it would only report that no such proc exists.
         let info = n.info
         toPragmaArgs()
-        if hasParRi:
-          while n.hasMore: skip n
         dest.addParLe(PragmaP, info)
         dest.addSymUse(psym, info)
+        if hasParRi:
+          while n.hasMore: takeTree dest, n
         dest.addParRi()
       else:
         buildErr c, dest, n.info, "expected pragma"

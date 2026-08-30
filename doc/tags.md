@@ -319,7 +319,7 @@
 | `(pure)` | NimonyPragma | `pure` pragma (currently ignored) |
 | `(final)` | NimonyPragma | `final` pragma |
 | `(acyclic)` | NimonyPragma | `acyclic` pragma (currently ignored) |
-| `(pragma D)` | NimonyPragma | `pragma` pragma |
+| `(pragma D X*)` | NimonyPragma | `pragma` pragma: a custom pragma attached to a declaration, naming the `{.pragma.}` template it resolved to, followed by its arguments exactly as written (they are `untyped`, so they are preserved unchecked) |
 | `(internalTypeName T)` | NimonyExpr | returns compiler's internal type name |
 | `(internalFieldPairs T X)` | NimonyExpr | variant of fieldPairs iterator returns compiler's internal field name |
 | `(failed X)` | NimonyExpr | used to access the hidden failure flag for raising calls |
