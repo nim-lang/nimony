@@ -6,6 +6,9 @@ import ".." / lib / argsfinder
 import ".." / gear2 / modnames
 import context, category, markers
 
+export modnames.BackendDirC, modnames.BackendDirLLVM,
+       modnames.BackendDirNative, modnames.BackendDirWasm
+
 proc execNimony*(cmd: string; cat: Category): (string, int) =
   let cacheArg =
     if nimcacheDir != "nimcache": "--nimcache:" & quoteShell(nimcacheDir) & " "
@@ -29,15 +32,18 @@ proc pathsForFile(file: string): seq[string] =
     if pathsFile.len > 0:
       processPathsFile pathsFile, result
 
-proc generatedFile*(orig, ext: string): string =
+proc generatedFile*(orig, ext: string; backendTag = BackendDirC): string =
+  ## `backendTag` selects the backend whose artifacts to look at; it must match
+  ## the command the file was compiled with (`BackendDirNative` after
+  ## `execNimonyNative`, and so on). See `deps.backendDirName`.
   let name = modnames.moduleSuffix(orig, pathsForFile(orig))
-  # Backend (DCE and after) is in nimcache/<mainmod>/, see deps.nim; .s.nif is shared
+  # Backend (DCE and after) is in nimcache/<mainmod><tag>/, see deps.nim; .s.nif is shared
   result = if ext == ".s.nif": nimcacheDir / name.addFileExt(ext)
-           else: nimcacheDir / name / name.addFileExt(ext)
+           else: nimcacheDir / (name & backendTag) / name.addFileExt(ext)
 
-proc generatedExeFile*(orig: string): string =
+proc generatedExeFile*(orig: string; backendTag = BackendDirC): string =
   let name = modnames.moduleSuffix(orig, pathsForFile(orig))
-  result = nimcacheDir / name / orig.splitFile.name.addFileExt(ExeExt)
+  result = nimcacheDir / (name & backendTag) / orig.splitFile.name.addFileExt(ExeExt)
 
 proc removeMakeErrors*(output: string): string =
   result = output.strip

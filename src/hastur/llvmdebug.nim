@@ -72,7 +72,7 @@ proc runLLVMDebugTests*(dir: string; overwrite: bool) =
     # meaningful here; the `.ll` is written before linking and is what we check.
     discard execLocal("nimony", "l --silentMake --isMain --inlineframes:on " &
       cacheArg & quoteShell(file))
-    let llFile = generatedFile(file, ".ll")
+    let llFile = generatedFile(file, ".ll", BackendDirLLVM)
     if not llFile.fileExists():
       failure c, file, "lengc .ll", "missing: " & llFile
       continue

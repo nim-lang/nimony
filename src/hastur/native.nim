@@ -111,7 +111,7 @@ proc nativeTestFile*(c: var TestCounters; file: string; overwrite: bool) =
     failure c, file, "native compiler exitcode 0",
       removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
     return
-  let exe = file.generatedExeFile()
+  let exe = file.generatedExeFile(BackendDirNative)
   if not exe.fileExists():
     failure c, file, "native executable", "missing: " & exe
     return
@@ -151,7 +151,7 @@ proc nativeValgrindTestFile*(c: var TestCounters; file: string) =
     failure c, file, "native -d:valgrind compiler exitcode 0",
       removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
     return
-  let exe = file.generatedExeFile()
+  let exe = file.generatedExeFile(BackendDirNative)
   if not exe.fileExists():
     failure c, file, "native executable", "missing: " & exe
     return
@@ -309,7 +309,7 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
         removeMakeErrors(compilerOutput) & "\nexitcode " & $compilerExitCode
       continue
     # 1) Golden arkham's assembler NIF for the main module.
-    let asmFile = generatedFile(file, ".asm.nif")
+    let asmFile = generatedFile(file, ".asm.nif", BackendDirNative)
     if not asmFile.fileExists():
       failure c, file, "arkham asm.nif", "missing: " & asmFile
       continue
@@ -319,7 +319,7 @@ proc runNativeCodegenTests*(dir: string; overwrite: bool) =
       continue
     diffFiles(c, file, file.changeFileExt(target & ".asm.nif"), asmFile, overwrite)
     # 2) Behavioural check: the linked ELF must run and match .output/.exitcode.
-    let exe = generatedExeFile(file)
+    let exe = generatedExeFile(file, BackendDirNative)
     if not exe.fileExists():
       failure c, file, "native executable", "missing: " & exe
       continue

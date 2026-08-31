@@ -1,7 +1,7 @@
 ## The incremental-build regression: drive `nimony c --report` through a fixed
 ## sequence of scenarios and assert which phases actually re-ran.
 
-import std / [syncio, os, osproc, strutils, times]
+import std / [syncio, os, osproc, strutils, times, algorithm, sequtils]
 
 # ---- Incremental-build regression test ------------------------------------
 # `nifmake --report` prints a machine-readable summary of which commands
@@ -34,6 +34,19 @@ proc reportField*(entries: seq[ReportEntry]; cmd: string): int =
   for e in entries:
     if e.cmd == cmd: return e.count
   result = 0
+
+proc mainHexedPerBackend(cache: string): seq[(string, string)] =
+  ## `(directory name, content of the main module's .x.nif)` for every backend
+  ## directory under `cache`. `deps.backendDirName` gives each backend its own
+  ## `<mainmod><tag>/`, and only the main module's `.x.nif` lives in one (the
+  ## imported modules' copies are shared, at the cache root), so this is one
+  ## entry per backend that has built here.
+  result = @[]
+  for kind, dir in walkDir(cache):
+    if kind != pcDir: continue
+    for f in walkFiles(dir / "*.x.nif"):
+      result.add (dir.lastPathPart, readFile(f))
+  sort result
 
 proc incrementalTests*() =
   ## Drive `bin/nimony c --report` through a fixed sequence of scenarios on
@@ -145,10 +158,47 @@ proc incrementalTests*() =
 
   restoreSources()
 
+  # Phase 6: switch backends without touching a source file. `nimony c` and
+  # `nimony n` do not produce the same artifacts from the same input — hexer
+  # alone runs with or without `--native`, which changes the main module's
+  # `.x.nif` — and nifmake reruns a node only when its input or output FILES
+  # changed, never when a tool's FLAGS did. So sharing one directory would not
+  # make the second backend overwrite the first: it would make it reuse the
+  # first one's artifacts, silently, for as long as the sources hold still.
+  # `deps.backendDirName` keeps the two populations apart; assert that both
+  # exist afterwards, that they disagree, and that the C build the native one
+  # ran on top of came through untouched.
+  var phases = 5
+  let arkham = "bin" / "arkham".addFileExt(ExeExt)
+  let nifasm = "bin" / "nifasm".addFileExt(ExeExt)
+  if fileExists(arkham) and fileExists(nifasm):
+    inc phases
+    block:
+      let before = mainHexedPerBackend(cache)
+      expect before.len == 1,
+             "backend-switch: expected 1 backend directory before, got " & $before.len
+      let nativeCmd = nimony.quoteShell & " n -r --silentMake --report --nimcache:" &
+                      cache.quoteShell & " " & src.quoteShell
+      let (nativeOut, nativeEc) = execCmdEx(nativeCmd)
+      if nativeEc != 0:
+        stdout.write nativeOut
+        restoreSources()
+        quit "incremental: 'backend-switch' native compile failed"
+      let after = mainHexedPerBackend(cache)
+      expect after.len == 2,
+             "backend-switch: expected a directory per backend, got " & $after.len &
+             " (" & after.mapIt(it[0]).join(", ") & ")"
+      if after.len == 2 and before.len == 1:
+        expect after[0][1] != after[1][1],
+               "backend-switch: both backends stored the same main .x.nif"
+        let cBefore = after.filterIt(it[0] == before[0][0])
+        expect cBefore.len == 1 and cBefore[0][1] == before[0][1],
+               "backend-switch: the native build rewrote the C backend's main .x.nif"
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f
     quit "FAILURE: " & $failures.len & " incremental phase(s) failed."
-  echo "incremental: 5 / 5 phases successful in ",
+  echo "incremental: ", phases, " / ", phases, " phases successful in ",
        formatFloat(dt, ffDecimal, precision=2), "s."
   echo "SUCCESS."
