@@ -21,12 +21,10 @@ include ".." / nimony / nif_annotations
 type
   Goal* = enum
     ElimExprs    # normal mode: eliminate expressions
-    TowardsNjvl  # goal mode: prepare for transformation into njvl
     LowerCasts   # lower cast expressions: bind both source and result to variables
     TowardsFinalIr # goal mode: prepare for the Final IR (doc/final_ir.md).
-                   # Like `TowardsNjvl` (calls bind to locations), but `and`/`or`
-                   # are lowered to the label/jump-friendly if-with-bool-temp form
-                   # (`trAnd`/`trOr`) instead of the cfvar (`mflag`/`jtrue`) form —
+                   # Calls bind to locations, and `and`/`or` are lowered to the
+                   # label/jump-friendly if-with-bool-temp form (`trAnd`/`trOr`).
                    # Final IR never introduces a single cfvar.
 
 proc isComplex(n: Cursor; goal: Goal): bool =
@@ -65,7 +63,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
       # never had this problem precisely because they are complex in *every*
       # goal, so they are already statements by the time the duplifier looks.
       result = true
-    elif goal in {TowardsNjvl, LowerCasts, TowardsFinalIr} and n.exprKind in CallKinds:
+    elif goal in {LowerCasts, TowardsFinalIr} and n.exprKind in CallKinds:
       result = true
     else:
       result = false
@@ -78,14 +76,13 @@ proc isComplex(n: Cursor; goal: Goal): bool =
 
 type
   Mode = enum
-    IsEmpty, IsAppend, IsBound, IsIgnored, IsCfvar, IsLabel
+    IsEmpty, IsAppend, IsBound, IsIgnored, IsLabel
   Target = object
     ## Where the value of the expression `trExpr` is translating should go.
-    ## `IsCfvar` and `IsLabel` are the two control-flow modes and are duals:
-    ## `IsCfvar` *materialises* a short-circuit condition into a bool slot,
-    ## `IsLabel` compiles it against a jump target and never creates the slot
-    ## (the two-target condition compiler `Cx`, below). They are selected by
-    ## goal and never both apply — see `CondJumpGoals`.
+    ## `IsLabel` is the control-flow mode: it compiles a short-circuit condition
+    ## against a jump target rather than materialising it into a bool slot (the
+    ## two-target condition compiler `Cx`, below). Selected by goal, see
+    ## `CondJumpGoals`.
     m: Mode
     t: TokenBuf
     lab: SymId        ## `IsLabel`: transfer to this label…
@@ -399,7 +396,7 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
     tar.t.addParRi()
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m in {IsAppend, IsEmpty} and c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
+  if tar.m in {IsAppend, IsEmpty} and c.goal in {LowerCasts, TowardsFinalIr}:
     # bind to a temporary variable:
     let info = n.info
     let typ = getType(c, n)
@@ -451,90 +448,7 @@ proc trStmtCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
   dest.addTarget tar
 
-proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool)
-
-type
-  CfVar = object
-    v: SymId # as variable
-
-proc makeCfVar(c: var Context; dest: var TokenBuf; tar: var Target; info: NifLineInfo): CfVar =
-  if tar.m == IsEmpty:
-    tar.m = IsCfvar
-    let s = "`j." & $c.counter & "." & c.thisModuleSuffix
-    inc c.counter
-
-    result = CfVar(v: pool.syms.getOrIncl(s))
-    dest.addParLe("mflag", info)
-    dest.addSymDef result.v, info
-    dest.addParRi()
-
-    tar.t.addSymUse result.v, info
-  else:
-    assert tar.m == IsCfvar
-    result = CfVar(v: readonlyCursorAt(tar.t, 0).symId)
-
-proc useCfVar(dest: var TokenBuf; cf: CfVar; info: NifLineInfo) =
-  dest.addParLe("jtrue", info)
-  dest.addSymUse cf.v, info
-  dest.addParRi()
-
-proc trCondAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  # `x and y` <=>
-  # var tmp = false
-  # if x:
-  #   if y: jtrue
-  let info = n.info
-  let cf = makeCfVar(c, dest, tar, info)
-
-  n.into:
-
-    var aa = Target(m: IsEmpty)
-    trCond c, dest, n, aa, true
-
-    copyIntoKind dest, IfS, info:
-      copyIntoKind dest, ElifU, info:
-        dest.addTarget aa                # if x
-        copyIntoKind dest, StmtsS, info:
-          var bb = Target(m: IsEmpty)
-          trCond c, dest, n, bb, true
-          copyIntoKind dest, IfS, info:
-            copyIntoKind dest, ElifU, info:
-              dest.addTarget bb                # if y
-              copyIntoKind dest, StmtsS, info:
-                useCfVar dest, cf, info
-
-proc trCondOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  # `x or y` <=>
-  # var tmp = false
-  # if x:
-  #   jtrue tmp
-  # else:
-  #   if y:
-  #     jtrue tmp
-  let info = n.info
-  let cf = makeCfVar(c, dest, tar, info)
-
-  n.into:
-
-    var aa = Target(m: IsEmpty)
-    trCond c, dest, n, aa, true
-
-    copyIntoKind dest, IfS, info:
-      copyIntoKind dest, ElifU, info:
-        dest.addTarget aa                # if x
-        copyIntoKind dest, StmtsS, info:
-          useCfVar dest, cf, info
-      # Watch out, we cannot use an ElifU here directly because `bb` can
-      # have side effects!
-      copyIntoKind dest, ElseU, info:
-        copyIntoKind dest, StmtsS, info:
-          var bb = Target(m: IsEmpty)
-          trCond c, dest, n, bb, true
-          copyIntoKind dest, IfS, info:
-            copyIntoKind dest, ElifU, info:
-              dest.addTarget bb                # if y
-              copyIntoKind dest, StmtsS, info:
-                useCfVar dest, cf, info
+proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
 
 proc condNodeSafe(n: Cursor): bool =
   var n = n
@@ -612,7 +526,7 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
   else:
     dest.takeTree n
 
-proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; mustUseLabel: bool) =
+proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   assert tar.m == IsEmpty
   if n.exprKind in {AndX, OrX, NotX, ExprX} and c.goal in CondPassthroughGoals and
      condPassthroughSafe(n):
@@ -632,23 +546,16 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target; 
     # did anyway.
     takeStrippingTrivialExpr(tar.t, n)
     return
-  if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
+  if c.goal in {LowerCasts, TowardsFinalIr}:
     case n.exprKind
     of AndX:
-      # `mustUseLabel` (cfvar lowering) is NJ-only. In `LowerCasts` and
-      # `TowardsFinalIr` mode we still want the binding/hoisting path inside
-      # `trAnd`'s `isComplex` branch, but never the cfvar form.
       if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
         takeStrippingTrivialExpr(tar.t, n)
-      elif mustUseLabel:
-        trCondAnd c, dest, n, tar
       else:
         trAnd c, dest, n, tar
     of OrX:
       if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
         takeStrippingTrivialExpr(tar.t, n)
-      elif mustUseLabel:
-        trCondOr c, dest, n, tar
       else:
         trOr c, dest, n, tar
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
@@ -761,11 +668,9 @@ proc condSpineHasShortCircuit(n: Cursor): bool =
 
 const
   CondJumpGoals = {ElimExprs, LowerCasts}
-    ## Goals whose consumer is the ordinary hexer→Leng pipeline. `TowardsNjvl`
-    ## is excluded because `nj.nim` lowers a short-circuit condition to its own
-    ## cfvar (`mflag`/`jtrue`) form and its golden outputs are that form;
-    ## `TowardsFinalIr` because `finalir.nim` carries its own condition
-    ## compiler and wants the `and`/`or` tree.
+    ## Goals whose consumer is the ordinary hexer→Leng pipeline.
+    ## `TowardsFinalIr` is excluded because `finalir.nim` carries its own
+    ## condition compiler and wants the `and`/`or` tree.
 
 proc wantsCondJumps(c: Context; n: Cursor): bool =
   ## `Cx` is for exactly the conditions that used to materialise a bool: a
@@ -1027,7 +932,7 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       of ElifU:
         var t0 = Target(m: IsEmpty)
         n.into:
-          trCond c, dest, n, t0, c.goal == TowardsNjvl
+          trCond c, dest, n, t0
 
           dest.addParLe(head.cursorTagId, head.info)
           inc toClose
@@ -1179,7 +1084,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trStmt c, dest, n
         else:
           var tar = Target(m: IsEmpty)
-          trCond c, dest, n, tar, c.goal == TowardsNjvl
+          trCond c, dest, n, tar
           dest.copyIntoKind IfS, info:
             dest.copyIntoKind ElifU, info:
               dest.addTarget tar
@@ -1307,7 +1212,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of DiscardS:
     let head = n
     n.into:
-      if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
+      if c.goal in {LowerCasts, TowardsFinalIr}:
         if n.isDotToken:
           dest.takeTree n
         else:
@@ -1354,13 +1259,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `LowerCasts` always binds — the dce2 inliner wants every call to appear
     # as the value of a let/var binding.
     var lhsIsResult = false
-    if c.goal in {TowardsNjvl, TowardsFinalIr}:
+    if c.goal == TowardsFinalIr:
       let peek = n.childCursor
       lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal in {TowardsNjvl, LowerCasts, TowardsFinalIr}:
-        if c.goal in {TowardsNjvl, TowardsFinalIr} and lhsIsResult:
+      if c.goal in {LowerCasts, TowardsFinalIr}:
+        if c.goal == TowardsFinalIr and lhsIsResult:
           tar.m = IsBound
         # else: tar.m stays IsAppend so trExprCall can bind
         trExpr c, dest, n, tar

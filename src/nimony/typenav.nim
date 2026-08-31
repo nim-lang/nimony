@@ -14,7 +14,7 @@ include ".." / lib / nifprelude
 
 import std/tables
 from std/strutils import endsWith
-import ".." / njvl / njvl_model
+import ".." / finalir / finalir_model
 import nimony_model, builtintypes, decls, programs, typeprops
 
 const
@@ -392,7 +392,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       of StmtsS, RetS, CommentS:
         result = c.builtins.voidType
       else:
-        case njvlKind(n)
+        case finalIrKind(n)
         of VV:
           result = getTypeImpl(c, n.childCursor, flags)
         of EtupatV:

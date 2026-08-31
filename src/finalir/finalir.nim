@@ -42,7 +42,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import ".." / hexer / [xelim, mover, passes]
-import njvl_model
+import finalir_model
 
 type
   Exit = object
@@ -710,16 +710,6 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       takeTree dest, n
   c.current = ensureMove oldProc
 
-proc trCfVarDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # xelim can produce cfvars that we pass through (the bool storage they need
-  # is still valid Final IR; we do not generate any ourselves).
-  var s = NoSymId
-  takeInto dest, n: # MflagV/VflagV
-    s = n.symId
-    dest.takeTree n # SymDef
-  let boolTyp = c.typeCache.builtins.boolType
-  c.typeCache.registerLocal(s, VarY, boolTyp)
-
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of StmtsS, ScopeS:
@@ -757,8 +747,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of CallKindsS:
     trStmtCall c, dest, n
   else:
-    if n.njvlKind in {MflagV, VflagV}:
-      trCfVarDecl c, dest, n
+    if n.finalIrKind in {MflagV, VflagV}:
+      # NJVL control-flow flags. `xelim` used to materialise short-circuit
+      # conditions into these for `nj.nim`, and this pass passed the bool
+      # storage through; that lowering went out with `nj.nim`, so nothing
+      # produces one any more. The tags stay in the NIF spec (doc/tags.md).
+      bug "cfvar in Final IR input"
     elif n.exprKind == PragmaxX:
       copyInto(dest, n):
         takeTree dest, n  # pragmas

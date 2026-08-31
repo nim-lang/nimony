@@ -8,7 +8,7 @@
 
 ## A **journaled** exit-summary tracker for the Final-IR nil/init analysis.
 ##
-## It supersedes the generic value-`Tracker` (`njvl/tracker.nim`) for this pass:
+## It supersedes the generic value-`Tracker` (`finalir/tracker.nim`) for this pass:
 ## the analysis state — the definite-assignment **init-set** and the `inferle`
 ## **facts** — is mutated *in place* under an undo journal, so a branch costs
 ## O(writes-since-checkpoint), never a whole-state copy. The old tracker copied
@@ -32,10 +32,40 @@
 
 import std/[tables, hashes, sets]
 include ".." / lib / nifprelude   # SymId (and its `==`/`hash`), like the rest of nimony/
+include ".." / lib / compat2      # `Hashable` for the `ExitKey` hash below
 import inferle, xints
-import ".." / njvl / tracker   # reuse ExitKind / ExitKey / labelKey
 
-export ExitKind, ExitKey, labelKey
+# --------------------------------------------------------------- exit keys
+# These used to live in the generic `Tracker[T, L]` of `finalir/tracker.nim`,
+# which this module superseded; nothing ever instantiated the generic again,
+# so its one surviving part moved here.
+
+type
+  ExitKind* = enum
+    ekLabel      ## a forward `jmp L`, loop-`break` (`jmp loopExit`) included
+    ekReturn     ## the primitive `return`, bound by the proc root
+    ekRaise      ## the primitive `raise`, bound by the nearest `except`
+    ekContinue   ## the loop back-edge, bound by its `loop` header
+
+  ExitKey*[L] = object
+    ## Every way control leaves a subtree. `continue` is *not* an acyclic
+    ## forward exit, but we key it here too so the loop header can pull it.
+    kind*: ExitKind
+    label*: L      ## meaningful only when `kind == ekLabel`
+
+func hash*[L: Hashable](k: ExitKey[L]): Hash =
+  result = hash(ord(k.kind))
+  if k.kind == ekLabel:
+    result = result !& hash(k.label)
+  result = !$result
+
+# `==` is left to the structural object equality: a custom `[L]`-generic `==`
+# is ambiguous with system's generic `==[T]` under Nimony, and the non-label
+# keys always carry `default(L)` in `label`, so field-wise equality already
+# matches the intended "same kind (and same label, when a label)" semantics.
+
+proc labelKey*[L](label: L): ExitKey[L] {.inline.} =
+  ExitKey[L](kind: ekLabel, label: label)
 
 # --------------------------------------------------------------- init-set
 

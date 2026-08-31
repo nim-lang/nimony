@@ -1,4 +1,4 @@
-tests/nimony/errmsgs/tinitnotproven.nim(13, 1) Error: cannot prove that result.0 has been initialized [pass --verbose for the NJ IR]
-tests/nimony/errmsgs/tinitnotproven.nim(23, 1) Error: cannot prove that result.1 has been initialized [pass --verbose for the NJ IR]
-tests/nimony/errmsgs/tinitnotproven.nim(37, 1) Error: cannot prove that result.2 has been initialized [pass --verbose for the NJ IR]
-tests/nimony/errmsgs/tinitnotproven.nim(51, 1) Error: cannot prove that result.3 has been initialized [pass --verbose for the NJ IR]
+tests/nimony/errmsgs/tinitnotproven.nim(13, 1) Error: cannot prove that result.0 has been initialized [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinitnotproven.nim(23, 1) Error: cannot prove that result.1 has been initialized [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinitnotproven.nim(37, 1) Error: cannot prove that result.2 has been initialized [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tinitnotproven.nim(51, 1) Error: cannot prove that result.3 has been initialized [pass --verbose for the Final IR]

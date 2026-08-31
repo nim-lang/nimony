@@ -99,7 +99,7 @@ Options:
                             debug build shows template calls as inlined frames
                             (default: off)
   --novalidate              skip running the plugin validator on plugin sources
-  --verbose                 dump NJVL IR (and other diagnostics) on contract
+  --verbose                 dump Final IR (and other diagnostics) on contract
                             analysis failures
   --version                 show the version
   --help                    show this help
