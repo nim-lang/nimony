@@ -966,10 +966,6 @@ func unescape*(s: string, prefix = "\"", suffix = "\""): string {.raises.} =
   if not s.endsWith(suffix):
     raise ValueError
 
-when not (defined(wasm32) and defined(standalone)):
-  func c_snprintf(buf: cstring, n: csize_t, frmt: cstring): cint {.
-    header: "<stdio.h>", importc: "snprintf", varargs.}
-
 type
   FloatFormatMode* = enum
     ## The different modes of floating point formatting.
@@ -977,219 +973,249 @@ type
     ffDecimal,   ## use decimal floating point notation
     ffScientific ## use scientific notation (using `e` character)
 
-when defined(wasm32) and defined(standalone):
-  # WebAssembly has no variadic calling convention: an imported function has
-  # ONE type, so a `{.varargs.}` importc cannot be called with different
-  # argument tails, and `c_snprintf(buf, n, fmt, precision, f)` emits a call
-  # whose f64 argument contradicts the import's declared type. The module is
-  # then rejected at compile time — not at the call, but wholesale, which is
-  # how a single `formatFloat` in a diagnostic path takes a whole program down.
-  #
-  # So the wasm arm formats without snprintf, from the digits `$f` already
-  # produces. Working on the DECIMAL STRING rather than scaling by a power of
-  # ten keeps the rounding exact: `f * 10^p` introduces its own error, and at a
-  # tie that error decides the last digit.
-  #
-  # KNOWN DIFFERENCE from the C path, measured not assumed: `$f` yields the
-  # SHORTEST round-tripping decimal, not the exact binary expansion, so a
-  # precision beyond that length pads with zeros where glibc continues the true
-  # expansion (`0.1` at 20 places is `0.10000000000000000000` here,
-  # `0.10000000000000000555` there). Within the shortest form's digits — which
-  # is every display use, and the whole grid in hikaru's
-  # tests/wasm/formatfloat_diff.nim — the two agree byte for byte, ties
-  # included; see `roundDigits` for how the ambiguous ones are settled.
+# Float formatting reproduces C's `%f`, `%e` and `%g` from the EXACT decimal
+# expansion of the double instead of calling `snprintf`. Three reasons:
+#
+# * WebAssembly has no variadic calling convention. An imported function has
+#   ONE type, so a `{.varargs.}` importc cannot be called with different
+#   argument tails, and `c_snprintf(buf, n, fmt, precision, f)` emits a call
+#   whose f64 argument contradicts the import's declared type. The engine
+#   rejects the whole MODULE, not the call, which is how a single
+#   `formatFloat` on a diagnostic path takes a program down before it starts.
+# * The freestanding targets and `nimony n` have no libc to call.
+# * `snprintf` produces the digit separator of the current C locale, which
+#   then has to be patched back to `decimalSep`.
+#
+# A double is `m * 2^e` with `m < 2^53`, so its decimal expansion is finite:
+# for `e >= 0` it is the integer `m * 2^e`, and for `e < 0` it is `m * 5^-e`
+# read with the point moved `-e` places to the left. Both are computed exactly
+# with a small base-10^9 bignum on the stack, and that exactness is what makes
+# the rounding agree with C digit for digit: the digit after the cut and
+# everything behind it are the true expansion, so a tie is RECOGNIZED rather
+# than guessed at, and goes half-to-even like the default rounding mode.
+# (Rounding the shortest round-tripping form from `$f` instead would get
+# 9.995 wrong at two places: it prints as "9.995" but the double is
+# 9.99499999999999957, which rounds DOWN.)
 
-  func c_isDigit(c: char): bool {.inline.} = c >= '0' and c <= '9'
+const
+  DecBase = 1_000_000_000'u64
+    ## One limb holds nine decimal digits.
+  DecMaxLimbs = 96
+    ## `2^-1074 * (2^53-1)` needs 767 digits, the largest expansion there is.
+  Pow5: array[0..12, uint32] = [1'u32, 5, 25, 125, 625, 3125, 15625, 78125,
+    390625, 1953125, 9765625, 48828125, 244140625]
+    ## `5^12` is the largest power of five below `DecBase`.
 
-  func splitDigits(s: string): tuple[neg: bool, digits: string, exp: int] =
-    ## `$f` (`-12.34`, `1e+20`, `0.0000001`) → sign, significant digits with no
-    ## point, and `exp` such that the value is `0.<digits> * 10^exp`.
-    var i = 0
-    # Seed the whole tuple: nimony proves initialization per RESULT, not per
-    # field, so field-by-field assignment leaves it "possibly uninitialized".
-    result = (neg: false, digits: "", exp: 0)
-    if i < s.len and (s[i] == '-' or s[i] == '+'):
-      result.neg = s[i] == '-'
-      inc i
-    var intDigits = 0
-    var seenPoint = false
-    var expPart = 0
-    var expNeg = false
-    var leading = true
-    while i < s.len:
-      let c = s[i]
-      if c == '.':
-        seenPoint = true
-        inc i
-      elif c == 'e' or c == 'E':
-        inc i
-        if i < s.len and (s[i] == '-' or s[i] == '+'):
-          expNeg = s[i] == '-'
-          inc i
-        while i < s.len and c_isDigit(s[i]):
-          expPart = expPart * 10 + (int(s[i]) - int('0'))
-          inc i
-        if expNeg: expPart = -expPart
-        break
-      elif c_isDigit(c):
-        if c == '0' and leading and result.digits.len == 0:
-          # Leading zeros contribute no significant digits, but each one after
-          # the point pushes the exponent down.
-          if seenPoint: dec result.exp
-          else: discard
-        else:
-          leading = false
-          result.digits.add c
-          if not seenPoint: inc intDigits
-        inc i
-      else:
-        inc i
-    if intDigits > 0: result.exp = intDigits
-    result.exp = result.exp + expPart
-    # Drop trailing zeros; they carry no information and would defeat the
-    # exact-tie test below.
-    var last = result.digits.len
-    while last > 0 and result.digits[last - 1] == '0': dec last
-    result.digits.setLen(last)
-    if result.digits.len == 0: result.exp = 0
+type
+  DecInt = object ## Non-negative integer, base `DecBase`, least significant limb first.
+    limbs: array[DecMaxLimbs, uint32]
+    len: int
 
-  func decimalValue(digits: string, exp: int): BiggestFloat =
-    ## The double nearest `0.<digits> * 10^exp`.
-    var t = "0." & (if digits.len > 0: digits else: "0") & "e" & $exp
-    result = 0.0
-    discard parseBiggestFloat(toOpenArray(t, 0, t.len - 1), result)
+func mulSmall(x: var DecInt; factor: uint32) =
+  var carry = 0'u64
+  var i = 0
+  while i < x.len:
+    let cur = uint64(x.limbs[i]) * uint64(factor) + carry
+    x.limbs[i] = uint32(cur mod DecBase)
+    carry = cur div DecBase
+    inc i
+  while carry > 0'u64 and x.len < DecMaxLimbs:
+    x.limbs[x.len] = uint32(carry mod DecBase)
+    carry = carry div DecBase
+    inc x.len
 
-  func roundDigits(digits: string, keep: int, f: BiggestFloat,
-                   exp: int): tuple[digits: string, carry: bool] =
-    ## Round `digits` to `keep` leading digits. `carry` means the rounding
-    ## overflowed into a new leading digit (999 -> 100 with carry).
-    ##
-    ## `f` and `exp` are here for the one case the digit string cannot decide.
-    ## `$f` is the SHORTEST round-tripping decimal, so a trailing `5` does NOT
-    ## mean an exact tie — 9.995 prints as "9.995" but the double is
-    ## 9.99499999999999957, which C rounds DOWN to 9.99 at two places. Guessing
-    ## half-to-even there is wrong for exactly the values a naive reading calls
-    ## obvious (this fixture caught it). So the ambiguous case is settled
-    ## against the VALUE: build both candidates, parse them back, and keep the
-    ## nearer one. Only a genuine tie leaves the two equidistant, and that one
-    ## goes half-to-even as C does.
-    result = (digits: "", carry: false)
-    if keep >= digits.len:
-      result.digits = digits
-      for _ in digits.len ..< keep: result.digits.add '0'
-      return
-    if keep < 0:
-      return
-    var kept = digits.substr(0, keep - 1)
-    let first = digits[keep]
-    var roundUp = false
-    if first > '5':
+func toDigits(x: DecInt): string =
+  ## Decimal digits of `x`, without leading zeros.
+  result = ""
+  var i = x.len - 1
+  while i > 0 and x.limbs[i] == 0'u32: dec i
+  if i < 0 or (i == 0 and x.limbs[0] == 0'u32):
+    result = "0"
+  else:
+    result.add $x.limbs[i]
+    dec i
+    while i >= 0:
+      let limb = $x.limbs[i]
+      for _ in limb.len ..< 9: result.add '0'
+      result.add limb
+      dec i
+
+func exactDigits(f: BiggestFloat): tuple[neg: bool, digits: string, exp: int] =
+  ## `f` as `0.<digits> * 10^exp`, `digits` exact and free of leading and
+  ## trailing zeros. Zero yields no digits and `exp = 1`, which is the
+  ## exponent `%e` and `%g` print for it (`0.000e+00`, not `0.000e-01`).
+  let bits = cast[uint64](f)
+  # Seed the whole tuple: nimony proves initialization per RESULT, not per
+  # field, so field-by-field assignment leaves it "possibly uninitialized".
+  result = (neg: (bits shr 63) != 0'u64, digits: "", exp: 1)
+  let biasedExp = int((bits shr 52) and 0x7FF'u64)
+  var mant = bits and 0xF_FFFF_FFFF_FFFF'u64
+  var e2 = 0
+  if biasedExp == 0:
+    if mant == 0'u64: return                  # +-0.0
+    e2 = -1074                                # subnormal: no hidden bit
+  else:
+    mant = mant or (1'u64 shl 52)
+    e2 = biasedExp - 1075
+  var x = default(DecInt)
+  while mant > 0'u64:
+    x.limbs[x.len] = uint32(mant mod DecBase)
+    mant = mant div DecBase
+    inc x.len
+  var pointPos = 0                            # digits to the right of the point
+  if e2 > 0:
+    var k = e2
+    while k > 0:
+      let step = if k > 29: 29 else: k        # 2^29 is the largest power of two below the base
+      mulSmall(x, 1'u32 shl step)
+      k = k - step
+  elif e2 < 0:
+    # `m * 2^-k` is `(m * 5^k) / 10^k`: the same digits, the point moved.
+    var k = -e2
+    pointPos = k
+    while k > 0:
+      let step = if k > 12: 12 else: k
+      mulSmall(x, Pow5[step])
+      k = k - step
+  var d = toDigits(x)
+  result.exp = d.len - pointPos
+  var last = d.len
+  while last > 0 and d[last-1] == '0': dec last
+  d.setLen last
+  result.digits = d
+
+func roundDigits(digits: string; keep: int): tuple[digits: string, carry: bool] =
+  ## Round the exact `digits` to `keep` leading digits, half-to-even. `carry`
+  ## reports an overflow into a new leading digit, so `999` kept at two digits
+  ## is `("10", true)`: the caller reads it with the exponent raised by one.
+  result = (digits: "", carry: false)
+  if keep < 0: return
+  if keep >= digits.len:
+    result.digits = digits
+    for _ in digits.len ..< keep: result.digits.add '0'
+    return
+  var kept = if keep == 0: "" else: digits.substr(0, keep-1)
+  let first = digits[keep]
+  var roundUp = false
+  if first > '5':
+    roundUp = true
+  elif first == '5':
+    var restNonZero = false
+    for i in keep+1 ..< digits.len:
+      if digits[i] != '0': restNonZero = true
+    if restNonZero:
       roundUp = true
-    elif first == '5':
-      var restNonZero = false
-      for i in keep + 1 ..< digits.len:
-        if digits[i] != '0': restNonZero = true
-      if restNonZero:
-        roundUp = true
-      else:
-        let lo = decimalValue(kept, exp)
-        var up = kept
-        var i = up.len - 1
-        var c = true
-        while i >= 0 and c:
-          if up[i] == '9': up[i] = '0'
-          else:
-            up[i] = char(int(up[i]) + 1)
-            c = false
-          dec i
-        let hi = (if c: decimalValue("1" & up, exp + 1) else: decimalValue(up, exp))
-        let a = abs(f) - lo
-        let b = hi - abs(f)
-        if b < a: roundUp = true
-        elif a < b: roundUp = false
-        else:
-          let prev = if keep > 0: digits[keep - 1] else: '0'
-          roundUp = ((int(prev) - int('0')) and 1) == 1
-    if roundUp:
-      var i = kept.len - 1
-      var carry = true
-      while i >= 0 and carry:
-        if kept[i] == '9':
-          kept[i] = '0'
-        else:
-          kept[i] = char(int(kept[i]) + 1)
-          carry = false
-        dec i
-      if carry:
-        result.carry = true
-        kept.shrink kept.len - 2
-        kept = "1" & kept
-    result.digits = kept
-
-  func fmtDecimal(f: BiggestFloat, neg: bool, digits: string,
-                  exp, precision: int, decimalSep: char): string =
-    ## Fixed-point: `precision` digits after the point.
-    let keep = exp + precision
-    var (d, carry) = roundDigits(digits, keep, f, exp)
-    var e = exp
-    if carry: inc e
-    if d.len == 0: d = "0"
-    result = ""
-    if neg: result.add '-'
-    if e <= 0:
-      result.add '0'
-      # The C path formats with `%#.*f`, and `#` keeps the point even at
-      # precision 0 ("2." not "2"). Match it, or every zero-precision call
-      # differs by one character.
-      result.add decimalSep
-      if precision > 0:
-        var zeros = -e
-        var written = 0
-        while written < precision and zeros > 0:
-          result.add '0'
-          inc written
-          dec zeros
-        var i = 0
-        while written < precision:
-          result.add (if i < d.len: d[i] else: '0')
-          inc i
-          inc written
     else:
-      var i = 0
-      while i < e:
-        result.add (if i < d.len: d[i] else: '0')
-        inc i
-      result.add decimalSep
-      if precision > 0:
-        var written = 0
-        while written < precision:
-          result.add (if i < d.len: d[i] else: '0')
-          inc i
-          inc written
+      # An exact tie, because the digits are the exact expansion: half-to-even.
+      let prev = if keep > 0: digits[keep-1] else: '0'
+      roundUp = ((int(prev) - int('0')) and 1) == 1
+  if roundUp:
+    var i = kept.len - 1
+    var carry = true
+    while i >= 0 and carry:
+      if kept[i] == '9':
+        kept[i] = '0'
+      else:
+        kept[i] = char(int(kept[i]) + 1)
+        carry = false
+      dec i
+    if carry:
+      # All nines: the leading 1 takes the place of the last digit and the
+      # caller lifts the exponent, `999` -> `10` at exponent+1.
+      if kept.len > 0: kept.setLen kept.len - 1
+      kept = "1" & kept
+      result.carry = true
+  result.digits = kept
 
-  func fmtScientific(f: BiggestFloat, neg: bool, digits: string,
-                     exp, precision: int, decimalSep: char): string =
-    var (d, carry) = roundDigits(digits, precision + 1, f, exp)
-    var e = exp
-    if carry: inc e
-    if d.len == 0: d = "0"
-    result = ""
-    if neg: result.add '-'
-    result.add d[0]
-    result.add decimalSep          # `%#.*e` keeps the point at precision 0 too
-    if precision > 0:
-      for i in 1 .. precision:
-        result.add (if i < d.len: d[i] else: '0')
-    # An all-zero mantissa is the value zero, whose exponent is 0, not -1.
-    var allZero = true
-    for c in d:
-      if c != '0': allZero = false
-    let e10 = (if allZero: 0 else: e - 1)
-    result.add 'e'
-    if e10 < 0: result.add '-' else: result.add '+'
-    let a = abs(e10)
-    if a < 10: result.add '0'
-    result.add $a
+func fmtDecimal(neg: bool; digits: string; exp, precision: int;
+                decimalSep: char; forcePoint: bool): string =
+  ## `%.*f`: `precision` digits after the point. `forcePoint` is the `#` flag,
+  ## which keeps the point at precision 0 ("2." rather than "2").
+  let (d, carry) = roundDigits(digits, exp + precision)
+  var e = exp
+  if carry: inc e
+  result = ""
+  if neg: result.add '-'
+  if e <= 0:
+    result.add '0'
+  else:
+    var i = 0
+    while i < e:
+      result.add (if i < d.len: d[i] else: '0')
+      inc i
+  if precision > 0 or forcePoint:
+    result.add decimalSep
+    # The k-th digit after the point sits at index `e + k - 1`; a negative
+    # index is a leading zero of the fraction, one past the end a trailing one.
+    var k = 1
+    while k <= precision:
+      let idx = e + k - 1
+      result.add (if idx >= 0 and idx < d.len: d[idx] else: '0')
+      inc k
+
+func fmtScientific(neg: bool; digits: string; exp, precision: int;
+                   decimalSep: char; forcePoint: bool): string =
+  ## `%.*e`: one digit before the point, `precision` after it.
+  let (d, carry) = roundDigits(digits, precision + 1)
+  var e = exp
+  if carry: inc e
+  result = ""
+  if neg: result.add '-'
+  result.add (if d.len > 0: d[0] else: '0')
+  if precision > 0 or forcePoint:
+    result.add decimalSep
+    var i = 1
+    while i <= precision:
+      result.add (if i < d.len: d[i] else: '0')
+      inc i
+  let e10 = e - 1
+  result.add 'e'
+  if e10 < 0: result.add '-' else: result.add '+'
+  let a = abs(e10)
+  if a < 10: result.add '0'                   # C pads the exponent to two digits
+  result.add $a
+
+func stripTrailingZeros(s: string; decimalSep: char): string =
+  ## `%g` without `#` drops the trailing zeros of the fraction, and the point
+  ## with them when nothing is left behind it.
+  var mantEnd = s.len
+  var i = 0
+  while i < s.len:
+    if s[i] == 'e':
+      mantEnd = i
+      break
+    inc i
+  var pointAt = -1
+  i = 0
+  while i < mantEnd:
+    if s[i] == decimalSep:
+      pointAt = i
+      break
+    inc i
+  if pointAt < 0:
+    result = s
+  else:
+    var last = mantEnd
+    while last > pointAt+1 and s[last-1] == '0': dec last
+    if last == pointAt+1: last = pointAt
+    result = s.substr(0, last-1) & s.substr(mantEnd, s.len-1)
+
+func fmtDefault(neg: bool; digits: string; exp, precision: int;
+                decimalSep: char; forcePoint: bool): string =
+  ## `%.*g`: `p` significant digits, printed in `%e` style when the exponent
+  ## falls outside `[-4, p)` and in `%f` style otherwise. C reads a precision
+  ## of 0 as 1.
+  let p = if precision == 0: 1 else: precision
+  let (d, carry) = roundDigits(digits, p)
+  var e = exp
+  if carry: inc e
+  let x = e - 1                               # the exponent `%e` would print
+  # `d` is already rounded to `p` digits, so the re-rounding below is a no-op.
+  let s = if x < -4 or x >= p:
+            fmtScientific(neg, d, e, p-1, decimalSep, forcePoint)
+          else:
+            fmtDecimal(neg, d, e, p-1-x, decimalSep, forcePoint)
+  result = if forcePoint: s else: stripTrailingZeros(s, decimalSep)
 
 func formatBiggestFloat*(f: BiggestFloat, format: FloatFormatMode = ffDefault,
                          precision: range[-1..32] = 16;
@@ -1209,48 +1235,19 @@ func formatBiggestFloat*(f: BiggestFloat, format: FloatFormatMode = ffDefault,
     assert x.formatBiggestFloat() == "123.4560000000000"
     assert x.formatBiggestFloat(ffDecimal, 4) == "123.4560"
     assert x.formatBiggestFloat(ffScientific, 2) == "1.23e+02"
-  when defined(wasm32) and defined(standalone):
-    let s = $f
-    # nan/inf print as themselves in every mode, as C does.
-    if s.len == 0 or not (c_isDigit(s[0]) or s[0] == '-' or s[0] == '+'):
-      return s
-    if s.len > 1 and (s[0] == '-' or s[0] == '+') and not c_isDigit(s[1]):
-      return s
-    let (neg, digits, exp) = splitDigits(s)
-    if precision.int < 0 or format == ffDefault:
-      # ffDefault IS "the shorter notation", which is exactly what `$f` gives.
-      result = ""
-      for c in s:
-        if c == '.' or c == ',': result.add decimalSep
-        else: result.add c
-    elif format == ffDecimal:
-      result = fmtDecimal(f, neg, digits, exp, precision.int, decimalSep)
-    else:
-      result = fmtScientific(f, neg, digits, exp, precision.int, decimalSep)
+  let bits = cast[uint64](f)
+  if int((bits shr 52) and 0x7FF'u64) == 0x7FF:
+    result = $f                               # inf, -inf, nan print as themselves
   else:
-    const floatFormatToChar: array[FloatFormatMode, char] = ['g', 'f', 'e']
-    var
-      frmtstr {.noinit.}: array[0..5, char]
-      buf {.noinit.}: array[0..2500, char]
-      L: cint
-    frmtstr[0] = '%'
-    if precision.int >= 0:
-      frmtstr[1] = '#'
-      frmtstr[2] = '.'
-      frmtstr[3] = '*'
-      frmtstr[4] = floatFormatToChar[format]
-      frmtstr[5] = '\0'
-      L = c_snprintf(cast[cstring](addr buf), csize_t(2501), cast[cstring](addr frmtstr), precision, f)
-    else:
-      frmtstr[1] = floatFormatToChar[format]
-      frmtstr[2] = '\0'
-      L = c_snprintf(cast[cstring](addr buf), csize_t(2501), cast[cstring](addr frmtstr), f)
-    result = newString(L)
-    for i in 0 ..< L:
-      # Depending on the locale either dot or comma is produced,
-      # but nothing else is possible:
-      if buf[i] in {'.', ','}: result[i] = decimalSep
-      else: result[i] = buf[i]
+    let (neg, digits, exp) = exactDigits(f)
+    # Without an explicit precision C uses its default of 6 and no `#` flag;
+    # with one it used `%#.*g` and friends, whose point is never dropped.
+    let p = if precision.int < 0: 6 else: precision.int
+    let forcePoint = precision.int >= 0
+    case format
+    of ffDefault: result = fmtDefault(neg, digits, exp, p, decimalSep, forcePoint)
+    of ffDecimal: result = fmtDecimal(neg, digits, exp, p, decimalSep, forcePoint)
+    of ffScientific: result = fmtScientific(neg, digits, exp, p, decimalSep, forcePoint)
 
 func formatFloat*(f: float, format: FloatFormatMode = ffDefault,
                   precision: range[-1..32] = 16; decimalSep = '.'): string =
