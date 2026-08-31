@@ -729,6 +729,42 @@ block: # formatBiggestFloat
 block: # formatFloat
   assert formatFloat(1234.567, ffDecimal, 1) == "1234.6"
 
+block: # formatBiggestFloat without snprintf
+  # The C library's `%#.*g`, `%#.*f` and `%#.*e` are reproduced from the exact
+  # decimal expansion of the double; every expectation here is what glibc and
+  # macOS libc print for the same call.
+  assert formatBiggestFloat(123.456) == "123.4560000000000"    # ffDefault keeps
+  assert formatBiggestFloat(0.5, ffDefault, 3) == "0.500"      # the trailing zeros
+  assert formatBiggestFloat(1e-5, ffDefault, 3) == "1.00e-05"  # of `%#g`
+  assert formatBiggestFloat(123.456, ffDefault, 0) == "1.e+02" # precision 0 means 1
+  # Without a precision C uses its default of 6, and `%g` DROPS trailing zeros.
+  assert formatBiggestFloat(1234.567, ffDefault, -1) == "1234.57"
+  assert formatBiggestFloat(0.0001, ffDefault, -1) == "0.0001"
+  assert formatBiggestFloat(0.00001, ffDefault, -1) == "1e-05"
+  assert formatBiggestFloat(1e20, ffDefault, -1) == "1e+20"
+  assert formatBiggestFloat(1234.567, ffScientific, -1) == "1.234567e+03"
+  # Exact ties round half-to-even, as the hardware's rounding mode does.
+  assert formatBiggestFloat(0.5, ffDecimal, 0) == "0."
+  assert formatBiggestFloat(1.5, ffDecimal, 0) == "2."
+  assert formatBiggestFloat(2.5, ffDecimal, 0) == "2."
+  assert formatBiggestFloat(3.5, ffDecimal, 0) == "4."
+  assert formatBiggestFloat(0.125, ffDecimal, 2) == "0.12"
+  assert formatBiggestFloat(0.375, ffDecimal, 2) == "0.38"
+  # 9.995 is NOT a tie: the double is 9.99499999999999957, so it rounds down.
+  assert formatBiggestFloat(9.995, ffDecimal, 2) == "9.99"
+  assert formatBiggestFloat(9.995, ffScientific, 2) == "9.99e+00"
+  # Beyond the shortest round-tripping form the true expansion continues.
+  assert formatBiggestFloat(0.1, ffDecimal, 20) == "0.10000000000000000555"
+  # Rounding that overflows into a new leading digit.
+  assert formatBiggestFloat(9.99, ffDecimal, 1) == "10.0"
+  assert formatBiggestFloat(999.9, ffDecimal, 0) == "1000."
+  assert formatBiggestFloat(1e20, ffDecimal, 2) == "100000000000000000000.00"
+  assert formatBiggestFloat(1e300, ffScientific, 2) == "1.00e+300"
+  assert formatBiggestFloat(-0.0, ffDecimal, 2) == "-0.00"
+  assert formatBiggestFloat(Inf) == "inf"
+  assert formatBiggestFloat(-Inf, ffDecimal, 3) == "-inf"
+  assert formatBiggestFloat(NaN, ffScientific, 3) == "nan"
+
 block: # `%`
   try:
     assert "" % ["a"] == ""
