@@ -4559,9 +4559,13 @@ While the code for the avoidtemps plugin is beyond the scope of this document, t
 The `import` statement can be combined with a plugin pragma to load a module that is the result of a plugin output:
 
 ```nim
-import (path/foo) {.plugin: "std/v2".}
+import (path/foo) {.plugin: "v2".}
 ```
 
-This syntax imports the module `path/foo` **from the plugin** `std/v2`. This mechanism can be used to import code from a foreign programming language.
+This syntax imports the module `path/foo` **from the plugin** `v2`. This mechanism can be used to import code from a foreign programming language.
+
+Unlike the other plugin kinds, the string names an already-built executable
+(looked up relative to the current directory and then in the toolchain's `bin`
+directory) rather than a `.nim` file the compiler compiles for you.
 
 The plugin does not receive Nim code but only the path `path/foo`.
