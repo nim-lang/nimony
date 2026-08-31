@@ -209,6 +209,19 @@ proc skipToObjectBody(n: Cursor): Cursor =
     else:
       break
 
+proc skipTypeAliases(n: Cursor): Cursor =
+  ## Follow `type A = B` chains until a structural type is reached. Bounded so
+  ## a cyclic alias cannot hang the navigator.
+  var counter = 20
+  result = n
+  while counter > 0 and result.isSymbol:
+    dec counter
+    let d = getTypeSection(result.symId)
+    if d.kind == TypeY:
+      result = d.body
+    else:
+      break
+
 proc fieldDecl(c: var TypeCache; n: var Cursor; fld: SymId): Local =
   ## Find `fld`'s declaration in an object body, inheritance and case
   ## sections included. Not-found is signalled by `result.typ` being the
@@ -609,23 +622,35 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of EnvpX:
     result = c.builtins.autoType
   of ToClosureX:
-    let srcProc = getTypeImpl(c, n.childCursor, flags).asRoutine
-    assert srcProc.kind != NoSym
+    # `sigmatch.procTypeMatch` wraps *any* nimcall source in `(toClosure X)`,
+    # not only a routine symbol: a variable, field or parameter of nimcall proc
+    # type lands here too (nim-lang/nimony#2404). Whatever the source is, the
+    # type of the wrapper is a proctype/itertype carrying `(closure)` -- the
+    # same shape `sigmatch.procTypeOfRoutineSym` builds for the matching side.
+    var t = skipTypeAliases(getTypeImpl(c, n.childCursor, flags))
+    let kind = t.typeKind
+    if kind notin RoutineTypes:
+      # not a proc type at all: report it unchanged instead of inventing a
+      # type the rest of the pipeline cannot use.
+      return t
+    var nilTag = t
+    inc nilTag                    # slot 0, the nilability tag of a type form
+    skipToParams t                # the params, for a decl and a type form alike
     var buf = createTokenBuf()
-    copyIntoKind(buf, srcProc.kind, n.info):
-      buf.addDotToken() # name
-      buf.addDotToken() # exported
-      buf.addSubtree srcProc.pattern
-      buf.addDotToken() # typevars
-      buf.addSubtree srcProc.params
-      buf.addSubtree srcProc.retType
-      copyIntoKind(buf, PragmasU, srcProc.pragmas.info):
-        if not srcProc.pragmas.isDotToken:
-          var n2 = srcProc.pragmas
-          loopInto n2:
-            buf.takeTree n2
+    copyIntoKind(buf, (if kind in {IteratorT, ItertypeT}: ItertypeT else: ProctypeT), n.info):
+      if kind in {ProctypeT, ItertypeT}:
+        buf.takeTree nilTag       # nilability
+      else:
+        buf.addDotToken()         # a routine decl has no nilability tag
+      buf.takeTree t              # params
+      buf.takeTree t              # return type
+      copyIntoKind(buf, PragmasU, t.info):
+        if t.isDotToken:
+          inc t
+        else:
+          loopInto t:
+            buf.takeTree t
         buf.addParPair(ClosureP)
-      buf.addDotToken # effects
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
 
