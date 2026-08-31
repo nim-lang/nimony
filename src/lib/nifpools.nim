@@ -2,7 +2,8 @@
 ## NifLineInfo bridge that nimsem/hexer are architected around. This is the
 ## module the frontend imports (usually via nifprelude); lengc-style code that
 ## manages its own pools imports nifcore/nifcoreparse directly. The Nim
-## compiler's IC modules use the classic surface in nifstreams.nim instead.
+## compiler's IC modules use the classic surface in its own `nifstreams.nim`
+## (in the Nim repo, under `compiler/`) instead.
 ##
 ## Two model bridges do the real work:
 ##
@@ -17,7 +18,8 @@
 ##     directly: `.info` reads decode the token's `LineInfoLit` suffix, the
 ##     info-carrying builders re-attach it via `appendLineInfo`. The classic
 ##     `PackedLineInfo`/`lineMan` bridge is gone from the frontend; it
-##     survives only in nifstreams.nim for the frozen Nim-compiler side.
+##     survives only in the Nim compiler's own `nifstreams.nim`, which
+##     adapts this module for it.
 ##     `NoLineInfo` is kept as the frontend's name for `NoNifLineInfo`.
 ##
 ## Inline literals need no bridge: nifcore stores int/uint/float inline and
