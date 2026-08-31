@@ -933,6 +933,29 @@ proc writeLinkManifest(path, exe, apptype: string;
   b.close()
   result = path
 
+proc addInlineSourceInputs(b: var Builder; c: DepContext; v: Node; backend: string) =
+  ## Declare the `.c.nif` of every module `v` imports as an input of `v`'s
+  ## codegen node.
+  ##
+  ## All three consumers of a `.c.nif` -- `lengc`, `arkham` and Shoggoth's
+  ## `optimize` -- resolve foreign symbols by loading the *callee* module's
+  ## `.c.nif` on demand, and splice imported `.inline` bodies out of it. That
+  ## makes those files real inputs: nifmake decides whether to rerun a node
+  ## from its declared inputs, so without these edges an edit that only
+  ## changes a callee leaves every importer's already-generated code in place,
+  ## with a stale copy of the body spliced into it. The result is a link error
+  ## when the edit renames a symbol the splice references, and a silently
+  ## wrong binary when it does not (nim-lang/nimony#1897).
+  ##
+  ## Only input[0] reaches the tool's command line, so the extra inputs cost
+  ## nothing but the ordering and the freshness check.
+  var seen = initHashSet[string]()
+  for depIdx in v.deps:
+    let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
+    if not seen.containsOrIncl(depNif):
+      b.withTree "input":
+        b.addStrLit depNif
+
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
@@ -1467,11 +1490,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
             # Shoggoth's inter-module inliner also reads the imported modules'
-            # `.c.nif`, but they need no edge here: nifmake runs the DAG in
-            # depth batches and finishes one before starting the next, and
-            # every `dceEmit` shares the `.live.nif` input, so all the `.c.nif`
-            # are written in the batch before this node's. Verified by counting
-            # foreign loads that missed their file: zero.
+            # `.c.nif`. Ordering alone would be free (nifmake runs the DAG in
+            # depth batches, and every `dceEmit` shares the `.live.nif` input,
+            # so those files are all written in the batch before this node's),
+            # but they have to be inputs for FRESHNESS too: without the edge a
+            # changed callee body leaves this node's output untouched and the
+            # splice inside it stale (nim-lang/nimony#1897).
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized
@@ -1491,16 +1516,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "arkham"
             b.withTree "input":
               b.addStrLit lengcInput
-            var seenDeps = initHashSet[string]()
-            for depIdx in v.deps:
-              let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
-              if not seenDeps.containsOrIncl(depNif):
-                b.withTree "input":
-                  b.addStrLit depNif
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit c.config.asmFile(v.files[0], backend)
         else:
-          # Build C/LLVM IR files from .c.nif files
+          # Build C/LLVM IR files from .c.nif files. lengc splices the bodies
+          # of imported `.inline` procs into this translation unit, reading
+          # them out of the callee module's `.c.nif` under `--nimcache`, so
+          # those files are inputs of this node exactly as they are of
+          # `arkham`'s (nim-lang/nimony#1897). Only input[0] (this module's
+          # `lengcInput`) reaches lengc's command line (the cmd uses `(input)`).
           b.withTree "do":
             b.addIdent "lengc"
             b.withTree "args":
@@ -1510,6 +1535,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit "--isMain"
             b.withTree "input":
               b.addStrLit lengcInput
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit c.config.genFile(v.files[0], backend)
 

@@ -42,23 +42,35 @@ proc incrementalTests*() =
   ## sample file regardless of outcome.
   let t0 = epochTime()
   let src = "tests/incremental/sample.nim"
+  let dep = "tests/incremental/inlinedep.nim"
   let cache = "nimcache" / "incremental"
   let nimony = "bin" / "nimony".addFileExt(ExeExt)
-  if not fileExists(src):
-    quit "incremental: " & src & " missing"
+  for f in [src, dep]:
+    if not fileExists(f):
+      quit "incremental: " & f & " missing"
   if not fileExists(nimony):
     quit "incremental: " & nimony & " not found; run `hastur build nimony` first"
   removeDir cache
 
-  let baseCmd = nimony.quoteShell & " c --silentMake --report --nimcache:" &
+  # `-r` so every phase also RUNS the result: a rebuild that nifmake skipped
+  # when it should not have leaves a stale binary behind, and a report count
+  # alone would not notice (see the `inline-dep` phase).
+  let baseCmd = nimony.quoteShell & " c -r --silentMake --report --nimcache:" &
                 cache.quoteShell & " " & src.quoteShell
   let originalSrc = readFile(src)
+  let originalDep = readFile(dep)
 
+  proc restoreSources() =
+    writeFile(src, originalSrc)
+    writeFile(dep, originalDep)
+
+  var lastOutput = ""
   proc run(label: string): seq[seq[ReportEntry]] =
     let (output, ec) = execCmdEx(baseCmd)
+    lastOutput = output
     if ec != 0:
       stdout.write output
-      writeFile(src, originalSrc)
+      restoreSources()
       quit "incremental: '" & label & "' compile failed"
     parseNifmakeReports(output)
 
@@ -106,13 +118,37 @@ proc incrementalTests*() =
              "edit: nimsem did not re-run"
       expect reportField(r[1], "total") > 0,
              "edit: backend ran 0 commands"
+    # Undo the edit and let the cache settle on the restored file, so the next
+    # phase's only change is the one it makes itself.
+    writeFile(src, originalSrc)
+    discard run("resettle")
 
-  writeFile(src, originalSrc)
+  # Phase 5: edit an IMPORTED module's `.inline` proc and nothing else. The
+  # importer's own `.c.nif` still says only "call bump"; the body is spliced
+  # in one stage later, by lengc, out of the callee's `.c.nif`. So the
+  # importer's codegen depends on a file that is not its own input unless
+  # `deps.addInlineSourceInputs` declares it, and without that edge nifmake
+  # leaves the importer's `.c` untouched: a link error when the edit moves a
+  # symbol the splice names, and a silently stale binary when it does not
+  # (nim-lang/nimony#1897). Two `.c` files must be regenerated here — the
+  # callee's, because its body changed, and the importer's, because of the
+  # splice — and the program has to print the NEW value.
+  block:
+    writeFile(dep, originalDep.replace("x + 1", "x + 1000"))
+    let r = run("inline-dep")
+    if r.len == 2:
+      expect reportField(r[1], "lengc") >= 2,
+             "inline-dep: lengc ran " & $reportField(r[1], "lengc") &
+             " times (expected the callee's and the importer's)"
+    expect lastOutput.contains("1010"),
+           "inline-dep: ran a stale inlined body; expected the program to print 1010"
+
+  restoreSources()
 
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f
     quit "FAILURE: " & $failures.len & " incremental phase(s) failed."
-  echo "incremental: 4 / 4 phases successful in ",
+  echo "incremental: 5 / 5 phases successful in ",
        formatFloat(dt, ffDecimal, precision=2), "s."
   echo "SUCCESS."
