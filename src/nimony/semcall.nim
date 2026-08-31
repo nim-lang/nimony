@@ -1182,7 +1182,12 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, dest, it, cs.beforeCall, c.types.autoType
       else:
-        buildErr c, dest, cs.callNodeInfo, getErrorMsg(m[idx])
+        # `leaveCall` has already closed the call tree at `cs.beforeCall`, so
+        # the error has to REPLACE it: appended, it would be a second child of
+        # whatever encloses the call, and a node with a fixed arity — `(ret X)`
+        # above all — then has one child too many. The next reader trips over
+        # the leftover (`defer` lowering asserted on it, nim-lang/nimony#2400).
+        buildErrAt c, dest, cs.beforeCall, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       if c.templateInstCounter <= MaxNestedTemplates:
         c.expanded.addSymUse finalFn.sym, cs.callNodeInfo
@@ -1191,7 +1196,8 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           semTemplateCall c, dest, it, finalFn.sym, cs.beforeCall, m[idx], cs.flags
         dec c.templateInstCounter
       else:
-        buildErr c, dest, cs.callNodeInfo, "recursion limit exceeded for template expansions"
+        # same as above: replace the closed call tree, never append to it
+        buildErrAt c, dest, cs.beforeCall, "recursion limit exceeded for template expansions"
     elif finalFn.kind == MacroY:
       # Run compiled macro plugin
       runCompiledMacroPlugin(c, dest, it, cs, finalFn.sym)
