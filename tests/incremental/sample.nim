@@ -4,5 +4,7 @@
 # also lives in `src/hastur.nim`.
 
 import std/syncio
+import inlinedep
 
 echo "incremental sample"
+echo bump(10)

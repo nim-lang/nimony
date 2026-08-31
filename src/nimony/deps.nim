@@ -73,6 +73,30 @@ proc docIdxFile(config: NifConfig; f: FilePair): string =
   ## HTML is redirected via `--outdir`. Not user-relevant; uses the modname
   ## hash so it can't collide regardless of source layout.
   config.nifcachePath / "docs" / f.modname & ".docidx"
+proc backendDirName(config: NifConfig; f: FilePair): string =
+  ## Name of the per-main-module directory that holds everything from DCE
+  ## onward. Those artifacts are main-specific (a different main means a
+  ## different live set) AND backend-specific: hexer runs with `--native` or
+  ## without, which changes the main module's `.x.nif` (the synthesized entry
+  ## point terminates through `cExit` only on the native backend), and the
+  ## generated code, objects and executable below it obviously differ too.
+  ##
+  ## nifmake decides whether to rerun a node from its declared input and
+  ## output FILES, not from the tool's flags, so two backends sharing this
+  ## directory do not merely overwrite each other -- whichever ran first wins
+  ## and the second reuses its artifacts, because from nifmake's side nothing
+  ## changed. Giving each backend its own directory is the same split that
+  ## keeps `nimony doc` from fighting `nimony c` over `.p.nif`/`.pc.nif`.
+  ##
+  ## The C backend keeps the bare module name so existing caches, and every
+  ## path a tool derives from one, stay valid.
+  result = f.modname
+  case config.backend
+  of backendC: result.add BackendDirC
+  of backendLLVM: result.add BackendDirLLVM
+  of backendNative: result.add BackendDirNative
+  of backendWasm: result.add BackendDirWasm
+
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
 proc lengcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -933,6 +957,29 @@ proc writeLinkManifest(path, exe, apptype: string;
   b.close()
   result = path
 
+proc addInlineSourceInputs(b: var Builder; c: DepContext; v: Node; backend: string) =
+  ## Declare the `.c.nif` of every module `v` imports as an input of `v`'s
+  ## codegen node.
+  ##
+  ## All three consumers of a `.c.nif` -- `lengc`, `arkham` and Shoggoth's
+  ## `optimize` -- resolve foreign symbols by loading the *callee* module's
+  ## `.c.nif` on demand, and splice imported `.inline` bodies out of it. That
+  ## makes those files real inputs: nifmake decides whether to rerun a node
+  ## from its declared inputs, so without these edges an edit that only
+  ## changes a callee leaves every importer's already-generated code in place,
+  ## with a stale copy of the body spliced into it. The result is a link error
+  ## when the edit renames a symbol the splice references, and a silently
+  ## wrong binary when it does not (nim-lang/nimony#1897).
+  ##
+  ## Only input[0] reaches the tool's command line, so the extra inputs cost
+  ## nothing but the ordering and the freshness check.
+  var seen = initHashSet[string]()
+  for depIdx in v.deps:
+    let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
+    if not seen.containsOrIncl(depNif):
+      b.withTree "input":
+        b.addStrLit depNif
+
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
@@ -1204,7 +1251,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
-      let backend = c.rootNode.files[0].modname  # DCE and after are main-specific
+      let backend = c.config.backendDirName(c.rootNode.files[0])
       let backendDir = c.config.nifcachePath / backend
       let liveFile = backendDir / c.rootNode.files[0].modname & ".live.nif"
 
@@ -1467,11 +1514,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
             # Shoggoth's inter-module inliner also reads the imported modules'
-            # `.c.nif`, but they need no edge here: nifmake runs the DAG in
-            # depth batches and finishes one before starting the next, and
-            # every `dceEmit` shares the `.live.nif` input, so all the `.c.nif`
-            # are written in the batch before this node's. Verified by counting
-            # foreign loads that missed their file: zero.
+            # `.c.nif`. Ordering alone would be free (nifmake runs the DAG in
+            # depth batches, and every `dceEmit` shares the `.live.nif` input,
+            # so those files are all written in the batch before this node's),
+            # but they have to be inputs for FRESHNESS too: without the edge a
+            # changed callee body leaves this node's output untouched and the
+            # splice inside it stale (nim-lang/nimony#1897).
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized
@@ -1491,16 +1540,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "arkham"
             b.withTree "input":
               b.addStrLit lengcInput
-            var seenDeps = initHashSet[string]()
-            for depIdx in v.deps:
-              let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
-              if not seenDeps.containsOrIncl(depNif):
-                b.withTree "input":
-                  b.addStrLit depNif
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit c.config.asmFile(v.files[0], backend)
         else:
-          # Build C/LLVM IR files from .c.nif files
+          # Build C/LLVM IR files from .c.nif files. lengc splices the bodies
+          # of imported `.inline` procs into this translation unit, reading
+          # them out of the callee module's `.c.nif` under `--nimcache`, so
+          # those files are inputs of this node exactly as they are of
+          # `arkham`'s (nim-lang/nimony#1897). Only input[0] (this module's
+          # `lengcInput`) reaches lengc's command line (the cmd uses `(input)`).
           b.withTree "do":
             b.addIdent "lengc"
             b.withTree "args":
@@ -1510,6 +1559,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit "--isMain"
             b.withTree "input":
               b.addStrLit lengcInput
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit c.config.genFile(v.files[0], backend)
 
@@ -1987,7 +2037,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # It is generated by nimsem and doesn't contains modules imported under `when false:`.
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
-    let backend = c.config.nifcachePath / c.rootNode.files[0].modname
+    let backend = c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0])
     onRaiseQuit createDir(path(backend))
     onRaiseQuit createDir(path(sharedObjDir()))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsLengc, passC, passL)
@@ -1995,9 +2045,9 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
     # `bin/` here. Nim does the same in `prepareToWriteOutput`.
-    var exeOutPath = c.config.exeFile(c.rootNode.files[0], c.rootNode.files[0].modname)
+    var exeOutPath = c.config.exeFile(c.rootNode.files[0], c.config.backendDirName(c.rootNode.files[0]))
     if c.config.backend == backendWasm:
-      exeOutPath = c.config.wasmFile(c.rootNode.files[0], c.rootNode.files[0].modname)
+      exeOutPath = c.config.wasmFile(c.rootNode.files[0], c.config.backendDirName(c.rootNode.files[0]))
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
@@ -2035,7 +2085,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
 
   if cmd != DoCheck:
     if cmd == DoRun:
-      let backend = c.rootNode.files[0].modname
+      let backend = c.config.backendDirName(c.rootNode.files[0])
       if c.config.backend == backendWasm:
         # A .wasm module needs a host; run it under node with the standard
         # shim (tests/ithaqua/run_wasm.js provides env.nim_write/nim_exit).

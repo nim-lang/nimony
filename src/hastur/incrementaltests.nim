@@ -1,7 +1,7 @@
 ## The incremental-build regression: drive `nimony c --report` through a fixed
 ## sequence of scenarios and assert which phases actually re-ran.
 
-import std / [syncio, os, osproc, strutils, times]
+import std / [syncio, os, osproc, strutils, times, algorithm, sequtils]
 
 # ---- Incremental-build regression test ------------------------------------
 # `nifmake --report` prints a machine-readable summary of which commands
@@ -35,6 +35,19 @@ proc reportField*(entries: seq[ReportEntry]; cmd: string): int =
     if e.cmd == cmd: return e.count
   result = 0
 
+proc mainHexedPerBackend(cache: string): seq[(string, string)] =
+  ## `(directory name, content of the main module's .x.nif)` for every backend
+  ## directory under `cache`. `deps.backendDirName` gives each backend its own
+  ## `<mainmod><tag>/`, and only the main module's `.x.nif` lives in one (the
+  ## imported modules' copies are shared, at the cache root), so this is one
+  ## entry per backend that has built here.
+  result = @[]
+  for kind, dir in walkDir(cache):
+    if kind != pcDir: continue
+    for f in walkFiles(dir / "*.x.nif"):
+      result.add (dir.lastPathPart, readFile(f))
+  sort result
+
 proc incrementalTests*() =
   ## Drive `bin/nimony c --report` through a fixed sequence of scenarios on
   ## `tests/incremental/sample.nim` and assert the per-nifmake-invocation
@@ -42,23 +55,35 @@ proc incrementalTests*() =
   ## sample file regardless of outcome.
   let t0 = epochTime()
   let src = "tests/incremental/sample.nim"
+  let dep = "tests/incremental/inlinedep.nim"
   let cache = "nimcache" / "incremental"
   let nimony = "bin" / "nimony".addFileExt(ExeExt)
-  if not fileExists(src):
-    quit "incremental: " & src & " missing"
+  for f in [src, dep]:
+    if not fileExists(f):
+      quit "incremental: " & f & " missing"
   if not fileExists(nimony):
     quit "incremental: " & nimony & " not found; run `hastur build nimony` first"
   removeDir cache
 
-  let baseCmd = nimony.quoteShell & " c --silentMake --report --nimcache:" &
+  # `-r` so every phase also RUNS the result: a rebuild that nifmake skipped
+  # when it should not have leaves a stale binary behind, and a report count
+  # alone would not notice (see the `inline-dep` phase).
+  let baseCmd = nimony.quoteShell & " c -r --silentMake --report --nimcache:" &
                 cache.quoteShell & " " & src.quoteShell
   let originalSrc = readFile(src)
+  let originalDep = readFile(dep)
 
+  proc restoreSources() =
+    writeFile(src, originalSrc)
+    writeFile(dep, originalDep)
+
+  var lastOutput = ""
   proc run(label: string): seq[seq[ReportEntry]] =
     let (output, ec) = execCmdEx(baseCmd)
+    lastOutput = output
     if ec != 0:
       stdout.write output
-      writeFile(src, originalSrc)
+      restoreSources()
       quit "incremental: '" & label & "' compile failed"
     parseNifmakeReports(output)
 
@@ -106,13 +131,74 @@ proc incrementalTests*() =
              "edit: nimsem did not re-run"
       expect reportField(r[1], "total") > 0,
              "edit: backend ran 0 commands"
+    # Undo the edit and let the cache settle on the restored file, so the next
+    # phase's only change is the one it makes itself.
+    writeFile(src, originalSrc)
+    discard run("resettle")
 
-  writeFile(src, originalSrc)
+  # Phase 5: edit an IMPORTED module's `.inline` proc and nothing else. The
+  # importer's own `.c.nif` still says only "call bump"; the body is spliced
+  # in one stage later, by lengc, out of the callee's `.c.nif`. So the
+  # importer's codegen depends on a file that is not its own input unless
+  # `deps.addInlineSourceInputs` declares it, and without that edge nifmake
+  # leaves the importer's `.c` untouched: a link error when the edit moves a
+  # symbol the splice names, and a silently stale binary when it does not
+  # (nim-lang/nimony#1897). Two `.c` files must be regenerated here — the
+  # callee's, because its body changed, and the importer's, because of the
+  # splice — and the program has to print the NEW value.
+  block:
+    writeFile(dep, originalDep.replace("x + 1", "x + 1000"))
+    let r = run("inline-dep")
+    if r.len == 2:
+      expect reportField(r[1], "lengc") >= 2,
+             "inline-dep: lengc ran " & $reportField(r[1], "lengc") &
+             " times (expected the callee's and the importer's)"
+    expect lastOutput.contains("1010"),
+           "inline-dep: ran a stale inlined body; expected the program to print 1010"
+
+  restoreSources()
+
+  # Phase 6: switch backends without touching a source file. `nimony c` and
+  # `nimony n` do not produce the same artifacts from the same input — hexer
+  # alone runs with or without `--native`, which changes the main module's
+  # `.x.nif` — and nifmake reruns a node only when its input or output FILES
+  # changed, never when a tool's FLAGS did. So sharing one directory would not
+  # make the second backend overwrite the first: it would make it reuse the
+  # first one's artifacts, silently, for as long as the sources hold still.
+  # `deps.backendDirName` keeps the two populations apart; assert that both
+  # exist afterwards, that they disagree, and that the C build the native one
+  # ran on top of came through untouched.
+  var phases = 5
+  let arkham = "bin" / "arkham".addFileExt(ExeExt)
+  let nifasm = "bin" / "nifasm".addFileExt(ExeExt)
+  if fileExists(arkham) and fileExists(nifasm):
+    inc phases
+    block:
+      let before = mainHexedPerBackend(cache)
+      expect before.len == 1,
+             "backend-switch: expected 1 backend directory before, got " & $before.len
+      let nativeCmd = nimony.quoteShell & " n -r --silentMake --report --nimcache:" &
+                      cache.quoteShell & " " & src.quoteShell
+      let (nativeOut, nativeEc) = execCmdEx(nativeCmd)
+      if nativeEc != 0:
+        stdout.write nativeOut
+        restoreSources()
+        quit "incremental: 'backend-switch' native compile failed"
+      let after = mainHexedPerBackend(cache)
+      expect after.len == 2,
+             "backend-switch: expected a directory per backend, got " & $after.len &
+             " (" & after.mapIt(it[0]).join(", ") & ")"
+      if after.len == 2 and before.len == 1:
+        expect after[0][1] != after[1][1],
+               "backend-switch: both backends stored the same main .x.nif"
+        let cBefore = after.filterIt(it[0] == before[0][0])
+        expect cBefore.len == 1 and cBefore[0][1] == before[0][1],
+               "backend-switch: the native build rewrote the C backend's main .x.nif"
 
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f
     quit "FAILURE: " & $failures.len & " incremental phase(s) failed."
-  echo "incremental: 4 / 4 phases successful in ",
+  echo "incremental: ", phases, " / ", phases, " phases successful in ",
        formatFloat(dt, ffDecimal, precision=2), "s."
   echo "SUCCESS."

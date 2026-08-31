@@ -61,8 +61,10 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
   #echo "TESTING ", file
   let failuresBefore = c.failures
   inc c.total
+  let backendTag =
+    if walkUsesNative(file, cat): BackendDirNative else: BackendDirC
   let (compilerOutput, compilerExitCode) =
-    if walkUsesNative(file, cat):
+    if backendTag == BackendDirNative:
       execNimonyNative(nimonyNativeCmdFor(forward) & quoteShell(file))
     else:
       execNimony(nimonyCmdFor(file, cat, forward) & quoteShell(file), cat)
@@ -87,11 +89,11 @@ proc testFile*(c: var TestCounters; file: string; overwrite: bool; cat: Category
   if compilerExitCode == 0:
     let cfile = file.changeFileExt(".nim.c")
     if targetIs64bit and cfile.fileExists():
-      let nimcacheC = generatedFile(file, ".c")
+      let nimcacheC = generatedFile(file, ".c", backendTag)
       diffFiles c, file, cfile, nimcacheC, overwrite
 
     if cat notin {Basics, Tracked}:
-      let exe = file.generatedExeFile()
+      let exe = file.generatedExeFile(backendTag)
       let (testProgramOutput, testProgramExitCode) = osproc.execCmdEx(quoteShell exe)
       var output = file.changeFileExt(".output")
       if testProgramExitCode != 0:
@@ -172,7 +174,8 @@ proc joinedTest*(c: var TestCounters; dir: string; files: seq[string];
   if compilerExitCode != 0:
     bail "did not compile", compilerOutput
 
-  let exe = driver.generatedExeFile()
+  let exe = driver.generatedExeFile(
+    if native: BackendDirNative else: BackendDirC)
   let (progOutput, progExitCode) = osproc.execCmdEx(quoteShell exe)
   if progExitCode != 0:
     bail "exited with " & $progExitCode, progOutput
