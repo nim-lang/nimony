@@ -23,7 +23,11 @@ import nifpools
 # through (`info(n: NifToken)` differs only in return type, `NoLineInfo` is a
 # same-name const of a different type — either would be ambiguous or wrong for
 # ast2nif). The classic replacements are defined below / come from lineinfos.
-export nifpools except info, NoLineInfo
+# `tagId` is excluded for a different reason: nifpools decodes the 9-bit field
+# of a real `TagLit`, but this surface hands out `ParLe` tokens whose tag id
+# fills the whole 28-bit payload (see `next`), so the decode below is the only
+# correct one here.
+export nifpools except info, NoLineInfo, tagId
 import lineinfos
 export lineinfos
 
@@ -41,6 +45,11 @@ type
 # inline token the payload is packed bytes, not an id, so nifpools (nimony's own
 # surface, where buffers come from the builders) deliberately has no equivalent:
 # there it must go through a `Cursor`, which handles both encodings.
+proc tagId*(n: NifToken): TagId {.inline.} = TagId(uoperand(n))
+  ## Classic `ParLe` tokens (see `next`) keep the tag id in the full 28-bit
+  ## payload rather than in `TagLit`'s 9-bit field: `globalTags` already holds
+  ## 355 tags before the Nim compiler registers its own dialect, so a 512-tag
+  ## ceiling is not a ceiling this surface can live under.
 proc litId*(n: NifToken): StrId {.inline.} = StrId(uoperand(n) shr 1)
 proc symId*(n: NifToken): SymId {.inline.} = SymId(uoperand(n) shr 1)
 proc litId*(c: Cursor): StrId {.inline.} = strId(c)
@@ -150,6 +159,12 @@ type
   Stream* = object
     r*: Reader
 
+proc parLeToken*(t: TagId): NifToken {.inline.} =
+  ## The classic surface's opening-tag token: kind `ParLe`, tag id in the
+  ## payload. Transit-only, like `floatToken` — a `ParLe` never appears in a
+  ## binary token stream, so this must not be appended to a TokenBuf.
+  NifToken((uint32(t) shl KindBits) or uint32(ParLe))
+
 proc open*(filename: string): Stream =
   Stream(r: nifreader.open(filename))
 
@@ -165,7 +180,12 @@ proc next*(s: var Stream): NifToken =
   nifreader.next(s.r, t)
   case t.tk
   of ParLe:
-    result = tagLitToken(registerTag(globalTags, decodeStr(s.r, t)))
+    # NOT `tagLitToken`: that would set the kind to `TagLit`, and every classic
+    # structural scanner tests for `ParLe` (deps.nim walks the import graph that
+    # way). Emitting `TagLit` here made every one of those tests silently fail —
+    # the scanner saw an unknown token, skipped the subtree, and the Nim
+    # compiler's IC build graph came out missing most of its edges.
+    result = parLeToken(registerTag(globalTags, decodeStr(s.r, t)))
   of Ident:
     result = identToken(pool.strings.getOrIncl(decodeStr(s.r, t)))
   of StrLit:
@@ -177,3 +197,43 @@ proc next*(s: var Stream): NifToken =
   else:
     # ParRi/EofToken/DotToken/CharLit/numbers: correct kind, no payload.
     result = NifToken(uint32(t.tk))
+
+when isMainModule and not defined(nimony):
+  # nimony never imports this module (see the header), so this self-test is
+  # written for the classic Nim compiler that does — and it is the only place
+  # the promise below can be checked at all.
+  #
+  # The promise: structural scanners see the CLASSIC kinds. Nim's deps.nim walks
+  # the import graph by testing `t.kind == ParLe` and then reading
+  # `pool.tags[t.tagId]`. Hand out nifcore's own `TagLit` instead and every one
+  # of those tests falls through silently — the scanner treats the opener as an
+  # unknown token, skips the subtree, and Nim's IC build graph comes out missing
+  # most of its edges while each individual file still "parses" fine.
+  import std / [os, syncio]
+  from nifreader import processDirectives
+  from std / assertions import assert
+
+  let f = getTempDir() / "nifstreams_selftest.nif"
+  syncio.writeFile f, "(.nif27)\n(stmts (import (infix / std (bracket os osproc))) (x \"s\" y))\n"
+
+  var kinds: seq[NifKind] = @[]
+  var tagNames: seq[string] = @[]
+  var lits: seq[string] = @[]
+  var s = nifstreams.open(f)
+  discard processDirectives(s.r)
+  while true:
+    let t = next(s)
+    if t.kind == EofToken: break
+    kinds.add t.kind
+    case t.kind
+    of ParLe: tagNames.add pool.tags[t.tagId]
+    of Ident, StrLit: lits.add pool.strings[t.litId]
+    else: discard
+  nifstreams.close(s)
+  removeFile f
+
+  assert tagNames == @["stmts", "import", "infix", "bracket", "x"], $tagNames
+  assert lits == @["/", "std", "os", "osproc", "s", "y"], $lits
+  assert ParRi in kinds, "closers must stay classic too"
+  assert TagLit notin kinds, "an opener must arrive as ParLe, not TagLit"
+  echo "success"
