@@ -107,7 +107,16 @@ proc dumpCurrentProc(c: var NjvlContext; info: NifLineInfo; msg: string) =
   stderr.writeLine toString(c.currentProcStart, false)
   stderr.writeLine "--- end NJ IR dump ---"
 
-proc buildErr(c: var NjvlContext; info: NifLineInfo; msg: string) =
+proc buildErr(c: var NjvlContext; rawInfo: NifLineInfo; msg: string) =
+  # This pass runs on the FINAL IR, where the node an error is pinned to is
+  # often one the compiler synthesized -- the epilogue's `(ret result)` is what
+  # an uninitialized `result` is reported at -- and those carry no line info.
+  # Printed, such an error is a bare `???`; worse, `reporters` deduplicates by
+  # line info, so the second and every later one in a module is swallowed and
+  # the user fixes them one recompile at a time. Fall back to the enclosing
+  # proc's declaration, which is where the reader has to look anyway.
+  let info = if rawInfo.isValid or cursorIsNil(c.currentProcStart): rawInfo
+             else: c.currentProcStart.info
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
