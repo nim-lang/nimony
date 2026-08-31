@@ -6,8 +6,8 @@
 ##                   subtree): hastur compiles+runs it, passes context on argv,
 ##                   and takes its exit code as the verdict. This is the escape
 ##                   hatch for suites that aren't "a folder of inputs" (boot,
-##                   incremental, validator) or need bespoke logic (nj, vl,
-##                   dagon, pnak). It imports `kit.nim` as the test kit.
+##                   incremental, validator) or need bespoke logic (dagon,
+##                   pnak). It imports `kit.nim` as the test kit.
 ##   setup.hastur  — lightweight prep for a directory still run by the built-in
 ##                   nimony runner: each line is a hastur subcommand (e.g.
 ##                   `build nimony`), run before the tests below it.

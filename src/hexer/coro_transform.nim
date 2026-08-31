@@ -39,7 +39,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
-import ".." / njvl / [finalir, njvl_model]
+import ".." / finalir / [finalir, finalir_model]
 import passes, defaultvalues
 include ".." / nimony / nif_annotations
 
@@ -188,7 +188,7 @@ type
       ## a concrete width when a default value for one is synthesized.
     nextTemp*: int
       ## Continues the outer pipeline's xelim temp counter through the
-      ## nested per-coroutine njvl runs (treIteratorBody) — restarting at
+      ## nested per-coroutine Final-IR runs (treIteratorBody) — restarting at
       ## 0 re-mints `x.N SymIds that collide with still-live outer temps.
     typeCache*: TypeCache
     thisModuleSuffix*: string
@@ -1121,7 +1121,6 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
     currentState = int(n.childCursor.intVal)
 
   let sk = n.stmtKind
-  let nk = n.njvlKind
   case sk
   of LocalDecls:
     n.into:
@@ -1143,30 +1142,18 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
       while n.hasMore:
         escapingLocalsImpl c, n, currentState # the value
   else:
-    if nk in {MflagV, VflagV}:
-      # NJ guard flags are bool variables that may cross state boundaries
-      n.into: # mflag/vflag tag
-        let mine = n.symId
-        c.currentProc.localToEnv[mine] = EnvField(
-          objType: coroTypeForProc(c, c.procStack[^1]),
-          field: localToFieldname(c, mine),
-          typ: c.typeCache.builtins.boolType,
-          def: currentState,
-          use: currentState)
-        skip n # symdef
+    case n.kind
+    of TagLit:
+      n.loopInto:
+        escapingLocalsImpl c, n, currentState
+    of Symbol:
+      let def = c.currentProc.localToEnv.getOrDefault(n.symId, EnvField(def: -2)).def
+      if def != -2:
+        if def != currentState:
+          c.currentProc.localToEnv.getOrQuit(n.symId).use = currentState
+      inc n
     else:
-      case n.kind
-      of TagLit:
-        n.loopInto:
-          escapingLocalsImpl c, n, currentState
-      of Symbol:
-        let def = c.currentProc.localToEnv.getOrDefault(n.symId, EnvField(def: -2)).def
-        if def != -2:
-          if def != currentState:
-            c.currentProc.localToEnv.getOrQuit(n.symId).use = currentState
-        inc n
-      else:
-        inc n
+      inc n
 
 proc escapingLocals*(c: var Context; n: Cursor) =
   if n.isDotToken: return
@@ -1183,36 +1170,6 @@ proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
     if n.stmtKind == YldS or c.hooks.isPassiveCall(c, n) or n.exprKind == SuspendX:
       return true
   return false
-
-proc trMflag*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Convert `(mflag symdef)` / `(vflag symdef)` to a bool var initialized to
-  ## false. If the flag is lifted to the environment, emit an assignment to
-  ## the env field instead. The Final IR generates no control-flow variables
-  ## of its own; `finalir.trCfVarDecl` only passes through the ones `xelim`
-  ## already had. `jtrue` — which only `nj.nim` ever emitted — is gone with it.
-  let info = n.info
-  let flagStart = n  # past mflag/vflag tag
-  n = sub(n)
-  let symDef = n
-  let symId = n.symId
-  inc n  # skip symdef
-  n = flagStart; skip n  # past the (elided) ParRi
-  let field = c.currentProc.localToEnv.getOrDefault(symId)
-  if field.def != field.use:
-    dest.copyIntoKind AsgnS, info:
-      dest.copyIntoKind DotX, info:
-        dest.copyIntoKind DerefX, info:
-          dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-        dest.addSymUse field.field, info
-      dest.addParPair FalseX, info
-  else:
-    dest.addParLe VarS, info
-    dest.addSubtree symDef
-    dest.addDotToken()  # exported
-    dest.addDotToken()  # pragmas
-    dest.copyTree c.typeCache.builtins.boolType
-    dest.addParPair FalseX, info  # initialized to false
-    dest.addParRi()
 
 const
   KeptLoop* = -1
@@ -1441,7 +1398,7 @@ proc trTryGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var info = n.info
-  case n.njvlKind
+  case n.finalIrKind
   of ContinueV:
     # The back-edge of the INNERMOST enclosing loop. For a suspending one that
     # is the jump to its head state, emitted by the `LoopV` case below. For a
@@ -2523,7 +2480,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           WasmovedX, SinkhX, TraceX,
           InternalTypeNameX, InternalFieldPairsX,
           FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
-        case n.njvlKind
+        case n.finalIrKind
         of LoopV:
           # A suspension-free Final IR `(loop (stmts BODY (continue .)))`
           # survives into the state proc as an ordinary `while true`. The
@@ -2543,7 +2500,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             assert n.stmtKind == StmtsS, $n.kind
             n.into:                               # the body
               while n.hasMore:
-                if n.njvlKind == ContinueV:
+                if n.finalIrKind == ContinueV:
                   lastJmp = bodyBuf.len
                   inc jumps
                   bodyBuf.copyIntoKind JmpS, n.info:
@@ -2579,7 +2536,9 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             while n.hasMore:
               skip n
         of MflagV, VflagV:
-          trMflag c, dest, n
+          # NJVL control-flow flags; nothing produces them since `xelim`'s
+          # cfvar lowering went out with `nj.nim`. See `finalir.trStmt`.
+          bug "cfvar in Final IR input"
         of StoreV:
           # (store value dest) -> (asgn dest value)
           let info = n.info

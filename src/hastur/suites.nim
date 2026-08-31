@@ -1,6 +1,5 @@
 ## The per-directory custom suites a `tests/<dir>/setup.nim` drives: the NIF
-## tool goldens (nj, vl, controlflow, contracts), the validator, hexer, dagon
-## and pnak.
+## tool goldens (controlflow, contracts), the validator, hexer, dagon and pnak.
 
 import std / [syncio, os, osproc, strutils, times]
 import ".." / lib / nifindexes
@@ -9,17 +8,15 @@ import context, counters, builders
 
 proc runNifToolTests*(tool, testDir, inputExt, expectedExt: string; overwrite: bool) =
   ## Run tests for a NIF tool.
-  ## - inputExt: extension that input files must have (e.g., ".nif" or ".nj.nif")
-  ## - expectedExt: extension for expected output files (e.g., ".nj.nif" or ".vl.nif")
+  ## - inputExt: extension that input files must have (e.g. ".nif")
+  ## - expectedExt: extension for expected output files (e.g. ".expected.nif")
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   for x in walkDir(testDir, relative = true):
     # To match input, file must end with inputExt but not with any longer output extension.
-    # This prevents .nj.nif and .vl.nif from matching when inputExt is .nif
     let shouldTest = x.kind == pcFile and x.path.endsWith(inputExt) and
                      not x.path.contains(expectedExt) and
-                     not x.path.contains(".out.nif") and
-                     not (inputExt == ".nif" and (x.path.endsWith(".nj.nif") or x.path.endsWith(".vl.nif")))
+                     not x.path.contains(".out.nif")
     if shouldTest:
       inc c.total
       let t = testDir / x.path

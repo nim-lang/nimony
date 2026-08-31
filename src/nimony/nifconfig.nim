@@ -125,7 +125,7 @@ type
     backend*: Backend
     optLevel*: OptLevel
     noValidate*: bool # skip running the validator on plugin sources
-    verbose*: bool    # --verbose: dump NJ IR on contract/init failures
+    verbose*: bool    # --verbose: dump Final IR on contract/init failures
     outFile*: string  # filename portion set by `--out:PATH` / `-o:PATH`
                       # (empty = derive from module basename).
     outDir*: string   # directory portion set by `--out:DIR/NAME` (its

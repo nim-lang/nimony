@@ -77,12 +77,6 @@ proc buildControlflow*(showProgress = false) =
 proc buildContracts*(showProgress = false) =
   buildTool("contracts", "src/nimony/contracts.nim", showProgress)
 
-proc buildNj*(showProgress = false) =
-  buildTool("nj", "src/njvl/nj.nim", showProgress)
-
-proc buildVl*(showProgress = false) =
-  buildTool("vl", "src/njvl/vl.nim", showProgress)
-
 proc buildLengc*(showProgress = false) =
   buildTool("lengc", "src/lengc/lengc.nim", showProgress)
 

@@ -83,7 +83,7 @@
 | `(ochoice X X*)`| NimonyExpr | open choice |
 | `(emit X*)` | LengStmt, NimonyStmt, NimonyPragma | emit statement |
 | `(asgn X X)` | LengStmt, NimonyStmt, NiflerKind | assignment statement |
-| `(store X X)` | NjvlKind, LengStmt | `asgn` with reversed operands that reflects evaluation order |
+| `(store X X)` | FinalIrKind, LengStmt | `asgn` with reversed operands that reflects evaluation order |
 | `(keepovf X X)` | LengStmt | keep overflow flag statement |
 | `(scope S*)` | LengStmt, NimonyStmt | explicit scope annotation, like `stmts` |
 | `(if (elif X X)+ (else X)?)` | LengStmt, NimonyStmt, NiflerKind | if statement header |
@@ -92,14 +92,14 @@
 | `(else X)`; `(else .T)` | LengOther, NimonyOther, NiflerKind | `else` action, or the default branch of a Leng discriminated `union` |
 | `(typevars (typevar ...)*)` | NimonyOther, NiflerKind | type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)` |
 | `(break .Y)`; `(break)` | LengStmt, NimonyStmt, NiflerKind | `break` statement |
-| `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, NjvlKind | `continue` statement |
+| `(continue .Y)`; `(continue)` | NimonyStmt, NiflerKind, FinalIrKind | `continue` statement |
 | `(for X ... S)` | NimonyStmt, NiflerKind | for statement |
 | `(while X S)` | LengStmt, NimonyStmt, NiflerKind| `while` statement |
 | `(corofor X S)` | NimonyStmt | closure-iterator for loop, lowered shape used between iterinliner and cps; first child is the iterator call, second child is a `(stmts ...)` whose first inner statement is a `(var :forLoopVar T .)` declaration that receives each yielded value |
 | `(case X (of (ranges...) S)+ (else X)?)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | `case` statement |
 | `(of (ranges ...) S)`; `(of (ranges ...) .T)` | LengOther, NimonyOther, NiflerKind | `of` branch within a `case` statement, or of a Leng discriminated `union` |
-| `(lab D)` | LengStmt, LengSym, NimonyStmt, NimonySym, NjvlKind | label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge |
-| `(jmp Y)` | LengStmt, NimonyStmt, NjvlKind | jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals |
+| `(lab D)` | LengStmt, LengSym, NimonyStmt, NimonySym, FinalIrKind | label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge |
+| `(jmp Y)` | LengStmt, NimonyStmt, FinalIrKind | jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals |
 | `(ret .X)` | LengStmt, NimonyStmt, NiflerKind | `return` instruction |
 | `(yld .X)` | NimonyStmt, NiflerKind | yield statement |
 | `(stmts S*)` | LengStmt, NimonyStmt, NimonyOther, NiflerKind | list of statements |
@@ -163,20 +163,20 @@
 | `(raises ...)` | LengPragma, NimonyPragma | proc annotation; optional list of exception types the proc may raise |
 | `(errs)` | LengPragma | proc annotation |
 | `(static T)`; `(static)` | LengPragma, NimonyType, NiflerKind | `static` type or annotation |
-| `(ite X S S S STR_LIT?)` | ControlFlowKind, NjvlKind, LengStmt | if-then-else followed by `join` information followed by an optional label |
-| `(itec X S S)` | NjvlKind, LengStmt | if-then-else (that was a `case`) |
-| `(loop S X S S)` | NjvlKind, LengStmt | `loop` components are (before-cond, cond, loop-body, after) |
-| `(v X INT_LIT)` | NjvlKind | `versioned` locations |
-| `(etupat X INT_LIT)` | NjvlKind | tupat expression for error handling |
-| `(unknown X)` | NjvlKind | location's contents is unknown at this point |
-| `(jtrue Y+)` | NjvlKind, LengStmt | set variables v1, v2, ... to `(true)`; hint this should become a jump |
-| `(mflag D)` | NjvlKind, LengStmt, LengSym | declare a new **materialized** control flow flag `D` of type `bool` initialized to `false` |
-| `(vflag D)` | NjvlKind, LengStmt, LengSym | declare a new **virtual** control flow flag `D` of type `bool` initialized to `false` |
+| `(ite X S S S STR_LIT?)` | ControlFlowKind, FinalIrKind, LengStmt | if-then-else followed by `join` information followed by an optional label |
+| `(itec X S S)` | FinalIrKind, LengStmt | if-then-else (that was a `case`) |
+| `(loop S X S S)` | FinalIrKind, LengStmt | `loop` components are (before-cond, cond, loop-body, after) |
+| `(v X INT_LIT)` | FinalIrKind | `versioned` locations |
+| `(etupat X INT_LIT)` | FinalIrKind | tupat expression for error handling |
+| `(unknown X)` | FinalIrKind | location's contents is unknown at this point |
+| `(jtrue Y+)` | FinalIrKind, LengStmt | set variables v1, v2, ... to `(true)`; hint this should become a jump |
+| `(mflag D)` | FinalIrKind, LengStmt, LengSym | declare a new **materialized** control flow flag `D` of type `bool` initialized to `false` |
+| `(vflag D)` | FinalIrKind, LengStmt, LengSym | declare a new **virtual** control flow flag `D` of type `bool` initialized to `false` |
 | `(either Y INT_LIT+)` | NimonyOther | `either` construct to combine location versions |
 | `(join Y INT_LIT INT_LIT INT_LIT)` | NimonyOther | `join` construct inside `ite` |
 | `(graph Y)` | ControlFlowKind | disjoint subgraph annotation |
 | `(forbind ...)` | ControlFlowKind | bindings for a `for` loop but the loop itself is mapped to gotos |
-| `(kill Y)` | ControlFlowKind, NjvlKind | some.var is about to disappear (scope exit) |
+| `(kill Y)` | ControlFlowKind, FinalIrKind | some.var is about to disappear (scope exit) |
 | `(unpackflat ...)` | NimonyOther, NiflerKind | unpack into flat variable list |
 | `(unpacktup ...)` | NimonyOther, NiflerKind | unpack tuple |
 | `(callargs X*)` | NimonyOther | grouped call arguments in a for-loop plugin input |
@@ -228,8 +228,8 @@
 | `(noinit)` | NimonyPragma | `noinit` pragma |
 | `(requires X)` | NimonyPragma | `requires` pragma |
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
-| `(assume X)` | NimonyPragma, NimonyStmt, NjvlKind | `assume` pragma/annotation |
-| `(assert X)` | NimonyPragma, NimonyStmt, NjvlKind | `assert` pragma/annotation |
+| `(assume X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assume` pragma/annotation |
+| `(assert X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assert` pragma/annotation |
 | `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma |
 | `(feature STR)` | NimonyPragma | `feature` pragma |
 | `(string)` | NimonyPragma | `string` pragma |

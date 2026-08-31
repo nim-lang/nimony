@@ -1099,7 +1099,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
       c.dest.copyIntoKind AsgnS, info:
         c.dest.addSymUse excSym, info
         c.dest.addSymUse errSym, info
-      # Bare re-raise: `(raise .)`. njvl is expected to lower this into
+      # Bare re-raise: `(raise .)`. finalir is expected to lower this into
       # propagation that preserves the current `errorTracker` value.
       c.dest.copyIntoKind RaiseS, info:
         c.dest.addDotToken()

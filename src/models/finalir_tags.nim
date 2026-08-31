@@ -3,7 +3,7 @@
 import tags
 
 type
-  NjvlKind* = enum
+  FinalIrKind* = enum
     NoVTag
     StoreV = (ord(StoreTagId), "store")  ## `asgn` with reversed operands that reflects evaluation order
     ContinueV = (ord(ContinueTagId), "continue")  ## `continue` statement
@@ -22,6 +22,6 @@ type
     AssumeV = (ord(AssumeTagId), "assume")  ## `assume` pragma/annotation
     AssertV = (ord(AssertTagId), "assert")  ## `assert` pragma/annotation
 
-proc rawTagIsNjvlKind*(raw: TagEnum): bool {.inline.} =
+proc rawTagIsFinalIrKind*(raw: TagEnum): bool {.inline.} =
   raw in {StoreTagId, ContinueTagId, LabTagId, JmpTagId, IteTagId, ItecTagId, LoopTagId, VTagId, EtupatTagId, UnknownTagId, JtrueTagId, MflagTagId, VflagTagId, KillTagId, AssumeTagId, AssertTagId}
 

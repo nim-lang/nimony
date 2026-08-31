@@ -42,7 +42,7 @@ proc needsTemp(n: Cursor): bool =
   # while-loop, so it cannot prove `result` is set on the normal exit of
   # the AtX branch. `result = false` here is the bool default anyway —
   # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
-  # removed) to see the NJ IR that trips the checker.
+  # removed) to see the Final IR that trips the checker.
   result = false
   case n.kind
   of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:

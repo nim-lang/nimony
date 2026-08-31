@@ -28,7 +28,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|nj|vl|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
+  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
                        `nifbench` is the NIF micro-benchmark suite (src/nifbench),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
@@ -177,7 +177,7 @@ Files (per test directory, all optional):
                         `src/hastur/kit` as the test kit) and takes its exit
                         code as the verdict. For suites that aren't a folder
                         of inputs (boot, incremental, validator) or need a
-                        bespoke tool (nj, vl, dagon, pnak, hexer, controlflow,
+                        bespoke tool (dagon, pnak, hexer, controlflow,
                         contracts).
   setup.hastur          prep for a built-in-runner directory: each line is a
                         hastur subcommand (e.g. `build nimony`) run before the
@@ -379,8 +379,6 @@ proc handleCmdLine =
       buildNiflink(showProgress)
       buildHexer(showProgress)
       buildNifmake(showProgress)
-      buildNj(showProgress)
-      buildVl(showProgress)
       buildValidator(showProgress)
       buildDagon(showProgress)
       buildPnak(showProgress)
@@ -416,10 +414,6 @@ proc handleCmdLine =
       buildNifmake(showProgress)
     of "nifbench":
       buildNifbench(showProgress)
-    of "nj":
-      buildNj(showProgress)
-    of "vl":
-      buildVl(showProgress)
     of "validator":
       buildValidator(showProgress)
     of "dagon":

@@ -1484,7 +1484,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
         # wrapper spans the whole call (and the nil-dispatch `if`, when it
         # fires) and is closed at the end of genCall (`addTmpVar`).
         # A VOID call sits in statement position, so wrap in `(stmts …)`:
-        # an ExprX there makes njvl materialize a `void` result temp
+        # an ExprX there makes the lowering materialize a `void` result temp
         # (invalid C — upstream's shape only ever saw `(): int` callees).
         # A value-returning call needs the ExprX to stay an expression.
         addTmpVar = true
@@ -1509,7 +1509,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
             tre c, dest, n # value
       if needNilCheck:
         # Bare-call branch bodies, matching upstream d4435b37/#2150: the
-        # njvl/xelim line at this tip lowers them correctly for both void
+        # finalir/xelim line at this tip lowers them correctly for both void
         # and value-returning calls (the pre-#2153 engines needed explicit
         # `(stmts …)`/`(expr …)` wrappers here; those now MIS-lower).
         dest.addParLe IfS, info
@@ -1885,7 +1885,7 @@ proc elimLambdas*(pass: var Pass) =
     coroTypes: createTokenBuf(10),
     continuationProcImpl: coro_transform.generateContinuationProcImpl(),
     hooks: lambdaHooks(),
-    nextTemp: pass.nextTemp,        # nested njvl runs continue the xelim counter
+    nextTemp: pass.nextTemp,        # nested Final-IR runs continue the xelim counter
     ptrSize: pass.bits div 8
   )
   c.typeCache.openScope()
