@@ -284,6 +284,21 @@ when defined(posix):
     copyMem(addr sa, addr a4, sizeof(a4))
     saLen = SockLen(sizeof(a4))
 
+  proc getsockname(s: cint; name: ptr SockAddr; namelen: ptr SockLen): cint {.importc: "getsockname".}
+
+  proc boundPort*(fd: cint): uint16 =
+    ## The port `fd` is actually bound to. With `listenTcp(0)` the kernel picks
+    ## one, and asking for it afterwards is the only way a test can listen
+    ## without inventing a fixed number that a parallel run — or a socket still
+    ## in TIME_WAIT — will collide with.
+    var sa = default(Sockaddr_storage)
+    var slen = SockLen(sizeof(sa))
+    if getsockname(fd, cast[ptr SockAddr](addr sa), addr slen) != 0: return 0'u16
+    let raw = cast[ptr UncheckedArray[uint8]](addr sa)
+    # Network byte order, read as bytes so no host-endianness assumption is
+    # needed: sin_port sits at offset 2 in both sockaddr_in and sockaddr_in6.
+    result = (uint16(raw[2]) shl 8) or uint16(raw[3])
+
   proc listenTcp*(port: uint16; backlog = 128): cint =
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     assert fd >= 0, "socket() failed"

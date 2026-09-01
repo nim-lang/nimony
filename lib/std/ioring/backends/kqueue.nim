@@ -52,6 +52,9 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
       armDeadline(lane, idx)
       if buf[i].kind == opTimeout:
         continue          # nothing to arm on: the deadline heap is the wait
+      if buf[i].kind == opNop:
+        complete(idx, 0)  # nothing to wait for either
+        continue
       if buf[i].kind == opConnect:
         # Start the attempt here, on the polling thread, so the fd is already
         # connecting by the time we watch it. A connect that finished at once

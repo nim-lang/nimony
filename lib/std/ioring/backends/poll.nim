@@ -56,6 +56,16 @@ proc failPendingForFd*(fd: cint) =
 proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
   ## Arm `fd` for every op pending on it, including the one just allocated by
   ## the caller (`allocSlot` has already linked it into the fd's list).
+  ##
+  ## An op with no fd has nothing to arm, and arming anyway is not merely
+  ## useless — the arena lists ops by fd, so every fd-less op shares the `-1`
+  ## bucket. On epoll, `epoll_ctl` on `-1` fails with EBADF, which is read as
+  ## "this fd will never deliver readiness" and fails *every* op in the
+  ## bucket: one nop would complete every pending timer with an error. On
+  ## kqueue the arm silently does nothing instead, so the same nop hangs
+  ## forever. Neither is a bug the caller can do anything about, so fd-less
+  ## ops do not come here at all.
+  if fd < 0: return
   if not reArmEvent(fd, armEventsForFd(fd), alreadyRegistered):
     failPendingForFd(fd)
 

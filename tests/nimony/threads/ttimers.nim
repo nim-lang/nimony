@@ -4,6 +4,7 @@ when defined(windows):
   echo "read timed out res=-110"
   echo "read beat its deadline n=1"
   echo "ordered: 1 2 3"
+  echo "fd-less ops nops=1 timers=2"
   echo "connect ok res=0"
   echo "connect refused neg=true"
 else:
@@ -108,10 +109,35 @@ else:
     assert earlier(a, never) == a, "never can never win"
     assert millisUntil(never, monoNow()) == high(int)
 
+  block fdlessOpsDoNotCollide:
+    # Every op without an fd shares the arena's `-1` bucket. Arming that
+    # bucket fails every op in it on epoll and hangs on kqueue, so a nop
+    # submitted while timers are pending used to take them all down.
+    discard submitTimeout(afterMs(40))
+    discard submitTimeout(afterMs(50))
+    discard submitNop(never)
+    var seen = 0
+    var nops = 0
+    var timers = 0
+    while seen < 3:
+      let n = waitCompletions(comps)
+      for i in 0..<n:
+        inc seen
+        if comps[i].op == opNop:
+          assert comps[i].result == 0, "nop failed: " & $comps[i].result
+          inc nops
+        else:
+          assert comps[i].result == 0, "timer killed by the nop: " &
+                                       $comps[i].result
+          inc timers
+    echo "fd-less ops nops=", nops, " timers=", timers
+
   block connectWorks:
     # A real non-blocking connect through the ring, to a listener we own.
-    let port = 34917'u16
-    let lfd = listenTcp(port)
+    # Port 0: the kernel picks, so a parallel run cannot collide with us.
+    let lfd = listenTcp(0'u16)
+    let port = boundPort(lfd)
+    assert port != 0'u16, "no port was bound"
     let s = socketNonBlocking()
     var sa = default(Sockaddr_storage)
     var slen = SockLen(0)
@@ -126,10 +152,14 @@ else:
   block connectRefused:
     # Nothing is listening: the ring must report the errno, not a bare -1, and
     # not hang until the deadline.
+    # A port nothing is listening on: bind one, learn its number, close it.
+    let probe = listenTcp(0'u16)
+    let deadPort = boundPort(probe)
+    closeFd(probe)
     let s = socketNonBlocking()
     var sa = default(Sockaddr_storage)
     var slen = SockLen(0)
-    loopbackAddr(sa, slen, 34918'u16)
+    loopbackAddr(sa, slen, deadPort)
     discard submitConnect(s, sa, slen, afterMs(2000))
     let c = waitOne()
     assert c.op == opConnect
