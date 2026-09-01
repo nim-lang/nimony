@@ -26,7 +26,7 @@
 import ../../../src/lib/nifcore
 import std / [assertions, syncio]
 
-export nifcore.TagId, nifcore.`==`
+export nifcore.TagId, nifcore.`==`, nifcore.Cursor
 
 type
   HttpTag* = enum
@@ -189,6 +189,11 @@ proc name*(t: TagId): string =
   ## The wire spelling of a registered tag; `""` for an id nobody registered.
   if t.uint32 == 0'u32 or t.uint32 > gHttpTags.tags.len.uint32: ""
   else: gHttpTags.tagName(t)
+
+template spelling*(t: TagId): lent string =
+  ## The wire spelling, borrowed rather than copied — a template so it inlines
+  ## to the table access. This is what a serializer wants; `name` copies.
+  gHttpTags.tagName(t)
 
 const MaxHttpTags* = 511
   ## One-token tag ids. See `gHttpTags` on why we stop here rather than
@@ -393,6 +398,14 @@ proc addHeader*(m: var HttpMsg; h: TagId; value: int) =
   m.buf.buildTree h:
     m.buf.addIntLit value
 
+proc addHeader*(m: var HttpMsg; h: TagId; values: openArray[string]) =
+  ## A list-valued header as one node with several children — the shape a
+  ## comma-separated header is meant to take, so that reading it back does not
+  ## mean splitting a string again.
+  assert h.uint32 != 0'u32, "addHeader: unregistered tag"
+  m.buf.buildTree h:
+    for v in values: m.buf.addStrLit v
+
 proc addHeader*(m: var HttpMsg; h, value: TagId) =
   ## A header whose value is itself drawn from a known vocabulary, e.g.
   ## `(connection (keep-alive))`. Checking one is then an integer compare.
@@ -406,6 +419,8 @@ proc addHeader*(m: var HttpMsg; h: HttpTag; value: int) {.inline.} =
   addHeader(m, tag(h), value)
 proc addHeader*(m: var HttpMsg; h, value: HttpTag) {.inline.} =
   addHeader(m, tag(h), tag(value))
+proc addHeader*(m: var HttpMsg; h: HttpTag; values: openArray[string]) {.inline.} =
+  addHeader(m, tag(h), values)
 
 proc addOtherHeader*(m: var HttpMsg; name, value: string) =
   ## A header nobody registered: `(xhdr "name" "value")`. The application
@@ -476,6 +491,11 @@ proc versionOf*(m: var HttpMsg): TagId =
     body.skip                    # status
   result = body.cursorTagId
 
+proc rootCursor*(m: var HttpMsg): Cursor =
+  ## A cursor at the message node itself, for consumers that need the raw
+  ## tree — a serializer reaching the target without copying it out, say.
+  m.buf.beginRead()
+
 proc headersStart(m: var HttpMsg): Cursor =
   ## A bounded cursor positioned at the first header child.
   var c = m.buf.beginRead()
@@ -500,6 +520,16 @@ iterator headers*(m: var HttpMsg): TagId =
       var c = headersStart(m)
       while c.hasMore:
         yield c.cursorTagId
+        c.skip
+
+iterator headerNodes*(m: var HttpMsg): Cursor =
+  ## A cursor at each header node, so a serializer can reach the raw values
+  ## without them being copied out first. `sub` descends into one.
+  {.cast(noSideEffect).}:
+    if m.live and m.buf.len > 0:
+      var c = headersStart(m)
+      while c.hasMore:
+        yield c
         c.skip
 
 iterator otherHeaders*(m: var HttpMsg): (string, string) =

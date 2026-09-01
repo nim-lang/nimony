@@ -1,9 +1,10 @@
 # HTTP client and server — design
 
 **Status: in progress.** Implemented: §1 (`lib/std/http/httpmsg.nim`, with its
-nifcore prerequisites) and request-head parsing (`lib/std/http/httpparse.nim`).
-The examples below are what the code actually produces. Still design:
-everything from §2 on — the event loop, response serialization, and all IO.
+nifcore prerequisites), request-head parsing (`httpparse.nim`) and head
+serialization both ways (`httpwire.nim`). The examples below are what the code
+actually produces. Still design: everything from §2 on — the event loop, the
+connection layer, and all IO.
 
 The design rests on three ideas that already exist in this repo:
 
@@ -363,7 +364,7 @@ Two injection seams, both invisible to the code in §2:
 |---|---|
 | `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
 | `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request heads. |
-| `std/http/httpwire` | `TokenBuf` → wire bytes. |
+| `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
 | `std/http/httpconn` | passive read/write on ioring, buffering, chunked framing, keep-alive. |
 | `std/httpclient`, `std/httpserver` | the loops of §2. |
 
@@ -418,6 +419,18 @@ under 512 entries, so bucketing tags by name length leaves a handful of
 candidates that a byte compare settles — no hashing, and nothing that needs a
 `string` to ask with.
 
+Serializing is the same shape in reverse: `write(dest, i, …) -> int` answers
+the index just past what it wrote, or `WriteFull`. Writers are all-or-nothing,
+so a refused call leaves nothing to unpick — the caller retries from the same
+`i` with more room, and `headLen` says exactly how much room that is, so the
+usual path never retries at all. Nothing is built in a temporary and copied
+over: names are borrowed from the tag pool, values from the message's own
+pool, and integers are formatted straight into `dest`.
+
+Round-tripping is the property the tests pin down. Parsing our own output must
+reproduce the same tree, and serializing that must be byte-identical — which
+is what says the tag/payload split lost nothing on the way in.
+
 Rejections are deliberate rather than incidental, because HTTP/1.1 cannot
 resynchronize and a parser that guesses is how two hops come to disagree about
 where a request ends: obsolete line folding, a space between a header name and
@@ -430,8 +443,12 @@ its colon, a bare CR inside a value, a non-numeric or overflowing
 - The exact tag vocabulary: which headers are worth a tag, and which header
   values are worth parsing into tags. Currently `Connection`,
   `Transfer-Encoding` and `Content-Encoding` resolve their values.
-- Response-head parsing (the client side) and `httpwire`, which is the same
-  work in the other direction.
+- Response-head parsing, which is all the client side still needs at this
+  layer.
+- Splitting list-valued headers at parse time. The tree already represents
+  `(accept "a" "b")` and the serializer writes it back as `a, b`, but the
+  parser stores one line as one value — splitting only some headers on commas
+  (never `Date`, never `Set-Cookie`) is a decision worth making deliberately.
 - Structured header values — `Content-Type`'s parameters, `Accept`'s q-values —
   are stored as one string today. They are the natural next thing to give
   sub-structure to, and the tree already has room for it.
