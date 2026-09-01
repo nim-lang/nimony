@@ -330,6 +330,12 @@ type
       ## encoded inline in the token; only the filename is interned here.
 
   TagPool* = ref object
+    sealed*: bool
+      ## Once set, `registerTag` is a defect. An adapter whose tag vocabulary
+      ## is fixed before it meets untrusted input seals the pool after
+      ## registering, so "the parser must never intern" is enforced rather
+      ## than merely intended. Look ids up with `tagId` instead, which
+      ## answers `TagId(0)` for a spelling nobody registered.
     tags*: BiTable[TagId, string]
       ## Tag spelling ⇔ id, and NOT bounded by the 9-bit tag field: ids past
       ## `TagMask` are perfectly legal, they just cost a second token to spell
@@ -358,6 +364,15 @@ proc newPool*(): Pool =
        syms:      initBiTable[SymId, string](),
        filenames: initBiTable[FileId, string]())
 
+proc clear*(p: Pool) =
+  ## Drop every interned literal but keep the tables' capacity, so a pool that
+  ## is refilled per message does not reallocate each round. Every `StrId` /
+  ## `SymId` / `FileId` handed out before the call is invalid afterwards, so
+  ## only the owner of the buffers those ids live in may do this.
+  p.strings.clear()
+  p.syms.clear()
+  p.filenames.clear()
+
 proc newTagPool*(): TagPool =
   ## All BiTable ids start at 1 (id 0 is the "not used" sentinel).
   ## Adapters whose enum has ordinal 0 as the first real value bridge
@@ -368,7 +383,19 @@ proc newTagPool*(): TagPool =
 proc registerTag*(tp: TagPool; tag: string): TagId =
   ## Intern a tag string. Adapters call this in enum-ordinal order at
   ## startup so the returned TagId equals the enum ordinal (1-based).
+  assert not tp.sealed, "registerTag on a sealed TagPool: " & tag
   tp.tags.getOrIncl(tag)
+
+proc seal*(tp: TagPool) =
+  ## Close the tag vocabulary. Idempotent.
+  tp.sealed = true
+
+proc tagId*(tp: TagPool; tag: string): TagId =
+  ## The id of `tag` if it is registered, `TagId(0)` otherwise. Unlike
+  ## `registerTag` this never grows the pool, so it is what a parser handed
+  ## untrusted bytes should ask.
+  tp.tags.ensureIndexed()
+  tp.tags.getKeyId(tag)
 
 const
   FirstEscapeId* = TagMask + 1'u32
