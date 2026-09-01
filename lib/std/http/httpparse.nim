@@ -217,6 +217,67 @@ proc parseHeaderLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
     m.addHeader(h, toOpenArray(buf, j, stop - 1))
   result = afterValue
 
+# --------------------------------------------------------- response line ---
+
+proc parseStatus*(buf: openArray[char]; i: int; status: var int): int =
+  ## Exactly three digits, as RFC 9112 requires, and within 100..599. A code
+  ## outside that range is not an extension we do not know about, it is a
+  ## malformed response.
+  if buf.len - i < 3: return ParseIncomplete
+  var n = 0
+  for k in 0..2:
+    let c = buf[i + k]
+    if c < '0' or c > '9': return ParseBad
+    n = n * 10 + int(ord(c) - ord('0'))
+  if n < 100 or n > 599: return ParseBad
+  status = n
+  result = i + 3
+
+proc parseReason*(buf: openArray[char]; i: int; last: var int): int =
+  ## The reason phrase: spaces, tabs and printable bytes up to the line end.
+  ## Looser than `parseUntilEol` in allowing HTAB, which RFC 9112 permits
+  ## here, and it is a response we are reading rather than one we are serving.
+  var j = i
+  while j < buf.len:
+    let c = buf[j]
+    if c == '\r' or c == '\n': break
+    if c != '\t' and (c < ' ' or c == '\x7F'): return ParseBad
+    inc j
+  if j >= buf.len: return ParseIncomplete
+  last = j
+  result = j
+
+proc parseStatusLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
+  ## `version SP status [SP reason] CRLF`, opening the message node.
+  ##
+  ## The reason phrase is parsed and **discarded**. Nothing reads it — RFC 9110
+  ## tells clients to ignore it and lets a proxy replace it — and keeping it
+  ## would mean a payload string on every response for no reader. The cost is
+  ## that a response round trip is byte-identical only up to the phrase, which
+  ## `httpwire` regenerates canonically. Requests have no such gap.
+  var v = TagId(0)
+  var j = parseVersion(buf, i, v)
+  if j < 0: return j
+  if j >= buf.len: return ParseIncomplete
+  if buf[j] != ' ': return ParseBad
+  inc j
+
+  var status = 0
+  j = parseStatus(buf, j, status)
+  if j < 0: return j
+
+  if j < buf.len and buf[j] == ' ':
+    inc j
+    var stop = 0
+    let e = parseReason(buf, j, stop)
+    if e < 0: return e
+    j = stop
+  j = parseCrLf(buf, j)
+  if j < 0: return j
+
+  m.startResponse(status, v)
+  result = j
+
 # ------------------------------------------------------------ whole heads --
 
 proc parseRequestHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
@@ -239,6 +300,32 @@ proc parseRequestHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
       m.finish()
       return done
     if done != ParseBad: return done   # incomplete, not "no blank line here"
+    inc count
+    if count > MaxHeaderCount: return ParseBad
+    j = parseHeaderLine(buf, j, m)
+    if j < 0: return j
+
+proc parseResponseHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
+  ## A complete response head: the status line, its headers, and the blank
+  ## line. Returns the index of the first body byte — though whether there is
+  ## a body at all depends on the status and on the request that provoked it,
+  ## which is the connection layer's business, not this one's.
+  ##
+  ## Same contract as `parseRequestHead`: `m` must be empty, and on a negative
+  ## result it is left half-built and only `reset` is valid on it.
+  if i >= buf.len: return ParseIncomplete
+  if buf.len - i > MaxHeadLen: return ParseBad
+
+  var j = parseStatusLine(buf, i, m)
+  if j < 0: return j
+
+  var count = 0
+  while true:
+    let done = parseCrLf(buf, j)
+    if done >= 0:
+      m.finish()
+      return done
+    if done != ParseBad: return done
     inc count
     if count > MaxHeaderCount: return ParseBad
     j = parseHeaderLine(buf, j, m)

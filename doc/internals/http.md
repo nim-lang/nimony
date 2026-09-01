@@ -1,10 +1,10 @@
 # HTTP client and server — design
 
-**Status: in progress.** Implemented: §1 (`lib/std/http/httpmsg.nim`, with its
-nifcore prerequisites), request-head parsing (`httpparse.nim`) and head
-serialization both ways (`httpwire.nim`). The examples below are what the code
-actually produces. Still design: everything from §2 on — the event loop, the
-connection layer, and all IO.
+**Status: in progress.** The whole message layer is implemented and has no IO
+in it: §1 (`httpmsg.nim`, with its nifcore prerequisites), head parsing both
+ways (`httpparse.nim`) and head serialization both ways (`httpwire.nim`). The
+examples below are what the code actually produces. Still design: everything
+from §2 on — the event loop, the connection layer, and all IO.
 
 The design rests on three ideas that already exist in this repo:
 
@@ -363,7 +363,7 @@ Two injection seams, both invisible to the code in §2:
 | Module | Contains |
 |---|---|
 | `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
-| `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request heads. |
+| `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request and response heads. |
 | `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
 | `std/http/httpconn` | passive read/write on ioring, buffering, chunked framing, keep-alive. |
 | `std/httpclient`, `std/httpserver` | the loops of §2. |
@@ -431,6 +431,13 @@ Round-tripping is the property the tests pin down. Parsing our own output must
 reproduce the same tree, and serializing that must be byte-identical — which
 is what says the tag/payload split lost nothing on the way in.
 
+There is exactly one deliberate exception, and it is on the response side: the
+**reason phrase is parsed and discarded**. Nothing reads it — RFC 9110 tells
+clients to ignore it and lets a proxy replace it — so keeping it would mean a
+payload string on every response for no reader. `httpwire` regenerates a
+canonical phrase, so `404 Totally Not Here` comes back as `404 Not Found`. The
+tree still round-trips exactly; only that one string does not.
+
 Rejections are deliberate rather than incidental, because HTTP/1.1 cannot
 resynchronize and a parser that guesses is how two hops come to disagree about
 where a request ends: obsolete line folding, a space between a header name and
@@ -443,8 +450,6 @@ its colon, a bare CR inside a value, a non-numeric or overflowing
 - The exact tag vocabulary: which headers are worth a tag, and which header
   values are worth parsing into tags. Currently `Connection`,
   `Transfer-Encoding` and `Content-Encoding` resolve their values.
-- Response-head parsing, which is all the client side still needs at this
-  layer.
 - Splitting list-valued headers at parse time. The tree already represents
   `(accept "a" "b")` and the serializer writes it back as `a, b`, but the
   parser stores one line as one value — splitting only some headers on commas
