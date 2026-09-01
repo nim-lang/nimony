@@ -1,9 +1,9 @@
 when defined(windows):
   import std/syncio
-  echo "n=1 op=opPollAdd result=3 rd=true wr=true"
-  echo "m=1 op=opPollAdd result=2 wr=true"
-  echo "k=1 fd_is_a=true result=1"
-  echo "j=1 fd_is_b=true result=1 rd=true"
+  echo "n=1 op=opPollAdd rd=true wr=true"
+  echo "m=1 op=opPollAdd wr=true"
+  echo "k=1 fd_is_a=true rd=true wr=false"
+  echo "j=1 fd_is_b=true rd=true wr=false"
 else:
   import std / [ioring, assertions, syncio]
   import std/posix/posix
@@ -32,15 +32,15 @@ else:
   var comps: array[8, IoCompletion]
   discard submitPollAdd(a)
   let n = waitCompletions(comps)
-  echo "n=", n, " op=", comps[0].op, " result=", comps[0].result,
-       " rd=", (comps[0].result and EvRead) != 0,
-       " wr=", (comps[0].result and EvWrite) != 0
+  echo "n=", n, " op=", comps[0].op,
+       " rd=", evRead in comps[0].readyEvents,
+       " wr=", evWrite in comps[0].readyEvents
 
   # Oneshot: re-arm on `b`, which is writable.
   discard submitPollAdd(b)
   let m = waitCompletions(comps)
-  echo "m=", m, " op=", comps[0].op, " result=", comps[0].result,
-       " wr=", (comps[0].result and EvWrite) != 0
+  echo "m=", m, " op=", comps[0].op,
+       " wr=", evWrite in comps[0].readyEvents
 
   # The mask is honoured: `b` is writable but has nothing to read, so a
   # read-only probe on it must NOT complete. Asserting a negative without a
@@ -48,20 +48,23 @@ else:
   # still readable (nothing has consumed the byte above — a poll does no I/O).
   # Exactly one completion must come back, and it must be `a`'s.
   #
-  # Before the mask existed, opPollAdd always armed EvRead or EvWrite, so this
+  # Before the mask existed, opPollAdd always armed both directions, so this
   # probe fired immediately on writability — and since the op is oneshot, a
   # caller that re-armed after each wake spun as fast as it could poll.
-  discard submitPollAdd(b, EvRead)
-  discard submitPollAdd(a, EvRead)
+  discard submitPollAdd(b, {evRead})
+  discard submitPollAdd(a, {evRead})
   let k = waitCompletions(comps)
-  echo "k=", k, " fd_is_a=", cint(comps[0].fd) == a, " result=", comps[0].result
+  echo "k=", k, " fd_is_a=", cint(comps[0].fd) == a,
+       " rd=", evRead in comps[0].readyEvents,
+       " wr=", evWrite in comps[0].readyEvents
 
   # …and the probe left pending on `b` fires as soon as `b` really is readable,
-  # reporting EvRead and nothing else.
+  # reporting evRead and nothing else.
   discard send(a, msg.toCString, len(msg), MSG_NOSIGNAL)
   let j = waitCompletions(comps)
-  echo "j=", j, " fd_is_b=", cint(comps[0].fd) == b, " result=", comps[0].result,
-       " rd=", (comps[0].result and EvRead) != 0
+  echo "j=", j, " fd_is_b=", cint(comps[0].fd) == b,
+       " rd=", evRead in comps[0].readyEvents,
+       " wr=", evWrite in comps[0].readyEvents
 
   closeFd(a)
   closeFd(b)

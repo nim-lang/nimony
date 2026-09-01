@@ -1,11 +1,15 @@
 # Common types shared across all ioring layers.
 import std/posix/posix
 
-const
-  EvRead* = 1
-  EvWrite* = 2
-
 type
+  IoEvent* = enum
+    ## A readiness direction. `submitPollAdd` takes a set of these, and an
+    ## `opPollAdd` completion reports the set that actually fired.
+    evRead   ## readable — data is available, or a listener has a pending connection
+    evWrite  ## writable — the send buffer has room
+
+  IoEvents* = set[IoEvent]
+
   IoOp* = enum
     opNop, opRead, opWrite, opAccept, opPollAdd
 
@@ -16,6 +20,9 @@ type
     op*: IoOp
     fd*: FileHandle
     result*: int
+      ## Op-dependent: a byte count for `opRead`/`opWrite`, the accepted fd for
+      ## `opAccept`, -1 on failure — and for `opPollAdd` the fired directions
+      ## encoded as a bit mask, which `readyEvents` decodes into `IoEvents`.
 
   OpContext* = object
     kind*: IoOp
@@ -25,11 +32,30 @@ type
     len*: int
     cont*: Continuation
     res*: int
-    pollMask*: int
-      ## opPollAdd only: the direction(s) the caller actually waits for
-      ## (EvRead / EvWrite / both). Without it a readiness probe has to arm
-      ## both directions, and a caller waiting to READ is woken every time the
-      ## fd is merely WRITABLE — which, for a socket, is almost always. Since
-      ## the op is oneshot, that caller's re-arm turns into a hot spin.
+    pollMask*: IoEvents
+      ## opPollAdd only: the direction(s) the caller actually waits for.
+      ## Without it a readiness probe has to arm both directions, and a caller
+      ## waiting to READ is woken every time the fd is merely WRITABLE — which,
+      ## for a socket, is almost always. Since the op is oneshot, that caller's
+      ## re-arm turns into a hot spin.
     acceptAddr*: Sockaddr_storage
     acceptLen*: SockLen
+
+proc toEventMask*(events: IoEvents): int {.inline.} =
+  ## Encode `events` for the plain `int` channels a completion travels through
+  ## (`IoCompletion.result` and the `resPtr` out-parameter), neither of which
+  ## can carry a set.
+  result = 0
+  if evRead in events: result = result or (1 shl ord(evRead))
+  if evWrite in events: result = result or (1 shl ord(evWrite))
+
+proc toIoEvents*(mask: int): IoEvents {.inline.} =
+  ## Inverse of `toEventMask`.
+  result = {}
+  if (mask and (1 shl ord(evRead))) != 0: result.incl evRead
+  if (mask and (1 shl ord(evWrite))) != 0: result.incl evWrite
+
+proc readyEvents*(c: IoCompletion): IoEvents {.inline.} =
+  ## The direction(s) that fired, for an `opPollAdd` completion. Empty for
+  ## every other op, whose `result` is a byte count or an error instead.
+  if c.op == opPollAdd: toIoEvents(c.result) else: {}

@@ -17,7 +17,7 @@ const
 
 var kqFds: seq[cint]
 
-proc kqueueReArm(fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} =
+proc kqueueReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} =
   # EV_ADD is idempotent in kqueue (add-or-modify), unlike epoll's ADD/MOD
   # split, so there is no separate "first time vs re-arm" bookkeeping needed
   # here. `ident` (the fd) is what `kqueuePoll` reads back on delivery, not
@@ -31,12 +31,12 @@ proc kqueueReArm(fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.}
   # Reported, not discarded: a failed registration means no readiness, and
   # `submitForPoll` fails the ops waiting on it.
   result = true
-  if (mask and EvRead) != 0:
+  if evRead in events:
     ev.ident = uint(fd)
     ev.filter = EVFILT_READ
     ev.flags = EV_ADD or EV_ONESHOT
     if kevent(kq, addr ev, 1, nil, 0, nil) < 0: result = false
-  if (mask and EvWrite) != 0:
+  if evWrite in events:
     ev.ident = uint(fd)
     ev.filter = EVFILT_WRITE
     ev.flags = EV_ADD or EV_ONESHOT
@@ -50,38 +50,37 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
     for i in 0..<n:
       discard gSlots[lane].allocSlot(buf[i])
       submitForPoll(buf[i].fd)
-  var events {.noinit.}: array[64, KEvent]
+  var kevents {.noinit.}: array[64, KEvent]
   var ts = Timespec(
     tv_sec: Time(timeoutMs div 1000),
     tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
-  n = int(kevent(kqFds[lane], nil, 0, addr events[0], 64, addr ts))
+  n = int(kevent(kqFds[lane], nil, 0, addr kevents[0], 64, addr ts))
   if n <= 0:
     return false
   # A poll-add registers two kevents (EVFILT_READ and EVFILT_WRITE); when the
   # fd is ready in both directions both fire in the same batch. Deliver the
   # union per fd so a oneshot poll-add on a socket that is simultaneously
-  # readable and writable reports EvRead or EvWrite like io_uring's
+  # readable and writable reports {evRead, evWrite} like io_uring's
   # IORING_OP_POLL_ADD does, instead of completing on whichever event comes
   # first. Per-direction matching for read/write ops still happens inside
   # processFd.
   var firedFds {.noinit.}: array[64, cint]
-  var firedMasks {.noinit.}: array[64, int]
+  var firedEvents {.noinit.}: array[64, IoEvents]
   var m = 0
   for i in 0..<n:
-    let fd = cint(events[i].ident)
+    let fd = cint(kevents[i].ident)
+    let dir = if kevents[i].filter == EVFILT_READ: evRead else: evWrite
     var k = 0
     while k < m and firedFds[k] != fd:
       inc k
     if k == m:
       firedFds[m] = fd
-      firedMasks[m] = if events[i].filter == EVFILT_READ: EvRead else: EvWrite
+      firedEvents[m] = {dir}
       inc m
-    elif events[i].filter == EVFILT_READ:
-      firedMasks[k] = firedMasks[k] or EvRead
     else:
-      firedMasks[k] = firedMasks[k] or EvWrite
+      firedEvents[k].incl dir
   for i in 0..<m:
-    processFd(firedFds[i], firedMasks[i])
+    processFd(firedFds[i], firedEvents[i])
   return true
 
 proc kqueueClose() {.nimcall.} =

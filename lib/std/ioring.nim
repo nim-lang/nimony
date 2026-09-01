@@ -17,7 +17,8 @@
 import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
-export types.EvRead, types.EvWrite
+export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
+export types.readyEvents, types.toIoEvents, types.toEventMask
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
@@ -110,17 +111,16 @@ proc submitAccept*(listenFd: cint;
   op.acceptLen = SockLen(sizeof(op.acceptAddr))
   enqueueOp(op)
 
-proc submitPollAdd*(fd: cint; mask = EvRead or EvWrite;
+proc submitPollAdd*(fd: cint; events: IoEvents = {evRead, evWrite};
                     cont = Continuation(fn: nil, env: nil);
                     resPtr: nil ptr int = nil): SeqNum =
   ## Register oneshot readiness interest in `fd` without issuing any I/O.
-  ## When the fd becomes ready in one of the `mask` directions a single
-  ## completion fires whose `op` is `opPollAdd` and whose `result` holds the
-  ## ready-direction mask (bits `EvRead` and/or `EvWrite`). Unlike
-  ## `submitRead`/`submitWrite`, no transfer is performed — the caller decides
-  ## what to do with the ready fd (e.g. libcurl's multi-socket engine). This
-  ## is oneshot: `complete` frees the slot, so re-arm by calling
-  ## `submitPollAdd` again after handling the event.
+  ## When the fd becomes ready in one of the `events` directions a single
+  ## completion fires whose `op` is `opPollAdd` and whose `readyEvents` are the
+  ## directions that fired. Unlike `submitRead`/`submitWrite`, no transfer is
+  ## performed — the caller decides what to do with the ready fd (e.g.
+  ## libcurl's multi-socket engine). This is oneshot: `complete` frees the
+  ## slot, so re-arm by calling `submitPollAdd` again after handling the event.
   ##
   ## **Pass the direction you actually want.** The default watches both, which
   ## is right for a probe with no preference — but a caller waiting to *read*
@@ -128,9 +128,12 @@ proc submitPollAdd*(fd: cint; mask = EvRead or EvWrite;
   ## writable nearly always), and because the op is oneshot its re-arm then
   ## spins as fast as the loop can poll. libcurl's multi-socket engine always
   ## states its direction (`CURL_POLL_IN`/`CURL_POLL_OUT`); pass it through.
+  ##
+  ## A `resPtr` receives the same directions as a bit mask instead of a set,
+  ## being a `ptr int`; decode it with `toIoEvents`.
   result = nextSeqNum()
   var op = OpContext(kind: opPollAdd, fd: fd, seqnum: result,
-    cont: cont, res: cast[int](resPtr), pollMask: mask)
+    cont: cont, res: cast[int](resPtr), pollMask: events)
   enqueueOp(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =

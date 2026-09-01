@@ -19,10 +19,6 @@ from ./epoll import initEpollBackendRelays
 
 const
   DrainBatch = 128  ## Max deferred entries drained per poll() call.
-  # Standard poll(2) mask bits used by io_uring's OP_POLL_ADD (distinct from
-  # the internal EvRead/EvWrite flags, which never cross into the kernel).
-  POLLIN = uint32(0x0001)
-  POLLOUT = uint32(0x0004)
 
 var
   sqEntries: int
@@ -53,10 +49,13 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
     # re-arms with a new submitPollAdd (matching the epoll/kqueue oneshot
     # behaviour). Watching both regardless would spin a read-waiter on a
     # writable socket — see submitPollAdd's docstring.
-    var pollFlags = 0'u32
-    if (op.pollMask and EvRead) != 0: pollFlags = pollFlags or POLLIN
-    if (op.pollMask and EvWrite) != 0: pollFlags = pollFlags or POLLOUT
-    discard sqe.poll_add(op.fd, pollFlags)
+    # The kernel speaks poll(2) events, the ring speaks `IoEvents`; the two
+    # never share a representation, so translate in both directions here and
+    # in the completion loop below.
+    var pollEvents: PollEvents = {}
+    if evRead in op.pollMask: pollEvents.incl POLL_IN
+    if evWrite in op.pollMask: pollEvents.incl POLL_OUT
+    discard sqe.poll_add(op.fd, pollEvents)
   of opNop:
     discard sqe.nop()
 
@@ -107,17 +106,16 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       for i in 0..<n:
         let idx = int(cqes[i].userData)
         # For OP_POLL_ADD the kernel reports the fired mask in poll(2) form;
-        # translate it to the same internal EvRead/EvWrite flags the epoll/
-        # kqueue backends use, so the completion's `result` is consistent no
+        # translate it to the same internal `IoEvents` the epoll/kqueue
+        # backends report, so the completion's `readyEvents` are consistent no
         # matter which backend is in use.
         var res = int(cqes[i].res)
         if gSlots[lane].slots[idx].op.kind == opPollAdd:
-          var ev = 0
-          if (uint32(res) and POLLIN) != 0:
-            ev = ev or EvRead
-          if (uint32(res) and POLLOUT) != 0:
-            ev = ev or EvWrite
-          res = ev
+          var fired = toPollEvents(uint32(res))
+          var ev: IoEvents = {}
+          if POLL_IN in fired: ev.incl evRead
+          if POLL_OUT in fired: ev.incl evWrite
+          res = toEventMask(ev)
         complete(idx, res)
       return true
   return false
