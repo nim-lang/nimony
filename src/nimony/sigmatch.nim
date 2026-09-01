@@ -853,14 +853,12 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   let actualIsConcept = isConceptType(a)
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
   let meta = getConceptMetadata(m.context, conceptSym, body)
-  # Until concrete-type requirement matching is complete, standalone concepts
-  # match any concrete type (legacy stub behaviour). Concept-to-concept
-  # subsumption always checks requirements structurally.
   if not actualIsConcept and meta.parents.len == 0:
-    if not conceptTargetNeedsStrictCheck(a):
+    if not conceptTargetNeedsStrictCheck(a, m.context):
       # An unconstrained typevar reaches us as an empty (`.`) constraint: it
       # provably fulfils no requirement, so it must not satisfy the concept
-      # (issue #755). Genuine concrete types stay leniently accepted.
+      # (issue #755). Built-in scalars keep legacy acceptance until candidate
+      # generic-constraint verification is complete (see tdollar_char_loophole).
       let satisfied = not a.isDotToken
       storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied))
       return satisfied

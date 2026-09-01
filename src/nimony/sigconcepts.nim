@@ -14,35 +14,37 @@ import std / [sets, tables, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
-import nimony_model, decls, programs, semdata, typeprops, features, symtabs, conceptcache
+import nimony_model, decls, programs, semdata, typeprops, features, symtabs, conceptcache, builtintypes
 import ".." / lib / symparser
 
 proc isConceptType*(a: Cursor): bool {.inline.} =
   a.isSymbol and isConceptSym(a.symId)
 
-proc conceptTargetNeedsStrictCheck*(a: Cursor): bool =
-  ## Standalone concepts keep lenient matching for generic typevars and for
-  ## all types except user `distinct` types. Distinct types must satisfy
-  ## requirements structurally so they cannot inherit base-type operators
-  ## silently; other types (including `string` objects and ranges) keep the
-  ## legacy acceptance until full requirement matching is complete.
+proc conceptTargetNeedsStrictCheck*(a: Cursor; c: ptr SemContext): bool =
+  ## Standalone concepts structurally check requirements on user-defined types
+  ## declared in the module currently being semchecked. Types from ``system``,
+  ## the stdlib, or other modules keep legacy lenient matching until
+  ## generic-candidate constraint verification is complete.
   if a.isDotToken:
     return false
   var t = a
+  var typeSym = SymId(0)
   if t.isSymbol:
     let res = tryLoadSym(t.symId)
     if res.status != LacksNothing or res.decl.symKind == TypevarY:
       return false
     if res.decl.stmtKind != TypeS:
-      # `a` names something that is not a type declaration at all — e.g. a
-      # template parameter still sitting in type position while a template
-      # body is semchecked generically (`symKind == ParamY`). Stay lenient
-      # instead of asserting in `typeImpl`; the caller reports the real
-      # "not a type" diagnostic. (An instantiation with a concrete type
-      # binds the symbol to a genuine type and never reaches this branch.)
+      # Template parameters in type position (`symKind == ParamY`) are not types;
+      # the caller reports "not a type" without asserting in `typeImpl`.
       return false
+    typeSym = t.symId
     t = typeImpl(t.symId)
-  t.typeKind == DistinctT
+  if t.typeKind notin {ObjectT, EnumT, HoleyEnumT, DistinctT}:
+    return false
+  if c == nil:
+    return false
+  let modSuffix = extractModule(pool.syms[typeSym])
+  modSuffix != "" and modSuffix != SystemModuleSuffix and modSuffix == c.thisModuleSuffix
 
 proc conceptRoutineBasename*(routine: Cursor): StrId =
   var prc = routine
