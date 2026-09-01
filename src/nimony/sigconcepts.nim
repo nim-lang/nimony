@@ -154,11 +154,10 @@ iterator visibleNamedSyms*(c: ptr SemContext; basename: StrId): SymId {.sideEffe
 iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId;
                                    typeRoot: SymId): SymId {.sideEffect.} =
   ## All routines named `basename` that could satisfy a concept requirement,
-  ## mirroring what a call resolves against: what the concept's author sees
-  ## (the declaring module and its direct imports), the checked type's
-  ## type-bound operations (its declaring module), and what the checking
-  ## module sees (every imported interface and the visible scope).
-  ## Deduplicated across those sources.
+  ## mirroring what a call resolves against: the concept's declaring module,
+  ## the checked type's type-bound operations (the module that declares the
+  ## type), and what the checking module sees (every imported interface and
+  ## the visible scope). Deduplicated across those sources.
   var seen = initHashSet[SymId]()
   if c != nil:
     let ignoreStyle = IgnoreStyleFeature in c.features
@@ -168,10 +167,6 @@ iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basenam
         for cand in loadSyms(modSuffix, basename):
           if not seen.containsOrIncl(cand):
             yield cand
-        for imp in conceptModuleImports(c, modSuffix):
-          for cand in loadSyms(imp, basename):
-            if not seen.containsOrIncl(cand):
-              yield cand
       if typeRoot != SymId(0):
         let typeModule = extractModule(pool.syms[typeRoot])
         if typeModule != "" and typeModule != c.thisModuleSuffix:

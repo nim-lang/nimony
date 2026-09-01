@@ -3662,7 +3662,7 @@ Some consequences of this rule:
 - An `iterator` requirement is only met by an iterator.
 - If several candidates match the call, the requirement is satisfied; whether the call is ambiguous is decided at instantiation.
 - A candidate whose own constraint is the concept being checked, such as `proc <=[T: Orderable](x, y: T)` while checking `Orderable`, does not count: a type satisfies a concept only through a derivation that does not assume the conclusion.
-- Candidates are looked up by name where a call would find them: in the module that declares the concept and its imports, in the module that declares the checked type, and in every module visible where the check happens.
+- Candidates are looked up by name where a call would find them: in the module that declares the concept, in the module that declares the checked type (operations are attached to their type by living in its module), and in every module visible where the check happens.
 
 A concept that inherits with `concept of` adds its parents' requirements to its own; all of them are checked the same way.
 

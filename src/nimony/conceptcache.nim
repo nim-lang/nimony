@@ -17,11 +17,10 @@
 ## satisfies a concept only through a derivation that does not assume the
 ## conclusion (the inductive reading, as in classic Nim).
 
-import std / [tables, sets, hashes, os]
+import std / [tables, sets, hashes]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
-import ".." / gear2 / modnames
 import nimony_model, decls, programs, semdata, typeprops, symtabs
 
 const DefaultConceptCacheCapacity* = 1024
@@ -79,9 +78,6 @@ type
     bodyCache*: Table[BodyCacheKey, ConceptBodyResult]
     candidatesCache*: Table[CandidatesCacheKey, CandidatesEntry]
     metadata*: Table[SymId, ConceptMetadata]
-    moduleImports*: Table[string, seq[string]] ## module suffix -> suffixes of
-                                               ## its direct imports, read
-                                               ## from its `.s.deps.nif`
     declGeneration*: int ## bumped by every routine declaration: a new
                          ## overload can turn "not satisfied" into "satisfied"
                          ## and extend a candidate list, so those entries
@@ -292,42 +288,6 @@ proc conceptVerdictIsFinal*(c: ptr SemContext; hitsBefore: int): bool =
     return true
   let cache = asConceptCacheImpl(c.conceptCache)
   cache.assumptionHits == hitsBefore or cache.inProgress.len == 0
-
-proc readModuleImports(c: ptr SemContext; modSuffix: string): seq[string] =
-  ## The direct imports of an already compiled module, as module suffixes.
-  ## `nimsem` leaves them in the module's `.s.deps.nif` (minus anything
-  ## imported under `when false`).
-  result = @[]
-  let depsFile = changeModuleExt(suffixToNif(modSuffix), ".s.deps.nif")
-  if not fileExists(depsFile):
-    return
-  var buf = parseFromFile(depsFile)
-  var n = beginRead(buf)
-  if n.stmtKind != StmtsS:
-    return
-  n.into StmtsS:
-    while n.hasMore:
-      if n.stmtKind == ImportS:
-        n.into ImportS:
-          while n.hasMore:
-            if n.isStringLit:
-              let imp = moduleSuffix(pool.strings[n.strId], c.g.config.paths)
-              # a stale deps file can name a module this build never produced
-              if fileExists(suffixToNif(imp)):
-                result.add imp
-            skip n
-      else:
-        skip n
-
-proc conceptModuleImports*(c: ptr SemContext; modSuffix: string): seq[string] =
-  ## Cached `readModuleImports`. Empty for the module being compiled: its
-  ## deps file is not written yet, and its imports are in `c.importedModules`.
-  if c == nil or modSuffix == "" or modSuffix == c.thisModuleSuffix:
-    return @[]
-  let cache = ensureConceptCache(c)
-  if not cache.moduleImports.hasKey(modSuffix):
-    cache.moduleImports[modSuffix] = readModuleImports(c, modSuffix)
-  cache.moduleImports.getOrDefault(modSuffix)
 
 proc storeCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId;
                       typeRoot: SymId; res: sink seq[SymId]) =
