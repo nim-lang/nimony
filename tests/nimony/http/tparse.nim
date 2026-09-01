@@ -27,7 +27,7 @@ proc testTypedValues =
             "Host: h\r\n" &
             "Content-Length: 1234\r\n" &
             "Connection: keep-alive\r\n" &
-            "Transfer-Encoding: chunked\r\n\r\n"
+            "Content-Encoding: gzip\r\n\r\n"
   assert parseAll(req, m) == req.len
   # Content-Length arrived as digits and is stored as an integer.
   assert m.contentLength == 1234
@@ -35,7 +35,7 @@ proc testTypedValues =
   # A known value became a tag, so the check downstream is an integer compare.
   assert m.getTag(hConnection) == tag(vKeepAlive)
   assert m.isKeepAlive
-  assert m.getTag(hTransferEncoding) == tag(vChunked)
+  assert m.getTag(hContentEncoding) == tag(vGzip)
 
 proc testCaseAndWhitespace =
   var m = initHttpMsg()
@@ -97,6 +97,17 @@ proc testRejections =
   assert bad("GET / HTTP/1.1\r\nContent-Length: abc\r\n\r\n"), "non-numeric length"
   assert bad("GET / HTTP/1.1\r\nContent-Length: \r\n\r\n"), "empty length"
   assert bad("GET / HTTP/1.1\r\nContent-Length: 12x\r\n\r\n"), "trailing junk"
+
+  # Framing must be unambiguous, or two hops can disagree about where the
+  # message ends and an attacker picks which one believes which.
+  assert bad("GET / HTTP/1.1\r\nContent-Length: 5\r\n" &
+             "Transfer-Encoding: chunked\r\n\r\n"), "Content-Length with TE"
+  assert bad("GET / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\n"),
+         "duplicate Content-Length, even when they agree"
+  assert bad("GET / HTTP/1.1\r\nContent-Length: 5\r\nContent-Length: 6\r\n\r\n"),
+         "duplicate Content-Length that disagree"
+  assert bad("GET / HTTP/1.1\r\nTransfer-Encoding: chunked\r\n" &
+             "Transfer-Encoding: chunked\r\n\r\n"), "duplicate TE"
 
   # A length that cannot fit an int must be refused, not wrapped.
   assert bad("GET / HTTP/1.1\r\nContent-Length: " &

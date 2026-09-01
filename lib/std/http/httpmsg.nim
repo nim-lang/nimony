@@ -562,6 +562,20 @@ proc contains*(m: var HttpMsg; h: TagId): bool =
 
 proc contains*(m: var HttpMsg; h: HttpTag): bool {.inline.} = contains(m, tag(h))
 
+proc countHeader*(m: var HttpMsg; h: TagId): int =
+  ## How many times `h` appears. More than once matters for the headers that
+  ## frame a message: two `Content-Length` lines are a request-smuggling
+  ## vector, not a formatting quirk.
+  result = 0
+  if not m.live or m.buf.len == 0 or h.uint32 == 0'u32: return 0
+  var c = headersStart(m)
+  while c.hasMore:
+    if c.cursorTagId == h: inc result
+    c.skip
+
+proc countHeader*(m: var HttpMsg; h: HttpTag): int {.inline.} =
+  countHeader(m, tag(h))
+
 proc getStr*(m: var HttpMsg; h: TagId): string =
   ## The first value of `h` as a string, or `""` when absent. A value stored
   ## as a tag (`(connection (keep-alive))`) reads back as its wire spelling.

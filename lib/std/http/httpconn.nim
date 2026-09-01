@@ -14,14 +14,29 @@
 #     discard c.respond(200, "hello\n")
 #
 # What is here: the read buffer and its compaction, head reading in both
-# directions, `Content-Length` bodies, and writing. Chunked framing is not
-# here yet — `isChunked` recognises it so a caller can refuse rather than
-# mis-frame, which is the one thing it must not do.
+# directions, bodies framed either by `Content-Length` or by chunking, and
+# writing.
 
 import ./httpmsg
 import ./httpparse
 import ./httpwire
 import std / [ioring, assertions]
+
+# NOTE — no `openArray` parameters on the `.passive` procs below, and that is
+# not a style choice. An `openArray` parameter of a passive proc arrives
+# corrupt: its length survives, its pointer does not, so the callee reads
+# whatever happens to be at the wrong address. Reduced:
+#
+#   proc take(data: openArray[char]) {.passive.} =
+#     for i in 0..<data.len: s.add data[i]
+#   proc chain() {.passive.} =
+#     take("aaa"); take("bbb"); take("ccc")   # prints garbage, not aaa/bbb/ccc
+#
+# It happens with or without a suspension point in the callee, and only for
+# `openArray` — a `string` parameter and a `ptr UncheckedArray[char]` + length
+# pair both come through intact. So bodies are `string` (ergonomic, and a
+# response body is a string anyway) and destination buffers are pointer plus
+# capacity (no allocation, which is what a read path wants).
 
 const
   ReadChunk* = 8 * 1024
@@ -55,6 +70,13 @@ proc writeAsync*(fd: cint; buf: pointer; len: int; dl: Deadline): int {.passive.
 # ------------------------------------------------------------ connection ---
 
 type
+  ChunkState = enum
+    csHeader      ## at a chunk-size line
+    csData        ## inside a chunk's data, `chunkLeft` bytes to go
+    csDataEnd     ## at the CRLF that closes a chunk's data
+    csTrailer     ## after the zero chunk, in the trailer section
+    csDone        ## the body has ended
+
   HttpConn* = object
     fd*: cint
     deadline*: Deadline
@@ -66,13 +88,16 @@ type
     rpos: int          ## bytes already consumed from the front
     scan: HeadScanner
     wbuf: seq[char]
+    chunk: ChunkState
+    chunkLeft: int
 
 proc initHttpConn*(fd: cint; deadline: Deadline): HttpConn =
   ## `fd` must already be non-blocking. The deadline has no default: a
   ## connection with no budget is one a quiet peer can hold forever.
   HttpConn(fd: fd, deadline: deadline,
            rbuf: newSeq[char](ReadChunk), rlen: 0, rpos: 0,
-           scan: default(HeadScanner), wbuf: newSeq[char](ReadChunk))
+           scan: default(HeadScanner), wbuf: newSeq[char](ReadChunk),
+           chunk: csHeader, chunkLeft: 0)
 
 proc budget(c: HttpConn; dl: Deadline): Deadline {.inline.} =
   ## The deadline an operation actually runs under: the connection's, or a
@@ -171,16 +196,89 @@ proc bodyLength*(m: var HttpMsg): int {.inline.} =
   ## Declared body length, or `-1` when there is none or it is chunked.
   if isChunked(m): -1 else: m.contentLength
 
-proc readBody*(c: var HttpConn; dest: var openArray[char]; want: int;
+proc beginBody*(c: var HttpConn) {.inline.} =
+  ## Arm the chunk reader for a new body. Call after reading a head whose
+  ## `isChunked` is true, before the first `readChunked`.
+  c.chunk = csHeader
+  c.chunkLeft = 0
+
+proc readChunked*(c: var HttpConn; dest: ptr UncheckedArray[char]; cap: int;
+                  dl = never): int {.passive.} =
+  ## The next piece of a chunk-framed body: bytes copied, `0` once the body
+  ## has ended, negative on error.
+  ##
+  ## `0` means the whole body is over — the zero chunk and its trailers have
+  ## been consumed and the connection is positioned at whatever follows, so
+  ## it can be reused. It never means "nothing right now"; the loop keeps
+  ## reading until it has either bytes or the end.
+  result = 0
+  let dl2 = budget(c, dl)
+  while true:
+    case c.chunk
+    of csDone:
+      return 0
+    of csData:
+      if c.buffered == 0:
+        let n = fill(c, dl2)
+        if n < 0: return n
+        if n == 0: return -1          # truncated body: the peer went away
+        continue
+      let avail = c.buffered
+      var take = if avail < c.chunkLeft: avail else: c.chunkLeft
+      if take > cap: take = cap
+      for i in 0..<take: dest[i] = c.rbuf[c.rpos + i]
+      c.rpos += take
+      c.chunkLeft -= take
+      if c.chunkLeft == 0: c.chunk = csDataEnd
+      return take
+    of csHeader:
+      var size = 0
+      let after = parseChunkSize(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos, size)
+      if after == ParseBad: return -1
+      if after == ParseIncomplete:
+        let n = fill(c, dl2)
+        if n < 0: return n
+        if n == 0: return -1
+        continue
+      c.rpos = after
+      if size == 0:
+        c.chunk = csTrailer
+      else:
+        c.chunkLeft = size
+        c.chunk = csData
+    of csDataEnd:
+      let after = parseCrLf(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos)
+      if after == ParseBad: return -1     # chunk not closed where it claimed
+      if after == ParseIncomplete:
+        let n = fill(c, dl2)
+        if n < 0: return n
+        if n == 0: return -1
+        continue
+      c.rpos = after
+      c.chunk = csHeader
+    of csTrailer:
+      let after = parseTrailerEnd(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos)
+      if after == ParseBad: return -1
+      if after == ParseIncomplete:
+        let n = fill(c, dl2)
+        if n < 0: return n
+        if n == 0: return -1
+        continue
+      c.rpos = after
+      c.chunk = csDone
+      return 0
+
+proc readBody*(c: var HttpConn; dest: ptr UncheckedArray[char]; want: int;
                dl = never): int {.passive.} =
   ## Up to `want` bytes of body into `dest`, starting with whatever already
   ## arrived behind the head. Bytes copied, or negative on error.
   ##
-  ## Only for `Content-Length` bodies. Ask `isChunked` first: guessing the
-  ## framing is how two hops come to disagree about where a message ends.
+  ## Only for `Content-Length` bodies. Ask `isChunked` first and use
+  ## `readChunked` if it says so: guessing the framing is how two hops come to
+  ## disagree about where a message ends.
   result = 0
   let dl2 = budget(c, dl)
-  let limit = if want < dest.len: want else: dest.len
+  let limit = want
   var got = 0
   while got < limit:
     if c.buffered == 0:
@@ -223,14 +321,47 @@ proc sendHead*(c: var HttpConn; m: var HttpMsg;
   if n != need: return BugError
   result = writeAll(c, addr c.wbuf[0], n, budget(c, dl))
 
-proc sendBody*(c: var HttpConn; body: openArray[char];
+proc sendBody*(c: var HttpConn; body: string;
                dl = never): ErrorCode {.passive.} =
   ## Send a body already in memory. Nothing is copied.
   result = Success
   if body.len == 0: return Success
-  result = writeAll(c, addr body[0], body.len, budget(c, dl))
+  # A local, because `toCString` wants a mutable string — and because the
+  # local is lifted into this coroutine's frame, so the bytes stay put across
+  # the suspension inside `writeAll`.
+  var b = body
+  result = writeAll(c, cast[pointer](b.toCString), b.len, budget(c, dl))
 
-proc respond*(c: var HttpConn; status: int; body: openArray[char];
+proc sendChunk*(c: var HttpConn; data: string;
+                dl = never): ErrorCode {.passive.} =
+  ## One chunk. An empty `data` is *not* written: a zero-length chunk is the
+  ## end-of-body marker, so sending one here would end the body early.
+  ## `endChunks` is how a body is ended.
+  result = Success
+  if data.len == 0: return Success
+  let n = data.len
+  let need = chunkOverhead(n) + n
+  if c.wbuf.len < need:
+    c.wbuf = newSeq[char](need)
+  var j = writeChunkHeader(c.wbuf, 0, n)
+  if j < 0: return BugError
+  for i in 0..<n: c.wbuf[j + i] = data[i]
+  j += n
+  j = writeChunkEnd(c.wbuf, j)
+  if j < 0: return BugError
+  # Header, data and trailing CRLF go out as one write: a chunk split across
+  # writes is a chunk a peer can be left half-way through.
+  result = writeAll(c, addr c.wbuf[0], j, budget(c, dl))
+
+proc endChunks*(c: var HttpConn; dl = never): ErrorCode {.passive.} =
+  ## The zero chunk and the empty trailer section that end a chunked body.
+  result = Success
+  var buf = default(array[8, char])
+  let n = writeLastChunk(buf, 0)
+  if n < 0: return BugError
+  result = writeAll(c, addr buf[0], n, budget(c, dl))
+
+proc respond*(c: var HttpConn; status: int; body: string;
               dl = never): ErrorCode {.passive.} =
   ## A complete response: status, `Content-Length`, `Connection`, and the
   ## body. The length is always sent — a response whose end the peer has to

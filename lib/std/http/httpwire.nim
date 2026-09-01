@@ -199,6 +199,57 @@ proc headerNodeLen(c: Cursor): int =
     body.skip
   result = result + 2                      # CRLF
 
+# --------------------------------------------------------------- chunked ---
+
+proc writeHex(dest: var openArray[char]; i: int; x: int): int =
+  ## Lowercase hex, no `0x`, no padding — a chunk size and nothing else.
+  if x < 0: return WriteFull
+  var digits = 1
+  var v = x
+  while v >= 16:
+    v = v shr 4
+    inc digits
+  if i < 0 or dest.len - i < digits: return WriteFull
+  v = x
+  var k = i + digits - 1
+  while true:
+    let d = v and 0xF
+    dest[k] = if d < 10: chr(ord('0') + d) else: chr(ord('a') + d - 10)
+    v = v shr 4
+    if k == i: break
+    dec k
+  result = i + digits
+
+proc writeChunkHeader*(dest: var openArray[char]; i: int; size: int): int =
+  ## `SIZE CRLF`. The data follows, then its own CRLF — see `writeChunkEnd`.
+  ## No extensions are ever written: nothing reads them, and every byte in
+  ## this line is a byte another parser has to agree with us about.
+  let j = writeHex(dest, i, size)
+  if j < 0: return j
+  result = writeCrLf(dest, j)
+
+proc writeChunkEnd*(dest: var openArray[char]; i: int): int {.inline.} =
+  ## The CRLF that closes a chunk's data.
+  writeCrLf(dest, i)
+
+proc writeLastChunk*(dest: var openArray[char]; i: int): int =
+  ## `0 CRLF CRLF` — the zero-length chunk and an empty trailer section.
+  ## Written together because a body that stops after the zero chunk is a
+  ## body the peer is still waiting on.
+  var j = writeChunkHeader(dest, i, 0)
+  if j < 0: return j
+  result = writeCrLf(dest, j)
+
+proc chunkOverhead*(size: int): int =
+  ## Bytes `writeChunkHeader` + `writeChunkEnd` add around `size` bytes of
+  ## data, so a caller can size a buffer without writing twice.
+  var digits = 1
+  var v = size
+  while v >= 16:
+    v = v shr 4
+    inc digits
+  result = digits + 2 + 2
+
 # ------------------------------------------------------------ whole heads --
 
 proc writeRequestHead*(dest: var openArray[char]; i: int; m: var HttpMsg): int =

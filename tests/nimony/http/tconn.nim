@@ -6,6 +6,7 @@ when defined(windows):
   echo "idle connection timed out: TimeoutError"
   echo "client got 200 len=12 body=hello world!"
   echo "client got 404 len=0"
+  echo "chunked body: Hello, world!"
 else:
   # An end-to-end run over a real socket pair, through the ring, with the
   # server and the client each a `.passive` chain resumed by pool workers.
@@ -85,7 +86,7 @@ else:
     assert c.readResponse(res) == Success
     let n = res.contentLength
     var body = default(array[64, char])
-    let got = c.readBody(body, n)
+    let got = c.readBody(cast[ptr UncheckedArray[char]](addr body[0]), n)
     var s = ""
     for i in 0..<got: s.add body[i]
     clientLog.add "client got " & $res.statusOf & " len=" & $n &
@@ -108,6 +109,51 @@ else:
     srvFd = a; cliFd = b
     submit(delay(server()), 0)
     submit(delay(client()), 1)
+    awaitFlag(serverDone)
+    awaitFlag(clientDone)
+    closeFd(a); closeFd(b)
+
+  # ---- a chunk-framed body, both directions -------------------------------
+
+  var chSrv, chCli: cint
+
+  proc chunkSender() {.passive.} =
+    var c = initHttpConn(chSrv, afterMs(5000))
+    var m = initHttpMsg()
+    m.startResponse(200)
+    m.addHeader(hTransferEncoding, vChunked)
+    m.finish()
+    assert c.sendHead(m) == Success
+    # Deliberately uneven pieces, and one that would be a whole chunk on its
+    # own, so the reader has to reassemble rather than get lucky.
+    assert c.sendChunk("Hello") == Success
+    assert c.sendChunk(", ") == Success
+    assert c.sendChunk("world!") == Success
+    assert c.endChunks() == Success
+    atomicStore(serverDone, 1, moRelease)
+
+  proc chunkReceiver() {.passive.} =
+    var c = initHttpConn(chCli, afterMs(5000))
+    var m = initHttpMsg()
+    assert c.readResponse(m) == Success
+    assert m.isChunked, "the response should be chunk-framed"
+    assert m.bodyLength == -1, "a chunked body has no declared length"
+    c.beginBody()
+    var body = ""
+    var piece = default(array[4, char])   # smaller than a chunk, on purpose
+    while true:
+      let n = c.readChunked(cast[ptr UncheckedArray[char]](addr piece[0]), 4)
+      assert n >= 0, "chunked read failed: " & $n
+      if n == 0: break
+      for i in 0..<n: body.add piece[i]
+    clientLog.add "chunked body: " & body & "\n"
+    atomicStore(clientDone, 1, moRelease)
+
+  block chunked:
+    let (a, b) = mkPair()
+    chSrv = a; chCli = b
+    submit(delay(chunkSender()), 0)
+    submit(delay(chunkReceiver()), 1)
     awaitFlag(serverDone)
     awaitFlag(clientDone)
     closeFd(a); closeFd(b)

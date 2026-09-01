@@ -278,6 +278,102 @@ proc parseStatusLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
   m.startResponse(status, v)
   result = j
 
+# --------------------------------------------------------------- chunked ---
+
+const
+  MaxChunkSizeDigits* = 32
+    ## Hex digits allowed in a chunk size. Leading zeros are legal, so this
+    ## cannot be tight enough to bound the value — the overflow check does
+    ## that. It bounds the *line*, so a peer cannot send a megabyte of `0`.
+  MaxChunkExtLen* = 256
+    ## Chunk extensions are parsed only to be skipped; nothing reads them.
+  MaxTrailerCount* = 16
+
+proc hexDigit(c: char): int {.inline.} =
+  if c >= '0' and c <= '9': int(ord(c) - ord('0'))
+  elif c >= 'a' and c <= 'f': int(ord(c) - ord('a')) + 10
+  elif c >= 'A' and c <= 'F': int(ord(c) - ord('A')) + 10
+  else: -1
+
+proc parseChunkSize*(buf: openArray[char]; i: int; size: var int): int =
+  ## `1*HEXDIG [ chunk-ext ] CRLF`. Returns the index of the chunk's first
+  ## data byte and sets `size` — `0` for the last chunk.
+  ##
+  ## Strict on purpose. A chunk size is the length of the next piece of the
+  ## message, so a parser that accepts `+5`, `0x5` or a value that wraps is a
+  ## parser that can be made to disagree with the next hop about where this
+  ## message ends. Only hex digits, and only a value that fits.
+  var j = i
+  var n = 0
+  var digits = 0
+  while j < buf.len:
+    let d = hexDigit(buf[j])
+    if d < 0: break
+    inc digits
+    if digits > MaxChunkSizeDigits: return ParseBad
+    if n > (high(int) - d) div 16: return ParseBad     # would wrap
+    n = n * 16 + d
+    inc j
+  if digits == 0:
+    # No digits *because the buffer ran out* is "read more", not "malformed".
+    # Getting this wrong makes the very first read of a chunked body fail,
+    # since at that point there is nothing buffered at all.
+    return if j >= buf.len: ParseIncomplete else: ParseBad
+  if j >= buf.len: return ParseIncomplete
+  if buf[j] != '\r' and buf[j] != '\n':
+    # Not the line end, so it must be an extension, introduced by a
+    # semicolon. Trailing junk after the digits is not tolerated.
+    if buf[j] != ';': return ParseBad
+    var stop = 0
+    let e = parseUntilEol(buf, j, stop)
+    if e < 0: return e
+    if stop - j > MaxChunkExtLen: return ParseBad
+    j = stop
+  let after = parseCrLf(buf, j)
+  if after < 0: return after
+  size = n
+  result = after
+
+proc parseTrailerEnd*(buf: openArray[char]; i: int): int =
+  ## Skip the trailer section after the last chunk, and the blank line that
+  ## ends it. Returns the index just past the body.
+  ##
+  ## Trailers are consumed, not kept: folding them into the head would let a
+  ## peer set a header *after* the recipient has already acted on the ones it
+  ## sent up front, which is the reason trailers are treated with suspicion.
+  var j = i
+  var count = 0
+  while true:
+    let blank = parseCrLf(buf, j)
+    if blank >= 0: return blank
+    if blank != ParseBad: return blank        # incomplete, not "no blank line"
+    inc count
+    if count > MaxTrailerCount: return ParseBad
+    var stop = 0
+    let e = parseUntilEol(buf, j, stop)
+    if e < 0: return e
+    let after = parseCrLf(buf, stop)
+    if after < 0: return after
+    j = after
+
+proc framingIsUnambiguous*(m: var HttpMsg): bool =
+  ## Whether exactly one thing says where this message's body ends.
+  ##
+  ## This is the request-smuggling check, and it is a rejection rather than a
+  ## repair on purpose. If a message carries both `Content-Length` and
+  ## `Transfer-Encoding`, or two `Content-Length` lines, then two hops reading
+  ## the same bytes can disagree about where it stops — and an attacker picks
+  ## which hop believes which. RFC 9112 permits stripping the
+  ## `Content-Length` instead; doing that means trusting ourselves to strip it
+  ## exactly as everything in front of us does, which is the assumption these
+  ## attacks are built on.
+  let cl = countHeader(m, hContentLength)
+  if cl > 1: return false
+  let te = countHeader(m, hTransferEncoding)
+  if cl == 1 and te > 0: return false
+  if te > 1: return false
+  result = true
+
 # ------------------------------------------------------------ whole heads --
 
 proc parseRequestHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
@@ -298,6 +394,8 @@ proc parseRequestHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
     let done = parseCrLf(buf, j)
     if done >= 0:
       m.finish()
+      # Only now: the check needs every header to be present.
+      if not framingIsUnambiguous(m): return ParseBad
       return done
     if done != ParseBad: return done   # incomplete, not "no blank line here"
     inc count
@@ -324,6 +422,8 @@ proc parseResponseHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
     let done = parseCrLf(buf, j)
     if done >= 0:
       m.finish()
+      # Only now: the check needs every header to be present.
+      if not framingIsUnambiguous(m): return ParseBad
       return done
     if done != ParseBad: return done
     inc count

@@ -369,7 +369,7 @@ Two injection seams, both invisible to the code in §2:
 | `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
 | `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request and response heads. |
 | `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
-| `std/http/httpconn` | passive read/write on ioring, buffering, keep-alive. **Done** except chunked framing. |
+| `std/http/httpconn` | passive read/write on ioring, buffering, chunked framing, keep-alive. **Done**. |
 | `std/httpclient`, `std/httpserver` | the loops of §2. |
 
 Mirrors `std/ioring.nim` plus `std/ioring/`.
@@ -485,6 +485,31 @@ started with `submit(delay(chain()), lane)` onto the pool, not called from
 non-passive code. A regular proc that calls a parking passive proc gets its
 `result` written into a frame it has already left.
 
+### A compiler bug this layer had to route around
+
+An `openArray` parameter of a `.passive` proc arrives corrupt: the length
+survives, the pointer does not, so the callee reads whatever is at the wrong
+address. Reduced:
+
+```nim
+proc take(data: openArray[char]) {.passive.} =
+  for i in 0..<data.len: s.add data[i]
+
+proc chain() {.passive.} =
+  take("aaa"); take("bbb"); take("ccc")   # prints garbage, not aaa/bbb/ccc
+```
+
+It happens with or without a suspension point in the callee, and only for
+`openArray` — a `string` parameter and a `ptr UncheckedArray[char]` plus
+length both come through intact. So `httpconn` takes bodies as `string` and
+destination buffers as pointer-plus-capacity, with a note at the top of the
+file so nobody changes it back before the CPS transform is fixed.
+
+Found the slow way. A chunked body came out as garbage while the chunk
+*sizes* were right, which is what pointed at the parameter rather than the
+framing: the lengths were being read correctly from the same object whose
+pointer was not.
+
 ## 8. Open
 
 - The exact tag vocabulary: which headers are worth a tag, and which header
@@ -494,6 +519,7 @@ non-passive code. A regular proc that calls a parking passive proc gets its
   `(accept "a" "b")` and the serializer writes it back as `a, b`, but the
   parser stores one line as one value — splitting only some headers on commas
   (never `Date`, never `Set-Cookie`) is a decision worth making deliberately.
+- The `openArray`-in-`.passive` bug above, in the compiler rather than here.
 - Structured header values — `Content-Type`'s parameters, `Accept`'s q-values —
   are stored as one string today. They are the natural next thing to give
   sub-structure to, and the tree already has room for it.

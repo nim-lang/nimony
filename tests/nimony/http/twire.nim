@@ -114,7 +114,7 @@ proc testRoundTrip =
              "Host: example.com\r\n" &
              "Content-Length: 42\r\n" &
              "Connection: keep-alive\r\n" &
-             "Transfer-Encoding: chunked\r\n" &
+             "Content-Encoding: gzip\r\n" &
              "X-Trace-Id: t-1\r\n" &
              "X-Unregistered: raw\r\n\r\n"
   var m1 = initHttpMsg()
@@ -132,7 +132,7 @@ proc testRoundTrip =
   assert m2.target == "/a/b?c=d"
   assert m2.contentLength == 42
   assert m2.getTag(hConnection) == tag(vKeepAlive)
-  assert m2.getTag(hTransferEncoding) == tag(vChunked)
+  assert m2.getTag(hContentEncoding) == tag(vGzip)
   assert m2.getStr(hTrace) == "t-1"
   var others = ""
   for k, v in m2.otherHeaders: others.add k & "=" & v & ";"
