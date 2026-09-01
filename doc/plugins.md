@@ -15,9 +15,10 @@ There are five kinds of plugins:
 | **For-loop plugin** | `iterator foo(...) {.plugin: "path".}` | Rewrites a `for` loop using the iterator |
 | **Module plugin** | `{.plugin: "path".}` as statement | Transforms the entire module |
 | **Type plugin** | `type T {.plugin: "path".} = ...` | Invoked for every module that uses `T` |
-| **Import plugin** | `import (path/foo) {.plugin: "std/v2".}` | Imports the module `path/foo` **from the plugin** `std/v2` |
+| **Import plugin** | `import (path/foo) {.plugin: "v2".}` | Imports the module `path/foo` **from the plugin** `v2` |
 
-All plugins share the same API (`plugins`) and execution model.
+The first four share the same API (`plugins`) and execution model. Import
+plugins are different in both respects; see [Import plugins](#import-plugins).
 
 
 ## Quick start
@@ -408,10 +409,21 @@ The `import` statement can be combined with a plugin pragma to load a module
 whose NIF is produced by a plugin:
 
 ```nim
-import (path/foo) {.plugin: "std/v2".}
+import (path/foo) {.plugin: "v2".}
 ```
 
 This is used for compatibility layers that translate between different NIF formats.
+
+Import plugins do not follow the rules above: the string is **not** a path to a
+`.nim` file resolved against the importing module, and the compiler does not
+build it. It names an already-built executable, looked up first relative to the
+current directory and then in the toolchain's `bin` directory. The plugin is run
+as `<plugin> <path/foo.nim> <nimcache/<plugin>/<module>.s.nif>` and is
+responsible for filling `nimcache/<plugin>` with the semchecked NIF **and** the
+matching index files.
+
+The `v2` plugin (`src/v2`) is the in-tree example; it shells out to a Nim 2
+compiler to translate Nim 2 modules. Build it with `nim c src/v2/v2.nim`.
 
 
 ## The plugin API (`plugins`)
