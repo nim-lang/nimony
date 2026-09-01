@@ -1301,6 +1301,27 @@ proc addStrLit*(b: var TokenBuf; s: string) {.nifEmits: "LIT".} =
   ## Appends a string literal, using inline storage when possible.
   addStringLike(b, StrLit, s, b.pool.strings)
 
+proc encodeInlineStrView(s: openArray[char]): uint32 {.inline.} =
+  result = StrInlineFlag or (uint32(s.len) shl StrLengthShift)
+  for i in 0 ..< s.len:
+    result = result or (uint32(byte(s[i])) shl (StrDataShift + uint32(i) * 8))
+
+proc addStrLit*(b: var TokenBuf; s: openArray[char]) {.nifEmits: "LIT".} =
+  ## Appends a string literal taken straight from a byte view. For a parser
+  ## reading someone else's buffer this saves cutting a slice out of it first:
+  ## a short value costs nothing at all, and a long one costs the single copy
+  ## the pool was going to make anyway.
+  ensurePools(b)
+  if s.len <= StrInlineMaxLen:
+    b.add NifToken(toX(StrLit, encodeInlineStrView(s)))
+  else:
+    var tmp = newString(s.len)
+    for i in 0 ..< s.len: tmp[i] = s[i]
+    let id = uint32 b.pool.strings.getOrIncl(tmp)
+    let payload = uint64(id) shl 1               # bit 0 = 0 => pool ref
+    b.add NifToken(toX(StrLit, lowBits(payload)))
+    addSuffixIfNeeded(b, payload)
+
 proc addIdent*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
   ## Appends an identifier, using inline storage when possible.
   addStringLike(b, Ident,  s, b.pool.strings)

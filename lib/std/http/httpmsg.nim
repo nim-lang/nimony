@@ -215,27 +215,101 @@ proc sealHttpTags*() =
 
 proc httpTagsSealed*(): bool {.inline.} = gHttpTags.sealed
 
+const
+  MaxTagNameLen* = 64
+    ## Longest spelling `lookupHeader` will even consider. Every built-in tag
+    ## is far shorter, so this only ever rejects something that was going to
+    ## miss anyway — cheaply, and without touching the pool.
+
+type
+  FoldBuf = array[MaxTagNameLen, char]
+
+proc foldAscii(dest: var FoldBuf; name: openArray[char]): bool {.inline.} =
+  ## Lowercase `name` into `dest`. False when it cannot fit, which is the
+  ## caller's cue to stop. No allocation: HTTP asks this question once per
+  ## header of every request, so it may not touch the heap.
+  if name.len == 0 or name.len > MaxTagNameLen: return false
+  for i in 0..<name.len:
+    let c = name[i]
+    dest[i] = if c >= 'A' and c <= 'Z': chr(ord(c) + 32) else: c
+  result = true
+
+# The vocabulary is sealed and smaller than 512, so looking a spelling up
+# does not need the pool's hash table — and must not, because `getKeyId`
+# takes a `string` and building one per header per request is exactly the
+# allocation this layer exists to avoid. Bucketing the tags by name length
+# leaves a handful of candidates per bucket, which a byte compare settles.
+
+var
+  gByLen: seq[TagId] = @[]
+  gLenStart: array[MaxTagNameLen + 2, int32]
+  gIndexedUpTo = 0
+
+proc buildLookupIndex() =
+  let n = gHttpTags.tags.len
+  var counts = default(array[MaxTagNameLen + 2, int32])
+  for i in 0..<counts.len: counts[i] = 0'i32
+  for id in 1..n:
+    let L = gHttpTags.tagName(TagId(id.uint32)).len
+    if L <= MaxTagNameLen: inc counts[L]
+  var acc = 0'i32
+  for L in 0..MaxTagNameLen:
+    gLenStart[L] = acc
+    acc = acc + counts[L]
+  gLenStart[MaxTagNameLen + 1] = acc
+  gByLen = newSeq[TagId](acc.int)
+  var cursor = default(array[MaxTagNameLen + 2, int32])
+  for i in 0..<cursor.len: cursor[i] = gLenStart[i]
+  for id in 1..n:
+    let t = TagId(id.uint32)
+    let L = gHttpTags.tagName(t).len
+    if L <= MaxTagNameLen:
+      gByLen[cursor[L].int] = t
+      inc cursor[L]
+  gIndexedUpTo = n
+
+proc sameBytes(t: TagId; folded: FoldBuf; n: int): bool {.inline.} =
+  let spelling = gHttpTags.tagName(t)
+  if spelling.len != n: return false
+  for i in 0..<n:
+    if spelling[i] != folded[i]: return false
+  result = true
+
+proc lookupTag(name: openArray[char]; fold: bool): TagId =
+  var buf = default(FoldBuf)
+  if name.len == 0 or name.len > MaxTagNameLen: return TagId(0)
+  if fold:
+    if not foldAscii(buf, name): return TagId(0)
+  else:
+    for i in 0..<name.len: buf[i] = name[i]
+  if gIndexedUpTo != gHttpTags.tags.len: buildLookupIndex()
+  let n = name.len
+  var k = gLenStart[n]
+  while k < gLenStart[n + 1]:
+    let t = gByLen[k.int]
+    if sameBytes(t, buf, n): return t
+    inc k
+  result = TagId(0)
+
 proc lookupHeader*(name: openArray[char]): TagId =
   ## Wire bytes to a `TagId`, folding ASCII case as HTTP requires. Answers
   ## `TagId(0)` for a name nobody registered — those become `(xhdr …)`.
   ##
-  ## **This never interns.** It is the one lookup the parser is allowed to
-  ## perform on attacker-controlled bytes.
-  const MaxHeaderName = 64
-  if name.len == 0 or name.len > MaxHeaderName: return TagId(0)
-  var folded = newString(name.len)
-  for i in 0..<name.len:
-    let c = name[i]
-    folded[i] = if c >= 'A' and c <= 'Z': chr(ord(c) + 32) else: c
-  result = gHttpTags.tagId(folded)
+  ## **This never interns**, and it never allocates. It is the one lookup the
+  ## parser is allowed to perform on attacker-controlled bytes.
+  lookupTag(name, fold = true)
+
+proc lookupValue*(name: openArray[char]): TagId =
+  ## Like `lookupHeader`, but answers only for spellings in the header-*value*
+  ## range — so `Connection: host` does not come back as the `host` tag.
+  let t = lookupTag(name, fold = true)
+  result = if t.uint32 >= tag(ValueLow).uint32 and
+              t.uint32 <= tag(ValueHigh).uint32: t else: TagId(0)
 
 proc lookupMethod*(name: openArray[char]): TagId =
   ## Wire bytes to a method tag, case-sensitively as HTTP requires. Answers
   ## `TagId(0)` for anything that is not one of the nine built-in methods.
-  if name.len == 0 or name.len > 16: return TagId(0)
-  var s = newString(name.len)
-  for i in 0..<name.len: s[i] = name[i]
-  let t = gHttpTags.tagId(s)
+  let t = lookupTag(name, fold = false)
   result = if t.isMethod: t else: TagId(0)
 
 # ----------------------------------------------------------------- message --
@@ -305,6 +379,13 @@ proc addHeader*(m: var HttpMsg; h: TagId; value: string) =
   m.buf.buildTree h:
     m.buf.addStrLit value
 
+proc addHeader*(m: var HttpMsg; h: TagId; value: openArray[char]) =
+  ## As above, from a byte view — what a parser has, without cutting a slice
+  ## out of its read buffer to get it.
+  assert h.uint32 != 0'u32, "addHeader: unregistered tag; use addOtherHeader"
+  m.buf.buildTree h:
+    m.buf.addStrLit value
+
 proc addHeader*(m: var HttpMsg; h: TagId; value: int) =
   ## A header whose value is numeric — `Content-Length` and friends. Stored as
   ## an `IntLit`, so it is parsed once here and never re-parsed on access.
@@ -333,6 +414,23 @@ proc addOtherHeader*(m: var HttpMsg; name, value: string) =
   m.buf.buildTree tag(tXhdr):
     m.buf.addStrLit name
     m.buf.addStrLit value
+
+proc addOtherHeader*(m: var HttpMsg; name, value: openArray[char]) =
+  ## As above, from byte views.
+  m.buf.buildTree tag(tXhdr):
+    m.buf.addStrLit name
+    m.buf.addStrLit value
+
+proc startRequest*(m: var HttpMsg; meth: TagId; target: openArray[char];
+                   v = tag(tV11)) =
+  ## As `startRequest`, with the target still in the parser's buffer.
+  assert m.live, "startRequest on a moved-from message"
+  assert m.buf.len == 0, "startRequest on a message already built; reset first"
+  assert meth.isMethod, "startRequest: not a method tag"
+  m.buf.openTag tag(tReq)
+  m.buf.addEmpty meth
+  m.buf.addStrLit target
+  m.buf.addEmpty v
 
 proc finish*(m: var HttpMsg) =
   ## Close the message node. Required before any accessor.

@@ -1,9 +1,9 @@
 # HTTP client and server — design
 
-**Status: in progress.** §1 is implemented — `lib/std/http/httpmsg.nim`, with
-its two nifcore prerequisites — and its examples below are what the code
-actually produces. Everything from §2 on is still design: no event loop, no
-parser, no wire serializer, no IO.
+**Status: in progress.** Implemented: §1 (`lib/std/http/httpmsg.nim`, with its
+nifcore prerequisites) and request-head parsing (`lib/std/http/httpparse.nim`).
+The examples below are what the code actually produces. Still design:
+everything from §2 on — the event loop, response serialization, and all IO.
 
 The design rests on three ideas that already exist in this repo:
 
@@ -81,7 +81,7 @@ compares as `Host`:
 ```nim
 let hTraceId = registerHeader("X-Trace-Id")   # init, before the first accept
 ...
-seal(gHttpTags)
+sealHttpTags()
 ```
 
 Sealing is what keeps interning off the request path. Growing the pool from
@@ -109,7 +109,7 @@ proxy forwarding what it does not understand — so it is never on a hot path.
 - **Values are typed once, at parse time.** `Content-Length` is an `IntLit`;
   `Date` is an epoch `IntLit`. No re-parsing on access.
 - **Known values are tags too.** `Connection: keep-alive` parses to
-  `(connection (keepalive))`, so the keep-alive check on every single request
+  `(connection (keep-alive))`, so the keep-alive check on every single request
   is an integer compare rather than a case-insensitive string compare. This is
   the same enum/payload idea applied one level down.
 - **The application's own headers get all of the above.** A registered custom
@@ -362,7 +362,7 @@ Two injection seams, both invisible to the code in §2:
 | Module | Contains |
 |---|---|
 | `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
-| `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. |
+| `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request heads. |
 | `std/http/httpwire` | `TokenBuf` → wire bytes. |
 | `std/http/httpconn` | passive read/write on ioring, buffering, chunked framing, keep-alive. |
 | `std/httpclient`, `std/httpserver` | the loops of §2. |
@@ -398,10 +398,43 @@ None of this is reachable until the following exist.
 8. `std/monotimes` needs a `CLOCK_BOOTTIME` path.
 
 
+### Parsing, in practice
+
+Every proc in `httpparse` is `parse(buf, i) -> int`: read `buf` from `i`, answer
+the index just past what was consumed, or `ParseIncomplete` / `ParseBad`. The
+head is inspected in place — no slicing, no substrings — so the only bytes
+copied are the ones that end up in the message, and they are copied once,
+straight from the read buffer into that message's pool. `nifcore` grew an
+`openArray` overload of `addStrLit` for that, and `lookupHeader` folds ASCII
+case into a stack buffer.
+
+Resumability costs the caller one integer. A head is parsed only when complete,
+so `HeadScanner` looks for the blank line that ends it and remembers where it
+stopped; appending more bytes and asking again resumes instead of rescanning,
+which is what keeps a head arriving one byte at a time from costing O(n²).
+
+The tag lookup does not use the pool's hash table. The vocabulary is sealed and
+under 512 entries, so bucketing tags by name length leaves a handful of
+candidates that a byte compare settles — no hashing, and nothing that needs a
+`string` to ask with.
+
+Rejections are deliberate rather than incidental, because HTTP/1.1 cannot
+resynchronize and a parser that guesses is how two hops come to disagree about
+where a request ends: obsolete line folding, a space between a header name and
+its colon, a bare CR inside a value, a non-numeric or overflowing
+`Content-Length`, and control characters anywhere in a target or value are all
+`ParseBad`. Head size, header count, target length and value length are capped.
+
 ## 8. Open
 
 - The exact tag vocabulary: which headers are worth a tag, and which header
-  values (beyond `Connection`) are worth parsing into tags.
+  values are worth parsing into tags. Currently `Connection`,
+  `Transfer-Encoding` and `Content-Encoding` resolve their values.
+- Response-head parsing (the client side) and `httpwire`, which is the same
+  work in the other direction.
+- Structured header values — `Content-Type`'s parameters, `Accept`'s q-values —
+  are stored as one string today. They are the natural next thing to give
+  sub-structure to, and the tree already has room for it.
 - Client-side correlation: a `ReqId` returned by `send`, matched by
   `ResponseEvent`, so pipelined or multiplexed requests can be told apart.
 - Whether one `HttpLoop` type serves both directions or client and server get
