@@ -1811,10 +1811,10 @@ proc isMutableLvalue(n: Cursor): bool =
   else:
     result = false
 
-proc inferArgTypevar(m: var Match; f: var Cursor; arg: CallArg) =
-  ## The argument's type is an inferable typevar (see `Match.inferable`):
-  ## a first use binds it to the formal, a later use must agree with that.
-  let aSym = arg.typ.symId
+proc inferArgTypevar(m: var Match; f: var Cursor; arg: CallArg; aSym: SymId) =
+  ## The argument's type is the inferable typevar `aSym` (see
+  ## `Match.inferable`): a first use binds it to the formal, a later use must
+  ## agree with what it was bound to.
   if m.inferred.contains(aSym):
     let prev = m.inferred.getOrQuit(aSym)
     m.concreteMatch = true
@@ -1826,13 +1826,37 @@ proc inferArgTypevar(m: var Match; f: var Cursor; arg: CallArg) =
   else:
     m.error ConstraintMismatch, f, arg.typ
 
+proc inferableArgTypevar(m: Match; f: Cursor; arg: CallArg): SymId =
+  ## The typevar to infer from `f`, or `NoSymId` when `arg` is not an inferable
+  ## typevar or `f` is not yet the shape it can bind to: a modifier is peeled
+  ## by `singleArgOnFormal` first, and a typevar formal binds the arg the usual
+  ## way. An arg-side modifier is irrelevant to the binding and dropped.
+  result = NoSymId
+  if m.inferable.len > 0:
+    let a = skipModifier(arg.typ)
+    if a.isSymbol and a.symId in m.inferable and
+        f.typeKind notin {MutT, OutT, SinkT, LentT} and
+        not (f.isSymbol and isTypevar(f.symId)):
+      result = a.symId
+
+proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg)
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
-  if m.inferable.len > 0 and arg.typ.isSymbol and arg.typ.symId in m.inferable and
-      f.typeKind notin {MutT, OutT, SinkT, LentT} and
-      not (f.isSymbol and isTypevar(f.symId)):
-    # modifiers are peeled first; a typevar formal binds the arg the usual way
-    inferArgTypevar(m, f, arg)
-    return
+  ## Entry for matching one argument against the formal `f`, and the point every
+  ## refinement of the formal re-enters through: `singleArgOnFormal` peels a
+  ## modifier, resolves an alias, replaces a bound typevar or picks a typeclass
+  ## branch and comes back here with the narrower formal. The one decision
+  ## taken here — is the argument an inferable typevar that this formal now
+  ## binds? — depends on that shape, so it has to be re-asked at each step.
+  let aSym = inferableArgTypevar(m, f, arg)
+  if aSym != NoSymId:
+    inferArgTypevar(m, f, arg, aSym)
+  else:
+    singleArgOnFormal(m, f, arg)
+
+proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
+  ## Matches `arg` by the shape of the formal `f`. Every recursion goes through
+  ## `singleArgImpl`, never directly back here.
   case f.kind
   of Symbol:
     matchSymbol m, f, arg
