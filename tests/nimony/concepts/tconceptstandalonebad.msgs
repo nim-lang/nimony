@@ -1,2 +1,2 @@
 tests/nimony/concepts/tconceptstandalonebad.nim(17, 12) Error: Foo does not match constraint Comparable
-missing: func >(a: Self, b: Self)
+missing: func >>(a: Self, b: Self)
