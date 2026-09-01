@@ -1,19 +1,26 @@
 import std/[assertions, fenv]
 
 type
-  Arithmetic* = concept ## Types that supply the usual arithmetic and comparison operators.
-    func `-`(x: Self): Self
+  Arithmetic* = concept ## Types that supply the arithmetic and comparison
+                        ## operators signed, unsigned and float types have in common.
     func `+`(x, y: Self): Self
     func `-`(x, y: Self): Self
-    func inc(x: var Self, y: Self)
-    func dec(x: var Self, y: Self)
     func `*`(x, y: Self): Self
-    func `div`(x, y: Self): Self
     func `mod`(x, y: Self): Self
-    func `/`(x, y: Self): Self
     func `==`(x, y: Self): bool
     func `<`(x, y: Self): bool
     func `>`(x, y: Self): bool
+
+  IntegerArithmetic* = concept of Arithmetic ## `Arithmetic` plus the integer-only operations.
+    func `div`(x, y: Self): Self
+    func inc(x: var Self, y: Self)
+    func dec(x: var Self, y: Self)
+
+  SignedArithmetic* = concept of Arithmetic ## `Arithmetic` plus negation: signed integers and floats.
+    func `-`(x: Self): Self
+
+  FloatArithmetic* = concept of SignedArithmetic ## `SignedArithmetic` plus real division.
+    func `/`(x, y: Self): Self
 
   # Concepts for the individual transcendental functions below. They let generic
   # code (e.g. `std/complex`) depend precisely on the operations it actually uses,
@@ -329,7 +336,7 @@ func floorMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
   if (result > T(0) and y < T(0)) or (result < T(0) and y > T(0)):
     result = result + y
 
-func floorDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
+func floorDiv*[T: SomeInteger and IntegerArithmetic](x, y: T): T {.inline.} =
   ## Floor division is conceptually defined as `floor(x / y)`.
   ##
   ## This is different from the `system.div <system.html#div,int,int>`_
@@ -350,7 +357,7 @@ func floorDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.} =
   if (r > T(0) and y < T(0)) or (r < T(0) and y > T(0)):
     result = result - T(1)
 
-func euclDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.}=
+func euclDiv*[T: SomeInteger and IntegerArithmetic](x, y: T): T {.inline.}=
   ## Returns euclidean division of `x` by `y`.
   runnableExamples:
     assert euclDiv(13, 3) == 4
@@ -365,7 +372,7 @@ func euclDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline.}=
     else:
       inc result
 
-func euclMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
+func euclMod*[T: SomeNumber and SignedArithmetic](x, y: T): T {.inline.} =
   ## Returns euclidean modulo of `x` by `y`.
   ## `euclMod(x, y)` is non-negative.
   runnableExamples:
@@ -378,7 +385,7 @@ func euclMod*[T: SomeNumber and Arithmetic](x, y: T): T {.inline.} =
   if result < 0:
     result = result + abs(y)
 
-template ceilDivUint[T: SomeUnsignedInt and Arithmetic](x, y: T): T =
+template ceilDivUint[T: SomeUnsignedInt and IntegerArithmetic](x, y: T): T =
   # If the divisor is const, the backend C/C++ compiler generates code without a `div`
   # instruction, as it is slow on most CPUs.
   # If the divisor is a power of 2 and a const unsigned integer type, the
@@ -397,7 +404,7 @@ template ceilDivUint[T: SomeUnsignedInt and Arithmetic](x, y: T): T =
 template ceilDivSigned[T: SomeInteger](x, y: T; U: untyped): T {.untyped.} =
   T(ceilDivUint(x.U, y.U))
 
-func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline, raises.} =
+func ceilDiv*[T: SomeInteger and IntegerArithmetic](x, y: T): T {.inline, raises.} =
   ## Ceil division is conceptually defined as `ceil(x / y)`.
   ##
   ## Assumes `x >= 0` and `y > 0` (and `x + y - 1 <= high(T)` if T is SomeUnsignedInt).
@@ -442,7 +449,7 @@ func ceilDiv*[T: SomeInteger and Arithmetic](x, y: T): T {.inline, raises.} =
             else:
               ceilDivUint(x, y)
 
-func divmod*[T: SomeInteger and Arithmetic](x, y: T): (T, T) {.inline.} =
+func divmod*[T: SomeInteger and IntegerArithmetic](x, y: T): (T, T) {.inline.} =
   ## Computes both division and modulus.
   ## Return structure is: (quotient, remainder)
   runnableExamples:
@@ -710,7 +717,7 @@ func nextPowerOfTwo*(x: int): int =
 
 const RadPerDeg = PI / 180.0  ## Number of radians per degree.
 
-func degToRad*[T: SomeFloat and Arithmetic](d: T): T {.inline.} =
+func degToRad*[T: SomeFloat and FloatArithmetic](d: T): T {.inline.} =
   ## Converts from degrees to radians.
   ##
   ## **See also:**
@@ -720,7 +727,7 @@ func degToRad*[T: SomeFloat and Arithmetic](d: T): T {.inline.} =
 
   result = d * T(RadPerDeg)
 
-func radToDeg*[T: SomeFloat and Arithmetic](r: T): T {.inline.} =
+func radToDeg*[T: SomeFloat and FloatArithmetic](r: T): T {.inline.} =
   ## Converts from radians to degrees.
   ##
   ## **See also:**
@@ -893,7 +900,7 @@ func arcsech*(x: float64): float64 = arccosh(1.0 / x)
 func arccsch*(x: float32): float32 = arcsinh(1.0'f32 / x)
 func arccsch*(x: float64): float64 = arcsinh(1.0 / x)
 
-func splitDecimal*[T: SomeFloat and Arithmetic and HasDefault](x: T): tuple[intpart: T, floatpart: T] {.untyped.} =
+func splitDecimal*[T: SomeFloat and FloatArithmetic and HasDefault](x: T): tuple[intpart: T, floatpart: T] {.untyped.} =
   ## Breaks `x` into an integer and a fractional part.
   ##
   ## Returns a tuple containing `intpart` and `floatpart`, representing
@@ -941,7 +948,7 @@ func binom*(n, k: Natural): int =
   for i in 2 .. k:
     result = (result * (n + 1 - i)) div i
 
-func gcd*[T: Arithmetic](x, y: T): T =
+func gcd*[T: SignedArithmetic](x, y: T): T =
   ## Computes the greatest common (positive) divisor of `x` and `y`.
   ##
   ## Note that for floats, the result cannot always be interpreted as
@@ -960,7 +967,7 @@ func gcd*[T: Arithmetic](x, y: T): T =
     swap x, y
   abs x
 
-func gcd*[T: Arithmetic](x: openArray[T]): T =
+func gcd*[T: SignedArithmetic](x: openArray[T]): T =
   ## Computes the greatest common (positive) divisor of the elements of `x`.
   ##
   ## **See also:**
@@ -972,7 +979,7 @@ func gcd*[T: Arithmetic](x: openArray[T]): T =
   for i in 1 ..< x.len:
     result = gcd(result, x[i])
 
-func lcm*[T: Arithmetic](x, y: T): T {.inline.} =
+func lcm*[T: IntegerArithmetic and SignedArithmetic](x, y: T): T {.inline.} =
   ## Computes the least common multiple of `x` and `y`.
   ##
   ## **See also:**
@@ -983,7 +990,7 @@ func lcm*[T: Arithmetic](x, y: T): T {.inline.} =
 
   x div gcd(x, y) * y
 
-func lcm*[T: Arithmetic](x: openArray[T]): T =
+func lcm*[T: IntegerArithmetic and SignedArithmetic](x: openArray[T]): T =
   ## Computes the least common multiple of the elements of `x`.
   ##
   ## **See also:**

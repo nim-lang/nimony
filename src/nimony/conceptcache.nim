@@ -6,13 +6,22 @@
 
 ## Self-contained concept-match cache. The rest of the compiler only needs
 ## the lifecycle hooks (`initConceptCache`, `onConceptDeclSem`,
-## `onConceptImportsChanged`) and the `remember*` templates used from
+## `onConceptImportsChanged`) and the lookup/store procs used from
 ## `sigmatch.nim`.
+##
+## Besides memoizing `(concept, type)` verdicts the cache tracks which body
+## checks are currently *on the stack*. Requirement checking runs real
+## overload resolution on candidate routines, and a candidate such as
+## `min[T: Orderable]` asks `X is Orderable` while that very question is
+## being answered. A re-entrant query is answered "not satisfied": a type
+## satisfies a concept only through a derivation that does not assume the
+## conclusion (the inductive reading, as in classic Nim).
 
-import std / [tables, hashes]
+import std / [tables, sets, hashes, os]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
+import ".." / gear2 / modnames
 import nimony_model, decls, programs, semdata, typeprops, symtabs
 
 const DefaultConceptCacheCapacity* = 1024
@@ -26,34 +35,25 @@ type
     conceptSym*: SymId
     typeKey*: ConceptTypeKey
 
-  RoutineImplCacheKey* = object
-    conceptSym*: SymId
-    reqSym*: SymId
-    typeKey*: ConceptTypeKey
-
   CandidatesCacheKey* = object
     conceptSym*: SymId
     basename*: StrId
+    typeRoot*: SymId ## nominal root of the type being checked: its module's
+                     ## type-bound operations are candidates too
 
   ConceptBodyResult* = object
     satisfied*: bool
+    missing*: seq[SymId] ## the requirement syms that were not met; replayed
+                         ## into the diagnostics when a negative verdict hits
+    generation: int ## `declGeneration` at store time; a negative verdict is
+                    ## only valid while no routine has been declared since
 
-  ConceptRoutineImplResult* = object
-    found*: bool
-    impl*: SymId
+  CandidatesEntry = object
+    generation: int
+    syms: seq[SymId]
 
   ConceptMetadata* = object
     parents*: seq[SymId]
-
-  ConceptCacheImpl* = ref object of RootObj
-    capacity*: int
-    bodyCache*: Table[BodyCacheKey, ConceptBodyResult]
-    bodyCacheOrder*: seq[BodyCacheKey]
-    routineImplCache*: Table[RoutineImplCacheKey, ConceptRoutineImplResult]
-    routineImplCacheOrder*: seq[RoutineImplCacheKey]
-    candidatesCache*: Table[CandidatesCacheKey, seq[SymId]]
-    candidatesCacheOrder*: seq[CandidatesCacheKey]
-    metadata*: Table[SymId, ConceptMetadata]
 
 proc `==`*(a, b: ConceptTypeKey): bool {.inline, noSideEffect.} =
   a.root == b.root and a.aux == b.aux
@@ -67,17 +67,29 @@ proc `==`*(a, b: BodyCacheKey): bool {.inline, noSideEffect.} =
 proc hash*(k: BodyCacheKey): Hash {.noSideEffect.} =
   result = Hash(k.conceptSym.int) !& hash(k.typeKey)
 
-proc `==`*(a, b: RoutineImplCacheKey): bool {.inline, noSideEffect.} =
-  a.conceptSym == b.conceptSym and a.reqSym == b.reqSym and a.typeKey == b.typeKey
-
-proc hash*(k: RoutineImplCacheKey): Hash {.noSideEffect.} =
-  result = Hash(k.conceptSym.int) !& Hash(k.reqSym.int) !& hash(k.typeKey)
-
 proc `==`*(a, b: CandidatesCacheKey): bool {.inline, noSideEffect.} =
-  a.conceptSym == b.conceptSym and a.basename == b.basename
+  a.conceptSym == b.conceptSym and a.basename == b.basename and a.typeRoot == b.typeRoot
 
 proc hash*(k: CandidatesCacheKey): Hash {.noSideEffect.} =
-  result = Hash(k.conceptSym.int) !& Hash(k.basename.int)
+  result = Hash(k.conceptSym.int) !& Hash(k.basename.int) !& Hash(k.typeRoot.int)
+
+type
+  ConceptCacheImpl* = ref object of RootObj
+    capacity*: int
+    bodyCache*: Table[BodyCacheKey, ConceptBodyResult]
+    candidatesCache*: Table[CandidatesCacheKey, CandidatesEntry]
+    metadata*: Table[SymId, ConceptMetadata]
+    moduleImports*: Table[string, seq[string]] ## module suffix -> suffixes of
+                                               ## its direct imports, read
+                                               ## from its `.s.deps.nif`
+    declGeneration*: int ## bumped by every routine declaration: a new
+                         ## overload can turn "not satisfied" into "satisfied"
+                         ## and extend a candidate list, so those entries
+                         ## expire; positive verdicts only ever stay true
+    inProgress*: HashSet[BodyCacheKey] ## body checks currently on the stack
+    assumptionHits*: int ## how many re-entrant queries were answered so far;
+                         ## a verdict computed while this moved must not be
+                         ## memoized (see `conceptVerdictIsFinal`)
 
 proc initConceptCache*(c: var SemContext) =
   if c.conceptCache == nil:
@@ -100,11 +112,11 @@ proc onConceptImportsChanged*(c: var SemContext) =
     return
   let cache = asConceptCacheImpl(c.conceptCache)
   cache.bodyCache.clear()
-  cache.bodyCacheOrder.setLen(0)
-  cache.routineImplCache.clear()
-  cache.routineImplCacheOrder.setLen(0)
   cache.candidatesCache.clear()
-  cache.candidatesCacheOrder.setLen(0)
+
+proc onRoutineDeclSem*(c: var SemContext) =
+  if c.conceptCache != nil:
+    inc asConceptCacheImpl(c.conceptCache).declGeneration
 
 proc invalidateConceptSymCache(cache: ConceptCacheImpl; conceptSym: SymId) =
   block body:
@@ -114,25 +126,6 @@ proc invalidateConceptSymCache(cache: ConceptCacheImpl; conceptSym: SymId) =
         remove.add k
     for k in remove:
       cache.bodyCache.del k
-    var i = 0
-    while i < cache.bodyCacheOrder.len:
-      if cache.bodyCacheOrder[i].conceptSym == conceptSym:
-        cache.bodyCacheOrder.delete(i)
-      else:
-        inc i
-  block routine:
-    var remove: seq[RoutineImplCacheKey] = @[]
-    for k in cache.routineImplCache.keys:
-      if k.conceptSym == conceptSym:
-        remove.add k
-    for k in remove:
-      cache.routineImplCache.del k
-    var i = 0
-    while i < cache.routineImplCacheOrder.len:
-      if cache.routineImplCacheOrder[i].conceptSym == conceptSym:
-        cache.routineImplCacheOrder.delete(i)
-      else:
-        inc i
   block candidates:
     var remove: seq[CandidatesCacheKey] = @[]
     for k in cache.candidatesCache.keys:
@@ -140,12 +133,6 @@ proc invalidateConceptSymCache(cache: ConceptCacheImpl; conceptSym: SymId) =
         remove.add k
     for k in remove:
       cache.candidatesCache.del k
-    var i = 0
-    while i < cache.candidatesCacheOrder.len:
-      if cache.candidatesCacheOrder[i].conceptSym == conceptSym:
-        cache.candidatesCacheOrder.delete(i)
-      else:
-        inc i
 
 proc onConceptDeclSem*(c: var SemContext; ownerSym: SymId; dest: var TokenBuf; conceptStart: int) =
   if ownerSym == SymId(0) or c.conceptCache == nil:
@@ -182,17 +169,13 @@ proc hashTypeCursor(n: Cursor): Hash =
   result = h
 
 proc conceptTypeKey*(a: Cursor): ConceptTypeKey =
-  let root = nominalRoot(a, allowTypevar = true)
-  if root != SymId(0):
-    result = ConceptTypeKey(root: root)
-  else:
-    result = ConceptTypeKey(root: SymId(0), aux: hashTypeCursor(a))
+  ## `root` is the nominal head symbol, which for a generic *instance* is the
+  ## generic's own symbol — `Box[int]` and `Box[Foo]` share it. The structural
+  ## hash of the whole type tree is what tells the instances apart.
+  ConceptTypeKey(root: nominalRoot(a, allowTypevar = true), aux: hashTypeCursor(a))
 
 proc bodyCacheKey(conceptSym: SymId; a: Cursor): BodyCacheKey =
   BodyCacheKey(conceptSym: conceptSym, typeKey: conceptTypeKey(a))
-
-proc routineImplCacheKey(conceptSym, reqSym: SymId; a: Cursor): RoutineImplCacheKey =
-  RoutineImplCacheKey(conceptSym: conceptSym, reqSym: reqSym, typeKey: conceptTypeKey(a))
 
 proc isOpenTypevar*(a: Cursor): bool =
   if a.isSymbol:
@@ -240,130 +223,131 @@ proc getConceptMetadata*(c: ptr SemContext; conceptSym: SymId; body: Cursor): Co
       return cache.metadata.getOrDefault(conceptSym)
   collectConceptMetadata(body)
 
-proc lruTouchBody(order: var seq[BodyCacheKey]; key: BodyCacheKey) =
-  for i, k in order:
-    if k == key:
-      if i < order.high:
-        order.delete(i)
-        order.add key
-      return
-  order.add key
-
-proc lruPutBody(table: var Table[BodyCacheKey, ConceptBodyResult];
-                order: var seq[BodyCacheKey]; capacity: int;
-                key: BodyCacheKey; val: sink ConceptBodyResult) =
-  let isNew = not table.hasKey(key)
-  table[key] = val
-  if isNew:
-    order.add key
-  else:
-    lruTouchBody(order, key)
-  while order.len > capacity:
-    let oldKey = order[0]
-    order.delete(0)
-    table.del oldKey
-
-proc lruTouchRoutine(order: var seq[RoutineImplCacheKey]; key: RoutineImplCacheKey) =
-  for i, k in order:
-    if k == key:
-      if i < order.high:
-        order.delete(i)
-        order.add key
-      return
-  order.add key
-
-proc lruPutRoutine(table: var Table[RoutineImplCacheKey, ConceptRoutineImplResult];
-                   order: var seq[RoutineImplCacheKey]; capacity: int;
-                   key: RoutineImplCacheKey; val: sink ConceptRoutineImplResult) =
-  let isNew = not table.hasKey(key)
-  table[key] = val
-  if isNew:
-    order.add key
-  else:
-    lruTouchRoutine(order, key)
-  while order.len > capacity:
-    let oldKey = order[0]
-    order.delete(0)
-    table.del oldKey
-
-proc lruTouchCandidates(order: var seq[CandidatesCacheKey]; key: CandidatesCacheKey) =
-  for i, k in order:
-    if k == key:
-      if i < order.high:
-        order.delete(i)
-        order.add key
-      return
-  order.add key
-
-proc lruPutCandidates(table: var Table[CandidatesCacheKey, seq[SymId]];
-                      order: var seq[CandidatesCacheKey]; capacity: int;
-                      key: CandidatesCacheKey; val: sink seq[SymId]) =
-  let isNew = not table.hasKey(key)
-  table[key] = val
-  if isNew:
-    order.add key
-  else:
-    lruTouchCandidates(order, key)
-  while order.len > capacity:
-    let oldKey = order[0]
-    order.delete(0)
-    table.del oldKey
-
 proc isConceptTypeArg(a: Cursor): bool {.inline.} =
   a.isSymbol and isConceptSym(a.symId)
 
 proc cacheCapacity(cache: ConceptCacheImpl): int =
   if cache.capacity > 0: cache.capacity else: DefaultConceptCacheCapacity
 
+proc bodyCheckCacheable(c: ptr SemContext; conceptSym: SymId; a: Cursor): bool {.inline.} =
+  c != nil and conceptSym != SymId(0) and isCacheableConcreteType(a) and not isConceptTypeArg(a)
+
 proc tryBodyCheckFromCache*(c: ptr SemContext; conceptSym: SymId; a: Cursor): (bool, ConceptBodyResult) =
-  if c == nil or conceptSym == SymId(0) or not isCacheableConcreteType(a) or isConceptTypeArg(a):
+  if not bodyCheckCacheable(c, conceptSym, a):
     return (false, default(ConceptBodyResult))
   let cache = ensureConceptCache(c)
   let key = bodyCacheKey(conceptSym, a)
   if not cache.bodyCache.hasKey(key):
     return (false, default(ConceptBodyResult))
-  lruTouchBody(cache.bodyCacheOrder, key)
-  (true, cache.bodyCache.getOrDefault(key))
-
-proc storeRoutineImpl*(c: ptr SemContext; conceptSym, reqSym: SymId; a: Cursor;
-                        res: sink ConceptRoutineImplResult) =
-  if c == nil or conceptSym == SymId(0) or reqSym == SymId(0) or not isCacheableConcreteType(a):
-    return
-  let cache = ensureConceptCache(c)
-  let key = routineImplCacheKey(conceptSym, reqSym, a)
-  lruPutRoutine(cache.routineImplCache, cache.routineImplCacheOrder, cacheCapacity(cache), key, res)
-
-proc tryRoutineImplFromCache*(c: ptr SemContext; conceptSym, reqSym: SymId; a: Cursor): (bool, ConceptRoutineImplResult) =
-  if c == nil or conceptSym == SymId(0) or reqSym == SymId(0) or not isCacheableConcreteType(a):
-    return (false, default(ConceptRoutineImplResult))
-  let cache = ensureConceptCache(c)
-  let key = routineImplCacheKey(conceptSym, reqSym, a)
-  if not cache.routineImplCache.hasKey(key):
-    return (false, default(ConceptRoutineImplResult))
-  lruTouchRoutine(cache.routineImplCacheOrder, key)
-  (true, cache.routineImplCache.getOrDefault(key))
+  let res = cache.bodyCache.getOrDefault(key)
+  if not res.satisfied and res.generation != cache.declGeneration:
+    return (false, default(ConceptBodyResult))
+  (true, res)
 
 proc storeBodyCheck*(c: ptr SemContext; conceptSym: SymId; a: Cursor; res: sink ConceptBodyResult) =
-  if c == nil or conceptSym == SymId(0) or not isCacheableConcreteType(a) or isConceptTypeArg(a):
+  if not bodyCheckCacheable(c, conceptSym, a):
     return
+  let cache = ensureConceptCache(c)
+  # Hits are the hot path: overload resolution asks the same `(concept, type)`
+  # question once per candidate per call. A plain clear-at-capacity keeps the
+  # hit free instead of paying for LRU bookkeeping.
+  if cache.bodyCache.len >= cacheCapacity(cache):
+    cache.bodyCache.clear()
+  var entry = res
+  entry.generation = cache.declGeneration
+  cache.bodyCache[bodyCacheKey(conceptSym, a)] = entry
+
+proc enterBodyCheck*(c: ptr SemContext; conceptSym: SymId; a: Cursor): bool =
+  ## False when the same check is already on the stack: the caller answers
+  ## "not satisfied" without recursing. The guard applies to every type,
+  ## cacheable or not, since a generic candidate can re-ask for `seq[T]` as
+  ## easily as for `int`.
+  if c == nil or conceptSym == SymId(0):
+    return true
   let cache = ensureConceptCache(c)
   let key = bodyCacheKey(conceptSym, a)
-  lruPutBody(cache.bodyCache, cache.bodyCacheOrder, cacheCapacity(cache), key, res)
+  if key in cache.inProgress:
+    inc cache.assumptionHits
+    return false
+  cache.inProgress.incl key
+  true
+
+proc leaveBodyCheck*(c: ptr SemContext; conceptSym: SymId; a: Cursor) =
+  if c == nil or conceptSym == SymId(0):
+    return
+  let cache = ensureConceptCache(c)
+  cache.inProgress.excl bodyCacheKey(conceptSym, a)
+
+proc conceptAssumptionHits*(c: ptr SemContext): int =
+  if c == nil or c.conceptCache == nil: 0
+  else: asConceptCacheImpl(c.conceptCache).assumptionHits
+
+proc conceptVerdictIsFinal*(c: ptr SemContext; hitsBefore: int): bool =
+  ## Whether a verdict computed since `hitsBefore` may be memoized. A verdict
+  ## that consulted an in-progress assumption is only trusted for the
+  ## outermost check, whose own assumption is the one that was consulted; an
+  ## inner verdict may have been shaped by an assumption about a sibling and
+  ## is recomputed next time.
+  if c == nil or c.conceptCache == nil:
+    return true
+  let cache = asConceptCacheImpl(c.conceptCache)
+  cache.assumptionHits == hitsBefore or cache.inProgress.len == 0
+
+proc readModuleImports(c: ptr SemContext; modSuffix: string): seq[string] =
+  ## The direct imports of an already compiled module, as module suffixes.
+  ## `nimsem` leaves them in the module's `.s.deps.nif` (minus anything
+  ## imported under `when false`).
+  result = @[]
+  let depsFile = changeModuleExt(suffixToNif(modSuffix), ".s.deps.nif")
+  if not fileExists(depsFile):
+    return
+  var buf = parseFromFile(depsFile)
+  var n = beginRead(buf)
+  if n.stmtKind != StmtsS:
+    return
+  n.into StmtsS:
+    while n.hasMore:
+      if n.stmtKind == ImportS:
+        n.into ImportS:
+          while n.hasMore:
+            if n.isStringLit:
+              let imp = moduleSuffix(pool.strings[n.strId], c.g.config.paths)
+              # a stale deps file can name a module this build never produced
+              if fileExists(suffixToNif(imp)):
+                result.add imp
+            skip n
+      else:
+        skip n
+
+proc conceptModuleImports*(c: ptr SemContext; modSuffix: string): seq[string] =
+  ## Cached `readModuleImports`. Empty for the module being compiled: its
+  ## deps file is not written yet, and its imports are in `c.importedModules`.
+  if c == nil or modSuffix == "" or modSuffix == c.thisModuleSuffix:
+    return @[]
+  let cache = ensureConceptCache(c)
+  if not cache.moduleImports.hasKey(modSuffix):
+    cache.moduleImports[modSuffix] = readModuleImports(c, modSuffix)
+  cache.moduleImports.getOrDefault(modSuffix)
 
 proc storeCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId;
-                      res: sink seq[SymId]) =
+                      typeRoot: SymId; res: sink seq[SymId]) =
   if c == nil:
     return
   let cache = ensureConceptCache(c)
-  let key = CandidatesCacheKey(conceptSym: conceptSym, basename: basename)
-  lruPutCandidates(cache.candidatesCache, cache.candidatesCacheOrder, cacheCapacity(cache), key, res)
+  if cache.candidatesCache.len >= cacheCapacity(cache):
+    cache.candidatesCache.clear()
+  cache.candidatesCache[CandidatesCacheKey(conceptSym: conceptSym, basename: basename, typeRoot: typeRoot)] =
+    CandidatesEntry(generation: cache.declGeneration, syms: res)
 
-proc tryCandidatesFromCache*(c: ptr SemContext; conceptSym: SymId; basename: StrId): (bool, seq[SymId]) =
+proc tryCandidatesFromCache*(c: ptr SemContext; conceptSym: SymId; basename: StrId;
+                             typeRoot: SymId): (bool, seq[SymId]) =
   if c == nil:
     return (false, default(seq[SymId]))
   let cache = ensureConceptCache(c)
-  let key = CandidatesCacheKey(conceptSym: conceptSym, basename: basename)
+  let key = CandidatesCacheKey(conceptSym: conceptSym, basename: basename, typeRoot: typeRoot)
   if not cache.candidatesCache.hasKey(key):
     return (false, default(seq[SymId]))
-  lruTouchCandidates(cache.candidatesCacheOrder, key)
-  (true, cache.candidatesCache.getOrDefault(key))
+  let entry = cache.candidatesCache.getOrDefault(key)
+  if entry.generation != cache.declGeneration:
+    return (false, default(seq[SymId]))
+  (true, entry.syms)

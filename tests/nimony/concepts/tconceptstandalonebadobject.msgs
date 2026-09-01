@@ -1,0 +1,2 @@
+tests/nimony/concepts/tconceptstandalonebadobject.nim(13, 12) Error: Plain does not match constraint Addable
+missing: proc +(a: Self, b: Self)
