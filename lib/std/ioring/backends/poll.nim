@@ -36,7 +36,10 @@ proc armEventsForFd*(fd: cint): IoEvents =
       # Arming both regardless would wake a read-waiter on writability, and a
       # oneshot op re-armed on every spurious wake is a busy loop.
       result = result + gSlots[lane].slots[j].op.pollMask
-    of opNop:
+    of opConnect:
+      # A non-blocking connect reports its outcome as writability.
+      result.incl evWrite
+    of opNop, opTimeout:
       discard
 
 const ArmFailed* = -1
@@ -58,11 +61,50 @@ proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen
+  from std/posix/posix import SockLen, EINPROGRESS
+
+  # `posix.errno` is not usable here. Under `-d:nimNativeIo` it returns a
+  # module-local variable that only that module's freestanding syscall
+  # wrappers maintain (posix.nim says so itself), while everything the ring
+  # calls — connect, read, write, accept — is a bare `importc` into libc and
+  # sets *libc's* errno. Reading the wrong one is not a wrong error message,
+  # it is a wrong branch: a failed connect reported `0` and completed as a
+  # success. The ring already depends on libc for those calls, so it reads
+  # libc's errno the way libc exposes it.
+  when defined(osx):
+    proc errnoLocation(): ptr cint {.importc: "__error", sideEffect.}
+  else:
+    proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
+  proc sysErrno*(): cint {.inline.} = errnoLocation()[]
 
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
   proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
+  proc getsockopt(s: cint; level, optname: cint; val: pointer;
+                  vlen: ptr SockLen): cint {.importc: "getsockopt".}
+  proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "connect".}
+
+  const
+    SOL_SOCKET = (when defined(macosx): 0xFFFF.cint else: 1.cint)
+    SO_ERROR = (when defined(macosx): 0x1007.cint else: 4.cint)
+
+  proc startConnect*(fd: cint; idx: int): bool =
+    ## Kick off a non-blocking connect on the op in slot `idx`. True when the
+    ## attempt is under way and the poller should watch for writability.
+    ##
+    ## False means it is already over — and then this completes the slot,
+    ## because nothing else will: an op that is never armed gets no readiness
+    ## event, so leaving it here would park the caller until its deadline no
+    ## matter how the connect actually went.
+    let s = addr gSlots[ioLane()].slots[idx]
+    let r = posixConnect(fd, addr s.op.sockAddr, s.op.sockAddrLen)
+    if r == 0:
+      complete(idx, 0)               # connected outright: loopback often does
+      return false
+    let e = sysErrno()
+    if e == EINPROGRESS: return true
+    complete(idx, -int(e))           # refused, unreachable, bad address …
+    result = false
 
   proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
     ## Dispatch every pending op on `fd` whose direction actually matches the
@@ -88,8 +130,8 @@ when defined(posix):
           complete(j, if r >= 0: r else: -1)
       of opAccept:
         if evRead in firedEvents:
-          var addrLen = s.op.acceptLen
-          let clientFd = posixAccept(fd, addr s.op.acceptAddr, addr addrLen)
+          var addrLen = s.op.sockAddrLen
+          let clientFd = posixAccept(fd, addr s.op.sockAddr, addr addrLen)
           complete(j, if clientFd >= 0: clientFd else: -1)
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
@@ -103,7 +145,19 @@ when defined(posix):
         let hit = firedEvents * s.op.pollMask
         if hit != {}:
           complete(j, toEventMask(hit))
-      of opNop:
+      of opConnect:
+        if evWrite in firedEvents:
+          # Writability only says the attempt finished. `SO_ERROR` says how:
+          # a refused connection is just as writable as an accepted one.
+          var err: cint = 0
+          var elen = SockLen(sizeof(err))
+          if getsockopt(fd, SOL_SOCKET, SO_ERROR, addr err, addr elen) < 0:
+            complete(j, -1)
+          elif err != 0:
+            complete(j, -int(err))
+          else:
+            complete(j, 0)
+      of opNop, opTimeout:
         discard
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).

@@ -48,14 +48,27 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
   var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
   if n > 0:
     for i in 0..<n:
-      discard gSlots[lane].allocSlot(buf[i])
+      let idx = gSlots[lane].allocSlot(buf[i])
+      armDeadline(lane, idx)
+      if buf[i].kind == opTimeout:
+        continue          # nothing to arm on: the deadline heap is the wait
+      if buf[i].kind == opConnect:
+        # Start the attempt here, on the polling thread, so the fd is already
+        # connecting by the time we watch it. A connect that finished at once
+        # has completed the slot and there is nothing left to arm.
+        if not startConnect(buf[i].fd, idx):
+          continue
       submitForPoll(buf[i].fd)
   var kevents {.noinit.}: array[64, KEvent]
+  # Sleep no longer than the earliest deadline in this lane, so a timer fires
+  # on time instead of on the next poll that happens for another reason.
+  let waitMs = waitMillis(lane, timeoutMs)
   var ts = Timespec(
-    tv_sec: Time(timeoutMs div 1000),
-    tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
+    tv_sec: Time(waitMs div 1000),
+    tv_nsec: clong((waitMs mod 1000) * 1_000_000))
   n = int(kevent(kqFds[lane], nil, 0, addr kevents[0], 64, addr ts))
   if n <= 0:
+    expireDeadlines(lane)
     return false
   # A poll-add registers two kevents (EVFILT_READ and EVFILT_WRITE); when the
   # fd is ready in both directions both fire in the same batch. Deliver the
@@ -81,6 +94,7 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
       firedEvents[k].incl dir
   for i in 0..<m:
     processFd(firedFds[i], firedEvents[i])
+  expireDeadlines(lane)
   return true
 
 proc kqueueClose() {.nimcall.} =

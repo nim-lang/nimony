@@ -35,7 +35,11 @@ proc fdNotPollable(): bool {.inline.} =
   ## Reads `errno`, not the return value: epoll_ctl reports *every* failure as
   ## -1 and puts the reason in errno, so comparing the result against EPERM/EBADF
   ## never matched and the fallback below ran (and printed) for every failure.
-  let e = errno()
+  ##
+  ## `sysErrno`, not `posix.errno`: under `-d:nimNativeIo` the latter reads a
+  ## variable that libc calls never touch, so this test silently took the
+  ## wrong branch. See the note in `poll.nim`.
+  let e = sysErrno()
   result = e == EPERM or e == EBADF
 
 proc epollReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} =
@@ -70,11 +74,23 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   if n > 0:
     for i in 0..<n:
       let alreadyRegistered = gSlots[lane].hasPendingForFd(buf[i].fd)
-      discard gSlots[lane].allocSlot(buf[i])
+      let idx = gSlots[lane].allocSlot(buf[i])
+      armDeadline(lane, idx)
+      if buf[i].kind == opTimeout:
+        continue          # nothing to arm on: the deadline heap is the wait
+      if buf[i].kind == opConnect:
+        # Start the attempt here, on the polling thread, so the fd is already
+        # connecting by the time we watch it. A connect that finished at once
+        # has completed the slot and there is nothing left to arm.
+        if not startConnect(buf[i].fd, idx):
+          continue
       submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
-  n = int(epoll_wait(epollFds[lane], addr ioEvents[0], MaxIoEvents.cint, timeoutMs.cint))
+  # Sleep no longer than the earliest deadline in this lane.
+  let waitMs = waitMillis(lane, timeoutMs)
+  n = int(epoll_wait(epollFds[lane], addr ioEvents[0], MaxIoEvents.cint, waitMs.cint))
   if n <= 0:
+    expireDeadlines(lane)
     return false
   for i in 0..<n:
     let fd = cint(cast[uint](ioEvents[i].data.`ptr`))
@@ -85,6 +101,7 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
     if (events and EPOLLOUT) != 0:
       firedEvents.incl evWrite
     processFd(fd, firedEvents)
+  expireDeadlines(lane)
   return true
 
 proc epollClose() {.nimcall.} =

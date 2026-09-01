@@ -326,10 +326,11 @@ per-lane min-heap of deadlines supplies that wait for real, letting a worker
 sleep until the earliest deadline. The change that gives us timers also gets
 rid of the fixed-granularity idle wakeup.
 
-Use `CLOCK_BOOTTIME`, not `CLOCK_MONOTONIC` (which `std/monotimes` currently
-uses): a machine that suspends for an hour should find its in-flight deadlines
-blown, not extended. Never `CLOCK_REALTIME`, or an NTP step retimes everything
-in flight.
+The ring uses `CLOCK_BOOTTIME` on Linux rather than `CLOCK_MONOTONIC` (which
+`std/monotimes` uses): a machine that suspends for an hour should find its
+in-flight deadlines blown, not extended. Darwin and the BSDs have no
+equivalent, so they get `CLOCK_MONOTONIC`. Never `CLOCK_REALTIME`, or an NTP
+step retimes everything in flight.
 
 
 ## 4. Connections and threading
@@ -377,10 +378,23 @@ None of this is reachable until the following exist.
 
 **ioring**
 
-1. `submitConnect` — absent; the client cannot connect at all today.
-2. **Timers.** No backend has one, and §3 does not work without them. io_uring
-   gets `link_timeout` + `TIMEOUT_ABS`; kqueue and epoll get a per-lane deadline
-   heap feeding the existing `poll(timeoutMs)` argument.
+1. ~~`submitConnect`~~ — done. Non-blocking connect through the ring; the
+   attempt is started on the polling thread so the fd is watched from the
+   moment it is connecting, and `SO_ERROR` on writability distinguishes a
+   refusal from a success (both look identical to the poller). Completes with
+   the negated errno, so a caller can tell "nobody listening" from "the
+   network ate it".
+2. ~~**Timers**~~ — done. `Deadline` is absolute, `never` has to be spelled,
+   and every op carries one. A per-lane min-heap answers both questions the
+   poll loop has — how long it may wait, and what has run out of time — and
+   feeds the `poll(timeoutMs)` argument that was previously a hardcoded 0 or
+   1. Entries are not removed when an op completes in time; they name the slot
+   *generation* they were armed for and are dropped as stale when they surface.
+   `submitTimeout` is a pure timer, and reaching its deadline is its success.
+
+   Still to do here: io_uring can attach an absolute `link_timeout` to an
+   individual SQE, which is better than one lane-wide bound. The lane-wide
+   bound keeps both backends behaving identically in the meantime.
 3. Multishot accept. `submitAccept` is oneshot, so a busy listener pays one
    submission per connection; io_uring has `accept_multishot`.
 4. DNS. `getaddrinfo` blocks and io_uring has no resolver, so it needs

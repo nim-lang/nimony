@@ -42,7 +42,7 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
     if op.buf != nil:
       discard sqe.write(op.fd, cast[pointer](op.buf), op.len)
   of opAccept:
-    discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.acceptAddr), addr op.acceptLen, 0)
+    discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.sockAddr), addr op.sockAddrLen, 0)
   of opPollAdd:
     # Single-shot readiness probe on the direction(s) the caller asked for;
     # completes with the fired poll mask, then the slot is freed so the caller
@@ -56,7 +56,13 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
     if evRead in op.pollMask: pollEvents.incl POLL_IN
     if evWrite in op.pollMask: pollEvents.incl POLL_OUT
     discard sqe.poll_add(op.fd, pollEvents)
-  of opNop:
+  of opConnect:
+    discard sqe.connect(SocketHandle(op.fd),
+                        cast[ptr SockAddr](addr op.sockAddr), op.sockAddrLen)
+  of opNop, opTimeout:
+    # A timer needs no SQE. The lane's deadline heap already knows when it is
+    # due and bounds the `submit(waitNr)` below, so letting the kernel hold a
+    # second copy of the same deadline would only be a second thing to cancel.
     discard sqe.nop()
 
 proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
@@ -73,6 +79,11 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
   if n > 0:
     for i in 0..<n:
+      if buf[i].kind == opTimeout:
+        # No SQE, but it still needs a slot so the heap can complete it.
+        let idx = gSlots[lane].allocSlot(buf[i])
+        armDeadline(lane, idx)
+        continue
       var sqe: nil ptr Sqe
       try:
         sqe = localQueues[lane].getSqe()
@@ -87,15 +98,22 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
           discard gOpQueues[lane].tryEnqueue(buf[k])
         break
       let idx = gSlots[lane].allocSlot(buf[i])
+      armDeadline(lane, idx)
       sqe.userData = cast[pointer](uint(idx))
       # Fill from the ARENA copy, never from `buf`: an accept SQE stores
-      # `addr op.acceptAddr`/`addr op.acceptLen` and the kernel writes through
+      # `addr op.sockAddr`/`addr op.sockAddrLen` and the kernel writes through
       # those at completion time, long after this stack frame is gone.
       fillSqe(sqe, addr gSlots[lane].slots[idx].op)
     try:
       discard localQueues[lane].submit()
     except ErrorCode as e:
       quit "fatal: bug: submit cannot fail: " & $e
+  # Bound the wait by the earliest deadline in this lane, the same way the
+  # readiness backends bound theirs. io_uring can attach an absolute
+  # `link_timeout` to an individual SQE, which is the better answer for
+  # per-op deadlines and is the natural next step here; one lane-wide bound
+  # keeps the two backends behaving identically in the meantime.
+  discard waitMillis(lane, timeoutMs)
   if localQueues[lane].cqReady > 0:
     var cqes {.noinit.}: array[DrainBatch, Cqe]
     try:
@@ -117,7 +135,9 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
           if POLL_OUT in fired: ev.incl evWrite
           res = toEventMask(ev)
         complete(idx, res)
+      expireDeadlines(lane)
       return true
+  expireDeadlines(lane)
   return false
 
 proc iouringForgetFd(fd: cint) {.nimcall.} =

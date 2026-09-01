@@ -52,6 +52,99 @@ proc initSlots*() =
   for s in gSlots:
     s.init(MaxOps)
 
+# ------------------------------------------------------------- deadlines ---
+#
+# Every op carries a deadline, so a per-lane min-heap of them answers two
+# questions the poll loop needs: how long it may wait, and which ops have run
+# out of time. Both in O(1) and O(log n); scanning the arena would be O(MaxOps)
+# on every single poll.
+#
+# Entries are never removed when an op completes normally — finding and
+# deleting one would cost more than leaving it. Instead an entry names the
+# slot *generation* it was armed for, and a stale entry is dropped when it
+# reaches the top. The heap is therefore bounded by ops-ever-armed between
+# two expiries rather than by ops-in-flight, which is why `arm` skips `never`:
+# an op with no deadline must not leave a permanent entry behind.
+
+type
+  TimerEntry* = object
+    at*: Deadline
+    slot*: int32
+    gen*: uint32
+
+  TimerHeap* = object
+    a*: seq[TimerEntry]
+
+proc len*(h: TimerHeap): int {.inline.} = h.a.len
+
+proc swapEntries(h: var TimerHeap; i, j: int) {.inline.} =
+  ## Both elements are copied out before either is written back: assigning one
+  ## element of a seq straight from another is a mutable/immutable alias of
+  ## the same object, which the compiler refuses — rightly, since it is the
+  ## shape that hides real aliasing bugs.
+  let a = h.a[i]
+  let b = h.a[j]
+  h.a[i] = b
+  h.a[j] = a
+
+proc push*(h: var TimerHeap; e: TimerEntry) =
+  h.a.add e
+  var i = h.a.len - 1
+  while i > 0:
+    let parent = (i - 1) div 2
+    if h.a[parent].at <= h.a[i].at: break
+    h.swapEntries(parent, i)
+    i = parent
+
+proc popMin*(h: var TimerHeap): TimerEntry =
+  result = h.a[0]
+  let last = h.a.len - 1
+  let tail = h.a[last]
+  h.a[0] = tail
+  h.a.shrink last
+  var i = 0
+  while true:
+    let l = 2 * i + 1
+    let r = l + 1
+    var small = i
+    if l < h.a.len and h.a[l].at < h.a[small].at: small = l
+    if r < h.a.len and h.a[r].at < h.a[small].at: small = r
+    if small == i: break
+    h.swapEntries(small, i)
+    i = small
+
+var gTimers*: seq[TimerHeap]
+proc initTimers*() =
+  gTimers = newSeq[TimerHeap](ioLanes())
+
+proc armDeadline*(lane: int; slotIdx: int) =
+  ## Record the deadline of the op just allocated into `slotIdx`. A `never`
+  ## deadline arms nothing, so the heap holds only ops that can actually
+  ## expire.
+  let d = gSlots[lane].slots[slotIdx].op.deadline
+  if d == never: return
+  gTimers[lane].push TimerEntry(at: d, slot: int32(slotIdx),
+                                gen: gSlots[lane].slots[slotIdx].gen)
+
+proc nextDeadline*(lane: int): Deadline =
+  ## The earliest deadline this lane is waiting on, skipping entries whose op
+  ## has already completed. `never` when there is nothing to wait for.
+  while gTimers[lane].len > 0:
+    let e = gTimers[lane].a[0]
+    let s = addr gSlots[lane].slots[e.slot.int]
+    if s.inUse and s.gen == e.gen: return e.at
+    discard gTimers[lane].popMin()
+  result = never
+
+proc waitMillis*(lane: int; requested: int): int =
+  ## How long the backend may actually block: what the caller asked for, or
+  ## the time to the earliest deadline, whichever is sooner. This is what
+  ## turns a fixed poll interval into "sleep exactly until something is due".
+  let d = nextDeadline(lane)
+  if d == never: return requested
+  let ms = millisUntil(d, monoNow())
+  result = if requested < 0 or ms < requested: ms else: requested
+
 var
   gNextSeq*: SeqNum
   gCqLock*: TicketLock
@@ -59,6 +152,11 @@ var
   gCqHead*: int
   gCqTail*: int
   gCqCount*: int
+
+const
+  IoTimedOut* = -110
+    ## Completion result for an op whose deadline passed. `ETIMEDOUT` on
+    ## Linux, and negative like every other failure the ring reports.
 
 proc complete*(slotIdx: int; res: int) =
   let lane = ioLane()
@@ -79,3 +177,26 @@ proc complete*(slotIdx: int; res: int) =
       gCqTail = (gCqTail + 1) and (CqSize - 1)
       inc gCqCount
     gCqLock.release()
+
+proc expireDeadlines*(lane: int) =
+  ## Complete every op in this lane whose deadline has passed. Called by each
+  ## backend after it waits, so a deadline fires whether or not any I/O did.
+  ##
+  ## This is what makes "nothing parks forever" structural: an op cannot be
+  ## submitted without a deadline, and every deadline is either met or arrives
+  ## here. A caller parked on a peer that has gone quiet is resumed with
+  ## `IoTimedOut` rather than being left for the process's lifetime.
+  if gTimers[lane].len == 0: return
+  let now = monoNow()
+  while gTimers[lane].len > 0:
+    let e = gTimers[lane].a[0]
+    let s = addr gSlots[lane].slots[e.slot.int]
+    if not s.inUse or s.gen != e.gen:
+      discard gTimers[lane].popMin()      # its op finished in time
+      continue
+    if now < e.at: break                  # the earliest is still in the future
+    discard gTimers[lane].popMin()
+    # A timer op reaching its deadline is a success — that is the whole point
+    # of it. Anything else has run out of time.
+    let res = if s.op.kind == opTimeout: 0 else: IoTimedOut
+    complete(e.slot.int, res)

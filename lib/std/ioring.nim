@@ -19,6 +19,10 @@ import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
 export types.readyEvents, types.toIoEvents, types.toEventMask
+export types.Deadline, types.never, types.earlier, types.monoNow
+export types.after, types.afterMs, types.millisUntil, types.`<`, types.`<=`
+export types.`==`
+export backend.IoTimedOut
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
 from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
@@ -30,6 +34,7 @@ proc setupRing() =
   initPool()
   initOpQueues()
   initSlots()
+  initTimers()
   gCq = newSeq[IoCompletion](CqSize)
   initPlatformBackend()
   gReactor = backendRelays.poll
@@ -78,40 +83,78 @@ proc enqueueOp(op: OpContext) =
   while not gOpQueues[ioLane()].tryEnqueue(op):
     discard backendRelays.poll(0)
 
-proc submitNop*(cont = Continuation(fn: nil, env: nil);
+proc submitNop*(deadline: Deadline; cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opNop, fd: -1, seqnum: result,
-    cont: cont, res: cast[int](resPtr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitRead*(fd: cint; buf: pointer; len: int;
+proc submitTimeout*(deadline: Deadline;
+                    cont = Continuation(fn: nil, env: nil);
+                    resPtr: nil ptr int = nil): SeqNum =
+  ## Complete once `deadline` passes, with no I/O at all. Unlike every other
+  ## op, reaching the deadline is this one's *success*: it completes with `0`
+  ## rather than `IoTimedOut`.
+  ##
+  ## This is how a loop gets a turn on a schedule — `next(e, deadline)` in the
+  ## HTTP design is one of these plus whatever else is pending.
+  result = nextSeqNum()
+  var op = OpContext(kind: opTimeout, fd: -1, seqnum: result,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitRead*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opRead, fd: fd, seqnum: result, buf: buf, len: len,
-    cont: cont, res: cast[int](resPtr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitWrite*(fd: cint; buf: pointer; len: int;
+proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
-    cont: cont, res: cast[int](resPtr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitAccept*(listenFd: cint;
+proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opAccept, fd: listenFd, seqnum: result,
-    cont: cont, res: cast[int](resPtr))
-  op.acceptAddr = Sockaddr_storage()
-  op.acceptLen = SockLen(sizeof(op.acceptAddr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  op.sockAddr = Sockaddr_storage()
+  op.sockAddrLen = SockLen(sizeof(op.sockAddr))
   enqueueOp(op)
 
-proc submitPollAdd*(fd: cint; events: IoEvents = {evRead, evWrite};
+proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
+                    deadline: Deadline;
+                    cont = Continuation(fn: nil, env: nil);
+                    resPtr: nil ptr int = nil): SeqNum =
+  ## Connect `fd` to `sa`. Completes with `0` on success, or the negated
+  ## errno — a refused connection is `-ECONNREFUSED`, not a generic -1,
+  ## because the caller usually wants to tell "nobody listening" from "the
+  ## network ate it".
+  ##
+  ## `fd` must already be non-blocking (`setNonBlocking`). The attempt is
+  ## started on the polling thread, not here, so that the fd is being watched
+  ## from the moment it is connecting.
+  ##
+  ## A connect with no deadline is the classic way to hold a slot forever: a
+  ## SYN into a black hole never answers. Hence the parameter, and hence no
+  ## default for it.
+  result = nextSeqNum()
+  var op = OpContext(kind: opConnect, fd: fd, seqnum: result,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  op.sockAddr = sa
+  op.sockAddrLen = saLen
+  enqueueOp(op)
+
+proc submitPollAdd*(fd: cint; deadline: Deadline;
+                    events: IoEvents = {evRead, evWrite};
                     cont = Continuation(fn: nil, env: nil);
                     resPtr: nil ptr int = nil): SeqNum =
   ## Register oneshot readiness interest in `fd` without issuing any I/O.
@@ -133,7 +176,7 @@ proc submitPollAdd*(fd: cint; events: IoEvents = {evRead, evWrite};
   ## being a `ptr int`; decode it with `toIoEvents`.
   result = nextSeqNum()
   var op = OpContext(kind: opPollAdd, fd: fd, seqnum: result,
-    cont: cont, res: cast[int](resPtr), pollMask: events)
+    cont: cont, res: cast[int](resPtr), pollMask: events, deadline: deadline)
   enqueueOp(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =
@@ -220,6 +263,26 @@ when defined(posix):
       result = x
     else:
       result = (x shl 8) or (x shr 8)
+
+  proc socketNonBlocking*(): cint =
+    ## A non-blocking TCP socket, which is what `submitConnect` requires: a
+    ## blocking one would finish the connect inside the syscall and there
+    ## would be nothing for the ring to wait on.
+    result = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    if result >= 0: setNonBlocking(result)
+
+  proc loopbackAddr*(sa: var Sockaddr_storage; saLen: var SockLen;
+                     port: uint16) =
+    ## Fill `sa` with `127.0.0.1:port`, ready for `submitConnect`.
+    const Loopback =
+      when defined(bigEndian): 0x7F000001'u32 else: 0x0100007F'u32
+    var a4 = default(Sockaddr_in)
+    a4.sin_family = TSa_Family(AF_INET)
+    a4.sin_port = htons(port)
+    a4.sin_addr.s_addr = Loopback
+    sa = default(Sockaddr_storage)
+    copyMem(addr sa, addr a4, sizeof(a4))
+    saLen = SockLen(sizeof(a4))
 
   proc listenTcp*(port: uint16; backlog = 128): cint =
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
