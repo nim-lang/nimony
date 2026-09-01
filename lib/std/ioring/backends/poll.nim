@@ -7,15 +7,15 @@ import ../core/types
 import ../core/slots
 import ../core/backend
 
-proc noopReArm(fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} = true
-var reArmEvent*: proc (fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} = noopReArm
+proc noopReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} = true
+var reArmEvent*: proc (fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} = noopReArm
 ## Registers (or re-arms, for EPOLLONESHOT-style backends) readiness
-## interest for `fd`. Takes only `fd` and the direction mask — never a
+## interest for `fd`. Takes only `fd` and the directions — never a
 ## specific slot index: a fd can have several ops in flight (e.g. a
 ## pending read *and* a pending write) sharing one epoll/kqueue
 ## registration, so the registration is keyed by fd, not by any one op.
-  
-proc armMaskForFd*(fd: cint): int =
+
+proc armEventsForFd*(fd: cint): IoEvents =
   ## The union of the directions every op currently pending on `fd` waits for.
   ##
   ## It has to be the union, never one op's own direction: the registration is
@@ -23,19 +23,19 @@ proc armMaskForFd*(fd: cint): int =
   ## with just the newest op's direction therefore silently disarms the others —
   ## `submitWrite(fd)` followed by `submitRead(fd)` would leave the fd watched
   ## for EPOLLIN only and the pending write would never be woken.
-  result = 0
+  result = {}
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
     case gSlots[lane].slots[j].op.kind
     of opRead, opAccept:
-      result = result or EvRead
+      result.incl evRead
     of opWrite:
-      result = result or EvWrite
+      result.incl evWrite
     of opPollAdd:
       # Pure readiness probe: exactly the direction(s) the caller asked for.
       # Arming both regardless would wake a read-waiter on writability, and a
       # oneshot op re-armed on every spurious wake is a busy loop.
-      result = result or gSlots[lane].slots[j].op.pollMask
+      result = result + gSlots[lane].slots[j].op.pollMask
     of opNop:
       discard
 
@@ -53,7 +53,7 @@ proc failPendingForFd*(fd: cint) =
 proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
   ## Arm `fd` for every op pending on it, including the one just allocated by
   ## the caller (`allocSlot` has already linked it into the fd's list).
-  if not reArmEvent(fd, armMaskForFd(fd), alreadyRegistered):
+  if not reArmEvent(fd, armEventsForFd(fd), alreadyRegistered):
     failPendingForFd(fd)
 
 when defined(posix):
@@ -64,14 +64,14 @@ when defined(posix):
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
   proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
 
-  proc processFd*(fd: cint; firedEvents: int) {.nimcall.} =
+  proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
     ## Dispatch every pending op on `fd` whose direction actually matches the
-    ## readiness that just fired. `firedEvents` (EvRead/EvWrite, as delivered
-    ## by the poller) is authoritative: a write-readiness wakeup must not
-    ## drive a still-pending *read* op (and vice versa) — the fd may be
-    ## registered for both directions at once (e.g. a socket with an
-    ## in-flight read and an in-flight write), and only the direction that
-    ## actually fired has data ready / a free send buffer.
+    ## readiness that just fired. `firedEvents` (as delivered by the poller)
+    ## is authoritative: a write-readiness wakeup must not drive a
+    ## still-pending *read* op (and vice versa) — the fd may be registered for
+    ## both directions at once (e.g. a socket with an in-flight read and an
+    ## in-flight write), and only the direction that actually fired has data
+    ## ready / a free send buffer.
     # O(k) in the number of ops on this fd, via the intrusive per-fd list,
     # instead of an O(MaxOps) scan of the whole arena.
     let lane = ioLane()
@@ -79,15 +79,15 @@ when defined(posix):
       let s = addr gSlots[lane].slots[j]
       case s.op.kind
       of opRead:
-        if (firedEvents and EvRead) != 0:
+        if evRead in firedEvents:
           let r = posixRead(fd, s.op.buf, s.op.len)
           complete(j, if r >= 0: r else: -1)
       of opWrite:
-        if (firedEvents and EvWrite) != 0:
+        if evWrite in firedEvents:
           let r = posixWrite(fd, s.op.buf, s.op.len)
           complete(j, if r >= 0: r else: -1)
       of opAccept:
-        if (firedEvents and EvRead) != 0:
+        if evRead in firedEvents:
           var addrLen = s.op.acceptLen
           let clientFd = posixAccept(fd, addr s.op.acceptAddr, addr addrLen)
           complete(j, if clientFd >= 0: clientFd else: -1)
@@ -100,19 +100,19 @@ when defined(posix):
         # Only the directions this op asked for count. A wake for a direction
         # it did not request leaves the slot pending, and the re-arm below
         # keeps watching for the one it did.
-        let hit = firedEvents and s.op.pollMask
-        if hit != 0:
-          complete(j, hit)
+        let hit = firedEvents * s.op.pollMask
+        if hit != {}:
+          complete(j, toEventMask(hit))
       of opNop:
         discard
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
     if gSlots[lane].hasPendingForFd(fd):
-      if not reArmEvent(fd, armMaskForFd(fd), true):
+      if not reArmEvent(fd, armEventsForFd(fd), true):
         failPendingForFd(fd)
     # else: nothing left for this fd; the backend already consumed the
     # one-shot registration, and submit/registerEvent will re-add it the
     # next time an op targets this fd.
 else:
-  proc processFd*(fd: cint; firedEvents: int) {.nimcall.} =
+  proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
     discard

@@ -38,13 +38,13 @@ proc fdNotPollable(): bool {.inline.} =
   let e = errno()
   result = e == EPERM or e == EBADF
 
-proc epollReArm(fd: cint; mask: int, alreadyRegistered: bool): bool {.nimcall.} =
+proc epollReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} =
   let epollFd = epollFds[ioLane()]
   var ev {.noinit.}: EpollEvent
   ev.events = EPOLLONESHOT
-  if (mask and EvRead) != 0:
+  if evRead in events:
     ev.events = ev.events or EPOLLIN
-  if (mask and EvWrite) != 0:
+  if evWrite in events:
     ev.events = ev.events or EPOLLOUT
   # Store the fd itself (not a slot index) as user data: a slot can be freed
   # and its index reused for a *different* fd between registration and the
@@ -79,11 +79,11 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
   for i in 0..<n:
     let fd = cint(cast[uint](ioEvents[i].data.`ptr`))
     let events = ioEvents[i].events
-    var firedEvents = 0
+    var firedEvents: IoEvents = {}
     if (events and EPOLLIN) != 0:
-      firedEvents = firedEvents or EvRead
+      firedEvents.incl evRead
     if (events and EPOLLOUT) != 0:
-      firedEvents = firedEvents or EvWrite
+      firedEvents.incl evWrite
     processFd(fd, firedEvents)
   return true
 
