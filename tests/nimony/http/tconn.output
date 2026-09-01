@@ -1,0 +1,6 @@
+server saw GET /hello keepalive=true
+second request on the same connection: /again
+read past a dead peer: EndOfStreamError
+idle connection timed out: TimeoutError
+client got 200 len=12 body=hello world!
+client got 404 len=0

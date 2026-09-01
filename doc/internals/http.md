@@ -1,10 +1,13 @@
 # HTTP client and server — design
 
-**Status: in progress.** The whole message layer is implemented and has no IO
-in it: §1 (`httpmsg.nim`, with its nifcore prerequisites), head parsing both
-ways (`httpparse.nim`) and head serialization both ways (`httpwire.nim`). The
-examples below are what the code actually produces. Still design: everything
-from §2 on — the event loop, the connection layer, and all IO.
+**Status: in progress.** Implemented: the message layer, which has no IO in it
+at all (`httpmsg.nim` with its nifcore prerequisites, `httpparse.nim`,
+`httpwire.nim`), the ioring work §7 gates on (deadlines, timers, connect), and
+the connection layer `httpconn.nim` — which is where `.passive` meets the ring
+and is proven end to end by `tests/nimony/http/tconn.nim`: a real socket, a
+server and a client each a passive chain resumed by pool workers, keep-alive
+across two requests, a dead peer, and an idle connection expiring on its own
+budget. Still design: §2, the event loop itself.
 
 The design rests on three ideas that already exist in this repo:
 
@@ -366,7 +369,7 @@ Two injection seams, both invisible to the code in §2:
 | `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
 | `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request and response heads. |
 | `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
-| `std/http/httpconn` | passive read/write on ioring, buffering, chunked framing, keep-alive. |
+| `std/http/httpconn` | passive read/write on ioring, buffering, keep-alive. **Done** except chunked framing. |
 | `std/httpclient`, `std/httpserver` | the loops of §2. |
 
 Mirrors `std/ioring.nim` plus `std/ioring/`.
@@ -458,6 +461,29 @@ where a request ends: obsolete line folding, a space between a header name and
 its colon, a bare CR inside a value, a non-numeric or overflowing
 `Content-Length`, and control characters anywhere in a target or value are all
 `ParseBad`. Head size, header count, target length and value length are capped.
+
+### The passive bridge, confirmed
+
+The shape the design assumed does work:
+
+```nim
+proc readAsync*(fd: cint; buf: pointer; len: int; dl: Deadline): int {.passive.} =
+  result = 0
+  let c = delay()
+  discard submitRead(fd, buf, len, dl, c, addr result)
+  suspend()
+```
+
+The coroutine parks, a pool worker resumes it when the ring completes, and
+`addr result` — a pointer into the *caller's* heap-allocated frame — is still
+valid on the other side. `result` has to be assigned before its address is
+taken, since the compiler will not hand out the address of something it cannot
+prove is initialised.
+
+The entry point matters, and it is the §8 hazard in practice: a chain is
+started with `submit(delay(chain()), lane)` onto the pool, not called from
+non-passive code. A regular proc that calls a parking passive proc gets its
+`result` written into a frame it has already left.
 
 ## 8. Open
 

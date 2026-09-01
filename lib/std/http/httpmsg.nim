@@ -206,6 +206,12 @@ proc registerHeader*(name: string): TagId =
   ##
   ## Returns `TagId(0)` when the tag space is full — a startup error, and the
   ## only reason this can fail.
+  ##
+  ## Idempotent, and deliberately so even after sealing: a name that is
+  ## already registered comes back without the pool being touched, so several
+  ## independent components (or several tests sharing one process) can each
+  ## ask for the headers they need without having to agree on who goes first.
+  ## Only a genuinely *new* name after `sealHttpTags` is a defect.
   assert name.len > 0, "registerHeader: empty name"
   let existing = gHttpTags.tagId(name)
   if existing.uint32 != 0'u32: return existing
