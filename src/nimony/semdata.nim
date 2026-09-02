@@ -235,7 +235,6 @@ type
     pendingTypePlugins*: Table[SymId, PluginObj]
     pendingModulePlugins*: seq[PluginObj]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
-    depsPlugins*: HashSet[StrId]  # paths of all plugins this module uses except Import plugins
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     conceptCache*: RootRef
       ## Opaque concept-match cache; implementation in conceptcache.nim.
