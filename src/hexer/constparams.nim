@@ -54,6 +54,41 @@ proc passByConstRef(typ, pragmas: Cursor; ptrSize: int;
 proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
   result = passByConstRef(typ, pragmas, c.ptrSize, c.sizeofCache)
 
+type
+  ArgRole = enum
+    argPlain        ## nothing to do here beyond walking into it
+    argConstRef     ## has to arrive as an address
+    argCompileTime  ## `typedesc`/`static`: a value with no runtime existence
+
+proc nextArgRole(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): ArgRole =
+  ## Classify the next actual against the formal parameter list, advancing
+  ## `fnType` past the formal it consumed.
+  ##
+  ## Two walkers need this — `trCall`, and `hoistCall` at the end of this file
+  ## — and they must agree exactly, because they walk formals and actuals in
+  ## step: a rule one of them has and the other lacks does not fail, it silently
+  ## pairs an argument with the wrong parameter from that point on. So the rules
+  ## live here once. They are: a `varargs` formal serves every remaining actual
+  ## and must not be advanced past; a closure's environment actual has no formal
+  ## at all; and the const-ref question is asked before the compile-time one.
+  ## What the two walkers *do* with a role is where they are allowed to differ.
+  if not fnType.hasMore: return argPlain
+  assert fnType.isTagLit
+  let previousFormalParam = fnType
+  let param = takeLocal(fnType, SkipFinalParRi)
+  let pk = param.typ.typeKind
+  if pk in {MutT, OutT, LentT}:
+    result = argPlain
+  elif pk == VarargsT:
+    fnType = previousFormalParam
+    result = argPlain
+  elif passByConstRef(param.typ, param.pragmas, ptrSize, cache):
+    result = argConstRef
+  elif pk in {TypedescT, StaticT}:
+    result = argCompileTime
+  else:
+    result = argPlain
+
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   if not params.isTagLit: return
   var n = params
@@ -239,26 +274,10 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
 
     fnType = sub(fnType) # peek only, never left
     while n.hasMore:
-      let previousFormalParam = fnType
-      if not fnType.hasMore:
-        tr c, dest, n # can happen for closure parameter
-      else:
-        assert fnType.isTagLit
-        let param = takeLocal(fnType, SkipFinalParRi)
-        let pk = param.typ.typeKind
-        if pk in {MutT, OutT, LentT}:
-          tr c, dest, n
-        elif pk == VarargsT:
-          # do not advance formal parameter:
-          fnType = previousFormalParam
-          tr c, dest, n
-        elif passByConstRef(c, param.typ, param.pragmas):
-          trConstRef c, dest, n
-        elif pk in {TypedescT, StaticT}:
-          # do not produce any code for this as it's a compile-time value:
-          skip n
-        else:
-          tr c, dest, n
+      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
+      of argPlain: tr c, dest, n
+      of argConstRef: trConstRef c, dest, n
+      of argCompileTime: skip n  # a compile-time value produces no code
     dest.addParRi(n.endInfo)
   if needsTuple:
     dest.addParRi() # TupconstrX
@@ -561,6 +580,25 @@ proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool)
 # a coroutine body before the transform, `cps` then lifts the temporaries into
 # the frame like any other local, and the later `trConstRef` finds an argument
 # that already has an address and leaves it alone.
+#
+# Two questions this arrangement invites, answered here so they need not be
+# re-derived:
+#
+# *Why not do it in `cps.nim`?* Because `cps.nim` is only one of two consumers.
+# `.closure` iterators reach the same coroutine transform through
+# `lambdalifting.nim`, and had the same bug. Both point their `trCoroutine`
+# hook at `coro_transform.transformCoroutineDecl`, which is where this is
+# called from — so it already sits at the one place that serves both, and
+# moving it up would mean two copies.
+#
+# *Why not just run `injectConstParamDerefs` early and again later?* Because
+# this file does more than const-ref: it also carries the raise lowering —
+# success tuples, `tupleVars`, `raise e` -> `raise (e, result)`. None of that
+# is idempotent, so the pass cannot run twice over the same body. Splitting off
+# the half that must be early is what makes running it at all possible; the
+# price is that the two halves walk the tree separately, and `nextArgRole`
+# above is what keeps the two walks from disagreeing about which actual goes
+# with which formal.
 
 type
   HoistContext = object
@@ -610,24 +648,12 @@ proc hoistCall(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
     hoistTr c, dest, n # the `fn`
     fnType = sub(fnType) # peek only, never left
     while n.hasMore:
-      let previousFormalParam = fnType
-      if not fnType.hasMore:
-        hoistTr c, dest, n # can happen for closure parameter
-      else:
-        let param = takeLocal(fnType, SkipFinalParRi)
-        let pk = param.typ.typeKind
-        if pk == VarargsT:
-          # do not advance formal parameter:
-          fnType = previousFormalParam
-          hoistTr c, dest, n
-        elif pk in {MutT, OutT, LentT, TypedescT, StaticT}:
-          # `trCall` DROPS the `TypedescT`/`StaticT` arguments; this pass must
-          # not, or that one would walk formals and actuals out of step.
-          hoistTr c, dest, n
-        elif passByConstRef(param.typ, param.pragmas, c.ptrSize, c.sizeofCache):
-          hoistArg c, dest, n
-        else:
-          hoistTr c, dest, n
+      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
+      of argConstRef: hoistArg c, dest, n
+      of argPlain, argCompileTime:
+        # `trCall` DROPS a compile-time actual; this pass must not, or that one
+        # would walk formals and actuals out of step when it runs later.
+        hoistTr c, dest, n
     dest.addParRi(n.endInfo)
 
 proc hoistProcDecl(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
