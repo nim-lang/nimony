@@ -21,11 +21,18 @@ else:
   const hasKqueue* = false
   const hasIouring* = false
 
-const hasWsaPoll* = defined(windows) and not defined(nimIoringIocp)
-  ## Windows default: the WSAPoll readiness backend (backends/wsapoll.nim).
-const hasIocp* = defined(windows) and defined(nimIoringIocp)
-  ## `-d:nimIoringIocp` selects the IOCP proactor — a stub until it lands
-  ## (design of record: hashi/doc/iocp-ioring-briefing.md).
+const hasIocp* = defined(windows) and not defined(nimIoringWsaPoll)
+  ## Windows default: the IOCP proactor (backends/iocp.nim) — the ring's
+  ## contract is completion-shaped and IOCP serves it directly, with no
+  ## readiness emulation and no per-connection scheduler-tick stall (see the
+  ## backend header for the measurements). `-d:nimIoringIocp`, the opt-in
+  ## while it was new, is accepted and means nothing now.
+const hasWsaPoll* = defined(windows) and defined(nimIoringWsaPoll)
+  ## `-d:nimIoringWsaPoll` picks the WSAPoll readiness backend
+  ## (backends/wsapoll.nim) instead — the same shape as `nimIoringNoUring`
+  ## on Linux: the fallback stays reachable deliberately, for testing and for
+  ## a host where completion ports misbehave (layered service providers are
+  ## the usual culprit).
 const hasIoPoll* = hasEpoll or hasKqueue or hasWsaPoll
 
 # Imports are guarded by syntactic `defined()` tests, not by the constants
@@ -41,10 +48,10 @@ elif defined(macosx) or defined(freebsd) or defined(netbsd) or
      defined(openbsd) or defined(dragonfly):
   import ./backends/kqueue
 elif defined(windows):
-  when defined(nimIoringIocp):
-    import ./backends/iocp
-  else:
+  when defined(nimIoringWsaPoll):
     import ./backends/wsapoll
+  else:
+    import ./backends/iocp
 
 var backendRelays*: BackendRelays
 
@@ -58,9 +65,9 @@ proc initPlatformBackend*() =
        defined(openbsd) or defined(dragonfly):
     backendRelays = initKqueueBackendRelays()
   elif defined(windows):
-    when defined(nimIoringIocp):
-      backendRelays = initIocpBackendRelays()
-    else:
+    when defined(nimIoringWsaPoll):
       backendRelays = initWsaPollBackendRelays()
+    else:
+      backendRelays = initIocpBackendRelays()
   else:
     {.error: "No I/O backend available for this platform".}
