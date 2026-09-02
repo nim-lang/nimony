@@ -13,7 +13,7 @@ include ".." / lib / compat2
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
+  constparams, raiselowering, vtables_backend, eraiser, lambdalifting, cps, passes,
   funcsummary, intramodinliner, arcopt
 # `arcopt` runs on the final NIFC (try/finally already lowered to explicit
 # control flow). It is the BasicBlock-based pass ported from the battle-tested
@@ -107,20 +107,29 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
         stderr.writeLine "verify_arc diagnostics for ", pass.moduleSuffix, ":"
         stderr.writeLine toString(arcErrs, false)
 
-  # Pass 7: CPS transform (coroutines)
+  # Pass 7: Lower `.raises` to success tuples. The eraiser (pass 4) did the
+  # control-flow half; this is the value half, and it belongs HERE rather than
+  # next to the const-ref lowering it was written beside: `cps` lifts a local
+  # that outlives a state into the coroutine frame, and after that there is no
+  # declaration left to retype and no symbol left to project. See the note at
+  # the top of `raiselowering.nim`.
+  pass.prepareForNext("raiselowering")
+  lowerRaises(pass)
+
+  # Pass 8: CPS transform (coroutines)
   pass.prepareForNext("cps")
   transformToCps(pass)
 
-  # Pass 8: Transform VTables (Virtual Table Backend)
+  # Pass 9: Transform VTables (Virtual Table Backend)
   var needsXelimAgain = false
   pass.prepareForNext("vtables")
   transformVTables(pass, needsXelimAgain)
 
-  # Pass 9: Inject Const Param Dereferences
+  # Pass 10: Inject Const Param Dereferences
   pass.prepareForNext("constparams")
   injectConstParamDerefs(pass, c.bits div 8, needsXelimAgain)
 
-  # Pass 10: the remaining REAL lowering step, not a repair pass: `LowerCasts`
+  # Pass 11: the remaining REAL lowering step, not a repair pass: `LowerCasts`
   # unnests calls (the Final-IR "calls are unnested statements" rule) and binds
   # a cast's source and result to variables. `vtables`/`constparams` still emit
   # `(expr (stmts ...) v)` for their temps, so this run also flattens those —

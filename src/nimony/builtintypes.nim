@@ -54,15 +54,8 @@ const
 proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo) =
   ## The type a `.raises` routine's result actually travels in: `ErrorCode`
   ## alone when the routine returns nothing, `(tuple ErrorCode T)` when it
-  ## returns a `T`.
-  ##
-  ## `lengcgen` derives this shape from the `(raises)` pragma at the very end
-  ## of the pipeline, which is late enough for every pass that only needs to
-  ## *ask* whether something raises — and too late for one that has to
-  ## MATERIALISE the value first. A coroutine is exactly that: `cps` puts a
-  ## local outliving a state into the frame, and a frame field needs the type
-  ## the field will hold, not the one the routine was written with. So the
-  ## shape lives here, once, and the two ends cannot drift.
+  ## returns a `T`. Prefer `addLengReturnType` unless the caller has already
+  ## established that the routine raises.
   if retType.isDotToken or retType.typeKind == VoidT:
     dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
   else:
@@ -70,6 +63,49 @@ proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo
     dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
     dest.addSubtree retType
     dest.addParRi()
+
+proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
+                        info: NifLineInfo) =
+  ## THE mapping from a routine's Nimony return type to its Leng one, and the
+  ## only place it is decided.
+  ##
+  ## Hexer keeps asking the Nimony type system what things are, and that answer
+  ## stays in Nimony's terms: a `.raises` routine returns `T` and says so with
+  ## a pragma. Leng has no exceptions, so at the boundary that becomes a value
+  ## and a code travelling together. Whoever crosses the boundary applies this,
+  ## and everyone who does agrees by construction — which is the whole
+  ## requirement, because the two type systems are allowed to differ and are
+  ## not allowed to differ INCONSISTENTLY. A signature rewritten one way and a
+  ## proctype rewritten the other is a function pointer that does not match its
+  ## function, and nothing but the C compiler is going to notice.
+  ##
+  ## `raiselowering` is the one pass that BAKES the answer into the
+  ## declarations it emits, because `cps` runs after it and builds a
+  ## coroutine's frame and result slot out of the return type. Everything that
+  ## still queries Nimony afterwards — `cps` for a callee, `lengcgen` for a
+  ## foreign proctype, which is pulled in as a type and never as code — has to
+  ## come back here for the same answer.
+  if hasPragma(pragmas, RaisesP):
+    addSuccessTupleType(dest, retType, info)
+  else:
+    dest.addSubtree retType
+
+proc addPragmasWithoutRaises*(dest: var TokenBuf; pragmas: Cursor) =
+  ## Copy a pragma list minus `(raises)`. Used where the raising-ness of a
+  ## routine has already been spent — `raiselowering` has put the success tuple
+  ## in the signature, so leaving the pragma on would have `lengcgen` wrap the
+  ## return type a second time — and on the procs `cps` generates FOR a
+  ## coroutine, which return a `Continuation` and never fail.
+  if pragmas.isDotToken or not pragmas.isTagLit:
+    dest.addDotToken()
+    return
+  var n = pragmas
+  dest.addParLe(n.cursorTagId, n.info)
+  n = sub(n)
+  while n.hasMore:
+    if n.pragmaKind == RaisesP: skip n
+    else: dest.takeTree n
+  dest.addParRi()
 
 proc createBuiltinTypes*(bits: int): BuiltinTypes =
   # Positions are recorded while building rather than hardcoded, so the

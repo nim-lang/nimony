@@ -90,6 +90,7 @@ proc validatorTests*(overwrite: bool) =
       "src/hexer/duplifier.nim",
       "src/hexer/lengcgen.nim",
       "src/hexer/eraiser.nim",
+      "src/hexer/raiselowering.nim",
       "src/hexer/vtables_backend.nim",
       "src/hexer/iterinliner.nim",
       "src/hexer/constparams.nim"]),
