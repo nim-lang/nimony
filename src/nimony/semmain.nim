@@ -109,14 +109,23 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
           deps.addStrLit p, NoLineInfo
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   # AlwaysWrite, and declared as an `(output)` of the sem node in `deps.nim` —
-  # this file is the node's WITNESS that it ran. nifmake is purely mtime-based
-  # and takes the *freshest* output as the staleness reference precisely so a
-  # node can have one always-written output alongside its OnlyIfChanged ones;
-  # sem had none, so when a sem re-run produced byte-identical `.s.nif` and
-  # `.s.idx.nif` (both OnlyIfChanged, both keeping their old mtime) nothing on
-  # disk recorded that the run had happened. Any input touched after those old
-  # mtimes then re-fired the node forever — which is what `cachedconfigfile.txt`
-  # did to EVERY sem node after a `-d:` flag was flipped and flipped back.
+  # this file is the node's WITNESS that nimsem ran.
+  #
+  # To be clear about what this is NOT about: OnlyIfChanged works, and the
+  # clients of an unchanged module are never recompiled. Measured on the wedge
+  # below, every rebuild was `nimsem=134 hexer=0 lengc=0 cc=0` — nothing
+  # downstream of sem ever re-ran, and nothing here changes that.
+  #
+  # What it fixes is the sem stage re-running for nothing, forever. nifmake is
+  # mtime-based and reduces over the *freshest* output, so a node proves "I ran
+  # since my inputs last changed" by having at least one output that is always
+  # written. Sem had none — `.s.nif`, `.s.idx.nif` and `.s.deps.nif` were all
+  # OnlyIfChanged — so a re-run reproducing identical content left every output
+  # at its old mtime and nothing on disk recording that it had happened. Since
+  # `cachedconfigfile.txt` is an input of every sem node, once it was newer than
+  # those preserved mtimes (flip a `-d:` flag and flip it back) all 131
+  # modules re-semmed on every build, reproduced byte-identical output and
+  # changed nothing: 1.749s per no-op build, permanently, for that nimcache.
   #
   # Safe to write unconditionally because nothing in the build graph takes
   # `.s.deps.nif` as an `(input)`: only nimony itself reads it, by content, when

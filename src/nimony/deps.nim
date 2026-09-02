@@ -1649,11 +1649,17 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin, docMode)
     # ...and the `.s.deps.nif`, which nimsem writes AlwaysWrite (see
-    # `semmain.writeNewDepsFile`). It is the node's WITNESS: the other two
-    # outputs are OnlyIfChanged, so a re-run that reproduces identical content
-    # leaves no trace on disk and the node looks stale against any input touched
-    # since. nifmake reduces over the *freshest* output for exactly this reason,
-    # but only over outputs it was told about — hence declaring it here.
+    # `semmain.writeNewDepsFile`). It is the node's WITNESS that it ran: the
+    # other two outputs are OnlyIfChanged, so a re-run reproducing identical
+    # content leaves nothing on disk recording that it happened, and the node
+    # stays stale against any input touched since. nifmake reduces over the
+    # *freshest* output for exactly this reason, but only over the outputs it
+    # was told about — hence declaring it here.
+    #
+    # Nothing downstream is affected either way: an unchanged module still does
+    # not recompile its clients, because `.s.nif`/`.s.idx.nif` keep their
+    # OnlyIfChanged mtimes and nothing takes `.s.deps.nif` as an input. The only
+    # waste this removes is sem re-running to produce output it already had.
     b.withTree "output":
       b.addStrLit c.config.deps2File(v.files[0])
     # Outputs for cyclic group members:
