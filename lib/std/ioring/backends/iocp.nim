@@ -1,4 +1,5 @@
-# Windows IOCP backend — a proactor, selected with `-d:nimIoringIocp`.
+# Windows IOCP backend — a proactor, the Windows default (platform.nim;
+# `-d:nimIoringWsaPoll` selects the readiness backend instead).
 #
 # The ring's public contract is already completion-shaped (submit an op, get
 # resumed with its byte count); IOCP *is* that contract, so this backend has
@@ -346,9 +347,14 @@ when defined(windows):
         if op.kind == opAccept and a.acceptSock != InvalidSocket:
           discard wsClosesocket(a.acceptSock)
           a.acceptSock = InvalidSocket
-        # Aborted by closesocket (see "Cancellation"): the ring's cancellation
-        # result, not a generic failure. Internal holds the NTSTATUS.
-        if uint32(e.internal and 0xFFFFFFFF'u) == StatusCancelled:
+        # Closed under the op (see "Cancellation"): the ring's cancellation
+        # result, not a generic failure. The kernel's status is not the test —
+        # an aborted AcceptEx completes STATUS_CANCELLED but a WSARecv pending
+        # on the closed socket completes with a disconnect status (measured) —
+        # ownership is: `closeFd` drops the record before closesocket, and
+        # nothing else drops it.
+        if uint32(e.internal and 0xFFFFFFFF'u) == StatusCancelled or
+            iocpOwnerLane(op.fd) < 0:
           res = ECancelled
       complete(slotIdx, res)
       result = true
