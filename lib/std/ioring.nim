@@ -21,6 +21,9 @@ export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
 export types.readyEvents, types.toIoEvents, types.toEventMask
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
+when defined(windows):
+  when defined(nimIoringIocp):
+    import ./ioring/backends/iocp   # iocpOwnerLane / iocpWake — lane routing
 when defined(posix):
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
                               SockAddr, InAddr, TSa_Family
@@ -88,8 +91,23 @@ proc enqueueOp(op: OpContext) =
   ## `tryEnqueue` copies `op` by value and only consumes it on success
   ## (stripes.nim), so retrying with the same op is safe, and polling from a
   ## non-worker thread is the same pattern `waitCompletions` already uses.
-  while not gOpQueues[ioLane()].tryEnqueue(op):
-    discard backendRelays.poll(0)
+  when hasIocp:
+    # A socket belongs to the lane whose completion port it is bound to
+    # (backends/iocp.nim): its ops must be issued there. Stripes are
+    # lock-protected, so a foreign lane can enqueue; it then wakes the owner
+    # out of its completion wait. The first op for a socket claims it for the
+    # submitting lane.
+    var lane = ioLane()
+    if op.fd >= 0:
+      let owner = iocpOwnerLane(op.fd)
+      if owner >= 0: lane = owner
+    while not gOpQueues[lane].tryEnqueue(op):
+      discard backendRelays.poll(0)
+    if lane != ioLane():
+      iocpWake(lane)
+  else:
+    while not gOpQueues[ioLane()].tryEnqueue(op):
+      discard backendRelays.poll(0)
 
 proc submitNop*(cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
@@ -316,9 +334,16 @@ when defined(windows):
     discard wsClosesocket(socketOf(fd))
 
   proc closeFd*(fd: cint) =
-    ## Close `fd`: cancel this lane's in-flight ops on it (see
-    ## `cancelPendingOps`), then `closesocket`.
-    cancelPendingOps(fd)
+    ## Close `fd`. Readiness backend: cancel this lane's in-flight ops on it
+    ## (see `cancelPendingOps`), then `closesocket`. IOCP: the socket's ops live
+    ## on its owner lane, where `closesocket` completes them with
+    ## ERROR_OPERATION_ABORTED and the drain frees their slots — so only the
+    ## lane association is dropped here.
+    when hasIocp:
+      if backendRelays.forgetFd != nil:
+        backendRelays.forgetFd(fd)
+    else:
+      cancelPendingOps(fd)
     discard wsClosesocket(socketOf(fd))
 
   proc listenTcp*(port: uint16; backlog = 128): cint =
