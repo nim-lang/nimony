@@ -12,7 +12,7 @@ from std / osproc import execCmdEx
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
+import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser, vfs]
 import ".." / lib / nifreader as rd
 from ".." / lib / nifcoreparse import parse
 # qualified-only: the private-pool plugin-input copy must not fight the
@@ -439,18 +439,79 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
   if checkCode != 0: return
   exec quoteShell(v) & " --nimcache:" & quoteShell(checkCache) & " " & quoteShell(nf)
 
-proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
+proc compilePluginInto(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
   ## Build a plugin's `.nim` source as an executable. Plugins import
   ## `lib/plugins.nim` and are compiled by Nimony itself.
+  ##
+  ## The link target is a temporary sibling, never `exefile` itself, and it is
+  ## moved into place as one operation once it is complete. A plugin is shared
+  ## mutable state: every module that uses it is semmed by its own nimsem
+  ## process, nifmake runs those in parallel, and each one arrives here able to
+  ## build and to run the very same path. Linking straight onto it means a
+  ## process can be executing the file another one is writing, which fails as
+  ## ETXTBSY on one side ("Text file busy") and as a link error on the other.
   runValidatorOnPlugin(c, nf, exefile)
   let pluginCache = exefile & "_d"
   makePluginCache pluginCache
+  let staging = atomicTempPath(exefile)
   var cmd = pluginCompileCmd(c, pluginCache)
   cmd.add " -o:"
-  cmd.add quoteShell(exefile)
+  cmd.add quoteShell(staging)
   cmd.add " c "
   cmd.add quoteShell(nf)
   exec cmd
+  if not vfsMoveInto(staging, exefile):
+    vfsRemove staging   # no `.tmp.NNN` litter
+    quit "FAILURE: cannot install plugin executable " & exefile
+
+const
+  PluginLockSpins = 3000
+    ## ~30s at 10ms a spin. A plugin compile that outlasts this is assumed
+    ## dead rather than slow, and the lock is taken over — see `withPluginLock`.
+  PluginLockSleepMs = 10
+
+proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
+  ## Build `exefile` from `nf`, exactly once across all the nimsem processes
+  ## running concurrently under nifmake.
+  ##
+  ## Serialised on a lock directory, because `mkdir` either creates or fails —
+  ## it is the one filesystem operation that lets several processes agree on a
+  ## winner without a shared runtime. Serialising is not merely an optimisation
+  ## over N redundant compiles: they would all drive `exefile & "_d"` as their
+  ## nimcache at once, and two builds sharing one nimcache corrupt each other's
+  ## intermediate artefacts (observed as `undefined reference to strlit_...`
+  ## from the plugin's link step).
+  ##
+  ## The losers do not compile. They wait for the winner to publish and then
+  ## re-check: by then the plugin is normally up to date and there is nothing
+  ## left to do. A lock nobody releases (a crashed or killed compiler) is taken
+  ## over after `PluginLockSpins`, so a stale directory cannot wedge the build
+  ## permanently.
+  let lockDir = exefile & ".lock"
+  if vfsTryClaimDir(lockDir):
+    try:
+      compilePluginInto(c, info, nf, exefile)
+    finally:
+      vfsReleaseDir lockDir
+    return
+
+  var spins = 0
+  while spins < PluginLockSpins:
+    vfsSleepMs PluginLockSleepMs
+    inc spins
+    if not needsRecompile(nf, exefile):
+      # The winner published it; nothing to do.
+      return
+    if vfsTryClaimDir(lockDir):
+      try:
+        if needsRecompile(nf, exefile):
+          compilePluginInto(c, info, nf, exefile)
+      finally:
+        vfsReleaseDir lockDir
+      return
+  # Nobody released the lock. Build it anyway rather than fail: the move into
+  # place is atomic, so the worst case is a duplicated compile.
+  compilePluginInto(c, info, nf, exefile)
 
 proc writeFileIfChanged(file, content: string) {.canRaise.} =
   if os.fileExists(file) and readFile(file) == content:
