@@ -115,21 +115,13 @@ when defined(nimony):
     try: removeFile(path(p)) except: discard
   proc moveIntoImpl(src, dst: string): bool =
     try: tryMoveFSObject(src, dst, false) except: false
-  proc claimDirImpl(d: string): bool =
-    try: tryCreateFinalDir(path(d)) == Success except: false
-  proc releaseDirImpl(d: string) =
-    try: discard tryRemoveFinalDir(path(d)) except: discard
-  when defined(windows):
-    import std / windows / winlean
-    proc sleepImpl(ms: int) = winlean.sleep(DWORD(ms))
-  else:
-    import std / posix / posix
-    proc sleepImpl(ms: int) =
-      var req: Timespec = default(Timespec)
-      var rem: Timespec = default(Timespec)
-      req.tv_sec = posix.Time(ms div 1000)
-      req.tv_nsec = clong((ms mod 1000) * 1_000_000)
-      discard nanosleep(req, rem)
+  proc removeTreeImpl(d: string) =
+    try:
+      for it in walkDir(path(d)):
+        if it.kind == pcDir: removeTreeImpl($it.path)
+        else: discard tryRemoveFile(it.path)
+      discard tryRemoveFinalDir(path(d))
+    except: discard
   proc readBytes(p: string): string =
     try: readFile(p) except: ""
 
@@ -160,11 +152,8 @@ else:
   proc rmPath(path: string) = removeFile(path)
   proc moveIntoImpl(src, dst: string): bool =
     try: moveFile(src, dst); true except CatchableError: false
-  proc claimDirImpl(d: string): bool =
-    try: not existsOrCreateDir(d) except CatchableError: false
-  proc releaseDirImpl(d: string) =
+  proc removeTreeImpl(d: string) =
     try: removeDir(d) except CatchableError: discard
-  proc sleepImpl(ms: int) = os.sleep(ms)
   proc readBytes(p: string): string = readFile(p)
   proc writeBytes(p, c: string) =
     let tmp = atomicTempPath(p)
@@ -190,28 +179,11 @@ proc vfsMoveInto*(src, dst: string): bool =
   ## writing one that somebody else is executing.
   moveIntoImpl(src, dst)
 
-proc vfsTryClaimDir*(dir: string): bool =
-  ## Create `dir`, returning true ONLY in the process that created it.
-  ##
-  ## `mkdir` is the primitive here because it is the one filesystem call that
-  ## both creates and reports "somebody beat me to it", atomically, with no
-  ## shared runtime between the processes. That makes a directory the cheapest
-  ## inter-process lock available to a compiler that fans out into independent
-  ## tool processes. Pair it with `vfsReleaseDir`.
-  claimDirImpl(dir)
-
-proc vfsSleepMs*(ms: int) =
-  ## Portable millisecond sleep, for backing off while another process holds a
-  ## lock taken with `vfsTryClaimDir`. Nimony's stdlib has no `os.sleep`, so
-  ## this is `nanosleep` there and `Sleep` on Windows — the same idiom
-  ## `std/osproc` already uses for its own timeout waits.
-  sleepImpl(ms)
-
-proc vfsReleaseDir*(dir: string) =
-  ## Drop a lock taken with `vfsTryClaimDir`. Best effort: failing to release
-  ## must never fail a build, and a lock that outlives its owner is expected to
-  ## be broken by a timeout on the waiting side rather than by cleanup here.
-  releaseDirImpl(dir)
+proc vfsRemoveTree*(dir: string) =
+  ## Remove `dir` and everything below it. Best effort: it exists to clean up
+  ## a scratch directory this process created for itself, and failing to do
+  ## so must never fail a build.
+  removeTreeImpl(dir)
 
 # --- relays ---------------------------------------------------------------
 #

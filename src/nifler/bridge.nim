@@ -237,6 +237,37 @@ proc splitIdentDefName(n: PNode): IdentDefName =
 
 proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false)
 
+template withDepsStream(c: var TranslationContext; body: untyped) =
+  ## Run `body` with `c.b` pointing at the deps file instead of the parsed
+  ## output, with line infos off and deps emission disabled so that nested
+  ## `toNif` calls (e.g. of a `when` condition) write plain trees.
+  let oldLineInfoEnabled = c.lineInfoEnabled
+  c.lineInfoEnabled = false
+  let oldDepsEnabled = c.depsEnabled
+  swap c.b, c.deps
+  c.depsEnabled = false
+  body
+  c.depsEnabled = oldDepsEnabled
+  swap c.b, c.deps
+  c.lineInfoEnabled = oldLineInfoEnabled
+
+proc emitWhenMarker(c: var TranslationContext) =
+  ## Conditional dependency: emit `(when COND...)` so the dep analyzer can
+  ## evaluate the conditions against the active set of `defined(...)` symbols
+  ## and skip the entry when the branch is statically dead. Nothing is
+  ## emitted outside of a `when`.
+  if c.whenCondStack.len > 0:
+    c.b.addTree "when"
+    for entry in c.whenCondStack:
+      if entry.negated:
+        c.b.addTree "prefix"
+        c.b.addIdent "not"
+        toNif(entry.cond, nil, c)
+        c.b.endTree()
+      else:
+        toNif(entry.cond, nil, c)
+    c.b.endTree()
+
 proc toVarTuple(v: PNode, n: PNode; c: var TranslationContext) =
   c.b.addTree(UnpacktupL)
   for i in 0..<v.len-1: # ignores typedesc
@@ -722,35 +753,36 @@ proc toNif*(n, parent: PNode; c: var TranslationContext; allowEmpty = false) =
     c.b.endTree()
 
     if c.depsEnabled:
-      let oldLineInfoEnabled = c.lineInfoEnabled
-      c.lineInfoEnabled = false
-      let oldDepsEnabled = c.depsEnabled
-      swap c.b, c.deps
-      c.depsEnabled = false
-
-      c.b.addTree(nodeKindTranslation(n.kind))
-      relLineInfo(n, nil, c)
-      if c.whenCondStack.len > 0:
-        # Conditional dependency: emit `(when COND...)` so the dep analyzer
-        # can evaluate the condition against the active set of `defined(...)`
-        # symbols and skip the import when the branch is statically dead.
-        c.b.addTree "when"
-        for entry in c.whenCondStack:
-          if entry.negated:
-            c.b.addTree "prefix"
-            c.b.addIdent "not"
-            toNif(entry.cond, nil, c)
-            c.b.endTree()
-          else:
-            toNif(entry.cond, nil, c)
+      withDepsStream c:
+        c.b.addTree(nodeKindTranslation(n.kind))
+        relLineInfo(n, nil, c)
+        emitWhenMarker c
+        for i in 0..<n.len:
+          toNif(n[i], nil, c)
         c.b.endTree()
-      for i in 0..<n.len:
-        toNif(n[i], nil, c)
-      c.b.endTree()
+  of nkPragma:
+    c.b.addTree(nodeKindTranslation(n.kind))
+    relLineInfo(n, parent, c)
+    attachDocComment(n, c)
+    for i in 0..<n.len:
+      toNif(n[i], n, c)
+    c.b.endTree()
 
-      c.depsEnabled = oldDepsEnabled
-      swap c.b, c.deps
-      c.lineInfoEnabled = oldLineInfoEnabled
+    if c.depsEnabled:
+      # `{.plugin: "name".}` names a program the build has to produce before
+      # this module -- or any module importing it -- can be semchecked. Listed
+      # in the deps file so the dependency scanner can make the plugin a node
+      # of the build graph, the way it does for imports.
+      for i in 0..<n.len:
+        let it = n[i]
+        if it.kind == nkExprColonExpr and it.len == 2 and
+            it[0].kind == nkIdent and it[0].ident.s == "plugin" and
+            it[1].kind in {nkStrLit..nkTripleStrLit}:
+          withDepsStream c:
+            c.b.addTree "plugin"
+            emitWhenMarker c
+            c.b.addStrLit it[1].strVal
+            c.b.endTree()
   of nkCallKinds:
     let oldDepsEnabled = c.depsEnabled
     if n.len > 0 and n[0].kind == nkIdent and n[0].ident.s == "runnableExamples":
