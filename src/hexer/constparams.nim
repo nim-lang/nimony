@@ -46,9 +46,54 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
     {.ensuresNif: addedAny(dest).}
 
-proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
-  result = sizeof.passByConstRef(typ, pragmas, c.ptrSize, c.sizeofCache) or
+proc passByConstRef(typ, pragmas: Cursor; ptrSize: int;
+                    cache: var SizeofCache): bool =
+  result = sizeof.passByConstRef(typ, pragmas, ptrSize, cache) or
            typeprops.isInheritable(typ, false)
+
+proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
+  result = passByConstRef(typ, pragmas, c.ptrSize, c.sizeofCache)
+
+type
+  ArgRole* = enum
+    argPlain        ## nothing to do here beyond walking into it
+    argConstRef     ## has to arrive as an address
+    argCompileTime  ## `typedesc`/`static`: a value with no runtime existence
+
+proc nextArgRole*(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): ArgRole =
+  ## Classify the next actual against the formal parameter list, advancing
+  ## `fnType` past the formal it consumed.
+  ##
+  ## Answers "how does this actual reach the callee?" — and `argConstRef` is
+  ## the interesting one: the callee gets an ADDRESS, so the actual needs
+  ## storage to have an address of.
+  ##
+  ## Two walkers need this and must agree exactly, because both walk formals
+  ## and actuals in step: `trCall` below, and `coro_transform`'s lifetime
+  ## extension, which asks the same question a pass earlier to find out what a
+  ## coroutine has to keep in its frame. A rule one of them has and the other
+  ## lacks does not fail — it silently pairs an argument with the wrong
+  ## parameter from that point on. So the rules live here once: a `varargs`
+  ## formal serves every remaining actual and must not be advanced past; a
+  ## closure's environment actual has no formal at all; and the const-ref
+  ## question is asked before the compile-time one. What the two walkers *do*
+  ## with a role is where they are allowed to differ.
+  if not fnType.hasMore: return argPlain
+  assert fnType.isTagLit
+  let previousFormalParam = fnType
+  let param = takeLocal(fnType, SkipFinalParRi)
+  let pk = param.typ.typeKind
+  if pk in {MutT, OutT, LentT}:
+    result = argPlain
+  elif pk == VarargsT:
+    fnType = previousFormalParam
+    result = argPlain
+  elif passByConstRef(param.typ, param.pragmas, ptrSize, cache):
+    result = argConstRef
+  elif pk in {TypedescT, StaticT}:
+    result = argCompileTime
+  else:
+    result = argPlain
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   if not params.isTagLit: return
@@ -94,10 +139,25 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.sizeofCache = move(c2.sizeofCache)
   c.needsXelim = c2.needsXelim
 
+proc yieldsAddress(n: Cursor): bool =
+  ## Does this expression already EVALUATE to an address? Not the same question
+  ## as "is its head an `addr`": `coro_transform`'s lifetime extension hands us
+  ## `(expr (stmts (var tmp ...)) (haddr tmp))`, whose value is an address even
+  ## though the tree it sits in is an `expr`.
+  var n = n
+  while n.exprKind == ExprX:
+    inc n
+    while not isLastSon(n): skip n
+  result = n.exprKind in {AddrX, HaddrX}
+
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  assert n.exprKind notin {AddrX, HaddrX}
-  if constructsValue(n):
+  if yieldsAddress(n):
+    # Already carries an address: this call is inside a coroutine, and
+    # `coro_transform` gave the argument storage in the FRAME rather than let
+    # us put it on a state proc's stack, which dies at the next suspension.
+    tr c, dest, n
+  elif constructsValue(n):
     # We cannot take the address of a literal so we have to copy it to a
     # temporary first:
     let argType = getType(c.typeCache, n)
@@ -230,26 +290,10 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetExpectsTupl
 
     fnType = sub(fnType) # peek only, never left
     while n.hasMore:
-      let previousFormalParam = fnType
-      if not fnType.hasMore:
-        tr c, dest, n # can happen for closure parameter
-      else:
-        assert fnType.isTagLit
-        let param = takeLocal(fnType, SkipFinalParRi)
-        let pk = param.typ.typeKind
-        if pk in {MutT, OutT, LentT}:
-          tr c, dest, n
-        elif pk == VarargsT:
-          # do not advance formal parameter:
-          fnType = previousFormalParam
-          tr c, dest, n
-        elif passByConstRef(c, param.typ, param.pragmas):
-          trConstRef c, dest, n
-        elif pk in {TypedescT, StaticT}:
-          # do not produce any code for this as it's a compile-time value:
-          skip n
-        else:
-          tr c, dest, n
+      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
+      of argPlain: tr c, dest, n
+      of argConstRef: trConstRef c, dest, n
+      of argCompileTime: skip n  # a compile-time value produces no code
     dest.addParRi(n.endInfo)
   if needsTuple:
     dest.addParRi() # TupconstrX
