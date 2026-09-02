@@ -4,10 +4,10 @@ import std/assertions
 
 type
   Foo*[T] = concept
-    func foo(x: T): T
+    func foo(x: Self): T
 
   Bar*[T] = concept of Foo[T]
-    func bar(x: T): T
+    func bar(x: Self): T
 
 func foo*(x: int): int = x
 func bar*(x: int): int = x

@@ -844,6 +844,17 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   var bindings = m.inferred
   for selfSym in conceptSelfSyms(body, routine):
     bindings[selfSym] = a
+  if not conceptRoutineUsesSelf(body, routine):
+    # `Self` is what ties a requirement to the checked type. A requirement that
+    # never names it may still be checked — but only once every typevar it names
+    # is bound, which an earlier requirement does under the "first use infers
+    # `T`" rule. While one is still open nothing relates the requirement to `a`,
+    # and candidate matching would bind that typevar to whatever type the
+    # candidate happens to name, so *every* type would satisfy the concept
+    # (issue #2430).
+    for tv in conceptRoutineTypevars(body, routine):
+      if not bindings.hasKey(tv):
+        return false
   var argBuf = createTokenBuf(32)
   var retBuf = createTokenBuf(16)
   substituteTypevars(retBuf, asRoutine(routine).retType, bindings)

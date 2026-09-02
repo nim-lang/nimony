@@ -68,24 +68,6 @@ proc collectSelfSymsInType(typ: Cursor; headerSelf: SymId; result: var seq[SymId
   else:
     discard
 
-proc conceptSelfSyms*(body: Cursor; routine: Cursor): seq[SymId] =
-  ## Every `Self` sym a requirement signature refers to, plus the header's.
-  result = @[]
-  let headerSelf = conceptSelfSymFromSlot(body)
-  var n = routine
-  skipToParams n
-  if n.substructureKind == ParamsU:
-    # `into` advances `n` past the params subtree, landing on the return type.
-    n.into ParamsU:
-      while n.hasMore:
-        let param = takeLocal(n, SkipFinalParRi)
-        collectSelfSymsInType(param.typ, headerSelf, result)
-  else:
-    skip n # void params slot
-  collectSelfSymsInType(n, headerSelf, result) # n now at the return type
-  if headerSelf != SymId(0) and headerSelf notin result:
-    result.add headerSelf
-
 proc collectOpenTypevars*(typ: Cursor; result: var HashSet[SymId]) =
   ## Every typevar symbol referenced inside a type tree.
   var typ = typ
@@ -100,6 +82,39 @@ proc collectOpenTypevars*(typ: Cursor; result: var HashSet[SymId]) =
   else:
     discard
 
+proc scanSignature(body: Cursor; routine: Cursor;
+                   selfSyms: var seq[SymId]; openTvs: var HashSet[SymId]) =
+  ## One walk over a requirement's parameter types and its return type,
+  ## collecting the `Self` syms it names and every typevar it names.
+  let headerSelf = conceptSelfSymFromSlot(body)
+  var n = routine
+  skipToParams n
+  if n.substructureKind == ParamsU:
+    # `into` advances `n` past the params subtree, landing on the return type.
+    n.into ParamsU:
+      while n.hasMore:
+        let param = takeLocal(n, SkipFinalParRi)
+        collectSelfSymsInType(param.typ, headerSelf, selfSyms)
+        collectOpenTypevars(param.typ, openTvs)
+  else:
+    skip n # void params slot
+  collectSelfSymsInType(n, headerSelf, selfSyms) # n now at the return type
+  collectOpenTypevars(n, openTvs)
+
+proc conceptSelfSymsInSignature(body: Cursor; routine: Cursor): seq[SymId] =
+  ## The `Self` syms the requirement's own signature refers to. Empty means the
+  ## requirement says nothing about the checked type.
+  result = @[]
+  var openTvs = initHashSet[SymId]()
+  scanSignature(body, routine, result, openTvs)
+
+proc conceptSelfSyms*(body: Cursor; routine: Cursor): seq[SymId] =
+  ## Every `Self` sym a requirement signature refers to, plus the header's.
+  result = conceptSelfSymsInSignature(body, routine)
+  let headerSelf = conceptSelfSymFromSlot(body)
+  if headerSelf != SymId(0) and headerSelf notin result:
+    result.add headerSelf
+
 proc conceptRequirementOwnTypevars*(routine: Cursor): seq[SymId] =
   ## The generic parameters a requirement declares for itself, as in
   ## `proc sample[G: HasNext](s: Self; g: var G)`.
@@ -113,6 +128,25 @@ proc conceptRequirementOwnTypevars*(routine: Cursor): seq[SymId] =
         if name.isSymbolDef:
           result.add name.symId
       skip tv
+
+proc conceptRoutineUsesSelf*(body: Cursor; routine: Cursor): bool {.inline.} =
+  ## Does the requirement's signature mention `Self`? That is what ties a
+  ## requirement to the type being checked; one that does not says nothing
+  ## about it.
+  conceptSelfSymsInSignature(body, routine).len > 0
+
+proc conceptRoutineTypevars*(body: Cursor; routine: Cursor): seq[SymId] =
+  ## The typevars a requirement's signature names, minus the generic parameters
+  ## the requirement declares for itself: those are universally quantified and
+  ## are never inferred. What is left are the concept's container parameters and
+  ## an enclosing generic's.
+  var selfSyms: seq[SymId] = @[]
+  var open = initHashSet[SymId]()
+  scanSignature(body, routine, selfSyms, open)
+  for own in conceptRequirementOwnTypevars(routine):
+    open.excl own
+  result = @[]
+  for tv in open: result.add tv
 
 proc substituteTypevars*(dest: var TokenBuf; typ: Cursor; bindings: Table[SymId, Cursor]) =
   ## Copies the type tree `typ` into `dest`, replacing every symbol that has a
