@@ -111,9 +111,9 @@ iterator values*(t: StringTableRef): string =
 
 proc myhash(mode: StringTableMode, key: string): Hash =
   case mode
-  of modeCaseSensitive: result = hashes.hash(key)
-  of modeCaseInsensitive: result = hashes.hashIgnoreCase(key)
-  of modeStyleInsensitive: result = hashes.hashIgnoreStyle(key)
+  of modeCaseSensitive: result = hash(key)
+  of modeCaseInsensitive: result = hashIgnoreCase(key)
+  of modeStyleInsensitive: result = hashIgnoreStyle(key)
 
 proc myhash(t: StringTableRef, key: string): Hash =
   result = myhash(t.mode, key)

@@ -40,7 +40,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / finalir / [finalir, finalir_model]
-import passes, defaultvalues, constparams
+import passes, defaultvalues, constparams, duplifier
 include ".." / nimony / nif_annotations
 
 ## Note: `ContinuationName` lives in `builtintypes` (re-imported via the
@@ -190,11 +190,10 @@ type
       ## Continues the outer pipeline's xelim temp counter through the
       ## nested per-coroutine Final-IR runs (treIteratorBody) — restarting at
       ## 0 re-mints `x.N SymIds that collide with still-live outer temps.
-    nextRefTemp*: int
-      ## The same, for the const-ref temporaries `hoistConstRefTemps` mints
-      ## ahead of the transform. One counter for the whole module: two
-      ## coroutines each starting at 0 would name two locals alike.
     typeCache*: TypeCache
+    sizeofCache*: SizeofCache
+      ## Memoizes the type sizes `nextArgRole` asks about while `trGoto`
+      ## decides which actuals have to arrive as an address.
     thisModuleSuffix*: string
     procStack*: seq[SymId]
     currentProc*: ProcContext
@@ -1127,9 +1126,9 @@ proc markAddressTaken(c: var Context; n: Cursor) =
   ## state proc happens to contain the `addr`. The pointer can be stored
   ## anywhere and read in a later state, i.e. after that proc returned, and the
   ## `def != use` rule below cannot see it: taking an address is not a use in a
-  ## different state. This is what keeps the const-ref temporaries
-  ## `hoistConstRefTemps` mints alive — the `openArray` built from one of them
-  ## outlives the state that built it.
+  ## different state. It is also the rule the lifetime extension below rests
+  ## on: the local it gives an escaping temporary is worth nothing unless the
+  ## `(haddr)` next to it pins that local to the frame.
   ##
   ## Derefs are not followed: `addr p[]` is an address of what `p` points at,
   ## which is not `p`'s own storage and says nothing about where `p` must live.
@@ -1229,6 +1228,102 @@ proc emitLabel*(dest: var TokenBuf; label: int; info: NifLineInfo) =
   dest.addParRi()
 
 proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor)
+
+# ---------------------------------------------------------------------
+# Lifetime extension for escaping data
+# ---------------------------------------------------------------------
+#
+# A state proc is not the coroutine's activation record. It runs, it returns,
+# and its stack is gone — while the FRAME, and everything the frame points at,
+# has to survive until the coroutine is resumed and, for a `.passive` callee,
+# until that callee has run to completion. So the coroutine has exactly one
+# kind of storage that outlives a state: the frame.
+#
+# `escapingLocals` below decides which NAMED locals go there — the `def != use`
+# rule, plus `markAddressTaken` for a local a pointer is kept to. Neither rule
+# can see data that has no name at all, and a value that is only ever an
+# argument does not get one until much later: `constparams.trConstRef` gives a
+# literal or a constructor a temporary to take the address of, and by then the
+# body has been cut and that temporary is a local of ONE state proc. The
+# pointer taken from it lives on — in an `openArray` in the frame, in the
+# `.passive` callee's own frame — so the length arrives intact and the data
+# pointer points into a dead stack slot.
+#
+# The fix is to name that data here, while there is still one body to name it
+# in: an actual that will reach its callee as an address gets a local of the
+# coroutine, `markAddressTaken` pins the local to the frame, and the later
+# `trConstRef` finds an argument that already has an address and leaves it
+# alone. `nextArgRole` is the shared classifier, so the two passes cannot
+# disagree about which actual goes with which formal.
+#
+# This rides on `trGoto`'s walk rather than adding a pass of its own: `trGoto`
+# already rewrites the whole body, already maintains the type cache this needs,
+# and runs right before `escapingLocals` — which is precisely the window in
+# which "give it a name" is still enough to mean "put it in the frame".
+
+proc trGotoValue(c: var Context; dest: var TokenBuf; n: var Cursor)
+
+proc extendLifetime(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `n` is an actual the callee receives as an ADDRESS. If it has no storage
+  ## of its own to take an address of, give it some — as a local, which the
+  ## `(haddr)` below then pins to the frame.
+  if not constructsValue(n):
+    # An lvalue already has storage of its own, and whether THAT storage is
+    # durable enough is the ordinary escape question `escapingLocals` answers:
+    # a borrow which outlives the call is one the caller kept, and keeping it
+    # means an `addr` that `markAddressTaken` can see — `toOpenArray` is
+    # `.inline`, so the `(haddr local)` inside it is in this body already.
+    trGotoValue c, dest, n
+    return
+  let info = n.info
+  let argType = getType(c.typeCache, n)
+  let symId = pool.syms.getOrIncl("`coroTemp." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  # The `(expr (stmts ...) v)` shape rather than a statement hoisted in front
+  # of the enclosing one: it keeps the value's evaluation exactly where it was,
+  # which matters as soon as a second argument of the same call has side
+  # effects. `xelim_final` flattens it at the end of the pipeline, the same way
+  # it flattens the temporaries `constparams` and `vtables` emit.
+  copyIntoKind dest, ExprX, info:
+    copyIntoKind dest, StmtsS, info:
+      copyIntoKind dest, VarS, info:
+        addSymDef dest, symId, info
+        dest.addEmpty2 info # export marker, pragmas
+        copyTree dest, argType
+        c.typeCache.registerLocal(symId, VarY, argType)
+        trGotoValue c, dest, n # the value
+    copyIntoKind dest, HaddrX, info:
+      dest.addSymUse symId, info
+
+proc trGotoCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n.childCursor))
+  if not fnType.isParamsTag:
+    # Nothing with formal parameters to walk against; just recurse.
+    copyInto dest, n:
+      while n.hasMore: trGotoValue c, dest, n
+    return
+  dest.addParLe(n.cursorTagId, n.info)
+  n.into:
+    trGotoValue c, dest, n # the `fn`
+    fnType = sub(fnType)   # peek only, never left
+    while n.hasMore:
+      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
+      of argConstRef: extendLifetime c, dest, n
+      of argPlain, argCompileTime: trGotoValue c, dest, n
+  dest.addParRi(n.endInfo)
+
+proc trGotoValue(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## Copy an expression, extending the lifetime of every escaping temporary
+  ## inside it. Used wherever `trGoto` would otherwise `takeTree` a value.
+  case n.kind
+  of TagLit:
+    if n.exprKind in CallKinds:
+      trGotoCall c, dest, n
+    else:
+      copyInto dest, n:
+        while n.hasMore: trGotoValue c, dest, n
+  else:
+    takeTree dest, n
 
 proc emitSymJump(dest: var TokenBuf; label: SymId; info: NifLineInfo) =
   dest.addParLe(JmpS, info)
@@ -1459,8 +1554,8 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var addLabel = false
     takeInto dest, n:
       addLabel = c.hooks.isPassiveCall(c, n)
-      dest.takeTree n
-      dest.takeTree n
+      trGotoValue c, dest, n
+      trGotoValue c, dest, n
     if addLabel:
       emitLabel dest, c.currentProc.labelCounter, info
       inc c.currentProc.labelCounter
@@ -1504,7 +1599,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc c.currentProc.labelCounter
         dest.copyIntoKind IfS, info:
           dest.copyIntoKind ElifU, info:
-            dest.takeTree n # cond
+            trGotoValue c, dest, n # cond
             dest.copyIntoKind StmtsS, info:
               emitJump dest, lthen, info
         var thenCur = n
@@ -1532,7 +1627,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       dest.addParLe(n.cursorTagId, info)
       n.into:
-        dest.takeTree n                # condition: an expression, nothing to do
+        trGotoValue c, dest, n         # condition
         trGotoScoped c, dest, n        # then
         if n.hasMore:
           if n.isTagLit: trGotoScoped c, dest, n   # else
@@ -1543,12 +1638,17 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let sk = n.stmtKind
     let ek = n.exprKind
     if sk == YldS or c.hooks.isPassiveCall(c, n) or ek == SuspendX:
-      takeTree dest, n
+      trGotoValue c, dest, n
       emitLabel dest, c.currentProc.labelCounter, info
       inc c.currentProc.labelCounter
     else:
       case n.kind
       of TagLit:
+        if n.exprKind in CallKinds:
+          # Also reached for a `(call ...)` in STATEMENT position: same tree,
+          # same actuals, and its arguments escape the same way.
+          trGotoCall c, dest, n
+          return
         case n.stmtKind
         of LocalDecls - {ResultS}:
           let sym = n.childCursor.symId
@@ -1562,7 +1662,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             # dont change type, tr will traverse it again later
             dest.takeTree n
             addLabel = c.hooks.isPassiveCall(c, n)
-            dest.takeTree n
+            trGotoValue c, dest, n
           if addLabel:
             emitLabel dest, c.currentProc.labelCounter, info
             inc c.currentProc.labelCounter
@@ -1596,7 +1696,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             var hasElse = false
             dest.addParLe(n.cursorTagId, info)      # the dispatch: jumps only
             n.into:
-              dest.takeTree n                       # selector
+              trGotoValue c, dest, n                # selector
               while n.hasMore:
                 let subK = n.substructureKind
                 if subK in {OfU, ElseU}:
@@ -1636,7 +1736,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           else:
             dest.addParLe(n.cursorTagId, info)
             n.into:
-              dest.takeTree n                       # selector
+              trGotoValue c, dest, n                # selector
               while n.hasMore:
                 let subK = n.substructureKind
                 if subK in {OfU, ElseU}:
@@ -1835,14 +1935,8 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   wrapper.addParRi()
   # `c.ptrSize` IS the target width; the 0 that stood here was invisible only
   # while the type cache ignored what it was handed.
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "constrefhoist",
+  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "finalir",
                       c.ptrSize * 8, nextTemp = c.nextTemp)
-  # Before the body is cut into states: give every const-ref argument that has
-  # no address of its own a named local to borrow one from, so the cut lifts it
-  # into the frame instead of leaving it on a state proc's stack. See the note
-  # on `hoistConstRefTemps`.
-  hoistConstRefTemps(pass, c.ptrSize, c.nextRefTemp)
-  pass.prepareForNext("finalir")
   toFinalIr(pass)
   c.nextTemp = pass.nextTemp
   block extractBody:

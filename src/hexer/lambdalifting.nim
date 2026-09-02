@@ -1886,7 +1886,6 @@ proc elimLambdas*(pass: var Pass) =
     continuationProcImpl: coro_transform.generateContinuationProcImpl(),
     hooks: lambdaHooks(),
     nextTemp: pass.nextTemp,        # nested Final-IR runs continue the xelim counter
-    nextRefTemp: pass.nextRefTemp,
     ptrSize: pass.bits div 8
   )
   c.typeCache.openScope()
@@ -1928,7 +1927,6 @@ proc elimLambdas*(pass: var Pass) =
       pass.dest.add stmtsBuf
       pass.dest.addParRi(n2.endInfo)
     pass.nextTemp = c.coroCtx.nextTemp
-    pass.nextRefTemp = c.coroCtx.nextRefTemp
     c.typeCache.closeScope()
 
   #echo "PRODUCED ", toString(pass.dest, false)

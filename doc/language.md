@@ -3650,6 +3650,22 @@ type
 
 A concept is a pure compile-time mechanism that is required to type-check generic code, it is not a runtime mechanism! It is **not** comparable to a C#/Java interface.
 
+### Satisfying a concept
+
+A type `A` satisfies a concept when every requirement, read as a call, resolves for `A`. For each requirement, `Self` is replaced by `A` in the signature and the resulting call is resolved with the ordinary overload resolution rules: implicit conversions and subtyping apply, and a generic candidate only counts if `A` meets the candidate's own constraints. The candidate's result type must then be assignable to the requirement's return type. This is exactly the check that instantiating a generic body with `A` performs later, so a type that satisfies a concept can be used with every generic that requires it.
+
+Some consequences of this rule:
+
+- `int8` satisfies `Stringable` even though `$` is only declared for `int64`: the call `$(x)` widens the argument.
+- A `var Self` parameter is only met by a candidate that takes a `var` parameter, and a plain `Self` parameter cannot be passed to a `var` parameter.
+- A `func` requirement is met by a `func`, by a `proc` marked `noSideEffect`, or by a `template`; a `proc` requirement is met by any of these plus a `proc`.
+- An `iterator` requirement is only met by an iterator.
+- If several candidates match the call, the requirement is satisfied; whether the call is ambiguous is decided at instantiation.
+- A candidate whose own constraint is the concept being checked, such as `proc <=[T: Orderable](x, y: T)` while checking `Orderable`, does not count: a type satisfies a concept only through a derivation that does not assume the conclusion.
+- Candidates are looked up by name where a call would find them: in the module that declares the concept, in the module that declares the checked type (operations are attached to their type by living in its module), and in every module visible where the check happens.
+
+A concept that inherits with `concept of` adds its parents' requirements to its own; all of them are checked the same way.
+
 ### Atoms and containers
 
 Concepts come in two forms: Atoms and containers. A container is a generic concept like `Iterable[T]`, an atom always lacks any kind of generic parameter (as in `Comparable`).

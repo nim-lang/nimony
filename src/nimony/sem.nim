@@ -4883,9 +4883,6 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
           isZero = true
         if not isZero:
           dest.addSubtree first
-      # skip the index type information in case we re-semcheck this node
-      while it.n.hasMore:
-        skip it.n
     of UarrayT:
       it.typ = typ
       inc it.typ
@@ -4899,6 +4896,11 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
        DistinctT, ItertypeT, RangetypeT, AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT,
        PointerT, OrdinalT:
       c.buildErr dest, lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
+    # Skip the index type information in case we re-semcheck this node: a
+    # generic body's `array` index may instantiate to a different lhs type,
+    # so this must happen regardless of the branch taken above.
+    while it.n.hasMore:
+      skip it.n
   commonType c, dest, it, beforeExpr, expected
 
 proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item) =

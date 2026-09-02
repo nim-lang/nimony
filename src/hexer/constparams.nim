@@ -55,23 +55,29 @@ proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
   result = passByConstRef(typ, pragmas, c.ptrSize, c.sizeofCache)
 
 type
-  ArgRole = enum
+  ArgRole* = enum
     argPlain        ## nothing to do here beyond walking into it
     argConstRef     ## has to arrive as an address
     argCompileTime  ## `typedesc`/`static`: a value with no runtime existence
 
-proc nextArgRole(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): ArgRole =
+proc nextArgRole*(fnType: var Cursor; ptrSize: int; cache: var SizeofCache): ArgRole =
   ## Classify the next actual against the formal parameter list, advancing
   ## `fnType` past the formal it consumed.
   ##
-  ## Two walkers need this — `trCall`, and `hoistCall` at the end of this file
-  ## — and they must agree exactly, because they walk formals and actuals in
-  ## step: a rule one of them has and the other lacks does not fail, it silently
-  ## pairs an argument with the wrong parameter from that point on. So the rules
-  ## live here once. They are: a `varargs` formal serves every remaining actual
-  ## and must not be advanced past; a closure's environment actual has no formal
-  ## at all; and the const-ref question is asked before the compile-time one.
-  ## What the two walkers *do* with a role is where they are allowed to differ.
+  ## Answers "how does this actual reach the callee?" — and `argConstRef` is
+  ## the interesting one: the callee gets an ADDRESS, so the actual needs
+  ## storage to have an address of.
+  ##
+  ## Two walkers need this and must agree exactly, because both walk formals
+  ## and actuals in step: `trCall` below, and `coro_transform`'s lifetime
+  ## extension, which asks the same question a pass earlier to find out what a
+  ## coroutine has to keep in its frame. A rule one of them has and the other
+  ## lacks does not fail — it silently pairs an argument with the wrong
+  ## parameter from that point on. So the rules live here once: a `varargs`
+  ## formal serves every remaining actual and must not be advanced past; a
+  ## closure's environment actual has no formal at all; and the const-ref
+  ## question is asked before the compile-time one. What the two walkers *do*
+  ## with a role is where they are allowed to differ.
   if not fnType.hasMore: return argPlain
   assert fnType.isTagLit
   let previousFormalParam = fnType
@@ -133,13 +139,23 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.sizeofCache = move(c2.sizeofCache)
   c.needsXelim = c2.needsXelim
 
+proc yieldsAddress(n: Cursor): bool =
+  ## Does this expression already EVALUATE to an address? Not the same question
+  ## as "is its head an `addr`": `coro_transform`'s lifetime extension hands us
+  ## `(expr (stmts (var tmp ...)) (haddr tmp))`, whose value is an address even
+  ## though the tree it sits in is an `expr`.
+  var n = n
+  while n.exprKind == ExprX:
+    inc n
+    while not isLastSon(n): skip n
+  result = n.exprKind in {AddrX, HaddrX}
+
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  if n.exprKind in {AddrX, HaddrX}:
-    # Already carries an address: `hoistConstRefTemps` got here first, because
-    # this call is inside a coroutine and the temporary had to become a frame
-    # field rather than a state proc's local. See the note at the end of this
-    # file.
+  if yieldsAddress(n):
+    # Already carries an address: this call is inside a coroutine, and
+    # `coro_transform` gave the argument storage in the FRAME rather than let
+    # us put it on a state proc's stack, which dies at the next suspension.
     tr c, dest, n
   elif constructsValue(n):
     # We cannot take the address of a literal so we have to copy it to a
@@ -558,157 +574,3 @@ proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool)
   tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
   needsXelim = c.needsXelim
-
-# ------------------------------------------------------------------------
-# Pre-CPS hoisting of const-ref temporaries
-# ------------------------------------------------------------------------
-#
-# `trConstRef` gives an argument that has no address of its own — a literal, a
-# constructor — a temporary to borrow one from, and that temporary is a local
-# of the routine the call appears in. Which is right, until `cps` CUTS that
-# routine into one proc per state: the temporary then belongs to a single
-# state proc, while the pointer taken from it lives in the coroutine frame and
-# is read after that proc returned. `openArray` is where it shows — the length
-# is copied into the frame and survives, the data pointer points into a dead
-# stack slot — but every const-ref argument of a coroutine is exposed to it.
-# See tests/nimony/cps/tpassive_openarray.nim.
-#
-# `injectConstParamDerefs` cannot simply move ahead of `cps`: it also has to
-# see the state procs and init wrappers `cps` GENERATES, whose const-ref params
-# need the same derefs as everyone else's. So only the temporaries move, and
-# only for the routines `cps` is about to cut up. `hoistConstRefTemps` runs on
-# a coroutine body before the transform, `cps` then lifts the temporaries into
-# the frame like any other local, and the later `trConstRef` finds an argument
-# that already has an address and leaves it alone.
-#
-# Two questions this arrangement invites, answered here so they need not be
-# re-derived:
-#
-# *Why not do it in `cps.nim`?* Because `cps.nim` is only one of two consumers.
-# `.closure` iterators reach the same coroutine transform through
-# `lambdalifting.nim`, and had the same bug. Both point their `trCoroutine`
-# hook at `coro_transform.transformCoroutineDecl`, which is where this is
-# called from — so it already sits at the one place that serves both, and
-# moving it up would mean two copies.
-#
-# *Why not just run `injectConstParamDerefs` early and again later?* Because
-# this file does more than const-ref: it also carries the raise lowering —
-# success tuples, `tupleVars`, `raise e` -> `raise (e, result)`. None of that
-# is idempotent, so the pass cannot run twice over the same body. Splitting off
-# the half that must be early is what makes running it at all possible; the
-# price is that the two halves walk the tree separately, and `nextArgRole`
-# above is what keeps the two walks from disagreeing about which actual goes
-# with which formal.
-
-type
-  HoistContext = object
-    ptrSize: int
-    counter: int
-    typeCache: TypeCache
-    sizeofCache: SizeofCache
-
-when not defined(nimony):
-  proc hoistTr(c: var HoistContext; dest: var TokenBuf; n: var Cursor)
-    {.ensuresNif: addedAny(dest).}
-
-proc hoistArg(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
-  ## The only rewrite this pass performs, and deliberately the same shape
-  ## `trConstRef` produces — so that pass finds nothing left to do here.
-  if n.exprKind in {AddrX, HaddrX} or not constructsValue(n):
-    hoistTr c, dest, n
-    return
-  let info = n.info
-  let argType = getType(c.typeCache, n)
-  copyIntoKind dest, ExprX, info:
-    copyIntoKind dest, StmtsS, info:
-      # A name of its own: `injectConstParamDerefs` mints `constRefTemp.N`
-      # against a per-module counter of its own, and a second producer drawing
-      # from the same well would hand two different locals one SymId.
-      let symId = pool.syms.getOrIncl("`coroRefTemp." & $c.counter)
-      inc c.counter
-      copyIntoKind dest, VarS, info:
-        addSymDef dest, symId, info
-        dest.addEmpty2 info # export marker, pragma
-        copyTree dest, argType
-        c.typeCache.registerLocal(symId, VarY, argType)
-        # value:
-        hoistTr c, dest, n
-    copyIntoKind dest, HaddrX, info:
-      dest.addSymUse symId, info
-
-proc hoistCall(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
-  var fnType = skipProcTypeToParams(getType(c.typeCache, n.childCursor))
-  if fnType.tagEnum != ParamsTagId:
-    # Nothing with formal parameters to walk against; just recurse.
-    copyInto dest, n:
-      while n.hasMore: hoistTr c, dest, n
-    return
-  dest.addParLe(n.cursorTagId, n.info)
-  n.into: # skip `(call)`
-    hoistTr c, dest, n # the `fn`
-    fnType = sub(fnType) # peek only, never left
-    while n.hasMore:
-      case nextArgRole(fnType, c.ptrSize, c.sizeofCache)
-      of argConstRef: hoistArg c, dest, n
-      of argPlain, argCompileTime:
-        # `trCall` DROPS a compile-time actual; this pass must not, or that one
-        # would walk formals and actuals out of step when it runs later.
-        hoistTr c, dest, n
-    dest.addParRi(n.endInfo)
-
-proc hoistProcDecl(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
-  let decl = n
-  copyInto(dest, n):
-    let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
-    if isConcrete:
-      c.typeCache.openScope()
-      hoistTr c, dest, n
-      c.typeCache.closeScope()
-    else:
-      takeTree dest, n
-
-proc hoistTr(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
-  case n.kind
-  of TagLit:
-    if n.exprKind in CallKinds:
-      hoistCall c, dest, n
-    else:
-      case n.stmtKind
-      of ProcS, FuncS, MethodS, ConverterS, IteratorS:
-        hoistProcDecl c, dest, n
-      of LocalDecls:
-        let kind = n.symKind
-        copyInto dest, n:
-          c.typeCache.takeLocalHeader(dest, n, kind)
-          hoistTr c, dest, n
-      of ScopeS:
-        c.typeCache.openScope()
-        copyInto dest, n:
-          while n.hasMore: hoistTr c, dest, n
-        c.typeCache.closeScope()
-      of TypeS, MacroS, TemplateS:
-        takeTree dest, n
-      of NoStmt, CallS, CmdS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS,
-         ContinueS, ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS,
-         StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS,
-         ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
-         CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
-         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
-         UsingS, AsmS, DeferS:
-        # generic container: copy the head and recurse into the children
-        copyInto dest, n:
-          while n.hasMore: hoistTr c, dest, n
-  else:
-    takeTree dest, n
-
-proc hoistConstRefTemps*(pass: var Pass; ptrSize: int; counter: var int) =
-  ## Materialise the const-ref temporaries of the routines in `pass`, so the
-  ## coroutine transform can lift them into the frame. `counter` is threaded
-  ## across the coroutines of one module: the temps share a name space.
-  var n = pass.n
-  var c = HoistContext(ptrSize: ptrSize, counter: counter,
-                       typeCache: createTypeCache(pass.bits))
-  c.typeCache.openScope()
-  hoistTr(c, pass.dest, n)
-  c.typeCache.closeScope()
-  counter = c.counter

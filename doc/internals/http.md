@@ -503,19 +503,23 @@ proc chain() {.passive.} =
   take("aaa"); take("bbb"); take("ccc")   # printed garbage, not aaa/bbb/ccc
 ```
 
-The cause was not `openArray` as such. A literal has no address of its own, so
-`constparams` gives it a temporary to borrow one from — a local of the routine
-the call appears in, which is right until `cps` cuts that routine into one proc
-per state. The temporary then belonged to one state proc while the view built
-from it lived in the coroutine frame and was read from a later state. Anything
-that borrows would have shown it; `openArray` is just where the shape is
-visible, because the length is copied and the pointer is not.
+The cause was not `openArray` as such, and not the const-ref parameters either.
+A state proc is not the coroutine's activation record: it runs, it returns, and
+its stack is gone, while the frame — and everything the frame points at — has to
+survive until the coroutine is resumed. A literal has no address of its own, so
+something has to give it storage to be addressed through, and until this was
+fixed that storage was a local of one state proc while the view built from it
+lived in the frame and was read from a later state. Anything that borrows would
+have shown it; `openArray` is just where the shape is visible, because the
+length is copied and the pointer is not.
 
-Fixed in `src/hexer/constparams.nim` (`hoistConstRefTemps`, which mints those
-temporaries ahead of the transform) and `src/hexer/coro_transform.nim` (an
-address taken of a local now pins it to the frame). Regression test:
-`tests/nimony/cps/tpassive_openarray.nim`. This layer's signatures are back to
-plain `openArray`.
+Fixed in `src/hexer/coro_transform.nim`, as a lifetime extension riding on the
+`trGoto` walk: an actual that will reach its callee as an address gets a local
+of the coroutine, and `markAddressTaken` pins that local to the frame like any
+other address taken of a local. Regression test:
+`tests/nimony/valgrind/tpassive_openarray.nim` — in the valgrind category,
+because reading a dead stack slot is only *sometimes* wrong output. This
+layer's signatures are back to plain `openArray`.
 
 Found the slow way. A chunked body came out as garbage while the chunk
 *sizes* were right, which is what pointed at the parameter rather than the

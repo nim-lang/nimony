@@ -1,5 +1,5 @@
 
-import hashes, assertions
+import assertions
 
 type
   Keyable* = concept ## Concept describing types usable as table keys (`==` plus `hash`).

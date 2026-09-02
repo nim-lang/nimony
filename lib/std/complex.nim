@@ -46,7 +46,7 @@ func complex*[T: SomeFloat](re: T): Complex[T] =
   ## Returns a complex number with real part `re` and zero imaginary part.
   result = Complex[T](re: re, im: T(0))
 
-func abs2*[T: SomeFloat and Arithmetic](z: Complex[T]): T =
+func abs2*[T: SomeFloat and FloatArithmetic](z: Complex[T]): T =
   ## Returns the squared absolute value of `z`, i.e. `z.re^2 + z.im^2`.
   ## Cheaper than `abs` because it avoids the square root.
   result = z.re * z.re + z.im * z.im
@@ -59,60 +59,60 @@ func arg*[T: SomeFloat and HasArctan2](z: Complex[T]): T =
   ## Returns the argument (phase angle, in radians) of `z`.
   result = arctan2(z.im, z.re)
 
-func conjugate*[T: SomeFloat and Arithmetic](z: Complex[T]): Complex[T] =
+func conjugate*[T: SomeFloat and FloatArithmetic](z: Complex[T]): Complex[T] =
   ## Returns the complex conjugate of `z` (`z.im` negated).
   result = Complex[T](re: z.re, im: -z.im)
 
-func `==`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): bool =
+func `==`*[T: SomeFloat and FloatArithmetic](a, b: Complex[T]): bool =
   ## Compares two complex numbers for equality.
   result = a.re == b.re and a.im == b.im
 
-func `+`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
+func `+`*[T: SomeFloat and FloatArithmetic](a, b: Complex[T]): Complex[T] =
   result = Complex[T](re: a.re + b.re, im: a.im + b.im)
 
-func `+`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+func `+`*[T: SomeFloat and FloatArithmetic](a: Complex[T]; b: T): Complex[T] =
   result = Complex[T](re: a.re + b, im: a.im)
 
-func `+`*[T: SomeFloat and Arithmetic](a: T; b: Complex[T]): Complex[T] =
+func `+`*[T: SomeFloat and FloatArithmetic](a: T; b: Complex[T]): Complex[T] =
   result = Complex[T](re: a + b.re, im: b.im)
 
-func `-`*[T: SomeFloat and Arithmetic](z: Complex[T]): Complex[T] =
+func `-`*[T: SomeFloat and FloatArithmetic](z: Complex[T]): Complex[T] =
   ## Unary minus.
   result = Complex[T](re: -z.re, im: -z.im)
 
-func `-`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
+func `-`*[T: SomeFloat and FloatArithmetic](a, b: Complex[T]): Complex[T] =
   result = Complex[T](re: a.re - b.re, im: a.im - b.im)
 
-func `-`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+func `-`*[T: SomeFloat and FloatArithmetic](a: Complex[T]; b: T): Complex[T] =
   result = Complex[T](re: a.re - b, im: a.im)
 
-func `-`*[T: SomeFloat and Arithmetic](a: T; b: Complex[T]): Complex[T] =
+func `-`*[T: SomeFloat and FloatArithmetic](a: T; b: Complex[T]): Complex[T] =
   result = Complex[T](re: a - b.re, im: -b.im)
 
-func `*`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
+func `*`*[T: SomeFloat and FloatArithmetic](a, b: Complex[T]): Complex[T] =
   result = Complex[T](re: a.re * b.re - a.im * b.im,
                       im: a.re * b.im + a.im * b.re)
 
-func `*`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+func `*`*[T: SomeFloat and FloatArithmetic](a: Complex[T]; b: T): Complex[T] =
   result = Complex[T](re: a.re * b, im: a.im * b)
 
-func `*`*[T: SomeFloat and Arithmetic](a: T; b: Complex[T]): Complex[T] =
+func `*`*[T: SomeFloat and FloatArithmetic](a: T; b: Complex[T]): Complex[T] =
   result = Complex[T](re: a * b.re, im: a * b.im)
 
-func `/`*[T: SomeFloat and Arithmetic](a, b: Complex[T]): Complex[T] =
+func `/`*[T: SomeFloat and FloatArithmetic](a, b: Complex[T]): Complex[T] =
   let d = b.re * b.re + b.im * b.im
   result = Complex[T](re: (a.re * b.re + a.im * b.im) / d,
                       im: (a.im * b.re - a.re * b.im) / d)
 
-func `/`*[T: SomeFloat and Arithmetic](a: Complex[T]; b: T): Complex[T] =
+func `/`*[T: SomeFloat and FloatArithmetic](a: Complex[T]; b: T): Complex[T] =
   result = Complex[T](re: a.re / b, im: a.im / b)
 
-func inv*[T: SomeFloat and Arithmetic](z: Complex[T]): Complex[T] =
+func inv*[T: SomeFloat and FloatArithmetic](z: Complex[T]): Complex[T] =
   ## Returns the multiplicative inverse `1 / z`.
   let d = z.re * z.re + z.im * z.im
   result = Complex[T](re: z.re / d, im: -z.im / d)
 
-func sqrt*[T: SomeFloat and Arithmetic and HasHypot and HasSqrt](z: Complex[T]): Complex[T] =
+func sqrt*[T: SomeFloat and FloatArithmetic and HasHypot and HasSqrt](z: Complex[T]): Complex[T] =
   ## Returns the principal square root of `z`.
   if z.re == T(0) and z.im == T(0):
     result = Complex[T](re: T(0), im: T(0))
@@ -122,7 +122,7 @@ func sqrt*[T: SomeFloat and Arithmetic and HasHypot and HasSqrt](z: Complex[T]):
     if z.im < T(0): s = -s
     result = Complex[T](re: sqrt((m + z.re) * T(0.5)), im: s)
 
-func exp*[T: SomeFloat and Arithmetic and HasExp and HasSin and HasCos](
+func exp*[T: SomeFloat and FloatArithmetic and HasExp and HasSin and HasCos](
     z: Complex[T]): Complex[T] =
   ## Returns the exponential `e^z`.
   let r = exp(z.re)
@@ -133,7 +133,7 @@ func ln*[T: SomeFloat and HasHypot and HasLn and HasArctan2](
   ## Returns the principal natural logarithm of `z`.
   result = Complex[T](re: ln(abs(z)), im: arg(z))
 
-func pow*[T: SomeFloat and Arithmetic and HasHypot and HasExp and HasLn and
+func pow*[T: SomeFloat and FloatArithmetic and HasHypot and HasExp and HasLn and
           HasSin and HasCos and HasArctan2](z, w: Complex[T]): Complex[T] =
   ## Returns `z` raised to the power `w` (principal value).
   if z.re == T(0) and z.im == T(0):

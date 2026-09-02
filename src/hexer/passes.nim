@@ -19,10 +19,6 @@ type
     moduleSuffix*: string  ## Module suffix for symbol generation
     bits*: int         ## number of bits in the target architecture
     nextTemp*: int     ## Counter for temporary variable generation
-    nextRefTemp*: int  ## Counter for `hoistConstRefTemps`'s temporaries.
-                       ## Separate from `nextTemp`: different name space, but
-                       ## the same reason for living here — one module, one
-                       ## counter, or two coroutines name two locals alike.
     passName*: string  ## Current pass name (for debugging/logging)
     when not defined(nimony):
       passStart*: MonoTime  ## start time of current pass (only set when timing on)

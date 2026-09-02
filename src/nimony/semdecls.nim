@@ -1156,6 +1156,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
   if newName == NoSymId:
     producesVoid c, dest, info, it.typ
   publish c, dest, symId, declStart
+  onRoutineDeclSem c
 
   if kind == MacroY and pass == checkBody:
     let macroDecl = cursorAt(dest, declStart)
