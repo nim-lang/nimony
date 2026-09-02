@@ -91,10 +91,10 @@ proc buildNiflink*(showProgress = false) =
 proc buildArkham*(showProgress = false) =
   ## `arkham` (Leng -> typed asm-NIF native codegen) lives in the sibling
   ## `../nativenif` repo and reuses nimony's NIF libraries via its committed
-  ## sibling-relative `nim.cfg`. We assume the checkout exists (the `dist/`
-  ## auto-clone is a later step) and put it on the `src/nativenif.commit` pin
-  ## first. arkham's own `nim.cfg` already sets `--outdir:bin`; we pass it
-  ## explicitly so the result is deterministic regardless of the current
+  ## sibling-relative `nim.cfg`. `syncNativenif` clones the checkout if it is
+  ## missing and puts it on the `src/nativenif.commit` pin, so asking for arkham
+  ## by name is enough. arkham's own `nim.cfg` already sets `--outdir:bin`; we
+  ## pass it explicitly so the result is deterministic regardless of the current
   ## directory.
   syncNativenif()
   createDir binDir()
@@ -128,8 +128,10 @@ proc buildNativeTools*(showProgress = false) =
   ## there is no native target for a 32-bit host, and the sibling checkout is
   ## something a plain `git clone` of this repo does not bring. Asking for them
   ## by name (`build native`, `build arkham`, `hastur native`) still goes
-  ## straight at `buildArkham`, which quits when the sibling is missing — an
-  ## explicit request deserves an error, a blanket `all` does not.
+  ## straight at `buildArkham`, whose `syncNativenif` CLONES the sibling when
+  ## it is missing — an explicit request earns a ~100 MB fetch, a blanket
+  ## `all` does not, which is why the `dirExists` guard stays here rather than
+  ## moving down into `syncNativenif`.
   when defined(cpu64):
     if dirExists(NativenifDir):
       buildArkham(showProgress)
