@@ -86,3 +86,10 @@ iterator slotsForFd*(a: var SlotArena; fd: cint): int =
     let nxt = a.slots[cur].nextInFd
     yield cur
     cur = nxt
+
+iterator pendingFds*(a: var SlotArena): cint =
+  ## Every fd that has at least one in-flight slot. The table is mutated by
+  ## `freeSlot`, so a caller that completes ops must collect the fds first and
+  ## dispatch afterwards — never `complete` from inside this loop.
+  for fd in a.fdHeads.keys:
+    yield fd

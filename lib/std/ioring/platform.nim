@@ -21,30 +21,46 @@ else:
   const hasKqueue* = false
   const hasIouring* = false
 
-const hasIocp* = defined(windows)
-const hasIoPoll* = hasEpoll or hasKqueue
+const hasWsaPoll* = defined(windows) and not defined(nimIoringIocp)
+  ## Windows default: the WSAPoll readiness backend (backends/wsapoll.nim).
+const hasIocp* = defined(windows) and defined(nimIoringIocp)
+  ## `-d:nimIoringIocp` selects the IOCP proactor — a stub until it lands
+  ## (design of record: hashi/doc/iocp-ioring-briefing.md).
+const hasIoPoll* = hasEpoll or hasKqueue or hasWsaPoll
 
-when hasIouring:
-  import ./backends/iouring
-elif hasIoPoll:
-  when hasEpoll:
+# Imports are guarded by syntactic `defined()` tests, not by the constants
+# above: nimony's module scanner prunes an import only when its `when` is a
+# literal `defined(...)` expression — a branch guarded by a `const` is always
+# built, so a platform backend would be compiled (and fail) on every other OS.
+when defined(linux):
+  when not defined(nimIoringNoUring):
+    import ./backends/iouring
+  else:
     import ./backends/epoll
-  elif hasKqueue:
-    import ./backends/kqueue
-elif hasIocp:
-  import ./backends/iocp
+elif defined(macosx) or defined(freebsd) or defined(netbsd) or
+     defined(openbsd) or defined(dragonfly):
+  import ./backends/kqueue
+elif defined(windows):
+  when defined(nimIoringIocp):
+    import ./backends/iocp
+  else:
+    import ./backends/wsapoll
 
 var backendRelays*: BackendRelays
 
 proc initPlatformBackend*() =
-  when hasIouring:
-    backendRelays = initIoUringBackendRelays()
-  elif hasIoPoll:
-    when hasEpoll:
+  when defined(linux):
+    when not defined(nimIoringNoUring):
+      backendRelays = initIoUringBackendRelays()
+    else:
       backendRelays = initEpollBackendRelays()
-    elif hasKqueue:
-      backendRelays = initKqueueBackendRelays()
-  elif hasIocp:
-    backendRelays = initIocpBackendRelays()
+  elif defined(macosx) or defined(freebsd) or defined(netbsd) or
+       defined(openbsd) or defined(dragonfly):
+    backendRelays = initKqueueBackendRelays()
+  elif defined(windows):
+    when defined(nimIoringIocp):
+      backendRelays = initIocpBackendRelays()
+    else:
+      backendRelays = initWsaPollBackendRelays()
   else:
     {.error: "No I/O backend available for this platform".}

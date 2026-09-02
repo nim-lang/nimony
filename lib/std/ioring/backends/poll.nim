@@ -114,5 +114,84 @@ when defined(posix):
     # one-shot registration, and submit/registerEvent will re-add it the
     # next time an op targets this fd.
 else:
+  # Windows (the WSAPoll backend): the transfer calls are Winsock's, bound by
+  # `dynlib` in the winlean house style so no `<winsock2.h>` has to be ordered
+  # against `<Windows.h>` in the generated C.
+  #
+  # One deliberate difference from the POSIX arm: a `WSAEWOULDBLOCK` on a
+  # readiness wake is not a failure. The ready state was consumed by another
+  # op on the fd (or by another lane polling the same socket), so the op stays
+  # pending and is re-armed below instead of completing with -1.
+  type
+    SocketHandle = uint   ## Winsock SOCKET (UINT_PTR)
+
+  const
+    SocketError = -1.cint
+    InvalidSocket = not 0'u
+    WSAEWOULDBLOCK = 10035.cint
+
+  # `buf` is `nil pointer` to match `OpContext.buf` (the POSIX arm declares its
+  # read/write the same way): the op layout is nilable and the transfer takes
+  # it as-is.
+  proc wsRecv(s: SocketHandle; buf: nil pointer; len, flags: cint): cint {.
+    stdcall, importc: "recv", dynlib: "ws2_32.dll".}
+  proc wsSend(s: SocketHandle; buf: nil pointer; len, flags: cint): cint {.
+    stdcall, importc: "send", dynlib: "ws2_32.dll".}
+  proc wsAccept(s: SocketHandle; name: pointer; namelen: ptr cint): SocketHandle {.
+    stdcall, importc: "accept", dynlib: "ws2_32.dll".}
+  proc wsaGetLastError(): cint {.
+    stdcall, importc: "WSAGetLastError", dynlib: "ws2_32.dll".}
+
+  proc socketOf(fd: cint): SocketHandle {.inline.} =
+    ## The ring narrows a SOCKET to `cint` (ioring.nim, Windows arm); widen it
+    ## back without sign extension.
+    SocketHandle(cast[uint32](fd))
+
+  proc clampLen(n: int): cint {.inline.} =
+    if n > int(high(cint)): high(cint) else: cint(n)
+
+  proc wouldBlock(): bool {.inline.} =
+    wsaGetLastError() == WSAEWOULDBLOCK
+
   proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
-    discard
+    ## Windows twin of the POSIX `processFd` above: same per-direction
+    ## dispatch over the fd's in-flight ops, Winsock transfers.
+    let lane = ioLane()
+    let s = socketOf(fd)
+    for j in gSlots[lane].slotsForFd(fd):
+      let sl = addr gSlots[lane].slots[j]
+      case sl.op.kind
+      of opRead:
+        if evRead in firedEvents:
+          let r = wsRecv(s, sl.op.buf, clampLen(sl.op.len), 0.cint)
+          if r == SocketError:
+            if not wouldBlock(): complete(j, -1)
+          else:
+            complete(j, int(r))
+      of opWrite:
+        if evWrite in firedEvents:
+          let r = wsSend(s, sl.op.buf, clampLen(sl.op.len), 0.cint)
+          if r == SocketError:
+            if not wouldBlock(): complete(j, -1)
+          else:
+            complete(j, int(r))
+      of opAccept:
+        if evRead in firedEvents:
+          var addrLen = cint(sl.op.acceptLen)
+          let client = wsAccept(s, addr sl.op.acceptAddr, addr addrLen)
+          if client == InvalidSocket:
+            if not wouldBlock(): complete(j, -1)
+          else:
+            # The accepted SOCKET must survive the cint narrowing the ring's
+            # API imposes; kernel handle values are small in practice (see
+            # ioring.nim's Windows `listenTcp`).
+            complete(j, int(cast[uint32](client)))
+      of opPollAdd:
+        let hit = firedEvents * sl.op.pollMask
+        if hit != {}:
+          complete(j, toEventMask(hit))
+      of opNop:
+        discard
+    if gSlots[lane].hasPendingForFd(fd):
+      if not reArmEvent(fd, armEventsForFd(fd), true):
+        failPendingForFd(fd)

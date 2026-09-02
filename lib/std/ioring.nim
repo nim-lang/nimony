@@ -21,13 +21,26 @@ export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
 export types.readyEvents, types.toIoEvents, types.toEventMask
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
-from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
-                            SockAddr, InAddr, TSa_Family
+when defined(posix):
+  from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
+                              SockAddr, InAddr, TSa_Family
 
 var ringState: int = 0
 
+when defined(windows):
+  proc wsaStartup(wVersionRequested: uint16; lpWSAData: pointer): cint {.
+    stdcall, importc: "WSAStartup", dynlib: "ws2_32.dll".}
+
+  proc initWinsock() =
+    ## Winsock 2.2, once per process. WSADATA is 408 bytes on x64; the buffer
+    ## is oversized so a header revision cannot overrun it.
+    var data = default(array[512, byte])
+    discard wsaStartup(0x0202'u16, addr data[0])
+
 proc setupRing() =
   initPool()
+  when defined(windows):
+    initWinsock()
   initOpQueues()
   initSlots()
   gCq = newSeq[IoCompletion](CqSize)
@@ -153,6 +166,46 @@ proc waitCompletions*(comps: var openArray[IoCompletion]): int =
     if result > 0: return
     discard backendRelays.poll(0)
 
+proc cancelPendingOps(fd: cint) =
+  ## The platform-neutral half of `closeFd`: cancel any ops still in flight on
+  ## `fd` so their continuations are resumed (with a cancellation result)
+  ## instead of leaking, and deregister the fd from the backend — all BEFORE
+  ## the actual close. Previously `closeFd` only called close(2): the backend
+  ## never found out (so epoll/kqueue kept a registration for a possibly-reused
+  ## fd number) and any pending slot for this fd stayed in use forever — a
+  ## permanent slot-arena leak for every fd closed with an op in flight.
+  ##
+  ## Order matters: deregister from the backend *before* the close, so a fresh
+  ## fd that the OS immediately reuses for the same number cannot race with a
+  ## stale registration/slot that still refers to it.
+  ##
+  ## **Scope: this thread's lane only** (see `ioLane`). Slot arenas are
+  ## per-lane and unlocked, so a fd must be closed from the same thread that
+  ## submitted its ops; ops another lane still holds for `fd` are not
+  ## cancelled here and would leak the way described above. Cancelling those
+  ## needs a cross-lane request the owning lane drains from its own `poll`
+  ## (and, on io_uring, an `IORING_OP_ASYNC_CANCEL` — the kernel still owns
+  ## the slot's buffers until it acknowledges), which this does not do yet.
+  let lane = ioLane()
+  if backendRelays.forgetFd != nil:
+    backendRelays.forgetFd(fd)
+  for idx in gSlots[lane].slotsForFd(fd):
+    let slot = addr gSlots[lane].slots[idx]
+    const ECancelled = -125
+    if slot.op.res != 0:
+      cast[ptr int](slot.op.res)[] = ECancelled
+    let cont = slot.op.cont
+    if cont.fn != nil:
+      submit(cont, int(fd))
+    gSlots[lane].freeSlot(idx)
+
+proc htons(x: uint16): uint16 {.inline.} =
+  ## Header macro/libc shim; a byte swap on the little-endian targets.
+  when defined(bigEndian):
+    result = x
+  else:
+    result = (x shl 8) or (x shr 8)
+
 when defined(posix):
   proc posixClose(fd: cint): cint {.importc: "close".}
   proc fcntl(fd: cint; cmd: cint): cint {.varargs, importc.}
@@ -169,37 +222,9 @@ when defined(posix):
     discard posixClose(fd)
 
   proc closeFd*(fd: cint) =
-    ## Close `fd`, first cancelling any ops still in flight on it so their
-    ## continuations are resumed (with a cancellation result) instead of
-    ## leaking, and deregistering it from the backend before the actual
-    ## close(). Previously `closeFd` only called close(2): the backend never
-    ## found out (so epoll/kqueue kept a registration for a possibly-reused
-    ## fd number) and any pending slot for this fd stayed in use forever —
-    ## a permanent slot-arena leak for every fd closed with an op in flight.
-    ##
-    ## Order matters: deregister from the backend *before* close(2), so a
-    ## fresh fd that the OS immediately reuses for the same number cannot
-    ## race with a stale registration/slot that still refers to it.
-    ##
-    ## **Scope: this thread's lane only** (see `ioLane`). Slot arenas are
-    ## per-lane and unlocked, so a fd must be closed from the same thread that
-    ## submitted its ops; ops another lane still holds for `fd` are not
-    ## cancelled here and would leak the way described above. Cancelling those
-    ## needs a cross-lane request the owning lane drains from its own `poll`
-    ## (and, on io_uring, an `IORING_OP_ASYNC_CANCEL` — the kernel still owns
-    ## the slot's buffers until it acknowledges), which this does not do yet.
-    let lane = ioLane()
-    if backendRelays.forgetFd != nil:
-      backendRelays.forgetFd(fd)
-    for idx in gSlots[lane].slotsForFd(fd):
-      let slot = addr gSlots[lane].slots[idx]
-      const ECancelled = -125
-      if slot.op.res != 0:
-        cast[ptr int](slot.op.res)[] = ECancelled
-      let cont = slot.op.cont
-      if cont.fn != nil:
-        submit(cont, int(fd))
-      gSlots[lane].freeSlot(idx)
+    ## Close `fd`: cancel this lane's in-flight ops on it (see
+    ## `cancelPendingOps`), deregister it from the backend, then close(2).
+    cancelPendingOps(fd)
     discard posixClose(fd)
 
 when defined(posix):
@@ -214,13 +239,6 @@ when defined(posix):
   proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.importc: "setsockopt".}
   proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "bind".}
   proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
-  proc htons(x: uint16): uint16 {.inline.} =
-    ## Header macro/libc shim; a byte swap on the little-endian targets.
-    when defined(bigEndian):
-      result = x
-    else:
-      result = (x shl 8) or (x shr 8)
-
   proc listenTcp*(port: uint16; backlog = 128): cint =
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     assert fd >= 0, "socket() failed"
@@ -235,5 +253,88 @@ when defined(posix):
     assert listen(fd, backlog.cint) == 0, "listen failed"
     setNonBlocking(fd)
     result = fd
+
+when defined(windows):
+  # Winsock socket surface — the ring's fd is a SOCKET narrowed to `cint`.
+  #
+  # `dynlib` externs are static imports on every backend, so the import library
+  # has to be on the link line; MinGW does not add ws2_32 by default.
+  {.passL: "-lws2_32".}
+  #
+  # `SOCKET` is `UINT_PTR`, but the values are kernel handles: small, 4-aligned
+  # integers well inside 31 bits in practice (undocumented, so `listenTcp` and
+  # the accept path assert it). Keeping the public `cint` API means every
+  # consumer (hashi, harness) stays platform-neutral; the IOCP backend can
+  # revisit this with completion keys (hashi/doc/iocp-ioring-briefing.md, open
+  # question 1).
+  # The POSIX arm's consumers see these names through `std/posix/posix`; give
+  # the Windows arm the same exported surface so a server written against the
+  # ring (hashi) stays platform-neutral.
+  export types.SockLen, types.Sockaddr_storage, types.FileHandle
+  type
+    SocketHandle = uint
+    InAddr* = object            ## struct in_addr
+      s_addr*: uint32
+    Sockaddr_in* = object       ## struct sockaddr_in (16 bytes, natural alignment)
+      sin_family*: cushort
+      sin_port*: uint16
+      sin_addr*: InAddr
+      sin_zero*: array[8, char]
+    SockAddr* = object          ## struct sockaddr (opaque, 16 bytes)
+      sa_family*: cushort
+      sa_data*: array[14, char]
+
+  const
+    InvalidSocket = not 0'u
+    AF_INET* = 2.cint
+    SOCK_STREAM* = 1.cint
+    IPPROTO_TCP* = 6.cint
+    SOL_SOCKET* = 0xFFFF.cint
+    SO_REUSEADDR* = 4.cint
+    INADDR_ANY* = 0'u32
+    FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
+
+  proc wsSocket(af, typ, protocol: cint): SocketHandle {.
+    stdcall, importc: "socket", dynlib: "ws2_32.dll".}
+  proc wsBind(s: SocketHandle; name: pointer; namelen: cint): cint {.
+    stdcall, importc: "bind", dynlib: "ws2_32.dll".}
+  proc wsListen(s: SocketHandle; backlog: cint): cint {.
+    stdcall, importc: "listen", dynlib: "ws2_32.dll".}
+  proc wsIoctlsocket(s: SocketHandle; cmd: clong; argp: ptr culong): cint {.
+    stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
+  proc wsClosesocket(s: SocketHandle): cint {.
+    stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
+
+  proc socketOf(fd: cint): SocketHandle {.inline.} =
+    SocketHandle(cast[uint32](fd))
+
+  proc setNonBlocking*(fd: cint) =
+    var one: culong = 1
+    discard wsIoctlsocket(socketOf(fd), FIONBIO, addr one)
+
+  proc closeFdRaw*(fd: cint) =
+    discard wsClosesocket(socketOf(fd))
+
+  proc closeFd*(fd: cint) =
+    ## Close `fd`: cancel this lane's in-flight ops on it (see
+    ## `cancelPendingOps`), then `closesocket`.
+    cancelPendingOps(fd)
+    discard wsClosesocket(socketOf(fd))
+
+  proc listenTcp*(port: uint16; backlog = 128): cint =
+    ## IPv4 wildcard listener. No SO_REUSEADDR: on Winsock that option allows a
+    ## second bind to hijack a live listener, so the POSIX "restart without
+    ## TIME_WAIT" semantics are not what it means here.
+    let s = wsSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    assert s != InvalidSocket, "socket() failed"
+    assert s <= SocketHandle(high(cint)), "SOCKET handle exceeds the ring's cint fd space"
+    var addr4 = default(Sockaddr_in)
+    addr4.sin_family = cushort(AF_INET)
+    addr4.sin_port = htons(port)
+    addr4.sin_addr.s_addr = INADDR_ANY
+    assert wsBind(s, addr addr4, cint(sizeof(addr4))) == 0, "bind failed"
+    assert wsListen(s, backlog.cint) == 0, "listen failed"
+    result = cint(cast[uint32](s))
+    setNonBlocking(result)
 
 initIoRing()

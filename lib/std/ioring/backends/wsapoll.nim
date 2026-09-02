@@ -1,0 +1,117 @@
+# Windows WSAPoll readiness backend.
+#
+# Winsock's poll(2) drives the same readiness machinery the epoll and kqueue
+# backends use (`processFd`/`armEventsForFd` in ./poll). Each lane owns its
+# poller state, and the poll set is rebuilt on every call from the lane's slot
+# arena: one entry per fd with in-flight ops, armed for the union of their
+# directions. There is no kernel-side registration to keep in sync, so
+# `reArmEvent` has nothing to do and `forgetFd` is nil — which also means
+# epoll's ADD/MOD race has no counterpart here.
+#
+# Scale: the set is O(pending fds) per poll and WSAPoll is O(n) per call —
+# right for a client and for a single-user local server. A Windows server with
+# thousands of connections wants the IOCP proactor instead (`-d:nimIoringIocp`,
+# a stub today; design of record: hashi/doc/iocp-ioring-briefing.md).
+#
+# Winsock is bound by `dynlib` (the winlean house style) rather than through
+# `<winsock2.h>`, so the generated C never has to order that header against
+# winlean's `<Windows.h>`. `WSAPOLLFD` is declared to its ABI (SOCKET + two
+# SHORTs, natural alignment). Known caveat: before Windows 10 2004, WSAPoll
+# does not report a failed connect() (no POLLERR is raised).
+
+when defined(windows):
+  import std/threadpool
+  import std/windows/winlean   # sleep
+
+  import ../core/types
+  import ../core/slots
+  import ../core/backend
+  import ./poll
+
+  const
+    DrainBatch = 128
+
+  type
+    SocketHandle = uint   ## Winsock SOCKET (UINT_PTR); the ring's fd is its cint narrowing
+    WsaPollFd = object    ## WSAPOLLFD
+      fd: SocketHandle
+      events: cshort
+      revents: cshort
+
+  const
+    POLLRDNORM = 0x0100   ## normal data readable
+    POLLWRNORM = 0x0010   ## normal data writable
+    POLLERR = 0x0001      ## error condition (revents only)
+    POLLHUP = 0x0002      ## hang-up (revents only)
+    POLLNVAL = 0x0004     ## invalid socket (revents only)
+    PollFailMask = POLLERR or POLLHUP or POLLNVAL
+
+  proc wsaPoll(fdArray: ptr WsaPollFd; nfds: culong; timeout: cint): cint {.
+    stdcall, importc: "WSAPoll", dynlib: "ws2_32.dll".}
+
+  var
+    pollSets: seq[seq[WsaPollFd]]   ## per lane; reused across polls
+
+  proc wsapollReArm(fd: cint; events: IoEvents; alreadyRegistered: bool): bool {.nimcall.} =
+    ## Nothing to register: the poll set is derived from the arena on every poll,
+    ## so arming cannot fail here — a dead socket surfaces as POLLNVAL instead.
+    result = true
+
+  proc wsapollPoll(timeoutMs: int): bool {.nimcall.} =
+    let lane = ioLane()
+    var buf {.noinit.}: array[DrainBatch, OpContext]
+    var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
+    if n > 0:
+      for i in 0..<n:
+        discard gSlots[lane].allocSlot(buf[i])
+    # Build this lane's set from its arena. Collect before dispatching:
+    # `processFd` frees slots, which mutates the fd index the set comes from.
+    pollSets[lane].setLen(0)
+    for fd in gSlots[lane].pendingFds:
+      let events = armEventsForFd(fd)
+      if events == {}: continue   # only opNop slots on this fd
+      var ev = 0
+      if evRead in events: ev = ev or POLLRDNORM
+      if evWrite in events: ev = ev or POLLWRNORM
+      pollSets[lane].add WsaPollFd(fd: SocketHandle(cast[uint32](fd)),
+                                   events: cshort(ev), revents: cshort(0))
+    if pollSets[lane].len == 0:
+      # Nothing armed on this lane: honour the idle timeout here, or the worker
+      # loop spins (it only sleeps when nothing fired AND it ran no task).
+      if timeoutMs > 0: sleep(uint32(timeoutMs))
+      return false
+    let ready = wsaPoll(addr pollSets[lane][0], culong(pollSets[lane].len),
+                        cint(timeoutMs))
+    if ready <= 0:
+      return false
+    for i in 0..<pollSets[lane].len:
+      let re = int(pollSets[lane][i].revents)
+      if re == 0: continue
+      var fired: IoEvents = {}
+      if (re and POLLRDNORM) != 0: fired.incl evRead
+      if (re and POLLWRNORM) != 0: fired.incl evWrite
+      if (re and PollFailMask) != 0:
+        # Error, hang-up or a dead socket: wake every pending op so its transfer
+        # runs and reports the failure (recv returns 0 or -1, send fails) instead
+        # of leaving the continuation parked on a socket that will never fire.
+        fired = {evRead, evWrite}
+      processFd(cint(cast[uint32](pollSets[lane][i].fd)), fired)
+    return true
+
+  proc wsapollClose() {.nimcall.} =
+    ## No poller descriptors to release. Winsock itself is left initialised:
+    ## sockets the process still owns keep working until exit tears it down.
+    discard
+
+  proc wsapollForgetFd(fd: cint) {.nimcall.} =
+    ## No registration to drop: the next poll simply no longer sees the fd.
+    discard
+
+  proc initWsaPollBackendRelays*(): BackendRelays =
+    pollSets = newSeq[seq[WsaPollFd]](ioLanes())
+    reArmEvent = wsapollReArm
+    result = BackendRelays(
+      poll: wsapollPoll,
+      close: wsapollClose,
+      forgetFd: wsapollForgetFd,
+    )

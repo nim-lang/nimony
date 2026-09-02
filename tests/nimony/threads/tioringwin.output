@@ -1,0 +1,5 @@
+accept ok=true
+read n=4 buf=ping
+write n=4 client=pong
+polladd wr=true rd=false
+close ok

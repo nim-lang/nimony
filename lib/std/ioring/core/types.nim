@@ -1,5 +1,19 @@
 # Common types shared across all ioring layers.
-import std/posix/posix
+when defined(posix):
+  import std/posix/posix
+else:
+  # Windows: the ring's socket surface is Winsock and `std/posix/posix` is
+  # empty there, so the POSIX-named types the op layout needs are declared
+  # here in their Winsock ABI shapes. `Sockaddr_storage` is the 128-byte
+  # `SOCKADDR_STORAGE`; `SockLen` is the `int` namelen Winsock's accept takes;
+  # `FileHandle` is the ring's fd — a Winsock `SOCKET` narrowed to `cint`
+  # (see ioring.nim's Windows arm for why that narrowing is sound).
+  type
+    FileHandle* = cint
+    SockLen* = cint
+    Sockaddr_storage* {.pure.} = object
+      ss_family*: uint16
+      ss_pad*: array[126, uint8]
 
 type
   IoEvent* = enum
