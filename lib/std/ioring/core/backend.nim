@@ -12,6 +12,14 @@ const MaxOps* = 8192
 type
   BackendRelays* = object
     poll*: proc (timeoutMs: int): bool {.nimcall.}
+    waits*: bool
+      ## True when `poll(timeoutMs)` really does sleep for up to `timeoutMs`
+      ## in the kernel. The pool's idle worker naps for a millisecond after a
+      ## fruitless poll, which is the right thing to do behind a backend that
+      ## only peeks and the wrong thing behind one that already waited — it
+      ## doubles the idle latency and spends a second syscall doing it. A
+      ## backend that cannot wait (or, for io_uring, is on a kernel without
+      ## `FEAT_EXT_ARG`) leaves this `false` and keeps the nap.
     close*: proc () {.nimcall.}
     forgetFd*: proc (fd: cint) {.nimcall.}
       ## Drop any backend-side per-fd registration/bookkeeping before a fd is
@@ -144,6 +152,16 @@ proc waitMillis*(lane: int; requested: int): int =
   if d == never: return requested
   let ms = millisUntil(d, monoNow())
   result = if requested < 0 or ms < requested: ms else: requested
+
+proc waitNanos*(lane: int; requestedMs: int): int64 =
+  ## `waitMillis` in nanoseconds, for a backend whose wait is a `timespec`.
+  ## `-1` is "no bound at all", which only happens when the caller asked for
+  ## none AND the lane is waiting on nothing that can expire.
+  let d = nextDeadline(lane)
+  let byDeadline = if d == never: -1'i64 else: nanosUntil(d, monoNow())
+  if requestedMs < 0: return byDeadline
+  let byRequest = int64(requestedMs) * 1_000_000'i64
+  result = if byDeadline < 0 or byRequest < byDeadline: byRequest else: byDeadline
 
 var
   gNextSeq*: SeqNum

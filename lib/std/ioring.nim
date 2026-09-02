@@ -38,6 +38,7 @@ proc setupRing() =
   gCq = newSeq[IoCompletion](CqSize)
   initPlatformBackend()
   gReactor = backendRelays.poll
+  gReactorWaits = backendRelays.waits
 
 proc initIoRing*() =
   ## Bring the default ring up. **Idempotent**, and it has to be: this module

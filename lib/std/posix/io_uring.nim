@@ -815,6 +815,41 @@ proc submit*(queue: var Queue; waitNr: uint = 0): int {.raises, tags: [], discar
   else:
     result = submited
 
+proc hasExtArg*(queue: var Queue): bool {.inline.} =
+  ## Can this ring's `io_uring_enter` carry a timeout? Linux 5.11 and up.
+  ## Without it there is no way to bound a wait from inside the ring, and a
+  ## caller that must not block forever has to stay in the non-blocking path.
+  FEAT_EXT_ARG in queue.params.features
+
+proc submitAndWait*(queue: var Queue; waitNr: uint; ts: nil ptr Timespec): int
+    {.raises, tags: [], discardable.} =
+  ## Submit, then WAIT in the kernel for `waitNr` completions, giving up after
+  ## `ts` (a RELATIVE duration; `nil` waits indefinitely). One syscall for both
+  ## halves — which is the point: `submit` never blocks, so a caller that wants
+  ## to sleep until something happens otherwise sleeps somewhere else, and a
+  ## completion arriving a microsecond into that nap waits out the rest of it.
+  ##
+  ## Needs `FEAT_EXT_ARG`; ask `hasExtArg` first.
+  ##
+  ## A timeout is not an error here: `ETIME` comes back as `0`, and so do
+  ## `EINTR`, `EAGAIN` and `EBUSY`. In every one of those cases the caller's
+  ## next move is the same — read whatever CQEs are there — so a raise would
+  ## only be something to catch and discard.
+  let submited = queue.sqFlush
+  var flags: EnterFlags = {ENTER_GETEVENTS, ENTER_EXT_ARG}
+  discard queue.sqNeedsEnter(submited, flags)
+  var arg = GeteventsArg(sigmask: 0'u64, sigmaskSz: 0'u32, pad: 0'u32,
+                         ts: cast[uint64](ts))
+  let r = syscall(SYS_io_uring_enter, queue.fd, submited.cint, waitNr.cint,
+                  cast[ptr cint](flags.addr)[], arg.addr,
+                  cint(sizeof(GeteventsArg)))
+  if r < 0:
+    let e = sysErrno()
+    if e == ETIME or e == EINTR or e == EAGAIN or e == EBUSY:
+      return 0
+    raiseOSError(OSErrorCode(e), "io_uring enter (submit and wait) failed")
+  result = int(r)
+
 proc sqReady*(queue: var Queue): uint32 =
   ## Returns the number of flushed and unflushed SQEs pending in the submission queue.
   ## In other words, this is the number of SQEs in the submission queue, i.e. its length.

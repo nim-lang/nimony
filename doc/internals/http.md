@@ -318,17 +318,37 @@ idle connection just closes it cleanly. Both surface as `ClosedEvent`.
 
 ### Mapping down
 
-The kernel already speaks absolute deadlines. `TIMEOUT_ABS` and `link_timeout`
-are in `std/posix/io_uring`, so a `Deadline` reaches the SQE with no per-call
-conversion, and `link_timeout` attaches it to the preceding op — "this read,
-with this deadline", one submission.
+**One timer per lane, not one per op.** A per-lane min-heap of deadlines, and
+the wait is bounded by whatever is on top of it — `epoll_wait(waitMs)` on the
+readiness backends, an `io_uring_enter` carrying a `timespec` (`ENTER_EXT_ARG`,
+Linux 5.11) on the ring. All three answer "how long may I sleep" from the same
+structure, and the kernel holds at most one timeout per lane no matter how many
+ops are in flight.
 
-For kqueue and epoll the seam exists and is currently wasted: an idle worker
-calls `gReactor(1)` and then, if nothing fired, sleeps another millisecond
-(`threadpool.nim:228-238`), so it wakes every 1–2ms with nothing to do. A
-per-lane min-heap of deadlines supplies that wait for real, letting a worker
-sleep until the earliest deadline. The change that gives us timers also gets
-rid of the fixed-granularity idle wakeup.
+The tempting alternative is io_uring's `link_timeout`, which attaches an
+absolute deadline to the preceding SQE — "this read, with this deadline", one
+submission, and the kernel cancels the op itself. It is the wrong trade here.
+It costs a second SQE *and* a second CQE for every op, so a server holding an
+idle deadline per connection spends most of its ring on timers to buy a wakeup
+the lane-wide bound already provides; it needs `IOSQE_IO_LINK`, which imposes
+submission ordering we do not otherwise want; and it exists only on io_uring,
+so the backends stop agreeing about what a deadline is. What it would buy —
+retiring `gCancelInFlight`, because an op the kernel cancelled needs no taking
+back — is a real thing to want, but it is a cancellation question and it wants
+a cancellation answer. (Thanks to @blackmius for pushing back on this.)
+
+The idle path was the other half. An idle worker called `gReactor(1)` and then,
+if nothing fired, slept another millisecond (`threadpool.nim`), so it woke every
+1–2ms with nothing to do — and on io_uring it was worse than that, because the
+bound was computed and thrown away and the ring never entered the kernel to wait
+at all. The reactor now does the waiting, and `BackendRelays.waits` says so, so
+the pool's nap is skipped behind a backend that has already waited.
+
+One bound remains above the deadline: nothing wakes a worker when a *task* is
+enqueued — `threadpool.submit` only enqueues — so a lane may not sleep past its
+next look at the run queue, and the pool asks for a millisecond. Give the pool a
+wakeup (an eventfd, or `OP_MSG_RING`) and that ceiling goes, and then a lane
+really does sleep until its earliest deadline.
 
 The ring uses `CLOCK_BOOTTIME` on Linux rather than `CLOCK_MONOTONIC` (which
 `std/monotimes` uses): a machine that suspends for an hour should find its
@@ -396,12 +416,14 @@ None of this is reachable until the following exist.
    *generation* they were armed for and are dropped as stale when they surface.
    `submitTimeout` is a pure timer, and reaching its deadline is its success.
 
-   Still to do here: io_uring can attach an absolute `link_timeout` to an
-   individual SQE, which is better than one lane-wide bound. The lane-wide
-   bound keeps both backends behaving identically in the meantime — and, since
-   it means an op can be given up on here while the kernel still holds it, it
-   is also what makes `gCancelInFlight` necessary. `link_timeout` would retire
-   both.
+   The bound is lane-wide on every backend, and stays that way: see §3's
+   *Mapping down* for why per-SQE `link_timeout` is not the upgrade it looks
+   like. io_uring waits in the kernel for it now (`ENTER_EXT_ARG`), so a
+   completion is noticed when it arrives rather than at the next millisecond
+   tick.
+
+   Still to do here: a wakeup for task submission, so a lane can sleep past
+   the pool's 1ms heartbeat and out to its actual earliest deadline.
 3. Multishot accept. `submitAccept` is oneshot, so a busy listener pays one
    submission per connection; io_uring has `accept_multishot`.
 4. DNS. `getaddrinfo` blocks and io_uring has no resolver, so it needs

@@ -61,6 +61,15 @@ proc millisUntil*(d, base: Deadline): int =
   let ms = (ns + 999_999'i64) div 1_000_000'i64
   result = if ms > int64(high(int32)): int(high(int32)) else: int(ms)
 
+proc nanosUntil*(d, base: Deadline): int64 =
+  ## The same question in the unit io_uring's wait actually takes. `0` if the
+  ## deadline is already past, `-1` for `never`. No rounding up: a `timespec`
+  ## can name the instant, so unlike `millisUntil` this does not have to give
+  ## a deadline a whole extra millisecond to be sure of reaching it.
+  if d == never: return -1
+  result = int64(d) - int64(base)
+  if result < 0: result = 0
+
 type
   IoEvent* = enum
     ## A readiness direction. `submitPollAdd` takes a set of these, and an

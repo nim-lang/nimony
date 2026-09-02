@@ -114,16 +114,42 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       # `addr op.sockAddr`/`addr op.sockAddrLen` and the kernel writes through
       # those at completion time, long after this stack frame is gone.
       fillSqe(sqe, addr gSlots[lane].slots[idx].op)
+  # Sleep in the kernel until something is due — an I/O completion, or the
+  # earliest deadline this lane is waiting on, whichever comes first. That is
+  # ONE timeout for the whole lane, taken off the top of the deadline heap,
+  # rather than one timeout per op: a `link_timeout` on every SQE would buy the
+  # same wakeup for a second submission and a second completion each, and a
+  # server holding an idle deadline per connection would spend most of its ring
+  # on timers. The readiness backends bound their wait exactly this way
+  # (`epoll_wait(waitMs)`), so all three answer "how long may I sleep" from the
+  # same heap.
+  #
+  # The wait is still bounded from above by what the caller asked for, because
+  # nothing wakes a worker when a TASK is enqueued — `threadpool.submit` only
+  # enqueues — so a lane may not sleep past its next look at the run queue.
+  # Give the pool a wakeup and this bound can go, and then the ring sleeps
+  # until there is genuinely something to do.
+  #
+  # Before this the ring never entered the kernel to wait at all: the bound was
+  # computed and discarded, and an idle worker `nanosleep`t a millisecond with
+  # its eyes shut, so a completion arriving 10us in was noticed 990us late.
+  let blocking = timeoutMs != 0 and localQueues[lane].cqReady == 0 and
+                 localQueues[lane].hasExtArg
+  if blocking:
+    let ns = waitNanos(lane, timeoutMs)
+    var ts = Timespec(tv_sec: Time(ns div 1_000_000_000'i64),
+                      tv_nsec: clong(ns mod 1_000_000_000'i64))
+    var tsp: nil ptr Timespec = nil
+    if ns >= 0: tsp = addr ts
+    try:
+      discard localQueues[lane].submitAndWait(1, tsp)
+    except ErrorCode as e:
+      quit "fatal: bug: submit and wait cannot fail: " & $e
+  elif n > 0:
     try:
       discard localQueues[lane].submit()
     except ErrorCode as e:
       quit "fatal: bug: submit cannot fail: " & $e
-  # Bound the wait by the earliest deadline in this lane, the same way the
-  # readiness backends bound theirs. io_uring can attach an absolute
-  # `link_timeout` to an individual SQE, which is the better answer for
-  # per-op deadlines and is the natural next step here; one lane-wide bound
-  # keeps the two backends behaving identically in the meantime.
-  discard waitMillis(lane, timeoutMs)
   if localQueues[lane].cqReady > 0:
     var cqes {.noinit.}: array[DrainBatch, Cqe]
     try:
@@ -229,6 +255,7 @@ proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
   gCancelInFlight = iouringCancelInFlight
   result = BackendRelays(
     poll: iouringPoll,
+    waits: localQueues[0].hasExtArg,
     close: iouringClose,
     forgetFd: iouringForgetFd,
   )

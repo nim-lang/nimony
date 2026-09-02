@@ -124,6 +124,7 @@ proc initEpollBackendRelays*(): BackendRelays =
   reArmEvent = epollReArm
   result = BackendRelays(
     poll: epollPoll,
+    waits: true,          # `epoll_wait(waitMs)` is a real wait
     close: epollClose,
     forgetFd: epollForgetFd,
   )
