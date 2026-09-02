@@ -12,7 +12,7 @@ from std / osproc import execCmdEx
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
+import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser, vfs]
 import ".." / lib / nifreader as rd
 from ".." / lib / nifcoreparse import parse
 # qualified-only: the private-pool plugin-input copy must not fight the
@@ -370,7 +370,7 @@ proc makePluginCache(dir: string) =
   except:
     quit "FAILURE: cannot create directory " & dir
 
-proc pluginCompileCmd(c: var SemContext; cacheDir: string): string =
+proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   ## The invocation a plugin sub-compile shares with the sem-only run the
   ## validator needs: the cache, the search paths and the stdlib-configuration
   ## opt-outs. The caller appends the command and the file.
@@ -384,14 +384,21 @@ proc pluginCompileCmd(c: var SemContext; cacheDir: string): string =
   # supplied below and deliberately not forwarded from the caller's path file.
   # Do not forward the raw command line: it can contain `--base`, which would
   # make plugin child compiles read caller-local nimony.paths files.
+  #
+  # `-d:nimonyPlugin` marks the sub-compile as the build OF a plugin. The
+  # dependency scanner then schedules no plugin builds of its own: a plugin is
+  # a leaf of the build graph. Without this, a plugin whose source imports the
+  # module declaring it (`lib/std/deps/smartcli.nim` imports `std/smartcli`)
+  # would need itself built first, and the nested builds never bottom out.
   let nimonyExe = findTool("nimony")
   let pluginDir = nimonyDir() / "src/nimony/lib"
   let srcLibPath = nimonyDir() / "src" / "lib"
   result = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(cacheDir) &
+    " -d:nimonyPlugin" &
     " --path:" & quoteShell(srcLibPath) &
     " --path:" & quoteShell(pluginDir)
-  for path in c.g.config.paths:
+  for path in config.paths:
     if path != stdlibDir() and path != pluginDir and path != srcLibPath:
       result.add " --path:"
       result.add quoteShell(path)
@@ -402,11 +409,11 @@ proc pluginCompileCmd(c: var SemContext; cacheDir: string): string =
   # above. The derived defines (`nimNativeAlloc`/`nimNativeIo`) are NOT
   # forwarded: the child re-derives them from these opt-outs.
   for d in ["useLibc", "useLibcIo", "useMimalloc"]:
-    if c.g.config.isDefined(d):
+    if config.isDefined(d):
       result.add " -d:"
       result.add d
 
-proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
+proc runValidatorOnPlugin(config: NifConfig; nf, checkCache: string) =
   ## Run the plugin validator on `nf` before compiling it. Skipped when
   ## --novalidate was passed or when the validator binary is not available
   ## (a fresh clone before `hastur build validator` has run).
@@ -417,16 +424,15 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
   ##
   ## A failing sem run is not reported here. It means the plugin does not
   ## compile, and the build that follows says so with the real diagnostics.
-  if c.g.config.noValidate: return
+  if config.noValidate: return
   let v = findTool("validator")
   if not os.fileExists(v):
     echo "warning: validator binary not found at ", v,
          "; skipping plugin validation (build it with `hastur build validator` ",
          "or pass --novalidate to silence this)"
     return
-  let checkCache = exefile & "_v"
   makePluginCache checkCache
-  let checkCmd = pluginCompileCmd(c, checkCache) & " check " & quoteShell(nf)
+  let checkCmd = pluginCompileCmd(config, checkCache) & " check " & quoteShell(nf)
   # Captured, not inherited: on failure the build below reports the same
   # diagnostics, and printing them twice would only obscure them.
   var checkCode = 0
@@ -439,18 +445,50 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
   if checkCode != 0: return
   exec quoteShell(v) & " --nimcache:" & quoteShell(checkCache) & " " & quoteShell(nf)
 
-proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
-  ## Build a plugin's `.nim` source as an executable. Plugins import
-  ## `lib/plugins.nim` and are compiled by Nimony itself.
-  runValidatorOnPlugin(c, nf, exefile)
-  let pluginCache = exefile & "_d"
-  makePluginCache pluginCache
-  var cmd = pluginCompileCmd(c, pluginCache)
+proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string) =
+  ## Build a plugin's `.nim` source `nf` as the executable `exefile`. Plugins
+  ## import `lib/plugins.nim` and are compiled by Nimony itself. The
+  ## sub-compiles work in `<scratch>_d` (the build) and `<scratch>_v` (the
+  ## validator's sem-only run); the caller owns these directories.
+  ##
+  ## The link target is a temporary sibling, never `exefile` itself, and it is
+  ## moved into place as one operation once it is complete. Nothing ever opens
+  ## the live path for writing: a process executing the old plugin keeps its
+  ## inode, and one starting afterwards sees a complete file.
+  runValidatorOnPlugin(config, nf, scratch & "_v")
+  let cacheDir = scratch & "_d"
+  makePluginCache cacheDir
+  let staging = atomicTempPath(exefile)
+  var cmd = pluginCompileCmd(config, cacheDir)
   cmd.add " -o:"
-  cmd.add quoteShell(exefile)
+  cmd.add quoteShell(staging)
   cmd.add " c "
   cmd.add quoteShell(nf)
   exec cmd
+  if not vfsMoveInto(staging, exefile):
+    vfsRemove staging   # no `.tmp.NNN` litter
+    quit "FAILURE: cannot install plugin executable " & exefile
+
+proc buildPlugin*(config: NifConfig; nf, exefile: string) =
+  ## `nimsem plugin <nf> <exefile>`: the build-graph way to get a plugin.
+  ## The dependency scanner lists every `{.plugin.}` a module declares, so
+  ## nifmake builds the executable once, as a node of its own, before any of
+  ## the nimsem runs that may execute it. Being the only builder by
+  ## construction, this path may keep incremental caches next to the exe.
+  buildPluginInto(config, nf, exefile, exefile)
+
+proc ensurePlugin(config: NifConfig; nf, exefile: string) =
+  ## The lazy fallback for a plugin the build graph did not provide: a
+  ## `{.plugin.}` pragma nifler could not see, or a hand-driven `nimsem m`.
+  ## Several nimsem processes may get here for the same plugin at once, so it
+  ## shares nothing that could be corrupted: the sub-compiles run in throwaway
+  ## per-process caches, and the executable is installed atomically. The
+  ## worst case of a collision is a redundant compile.
+  if not needsRecompile(nf, exefile): return
+  let scratch = atomicTempPath(exefile)
+  buildPluginInto(config, nf, exefile, scratch)
+  vfsRemoveTree scratch & "_d"
+  vfsRemoveTree scratch & "_v"
 
 proc writeFileIfChanged(file, content: string) {.canRaise.} =
   if os.fileExists(file) and readFile(file) == content:
@@ -527,9 +565,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
 
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
-  if needsRecompile(nf, pluginExe):
-    compilePlugin(c, info, nf, pluginExe)
-  c.depsPlugins.incl pool.strings.getOrIncl nf
+  ensurePlugin(c.g.config, nf, pluginExe)
 
   try:
     writeFileIfChanged(inputFile, pluginInput)

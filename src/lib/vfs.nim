@@ -113,6 +113,15 @@ when defined(nimony):
     except: 0'i64
   proc rmPath(p: string) =
     try: removeFile(path(p)) except: discard
+  proc moveIntoImpl(src, dst: string): bool =
+    try: tryMoveFSObject(src, dst, false) except: false
+  proc removeTreeImpl(d: string) =
+    try:
+      for it in walkDir(path(d)):
+        if it.kind == pcDir: removeTreeImpl($it.path)
+        else: discard tryRemoveFile(it.path)
+      discard tryRemoveFinalDir(path(d))
+    except: discard
   proc readBytes(p: string): string =
     try: readFile(p) except: ""
 
@@ -121,7 +130,7 @@ when defined(nimony):
     var ok = false
     try:
       writeFile(tmp, c)
-      ok = tryMoveFSObject(tmp, p, false)
+      ok = moveIntoImpl(tmp, p)
     except:
       ok = false
     if not ok:
@@ -141,17 +150,40 @@ else:
     let t = getTime()
     toUnix(t) * nanosPerSec + int64(t.nanosecond)
   proc rmPath(path: string) = removeFile(path)
+  proc moveIntoImpl(src, dst: string): bool =
+    try: moveFile(src, dst); true except CatchableError: false
+  proc removeTreeImpl(d: string) =
+    try: removeDir(d) except CatchableError: discard
   proc readBytes(p: string): string = readFile(p)
   proc writeBytes(p, c: string) =
     let tmp = atomicTempPath(p)
     try:
       writeFile(tmp, c)
-      moveFile(tmp, p)
+      if not moveIntoImpl(tmp, p): raise newException(IOError, "move failed: " & p)
     except CatchableError:
       try: removeFile(tmp) except CatchableError: discard   # no `.tmp.NNN` litter
       raise
   proc fileMaybeExists(p: string): bool = fileExists(p)
   proc openMmapImpl(p: string): MemFile = memfiles.open(p)
+
+proc vfsMoveInto*(src, dst: string): bool =
+  ## Move `src` onto `dst` as a single filesystem operation, replacing whatever
+  ## was there. The point is that `dst` is never opened for writing: a reader
+  ## that mmap'd it, or a process currently EXECUTING it, keeps the old inode
+  ## and is undisturbed, while everyone who opens the path afterwards sees the
+  ## complete new file. There is no window in which `dst` is half-written.
+  ##
+  ## This is what makes a build artefact safe to publish from several processes
+  ## at once. Writing one in place is not: a concurrent `execve` of a partially
+  ## written executable fails with ETXTBSY ("Text file busy"), and so does
+  ## writing one that somebody else is executing.
+  moveIntoImpl(src, dst)
+
+proc vfsRemoveTree*(dir: string) =
+  ## Remove `dir` and everything below it. Best effort: it exists to clean up
+  ## a scratch directory this process created for itself, and failing to do
+  ## so must never fail a build.
+  removeTreeImpl(dir)
 
 # --- relays ---------------------------------------------------------------
 #

@@ -17,7 +17,7 @@
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
-import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
+import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
 import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder]
@@ -198,7 +198,9 @@ type
     isSystem: bool
     plugin: string
     cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
-    depsPlugins: HashSet[StrId] ## Set of plugins `files` uses except import plugins
+    plugins: HashSet[string] ## exe basenames of the `{.plugin.}`s this module may
+                             ## run: the ones it declares plus, after
+                             ## `propagatePlugins`, those of its import closure
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -251,6 +253,8 @@ type
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
+    pluginSources: Table[string, string] ## exe basename -> resolved `.nim` source
+                                         ## of every `{.plugin.}` in the graph
     toBuild: seq[CFile]
     backendTools: seq[BackendTool]
     bundles: seq[Bundle]
@@ -520,6 +524,45 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
         processPluginImport c, f, info, current
       break
 
+proc cmpNames(a, b: string): int =
+  ## `sort` needs an explicit comparator under Nimony, whose stdlib has no `cmp`.
+  if a < b: -1 elif a > b: 1 else: 0
+
+proc pluginExe(c: DepContext; name: string): string =
+  ## Where `semos.runPlugin` looks for the plugin: keep the two in sync.
+  c.config.nifcachePath / name.addFileExt(ExeExt)
+
+proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
+  ## `(plugin [(when COND...)] "name")`: nifler's deps-file entry for a
+  ## `{.plugin: "name".}` pragma. The name resolves relative to the declaring
+  ## file exactly as `semos.runPlugin` resolves it.
+  ##
+  ## Ignored when this build IS a plugin build (`-d:nimonyPlugin`, set by
+  ## `semos.pluginCompileCmd`): plugins are leaves of the build graph. A plugin
+  ## whose source imports its declaring module would otherwise require itself,
+  ## and the nested builds would recurse without end. Should such a plugin
+  ## actually run another plugin at compile time, `runPlugin`'s lazy fallback
+  ## still builds that one on demand.
+  var x = it
+  skip it
+  if c.config.isDefined("nimonyPlugin"):
+    return
+  x.into:  # (plugin …)
+    if x.stmtKind == WhenS:
+      if not whenMarkerHolds(c, x):
+        return
+      skip x, SkipCond
+    while x.hasMore:
+      if x.isStringLit:
+        let name = pool.strings[x.strId]
+        let src = resolveFile(c.config.paths, current.files[current.active].nimFile, name)
+        if semos.fileExists(src):
+          let exeName = splitFile(name).name
+          current.plugins.incl exeName
+          if not c.pluginSources.hasKey(exeName):
+            c.pluginSources[exeName] = src
+      skip x
+
 proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
   it.into:  # (build …)
     while it.hasMore:
@@ -595,6 +638,8 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
       processBuild c, n, current
     elif n.cursorTagId == TagId(BundleIdx):
       processBundle c, n
+    elif n.cursorTagId == TagId(PluginP):
+      processPlugin c, n, current
     elif n.cursorTagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
@@ -687,29 +732,21 @@ proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
     importSystem c, current
 
-proc traverseDeps2(c: var DepContext) =
-  # Get the list of used plugins from deps2File so that Nimony generates a build file that
-  # automatically rebuild modules using the plugins when the plugins are modified.
-  # So don't need to get the list when deps2File doesn't exist as modules are semchecked then.
-  # Plugins used under `when false:` or template plugins used with templates never called are not listed in deps2File.
-  for current in c.nodes:
-    for p in current.files:
-      let depsFile = c.config.deps2File(p)
-      if semos.fileExists(depsFile):
-        var r = rd.open(depsFile)
-        var buf = createTokenBuf()
-        parse(r, buf)
-        rd.close(r)
-        var n = beginRead(buf)
-        if n.stmtKind == StmtsS:
-          n.loopInto:
-            if n.pragmaKind == PluginP:
-              n.loopInto:
-                if n.isStringLit:
-                  current.depsPlugins.incl n.strId
-                skip n
-            else:
-              skip n
+proc propagatePlugins(c: var DepContext) =
+  ## A plugin declared in module A runs whenever a module importing A is
+  ## semchecked (a `.plugin` template of A expands at its call site in B), so
+  ## a nimsem run needs the plugins of its whole import closure. A fixpoint
+  ## over `deps` rather than a DFS: cyclic modules make the graph a general
+  ## digraph and it is small.
+  var changed = true
+  while changed:
+    changed = false
+    for v in c.nodes:
+      for d in v.deps:
+        if d == v.id: continue   # never iterate a set while growing it
+        for p in c.nodes[d].plugins:
+          if not v.plugins.containsOrIncl(p):
+            changed = true
 
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
@@ -1635,10 +1672,15 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       if not seenDeps.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
-    # Input: plugins
-    for p in v.depsPlugins:
+    # Input: the executables of the plugins this module may run. They are
+    # outputs of `pluginbuild` nodes, so nifmake builds them first and re-sems
+    # the module when one of them changes.
+    var plugins: seq[string] = @[]
+    for p in v.plugins: plugins.add p
+    sort plugins, cmpNames
+    for p in plugins:
       b.withTree "input":
-        b.addStrLit pool.strings[p]
+        b.addStrLit c.pluginExe(p)
     # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
     b.withTree "output":
@@ -1698,6 +1740,17 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
           b.addIntLit 0
           b.addIntLit -1 # all inputs
 
+    if c.pluginSources.len > 0:
+      # `nimsem <frontend args> plugin <source> <exe>`: builds a `{.plugin.}`
+      # executable, validator included. One node per plugin, below.
+      b.withTree "cmd":
+        b.addSymbolDef "pluginbuild"
+        b.addStrLit c.nimsem
+        emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+        b.addStrLit "plugin"
+        b.addKeyw "input"
+        b.addKeyw "output"
+
     for plugin in c.foundPlugins:
       b.withTree "cmd":
         b.addSymbolDef plugin
@@ -1710,6 +1763,20 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         # index file output is not explicitly passed to the plugin!
         #b.withTree "output":
         #  b.addIntLit 1  # index file output
+
+    # Build rules for plugin executables. Every sem node that may run one
+    # lists it as an input, which is what orders the build and makes it happen
+    # exactly once, however many modules share the plugin.
+    var pluginNames: seq[string] = @[]
+    for name in c.pluginSources.keys: pluginNames.add name
+    sort pluginNames, cmpNames
+    for name in pluginNames:
+      b.withTree "do":
+        b.addIdent "pluginbuild"
+        b.withTree "input":
+          b.addStrLit c.pluginSources.getOrDefault(name)
+        b.withTree "output":
+          b.addStrLit c.pluginExe(name)
 
     # Build rules for semantic checking
     var i = 0
@@ -1793,7 +1860,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.processedModules[p.modname] = 0
   traverseDeps result, p, root
   if not isFinal:
-    traverseDeps2 result
+    propagatePlugins result
 
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     flags: set[BuildFlag]; moduleFlags: set[ModuleFlag]) =

@@ -142,10 +142,17 @@ in the plugin rather than a malformed NIF tree at runtime.
 
 ## How plugins are compiled and run
 
-1. The compiler finds the `.plugin` pragma and resolves the path relative to the
-   source file containing the pragma string literal.
-2. The plugin is compiled with Nimony.
-   The compiled executable is cached in the nimcache directory and reused until the source changes.
+1. The parser (nifler) lists every `.plugin` pragma in the module's deps file,
+   and the dependency scanner resolves the path relative to the source file
+   containing the pragma string literal.
+2. The plugin is compiled with Nimony as a node of the build graph: nifmake
+   builds the executable exactly once, before any of the module compilations
+   that may run it (the declaring module and everything importing it), and
+   rebuilds it — and them — when the plugin's source changes. The executable
+   is cached in the nimcache directory. Should a plugin reach the compiler
+   without a build-graph node (a pragma the parser could not see), it is
+   built on demand instead; that path shares nothing between processes, so
+   concurrent compilations of one module set stay safe.
 3. At the call site, the compiler writes the input AST to a `.nif` file and invokes
    the plugin executable as a subprocess.
 4. The plugin reads the input, transforms it, writes output, and exits.
