@@ -22,22 +22,6 @@ import ./httpparse
 import ./httpwire
 import std / [ioring, assertions]
 
-# NOTE — no `openArray` parameters on the `.passive` procs below, and that is
-# not a style choice. An `openArray` parameter of a passive proc arrives
-# corrupt: its length survives, its pointer does not, so the callee reads
-# whatever happens to be at the wrong address. Reduced:
-#
-#   proc take(data: openArray[char]) {.passive.} =
-#     for i in 0..<data.len: s.add data[i]
-#   proc chain() {.passive.} =
-#     take("aaa"); take("bbb"); take("ccc")   # prints garbage, not aaa/bbb/ccc
-#
-# It happens with or without a suspension point in the callee, and only for
-# `openArray` — a `string` parameter and a `ptr UncheckedArray[char]` + length
-# pair both come through intact. So bodies are `string` (ergonomic, and a
-# response body is a string anyway) and destination buffers are pointer plus
-# capacity (no allocation, which is what a read path wants).
-
 const
   ReadChunk* = 8 * 1024
     ## How much is asked for per `read`. Also the buffer's growth step.
@@ -202,7 +186,7 @@ proc beginBody*(c: var HttpConn) {.inline.} =
   c.chunk = csHeader
   c.chunkLeft = 0
 
-proc readChunked*(c: var HttpConn; dest: ptr UncheckedArray[char]; cap: int;
+proc readChunked*(c: var HttpConn; dest: var openArray[char];
                   dl = never): int {.passive.} =
   ## The next piece of a chunk-framed body: bytes copied, `0` once the body
   ## has ended, negative on error.
@@ -225,7 +209,7 @@ proc readChunked*(c: var HttpConn; dest: ptr UncheckedArray[char]; cap: int;
         continue
       let avail = c.buffered
       var take = if avail < c.chunkLeft: avail else: c.chunkLeft
-      if take > cap: take = cap
+      if take > dest.len: take = dest.len
       for i in 0..<take: dest[i] = c.rbuf[c.rpos + i]
       c.rpos += take
       c.chunkLeft -= take
@@ -268,17 +252,17 @@ proc readChunked*(c: var HttpConn; dest: ptr UncheckedArray[char]; cap: int;
       c.chunk = csDone
       return 0
 
-proc readBody*(c: var HttpConn; dest: ptr UncheckedArray[char]; want: int;
+proc readBody*(c: var HttpConn; dest: var openArray[char];
                dl = never): int {.passive.} =
-  ## Up to `want` bytes of body into `dest`, starting with whatever already
-  ## arrived behind the head. Bytes copied, or negative on error.
+  ## Fills `dest` with body bytes, starting with whatever already arrived
+  ## behind the head. Bytes copied, or negative on error.
   ##
   ## Only for `Content-Length` bodies. Ask `isChunked` first and use
   ## `readChunked` if it says so: guessing the framing is how two hops come to
   ## disagree about where a message ends.
   result = 0
   let dl2 = budget(c, dl)
-  let limit = want
+  let limit = dest.len
   var got = 0
   while got < limit:
     if c.buffered == 0:
@@ -321,18 +305,14 @@ proc sendHead*(c: var HttpConn; m: var HttpMsg;
   if n != need: return BugError
   result = writeAll(c, addr c.wbuf[0], n, budget(c, dl))
 
-proc sendBody*(c: var HttpConn; body: string;
+proc sendBody*(c: var HttpConn; body: openArray[char];
                dl = never): ErrorCode {.passive.} =
   ## Send a body already in memory. Nothing is copied.
   result = Success
   if body.len == 0: return Success
-  # A local, because `toCString` wants a mutable string — and because the
-  # local is lifted into this coroutine's frame, so the bytes stay put across
-  # the suspension inside `writeAll`.
-  var b = body
-  result = writeAll(c, cast[pointer](b.toCString), b.len, budget(c, dl))
+  result = writeAll(c, addr body[0], body.len, budget(c, dl))
 
-proc sendChunk*(c: var HttpConn; data: string;
+proc sendChunk*(c: var HttpConn; data: openArray[char];
                 dl = never): ErrorCode {.passive.} =
   ## One chunk. An empty `data` is *not* written: a zero-length chunk is the
   ## end-of-body marker, so sending one here would end the body early.
@@ -361,7 +341,7 @@ proc endChunks*(c: var HttpConn; dl = never): ErrorCode {.passive.} =
   if n < 0: return BugError
   result = writeAll(c, addr buf[0], n, budget(c, dl))
 
-proc respond*(c: var HttpConn; status: int; body: string;
+proc respond*(c: var HttpConn; status: int; body: openArray[char];
               dl = never): ErrorCode {.passive.} =
   ## A complete response: status, `Content-Length`, `Connection`, and the
   ## body. The length is always sent — a response whose end the peer has to

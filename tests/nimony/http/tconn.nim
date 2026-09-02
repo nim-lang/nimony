@@ -86,7 +86,7 @@ else:
     assert c.readResponse(res) == Success
     let n = res.contentLength
     var body = default(array[64, char])
-    let got = c.readBody(cast[ptr UncheckedArray[char]](addr body[0]), n)
+    let got = c.readBody(toOpenArray(body, 0, n - 1))
     var s = ""
     for i in 0..<got: s.add body[i]
     clientLog.add "client got " & $res.statusOf & " len=" & $n &
@@ -142,7 +142,7 @@ else:
     var body = ""
     var piece = default(array[4, char])   # smaller than a chunk, on purpose
     while true:
-      let n = c.readChunked(cast[ptr UncheckedArray[char]](addr piece[0]), 4)
+      let n = c.readChunked(toOpenArray(piece, 0, 3))
       assert n >= 0, "chunked read failed: " & $n
       if n == 0: break
       for i in 0..<n: body.add piece[i]

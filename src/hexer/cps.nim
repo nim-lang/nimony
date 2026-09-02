@@ -409,6 +409,7 @@ proc transformToCps*(pass: var Pass) =
     typeCache: createTypeCache(pass.bits), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl(),
     hooks: passiveHooks(), nextTemp: pass.nextTemp,
+    nextRefTemp: pass.nextRefTemp,
     ptrSize: pass.bits div 8)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
@@ -424,6 +425,7 @@ proc transformToCps*(pass: var Pass) =
     c.coroTypes.addParRi() # close the root; its source ParRi may be elided
   swap c.coroTypes, pass.dest
   pass.nextTemp = c.nextTemp
+  pass.nextRefTemp = c.nextRefTemp
   c.typeCache.closeScope()
 
 when isMainModule:

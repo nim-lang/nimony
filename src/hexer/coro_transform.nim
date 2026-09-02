@@ -40,7 +40,7 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / finalir / [finalir, finalir_model]
-import passes, defaultvalues
+import passes, defaultvalues, constparams
 include ".." / nimony / nif_annotations
 
 ## Note: `ContinuationName` lives in `builtintypes` (re-imported via the
@@ -190,6 +190,10 @@ type
       ## Continues the outer pipeline's xelim temp counter through the
       ## nested per-coroutine Final-IR runs (treIteratorBody) — restarting at
       ## 0 re-mints `x.N SymIds that collide with still-live outer temps.
+    nextRefTemp*: int
+      ## The same, for the const-ref temporaries `hoistConstRefTemps` mints
+      ## ahead of the transform. One counter for the whole module: two
+      ## coroutines each starting at 0 would name two locals alike.
     typeCache*: TypeCache
     thisModuleSuffix*: string
     procStack*: seq[SymId]
@@ -1112,6 +1116,42 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 # Lifetime + state analysis
 # ---------------------------------------------------------------------
 
+const
+  AddressTaken = -1
+    ## A `use` state no `def` can equal — `currentState` only ever comes from a
+    ## non-negative `lab` literal — so a local marked with it always becomes a
+    ## frame field.
+
+proc markAddressTaken(c: var Context; n: Cursor) =
+  ## A local whose address is taken has to live in the FRAME, not in whichever
+  ## state proc happens to contain the `addr`. The pointer can be stored
+  ## anywhere and read in a later state, i.e. after that proc returned, and the
+  ## `def != use` rule below cannot see it: taking an address is not a use in a
+  ## different state. This is what keeps the const-ref temporaries
+  ## `hoistConstRefTemps` mints alive — the `openArray` built from one of them
+  ## outlives the state that built it.
+  ##
+  ## Derefs are not followed: `addr p[]` is an address of what `p` points at,
+  ## which is not `p`'s own storage and says nothing about where `p` must live.
+  var n = n
+  while true:
+    case n.exprKind
+    of DotX, TupatX, AtX, ArratX, AddrX, HaddrX:
+      inc n
+    of ConvKinds:
+      inc n
+      skip n # type part
+    of BaseobjX:
+      inc n
+      skip n # type part
+      skip n # skip intlit
+    else:
+      break
+  if n.kind == Symbol:
+    let known = c.currentProc.localToEnv.getOrDefault(n.symId, EnvField(def: -2))
+    if known.def != -2:
+      c.currentProc.localToEnv.getOrQuit(n.symId).use = AddressTaken
+
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
   if n.stmtKind == LabS and n.childCursor.kind == IntLit:
@@ -1144,6 +1184,8 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   else:
     case n.kind
     of TagLit:
+      if n.exprKind in {AddrX, HaddrX}:
+        markAddressTaken c, n.childCursor
       n.loopInto:
         escapingLocalsImpl c, n, currentState
     of Symbol:
@@ -1793,8 +1835,14 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   wrapper.addParRi()
   # `c.ptrSize` IS the target width; the 0 that stood here was invisible only
   # while the type cache ignored what it was handed.
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "finalir",
+  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "constrefhoist",
                       c.ptrSize * 8, nextTemp = c.nextTemp)
+  # Before the body is cut into states: give every const-ref argument that has
+  # no address of its own a named local to borrow one from, so the cut lifts it
+  # into the frame instead of leaving it on a state proc's stack. See the note
+  # on `hoistConstRefTemps`.
+  hoistConstRefTemps(pass, c.ptrSize, c.nextRefTemp)
+  pass.prepareForNext("finalir")
   toFinalIr(pass)
   c.nextTemp = pass.nextTemp
   block extractBody:

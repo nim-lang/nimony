@@ -46,9 +46,13 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
     {.ensuresNif: addedAny(dest).}
 
-proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
-  result = sizeof.passByConstRef(typ, pragmas, c.ptrSize, c.sizeofCache) or
+proc passByConstRef(typ, pragmas: Cursor; ptrSize: int;
+                    cache: var SizeofCache): bool =
+  result = sizeof.passByConstRef(typ, pragmas, ptrSize, cache) or
            typeprops.isInheritable(typ, false)
+
+proc passByConstRef(c: var Context; typ, pragmas: Cursor): bool =
+  result = passByConstRef(typ, pragmas, c.ptrSize, c.sizeofCache)
 
 proc rememberConstRefParams(c: var Context; params: Cursor) =
   if not params.isTagLit: return
@@ -96,8 +100,13 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  assert n.exprKind notin {AddrX, HaddrX}
-  if constructsValue(n):
+  if n.exprKind in {AddrX, HaddrX}:
+    # Already carries an address: `hoistConstRefTemps` got here first, because
+    # this call is inside a coroutine and the temporary had to become a frame
+    # field rather than a state proc's local. See the note at the end of this
+    # file.
+    tr c, dest, n
+  elif constructsValue(n):
     # We cannot take the address of a literal so we have to copy it to a
     # temporary first:
     let argType = getType(c.typeCache, n)
@@ -530,3 +539,143 @@ proc injectConstParamDerefs*(pass: var Pass; ptrSize: int; needsXelim: var bool)
   tr(c, pass.dest, n)  # Write to pass.dest
   c.typeCache.closeScope()
   needsXelim = c.needsXelim
+
+# ------------------------------------------------------------------------
+# Pre-CPS hoisting of const-ref temporaries
+# ------------------------------------------------------------------------
+#
+# `trConstRef` gives an argument that has no address of its own — a literal, a
+# constructor — a temporary to borrow one from, and that temporary is a local
+# of the routine the call appears in. Which is right, until `cps` CUTS that
+# routine into one proc per state: the temporary then belongs to a single
+# state proc, while the pointer taken from it lives in the coroutine frame and
+# is read after that proc returned. `openArray` is where it shows — the length
+# is copied into the frame and survives, the data pointer points into a dead
+# stack slot — but every const-ref argument of a coroutine is exposed to it.
+# See tests/nimony/cps/tpassive_openarray.nim.
+#
+# `injectConstParamDerefs` cannot simply move ahead of `cps`: it also has to
+# see the state procs and init wrappers `cps` GENERATES, whose const-ref params
+# need the same derefs as everyone else's. So only the temporaries move, and
+# only for the routines `cps` is about to cut up. `hoistConstRefTemps` runs on
+# a coroutine body before the transform, `cps` then lifts the temporaries into
+# the frame like any other local, and the later `trConstRef` finds an argument
+# that already has an address and leaves it alone.
+
+type
+  HoistContext = object
+    ptrSize: int
+    counter: int
+    typeCache: TypeCache
+    sizeofCache: SizeofCache
+
+when not defined(nimony):
+  proc hoistTr(c: var HoistContext; dest: var TokenBuf; n: var Cursor)
+    {.ensuresNif: addedAny(dest).}
+
+proc hoistArg(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
+  ## The only rewrite this pass performs, and deliberately the same shape
+  ## `trConstRef` produces — so that pass finds nothing left to do here.
+  if n.exprKind in {AddrX, HaddrX} or not constructsValue(n):
+    hoistTr c, dest, n
+    return
+  let info = n.info
+  let argType = getType(c.typeCache, n)
+  copyIntoKind dest, ExprX, info:
+    copyIntoKind dest, StmtsS, info:
+      # A name of its own: `injectConstParamDerefs` mints `constRefTemp.N`
+      # against a per-module counter of its own, and a second producer drawing
+      # from the same well would hand two different locals one SymId.
+      let symId = pool.syms.getOrIncl("`coroRefTemp." & $c.counter)
+      inc c.counter
+      copyIntoKind dest, VarS, info:
+        addSymDef dest, symId, info
+        dest.addEmpty2 info # export marker, pragma
+        copyTree dest, argType
+        c.typeCache.registerLocal(symId, VarY, argType)
+        # value:
+        hoistTr c, dest, n
+    copyIntoKind dest, HaddrX, info:
+      dest.addSymUse symId, info
+
+proc hoistCall(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
+  var fnType = skipProcTypeToParams(getType(c.typeCache, n.childCursor))
+  if fnType.tagEnum != ParamsTagId:
+    # Nothing with formal parameters to walk against; just recurse.
+    copyInto dest, n:
+      while n.hasMore: hoistTr c, dest, n
+    return
+  dest.addParLe(n.cursorTagId, n.info)
+  n.into: # skip `(call)`
+    hoistTr c, dest, n # the `fn`
+    fnType = sub(fnType) # peek only, never left
+    while n.hasMore:
+      let previousFormalParam = fnType
+      if not fnType.hasMore:
+        hoistTr c, dest, n # can happen for closure parameter
+      else:
+        let param = takeLocal(fnType, SkipFinalParRi)
+        let pk = param.typ.typeKind
+        if pk == VarargsT:
+          # do not advance formal parameter:
+          fnType = previousFormalParam
+          hoistTr c, dest, n
+        elif pk in {MutT, OutT, LentT, TypedescT, StaticT}:
+          # `trCall` DROPS the `TypedescT`/`StaticT` arguments; this pass must
+          # not, or that one would walk formals and actuals out of step.
+          hoistTr c, dest, n
+        elif passByConstRef(param.typ, param.pragmas, c.ptrSize, c.sizeofCache):
+          hoistArg c, dest, n
+        else:
+          hoistTr c, dest, n
+    dest.addParRi(n.endInfo)
+
+proc hoistProcDecl(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
+  let decl = n
+  copyInto(dest, n):
+    let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
+    if isConcrete:
+      c.typeCache.openScope()
+      hoistTr c, dest, n
+      c.typeCache.closeScope()
+    else:
+      takeTree dest, n
+
+proc hoistTr(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
+  case n.kind
+  of TagLit:
+    if n.exprKind in CallKinds:
+      hoistCall c, dest, n
+    else:
+      case n.stmtKind
+      of ProcS, FuncS, MethodS, ConverterS, IteratorS:
+        hoistProcDecl c, dest, n
+      of LocalDecls:
+        let kind = n.symKind
+        copyInto dest, n:
+          c.typeCache.takeLocalHeader(dest, n, kind)
+          hoistTr c, dest, n
+      of ScopeS:
+        c.typeCache.openScope()
+        copyInto dest, n:
+          while n.hasMore: hoistTr c, dest, n
+        c.typeCache.closeScope()
+      of TypeS, MacroS, TemplateS:
+        takeTree dest, n
+      else:
+        copyInto dest, n:
+          while n.hasMore: hoistTr c, dest, n
+  else:
+    takeTree dest, n
+
+proc hoistConstRefTemps*(pass: var Pass; ptrSize: int; counter: var int) =
+  ## Materialise the const-ref temporaries of the routines in `pass`, so the
+  ## coroutine transform can lift them into the frame. `counter` is threaded
+  ## across the coroutines of one module: the temps share a name space.
+  var n = pass.n
+  var c = HoistContext(ptrSize: ptrSize, counter: counter,
+                       typeCache: createTypeCache(pass.bits))
+  c.typeCache.openScope()
+  hoistTr(c, pass.dest, n)
+  c.typeCache.closeScope()
+  counter = c.counter

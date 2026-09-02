@@ -485,25 +485,33 @@ started with `submit(delay(chain()), lane)` onto the pool, not called from
 non-passive code. A regular proc that calls a parking passive proc gets its
 `result` written into a frame it has already left.
 
-### A compiler bug this layer had to route around
+### A compiler bug this layer flushed out (fixed)
 
-An `openArray` parameter of a `.passive` proc arrives corrupt: the length
-survives, the pointer does not, so the callee reads whatever is at the wrong
-address. Reduced:
+An `openArray` parameter of a `.passive` proc used to arrive corrupt: the
+length survived, the pointer did not, so the callee read whatever was at the
+wrong address.
 
 ```nim
 proc take(data: openArray[char]) {.passive.} =
   for i in 0..<data.len: s.add data[i]
 
 proc chain() {.passive.} =
-  take("aaa"); take("bbb"); take("ccc")   # prints garbage, not aaa/bbb/ccc
+  take("aaa"); take("bbb"); take("ccc")   # printed garbage, not aaa/bbb/ccc
 ```
 
-It happens with or without a suspension point in the callee, and only for
-`openArray` — a `string` parameter and a `ptr UncheckedArray[char]` plus
-length both come through intact. So `httpconn` takes bodies as `string` and
-destination buffers as pointer-plus-capacity, with a note at the top of the
-file so nobody changes it back before the CPS transform is fixed.
+The cause was not `openArray` as such. A literal has no address of its own, so
+`constparams` gives it a temporary to borrow one from — a local of the routine
+the call appears in, which is right until `cps` cuts that routine into one proc
+per state. The temporary then belonged to one state proc while the view built
+from it lived in the coroutine frame and was read from a later state. Anything
+that borrows would have shown it; `openArray` is just where the shape is
+visible, because the length is copied and the pointer is not.
+
+Fixed in `src/hexer/constparams.nim` (`hoistConstRefTemps`, which mints those
+temporaries ahead of the transform) and `src/hexer/coro_transform.nim` (an
+address taken of a local now pins it to the frame). Regression test:
+`tests/nimony/cps/tpassive_openarray.nim`. This layer's signatures are back to
+plain `openArray`.
 
 Found the slow way. A chunked body came out as garbage while the chunk
 *sizes* were right, which is what pointed at the parameter rather than the
@@ -519,7 +527,6 @@ pointer was not.
   `(accept "a" "b")` and the serializer writes it back as `a, b`, but the
   parser stores one line as one value — splitting only some headers on commas
   (never `Date`, never `Set-Cookie`) is a decision worth making deliberately.
-- The `openArray`-in-`.passive` bug above, in the compiler rather than here.
 - Structured header values — `Content-Type`'s parameters, `Accept`'s q-values —
   are stored as one string today. They are the natural next thing to give
   sub-structure to, and the tree already has room for it.
