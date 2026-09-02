@@ -18,7 +18,7 @@ import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
-export types.readyEvents, types.toIoEvents, types.toEventMask
+export types.readyEvents, types.toIoEvents, types.toEventMask, types.ECancelled
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
 when defined(windows):
@@ -208,14 +208,11 @@ proc cancelPendingOps(fd: cint) =
   if backendRelays.forgetFd != nil:
     backendRelays.forgetFd(fd)
   for idx in gSlots[lane].slotsForFd(fd):
-    let slot = addr gSlots[lane].slots[idx]
-    const ECancelled = -125
-    if slot.op.res != 0:
-      cast[ptr int](slot.op.res)[] = ECancelled
-    let cont = slot.op.cont
-    if cont.fn != nil:
-      submit(cont, int(fd))
-    gSlots[lane].freeSlot(idx)
+    # The shared completion path: writes `ECancelled`, resumes the continuation
+    # or — for an op without one — pushes a completion-queue entry, then frees
+    # the slot. This used to resume continuations only, so a cancelled op that
+    # had none (a `waitCompletions` driver) vanished and its waiter hung.
+    complete(idx, ECancelled)
 
 proc htons(x: uint16): uint16 {.inline.} =
   ## Header macro/libc shim; a byte swap on the little-endian targets.
@@ -336,9 +333,10 @@ when defined(windows):
   proc closeFd*(fd: cint) =
     ## Close `fd`. Readiness backend: cancel this lane's in-flight ops on it
     ## (see `cancelPendingOps`), then `closesocket`. IOCP: the socket's ops live
-    ## on its owner lane, where `closesocket` completes them with
-    ## ERROR_OPERATION_ABORTED and the drain frees their slots — so only the
-    ## lane association is dropped here.
+    ## on its owner lane, where `closesocket` aborts them — whichever lane
+    ## issued them — and the drain reports each as `ECancelled`, freeing the
+    ## slot; only the lane association is dropped here (backends/iocp.nim,
+    ## "Cancellation").
     when hasIocp:
       if backendRelays.forgetFd != nil:
         backendRelays.forgetFd(fd)

@@ -1,8 +1,10 @@
-# std/ioring on Windows: the WSAPoll readiness backend driving a loopback TCP
-# round trip through the ring's own socket surface — listenTcp, submitAccept,
-# submitRead, submitWrite, submitPollAdd, closeFd — with completions drained
-# through waitCompletions (no continuations, so the test needs no CPS). The
-# client side is raw blocking Winsock so the only thing under test is the ring.
+# std/ioring on Windows: the selected backend (IOCP proactor or WSAPoll
+# readiness — ioring/platform.nim) driving a loopback TCP round trip through
+# the ring's own socket surface — listenTcp, submitAccept, submitRead,
+# submitWrite, submitPollAdd, closeFd — with completions drained through
+# waitCompletions (no continuations, so the test needs no CPS). The client
+# side is raw blocking Winsock so the only thing under test is the ring. The
+# output is backend-neutral, so run it under both.
 #
 # On the other platforms this prints the expected output verbatim, the mirror
 # image of tioringrw/tpolladd's Windows stubs, so one .output serves everywhere.
@@ -14,6 +16,8 @@ when not defined(windows):
   echo "read n=4 buf=ping"
   echo "write n=4 client=pong"
   echo "polladd wr=true rd=false"
+  echo "abort read res=-125 op=true"
+  echo "abort accept res=-125 op=true"
   echo "close ok"
 else:
   import std / [ioring, syncio, assertions]
@@ -102,7 +106,20 @@ else:
   let pa = waitOne()
   echo "polladd wr=", evWrite in pa.readyEvents, " rd=", evRead in pa.readyEvents
 
+  # Close with ops in flight: an issued read and an issued accept must both
+  # surface as `ECancelled` completions with their slots freed — the IOCP
+  # kernel abort on closesocket and the readiness `cancelPendingOps` report the
+  # same result. `pollCompletions` first, so the op is issued (an overlapped
+  # WSARecv/AcceptEx) rather than still queued when the socket goes.
+  discard submitRead(cfd, addr rbuf[0], 8)
+  discard pollCompletions(comps)
   closeFd(cfd)
+  let ab = waitOne()
+  echo "abort read res=", ab.result, " op=", ab.op == opRead
+  discard submitAccept(lfd)
+  discard pollCompletions(comps)
   closeFd(lfd)
+  let ac = waitOne()
+  echo "abort accept res=", ac.result, " op=", ac.op == opAccept
   discard wsClosesocket(client)
   echo "close ok"

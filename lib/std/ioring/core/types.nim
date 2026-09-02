@@ -15,6 +15,13 @@ else:
       ss_family*: uint16
       ss_pad*: array[126, uint8]
 
+const
+  # Result of an op cancelled by `closeFd` before it completed: the ring's own
+  # convention (mirrors -ECANCELED), reported identically by every backend —
+  # readiness/POSIX through `cancelPendingOps`, IOCP when the kernel aborts an
+  # overlapped op on closesocket (STATUS_CANCELLED).
+  ECancelled* = -125
+
 type
   IoEvent* = enum
     ## A readiness direction. `submitPollAdd` takes a set of these, and an

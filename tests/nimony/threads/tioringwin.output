@@ -2,4 +2,6 @@ accept ok=true
 read n=4 buf=ping
 write n=4 client=pong
 polladd wr=true rd=false
+abort read res=-125 op=true
+abort accept res=-125 op=true
 close ok

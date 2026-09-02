@@ -25,10 +25,33 @@
 # slots are served by a WSAPoll(0) pass on each poll while any are pending,
 # with the completion wait shortened to 1 ms so they are re-checked promptly.
 #
+# Cancellation: `closeFd` may run on any lane. It drops the ownership record
+# and `closesocket`s; the kernel then aborts every overlapped op pending on
+# the socket — whichever lane issued it — and delivers each to the owner's
+# port with STATUS_CANCELLED, which the drain reports as `ECancelled`, freeing
+# the slot through the normal path. That is the cross-lane cancellation the
+# readiness backends lack (their `cancelPendingOps` reaches the closing lane's
+# slots only). An op still *queued* on the owner lane at close time fails at
+# issue — the handle is gone, so the association fails and it completes as
+# `ECancelled` too — unless Winsock has already reused the handle value for a
+# new socket that claimed the same lane: the fd-reuse hazard every backend
+# shares, so callers must not submit on a socket they are closing.
+#
+# Waiting: `poll` blocks in GetQueuedCompletionStatusEx for the worker loop's
+# idle budget and reports a blocking wait as served, so the loop does not add
+# its Sleep(1) on top — on Windows both round up to the ~15.6 ms scheduler
+# tick, and the double wait cost cross-thread task hand-offs a second tick.
+# Socket completions wake the wait at once, so no timeBeginPeriod: measured on
+# a MinGW builder (hashi ws_echo), a fresh connection's first request is
+# answered in ~0.4 ms here versus one full tick under the readiness backend,
+# and the echo path is ~0.4 ms per frame under both. Only timer resumes and
+# foreign-thread task submits still see the tick (they land in a stripe the
+# sleeping worker scans on its next cycle); waking the target lane's port from
+# `submit` would close that, and is a threadpool-level follow-up.
+#
 # Winsock/kernel32 are bound by `dynlib` (static imports on this toolchain;
 # ioring.nim links ws2_32). Known v1 limits: one AcceptEx per submitAccept,
-# no FILE_SKIP_COMPLETION_PORT_ON_SUCCESS (one delivery path), no cross-lane
-# cancellation (closesocket aborts pending ops on the owner lane instead).
+# no FILE_SKIP_COMPLETION_PORT_ON_SUCCESS (one delivery path).
 
 when defined(windows):
   {.feature: "lenientnils".}   # nil proc values (the AcceptEx pointer)
@@ -81,6 +104,7 @@ when defined(windows):
     MaxEntries = 64
     DrainBatch = 128
     WakeKey = not 0'u              ## completion key of a PostQueuedCompletionStatus wake
+    StatusCancelled = 0xC0000120'u32   ## NTSTATUS in OVERLAPPED.Internal of an aborted op
     OpKey = 1'u                    ## completion key of every real socket completion
     POLLRDNORM = 0x0100
     POLLWRNORM = 0x0010
@@ -151,12 +175,22 @@ when defined(windows):
     ## Wake `lane` out of its completion wait (a cross-lane enqueue).
     discard postQueuedCompletionStatus(gPorts[lane], 0'u32, WakeKey, nil)
 
-  proc ensureAssociated(fd: cint; lane: int) =
-    ## First op for a socket on this lane: bind it to this lane's port.
+  proc ensureAssociated(fd: cint; lane: int): bool =
+    ## First op for a socket: bind it to this lane's port and record the owner.
+    ## False when the op must not be issued: the association failed (a handle
+    ## closed while its op was still queued, or one bound to another port), or
+    ## the socket belongs to another lane after all (its handle value was
+    ## closed and reused between routing and issue). Ownership is recorded only
+    ## on success — a stale record would make the next socket to get this
+    ## handle value skip association, and its ops would never complete.
     gOwnerLock.acquire()
-    if not gOwner.hasKey(fd):
-      discard createIoCompletionPort(cast[Handle](socketOf(fd)), gPorts[lane], OpKey, 0'u32)
-      gOwner[fd] = lane
+    let owner = gOwner.getOrDefault(fd, -1)
+    if owner < 0:
+      result = createIoCompletionPort(cast[Handle](socketOf(fd)), gPorts[lane],
+                                      OpKey, 0'u32) != cast[Handle](0)
+      if result: gOwner[fd] = lane
+    else:
+      result = owner == lane
     gOwnerLock.release()
 
   proc loadAcceptEx(s: SocketHandle) =
@@ -269,9 +303,11 @@ when defined(windows):
     while i < n:
       let slotIdx = gSlots[lane].allocSlot(buf[i])
       assert slotIdx < MaxOps, "ioring/iocp: slot arena grew past MaxOps (OVERLAPPED storage)"
-      if buf[i].kind != opNop and buf[i].kind != opPollAdd:
-        ensureAssociated(buf[i].fd, lane)
-      issue(lane, slotIdx)
+      if buf[i].kind != opNop and buf[i].kind != opPollAdd and
+          not ensureAssociated(buf[i].fd, lane):
+        complete(slotIdx, ECancelled)   # closed or foreign handle: never issued
+      else:
+        issue(lane, slotIdx)
       i = i + 1
     result = servePollAdds(lane)
     # Readiness probes are re-checked every millisecond while any are pending.
@@ -280,7 +316,8 @@ when defined(windows):
     var got = 0'u32
     if getQueuedCompletionStatusEx(gPorts[lane], addr entries[0], uint32(MaxEntries),
                                    addr got, uint32(wait), 0'i32) == 0:
-      return result
+      # Timed out: a blocking wait was this worker's idle sleep (see header).
+      return result or wait > 0
     var k = 0
     while k < int(got):
       let e = addr entries[k]
@@ -309,6 +346,10 @@ when defined(windows):
         if op.kind == opAccept and a.acceptSock != InvalidSocket:
           discard wsClosesocket(a.acceptSock)
           a.acceptSock = InvalidSocket
+        # Aborted by closesocket (see "Cancellation"): the ring's cancellation
+        # result, not a generic failure. Internal holds the NTSTATUS.
+        if uint32(e.internal and 0xFFFFFFFF'u) == StatusCancelled:
+          res = ECancelled
       complete(slotIdx, res)
       result = true
 
