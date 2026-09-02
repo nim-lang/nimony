@@ -204,6 +204,7 @@ template linear*() {.pragma.}
 include "system/seqimpl"
 include "system/stringimpl"
 include "system/openarrays"
+include "system/hashes"
 
 # The memory management strategy, chosen by `--mm:NAME`: `$MM` expands to
 # `system/<name>`, so a strategy is a file and needs no `when` chain here.
