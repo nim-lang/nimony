@@ -257,17 +257,27 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
     finishRaiseTuple c, dest, n.endInfo
 
+proc holdsCodeOnly(typ: Cursor): bool {.inline.} =
+  ## Does this operand hold just the `ErrorCode`, with no value beside it?
+  ## True for a void raising call's temp, whose type is still `void` here, and
+  ## for the same temp once a coroutine frame has given it the type it will
+  ## end up with (`builtintypes.addSuccessTupleType`).
+  isVoidType(typ) or
+    (typ.kind == Symbol and pool.syms[typ.symId] == ErrorCodeName)
+
 proc trFailed(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   n.into:
-    let localIsVoid = isVoidType(getType(c.typeCache, n))
-    if localIsVoid:
+    # `takeTree`, not `tr`: the operand is being asked for its error CODE, and
+    # `tr` would answer with the value projection a plain use gets. It is a
+    # symbol in an ordinary routine and `(dot (deref this) fld)` inside a
+    # coroutine, where `cps` lifted the temp into the frame — so nothing here
+    # may assume which.
+    if holdsCodeOnly(getType(c.typeCache, n)):
       dest.takeTree n
     else:
-      assert n.kind == Symbol
       copyIntoKind dest, TupatX, info:
-        dest.addSymUse n.symId, info
-        inc n
+        dest.takeTree n
         dest.addIntLit 0, info
   c.nextRaiseIsSpecial = true
 

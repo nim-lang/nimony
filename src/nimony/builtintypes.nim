@@ -51,6 +51,26 @@ const
   ContinuationName* = "Continuation.0." & SystemModuleSuffix
   OpenArrayHeadName* = "openArray.0." & SystemModuleSuffix
 
+proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo) =
+  ## The type a `.raises` routine's result actually travels in: `ErrorCode`
+  ## alone when the routine returns nothing, `(tuple ErrorCode T)` when it
+  ## returns a `T`.
+  ##
+  ## `lengcgen` derives this shape from the `(raises)` pragma at the very end
+  ## of the pipeline, which is late enough for every pass that only needs to
+  ## *ask* whether something raises — and too late for one that has to
+  ## MATERIALISE the value first. A coroutine is exactly that: `cps` puts a
+  ## local outliving a state into the frame, and a frame field needs the type
+  ## the field will hold, not the one the routine was written with. So the
+  ## shape lives here, once, and the two ends cannot drift.
+  if retType.isDotToken or retType.typeKind == VoidT:
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+  else:
+    dest.addParLe TupleT, info
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+    dest.addSubtree retType
+    dest.addParRi()
+
 proc createBuiltinTypes*(bits: int): BuiltinTypes =
   # Positions are recorded while building rather than hardcoded, so the
   # layout stays correct when `-d:virtualParRi` elides the `)` tokens.

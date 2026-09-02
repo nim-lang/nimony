@@ -834,15 +834,11 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   skip n
   # n is now at the pragmas position:
   if hasPragma(n, RaisesP):
-    # use a tuple type:
+    # use a tuple type. The shape is `builtintypes.addSuccessTupleType`, shared
+    # with the coroutine transform, which has to build the same slot a pass
+    # earlier — see the note there.
     var ret = createTokenBuf(6)
-    if isVoidType(retType):
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-    else:
-      ret.addParLe TupleT, NoLineInfo
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-      ret.addSubtree retType
-      ret.addParRi()
+    addSuccessTupleType(ret, retType, NoLineInfo)
     retType = cursorAt(ret, 0)
     trType c, dest, retType
   else:
