@@ -1635,9 +1635,6 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       if not seenDeps.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
-    # Input: cached config file
-    b.withTree "input":
-      b.addStrLit c.config.cachedConfigFile()
     # Input: plugins
     for p in v.depsPlugins:
       b.withTree "input":
@@ -1749,9 +1746,32 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
           b.withTree "input":
             b.addStrLit s
 
-proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
+proc generateCachedConfigFile(c: DepContext; passC, passL: string): bool =
+  ## Returns true when the configuration differs from the one the nimcache was
+  ## last built with, i.e. when the sem results in it are for another set of
+  ## options and have to be produced again.
+  ##
+  ## This is a MEMO nimony keeps for itself, NOT an `(input)` of the sem nodes.
+  ## It used to be one, and that was the wrong model twice over: sem does not
+  ## read this file, and an mtime cannot express "already built against this".
+  ## Once the file was newer than outputs that a re-run had legitimately left
+  ## untouched (nimsem writes OnlyIfChanged, so identical results keep their old
+  ## mtime), every sem node stayed stale against it on every subsequent build —
+  ## for good. Flipping a `-d:` flag and flipping it back was enough. The answer
+  ## is not to fake a newer output; it is that "the options changed" means
+  ## RE-RUN THIS STAGE, which is what the caller now says outright.
   let path = c.config.cachedConfigFile()
-  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile &
+  # The ROOT MODULE is deliberately NOT part of this string. Every sem node
+  # takes this file as an input (see `generateSemInstructions`), so anything in
+  # here that differs between two builds sharing a nimcache invalidates all of
+  # the other's sem results — and `executeExpr`'s const-eval sub-compile is
+  # exactly such a second build: same nimcache, same options, but a generated
+  # root (`nim<checksum>.p.nif`). With the root name in here the two overwrote
+  # each other's entry on every run, so each build re-semmed everything the
+  # other had just done, forever. The OPTIONS do belong here: two roots
+  # compiled with different options really must invalidate each other, because
+  # the `.s.nif` artifacts are keyed by module name and shared between them.
+  let configStr = c.config.getOptionsAsOneString() &
                   " --passC:" & passC & " --passL:" & passL
 
   let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
@@ -1760,6 +1780,7 @@ proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
                      true
   if needUpdate:
     onRaiseQuit writeFile(path, configStr)
+  result = needUpdate
 
 proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
@@ -1991,18 +2012,25 @@ proc buildGraph*(config: sink NifConfig; project: string;
     parseNifConfig cfgNif, config
 
   var c = initDepContext(config, project, nifler, false, forceRebuild, moduleFlags, cmd)
-  generateCachedConfigFile c, passC, passL
+  let configChanged = generateCachedConfigFile(c, passC, passL)
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
   when defined(windows) and not defined(nimony):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
-  let nifmakeCommand = quoteShell(nifmake) &
+  let nifmakeBase = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
     (if Profile in flags: " --profile" else: "") &
     (if Report in flags: " --report" else: "") &
-    " --base:" & quoteShell(config.baseDir) &
-    " -j run "
+    " --base:" & quoteShell(config.baseDir)
+  let nifmakeCommand = nifmakeBase & " -j run "
+  # A changed configuration invalidates every sem result, and now says so
+  # directly instead of through a file the sem nodes pretended to read.
+  # `--rerun`, not `--force`: the outputs must stay in place so nimsem's
+  # OnlyIfChanged writes can still find a result unchanged and spare the
+  # entire backend.
+  let frontendCommand = nifmakeBase &
+    (if configChanged: " --rerun" else: "") & " -j run "
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
@@ -2010,7 +2038,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
   # indicator across the separate processes instead of restarting per phase.
   let twoPhase = cmd != DoCheck
 
-  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
+  exec frontendCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
