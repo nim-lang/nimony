@@ -662,7 +662,14 @@ proc hoistTr(c: var HoistContext; dest: var TokenBuf; n: var Cursor) =
         c.typeCache.closeScope()
       of TypeS, MacroS, TemplateS:
         takeTree dest, n
-      else:
+      of NoStmt, CallS, CmdS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS,
+         ContinueS, ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS,
+         StmtsS, PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS,
+         ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS,
+         CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
+         UsingS, AsmS, DeferS:
+        # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore: hoistTr c, dest, n
   else:
