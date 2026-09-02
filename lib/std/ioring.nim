@@ -22,7 +22,7 @@ export types.readyEvents, types.toIoEvents, types.toEventMask, types.ECancelled
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
 when defined(windows):
-  when defined(nimIoringIocp):
+  when not defined(nimIoringWsaPoll):
     import ./ioring/backends/iocp   # iocpOwnerLane / iocpWake — lane routing
 when defined(posix):
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
@@ -168,6 +168,13 @@ proc submitPollAdd*(fd: cint; events: IoEvents = {evRead, evWrite};
   enqueueOp(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =
+  ## Non-blocking: drive this lane's backend once — issue the ops queued on
+  ## it and collect whatever the kernel has finished — then hand back up to
+  ## `comps.len` completions from the shared queue. Returns 0 when nothing has
+  ## completed. It used to only drain the queue, so a caller that submitted
+  ## and then polled had not issued anything, and a `closeFd` in between
+  ## found no slot to cancel.
+  discard backendRelays.poll(0)
   result = 0
   gCqLock.acquire()
   while result < comps.len and gCqCount > 0:
@@ -178,11 +185,11 @@ proc pollCompletions*(comps: var openArray[IoCompletion]): int =
   gCqLock.release()
 
 proc waitCompletions*(comps: var openArray[IoCompletion]): int =
+  ## `pollCompletions` until at least one completion has landed.
   result = 0
   while true:
     result = pollCompletions(comps)
     if result > 0: return
-    discard backendRelays.poll(0)
 
 proc cancelPendingOps(fd: cint) =
   ## The platform-neutral half of `closeFd`: cancel any ops still in flight on

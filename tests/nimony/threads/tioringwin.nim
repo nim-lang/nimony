@@ -1,5 +1,5 @@
-# std/ioring on Windows: the selected backend (IOCP proactor or WSAPoll
-# readiness — ioring/platform.nim) driving a loopback TCP round trip through
+# std/ioring on Windows: the selected backend (the IOCP proactor by default,
+# WSAPoll readiness with -d:nimIoringWsaPoll) driving a loopback TCP round trip through
 # the ring's own socket surface — listenTcp, submitAccept, submitRead,
 # submitWrite, submitPollAdd, closeFd — with completions drained through
 # waitCompletions (no continuations, so the test needs no CPS). The client
@@ -18,6 +18,7 @@ when not defined(windows):
   echo "polladd wr=true rd=false"
   echo "abort read res=-125 op=true"
   echo "abort accept res=-125 op=true"
+  echo "abort queued accept res=-125 op=true"
   echo "close ok"
 else:
   import std / [ioring, syncio, assertions]
@@ -106,20 +107,27 @@ else:
   let pa = waitOne()
   echo "polladd wr=", evWrite in pa.readyEvents, " rd=", evRead in pa.readyEvents
 
-  # Close with ops in flight: an issued read and an issued accept must both
-  # surface as `ECancelled` completions with their slots freed — the IOCP
-  # kernel abort on closesocket and the readiness `cancelPendingOps` report the
-  # same result. `pollCompletions` first, so the op is issued (an overlapped
-  # WSARecv/AcceptEx) rather than still queued when the socket goes.
+  # Close with ops in flight. Every backend must surface the op as an
+  # `ECancelled` completion with its slot freed, in both windows:
+  #  - issued: `pollCompletions` drove the lane once, so the op is a pending
+  #    overlapped WSARecv/AcceptEx (IOCP: closesocket aborts it, the drain
+  #    maps STATUS_CANCELLED) or an armed readiness slot (`cancelPendingOps`);
+  #  - queued: closeFd ran before the lane ever issued it (IOCP: the port
+  #    association fails on the dead handle; readiness: WSAPoll's POLLNVAL).
   discard submitRead(cfd, addr rbuf[0], 8)
   discard pollCompletions(comps)
   closeFd(cfd)
   let ab = waitOne()
   echo "abort read res=", ab.result, " op=", ab.op == opRead
-  discard submitAccept(lfd)
+  let lfd2 = listenTcp(0)
+  discard submitAccept(lfd2)
   discard pollCompletions(comps)
-  closeFd(lfd)
+  closeFd(lfd2)
   let ac = waitOne()
   echo "abort accept res=", ac.result, " op=", ac.op == opAccept
+  discard submitAccept(lfd)
+  closeFd(lfd)
+  let aq = waitOne()
+  echo "abort queued accept res=", aq.result, " op=", aq.op == opAccept
   discard wsClosesocket(client)
   echo "close ok"

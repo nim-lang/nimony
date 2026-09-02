@@ -9,9 +9,11 @@
 # epoll's ADD/MOD race has no counterpart here.
 #
 # Scale: the set is O(pending fds) per poll and WSAPoll is O(n) per call —
-# right for a client and for a single-user local server. A Windows server with
-# thousands of connections wants the IOCP proactor instead (`-d:nimIoringIocp`,
-# a stub today; design of record: hashi/doc/iocp-ioring-briefing.md).
+# right for a client and for a single-user local server, and the fallback
+# selected with `-d:nimIoringWsaPoll`; the Windows default is the IOCP
+# proactor (backends/iocp.nim), which also avoids this backend's one
+# scheduler-tick stall on a fresh connection's first request (the listener's
+# readiness is a tick late; measured in the IOCP header).
 #
 # Winsock is bound by `dynlib` (the winlean house style) rather than through
 # `<winsock2.h>`, so the generated C never has to order that header against
@@ -80,13 +82,25 @@ when defined(windows):
       # loop spins (it only sleeps when nothing fired AND it ran no task).
       if timeoutMs > 0: sleep(uint32(timeoutMs))
       return false
-    let ready = wsaPoll(addr pollSets[lane][0], culong(pollSets[lane].len),
-                        cint(timeoutMs))
-    if ready <= 0:
-      return false
+    discard wsaPoll(addr pollSets[lane][0], culong(pollSets[lane].len),
+                    cint(timeoutMs))
+    # The return value is not the gate: WSAPoll marks a closed handle POLLNVAL
+    # in revents but does not count it — it returns 0 with live sockets in the
+    # set and SOCKET_ERROR/WSAENOTSOCK with only dead ones (measured on a
+    # Windows 10 builder). Gating on `ready > 0` therefore parked every op on
+    # a socket closed before its op was issued for good. Scan revents always.
+    result = false
     for i in 0..<pollSets[lane].len:
       let re = int(pollSets[lane][i].revents)
       if re == 0: continue
+      result = true
+      if (re and POLLNVAL) != 0:
+        # Closed under its ops (closeFd ran before this lane issued them):
+        # the ring's cancellation result, same as the other backends report.
+        let dead = cint(cast[uint32](pollSets[lane][i].fd))
+        for idx in gSlots[lane].slotsForFd(dead):
+          complete(idx, ECancelled)
+        continue
       var fired: IoEvents = {}
       if (re and POLLRDNORM) != 0: fired.incl evRead
       if (re and POLLWRNORM) != 0: fired.incl evWrite
@@ -96,7 +110,6 @@ when defined(windows):
         # of leaving the continuation parked on a socket that will never fire.
         fired = {evRead, evWrite}
       processFd(cint(cast[uint32](pollSets[lane][i].fd)), fired)
-    return true
 
   proc wsapollClose() {.nimcall.} =
     ## No poller descriptors to release. Winsock itself is left initialised:
