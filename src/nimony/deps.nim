@@ -536,8 +536,17 @@ proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
   ## `(plugin [(when COND...)] "name")`: nifler's deps-file entry for a
   ## `{.plugin: "name".}` pragma. The name resolves relative to the declaring
   ## file exactly as `semos.runPlugin` resolves it.
+  ##
+  ## Ignored when this build IS a plugin build (`-d:nimonyPlugin`, set by
+  ## `semos.pluginCompileCmd`): plugins are leaves of the build graph. A plugin
+  ## whose source imports its declaring module would otherwise require itself,
+  ## and the nested builds would recurse without end. Should such a plugin
+  ## actually run another plugin at compile time, `runPlugin`'s lazy fallback
+  ## still builds that one on demand.
   var x = it
   skip it
+  if c.config.isDefined("nimonyPlugin"):
+    return
   x.into:  # (plugin …)
     if x.stmtKind == WhenS:
       if not whenMarkerHolds(c, x):

@@ -384,11 +384,18 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   # supplied below and deliberately not forwarded from the caller's path file.
   # Do not forward the raw command line: it can contain `--base`, which would
   # make plugin child compiles read caller-local nimony.paths files.
+  #
+  # `-d:nimonyPlugin` marks the sub-compile as the build OF a plugin. The
+  # dependency scanner then schedules no plugin builds of its own: a plugin is
+  # a leaf of the build graph. Without this, a plugin whose source imports the
+  # module declaring it (`lib/std/deps/smartcli.nim` imports `std/smartcli`)
+  # would need itself built first, and the nested builds never bottom out.
   let nimonyExe = findTool("nimony")
   let pluginDir = nimonyDir() / "src/nimony/lib"
   let srcLibPath = nimonyDir() / "src" / "lib"
   result = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(cacheDir) &
+    " -d:nimonyPlugin" &
     " --path:" & quoteShell(srcLibPath) &
     " --path:" & quoteShell(pluginDir)
   for path in config.paths:
