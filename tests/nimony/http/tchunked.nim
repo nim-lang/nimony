@@ -1,8 +1,7 @@
 # Chunked framing: the parser, the writer, and a real chunked exchange.
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
-
-sealHttpTags()
+import httptags
 
 proc testParseChunkSize =
   proc sz(s: string; expect: int; consumed: int) =

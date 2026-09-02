@@ -1,9 +1,7 @@
 # lib/std/http/httpwire — an HttpMsg back to wire bytes.
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
-
-let hTrace = registerHeader("x-trace-id")
-sealHttpTags()
+import httptags
 
 var wbuf = default(array[4096, char])
 

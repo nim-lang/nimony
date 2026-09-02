@@ -1,16 +1,15 @@
 # lib/std/http/httpmsg — the message layer of doc/internals/http.md §1.
 
 import std / [http/httpmsg, assertions, syncio]
+import httptags
 
-# --- init: the application registers what it indexes on, then seals --------
+# --- init: `httptags` registered what we index on and sealed the pool -------
 
-let hTrace = registerHeader("x-trace-id")
 assert hTrace.uint32 != 0'u32
 assert registerHeader("x-trace-id") == hTrace, "registration is idempotent"
 assert not isKnownHeader(hTrace), "app headers sit past the built-in range"
 
 let poolSizeAtSeal = httpTags().tags.len
-sealHttpTags()
 assert httpTagsSealed()
 
 proc testLookupNeverGrows =

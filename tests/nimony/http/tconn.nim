@@ -13,6 +13,7 @@ else:
   import std / [http/httpconn, http/httpmsg, http/httpparse,
                 ioring, threadpool, atomics, assertions, syncio]
   import std/posix/posix
+  import httptags
 
   const
     AF_UNIX = 1.cint
@@ -20,9 +21,6 @@ else:
 
   proc socketpair(domain, typ, protocol: cint;
                   sv: ptr UncheckedArray[cint]): cint {.importc: "socketpair".}
-
-  let hTrace = registerHeader("x-trace-id")
-  sealHttpTags()
 
   proc mkPair(): (cint, cint) =
     var fds = default(array[2, cint])
@@ -42,9 +40,17 @@ else:
   var clientLog = ""
 
   proc awaitFlag(flag: var int) =
-    var spins = 0
-    while atomicLoad(flag, moAcquire) == 0 and spins < 200_000_000:
-      inc spins
+    ## A wall-clock budget, not a spin count. What these chains are waiting on
+    ## is time — 5s deadlines for most of them, 40ms for the idle connection —
+    ## and a spin count is only a proxy for it: 200M iterations of this loop is
+    ## somewhere between 40ms and 60ms depending on the machine and what else
+    ## is running, so the idle block was a coin flip against its own deadline
+    ## and failed about half the time with "a passive chain never finished"
+    ## when nothing was wrong with the chain at all.
+    const BudgetMs = 10_000
+    let start = monoNow()
+    while atomicLoad(flag, moAcquire) == 0:
+      if millisUntil(monoNow(), start) > BudgetMs: break
     assert atomicLoad(flag, moAcquire) == 1, "a passive chain never finished"
     atomicStore(flag, 0, moRelease)
 

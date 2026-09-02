@@ -7,7 +7,8 @@ the connection layer `httpconn.nim` — which is where `.passive` meets the ring
 and is proven end to end by `tests/nimony/http/tconn.nim`: a real socket, a
 server and a client each a passive chain resumed by pool workers, keep-alive
 across two requests, a dead peer, and an idle connection expiring on its own
-budget. Still design: §2, the event loop itself.
+budget — on both Linux backends, io_uring and the epoll fallback.
+Still design: §2, the event loop itself.
 
 The design rests on three ideas that already exist in this repo:
 
@@ -397,7 +398,10 @@ None of this is reachable until the following exist.
 
    Still to do here: io_uring can attach an absolute `link_timeout` to an
    individual SQE, which is better than one lane-wide bound. The lane-wide
-   bound keeps both backends behaving identically in the meantime.
+   bound keeps both backends behaving identically in the meantime — and, since
+   it means an op can be given up on here while the kernel still holds it, it
+   is also what makes `gCancelInFlight` necessary. `link_timeout` would retire
+   both.
 3. Multishot accept. `submitAccept` is oneshot, so a busy listener pays one
    submission per connection; io_uring has `accept_multishot`.
 4. DNS. `getaddrinfo` blocks and io_uring has no resolver, so it needs
@@ -517,6 +521,73 @@ Found the slow way. A chunked body came out as garbage while the chunk
 *sizes* were right, which is what pointed at the parameter rather than the
 framing: the lengths were being read correctly from the same object whose
 pointer was not.
+
+### And three ring bugs (fixed)
+
+`tconn` is the first thing in the tree that drives the ring hard enough to be
+a test of it, and it found that the io_uring backend had never really run.
+Three separate defects, each hiding the next:
+
+**A raise that was not one.** `raiseOSError(osLastError(), ...)` maps an errno
+to an `ErrorCode`, and errno `0` maps to `Success` — raising which is a no-op.
+So a `.noreturn` proc *returned*, into a caller that had already established
+its call failed. `io_uring_setup` returning `-1` therefore travelled on as a
+file descriptor, `mmap` on it returned `MAP_FAILED`, and `newRing` wrote
+through that: a segfault during module initialisation, from what should have
+been a clean fall back to epoll. `raiseOSError` now reports `Failure` rather
+than nothing when the code it is handed is zero.
+
+Errno was zero because `posix.errno` is not libc's. Under the default
+`-d:nimNativeIo` it reads a module-local variable that only posix.nim's own
+freestanding wrappers maintain, while `syscall` and `mmap` are bare `importc`s
+into libc. `ioring/backends/poll.nim` had already been caught by this and says
+so at length; `posix/io_uring.nim` now reads libc's errno the same way.
+
+**A `Params` nobody zeroed.** `io_uring_setup` rejects a `Params` whose `resv`
+words are non-zero, and it was allocated with `alloc`. So the ring came up or
+did not according to what the allocator last held there — which is why the
+crash needed a program with a warm heap and never reproduced in a small one.
+
+**Completions applied to the wrong op.** A slot is recycled the moment its op
+completes, and an op can complete *locally* while the kernel is still working
+on it: a blown deadline expires it from the lane's heap, and `closeFd` frees
+its slot. The CQE that arrives afterwards named a slot holding an unrelated
+op — and completing it freed a slot that was already free, so its index went
+onto the freelist twice and two later ops shared one slot. One of them could
+then never complete, which is how this surfaced as a *hang* rather than as a
+wrong result. The arena has carried a generation counter all along for exactly
+this; `user_data` now carries it next to the slot index, and a CQE whose
+generation does not match is dropped.
+
+The kernel still owning an op we have stopped waiting for is a hazard in its
+own right — it may write into that op's buffer afterwards — so the two places
+that complete an op locally now take it back: `closeFd` submits an
+`ASYNC_CANCEL` for the fd (`iouringForgetFd`, whose whole point this is and
+which had been a `discard`), and a blown deadline cancels its own op through
+the `gCancelInFlight` hook. Per-SQE `link_timeout` remains the better answer
+and is still §7.2's next step; this makes the interim sound rather than
+merely usually-fine.
+
+One thing the first defect had been hiding all along: `teardown` unmapped
+lengths it recomputed from `Params`, and they did not match what `newRing`
+had mapped. A short munmap is a *legal partial* unmap, so it leaked a page per
+ring and said nothing — and a wrong one would have been silent too, because
+`uringUnmap` raised into the same void. Each ring now records the byte length
+it was mapped with. (The SQ ring's array holds `__u32` indices, not pointers;
+sizing it for pointers is what left room for the off-by-one that wrote one
+entry past its end.)
+
+And two things about the tests rather than the code. `tconn`'s
+`awaitFlag` bounded its wait with a spin count, which is only a proxy for
+time: 200M iterations is somewhere between 40ms and 60ms depending on the
+machine, and the idle-connection block is waiting on a 40ms deadline — so it
+failed about half the time with "a passive chain never finished" when nothing
+had gone wrong. It is a wall-clock budget now. And the tag pool is
+process-global and sealed once while a joined group is one process, so each
+test registering and sealing for itself made the first member's init decide
+the vocabulary for the rest; `tests/nimony/http/httptags.nim` is the one place
+that registers and seals, which is the shape §1 prescribes for an application
+anyway.
 
 ## 8. Open
 

@@ -526,6 +526,20 @@ const
   OP_SUPPORTED* = 1u shl 0
 
 proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
+
+# `posix.errno` is not usable here, for the reason `ioring/backends/poll.nim`
+# spells out at length: under the default `-d:nimNativeIo` it reads a
+# module-local variable that only posix.nim's own freestanding wrappers
+# maintain, while every call below — `syscall`, `mmap`, `munmap` — is a bare
+# `importc` into libc and sets *libc's* errno. Reading the wrong one is not a
+# wrong message, it is a wrong control flow: every failure here reported `0`,
+# which maps to `Success`, so `raiseOSError` raised nothing at all and
+# `setup`'s `-1` fd travelled on into `mmap`. `newRing` then wrote through the
+# `MAP_FAILED` it got back, and the ioring init that is supposed to fall back
+# to epoll segfaulted instead.
+proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
+proc sysErrno(): cint {.inline.} = errnoLocation()[]
+
 const
   # Arch-independent since their introduction in Linux 5.1 (io_uring was added
   # after the syscall tables were unified).
@@ -536,7 +550,7 @@ const
 proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} =
   result = syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
   if result < 0:
-    raiseOSError(osLastError(), "io_uring setup syscall failed")
+    raiseOSError(OSErrorCode(sysErrno()), "io_uring setup syscall failed")
 
 proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
             flags: EnterFlags, sig: nil pointer, sz: cint): cint {.raises, tags: [].} =
@@ -545,31 +559,35 @@ proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
   result = syscall(SYS_io_uring_enter, fd, toSubmit, minComplete,
                    cast[ptr cint](f.addr)[], sig, sz)
   if result < 0:
-    raiseOSError(osLastError(), "io_uring enter syscall failed")
+    raiseOSError(OSErrorCode(sysErrno()), "io_uring enter syscall failed")
 
 proc register*(fd: cint, op: RegisterOp, arg: nil pointer, nr_args: cint): cint {.raises, tags: [].} =
   result = syscall(SYS_io_uring_register, fd, cint(op), arg, nr_args, 0, 0)
   if result < 0:
-    raiseOSError(osLastError(), "io_uring register syscall failed")
+    raiseOSError(OSErrorCode(sysErrno()), "io_uring register syscall failed")
 
 # ============= QUEUE ==================
 
 proc `+`(p: pointer; i: uint32): pointer =
   result = cast[pointer](cast[uint](p) + i.uint)
 
-proc uringMap(offset: Off; fd: FileHandle; begin: uint32;
-               count: uint32; typSize: int): pointer {.raises, tags: [].} =
-  let size = int(begin + count * typSize.uint32)
+proc mapBytes(begin: uint32; count: uint32; typSize: int): int {.inline.} =
+  ## The byte length of a ring mapping. The kernel puts the ring's head, tail,
+  ## mask and flags words in front of the array it hands out, so the mapping is
+  ## that leading offset plus the array itself.
+  int(begin) + int(count) * typSize
+
+proc uringMap(offset: Off; fd: FileHandle; size: int): pointer {.raises, tags: [].} =
   result = mmap(nil, csize_t(size), PROT_READ or PROT_WRITE, MAP_SHARED or MAP_POPULATE,
                 fd.cint, offset)
   if mmapFailed(result):
-    raiseOSError(osLastError(), "io_uring uringMap failed")
+    raiseOSError(OSErrorCode(sysErrno()), "io_uring uringMap failed")
 
 proc uringUnmap(p: pointer; size: int) {.raises, tags: [].} =
   ## interface to tear down some memory (probably mmap'd)
   let code = munmap(p, csize_t(size))
   if code < 0:
-    raiseOSError(osLastError(), "io_uring uringUnmap failed")
+    raiseOSError(OSErrorCode(sysErrno()), "io_uring uringUnmap failed")
 
 type
   Ring = object of RootObj
@@ -579,12 +597,18 @@ type
     entries*: ptr uint32
     size*: uint32
     ring*: pointer
+    mapLen*: int
+      ## Byte length of `ring`'s mapping, kept so `teardown` unmaps exactly
+      ## what was mapped rather than recomputing it — the two had drifted, and
+      ## the shortfall was a page per ring that munmap left behind without
+      ## complaining, because a partial unmap is legal.
 
   SqRing* = object of Ring
     flags*: ptr SqringFlags
     dropped*: pointer
     array*: pointer
     sqes*: ptr Sqe
+    sqesLen*: int        ## byte length of the separate `sqes` mapping
     sqeTail*: uint32
     sqeHead*: uint32
 
@@ -604,9 +628,10 @@ const
 
 proc newRing(fd: FileHandle; offset: ptr CqringOffsets; size: uint32): CqRing {.raises, tags: [].} =
   ## mmap a Cq ring from the given file-descriptor, using the size spec'd
-  let ring = OFF_CQ_RING.uringMap(fd, offset.cqes, size, sizeof(Cqe))
+  let mapLen = mapBytes(offset.cqes, size, sizeof(Cqe))
+  let ring = OFF_CQ_RING.uringMap(fd, mapLen)
   result = CqRing(
-    size: size, ring: ring,
+    size: size, ring: ring, mapLen: mapLen,
     cqes: ring + offset.cqes,
     overflow: cast[ptr int](ring + offset.overflow),
     flags: cast[ptr CqringFlags](ring + offset.flags),
@@ -619,20 +644,26 @@ proc newRing(fd: FileHandle; offset: ptr CqringOffsets; size: uint32): CqRing {.
 
 proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.raises, tags: [].} =
   ## mmap a Sq ring from the given file-descriptor, using the size spec'd
-  let ring = OFF_SQ_RING.uringMap(fd, offset.array, size, sizeof(pointer))
+  # The SQ ring's array holds `__u32` indices into the SQE array, not pointers:
+  # sizing it for pointers mapped twice what the kernel asks for.
+  let mapLen = mapBytes(offset.array, size, sizeof(uint32))
+  let sqesLen = mapBytes(0, size, sizeof(Sqe))
+  let ring = OFF_SQ_RING.uringMap(fd, mapLen)
   result = SqRing(
-    size: size, ring: ring,
+    size: size, ring: ring, mapLen: mapLen, sqesLen: sqesLen,
     dropped: ring + offset.dropped,
     array: ring + offset.array,
     flags: cast[ptr SqringFlags](ring + offset.flags),
-    sqes: cast[ptr Sqe](OFF_SQES.uringMap(fd, 0, size, sizeof(Sqe))),
+    sqes: cast[ptr Sqe](OFF_SQES.uringMap(fd, sqesLen)),
     head: cast[ptr uint32](ring + offset.head),
     tail: cast[ptr uint32](ring + offset.tail),
     mask: cast[ptr uint32](ring + offset.ringMask),
     entries: cast[ptr uint32](ring + offset.ringEntries))
-  # Directly map SQ slots to SQEs
+  # Directly map SQ slots to SQEs. `0 ..< size`, not `0 .. size`: the array has
+  # exactly `size` entries, and the inclusive form wrote one past the last —
+  # out of bounds of what is now mapped, and always out of bounds of the ring.
   var arr = cast[ptr UncheckedArray[uint32]](result.array)
-  for i in 0..size.int:
+  for i in 0..<size.int:
     arr[i] = i.uint32
   # if offset.ringEntries <= 0:
   #   raise ERROR_io_uring_not_initializes
@@ -642,11 +673,11 @@ proc teardown*(queue: var Queue) {.tags: [].} =
     if queue.fd != 0:
       discard close(queue.fd)
     if queue.cq.ring != nil:
-      uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
+      uringUnmap(queue.cq.ring, queue.cq.mapLen)
     if queue.sq.ring != nil:
-      uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
+      uringUnmap(queue.sq.ring, queue.sq.mapLen)
     if queue.sq.sqes != nil:
-      uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
+      uringUnmap(queue.sq.sqes, queue.sq.sqesLen)
     if queue.params != nil:
       # deallocShared(queue.params)
       dealloc(queue.params)
@@ -674,7 +705,11 @@ proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;
   # if not sqEntries.isPowerOfTwo:
   #   raise ERROR_entries_must_be_power_of_two
   # var params = createShared(Params)
-  var params = cast[ptr Params](alloc(sizeof(Params)))
+  # `alloc0`, not `alloc`: `io_uring_setup` rejects a `Params` whose `resv`
+  # words are non-zero with EINVAL, so an uninitialised one fails or succeeds
+  # according to what the allocator last held there. That is why this crashed
+  # in a program with a warm heap and worked in a small one.
+  var params = cast[ptr Params](alloc0(sizeof(Params)))
   params.flags = flags
   params.sqThreadCpu = sqThreadCpu.uint32
   params.sqThreadIdle = sqThreadIdle.uint32

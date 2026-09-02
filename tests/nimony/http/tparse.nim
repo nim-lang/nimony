@@ -1,10 +1,9 @@
 # lib/std/http/httpparse — wire bytes to an HttpMsg, without slicing.
 
 import std / [http/httpmsg, http/httpparse, assertions, syncio]
+import httptags
 
-let hTrace = registerHeader("x-trace-id")
 let poolSizeAtSeal = httpTags().tags.len
-sealHttpTags()
 
 proc parseAll(s: string; m: var HttpMsg): int =
   ## Parse a complete head held in one buffer.

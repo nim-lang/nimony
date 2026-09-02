@@ -1,10 +1,9 @@
 # Response-head parsing, and what a response round trip does and does not keep.
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
+import httptags
 
-let hTrace = registerHeader("x-trace-id")
 let poolSizeAtSeal = httpTags().tags.len
-sealHttpTags()
 
 var wbuf = default(array[4096, char])
 
