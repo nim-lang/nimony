@@ -352,7 +352,8 @@ proc trArrayBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
-proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor)
+proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
+              rewriteRaises = false)
 
 proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe("proctype", n.info)
@@ -373,7 +374,7 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       skip n # export marker
       skip n # pattern
       skip n # generics
-    trParams c, dest, n
+    trParams c, dest, n, rewriteRaises = true
 
     let pinfo = n.info
     let prag = parsePragmas(c, dest, n)
@@ -815,7 +816,8 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   else:
     trLocal(c, dest, n, ParamY, TraverseSig, SymId(0))
 
-proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
+              rewriteRaises = false) =
   if n.isDotToken:
     dest.addSubtree n
     inc n
@@ -833,16 +835,19 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   var retType = n
   skip n
   # n is now at the pragmas position:
-  if hasPragma(n, RaisesP):
-    # use a tuple type:
+  if rewriteRaises and hasPragma(n, RaisesP):
+    # PROCTYPES only. A raising routine's DECLARATION gets its success tuple
+    # from `raiselowering`, which has to run before `cps` — a coroutine's frame
+    # and result slot are built out of the return type, and that cannot wait
+    # for codegen. Imported routines included: `transformInlineRoutines` runs
+    # the whole pipeline over those too.
+    #
+    # A proctype is different. `(type :Fn . . . (proctype ... (raises)))` in
+    # another module is pulled in as a type DECLARATION, not as code, so this
+    # is the only pass that ever looks at one. Hence the mapping lives in
+    # `builtintypes.addLengReturnType`: several sites, one definition.
     var ret = createTokenBuf(6)
-    if isVoidType(retType):
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-    else:
-      ret.addParLe TupleT, NoLineInfo
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-      ret.addSubtree retType
-      ret.addParRi()
+    addLengReturnType(ret, retType, n, NoLineInfo)
     retType = cursorAt(ret, 0)
     trType c, dest, retType
   else:

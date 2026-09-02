@@ -105,9 +105,12 @@ proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
   let typ = c.typeCache.getType(n.childCursor, {SkipAliases})
   let retType = getType(c.typeCache, n)
-  let hasResult = not isVoidType(retType)
-  if hasResult:
+  if not isVoidType(retType):
     assert not cursorIsNil(target), "passive call without target"
+  # A `.raises` coroutine hands its ErrorCode back through the result slot, so
+  # it has one even when it returns nothing — see `patchParamList`.
+  let hasResult = (procHasPragma(typ, RaisesP) or not isVoidType(retType)) and
+                  not cursorIsNil(target)
   case c.currentProc.kind
   of IsNormal:
     # passive call from within a normal proc:

@@ -136,6 +136,16 @@ type
       ## kept loop has to push too: without an entry of its own its back-edge
       ## would lower against the enclosing suspending loop and turn the inner
       ## loop into a single iteration per outer round.
+    resultIsTuple*: bool
+      ## The result slot is a `(ErrorCode, T)`, i.e. this was a `.raises`
+      ## routine that returns a value and `raiselowering` gave its signature
+      ## the success tuple. The code lives at index 0. A `void` raising
+      ## coroutine's slot is a bare `ErrorCode` and is written whole.
+    resultSlotType*: TokenBuf
+      ## The return type `patchParamList` built the result param from. Needed
+      ## again by `generateCoroutineType` for a routine that HAS a result slot
+      ## but no `result` local to lift into it — which is what a `void`
+      ## `.raises` routine is once its signature returns an `ErrorCode`.
     kind*: RoutineKind
     isClosureIter*: bool
       ## True for `.closure` iters specifically. Drives the resume-slot
@@ -345,14 +355,18 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
           buf.takeTree p # pragmas
           buf.takeTree p # type
           buf.takeTree p # default value
+    # `fn` is the NIMONY declaration — this is the foreign case, so nothing
+    # has lowered it — hence the mapping is applied here rather than read off
+    # an already-lowered return type the way `generateCoroutineHelpers` does.
+    let raises = hasPragma(fn.pragmas, RaisesP)
     var ret = fn.retType
-    if not isVoidType(ret):
+    if raises or not isVoidType(ret):
       buf.copyIntoKind ParamU, info:
         buf.addSymDef pool.syms.getOrIncl(ResultParamName), info
         buf.addDotToken() # export
         buf.addDotToken() # pragmas
         buf.copyIntoKind PtrT, info:
-          buf.takeTree ret
+          addLengReturnType(buf, ret, fn.pragmas, info)
         buf.addDotToken() # default value
     buf.copyIntoKind ParamU, info:
       buf.addSymDef pool.syms.getOrIncl(CallerParamName), info
@@ -361,7 +375,7 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
       buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
       buf.addDotToken() # default value
   buf.addSymUse pool.syms.getOrIncl(ContinuationName), info
-  buf.addSubtree fn.pragmas
+  addPragmasWithoutRaises(buf, fn.pragmas)
   buf.addDotToken() # effects
   buf.addDotToken() # body — empty, cps replaces with the real body
   buf.addParRi() # close proc
@@ -890,7 +904,12 @@ proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let typ = c.typeCache.getType(fn, {SkipAliases})
   if procHasPragma(typ, PassiveP):
     var retType = getType(c.typeCache, n)
-    let hasResult = not isVoidType(retType)
+    # `retType` is the NIMONY answer. A `.raises` callee hands back an
+    # `ErrorCode` beside it — or instead of it — so the temp receiving the call
+    # has to be the Leng type, and a callee that returns nothing still has one.
+    # See `builtintypes.addLengReturnType`.
+    let raises = procHasPragma(typ, RaisesP)
+    let hasResult = raises or not isVoidType(retType)
     if hasResult:
       let info = n.info
       dest.copyIntoKind ExprX, info:
@@ -902,7 +921,17 @@ proc trCall*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           dest.addSymDef tmpVar, info
           dest.addDotToken() # exported
           dest.addDotToken() # pragmas
-          coroTr c, dest, retType # type
+          if raises:
+            # spelled out rather than `addLengReturnType`, because the value
+            # half still has to go through `coroTr`'s proctype rewriting
+            if isVoidType(retType):
+              dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+            else:
+              dest.copyIntoKind TupleT, info:
+                dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+                coroTr c, dest, retType
+          else:
+            coroTr c, dest, retType # type
           dest.addDotToken()
         c.hooks.trPassiveCall(c, dest, n, beginRead target)
         dest.addSymUse tmpVar, info
@@ -1042,20 +1071,36 @@ proc gotoNextState*(c: var Context; dest: var TokenBuf; state: int; info: NifLin
       dest.addSymUse stateToProcName(c, c.procStack[^1], state), info
       dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
 
-proc returnValue*(c: var Context; dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
-  n.into: # yield/return
+proc emitResultSlot(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  ## `(*this).result[]` — the caller's storage for what this coroutine
+  ## produces, which for a `.raises` coroutine is where its ErrorCode goes too.
+  dest.copyIntoKind DerefX, info:
+    dest.copyIntoKind DotX, info:
+      dest.copyIntoKind DerefX, info:
+        dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
+      dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
+
+proc returnValue*(c: var Context; dest: var TokenBuf; n: var Cursor;
+                  info: NifLineInfo; isRaise = false) =
+  n.into: # yield/return/raise
     if n.kind == DotToken or (n.kind == Symbol and n.symId == c.currentProc.resultSym):
       inc n
     elif isVoidType(getType(c.typeCache, n)) and n.kind != Symbol:
       # void type for Symbol can happen for `raise` statements:
       coroTr c, dest, n
+    elif isRaise and c.currentProc.resultIsTuple and n.exprKind != TupconstrX:
+      # A BARE code: `trTryGoto`'s uncaught fall-through re-raises its error
+      # tracker, which is an `ErrorCode` and not the success tuple
+      # `raiselowering` builds at a proc-exit raise. The value half of the slot
+      # keeps whatever it held, exactly as an ordinary routine leaves it.
+      dest.copyIntoKind AsgnS, info:
+        dest.copyIntoKind TupatX, info:
+          emitResultSlot(c, dest, info)
+          dest.addIntLit 0, info
+        coroTr c, dest, n
     else:
       dest.copyIntoKind AsgnS, info:
-        dest.copyIntoKind DerefX, info:
-          dest.copyIntoKind DotX, info:
-            dest.copyIntoKind DerefX, info:
-              dest.addSymUse pool.syms.getOrIncl(EnvParamName), info
-            dest.addSymUse pool.syms.getOrIncl(ResultFieldName), info
+        emitResultSlot(c, dest, info)
         coroTr c, dest, n
 
 proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -1085,10 +1130,16 @@ proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
   # this.res[] = x
-  # var tmpCaller = this.caller; deallocFrame(this); return/raise tmpCaller
-  let headTag = n.cursorTagId
+  # var tmpCaller = this.caller; deallocFrame(this); return tmpCaller
+  #
+  # A `raise` leaves as a RETURN. A state proc's return type is the
+  # `Continuation` the trampoline drives next, and it is not an error channel:
+  # the code went into the result slot above, which is where the caller's
+  # `(failed tmp)` reads it. Emitting the source's own tag here instead would
+  # hand `(raise <Continuation>)` to a proc that does not raise.
+  let isRaise = n.stmtKind == RaiseS
   let info = n.info
-  returnValue(c, dest, n, info)
+  returnValue(c, dest, n, info, isRaise)
   if c.currentProc.isClosureIter:
     # `.closure` iters: caller.fn holds the resume slot, not a return
     # target. Emit the same shape as emitFinalReturn.
@@ -1107,9 +1158,8 @@ proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse pool.syms.getOrIncl(CallerFieldName), info
       dest.addIntLit 1, info # field is in superclass
   emitDeallocFrame(c, dest, info)
-  dest.addParLe(headTag, info)
-  dest.addSymUse tmpVar, info
-  dest.addParRi()
+  dest.copyIntoKind RetS, info:
+    dest.addSymUse tmpVar, info
 
 # ---------------------------------------------------------------------
 # Lifetime + state analysis
@@ -1388,6 +1438,21 @@ proc trGotoBuf(c: var Context; dest: var TokenBuf; buf: var TokenBuf) =
   while m.hasMore:
     trGoto c, dest, m
 
+proc emitErrorCodeOf(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## The ERROR CODE of a raise operand. An enclosing `try`'s tracker is an
+  ## `ErrorCode`, and inside a routine that itself raises, `raiselowering` has
+  ## already given the raise the whole success tuple — the code is its first
+  ## element. Getting this wrong does not fail to compile, it puts the returned
+  ## VALUE where the code belongs.
+  if n.exprKind == TupconstrX:
+    let start = n
+    n = sub(n)
+    skip n          # the tuple type
+    dest.takeTree n # the code
+    n = start; skip n
+  else:
+    dest.takeTree n
+
 proc trRaiseGoto(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
   ## A `raise` inside a `try` BODY is not a proc exit. Store the error code in
   ## that try's tracker and jump to its handler dispatch. Returns false when no
@@ -1407,7 +1472,7 @@ proc trRaiseGoto(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
   else:
     dest.copyIntoKind AsgnS, info:
       dest.addSymUse t.tracker, info
-      dest.takeTree n
+      emitErrorCodeOf c, dest, n
   emitSymJump dest, t.label, info
   n = raiseStart; skip n
   result = true
@@ -1474,9 +1539,9 @@ proc trTryGoto(c: var Context; dest: var TokenBuf; n: var Cursor) =
       var h = createTokenBuf(64)
       h.addParLe IteV, info
       # NOT `(failed t)`: that tag is the eraiser's contract for a raising
-      # call's own result temp, and `constparams.localsThatBecomeTuples`
-      # retypes every symbol it sees under one to `(tuple ErrorCode T)`. The
-      # tracker is a plain `ErrorCode`, so it asks the plain question.
+      # call's own result temp, and `raiselowering` retypes every symbol it
+      # sees under one to `(tuple ErrorCode T)`. The tracker is a plain
+      # `ErrorCode`, so it asks the plain question.
       h.copyIntoKind NeqX, info:
         h.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
         h.addSymUse tracker, info
@@ -1753,11 +1818,12 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           trTryGoto c, dest, n
         of RaiseS:
           if not trRaiseGoto(c, dest, n):
-            # no enclosing `try`: a proc exit, taken by `coroTr.trReturn`
+            # no enclosing `try`: a proc exit, taken by `coroTr.trReturn`,
+            # which writes the code into the frame's result slot
             dest.addParLe(n.cursorTagId, n.info)
             n.into:
               while n.hasMore:
-                trGoto c, dest, n
+                emitErrorCodeOf c, dest, n
             dest.addParRi()
         of StmtsS, ScopeS:
           # FLATTEN. The Final IR wraps every body — an `ite` arm, a loop body,
@@ -2005,6 +2071,10 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
             else:
               dest.copyTree value.pragmas
             if key == c.currentProc.resultSym:
+              # No success-tuple wrapping here even for a raising coroutine:
+              # `raiselowering.trResultDecl` has already retyped the `result`
+              # local, so `typ` IS the tuple and `patchParamList` built the
+              # matching pointer from the raw return type.
               dest.copyIntoKind PtrT, info:
                 coroTr c, dest, typ
             elif value.typeAsSym != SymId(0):
@@ -2013,6 +2083,21 @@ proc generateCoroutineType*(c: var Context; dest: var TokenBuf; sym: SymId) =
               coroTr c, dest, typ
             dest.addDotToken() # default value
           programs.publish(value.field, dest, beforeField)
+      if c.currentProc.resultSym == SymId(0) and
+         pool.syms.getOrIncl(ResultFieldName) in c.currentProc.constrFields:
+        # A result slot with no `result` local for `escapingLocals` to lift
+        # into it. That is what a `void` `.raises` routine looks like after
+        # `raiselowering`: its signature returns an `ErrorCode` it never names.
+        # `patchParamList` has already put the pointer into the constructor.
+        let beforeField = dest.len
+        copyIntoKind dest, FldU, info:
+          dest.addSymDef pool.syms.getOrIncl(ResultFieldName), info
+          dest.addDotToken() # exported
+          dest.addDotToken() # pragmas
+          dest.copyIntoKind PtrT, info:
+            dest.addSubtree beginRead(c.currentProc.resultSlotType)
+          dest.addDotToken() # default value
+        programs.publish(pool.syms.getOrIncl(ResultFieldName), dest, beforeField)
       if c.currentProc.capturedEnvField != SymId(0):
         # The capture slot: erased to `(ref RootObj)` like a closure
         # proc's env, so the frame type doesn't depend on the enclosing
@@ -2109,8 +2194,9 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
       dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
       dest.addDotToken() # default value
   dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
-  dest.takeTree n
-  dest.takeTree n
+  addPragmasWithoutRaises(dest, n)
+  skip n          # the routine's pragmas, filtered above
+  dest.takeTree n # effects
 
   publishSignature dest, newSym, start
 
@@ -2275,6 +2361,15 @@ proc patchParamList*(c: var Context; dest, init: var TokenBuf; sym: SymId;
   var retType = createTokenBuf(4)
   # balanced span: raw copy keeps its seals
   for i in paramsEnd..<dest.len: retType.add dest[i]
+  # No success-tuple wrapping here. `raiselowering` has already put it in the
+  # signature, which is why a `.raises` routine that returns nothing still
+  # arrives with a return type — its `ErrorCode` — and so still gets a result
+  # slot to hand it back through.
+  c.currentProc.resultIsTuple = beginRead(retType).typeKind == TupleT
+  block:
+    var t = createTokenBuf(8)
+    t.addSubtree beginRead(retType)
+    c.currentProc.resultSlotType = ensureMove t
 
   dest.shrink paramsBegin
   let thisParam = pool.syms.getOrIncl(EnvParamName)
@@ -2425,6 +2520,12 @@ proc transformCoroutineDecl*(c: var Context; dest: var TokenBuf; n: var Cursor) 
             # retag in place: `parLeToken` would reset an already-set jump
             setTagAt(dest, procStart, cast[TagId](ProcS))
           patchParamList c, dest, init, sym, paramsBegin, paramsEnd, origParams
+      if isCoroutine and isConcrete:
+        # The state machine returns a `Continuation` and cannot fail; the
+        # error, if there is one, went into the frame's result slot.
+        addPragmasWithoutRaises(dest, n)
+        skip n
+        continue
     elif i == TypevarsPos:
       isConcrete = n.substructureKind != TypevarsU
     # function declaration can have (delay) tag inside but it just
