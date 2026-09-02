@@ -1648,12 +1648,22 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)
     b.withTree "output":
       b.addStrLit c.config.indexFile(v.files[0], v.plugin, docMode)
+    # ...and the `.s.deps.nif`, which nimsem writes AlwaysWrite (see
+    # `semmain.writeNewDepsFile`). It is the node's WITNESS: the other two
+    # outputs are OnlyIfChanged, so a re-run that reproduces identical content
+    # leaves no trace on disk and the node looks stale against any input touched
+    # since. nifmake reduces over the *freshest* output for exactly this reason,
+    # but only over outputs it was told about — hence declaring it here.
+    b.withTree "output":
+      b.addStrLit c.config.deps2File(v.files[0])
     # Outputs for cyclic group members:
     for idx in v.cyclicFiles:
       b.withTree "output":
         b.addStrLit c.config.semmedFile(v.files[idx], v.plugin, docMode)
       b.withTree "output":
         b.addStrLit c.config.indexFile(v.files[idx], v.plugin, docMode)
+      b.withTree "output":
+        b.addStrLit c.config.deps2File(v.files[idx])
 
 proc generatePluginSemInstructions(c: DepContext; v: Node; b: var Builder) =
   #[ An import plugin fills `nimcache/<plugin>` for us. It is our job to
@@ -1751,7 +1761,17 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
 
 proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
   let path = c.config.cachedConfigFile()
-  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile &
+  # The ROOT MODULE is deliberately NOT part of this string. Every sem node
+  # takes this file as an input (see `generateSemInstructions`), so anything in
+  # here that differs between two builds sharing a nimcache invalidates all of
+  # the other's sem results — and `executeExpr`'s const-eval sub-compile is
+  # exactly such a second build: same nimcache, same options, but a generated
+  # root (`nim<checksum>.p.nif`). With the root name in here the two overwrote
+  # each other's entry on every run, so each build re-semmed everything the
+  # other had just done, forever. The OPTIONS do belong here: two roots
+  # compiled with different options really must invalidate each other, because
+  # the `.s.nif` artifacts are keyed by module name and shared between them.
+  let configStr = c.config.getOptionsAsOneString() &
                   " --passC:" & passC & " --passL:" & passL
 
   let needUpdate = if semos.fileExists(path) and not c.forceRebuild:

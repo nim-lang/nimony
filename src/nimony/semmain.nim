@@ -108,7 +108,20 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
         for p in c.depsPlugins:
           deps.addStrLit p, NoLineInfo
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
-  onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)
+  # AlwaysWrite, and declared as an `(output)` of the sem node in `deps.nim` —
+  # this file is the node's WITNESS that it ran. nifmake is purely mtime-based
+  # and takes the *freshest* output as the staleness reference precisely so a
+  # node can have one always-written output alongside its OnlyIfChanged ones;
+  # sem had none, so when a sem re-run produced byte-identical `.s.nif` and
+  # `.s.idx.nif` (both OnlyIfChanged, both keeping their old mtime) nothing on
+  # disk recorded that the run had happened. Any input touched after those old
+  # mtimes then re-fired the node forever — which is what `cachedconfigfile.txt`
+  # did to EVERY sem node after a `-d:` flag was flipped and flipped back.
+  #
+  # Safe to write unconditionally because nothing in the build graph takes
+  # `.s.deps.nif` as an `(input)`: only nimony itself reads it, by content, when
+  # constructing the graph. So a fresh mtime here cascades to nobody.
+  onRaiseQuit writeFile(deps, depsFile, AlwaysWrite)
 
 proc pruneMatchedForwardDecls(c: var SemContext; dest: var TokenBuf) =
   ## Overwrite `(proc :sym ...)` subtrees with DotTokens for every symbol
