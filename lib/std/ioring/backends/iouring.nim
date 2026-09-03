@@ -23,9 +23,22 @@ const
 var
   sqEntries: int
   localQueues: seq[Queue]
+  inFlight: seq[int]
+    ## Ops submitted on this lane and not yet completed. Owned by the lane's own
+    ## thread — `iouringPoll` is the only writer and is the only place either
+    ## end of an op's life is observed.
+    ##
+    ## It exists to answer "can a completion possibly arrive?", which the ring
+    ## itself cannot: `sqReady` counts SQEs the KERNEL has yet to consume, and
+    ## drops to zero the moment it does, while the op is still outstanding.
+    ## Reading it instead would skip the wait exactly when there is work to wait
+    ## for. Drift is one-directional by construction — an op that is cancelled
+    ## without a CQE leaves the count high, which costs a syscall and never a
+    ## missed completion.
 
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
+  inFlight = newSeq[int](ioLanes())
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
@@ -92,10 +105,30 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       # `addr op.acceptAddr`/`addr op.acceptLen` and the kernel writes through
       # those at completion time, long after this stack frame is gone.
       fillSqe(sqe, addr gSlots[lane].slots[idx].op)
-    try:
-      discard localQueues[lane].submit()
-    except ErrorCode as e:
-      quit "fatal: bug: submit cannot fail: " & $e
+      inFlight[lane] = inFlight[lane] + 1
+  # ONE enter per poll: flush whatever was just filled and, when the caller gave
+  # us a time budget, wait for a completion inside the same syscall.
+  #
+  # Waiting here is the whole point. Peeking at the CQ and returning empty
+  # leaves the caller to spend its budget in `nanosleep` (see
+  # `threadpool.workerLoop`) — a sleep no completion can interrupt, so every
+  # completion picks up latency bounded by the poll interval rather than being
+  # delivered when the kernel has it. epoll never had that problem because its
+  # wait IS `epoll_wait(timeoutMs)`.
+  #
+  # With a budget the wait happens whether or not anything is in flight. On an
+  # empty ring the timed enter can only time out — and that timeout IS the
+  # caller's idle sleep, at the same syscall cost as the `nanosleep` it would
+  # otherwise do, so skipping it (as this backend first did) only moved the
+  # sleep onto the caller: a loop that just pumps (`while running: pumpIo(100)`)
+  # spun a full core once its lane went idle. Only a budget-less poll on an idle
+  # lane skips the enter; with work in flight and no budget, `submitAndWait`
+  # still decides whether a syscall is needed.
+  var waited = timeoutMs > 0 and localQueues[lane].canTimedWait
+  if waited or inFlight[lane] > 0:
+    let waitNr = if waited: 1'u else: 0'u
+    discard localQueues[lane].submitAndWait(waitNr,
+                                            timeoutMs.int64 * 1_000_000'i64)
   if localQueues[lane].cqReady > 0:
     var cqes {.noinit.}: array[DrainBatch, Cqe]
     try:
@@ -117,8 +150,15 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
           if POLL_OUT in fired: ev.incl evWrite
           res = toEventMask(ev)
         complete(idx, res)
+      inFlight[lane] = inFlight[lane] - n
       return true
-  return false
+  # Nothing completed — but if the wait above happened, the caller's timeout has
+  # ALREADY been spent, in the kernel, where a completion could have cut it
+  # short. Saying `false` here would send it into `nanosleep` for the same
+  # interval a second time: twice the idle latency, and the second half
+  # uninterruptible, which is the exact cost this backend just stopped paying.
+  # Hence the relay's contract is "the budget is spent", not "an event fired".
+  return waited
 
 proc iouringForgetFd(fd: cint) {.nimcall.} =
   discard

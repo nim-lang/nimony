@@ -12,6 +12,18 @@ const MaxOps* = 8192
 type
   BackendRelays* = object
     poll*: proc (timeoutMs: int): bool {.nimcall.}
+      ## Service one lane for at most `timeoutMs`. Returns true when the
+      ## caller's time budget has been SPENT — either completions were
+      ## delivered, or this call waited for them and none came. A caller that
+      ## paces itself when idle (`threadpool.workerLoop`) must not sleep out the
+      ## same interval again on a true; doing so doubles idle latency and makes
+      ## the second half uninterruptible by a completion.
+      ##
+      ## False therefore means "nothing happened AND nothing was waited for":
+      ## the call had no budget, or the ring cannot wait with a deadline
+      ## (io_uring without EXT_ARG, kernel < 5.11). Only then does the caller
+      ## keep responsibility for its own pacing. A poll WITH a budget spends it
+      ## even on an idle lane, so a loop that only pumps does not spin.
     close*: proc () {.nimcall.}
     forgetFd*: proc (fd: cint) {.nimcall.}
       ## Drop any backend-side per-fd registration/bookkeeping before a fd is
