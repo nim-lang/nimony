@@ -10,10 +10,10 @@
 
 {.feature: "untyped".}
 
-import std / [assertions, hashes, syncio, cmdline]
+import std / [assertions, hashes, syncio, cmdline, os]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
 import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse, addSymDef
-from ".." / ".." / "lib" / bif import isBifFile, load, store, UnusedNameTag
+from ".." / ".." / "lib" / bif import isBifFile, load, store, UnusedNameTag, DependencyTag
 import ".." / ".." / "lib" / [bitabs, symparser]
 import ".." / ".." / "models" / [tags, nimony_tags]
 import ".." / nif_annotations
@@ -72,6 +72,32 @@ nifcore.fallbackTags = pluginTags
 var
   unusedNameBase = ""
   nextUnusedName = 0
+  fileDependencies: seq[string] = @[]
+
+proc dependsOn*(path: string) =
+  ## Records that this plugin run READ `path`, so that a later build reruns the
+  ## plugin when the file changes. Without it a plugin that reads outside its
+  ## input is memoized forever: the compiler keys its cache on the input tree,
+  ## which did not change (nim-lang/nimony#1378).
+  ##
+  ## Call it for every file the plugin opens. The path is made absolute against
+  ## the plugin's working directory, which is the compiler's.
+  ##
+  ## Two limits worth knowing:
+  ## * Only a path that exists is recorded: a file cannot be watched before it
+  ##   is there, and a stale entry would force a rerun on every build. So
+  ##   *creating* a file the plugin looked for and did not find invalidates
+  ##   nothing, while deleting a recorded one does.
+  ## * Naming a *directory* tracks add/remove of its direct entries and nothing
+  ##   else, because that is all a directory mtime says; to follow the contents
+  ##   of a tree, name each file.
+  var full = ""
+  try:
+    full = absolutePath(path)
+  except:
+    discard "no working directory to resolve against: nothing to record"
+  if (fileExists(full) or dirExists(full)) and full notin fileDependencies:
+    fileDependencies.add full
 
 proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline, nifEmits: "None".} =
   buf.appendLineInfo(info)
@@ -834,6 +860,13 @@ proc writePluginTree(tree: var NifBuilder; filename: string) =
   if unusedNameBase.len > 0:
     buf.openTag(buf.tags.registerTag(UnusedNameTag))
     nifcore.addSymUse(buf, unusedNameBase & "." & $nextUnusedName)
+    buf.closeTag()
+  if fileDependencies.len > 0:
+    # `(dependency …)`: the second sidecar tree, peeled off by `semos.runPlugin`
+    # like the gensym hint above.
+    buf.openTag(buf.tags.registerTag(DependencyTag))
+    for d in fileDependencies:
+      nifcore.addStrLit(buf, d)
     buf.closeTag()
   if tree.len > 0:
     var c = beginRead(tree)

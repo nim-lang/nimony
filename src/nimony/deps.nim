@@ -20,7 +20,7 @@ when defined(nimony):
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder]
+import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -201,6 +201,9 @@ type
     plugins: HashSet[string] ## exe basenames of the `{.plugin.}`s this module may
                              ## run: the ones it declares plus, after
                              ## `propagatePlugins`, those of its import closure
+    fileDeps: seq[string] ## the `(dependency …)` list the PREVIOUS build's nimsem
+                          ## left in `.s.deps.nif`: files a plugin or a `slurp`
+                          ## read while semchecking this module
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -716,18 +719,44 @@ proc importSystem(c: var DepContext; current: Node) =
     existingNode = imported.id
   current.deps.add existingNode
 
+proc loadDepsFile(depsFile: string): TokenBuf =
+  var r = rd.open(depsFile)
+  result = createTokenBuf()
+  parse(r, result)
+  rd.close(r)
+
+proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
+  ## Reads the `(dependency …)` list out of the `.s.deps.nif` the previous
+  ## build's nimsem wrote (nim-lang/nimony#1378). The classic depfile pattern:
+  ## the first build has nothing to read and runs regardless, every later one
+  ## is exact. Nothing else in that file is looked at: its imports are last
+  ## build's, and the caller has just read the current ones from nifler.
+  let depsFile = c.config.deps2File(p)
+  if semos.fileExists(depsFile):
+    var buf = loadDepsFile(depsFile)
+    var n = beginRead(buf)
+    if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
+      n.into:
+        while n.hasMore:
+          if n.cursorTagId == TagId(DependencyIdx):
+            n.into:
+              while n.hasMore:
+                assert n.isStringLit
+                current.fileDeps.add pool.strings[n.strId]
+                inc n
+          else:
+            skip n
+
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
   if not c.isGeneratingFinal:
     execNifler c, p
     depsFile = c.config.depsFile(p, c.cmd == DoDoc)
+    processFileDeps c, p, current
   else:
     depsFile = c.config.deps2File(p)
 
-  var r = rd.open(depsFile)
-  var buf = createTokenBuf()
-  parse(r, buf)
-  rd.close(r)
+  var buf = loadDepsFile(depsFile)
   processDeps c, beginRead(buf), current
   if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
     importSystem c, current
@@ -1681,8 +1710,25 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
     for p in plugins:
       b.withTree "input":
         b.addStrLit c.pluginExe(p)
+    # Input: the files last build's sem READ — what `plugins.dependsOn`
+    # reported and what `slurp` folded. Nothing in the module's own source
+    # names them, so without this a changed data file leaves the `.s.nif`
+    # looking current.
+    var lostFileDep = false
+    for f in v.fileDeps:
+      if not semos.fileExists(f):
+        lostFileDep = true
+      elif not seenDeps.containsOrIncl(f):
+        b.withTree "input":
+          b.addStrLit f
     # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
+    if lostFileDep:
+      # A deleted file cannot be an input (nifmake wants a file or a rule for
+      # each), so the re-sem is forced by removing the output instead. That
+      # settles after one build: the re-sem no longer finds the file and so no
+      # longer records it.
+      vfsRemove(c.config.semmedFile(v.files[0], v.plugin, docMode))
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)
     b.withTree "output":

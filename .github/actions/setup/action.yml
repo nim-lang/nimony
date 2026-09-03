@@ -314,9 +314,17 @@ runs:
         # as `type C = concept of D`. The nightly's `bin/nim` is fine as the
         # bootstrap compiler; we only need fresh *compiler sources* overlaid on
         # top so parser fixes land when Nifler is (re)built.
+        #
+        # `lib/packages/docutils` comes along because the compiler's docgen is
+        # its consumer and upstream changes the two in one commit: nim-lang/Nim
+        # #26139 (2026-09-03) widened `rstgen.mergeIndexes` together with the
+        # call in `docgen.nim`, and the overlaid compiler stopped type-checking
+        # against the nightly's older lib. It is the only part of `lib/` outside
+        # `std/` that `compiler/` imports.
         git clone --depth 1 --branch ${{ inputs.nim_branch }} \
           https://github.com/nim-lang/Nim nim-src
         cp -a nim-src/compiler/. nim/compiler/
+        cp -a nim-src/lib/packages/docutils/. nim/lib/packages/docutils/
 
     - name: Cache host-Nim build artifacts
       uses: actions/cache@v5

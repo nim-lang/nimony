@@ -6,7 +6,7 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from std / strutils import multiReplace, split, strip, startsWith
+from std / strutils import multiReplace, startsWith
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
 from std / osproc import execCmdEx
 
@@ -18,7 +18,7 @@ from ".." / lib / nifcoreparse import parse
 # qualified-only: the private-pool plugin-input copy must not fight the
 # global-pool overloads nifprelude puts in scope
 from ".." / lib / nifcore import nil
-from ".." / lib / bif import storeToString, isBifFile, UnusedNameTag
+from ".." / lib / bif import storeToString, isBifFile, UnusedNameTag, DependencyTag
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -536,6 +536,101 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
   if nextDisamb > firstDisamb:
     c.locals[pluginTempBase] = nextDisamb - 1
 
+# ── Plugin output ───────────────────────────────────────────────────────────
+#
+# A plugin's output is memoized under `checksum(input)`. That is exact for a
+# plugin that computes from its input alone and wrong for one that also reads a
+# file — a schema, a template, a table of constants: the file changes, the
+# input does not, and the memo is served forever (nim-lang/nimony#1378).
+# `plugins.dependsOn` reports such reads, and the paths travel back as a leading
+# `(dependency …)` tree beside the `(unusedname …)` gensym hint. Both are
+# sidecars: peeled off here, never part of the tree that is sem-checked. The
+# same list, read out of a cached output, decides whether the memo still holds.
+
+type
+  PluginOutput = object
+    buf: TokenBuf       ## the whole output; a bif carries private pools, text
+                        ## is parsed into the global ones
+    nextName: string    ## the gensym hint, or ""
+    deps: seq[string]   ## the `(dependency …)` paths
+
+proc isSidecar(o: PluginOutput; n: Cursor): bool =
+  n.kind == TagLit and
+    tagName(o.buf.tags, n.cursorTagId) in [UnusedNameTag, DependencyTag]
+
+proc peelSidecars(o: var PluginOutput) =
+  ## Reads the leading sidecar trees into `nextName` and `deps`.
+  if o.buf.len > 0:
+    var n = beginRead(o.buf)
+    while n.hasMore and o.isSidecar(n):
+      let tag = tagName(o.buf.tags, n.cursorTagId)
+      n.into:
+        while n.hasMore:
+          if tag == UnusedNameTag and n.kind == Symbol:
+            o.nextName = symName(n)
+          elif tag == DependencyTag and n.kind == StrLit:
+            o.deps.add strVal(n)
+          skip n
+    endRead(n)
+
+proc loadPluginOutput(outputFile: string; info: NifLineInfo): PluginOutput =
+  result = PluginOutput(nextName: "", deps: @[])
+  if isBifFile(outputFile):
+    # Binary output: the tokens carry absolute line infos, so no parentSeed
+    # resolution is needed, and the gensym hint is the `(unusedname X)` tree.
+    var m = bif.load(outputFile)
+    result.buf = move m.buf
+  else:
+    # Text output (hand-written or third-party plugins): the gensym hint is
+    # the `.unusedname` directive. `parse` reads ONE tree per call, so each
+    # sidecar costs a call of its own before the output proper is reached.
+    result.buf = createTokenBuf(30)
+    var r = rd.open(outputFile)
+    result.nextName = rd.firstUnusedName(r)
+    var lastWasSidecar = true
+    while lastWasSidecar:
+      let start = result.buf.len
+      # seed the parse with the invocation site's absolute info: text plugin
+      # output copies the (file-less, relative) infos of its input, so without
+      # an anchor they resolve to NoFile and diagnostics print as `???`
+      parse(r, result.buf, parentSeed = info, denseLineInfo = true)
+      lastWasSidecar = result.buf.len > start and
+        result.isSidecar(cursorAt(result.buf, start))
+    rd.close(r)
+  peelSidecars result
+
+proc addPluginBody(dest: var TokenBuf; o: var PluginOutput) =
+  ## Appends the output proper, everything after the sidecars, to `dest`.
+  ## `addSubtree` re-interns a bif's private-pool content into the global pools.
+  if o.buf.len > 0:
+    var n = beginRead(o.buf)
+    while n.hasMore and o.isSidecar(n):
+      skip n
+    while n.hasMore:
+      addSubtree(dest, n)
+      skip n
+    endRead(n)
+
+proc memoIsStale(outputFile: string; deps: seq[string]): bool =
+  ## True when a file the cached output depended on has changed or vanished
+  ## since it was written. A vanished file forces exactly one rerun: the plugin
+  ## no longer finds it and so no longer reports it. `vfsMtime` rather than
+  ## `lastModTimeOrStale`, which is whole seconds on host Nim: a data file
+  ## edited in the same second as the output would tie and read as unchanged.
+  ## nifmake compares nanoseconds for the same reason.
+  result = false
+  let written = vfsMtime(outputFile)
+  for d in deps:
+    if not vfsExists(d) or vfsMtime(d) > written:
+      result = true
+
+proc execPlugin(pluginExe, inputFile, outputFile, inputFileB: string) =
+  var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
+  if inputFileB.len > 0:
+    cmd &= " "
+    cmd &= quoteShell(inputFileB)
+  exec cmd
+
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                 pluginName: string; input: var TokenBuf;
                 additionalInput: var TokenBuf) =
@@ -574,42 +669,17 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   except:
     quit "FAILURE: cannot write plugin input file " & inputFile
 
+  let typesFile = if pluginAdditionalInput.len > 0: inputFileB else: ""
   if needsRecompile(pluginExe, outputFile):
-    var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
-    if pluginAdditionalInput.len > 0:
-      cmd &= " "
-      cmd &= quoteShell(inputFileB)
-    exec cmd
-  var nextName = ""
-  if isBifFile(outputFile):
-    # Binary output: the tokens carry absolute line infos, so no parentSeed
-    # resolution is needed; the gensym hint arrives as the leading
-    # `(unusedname X)` tree. `addSubtree` re-interns the fresh-pool content
-    # into the caller's global-pool world.
-    var m = bif.load(outputFile)
-    if m.buf.len > 0:
-      var n = beginRead(m.buf)
-      if n.kind == TagLit and
-          tagName(m.buf.tags, n.cursorTagId) == UnusedNameTag:
-        n.into:
-          while n.hasMore:
-            if n.kind == Symbol:
-              nextName = symName(n)
-            skip n
-      while n.hasMore:
-        addSubtree(dest, n)
-        skip n
-      endRead(n)
-  else:
-    # Text output (hand-written or third-party plugins).
-    var r = rd.open(outputFile)
-    nextName = rd.firstUnusedName(r)
-    # seed the parse with the invocation site's absolute info: text plugin
-    # output copies the (file-less, relative) infos of its input, so without
-    # an anchor they resolve to NoFile and diagnostics print as `???`
-    parse(r, dest, parentSeed = info, denseLineInfo = true)
-    rd.close(r)
-  registerGeneratedSymbols(c, firstDisamb, nextName)
+    execPlugin pluginExe, inputFile, outputFile, typesFile
+  var output = loadPluginOutput(outputFile, info)
+  if memoIsStale(outputFile, output.deps):
+    execPlugin pluginExe, inputFile, outputFile, typesFile
+    output = loadPluginOutput(outputFile, info)
+  for d in output.deps:
+    recordFileDep c, d
+  addPluginBody dest, output
+  registerGeneratedSymbols(c, firstDisamb, output.nextName)
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                 pluginName: string; input: var TokenBuf) =
