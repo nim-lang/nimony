@@ -9,6 +9,5 @@ proc worker[T](x: T) {.passive.} =
 proc driver() {.passive.} =
   let c = delay(worker(3))
   complete(c)
-  complete(c)
 driver()
 echo log
