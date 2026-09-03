@@ -602,23 +602,24 @@ proc tr(n: NifCursor): NifBuilder =
   ...
 ```
 
-Call it for every file the plugin opens, before or after the read; reporting a
-path that does not exist is harmless. Paths are made absolute against the
-plugin's working directory, which is the compiler's.
+Call it for every file the plugin opens, before or after the read. Paths are
+made absolute against the plugin's working directory, which is the compiler's.
 
 Two limits are worth knowing:
 
-* Only files that exist when the compiler reads the report are tracked, so
-  *creating* a file the plugin looked for and did not find invalidates nothing.
-  Deleting a tracked one does force a rebuild.
+* Only a path that exists is recorded, so *creating* a file the plugin looked
+  for and did not find invalidates nothing. Deleting a recorded one does force
+  a rebuild.
 * Naming a **directory** tracks add/remove of its direct entries and nothing
   else, because that is all a directory mtime says. To follow the contents of a
   tree, name each file.
 
-Under the hood the paths travel back as a leading `(dependency …)` sidecar tree
-next to the gensym hint, are peeled off before the output becomes part of the
-module, and land in the module's `.s.deps.nif` as extra inputs of the next
-build's `nimsem` node.
+Under the hood the paths travel back as a leading `(dependency …)` tree next to
+the gensym hint. The compiler peels both off before the output becomes part of
+the module, compares the listed files against the cached output to decide
+whether to rerun the plugin, and writes the list into the module's
+`.s.deps.nif`, where the next build picks it up as extra inputs of the
+module's `nimsem` node.
 
 
 ### Error reporting

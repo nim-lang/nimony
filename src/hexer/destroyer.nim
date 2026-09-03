@@ -392,7 +392,7 @@ proc trIf(c: var Context; n: var Cursor) =
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
           TypevarU, StaticTypevarU, EfldU, FldU, WhenU, TypevarsU, CaseU, OfU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, DependencyU, NoSub:
+          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         takeTree c.dest, n
     c.flow.closeBranches()
 
@@ -416,7 +416,7 @@ proc trCase(c: var Context; n: var Cursor) =
       of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
           TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU, CaseU,
           StmtsU, ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
-          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, DependencyU, NoSub:
+          UnpacktupU, ExceptU, FinU, UncheckedU, GfldU, CallargsU, ForcallU, DeferexpansionU, NeedtypesU, NoSub:
         takeTree c.dest, n
     c.flow.closeBranches()
 

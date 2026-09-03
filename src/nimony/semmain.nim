@@ -16,7 +16,7 @@
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
-import std / [tables, sets, syncio, assertions, hashes, algorithm]
+import std / [tables, sets, syncio, assertions, hashes]
 from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -66,11 +66,6 @@ proc buildIndexExports(c: var SemContext): TokenBuf =
         result.addIdent(s, NoLineInfo)
       result.addParRi()
 
-proc cmpFileDeps(a, b: string): int =
-  ## `sort` needs an explicit comparator under Nimony, whose stdlib has no
-  ## `cmp`. Mirrors `deps.cmpNames`.
-  if a < b: -1 elif a > b: 1 else: 0
-
 proc writeNewDepsFile(c: var SemContext; outfile: string) =
   # Update .s.deps.nif file that doesn't contain modules imported under `when false:`
   # so that Hexer and following phases doesn't read such modules.
@@ -109,15 +104,8 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
         for i in c.passC:
           deps.addStrLit i
     if c.fileDeps.len != 0:
-      # Files a `.plugin` or `slurp` READ while semchecking this module. Sorted
-      # because a `HashSet` iterates in insertion-hash order: an unstable
-      # spelling would defeat `OnlyIfChanged` below and re-trigger every
-      # downstream node on each run.
-      var files: seq[string] = @[]
-      for f in c.fileDeps: files.add f
-      sort files, cmpFileDeps
       deps.buildTree TagId(DependencyIdx), NoLineInfo:
-        for f in files:
+        for f in c.fileDeps:
           deps.addStrLit f
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)

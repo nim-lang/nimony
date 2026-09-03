@@ -80,27 +80,24 @@ proc dependsOn*(path: string) =
   ## input is memoized forever: the compiler keys its cache on the input tree,
   ## which did not change (nim-lang/nimony#1378).
   ##
-  ## Call it for every file the plugin opens; reporting a path that does not
-  ## exist is harmless, the compiler simply drops it.
-  ##
-  ## The path is made absolute against the plugin's working directory, which is
-  ## the compiler's.
+  ## Call it for every file the plugin opens. The path is made absolute against
+  ## the plugin's working directory, which is the compiler's.
   ##
   ## Two limits worth knowing:
-  ## * Only files that exist when the compiler reads the report are tracked, so
+  ## * Only a path that exists is recorded: a file cannot be watched before it
+  ##   is there, and a stale entry would force a rerun on every build. So
   ##   *creating* a file the plugin looked for and did not find invalidates
-  ##   nothing. (Deleting a tracked one does force a rebuild.)
+  ##   nothing, while deleting a recorded one does.
   ## * Naming a *directory* tracks add/remove of its direct entries and nothing
   ##   else, because that is all a directory mtime says; to follow the contents
   ##   of a tree, name each file.
-  var full = path
+  var full = ""
   try:
     full = absolutePath(path)
   except:
-    discard "not absolute then; the compiler resolves it against its own cwd"
-  for d in fileDependencies:
-    if d == full: return
-  fileDependencies.add full
+    discard "no working directory to resolve against: nothing to record"
+  if (fileExists(full) or dirExists(full)) and full notin fileDependencies:
+    fileDependencies.add full
 
 proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline, nifEmits: "None".} =
   buf.appendLineInfo(info)
@@ -865,8 +862,8 @@ proc writePluginTree(tree: var NifBuilder; filename: string) =
     nifcore.addSymUse(buf, unusedNameBase & "." & $nextUnusedName)
     buf.closeTag()
   if fileDependencies.len > 0:
-    # `(dependency …)`: a second sidecar tree, peeled off by `semos.runPlugin`
-    # exactly like the gensym hint above. It never reaches the sem tree.
+    # `(dependency …)`: the second sidecar tree, peeled off by `semos.runPlugin`
+    # like the gensym hint above.
     buf.openTag(buf.tags.registerTag(DependencyTag))
     for d in fileDependencies:
       nifcore.addStrLit(buf, d)

@@ -118,9 +118,9 @@ const
     ## the directive into this tree when converting.
   DependencyTag* = "dependency"
     ## The plugin protocol's other sidecar tree, `(dependency STR+)`: the files
-    ## the plugin read (`plugins.dependsOn`). Named here rather than taken from
-    ## the tag models because both sides look it up by NAME — a bif buffer
-    ## carries its own tag table, so the ids do not match across processes.
+    ## the plugin read (`plugins.dependsOn`). Named here for the same reason as
+    ## `UnusedNameTag`: a bif buffer carries its own tag table, so both sides
+    ## look the tree up by name.
   Version = 5'u8
   MagicLen = 8
   LittleEndianTag = 0'u8
