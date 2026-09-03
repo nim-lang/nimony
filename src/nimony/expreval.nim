@@ -10,7 +10,7 @@ when defined(nimony):
   {.feature: "untyped".}
   {.feature: "lenientnils".}
 
-import std / [assertions, syncio]
+import std / [assertions, syncio, sets]
 from std / os import `/`, absolutePath, parentDir, isAbsolute, getCurrentDir
 
 include ".." / lib / nifprelude
@@ -337,6 +337,11 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       var contents = ""
       try:
         contents = readFile(full)
+        # Same bookkeeping as a plugin's `dependsOn`: without it the module's
+        # `.s.nif` is never rebuilt when the file changes (nim-lang/nimony#1378).
+        # Only a successful read is recorded — a path that is not there yet
+        # cannot be watched, and recording it would force a rebuild forever.
+        c.c[].fileDeps.incl full
       except:
         contents = ""
       result = stringValue(c, contents, n.info)

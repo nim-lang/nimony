@@ -116,6 +116,11 @@ const
     ## leading `(unusedname X)` tree in the stored buffer instead. Binary
     ## readers peel it off (`plugins.loadPluginTree`); `niftools nif2bif` lifts
     ## the directive into this tree when converting.
+  DependencyTag* = "dependency"
+    ## The plugin protocol's other sidecar tree, `(dependency STR+)`: the files
+    ## the plugin read (`plugins.dependsOn`). Named here rather than taken from
+    ## the tag models because both sides look it up by NAME — a bif buffer
+    ## carries its own tag table, so the ids do not match across processes.
   Version = 5'u8
   MagicLen = 8
   LittleEndianTag = 0'u8

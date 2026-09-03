@@ -261,6 +261,14 @@ type
     semEmitCB*: SemEmitCallbackT
     passL*: seq[string]
     passC*: seq[string]
+    fileDeps*: HashSet[string]
+      ## Absolute paths of files this module's semchecking READ outside its
+      ## own source: what a `.plugin` reported via `plugins.dependsOn` and what
+      ## `slurp`/`staticRead` folded. `semmain.writeNewDepsFile` writes them as
+      ## `(dependency …)` into `.s.deps.nif`, and `deps.nim` turns them into
+      ## extra inputs of the *next* build's nimsem node — the depfile pattern,
+      ## so the first build runs regardless and every later one is correct
+      ## (nim-lang/nimony#1378).
     importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf

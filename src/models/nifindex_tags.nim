@@ -30,7 +30,8 @@ type
     BuildIdx = (ord(BuildTagId), "build")  ## `build` pragma
     IndexIdx = (ord(IndexTagId), "index")  ## index section
     BundleIdx = (ord(BundleTagId), "bundle")  ## `bundle` pragma: a custom linker command override `(builder, tool[, args])`; the `tool` is built on demand by `builder` and replaces the final link step, consuming the project's link manifest
+    DependencyIdx = (ord(DependencyTagId), "dependency")  ## the files a compile-time computation read, so that a later build knows to redo it. Two producers: a *plugin* emits it as a leading TOP-LEVEL tree beside its output (a sibling of it, not a child), next to `(unusedname …)` — `plugins.dependsOn(path)` — and `slurp`/`staticRead` records the file it folded. `semos.runPlugin` peels it off the plugin output (it never reaches the sem tree) and `semmain.writeNewDepsFile` collects both sources into the module's `.s.deps.nif`, whence `deps.nim` lists them as extra inputs of the next build's `nimsem` node. Paths are absolute. Files only: naming a *directory* tracks add/remove of its direct entries and nothing else, because that is all a directory mtime says
 
 proc rawTagIsNifIndexKind*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId, BundleTagId}
+  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId, BundleTagId, DependencyTagId}
 
