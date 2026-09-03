@@ -2509,7 +2509,11 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         skip inner           # past target type
         if inner.kind == Symbol or inner.exprKind in {TupatX, DotX}:
           let srcTyp = c.typeCache.getType(inner, {SkipAliases})
-          let isFnEnvTuple = srcTyp.typeKind == ClosureTupleT
+          # A `.closure` proctype value is the same (fn, env) pair: a closure
+          # global declared in another module keeps its semchecked type here,
+          # only a local one's decl was rewritten to the tuple.
+          let isFnEnvTuple = srcTyp.typeKind == ClosureTupleT or
+              (srcTyp.typeKind == ProctypeT and procHasPragma(srcTyp, ClosureP))
           let isClosureIterType = srcTyp.typeKind == ItertypeT and
               not procHasPragma(srcTyp, PassiveP)
           if (isClosureIterType or isFnEnvTuple) and
