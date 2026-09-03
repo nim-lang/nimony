@@ -522,7 +522,7 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
 
 # ---- Composite type (struct / union) ----------------------------------
 
-proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType = default(Cursor)): int
+proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType: Cursor = default(Cursor)): int
 proc genDIAnonObject(c: var LLVMCode; n: var Cursor; name = ""): int
 
 proc enumFieldName(c: var LLVMCode; enumType: Cursor; value: int64): string =
@@ -662,7 +662,7 @@ proc genDIAnonObject(c: var LLVMCode; n: var Cursor; name = ""): int =
     ", align: " & $oAlign & ")"
   result = c.addMetadata(s)
 
-proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType = default(Cursor)): int =
+proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType: Cursor = default(Cursor)): int =
   ## Generate an anonymous DICompositeType union for an inline union body.
   ## Each branch (nested object / field) becomes an overlapping member.
   ##
