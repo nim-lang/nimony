@@ -116,14 +116,16 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   # delivered when the kernel has it. epoll never had that problem because its
   # wait IS `epoll_wait(timeoutMs)`.
   #
-  # Not conditional on having just filled SQEs: with nothing new to submit there
-  # is still a budget to spend waiting on work already in flight. But with
-  # NOTHING in flight either, no completion can arrive, so the enter is a
-  # syscall that can only ever time out — skip it and let the caller idle in its
-  # own sleep, which is the pre-io_uring behaviour for a lane with no work.
-  var waited = false
-  if inFlight[lane] > 0:
-    waited = timeoutMs > 0 and localQueues[lane].canTimedWait
+  # With a budget the wait happens whether or not anything is in flight. On an
+  # empty ring the timed enter can only time out — and that timeout IS the
+  # caller's idle sleep, at the same syscall cost as the `nanosleep` it would
+  # otherwise do, so skipping it (as this backend first did) only moved the
+  # sleep onto the caller: a loop that just pumps (`while running: pumpIo(100)`)
+  # spun a full core once its lane went idle. Only a budget-less poll on an idle
+  # lane skips the enter; with work in flight and no budget, `submitAndWait`
+  # still decides whether a syscall is needed.
+  var waited = timeoutMs > 0 and localQueues[lane].canTimedWait
+  if waited or inFlight[lane] > 0:
     let waitNr = if waited: 1'u else: 0'u
     discard localQueues[lane].submitAndWait(waitNr,
                                             timeoutMs.int64 * 1_000_000'i64)

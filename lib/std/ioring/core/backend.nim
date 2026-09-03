@@ -19,9 +19,11 @@ type
       ## same interval again on a true; doing so doubles idle latency and makes
       ## the second half uninterruptible by a completion.
       ##
-      ## False therefore means "nothing happened AND nothing was waited for" —
-      ## the lane had no work a wait could have produced — and the caller keeps
-      ## responsibility for its own pacing.
+      ## False therefore means "nothing happened AND nothing was waited for":
+      ## the call had no budget, or the ring cannot wait with a deadline
+      ## (io_uring without EXT_ARG, kernel < 5.11). Only then does the caller
+      ## keep responsibility for its own pacing. A poll WITH a budget spends it
+      ## even on an idle lane, so a loop that only pumps does not spin.
     close*: proc () {.nimcall.}
     forgetFd*: proc (fd: cint) {.nimcall.}
       ## Drop any backend-side per-fd registration/bookkeeping before a fd is
