@@ -56,6 +56,15 @@ proc runSetupNimDir*(c: var TestCounters; dir, forward: string; overwrite: bool)
     # top-level summary still points somewhere.
     noteFailure c, dir & " (setup.nim runner)"
 
+proc setupDirCmd*(dir: string; overwrite: bool; forward: string) =
+  ## `hastur test <dir>` pointed at a directory that owns a `setup.nim`: the
+  ## same dispatch the walk makes, so the runner is run rather than compiled
+  ## as one more Nimony test.
+  var c = TestCounters(total: 0, failures: 0)
+  runSetupNimDir(c, dir, forward, overwrite)
+  if c.failures > 0:
+    quit "FAILURE: Some tests failed."
+
 type WalkPlan = object
   ## Accumulated during the tree walk so the run phase can drive ONE
   ## saturated parallel pool instead of one pool per directory. The old

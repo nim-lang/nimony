@@ -475,10 +475,12 @@ proc handleCmdLine =
   of "test":
     if args.len > 0:
       for arg in args:
-        if arg.dirExists():
-          testDirCmd arg, overwrite, forward
-        else:
+        if not arg.dirExists():
           test arg, overwrite, categoryOf(arg), forward
+        elif fileExists(arg / "setup.nim"):
+          setupDirCmd arg, overwrite, forward
+        else:
+          testDirCmd arg, overwrite, forward
     else:
       quit "`test` takes an argument"
   of "joined":
