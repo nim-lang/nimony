@@ -309,6 +309,23 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         skip tupType
         dec idx
       result = getTupleFieldType(tupType)
+  elif tupType.typeKind in {ProctypeT, ItertypeT} and procHasPragma(tupType, ClosureP):
+    # A `.closure` value is the pair (fn, env) once hexer's lambdalifting has
+    # lowered it: `(tupat v 0)` is the routine, `(tupat v 1)` its environment.
+    # Hexer keeps querying the semchecked, precisely annotated type of `v` —
+    # a closure global declared in another module is never rewritten, only
+    # its uses are — so the projection has to follow from the annotation.
+    skip n # skip the closure expression
+    if n.isIntLit:
+      if n.intVal == 0:
+        result = tupType
+      elif n.intVal == 1:
+        var buf = createTokenBuf(4)
+        buf.addParLe(RefT, n.info)
+        buf.addSymUse pool.syms.getOrIncl("RootObj.0." & SystemModuleSuffix), n.info
+        buf.addParRi()
+        c.mem.add buf
+        result = cursorAt(c.mem[c.mem.len-1], 0)
   elif BeStrict in flags:
     assert false, "wanted tuple type but got: " & toString(tupType, false)
 
