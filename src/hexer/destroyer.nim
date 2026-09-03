@@ -59,22 +59,8 @@ const
 
 type
   ScopeKind = enum
-    Other
-      ## Default. If `finallySection` is set (only for `except`-body
-      ## scopes), `leaveScope` inlines it — this is what makes the
-      ## raise→except→finally path emit the finally.
-    CaughtLocally
-      ## Body scope of a `try` with an `except` arm. The raise is caught
-      ## by that except, so the (own) finally runs naturally afterward;
-      ## `leaveScope` skips it, and `trRaise` stops walking outward at
-      ## this scope so an *outer* try's finally is not inlined either.
-    TryFinOnlyBody
-      ## Body scope of a `try`/`finally` *without* `except`. On normal
-      ## exit (`trScope`) the surrounding `(fin ...)` clause is emitted
-      ## naturally by `trTry`, so we skip; on raise the raise propagates
-      ## past the try and `trRaise` must inline the finally before the
-      ## jump.
-    WhileOrBlock
+    Other        ## an ordinary destructor scope
+    WhileOrBlock ## a `break` can land just past this one
   DestructorOp = object
     destroyProc: SymId
     arg: SymId
@@ -91,7 +77,6 @@ type
     isTopLevel: bool
     destroyOps: seq[DestructorOp]
     info: NifLineInfo
-    finallySection: Cursor
     parent: ptr Scope
 
   Context = object
@@ -148,10 +133,10 @@ proc labelIdOf(n: Cursor): LabelId =
   LabelId(uint32(n.symId))
 
 proc createNestedScope(kind: ScopeKind; parent: var Scope; info: NifLineInfo;
-                       label = NoLabel; fin = default(Cursor)): Scope =
+                       label = NoLabel): Scope =
   Scope(label: label,
     kind: kind, destroyOps: @[], info: info, parent: addr(parent),
-    isTopLevel: false, finallySection: fin)
+    isTopLevel: false)
 
 proc createEntryScope(info: NifLineInfo): Scope =
   Scope(label: NoLabel,
@@ -171,78 +156,16 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId) =
 when not defined(nimony):
   proc tr(c: var Context; n: var Cursor)
 
-proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
-               dest: var TokenBuf) =
-  case n.kind
-  of Symbol:
-    let repl = newVars.getOrDefault(n.symId, n.symId)
-    dest.addSymUse(repl, n.info)
-    inc n
-  of TagLit:
-    let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
-    copyInto dest, n:
-      if isLocalDecl and n.isSymbolDef:
-        let repl = pool.syms.getOrIncl("`ffv." & $idgen)
-        newVars[n.symId] = repl
-        dest.addSymDef(repl, n.info)
-        inc idgen
-        inc n
-      while n.hasMore:
-        freshVars(n, newVars, idgen, dest)
-  of UIntLit, StrLit, IntLit, FloatLit, CharLit, SymbolDef, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit, DotToken, Ident:
-    dest.addSubtree n
-    inc n
-  else:
-    raiseAssert "BUG: unexpected ParRi in destroyer.createFreshVars" # classic ParRi only
-
-proc createFreshVars(c: var Context; n: Cursor): TokenBuf =
-  var n = n
-  var newVars = initTable[SymId, SymId]()
-  var idgen = 0
-  result = createTokenBuf(30)
-  freshVars(n, newVars, idgen, result)
-
-proc leaveScope(c: var Context; sptr: ptr Scope; kind = Other; raising = false) =
-  ## Walk-out of one scope: optionally inline the scope's finally body and
-  ## run destructors.
+proc leaveScope(c: var Context; sptr: ptr Scope) =
+  ## Walk-out of one scope: run its destructors, innermost declaration first.
   ##
-  ## `sptr` is taken as `ptr Scope` (not `var Scope` — Nimony's borrow
-  ## checker would reject passing a field of `c` as both `var Context`
-  ## and `var Scope`) so we can detach `sptr.finallySection` during the
-  ## inline. The detach is what prevents infinite recursion: a raise
-  ## inside the inlined finally body re-enters `trRaise`, walks the same
-  ## `c.currentScope` chain that still links back to `sptr^`, and would
-  ## otherwise inline this same finally forever. The restore at the end
-  ## puts the finally back so subsequent branches of an enclosing
-  ## `if`/`case` still see it on their normal exit.
-  ##
-  ## "Inline finally" decision per scope kind:
-  ##   - `CaughtLocally`: never inline. A raise here will be caught by
-  ##     this try's `except`; the finally runs naturally afterward.
-  ##   - `TryFinOnlyBody`: inline only when leaving via a raise (the
-  ##     raise propagates past the try and `nifcgen`'s straight-line
-  ##     emission of the finally won't run before the raise jump). Skip
-  ##     on normal exit, where `trTry` emits the finally clause itself.
-  ##   - `Other`/`WhileOrBlock` with a `finallySection`: inline. The only
-  ##     scope that has its `finallySection` set under `Other` is an
-  ##     `except`-body; inlining the outer finally at its end is what
-  ##     makes the raise→except→finally path actually run the finally
-  ##     (nifcgen's else-branch structure only runs it on the no-raise
-  ##     path).
-  let savedFin = sptr.finallySection
-  sptr.finallySection = default(Cursor)
-  let inlineFin =
-    case kind
-    of CaughtLocally: false
-    of TryFinOnlyBody: raising and savedFin != default(Cursor)
-    of Other, WhileOrBlock: savedFin != default(Cursor)
-  if inlineFin:
-    var freshVars = createFreshVars(c, savedFin)
-    var n = beginRead(freshVars)
-    tr c, n
+  ## This used to also replicate the scope's `finally` body, with a `ScopeKind`
+  ## apiece for "the raise is caught here" and "the raise travels past here".
+  ## The `eraiser` lowers `try` now, so by the time this pass runs there are no
+  ## `finally` sections left to replicate and no `try` to be inside — only
+  ## `jmp`/`lab`/`ret`, which this walk already handled.
   for i in countdown(sptr.destroyOps.high, 0):
     callDestroy c, sptr.destroyOps[i].destroyProc, sptr.destroyOps[i].arg
-  sptr.finallySection = savedFin
 
 proc leaveNamedBlock(c: var Context; label: SymId) =
   #[ Consider:
@@ -302,24 +225,18 @@ proc trReturn(c: var Context; n: var Cursor) =
   takeTree c.dest, n
 
 proc trRaise(c: var Context; n: var Cursor) =
-  #[
-  Walk enclosing scopes, inlining each scope's finally before the raise
-  jump. Stop at the first `CaughtLocally` scope: that scope is the body
-  of a `try` with an `except` arm, so the raise is caught right there and
-  cannot reach any outer finally. Without this stop, a nested
-  `try`-with-`except` inside an outer `try`'s `except`-body would
-  spuriously inline the outer finally before the raise lands on the
-  inner handler — see `tnested_heap_with_fin.nim`.
-  ]#
+  ## Identical to `trReturn`, and that is the whole point: after the `eraiser`
+  ## a `raise` can only mean "leave the routine". A raise the source wrote is
+  ## already a `jmp` to its handler or a `ret`; the only ones still spelled
+  ## `raise` here are the ones a LATER pass emits for an unrecoverable failure
+  ## (the duplifier's out-of-memory check), which no handler catches.
   if c.terminates:
     # unreachable: an earlier jump already left these scopes
     takeTree c.dest, n
     return
   var it = addr(c.currentScope)
   while it != nil:
-    leaveScope(c, it, it.kind, raising = true)
-    if it.kind == CaughtLocally:
-      break
+    leaveScope(c, it)
     it = it.parent
   takeTree c.dest, n
 
@@ -339,7 +256,7 @@ proc trLocal(c: var Context; n: var Cursor) =
   if destructor != NoSymId and r.kind notin {CursorY, PatternvarY, ResultY, GvarY, TvarY, GletY, TletY, ConstY}:
     c.currentScope.destroyOps.add DestructorOp(destroyProc: destructor, arg: r.name.symId)
 
-proc trScope(c: var Context; body: var Cursor; kind = Other) =
+proc trScope(c: var Context; body: var Cursor) =
   copyIntoKind c.dest, StmtsS, body.info:
     if body.stmtKind == StmtsS:
       body.into:
@@ -359,7 +276,7 @@ proc trScope(c: var Context; body: var Cursor; kind = Other) =
        paired `=wasMoved` together with the first, genuinely dead,
        destroy). ]#
     if not c.terminates:
-      leaveScope(c, addr(c.currentScope), kind)
+      leaveScope(c, addr(c.currentScope))
 
 proc registerSinkParameters(c: var Context; params: Cursor) =
   if not params.isTagLit: return
@@ -402,11 +319,11 @@ proc trProcDecl(c: var Context; n: var Cursor) =
     copyTree c.dest, r.body
   c.dest.addParRi()
 
-proc trNestedScope(c: var Context; body: var Cursor; kind = Other; fin = default(Cursor)) =
+proc trNestedScope(c: var Context; body: var Cursor; kind = Other) =
   var oldScope = move c.currentScope
-  c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel, fin)
+  c.currentScope = createNestedScope(kind, oldScope, body.info, NoLabel)
   c.currentScope.labels = collectLabels(body)
-  trScope c, body, kind
+  trScope c, body
   swap c.currentScope, oldScope
 
 proc trWhile(c: var Context; n: var Cursor) =
@@ -503,44 +420,6 @@ proc trCase(c: var Context; n: var Cursor) =
         takeTree c.dest, n
     c.flow.closeBranches()
 
-proc trTry(c: var Context; n: var Cursor) =
-  var nn = n
-  inc nn
-  skip nn # try statements
-  var hasExcept = false
-  while nn.substructureKind == ExceptU:
-    hasExcept = true
-    skip nn
-  copyInto(c.dest, n):
-    let fin = if nn.substructureKind == FinU: nn.childCursor else: default(Cursor)
-    # Body kind depends on whether an `except` arm exists:
-    #   - has except: raise from the body is caught by that except, so the
-    #     finally runs naturally afterward (no duplication) and there's no
-    #     reason to walk past this scope.
-    #   - no except (plain try/finally): raise propagates past the try and
-    #     the finally must be inlined before the raise jump. Use
-    #     `TryFinOnlyBody` so `leaveScope` inlines the finally on raise
-    #     but not on normal exit (where `trTry` emits the finally clause
-    #     itself).
-    let bodyKind = if hasExcept: CaughtLocally else: TryFinOnlyBody
-    # Body and handlers are one non-exhaustive sibling group: the body may
-    # leave via a raise the handlers catch, so neither alone decides whether
-    # the `try` as a whole falls through.
-    c.flow.openBranches()
-    c.flow.openBranch()
-    trNestedScope c, n, bodyKind, fin
-    c.flow.closeBranch()
-    while n.substructureKind == ExceptU:
-      copyInto(c.dest, n):
-        takeTree c.dest, n # `E as e`
-        c.flow.openBranch()
-        trNestedScope c, n, Other, fin
-        c.flow.closeBranch()
-    c.flow.closeBranches()
-    if n.substructureKind == FinU:
-      copyInto(c.dest, n):
-        trNestedScope c, n
-
 proc tr(c: var Context; n: var Cursor) =
   # `c.terminates` (i.e. `c.flow.diverged`) says whether control has already
   # left this statement list. Only the jump statements set it — `ret`, `raise`,
@@ -582,7 +461,7 @@ proc tr(c: var Context; n: var Cursor) =
         while n.hasMore:
           tr c, n
         if not c.terminates:
-          leaveScope(c, addr(c.currentScope), Other)
+          leaveScope(c, addr(c.currentScope))
       c.dest.addParRi()
       swap c.currentScope, oldScope
     of JmpS:
@@ -616,7 +495,7 @@ proc tr(c: var Context; n: var Cursor) =
     of WhileS, CoroforS:
       trWhile c, n
     of TryS:
-      trTry c, n
+      bug "`try` should have been lowered by the eraiser"
     of ProcS, FuncS, MethodS, ConverterS:
       trProcDecl c, n
     of IteratorS:

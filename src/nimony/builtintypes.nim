@@ -64,6 +64,31 @@ proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo
     dest.addSubtree retType
     dest.addParRi()
 
+proc addRaisedCode*(dest: var TokenBuf; loweredRetType: Cursor; code, resultSym: SymId;
+                    info: NifLineInfo) =
+  ## The operand of a `(raise ...)` emitted into a routine whose signature has
+  ## ALREADY been through `addSuccessTupleType`: a bare `ErrorCode` when the
+  ## routine returns nothing, else `(code, result[1])` — the code paired with
+  ## whatever the result slot holds so far.
+  ##
+  ## Exception lowering happens once, early. A pass that runs after it and
+  ## still needs to signal an error — the duplifier's out-of-memory check is
+  ## the only such case — cannot emit a bare `(raise code)` and leave the
+  ## typing to somebody downstream, because there is no longer anybody
+  ## downstream. It emits the finished payload through here.
+  if loweredRetType.typeKind != TupleT:
+    dest.addSymUse code, info
+  else:
+    dest.addParLe TupconstrX, info
+    dest.addSubtree loweredRetType
+    dest.addSymUse code, info
+    if resultSym != SymId(0):
+      dest.addParLe TupatX, info
+      dest.addSymUse resultSym, info
+      dest.addIntLit 1, info
+      dest.addParRi()
+    dest.addParRi()
+
 proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
                         info: NifLineInfo) =
   ## THE mapping from a routine's Nimony return type to its Leng one, and the
@@ -79,7 +104,7 @@ proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
   ## proctype rewritten the other is a function pointer that does not match its
   ## function, and nothing but the C compiler is going to notice.
   ##
-  ## `raiselowering` is the one pass that BAKES the answer into the
+  ## The `eraiser` is the one pass that BAKES the answer into the
   ## declarations it emits, because `cps` runs after it and builds a
   ## coroutine's frame and result slot out of the return type. Everything that
   ## still queries Nimony afterwards — `cps` for a callee, `lengcgen` for a
@@ -92,7 +117,7 @@ proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
 
 proc addPragmasWithoutRaises*(dest: var TokenBuf; pragmas: Cursor) =
   ## Copy a pragma list minus `(raises)`. Used where the raising-ness of a
-  ## routine has already been spent — `raiselowering` has put the success tuple
+  ## routine has already been spent — the `eraiser` has put the success tuple
   ## in the signature, so leaving the pragma on would have `lengcgen` wrap the
   ## return type a second time — and on the procs `cps` generates FOR a
   ## coroutine, which return a `Continuation` and never fail.
