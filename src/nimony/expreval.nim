@@ -337,6 +337,9 @@ proc evalCall(c: var EvalContext; n: Cursor): Cursor =
       var contents = ""
       try:
         contents = readFile(full)
+        # Same bookkeeping as a plugin's `dependsOn`: without it the module's
+        # `.s.nif` is never rebuilt when the file changes (nim-lang/nimony#1378).
+        recordFileDep c.c[], full
       except:
         contents = ""
       result = stringValue(c, contents, n.info)

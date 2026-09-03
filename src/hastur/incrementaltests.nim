@@ -195,6 +195,95 @@ proc incrementalTests*() =
         expect cBefore.len == 1 and cBefore[0][1] == before[0][1],
                "backend-switch: the native build rewrote the C backend's main .x.nif"
 
+  # Phases 7-11: files read at COMPILE TIME that no source file mentions —
+  # what a `.plugin` reports through `plugins.dependsOn` and what `slurp`
+  # folds (nim-lang/nimony#1378). Nothing in the module's own inputs changes
+  # when such a file is edited, so without the `(dependency …)` bookkeeping
+  # the `.s.nif` looks current forever and the program keeps printing the old
+  # contents. Driven from a fixture of its own so the plugin build node does
+  # not perturb the counts asserted above.
+  let depSrc = "tests/incremental/plugindep.nim"
+  let pluginData = "tests/incremental/plugindata.txt"
+  let slurpData = "tests/incremental/slurpdata.txt"
+  let depCache = "nimcache" / "incremental-deps"
+  if fileExists(depSrc) and fileExists(pluginData) and fileExists(slurpData):
+    phases += 5
+    let originalPluginData = readFile(pluginData)
+    let originalSlurpData = readFile(slurpData)
+    removeDir depCache
+    let depCmd = nimony.quoteShell & " c -r --silentMake --report --nimcache:" &
+                 depCache.quoteShell & " " & depSrc.quoteShell
+
+    var depOutput = ""
+    proc runDep(label: string): seq[seq[ReportEntry]] =
+      let (output, ec) = execCmdEx(depCmd)
+      depOutput = output
+      if ec != 0:
+        stdout.write output
+        writeFile(pluginData, originalPluginData)
+        writeFile(slurpData, originalSlurpData)
+        restoreSources()
+        quit "incremental: '" & label & "' compile failed"
+      parseNifmakeReports(output)
+
+    # Phase 7: cold build establishes the baseline and records both files.
+    block:
+      discard runDep("dep-cold")
+      expect depOutput.contains("plugin-one"),
+             "dep-cold: plugin did not read its data file"
+      expect depOutput.contains("slurp-one"),
+             "dep-cold: slurp did not read its data file"
+
+    # Phase 8: nothing changed — the extra inputs must not make the node
+    # perpetually stale.
+    block:
+      let r = runDep("dep-noop")
+      if r.len == 2:
+        expect reportField(r[0], "total") == 0,
+               "dep-noop: frontend re-ran " & $reportField(r[0], "total") & " commands"
+        expect reportField(r[1], "total") == 0,
+               "dep-noop: backend re-ran " & $reportField(r[1], "total") & " commands"
+
+    # Phase 9: edit the file the PLUGIN reads. Two caches have to give way —
+    # nifmake's (the module is re-semmed at all) and `runPlugin`'s memo of the
+    # plugin output, which is keyed on the input tree and so did not change.
+    block:
+      writeFile(pluginData, "plugin-two")
+      let r = runDep("dep-plugin-edit")
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") >= 1,
+               "dep-plugin-edit: nimsem did not re-run"
+      expect depOutput.contains("plugin-two"),
+             "dep-plugin-edit: ran a stale plugin expansion; expected 'plugin-two'"
+
+    # Phase 10: same for the file `slurp` folded.
+    block:
+      writeFile(slurpData, "slurp-two")
+      let r = runDep("dep-slurp-edit")
+      if r.len == 2:
+        expect reportField(r[0], "nimsem") >= 1,
+               "dep-slurp-edit: nimsem did not re-run"
+      expect depOutput.contains("slurp-two"),
+             "dep-slurp-edit: folded a stale slurp; expected 'slurp-two'"
+
+    # Phase 11: DELETE the plugin's data file. It cannot be listed as a
+    # nifmake input any more, so the re-sem is forced by dropping the output
+    # instead — and that must happen exactly once. A run that keeps forcing it
+    # is the failure mode this phase exists to catch: the re-sem no longer
+    # records the file, so the build after it has to be a clean no-op.
+    block:
+      removeFile(pluginData)
+      discard runDep("dep-delete")
+      expect depOutput.contains("plugin-data-missing"),
+             "dep-delete: kept a stale plugin expansion after the data file vanished"
+      let r = runDep("dep-delete-settle")
+      if r.len == 2:
+        expect reportField(r[0], "total") == 0,
+               "dep-delete-settle: frontend re-ran " & $reportField(r[0], "total") &
+               " commands; a missing dependency must force ONE rebuild, not a loop"
+    writeFile(pluginData, originalPluginData)
+    writeFile(slurpData, originalSlurpData)
+
   let dt = epochTime() - t0
   if failures.len > 0:
     for f in failures: stderr.writeLine "incremental: " & f
