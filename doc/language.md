@@ -3727,6 +3727,17 @@ type
 ```
 
 
+Inference of a generic parameter is anchored to `Self`: it is `Self` that ties a requirement to the type being checked. A requirement may leave `Self` out, but only once every generic parameter it names is already bound by an earlier requirement:
+
+```nim
+type
+  Findable[T] = concept
+    iterator items(x: Self): T   # the first usage binds `T`
+    proc `==`(a, b: T): bool     # no `Self`, but `T` is bound by now
+```
+
+A requirement that neither names `Self` nor has all its parameters bound states nothing about the checked type and is never satisfied — otherwise a candidate would bind the open parameter to whatever type it happens to name, and every type would satisfy the concept.
+
 ## Generics
 
 Generics are a means to parametrize procs, iterators or types with `type parameters`:idx:. Depending on the context, the brackets are used either to introduce type parameters or to instantiate a generic proc, iterator, or type.
