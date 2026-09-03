@@ -70,6 +70,7 @@ type
                       ## direction only makes `sigmatch` MISS a rejection —
                       ## never invent one — and `buildTypeArgs` still catches it
                       ## the way it always did.
+    unboundStaticTvars: int ## like `unboundTvars`, but only static parameters
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
@@ -109,7 +110,10 @@ proc bindTypevar(m: var Match; fs: SymId; a: Cursor) =
   ## `InferActualTypevar` — are bound but not counted, exactly as
   ## `matchTypevars` did not count them.
   m.inferred[fs] = a
-  if fs in m.tvars: dec m.unboundTvars
+  if fs in m.tvars:
+    dec m.unboundTvars
+    if isStaticTypevar(fs):
+      dec m.unboundStaticTvars
 
 proc addMissingConstraint*(m: var Match; routine: Cursor) =
   let key = asNimCode(routine, {renderNoBody})
@@ -789,7 +793,10 @@ proc adoptInferred(m: var Match; probe: Match; adopted: var seq[SymId]) =
 proc undoInferred(m: var Match; adopted: openArray[SymId]) =
   for k in adopted:
     m.inferred.del k
-    if k in m.tvars: inc m.unboundTvars
+    if k in m.tvars:
+      inc m.unboundTvars
+      if isStaticTypevar(k):
+        inc m.unboundStaticTvars
 
 type
   ConceptProbe = object
@@ -2502,11 +2509,14 @@ proc notATypeArg(e: Cursor): bool =
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
   m.tvars = default(HashSet[SymId])
   m.unboundTvars = 0
+  m.unboundStaticTvars = 0
   if fn.kind in RoutineKinds:
     var e = explicitTypeVars
     for v in typeVars(fn.sym):
       m.tvars.incl v
       inc m.unboundTvars
+      if isStaticTypevar(v):
+        inc m.unboundStaticTvars
       if e.isDotToken: discard
       elif not e.hasMore:
         m.error0Typevar MissingExplicitGenericParameter, v
@@ -2600,6 +2610,26 @@ proc allUninstantiable*(m: openArray[Match]): bool =
   for i in 0..<m.len:
     if not (m[i].err and m[i].error.kind == CouldNotInferTypeVar):
       return false
+
+proc hasUnboundStaticTypevar*(m: Match): bool {.inline.} =
+  m.unboundStaticTvars > 0
+
+proc markFirstUnboundStaticTypevar*(m: var Match) =
+  ## Record ``CouldNotInferTypeVar`` for the first unbound static parameter.
+  if m.err: return
+  for v in typeVars(m.fn.sym):
+    if not m.inferred.hasKey(v) and isStaticTypevar(v):
+      m.error0Typevar CouldNotInferTypeVar, v
+      break
+
+proc markFirstUnboundTypevar*(m: var Match) =
+  ## Record ``CouldNotInferTypeVar`` for the first of the candidate's own
+  ## generic parameters that still lacks a binding.
+  if m.err: return
+  for v in typeVars(m.fn.sym):
+    if not m.inferred.hasKey(v):
+      m.error0Typevar CouldNotInferTypeVar, v
+      break
 
 proc buildTypeArgs*(m: var Match) =
   # check all type vars have a value:
@@ -2712,14 +2742,6 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
     if aInh < bInh:
       return FirstWins
     elif aInh > bInh:
-      return SecondWins
-    # Prefer the candidate that leaves fewer of the routine's own generic
-    # parameters unbound. Binding `T` to the whole argument in `foo(x: T)`
-    # must not beat `foo(x: array[N, T])` just because it records fewer
-    # entries in `inferred` while orphaning the static `N`.
-    if a.unboundTvars < b.unboundTvars:
-      return FirstWins
-    elif a.unboundTvars > b.unboundTvars:
       return SecondWins
     let diff = a.inferred.len - b.inferred.len
     if diff < 0:

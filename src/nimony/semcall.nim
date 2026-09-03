@@ -979,9 +979,7 @@ proc inferTypevarsFromExpected(c: var SemContext; m: var Match; expected: TypeCu
   ## When argument matching leaves a generic routine's typevars unbound but the
   ## call site has a concrete expected type, unify the routine's return type with
   ## it to bind the rest — e.g. `let r: Result[int, string] = ok(5)` infers `E`
-  ## from the target even though only `T` appears in `ok`'s argument. Runs after
-  ## overload selection, so it cannot affect which candidate is chosen; it only
-  ## fills in bindings before `buildTypeArgs` checks they are all present. Merges
+  ## from the target even though only `T` appears in `ok`'s argument. Merges
   ## only on a clean (non-converting) unify, so a conversion-to-expected (handled
   ## later by `commonType`) is left untouched.
   if m.err or m.fn.kind notin RoutineKinds or m.fn.sym == SymId(0): return
@@ -994,6 +992,18 @@ proc inferTypevarsFromExpected(c: var SemContext; m: var Match; expected: TypeCu
   typematch(rtMatch, rt, Item(n: emptyNode(c), typ: expected))
   if not rtMatch.err and classifyMatch(rtMatch) in {EqualMatch, GenericMatch}:
     m.inferred = rtMatch.inferred
+
+proc rejectOrphanTypevars(m: var Match) =
+  ## Drop overload candidates that still orphan static generic parameters.
+  ## Type parameters may remain open through return-type inference or default
+  ## arguments; static parameters must be fixed by argument matching.
+  if m.err or m.insertedParam or m.fn.sym == SymId(0): return
+  if m.hasUnboundStaticTypevar():
+    m.markFirstUnboundStaticTypevar()
+
+proc rejectOrphanCandidates(m: var seq[Match]) =
+  for i in 0 ..< m.len:
+    rejectOrphanTypevars(m[i])
 
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
@@ -1081,6 +1091,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     earlyErr = createTokenBuf(4)
     earlyErr.addSubtree readonlyCursorAt(dest, errStart)
     dest.shrink errStart
+  rejectOrphanCandidates(m)
   var idx = pickBestMatch(c, m, cs.flags)
 
   if idx < 0:
@@ -1146,6 +1157,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         m.add newMatch
         matchAdded = true
     if matchAdded: # m.len != L
+      rejectOrphanCandidates(m)
       idx = pickBestMatch(c, m, cs.flags)
     if idx < 0 and cs.hasNamedArgs:
       # restore original args for error message generation:
