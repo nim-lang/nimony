@@ -17,12 +17,84 @@ else:
     import std/assertions
 
 type
+  LazyStrings* = ref object
+    ## The backing of a `BiTable[Id, string]` whose values still sit in a
+    ## mapped file: per entry a byte offset and length into `base`. An entry
+    ## is copied into `vals` the first time it is READ; hashing and
+    ## comparison work on the mapped bytes directly, so a table can be
+    ## indexed and looked up by value without materialising anything.
+    ##
+    ## Why: `bif.load` fills four pools per file, and a Nim IC backend process
+    ## opens ~800 files of which it reads names from a fraction — 222MB of
+    ## strings, 41% of the process's heap, for names it never looked at
+    ## (`--mm:refc -d:nimTypeNames` on nimbus-eth2). `base` is borrowed from
+    ## the mapping, which has to outlive the table; `bif.load` leaves its
+    ## mapping in place for the buffer's lifetime for the same reason.
+    base: ptr UncheckedArray[char]
+    offs: seq[uint32]
+    lens: seq[uint32]
+
   BiTable*[Id, T] = object # Id must be an int/uint or a distinct type thereof
                            # that is convertible to `uint32`. `Id(0)` must mean "not used".
     vals: seq[T] # indexed by LitId
     keys: seq[Id]  # indexed by hash(val)
+    lazy: LazyStrings # nil unless `T is string` and `addLazy` was used
 
 proc initBiTable*[Id, T](): BiTable[Id, T] = BiTable[Id, T](vals: @[], keys: @[])
+
+const
+  idStart = 1
+
+template idToIdx(x: untyped): int = x.int - idStart
+
+template isLazyAt(t, idx: untyped): bool =
+  ## Entry `idx` is still only in the mapped file.
+  t.lazy != nil and t.vals[idx].len == 0 and t.lazy.lens[idx] > 0'u32
+
+proc materialize[Id, T](t: var BiTable[Id, T]; idx: int) {.inline.} =
+  when T is string:
+    if isLazyAt(t, idx):
+      let n = int t.lazy.lens[idx]
+      var s = newString(n)
+      copyMem(addr s[0], addr t.lazy.base[t.lazy.offs[idx]], n)
+      t.vals[idx] = s
+
+proc hashAt[Id, T](t: BiTable[Id, T]; idx: int): Hash {.inline.} =
+  ## `hash(t.vals[idx])`, off the mapped bytes when the entry is still there.
+  ## `hash(openArray[char])` and `hash(string)` run the same algorithm.
+  when T is string:
+    if isLazyAt(t, idx):
+      let off = int t.lazy.offs[idx]
+      return hash(toOpenArray(t.lazy.base, off, off + int(t.lazy.lens[idx]) - 1))
+  result = hash(t.vals[idx])
+
+proc eqAt[Id, T, V](t: BiTable[Id, T]; idx: int; v: V): bool {.inline.} =
+  ## `v == t.vals[idx]`, off the mapped bytes when the entry is still there.
+  ## `V` is `T` or a view of it (`getOrInclFromView`); only a `string` probe
+  ## gets the no-copy comparison, a view against a lazy entry compares
+  ## against a copy — that path does not run on file-loaded pools.
+  when T is string:
+    if isLazyAt(t, idx):
+      let n = int t.lazy.lens[idx]
+      when V is string:
+        return v.len == n and (n == 0 or
+          equalMem(unsafeAddr v[0], addr t.lazy.base[t.lazy.offs[idx]], n))
+      else:
+        var tmp = newString(n)
+        if n > 0: copyMem(addr tmp[0], addr t.lazy.base[t.lazy.offs[idx]], n)
+        return v == tmp
+  result = v == t.vals[idx]
+
+proc addLazy*[Id](t: var BiTable[Id, string]; base: pointer; off, len: int): Id =
+  ## `addOrdered` for a value that stays in the mapped file at `base + off`
+  ## until it is first read. Only for a table filled in id order from a file
+  ## (see `bif.load`); mixing with `getOrIncl` afterwards is fine.
+  if t.lazy == nil: t.lazy = LazyStrings(base: cast[ptr UncheckedArray[char]](base))
+  assert cast[pointer](t.lazy.base) == base, "addLazy: one mapping per table"
+  t.lazy.offs.add uint32(off)
+  t.lazy.lens.add uint32(len)
+  t.vals.add ""
+  result = Id(t.vals.len - 1 + idStart)
 
 proc nextTry(h, maxHash: Hash): Hash {.inline.} =
   result = (h + 1) and maxHash
@@ -36,10 +108,6 @@ proc mustRehash(length, counter: int): bool {.inline.} =
   assert(length > counter)
   result = (length < counter div 2 + counter) or (length - counter < 4)
 
-const
-  idStart = 1
-
-template idToIdx(x: untyped): int = x.int - idStart
 
 proc hasId*[Id, T](t: BiTable[Id, T]; x: Id): bool {.inline.} =
   let idx = idToIdx(x)
@@ -52,7 +120,7 @@ proc enlarge[Id, T](t: var BiTable[Id, T]) =
   for i in 0..high(n):
     let eh = n[i]
     if isFilled(eh):
-      var j = hash(t.vals[idToIdx eh]) and maxHash(t)
+      var j = hashAt(t, idToIdx eh) and maxHash(t)
       while isFilled(t.keys[j]):
         j = nextTry(j, maxHash(t))
       t.keys[j] = move n[i]
@@ -68,7 +136,7 @@ proc rebuildIndex[Id, T](t: var BiTable[Id, T]) =
   while mustRehash(cap, t.vals.len): cap = cap * 2
   t.keys = newSeq[Id](cap)
   for i in 0 ..< t.vals.len:
-    var j = hash(t.vals[i]) and maxHash(t)
+    var j = hashAt(t, i) and maxHash(t)
     while isFilled(t.keys[j]):
       j = nextTry(j, maxHash(t))
     t.keys[j] = Id(i + idStart)
@@ -104,6 +172,9 @@ proc addOrdered*[Id, T](t: var BiTable[Id, T]; v: sink T): Id =
   ## point something needs it rather than always. Callers that only ever map
   ## id -> value never pay at all.
   t.vals.add v
+  if t.lazy != nil:
+    t.lazy.offs.add 0'u32
+    t.lazy.lens.add 0'u32
   result = Id(t.vals.len - 1 + idStart)
 
 proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
@@ -115,7 +186,7 @@ proc getKeyId*[Id, T](t: BiTable[Id, T]; v: T): Id =
     while true:
       let strId = t.keys[h]
       if not isFilled(strId): break
-      if v == t.vals[idToIdx strId]: return strId
+      if eqAt(t, idToIdx strId, v): return strId
       h = nextTry(h, maxHash(t))
   return Id(0)
 
@@ -129,7 +200,7 @@ template getOrInclImpl() {.maybeDirty.} =
     while true:
       let strId = t.keys[h]
       if not isFilled(strId): break
-      if v == t.vals[idToIdx strId]: return strId
+      if eqAt(t, idToIdx strId, v): return strId
       h = nextTry(h, maxHash(t))
     # not found, we need to insert it:
     if mustRehash(t.keys.len, t.vals.len):
@@ -149,6 +220,9 @@ proc getOrIncl*[Id, T](t: var BiTable[Id, T]; v: T): Id =
   result = Id(t.vals.len + idStart)
   t.keys[h] = result
   t.vals.add v
+  if t.lazy != nil:
+    t.lazy.offs.add 0'u32
+    t.lazy.lens.add 0'u32
 
 proc getOrInclFromView*[Id, T, View](t: var BiTable[Id, T]; v: View): Id =
   ## Optimized version that only materializes from the view `v` if the value does
@@ -157,6 +231,9 @@ proc getOrInclFromView*[Id, T, View](t: var BiTable[Id, T]; v: View): Id =
   result = Id(t.vals.len + idStart)
   t.keys[h] = result
   t.vals.add $v
+  if t.lazy != nil:
+    t.lazy.offs.add 0'u32
+    t.lazy.lens.add 0'u32
 
 when defined(nimony):
   proc `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): var T {.inline.} =
@@ -167,11 +244,19 @@ else:
   proc `[]`*[Id, T](t: var BiTable[Id, T]; strId: Id): var T {.inline.} =
     let idx = idToIdx strId
     assert idx < t.vals.len
+    materialize(t, idx)
     result = t.vals[idx]
 
   proc `[]`*[Id, T](t: BiTable[Id, T]; strId: Id): lent T {.inline.} =
     let idx = idToIdx strId
     assert idx < t.vals.len
+    # A read materialises a lazy entry, and a read through a non-`var` table
+    # still has to: the entry's storage is the heap seq the table owns, so
+    # filling it in place is exactly what the `var` overload does — the only
+    # thing `lent` forbids is doing it through this parameter.
+    when T is string:
+      if isLazyAt(t, idx):
+        materialize(cast[ptr BiTable[Id, T]](unsafeAddr t)[], idx)
     result = t.vals[idx]
 
 proc hash*[Id, T](t: BiTable[Id, T]): Hash =

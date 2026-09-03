@@ -542,7 +542,21 @@ proc rStr(r: var BifReader): string =
     endStore(result)
     r.pos += n
 
-proc load*(filename: string): BifModule =
+proc rLazyStr[Id](r: var BifReader; t: var BiTable[Id, string]) {.inline.} =
+  ## `rStr`, except that the bytes stay in the mapping and the pool records
+  ## where they are (`bitabs.addLazy`). The mapping is left in place for the
+  ## buffer's lifetime already, and the pool borrows it the same way.
+  let n = int rVarint(r)
+  assert r.pos + n <= r.size, "bif: truncated string"
+  discard t.addLazy(cast[pointer](r.base), r.pos, n)
+  r.pos += n
+
+proc load*(filename: string; lazyPools = false): BifModule =
+  ## Load a `.bif`. The token block is borrowed from the mapping either way;
+  ## with `lazyPools` the string, symbol and filename pools are too — an
+  ## entry is copied out on its first read (`bitabs.LazyStrings`) — which is
+  ## what a reader that touches a fraction of a file's names wants. Tags are
+  ## few and always read, and stay eager.
   ## Read a `BifModule` from a binary `.bif` file, memory-mapping it and BORROWING
   ## the token block (zero-copy — see `adoptForeignTokens`). Mints fresh pools (the
   ## bif INVARIANT). The mapping stays resident for the process lifetime.
@@ -574,9 +588,14 @@ proc load*(filename: string): BifModule =
   # hashing — `addOrdered` leaves the reverse index unbuilt, and `getOrIncl` (or
   # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(rStr(r))
-  for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(rStr(r))
-  for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(rStr(r))
-  for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(rStr(r))
+  if lazyPools:
+    for _ in 1 .. nStrings: rLazyStr(r, result.buf.pool.strings)
+    for _ in 1 .. nSyms:    rLazyStr(r, result.buf.pool.syms)
+    for _ in 1 .. nFiles:   rLazyStr(r, result.buf.pool.filenames)
+  else:
+    for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(rStr(r))
+    for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(rStr(r))
+    for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(rStr(r))
   # symbol index (we are now positioned exactly at indexOffset).
   let nIndex = int rVarint(r)
   result.index = newSeq[IndexEntry](nIndex)
@@ -908,6 +927,21 @@ when isMainModule:
     close(ff)
     doAssert sameTokens(src, fm.buf), "loadFromFile disagrees with mmap load"
     doAssert fm.buf.pool.syms.len == src.pool.syms.len
+
+    # lazy pools: every pooled name reads back identical, and a lookup BY
+    # VALUE finds it — that lookup hashes and compares the mapped bytes, and
+    # runs before anything has copied the entry out.
+    var lm = load(tmp, lazyPools = true)
+    doAssert sameTokens(src, lm.buf), "lazy load disagrees with mmap load"
+    doAssert lm.buf.pool.syms.len == src.pool.syms.len
+    ensureIndexed(lm.buf.pool.syms)
+    for i in 0 ..< src.pool.syms.len:
+      let id = SymId(i + 1)
+      doAssert lm.buf.pool.syms.getKeyId(src.pool.syms[id]) == id, "lazy lookup"
+      doAssert lm.buf.pool.syms[id] == src.pool.syms[id], "lazy read"
+    for i in 0 ..< src.pool.strings.len:
+      let id = StrId(i + 1)
+      doAssert lm.buf.pool.strings[id] == src.pool.strings[id], "lazy string"
 
     # containsSym probes only the syms table (skipping header, pad, tokens, tags,
     # strings); it must find a pooled name and reject an absent one.
