@@ -9,6 +9,15 @@ type
 
 proc use(l: Label): int = childCount(l)
 
+# A subtype-typed local (`Label`) moved into a base-typed result (`Node`):
+# `result = l` upcasts and moves, so the moved-from `l` needs `=wasMoved`
+# through the upcast. The wasmoved arg must be `&l` (cast the address), not
+# `&((Node*)l)` (address of a cast rvalue, which the C compiler rejects).
+proc buildMovedIntoBase(): Node =
+  let l: Label = newLabel()
+  discard use(l)
+  result = l
+
 proc main() =
   var base = destroyCount()
   block:
@@ -31,5 +40,11 @@ proc main() =
   discard use(p.labels[0]) + use(p.labels[1])
   p.labels = @[]                   # seq-clear destroys both
   echo "seqclear ", destroyCount() - base
+
+  base = destroyCount()
+  block:
+    let n = buildMovedIntoBase()   # subtype moved into base -> wasmoved via upcast
+    discard childCount(n)          # destroyed once here; double-free would print 2
+  echo "movebase ", destroyCount() - base
 
 main()
