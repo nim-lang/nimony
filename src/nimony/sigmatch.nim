@@ -2713,6 +2713,14 @@ proc cmpMatches*(a, b: Match; preferIterators = false): DisambiguationResult =
       return FirstWins
     elif aInh > bInh:
       return SecondWins
+    # Prefer the candidate that leaves fewer of the routine's own generic
+    # parameters unbound. Binding `T` to the whole argument in `foo(x: T)`
+    # must not beat `foo(x: array[N, T])` just because it records fewer
+    # entries in `inferred` while orphaning the static `N`.
+    if a.unboundTvars < b.unboundTvars:
+      return FirstWins
+    elif a.unboundTvars > b.unboundTvars:
+      return SecondWins
     let diff = a.inferred.len - b.inferred.len
     if diff < 0:
       result = FirstWins
