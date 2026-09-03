@@ -50,6 +50,11 @@ type
     typeCache: TypeCache
     tmpCounter: int
     resultSym: SymId
+    retType: Cursor
+      ## Return type of the routine being translated, as its signature already
+      ## spells it — exception lowering ran before this pass, so for a
+      ## `.raises` routine this is the success tuple, not the source-level `T`.
+      ## Only `genOutOfMemCheck` needs it.
     source: ptr TokenBuf
     moduleSuffix: string
     mover: MoverContext
@@ -839,6 +844,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.addParLe(n.cursorTagId, n.info)
   let oldResultSym = c.resultSym
   let oldFlags = c.flags
+  let oldRetType = c.retType
   c.resultSym = NoSymId
   c.flags = {}
   let decl = n
@@ -856,6 +862,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   copyTree c.dest, r.typevars
   copyTree c.dest, r.params
   copyTree c.dest, r.retType
+  c.retType = r.retType
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.effects
   if r.body.stmtKind == StmtsS and not isGeneric(r):
@@ -872,6 +879,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
   c.dest.addParRi()
   c.resultSym = oldResultSym
   c.flags = oldFlags
+  c.retType = oldRetType
 
 proc hasDestructor(c: Context; typ: Cursor): bool {.inline.} =
   # `isTrivial(c.lifter[], typ)` consults `c.lifter[].op`, which floats
@@ -1019,6 +1027,10 @@ proc trNewobjFields(c: var Context; n: var Cursor) =
       tr(c, n, WantOwner)
 
 proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
+  ## Only reached inside a `.raises` routine (see the call site). Exception
+  ## lowering has already run, so this raise is emitted in its finished form —
+  ## `addRaisedCode` pairs the code with the result slot the way the routine's
+  ## rewritten signature demands.
   copyIntoKind c.dest, IfS, info:
     copyIntoKind c.dest, ElifU, info:
       copyIntoKind c.dest, EqX, info:
@@ -1027,7 +1039,9 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
         copyIntoKind c.dest, NilX, info: discard
       copyIntoKind c.dest, StmtsS, info:
         copyIntoKind c.dest, RaiseS, info:
-          c.dest.addSymUse(pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix), info)
+          addRaisedCode(c.dest, c.retType,
+                        pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix),
+                        c.resultSym, info)
 
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =

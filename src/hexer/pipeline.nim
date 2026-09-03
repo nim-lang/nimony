@@ -13,7 +13,7 @@ include ".." / lib / compat2
 
 import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
-  constparams, raiselowering, vtables_backend, eraiser, lambdalifting, cps, passes,
+  constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
   funcsummary, intramodinliner, arcopt
 # `arcopt` runs on the final NIFC (try/finally already lowered to explicit
 # control flow). It is the BasicBlock-based pass ported from the battle-tested
@@ -68,14 +68,26 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("xelim1")
   lowerExprs(pass)
 
-  # Pass 4: Inject Raising Calls (Exception Handling). Emits the `canRaise`
-  # temp and its check as STATEMENTS in front of the enclosing statement, so
-  # it no longer re-introduces the `(expr (stmts ...) tmp)` nesting that used
-  # to require a second `xelim` run right after it.
+  # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
+  # a check, and the success tuple lands in the same pass: signatures, the
+  # `result` slot, the temps, and every use projected onto its value half.
+  # Emitted as STATEMENTS in front of the enclosing statement, so it does not
+  # re-introduce the `(expr (stmts ...) tmp)` nesting that used to require a
+  # second `xelim` run right after it.
+  #
+  # Everything downstream therefore sees a finished shape: the destroyer sees a
+  # tuple-typed temp like any other local and `cps` sees a coroutine that
+  # happens to return a tuple. The cost of deciding it here is the one
+  # `eraiser.nim`'s header describes — the lifter synthesises a hook per
+  # `(ErrorCode, T)` that only delegates to `T`'s, which the inliner prunes.
+  #
+  # The flip side: nothing lowers raises after this point, so a later pass that
+  # needs to signal an error emits the finished form (the duplifier's
+  # out-of-memory check, via `builtintypes.addRaisedCode`).
   pass.prepareForNext("eraiser")
   injectRaisingCalls(pass, c.bits div 8)
 
-  # Pass 5: Inject Duplication Points. Like the eraiser it emits its owning
+  # Pass 6: Inject Duplication Points. Like the eraiser it emits its owning
   # temps as statements (`bindToTemp` → `c.hoisted`), which is what removed the
   # `xelim2` run that used to sit between this pass and the destroyer.
   pass.prepareForNext("duplifier")
@@ -107,16 +119,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
         stderr.writeLine "verify_arc diagnostics for ", pass.moduleSuffix, ":"
         stderr.writeLine toString(arcErrs, false)
 
-  # Pass 7: Lower `.raises` to success tuples. The eraiser (pass 4) did the
-  # control-flow half; this is the value half, and it belongs HERE rather than
-  # next to the const-ref lowering it was written beside: `cps` lifts a local
-  # that outlives a state into the coroutine frame, and after that there is no
-  # declaration left to retype and no symbol left to project. See the note at
-  # the top of `raiselowering.nim`.
-  pass.prepareForNext("raiselowering")
-  lowerRaises(pass)
-
-  # Pass 8: CPS transform (coroutines)
+  # Pass 7: CPS transform (coroutines)
   pass.prepareForNext("cps")
   transformToCps(pass)
 
