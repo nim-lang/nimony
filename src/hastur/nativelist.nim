@@ -124,6 +124,17 @@ const
     "tests/nimony/stdlib/tbitops",
     "tests/nimony/stdlib/tencodings",
     "tests/nimony/stdlib/trandom",
+    # The one test on Windows that actually spawns a thread — every other test in
+    # `tests/nimony/threads` either stubs itself out here or never reaches
+    # `rawthreads.create`, so this is where the gap first shows. `CreateThread`
+    # calls `threadProcWrapper` with the Win64 ABI, but arkham applies that ABI
+    # only to a `stdcall` PROCTYPE (`isForeignAbiProctype` — a pointer to foreign
+    # code arkham calls out through); a `stdcall` proc DEFINITION, which is code
+    # the OS calls into, keeps arkham's own SysV convention. So the wrapper reads
+    # its closure from rdi while Windows put it in rcx, and the first worker
+    # faults on a null `t.dataFn` before the program prints anything. Green on
+    # the C backend under Wine, both ioring backends.
+    "tests/nimony/threads/tioringwin",
     # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
     # fails to run ("vfs: open failed"), and the C backend fails it identically,
     # so nothing here would fix it.
