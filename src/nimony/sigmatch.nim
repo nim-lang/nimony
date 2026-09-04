@@ -139,8 +139,13 @@ proc scopeBump(m: Match): int =
   ## Models an implicit `Scope` parameter on every routine. Same-module
   ## calls pass `Scope` (exact match); cross-module calls pass
   ## `ImportScope`, where `ImportScope = object of Scope` (subtype match,
-  ## depth 1). Returns the phantom parameter's contribution to
-  ## `inheritanceCosts`: 0 for a same-module candidate, 1 otherwise.
+  ## depth 1). Concept requirement stubs are phantom declarations with no
+  ## body; they are modeled as `ConceptScope`, where `Scope = object of
+  ## ConceptScope`, so they beat same-module candidates when everything
+  ## else ties and `addFn`'s `fromConcept` path can defer the call to
+  ## instantiation. Returns the phantom parameter's contribution to
+  ## `inheritanceCosts`: -1 for a concept requirement, 0 for same-module,
+  ## 1 for cross-module.
   ##
   ## Treating module-of-origin as a subtyping dimension makes overload
   ## resolution prefer locally defined routines over imported ones
@@ -152,6 +157,7 @@ proc scopeBump(m: Match): int =
   ## Evaluated lazily by `cmpMatches`, so unique-resolution call sites
   ## pay nothing: only candidates that actually compete with another
   ## successful match are inspected.
+  if m.fn.fromConcept: return -1
   if m.context == nil or m.fn.sym == SymId(0): return 0
   let s = pool.syms[m.fn.sym]
   # Locate the dot that introduces the module suffix without allocating
