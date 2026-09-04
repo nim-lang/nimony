@@ -1189,8 +1189,9 @@ No new ranking category is introduced; the existing rules do the work:
 
   func doBar[T: Foo](x: T): int = bar(x)
 
-  doBar(1.0'f64) # 2, not ambiguous: deferred at definition time,
-                 # then `bar(x: float64)` wins at instantiation
+  doBar(1.0'f64) # 2, not ambiguous: inside `doBar`, `bar` is bound to the
+                 # Foo concept requirement (ConceptScope wins the tie), which
+                 # defers resolution; at instantiation, `bar(x: float64)` wins
   ```
 
   ```nim
