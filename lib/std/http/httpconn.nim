@@ -95,8 +95,9 @@ proc buffered*(c: HttpConn): int {.inline.} =
   c.rlen - c.rpos
 
 proc compact(c: var HttpConn) =
-  ## Move the unconsumed tail to the front. The scanner's position moves with
-  ## it, or it would go on pointing into bytes that have shifted.
+  ## Move the unconsumed tail to the front. Nothing else has to be fixed up:
+  ## every position this layer keeps is relative to the front of the
+  ## *unconsumed* bytes, which is exactly what does not move here.
   if c.rpos == 0: return
   let n = c.rlen - c.rpos
   # Through a local: assigning one element of a seq straight from another is
@@ -105,7 +106,6 @@ proc compact(c: var HttpConn) =
     let b = c.rbuf[c.rpos + i]
     c.rbuf[i] = b
   c.rlen = n
-  c.scan.pos = if c.scan.pos > c.rpos: c.scan.pos - c.rpos else: 0
   c.rpos = 0
 
 proc fill(c: var HttpConn; dl: Deadline): int {.passive.} =
@@ -143,19 +143,22 @@ proc readHead(c: var HttpConn; m: var HttpMsg; asRequest: bool;
   result = Success
   let dl2 = budget(c, dl)
   while true:
-    let hasHead = findHeadEnd(c.scan, toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos)
-    if hasHead == ParseBad: return ContentTooLong
-    if hasHead >= 0:
-      let stop =
-        if asRequest:
-          parseRequestHead(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos, m)
-        else:
-          parseResponseHead(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos, m)
-      if stop < 0:
+    let headLen = findHeadEnd(c.scan, toOpenArray(c.rbuf, c.rpos, c.rlen - 1))
+    if headLen == ParseBad: return ContentTooLong
+    if headLen >= 0:
+      # Exactly the head, not the head plus whatever body arrived behind it:
+      # the parser then cannot run past what the scanner vouched for, and its
+      # `MaxHeadLen` test is about the head rather than about the buffer.
+      let head = toOpenArray(c.rbuf, c.rpos, c.rpos + headLen - 1)
+      let n =
+        if asRequest: parseRequestHead(head, m)
+        else: parseResponseHead(head, m)
+      if n < 0:
         # The head is complete, so `ParseIncomplete` here is not "read more",
         # it is a head that ends without being valid.
         return SyntaxError
-      c.rpos = stop
+      c.rpos += n
+      c.scan.pos = 0            # the next head starts where this one stopped
       return Success
     let n = fill(c, dl2)
     if n <= 0: return toErr(n)
@@ -171,12 +174,12 @@ proc readResponse*(c: var HttpConn; m: var HttpMsg;
   ## The next response head — the client side of the same loop.
   readHead(c, m, false, dl)
 
-proc isChunked*(m: var HttpMsg): bool {.inline.} =
+proc isChunked*(m: HttpMsg): bool {.inline.} =
   ## Whether the body is chunk-framed. The parser resolves a known
   ## `Transfer-Encoding` to a tag, so this is an integer compare.
   m.getTag(hTransferEncoding) == tag(vChunked)
 
-proc bodyLength*(m: var HttpMsg): int {.inline.} =
+proc bodyLength*(m: HttpMsg): int {.inline.} =
   ## Declared body length, or `-1` when there is none or it is chunked.
   if isChunked(m): -1 else: m.contentLength
 
@@ -217,38 +220,38 @@ proc readChunked*(c: var HttpConn; dest: var openArray[char];
       return take
     of csHeader:
       var size = 0
-      let after = parseChunkSize(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos, size)
+      let after = parseChunkSize(toOpenArray(c.rbuf, c.rpos, c.rlen - 1), size)
       if after == ParseBad: return -1
       if after == ParseIncomplete:
         let n = fill(c, dl2)
         if n < 0: return n
         if n == 0: return -1
         continue
-      c.rpos = after
+      c.rpos += after
       if size == 0:
         c.chunk = csTrailer
       else:
         c.chunkLeft = size
         c.chunk = csData
     of csDataEnd:
-      let after = parseCrLf(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos)
+      let after = parseCrLf(toOpenArray(c.rbuf, c.rpos, c.rlen - 1))
       if after == ParseBad: return -1     # chunk not closed where it claimed
       if after == ParseIncomplete:
         let n = fill(c, dl2)
         if n < 0: return n
         if n == 0: return -1
         continue
-      c.rpos = after
+      c.rpos += after
       c.chunk = csHeader
     of csTrailer:
-      let after = parseTrailerEnd(toOpenArray(c.rbuf, 0, c.rlen - 1), c.rpos)
+      let after = parseTrailerEnd(toOpenArray(c.rbuf, c.rpos, c.rlen - 1))
       if after == ParseBad: return -1
       if after == ParseIncomplete:
         let n = fill(c, dl2)
         if n < 0: return n
         if n == 0: return -1
         continue
-      c.rpos = after
+      c.rpos += after
       c.chunk = csDone
       return 0
 
@@ -291,7 +294,7 @@ proc writeAll(c: var HttpConn; buf: pointer; len: int;
     if n <= 0: return toErr(n)
     sent += n
 
-proc sendHead*(c: var HttpConn; m: var HttpMsg;
+proc sendHead*(c: var HttpConn; m: HttpMsg;
                dl = never): ErrorCode {.passive.} =
   ## Serialize `m`'s head into the connection's write buffer and send it.
   ## `headLen` sizes the buffer exactly, so this never writes, fails and

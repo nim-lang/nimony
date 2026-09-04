@@ -1,7 +1,8 @@
 # lib/std/http/httpwire — an HttpMsg back to wire bytes.
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
-import httptags
+
+let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
 
 var wbuf = default(array[4096, char])
 
@@ -29,14 +30,14 @@ proc testRequest =
   m.startRequest(tag(mPost), "/submit", tag(tV10))
   m.addHeader(hHost, "example.com")
   m.addHeader(hContentLength, 1234)
-  m.addHeader(hTrace, "abc")
+  m.addHeader(hApiKey, "abc")
   m.addOtherHeader("X-Weird", "1")
   m.finish()
   assert render(m) ==
     "POST /submit HTTP/1.0\r\n" &
     "host: example.com\r\n" &
     "content-length: 1234\r\n" &
-    "x-trace-id: abc\r\n" &
+    "x-api-key: abc\r\n" &
     "X-Weird: 1\r\n\r\n", render(m)
 
 proc testMultiValue =
@@ -113,14 +114,14 @@ proc testRoundTrip =
              "Content-Length: 42\r\n" &
              "Connection: keep-alive\r\n" &
              "Content-Encoding: gzip\r\n" &
-             "X-Trace-Id: t-1\r\n" &
+             "X-API-Key: t-1\r\n" &
              "X-Unregistered: raw\r\n\r\n"
   var m1 = initHttpMsg()
-  assert parseRequestHead(toOpenArray(wire, 0, wire.len - 1), 0, m1) == wire.len
+  assert parseRequestHead(toOpenArray(wire, 0, wire.len - 1), m1) == wire.len
   let once = render(m1)
 
   var m2 = initHttpMsg()
-  let n = parseRequestHead(toOpenArray(once, 0, once.len - 1), 0, m2)
+  let n = parseRequestHead(toOpenArray(once, 0, once.len - 1), m2)
   assert n == once.len, "re-parsing our own output: " & $n & " of " & $once.len
   let twice = render(m2)
   assert once == twice, "not idempotent:\n" & once & "---\n" & twice
@@ -131,7 +132,7 @@ proc testRoundTrip =
   assert m2.contentLength == 42
   assert m2.getTag(hConnection) == tag(vKeepAlive)
   assert m2.getTag(hContentEncoding) == tag(vGzip)
-  assert m2.getStr(hTrace) == "t-1"
+  assert m2.getStr(hApiKey) == "t-1"
   var others = ""
   for k, v in m2.otherHeaders: others.add k & "=" & v & ";"
   assert others == "X-Unregistered=raw;", others

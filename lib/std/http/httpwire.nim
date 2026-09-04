@@ -40,17 +40,24 @@ proc writeCrLf*(dest: var openArray[char]; i: int): int {.inline.} =
   result = i + 2
 
 proc digitCount*(x: int): int =
-  ## Digits in the decimal form of a non-negative `x`.
+  ## Digits in the decimal form of a non-negative `x`. Multiplications, not
+  ## divisions: `headLen` asks this for every integer header of every head
+  ## just to size a buffer, and `writeInt` then does the one division pass
+  ## that actually produces the digits.
   result = 1
-  var n = x
-  while n >= 10:
-    n = n div 10
+  var limit = 10
+  while x >= limit:
     inc result
+    if limit > high(int) div 10: break     # no wider decimal to compare against
+    limit = limit * 10
 
 proc writeInt*(dest: var openArray[char]; i: int; x: int): int =
   ## Decimal, formatted in place. Negative values are not written: nothing in
   ## an HTTP head is signed, and a `-1` reaching the wire would be a bug
   ## downstream rather than a value.
+  ##
+  ## Written back-to-front from the last digit, so the single `div` loop lands
+  ## the digits straight in `dest` — no temporary to reverse out of.
   if x < 0: return WriteFull
   let n = digitCount(x)
   if i < 0 or dest.len - i < n: return WriteFull
@@ -242,17 +249,17 @@ proc writeLastChunk*(dest: var openArray[char]; i: int): int =
 
 proc chunkOverhead*(size: int): int =
   ## Bytes `writeChunkHeader` + `writeChunkEnd` add around `size` bytes of
-  ## data, so a caller can size a buffer without writing twice.
-  var digits = 1
+  ## data, so a caller can size a buffer without writing twice: one hex digit
+  ## and the two CRLFs, plus a digit for every further nibble.
+  result = 5
   var v = size
   while v >= 16:
     v = v shr 4
-    inc digits
-  result = digits + 2 + 2
+    inc result
 
 # ------------------------------------------------------------ whole heads --
 
-proc writeRequestHead*(dest: var openArray[char]; i: int; m: var HttpMsg): int =
+proc writeRequestHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
   ## `METHOD SP target SP version CRLF`, the headers, and the blank line.
   assert m.isRequest, "writeRequestHead on a response"
   var j = writeBytes(dest, i, spelling(m.methodOf))
@@ -280,7 +287,7 @@ proc writeRequestHead*(dest: var openArray[char]; i: int; m: var HttpMsg): int =
     if j < 0: return j
   result = writeCrLf(dest, j)
 
-proc writeResponseHead*(dest: var openArray[char]; i: int; m: var HttpMsg): int =
+proc writeResponseHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
   ## `version SP status SP reason CRLF`, the headers, and the blank line.
   assert m.isResponse, "writeResponseHead on a request"
   let status = m.statusOf
@@ -302,13 +309,13 @@ proc writeResponseHead*(dest: var openArray[char]; i: int; m: var HttpMsg): int 
     if j < 0: return j
   result = writeCrLf(dest, j)
 
-proc writeHead*(dest: var openArray[char]; i: int; m: var HttpMsg): int =
+proc writeHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
   ## Whichever kind `m` is.
   if m.isRequest: writeRequestHead(dest, i, m)
   elif m.isResponse: writeResponseHead(dest, i, m)
   else: WriteFull
 
-proc headLen*(m: var HttpMsg): int =
+proc headLen*(m: HttpMsg): int =
   ## Exactly how many bytes `writeHead` will produce. One extra walk of a tree
   ## that is already in cache, and it means the common path sizes its buffer
   ## once instead of writing, failing and retrying.

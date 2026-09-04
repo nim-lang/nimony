@@ -1,12 +1,13 @@
 # Chunked framing: the parser, the writer, and a real chunked exchange.
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
-import httptags
+
+let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
 
 proc testParseChunkSize =
   proc sz(s: string; expect: int; consumed: int) =
     var got = -1
-    let n = parseChunkSize(toOpenArray(s, 0, s.len - 1), 0, got)
+    let n = parseChunkSize(toOpenArray(s, 0, s.len - 1), got)
     assert n == consumed, s & ": index " & $n & " wanted " & $consumed
     assert got == expect, s & ": size " & $got & " wanted " & $expect
 
@@ -23,7 +24,7 @@ proc testParseChunkSize =
 proc testRejectChunkSize =
   proc bad(s: string): bool =
     var got = -1
-    result = parseChunkSize(toOpenArray(s, 0, s.len - 1), 0, got) == ParseBad
+    result = parseChunkSize(toOpenArray(s, 0, s.len - 1), got) == ParseBad
 
   assert bad("\r\n"), "no digits"
   assert bad("+5\r\n"), "no sign"
@@ -43,7 +44,7 @@ proc testRejectChunkSize =
 proc testIncompleteChunkSize =
   proc inc0(s: string): bool =
     var got = -1
-    result = parseChunkSize(toOpenArray(s, 0, s.len - 1), 0, got) == ParseIncomplete
+    result = parseChunkSize(toOpenArray(s, 0, s.len - 1), got) == ParseIncomplete
   assert inc0("5")
   assert inc0("5\r")
   assert inc0("5;ext")
@@ -55,21 +56,21 @@ proc testIncompleteChunkSize =
   let line = "1a;ext=v\r\n"
   for n in 0..<line.len:
     var got = -1
-    let r = parseChunkSize(toOpenArray(line, 0, n - 1), 0, got)
+    let r = parseChunkSize(toOpenArray(line, 0, n - 1), got)
     assert r == ParseIncomplete, "prefix of length " & $n & " gave " & $r
 
 proc testTrailers =
   proc te(s: string; expect: int) =
-    let n = parseTrailerEnd(toOpenArray(s, 0, s.len - 1), 0)
+    let n = parseTrailerEnd(toOpenArray(s, 0, s.len - 1))
     assert n == expect, s & ": " & $n & " wanted " & $expect
   te("\r\n", 2)                                    # no trailers
   te("X-A: 1\r\n\r\n", 10)                          # one trailer
   te("X-A: 1\r\nX-B: 2\r\n\r\n", 18)                # two
-  assert parseTrailerEnd(toOpenArray("X-A: 1\r\n", 0, 7), 0) == ParseIncomplete
+  assert parseTrailerEnd(toOpenArray("X-A: 1\r\n", 0, 7)) == ParseIncomplete
   var many = ""
   for i in 0..<20: many.add "X-" & $i & ": v\r\n"
   many.add "\r\n"
-  assert parseTrailerEnd(toOpenArray(many, 0, many.len - 1), 0) == ParseBad,
+  assert parseTrailerEnd(toOpenArray(many, 0, many.len - 1)) == ParseBad,
          "trailer count is capped"
 
 var wb = default(array[64, char])
@@ -119,17 +120,17 @@ proc testRoundTripAChunkedBody =
   var body = ""
   while true:
     var size = 0
-    let after = parseChunkSize(toOpenArray(wire, 0, wire.len - 1), i, size)
+    let after = parseChunkSize(toOpenArray(wire, i, wire.len - 1), size)
     assert after > 0, "chunk size at " & $i
-    i = after
+    i += after
     if size == 0: break
     for k in 0..<size: body.add wire[i + k]
     i += size
-    let e = parseCrLf(toOpenArray(wire, 0, wire.len - 1), i)
+    let e = parseCrLf(toOpenArray(wire, i, wire.len - 1))
     assert e > 0, "chunk not closed"
-    i = e
-  let done = parseTrailerEnd(toOpenArray(wire, 0, wire.len - 1), i)
-  assert done == wire.len, $done & " vs " & $wire.len
+    i += e
+  let done = parseTrailerEnd(toOpenArray(wire, i, wire.len - 1))
+  assert i + done == wire.len, $(i + done) & " vs " & $wire.len
   assert body == "Hello, world!", body
 
 proc testFramingRejections =
@@ -137,7 +138,7 @@ proc testFramingRejections =
   # the body ends.
   proc bad(res: string): bool =
     var m = initHttpMsg()
-    result = parseResponseHead(toOpenArray(res, 0, res.len - 1), 0, m) == ParseBad
+    result = parseResponseHead(toOpenArray(res, 0, res.len - 1), m) == ParseBad
 
   assert bad("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n" &
              "Transfer-Encoding: chunked\r\n\r\n")
@@ -146,7 +147,7 @@ proc testFramingRejections =
   # …and a message framed by exactly one of them is fine.
   var m = initHttpMsg()
   let ok = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
-  assert parseResponseHead(toOpenArray(ok, 0, ok.len - 1), 0, m) == ok.len
+  assert parseResponseHead(toOpenArray(ok, 0, ok.len - 1), m) == ok.len
   assert m.getTag(hTransferEncoding) == tag(vChunked)
 
 testParseChunkSize()

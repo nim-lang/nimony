@@ -2,11 +2,14 @@
 #
 # HTTP/1.1 head parsing: wire bytes to an `HttpMsg`. See doc/internals/http.md.
 #
-# Every proc here follows the `parse(buf, i) -> int` shape: it reads `buf`
-# starting at `i` and answers the index just past what it consumed, or one of
-# the negative results below. Nothing slices and nothing takes a substring —
-# a head is inspected in place and only the bytes that end up in the message
-# are ever copied, once, into that message's pool.
+# Every proc here follows the `parse(buf, …) -> int` shape: it reads `buf` from
+# the front and answers how many bytes it consumed, or one of the negative
+# results below. There is no `i` parameter — `openArray` already carries a
+# start, so a caller that is part-way through a buffer hands over
+# `toOpenArray(buf, j, buf.len-1)`, which costs nothing, and adds the answer to
+# `j`. Nothing is copied out either: what a proc matched is `buf`'s first
+# `result` bytes, so the caller has the bounds without a second out-parameter
+# and without a substring.
 #
 # Resumability is the caller's business and costs it one integer. A head is
 # parsed only once it is complete, so `HeadScanner` walks the buffer looking
@@ -35,88 +38,80 @@ const
 
 # ------------------------------------------------------------- primitives --
 
-proc isTokenChar(c: char): bool {.inline.} =
-  ## RFC 9110 `tchar`. Notably excludes the separators, so a header name
-  ## cannot contain a colon, space or control character.
-  case c
-  of 'a'..'z', 'A'..'Z', '0'..'9',
-     '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.',
-     '^', '_', '`', '|', '~': true
-  else: false
+const
+  TokenChars = {'a'..'z', 'A'..'Z', '0'..'9',
+                '!', '#', '$', '%', '&', '\'', '*', '+', '-', '.',
+                '^', '_', '`', '|', '~'}
+    ## RFC 9110 `tchar`. Notably excludes the separators, so a header name
+    ## cannot contain a colon, space or control character.
+  Spaces = {' ', '\t'}
+  LineEnd = {'\r', '\n'}
+  Controls = {'\0'..'\x1F', '\x7F'}
+    ## Rejected inside a target or a value rather than swallowed: a NUL or a
+    ## stray CR there is how a request gets smuggled past one parser and into
+    ## another.
 
-proc isSpace(c: char): bool {.inline.} = c == ' ' or c == '\t'
+proc skipSpaces*(buf: openArray[char]): int =
+  ## Past any spaces and tabs. Never fails; may return `0`.
+  result = 0
+  while result < buf.len and buf[result] in Spaces: inc result
 
-proc skipSpaces*(buf: openArray[char]; i: int): int =
-  ## Past any spaces and tabs. Never fails; may return `i`.
-  result = i
-  while result < buf.len and isSpace(buf[result]): inc result
-
-proc parseCrLf*(buf: openArray[char]; i: int): int =
+proc parseCrLf*(buf: openArray[char]): int =
   ## Past a CRLF. A bare LF is accepted because too much of the world emits
   ## it; a bare CR is not, since it is the classic request-smuggling seam.
-  if i >= buf.len: return ParseIncomplete
-  if buf[i] == '\n': return i + 1
-  if buf[i] != '\r': return ParseBad
-  if i + 1 >= buf.len: return ParseIncomplete
-  if buf[i + 1] != '\n': return ParseBad
-  result = i + 2
+  if buf.len == 0: return ParseIncomplete
+  if buf[0] == '\n': return 1
+  if buf[0] != '\r': return ParseBad
+  if buf.len < 2: return ParseIncomplete
+  if buf[1] != '\n': return ParseBad
+  result = 2
 
-proc parseToken*(buf: openArray[char]; i: int; last: var int): int =
-  ## A run of `tchar`. `last` is set to the index one past the run, so the
-  ## caller has the bounds without cutting anything out.
-  var j = i
-  while j < buf.len and isTokenChar(buf[j]): inc j
-  if j == i: return ParseBad
-  last = j
-  result = j
+proc parseToken*(buf: openArray[char]): int =
+  ## The length of the leading run of `tchar`, which is also the token: it is
+  ## `buf`'s first `result` bytes.
+  result = 0
+  while result < buf.len and buf[result] in TokenChars: inc result
+  if result == 0: return ParseBad
 
-proc parseUntil*(buf: openArray[char]; i: int; stop: char; last: var int): int =
-  ## Up to but not including `stop`. Control characters terminate the parse
-  ## rather than being swallowed: a NUL or a stray CR inside a target or a
-  ## value is how a request gets smuggled past one parser and into another.
-  var j = i
+proc parseUntil*(buf: openArray[char]; stop: char): int =
+  ## The length up to but not including `stop`.
+  var j = 0
   while j < buf.len:
     let c = buf[j]
-    if c == stop: break
-    if c < ' ' or c == '\x7F': return ParseBad
+    if c == stop: return j
+    if c in Controls: return ParseBad
     inc j
-  if j >= buf.len: return ParseIncomplete
-  last = j
-  result = j
+  result = ParseIncomplete
 
-proc parseUntilEol*(buf: openArray[char]; i: int; last: var int): int =
-  ## Up to but not including the CR or LF that ends the line. Same rejection
-  ## of control characters, and the same reason for it.
-  var j = i
+proc parseUntilEol*(buf: openArray[char]): int =
+  ## The length up to but not including the CR or LF that ends the line.
+  var j = 0
   while j < buf.len:
     let c = buf[j]
-    if c == '\r' or c == '\n': break
-    if c < ' ' or c == '\x7F': return ParseBad
+    if c in LineEnd: return j
+    if c in Controls: return ParseBad
     inc j
-  if j >= buf.len: return ParseIncomplete
-  last = j
-  result = j
+  result = ParseIncomplete
 
 # ---------------------------------------------------------- request line ---
 
-proc parseMethod*(buf: openArray[char]; i: int; meth: var TagId): int =
+proc parseMethod*(buf: openArray[char]; meth: var TagId): int =
   ## A method name followed by one space.
-  var stop = 0
-  let j = parseToken(buf, i, stop)
-  if j < 0: return j
-  if j >= buf.len: return ParseIncomplete    # the name may not be complete yet
-  if buf[j] != ' ': return ParseBad
-  meth = lookupMethod(toOpenArray(buf, i, stop - 1))
+  let n = parseToken(buf)
+  if n < 0: return n
+  if n >= buf.len: return ParseIncomplete    # the name may not be complete yet
+  if buf[n] != ' ': return ParseBad
+  meth = lookupMethod(toOpenArray(buf, 0, n - 1))
   if meth.uint32 == 0'u32: return ParseBad   # extension methods are not served
-  result = j + 1
+  result = n + 1
 
-proc parseVersion*(buf: openArray[char]; i: int; v: var TagId): int =
+proc parseVersion*(buf: openArray[char]; v: var TagId): int =
   ## `HTTP/1.1`, `HTTP/1.0`, or `HTTP/2`.
   const Prefix = "HTTP/"
-  if buf.len - i < Prefix.len + 1: return ParseIncomplete
+  if buf.len < Prefix.len + 1: return ParseIncomplete
   for k in 0..<Prefix.len:
-    if buf[i + k] != Prefix[k]: return ParseBad
-  let j = i + Prefix.len
+    if buf[k] != Prefix[k]: return ParseBad
+  let j = Prefix.len
   if buf[j] == '2':
     v = tag(tV20)
     return j + 1
@@ -128,29 +123,28 @@ proc parseVersion*(buf: openArray[char]; i: int; v: var TagId): int =
   else: return ParseBad
   result = j + 3
 
-proc parseRequestLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
+proc parseRequestLine*(buf: openArray[char]; m: var HttpMsg): int =
   ## `METHOD SP target SP HTTP/1.1 CRLF`, opening the message node.
   var meth = TagId(0)
-  var j = parseMethod(buf, i, meth)
+  var j = parseMethod(buf, meth)
   if j < 0: return j
 
-  var stop = 0
-  let t = parseUntil(buf, j, ' ', stop)
-  if t < 0: return t
-  if stop == j: return ParseBad                  # empty target
-  if stop - j > MaxTargetLen: return ParseBad
+  let target = parseUntil(toOpenArray(buf, j, buf.len - 1), ' ')
+  if target < 0: return target
+  if target == 0: return ParseBad                # empty target
+  if target > MaxTargetLen: return ParseBad
   let targetStart = j
-  let targetStop = stop
-  j = t + 1                                      # past the space
+  j += target + 1                                # past the target and its space
 
   var v = TagId(0)
-  j = parseVersion(buf, j, v)
-  if j < 0: return j
-  j = parseCrLf(buf, j)
-  if j < 0: return j
+  let ver = parseVersion(toOpenArray(buf, j, buf.len - 1), v)
+  if ver < 0: return ver
+  j += ver
+  let eol = parseCrLf(toOpenArray(buf, j, buf.len - 1))
+  if eol < 0: return eol
 
-  m.startRequest(meth, toOpenArray(buf, targetStart, targetStop - 1), v)
-  result = j
+  m.startRequest(meth, toOpenArray(buf, targetStart, targetStart + target - 1), v)
+  result = j + eol
 
 # --------------------------------------------------------------- headers ---
 
@@ -161,51 +155,54 @@ proc valueIsTagged(h: TagId): bool {.inline.} =
   h == tag(hConnection) or h == tag(hTransferEncoding) or
   h == tag(hContentEncoding)
 
-proc parseHeaderLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
+proc parseContentLength(buf: openArray[char]; n: var int): bool =
+  ## Digits to an integer. Parsed once, here, so nothing downstream ever
+  ## re-reads them and a non-numeric length is refused at the door rather than
+  ## being interpreted differently by the next hop.
+  if buf.len == 0: return false
+  n = 0
+  for c in buf:
+    if c < '0' or c > '9': return false
+    let d = int(ord(c) - ord('0'))
+    if n > (high(int) - d) div 10: return false
+    n = n * 10 + d
+  result = true
+
+proc parseHeaderLine*(buf: openArray[char]; m: var HttpMsg): int =
   ## One `name ":" OWS value OWS CRLF`, appended to `m`.
-  if i < buf.len and isSpace(buf[i]):
+  if buf.len > 0 and buf[0] in Spaces:
     # Obsolete line folding. RFC 9112 says a server must reject it rather than
     # guess, and guessing is how two parsers come to disagree about where a
     # header ends.
     return ParseBad
 
-  var nameStop = 0
-  var j = parseToken(buf, i, nameStop)
-  if j < 0: return j
-  if j >= buf.len: return ParseIncomplete
+  let nameLen = parseToken(buf)
+  if nameLen < 0: return nameLen
+  if nameLen >= buf.len: return ParseIncomplete
   # No space is allowed between the name and the colon; that too is a
   # smuggling seam.
-  if buf[j] != ':': return ParseBad
-  inc j
+  if buf[nameLen] != ':': return ParseBad
 
-  j = skipSpaces(buf, j)
-  var valueEnd = 0
-  let e = parseUntilEol(buf, j, valueEnd)
-  if e < 0: return e
+  var j = nameLen + 1
+  j += skipSpaces(toOpenArray(buf, j, buf.len - 1))
+  let valueLen = parseUntilEol(toOpenArray(buf, j, buf.len - 1))
+  if valueLen < 0: return valueLen
 
   # Trailing optional whitespace is not part of the value.
-  var stop = valueEnd
-  while stop > j and isSpace(buf[stop - 1]): dec stop
+  var stop = j + valueLen
+  while stop > j and buf[stop - 1] in Spaces: dec stop
   if stop - j > MaxValueLen: return ParseBad
 
-  let afterValue = parseCrLf(buf, valueEnd)
-  if afterValue < 0: return afterValue
+  let eol = parseCrLf(toOpenArray(buf, j + valueLen, buf.len - 1))
+  if eol < 0: return eol
 
-  let h = lookupHeader(toOpenArray(buf, i, nameStop - 1))
+  let h = lookupHeader(toOpenArray(buf, 0, nameLen - 1))
   if h.uint32 == 0'u32:
-    m.addOtherHeader(toOpenArray(buf, i, nameStop - 1),
+    m.addOtherHeader(toOpenArray(buf, 0, nameLen - 1),
                      toOpenArray(buf, j, stop - 1))
   elif h == tag(hContentLength):
-    # Parsed once, here, and stored as an integer — so nothing downstream ever
-    # re-reads the digits, and a non-numeric length is refused at the door
-    # rather than being interpreted differently by the next hop.
-    if stop == j: return ParseBad
     var n = 0
-    for k in j..<stop:
-      let c = buf[k]
-      if c < '0' or c > '9': return ParseBad
-      if n > (high(int) - int(ord(c) - ord('0'))) div 10: return ParseBad
-      n = n * 10 + int(ord(c) - ord('0'))
+    if not parseContentLength(toOpenArray(buf, j, stop - 1), n): return ParseBad
     m.addHeader(h, n)
   elif valueIsTagged(h):
     let v = lookupValue(toOpenArray(buf, j, stop - 1))
@@ -215,39 +212,37 @@ proc parseHeaderLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
       m.addHeader(h, toOpenArray(buf, j, stop - 1))
   else:
     m.addHeader(h, toOpenArray(buf, j, stop - 1))
-  result = afterValue
+  result = j + valueLen + eol
 
 # --------------------------------------------------------- response line ---
 
-proc parseStatus*(buf: openArray[char]; i: int; status: var int): int =
+proc parseStatus*(buf: openArray[char]; status: var int): int =
   ## Exactly three digits, as RFC 9112 requires, and within 100..599. A code
   ## outside that range is not an extension we do not know about, it is a
   ## malformed response.
-  if buf.len - i < 3: return ParseIncomplete
+  if buf.len < 3: return ParseIncomplete
   var n = 0
   for k in 0..2:
-    let c = buf[i + k]
+    let c = buf[k]
     if c < '0' or c > '9': return ParseBad
     n = n * 10 + int(ord(c) - ord('0'))
   if n < 100 or n > 599: return ParseBad
   status = n
-  result = i + 3
+  result = 3
 
-proc parseReason*(buf: openArray[char]; i: int; last: var int): int =
+proc parseReason*(buf: openArray[char]): int =
   ## The reason phrase: spaces, tabs and printable bytes up to the line end.
   ## Looser than `parseUntilEol` in allowing HTAB, which RFC 9112 permits
   ## here, and it is a response we are reading rather than one we are serving.
-  var j = i
+  var j = 0
   while j < buf.len:
     let c = buf[j]
-    if c == '\r' or c == '\n': break
-    if c != '\t' and (c < ' ' or c == '\x7F'): return ParseBad
+    if c in LineEnd: return j
+    if c != '\t' and c in Controls: return ParseBad
     inc j
-  if j >= buf.len: return ParseIncomplete
-  last = j
-  result = j
+  result = ParseIncomplete
 
-proc parseStatusLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
+proc parseStatusLine*(buf: openArray[char]; m: var HttpMsg): int =
   ## `version SP status [SP reason] CRLF`, opening the message node.
   ##
   ## The reason phrase is parsed and **discarded**. Nothing reads it — RFC 9110
@@ -256,27 +251,27 @@ proc parseStatusLine*(buf: openArray[char]; i: int; m: var HttpMsg): int =
   ## that a response round trip is byte-identical only up to the phrase, which
   ## `httpwire` regenerates canonically. Requests have no such gap.
   var v = TagId(0)
-  var j = parseVersion(buf, i, v)
+  var j = parseVersion(buf, v)
   if j < 0: return j
   if j >= buf.len: return ParseIncomplete
   if buf[j] != ' ': return ParseBad
   inc j
 
   var status = 0
-  j = parseStatus(buf, j, status)
-  if j < 0: return j
+  let st = parseStatus(toOpenArray(buf, j, buf.len - 1), status)
+  if st < 0: return st
+  j += st
 
   if j < buf.len and buf[j] == ' ':
     inc j
-    var stop = 0
-    let e = parseReason(buf, j, stop)
-    if e < 0: return e
-    j = stop
-  j = parseCrLf(buf, j)
-  if j < 0: return j
+    let reason = parseReason(toOpenArray(buf, j, buf.len - 1))
+    if reason < 0: return reason
+    j += reason
+  let eol = parseCrLf(toOpenArray(buf, j, buf.len - 1))
+  if eol < 0: return eol
 
   m.startResponse(status, v)
-  result = j
+  result = j + eol
 
 # --------------------------------------------------------------- chunked ---
 
@@ -290,73 +285,70 @@ const
   MaxTrailerCount* = 16
 
 proc hexDigit(c: char): int {.inline.} =
-  if c >= '0' and c <= '9': int(ord(c) - ord('0'))
-  elif c >= 'a' and c <= 'f': int(ord(c) - ord('a')) + 10
-  elif c >= 'A' and c <= 'F': int(ord(c) - ord('A')) + 10
+  case c
+  of '0'..'9': ord(c) - ord('0')
+  of 'a'..'f': ord(c) - ord('a') + 10
+  of 'A'..'F': ord(c) - ord('A') + 10
   else: -1
 
-proc parseChunkSize*(buf: openArray[char]; i: int; size: var int): int =
-  ## `1*HEXDIG [ chunk-ext ] CRLF`. Returns the index of the chunk's first
-  ## data byte and sets `size` — `0` for the last chunk.
+proc parseChunkSize*(buf: openArray[char]; size: var int): int =
+  ## `1*HEXDIG [ chunk-ext ] CRLF`. Consumes up to the chunk's first data byte
+  ## and sets `size` — `0` for the last chunk.
   ##
   ## Strict on purpose. A chunk size is the length of the next piece of the
   ## message, so a parser that accepts `+5`, `0x5` or a value that wraps is a
   ## parser that can be made to disagree with the next hop about where this
   ## message ends. Only hex digits, and only a value that fits.
-  var j = i
+  var j = 0
   var n = 0
-  var digits = 0
   while j < buf.len:
     let d = hexDigit(buf[j])
     if d < 0: break
-    inc digits
-    if digits > MaxChunkSizeDigits: return ParseBad
+    if j >= MaxChunkSizeDigits: return ParseBad
     if n > (high(int) - d) div 16: return ParseBad     # would wrap
     n = n * 16 + d
     inc j
-  if digits == 0:
+  if j == 0:
     # No digits *because the buffer ran out* is "read more", not "malformed".
     # Getting this wrong makes the very first read of a chunked body fail,
     # since at that point there is nothing buffered at all.
-    return if j >= buf.len: ParseIncomplete else: ParseBad
+    return if buf.len == 0: ParseIncomplete else: ParseBad
   if j >= buf.len: return ParseIncomplete
-  if buf[j] != '\r' and buf[j] != '\n':
+  if buf[j] notin LineEnd:
     # Not the line end, so it must be an extension, introduced by a
     # semicolon. Trailing junk after the digits is not tolerated.
     if buf[j] != ';': return ParseBad
-    var stop = 0
-    let e = parseUntilEol(buf, j, stop)
-    if e < 0: return e
-    if stop - j > MaxChunkExtLen: return ParseBad
-    j = stop
-  let after = parseCrLf(buf, j)
-  if after < 0: return after
+    let ext = parseUntilEol(toOpenArray(buf, j, buf.len - 1))
+    if ext < 0: return ext
+    if ext > MaxChunkExtLen: return ParseBad
+    j += ext
   size = n
-  result = after
+  let eol = parseCrLf(toOpenArray(buf, j, buf.len - 1))
+  result = if eol < 0: eol else: j + eol
 
-proc parseTrailerEnd*(buf: openArray[char]; i: int): int =
+proc parseTrailerEnd*(buf: openArray[char]): int =
   ## Skip the trailer section after the last chunk, and the blank line that
-  ## ends it. Returns the index just past the body.
+  ## ends it. Consumes everything up to and including that blank line.
   ##
   ## Trailers are consumed, not kept: folding them into the head would let a
   ## peer set a header *after* the recipient has already acted on the ones it
   ## sent up front, which is the reason trailers are treated with suspicion.
-  var j = i
+  var j = 0
   var count = 0
   while true:
-    let blank = parseCrLf(buf, j)
-    if blank >= 0: return blank
+    let blank = parseCrLf(toOpenArray(buf, j, buf.len - 1))
+    if blank >= 0: return j + blank
     if blank != ParseBad: return blank        # incomplete, not "no blank line"
     inc count
     if count > MaxTrailerCount: return ParseBad
-    var stop = 0
-    let e = parseUntilEol(buf, j, stop)
-    if e < 0: return e
-    let after = parseCrLf(buf, stop)
-    if after < 0: return after
-    j = after
+    let line = parseUntilEol(toOpenArray(buf, j, buf.len - 1))
+    if line < 0: return line
+    j += line
+    let eol = parseCrLf(toOpenArray(buf, j, buf.len - 1))
+    if eol < 0: return eol
+    j += eol
 
-proc framingIsUnambiguous*(m: var HttpMsg): bool =
+proc framingIsUnambiguous*(m: HttpMsg): bool =
   ## Whether exactly one thing says where this message's body ends.
   ##
   ## This is the request-smuggling check, and it is a rejection rather than a
@@ -376,89 +368,83 @@ proc framingIsUnambiguous*(m: var HttpMsg): bool =
 
 # ------------------------------------------------------------ whole heads --
 
-proc parseRequestHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
+proc parseHead(buf: openArray[char]; m: var HttpMsg; asRequest: bool): int =
+  ## The shared body of `parseRequestHead` / `parseResponseHead`: a start line,
+  ## its headers, and the blank line that ends them.
+  if buf.len == 0: return ParseIncomplete
+  if buf.len > MaxHeadLen: return ParseBad
+
+  var j =
+    if asRequest: parseRequestLine(buf, m)
+    else: parseStatusLine(buf, m)
+  if j < 0: return j
+
+  var count = 0
+  while true:
+    let done = parseCrLf(toOpenArray(buf, j, buf.len - 1))
+    if done >= 0:
+      m.finish()
+      # Only now: the check needs every header to be present.
+      if not framingIsUnambiguous(m): return ParseBad
+      return j + done
+    if done != ParseBad: return done   # incomplete, not "no blank line here"
+    inc count
+    if count > MaxHeaderCount: return ParseBad
+    let line = parseHeaderLine(toOpenArray(buf, j, buf.len - 1), m)
+    if line < 0: return line
+    j += line
+
+proc parseRequestHead*(buf: openArray[char]; m: var HttpMsg): int =
   ## A complete request head: the request line, its headers, and the blank
-  ## line that ends them. Returns the index of the first body byte.
+  ## line that ends them. Consumes up to the first body byte.
   ##
   ## `m` must be empty — `initHttpMsg` or `reset`. On a negative result it is
   ## left half-built and only `reset` is valid on it, which is fine because
   ## neither outcome lets the connection continue.
-  if i >= buf.len: return ParseIncomplete
-  if buf.len - i > MaxHeadLen: return ParseBad
+  parseHead(buf, m, asRequest = true)
 
-  var j = parseRequestLine(buf, i, m)
-  if j < 0: return j
-
-  var count = 0
-  while true:
-    let done = parseCrLf(buf, j)
-    if done >= 0:
-      m.finish()
-      # Only now: the check needs every header to be present.
-      if not framingIsUnambiguous(m): return ParseBad
-      return done
-    if done != ParseBad: return done   # incomplete, not "no blank line here"
-    inc count
-    if count > MaxHeaderCount: return ParseBad
-    j = parseHeaderLine(buf, j, m)
-    if j < 0: return j
-
-proc parseResponseHead*(buf: openArray[char]; i: int; m: var HttpMsg): int =
+proc parseResponseHead*(buf: openArray[char]; m: var HttpMsg): int =
   ## A complete response head: the status line, its headers, and the blank
-  ## line. Returns the index of the first body byte — though whether there is
-  ## a body at all depends on the status and on the request that provoked it,
-  ## which is the connection layer's business, not this one's.
+  ## line. Consumes up to the first body byte — though whether there is a body
+  ## at all depends on the status and on the request that provoked it, which is
+  ## the connection layer's business, not this one's.
   ##
   ## Same contract as `parseRequestHead`: `m` must be empty, and on a negative
   ## result it is left half-built and only `reset` is valid on it.
-  if i >= buf.len: return ParseIncomplete
-  if buf.len - i > MaxHeadLen: return ParseBad
-
-  var j = parseStatusLine(buf, i, m)
-  if j < 0: return j
-
-  var count = 0
-  while true:
-    let done = parseCrLf(buf, j)
-    if done >= 0:
-      m.finish()
-      # Only now: the check needs every header to be present.
-      if not framingIsUnambiguous(m): return ParseBad
-      return done
-    if done != ParseBad: return done
-    inc count
-    if count > MaxHeaderCount: return ParseBad
-    j = parseHeaderLine(buf, j, m)
-    if j < 0: return j
+  parseHead(buf, m, asRequest = false)
 
 type
   HeadScanner* = object
-    ## Where the search for the end of the head got to. Carrying it across
-    ## reads is what stops a head that arrives in small pieces from being
-    ## rescanned from the top every time — which is the difference between
-    ## O(n) and O(n²) for a peer that sends one byte at a time.
+    ## How far into the unconsumed bytes the search for the end of the head
+    ## got. Carrying it across reads is what stops a head that arrives in
+    ## small pieces from being rescanned from the top every time — the
+    ## difference between O(n) and O(n²) for a peer that sends one byte at a
+    ## time.
+    ##
+    ## Relative to the front of the buffer it is asked about, so a connection
+    ## that compacts its read buffer moves the bytes and the position together
+    ## and there is nothing to fix up.
     pos*: int
 
-proc findHeadEnd*(sc: var HeadScanner; buf: openArray[char]; i: int): int =
-  ## The index just past the blank line that ends the head, or
+proc findHeadEnd*(sc: var HeadScanner; buf: openArray[char]): int =
+  ## The length of the head including the blank line that ends it, or
   ## `ParseIncomplete` if it has not arrived yet, or `ParseBad` once the head
   ## is over `MaxHeadLen`.
   ##
   ## Call it again after appending to `buf`; it resumes where it stopped.
-  if sc.pos < i: sc.pos = i
   # The terminator is at most four bytes (CRLFCRLF), so resuming three bytes
   # back cannot miss one that straddles where the last read ended.
-  var j = if sc.pos - i >= 3: sc.pos - 3 else: i
+  var j = if sc.pos >= 3: sc.pos - 3 else: 0
   while j < buf.len:
     if buf[j] == '\n':
       # A blank line is a line terminator immediately after another one.
       let blank =
-        (j - 1 >= i and buf[j - 1] == '\n') or
-        (j - 2 >= i and buf[j - 1] == '\r' and buf[j - 2] == '\n')
+        (j >= 1 and buf[j - 1] == '\n') or
+        (j >= 2 and buf[j - 1] == '\r' and buf[j - 2] == '\n')
       if blank:
         sc.pos = j + 1
         return j + 1
     inc j
   sc.pos = buf.len
-  if buf.len - i > MaxHeadLen: return ParseBad
+  if buf.len > MaxHeadLen: return ParseBad
   result = ParseIncomplete

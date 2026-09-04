@@ -1,14 +1,15 @@
 # Response-head parsing, and what a response round trip does and does not keep.
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
-import httptags
+
+let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
 
 let poolSizeAtInit = httpTags().tags.len
 
 var wbuf = default(array[4096, char])
 
 proc parseAll(s: string; m: var HttpMsg): int =
-  parseResponseHead(toOpenArray(s, 0, s.len - 1), 0, m)
+  parseResponseHead(toOpenArray(s, 0, s.len - 1), m)
 
 proc render(m: var HttpMsg): string =
   let need = headLen(m)
@@ -65,10 +66,10 @@ proc testIncomplete =
   let res = "HTTP/1.1 404 Not Found\r\nServer: x\r\nContent-Length: 0\r\n\r\n"
   for n in 1..<res.len:
     var m = initHttpMsg()
-    let r = parseResponseHead(toOpenArray(res, 0, n - 1), 0, m)
+    let r = parseResponseHead(toOpenArray(res, 0, n - 1), m)
     assert r == ParseIncomplete, "prefix of length " & $n & " gave " & $r
   var m = initHttpMsg()
-  assert parseResponseHead(toOpenArray(res, 0, res.len - 1), 0, m) == res.len
+  assert parseResponseHead(toOpenArray(res, 0, res.len - 1), m) == res.len
 
 proc testTypedValues =
   var m = initHttpMsg()
@@ -76,14 +77,14 @@ proc testTypedValues =
             "Content-Length: 1234\r\n" &
             "Connection: close\r\n" &
             "Content-Encoding: gzip\r\n" &
-            "X-Trace-Id: t\r\n" &
+            "X-API-Key: t\r\n" &
             "X-Odd: raw\r\n\r\n"
   assert parseAll(res, m) == res.len
   assert m.contentLength == 1234
   assert m.getTag(hConnection) == tag(vClose)
   assert not m.isKeepAlive
   assert m.getTag(hContentEncoding) == tag(vGzip)
-  assert m.getStr(hTrace) == "t"
+  assert m.getStr(hApiKey) == "t"
   var others = ""
   for k, v in m.otherHeaders: others.add k & "=" & v & ";"
   assert others == "X-Odd=raw;", others
@@ -127,11 +128,11 @@ proc testFindHeadEndOnResponses =
   let res = "HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nBODY"
   let headLen = res.len - 4
   var sc = default(HeadScanner)
-  assert findHeadEnd(sc, toOpenArray(res, 0, res.len - 1), 0) == headLen
+  assert findHeadEnd(sc, toOpenArray(res, 0, res.len - 1)) == headLen
   var sc2 = default(HeadScanner)
   var found = ParseIncomplete
   for n in 1..res.len:
-    found = findHeadEnd(sc2, toOpenArray(res, 0, n - 1), 0)
+    found = findHeadEnd(sc2, toOpenArray(res, 0, n - 1))
     if found >= 0: break
   assert found == headLen
 
@@ -139,10 +140,10 @@ proc testPipelinedAndRecycled =
   let two = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" &
             "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
   var m = initHttpMsg()
-  let n = parseResponseHead(toOpenArray(two, 0, two.len - 1), 0, m)
+  let n = parseResponseHead(toOpenArray(two, 0, two.len - 1), m)
   assert n > 0 and m.statusOf == 200
   m.reset()
-  assert parseResponseHead(toOpenArray(two, 0, two.len - 1), n, m) == two.len
+  assert parseResponseHead(toOpenArray(two, n, two.len - 1), m) == two.len - n
   assert m.statusOf == 500
 
   for i in 0..<50:

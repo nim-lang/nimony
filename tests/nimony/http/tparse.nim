@@ -1,13 +1,14 @@
 # lib/std/http/httpparse — wire bytes to an HttpMsg, without slicing.
 
 import std / [http/httpmsg, http/httpparse, assertions, syncio]
-import httptags
+
+let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
 
 let poolSizeAtInit = httpTags().tags.len
 
 proc parseAll(s: string; m: var HttpMsg): int =
   ## Parse a complete head held in one buffer.
-  parseRequestHead(toOpenArray(s, 0, s.len - 1), 0, m)
+  parseRequestHead(toOpenArray(s, 0, s.len - 1), m)
 
 proc testSimple =
   var m = initHttpMsg()
@@ -41,11 +42,11 @@ proc testCaseAndWhitespace =
   let req = "GET / HTTP/1.1\r\n" &
             "HOST:   example.com   \r\n" &          # folded name, OWS both sides
             "CoNtEnT-lEnGtH:0\r\n" &                # no space after colon
-            "X-Trace-Id: abc\r\n\r\n"
+            "X-API-Key: abc\r\n\r\n"
   assert parseAll(req, m) == req.len
   assert m.getStr(hHost) == "example.com", "'" & m.getStr(hHost) & "'"
   assert m.contentLength == 0
-  assert m.getStr(hTrace) == "abc"
+  assert m.getStr(hApiKey) == "abc"
 
 proc testUnknownHeader =
   var m = initHttpMsg()
@@ -74,12 +75,12 @@ proc testLfOnly =
 
 proc testVersions =
   var v = TagId(0)
-  assert parseVersion(toOpenArray("HTTP/1.1", 0, 7), 0, v) == 8 and v == tag(tV11)
-  assert parseVersion(toOpenArray("HTTP/1.0", 0, 7), 0, v) == 8 and v == tag(tV10)
-  assert parseVersion(toOpenArray("HTTP/2", 0, 5), 0, v) == 6 and v == tag(tV20)
-  assert parseVersion(toOpenArray("HTTP/1.", 0, 6), 0, v) == ParseIncomplete
-  assert parseVersion(toOpenArray("HTTP/1.9", 0, 7), 0, v) == ParseBad
-  assert parseVersion(toOpenArray("HTTQ/1.1", 0, 7), 0, v) == ParseBad
+  assert parseVersion(toOpenArray("HTTP/1.1", 0, 7), v) == 8 and v == tag(tV11)
+  assert parseVersion(toOpenArray("HTTP/1.0", 0, 7), v) == 8 and v == tag(tV10)
+  assert parseVersion(toOpenArray("HTTP/2", 0, 5), v) == 6 and v == tag(tV20)
+  assert parseVersion(toOpenArray("HTTP/1.", 0, 6), v) == ParseIncomplete
+  assert parseVersion(toOpenArray("HTTP/1.9", 0, 7), v) == ParseBad
+  assert parseVersion(toOpenArray("HTTQ/1.1", 0, 7), v) == ParseBad
 
 proc testRejections =
   proc bad(req: string): bool =
@@ -123,10 +124,10 @@ proc testIncomplete =
   let req = "GET /a HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\n"
   for n in 1..<req.len:
     var m = initHttpMsg()
-    let r = parseRequestHead(toOpenArray(req, 0, n - 1), 0, m)
+    let r = parseRequestHead(toOpenArray(req, 0, n - 1), m)
     assert r == ParseIncomplete, "prefix of length " & $n & " gave " & $r
   var m = initHttpMsg()
-  assert parseRequestHead(toOpenArray(req, 0, req.len - 1), 0, m) == req.len
+  assert parseRequestHead(toOpenArray(req, 0, req.len - 1), m) == req.len
 
 proc testFindHeadEnd =
   let req = "GET /a HTTP/1.1\r\nHost: h\r\n\r\nBODYBODY"
@@ -134,14 +135,14 @@ proc testFindHeadEnd =
 
   # All at once.
   var sc = default(HeadScanner)
-  assert findHeadEnd(sc, toOpenArray(req, 0, req.len - 1), 0) == headLen
+  assert findHeadEnd(sc, toOpenArray(req, 0, req.len - 1)) == headLen
 
   # One byte at a time, with the scanner carried across: it must land on the
   # same place, and resuming must not miss a terminator that straddles a read.
   var sc2 = default(HeadScanner)
   var found = ParseIncomplete
   for n in 1..req.len:
-    found = findHeadEnd(sc2, toOpenArray(req, 0, n - 1), 0)
+    found = findHeadEnd(sc2, toOpenArray(req, 0, n - 1))
     if found >= 0:
       assert n >= headLen, "found the end before it arrived"
       break
@@ -150,12 +151,12 @@ proc testFindHeadEnd =
   # LF-only terminator.
   var sc3 = default(HeadScanner)
   let lf = "GET / HTTP/1.1\nHost: h\n\nbody"
-  assert findHeadEnd(sc3, toOpenArray(lf, 0, lf.len - 1), 0) == lf.len - 4
+  assert findHeadEnd(sc3, toOpenArray(lf, 0, lf.len - 1)) == lf.len - 4
 
   # No terminator at all.
   var sc4 = default(HeadScanner)
   let partial = "GET / HTTP/1.1\r\nHost: h\r\n"
-  assert findHeadEnd(sc4, toOpenArray(partial, 0, partial.len - 1), 0) ==
+  assert findHeadEnd(sc4, toOpenArray(partial, 0, partial.len - 1)) ==
          ParseIncomplete
 
 proc testPipelined =
@@ -164,14 +165,14 @@ proc testPipelined =
   let two = "GET /one HTTP/1.1\r\nHost: a\r\n\r\n" &
             "GET /two HTTP/1.1\r\nHost: b\r\n\r\n"
   var m = initHttpMsg()
-  let n = parseRequestHead(toOpenArray(two, 0, two.len - 1), 0, m)
+  let n = parseRequestHead(toOpenArray(two, 0, two.len - 1), m)
   assert n > 0
   assert m.target == "/one"
   assert m.getStr(hHost) == "a"
 
   m.reset()
-  let n2 = parseRequestHead(toOpenArray(two, 0, two.len - 1), n, m)
-  assert n2 == two.len, $n2
+  let n2 = parseRequestHead(toOpenArray(two, n, two.len - 1), m)
+  assert n + n2 == two.len, $n2
   assert m.target == "/two"
   assert m.getStr(hHost) == "b"
 

@@ -13,7 +13,7 @@ else:
   import std / [http/httpconn, http/httpmsg, http/httpparse,
                 ioring, threadpool, atomics, assertions, syncio]
   import std/posix/posix
-  import httptags
+  let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
 
   const
     AF_UNIX = 1.cint
@@ -65,7 +65,7 @@ else:
     assert e == Success, "server readRequest: " & $e
     serverLog.add "server saw " & name(m.methodOf) & " " & m.target &
                   " keepalive=" & $m.isKeepAlive & "\n"
-    assert m.getStr(hTrace) == "t-9"
+    assert m.getStr(hApiKey) == "t-9"
     discard c.respond(200, "hello world!")
 
     # …and a second request on the same connection, which is the whole point
@@ -83,7 +83,7 @@ else:
     var req = initHttpMsg()
     req.startRequest(tag(mGet), "/hello")
     req.addHeader(hHost, "example.com")
-    req.addHeader(hTrace, "t-9")
+    req.addHeader(hApiKey, "t-9")
     req.addHeader(hConnection, vKeepAlive)
     req.finish()
     assert c.sendHead(req) == Success

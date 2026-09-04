@@ -154,26 +154,81 @@ const TagNames: array[HttpTag, string] = [
 
 # ---------------------------------------------------------------- tag pool --
 
-var gHttpTags: TagPool = nil
-  ## Process-global, and grown only by `registerHeader`. Deliberately has NO
-  ## `escapeTag`: with one, ids past 511 stay legal at the cost of a second
-  ## token and there is no wall to detect, so any cap would be a number we
-  ## invented. Without one, 511 is structural and "the pool is full" is a real
-  ## condition that `registerHeader` reports.
+const
+  MaxHttpTags* = 511
+    ## One-token tag ids. See `HttpTags` on why we stop here rather than
+    ## spending a second token.
+  MaxTagNameLen* = 64
+    ## Longest spelling `lookupHeader` will even consider. Every built-in tag
+    ## is far shorter, so this only ever rejects something that was going to
+    ## miss anyway — cheaply, and without touching the pool.
+
+type
+  HttpTags = object
+    ## The tag space and the index `lookupHeader` searches, in one object
+    ## because the second is a *function* of the first: an index that has not
+    ## seen a registration answers `TagId(0)` for a name that is in the pool.
+    ## Keeping them in one declaration is what makes "written by
+    ## `registerHeader`, read by everyone else" a thing you can check by
+    ## looking, rather than a protocol spread over three variables and a
+    ## rebuild-if-stale test on the hot path.
+    pool: TagPool
+      ## Deliberately has NO `escapeTag`: with one, ids past 511 stay legal at
+      ## the cost of a second token and there is no wall to detect, so any cap
+      ## would be a number we invented. Without one, `MaxHttpTags` is
+      ## structural and "the pool is full" is a real condition that
+      ## `registerHeader` reports.
+    byLen: seq[TagId]
+      ## Every tag id, grouped by the length of its spelling. The vocabulary is
+      ## under 512 entries, so a group is a handful of candidates that a byte
+      ## compare settles — no hashing, and nothing that needs a `string` to ask
+      ## with.
+    lenStart: array[MaxTagNameLen + 2, int32]
+      ## `byLen[lenStart[n] ..< lenStart[n+1]]` are the tags spelled with `n`
+      ## bytes.
+
+var gTags: HttpTags
+  ## Process-global, because the tag space is: an id has to mean the same
+  ## thing in every message the process handles, which is the whole reason a
+  ## header name can be compared as an integer.
+
+proc rebuildIndex(t: var HttpTags) =
+  ## Group the pool's spellings by length. Called from the two places that
+  ## grow the pool, both of which run during init, so the lookup path never
+  ## has to wonder whether the index is current.
+  let n = t.pool.tags.len
+  var counts = default(array[MaxTagNameLen + 2, int32])
+  for id in 1..n:
+    let L = t.pool.tagName(TagId(id.uint32)).len
+    if L <= MaxTagNameLen: inc counts[L]
+  var acc = 0'i32
+  for L in 0..MaxTagNameLen:
+    t.lenStart[L] = acc
+    acc = acc + counts[L]
+  t.lenStart[MaxTagNameLen + 1] = acc
+  t.byLen = newSeq[TagId](acc.int)
+  var cursor = t.lenStart
+  for id in 1..n:
+    let tg = TagId(id.uint32)
+    let L = t.pool.tagName(tg).len
+    if L <= MaxTagNameLen:
+      t.byLen[cursor[L].int] = tg
+      inc cursor[L]
 
 proc initHttpTags() =
-  gHttpTags = newTagPool()
+  gTags.pool = newTagPool()
   for e in HttpTag.low..HttpTag.high:
-    let id = gHttpTags.registerTag(TagNames[e])
+    let id = gTags.pool.registerTag(TagNames[e])
     assert id.uint32 == e.uint32 + 1'u32,
       "httpmsg: tag/enum misalignment at " & TagNames[e]
+  rebuildIndex(gTags)
 
 initHttpTags()
 
 proc httpTags*(): TagPool {.inline.} =
   ## The shared tag pool. Messages are built against it; nothing else should
   ## need it.
-  gHttpTags
+  gTags.pool
 
 template tag*(e: HttpTag): TagId =
   ## The pool id of a built-in tag. Ids are `ord + 1` by construction, so this
@@ -188,17 +243,13 @@ proc isKnownHeader*(t: TagId): bool {.inline.} =
 
 proc name*(t: TagId): string =
   ## The wire spelling of a registered tag; `""` for an id nobody registered.
-  if t.uint32 == 0'u32 or t.uint32 > gHttpTags.tags.len.uint32: ""
-  else: gHttpTags.tagName(t)
+  if t.uint32 == 0'u32 or t.uint32 > gTags.pool.tags.len.uint32: ""
+  else: gTags.pool.tagName(t)
 
 template spelling*(t: TagId): lent string =
   ## The wire spelling, borrowed rather than copied — a template so it inlines
   ## to the table access. This is what a serializer wants; `name` copies.
-  gHttpTags.tagName(t)
-
-const MaxHttpTags* = 511
-  ## One-token tag ids. See `gHttpTags` on why we stop here rather than
-  ## spending a second token.
+  gTags.pool.tagName(t)
 
 proc registerHeader*(name: string): TagId =
   ## Register a header the application indexes on, so it gets the same
@@ -214,16 +265,11 @@ proc registerHeader*(name: string): TagId =
   ## can each ask for the headers they need without having to agree on who
   ## goes first.
   assert name.len > 0, "registerHeader: empty name"
-  let existing = gHttpTags.tags.getKeyId(name)
+  let existing = gTags.pool.tags.getKeyId(name)
   if existing.uint32 != 0'u32: return existing
-  if gHttpTags.tags.len >= MaxHttpTags: return TagId(0)
-  result = gHttpTags.registerTag(name)
-
-const
-  MaxTagNameLen* = 64
-    ## Longest spelling `lookupHeader` will even consider. Every built-in tag
-    ## is far shorter, so this only ever rejects something that was going to
-    ## miss anyway — cheaply, and without touching the pool.
+  if gTags.pool.tags.len >= MaxHttpTags: return TagId(0)
+  result = gTags.pool.registerTag(name)
+  rebuildIndex(gTags)
 
 type
   FoldBuf = array[MaxTagNameLen, char]
@@ -238,60 +284,28 @@ proc foldAscii(dest: var FoldBuf; name: openArray[char]): bool {.inline.} =
     dest[i] = if c >= 'A' and c <= 'Z': chr(ord(c) + 32) else: c
   result = true
 
-# The vocabulary is fixed by the time a connection is served and smaller than
-# 512, so looking a spelling up does not need the pool's hash table — and must
-# not, because `getKeyId` takes a `string` and building one per header per
-# request is exactly the allocation this layer exists to avoid. Bucketing the
-# tags by name length leaves a handful of candidates per bucket, which a byte
-# compare settles.
-
-var
-  gByLen: seq[TagId] = @[]
-  gLenStart: array[MaxTagNameLen + 2, int32]
-  gIndexedUpTo = 0
-
-proc buildLookupIndex() =
-  let n = gHttpTags.tags.len
-  var counts = default(array[MaxTagNameLen + 2, int32])
-  for i in 0..<counts.len: counts[i] = 0'i32
-  for id in 1..n:
-    let L = gHttpTags.tagName(TagId(id.uint32)).len
-    if L <= MaxTagNameLen: inc counts[L]
-  var acc = 0'i32
-  for L in 0..MaxTagNameLen:
-    gLenStart[L] = acc
-    acc = acc + counts[L]
-  gLenStart[MaxTagNameLen + 1] = acc
-  gByLen = newSeq[TagId](acc.int)
-  var cursor = default(array[MaxTagNameLen + 2, int32])
-  for i in 0..<cursor.len: cursor[i] = gLenStart[i]
-  for id in 1..n:
-    let t = TagId(id.uint32)
-    let L = gHttpTags.tagName(t).len
-    if L <= MaxTagNameLen:
-      gByLen[cursor[L].int] = t
-      inc cursor[L]
-  gIndexedUpTo = n
-
 proc sameBytes(t: TagId; folded: FoldBuf; n: int): bool {.inline.} =
-  let spelling = gHttpTags.tagName(t)
+  let spelling = gTags.pool.tagName(t)
   if spelling.len != n: return false
   for i in 0..<n:
     if spelling[i] != folded[i]: return false
   result = true
 
 proc lookupTag(name: openArray[char]; fold: bool): TagId =
+  ## The pool's own hash table is not used and must not be: `getKeyId` takes a
+  ## `string`, and building one per header of every request is exactly the
+  ## allocation this layer exists to avoid. `gTags.byLen` answers from the
+  ## caller's bytes.
   var buf = default(FoldBuf)
   if name.len == 0 or name.len > MaxTagNameLen: return TagId(0)
   if fold:
     if not foldAscii(buf, name): return TagId(0)
   else:
     for i in 0..<name.len: buf[i] = name[i]
-  if gIndexedUpTo != gHttpTags.tags.len: buildLookupIndex()
   let n = name.len
-  var k = gLenStart[n]
-  while k < gLenStart[n + 1]:
-    let t = gByLen[k.int]
+  var k = gTags.lenStart[n]
+  while k < gTags.lenStart[n + 1]:
+    let t = gTags.byLen[k.int]
     if sameBytes(t, buf, n): return t
     inc k
   result = TagId(0)
@@ -342,7 +356,7 @@ proc hasBuf*(m: HttpMsg): bool {.inline.} =
 
 proc initHttpMsg*(cap = 64): HttpMsg =
   ## A message with its own literal pool, sharing the global tag space.
-  HttpMsg(buf: createTokenBuf(cap, sharedTags = gHttpTags), live: true)
+  HttpMsg(buf: createTokenBuf(cap, sharedTags = gTags.pool), live: true)
 
 proc reset*(m: var HttpMsg) =
   ## Drop the content, keeping the token buffer's allocation — which is the
@@ -451,41 +465,73 @@ proc startRequest*(m: var HttpMsg; meth: TagId; target: openArray[char];
   m.buf.addEmpty v
 
 proc finish*(m: var HttpMsg) =
-  ## Close the message node. Required before any accessor.
+  ## Close the message node, and take the buffer's cursor owner while `m` is
+  ## still mutable. Required before any accessor, and for two reasons now: the
+  ## tree has to be closed to be walked, and every accessor below reads through
+  ## `readonlyCursorAt`, which needs the buffer to be owned *already* — an
+  ## ownerless cursor resolves `strVal` against the fallback pool rather than
+  ## this message's own. `finish` is the one point in a message's life that is
+  ## both mutable and guaranteed to run before any read.
+  ##
+  ## The owner survives until the next mutation, which `prepareMutation` uses
+  ## to drop it again — so a recycled message re-takes it here, once.
   m.buf.closeTag()
+  discard m.buf.beginRead()
 
 # --------------------------------------------------------------- reading ---
+#
+# Reading a message is not a mutation of it, so every accessor below takes the
+# message by value. `readonlyCursorAt` is what allows that: `beginRead` needs
+# `var TokenBuf` because it takes a refcount on the buffer's owner, which would
+# make asking a request for its `Host` header require a mutable reference to it
+# — and force that `var` back up through every caller that only wants to look.
+# The cursor is ownerless and valid while `m` is, which is the lifetime an
+# accessor's result had anyway.
 
-proc isRequest*(m: var HttpMsg): bool =
-  m.live and m.buf.len > 0 and m.buf.beginRead().cursorTagId == tag(tReq)
+proc readCursor(m: HttpMsg): Cursor {.inline.} =
+  ## A cursor at the message node. Only valid once `finish` has run, which is
+  ## what `hasContent` checks for the accessors that can be asked earlier.
+  readonlyCursorAt(m.buf, 0)
 
-proc isResponse*(m: var HttpMsg): bool =
-  m.live and m.buf.len > 0 and m.buf.beginRead().cursorTagId == tag(tRes)
+proc hasContent(m: HttpMsg): bool {.inline.} =
+  ## Whether there is a tree to read at all: a moved-from message has no
+  ## buffer, and a `reset` one has an empty buffer.
+  m.live and m.buf.len > 0
 
-proc methodOf*(m: var HttpMsg): TagId =
+proc isRequest*(m: HttpMsg): bool =
+  m.hasContent and m.readCursor().cursorTagId == tag(tReq)
+
+proc isResponse*(m: HttpMsg): bool =
+  m.hasContent and m.readCursor().cursorTagId == tag(tRes)
+
+proc methodOf*(m: HttpMsg): TagId =
   ## The request's method tag, or `TagId(0)` on a response.
-  var c = m.buf.beginRead()
+  if not m.hasContent: return TagId(0)
+  var c = m.readCursor()
   if c.cursorTagId != tag(tReq): return TagId(0)
   var body = c.sub()
   result = body.cursorTagId
 
-proc target*(m: var HttpMsg): string =
+proc target*(m: HttpMsg): string =
   ## The request target, or `""` on a response.
-  var c = m.buf.beginRead()
+  if not m.hasContent: return ""
+  var c = m.readCursor()
   if c.cursorTagId != tag(tReq): return ""
   var body = c.sub()
   body.skip                      # past (METHOD)
   result = body.strVal
 
-proc statusOf*(m: var HttpMsg): int =
+proc statusOf*(m: HttpMsg): int =
   ## The response status, or `0` on a request.
-  var c = m.buf.beginRead()
+  if not m.hasContent: return 0
+  var c = m.readCursor()
   if c.cursorTagId != tag(tRes): return 0
   var body = c.sub()
   result = int(body.intVal)
 
-proc versionOf*(m: var HttpMsg): TagId =
-  var c = m.buf.beginRead()
+proc versionOf*(m: HttpMsg): TagId =
+  if not m.hasContent: return TagId(0)
+  var c = m.readCursor()
   var body = c.sub()
   if c.cursorTagId == tag(tReq):
     body.skip                    # (METHOD)
@@ -494,14 +540,14 @@ proc versionOf*(m: var HttpMsg): TagId =
     body.skip                    # status
   result = body.cursorTagId
 
-proc rootCursor*(m: var HttpMsg): Cursor =
+proc rootCursor*(m: HttpMsg): Cursor =
   ## A cursor at the message node itself, for consumers that need the raw
   ## tree — a serializer reaching the target without copying it out, say.
-  m.buf.beginRead()
+  m.readCursor()
 
-proc headersStart(m: var HttpMsg): Cursor =
+proc headersStart(m: HttpMsg): Cursor =
   ## A bounded cursor positioned at the first header child.
-  var c = m.buf.beginRead()
+  var c = m.readCursor()
   result = c.sub()
   if c.cursorTagId == tag(tReq):
     result.skip                  # (METHOD)
@@ -511,34 +557,35 @@ proc headersStart(m: var HttpMsg): Cursor =
     result.skip                  # status
     result.skip                  # (version)
 
-iterator headers*(m: var HttpMsg): TagId =
+iterator headers*(m: HttpMsg): TagId =
   ## Every header in wire order. `tag(tXhdr)` is yielded for the unregistered
   ## ones; ask `otherHeaders` for their names.
   ##
-  ## The `cast` is because reading a `TokenBuf` goes through a `Cursor`, and a
-  ## cursor holds a refcount on the buffer's owner — so walking a message is
-  ## observably a mutation even though nothing about the message changes.
+  ## The `cast` is the cursor refcount, not the message: an iterator is
+  ## inferred `.noSideEffect` and taking a reference on the buffer's owner is
+  ## a write. Nothing about `m` changes — see `readCursor`.
   {.cast(noSideEffect).}:
-    if m.live and m.buf.len > 0:
+    if m.hasContent:
       var c = headersStart(m)
       while c.hasMore:
         yield c.cursorTagId
         c.skip
 
-iterator headerNodes*(m: var HttpMsg): Cursor =
+iterator headerNodes*(m: HttpMsg): Cursor =
   ## A cursor at each header node, so a serializer can reach the raw values
-  ## without them being copied out first. `sub` descends into one.
+  ## without them being copied out first. `sub` descends into one. See
+  ## `headers` on the cast.
   {.cast(noSideEffect).}:
-    if m.live and m.buf.len > 0:
+    if m.hasContent:
       var c = headersStart(m)
       while c.hasMore:
         yield c
         c.skip
 
-iterator otherHeaders*(m: var HttpMsg): (string, string) =
+iterator otherHeaders*(m: HttpMsg): (string, string) =
   ## Name/value for the headers that have no tag. See `headers` on the cast.
   {.cast(noSideEffect).}:
-    if m.live and m.buf.len > 0:
+    if m.hasContent:
       var c = headersStart(m)
       while c.hasMore:
         if c.cursorTagId == tag(tXhdr):
@@ -548,35 +595,35 @@ iterator otherHeaders*(m: var HttpMsg): (string, string) =
           yield (n, kv.strVal)
         c.skip
 
-proc contains*(m: var HttpMsg; h: TagId): bool =
+proc contains*(m: HttpMsg; h: TagId): bool =
   ## Whether the message carries `h` at least once.
-  if not m.live or m.buf.len == 0 or h.uint32 == 0'u32: return false
+  if not m.hasContent or h.uint32 == 0'u32: return false
   var c = headersStart(m)
   while c.hasMore:
     if c.cursorTagId == h: return true
     c.skip
   result = false
 
-proc contains*(m: var HttpMsg; h: HttpTag): bool {.inline.} = contains(m, tag(h))
+proc contains*(m: HttpMsg; h: HttpTag): bool {.inline.} = contains(m, tag(h))
 
-proc countHeader*(m: var HttpMsg; h: TagId): int =
+proc countHeader*(m: HttpMsg; h: TagId): int =
   ## How many times `h` appears. More than once matters for the headers that
   ## frame a message: two `Content-Length` lines are a request-smuggling
   ## vector, not a formatting quirk.
   result = 0
-  if not m.live or m.buf.len == 0 or h.uint32 == 0'u32: return 0
+  if not m.hasContent or h.uint32 == 0'u32: return 0
   var c = headersStart(m)
   while c.hasMore:
     if c.cursorTagId == h: inc result
     c.skip
 
-proc countHeader*(m: var HttpMsg; h: HttpTag): int {.inline.} =
+proc countHeader*(m: HttpMsg; h: HttpTag): int {.inline.} =
   countHeader(m, tag(h))
 
-proc getStr*(m: var HttpMsg; h: TagId): string =
+proc getStr*(m: HttpMsg; h: TagId): string =
   ## The first value of `h` as a string, or `""` when absent. A value stored
   ## as a tag (`(connection (keep-alive))`) reads back as its wire spelling.
-  if not m.live or m.buf.len == 0 or h.uint32 == 0'u32: return ""
+  if not m.hasContent or h.uint32 == 0'u32: return ""
   var c = headersStart(m)
   while c.hasMore:
     if c.cursorTagId == h:
@@ -590,12 +637,12 @@ proc getStr*(m: var HttpMsg; h: TagId): string =
     c.skip
   result = ""
 
-proc getStr*(m: var HttpMsg; h: HttpTag): string {.inline.} = getStr(m, tag(h))
+proc getStr*(m: HttpMsg; h: HttpTag): string {.inline.} = getStr(m, tag(h))
 
-proc getInt*(m: var HttpMsg; h: TagId; default = -1): int =
+proc getInt*(m: HttpMsg; h: TagId; default = -1): int =
   ## The first value of `h` as an integer — no re-parsing, it was stored as
   ## one. `default` when the header is absent or is not numeric.
-  if not m.live or m.buf.len == 0 or h.uint32 == 0'u32: return default
+  if not m.hasContent or h.uint32 == 0'u32: return default
   var c = headersStart(m)
   while c.hasMore:
     if c.cursorTagId == h:
@@ -605,13 +652,13 @@ proc getInt*(m: var HttpMsg; h: TagId; default = -1): int =
     c.skip
   result = default
 
-proc getInt*(m: var HttpMsg; h: HttpTag; default = -1): int {.inline.} =
+proc getInt*(m: HttpMsg; h: HttpTag; default = -1): int {.inline.} =
   getInt(m, tag(h), default)
 
-proc getTag*(m: var HttpMsg; h: TagId): TagId =
+proc getTag*(m: HttpMsg; h: TagId): TagId =
   ## The first value of `h` when it is itself a tag, else `TagId(0)`. This is
   ## the integer-compare path: `m.getTag(hConnection) == tag(vKeepAlive)`.
-  if not m.live or m.buf.len == 0 or h.uint32 == 0'u32: return TagId(0)
+  if not m.hasContent or h.uint32 == 0'u32: return TagId(0)
   var c = headersStart(m)
   while c.hasMore:
     if c.cursorTagId == h:
@@ -621,13 +668,13 @@ proc getTag*(m: var HttpMsg; h: TagId): TagId =
     c.skip
   result = TagId(0)
 
-proc getTag*(m: var HttpMsg; h: HttpTag): TagId {.inline.} = getTag(m, tag(h))
+proc getTag*(m: HttpMsg; h: HttpTag): TagId {.inline.} = getTag(m, tag(h))
 
-proc contentLength*(m: var HttpMsg): int {.inline.} =
+proc contentLength*(m: HttpMsg): int {.inline.} =
   ## `-1` when absent. One token read; the digits were parsed at parse time.
   getInt(m, tag(hContentLength), -1)
 
-proc isKeepAlive*(m: var HttpMsg): bool =
+proc isKeepAlive*(m: HttpMsg): bool =
   ## The check every request pays for, as an integer compare rather than a
   ## case-insensitive string compare.
   let v = getTag(m, tag(hConnection))

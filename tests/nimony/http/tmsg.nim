@@ -1,13 +1,14 @@
 # lib/std/http/httpmsg — the message layer of doc/internals/http.md §1.
 
 import std / [http/httpmsg, assertions, syncio]
-import httptags
 
-# --- init: `httptags` registered what we index on --------------------------
+let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
 
-assert hTrace.uint32 != 0'u32
-assert registerHeader("x-trace-id") == hTrace, "registration is idempotent"
-assert not isKnownHeader(hTrace), "app headers sit past the built-in range"
+# --- init ------------------------------------------------------------------
+
+assert hApiKey.uint32 != 0'u32
+assert registerHeader("x-api-key") == hApiKey, "registration is idempotent"
+assert not isKnownHeader(hApiKey), "app headers sit past the built-in range"
 
 let poolSizeAtInit = httpTags().tags.len
 
@@ -18,8 +19,8 @@ proc testLookupNeverGrows =
   assert lookupHeader("host") == tag(hHost)
   assert lookupHeader("HOST") == tag(hHost), "ASCII case is folded"
   assert lookupHeader("Content-Length") == tag(hContentLength)
-  assert lookupHeader("x-trace-id") == hTrace
-  assert lookupHeader("X-Trace-ID") == hTrace
+  assert lookupHeader("x-api-key") == hApiKey
+  assert lookupHeader("X-API-Key") == hApiKey
   for i in 0..<200:
     assert lookupHeader("x-attacker-" & $i).uint32 == 0'u32
   assert lookupHeader("").uint32 == 0'u32
@@ -47,7 +48,7 @@ proc testRequest =
   m.addHeader(hContentLength, 42)
   m.addHeader(hContentType, "application/json")
   m.addHeader(hConnection, vKeepAlive)
-  m.addHeader(hTrace, "abc123")
+  m.addHeader(hApiKey, "abc123")
   m.addOtherHeader("X-Weird", "1")
   m.addOtherHeader("X-Other", "2")
   m.finish()
@@ -72,8 +73,8 @@ proc testRequest =
   assert m.getStr(hConnection) == "keep-alive", "a tag value still prints"
 
   # An app-registered header behaves exactly like a built-in one.
-  assert hTrace in m
-  assert m.getStr(hTrace) == "abc123"
+  assert hApiKey in m
+  assert m.getStr(hApiKey) == "abc123"
 
   assert hHost in m
   assert hDate notin m
