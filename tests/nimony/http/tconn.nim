@@ -59,55 +59,63 @@ else:
   var srvFd, cliFd: cint
 
   proc server() {.passive.} =
+    # The happy paths raise nothing, so the `except` is how a failure becomes
+    # visible: an uncaught raise inside a passive chain goes into the frame's
+    # result slot, which nothing here would ever look at — the test would pass
+    # by saying nothing. Logging it puts it in the expected output instead.
     var c = initHttpConn(srvFd, afterMs(5000))
-    var m = initHttpMsg()
-    let e = c.readRequest(m)
-    assert e == Success, "server readRequest: " & $e
-    serverLog.add "server saw " & name(m.methodOf) & " " & m.target &
-                  " keepalive=" & $m.isKeepAlive & "\n"
-    assert m.getStr(hApiKey) == "t-9"
-    discard c.respond(200, "hello world!")
+    try:
+      var m = initHttpMsg()
+      c.readRequest(m)
+      serverLog.add "server saw " & name(m.methodOf) & " " & m.target &
+                    " keepalive=" & $m.isKeepAlive & "\n"
+      assert m.getStr(hApiKey) == "t-9"
+      c.respond(200, "hello world!")
 
-    # …and a second request on the same connection, which is the whole point
-    # of keep-alive: same conn, same message buffer.
-    m.reset()
-    c.renew(afterMs(5000))
-    let e2 = c.readRequest(m)
-    assert e2 == Success, "server second readRequest: " & $e2
-    serverLog.add "second request on the same connection: " & m.target & "\n"
-    discard c.respond(404, "")
+      # …and a second request on the same connection, which is the whole point
+      # of keep-alive: same conn, same message buffer.
+      m.reset()
+      c.renew(afterMs(5000))
+      c.readRequest(m)
+      serverLog.add "second request on the same connection: " & m.target & "\n"
+      c.respond(404, "")
+    except ErrorCode as e:
+      serverLog.add "server failed: " & $e & "\n"
     atomicStore(serverDone, 1, moRelease)
 
   proc client() {.passive.} =
     var c = initHttpConn(cliFd, afterMs(5000))
-    var req = initHttpMsg()
-    req.startRequest(tag(mGet), "/hello")
-    req.addHeader(hHost, "example.com")
-    req.addHeader(hApiKey, "t-9")
-    req.addHeader(hConnection, vKeepAlive)
-    req.finish()
-    assert c.sendHead(req) == Success
+    try:
+      var req = initHttpMsg()
+      req.startRequest(tag(mGet), "/hello")
+      req.addHeader(hHost, "example.com")
+      req.addHeader(hApiKey, "t-9")
+      req.addHeader(hConnection, vKeepAlive)
+      req.finish()
+      c.sendHead(req)
 
-    var res = initHttpMsg()
-    assert c.readResponse(res) == Success
-    let n = res.contentLength
-    var body = default(array[64, char])
-    let got = c.readBody(toOpenArray(body, 0, n - 1))
-    var s = ""
-    for i in 0..<got: s.add body[i]
-    clientLog.add "client got " & $res.statusOf & " len=" & $n &
-                  " body=" & s & "\n"
+      var res = initHttpMsg()
+      c.readResponse(res)
+      let n = res.contentLength
+      var body = default(array[64, char])
+      let got = c.readBody(toOpenArray(body, 0, n - 1))
+      var s = ""
+      for i in 0..<got: s.add body[i]
+      clientLog.add "client got " & $res.statusOf & " len=" & $n &
+                    " body=" & s & "\n"
 
-    # Second request down the same connection.
-    req.reset()
-    req.startRequest(tag(mGet), "/again")
-    req.addHeader(hHost, "example.com")
-    req.finish()
-    assert c.sendHead(req) == Success
-    res.reset()
-    assert c.readResponse(res) == Success
-    clientLog.add "client got " & $res.statusOf & " len=" &
-                  $res.contentLength & "\n"
+      # Second request down the same connection.
+      req.reset()
+      req.startRequest(tag(mGet), "/again")
+      req.addHeader(hHost, "example.com")
+      req.finish()
+      c.sendHead(req)
+      res.reset()
+      c.readResponse(res)
+      clientLog.add "client got " & $res.statusOf & " len=" &
+                    $res.contentLength & "\n"
+    except ErrorCode as e:
+      clientLog.add "client failed: " & $e & "\n"
     atomicStore(clientDone, 1, moRelease)
 
   block exchange:
@@ -125,34 +133,39 @@ else:
 
   proc chunkSender() {.passive.} =
     var c = initHttpConn(chSrv, afterMs(5000))
-    var m = initHttpMsg()
-    m.startResponse(200)
-    m.addHeader(hTransferEncoding, vChunked)
-    m.finish()
-    assert c.sendHead(m) == Success
-    # Deliberately uneven pieces, and one that would be a whole chunk on its
-    # own, so the reader has to reassemble rather than get lucky.
-    assert c.sendChunk("Hello") == Success
-    assert c.sendChunk(", ") == Success
-    assert c.sendChunk("world!") == Success
-    assert c.endChunks() == Success
+    try:
+      var m = initHttpMsg()
+      m.startResponse(200)
+      m.addHeader(hTransferEncoding, vChunked)
+      m.finish()
+      c.sendHead(m)
+      # Deliberately uneven pieces, and one that would be a whole chunk on its
+      # own, so the reader has to reassemble rather than get lucky.
+      c.sendChunk("Hello")
+      c.sendChunk(", ")
+      c.sendChunk("world!")
+      c.endChunks()
+    except ErrorCode as e:
+      serverLog.add "chunkSender failed: " & $e & "\n"
     atomicStore(serverDone, 1, moRelease)
 
   proc chunkReceiver() {.passive.} =
     var c = initHttpConn(chCli, afterMs(5000))
-    var m = initHttpMsg()
-    assert c.readResponse(m) == Success
-    assert m.isChunked, "the response should be chunk-framed"
-    assert m.bodyLength == -1, "a chunked body has no declared length"
-    c.beginBody()
-    var body = ""
-    var piece = default(array[4, char])   # smaller than a chunk, on purpose
-    while true:
-      let n = c.readChunked(toOpenArray(piece, 0, 3))
-      assert n >= 0, "chunked read failed: " & $n
-      if n == 0: break
-      for i in 0..<n: body.add piece[i]
-    clientLog.add "chunked body: " & body & "\n"
+    try:
+      var m = initHttpMsg()
+      c.readResponse(m)
+      assert m.isChunked, "the response should be chunk-framed"
+      assert m.bodyLength == -1, "a chunked body has no declared length"
+      c.beginBody()
+      var body = ""
+      var piece = default(array[4, char])   # smaller than a chunk, on purpose
+      while true:
+        let n = c.readChunked(toOpenArray(piece, 0, 3))
+        if n == 0: break                    # the body ended, cleanly
+        for i in 0..<n: body.add piece[i]
+      clientLog.add "chunked body: " & body & "\n"
+    except ErrorCode as e:
+      clientLog.add "chunkReceiver failed: " & $e & "\n"
     atomicStore(clientDone, 1, moRelease)
 
   block chunked:
@@ -171,8 +184,11 @@ else:
   proc readsDeadPeer() {.passive.} =
     var c = initHttpConn(deadFd, afterMs(5000))
     var m = initHttpMsg()
-    let e = c.readRequest(m)
-    serverLog.add "read past a dead peer: " & $e & "\n"
+    try:
+      c.readRequest(m)
+      serverLog.add "read past a dead peer: no error\n"
+    except ErrorCode as e:
+      serverLog.add "read past a dead peer: " & $e & "\n"
     atomicStore(serverDone, 1, moRelease)
 
   block deadPeer:
@@ -191,8 +207,11 @@ else:
     # ever wake this up.
     var c = initHttpConn(idleFd, afterMs(40))
     var m = initHttpMsg()
-    let e = c.readRequest(m)
-    serverLog.add "idle connection timed out: " & $e & "\n"
+    try:
+      c.readRequest(m)
+      serverLog.add "idle connection timed out: no error\n"
+    except ErrorCode as e:
+      serverLog.add "idle connection timed out: " & $e & "\n"
     atomicStore(serverDone, 1, moRelease)
 
   block idlePeer:

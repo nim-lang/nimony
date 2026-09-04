@@ -228,13 +228,13 @@ This is the same shape one layer down — `waitCompletions` in `std/ioring` *is*
 
 ### Responding
 
-`respond` is `.passive` and returns an `ErrorCode`
+`respond` is `.passive` and `.raises`
 (`lib/std/errorcodes/errorcodes_http.nim` already carries the status↔code
 mapping):
 
 ```nim
 proc respond*(s: var HttpLoop; c: ConnId; status: int;
-              body: openArray[char]; dl = Deadline.none): ErrorCode {.passive.}
+              body: openArray[char]; dl = Deadline.none) {.passive, raises.}
 ```
 
 Because it suspends until the write lands, **suspension is the backpressure** —
@@ -253,7 +253,7 @@ Because `respond` is passive, the inline and the coroutine-per-connection
 styles are the same code:
 
 ```nim
-of RequestEvent: discard s.respond(e.conn, 200, "hi")     # inline
+of RequestEvent: s.respond(e.conn, 200, "hi")             # inline
 of RequestEvent: spawn handle(s, e.conn, move e.msg)      # escaped
 ```
 
@@ -422,6 +422,25 @@ Two injection seams, both invisible to the code in §2:
 | `std/httpclient`, `std/httpserver` | the loops of §2. |
 
 Mirrors `std/ioring.nim` plus `std/ioring/`.
+
+### Failure is raised, not returned
+
+Every `.passive` proc that can fail is `.raises` and the failure is an
+`ErrorCode` caught with an ordinary `try`. What these procs *return* is the
+answer to the question that was asked — `fill` how many bytes arrived,
+`readChunked` how many it copied — and `0` from either is an end rather than a
+failure: a peer that has finished sending, or a body that is over.
+
+That split is the point. The previous shape returned `ErrorCode` from the
+writers and a possibly-negative count from the readers, and the two disagreed
+about what a number meant: `readChunked`'s `-1` was a malformed chunk size
+*and* a peer that vanished mid-body, which are a 400 and a dropped connection
+respectively. They are `SyntaxError` and `EndOfStreamError` now, and nothing
+has to remember which sign convention this particular call used.
+
+`.passive` still does not imply `.raises` (§8) — `readAsync` and `writeAsync`
+are passive and cannot fail, because their result *is* the ring's answer and
+`fill` is the one that decides what it means.
 
 ### The layer under HTTP
 

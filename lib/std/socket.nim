@@ -21,7 +21,12 @@
 #
 # `.passive` throughout: these park on `std/ioring` and are resumed by a pool
 # worker, so they read like blocking code and are not. The ones that can park
-# are the ones that can time out, and those are the ones that `raises`.
+# are the ones that can time out, and those are the ones that `raises` — an
+# `ErrorCode`, caught with an ordinary `try`. A failure is not in the return
+# value: `fill` answers how many bytes arrived and `read` how many it copied,
+# and `0` from either is the peer closing, which is an end and not a failure.
+# Nothing here reports a problem as a negative number the caller has to
+# remember to test.
 
 import std / [ioring, assertions]
 
@@ -154,21 +159,27 @@ proc compact(s: var Socket) =
   s.rlen = n
   s.rpos = 0
 
-proc fill*(s: var Socket; dl = never): int {.passive.} =
-  ## One read into the buffer. Bytes added, `0` at end of stream, or negative
-  ## on error / timeout. Compacts first, then grows up to `MaxBuffered` and
-  ## reports `-1` rather than growing without bound at a peer's choosing.
+proc fill*(s: var Socket; dl = never): int {.passive, raises.} =
+  ## One read into the buffer. The bytes added, or `0` at end of stream —
+  ## which is a peer that has finished, not a failure, so it is a value and
+  ## not a raise. Compacts first, then grows up to `MaxBuffered`.
+  ##
+  ## Raises `FullError` when the buffer is at its ceiling and still full: the
+  ## peer has sent more of something than we agreed to hold, and growing
+  ## further would let it pick our memory use. `TimeoutError` when the
+  ## deadline arrived first, `IOError` otherwise.
   result = 0
   compact(s)
   if s.rlen >= s.rbuf.len:
     if s.rbuf.len >= MaxBuffered:
-      return -1
+      raise FullError
     var bigger = newSeq[char](min(s.rbuf.len * 2, MaxBuffered))
     for i in 0..<s.rlen: bigger[i] = s.rbuf[i]
     s.rbuf = bigger
   let room = s.rbuf.len - s.rlen
   let n = readAsync(s.fd, addr s.rbuf[s.rlen], room, budget(s, dl))
-  if n > 0: s.rlen += n
+  if n < 0: raise toErr(n)
+  s.rlen += n
   result = n
 
 proc take*(s: var Socket; dest: var openArray[char]; limit: int): int =
@@ -181,50 +192,51 @@ proc take*(s: var Socket; dest: var openArray[char]; limit: int): int =
   for i in 0..<result: dest[i] = s.rbuf[s.rpos + i]
   s.consume result
 
-proc read*(s: var Socket; dest: var openArray[char]; dl = never): int {.passive.} =
-  ## Fill `dest`, starting with whatever is already buffered. Bytes copied —
-  ## fewer than asked for only at end of stream — or negative on error.
+proc read*(s: var Socket; dest: var openArray[char]; dl = never): int {.passive, raises.} =
+  ## Fill `dest`, starting with whatever is already buffered. The bytes
+  ## copied — fewer than asked for only at end of stream. Raises what `fill`
+  ## raises.
   result = 0
   let dl2 = budget(s, dl)
   let limit = dest.len
   var got = 0
   while got < limit:
     if s.buffered == 0:
-      let n = fill(s, dl2)
-      if n < 0: return n
-      if n == 0: break                    # end of stream
+      if fill(s, dl2) == 0: break         # end of stream
     got += s.take(toOpenArray(dest, got, limit - 1), limit - got)
   result = got
 
 # -------------------------------------------------------- the write side ---
 
 proc toErr*(n: int): ErrorCode {.inline.} =
-  ## What a non-positive read/write result means. `0` is the peer closing,
-  ## which is an end rather than a failure everywhere except mid-message.
+  ## What a negative ring result means. Exported because a protocol above may
+  ## have to decide for itself whether a `0` — the peer closing — is an end or
+  ## a truncation, and wants the same mapping for the rest.
   if n == 0: EndOfStreamError
   elif n == IoTimedOut: TimeoutError
   else: IOError
 
 proc writeAll*(s: var Socket; buf: pointer; len: int;
-               dl = never): ErrorCode {.passive.} =
-  ## Write every byte or fail. A short write is normal — the peer's window is
+               dl = never) {.passive, raises.} =
+  ## Write every byte or raise. A short write is normal — the peer's window is
   ## not our business — so it loops rather than reporting partial success that
-  ## a caller would have to unpick.
-  result = Success
+  ## a caller would have to unpick. There is no partial success to report:
+  ## either every byte went or this raised.
   let dl2 = budget(s, dl)
   var sent = 0
   while sent < len:
     let n = writeAsync(s.fd, cast[pointer](cast[uint](buf) + uint(sent)),
                        len - sent, dl2)
-    if n <= 0: return toErr(n)
+    # `0` is not an end here the way it is on the read side: a write that
+    # placed nothing and reported no error has a peer that is gone.
+    if n <= 0: raise toErr(n)
     sent += n
 
 proc write*(s: var Socket; data: openArray[char];
-            dl = never): ErrorCode {.passive.} =
+            dl = never) {.passive, raises.} =
   ## Send bytes already in memory. Nothing is copied.
-  result = Success
-  if data.len == 0: return Success
-  result = writeAll(s, addr data[0], data.len, dl)
+  if data.len == 0: return
+  writeAll(s, addr data[0], data.len, dl)
 
 proc scratch*(s: var Socket; n: int): var openArray[char] =
   ## A writable staging area of at least `n` bytes, kept between calls so
@@ -234,10 +246,9 @@ proc scratch*(s: var Socket; n: int): var openArray[char] =
     s.wbuf = newSeq[char](n)
   toOpenArray(s.wbuf, 0, n - 1)
 
-proc flush*(s: var Socket; n: int; dl = never): ErrorCode {.passive.} =
+proc flush*(s: var Socket; n: int; dl = never) {.passive, raises.} =
   ## Send the first `n` bytes of the staging area in one write. One write and
   ## not several because a frame split across writes is a frame a peer can be
   ## left half-way through.
-  result = Success
-  if n <= 0: return Success
-  result = writeAll(s, addr s.wbuf[0], n, dl)
+  if n <= 0: return
+  writeAll(s, addr s.wbuf[0], n, dl)
