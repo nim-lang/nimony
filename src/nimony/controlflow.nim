@@ -735,7 +735,6 @@ proc trCoroFor(c: var ControlFlow; n: var Cursor) =
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
-  let orig = n
   var it {.cursor.} = c.currentBlock
   var control {.cursor.}: BlockOrLoop = nil
   while it != nil and it.kind != IsRoutine:
@@ -758,9 +757,20 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     elif (n.isSymbol and n.symId == c.resultSym) or (n.isDotToken):
       discard "do not generate `result = result`"
       inc n
+    elif c.resultSym == NoSymId:
+      # `(ret x)` in a routine that declares no `result`. Front-end IR never
+      # has this, but hexer's IR does and runs this builder over it (the
+      # duplifier's last-read analysis): the eraiser gives a VOID `.raises`
+      # routine an `ErrorCode` return type and a trailing `(ret Success)`,
+      # and the code goes straight out with no slot to pass through. There is
+      # nothing to assign, but the expression's reads must stay visible to the
+      # dataflow, so model it as a discard.
+      var aa = Target(m: IsEmpty)
+      trExpr c, n, aa
+      c.dest.addParLe(DiscardS, n.endInfo)
+      c.flush aa
+      c.dest.addParRi()
     else:
-      if c.resultSym == NoSymId:
-        bug "result symbol not found " & toString(orig, false)
       var aa = Target(m: IsEmpty)
       trExpr c, n, aa
       c.dest.addParLe(AsgnS, n.endInfo)
@@ -1113,12 +1123,21 @@ proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]; bit
     trProc c, n
   else:
     assert sk == StmtsS
+    # Module-level statements are a routine too, as far as control flow goes:
+    # hexer's IR has `(ret ...)` out here (the eraiser turns a bare re-raise
+    # outside a `.raises` routine into one), and it means "leave the module
+    # init", which is exactly what `addRet` below is. Without a root block
+    # `trReturn` would find no enclosing routine and bug out.
+    let thisModule = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
+    c.currentBlock = thisModule
     c.dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         trStmt c, n
+    for ret in thisModule.breakInstrs: c.patch ret
     addRet c
     c.dest.addParRi()
+    c.currentBlock = c.currentBlock.parent
   c.typeCache.closeScope()
   c.pad()                       # fill trailing synthesized tokens with -1
   srcMap = ensureMove c.destSrc

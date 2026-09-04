@@ -14,7 +14,7 @@ We do this right before inlining and before codegen as it interacts with the
 codegen's `maybeByConstRef` logic — and, unlike the raise lowering that used to
 share this file, it cannot move ahead of `cps`: the state procs and init
 wrappers `cps` GENERATES have const-ref params of their own and need the same
-derefs as everyone else's. See `raiselowering.nim` for the half that left.
+derefs as everyone else's. See `eraiser.nim`, which absorbed the half that left.
 
 ]##
 

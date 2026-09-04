@@ -35,7 +35,17 @@ proc semBoolExprBody(c: var SemContext; dest: var TokenBuf; n: var Cursor; start
   result = Item(n: n, typ: c.types.autoType)
   semExpr c, dest, result
   let t = skipModifier(result.typ)
-  if classifyType(c, t) != BoolT and not hasErrorSince(dest, start):
+  if t.typeKind == UntypedT:
+    # `untyped` is not a type this can disagree with — it is "no type yet".
+    # It reaches here while a template's own body is checked, where an
+    # expression built from an `untyped` parameter cannot be typed and is not
+    # meant to be: `template t(x: untyped) = (if x < 0: …)` is legal, and what
+    # `x` turns out to be is the call site's business. The expansion is
+    # semchecked again with the argument substituted, and *that* pass runs
+    # this test against a real type — so a genuine `if 5:` is still caught,
+    # just at the call site where the 5 actually is.
+    discard
+  elif classifyType(c, t) != BoolT and not hasErrorSince(dest, start):
     combineErr c, dest, start, origInfo,
       "expected `bool` but got: " & typeToString(t)
 
