@@ -107,7 +107,7 @@ when defined(windows):
                        recvLen, localLen, remoteLen: uint32; received: ptr uint32;
                        ov: ptr Overlapped): int32 {.stdcall.}
     ConnectExFn = proc (s: SocketHandle; name: pointer; namelen: cint;
-                        sendBuf: nil pointer; sendLen: uint32; sent: ptr uint32;
+                        sendBuf: pointer; sendLen: uint32; sent: ptr uint32;
                         ov: ptr Overlapped): int32 {.stdcall.}
 
   const
@@ -220,18 +220,23 @@ when defined(windows):
       result = owner == lane
     gOwnerLock.release()
 
+  # WSAIoctl writes the function pointer straight into a proc-typed slot: a
+  # pointer→proc cast is not allowed on this toolchain. It writes into the
+  # GLOBAL rather than into a local that is then assigned across, because a
+  # `nil`-initialised local of proc type is what the native backend cannot
+  # assemble — `mov <proctype>, nil` is not among the pairings nifasm's `mov`
+  # rule admits, so `var fn: AcceptExFn = nil` fails to build for some proc
+  # types and (depending on whether the type resolved at all) silently passes
+  # for others. The global needs no such store: it starts out zero, and a
+  # WSAIoctl that fails writes nothing, so a failed load leaves it nil.
   proc loadAcceptEx(s: SocketHandle) =
     ## AcceptEx is an extension: fetched once per process through WSAIoctl.
     if gAcceptEx != nil: return
     var guid = Guid(data1: 0xb5367df1'u32, data2: 0xcbac'u16, data3: 0x11cf'u16,
                     data4: [0x95'u8, 0xca'u8, 0x00'u8, 0x80'u8, 0x5f'u8, 0x48'u8, 0xa1'u8, 0x92'u8])
-    # WSAIoctl writes the function pointer straight into a proc-typed slot: a
-    # pointer→proc cast is not allowed on this toolchain.
-    var fn: AcceptExFn = nil
     var got = 0'u32
-    if wsaIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, addr guid, uint32(sizeof(guid)),
-                addr fn, uint32(sizeof(fn)), addr got, nil, nil) == 0:
-      gAcceptEx = fn
+    discard wsaIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, addr guid, uint32(sizeof(guid)),
+                     addr gAcceptEx, uint32(sizeof(gAcceptEx)), addr got, nil, nil)
 
   proc listenerFamily(s: SocketHandle): cint =
     ## The listener's address family, so the accept socket matches it.
@@ -251,11 +256,9 @@ when defined(windows):
     if gConnectEx != nil: return
     var guid = Guid(data1: 0x25a207b9'u32, data2: 0xddf3'u16, data3: 0x4660'u16,
                     data4: [0x8e'u8, 0xe9'u8, 0x76'u8, 0xe5'u8, 0x8c'u8, 0x74'u8, 0x06'u8, 0x3e'u8])
-    var fn: ConnectExFn = nil
     var got = 0'u32
-    if wsaIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, addr guid, uint32(sizeof(guid)),
-                addr fn, uint32(sizeof(fn)), addr got, nil, nil) == 0:
-      gConnectEx = fn
+    discard wsaIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, addr guid, uint32(sizeof(guid)),
+                     addr gConnectEx, uint32(sizeof(gConnectEx)), addr got, nil, nil)
 
   proc allocAux(lane: int): int32 =
     ## An OVERLAPPED block the kernel is not using. `NoAux` when every block is
