@@ -1,0 +1,2 @@
+tests/nimony/methods/tmethodnoparam.nim(4, 1) Error: 'method' needs a parameter that has an object type
+tests/nimony/methods/tmethodnoparam.nim(7, 1) Error: cannot attach method to type int64

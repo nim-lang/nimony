@@ -778,9 +778,11 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
   let paramsNode = params
   var root = SymId(0)
   var signature = StrId(0)
+  var hasFirstParam = false
   if params.isTagLit:
     inc params
     if params.substructureKind == ParamU:
+      hasFirstParam = true
       inc params
       skip params, SkipName # name
       skip params, SkipExport # export marker
@@ -789,10 +791,14 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
       var methodName = pool.syms[symId]
       extractBasename methodName
       signature = pool.strings.getOrIncl(methodKey(methodName, paramsNode))
-  if root == SymId(0) or not isObjectType(root):
-    let typ = typeToString(params)
+  if not hasFirstParam or root == SymId(0) or not isObjectType(root):
     var errBuf = createTokenBuf(16)
-    buildErr c, errBuf, info, "cannot attach method to type " & typ
+    if not hasFirstParam:
+      # `params` is not sitting on a type here, so don't render one: without a
+      # first parameter there is nothing a method could dispatch on (#2279).
+      buildErr c, errBuf, info, "'method' needs a parameter that has an object type"
+    else:
+      buildErr c, errBuf, info, "cannot attach method to type " & typeToString(params)
     dest.insert errBuf, declStart
   else:
     let methodIsInstance = dest[beforeGenericParams].kind == TagLit and dest[beforeGenericParams].tagId == TagId(InvokeT)
