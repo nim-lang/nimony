@@ -1,0 +1,763 @@
+# HTTP client and server — design
+
+**Status: in progress.** Implemented: the message layer, which has no IO in it
+at all (`httpmsg.nim` with its nifcore prerequisites, `httpparse.nim`,
+`httpwire.nim`), the ioring work §7 gates on (deadlines, timers, connect), and
+the connection layer `httpconn.nim` — which is where `.passive` meets the ring
+and is proven end to end by `tests/nimony/http/tconn.nim`: a real socket, a
+server and a client each a passive chain resumed by pool workers, keep-alive
+across two requests, a dead peer, and an idle connection expiring on its own
+budget — on both Linux backends, io_uring and the epoll fallback.
+Still design: §2, the event loop itself.
+
+The design rests on three ideas that already exist in this repo:
+
+- **NIF's tag/payload split** (`src/lib/nifcore.nim`) for messages. HTTP verbs
+  and header names are a vocabulary that is closed by the time it matters — the
+  stdlib's known set plus whatever the application registers, fixed before the
+  first connection — which is exactly what a tag space is for.
+- **`.passive` procs** ([passive_procs.md](../passive_procs.md)) for the API. No
+  callbacks, no futures, no coloring.
+- **The relay pattern** (`ioring/core/backend.nim`, and uirelays' `InputRelays`)
+  for backend injection — *below* the application, never in the API it sees.
+
+Everything runs on `std/ioring`.
+
+
+## 1. Messages are NIF trees
+
+A request and a response are the same type: a `TokenBuf` holding one node.
+
+```
+(req (GET) "/index.html" (v11)
+  (host           "example.com")
+  (content-length 42)                                  ; IntLit — parsed once
+  (accept         "text/html" "application/xhtml+xml") ; two children
+  (connection     (keep-alive))                        ; value is itself a tag
+  (x-trace-id     "abc123")                            ; registered by the app
+  (xhdr           "X-Weird" "1"))                      ; registered by nobody
+```
+
+```
+(res 200 (v11)
+  (content-type   "text/html")
+  (content-length 1234)
+  (connection     (keep-alive)))
+```
+
+Method, target and version are the first three children by position; headers
+follow in any order. There is no `(headers ...)` wrapper — node jumps make
+skipping O(1) either way, and the wrapper would only cost a token.
+
+### Tag space vs payload space
+
+This distinction is the whole design, so it is worth stating plainly:
+
+- The **tag space** is a single process-global `TagPool`, filled during init
+  and not touched again once connections are being served. Known header names,
+  known
+  methods, known header *values* and the structural tags live here — and so do
+  whatever custom headers the application registers.
+- The **payload space** is a `Pool` per message, created with the message and
+  destroyed with it.
+
+`createTokenBuf(cap, sharedTags = gHttpTags)` gives exactly this: the tag
+namespace is shared, the literal pool is not.
+
+`createTags[E]` cannot be used directly, because it registers `$e` and
+`content-length` is not a Nim identifier — a parallel
+`const TagNames: array[HttpTag, string]` supplies the wire spellings, which
+also makes a NIF dump of a request read as real HTTP. Header names are
+canonical lowercase; methods keep their uppercase form, which is
+case-sensitive on the wire.
+
+A spelling maps to exactly one id, so a word that names both a header and a
+header *value* — `upgrade` is the one in the built-in set — is one tag used in
+two positions, and the position says which role it is in. The registration
+loop asserts enum/id alignment, which is what caught that collision.
+
+### The vocabulary is fixed during init
+
+An application's own headers — `X-Request-Id`, a custom auth header, whatever
+the proxy in front adds — are usually the ones it indexes on. They are not
+unknown to the *application*, only to the stdlib. So the application registers
+them during init and they get the same process-stable ids and integer
+compares as `Host`:
+
+```nim
+let hTraceId = registerHeader("X-Trace-Id")   # init, before the first accept
+```
+
+`registerHeader` is the only thing that grows the pool, and the parser does not
+call it: it calls `lookupHeader`, which answers from a byte compare over the
+registered spellings and has no way to add one. So interning is off the request
+path by construction — there is no flag to set and nothing to enforce at
+runtime. A name nobody registered simply becomes `(xhdr "name" "value")`.
+
+Which is what we want anyway, because the pool is process-global and monotonic:
+growing it from incoming bytes would make exhaustion permanent and shared. As
+it is, "the pool is full" can only be reached from `registerHeader` during
+init, where it is a startup error and a programmer mistake.
+
+The HTTP pool deliberately nominates **no `escapeTag`**. With one, ids past 511
+stay legal at the cost of a second token and there is no wall to detect, so any
+cap would be a number we invented. Without one, 511 is structural, every tag is
+exactly one token, and "the pool is full" is a real condition.
+
+Names nobody registered still need a representation: `(xhdr "name" "value")`.
+That form is for headers the application provably does not index by constant — a
+proxy forwarding what it does not understand — so it is never on a hot path.
+
+### Why this beats a string map
+
+- **Header lookup is an integer compare.** HTTP names are case-insensitive, so
+  a `Table[string, string]` design lowercases and hashes on every access.
+  `hContentLength` is a `TagId` known at compile time.
+- **Values are typed once, at parse time.** `Content-Length` is an `IntLit`;
+  `Date` is an epoch `IntLit`. No re-parsing on access.
+- **Known values are tags too.** `Connection: keep-alive` parses to
+  `(connection (keep-alive))`, so the keep-alive check on every single request
+  is an integer compare rather than a case-insensitive string compare. This is
+  the same enum/payload idea applied one level down.
+- **The application's own headers get all of the above.** A registered custom
+  header is a tag like any other, which matters because those are frequently
+  the ones a service actually branches on. A design that made them the
+  exception would be optimizing the wrong half.
+- **Multi-value headers are just multiple children.** No comma-splitting on
+  access.
+- **One allocation per message**, contiguous and movable.
+- **Client and server share the entire message layer** — the same type is the
+  parse target and the build source.
+
+It also generalizes: HPACK's static table *is* the known-header enum, and its
+dynamic table is a per-connection pool. HTTP/2 is a framing change, not a
+message-model change.
+
+### The body is not in the buffer
+
+Bodies stream and can be gigabytes. The message is head metadata only; body
+bytes arrive as their own events, borrowed from the connection's read buffer.
+
+### Ownership and recycling
+
+`TokenBuf` is already `=copy {.error.}`, so `HttpMsg` is move-only: a genuine
+copy is rejected. (The diagnostic is late and cryptic — `'=dup' is not
+available for type <HttpMsg>`, raised by hexer rather than sem, so `nimony
+check` alone accepts the copy. Worth improving, but the property holds.)
+
+`HttpMsg` needs its own `=wasMoved` to clear the "owns a buffer" flag along
+with the buffer — without it a moved-from message still claims ownership,
+which is precisely the question the loop asks. The loop reclaims at the top of
+`next`:
+
+```nim
+proc next*(s: var HttpLoop; e: var HttpEvent; dl = Deadline.none): bool {.passive.} =
+  if e.msg.hasBuf:           # handler never took it → keep the allocation
+    s.recycle(move e.msg)
+  ...
+```
+
+So a handler that ignores `e.msg` gets buffer reuse for free. A handler that
+moves the message out — to hand it to a spawned coroutine, say — can donate the
+buffer back with `e.msg = move(m)` when it is done, and pays one allocation if
+it does not. **The failure mode is a slow path, never a bug.**
+
+`reset` keeps the token buffer — the allocation that grew to fit the traffic —
+and gives the message a fresh `Pool`. The pool holds only the values too long
+to sit inline in a token, so it is usually small or untouched, and one small
+allocation buys the certainty that no id from the previous message is still
+reachable. This needs nothing from nifcore.
+
+`Socket` (§6) is move-only for the same reason and one more: a message that is
+copied wastes an allocation, but a socket that is copied has two owners of one
+file descriptor, and whichever is destroyed first closes it under the other.
+Unlike `HttpMsg` it has a destructor, because unlike a buffer a descriptor is
+not reclaimed by anything else.
+
+
+## 2. The application pulls events
+
+Modelled on uirelays' `Event` + `pollEvent`/`waitEvent`: a flat struct with a
+kind discriminator and payload fields, filled into a caller-owned variable. No
+allocation per event, and no callbacks anywhere above the driver line.
+
+```nim
+type
+  HttpEventKind* = enum
+    NoHttpEvent
+    ConnectedEvent      ## peer accepted (and, with TLS, handshake done)
+    RequestEvent        ## request head parsed and complete
+    ResponseEvent       ## client side: response head parsed
+    BodyEvent           ## a piece of the body; `final` marks the last
+    ClosedEvent         ## peer gone or error; `status` says why
+    TimeoutEvent        ## a deadline expired
+    ShutdownEvent
+
+  HttpEvent* = object
+    kind*: HttpEventKind
+    conn*: ConnId
+    msg*: HttpMsg                    ## Request/ResponseEvent; move-only
+    data*: ptr UncheckedArray[char]  ## BodyEvent; borrowed until the next `next`
+    len*: int
+    final*: bool
+    status*: ErrorCode
+```
+
+One enum covers both directions, because a proxy needs both and the vocabulary
+is the same.
+
+```nim
+proc main() {.passive.} =
+  var s = listenHttp(Port(8080), budget = 30.seconds)
+  var e: HttpEvent
+  while s.next(e, never):
+    case e.kind
+    of RequestEvent:
+      if e.msg.path == "/": discard s.respond(e.conn, 200, "hello\n")
+      else:                 discard s.respond(e.conn, 404, "")
+    of ClosedEvent: discard
+    else: discard
+```
+
+`next` is `waitEvent` without a blocked thread and without a callback: it
+returns immediately when events are queued, and otherwise does `delay()` +
+register-with-ioring + `suspend()`.
+
+This is the same shape one layer down — `waitCompletions` in `std/ioring` *is*
+`pollEvent`, and this loop is that one with parsing on top.
+
+### Responding
+
+`respond` is `.passive` and `.raises`
+(`lib/std/errorcodes/errorcodes_http.nim` already carries the status↔code
+mapping):
+
+```nim
+proc respond*(s: var HttpLoop; c: ConnId; status: int;
+              body: openArray[char]; dl = Deadline.none) {.passive, raises.}
+```
+
+Because it suspends until the write lands, **suspension is the backpressure** —
+there is no drain event and no "did I remember to check for room" bug class.
+The same holds for a streaming `write(chunk)`.
+
+Passive does not mean *always* suspends. `respond` should attempt a direct
+non-blocking `write(2)` first and only go through the ring on `EAGAIN` or a
+short write, so a response that fits the socket buffer never parks. The fast
+path is only legal when that connection has nothing already queued in the ring,
+or it reorders against in-flight writes.
+
+### Two styles, one API
+
+Because `respond` is passive, the inline and the coroutine-per-connection
+styles are the same code:
+
+```nim
+of RequestEvent: s.respond(e.conn, 200, "hi")             # inline
+of RequestEvent: spawn handle(s, e.conn, move e.msg)      # escaped
+```
+
+Long work — a database query, a call to another service — escapes into a
+spawned coroutine and answers later through the identical `respond`. The loop
+stays non-blocking and callback-free. Coroutine-per-connection, for anyone who
+wants it, is then a thin layer that dispatches events by `ConnId`; the reverse
+does not work, which is why the event loop is the primitive.
+
+
+## 3. Deadlines are part of the model
+
+Nimony targets designs that hold up under hard-realtime constraints, so
+deadlines are explicit rather than an optional configuration knob.
+
+**Deadlines, not timeouts.** Absolute instants, not relative durations. A
+per-call timeout does not compose: `readHead(1s)`, `readBody(1s)`, `respond(1s)`
+is a 3s worst case that grows with however many operations the code happens to
+perform, so the request as a whole has no bound anyone can state. One absolute
+deadline threaded through the request bounds the total regardless of what
+happens inside it.
+
+```nim
+type Deadline* = distinct int64      ## absolute monotonic nanoseconds
+
+proc earlier*(a, b: Deadline): Deadline   ## the only combinator
+const never*: Deadline
+```
+
+`earlier` is the only combinator, and that is the invariant: a sub-operation
+can tighten its caller's budget, never widen it.
+
+`never` exists but must be *typed*. The difference between "no deadline because
+I decided" and "no deadline because I did not think about it" is whether the
+programmer had to write the word. Nothing that can park has a default.
+
+### Where they are required
+
+Explicit at the boundaries that mint work:
+
+- `listenHttp(port, budget)` — the per-request budget for accepted connections.
+- `connect(host, port, dl)` and `request(..., dl)` on the client.
+- `next(e, dl)` — the loop's own wait. `TimeoutEvent` is how periodic
+  housekeeping gets a turn, mirroring uirelays' `waitEvent(e, timeoutMs)`.
+
+`Conn` carries the deadline from there, so `respond(e.conn, ...)` needs no
+parameter. Every parking op takes an optional trailing `dl` that *tightens*:
+the call applies `earlier(conn.deadline, dl)` internally, so passing a later
+instant cannot widen the budget.
+
+A keep-alive connection holds an **idle deadline** (when the next request must
+begin); the loop re-arms it to `now() + budget` at each request boundary.
+
+### What expiry does
+
+The parked continuation resumes with `TimeoutError`. A deadline blown while
+*writing* kills the connection — HTTP/1.1 framing cannot resynchronize after a
+truncated response. A deadline blown while waiting for the next request on an
+idle connection just closes it cleanly. Both surface as `ClosedEvent`.
+
+### What this buys
+
+- **The leak class disappears structurally.** Every parked continuation has a
+  deadline, so nothing parks forever. "Who wakes a stuck `respond`" stops
+  needing a case-by-case answer.
+- **The scheduler can use them.** Deadlines visible to the runtime let the
+  ready queue be earliest-deadline-first rather than FIFO, on both the ring's
+  completion side and the pool's run queue.
+- **Admission control becomes possible.** A loop that is behind can refuse a
+  connection rather than accept work it cannot finish in budget — but only if
+  the budget is visible at accept time.
+
+### Mapping down
+
+**One timer per lane, not one per op.** A per-lane min-heap of deadlines, and
+the wait is bounded by whatever is on top of it — `epoll_wait(waitMs)` on the
+readiness backends, an `io_uring_enter` carrying a `timespec` (`ENTER_EXT_ARG`,
+Linux 5.11) on the ring. All three answer "how long may I sleep" from the same
+structure, and the kernel holds at most one timeout per lane no matter how many
+ops are in flight. A timer op needs no SQE at all: the heap already knows when
+it is due, so it takes a slot and nothing else, and the ring is never asked to
+hold a timeout per connection.
+
+One clock read per poll survives that: the `timespec` handed to `ENTER_EXT_ARG`
+is relative, so the loop asks `monoNow()` to turn the heap's absolute top into a
+duration. `IORING_ENTER_ABS_TIMER` (6.12) takes the absolute deadline directly
+and would retire it. See the list at the end of this section.
+
+The tempting alternative is io_uring's `link_timeout`, which attaches an
+absolute deadline to the preceding SQE — "this read, with this deadline", one
+submission, and the kernel cancels the op itself. It is the wrong trade here.
+It costs a second SQE *and* a second CQE for every op, so a server holding an
+idle deadline per connection spends most of its ring on timers to buy a wakeup
+the lane-wide bound already provides; it needs `IOSQE_IO_LINK`, which imposes
+submission ordering we do not otherwise want; and it exists only on io_uring,
+so the backends stop agreeing about what a deadline is. What it would buy —
+retiring `gCancelInFlight`, because an op the kernel cancelled needs no taking
+back — is a real thing to want, but it is a cancellation question and it wants
+a cancellation answer. (Thanks to @blackmius for pushing back on this.)
+
+The idle path was the other half. An idle worker called `gReactor(1)` and then,
+if nothing fired, slept another millisecond (`threadpool.nim`), so it woke every
+1–2ms with nothing to do — and on io_uring it was worse than that, because the
+bound was computed and thrown away and the ring never entered the kernel to wait
+at all. The reactor now does the waiting, and `BackendRelays.waits` says so, so
+the pool's nap is skipped behind a backend that has already waited.
+
+One bound remains above the deadline: nothing wakes a worker when a *task* is
+enqueued — `threadpool.submit` only enqueues — so a lane may not sleep past its
+next look at the run queue, and the pool asks for a millisecond. Give the pool a
+wakeup (an eventfd, or `OP_MSG_RING`) and that ceiling goes, and then a lane
+really does sleep until its earliest deadline.
+
+The ring uses `CLOCK_BOOTTIME` on Linux rather than `CLOCK_MONOTONIC` (which
+`std/monotimes` uses): a machine that suspends for an hour should find its
+in-flight deadlines blown, not extended. Darwin and the BSDs have no
+equivalent, so they get `CLOCK_MONOTONIC`. Never `CLOCK_REALTIME`, or an NTP
+step retimes everything in flight.
+
+
+## 4. Connections and threading
+
+`ConnId` is a dense integer with a generation counter, like ioring's slot
+arena — not a pointer. That keeps `HttpEvent` POD and copyable, and makes a
+stale reference *detectable* rather than a use-after-free, which matters
+because connections die asynchronously and handlers will hold ids across
+suspensions.
+
+**One loop per thread, and a connection belongs to its lane for life.** ioring's
+slot arenas and submission rings are per-lane and unlocked, and `closeFd`
+already documents that ops held by another lane are not cancelled and leak
+their slots. Shared-nothing avoids that entirely. Distribution is by
+`SO_REUSEPORT`, or by handing a connection off exactly once at accept time.
+
+Pinning a lane to a core only pays if the NIC agrees about which core a
+connection belongs to: one RX queue per lane, that queue's IRQ affine to that
+lane's core, and RSS steering a flow to the same queue for its lifetime.
+Otherwise the packet is received on one core and the connection processed on
+another, and the cache line it cost to avoid a lock is spent anyway. That is a
+deployment property rather than a library one — it is `ethtool` and
+`/proc/irq`, not code — but the lane count has to be chosen with it in mind,
+so it belongs in whatever runs a server rather than being left implicit.
+(Thanks to @blackmius.)
+
+
+## 5. Relays sit below the application
+
+Two injection seams, both invisible to the code in §2:
+
+- **`TransportRelays`** — `read`, `write`, `close`, `handshake`. Plaintext is
+  the default; a TLS module overrides it and the HTTP layer never learns.
+- **`FramingRelays`** — bytes to events. `RequestEvent` and `BodyEvent` mean the
+  same thing in HTTP/1.1 and HTTP/2, so h2 is a second framing relay rather
+  than a second API.
+
+
+## 6. Module layout
+
+| Module | Contains |
+|---|---|
+| `std/socket` | a buffered, deadline-carrying connection. No HTTP. **Done**. |
+| `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
+| `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request and response heads. |
+| `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
+| `std/http/httpconn` | HTTP framing and keep-alive on a `Socket`. **Done**. |
+| `std/httpclient`, `std/httpserver` | the loops of §2. |
+
+Mirrors `std/ioring.nim` plus `std/ioring/`.
+
+### Failure is raised, not returned
+
+Every `.passive` proc that can fail is `.raises` and the failure is an
+`ErrorCode` caught with an ordinary `try`. What these procs *return* is the
+answer to the question that was asked — `fill` how many bytes arrived,
+`readChunked` how many it copied — and `0` from either is an end rather than a
+failure: a peer that has finished sending, or a body that is over.
+
+That split is the point. The previous shape returned `ErrorCode` from the
+writers and a possibly-negative count from the readers, and the two disagreed
+about what a number meant: `readChunked`'s `-1` was a malformed chunk size
+*and* a peer that vanished mid-body, which are a 400 and a dropped connection
+respectively. They are `SyntaxError` and `EndOfStreamError` now, and nothing
+has to remember which sign convention this particular call used.
+
+`.passive` still does not imply `.raises` (§8) — `readAsync` and `writeAsync`
+are passive and cannot fail, because their result *is* the ring's answer and
+`fill` is the one that decides what it means.
+
+### The layer under HTTP
+
+`httpconn` grew a read buffer that compacts rather than reallocates, a ceiling
+so a peer cannot pick our memory use, one deadline that every operation runs
+under and that a caller can tighten but never widen, and a write that loops
+because a short write is the peer's window and not our business. None of that
+is HTTP, and it is `std/socket` now. `HttpConn` is a `Socket` plus the three
+things HTTP actually adds: where a head ends, where a body ends, and what may
+follow what.
+
+The read side is deliberately two halves rather than a `readLine`-shaped API:
+`fill` puts bytes in, `peek` hands out an `openArray` view of what has not been
+consumed, and `consume` says how much of it a parser used. So a parser is given
+the bytes where they already are — it does not slice, copy or own anything —
+and what it did not use stays put for the next `fill` to extend. That is what
+makes a head arriving one byte at a time cost O(n) rather than O(n²), and it is
+why `httpparse` never needed a buffer type of its own.
+
+A `Socket` owns its fd and closes it in its destructor, the way a `File` owns
+its handle: the descriptor is the resource, and the leak that mattered was
+never the buffers but the fd on the error path nobody wrote. That makes it
+move-only — two sockets over one fd is two owners of one descriptor.
+
+The suggestion this answers went further: a vtable-based `Stream` with
+`Readable` / `Writable` / `Seekable` concepts, `TcpConn` as a `DuplexStream`,
+`HttpConn` on top of that. The concepts are the right shape and are what a TLS
+layer will want, since §5's `TransportRelays` is a vtable in all but name and
+should be one of these instead. What is deliberately *not* here yet is the
+indirection: there is one implementation, and a dynamic dispatch on every
+`fill` of a plaintext socket is a cost paid for a second implementation that
+does not exist. `Socket` is a concrete type with the shape a `Readable` /
+`Writable` pair would have, so making it one is a signature change rather than
+a rewrite — and the right time is when TLS lands and there is a second thing to
+dispatch to. (Thanks to @blackmius.)
+
+
+## 7. Prerequisites
+
+None of this is reachable until the following exist.
+
+**ioring**
+
+1. ~~`submitConnect`~~ — done. Non-blocking connect through the ring; the
+   attempt is started on the polling thread so the fd is watched from the
+   moment it is connecting, and `SO_ERROR` on writability distinguishes a
+   refusal from a success (both look identical to the poller). Completes with
+   the negated errno, so a caller can tell "nobody listening" from "the
+   network ate it".
+2. ~~**Timers**~~ — done. `Deadline` is absolute, `never` has to be spelled,
+   and every op carries one. A per-lane min-heap answers both questions the
+   poll loop has — how long it may wait, and what has run out of time — and
+   feeds the `poll(timeoutMs)` argument that was previously a hardcoded 0 or
+   1. Entries are not removed when an op completes in time; they name the slot
+   *generation* they were armed for and are dropped as stale when they surface.
+   `submitTimeout` is a pure timer, and reaching its deadline is its success.
+
+   The bound is lane-wide on every backend, and stays that way: see §3's
+   *Mapping down* for why per-SQE `link_timeout` is not the upgrade it looks
+   like. io_uring waits in the kernel for it now (`ENTER_EXT_ARG`), so a
+   completion is noticed when it arrives rather than at the next millisecond
+   tick.
+
+   Still to do here: a wakeup for task submission, so a lane can sleep past
+   the pool's 1ms heartbeat and out to its actual earliest deadline.
+3. Multishot accept. `submitAccept` is oneshot, so a busy listener pays one
+   submission per connection; io_uring has `accept_multishot`.
+4. `IORING_ENTER_ABS_TIMER` (6.12), so the ext-arg `timespec` carries the
+   heap's absolute deadline instead of a duration computed from a
+   `clock_gettime` on every poll. The heap already holds the right number; the
+   loop converts it only because the old ABI wanted a relative one.
+5. Sockets through the ring. `socket(2)` and `setsockopt(2)` are still direct
+   syscalls on the submitting thread; io_uring has `OP_SOCKET` and
+   `OP_CMD_SOCK` for both. (Thanks to @blackmius.)
+6. DNS. `getaddrinfo` blocks and io_uring has no resolver. Offloading it to a
+   pool thread is the cheap answer; writing the resolver is the better one and
+   is not much code — one UDP datagram out, one back, plus `/etc/hosts` and
+   `/etc/resolv.conf` — and it is the only version that can carry a
+   `Deadline`, which is the whole point of this layer. libc's resolver cannot
+   be given one and cannot be cancelled, so a pool thread parked in
+   `getaddrinfo` stays parked. (Thanks to @blackmius.)
+
+**Elsewhere**
+
+7. `std/uri` does not exist.
+8. `std/monotimes` needs a `CLOCK_BOOTTIME` path.
+
+
+### Parsing, in practice
+
+Every proc in `httpparse` is `parse(buf, …) -> int`: read `buf` from the front,
+answer how many bytes were consumed, or `ParseIncomplete` / `ParseBad`. There is
+no index parameter — an `openArray` already carries a start, so a caller
+part-way through a buffer hands over `toOpenArray(buf, j, buf.len-1)`, which is
+O(1), and adds the answer to `j`. What a proc matched is `buf`'s first `result`
+bytes, which is also why none of them needs an out-parameter to report where the
+match ended: the two would be the same number, and two names for one number is
+one of them that can be wrong.
+
+The head is inspected in place — no slicing, no substrings — so the only bytes
+copied are the ones that end up in the message, and they are copied once,
+straight from the read buffer into that message's pool. `nifcore` grew an
+`openArray` overload of `addStrLit` for that, and `lookupHeader` folds ASCII
+case into a stack buffer.
+
+Resumability costs the caller one integer. A head is parsed only when complete,
+so `HeadScanner` looks for the blank line that ends it and remembers where it
+stopped; appending more bytes and asking again resumes instead of rescanning,
+which is what keeps a head arriving one byte at a time from costing O(n²). That
+position is relative to the front of the *unconsumed* bytes — `Socket.peek` —
+so compacting the read buffer moves the bytes and the position together and
+there is nothing to fix up.
+
+The tag lookup does not use the pool's hash table. The vocabulary is fixed by
+the time a connection is served and under 512 entries, so bucketing tags by
+name length leaves a handful of
+candidates that a byte compare settles — no hashing, and nothing that needs a
+`string` to ask with.
+
+Serializing keeps its `i`, because there it is not a restatement of where
+`dest` begins — it is the cursor a caller threads from one writer to the next.
+`write(dest, i, …) -> int` answers the index just past what it wrote, or
+`WriteFull`, **and passes a negative `i` through untouched**, so a head is
+written as the chain it reads as and one test at the end of it says whether the
+whole thing fitted. Writers are all-or-nothing, so a refused call leaves nothing
+to unpick — the caller retries from the same `i` with more room, and `headLen`
+says exactly how much room that is, so the usual path never retries at all. Nothing is built in a temporary and copied
+over: names are borrowed from the tag pool, values from the message's own
+pool, and integers are formatted straight into `dest`.
+
+Round-tripping is the property the tests pin down. Parsing our own output must
+reproduce the same tree, and serializing that must be byte-identical — which
+is what says the tag/payload split lost nothing on the way in.
+
+There is exactly one deliberate exception, and it is on the response side: the
+**reason phrase is parsed and discarded**. Nothing reads it — RFC 9110 tells
+clients to ignore it and lets a proxy replace it — so keeping it would mean a
+payload string on every response for no reader. `httpwire` regenerates a
+canonical phrase, so `404 Totally Not Here` comes back as `404 Not Found`. The
+tree still round-trips exactly; only that one string does not.
+
+Rejections are deliberate rather than incidental, because HTTP/1.1 cannot
+resynchronize and a parser that guesses is how two hops come to disagree about
+where a request ends: obsolete line folding, a space between a header name and
+its colon, a bare CR inside a value, a non-numeric or overflowing
+`Content-Length`, and control characters anywhere in a target or value are all
+`ParseBad`. Head size, header count, target length and value length are capped.
+
+### The passive bridge, confirmed
+
+The shape the design assumed does work:
+
+```nim
+proc readAsync*(fd: cint; buf: pointer; len: int; dl: Deadline): int {.passive.} =
+  result = 0
+  let c = delay()
+  discard submitRead(fd, buf, len, dl, c, addr result)
+  suspend()
+```
+
+The coroutine parks, a pool worker resumes it when the ring completes, and
+`addr result` — a pointer into the *caller's* heap-allocated frame — is still
+valid on the other side. `result` has to be assigned before its address is
+taken, since the compiler will not hand out the address of something it cannot
+prove is initialised.
+
+The entry point matters, and it is the §8 hazard in practice: a chain is
+started with `submit(delay(chain()), lane)` onto the pool, not called from
+non-passive code. A regular proc that calls a parking passive proc gets its
+`result` written into a frame it has already left.
+
+### A compiler bug this layer flushed out (fixed)
+
+An `openArray` parameter of a `.passive` proc used to arrive corrupt: the
+length survived, the pointer did not, so the callee read whatever was at the
+wrong address.
+
+```nim
+proc take(data: openArray[char]) {.passive.} =
+  for i in 0..<data.len: s.add data[i]
+
+proc chain() {.passive.} =
+  take("aaa"); take("bbb"); take("ccc")   # printed garbage, not aaa/bbb/ccc
+```
+
+The cause was not `openArray` as such, and not the const-ref parameters either.
+A state proc is not the coroutine's activation record: it runs, it returns, and
+its stack is gone, while the frame — and everything the frame points at — has to
+survive until the coroutine is resumed. A literal has no address of its own, so
+something has to give it storage to be addressed through, and until this was
+fixed that storage was a local of one state proc while the view built from it
+lived in the frame and was read from a later state. Anything that borrows would
+have shown it; `openArray` is just where the shape is visible, because the
+length is copied and the pointer is not.
+
+Fixed in `src/hexer/coro_transform.nim`, as a lifetime extension riding on the
+`trGoto` walk: an actual that will reach its callee as an address gets a local
+of the coroutine, and `markAddressTaken` pins that local to the frame like any
+other address taken of a local. Regression test:
+`tests/nimony/valgrind/tpassive_openarray.nim` — in the valgrind category,
+because reading a dead stack slot is only *sometimes* wrong output. This
+layer's signatures are back to plain `openArray`.
+
+Found the slow way. A chunked body came out as garbage while the chunk
+*sizes* were right, which is what pointed at the parameter rather than the
+framing: the lengths were being read correctly from the same object whose
+pointer was not.
+
+### And three ring bugs (fixed)
+
+`tconn` is the first thing in the tree that drives the ring hard enough to be
+a test of it, and it found that the io_uring backend had never really run.
+Three separate defects, each hiding the next:
+
+**A raise that was not one.** `raiseOSError(osLastError(), ...)` maps an errno
+to an `ErrorCode`, and errno `0` maps to `Success` — raising which is a no-op.
+So a `.noreturn` proc *returned*, into a caller that had already established
+its call failed. `io_uring_setup` returning `-1` therefore travelled on as a
+file descriptor, `mmap` on it returned `MAP_FAILED`, and `newRing` wrote
+through that: a segfault during module initialisation, from what should have
+been a clean fall back to epoll. `raiseOSError` now reports `Failure` rather
+than nothing when the code it is handed is zero.
+
+Errno was zero because `posix.errno` is not libc's. Under the default
+`-d:nimNativeIo` it reads a module-local variable that only posix.nim's own
+freestanding wrappers maintain, while `syscall` and `mmap` are bare `importc`s
+into libc. `ioring/backends/poll.nim` had already been caught by this and says
+so at length; `posix/io_uring.nim` now reads libc's errno the same way.
+
+**A `Params` nobody zeroed.** `io_uring_setup` rejects a `Params` whose `resv`
+words are non-zero, and it was allocated with `alloc`. So the ring came up or
+did not according to what the allocator last held there — which is why the
+crash needed a program with a warm heap and never reproduced in a small one.
+
+**Completions applied to the wrong op.** A slot is recycled the moment its op
+completes, and an op can complete *locally* while the kernel is still working
+on it: a blown deadline expires it from the lane's heap, and `closeFd` frees
+its slot. The CQE that arrives afterwards named a slot holding an unrelated
+op — and completing it freed a slot that was already free, so its index went
+onto the freelist twice and two later ops shared one slot. One of them could
+then never complete, which is how this surfaced as a *hang* rather than as a
+wrong result. The arena has carried a generation counter all along for exactly
+this; `user_data` now carries it next to the slot index, and a CQE whose
+generation does not match is dropped.
+
+The kernel still owning an op we have stopped waiting for is a hazard in its
+own right — it may write into that op's buffer afterwards — so the two places
+that complete an op locally now take it back: `closeFd` submits an
+`ASYNC_CANCEL` for the fd (`iouringForgetFd`, whose whole point this is and
+which had been a `discard`), and a blown deadline cancels its own op through
+the `gCancelInFlight` hook. Per-SQE `link_timeout` remains the better answer
+and is still §7.2's next step; this makes the interim sound rather than
+merely usually-fine.
+
+One thing the first defect had been hiding all along: `teardown` unmapped
+lengths it recomputed from `Params`, and they did not match what `newRing`
+had mapped. A short munmap is a *legal partial* unmap, so it leaked a page per
+ring and said nothing — and a wrong one would have been silent too, because
+`uringUnmap` raised into the same void. Each ring now records the byte length
+it was mapped with. (The SQ ring's array holds `__u32` indices, not pointers;
+sizing it for pointers is what left room for the off-by-one that wrote one
+entry past its end.)
+
+And two things about the tests rather than the code. `tconn`'s
+`awaitFlag` bounded its wait with a spin count, which is only a proxy for
+time: 200M iterations is somewhere between 40ms and 60ms depending on the
+machine, and the idle-connection block is waiting on a 40ms deadline — so it
+failed about half the time with "a passive chain never finished" when nothing
+had gone wrong. It is a wall-clock budget now. And the tag pool is
+process-global while a joined group is one process, so each test registering
+for itself made the first member's init decide what ids the rest saw;
+`tests/nimony/http/httptags.nim` is the one place that registers, which is the
+shape §1 prescribes for an application anyway.
+
+## 8. Open
+
+- The exact tag vocabulary: which headers are worth a tag, and which header
+  values are worth parsing into tags. Currently `Connection`,
+  `Transfer-Encoding` and `Content-Encoding` resolve their values.
+- Splitting list-valued headers at parse time. The tree already represents
+  `(accept "a" "b")` and the serializer writes it back as `a, b`, but the
+  parser stores one line as one value — splitting only some headers on commas
+  (never `Date`, never `Set-Cookie`) is a decision worth making deliberately.
+- Structured header values — `Content-Type`'s parameters, `Accept`'s q-values —
+  are stored as one string today. They are the natural next thing to give
+  sub-structure to, and the tree already has room for it.
+- Client-side correlation: a `ReqId` returned by `send`, matched by
+  `ResponseEvent`, so pipelined or multiplexed requests can be told apart.
+- Whether one `HttpLoop` type serves both directions or client and server get
+  their own.
+- Whether cancellation stays a runtime concern that ioring implements, or wants
+  the language-level support the reserved `CoroutineBase.callee` field was set
+  aside for. An HTTP server is the workload that will force the answer.
+
+  What the runtime can do on its own is close OS resources; what it cannot do
+  is unwind whatever the application built on top of one, and a `close()` lever
+  handed to a user has to reach the innermost child for the error to propagate
+  outwards the way an exception does. Today nothing calls `close` except a
+  deadline expiring, which surfaces as `TimeoutError` and is caught the same
+  way anything else is — bottom to top.
+
+  **`.passive` will not imply `.raises`.** The suggestion was that a cancellable
+  passive proc can always raise `CancelError`, so the pragma may as well be
+  implied; it will not be. Most passive procs cannot raise, and saying so is
+  worth more than the annotation costs — `.raises` goes on the ones that park
+  on something with a deadline, because those are the ones that can time out.
+  A blanket implication would make the effect say nothing.
+
+### A hazard to settle first
+
+In `readAsync(fd, buf, len) {.passive.}`, `addr result` points into the
+*caller's* frame. If the caller is passive that frame is heap-allocated and
+survives the suspension. If a **regular** proc calls a parking passive proc,
+the frame is a stack local, `complete()` returns on park so the stack can
+unwind, and the later resume writes into a dead frame.
+
+Either the rule is "everything from the pool entry point down is passive" — in
+which case `main` above must be `{.passive.}`, as written — or a regular caller
+of a parking passive proc should be rejected outright. This is a question about
+the CPS model, not about HTTP, but HTTP is where it bites.

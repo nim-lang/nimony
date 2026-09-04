@@ -46,8 +46,8 @@ else:
     assert send(d, m2.toCString, 1, MSG_NOSIGNAL) == 1
     var r1 = default(array[8, char])
     var r2 = default(array[8, char])
-    discard submitRead(a, addr r1[0], 8)
-    discard submitRead(c, addr r2[0], 8)
+    discard submitRead(a, addr r1[0], 8, never)
+    discard submitRead(c, addr r2[0], 8, never)
     let got = drain(2)
     echo "two-reads got=", got, " r1=", r1[0], " r2=", r2[0]
     closeFd(a); closeFd(b); closeFd(c); closeFd(d)
@@ -59,8 +59,8 @@ else:
     let (a, b) = mkPair()
     var outb = "X"
     var inb = default(array[8, char])
-    discard submitWrite(a, outb.toCString, 1)
-    discard submitRead(a, addr inb[0], 8)
+    discard submitWrite(a, outb.toCString, 1, never)
+    discard submitRead(a, addr inb[0], 8, never)
     var y = "Y"
     assert send(b, y.toCString, 1, MSG_NOSIGNAL) == 1
     var wrote = 0
@@ -84,8 +84,8 @@ else:
     let (a, b) = mkPair()
     var outb = "Z"
     var inb = default(array[8, char])
-    discard submitWrite(a, outb.toCString, 1)
-    discard submitRead(a, addr inb[0], 8)
+    discard submitWrite(a, outb.toCString, 1, never)
+    discard submitRead(a, addr inb[0], 8, never)
     var wrote = -1
     while wrote < 0:
       let n = waitCompletions(comps)

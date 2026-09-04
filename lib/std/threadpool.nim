@@ -57,6 +57,11 @@ var
   stopFlag: bool # accessed atomically
   workerCount* = 0
   gReactor*: proc(timeoutMs: int): bool {.nimcall.} = poolPollIo
+var gReactorWaits* = false
+  ## Does `gReactor(ms)` actually sleep for up to `ms`? Set from the I/O
+  ## backend (see `BackendRelays.waits`). While it is false an idle worker has
+  ## to do the sleeping itself, because a reactor that only peeks would
+  ## otherwise leave the loop spinning on a core.
 var threadIdx* {.threadvar.}: int
 
 # --- Submit / dequeue ---
@@ -226,7 +231,10 @@ proc workerLoop(arg: pointer) {.nimcall.} =
     let busy = drainOnce(threadIdx)
     # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
     let eventFired = gReactor(if busy: 0.cint else: 1.cint)
-    if not eventFired and not busy:
+    if not eventFired and not busy and not gReactorWaits:
+      # Only when the reactor did not wait for us. Behind one that did, this
+      # nap is the difference between noticing a completion when it arrives
+      # and noticing it up to a millisecond later.
       const timeoutMs = 1
       when defined(windows):
         sleep(timeoutMs.uint32)

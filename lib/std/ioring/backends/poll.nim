@@ -36,7 +36,10 @@ proc armEventsForFd*(fd: cint): IoEvents =
       # Arming both regardless would wake a read-waiter on writability, and a
       # oneshot op re-armed on every spurious wake is a busy loop.
       result = result + gSlots[lane].slots[j].op.pollMask
-    of opNop:
+    of opConnect:
+      # A non-blocking connect reports its outcome as writability.
+      result.incl evWrite
+    of opNop, opTimeout:
       discard
 
 const ArmFailed* = -1
@@ -53,16 +56,56 @@ proc failPendingForFd*(fd: cint) =
 proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
   ## Arm `fd` for every op pending on it, including the one just allocated by
   ## the caller (`allocSlot` has already linked it into the fd's list).
+  ##
+  ## An op with no fd has nothing to arm, and arming anyway is not merely
+  ## useless — the arena lists ops by fd, so every fd-less op shares the `-1`
+  ## bucket. On epoll, `epoll_ctl` on `-1` fails with EBADF, which is read as
+  ## "this fd will never deliver readiness" and fails *every* op in the
+  ## bucket: one nop would complete every pending timer with an error. On
+  ## kqueue the arm silently does nothing instead, so the same nop hangs
+  ## forever. Neither is a bug the caller can do anything about, so fd-less
+  ## ops do not come here at all.
+  if fd < 0: return
   if not reArmEvent(fd, armEventsForFd(fd), alreadyRegistered):
     failPendingForFd(fd)
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen
+  from std/posix/posix import SockLen, EINPROGRESS, pcall
+
+  # No errno anywhere below. Every call the ring makes goes through
+  # `posix.pcall`, which answers the raw Linux convention — the result, or
+  # `-errno` — so a failure is a value the completion carries rather than a
+  # global read at the right moment. That is also why the completions report
+  # the actual error now instead of a flat `-1`.
 
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
   proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
+  proc getsockopt(s: cint; level, optname: cint; val: pointer;
+                  vlen: ptr SockLen): cint {.importc: "getsockopt".}
+  proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "connect".}
+
+  const
+    SOL_SOCKET = (when defined(macosx): 0xFFFF.cint else: 1.cint)
+    SO_ERROR = (when defined(macosx): 0x1007.cint else: 4.cint)
+
+  proc startConnect*(fd: cint; idx: int): bool =
+    ## Kick off a non-blocking connect on the op in slot `idx`. True when the
+    ## attempt is under way and the poller should watch for writability.
+    ##
+    ## False means it is already over — and then this completes the slot,
+    ## because nothing else will: an op that is never armed gets no readiness
+    ## event, so leaving it here would park the caller until its deadline no
+    ## matter how the connect actually went.
+    let s = addr gSlots[ioLane()].slots[idx]
+    let r = int pcall(posixConnect(fd, addr s.op.sockAddr, s.op.sockAddrLen))
+    if r == 0:
+      complete(idx, 0)               # connected outright: loopback often does
+      return false
+    if r == -int(EINPROGRESS): return true
+    complete(idx, r)                 # refused, unreachable, bad address …
+    result = false
 
   proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
     ## Dispatch every pending op on `fd` whose direction actually matches the
@@ -80,17 +123,14 @@ when defined(posix):
       case s.op.kind
       of opRead:
         if evRead in firedEvents:
-          let r = posixRead(fd, s.op.buf, s.op.len)
-          complete(j, if r >= 0: r else: -1)
+          complete(j, int pcall(posixRead(fd, s.op.buf, s.op.len)))
       of opWrite:
         if evWrite in firedEvents:
-          let r = posixWrite(fd, s.op.buf, s.op.len)
-          complete(j, if r >= 0: r else: -1)
+          complete(j, int pcall(posixWrite(fd, s.op.buf, s.op.len)))
       of opAccept:
         if evRead in firedEvents:
-          var addrLen = s.op.acceptLen
-          let clientFd = posixAccept(fd, addr s.op.acceptAddr, addr addrLen)
-          complete(j, if clientFd >= 0: clientFd else: -1)
+          var addrLen = s.op.sockAddrLen
+          complete(j, int pcall(posixAccept(fd, addr s.op.sockAddr, addr addrLen)))
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide
@@ -103,7 +143,20 @@ when defined(posix):
         let hit = firedEvents * s.op.pollMask
         if hit != {}:
           complete(j, toEventMask(hit))
-      of opNop:
+      of opConnect:
+        if evWrite in firedEvents:
+          # Writability only says the attempt finished. `SO_ERROR` says how:
+          # a refused connection is just as writable as an accepted one.
+          var err: cint = 0
+          var elen = SockLen(sizeof(err))
+          let g = int pcall(getsockopt(fd, SOL_SOCKET, SO_ERROR, addr err, addr elen))
+          if g < 0:
+            complete(j, g)
+          elif err != 0:
+            complete(j, -int(err))
+          else:
+            complete(j, 0)
+      of opNop, opTimeout:
         discard
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
