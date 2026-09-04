@@ -30,7 +30,7 @@ template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind
   dest.addParRi()
 
 proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: NifLineInfo;
-                             option = FindAll): int =
+                             option = FindAll; skipRoutines = false): int =
   result = 0
   let ignoreStyle = IgnoreStyleFeature in c.features
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -39,17 +39,18 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
       for foreignName in stylesOfIface(iface[], realName, ignoreStyle):
         let candidates = addr iface[].getOrQuit(foreignName)
         for defId in candidates[]:
-          # when resolving a caller `fn`, keep re-exported modules out of the
-          # sym choice so `foo[...]` binds the proc, not a same-named module
-          # (nim-lang/nimony#2130):
-          var callable = true
-          if option == FindOverloads:
+          if skipRoutines or option == FindOverloads:
             let res = tryLoadSym(defId)
             if res.status == LacksNothing:
-              callable = isValidFnHead(res.decl.symKind)
-          if callable:
-            inc result
-            dest.addSymUse(defId, info)
+              if skipRoutines and isRoutine(res.decl.symKind):
+                continue
+              # when resolving a caller `fn`, keep re-exported modules out of the
+              # sym choice so `foo[...]` binds the proc, not a same-named module
+              # (nim-lang/nimony#2130):
+              if option == FindOverloads and not isValidFnHead(res.decl.symKind):
+                continue
+          inc result
+          dest.addSymUse(defId, info)
 
 proc addSymUse*(dest: var TokenBuf; s: Sym; info: NifLineInfo) =
   dest.addSymUse(s.name, info)
@@ -147,9 +148,16 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
           inc result
           if sym.kind.isNonOverloadable:
             inc nonOverloadable
-    if result == 1 and (option == InnerMost or
-        (option == FindOverloads and nonOverloadable == 1)):
-      # unambiguous local symbol found
+    if result == 1 and option == InnerMost:
+      # A single non-overloadable binding (let, param, enum field, …) shadows
+      # everything outside this scope. A lone routine may still clash with a
+      # non-routine import (enum field, const, type, …): merge those without
+      # walking to outer scopes. Imported routines are still shadowed.
+      if nonOverloadable == 1:
+        return
+      inc result, considerImportedSymbols(c, dest, identifier, info, skipRoutines = true)
+      return
+    elif result == 1 and option == FindOverloads and nonOverloadable == 1:
       # in case of FindOverloads, if symbol is overloadable, consider other overloads
       return
     it = it.up
