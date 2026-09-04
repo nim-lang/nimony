@@ -168,6 +168,12 @@ to sit inline in a token, so it is usually small or untouched, and one small
 allocation buys the certainty that no id from the previous message is still
 reachable. This needs nothing from nifcore.
 
+`Socket` (§6) is move-only for the same reason and one more: a message that is
+copied wastes an allocation, but a socket that is copied has two owners of one
+file descriptor, and whichever is destroyed first closes it under the other.
+Unlike `HttpMsg` it has a destructor, because unlike a buffer a descriptor is
+not reclaimed by anything else.
+
 
 ## 2. The application pulls events
 
@@ -327,7 +333,14 @@ the wait is bounded by whatever is on top of it — `epoll_wait(waitMs)` on the
 readiness backends, an `io_uring_enter` carrying a `timespec` (`ENTER_EXT_ARG`,
 Linux 5.11) on the ring. All three answer "how long may I sleep" from the same
 structure, and the kernel holds at most one timeout per lane no matter how many
-ops are in flight.
+ops are in flight. A timer op needs no SQE at all: the heap already knows when
+it is due, so it takes a slot and nothing else, and the ring is never asked to
+hold a timeout per connection.
+
+One clock read per poll survives that: the `timespec` handed to `ENTER_EXT_ARG`
+is relative, so the loop asks `monoNow()` to turn the heap's absolute top into a
+duration. `IORING_ENTER_ABS_TIMER` (6.12) takes the absolute deadline directly
+and would retire it. See the list at the end of this section.
 
 The tempting alternative is io_uring's `link_timeout`, which attaches an
 absolute deadline to the preceding SQE — "this read, with this deadline", one
@@ -375,6 +388,16 @@ already documents that ops held by another lane are not cancelled and leak
 their slots. Shared-nothing avoids that entirely. Distribution is by
 `SO_REUSEPORT`, or by handing a connection off exactly once at accept time.
 
+Pinning a lane to a core only pays if the NIC agrees about which core a
+connection belongs to: one RX queue per lane, that queue's IRQ affine to that
+lane's core, and RSS steering a flow to the same queue for its lifetime.
+Otherwise the packet is received on one core and the connection processed on
+another, and the cache line it cost to avoid a lock is spent anyway. That is a
+deployment property rather than a library one — it is `ethtool` and
+`/proc/irq`, not code — but the lane count has to be chosen with it in mind,
+so it belongs in whatever runs a server rather than being left implicit.
+(Thanks to @blackmius.)
+
 
 ## 5. Relays sit below the application
 
@@ -391,13 +414,49 @@ Two injection seams, both invisible to the code in §2:
 
 | Module | Contains |
 |---|---|
+| `std/socket` | a buffered, deadline-carrying connection. No HTTP. **Done**. |
 | `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
 | `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request and response heads. |
 | `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
-| `std/http/httpconn` | passive read/write on ioring, buffering, chunked framing, keep-alive. **Done**. |
+| `std/http/httpconn` | HTTP framing and keep-alive on a `Socket`. **Done**. |
 | `std/httpclient`, `std/httpserver` | the loops of §2. |
 
 Mirrors `std/ioring.nim` plus `std/ioring/`.
+
+### The layer under HTTP
+
+`httpconn` grew a read buffer that compacts rather than reallocates, a ceiling
+so a peer cannot pick our memory use, one deadline that every operation runs
+under and that a caller can tighten but never widen, and a write that loops
+because a short write is the peer's window and not our business. None of that
+is HTTP, and it is `std/socket` now. `HttpConn` is a `Socket` plus the three
+things HTTP actually adds: where a head ends, where a body ends, and what may
+follow what.
+
+The read side is deliberately two halves rather than a `readLine`-shaped API:
+`fill` puts bytes in, `peek` hands out an `openArray` view of what has not been
+consumed, and `consume` says how much of it a parser used. So a parser is given
+the bytes where they already are — it does not slice, copy or own anything —
+and what it did not use stays put for the next `fill` to extend. That is what
+makes a head arriving one byte at a time cost O(n) rather than O(n²), and it is
+why `httpparse` never needed a buffer type of its own.
+
+A `Socket` owns its fd and closes it in its destructor, the way a `File` owns
+its handle: the descriptor is the resource, and the leak that mattered was
+never the buffers but the fd on the error path nobody wrote. That makes it
+move-only — two sockets over one fd is two owners of one descriptor.
+
+The suggestion this answers went further: a vtable-based `Stream` with
+`Readable` / `Writable` / `Seekable` concepts, `TcpConn` as a `DuplexStream`,
+`HttpConn` on top of that. The concepts are the right shape and are what a TLS
+layer will want, since §5's `TransportRelays` is a vtable in all but name and
+should be one of these instead. What is deliberately *not* here yet is the
+indirection: there is one implementation, and a dynamic dispatch on every
+`fill` of a plaintext socket is a cost paid for a second implementation that
+does not exist. `Socket` is a concrete type with the shape a `Readable` /
+`Writable` pair would have, so making it one is a signature change rather than
+a rewrite — and the right time is when TLS lands and there is a second thing to
+dispatch to. (Thanks to @blackmius.)
 
 
 ## 7. Prerequisites
@@ -430,20 +489,39 @@ None of this is reachable until the following exist.
    the pool's 1ms heartbeat and out to its actual earliest deadline.
 3. Multishot accept. `submitAccept` is oneshot, so a busy listener pays one
    submission per connection; io_uring has `accept_multishot`.
-4. DNS. `getaddrinfo` blocks and io_uring has no resolver, so it needs
-   offloading to a pool thread.
+4. `IORING_ENTER_ABS_TIMER` (6.12), so the ext-arg `timespec` carries the
+   heap's absolute deadline instead of a duration computed from a
+   `clock_gettime` on every poll. The heap already holds the right number; the
+   loop converts it only because the old ABI wanted a relative one.
+5. Sockets through the ring. `socket(2)` and `setsockopt(2)` are still direct
+   syscalls on the submitting thread; io_uring has `OP_SOCKET` and
+   `OP_CMD_SOCK` for both. (Thanks to @blackmius.)
+6. DNS. `getaddrinfo` blocks and io_uring has no resolver. Offloading it to a
+   pool thread is the cheap answer; writing the resolver is the better one and
+   is not much code — one UDP datagram out, one back, plus `/etc/hosts` and
+   `/etc/resolv.conf` — and it is the only version that can carry a
+   `Deadline`, which is the whole point of this layer. libc's resolver cannot
+   be given one and cannot be cancelled, so a pool thread parked in
+   `getaddrinfo` stays parked. (Thanks to @blackmius.)
 
 **Elsewhere**
 
-5. `std/uri` does not exist.
-6. `std/monotimes` needs a `CLOCK_BOOTTIME` path.
+7. `std/uri` does not exist.
+8. `std/monotimes` needs a `CLOCK_BOOTTIME` path.
 
 
 ### Parsing, in practice
 
-Every proc in `httpparse` is `parse(buf, i) -> int`: read `buf` from `i`, answer
-the index just past what was consumed, or `ParseIncomplete` / `ParseBad`. The
-head is inspected in place — no slicing, no substrings — so the only bytes
+Every proc in `httpparse` is `parse(buf, …) -> int`: read `buf` from the front,
+answer how many bytes were consumed, or `ParseIncomplete` / `ParseBad`. There is
+no index parameter — an `openArray` already carries a start, so a caller
+part-way through a buffer hands over `toOpenArray(buf, j, buf.len-1)`, which is
+O(1), and adds the answer to `j`. What a proc matched is `buf`'s first `result`
+bytes, which is also why none of them needs an out-parameter to report where the
+match ended: the two would be the same number, and two names for one number is
+one of them that can be wrong.
+
+The head is inspected in place — no slicing, no substrings — so the only bytes
 copied are the ones that end up in the message, and they are copied once,
 straight from the read buffer into that message's pool. `nifcore` grew an
 `openArray` overload of `addStrLit` for that, and `lookupHeader` folds ASCII
@@ -452,7 +530,10 @@ case into a stack buffer.
 Resumability costs the caller one integer. A head is parsed only when complete,
 so `HeadScanner` looks for the blank line that ends it and remembers where it
 stopped; appending more bytes and asking again resumes instead of rescanning,
-which is what keeps a head arriving one byte at a time from costing O(n²).
+which is what keeps a head arriving one byte at a time from costing O(n²). That
+position is relative to the front of the *unconsumed* bytes — `Socket.peek` —
+so compacting the read buffer moves the bytes and the position together and
+there is nothing to fix up.
 
 The tag lookup does not use the pool's hash table. The vocabulary is fixed by
 the time a connection is served and under 512 entries, so bucketing tags by
@@ -460,11 +541,14 @@ name length leaves a handful of
 candidates that a byte compare settles — no hashing, and nothing that needs a
 `string` to ask with.
 
-Serializing is the same shape in reverse: `write(dest, i, …) -> int` answers
-the index just past what it wrote, or `WriteFull`. Writers are all-or-nothing,
-so a refused call leaves nothing to unpick — the caller retries from the same
-`i` with more room, and `headLen` says exactly how much room that is, so the
-usual path never retries at all. Nothing is built in a temporary and copied
+Serializing keeps its `i`, because there it is not a restatement of where
+`dest` begins — it is the cursor a caller threads from one writer to the next.
+`write(dest, i, …) -> int` answers the index just past what it wrote, or
+`WriteFull`, **and passes a negative `i` through untouched**, so a head is
+written as the chain it reads as and one test at the end of it says whether the
+whole thing fitted. Writers are all-or-nothing, so a refused call leaves nothing
+to unpick — the caller retries from the same `i` with more room, and `headLen`
+says exactly how much room that is, so the usual path never retries at all. Nothing is built in a temporary and copied
 over: names are borrowed from the tag pool, values from the message's own
 pool, and integers are formatted straight into `dest`.
 
@@ -631,6 +715,20 @@ shape §1 prescribes for an application anyway.
 - Whether cancellation stays a runtime concern that ioring implements, or wants
   the language-level support the reserved `CoroutineBase.callee` field was set
   aside for. An HTTP server is the workload that will force the answer.
+
+  What the runtime can do on its own is close OS resources; what it cannot do
+  is unwind whatever the application built on top of one, and a `close()` lever
+  handed to a user has to reach the innermost child for the error to propagate
+  outwards the way an exception does. Today nothing calls `close` except a
+  deadline expiring, which surfaces as `TimeoutError` and is caught the same
+  way anything else is — bottom to top.
+
+  **`.passive` will not imply `.raises`.** The suggestion was that a cancellable
+  passive proc can always raise `CancelError`, so the pragma may as well be
+  implied; it will not be. Most passive procs cannot raise, and saying so is
+  worth more than the annotation costs — `.raises` goes on the ones that park
+  on something with a deadline, because those are the ones that can time out.
+  A blanket implication would make the effect say nothing.
 
 ### A hazard to settle first
 
