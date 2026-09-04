@@ -8,6 +8,12 @@
 # not fit. Writers are all-or-nothing — a failed call leaves nothing the
 # caller has to unpick, it just retries from the same `i` with more room.
 #
+# `i` is a cursor, not a redundant restatement of where `dest` begins: it is
+# what a caller threads from one writer to the next, and **a negative `i` is
+# passed through untouched**. So a chain of writes is written as a chain, and
+# the one test at the end of it says whether the whole head fitted — rather
+# than every link restating the same question about the previous one.
+#
 # Nothing is built up in a temporary and copied over. Header names are
 # borrowed from the tag pool, values are borrowed from the message's own pool,
 # and integers are formatted straight into `dest`. `headLen` says exactly how
@@ -24,7 +30,7 @@ const
 # ------------------------------------------------------------- primitives --
 
 proc writeByte*(dest: var openArray[char]; i: int; c: char): int =
-  if i >= dest.len: return WriteFull
+  if i < 0 or i >= dest.len: return WriteFull
   dest[i] = c
   result = i + 1
 
@@ -137,6 +143,7 @@ proc reasonPhrase*(status: int): string =
 
 proc writeValue(dest: var openArray[char]; i: int; v: Cursor): int =
   ## One header value, whatever shape it is stored in.
+  if i < 0: return i
   case v.kind
   of StrLit:
     if v.isInlineLit:
@@ -172,20 +179,15 @@ proc writeHeaderNode(dest: var openArray[char]; i: int; c: Cursor): int =
   if c.cursorTagId == tag(tXhdr):
     # (xhdr "name" "value") — the name is a payload, not a tag.
     j = writeValue(dest, i, body)
-    if j < 0: return j
     body.skip
   else:
     j = writeBytes(dest, i, spelling(c.cursorTagId))
-    if j < 0: return j
   j = writeBytes(dest, j, ": ")
-  if j < 0: return j
   var first = true
   while body.hasMore:
     if not first:
       j = writeBytes(dest, j, ", ")
-      if j < 0: return j
     j = writeValue(dest, j, body)
-    if j < 0: return j
     first = false
     body.skip
   result = writeCrLf(dest, j)
@@ -231,9 +233,7 @@ proc writeChunkHeader*(dest: var openArray[char]; i: int; size: int): int =
   ## `SIZE CRLF`. The data follows, then its own CRLF — see `writeChunkEnd`.
   ## No extensions are ever written: nothing reads them, and every byte in
   ## this line is a byte another parser has to agree with us about.
-  let j = writeHex(dest, i, size)
-  if j < 0: return j
-  result = writeCrLf(dest, j)
+  result = writeCrLf(dest, writeHex(dest, i, size))
 
 proc writeChunkEnd*(dest: var openArray[char]; i: int): int {.inline.} =
   ## The CRLF that closes a chunk's data.
@@ -243,9 +243,7 @@ proc writeLastChunk*(dest: var openArray[char]; i: int): int =
   ## `0 CRLF CRLF` — the zero-length chunk and an empty trailer section.
   ## Written together because a body that stops after the zero chunk is a
   ## body the peer is still waiting on.
-  var j = writeChunkHeader(dest, i, 0)
-  if j < 0: return j
-  result = writeCrLf(dest, j)
+  result = writeCrLf(dest, writeChunkHeader(dest, i, 0))
 
 proc chunkOverhead*(size: int): int =
   ## Bytes `writeChunkHeader` + `writeChunkEnd` add around `size` bytes of
@@ -262,29 +260,20 @@ proc chunkOverhead*(size: int): int =
 proc writeRequestHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
   ## `METHOD SP target SP version CRLF`, the headers, and the blank line.
   assert m.isRequest, "writeRequestHead on a response"
-  var j = writeBytes(dest, i, spelling(m.methodOf))
-  if j < 0: return j
-  j = writeByte(dest, j, ' ')
-  if j < 0: return j
-
   # The target is the message's second child; reach it through a cursor so it
   # is borrowed rather than copied out.
   var root = m.rootCursor()
   var body = root.sub()
   body.skip                                # (METHOD)
-  j = writeValue(dest, j, body)
-  if j < 0: return j
 
+  var j = writeBytes(dest, i, spelling(m.methodOf))
   j = writeByte(dest, j, ' ')
-  if j < 0: return j
+  j = writeValue(dest, j, body)
+  j = writeByte(dest, j, ' ')
   j = writeBytes(dest, j, versionText(m.versionOf))
-  if j < 0: return j
   j = writeCrLf(dest, j)
-  if j < 0: return j
-
   for c in m.headerNodes:
     j = writeHeaderNode(dest, j, c)
-    if j < 0: return j
   result = writeCrLf(dest, j)
 
 proc writeResponseHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
@@ -292,21 +281,13 @@ proc writeResponseHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
   assert m.isResponse, "writeResponseHead on a request"
   let status = m.statusOf
   var j = writeBytes(dest, i, versionText(m.versionOf))
-  if j < 0: return j
   j = writeByte(dest, j, ' ')
-  if j < 0: return j
   j = writeInt(dest, j, status)
-  if j < 0: return j
   j = writeByte(dest, j, ' ')
-  if j < 0: return j
   j = writeBytes(dest, j, reasonPhrase(status))
-  if j < 0: return j
   j = writeCrLf(dest, j)
-  if j < 0: return j
-
   for c in m.headerNodes:
     j = writeHeaderNode(dest, j, c)
-    if j < 0: return j
   result = writeCrLf(dest, j)
 
 proc writeHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =

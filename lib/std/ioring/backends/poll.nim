@@ -71,21 +71,13 @@ proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, EINPROGRESS
+  from std/posix/posix import SockLen, EINPROGRESS, pcall
 
-  # `posix.errno` is not usable here. Under `-d:nimNativeIo` it returns a
-  # module-local variable that only that module's freestanding syscall
-  # wrappers maintain (posix.nim says so itself), while everything the ring
-  # calls — connect, read, write, accept — is a bare `importc` into libc and
-  # sets *libc's* errno. Reading the wrong one is not a wrong error message,
-  # it is a wrong branch: a failed connect reported `0` and completed as a
-  # success. The ring already depends on libc for those calls, so it reads
-  # libc's errno the way libc exposes it.
-  when defined(osx):
-    proc errnoLocation(): ptr cint {.importc: "__error", sideEffect.}
-  else:
-    proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
-  proc sysErrno*(): cint {.inline.} = errnoLocation()[]
+  # No errno anywhere below. Every call the ring makes goes through
+  # `posix.pcall`, which answers the raw Linux convention — the result, or
+  # `-errno` — so a failure is a value the completion carries rather than a
+  # global read at the right moment. That is also why the completions report
+  # the actual error now instead of a flat `-1`.
 
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
@@ -107,13 +99,12 @@ when defined(posix):
     ## event, so leaving it here would park the caller until its deadline no
     ## matter how the connect actually went.
     let s = addr gSlots[ioLane()].slots[idx]
-    let r = posixConnect(fd, addr s.op.sockAddr, s.op.sockAddrLen)
+    let r = int pcall(posixConnect(fd, addr s.op.sockAddr, s.op.sockAddrLen))
     if r == 0:
       complete(idx, 0)               # connected outright: loopback often does
       return false
-    let e = sysErrno()
-    if e == EINPROGRESS: return true
-    complete(idx, -int(e))           # refused, unreachable, bad address …
+    if r == -int(EINPROGRESS): return true
+    complete(idx, r)                 # refused, unreachable, bad address …
     result = false
 
   proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
@@ -132,17 +123,14 @@ when defined(posix):
       case s.op.kind
       of opRead:
         if evRead in firedEvents:
-          let r = posixRead(fd, s.op.buf, s.op.len)
-          complete(j, if r >= 0: r else: -1)
+          complete(j, int pcall(posixRead(fd, s.op.buf, s.op.len)))
       of opWrite:
         if evWrite in firedEvents:
-          let r = posixWrite(fd, s.op.buf, s.op.len)
-          complete(j, if r >= 0: r else: -1)
+          complete(j, int pcall(posixWrite(fd, s.op.buf, s.op.len)))
       of opAccept:
         if evRead in firedEvents:
           var addrLen = s.op.sockAddrLen
-          let clientFd = posixAccept(fd, addr s.op.sockAddr, addr addrLen)
-          complete(j, if clientFd >= 0: clientFd else: -1)
+          complete(j, int pcall(posixAccept(fd, addr s.op.sockAddr, addr addrLen)))
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide
@@ -161,8 +149,9 @@ when defined(posix):
           # a refused connection is just as writable as an accepted one.
           var err: cint = 0
           var elen = SockLen(sizeof(err))
-          if getsockopt(fd, SOL_SOCKET, SO_ERROR, addr err, addr elen) < 0:
-            complete(j, -1)
+          let g = int pcall(getsockopt(fd, SOL_SOCKET, SO_ERROR, addr err, addr elen))
+          if g < 0:
+            complete(j, g)
           elif err != 0:
             complete(j, -int(err))
           else:

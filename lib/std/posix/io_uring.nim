@@ -527,18 +527,16 @@ const
 
 proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
 
-# `posix.errno` is not usable here, for the reason `ioring/backends/poll.nim`
-# spells out at length: under the default `-d:nimNativeIo` it reads a
-# module-local variable that only posix.nim's own freestanding wrappers
-# maintain, while every call below — `syscall`, `mmap`, `munmap` — is a bare
-# `importc` into libc and sets *libc's* errno. Reading the wrong one is not a
-# wrong message, it is a wrong control flow: every failure here reported `0`,
-# which maps to `Success`, so `raiseOSError` raised nothing at all and
-# `setup`'s `-1` fd travelled on into `mmap`. `newRing` then wrote through the
-# `MAP_FAILED` it got back, and the ioring init that is supposed to fall back
-# to epoll segfaulted instead.
-proc errnoLocation(): ptr cint {.importc: "__errno_location", sideEffect.}
-proc sysErrno(): cint {.inline.} = errnoLocation()[]
+# There is no errno here. A Linux syscall reports failure by *returning*
+# `-errno`, which is the whole convention this file talks to the kernel in;
+# `posix.pcall` normalizes the libc wrapper's `-1`-plus-a-global back to it, so
+# the error is in the result and nowhere else. (Reading a global was not merely
+# uglier: `posix.errno` under the default `-d:nimNativeIo` is a variable that
+# only posix.nim's own freestanding wrappers maintain, while `syscall`/`mmap`/
+# `munmap` here go through libc — so every failure reported `0`, which maps to
+# `Success`, `raiseOSError` raised nothing, `setup`'s `-1` fd travelled on into
+# `mmap`, and `newRing` wrote through the `MAP_FAILED` it got back. The ioring
+# init that is supposed to fall back to epoll segfaulted instead.)
 
 const
   # Arch-independent since their introduction in Linux 5.1 (io_uring was added
@@ -548,23 +546,24 @@ const
   SYS_io_uring_register = cint(427)
 
 proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} =
-  result = syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
+  result = cint pcall(syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0))
   if result < 0:
-    raiseOSError(OSErrorCode(sysErrno()), "io_uring setup syscall failed")
+    raiseOSError(OSErrorCode(-result), "io_uring setup syscall failed")
 
 proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
             flags: EnterFlags, sig: nil pointer, sz: cint): cint {.raises, tags: [].} =
   ## `sig` points to a kernel sigset (8 bytes on Linux) or is nil.
   var f = flags
-  result = syscall(SYS_io_uring_enter, fd, toSubmit, minComplete,
-                   cast[ptr cint](f.addr)[], sig, sz)
+  result = cint pcall(syscall(SYS_io_uring_enter, fd, toSubmit, minComplete,
+                              cast[ptr cint](f.addr)[], sig, sz))
   if result < 0:
-    raiseOSError(OSErrorCode(sysErrno()), "io_uring enter syscall failed")
+    raiseOSError(OSErrorCode(-result), "io_uring enter syscall failed")
 
 proc register*(fd: cint, op: RegisterOp, arg: nil pointer, nr_args: cint): cint {.raises, tags: [].} =
-  result = syscall(SYS_io_uring_register, fd, cint(op), arg, nr_args, 0, 0)
+  result = cint pcall(syscall(SYS_io_uring_register, fd, cint(op), arg,
+                              nr_args, 0, 0))
   if result < 0:
-    raiseOSError(OSErrorCode(sysErrno()), "io_uring register syscall failed")
+    raiseOSError(OSErrorCode(-result), "io_uring register syscall failed")
 
 # ============= QUEUE ==================
 
@@ -581,13 +580,13 @@ proc uringMap(offset: Off; fd: FileHandle; size: int): pointer {.raises, tags: [
   result = mmap(nil, csize_t(size), PROT_READ or PROT_WRITE, MAP_SHARED or MAP_POPULATE,
                 fd.cint, offset)
   if mmapFailed(result):
-    raiseOSError(OSErrorCode(sysErrno()), "io_uring uringMap failed")
+    raiseOSError(OSErrorCode(mmapErrno(result)), "io_uring uringMap failed")
 
 proc uringUnmap(p: pointer; size: int) {.raises, tags: [].} =
   ## interface to tear down some memory (probably mmap'd)
-  let code = munmap(p, csize_t(size))
+  let code = pcall(munmap(p, csize_t(size)))
   if code < 0:
-    raiseOSError(OSErrorCode(sysErrno()), "io_uring uringUnmap failed")
+    raiseOSError(OSErrorCode(-code), "io_uring uringUnmap failed")
 
 type
   Ring = object of RootObj
@@ -840,11 +839,11 @@ proc submitAndWait*(queue: var Queue; waitNr: uint; ts: nil ptr Timespec): int
   discard queue.sqNeedsEnter(submited, flags)
   var arg = GeteventsArg(sigmask: 0'u64, sigmaskSz: 0'u32, pad: 0'u32,
                          ts: cast[uint64](ts))
-  let r = syscall(SYS_io_uring_enter, queue.fd, submited.cint, waitNr.cint,
-                  cast[ptr cint](flags.addr)[], arg.addr,
-                  cint(sizeof(GeteventsArg)))
+  let r = pcall(syscall(SYS_io_uring_enter, queue.fd, submited.cint, waitNr.cint,
+                        cast[ptr cint](flags.addr)[], arg.addr,
+                        cint(sizeof(GeteventsArg))))
   if r < 0:
-    let e = sysErrno()
+    let e = cint(-r)
     if e == ETIME or e == EINTR or e == EAGAIN or e == EBUSY:
       return 0
     raiseOSError(OSErrorCode(e), "io_uring enter (submit and wait) failed")

@@ -50,18 +50,19 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
     for i in 0..<n:
       let idx = gSlots[lane].allocSlot(buf[i])
       armDeadline(lane, idx)
-      if buf[i].kind == opTimeout:
-        continue          # nothing to arm on: the deadline heap is the wait
-      if buf[i].kind == opNop:
-        complete(idx, 0)  # nothing to wait for either
-        continue
-      if buf[i].kind == opConnect:
+      case buf[i].kind
+      of opTimeout:
+        discard            # nothing to arm on: the deadline heap is the wait
+      of opNop:
+        complete(idx, 0)   # nothing to wait for either
+      of opConnect:
         # Start the attempt here, on the polling thread, so the fd is already
         # connecting by the time we watch it. A connect that finished at once
         # has completed the slot and there is nothing left to arm.
-        if not startConnect(buf[i].fd, idx):
-          continue
-      submitForPoll(buf[i].fd)
+        if startConnect(buf[i].fd, idx):
+          submitForPoll(buf[i].fd)
+      else:
+        submitForPoll(buf[i].fd)
   var kevents {.noinit.}: array[64, KEvent]
   # Sleep no longer than the earliest deadline in this lane, so a timer fires
   # on time instead of on the next poll that happens for another reason.

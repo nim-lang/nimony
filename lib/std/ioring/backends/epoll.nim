@@ -23,24 +23,20 @@ const
 var
   epollFds: seq[cint]
 
-proc fdNotPollable(): bool {.inline.} =
-  ## True when the epoll_ctl that just failed did so because the fd is no longer
-  ## a live pollable descriptor we own: EPERM (a non-pollable type — a regular
-  ## file, e.g. a socket fd closed by its transfer and its number reused by one
-  ## of the process's file opens before this arm ran) or EBADF (already closed).
-  ## Skipping such an fd is correct — it carries no real transfer, so not
-  ## watching it can't stall one — and avoids error spam under multi-threaded
-  ## handler resumption.
+proc fdNotPollable(res: int): bool {.inline.} =
+  ## True when the `epoll_ctl` that returned `res` failed because the fd is no
+  ## longer a live pollable descriptor we own: EPERM (a non-pollable type — a
+  ## regular file, e.g. a socket fd closed by its transfer and its number reused
+  ## by one of the process's file opens before this arm ran) or EBADF (already
+  ## closed). Skipping such an fd is correct — it carries no real transfer, so
+  ## not watching it can't stall one — and avoids error spam under
+  ## multi-threaded handler resumption.
   ##
-  ## Reads `errno`, not the return value: epoll_ctl reports *every* failure as
-  ## -1 and puts the reason in errno, so comparing the result against EPERM/EBADF
-  ## never matched and the fallback below ran (and printed) for every failure.
-  ##
-  ## `sysErrno`, not `posix.errno`: under `-d:nimNativeIo` the latter reads a
-  ## variable that libc calls never touch, so this test silently took the
-  ## wrong branch. See the note in `poll.nim`.
-  let e = sysErrno()
-  result = e == EPERM or e == EBADF
+  ## `res` comes from `pcall`, so it is `-errno` and says *which* failure this
+  ## was. Bare `epoll_ctl` reports every one of them as `-1`, so a test against
+  ## EPERM/EBADF on that never matched and the fallback below ran — and printed
+  ## — for every failure there is.
+  res == -int(EPERM) or res == -int(EBADF)
 
 proc epollReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} =
   let epollFd = epollFds[ioLane()]
@@ -56,12 +52,12 @@ proc epollReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nim
   # occasionally wrong — way to recover the fd on delivery.
   ev.data.`ptr` = cast[pointer](uint(fd))
   let op = if alreadyRegistered: EPOLL_CTL_MOD else: EPOLL_CTL_ADD
-  var res = epoll_ctl(epollFd, op, fd, addr ev)
-  if res != 0 and op == EPOLL_CTL_ADD and not fdNotPollable():
+  var res = int pcall(epoll_ctl(epollFd, op, fd, addr ev))
+  if res != 0 and op == EPOLL_CTL_ADD and not fdNotPollable(res):
     # ADD on an already-present fd → EEXIST (the arena is one poll cycle behind
     # a concurrent submit at worst); fall back to MOD so the fd ends up armed
     # rather than staying a fired, disarmed oneshot.
-    res = epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev)
+    res = int pcall(epoll_ctl(epollFd, EPOLL_CTL_MOD, fd, addr ev))
   # Still failing → this fd will not deliver readiness (both verbs failed, a MOD
   # on a registered fd failed, or it is not pollable at all: EPERM/EBADF).
   # `submitForPoll` fails the ops waiting on it.
@@ -76,18 +72,19 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
       let alreadyRegistered = gSlots[lane].hasPendingForFd(buf[i].fd)
       let idx = gSlots[lane].allocSlot(buf[i])
       armDeadline(lane, idx)
-      if buf[i].kind == opTimeout:
-        continue          # nothing to arm on: the deadline heap is the wait
-      if buf[i].kind == opNop:
-        complete(idx, 0)  # nothing to wait for either
-        continue
-      if buf[i].kind == opConnect:
+      case buf[i].kind
+      of opTimeout:
+        discard            # nothing to arm on: the deadline heap is the wait
+      of opNop:
+        complete(idx, 0)   # nothing to wait for either
+      of opConnect:
         # Start the attempt here, on the polling thread, so the fd is already
         # connecting by the time we watch it. A connect that finished at once
         # has completed the slot and there is nothing left to arm.
-        if not startConnect(buf[i].fd, idx):
-          continue
-      submitForPoll(buf[i].fd, alreadyRegistered)
+        if startConnect(buf[i].fd, idx):
+          submitForPoll(buf[i].fd, alreadyRegistered)
+      else:
+        submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]
   # Sleep no longer than the earliest deadline in this lane.
   let waitMs = waitMillis(lane, timeoutMs)
