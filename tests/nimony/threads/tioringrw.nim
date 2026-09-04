@@ -93,3 +93,10 @@ else:
         if comps[i].op == opWrite: wrote = comps[i].result
     echo "write-only wrote=", wrote
     closeFd(a); closeFd(b)
+    # The read is still in flight, on purpose, so `closeFd` cancels it — and a
+    # cancelled op with no continuation reports itself by pushing to the SHARED
+    # completion queue. Left there it becomes the NEXT test's first completion:
+    # joined with its neighbours, this test used to hand `tpolladd` a stray
+    # `opRead` in the same batch as the probe it was actually waiting for.
+    # Nothing here is waiting for it, so take it back.
+    while pollCompletions(comps) > 0: discard
