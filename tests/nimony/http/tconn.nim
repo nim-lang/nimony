@@ -10,7 +10,7 @@ when defined(windows):
 else:
   # An end-to-end run over a real socket pair, through the ring, with the
   # server and the client each a `.passive` chain resumed by pool workers.
-  import std / [http/httpconn, http/httpmsg, http/httpparse,
+  import std / [http/httpconn, http/httpmsg, http/httpparse, socket,
                 ioring, threadpool, atomics, assertions, syncio]
   import std/posix/posix
   let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
@@ -117,7 +117,7 @@ else:
     submit(delay(client()), 1)
     awaitFlag(serverDone)
     awaitFlag(clientDone)
-    closeFd(a); closeFd(b)
+    # `a` and `b` belong to the two connections now; they close themselves.
 
   # ---- a chunk-framed body, both directions -------------------------------
 
@@ -162,7 +162,7 @@ else:
     submit(delay(chunkReceiver()), 1)
     awaitFlag(serverDone)
     awaitFlag(clientDone)
-    closeFd(a); closeFd(b)
+    # `a` and `b` belong to the two connections now; they close themselves.
 
   # ---- the peer goes away -------------------------------------------------
 
@@ -180,8 +180,7 @@ else:
     closeFd(b)                     # nothing will ever arrive on `a`
     deadFd = a
     submit(delay(readsDeadPeer()), 0)
-    awaitFlag(serverDone)
-    closeFd(a)
+    awaitFlag(serverDone)           # `a` belongs to the connection
 
   # ---- the peer goes quiet ------------------------------------------------
 
@@ -201,7 +200,38 @@ else:
     idleFd = a
     submit(delay(readsIdlePeer()), 0)
     awaitFlag(serverDone)
-    closeFd(a); closeFd(b)
+    closeFd(b)                     # `a` belongs to the connection
+
+  # ---- a socket owns its fd ----------------------------------------------
+
+  proc dupFd(fd: cint): cint {.importc: "dup".}
+
+  proc fdIsOpen(fd: cint): bool =
+    ## `dup` succeeds on a live descriptor and fails on a closed one, so this
+    ## asks the kernel rather than trusting our own bookkeeping — which is the
+    ## whole point of the test. The copy is closed again straight away.
+    let d = dupFd(fd)
+    if d >= 0: discard close(d)
+    result = d >= 0
+
+  block socketClosesInItsDestructor:
+    let (a, b) = mkPair()
+    block:
+      var s = initSocket(a, afterMs(1000))
+      assert fdIsOpen(a), "the socket closed its fd while still holding it"
+      assert s.buffered == 0
+    assert not fdIsOpen(a), "leaving the scope did not close the fd"
+    closeFd(b)
+
+  block explicitCloseIsStillFine:
+    # `close` and the destructor must not both close: whoever went first would
+    # leave the second one closing a number the process has since reused.
+    let (a, b) = mkPair()
+    block:
+      var s = initSocket(a, afterMs(1000))
+      s.close()
+      assert not fdIsOpen(a)
+    closeFd(b)
 
   # Printed in a fixed order, after both chains have been joined, so the
   # expected output cannot depend on which worker got there first.

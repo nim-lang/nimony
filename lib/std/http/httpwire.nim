@@ -245,6 +245,14 @@ proc writeLastChunk*(dest: var openArray[char]; i: int): int =
   ## body the peer is still waiting on.
   result = writeCrLf(dest, writeChunkHeader(dest, i, 0))
 
+proc writeChunk*(dest: var openArray[char]; i: int; data: openArray[char]): int =
+  ## `SIZE CRLF data CRLF` — a whole chunk, staged in one place so the caller
+  ## can send it in one write. A chunk split across writes is a chunk a peer
+  ## can be left half-way through.
+  var j = writeChunkHeader(dest, i, data.len)
+  j = writeBytes(dest, j, data)
+  result = writeChunkEnd(dest, j)
+
 proc chunkOverhead*(size: int): int =
   ## Bytes `writeChunkHeader` + `writeChunkEnd` add around `size` bytes of
   ## data, so a caller can size a buffer without writing twice: one hex digit
