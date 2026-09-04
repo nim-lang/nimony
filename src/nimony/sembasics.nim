@@ -271,29 +271,6 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; msg: st
   orig.addDotToken()
   c.buildErr dest, info, msg, cursorAt(orig, 0)
 
-proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string; orig: Cursor) =
-  ## Builds ErrT node and combine it with the node at `pos` so that no nodes are added outside of
-  ## the node at `pos`.
-  ## When there is no node at `pos`, New ErrT node is added to `c.dest`.
-  ## Assumes the node at `pos` is the last node.
-  var needsParRi = false
-  if dest.len > pos:
-    needsParRi = true
-    if dest[pos].stmtKind == StmtsS:
-      dest.reopenLastTree pos
-    else:
-      # nifcore cannot splice an unbalanced open; skip the stmts wrapper for
-      # this error-recovery path (the err node is still emitted below).
-      needsParRi = false
-  buildErr c, dest, info, msg, orig
-  if needsParRi:
-    dest.addParRi
-
-proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string) =
-  var orig = createTokenBuf(1)
-  orig.addDotToken()
-  c.combineErr dest, pos, info, msg, cursorAt(orig, 0)
-
 proc buildErrAt*(c: var SemContext; dest: var TokenBuf; pos: int; msg: string) =
   ## Builds ErrT node on the existing node at `pos` and it becomes the origin of the error.
   ## If the node at `pos` is a tag node, it must be closed.
@@ -310,6 +287,38 @@ proc buildErrAt*(c: var SemContext; dest: var TokenBuf; pos: int; msg: string) =
     buildErr c, tmpBuf, n.info, msg, n
   let errAt = beginRead(tmpBuf)
   replace dest, errAt, pos
+
+proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string; orig: Cursor) =
+  ## Builds an ErrT node and combines it with the node at `pos` so that what
+  ## spans from `pos` on is still a SINGLE node.
+  ##
+  ## That is the entire contract, and it is not cosmetic. A caller that had
+  ## emitted one child of the node it is building must still have emitted one
+  ## child afterwards, or the enclosing node silently grows an arity nobody
+  ## reading it expects — an `(elif cond body)` becomes `(elif cond err body)`,
+  ## and the next pass to walk it takes `err` for the body and `body` for
+  ## nothing at all.
+  ##
+  ## Assumes the node at `pos` is the last node in `dest`.
+  if dest.len <= pos:
+    # Nothing was emitted at all, so the error node *is* the node.
+    buildErr c, dest, info, msg, orig
+  elif dest[pos].stmtKind == StmtsS:
+    # A statement list can hold the error as one more child of itself.
+    dest.reopenLastTree pos
+    buildErr c, dest, info, msg, orig
+    dest.addParRi
+  else:
+    # Anything else gets wrapped, so one node stays one node. The node at
+    # `pos` becomes the error's origin, which is also the better diagnostic:
+    # it is the expression that was actually wrong, where `orig` is a dot at
+    # every call site there is.
+    buildErrAt c, dest, pos, msg
+
+proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string) =
+  var orig = createTokenBuf(1)
+  orig.addDotToken()
+  c.combineErr dest, pos, info, msg, cursorAt(orig, 0)
 
 proc buildLocalErr*(dest: var TokenBuf; info: NifLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
