@@ -637,7 +637,10 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       c.buildErr dest, info, "cannot attempt to instantiate a non-type"
 
   var params = default(Cursor)
-  if decl.kind == TypeY:
+  if ok:
+    # only a generic type has a `(typevars ...)` list to walk; `ok` already
+    # implies it, whereas `decl.kind == TypeY` also holds for a concrete type
+    # like `Foo` in `Foo[T]`, whose `typevars` is a DotToken (#2440).
     params = decl.typevars
     params = sub(params) # bound the parameter walk
   var paramCount = 0

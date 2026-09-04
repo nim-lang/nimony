@@ -1,0 +1,2 @@
+tests/nimony/concepts/tconceptinheritnotgeneric.nim(7, 23) Error: cannot attempt to instantiate a concrete type
+tests/nimony/concepts/tconceptinheritnotgeneric.nim(7, 24) Error: undeclared identifier: T

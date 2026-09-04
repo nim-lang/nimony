@@ -616,7 +616,7 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState; callee: Cursor) =
     buf.addSubtree cs.args[valueIndex].n
   buf.addParRi()
 
-proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[CallArg], genericArgs: Cursor, hasNamedArgs: bool) =
+proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[CallArg], genericArgs: Cursor, hasNamedArgs: bool, expected: TypeCursor) =
   # scope extension: procs attached to argument types are also considered
   # If the type is Typevar and it has attached
   # a concept, use the concepts symbols too:
@@ -635,7 +635,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
         addTypeboundOps c, fnName, root, candidates
     # now match them:
     for candidate in candidates.a:
-      m.add createMatch(addr c)
+      m.add createMatch(addr c, expected)
       sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
 proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; origArgs: openArray[CallArg]) =
@@ -975,26 +975,6 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   else:
     buildErr c, dest, cs.callNodeInfo, "macro '" & pool.syms[finalFn] & "' not compiled"
 
-proc inferTypevarsFromExpected(c: var SemContext; m: var Match; expected: TypeCursor) =
-  ## When argument matching leaves a generic routine's typevars unbound but the
-  ## call site has a concrete expected type, unify the routine's return type with
-  ## it to bind the rest — e.g. `let r: Result[int, string] = ok(5)` infers `E`
-  ## from the target even though only `T` appears in `ok`'s argument. Runs after
-  ## overload selection, so it cannot affect which candidate is chosen; it only
-  ## fills in bindings before `buildTypeArgs` checks they are all present. Merges
-  ## only on a clean (non-converting) unify, so a conversion-to-expected (handled
-  ## later by `commonType`) is left untouched.
-  if m.err or m.fn.kind notin RoutineKinds or m.fn.sym == SymId(0): return
-  if cursorIsNil(expected) or expected.isDotToken or
-     expected.typeKind in {AutoT, VoidT} or containsGenericParams(expected): return
-  if cursorIsNil(m.returnType) or m.returnType.isDotToken: return
-  var rtMatch = createMatch(addr c)
-  rtMatch.inferred = m.inferred  # seed with the bindings already found from args
-  var rt = m.returnType
-  typematch(rtMatch, rt, Item(n: emptyNode(c), typ: expected))
-  if not rtMatch.err and classifyMatch(rtMatch) in {EqualMatch, GenericMatch}:
-    m.inferred = rtMatch.inferred
-
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
   # DIAGNOSTIC ("attempt to call routine", a symchoice element that cannot be
@@ -1021,12 +1001,12 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         let maybeProc = typ.skipModifier
         if maybeProc.typeKind in RoutineTypes:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: maybeProc)
-          m.add createMatch(addr c)
+          m.add createMatch(addr c, it.typ)
           sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
       else:
         buildErr c, dest, cs.fn.n.info, "`choice` node does not contain `symbol`"
       inc f
-    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
+    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
     if m.len == 0:
       # symchoice contained no callable symbols and no typebound ops
       assert cs.fnName != StrId(0)
@@ -1036,7 +1016,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     # for dot-call desugaring and generic bodies). Still run ADL / concept
     # lookup on the argument types so e.g. `t.one()` → `one(t)` can match a
     # concept requirement without a real `one` in scope yet.
-    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
+    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     closeArgsScope c, cs
     semConvFromCall c, dest, it, cs
@@ -1056,9 +1036,9 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     let maybeProc = typ.skipModifier
     if maybeProc.typeKind in RoutineTypes:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: maybeProc)
-      m.add createMatch(addr c)
+      m.add createMatch(addr c, it.typ)
       sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
-      considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
+      considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
     elif sym != SymId(0):
       # non-callable symbol, look up all overloads
       assert cs.fnName != StrId(0)
@@ -1092,7 +1072,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       csArgsOrig = move cs.args
     for mi in 0 ..< L:
       if not m[mi].err: continue
-      var newMatch = createMatch(addr c)
+      var newMatch = createMatch(addr c, it.typ)
       var newArgs: seq[CallArg] = @[]
       var newArgBufs: seq[TokenBuf] = @[] # to keep alive
       var param = skipProcTypeToParams(m[mi].fn.typ)
@@ -1168,8 +1148,6 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         compatBundleVarargsInMatch c, m[idx], varargsElem, cs.callNodeInfo
     addArgsInstConverters(c, dest, m[idx], cs.args)
     leaveCall dest, it, cs
-    if m[idx].hasUnboundTypevars:
-      inferTypevarsFromExpected(c, m[idx], it.typ)
     buildTypeArgs(m[idx])
 
     if m[idx].err:
