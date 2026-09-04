@@ -17,10 +17,10 @@
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
-import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
+import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder]
+import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -198,7 +198,12 @@ type
     isSystem: bool
     plugin: string
     cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
-    depsPlugins: HashSet[StrId] ## Set of plugins `files` uses except import plugins
+    plugins: HashSet[string] ## exe basenames of the `{.plugin.}`s this module may
+                             ## run: the ones it declares plus, after
+                             ## `propagatePlugins`, those of its import closure
+    fileDeps: seq[string] ## the `(dependency …)` list the PREVIOUS build's nimsem
+                          ## left in `.s.deps.nif`: files a plugin or a `slurp`
+                          ## read while semchecking this module
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -251,6 +256,8 @@ type
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
+    pluginSources: Table[string, string] ## exe basename -> resolved `.nim` source
+                                         ## of every `{.plugin.}` in the graph
     toBuild: seq[CFile]
     backendTools: seq[BackendTool]
     bundles: seq[Bundle]
@@ -520,6 +527,45 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
         processPluginImport c, f, info, current
       break
 
+proc cmpNames(a, b: string): int =
+  ## `sort` needs an explicit comparator under Nimony, whose stdlib has no `cmp`.
+  if a < b: -1 elif a > b: 1 else: 0
+
+proc pluginExe(c: DepContext; name: string): string =
+  ## Where `semos.runPlugin` looks for the plugin: keep the two in sync.
+  c.config.nifcachePath / name.addFileExt(ExeExt)
+
+proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
+  ## `(plugin [(when COND...)] "name")`: nifler's deps-file entry for a
+  ## `{.plugin: "name".}` pragma. The name resolves relative to the declaring
+  ## file exactly as `semos.runPlugin` resolves it.
+  ##
+  ## Ignored when this build IS a plugin build (`-d:nimonyPlugin`, set by
+  ## `semos.pluginCompileCmd`): plugins are leaves of the build graph. A plugin
+  ## whose source imports its declaring module would otherwise require itself,
+  ## and the nested builds would recurse without end. Should such a plugin
+  ## actually run another plugin at compile time, `runPlugin`'s lazy fallback
+  ## still builds that one on demand.
+  var x = it
+  skip it
+  if c.config.isDefined("nimonyPlugin"):
+    return
+  x.into:  # (plugin …)
+    if x.stmtKind == WhenS:
+      if not whenMarkerHolds(c, x):
+        return
+      skip x, SkipCond
+    while x.hasMore:
+      if x.isStringLit:
+        let name = pool.strings[x.strId]
+        let src = resolveFile(c.config.paths, current.files[current.active].nimFile, name)
+        if semos.fileExists(src):
+          let exeName = splitFile(name).name
+          current.plugins.incl exeName
+          if not c.pluginSources.hasKey(exeName):
+            c.pluginSources[exeName] = src
+      skip x
+
 proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
   it.into:  # (build …)
     while it.hasMore:
@@ -595,6 +641,8 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
       processBuild c, n, current
     elif n.cursorTagId == TagId(BundleIdx):
       processBundle c, n
+    elif n.cursorTagId == TagId(PluginP):
+      processPlugin c, n, current
     elif n.cursorTagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
@@ -671,45 +719,63 @@ proc importSystem(c: var DepContext; current: Node) =
     existingNode = imported.id
   current.deps.add existingNode
 
+proc loadDepsFile(depsFile: string): TokenBuf =
+  var r = rd.open(depsFile)
+  result = createTokenBuf()
+  parse(r, result)
+  rd.close(r)
+
+proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
+  ## Reads the `(dependency …)` list out of the `.s.deps.nif` the previous
+  ## build's nimsem wrote (nim-lang/nimony#1378). The classic depfile pattern:
+  ## the first build has nothing to read and runs regardless, every later one
+  ## is exact. Nothing else in that file is looked at: its imports are last
+  ## build's, and the caller has just read the current ones from nifler.
+  let depsFile = c.config.deps2File(p)
+  if semos.fileExists(depsFile):
+    var buf = loadDepsFile(depsFile)
+    var n = beginRead(buf)
+    if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
+      n.into:
+        while n.hasMore:
+          if n.cursorTagId == TagId(DependencyIdx):
+            n.into:
+              while n.hasMore:
+                assert n.isStringLit
+                current.fileDeps.add pool.strings[n.strId]
+                inc n
+          else:
+            skip n
+
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
   if not c.isGeneratingFinal:
     execNifler c, p
     depsFile = c.config.depsFile(p, c.cmd == DoDoc)
+    processFileDeps c, p, current
   else:
     depsFile = c.config.deps2File(p)
 
-  var r = rd.open(depsFile)
-  var buf = createTokenBuf()
-  parse(r, buf)
-  rd.close(r)
+  var buf = loadDepsFile(depsFile)
   processDeps c, beginRead(buf), current
   if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
     importSystem c, current
 
-proc traverseDeps2(c: var DepContext) =
-  # Get the list of used plugins from deps2File so that Nimony generates a build file that
-  # automatically rebuild modules using the plugins when the plugins are modified.
-  # So don't need to get the list when deps2File doesn't exist as modules are semchecked then.
-  # Plugins used under `when false:` or template plugins used with templates never called are not listed in deps2File.
-  for current in c.nodes:
-    for p in current.files:
-      let depsFile = c.config.deps2File(p)
-      if semos.fileExists(depsFile):
-        var r = rd.open(depsFile)
-        var buf = createTokenBuf()
-        parse(r, buf)
-        rd.close(r)
-        var n = beginRead(buf)
-        if n.stmtKind == StmtsS:
-          n.loopInto:
-            if n.pragmaKind == PluginP:
-              n.loopInto:
-                if n.isStringLit:
-                  current.depsPlugins.incl n.strId
-                skip n
-            else:
-              skip n
+proc propagatePlugins(c: var DepContext) =
+  ## A plugin declared in module A runs whenever a module importing A is
+  ## semchecked (a `.plugin` template of A expands at its call site in B), so
+  ## a nimsem run needs the plugins of its whole import closure. A fixpoint
+  ## over `deps` rather than a DFS: cyclic modules make the graph a general
+  ## digraph and it is small.
+  var changed = true
+  while changed:
+    changed = false
+    for v in c.nodes:
+      for d in v.deps:
+        if d == v.id: continue   # never iterate a set while growing it
+        for p in c.nodes[d].plugins:
+          if not v.plugins.containsOrIncl(p):
+            changed = true
 
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
@@ -1635,15 +1701,34 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       if not seenDeps.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
-    # Input: cached config file
-    b.withTree "input":
-      b.addStrLit c.config.cachedConfigFile()
-    # Input: plugins
-    for p in v.depsPlugins:
+    # Input: the executables of the plugins this module may run. They are
+    # outputs of `pluginbuild` nodes, so nifmake builds them first and re-sems
+    # the module when one of them changes.
+    var plugins: seq[string] = @[]
+    for p in v.plugins: plugins.add p
+    sort plugins, cmpNames
+    for p in plugins:
       b.withTree "input":
-        b.addStrLit pool.strings[p]
+        b.addStrLit c.pluginExe(p)
+    # Input: the files last build's sem READ — what `plugins.dependsOn`
+    # reported and what `slurp` folded. Nothing in the module's own source
+    # names them, so without this a changed data file leaves the `.s.nif`
+    # looking current.
+    var lostFileDep = false
+    for f in v.fileDeps:
+      if not semos.fileExists(f):
+        lostFileDep = true
+      elif not seenDeps.containsOrIncl(f):
+        b.withTree "input":
+          b.addStrLit f
     # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
+    if lostFileDep:
+      # A deleted file cannot be an input (nifmake wants a file or a rule for
+      # each), so the re-sem is forced by removing the output instead. That
+      # settles after one build: the re-sem no longer finds the file and so no
+      # longer records it.
+      vfsRemove(c.config.semmedFile(v.files[0], v.plugin, docMode))
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)
     b.withTree "output":
@@ -1701,6 +1786,17 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
           b.addIntLit 0
           b.addIntLit -1 # all inputs
 
+    if c.pluginSources.len > 0:
+      # `nimsem <frontend args> plugin <source> <exe>`: builds a `{.plugin.}`
+      # executable, validator included. One node per plugin, below.
+      b.withTree "cmd":
+        b.addSymbolDef "pluginbuild"
+        b.addStrLit c.nimsem
+        emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+        b.addStrLit "plugin"
+        b.addKeyw "input"
+        b.addKeyw "output"
+
     for plugin in c.foundPlugins:
       b.withTree "cmd":
         b.addSymbolDef plugin
@@ -1713,6 +1809,20 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         # index file output is not explicitly passed to the plugin!
         #b.withTree "output":
         #  b.addIntLit 1  # index file output
+
+    # Build rules for plugin executables. Every sem node that may run one
+    # lists it as an input, which is what orders the build and makes it happen
+    # exactly once, however many modules share the plugin.
+    var pluginNames: seq[string] = @[]
+    for name in c.pluginSources.keys: pluginNames.add name
+    sort pluginNames, cmpNames
+    for name in pluginNames:
+      b.withTree "do":
+        b.addIdent "pluginbuild"
+        b.withTree "input":
+          b.addStrLit c.pluginSources.getOrDefault(name)
+        b.withTree "output":
+          b.addStrLit c.pluginExe(name)
 
     # Build rules for semantic checking
     var i = 0
@@ -1749,9 +1859,32 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
           b.withTree "input":
             b.addStrLit s
 
-proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
+proc generateCachedConfigFile(c: DepContext; passC, passL: string): bool =
+  ## Returns true when the configuration differs from the one the nimcache was
+  ## last built with, i.e. when the sem results in it are for another set of
+  ## options and have to be produced again.
+  ##
+  ## This is a MEMO nimony keeps for itself, NOT an `(input)` of the sem nodes.
+  ## It used to be one, and that was the wrong model twice over: sem does not
+  ## read this file, and an mtime cannot express "already built against this".
+  ## Once the file was newer than outputs that a re-run had legitimately left
+  ## untouched (nimsem writes OnlyIfChanged, so identical results keep their old
+  ## mtime), every sem node stayed stale against it on every subsequent build —
+  ## for good. Flipping a `-d:` flag and flipping it back was enough. The answer
+  ## is not to fake a newer output; it is that "the options changed" means
+  ## RE-RUN THIS STAGE, which is what the caller now says outright.
   let path = c.config.cachedConfigFile()
-  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile &
+  # The ROOT MODULE is deliberately NOT part of this string. Every sem node
+  # takes this file as an input (see `generateSemInstructions`), so anything in
+  # here that differs between two builds sharing a nimcache invalidates all of
+  # the other's sem results — and `executeExpr`'s const-eval sub-compile is
+  # exactly such a second build: same nimcache, same options, but a generated
+  # root (`nim<checksum>.p.nif`). With the root name in here the two overwrote
+  # each other's entry on every run, so each build re-semmed everything the
+  # other had just done, forever. The OPTIONS do belong here: two roots
+  # compiled with different options really must invalidate each other, because
+  # the `.s.nif` artifacts are keyed by module name and shared between them.
+  let configStr = c.config.getOptionsAsOneString() &
                   " --passC:" & passC & " --passL:" & passL
 
   let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
@@ -1760,6 +1893,7 @@ proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
                      true
   if needUpdate:
     onRaiseQuit writeFile(path, configStr)
+  result = needUpdate
 
 proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
@@ -1772,7 +1906,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.processedModules[p.modname] = 0
   traverseDeps result, p, root
   if not isFinal:
-    traverseDeps2 result
+    propagatePlugins result
 
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     flags: set[BuildFlag]; moduleFlags: set[ModuleFlag]) =
@@ -1991,18 +2125,25 @@ proc buildGraph*(config: sink NifConfig; project: string;
     parseNifConfig cfgNif, config
 
   var c = initDepContext(config, project, nifler, false, forceRebuild, moduleFlags, cmd)
-  generateCachedConfigFile c, passC, passL
+  let configChanged = generateCachedConfigFile(c, passC, passL)
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
   when defined(windows) and not defined(nimony):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
-  let nifmakeCommand = quoteShell(nifmake) &
+  let nifmakeBase = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
     (if Profile in flags: " --profile" else: "") &
     (if Report in flags: " --report" else: "") &
-    " --base:" & quoteShell(config.baseDir) &
-    " -j run "
+    " --base:" & quoteShell(config.baseDir)
+  let nifmakeCommand = nifmakeBase & " -j run "
+  # A changed configuration invalidates every sem result, and now says so
+  # directly instead of through a file the sem nodes pretended to read.
+  # `--rerun`, not `--force`: the outputs must stay in place so nimsem's
+  # OnlyIfChanged writes can still find a result unchanged and spare the
+  # entire backend.
+  let frontendCommand = nifmakeBase &
+    (if configChanged: " --rerun" else: "") & " -j run "
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
@@ -2010,7 +2151,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
   # indicator across the separate processes instead of restarting per phase.
   let twoPhase = cmd != DoCheck
 
-  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
+  exec frontendCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)

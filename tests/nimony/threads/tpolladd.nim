@@ -30,14 +30,14 @@ else:
   assert written == len(msg)
 
   var comps: array[8, IoCompletion]
-  discard submitPollAdd(a)
+  discard submitPollAdd(a, never)
   let n = waitCompletions(comps)
   echo "n=", n, " op=", comps[0].op,
        " rd=", evRead in comps[0].readyEvents,
        " wr=", evWrite in comps[0].readyEvents
 
   # Oneshot: re-arm on `b`, which is writable.
-  discard submitPollAdd(b)
+  discard submitPollAdd(b, never)
   let m = waitCompletions(comps)
   echo "m=", m, " op=", comps[0].op,
        " wr=", evWrite in comps[0].readyEvents
@@ -51,8 +51,8 @@ else:
   # Before the mask existed, opPollAdd always armed both directions, so this
   # probe fired immediately on writability — and since the op is oneshot, a
   # caller that re-armed after each wake spun as fast as it could poll.
-  discard submitPollAdd(b, {evRead})
-  discard submitPollAdd(a, {evRead})
+  discard submitPollAdd(b, never, {evRead})
+  discard submitPollAdd(a, never, {evRead})
   let k = waitCompletions(comps)
   echo "k=", k, " fd_is_a=", cint(comps[0].fd) == a,
        " rd=", evRead in comps[0].readyEvents,

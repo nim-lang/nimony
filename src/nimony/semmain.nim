@@ -103,10 +103,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree TagId(PassCP), NoLineInfo:
         for i in c.passC:
           deps.addStrLit i
-    if c.depsPlugins.len != 0:
-      deps.buildTree TagId(PluginP), NoLineInfo:
-        for p in c.depsPlugins:
-          deps.addStrLit p, NoLineInfo
+    if c.fileDeps.len != 0:
+      deps.buildTree TagId(DependencyIdx), NoLineInfo:
+        for f in c.fileDeps:
+          deps.addStrLit f
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)
 

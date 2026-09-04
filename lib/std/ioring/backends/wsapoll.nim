@@ -65,25 +65,47 @@ when defined(windows):
     var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
     if n > 0:
       for i in 0..<n:
-        discard gSlots[lane].allocSlot(buf[i])
+        let idx = gSlots[lane].allocSlot(buf[i])
+        armDeadline(lane, idx)
+        case buf[i].kind
+        of opTimeout:
+          discard            # nothing to arm on: the deadline heap is the wait
+        of opNop:
+          complete(idx, 0)   # nothing to wait for either
+        of opConnect:
+          # Start the attempt here, on the polling thread, so the socket is
+          # already connecting by the time the set below watches it. A connect
+          # that finished at once has completed the slot; the set is rebuilt
+          # from the arena, so there is nothing to undo either way.
+          discard startConnect(buf[i].fd, idx)
+        else:
+          discard
     # Build this lane's set from its arena. Collect before dispatching:
     # `processFd` frees slots, which mutates the fd index the set comes from.
     pollSets[lane].setLen(0)
     for fd in gSlots[lane].pendingFds:
       let events = armEventsForFd(fd)
-      if events == {}: continue   # only opNop slots on this fd
+      if events == {}: continue   # nothing to watch: the fd-less bucket (timers)
       var ev = 0
       if evRead in events: ev = ev or POLLRDNORM
       if evWrite in events: ev = ev or POLLWRNORM
       pollSets[lane].add WsaPollFd(fd: SocketHandle(cast[uint32](fd)),
                                    events: cshort(ev), revents: cshort(0))
+    # Sleep no longer than the earliest deadline in this lane, so a timer
+    # fires on time instead of on the next poll that happens for another
+    # reason.
+    let waitMs = waitMillis(lane, timeoutMs)
     if pollSets[lane].len == 0:
       # Nothing armed on this lane: honour the idle timeout here, or the worker
-      # loop spins (it only sleeps when nothing fired AND it ran no task).
-      if timeoutMs > 0: sleep(uint32(timeoutMs))
+      # loop spins (it only sleeps when nothing fired AND it ran no task). A
+      # lane holding nothing but timers takes this path on every poll, so the
+      # sleep is the deadline-bounded one and the expiry below is what
+      # completes them.
+      if waitMs > 0: sleep(uint32(waitMs))
+      expireDeadlines(lane)
       return false
     discard wsaPoll(addr pollSets[lane][0], culong(pollSets[lane].len),
-                    cint(timeoutMs))
+                    cint(waitMs))
     # The return value is not the gate: WSAPoll marks a closed handle POLLNVAL
     # in revents but does not count it — it returns 0 with live sockets in the
     # set and SOCKET_ERROR/WSAENOTSOCK with only dead ones (measured on a
@@ -110,6 +132,7 @@ when defined(windows):
         # of leaving the continuation parked on a socket that will never fire.
         fired = {evRead, evWrite}
       processFd(cint(cast[uint32](pollSets[lane][i].fd)), fired)
+    expireDeadlines(lane)
 
   proc wsapollClose() {.nimcall.} =
     ## No poller descriptors to release. Winsock itself is left initialised:
@@ -125,6 +148,8 @@ when defined(windows):
     reArmEvent = wsapollReArm
     result = BackendRelays(
       poll: wsapollPoll,
+      waits: true,          # `WSAPoll(waitMs)` is a real wait, and so is the
+                            # `sleep` on the nothing-armed path above
       close: wsapollClose,
       forgetFd: wsapollForgetFd,
     )

@@ -1,0 +1,3 @@
+tests/nimony/concepts/tandconstraintconceptcrash.nim(16, 24) Error: Type mismatch at [position]
+abs(y)
+[1] T does not match constraint ComparableAndNegatable (declared in lib/std/system.nim(248, 1))

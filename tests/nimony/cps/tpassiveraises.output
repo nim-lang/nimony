@@ -1,0 +1,9 @@
+failVoid ok 1
+catchVoid: caught
+failInt gave 40
+catchInt: caught
+middle gave 21
+catchNested: caught
+catchWithFinally: caught
+catchWithFinally: body
+catchWithFinally: finally ran = true

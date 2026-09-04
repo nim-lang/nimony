@@ -155,7 +155,14 @@ proc takeUnionBranch*(n: var Cursor): UnionBranch =
   ## Read a `(of RANGES BODY)` / `(else BODY)` branch and advance past it.
   ## Callers that only need the fields use `result.body`; debug info also reads
   ## `result.ranges` to name the branch after its discriminant values.
+  ##
+  ## Start from the nil-cursor default: an `else` branch has no ranges, so
+  ## without this `result.ranges` is whatever the stack held — and
+  ## `cursorIsNil(branch.ranges)` is exactly how `contracts_fir` and
+  ## `llvmdebug` tell the two shapes apart. `strictdefs` rejects the field
+  ## write into an uninitialized `result` for that reason.
   let isOf = n.substructureKind == OfU
+  result = default(UnionBranch)
   n.into:
     if isOf:
       result.ranges = n

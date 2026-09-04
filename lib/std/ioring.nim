@@ -19,6 +19,10 @@ import ./ioring/core/[types, slots, backend]
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
 export types.readyEvents, types.toIoEvents, types.toEventMask, types.ECancelled
+export types.Deadline, types.never, types.earlier, types.monoNow
+export types.after, types.afterMs, types.millisUntil, types.`<`, types.`<=`
+export types.`==`
+export backend.IoTimedOut
 export backend.BackendRelays, backend.CqSize, backend.MaxOps
 import ./ioring/platform
 when defined(windows):
@@ -46,9 +50,11 @@ proc setupRing() =
     initWinsock()
   initOpQueues()
   initSlots()
+  initTimers()
   gCq = newSeq[IoCompletion](CqSize)
   initPlatformBackend()
   gReactor = backendRelays.poll
+  gReactorWaits = backendRelays.waits
 
 proc initIoRing*() =
   ## Bring the default ring up. **Idempotent**, and it has to be: this module
@@ -109,40 +115,78 @@ proc enqueueOp(op: OpContext) =
     while not gOpQueues[ioLane()].tryEnqueue(op):
       discard backendRelays.poll(0)
 
-proc submitNop*(cont = Continuation(fn: nil, env: nil);
+proc submitNop*(deadline: Deadline; cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opNop, fd: -1, seqnum: result,
-    cont: cont, res: cast[int](resPtr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitRead*(fd: cint; buf: pointer; len: int;
+proc submitTimeout*(deadline: Deadline;
+                    cont = Continuation(fn: nil, env: nil);
+                    resPtr: nil ptr int = nil): SeqNum =
+  ## Complete once `deadline` passes, with no I/O at all. Unlike every other
+  ## op, reaching the deadline is this one's *success*: it completes with `0`
+  ## rather than `IoTimedOut`.
+  ##
+  ## This is how a loop gets a turn on a schedule — `next(e, deadline)` in the
+  ## HTTP design is one of these plus whatever else is pending.
+  result = nextSeqNum()
+  var op = OpContext(kind: opTimeout, fd: -1, seqnum: result,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitRead*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opRead, fd: fd, seqnum: result, buf: buf, len: len,
-    cont: cont, res: cast[int](resPtr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitWrite*(fd: cint; buf: pointer; len: int;
+proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
-    cont: cont, res: cast[int](resPtr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitAccept*(listenFd: cint;
+proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
   var op = OpContext(kind: opAccept, fd: listenFd, seqnum: result,
-    cont: cont, res: cast[int](resPtr))
-  op.acceptAddr = Sockaddr_storage()
-  op.acceptLen = SockLen(sizeof(op.acceptAddr))
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  op.sockAddr = Sockaddr_storage()
+  op.sockAddrLen = SockLen(sizeof(op.sockAddr))
   enqueueOp(op)
 
-proc submitPollAdd*(fd: cint; events: IoEvents = {evRead, evWrite};
+proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
+                    deadline: Deadline;
+                    cont = Continuation(fn: nil, env: nil);
+                    resPtr: nil ptr int = nil): SeqNum =
+  ## Connect `fd` to `sa`. Completes with `0` on success, or the negated
+  ## errno — a refused connection is `-ECONNREFUSED`, not a generic -1,
+  ## because the caller usually wants to tell "nobody listening" from "the
+  ## network ate it".
+  ##
+  ## `fd` must already be non-blocking (`setNonBlocking`). The attempt is
+  ## started on the polling thread, not here, so that the fd is being watched
+  ## from the moment it is connecting.
+  ##
+  ## A connect with no deadline is the classic way to hold a slot forever: a
+  ## SYN into a black hole never answers. Hence the parameter, and hence no
+  ## default for it.
+  result = nextSeqNum()
+  var op = OpContext(kind: opConnect, fd: fd, seqnum: result,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  op.sockAddr = sa
+  op.sockAddrLen = saLen
+  enqueueOp(op)
+
+proc submitPollAdd*(fd: cint; deadline: Deadline;
+                    events: IoEvents = {evRead, evWrite};
                     cont = Continuation(fn: nil, env: nil);
                     resPtr: nil ptr int = nil): SeqNum =
   ## Register oneshot readiness interest in `fd` without issuing any I/O.
@@ -164,7 +208,7 @@ proc submitPollAdd*(fd: cint; events: IoEvents = {evRead, evWrite};
   ## being a `ptr int`; decode it with `toIoEvents`.
   result = nextSeqNum()
   var op = OpContext(kind: opPollAdd, fd: fd, seqnum: result,
-    cont: cont, res: cast[int](resPtr), pollMask: events)
+    cont: cont, res: cast[int](resPtr), pollMask: events, deadline: deadline)
   enqueueOp(op)
 
 proc pollCompletions*(comps: var openArray[IoCompletion]): int =
@@ -261,6 +305,41 @@ when defined(posix):
   proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.importc: "setsockopt".}
   proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "bind".}
   proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
+  proc socketNonBlocking*(): cint =
+    ## A non-blocking TCP socket, which is what `submitConnect` requires: a
+    ## blocking one would finish the connect inside the syscall and there
+    ## would be nothing for the ring to wait on.
+    result = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    if result >= 0: setNonBlocking(result)
+
+  proc loopbackAddr*(sa: var Sockaddr_storage; saLen: var SockLen;
+                     port: uint16) =
+    ## Fill `sa` with `127.0.0.1:port`, ready for `submitConnect`.
+    const Loopback =
+      when defined(bigEndian): 0x7F000001'u32 else: 0x0100007F'u32
+    var a4 = default(Sockaddr_in)
+    a4.sin_family = TSa_Family(AF_INET)
+    a4.sin_port = htons(port)
+    a4.sin_addr.s_addr = Loopback
+    sa = default(Sockaddr_storage)
+    copyMem(addr sa, addr a4, sizeof(a4))
+    saLen = SockLen(sizeof(a4))
+
+  proc getsockname(s: cint; name: ptr SockAddr; namelen: ptr SockLen): cint {.importc: "getsockname".}
+
+  proc boundPort*(fd: cint): uint16 =
+    ## The port `fd` is actually bound to. With `listenTcp(0)` the kernel picks
+    ## one, and asking for it afterwards is the only way a test can listen
+    ## without inventing a fixed number that a parallel run — or a socket still
+    ## in TIME_WAIT — will collide with.
+    var sa = default(Sockaddr_storage)
+    var slen = SockLen(sizeof(sa))
+    if getsockname(fd, cast[ptr SockAddr](addr sa), addr slen) != 0: return 0'u16
+    let raw = cast[ptr UncheckedArray[uint8]](addr sa)
+    # Network byte order, read as bytes so no host-endianness assumption is
+    # needed: sin_port sits at offset 2 in both sockaddr_in and sockaddr_in6.
+    result = (uint16(raw[2]) shl 8) or uint16(raw[3])
+
   proc listenTcp*(port: uint16; backlog = 128): cint =
     let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
     assert fd >= 0, "socket() failed"
@@ -326,6 +405,8 @@ when defined(windows):
     stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
   proc wsClosesocket(s: SocketHandle): cint {.
     stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
+  proc wsGetsockname(s: SocketHandle; name: pointer; namelen: ptr cint): cint {.
+    stdcall, importc: "getsockname", dynlib: "ws2_32.dll".}
 
   proc socketOf(fd: cint): SocketHandle {.inline.} =
     SocketHandle(cast[uint32](fd))
@@ -366,5 +447,44 @@ when defined(windows):
     assert wsListen(s, backlog.cint) == 0, "listen failed"
     result = cint(cast[uint32](s))
     setNonBlocking(result)
+
+  # The POSIX arm's connect helpers, in their Winsock shapes. They exist here
+  # for the same reason the socket types do: `submitConnect` is public on both
+  # platforms, so what a caller needs to *use* it must be too.
+
+  proc socketNonBlocking*(): cint =
+    ## A non-blocking TCP socket, which is what `submitConnect` requires: a
+    ## blocking one would finish the connect inside the syscall and there
+    ## would be nothing for the ring to wait on.
+    let s = wsSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    if s == InvalidSocket or s > SocketHandle(high(cint)): return -1
+    result = cint(cast[uint32](s))
+    setNonBlocking(result)
+
+  proc loopbackAddr*(sa: var Sockaddr_storage; saLen: var SockLen;
+                     port: uint16) =
+    ## Fill `sa` with `127.0.0.1:port`, ready for `submitConnect`.
+    const Loopback =
+      when defined(bigEndian): 0x7F000001'u32 else: 0x0100007F'u32
+    var a4 = default(Sockaddr_in)
+    a4.sin_family = cushort(AF_INET)
+    a4.sin_port = htons(port)
+    a4.sin_addr.s_addr = Loopback
+    sa = default(Sockaddr_storage)
+    copyMem(addr sa, addr a4, sizeof(a4))
+    saLen = SockLen(sizeof(a4))
+
+  proc boundPort*(fd: cint): uint16 =
+    ## The port `fd` is actually bound to. With `listenTcp(0)` the kernel picks
+    ## one, and asking for it afterwards is the only way a test can listen
+    ## without inventing a fixed number that a parallel run — or a socket still
+    ## in TIME_WAIT — will collide with.
+    var sa = default(Sockaddr_storage)
+    var slen = cint(sizeof(sa))
+    if wsGetsockname(socketOf(fd), addr sa, addr slen) != 0: return 0'u16
+    let raw = cast[ptr UncheckedArray[uint8]](addr sa)
+    # Network byte order, read as bytes so no host-endianness assumption is
+    # needed: sin_port sits at offset 2 in both sockaddr_in and sockaddr_in6.
+    result = (uint16(raw[2]) shl 8) or uint16(raw[3])
 
 initIoRing()

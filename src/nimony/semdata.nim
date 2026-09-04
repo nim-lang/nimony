@@ -235,7 +235,6 @@ type
     pendingTypePlugins*: Table[SymId, PluginObj]
     pendingModulePlugins*: seq[PluginObj]
     pluginBlacklist*: HashSet[StrId] # make 1984 fiction again
-    depsPlugins*: HashSet[StrId]  # paths of all plugins this module uses except Import plugins
     cachedTypeboundOps*: Table[(SymId, StrId), seq[SymId]]
     conceptCache*: RootRef
       ## Opaque concept-match cache; implementation in conceptcache.nim.
@@ -262,6 +261,14 @@ type
     semEmitCB*: SemEmitCallbackT
     passL*: seq[string]
     passC*: seq[string]
+    fileDeps*: seq[string]
+      ## Absolute paths of the files this module's semchecking READ outside
+      ## its own source: what a `.plugin` reported via `plugins.dependsOn` and
+      ## what `slurp`/`staticRead` folded. `semmain.writeNewDepsFile` writes
+      ## them as `(dependency …)` into `.s.deps.nif`, and `deps.nim` turns them
+      ## into extra inputs of the *next* build's nimsem node — the depfile
+      ## pattern, so the first build runs regardless and every later one is
+      ## exact (nim-lang/nimony#1378). Filled through `recordFileDep`.
     importSnippets*: TokenBuf ## NIF snippets for import statements (with absolute paths), for use by exprexec
     genericInnerProcs*: HashSet[SymId] # these are special in that they must be instantiated in specific places
     expanded*: TokenBuf
@@ -297,6 +304,12 @@ type
       ## it as OkExistingFresh) so the body phase does not redeclare it and the
       ## symbol keeps the same name as if it had never been resolved early.
       ## Persists phase 2 → phase 3; cleared per module at phase-2 start.
+
+proc recordFileDep*(c: var SemContext; path: string) =
+  ## `path` was read while semchecking this module; see `fileDeps`. Only a
+  ## file that exists can be watched, so nothing else is recorded.
+  if (fileExists(path) or dirExists(path)) and path notin c.fileDeps:
+    c.fileDeps.add path
 
 proc typeToCanonAux(result: var string; c: var Cursor) =
   ## Cursor walk (ignores nifcore's sparse line-info suffixes, which must not

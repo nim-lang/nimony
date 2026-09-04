@@ -5,4 +5,8 @@ polladd wr=true rd=false
 abort read res=-125 op=true
 abort accept res=-125 op=true
 abort queued accept res=-125 op=true
+timer res=0 op=true
+connect res=0
+read deadline res=-110 op=true
+connect refused neg=true
 close ok

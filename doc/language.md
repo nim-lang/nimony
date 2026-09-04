@@ -1143,15 +1143,26 @@ Conceptually, every routine has one extra implicit parameter of type
 `Scope`. The compiler synthesizes the corresponding argument at every
 call site:
 
+- when the routine is a **concept requirement** — a phantom declaration
+  taken from a concept body, with no implementation of its own — the
+  argument has type `ConceptScope`;
 - when the routine is declared in the calling module, the argument has
-  type `Scope` and the parameter matches **exactly**;
+  type `Scope`, where `Scope = object of ConceptScope`, and the
+  parameter matches as a **subtype** (depth 1);
 - when the routine is imported from another module, the argument has
   type `ImportScope`, where `ImportScope = object of Scope`, and the
-  parameter matches as a **subtype** (depth 1).
+  parameter matches as a **subtype** (depth 2).
 
 So `import` is treated as a form of inheritance between scopes, in the
-same spirit as Eiffel's inheritance between classes. No new ranking
-category is introduced; the existing rules do the work:
+same spirit as Eiffel's inheritance between classes. Concept requirements
+likewise participate in this hierarchy: they are the most specific scope,
+so they win ties against same-module and imported candidates when every
+real-argument metric is equal. A call that selects a concept requirement
+is not executed as written — the compiler defers it and **re-resolves**
+the call at generic instantiation time, when concrete argument types can
+pick a real overload.
+
+No new ranking category is introduced; the existing rules do the work:
 
 - two candidates that tie on real-argument matches → the local one wins
   because the imported one carries one extra unit of subtype distance;
@@ -1162,7 +1173,26 @@ category is introduced; the existing rules do the work:
 - a local candidate that matches via subtyping on a real argument vs.
   an imported candidate that matches exactly on its real arguments →
   ambiguous, because each side contributes one unit of subtype distance
-  and the categories tie.
+  and the categories tie;
+- inside a generic body whose type parameter is constrained by a concept,
+  a concept requirement that ties with real overloads on every other
+  metric wins the tie via `ConceptScope` and is re-resolved once the
+  generic is instantiated with a concrete type.
+
+  ```nim
+  type
+    Foo = concept
+      func bar(x: Self): int
+
+  func bar[T](x: T): int = 1
+  func bar(x: float64): int = 2
+
+  func doBar[T: Foo](x: T): int = bar(x)
+
+  doBar(1.0'f64) # 2, not ambiguous: inside `doBar`, `bar` is bound to the
+                 # Foo concept requirement (ConceptScope wins the tie), which
+                 # defers resolution; at instantiation, `bar(x: float64)` wins
+  ```
 
   ```nim
   # module m:
@@ -3660,7 +3690,7 @@ Some consequences of this rule:
 - A `var Self` parameter is only met by a candidate that takes a `var` parameter, and a plain `Self` parameter cannot be passed to a `var` parameter.
 - A `func` requirement is met by a `func`, by a `proc` marked `noSideEffect`, or by a `template`; a `proc` requirement is met by any of these plus a `proc`.
 - An `iterator` requirement is only met by an iterator.
-- If several candidates match the call, the requirement is satisfied; whether the call is ambiguous is decided at instantiation.
+- If several candidates match the call, the requirement is satisfied; whether the call is ambiguous is decided at instantiation. (This leniency applies only while **checking** that a type satisfies a concept. A call inside an instantiated generic body uses ordinary overload resolution, including the `ConceptScope` preference described under [Module-of-origin](#module-of-origin).)
 - A candidate whose own constraint is the concept being checked, such as `proc <=[T: Orderable](x, y: T)` while checking `Orderable`, does not count: a type satisfies a concept only through a derivation that does not assume the conclusion.
 - Candidates are looked up by name where a call would find them: in the module that declares the concept, in the module that declares the checked type (operations are attached to their type by living in its module), and in every module visible where the check happens.
 
@@ -3726,6 +3756,17 @@ type
     proc `[]=`(a: var Self; key: K; value: V)
 ```
 
+
+Inference of a generic parameter is anchored to `Self`: it is `Self` that ties a requirement to the type being checked. A requirement may leave `Self` out, but only once every generic parameter it names is already bound by an earlier requirement:
+
+```nim
+type
+  Findable[T] = concept
+    iterator items(x: Self): T   # the first usage binds `T`
+    proc `==`(a, b: T): bool     # no `Self`, but `T` is bound by now
+```
+
+A requirement that neither names `Self` nor has all its parameters bound states nothing about the checked type and is never satisfied — otherwise a candidate would bind the open parameter to whatever type it happens to name, and every type would satisfy the concept.
 
 ## Generics
 

@@ -1,0 +1,6 @@
+local fn 10
+local fn caught
+foreign fn 15
+foreign fn caught
+direct 12
+direct caught

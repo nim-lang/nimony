@@ -18,6 +18,12 @@ const
     ## Sibling checkout arkham + nifasm live in. Their committed `nim.cfg`s
     ## reach back here through `../../../nimony/src/lib`, so the layout — and
     ## this repo's directory name — is already load-bearing.
+  NativenifUrl* = "https://github.com/nim-lang/nativenif"
+    ## Cloned from over HTTPS rather than SSH: the auto-clone below has to work
+    ## on a machine that has never pushed to this repo — CI, or someone who
+    ## just cloned nimony — and `git@github.com:` needs a key for a read that
+    ## does not. A checkout that already exists is never re-pointed, so anyone
+    ## who prefers SSH keeps their own remote.
   NativenifCommitFile* = "src/nativenif.commit"
     ## Under `src/` with the rest of what a build is made of — and so a change to
     ## it invalidates the CI artifact cache, whose key hashes `src/**`. Read
@@ -56,6 +62,27 @@ proc commitDate(dir, commit: string): string =
   let (dateOut, dateCode) = gitIn(dir, "show --no-patch --format=%cd --date=short " & commit)
   if dateCode == 0: dateOut.strip else: ""
 
+proc cloneNativenif(): bool =
+  ## Clone the sibling checkout when it is not there yet, and say whether we
+  ## did. arkham and nifasm are part of the toolchain, so "clone nim-lang/
+  ## nativenif next to this repo" was a build error that had exactly one
+  ## remedy — and every caller of it was a person typing the same command
+  ## back. Do it for them.
+  ##
+  ## Deliberately NOT shallow: the pin is regularly a commit behind whatever
+  ## the default branch has, and `--depth 1` would fetch a history that cannot
+  ## reach it — so the checkout below would immediately have to deepen again.
+  ## The repo is small enough (a couple of hundred commits) that a full clone
+  ## is the cheaper of the two.
+  if dirExists(NativenifDir): return false
+  echo "[deps] cloning ", NativenifUrl, " into ", NativenifDir
+  let (cloneOut, cloneCode) = execCmdEx(
+    "git clone --quiet " & NativenifUrl.quoteShell & " " & NativenifDir.quoteShell)
+  if cloneCode != 0:
+    quit "hastur: cannot clone " & NativenifUrl & " into " & NativenifDir &
+         " (it holds arkham + nifasm):\n" & cloneOut
+  result = true
+
 var nativenifChecked = false
 
 proc syncNativenif*() =
@@ -67,11 +94,12 @@ proc syncNativenif*() =
   ## pin (the branch that was there is still a `git switch -` away).
   if nativenifChecked: return
   nativenifChecked = true
+  # The clone comes first and is not conditional on the pin: whether the
+  # checkout EXISTS and which commit it sits on are two different questions,
+  # and an unpinned tree still has to be there to be built from.
+  let justCloned = cloneNativenif()
   let pin = pinnedNativenifCommit()
   if pin.len == 0: return
-  if not dirExists(NativenifDir):
-    quit "hastur: " & NativenifDir & " not found; clone nim-lang/nativenif " &
-         "next to this repo (it holds arkham + nifasm)"
   let (headOut, headCode) = gitIn(NativenifDir, "rev-parse HEAD")
   if headCode != 0:
     echo "[deps] ", NativenifDir, " is not a git checkout; building it as it is"
@@ -93,8 +121,13 @@ proc syncNativenif*() =
   # fix was replacing. Leave it be and say so. CI is the one place that must
   # enforce the pin regardless: its checkout is on the default branch too, and a
   # pin deliberately BEHIND that branch is the whole point of pinning.
+  # `justCloned` is the third exemption alongside CI: a clone made two
+  # statements ago is on its default branch by construction, not because
+  # someone is working in it, so leaving it there would mean the very first
+  # build after an auto-clone quietly ignored the pin.
   let (branch, branchCode) = gitIn(NativenifDir, "symbolic-ref --quiet --short HEAD")
-  if branchCode == 0 and branch.strip.len > 0 and getEnv("CI").len == 0:
+  if branchCode == 0 and branch.strip.len > 0 and getEnv("CI").len == 0 and
+     not justCloned:
     echo "[deps] WARNING: ", NativenifDir, " is on branch '", branch.strip, "' at ", head
     echo "[deps] WARNING: leaving it there; ", NativenifCommitFile, " pins ", pin
     echo "[deps] to build the pin instead: git -C ", NativenifDir,

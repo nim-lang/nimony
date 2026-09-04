@@ -385,9 +385,27 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add s
       inc n
     of StrLit:
+      # The cast and the literal must be emitted as ONE parenthesized unit.
+      # C's postfix operators bind tighter than a cast, so an unwrapped
+      # `(NC8*)"lit"` that a caller then subscripts yields
+      # `(NC8*)"lit"[i]` = `(NC8*)("lit"[i])` — a char cast to a pointer,
+      # not the i-th char of the string. The subscript emitters (AtC/PatC)
+      # and DotC append directly to whatever `genx` produced, so making the
+      # literal self-parenthesizing here fixes every one of those call
+      # sites at once. Same shape `suffixConv` above already uses for its
+      # own cast. Reached in practice by inlining a string-literal argument
+      # into a `cstring` parameter that is indexed (only at --opt:speed,
+      # since without inlining the parameter stays a variable).
       if gfInCallImportC notin c.flags and gfInFlexArray notin c.flags:
+        c.add ParLe
         c.add "(NC8*)"
-      c.add makeCString(c.m.pool.strings[n.litId])
+        c.add makeCString(c.m.pool.strings[n.litId])
+        c.add ParRi
+      else:
+        # No cast emitted in these contexts, so there is nothing for a
+        # postfix operator to bind past — and a bare literal is what an
+        # importC call / flexible-array initializer expects.
+        c.add makeCString(c.m.pool.strings[n.litId])
       inc n
     else:
       genLvalue c, n

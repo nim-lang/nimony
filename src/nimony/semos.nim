@@ -6,19 +6,19 @@
 
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
-from std / strutils import multiReplace, split, strip, startsWith
+from std / strutils import multiReplace, startsWith
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
 from std / osproc import execCmdEx
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser]
+import ".." / lib / [nifchecksums, nifindexes, tooldirs, argsfinder, symparser, vfs]
 import ".." / lib / nifreader as rd
 from ".." / lib / nifcoreparse import parse
 # qualified-only: the private-pool plugin-input copy must not fight the
 # global-pool overloads nifprelude puts in scope
 from ".." / lib / nifcore import nil
-from ".." / lib / bif import storeToString, isBifFile, UnusedNameTag
+from ".." / lib / bif import storeToString, isBifFile, UnusedNameTag, DependencyTag
 
 import nimony_model, symtabs, builtintypes, decls, asthelpers,
   programs, sigmatch, magics, reporters, nifconfig,
@@ -370,7 +370,7 @@ proc makePluginCache(dir: string) =
   except:
     quit "FAILURE: cannot create directory " & dir
 
-proc pluginCompileCmd(c: var SemContext; cacheDir: string): string =
+proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
   ## The invocation a plugin sub-compile shares with the sem-only run the
   ## validator needs: the cache, the search paths and the stdlib-configuration
   ## opt-outs. The caller appends the command and the file.
@@ -384,14 +384,21 @@ proc pluginCompileCmd(c: var SemContext; cacheDir: string): string =
   # supplied below and deliberately not forwarded from the caller's path file.
   # Do not forward the raw command line: it can contain `--base`, which would
   # make plugin child compiles read caller-local nimony.paths files.
+  #
+  # `-d:nimonyPlugin` marks the sub-compile as the build OF a plugin. The
+  # dependency scanner then schedules no plugin builds of its own: a plugin is
+  # a leaf of the build graph. Without this, a plugin whose source imports the
+  # module declaring it (`lib/std/deps/smartcli.nim` imports `std/smartcli`)
+  # would need itself built first, and the nested builds never bottom out.
   let nimonyExe = findTool("nimony")
   let pluginDir = nimonyDir() / "src/nimony/lib"
   let srcLibPath = nimonyDir() / "src" / "lib"
   result = quoteShell(nimonyExe) &
     " --nimcache:" & quoteShell(cacheDir) &
+    " -d:nimonyPlugin" &
     " --path:" & quoteShell(srcLibPath) &
     " --path:" & quoteShell(pluginDir)
-  for path in c.g.config.paths:
+  for path in config.paths:
     if path != stdlibDir() and path != pluginDir and path != srcLibPath:
       result.add " --path:"
       result.add quoteShell(path)
@@ -402,11 +409,11 @@ proc pluginCompileCmd(c: var SemContext; cacheDir: string): string =
   # above. The derived defines (`nimNativeAlloc`/`nimNativeIo`) are NOT
   # forwarded: the child re-derives them from these opt-outs.
   for d in ["useLibc", "useLibcIo", "useMimalloc"]:
-    if c.g.config.isDefined(d):
+    if config.isDefined(d):
       result.add " -d:"
       result.add d
 
-proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
+proc runValidatorOnPlugin(config: NifConfig; nf, checkCache: string) =
   ## Run the plugin validator on `nf` before compiling it. Skipped when
   ## --novalidate was passed or when the validator binary is not available
   ## (a fresh clone before `hastur build validator` has run).
@@ -417,16 +424,15 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
   ##
   ## A failing sem run is not reported here. It means the plugin does not
   ## compile, and the build that follows says so with the real diagnostics.
-  if c.g.config.noValidate: return
+  if config.noValidate: return
   let v = findTool("validator")
   if not os.fileExists(v):
     echo "warning: validator binary not found at ", v,
          "; skipping plugin validation (build it with `hastur build validator` ",
          "or pass --novalidate to silence this)"
     return
-  let checkCache = exefile & "_v"
   makePluginCache checkCache
-  let checkCmd = pluginCompileCmd(c, checkCache) & " check " & quoteShell(nf)
+  let checkCmd = pluginCompileCmd(config, checkCache) & " check " & quoteShell(nf)
   # Captured, not inherited: on failure the build below reports the same
   # diagnostics, and printing them twice would only obscure them.
   var checkCode = 0
@@ -439,18 +445,50 @@ proc runValidatorOnPlugin(c: var SemContext; nf, exefile: string) =
   if checkCode != 0: return
   exec quoteShell(v) & " --nimcache:" & quoteShell(checkCache) & " " & quoteShell(nf)
 
-proc compilePlugin(c: var SemContext; info: NifLineInfo; nf, exefile: string) =
-  ## Build a plugin's `.nim` source as an executable. Plugins import
-  ## `lib/plugins.nim` and are compiled by Nimony itself.
-  runValidatorOnPlugin(c, nf, exefile)
-  let pluginCache = exefile & "_d"
-  makePluginCache pluginCache
-  var cmd = pluginCompileCmd(c, pluginCache)
+proc buildPluginInto(config: NifConfig; nf, exefile, scratch: string) =
+  ## Build a plugin's `.nim` source `nf` as the executable `exefile`. Plugins
+  ## import `lib/plugins.nim` and are compiled by Nimony itself. The
+  ## sub-compiles work in `<scratch>_d` (the build) and `<scratch>_v` (the
+  ## validator's sem-only run); the caller owns these directories.
+  ##
+  ## The link target is a temporary sibling, never `exefile` itself, and it is
+  ## moved into place as one operation once it is complete. Nothing ever opens
+  ## the live path for writing: a process executing the old plugin keeps its
+  ## inode, and one starting afterwards sees a complete file.
+  runValidatorOnPlugin(config, nf, scratch & "_v")
+  let cacheDir = scratch & "_d"
+  makePluginCache cacheDir
+  let staging = atomicTempPath(exefile)
+  var cmd = pluginCompileCmd(config, cacheDir)
   cmd.add " -o:"
-  cmd.add quoteShell(exefile)
+  cmd.add quoteShell(staging)
   cmd.add " c "
   cmd.add quoteShell(nf)
   exec cmd
+  if not vfsMoveInto(staging, exefile):
+    vfsRemove staging   # no `.tmp.NNN` litter
+    quit "FAILURE: cannot install plugin executable " & exefile
+
+proc buildPlugin*(config: NifConfig; nf, exefile: string) =
+  ## `nimsem plugin <nf> <exefile>`: the build-graph way to get a plugin.
+  ## The dependency scanner lists every `{.plugin.}` a module declares, so
+  ## nifmake builds the executable once, as a node of its own, before any of
+  ## the nimsem runs that may execute it. Being the only builder by
+  ## construction, this path may keep incremental caches next to the exe.
+  buildPluginInto(config, nf, exefile, exefile)
+
+proc ensurePlugin(config: NifConfig; nf, exefile: string) =
+  ## The lazy fallback for a plugin the build graph did not provide: a
+  ## `{.plugin.}` pragma nifler could not see, or a hand-driven `nimsem m`.
+  ## Several nimsem processes may get here for the same plugin at once, so it
+  ## shares nothing that could be corrupted: the sub-compiles run in throwaway
+  ## per-process caches, and the executable is installed atomically. The
+  ## worst case of a collision is a redundant compile.
+  if not needsRecompile(nf, exefile): return
+  let scratch = atomicTempPath(exefile)
+  buildPluginInto(config, nf, exefile, scratch)
+  vfsRemoveTree scratch & "_d"
+  vfsRemoveTree scratch & "_v"
 
 proc writeFileIfChanged(file, content: string) {.canRaise.} =
   if os.fileExists(file) and readFile(file) == content:
@@ -498,6 +536,101 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
   if nextDisamb > firstDisamb:
     c.locals[pluginTempBase] = nextDisamb - 1
 
+# ── Plugin output ───────────────────────────────────────────────────────────
+#
+# A plugin's output is memoized under `checksum(input)`. That is exact for a
+# plugin that computes from its input alone and wrong for one that also reads a
+# file — a schema, a template, a table of constants: the file changes, the
+# input does not, and the memo is served forever (nim-lang/nimony#1378).
+# `plugins.dependsOn` reports such reads, and the paths travel back as a leading
+# `(dependency …)` tree beside the `(unusedname …)` gensym hint. Both are
+# sidecars: peeled off here, never part of the tree that is sem-checked. The
+# same list, read out of a cached output, decides whether the memo still holds.
+
+type
+  PluginOutput = object
+    buf: TokenBuf       ## the whole output; a bif carries private pools, text
+                        ## is parsed into the global ones
+    nextName: string    ## the gensym hint, or ""
+    deps: seq[string]   ## the `(dependency …)` paths
+
+proc isSidecar(o: PluginOutput; n: Cursor): bool =
+  n.kind == TagLit and
+    tagName(o.buf.tags, n.cursorTagId) in [UnusedNameTag, DependencyTag]
+
+proc peelSidecars(o: var PluginOutput) =
+  ## Reads the leading sidecar trees into `nextName` and `deps`.
+  if o.buf.len > 0:
+    var n = beginRead(o.buf)
+    while n.hasMore and o.isSidecar(n):
+      let tag = tagName(o.buf.tags, n.cursorTagId)
+      n.into:
+        while n.hasMore:
+          if tag == UnusedNameTag and n.kind == Symbol:
+            o.nextName = symName(n)
+          elif tag == DependencyTag and n.kind == StrLit:
+            o.deps.add strVal(n)
+          skip n
+    endRead(n)
+
+proc loadPluginOutput(outputFile: string; info: NifLineInfo): PluginOutput =
+  result = PluginOutput(nextName: "", deps: @[])
+  if isBifFile(outputFile):
+    # Binary output: the tokens carry absolute line infos, so no parentSeed
+    # resolution is needed, and the gensym hint is the `(unusedname X)` tree.
+    var m = bif.load(outputFile)
+    result.buf = move m.buf
+  else:
+    # Text output (hand-written or third-party plugins): the gensym hint is
+    # the `.unusedname` directive. `parse` reads ONE tree per call, so each
+    # sidecar costs a call of its own before the output proper is reached.
+    result.buf = createTokenBuf(30)
+    var r = rd.open(outputFile)
+    result.nextName = rd.firstUnusedName(r)
+    var lastWasSidecar = true
+    while lastWasSidecar:
+      let start = result.buf.len
+      # seed the parse with the invocation site's absolute info: text plugin
+      # output copies the (file-less, relative) infos of its input, so without
+      # an anchor they resolve to NoFile and diagnostics print as `???`
+      parse(r, result.buf, parentSeed = info, denseLineInfo = true)
+      lastWasSidecar = result.buf.len > start and
+        result.isSidecar(cursorAt(result.buf, start))
+    rd.close(r)
+  peelSidecars result
+
+proc addPluginBody(dest: var TokenBuf; o: var PluginOutput) =
+  ## Appends the output proper, everything after the sidecars, to `dest`.
+  ## `addSubtree` re-interns a bif's private-pool content into the global pools.
+  if o.buf.len > 0:
+    var n = beginRead(o.buf)
+    while n.hasMore and o.isSidecar(n):
+      skip n
+    while n.hasMore:
+      addSubtree(dest, n)
+      skip n
+    endRead(n)
+
+proc memoIsStale(outputFile: string; deps: seq[string]): bool =
+  ## True when a file the cached output depended on has changed or vanished
+  ## since it was written. A vanished file forces exactly one rerun: the plugin
+  ## no longer finds it and so no longer reports it. `vfsMtime` rather than
+  ## `lastModTimeOrStale`, which is whole seconds on host Nim: a data file
+  ## edited in the same second as the output would tie and read as unchanged.
+  ## nifmake compares nanoseconds for the same reason.
+  result = false
+  let written = vfsMtime(outputFile)
+  for d in deps:
+    if not vfsExists(d) or vfsMtime(d) > written:
+      result = true
+
+proc execPlugin(pluginExe, inputFile, outputFile, inputFileB: string) =
+  var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
+  if inputFileB.len > 0:
+    cmd &= " "
+    cmd &= quoteShell(inputFileB)
+  exec cmd
+
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                 pluginName: string; input: var TokenBuf;
                 additionalInput: var TokenBuf) =
@@ -527,9 +660,7 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   let pluginExe = c.g.config.nifcachePath / p.name.addFileExt(ExeExt)
 
   let nf = resolveFile(c.g.config.paths, getFile(info), pluginName)
-  if needsRecompile(nf, pluginExe):
-    compilePlugin(c, info, nf, pluginExe)
-  c.depsPlugins.incl pool.strings.getOrIncl nf
+  ensurePlugin(c.g.config, nf, pluginExe)
 
   try:
     writeFileIfChanged(inputFile, pluginInput)
@@ -538,42 +669,17 @@ proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
   except:
     quit "FAILURE: cannot write plugin input file " & inputFile
 
+  let typesFile = if pluginAdditionalInput.len > 0: inputFileB else: ""
   if needsRecompile(pluginExe, outputFile):
-    var cmd = quoteShell(pluginExe) & " " & quoteShell(inputFile) & " " & quoteShell(outputFile)
-    if pluginAdditionalInput.len > 0:
-      cmd &= " "
-      cmd &= quoteShell(inputFileB)
-    exec cmd
-  var nextName = ""
-  if isBifFile(outputFile):
-    # Binary output: the tokens carry absolute line infos, so no parentSeed
-    # resolution is needed; the gensym hint arrives as the leading
-    # `(unusedname X)` tree. `addSubtree` re-interns the fresh-pool content
-    # into the caller's global-pool world.
-    var m = bif.load(outputFile)
-    if m.buf.len > 0:
-      var n = beginRead(m.buf)
-      if n.kind == TagLit and
-          tagName(m.buf.tags, n.cursorTagId) == UnusedNameTag:
-        n.into:
-          while n.hasMore:
-            if n.kind == Symbol:
-              nextName = symName(n)
-            skip n
-      while n.hasMore:
-        addSubtree(dest, n)
-        skip n
-      endRead(n)
-  else:
-    # Text output (hand-written or third-party plugins).
-    var r = rd.open(outputFile)
-    nextName = rd.firstUnusedName(r)
-    # seed the parse with the invocation site's absolute info: text plugin
-    # output copies the (file-less, relative) infos of its input, so without
-    # an anchor they resolve to NoFile and diagnostics print as `???`
-    parse(r, dest, parentSeed = info, denseLineInfo = true)
-    rd.close(r)
-  registerGeneratedSymbols(c, firstDisamb, nextName)
+    execPlugin pluginExe, inputFile, outputFile, typesFile
+  var output = loadPluginOutput(outputFile, info)
+  if memoIsStale(outputFile, output.deps):
+    execPlugin pluginExe, inputFile, outputFile, typesFile
+    output = loadPluginOutput(outputFile, info)
+  for d in output.deps:
+    recordFileDep c, d
+  addPluginBody dest, output
+  registerGeneratedSymbols(c, firstDisamb, output.nextName)
 
 proc runPlugin*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                 pluginName: string; input: var TokenBuf) =

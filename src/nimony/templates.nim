@@ -108,11 +108,28 @@ proc expandTemplateImpl(c: var SemContext; dest: var TokenBuf;
       # `block`, the branches of an `if` — is a scope of its own in `identToSym`'s
       # eyes, so a name declared under it keeps the local layout it already has.
       let listy = body.stmtKind == StmtsS
+      # A local declared in the body may have been typed `untyped` when the
+      # template's own body was checked — `let n = call` can be nothing else
+      # there. That type must not travel into the expansion: here the
+      # initializer IS typed, and a local claiming `untyped` over a real value
+      # makes the next thing to read it (`return n`, an assignment, a call that
+      # has to pick an overload) report a mismatch nobody can act on. Blanking
+      # the slot is what the source said, and the expansion is semchecked
+      # again, so the type is inferred from the value where it can be known.
+      #
+      # In the body's own tree it has to stay: that check needs *a* type for
+      # `n` or every use of it fails. Only what is emitted here is real code.
+      let localy = body.stmtKind in LocalDecls
+      var child = 0
       var first = true
       body.into:
         while body.hasMore:
-          expandTemplateImpl c, dest, e, body,
-                             atToplevel and (listy or (first and body.kind == SymbolDef))
+          if localy and child == LocalTypePos and body.typeKind == UntypedT:
+            dest.addDotToken(body.info)
+          else:
+            expandTemplateImpl c, dest, e, body,
+                               atToplevel and (listy or (first and body.kind == SymbolDef))
+          inc child
           first = false
           skip body
         dest.addParRi(body.endInfo)

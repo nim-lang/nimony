@@ -14,6 +14,11 @@ include nif_annotations
 type
   ActionItem = object
     id: int
+      ## The enclosing scope, identified by the position its body starts at.
+    pos: int
+      ## Where this `defer`'s `try` BEGINS: the position the statement after it
+      ## will be written to. A `defer` protects what follows it, not what
+      ## precedes it, so this is not the scope start.
     action: TokenBuf
   Context = object
     scopeStack: seq[int]
@@ -33,34 +38,45 @@ proc takeUnexpectedChild(dest: var TokenBuf; n: var Cursor) =
   ## instead of printing the diagnostic. Copy it through and keep walking.
   dest.takeTree n
 
-proc wrapDeferScope(dest: var TokenBuf; beforeBody: int;
-                    defers: var seq[TokenBuf]; info: NifLineInfo) =
+proc wrapOneDefer(dest: var TokenBuf; startsAt: int; action: var TokenBuf;
+                  info: NifLineInfo) =
   ## Collect-then-wrap: nifcore's sealed model can't insert unbalanced opens,
-  ## so instead of splicing `(try (stmts` at scope start we take the finished
-  ## body `dest[beforeBody..]`, drop it, and re-emit it wrapped in one nested
-  ## try/finally per defer. `defers` is popped LIFO (defers[0] = last-declared
-  ## = innermost try; defers[^1] = first-declared = outermost) — the exact
-  ## nesting the classic insert path produced.
-  var bodyBuf = createTokenBuf(dest.len - beforeBody + 4)
-  for i in beforeBody ..< dest.len: bodyBuf.add dest[i]
-  dest.shrink beforeBody
-  let m = defers.len
-  for k in countdown(m-1, 0):        # open trys outer -> inner
-    dest.addParLe(TryS, info)
-    dest.addParLe(StmtsS, info)
-  var bc = beginRead(bodyBuf)         # the body inside the innermost stmts
+  ## so instead of splicing `(try (stmts` in at `startsAt` we take the finished
+  ## tail `dest[startsAt..]`, drop it, and re-emit it wrapped.
+  ##
+  ## `startsAt` is where the `defer` STOOD, not where its scope began: a
+  ## `defer` protects the statements after it and nothing before it. Wrapping
+  ## from the scope start instead pulled the scope's earlier declarations —
+  ## `result` among them — inside the `try` body, which put them in a
+  ## different scope from the `finally` that reads them and left every later
+  ## pass to cope with a `try` body that was not a scope.
+  var bodyBuf = createTokenBuf(dest.len - startsAt + 4)
+  for i in startsAt ..< dest.len: bodyBuf.add dest[i]
+  dest.shrink startsAt
+  dest.addParLe(TryS, info)
+  dest.addParLe(StmtsS, info)
+  var bc = beginRead(bodyBuf)
   while bc.hasMore:
     dest.addSubtree bc
     skip bc
-  for k in 0 ..< m:                   # close inner -> outer, each with its finally
-    dest.addParRi()                   # close this try's stmts
-    dest.addParLe(FinU, info)
-    var dc = beginRead(defers[k])
-    while dc.hasMore:
-      dest.addSubtree dc
-      skip dc
-    dest.addParRi()                   # close (fin …)
-    dest.addParRi()                   # close (try …)
+  dest.addParRi()                     # close the try's stmts
+  dest.addParLe(FinU, info)
+  var dc = beginRead(action)
+  while dc.hasMore:
+    dest.addSubtree dc
+    skip dc
+  dest.addParRi()                     # close (fin …)
+  dest.addParRi()                     # close (try …)
+
+proc wrapScopeDefers(c: var Context; dest: var TokenBuf; scopeId: int;
+                     info: NifLineInfo) =
+  ## Wrap every `defer` this scope collected. Popping the stack hands them
+  ## back last-declared first, which is also innermost first: the last
+  ## `defer`'s `try` starts latest and so must be built before the earlier
+  ## ones, which then wrap it along with the statements between them.
+  while c.actionStack.len > 0 and c.actionStack[^1].id == scopeId:
+    var popped = c.actionStack.pop
+    wrapOneDefer(dest, popped.pos, popped.action, info)
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let beforeBody = dest.len+1
@@ -74,22 +90,21 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     dest.addParLe(StmtsS, n.info)
     trStmt c, dest, n
-  var defers: seq[TokenBuf] = @[]
-  while c.actionStack.len > 0 and c.actionStack[^1].id == beforeBody:
-    var popped = c.actionStack.pop
-    defers.add ensureMove(popped.action)
-  if defers.len > 0:
-    wrapDeferScope(dest, beforeBody, defers, blockInfo)
+  wrapScopeDefers(c, dest, beforeBody, blockInfo)
   dest.addParRi()
   discard c.scopeStack.pop
 
 proc trDefer(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let mine = c.scopeStack[^1]
+  # `dest.len` BEFORE anything else is emitted: the `defer` statement itself
+  # writes nothing here (its body is captured into `deferBody`), so this is
+  # exactly where the statements it protects begin.
+  let startsAt = dest.len
   # capture the (transformed) defer body; the wrap happens at scope end
   var deferBody = createTokenBuf(50)
   n.into: # enter (defer
     trStmt c, deferBody, n
-  c.actionStack.add ActionItem(id: mine, action: ensureMove deferBody)
+  c.actionStack.add ActionItem(id: mine, pos: startsAt, action: ensureMove deferBody)
 proc trReturn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.retSym != NoSymId and not (n.childCursor.isSymbol and n.childCursor.symId == c.retSym):
     # transform to `result = <expr>; return result`, see bug #1440
@@ -211,12 +226,7 @@ proc transformDefer*(dest: var TokenBuf; procBody: int) =
   n.into:
     while n.hasMore:
       trStmt c, buf, n
-  var defers: seq[TokenBuf] = @[]
-  while c.actionStack.len > 0:
-    var popped = c.actionStack.pop
-    defers.add ensureMove(popped.action)
-  if defers.len > 0:
-    wrapDeferScope(buf, beforeBody, defers, topInfo)
+  wrapScopeDefers(c, buf, beforeBody, topInfo)
   buf.addParRi()
 
   dest.shrink procBody

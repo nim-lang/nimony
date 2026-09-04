@@ -91,6 +91,12 @@ type
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
     returnType*: Cursor
+    expected*: TypeCursor ## the type the CALL SITE wants, or a nil/`auto`
+                          ## cursor when it wants nothing in particular. The
+                          ## last thing that can bind a leftover typevar (see
+                          ## `inferTypevarsFromExpected`), so matching needs it
+                          ## in hand to tell an uninstantiable candidate from
+                          ## one the target type still completes.
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
@@ -98,8 +104,9 @@ type
     genericConverter*, refineArgType*, insertedParam*: bool
     missingConstraints*: OrderedTable[string, Cursor]
 
-proc createMatch*(context: ptr SemContext): Match =
-  Match(context: context, firstVarargPosition: -1, varargsEndPosition: -1)
+proc createMatch*(context: ptr SemContext; expected: TypeCursor = default(Cursor)): Match =
+  Match(context: context, expected: expected,
+        firstVarargPosition: -1, varargsEndPosition: -1)
 
 proc bindTypevar(m: var Match; fs: SymId; a: Cursor) =
   ## Record a FRESH binding for the formal typevar `fs`. Every call site is
@@ -132,8 +139,13 @@ proc scopeBump(m: Match): int =
   ## Models an implicit `Scope` parameter on every routine. Same-module
   ## calls pass `Scope` (exact match); cross-module calls pass
   ## `ImportScope`, where `ImportScope = object of Scope` (subtype match,
-  ## depth 1). Returns the phantom parameter's contribution to
-  ## `inheritanceCosts`: 0 for a same-module candidate, 1 otherwise.
+  ## depth 1). Concept requirement stubs are phantom declarations with no
+  ## body; they are modeled as `ConceptScope`, where `Scope = object of
+  ## ConceptScope`, so they beat same-module candidates when everything
+  ## else ties and `addFn`'s `fromConcept` path can defer the call to
+  ## instantiation. Returns the phantom parameter's contribution to
+  ## `inheritanceCosts`: -1 for a concept requirement, 0 for same-module,
+  ## 1 for cross-module.
   ##
   ## Treating module-of-origin as a subtyping dimension makes overload
   ## resolution prefer locally defined routines over imported ones
@@ -145,6 +157,7 @@ proc scopeBump(m: Match): int =
   ## Evaluated lazily by `cmpMatches`, so unique-resolution call sites
   ## pay nothing: only candidates that actually compete with another
   ## successful match are inspected.
+  if m.fn.fromConcept: return -1
   if m.context == nil or m.fn.sym == SymId(0): return 0
   let s = pool.syms[m.fn.sym]
   # Locate the dot that introduces the module suffix without allocating
@@ -844,6 +857,17 @@ proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; rout
   var bindings = m.inferred
   for selfSym in conceptSelfSyms(body, routine):
     bindings[selfSym] = a
+  if not conceptRoutineUsesSelf(body, routine):
+    # `Self` is what ties a requirement to the checked type. A requirement that
+    # never names it may still be checked — but only once every typevar it names
+    # is bound, which an earlier requirement does under the "first use infers
+    # `T`" rule. While one is still open nothing relates the requirement to `a`,
+    # and candidate matching would bind that typevar to whatever type the
+    # candidate happens to name, so *every* type would satisfy the concept
+    # (issue #2430).
+    for tv in conceptRoutineTypevars(body, routine):
+      if not bindings.hasKey(tv):
+        return false
   var argBuf = createTokenBuf(32)
   var retBuf = createTokenBuf(16)
   substituteTypevars(retBuf, asRoutine(routine).retType, bindings)
@@ -2524,6 +2548,40 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
       m.error0 RoutineIsNotGeneric
       return
 
+proc inferTypevarsFromExpected(m: var Match) =
+  ## Last chance to bind a generic routine's leftover typevars: unify its
+  ## RETURN type with the type the call site expects — `let r: Result[int,
+  ## string] = ok(5)` infers `E` that way, as `ok`'s argument only mentions
+  ## `T`. This is part of MATCHING, not a touch-up applied to the winner
+  ## afterwards: whether the expected type completes a candidate is exactly
+  ## what separates one that can be instantiated from one that cannot, and the
+  ## latter must not reach `pickBestMatch` at all. Merges only on a clean
+  ## (non-converting) unify, so a conversion-to-expected — `commonType`'s job,
+  ## much later — is left untouched.
+  if m.fn.kind notin RoutineKinds or m.fn.sym == SymId(0): return
+  if cursorIsNil(m.expected) or m.expected.isDotToken or
+     m.expected.typeKind in {AutoT, VoidT} or containsGenericParams(m.expected): return
+  if cursorIsNil(m.returnType) or m.returnType.isDotToken: return
+  var rtMatch = createMatch(m.context)
+  rtMatch.inferred = m.inferred # seed with the bindings already found from args
+  var rt = m.returnType
+  typematch(rtMatch, rt, Item(n: emptyNode(m.context[]), typ: m.expected))
+  if not rtMatch.err and classifyMatch(rtMatch) in {EqualMatch, GenericMatch}:
+    # `bindTypevar` rather than assigning `inferred` wholesale: it is what keeps
+    # `unboundTvars` — the count the caller is about to test — honest.
+    for v, inf in rtMatch.inferred:
+      if not m.inferred.hasKey(v):
+        bindTypevar m, v, inf
+
+proc anArgIsStillUntyped(args: openArray[CallArg]): bool =
+  ## `auto` on an argument is not a type, it is "not decided yet": an empty
+  ## literal (`@[]`) whose element type only the enclosing context can supply.
+  ## A typevar the arguments left unbound is then unbound because the ARGUMENT
+  ## is unfinished, not because the candidate is uninstantiable — so the
+  ## rejection below has nothing to say about it.
+  for a in args:
+    if not cursorIsNil(a.typ) and a.typ.typeKind == AutoT: return true
+
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
   assert fn.kind != NoSym or fn.sym == SymId(0)
@@ -2552,32 +2610,29 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
     f = paramsStart; skip f
     m.returnType = f # return type follows the parameters in the token stream
 
-  if m.unboundTvars > 0 and not m.err and not m.insertedParam:
-    # The arguments have had their say and the only thing that can still bind a
-    # typevar is `inferTypevarsFromExpected`, which reaches them through the
-    # return type — plus, when a parameter was left to its default,
-    # `addArgsInstConverters`, which instantiates that default expression and
-    # matches it against the formal (`proc foo6[T](x: T = 3)` called as
-    # `foo6()` infers `T` from the `3`). Hence `insertedParam` bows out here.
-    # So a typevar left over in a routine whose return type is concrete and
-    # whose parameters all got arguments is one that nothing will ever bind: an
-    # ORPHAN type parameter,
-    # like `Z` in `func foo[Z: static int](x: float)`. It cannot be
-    # instantiated, hence it is not a match at all — left in the running it
-    # ties the non-generic `foo(x: float)` at `pickBestMatch` and turns a
-    # perfectly clear call into "ambiguous call" (#2392). Walking the typevars
-    # is confined to this failure path: it only serves to name the culprit.
-    if cursorIsNil(m.returnType) or not containsGenericParams(m.returnType):
-      for v in m.tvars:
+  if m.unboundTvars > 0 and not m.err and not m.insertedParam and
+      not anArgIsStillUntyped(args):
+    # The arguments have had their say. Two things can still bind a typevar:
+    # the call site's expected type, through the return type (right below),
+    # and — when a parameter was left to its default — `addArgsInstConverters`,
+    # which instantiates that default expression and matches it against the
+    # formal (`proc foo6[T](x: T = 3)` called as `foo6()` infers `T` from the
+    # `3`). Hence `insertedParam` bows out here.
+    inferTypevarsFromExpected m
+    if m.unboundTvars > 0:
+      # A typevar still unbound now is one that NOTHING will ever bind, so the
+      # candidate cannot be instantiated — and a candidate that cannot be
+      # instantiated is not a match at all. Left in the running it either ties
+      # a viable overload at `pickBestMatch` and turns a clear call into
+      # "ambiguous call" (#2392), or outright beats it by binding fewer
+      # typevars — `matrix[R, C: static int, T](fill: T)` swallowing the call
+      # meant for `matrix(elems: array[R, array[C, T]])` and orphaning `R` and
+      # `C` (#2442). Walking the typevars is confined to this failure path: it
+      # only serves to name the culprit, in declaration order.
+      for v in typeVars(m.fn.sym):
         if not m.inferred.hasKey(v):
           m.error0Typevar CouldNotInferTypeVar, v
           break
-
-proc hasUnboundTypevars*(m: Match): bool =
-  ## True if `m.fn`'s generic typevars (as collected by `matchTypevars`) still
-  ## lack a binding after argument matching. Free: `bindTypevar` keeps the
-  ## count up to date as the bindings happen.
-  m.unboundTvars > 0
 
 proc allUninstantiable*(m: openArray[Match]): bool =
   ## Every candidate was dropped for the same reason: a type parameter nothing

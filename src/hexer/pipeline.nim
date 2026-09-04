@@ -68,14 +68,26 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("xelim1")
   lowerExprs(pass)
 
-  # Pass 4: Inject Raising Calls (Exception Handling). Emits the `canRaise`
-  # temp and its check as STATEMENTS in front of the enclosing statement, so
-  # it no longer re-introduces the `(expr (stmts ...) tmp)` nesting that used
-  # to require a second `xelim` run right after it.
+  # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
+  # a check, and the success tuple lands in the same pass: signatures, the
+  # `result` slot, the temps, and every use projected onto its value half.
+  # Emitted as STATEMENTS in front of the enclosing statement, so it does not
+  # re-introduce the `(expr (stmts ...) tmp)` nesting that used to require a
+  # second `xelim` run right after it.
+  #
+  # Everything downstream therefore sees a finished shape: the destroyer sees a
+  # tuple-typed temp like any other local and `cps` sees a coroutine that
+  # happens to return a tuple. The cost of deciding it here is the one
+  # `eraiser.nim`'s header describes — the lifter synthesises a hook per
+  # `(ErrorCode, T)` that only delegates to `T`'s, which the inliner prunes.
+  #
+  # The flip side: nothing lowers raises after this point, so a later pass that
+  # needs to signal an error emits the finished form (the duplifier's
+  # out-of-memory check, via `builtintypes.addRaisedCode`).
   pass.prepareForNext("eraiser")
   injectRaisingCalls(pass, c.bits div 8)
 
-  # Pass 5: Inject Duplication Points. Like the eraiser it emits its owning
+  # Pass 6: Inject Duplication Points. Like the eraiser it emits its owning
   # temps as statements (`bindToTemp` → `c.hoisted`), which is what removed the
   # `xelim2` run that used to sit between this pass and the destroyer.
   pass.prepareForNext("duplifier")
@@ -111,16 +123,16 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("cps")
   transformToCps(pass)
 
-  # Pass 8: Transform VTables (Virtual Table Backend)
+  # Pass 9: Transform VTables (Virtual Table Backend)
   var needsXelimAgain = false
   pass.prepareForNext("vtables")
   transformVTables(pass, needsXelimAgain)
 
-  # Pass 9: Inject Const Param Dereferences
+  # Pass 10: Inject Const Param Dereferences
   pass.prepareForNext("constparams")
   injectConstParamDerefs(pass, c.bits div 8, needsXelimAgain)
 
-  # Pass 10: the remaining REAL lowering step, not a repair pass: `LowerCasts`
+  # Pass 11: the remaining REAL lowering step, not a repair pass: `LowerCasts`
   # unnests calls (the Final-IR "calls are unnested statements" rule) and binds
   # a cast's source and result to variables. `vtables`/`constparams` still emit
   # `(expr (stmts ...) v)` for their temps, so this run also flattens those —

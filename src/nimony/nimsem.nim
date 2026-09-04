@@ -56,7 +56,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 type
   Command = enum
-    None, SingleModule, GenerateIdx, Execute, Idetools
+    None, SingleModule, GenerateIdx, Execute, Idetools, BuildPlugin
 
 proc processModules(infiles: seq[string]; config: sink NifConfig;
                     moduleFlags: set[ModuleFlag]; commandLineArgs: string) =
@@ -118,6 +118,8 @@ proc handleCmdLine() =
           cmd = Execute
         of "idetools":
           cmd = Idetools
+        of "plugin":
+          cmd = BuildPlugin
         else:
           quit "command expected"
       else:
@@ -160,6 +162,10 @@ proc handleCmdLine() =
     if args.len == 0:
       quit "want more than 0 command line argument"
     executeNif args, ensureMove config
+  of BuildPlugin:
+    if args.len != 2:
+      quit "want exactly 2 command line arguments: <plugin.nim> <executable>"
+    buildPlugin(config, args[0], args[1])
   of Idetools:
     if args.len == 0:
       quit "want more than 0 command line argument"

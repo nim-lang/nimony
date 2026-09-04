@@ -352,7 +352,8 @@ proc trArrayBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
-proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor)
+proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
+              rewriteRaises = false)
 
 proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe("proctype", n.info)
@@ -373,7 +374,7 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       skip n # export marker
       skip n # pattern
       skip n # generics
-    trParams c, dest, n
+    trParams c, dest, n, rewriteRaises = true
 
     let pinfo = n.info
     let prag = parsePragmas(c, dest, n)
@@ -815,7 +816,8 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   else:
     trLocal(c, dest, n, ParamY, TraverseSig, SymId(0))
 
-proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
+              rewriteRaises = false) =
   if n.isDotToken:
     dest.addSubtree n
     inc n
@@ -833,16 +835,19 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   var retType = n
   skip n
   # n is now at the pragmas position:
-  if hasPragma(n, RaisesP):
-    # use a tuple type:
+  if rewriteRaises and hasPragma(n, RaisesP):
+    # PROCTYPES only. A raising routine's DECLARATION gets its success tuple
+    # from the `eraiser`, which has to run before `cps` — a coroutine's frame
+    # and result slot are built out of the return type, and that cannot wait
+    # for codegen. Imported routines included: `transformInlineRoutines` runs
+    # the whole pipeline over those too.
+    #
+    # A proctype is different. `(type :Fn . . . (proctype ... (raises)))` in
+    # another module is pulled in as a type DECLARATION, not as code, so this
+    # is the only pass that ever looks at one. Hence the mapping lives in
+    # `builtintypes.addLengReturnType`: several sites, one definition.
     var ret = createTokenBuf(6)
-    if isVoidType(retType):
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-    else:
-      ret.addParLe TupleT, NoLineInfo
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-      ret.addSubtree retType
-      ret.addParRi()
+    addLengReturnType(ret, retType, n, NoLineInfo)
     retType = cursorAt(ret, 0)
     trType c, dest, retType
   else:
@@ -2087,99 +2092,29 @@ proc trKeepovf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     trExpr c, dest, n # destination
 
 proc trRaise(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## A `raise` reaching codegen can only be a routine exit: the `eraiser`
+  ## turned every catchable one into a `jmp` to its handler, and the payload it
+  ## carries is already the success tuple. The `goto` case that used to live
+  ## here moved there with the rest of the `try` lowering.
   let info = n.info
   n.into:
-    if c.exceptLabels.len == 0:
-      # translate `raise` to `return`:
-      dest.addParLe RetS, info
-      trExpr c, dest, n
-    else:
-      # translate `raise` to `goto`:
-      skip n # raise expression handled in constparams.nim
-      let lab = c.exceptLabels[^1]
-      dest.addParLe("jmp", info)
-      dest.addSymUse(lab, info)
+    dest.addParLe RetS, info
+    trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
 proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  # We only deal with the control flow here. A `try` with handlers lowers to
-  # a FLAT goto sequence:
-  #
-  #   <try body>            # every raise inside became (jmp `exlab.N)
-  #   <finally>             # normal path only, see below
-  #   (jmp `exend.N)
-  #   (stmts (lab :`exlab.N) <handler>)
-  #   (lab :`exend.N)
-  #
-  # The handler must skip the normal path's finally — its own finally already
-  # ran at the raise site (finally statements are duplicated before every
-  # `raise`) — and the explicit jmp says so directly. The former shape parked
-  # the handler in a false-guarded `(elif)` of an `(if)` for the same effect,
-  # and every consumer paid for the pretense: arkham emitted a real
-  # materialize-and-`cmp 0` for a guard it cannot know is dead, and every
-  # branch-pruning pass needed a label-pinning rule to keep it from deleting
-  # a "dead" arm a jmp enters (see `branchPinned` in intramodinliner).
-  let info = n.info
+  ## Only the `try`/`finally` that `cps` builds for the `corofor` trampoline
+  ## still reaches codegen — the `eraiser` lowers every source-level one to
+  ## `lab`/`jmp` long before here. It has no handlers and nothing in it raises,
+  ## so "run the body, then the finally" is the whole translation.
   let tryStart = n
   n = sub(n)
-  var nn = n
-  skip nn # stmts
-  let oldLen = c.exceptLabels.len
-  var hasExcept = false
-  var tryLab: SymId = NoSymId
-  if nn.substructureKind == ExceptU:
-    # Use a distinct prefix from iterinliner's anonymous block break labels
-    # (`lab.N` via elimForLoops) so try/except lowering does not reuse the
-    # same C label as the enclosing block's break target.
-    tryLab = pool.syms.getOrIncl("`exlab." & $getTmpId(c))
-    c.exceptLabels.add tryLab
-    hasExcept = true
   trStmt c, dest, n
-
-  # The except clauses precede the finally in the tree, but the flat form
-  # emits the normal path (the finally) first: park their cursors, return
-  # for them after. A `raise` inside a handler or the finally must propagate
-  # PAST this try, not loop back to its own handler label, so the label is
-  # popped before either is translated.
-  var handlers: seq[Cursor] = @[]
-  while n.substructureKind == ExceptU:
-    handlers.add n
-    skip n, SkipFull
-  c.exceptLabels.shrink oldLen
-
-  # Since we duplicated the finally statements before every `raise` statement we
-  # know that when control flow reaches here, no error was raised. Hence we do not
-  # need to add logic to re-raise an exception here.
+  if n.substructureKind == ExceptU:
+    error c, "BUG: `except` should have been lowered by the eraiser: ", n
   if n.substructureKind == FinU:
     n.into:
       trStmt c, dest, n
-
-  if hasExcept:
-    let endLab = pool.syms.getOrIncl("`exend." & $getTmpId(c))
-    dest.addParLe("jmp", info)
-    dest.addSymUse(endLab, info)
-    dest.addParRi()
-    for i in 0 ..< handlers.len:
-      var h = handlers[i]
-      let hinfo = h.info
-      dest.copyIntoKind StmtsS, hinfo:
-        if i == 0:
-          dest.addParLe("lab", hinfo)
-          dest.addSymDef(tryLab, hinfo)
-          dest.addParRi()
-        h.into:
-          if h.stmtKind == LetS:
-            trStmt c, dest, h
-          else:
-            skip h # skip `T`
-          trStmt c, dest, h
-      if i < handlers.len - 1:
-        dest.addParLe("jmp", hinfo)
-        dest.addSymUse(endLab, hinfo)
-        dest.addParRi()
-    dest.addParLe("lab", info)
-    dest.addSymDef(endLab, info)
-    dest.addParRi()
   n = tryStart; skip n
 
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner) =
