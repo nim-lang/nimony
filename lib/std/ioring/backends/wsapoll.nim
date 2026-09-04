@@ -15,6 +15,11 @@
 # scheduler-tick stall on a fresh connection's first request (the listener's
 # readiness is a tick late; measured in the IOCP header).
 #
+# Deadlines are the shared ones: the wait is bounded by this lane's earliest
+# (`waitMillis`) and `expireDeadlines` runs on the way out, so an op that runs
+# out of time is completed here even when nothing became ready — including on
+# the path where the poll set is empty and the lane holds only timers.
+#
 # Winsock is bound by `dynlib` (the winlean house style) rather than through
 # `<winsock2.h>`, so the generated C never has to order that header against
 # winlean's `<Windows.h>`. `WSAPOLLFD` is declared to its ABI (SOCKET + two

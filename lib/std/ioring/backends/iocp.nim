@@ -48,9 +48,12 @@
 # shares, so callers must not submit on a socket they are closing.
 #
 # Waiting: `poll` blocks in GetQueuedCompletionStatusEx for the worker loop's
-# idle budget and reports a blocking wait as served, so the loop does not add
-# its Sleep(1) on top — on Windows both round up to the ~15.6 ms scheduler
-# tick, and the double wait cost cross-thread task hand-offs a second tick.
+# idle budget — or until this lane's earliest deadline, whichever is sooner
+# (`waitMillis`; `expireDeadlines` then completes whatever ran out of time, so
+# a timer fires whether or not any I/O did). The relay declares `waits`, so the
+# loop does not add its Sleep(1) on top — on Windows both round up to the
+# ~15.6 ms scheduler tick, and the double wait cost cross-thread task hand-offs
+# a second tick.
 # Socket completions wake the wait at once, so no timeBeginPeriod: measured on
 # a MinGW builder (hashi ws_echo), a fresh connection's first request is
 # answered in ~0.4 ms here versus one full tick under the readiness backend,
