@@ -3,7 +3,7 @@
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
 import httptags
 
-let poolSizeAtSeal = httpTags().tags.len
+let poolSizeAtInit = httpTags().tags.len
 
 var wbuf = default(array[4096, char])
 
@@ -87,7 +87,7 @@ proc testTypedValues =
   var others = ""
   for k, v in m.otherHeaders: others.add k & "=" & v & ";"
   assert others == "X-Odd=raw;", others
-  assert httpTags().tags.len == poolSizeAtSeal
+  assert httpTags().tags.len == poolSizeAtInit
 
 proc testRoundTrip =
   # The tree round-trips; the reason phrase deliberately does not.

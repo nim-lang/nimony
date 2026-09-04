@@ -3,18 +3,18 @@
 import std / [http/httpmsg, assertions, syncio]
 import httptags
 
-# --- init: `httptags` registered what we index on and sealed the pool -------
+# --- init: `httptags` registered what we index on --------------------------
 
 assert hTrace.uint32 != 0'u32
 assert registerHeader("x-trace-id") == hTrace, "registration is idempotent"
 assert not isKnownHeader(hTrace), "app headers sit past the built-in range"
 
-let poolSizeAtSeal = httpTags().tags.len
-assert httpTagsSealed()
+let poolSizeAtInit = httpTags().tags.len
 
 proc testLookupNeverGrows =
-  # The parser's only lookup. Attacker-controlled bytes must not reach the
-  # pool, which is what makes the sealed vocabulary a real boundary.
+  # The parser's only lookup, and the reason the vocabulary stays fixed:
+  # `lookupHeader` answers from a byte compare and cannot intern, so bytes a
+  # peer sent never reach the pool.
   assert lookupHeader("host") == tag(hHost)
   assert lookupHeader("HOST") == tag(hHost), "ASCII case is folded"
   assert lookupHeader("Content-Length") == tag(hContentLength)
@@ -27,7 +27,7 @@ proc testLookupNeverGrows =
   var long = ""
   for i in 0..<65: long.add 'a'
   assert lookupHeader(long).uint32 == 0'u32
-  assert httpTags().tags.len == poolSizeAtSeal, "the pool did not grow"
+  assert httpTags().tags.len == poolSizeAtInit, "the pool did not grow"
 
 proc testMethods =
   assert lookupMethod("GET") == tag(mGet)
@@ -140,7 +140,7 @@ proc testRecycle =
     assert m.target == "/page/" & $round
     assert m.getStr(hHost) == "host-" & $round & ".example.com"
     assert m.contentLength == round
-  assert httpTags().tags.len == poolSizeAtSeal, "recycling never touches tags"
+  assert httpTags().tags.len == poolSizeAtInit, "recycling never touches tags"
 
 proc testMoveOnly =
   var m = initHttpMsg()

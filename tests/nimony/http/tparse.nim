@@ -3,7 +3,7 @@
 import std / [http/httpmsg, http/httpparse, assertions, syncio]
 import httptags
 
-let poolSizeAtSeal = httpTags().tags.len
+let poolSizeAtInit = httpTags().tags.len
 
 proc parseAll(s: string; m: var HttpMsg): int =
   ## Parse a complete head held in one buffer.
@@ -54,7 +54,7 @@ proc testUnknownHeader =
   var got = ""
   for k, v in m.otherHeaders: got.add k & "=" & v & ";"
   assert got == "X-Weird=1;X-Other=two;", got
-  assert httpTags().tags.len == poolSizeAtSeal,
+  assert httpTags().tags.len == poolSizeAtInit,
          "unknown names never reach the pool"
 
 proc testEmptyValue =

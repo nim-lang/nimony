@@ -53,8 +53,9 @@ skipping O(1) either way, and the wrapper would only cost a token.
 
 This distinction is the whole design, so it is worth stating plainly:
 
-- The **tag space** is a single process-global `TagPool`, filled during init and
-  sealed before the first connection is accepted. Known header names, known
+- The **tag space** is a single process-global `TagPool`, filled during init
+  and not touched again once connections are being served. Known header names,
+  known
   methods, known header *values* and the structural tags live here — and so do
   whatever custom headers the application registers.
 - The **payload space** is a `Pool` per message, created with the message and
@@ -75,7 +76,7 @@ header *value* — `upgrade` is the one in the built-in set — is one tag used 
 two positions, and the position says which role it is in. The registration
 loop asserts enum/id alignment, which is what caught that collision.
 
-### The pool is sealed before serving
+### The vocabulary is fixed during init
 
 An application's own headers — `X-Request-Id`, a custom auth header, whatever
 the proxy in front adds — are usually the ones it indexes on. They are not
@@ -85,17 +86,18 @@ compares as `Host`:
 
 ```nim
 let hTraceId = registerHeader("X-Trace-Id")   # init, before the first accept
-...
-sealHttpTags()
 ```
 
-Sealing is what keeps interning off the request path. Growing the pool from
-incoming bytes would be uniform and convenient, but the pool is process-global
-and monotonic, so exhaustion is permanent and shared: one request carrying 511
-novel names would fill it for the life of the process, and every custom header
-the program met afterwards would fail — everywhere, not just on the connection
-that caused it. Sealing moves exhaustion to registration, where it is a startup
-error and a programmer mistake: caught at once, harmless to reject.
+`registerHeader` is the only thing that grows the pool, and the parser does not
+call it: it calls `lookupHeader`, which answers from a byte compare over the
+registered spellings and has no way to add one. So interning is off the request
+path by construction — there is no flag to set and nothing to enforce at
+runtime. A name nobody registered simply becomes `(xhdr "name" "value")`.
+
+Which is what we want anyway, because the pool is process-global and monotonic:
+growing it from incoming bytes would make exhaustion permanent and shared. As
+it is, "the pool is full" can only be reached from `registerHeader` during
+init, where it is a startup error and a programmer mistake.
 
 The HTTP pool deliberately nominates **no `escapeTag`**. With one, ids past 511
 stay legal at the cost of a second token and there is no wall to detect, so any
@@ -160,9 +162,11 @@ moves the message out — to hand it to a spawned coroutine, say — can donate 
 buffer back with `e.msg = move(m)` when it is done, and pays one allocation if
 it does not. **The failure mode is a slow path, never a bug.**
 
-This needs one addition to nifcore: `clear` on `BiTable`/`Pool`, emptying the
-tables while keeping their capacity. Without it, recycling a buffer means a
-fresh `Pool` and loses the point.
+`reset` keeps the token buffer — the allocation that grew to fit the traffic —
+and gives the message a fresh `Pool`. The pool holds only the values too long
+to sit inline in a token, so it is usually small or untouched, and one small
+allocation buys the certainty that no id from the previous message is still
+reachable. This needs nothing from nifcore.
 
 
 ## 2. The application pulls events
@@ -429,17 +433,10 @@ None of this is reachable until the following exist.
 4. DNS. `getaddrinfo` blocks and io_uring has no resolver, so it needs
    offloading to a pool thread.
 
-**nifcore** — done
-
-5. ~~`clear` on `BiTable`/`Pool`~~ — see §1. `BiTable.clear` drops the values
-   and blanks the hash index in place, keeping both allocations.
-6. ~~`seal` on `TagPool`~~ — plus `tagId`, the lookup that answers `TagId(0)`
-   instead of interning, which is what the parser is allowed to call.
-
 **Elsewhere**
 
-7. `std/uri` does not exist.
-8. `std/monotimes` needs a `CLOCK_BOOTTIME` path.
+5. `std/uri` does not exist.
+6. `std/monotimes` needs a `CLOCK_BOOTTIME` path.
 
 
 ### Parsing, in practice
@@ -457,8 +454,9 @@ so `HeadScanner` looks for the blank line that ends it and remembers where it
 stopped; appending more bytes and asking again resumes instead of rescanning,
 which is what keeps a head arriving one byte at a time from costing O(n²).
 
-The tag lookup does not use the pool's hash table. The vocabulary is sealed and
-under 512 entries, so bucketing tags by name length leaves a handful of
+The tag lookup does not use the pool's hash table. The vocabulary is fixed by
+the time a connection is served and under 512 entries, so bucketing tags by
+name length leaves a handful of
 candidates that a byte compare settles — no hashing, and nothing that needs a
 `string` to ask with.
 
@@ -609,11 +607,10 @@ time: 200M iterations is somewhere between 40ms and 60ms depending on the
 machine, and the idle-connection block is waiting on a 40ms deadline — so it
 failed about half the time with "a passive chain never finished" when nothing
 had gone wrong. It is a wall-clock budget now. And the tag pool is
-process-global and sealed once while a joined group is one process, so each
-test registering and sealing for itself made the first member's init decide
-the vocabulary for the rest; `tests/nimony/http/httptags.nim` is the one place
-that registers and seals, which is the shape §1 prescribes for an application
-anyway.
+process-global while a joined group is one process, so each test registering
+for itself made the first member's init decide what ids the rest saw;
+`tests/nimony/http/httptags.nim` is the one place that registers, which is the
+shape §1 prescribes for an application anyway.
 
 ## 8. Open
 

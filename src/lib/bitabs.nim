@@ -32,17 +32,6 @@ template isFilled(x: untyped): bool = x.uint32 > 0'u32
 
 proc len*[Id, T](t: BiTable[Id, T]): int = t.vals.len
 
-proc clear*[Id, T](t: var BiTable[Id, T]) =
-  ## Drop every entry but keep the allocated capacity, so a table that is
-  ## refilled repeatedly (a pool recycled per message, say) does not pay for a
-  ## fresh allocation each round. Ids handed out before the call are invalid
-  ## afterwards; the next `getOrIncl` starts again at 1.
-  t.vals.shrink 0
-  # Not `shrink`: the index is addressed by hash modulo its length, so it has
-  # to stay the same size and be blanked instead. `Id(0)` is the "not used"
-  # sentinel, which is exactly what a zeroed slot means.
-  for i in 0..<t.keys.len: t.keys[i] = Id(0)
-
 proc mustRehash(length, counter: int): bool {.inline.} =
   assert(length > counter)
   result = (length < counter div 2 + counter) or (length - counter < 4)

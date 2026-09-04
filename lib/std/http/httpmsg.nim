@@ -13,10 +13,11 @@
 # The vocabulary is split in two, and the split is the whole point:
 #
 # * The **tag space** is one process-global `TagPool`, filled during init and
-#   sealed before the first connection. Everything below plus whatever headers
-#   the application registers lives there, so a header name is a `TagId` and
-#   comparing one is an integer compare — no lowercasing, no hashing, no
-#   case-insensitive string compare on the hot path.
+#   never again: the parser's only lookup is `lookupHeader`, which cannot
+#   intern. Everything below plus whatever headers the application registers
+#   lives there, so a header name is a `TagId` and comparing one is an integer
+#   compare — no lowercasing, no hashing, no case-insensitive string compare
+#   on the hot path.
 # * The **payload space** is a `Pool` per message that dies with it, so bytes
 #   a peer sent can never accumulate.
 #
@@ -154,7 +155,7 @@ const TagNames: array[HttpTag, string] = [
 # ---------------------------------------------------------------- tag pool --
 
 var gHttpTags: TagPool = nil
-  ## Process-global and, after `sealHttpTags`, immutable. Deliberately has NO
+  ## Process-global, and grown only by `registerHeader`. Deliberately has NO
   ## `escapeTag`: with one, ids past 511 stay legal at the cost of a second
   ## token and there is no wall to detect, so any cap would be a number we
   ## invented. Without one, 511 is structural and "the pool is full" is a real
@@ -201,30 +202,22 @@ const MaxHttpTags* = 511
 
 proc registerHeader*(name: string): TagId =
   ## Register a header the application indexes on, so it gets the same
-  ## integer-compare treatment as `hHost`. Call during init; the pool is
-  ## sealed before serving and this is a defect afterwards.
+  ## integer-compare treatment as `hHost`. Call during init, before the first
+  ## connection: the pool is process-global and monotonic, so a name added
+  ## later is one every message parsed so far reported as `(xhdr …)`.
   ##
   ## Returns `TagId(0)` when the tag space is full — a startup error, and the
   ## only reason this can fail.
   ##
-  ## Idempotent, and deliberately so even after sealing: a name that is
-  ## already registered comes back without the pool being touched, so several
-  ## independent components (or several tests sharing one process) can each
-  ## ask for the headers they need without having to agree on who goes first.
-  ## Only a genuinely *new* name after `sealHttpTags` is a defect.
+  ## Idempotent: a name already registered comes back with the pool untouched,
+  ## so several independent components (or several tests sharing one process)
+  ## can each ask for the headers they need without having to agree on who
+  ## goes first.
   assert name.len > 0, "registerHeader: empty name"
-  let existing = gHttpTags.tagId(name)
+  let existing = gHttpTags.tags.getKeyId(name)
   if existing.uint32 != 0'u32: return existing
   if gHttpTags.tags.len >= MaxHttpTags: return TagId(0)
   result = gHttpTags.registerTag(name)
-
-proc sealHttpTags*() =
-  ## Close the vocabulary. Call once, after every `registerHeader`, before the
-  ## first connection is accepted. From here on the only way to name a header
-  ## is `lookupHeader`, which cannot grow the pool.
-  gHttpTags.seal()
-
-proc httpTagsSealed*(): bool {.inline.} = gHttpTags.sealed
 
 const
   MaxTagNameLen* = 64
@@ -245,11 +238,12 @@ proc foldAscii(dest: var FoldBuf; name: openArray[char]): bool {.inline.} =
     dest[i] = if c >= 'A' and c <= 'Z': chr(ord(c) + 32) else: c
   result = true
 
-# The vocabulary is sealed and smaller than 512, so looking a spelling up
-# does not need the pool's hash table — and must not, because `getKeyId`
-# takes a `string` and building one per header per request is exactly the
-# allocation this layer exists to avoid. Bucketing the tags by name length
-# leaves a handful of candidates per bucket, which a byte compare settles.
+# The vocabulary is fixed by the time a connection is served and smaller than
+# 512, so looking a spelling up does not need the pool's hash table — and must
+# not, because `getKeyId` takes a `string` and building one per header per
+# request is exactly the allocation this layer exists to avoid. Bucketing the
+# tags by name length leaves a handful of candidates per bucket, which a byte
+# compare settles.
 
 var
   gByLen: seq[TagId] = @[]
@@ -351,12 +345,15 @@ proc initHttpMsg*(cap = 64): HttpMsg =
   HttpMsg(buf: createTokenBuf(cap, sharedTags = gHttpTags), live: true)
 
 proc reset*(m: var HttpMsg) =
-  ## Drop the content, keep both allocations — the token buffer's and the
-  ## literal pool's. This is what makes recycling a message cheaper than
-  ## building a new one.
+  ## Drop the content, keeping the token buffer's allocation — which is the
+  ## one that grew to fit the traffic and the reason recycling a message beats
+  ## building a new one. The literal pool is replaced rather than emptied: it
+  ## holds only the values too long to sit inline in a token, so it is
+  ## typically small or untouched, and a fresh `Pool` is one allocation
+  ## against the certainty that no id from the old message stays reachable.
   if m.live:
     m.buf.shrink 0
-    m.buf.pool.clear()
+    m.buf.pool = newPool()
 
 # -------------------------------------------------------------- building ---
 

@@ -1,18 +1,14 @@
 # Shared tag setup for this directory's tests.
 #
-# The HTTP tag pool is process-global and sealed exactly once, and a joined
-# group is one process. With the registration written into each test, whichever
-# member's module init ran first fixed the vocabulary for all of them — and the
-# one that sealed without registering `x-trace-id` made every later
-# registration the defect `registerHeader` is right to reject. Which member
-# goes first is a `walkDir` and a sort, which has nothing to do with what the
-# tests mean.
+# The HTTP tag pool is process-global and a joined group is one process, so
+# with the registration written into each test the ids a test sees would
+# depend on which member's module init happened to run first — a `walkDir` and
+# a sort, which has nothing to do with what the tests mean.
 #
 # An imported module initialises once, before any of its importers, so
 # registering here makes the group independent of that order. It is also the
 # shape the design prescribes for an application: register the headers you
-# index on in one place during init, then seal.
+# index on in one place during init, before the first connection.
 import std/http/httpmsg
 
 let hTrace* = registerHeader("x-trace-id")
-sealHttpTags()
