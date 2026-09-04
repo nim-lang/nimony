@@ -267,8 +267,18 @@ when defined(windows):
     result = gAuxFree[lane].pop()
 
   proc freeAux(lane: int; ai: int32) {.inline.} =
-    ## Only ever from the drain: the kernel is done with this OVERLAPPED.
+    ## The kernel is done with this OVERLAPPED — from the drain, or from an
+    ## issue that never reached the kernel at all.
     if ai != NoAux: gAuxFree[lane].add ai
+
+  proc abortIssue(lane, slotIdx: int; ai: int32; res: int) =
+    ## An op that never reached the kernel. The slot's binding is cleared
+    ## BEFORE the slot is freed: a stale `gSlotAux` entry would let
+    ## `iocpCancelInFlight` reach through it later and CancelIoEx an OVERLAPPED
+    ## that by then belongs to a live op of somebody else's.
+    gSlotAux[lane][slotIdx] = NoAux
+    freeAux(lane, ai)
+    complete(slotIdx, res)
 
   proc clampLen(n: int): uint32 {.inline.} =
     if n > int(high(int32)): uint32(high(int32)) else: uint32(n)
@@ -316,25 +326,21 @@ when defined(windows):
       var flags = 0'u32
       let r = wsaRecv(s, addr a.wsabuf, 1'u32, addr n, addr flags, addr a.wov.ov, nil)
       if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
-        freeAux(lane, ai)
-        complete(slotIdx, -1)
+        abortIssue(lane, slotIdx, ai, -1)
     of opWrite:
       a.wsabuf = WsaBuf(len: clampLen(op.len), buf: op.buf)
       var n = 0'u32
       let r = wsaSend(s, addr a.wsabuf, 1'u32, addr n, 0'u32, addr a.wov.ov, nil)
       if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
-        freeAux(lane, ai)
-        complete(slotIdx, -1)
+        abortIssue(lane, slotIdx, ai, -1)
     of opAccept:
       loadAcceptEx(s)
       if gAcceptEx == nil:
-        freeAux(lane, ai)
-        complete(slotIdx, -1)
+        abortIssue(lane, slotIdx, ai, -1)
       else:
         a.acceptSock = wsaSocketW(listenerFamily(s), 1.cint, 6.cint, nil, 0'u32, WSA_FLAG_OVERLAPPED)
         if a.acceptSock == InvalidSocket:
-          freeAux(lane, ai)
-          complete(slotIdx, -1)
+          abortIssue(lane, slotIdx, ai, -1)
         else:
           var n = 0'u32
           let ok = gAcceptEx(s, a.acceptSock, addr a.acceptBuf[0], 0'u32,
@@ -342,13 +348,11 @@ when defined(windows):
           if ok == 0 and wsaGetLastError() != WSA_IO_PENDING:
             discard wsClosesocket(a.acceptSock)
             a.acceptSock = InvalidSocket
-            freeAux(lane, ai)
-            complete(slotIdx, -1)
+            abortIssue(lane, slotIdx, ai, -1)
     of opConnect:
       loadConnectEx(s)
       if gConnectEx == nil:
-        freeAux(lane, ai)
-        complete(slotIdx, -1)
+        abortIssue(lane, slotIdx, ai, -1)
       else:
         # ConnectEx demands a bound socket, which a caller has no reason to
         # have done — `socketNonBlocking` just creates one. Bind the wildcard
@@ -364,13 +368,11 @@ when defined(windows):
         if ok == 0 and err != WSA_IO_PENDING:
           # A negated Winsock code, not an errno — see poll.nim's Windows
           # `startConnect` for why the two arms cannot share a numbering.
-          freeAux(lane, ai)
-          complete(slotIdx, -int(err))
+          abortIssue(lane, slotIdx, ai, -int(err))
     else:
       # opNop/opTimeout/opPollAdd returned above; this arm exists so a new op
       # kind fails loudly here instead of silently never being issued.
-      freeAux(lane, ai)
-      complete(slotIdx, -1)
+      abortIssue(lane, slotIdx, ai, -1)
 
   proc liveProbe(lane: int; e: PendingPoll): bool {.inline.} =
     ## Is this entry still the op it was recorded for? A probe can be completed
@@ -427,6 +429,9 @@ when defined(windows):
     while i < n:
       let slotIdx = gSlots[lane].allocSlot(buf[i])
       assert slotIdx < MaxOps, "ioring/iocp: slot arena grew past MaxOps (OVERLAPPED storage)"
+      # The slot is fresh, so whatever its previous op bound here is gone; the
+      # kinds `issue` handles without an OVERLAPPED never write it at all.
+      gSlotAux[lane][slotIdx] = NoAux
       armDeadline(lane, slotIdx)
       # An fd-less op (nop, timer) has no socket to associate, and a readiness
       # probe is served by WSAPoll rather than by the port.
