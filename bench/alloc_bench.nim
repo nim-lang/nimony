@@ -13,9 +13,17 @@
 import std / syncio
 
 const
+  smoke = defined(benchSmoke)
+    ## `hastur` compiles this file with `-d:benchSmoke` (see `bench/hastur.mode`).
+    ## The test suite is not here to time anything — it asks whether the program
+    ## still builds and still computes the number it used to — so the smoke
+    ## workload is the same code paths at a size that costs milliseconds. The
+    ## checksum depends on the trip counts, which is why the golden `.output`
+    ## belongs to this configuration and not to a benchmark run.
+
   MaxLive = 4096       # live pointers at any time
-  Rounds = 100
-  ChurnOps = 200_000   # random free+alloc pairs per round
+  Rounds = when smoke: 2 else: 100
+  ChurnOps = when smoke: 2_000 else: 200_000  # random free+alloc pairs per round
 
 var slots: array[MaxLive, pointer]
 var rngState: uint64 = 0x9E3779B97F4A7C15u64

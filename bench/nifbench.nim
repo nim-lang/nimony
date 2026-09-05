@@ -71,8 +71,15 @@ const BifScratch = "nifbench.scratch.bif"
   ## directory you ran it from is easier to reason about than one that does not.
 
 const
+  smoke = defined(benchSmoke)
+    ## `hastur` compiles this file with `-d:benchSmoke` (see `bench/hastur.mode`).
+    ## The suite asks whether every phase still builds and still folds the same
+    ## number into `sink`, not how fast it does it, so a smoke build shrinks the
+    ## corpus to one repetition of a small module and prints the checksum alone:
+    ## `sink` is a golden a diff can hold, the timings next to it are not.
+
   Version = "0.1.0"
-  BaseProcs = 900
+  BaseProcs = when smoke: 30 else: 900
     ## Toplevel decls at `--scale:1`. Chosen so the generated module lands near
     ## 300k tokens / 2 MB of text — the size of a big real module, and big
     ## enough that every phase runs well past timer noise at one iteration.
@@ -336,7 +343,7 @@ type Result = object
 var
   results: seq[Result] = @[]
   only = ""
-  reps = 5
+  reps = when smoke: 1 else: 5
   sink: uint64 = 0
     ## Every benchmark folds something into this and `main` prints it. A
     ## benchmark whose result is never observed is a benchmark the optimizer
@@ -496,18 +503,23 @@ proc fmtRate(units: int; ns: int64; unit: string): string =
     result = hundredths((u * 100_000) div ns) & " M" & unit & "/s"
 
 proc printTable(csv: bool) =
-  if csv:
-    echo "name,ns,units,unit"
-    for r in results:
-      echo r.name, ",", r.ns, ",", r.units, ",", r.unit
+  when smoke:
+    # `sink` alone carries the smoke verdict, and `main` prints it; a table of
+    # durations has nothing a golden could be diffed against.
+    discard csv
   else:
-    echo "benchmark            time        throughput"
-    echo "-------------------- ----------- --------------"
-    for r in results:
-      let ms = hundredths(r.ns div 10_000) & " ms"
-      echo r.name & repeat(' ', max(1, 21 - r.name.len)) &
-           repeat(' ', max(0, 11 - ms.len)) & ms & "  " &
-           fmtRate(r.units, r.ns, r.unit)
+    if csv:
+      echo "name,ns,units,unit"
+      for r in results:
+        echo r.name, ",", r.ns, ",", r.units, ",", r.unit
+    else:
+      echo "benchmark            time        throughput"
+      echo "-------------------- ----------- --------------"
+      for r in results:
+        let ms = hundredths(r.ns div 10_000) & " ms"
+        echo r.name & repeat(' ', max(1, 21 - r.name.len)) &
+             repeat(' ', max(0, 11 - ms.len)) & ms & "  " &
+             fmtRate(r.units, r.ns, r.unit)
 
 # ── main ────────────────────────────────────────────────────────────────────
 
