@@ -45,5 +45,9 @@ type
   Composite[A, B: static[int]] = object
     s: Span[bump(A)]
 
-func foo[A, B: static[int]](): Span[bump(A)] = B
-assert foo[2, 3]() == 3
+func foo[A, B: static[int]](): Span[bump(A)] = bump(B)
+
+let f = foo[2, 1]()
+assert typeof(f) is Span[3]
+assert typeof(f) is range[0..3]
+assert f == 2
