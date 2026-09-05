@@ -1506,6 +1506,12 @@ proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: 
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, dest, it
   n = it.n
+  if context == AllowValues:
+    let emitted = cursorAt(dest, start)
+    if emitted.exprKind == ExprX and isPureTypeValueExpr(emitted):
+      var buf = createTokenBuf(4)
+      buf.addSubtree typeValueExpr(emitted)
+      dest.replace cursorAt(buf, 0), start
   exprToType c, dest, it.typ, start, context, info
   swap c.phase, phase
 
