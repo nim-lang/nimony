@@ -8,6 +8,13 @@
 #   so a module missing here is a module missing from the docs.
 #
 # Sorted, one import per line, nothing else: the check is a line scan.
+#
+# Windows compiles this file with `nimony n`, not `nimony c`: its directory is
+# in `NativeTestDirsWindows` and nothing here opts out, so every import added
+# below has to survive arkham + nifasm on win_x64 as well. That is the one
+# platform where it happens — `NativeTestDirs`, the list the other hosts use,
+# does not carry this directory — so a native gap reached from here is invisible
+# until CI says so. `nimony n --os:windows` plus wine reproduces it locally.
 
 import std/algorithm
 import std/appdirs
