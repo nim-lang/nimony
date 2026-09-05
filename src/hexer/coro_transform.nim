@@ -1244,11 +1244,42 @@ proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
   var n = n
   if n.stmtKind == YldS or c.hooks.isPassiveCall(c, n) or n.exprKind == SuspendX:
     return true
-  # `linearScan` visits the nested nodes; the root was checked above
+  # `linearScan` visits the nested nodes; the root was checked above.
+  #
+  # REGISTER THE LOCALS WE WALK PAST. `isPassiveCall` types the call TARGET,
+  # and this predicate reaches nodes nested arbitrarily deep BEFORE the main
+  # traversal has registered the locals declared beside them. A local declared
+  # INSIDE this subtree and used as a passive call's target therefore failed
+  # the typenav lookup outright:
+  #
+  #   proc drv() {.passive.} =
+  #     if true:
+  #       let h = arr[0]        # declared inside the branch…
+  #       discard h(5)          # …and the call target -> could not find symbol: h.0
+  #
+  # The same local declared OUTSIDE the branch was fine, because the main pass
+  # had already registered it — which is why this only ever showed up for
+  # `if`/`while` regions, and why a bare `block:` (never handed to this
+  # predicate) compiled. Registration happens in a scope of our own so nothing
+  # leaks back to the caller; the main traversal registers these again later.
+  result = false
+  c.typeCache.openScope()
   linearScan n:
-    if n.stmtKind == YldS or c.hooks.isPassiveCall(c, n) or n.exprKind == SuspendX:
-      return true
-  return false
+    let sk = n.stmtKind
+    if sk in {LetS, CursorS, PatternvarS, VarS, TvarS, TletS, GvarS, GletS}:
+      # A plain child walk, NOT `into`: `into` asserts its body consumed every
+      # child, and we only want the four leading slots (name, export marker,
+      # pragmas, type) — the init value is none of our business here.
+      var d = n.childCursor      # at the name
+      let name = d.symId
+      inc d                      # name
+      skip d, SkipExport         # export marker
+      skip d, SkipPragmas        # pragmas
+      c.typeCache.registerLocal(name, cast[SymKind](sk), d)
+    if sk == YldS or c.hooks.isPassiveCall(c, n) or n.exprKind == SuspendX:
+      result = true
+      break
+  c.typeCache.closeScope()
 
 const
   KeptLoop* = -1
