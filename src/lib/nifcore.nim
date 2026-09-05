@@ -911,13 +911,32 @@ proc sub*(c: Cursor): Cursor =
   result = c
   discard enterScope(result)
 
-proc isEscapedTag*(c: Cursor): bool {.inline.} =
+proc isEscapedBody(c: Cursor): bool {.noinline.} =
+  ## The last conjunct of `isEscapedTag`, out of line. Reached only once the tag
+  ## at `c` IS the adapter's escape tag, which on nifbench is never: an adapter
+  ## that declares no escape space answers `TagId(0)` and the first conjunct is
+  ## already false. Keeping the `sub` here is what lets the caller be spliced —
+  ## `sub` enters a scope, so inlining this half would drag `enterScope` (and the
+  ## temp cursor's destructor) into every site, and on AArch64 the call alone
+  ## forces a frame: `bl` delivers the return address in x30, so a proc holding
+  ## one anywhere must spill lr on every entry to reach a branch not taken.
+  ##
+  ## `c.load.kind == TagLit` is the caller's second conjunct and therefore a
+  ## precondition here — it is what `sub`'s own assert wants.
+  let body = sub(c)
+  result = body.hasMore and body.load.kind == IntLit
+
+proc isEscapedTag*(c: Cursor): bool {.alwaysInline.} =
   ## Is the node at `c` spelled through its adapter's escape tag — i.e. does its
   ## real id sit in a leading `IntLit` child, one token in front of the operands?
+  ##
+  ## `{.alwaysInline.}` rather than `{.inline.}`, which `computeInlineInfo` does
+  ## not consult: what is left here is `escapeTagOf` plus two comparisons, and it
+  ## has five call sites. See `isEscapedBody` for what was taken out to make that
+  ## true.
   let esc = escapeTagOf(c)
   result = esc != TagId(0) and c.load.kind == TagLit and
-           c.cursorTagId == esc and
-           (let body = sub(c); body.hasMore and body.load.kind == IntLit)
+           c.cursorTagId == esc and isEscapedBody(c)
 
 proc resolvedTagId*(c: Cursor): TagId =
   ## The tag id of the node at `c`, undoing the escape. Equal to `cursorTagId`
