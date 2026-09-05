@@ -43,7 +43,7 @@ import ".." / finalir / [finalir_model, finalir]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
-  renderer, typeprops, inferle, xints, builtintypes, features
+  renderer, typeprops, inferle, xints, builtintypes, features, expreval
 
 type
   BorrowableCheck = enum
@@ -81,6 +81,7 @@ type
     activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump final IR on init/contract
                                        # failures for easier debugging
+    bits: int                          # target `int` width for compile-time folding
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
@@ -444,9 +445,14 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
     of IntLit: off = createXint(value.intVal); isLit = true
     of UIntLit: off = createXint(value.uintVal); isLit = true
     else:
-      # A value we cannot model cannot be proven in range, so we reject it.
-      buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
-      return
+      let folded = tryEvalOrdinal(c.bits, value)
+      if not folded.isNaN:
+        off = folded
+        isLit = true
+      else:
+        # A value we cannot model cannot be proven in range, so we reject it.
+        buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
+        return
 
   # lo <= v + off   <=>   0 <= v + (off - lo)
   let lower = query(VarId(0), v, off - lo)
@@ -1847,7 +1853,8 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
     flow: initFlowState(),
     loopExitLabels: initHashSet[SymId](),
     verbose: verbose,
-    features: features
+    features: features,
+    bits: bits
   )
   c.typeCache.openScope()
 

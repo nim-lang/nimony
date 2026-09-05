@@ -1150,6 +1150,18 @@ proc evalOrdinal(c: ptr SemContext, n: Cursor; bits = 0): xint =
 proc evalOrdinal*(c: var SemContext, n: Cursor): xint =
   evalOrdinal(addr c, n)
 
+proc tryEvalOrdinal*(bits: int; n: Cursor): xint =
+  ## Fold a compile-time ordinal without a `SemContext` (hexer/FIR callers).
+  ## Returns NaN when the expression is not foldable; never shells out to
+  ## sub-compile.
+  var ec = initEvalContext(nil, noExecute = true, bits = bits)
+  var cur = n
+  let val = eval(ec, cur)
+  if val.isTagLit and val.cursorTagId == nifpools.ErrT:
+    result = createNaN()
+  else:
+    result = getConstOrdinalValue(val)
+
 proc getConstStringValue*(val: Cursor): StrId =
   if val.isStringLit:
     result = val.strId
