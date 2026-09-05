@@ -147,6 +147,23 @@ proc emitTyperef(b: var HtmlBuilder; ctx: RenderCtx; sym: SymId) =
       emitText(b, href)
       emitText(b, name)
 
+const PrimTypeNames = [
+  "int", "int8", "int16", "int32", "int64",
+  "uint", "uint8", "uint16", "uint32", "uint64",
+  "float", "float32", "float64", "float128",
+  "bool", "char", "void", "pointer", "cstring",
+  "auto", "untyped", "typed"]
+  ## The builtin types the renderer writes as a bare name: they have no symbol
+  ## behind them, so nothing else in `emitSrcGen` can tell them apart from a
+  ## symbol whose `SymId` was lost. Names only — `set`, `array`, `range`,
+  ## `varargs` and `typedesc` reach the same fallback and are keywords, not
+  ## primitives, so they are deliberately not here.
+  ##
+  ## `int` is on the list for completeness and does not occur today: sem
+  ## resolves it to the target's width, so a source `int` reaches the doc
+  ## generator as `(i 64)` and renders as `int64`. Recovering the spelling
+  ## would mean carrying it through the whole type representation.
+
 proc emitPrim(b: var HtmlBuilder; name: string) =
   ## A primitive type rendered as a typeref-class span without a link target.
   emitClass(b, "prim"):
@@ -182,6 +199,10 @@ proc emitSrcGen(b: var HtmlBuilder; ctx: RenderCtx; g: SrcGen) =
         let cand = ctx.nameToSym.getOrDefault(frag, 0)
         if cand > 0:
           emitTyperef(b, ctx, SymId(cand))
+        elif frag in PrimTypeNames:
+          # Checked after the symbol lookup so a declared symbol always wins:
+          # this is a name match, and a name match is the weaker claim.
+          emitPrim(b, frag)
         else:
           emitName(b, frag)
     of tkSpaces:

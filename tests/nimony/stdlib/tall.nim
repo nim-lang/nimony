@@ -28,6 +28,10 @@ import std/fenv
 import std/formatfloat
 import std/hashes
 import std/heapqueue
+import std/http/httpconn
+import std/http/httpmsg
+import std/http/httpparse
+import std/http/httpwire
 import std/intsets
 import std/ioring
 import std/json
@@ -61,6 +65,7 @@ import std/sets
 import std/setutils
 import std/sha1
 import std/smartcli
+import std/socket
 import std/stacktraces
 import std/streams
 import std/stripes

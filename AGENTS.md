@@ -79,7 +79,11 @@ against that directory on every run that reaches it (`src/hastur/coverage.nim`).
 A new stdlib module must be added there: `tall.nim` is the only test that
 compiles the stdlib modules together, and `dagon` walks it as the aggregator
 driver for the website's documentation, so a module missing from it is a module
-missing from the docs.
+missing from the docs. Subdirectories count too (`std/http/httpmsg`) — the
+check carries a deny list of the ones that hold no importable module
+(`system/`, `private/`, `posix/`, …), so a new *public* subdirectory fails the
+check rather than being silently skipped, and a new internals one needs a line
+on that list with its reason.
 
 ## Joined tests
 

@@ -15,16 +15,32 @@ const
     ## for the website's documentation, so a module missing here is a module
     ## missing from the docs.
 
-proc stdlibModules(dir: string): seq[string] =
-  ## Every documented stdlib module: the `.nim` files directly in `lib/std`.
-  ## Subdirectories are deliberately out: `system/` and `includes/` are
-  ## `include` fragments, `private/` is private by name, `deps/` is the plugin
-  ## support code, and `posix/`/`windows/` are per-platform bindings that no
-  ## single build can import at once.
-  result = @[]
+const NonModuleDirs = ["system", "includes", "private", "deps", "errorcodes",
+                       "posix", "windows", "ioring"]
+  ## Subdirectories of `lib/std` that hold no importable module, with the
+  ## reason each is here: `system/`, `includes/` and `errorcodes/` are `include`
+  ## fragments (`system.nim` pulls them in), `private/` is private by name,
+  ## `deps/` is plugin support code, `posix/`/`windows/` are per-platform
+  ## bindings no single build can import at once, and `ioring/` is the internals
+  ## `std/ioring` is the front door to.
+  ##
+  ## A DENY list on purpose. Everything else under `lib/std` — `http/` today —
+  ## is a public module the docs must carry, and a new public subdirectory
+  ## should fail this check rather than be silently skipped. A new INTERNALS
+  ## directory is the case that needs a line here, and its reason with it.
+
+proc collectModules(dir, prefix: string; result: var seq[string]) =
   for x in walkDir(dir):
     if x.kind == pcFile and x.path.endsWith(".nim"):
-      result.add x.path.splitFile.name
+      result.add prefix & x.path.splitFile.name
+    elif x.kind == pcDir and x.path.splitPath.tail notin NonModuleDirs:
+      collectModules(x.path, prefix & x.path.splitPath.tail & "/", result)
+
+proc stdlibModules(dir: string): seq[string] =
+  ## Every documented stdlib module, spelled the way it is imported:
+  ## `hashes`, `http/httpmsg`. See `NonModuleDirs` for what is left out.
+  result = @[]
+  collectModules(dir, "", result)
   sort result
 
 proc importedModules(testFile: string): seq[string] =
