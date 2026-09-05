@@ -21,3 +21,10 @@ tools/tester
 *.exe
 # per-directory driver hastur generates for a joined test group
 _hastur_joined.nim
+# Nim's own `compiler/parser.nim`, which nifler parses `.nim` source with:
+# `hastur build nifler` checks it out at the commit
+# `src/nifler/nimparser/upstream.commit` pins (that file IS tracked), and
+# `parser.fetched` records which commit the copy on disk came from.
+src/nifler/nimparser/parser.nim
+src/nifler/nimparser/parser.nim.tmp
+src/nifler/nimparser/parser.fetched
