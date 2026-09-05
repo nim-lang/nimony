@@ -47,7 +47,7 @@ const
     # test-by-test and failed as a group, on three backend bugs that only a
     # module compiled as an import can reach (see `NativeJoinSkip`).
     #
-    # `tests/nimony/stdlib`: 45 of its 53 pass; the rest are in `NativeTestSkip`.
+    # `tests/nimony/stdlib`: 44 of its 53 pass; the rest are in `NativeTestSkip`.
     # This is the suite that covers the process vectors the Windows entry point
     # does not receive (`tcmdline`, `tenvvars`, `tos`) — the reason it is worth
     # running natively at all rather than only through the C backend.
@@ -143,7 +143,19 @@ const
     # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
     # fails to run ("vfs: open failed"), and the C backend fails it identically,
     # so nothing here would fix it.
-    "tests/nimony/stdlib/ttypetraits"
+    "tests/nimony/stdlib/ttypetraits",
+    # `tall` imports EVERY stdlib module, which is the point of it: that they
+    # still compile together, and that `dagon` can document them. Nothing about
+    # it is a native assertion, and running it as one asks a much larger question
+    # than the file was written to ask — it reaches `threadpool`, `parfor`,
+    # `ticketlocks`, `socket`, `ioring` and the http modules, so it needs every
+    # threadvar the pinned arkham gets wrong on win_x64. It compiles and then
+    # faults on a null read before its first `echo`. nativenif #157 (`arkham/
+    # nifasm: real thread-locals on win_x64`) fixes exactly that — verified with
+    # `nimony n --os:windows` under wine, where all 45 of this directory's
+    # native-eligible tests pass with it and `tall` prints `ok` — but that commit
+    # is not the pin yet. Delete this line when it is.
+    "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —

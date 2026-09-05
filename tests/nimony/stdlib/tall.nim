@@ -9,12 +9,13 @@
 #
 # Sorted, one import per line, nothing else: the check is a line scan.
 #
-# Windows compiles this file with `nimony n`, not `nimony c`: its directory is
-# in `NativeTestDirsWindows` and nothing here opts out, so every import added
-# below has to survive arkham + nifasm on win_x64 as well. That is the one
-# platform where it happens — `NativeTestDirs`, the list the other hosts use,
-# does not carry this directory — so a native gap reached from here is invisible
-# until CI says so. `nimony n --os:windows` plus wine reproduces it locally.
+# Not a native-backend test: `NativeTestSkip` names this file, with the reason.
+# Windows compiles `tests/nimony/stdlib` with `nimony n` (it is in
+# `NativeTestDirsWindows`, which the other hosts' `NativeTestDirs` does not
+# carry), so without that entry every import added here would also have to
+# survive arkham + nifasm on win_x64 — a much larger claim than "the stdlib
+# modules compile together", and one no other host would catch. If you do want
+# to know, `nimony n --os:windows` plus wine reproduces Windows locally.
 
 import std/algorithm
 import std/appdirs
