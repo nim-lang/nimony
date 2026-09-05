@@ -1,5 +1,26 @@
 # Common types shared across all ioring layers.
-import std/posix/posix
+when defined(posix):
+  import std/posix/posix
+else:
+  # Windows: the ring's socket surface is Winsock and `std/posix/posix` is
+  # empty there, so the POSIX-named types the op layout needs are declared
+  # here in their Winsock ABI shapes. `Sockaddr_storage` is the 128-byte
+  # `SOCKADDR_STORAGE`; `SockLen` is the `int` namelen Winsock's accept takes;
+  # `FileHandle` is the ring's fd — a Winsock `SOCKET` narrowed to `cint`
+  # (see ioring.nim's Windows arm for why that narrowing is sound).
+  type
+    FileHandle* = cint
+    SockLen* = cint
+    Sockaddr_storage* {.pure.} = object
+      ss_family*: uint16
+      ss_pad*: array[126, uint8]
+
+const
+  # Result of an op cancelled by `closeFd` before it completed: the ring's own
+  # convention (mirrors -ECANCELED), reported identically by every backend —
+  # readiness/POSIX through `cancelPendingOps`, IOCP when the kernel aborts an
+  # overlapped op on closesocket (STATUS_CANCELLED).
+  ECancelled* = -125
 
 type
   Deadline* = distinct int64
@@ -28,21 +49,57 @@ proc earlier*(a, b: Deadline): Deadline {.inline.} =
   ## its caller's budget, never widen it.
   if a < b: a else: b
 
-when defined(linux):
-  const RingClock = ClockId(7)
-    ## `CLOCK_BOOTTIME`, not `CLOCK_MONOTONIC`. A machine that suspends for an
-    ## hour should find its in-flight deadlines blown, not extended — the peer
-    ## is long gone either way. Never `CLOCK_REALTIME`, or an NTP step retimes
-    ## everything in flight.
-else:
-  const RingClock = CLOCK_MONOTONIC
-    ## Darwin and the BSDs have no `CLOCK_BOOTTIME`; this is the nearest.
+when defined(posix):
+  when defined(linux):
+    const RingClock = ClockId(7)
+      ## `CLOCK_BOOTTIME`, not `CLOCK_MONOTONIC`. A machine that suspends for an
+      ## hour should find its in-flight deadlines blown, not extended — the peer
+      ## is long gone either way. Never `CLOCK_REALTIME`, or an NTP step retimes
+      ## everything in flight.
+  else:
+    const RingClock = CLOCK_MONOTONIC
+      ## Darwin and the BSDs have no `CLOCK_BOOTTIME`; this is the nearest.
 
-proc monoNow*(): Deadline =
-  ## The ring's clock. Never the wall clock — see `RingClock`.
-  var ts = default(Timespec)
-  discard clock_gettime(RingClock, ts)
-  result = Deadline(int64(ts.tv_sec) * 1_000_000_000'i64 + int64(ts.tv_nsec))
+  proc monoNow*(): Deadline =
+    ## The ring's clock. Never the wall clock — see `RingClock`.
+    var ts = default(Timespec)
+    discard clock_gettime(RingClock, ts)
+    result = Deadline(int64(ts.tv_sec) * 1_000_000_000'i64 + int64(ts.tv_nsec))
+
+else:
+  # Windows: QueryPerformanceCounter. Monotonic, never stepped by the wall
+  # clock, and — unlike `GetTickCount64` or the interrupt-time clock — finer
+  # than the ~15.6 ms scheduler tick, which a deadline heap that hands
+  # millisecond waits to WSAPoll/GetQueuedCompletionStatusEx needs.
+  #
+  # Not an exact match for the POSIX arm's `CLOCK_BOOTTIME`: whether QPC keeps
+  # counting across suspend depends on the counter the HAL picked. Windows
+  # offers no clock that is both high-resolution and suspend-inclusive, and the
+  # resolution is what a deadline is actually measured against, so that is the
+  # side to err on.
+  proc queryPerformanceCounter(res: ptr int64): int32 {.
+    stdcall, importc: "QueryPerformanceCounter", dynlib: "kernel32".}
+  proc queryPerformanceFrequency(res: ptr int64): int32 {.
+    stdcall, importc: "QueryPerformanceFrequency", dynlib: "kernel32".}
+
+  var gQpcFreq: int64 = 0
+    ## Fixed for the boot session, so it is read once. Racing threads all write
+    ## the same value, which is why this needs no lock.
+
+  proc monoNow*(): Deadline =
+    ## The ring's clock. Never the wall clock — see the note above.
+    var freq = gQpcFreq
+    if freq == 0:
+      discard queryPerformanceFrequency(addr freq)
+      if freq <= 0: return Deadline(0)
+      gQpcFreq = freq
+    var c: int64 = 0
+    discard queryPerformanceCounter(addr c)
+    # Split rather than `c * 1_000_000_000 div freq`: the counter counts from
+    # boot, so at the usual 10 MHz the plain form overflows int64 after a few
+    # hours of uptime and every deadline comparison goes backwards.
+    result = Deadline((c div freq) * 1_000_000_000'i64 +
+                      ((c mod freq) * 1_000_000_000'i64) div freq)
 
 proc after*(ns: int64): Deadline {.inline.} =
   ## A deadline `ns` nanoseconds from now. Sugar for the common case; the

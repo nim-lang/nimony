@@ -167,5 +167,138 @@ when defined(posix):
     # one-shot registration, and submit/registerEvent will re-add it the
     # next time an op targets this fd.
 else:
+  # Windows (the WSAPoll backend): the transfer calls are Winsock's, bound by
+  # `dynlib` in the winlean house style so no `<winsock2.h>` has to be ordered
+  # against `<Windows.h>` in the generated C.
+  #
+  # One deliberate difference from the POSIX arm: a `WSAEWOULDBLOCK` on a
+  # readiness wake is not a failure. The ready state was consumed by another
+  # op on the fd (or by another lane polling the same socket), so the op stays
+  # pending and is re-armed below instead of completing with -1.
+  type
+    SocketHandle = uint   ## Winsock SOCKET (UINT_PTR)
+
+  const
+    SocketError = -1.cint
+    InvalidSocket = not 0'u
+    WSAEWOULDBLOCK = 10035.cint
+    WSAEINPROGRESS = 10036.cint
+    WSAEALREADY = 10037.cint
+    WSAEISCONN = 10056.cint
+    SOL_SOCKET = 0xFFFF.cint
+    SO_ERROR = 0x1007.cint
+
+  # `buf` is `nil pointer` to match `OpContext.buf` (the POSIX arm declares its
+  # read/write the same way): the op layout is nilable and the transfer takes
+  # it as-is.
+  proc wsRecv(s: SocketHandle; buf: nil pointer; len, flags: cint): cint {.
+    stdcall, importc: "recv", dynlib: "ws2_32.dll".}
+  proc wsSend(s: SocketHandle; buf: nil pointer; len, flags: cint): cint {.
+    stdcall, importc: "send", dynlib: "ws2_32.dll".}
+  proc wsAccept(s: SocketHandle; name: pointer; namelen: ptr cint): SocketHandle {.
+    stdcall, importc: "accept", dynlib: "ws2_32.dll".}
+  proc wsConnect(s: SocketHandle; name: pointer; namelen: cint): cint {.
+    stdcall, importc: "connect", dynlib: "ws2_32.dll".}
+  proc wsGetsockopt(s: SocketHandle; level, optname: cint; optval: pointer;
+                    optlen: ptr cint): cint {.
+    stdcall, importc: "getsockopt", dynlib: "ws2_32.dll".}
+  proc wsaGetLastError(): cint {.
+    stdcall, importc: "WSAGetLastError", dynlib: "ws2_32.dll".}
+
+  proc socketOf(fd: cint): SocketHandle {.inline.} =
+    ## The ring narrows a SOCKET to `cint` (ioring.nim, Windows arm); widen it
+    ## back without sign extension.
+    SocketHandle(cast[uint32](fd))
+
+  proc clampLen(n: int): cint {.inline.} =
+    if n > int(high(cint)): high(cint) else: cint(n)
+
+  proc wouldBlock(): bool {.inline.} =
+    wsaGetLastError() == WSAEWOULDBLOCK
+
+  proc startConnect*(fd: cint; idx: int): bool =
+    ## Windows twin of the POSIX `startConnect`: kick off a non-blocking
+    ## connect on the op in slot `idx`, true when the poller should now watch
+    ## for writability. False means it is already over, and then this has
+    ## completed the slot — an op that is never armed gets no readiness event,
+    ## so leaving it would park the caller until its deadline however the
+    ## connect actually went.
+    ##
+    ## The errors are negated Winsock codes (10035 …), not errnos: they do not
+    ## share a numbering with the POSIX arm's, and the ring has no translation
+    ## layer. A caller that must tell "refused" from "unreachable" apart on
+    ## both platforms has to ask per-platform.
+    let sl = addr gSlots[ioLane()].slots[idx]
+    let r = wsConnect(socketOf(fd), addr sl.op.sockAddr, cint(sl.op.sockAddrLen))
+    if r != SocketError:
+      complete(idx, 0)               # connected outright: loopback often does
+      return false
+    let e = wsaGetLastError()
+    if e == WSAEWOULDBLOCK or e == WSAEINPROGRESS or e == WSAEALREADY:
+      return true
+    if e == WSAEISCONN:
+      complete(idx, 0)
+      return false
+    complete(idx, -int(e))           # refused, unreachable, bad address ...
+    result = false
+
   proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
-    discard
+    ## Windows twin of the POSIX `processFd` above: same per-direction
+    ## dispatch over the fd's in-flight ops, Winsock transfers.
+    let lane = ioLane()
+    let s = socketOf(fd)
+    for j in gSlots[lane].slotsForFd(fd):
+      let sl = addr gSlots[lane].slots[j]
+      case sl.op.kind
+      of opRead:
+        if evRead in firedEvents:
+          let r = wsRecv(s, sl.op.buf, clampLen(sl.op.len), 0.cint)
+          if r == SocketError:
+            if not wouldBlock(): complete(j, -1)
+          else:
+            complete(j, int(r))
+      of opWrite:
+        if evWrite in firedEvents:
+          let r = wsSend(s, sl.op.buf, clampLen(sl.op.len), 0.cint)
+          if r == SocketError:
+            if not wouldBlock(): complete(j, -1)
+          else:
+            complete(j, int(r))
+      of opAccept:
+        if evRead in firedEvents:
+          var addrLen = cint(sl.op.sockAddrLen)
+          let client = wsAccept(s, addr sl.op.sockAddr, addr addrLen)
+          if client == InvalidSocket:
+            if not wouldBlock(): complete(j, -1)
+          else:
+            # The accepted SOCKET must survive the cint narrowing the ring's
+            # API imposes; kernel handle values are small in practice (see
+            # ioring.nim's Windows `listenTcp`).
+            complete(j, int(cast[uint32](client)))
+      of opPollAdd:
+        let hit = firedEvents * sl.op.pollMask
+        if hit != {}:
+          complete(j, toEventMask(hit))
+      of opConnect:
+        if evWrite in firedEvents:
+          # Writability only says the attempt finished. `SO_ERROR` says how:
+          # a refused connection is just as writable as an accepted one.
+          #
+          # Winsock signals a *failed* connect in the exception set, which
+          # WSAPoll reports as POLLERR — and does not, before Windows 10 2004
+          # (the caveat in the backend header). On such a host the failure is
+          # noticed when the deadline blows rather than at once, which is why
+          # `submitConnect` insists on one.
+          var err: cint = 0
+          var elen = cint(sizeof(err))
+          if wsGetsockopt(s, SOL_SOCKET, SO_ERROR, addr err, addr elen) != 0:
+            complete(j, -int(wsaGetLastError()))
+          elif err != 0:
+            complete(j, -int(err))
+          else:
+            complete(j, 0)
+      of opNop, opTimeout:
+        discard
+    if gSlots[lane].hasPendingForFd(fd):
+      if not reArmEvent(fd, armEventsForFd(fd), true):
+        failPendingForFd(fd)
