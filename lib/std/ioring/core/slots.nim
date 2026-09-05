@@ -4,7 +4,7 @@
 # the (intrusive, doubly-linked) list of in-flight slots for that fd.
 
 import ./types
-import std/tables
+import std/[tables, assertions]
 
 type
   Slot* = object
@@ -53,6 +53,12 @@ proc allocSlot*(a: var SlotArena, op: OpContext): int =
   return idx
 
 proc freeSlot*(a: var SlotArena; idx: int) =
+  # Freeing a slot twice is the one corruption this arena cannot survive: the
+  # index lands on the freelist twice, two later ops are handed the SAME slot,
+  # and from there `fdHeads`/`nextInFd` describe a list that does not exist —
+  # which surfaces far away as a bound check inside `slotsForFd`. Cheap to
+  # check, and it names the bug where it happens instead of where it lands.
+  assert a.slots[idx].inUse, "ioring/slots: freeSlot on a slot that is already free"
   let fd = a.slots[idx].op.fd
   let prev = a.slots[idx].prevInFd
   let next = a.slots[idx].nextInFd

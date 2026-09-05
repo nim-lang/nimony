@@ -21,6 +21,16 @@ To build it run this command:
 nim c -r src/hastur/hastur build all
 ```
 
+Nifler, the tool that reads `.nim` source, is built with Nim's own
+`compiler/parser.nim` rather than with whatever parser the installed compiler
+happens to have — Nimony's stdlib uses syntax (`concept of`) that no release
+knows. That file is not part of this repository: the first build checks it out
+at the commit `src/nifler/nimparser/upstream.commit` pins, from a Nim git
+checkout on your machine if it has that commit and otherwise with one HTTPS
+request. Later builds reuse the copy on disk. Working offline with no local Nim
+checkout, the build says so and falls back to the installed compiler's parser,
+which is fine if you are on `devel`.
+
 
 # Usage
 
