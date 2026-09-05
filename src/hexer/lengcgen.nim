@@ -110,7 +110,7 @@ type
 
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor)
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner)
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId)
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId; constRef = false)
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string
 
 type
@@ -138,6 +138,10 @@ type
     register: StrId          ## `{.register: "rdi".}` — the pinned machine register of a
                              ## param / result / local. Which names exist is arkham's
                              ## question; hexer only carries the string across.
+    interrupt: StrId         ## `{.interrupt: "SysTick".}` — the exception/interrupt
+                             ## vector this proc handles. Same arrangement as
+                             ## `register`: which vectors a part HAS is arkham's
+                             ## question, so hexer only carries the name across.
 
 proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): CollectedPragmas
 
@@ -179,11 +183,20 @@ proc externPragmas(c: var EContext; dest: var TokenBuf; genPragmas: var GenPragm
   if prag.header != StrId(0):
     dest.addKeyVal genPragmas, "header", prag.header, pinfo
   if prag.dynlib != StrId(0) and prag.flags * {ImportcP, ImportcppP} != {} and
-      c.nativeBackend and c.dynlibIsStaticImport:
-    # Only the native Windows target carries the library name into Leng, because
-    # only it has to build the import table itself. Every other combination
-    # either has a linker to do that or uses the runtime loader — see
-    # `dynlibIsStaticImport` for the whole matrix.
+      c.dynlibIsStaticImport:
+    # The library name goes into Leng wherever a `dynlib` means a STATIC import
+    # — see `dynlibIsStaticImport` for the whole matrix. Only the native backend
+    # reads it (it builds the import table itself); `lengc`'s C and LLVM code
+    # generators skip the pragma, because their linker resolves the symbol.
+    #
+    # Deliberately NOT `and c.nativeBackend`, which is what it used to say: a
+    # non-main module's `.x.nif` is cached ONCE per nimcache and shared by every
+    # project built there, and `nimony n` builds its compile-time plugins with
+    # `nimony c` in that same nimcache. Gating on the backend made the file's
+    # CONTENT depend on which of the two hexer runs got there first, and when the
+    # C one did, arkham refused `system`'s externs in a build that had been green
+    # a moment earlier ("`GetStdHandle` names no import library"). Whatever a
+    # shared artifact holds has to be the same for both backends.
     dest.addKeyVal genPragmas, "dynlib", prag.dynlib, pinfo
 
 proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag] = {}) =
@@ -339,7 +352,8 @@ proc trArrayBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
-proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor)
+proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
+              rewriteRaises = false)
 
 proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe("proctype", n.info)
@@ -360,7 +374,7 @@ proc trProcTypeBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       skip n # export marker
       skip n # pattern
       skip n # generics
-    trParams c, dest, n
+    trParams c, dest, n, rewriteRaises = true
 
     let pinfo = n.info
     let prag = parsePragmas(c, dest, n)
@@ -431,7 +445,7 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
     dest.addDotToken()
     case k
-    of TupleT:
+    of TupleT, ClosureTupleT:
       trTupleBody c, dest, body
     of ArrayT:
       trArrayBody c, dest, body
@@ -467,41 +481,65 @@ proc addRttiField(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   dest.addParRi() # "ptr"
   dest.addParRi() # "fld"
 
+proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag])
+
+proc trBranchRanges(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## Copy the `(ranges ...)` selector list of an `of` branch. Shared by the
+  ## `case` statement (`trCase`) and the case-object lowering in `trObjFields`,
+  ## so both spell branch values identically. Note `trExpr` folds an enum
+  ## symbol to its integer value, so the output carries numbers, not names.
+  if n.isTagLit and n.substructureKind == RangesU:
+    takeInto dest, n:            # (ranges ...)
+      while n.hasMore:
+        if n.isTagLit and n.substructureKind == RangeU:
+          takeInto dest, n:      # (range lo hi)
+            while n.hasMore:
+              trExpr c, dest, n
+        else:
+          trExpr c, dest, n
+  else:
+    trExpr c, dest, n
+
+proc trBranchBody(c: var EContext; dest: var TokenBuf; n: var Cursor;
+                  flags: set[TypeFlag]) =
+  ## Emit a branch's fields as an anonymous object, or `.` when the branch
+  ## declares none (`of x: nil`). The empty form still records that the
+  ## discriminant values of this branch are legal.
+  assert n.stmtKind == StmtsS
+  n.into:
+    if n.exprKind == NilX:
+      skip n
+      dest.addDotToken
+    else:
+      dest.addParLe("object", n.endInfo)
+      dest.addDotToken  # base type
+      trObjFields(c, dest, n, flags)
+      dest.addParRi # end of object
+
 proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeFlag]) =
   while n.hasMore:
     case n.substructureKind
     of FldU, GfldU:
       trField(c, dest, n, flags)
     of CaseU:
-      # XXX for now counts each case object field as separate
+      # A case object becomes a *discriminated* union: the selector is emitted
+      # as an ordinary field and the branches keep the `(ranges ...)` that
+      # select them, so debug info can map a discriminant value to its branch
+      # (see `doc/leng-spec.md`, UnionBranch). The discriminator is found
+      # positionally by consumers - it is the `fld` emitted immediately before
+      # the `union`, which the two statements below establish.
       n.into:
         trField(c, dest, n, flags)
         dest.addParLe("union", n.info)
         while n.hasMore:
           case n.substructureKind
           of OfU:
-            n.into:
-              skip n
-              assert n.stmtKind == StmtsS
-              n.into:
-                if n.exprKind == NilX:
-                  skip n
-                else:
-                  dest.addParLe("object", n.endInfo)
-                  dest.addDotToken  # base type
-                  trObjFields(c, dest, n, flags)
-                  dest.addParRi # end of object
+            takeInto dest, n:      # (of ...)
+              trBranchRanges c, dest, n
+              trBranchBody c, dest, n, flags
           of ElseU:
-            n.into:
-              assert n.stmtKind == StmtsS
-              n.into:
-                if n.exprKind == NilX:
-                  skip n
-                else:
-                  dest.addParLe("object", n.endInfo)
-                  dest.addDotToken  # base type
-                  trObjFields(c, dest, n, flags)
-                  dest.addParRi # end of object
+            takeInto dest, n:      # (else ...)
+              trBranchBody c, dest, n, flags
           of NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU,
               TypevarU, StaticTypevarU, EfldU, FldU, WhenU, ElifU, TypevarsU,
               CaseU, StmtsU, ParamsU, PragmasU, EitherU, JoinU,
@@ -510,7 +548,7 @@ proc trObjFields(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
             error "expected `of` or `else` inside `case`"
         dest.addParRi # end of union
     of NilU:
-      skip n
+      skip n, SkipFull
     of NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
         StaticTypevarU, EfldU, WhenU, ElifU, ElseU, TypevarsU, OfU, StmtsU,
         ParamsU, PragmasU, EitherU, JoinU, UnpackflatU,
@@ -666,7 +704,10 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
     of StaticT, SinkT, DistinctT:
       n.into:
         trType c, dest, n, flags
-    of TupleT:
+    of TupleT, ClosureTupleT:
+      # `(closureTuple fn env)` is laid out exactly like the plain tuple it
+      # replaced; only the mangled key differs, so it gets its own generated
+      # struct decl.
       trAsNamedType c, dest, n
     of ObjectT:
       let isUnion = IsUnion in flags
@@ -752,7 +793,7 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let param = asLocal(n)
   if param.typ.typeKind in {TypedescT, StaticT}:
     # do not produce any code for this as it's a compile-time parameter
-    skip n
+    skip n, SkipFull
   elif passByConstRef(param.typ, param.pragmas, c.bits div 8, c.sizeofCache) or typeprops.isInheritable(param.typ, false):
     var paramBuf = createTokenBuf()
     paramBuf.addParLe("param", n.info)
@@ -764,12 +805,19 @@ proc maybeByConstRef(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     paramBuf.addDotToken()
     paramBuf.addParRi()
     var paramCursor = beginRead(paramBuf)
-    trLocal(c, dest, paramCursor, ParamY, TraverseSig, SymId(0))
+    # `constRef = true`: this pointer exists only because the parameter is
+    # passed by reference for efficiency — the SOURCE parameter is by-value, so
+    # nothing may write through it. `passByConstRef` already excluded
+    # `sink`/`var`/`out`, so that is the precondition which licensed the
+    # pointer, not something anyone has to analyse. `funcsummary` reads the
+    # `(constref)` pragma back — see `paramMayWrite`.
+    trLocal(c, dest, paramCursor, ParamY, TraverseSig, SymId(0), constRef = true)
     skip n
   else:
     trLocal(c, dest, n, ParamY, TraverseSig, SymId(0))
 
-proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor;
+              rewriteRaises = false) =
   if n.isDotToken:
     dest.addSubtree n
     inc n
@@ -787,16 +835,19 @@ proc trParams(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   var retType = n
   skip n
   # n is now at the pragmas position:
-  if hasPragma(n, RaisesP):
-    # use a tuple type:
+  if rewriteRaises and hasPragma(n, RaisesP):
+    # PROCTYPES only. A raising routine's DECLARATION gets its success tuple
+    # from the `eraiser`, which has to run before `cps` — a coroutine's frame
+    # and result slot are built out of the return type, and that cannot wait
+    # for codegen. Imported routines included: `transformInlineRoutines` runs
+    # the whole pipeline over those too.
+    #
+    # A proctype is different. `(type :Fn . . . (proctype ... (raises)))` in
+    # another module is pulled in as a type DECLARATION, not as code, so this
+    # is the only pass that ever looks at one. Hence the mapping lives in
+    # `builtintypes.addLengReturnType`: several sites, one definition.
     var ret = createTokenBuf(6)
-    if isVoidType(retType):
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-    else:
-      ret.addParLe TupleT, NoLineInfo
-      ret.addSymUse(pool.syms.getOrIncl(ErrorCodeName), NoLineInfo)
-      ret.addSubtree retType
-      ret.addParRi()
+    addLengReturnType(ret, retType, n, NoLineInfo)
     retType = cursorAt(ret, 0)
     trType c, dest, retType
   else:
@@ -836,15 +887,21 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
               result.extern = n.strId
               result.flags.incl pk
               inc n
-          of AssemblerP, StackP:
-            # `(assembler)` on a proc, `(stack)` on a local: bare markers,
-            # forwarded as-is.
+          of AssemblerP, NakedP, StackP:
+            # `(assembler)`/`(naked)` on a proc, `(stack)` on a local: bare
+            # markers, forwarded as-is.
             result.flags.incl pk
             skip n
           of RegisterP:
             n.into:
               expectStrLit c, n
               result.register = n.strId
+              result.flags.incl pk
+              inc n
+          of InterruptP:
+            n.into:
+              expectStrLit c, n
+              result.interrupt = n.strId
               result.flags.incl pk
               inc n
           of InstructionP, IntrinsicP:
@@ -1017,7 +1074,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
           let (typevar, _) = getSymDef(c, n)
           while n.hasMore: skip n
   else:
-    skip n # generic parameters
+    skip n, SkipGenParams
 
   if isGeneric:
     # count each param as used:
@@ -1027,7 +1084,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
         n.into:                                 # (param ...)
           let (param, _) = getSymDef(c, n)
           while n.hasMore: skip n
-    skip n # skip return type
+    skip n, SkipType # return type
   else:
     trParams c, dest, n
 
@@ -1066,6 +1123,12 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
   if AssemblerP in prag.flags:
     dest.addKey genPragmas, "assembler", pinfo
 
+  if NakedP in prag.flags:
+    dest.addKey genPragmas, "naked", pinfo
+
+  if InterruptP in prag.flags and prag.interrupt != StrId(0):
+    dest.addKeyVal genPragmas, "interrupt", prag.interrupt, pinfo
+
   if NoreturnP in prag.flags and not procRaises:
     # Leng has no noreturn pragma of its own; carry the fact as the existing
     # `(attr "noreturn")`. The C backend renders it `__attribute__((noreturn))`
@@ -1087,7 +1150,7 @@ proc trProc(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMo
 
   # body:
   if isGeneric:
-    skip n
+    skip n, SkipBody
   elif mode != TraverseSig or InlineP in prag.flags:
     trProcBody c, dest, n
   else:
@@ -1146,7 +1209,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
           let (typevar, _) = getSymDef(c, n)
           while n.hasMore: skip n               # consume rest of body (skipToEnd would eat the parri too)
   else:
-    skip n # generic parameters
+    skip n, SkipGenParams
 
   let pinfo = n.info
   let prag = parsePragmas(c, dest, n)
@@ -1160,7 +1223,7 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
   if n.typeKind in TypeclassKinds:
     isGeneric = true
   if isGeneric:
-    skip n
+    skip n, SkipType
   else:
     var flags = {IsTypeBody}
     if NodeclP in prag.flags: flags.incl IsNodecl
@@ -1327,7 +1390,7 @@ proc trStmtsExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   n = sub(n)
   if isLastSon(n):
     trExpr c, dest, n
-    n = exprStart; skip n
+    n = exprStart; skip n, SkipFull
   else:
     dest.addParLe(exprStart.cursorTagId, exprStart.info)
     while n.hasMore:
@@ -1705,7 +1768,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trExpr c, dest, n # inheritance depth
       if n.isStringLit:
         # drop the access-token marker; NIFC has no visibility concept.
-        skip n
+        skip n, SkipFull
       takeParRi dest, n, dotStart
     of DdotX:
       dest.addParLe("dot", n.info)
@@ -1717,7 +1780,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       trFieldname c, dest, n
       trExpr c, dest, n
       if n.isStringLit:
-        skip n
+        skip n, SkipFull   # the access-token marker again
       takeParRi dest, n, dotStart
     of HaddrX, AddrX:
       if isAddrOfAconstrUarray(n):
@@ -1787,7 +1850,16 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
        InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX:
       error c, "BUG: not eliminated: ", n
       #skip n
-    of AtX, PatX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
+    of NilX:
+      # `(nil T)` — the frontend types every `nil` (see `trNil` in derefs.nim)
+      # and the type slot is a TYPE, not an expression. Keep it: it is what
+      # tells `intramodinliner`, which substitutes a literal argument at each
+      # use, what the pointer it splices actually is.
+      takeInto dest, n:
+        if n.hasMore:
+          trType(c, dest, n)
+          while n.hasMore: skip n   # the closure form's trailing nil environment
+    of AtX, PatX, ParX, InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, NotX, NegX, OvfX:
       dest.addParLe(n.cursorTagId, n.info)
       n.into:
         while n.hasMore:
@@ -1840,7 +1912,7 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     # of which can appear as a cursor head here.
     error c, "BUG: unexpected ')' or EofToken"
 
-proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId) =
+proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; mode: TraverseMode; renameTo: SymId; constRef = false) =
   var symKind = if tag == ResultY: VarY else: tag
   var localDecl = n
   let toPatch = dest.len
@@ -1878,6 +1950,8 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       dest.addKeyVal genPragmas, "register", prag.register, pinfo
     if StackP in prag.flags:
       dest.addKey genPragmas, "stack", pinfo
+    if constRef:
+      dest.addKey genPragmas, "constref", pinfo
     closeGenPragmas dest, genPragmas
 
     let typAt = n
@@ -1947,6 +2021,27 @@ proc trBreak(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse(lab, info)
     dest.addParRi(n.endInfo)
 
+proc trLab(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(lab :L)` — a Nimony-level merge label (`xelim`'s two-target condition
+  ## compiler emits these for short-circuit chains). Leng has the very same
+  ## construct, so this is a straight copy with the symbol registered.
+  let info = n.info
+  n.into:
+    let (s, _) = getSymDef(c, n)
+    dest.addParLe("lab", info)
+    dest.addSymDef(s, info)
+    dest.addParRi()
+
+proc trJmp(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  n.into:
+    expectSym c, n
+    let lab = n.symId
+    inc n
+    dest.addParLe("jmp", info)
+    dest.addSymUse(lab, info)
+    dest.addParRi()
+
 proc trIf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   # (if cond (.. then ..) (.. else ..))
   takeInto dest, n:
@@ -1979,21 +2074,7 @@ proc trCase(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       case n.substructureKind
       of OfU:
         takeInto dest, n:
-          if n.isTagLit and n.substructureKind == RangesU:
-            n.into:
-              dest.add "ranges", n.endInfo
-              while n.hasMore:
-                if n.isTagLit and n.substructureKind == RangeU:
-                  n.into:
-                    dest.add "range", n.endInfo
-                    while n.hasMore:
-                      trExpr c, dest, n
-                    dest.addParRi(n.endInfo)
-                else:
-                  trExpr c, dest, n
-              dest.addParRi(n.endInfo)
-          else:
-            trExpr c, dest, n
+          trBranchRanges c, dest, n
           trStmt c, dest, n
       of ElseU:
         takeInto dest, n:
@@ -2011,99 +2092,29 @@ proc trKeepovf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     trExpr c, dest, n # destination
 
 proc trRaise(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## A `raise` reaching codegen can only be a routine exit: the `eraiser`
+  ## turned every catchable one into a `jmp` to its handler, and the payload it
+  ## carries is already the success tuple. The `goto` case that used to live
+  ## here moved there with the rest of the `try` lowering.
   let info = n.info
   n.into:
-    if c.exceptLabels.len == 0:
-      # translate `raise` to `return`:
-      dest.addParLe RetS, info
-      trExpr c, dest, n
-    else:
-      # translate `raise` to `goto`:
-      skip n # raise expression handled in constparams.nim
-      let lab = c.exceptLabels[^1]
-      dest.addParLe("jmp", info)
-      dest.addSymUse(lab, info)
+    dest.addParLe RetS, info
+    trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
 proc trTry(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  # We only deal with the control flow here. A `try` with handlers lowers to
-  # a FLAT goto sequence:
-  #
-  #   <try body>            # every raise inside became (jmp `exlab.N)
-  #   <finally>             # normal path only, see below
-  #   (jmp `exend.N)
-  #   (stmts (lab :`exlab.N) <handler>)
-  #   (lab :`exend.N)
-  #
-  # The handler must skip the normal path's finally — its own finally already
-  # ran at the raise site (finally statements are duplicated before every
-  # `raise`) — and the explicit jmp says so directly. The former shape parked
-  # the handler in a false-guarded `(elif)` of an `(if)` for the same effect,
-  # and every consumer paid for the pretense: arkham emitted a real
-  # materialize-and-`cmp 0` for a guard it cannot know is dead, and every
-  # branch-pruning pass needed a label-pinning rule to keep it from deleting
-  # a "dead" arm a jmp enters (see `branchPinned` in intramodinliner).
-  let info = n.info
+  ## Only the `try`/`finally` that `cps` builds for the `corofor` trampoline
+  ## still reaches codegen — the `eraiser` lowers every source-level one to
+  ## `lab`/`jmp` long before here. It has no handlers and nothing in it raises,
+  ## so "run the body, then the finally" is the whole translation.
   let tryStart = n
   n = sub(n)
-  var nn = n
-  skip nn # stmts
-  let oldLen = c.exceptLabels.len
-  var hasExcept = false
-  var tryLab: SymId = NoSymId
-  if nn.substructureKind == ExceptU:
-    # Use a distinct prefix from iterinliner's anonymous block break labels
-    # (`lab.N` via elimForLoops) so try/except lowering does not reuse the
-    # same C label as the enclosing block's break target.
-    tryLab = pool.syms.getOrIncl("`exlab." & $getTmpId(c))
-    c.exceptLabels.add tryLab
-    hasExcept = true
   trStmt c, dest, n
-
-  # The except clauses precede the finally in the tree, but the flat form
-  # emits the normal path (the finally) first: park their cursors, return
-  # for them after. A `raise` inside a handler or the finally must propagate
-  # PAST this try, not loop back to its own handler label, so the label is
-  # popped before either is translated.
-  var handlers: seq[Cursor] = @[]
-  while n.substructureKind == ExceptU:
-    handlers.add n
-    skip n
-  c.exceptLabels.shrink oldLen
-
-  # Since we duplicated the finally statements before every `raise` statement we
-  # know that when control flow reaches here, no error was raised. Hence we do not
-  # need to add logic to re-raise an exception here.
+  if n.substructureKind == ExceptU:
+    error c, "BUG: `except` should have been lowered by the eraiser: ", n
   if n.substructureKind == FinU:
     n.into:
       trStmt c, dest, n
-
-  if hasExcept:
-    let endLab = pool.syms.getOrIncl("`exend." & $getTmpId(c))
-    dest.addParLe("jmp", info)
-    dest.addSymUse(endLab, info)
-    dest.addParRi()
-    for i in 0 ..< handlers.len:
-      var h = handlers[i]
-      let hinfo = h.info
-      dest.copyIntoKind StmtsS, hinfo:
-        if i == 0:
-          dest.addParLe("lab", hinfo)
-          dest.addSymDef(tryLab, hinfo)
-          dest.addParRi()
-        h.into:
-          if h.stmtKind == LetS:
-            trStmt c, dest, h
-          else:
-            skip h # skip `T`
-          trStmt c, dest, h
-      if i < handlers.len - 1:
-        dest.addParLe("jmp", hinfo)
-        dest.addSymUse(endLab, hinfo)
-        dest.addParRi()
-    dest.addParLe("lab", info)
-    dest.addSymDef(endLab, info)
-    dest.addParRi()
   n = tryStart; skip n
 
 proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseInner) =
@@ -2113,6 +2124,8 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     inc n
   of TagLit:
     case n.stmtKind
+    of LabS: trLab c, dest, n
+    of JmpS: trJmp c, dest, n
     of NoStmt:
       if n.cursorTagId == TagId(KeepovfTagId):
         trKeepovf c, dest, n
@@ -2185,8 +2198,7 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
       n = sub(n)
       if n.isStringLit or n.isDotToken:
         # eliminates discard without side effects
-        inc n
-        n = discardStart; skip n
+        n = discardStart; skip n, SkipFull
       else:
         dest.addParLe(discardToken.cursorTagId, discardToken.info)
         trExpr c, dest, n
@@ -2221,14 +2233,14 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of MacroS, TemplateS, IncludeS, FromimportS, ImportexceptS, ExportS, CommentS, IteratorS,
        ImportasS, ExportexceptS, BindS, MixinS, UsingS, StaticstmtS:
       # pure compile-time construct, ignore:
-      skip n
+      skip n, SkipFull
     of TypeS:
       moveToTopLevel(c, dest, mode):
         trTypeDecl c, dest, n, mode
     of ContinueS, WhenS:
       error c, "unreachable: ", n
     of PragmasS, AssumeS, AssertS:
-      skip n
+      skip n, SkipFull
   else:
     assert n.hasMore
     error c, "statement expected, but got: ", n
@@ -2793,7 +2805,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     else: mp.dir
   var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
     nestedIn: @[(StmtsS, SymId(0))],
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(bits),
     pending: createTokenBuf(),
     strLitBuf: createTokenBuf(),
     bits: bits,

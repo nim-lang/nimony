@@ -58,7 +58,8 @@ else:
   const assertionsEnabled = compileOption("assertions")
 
 import std / [assertions, hashes]
-import bitabs, lineinfos
+import bitabs, lineinfos, nifroles
+export nifroles  # a `{.nifWrap.}` in a template body is resolved where it expands
 export bitabs  # adapters touching pool.strings / tags need getOrIncl etc.
 export lineinfos.FileId, lineinfos.NoFile, lineinfos.isValid,
        lineinfos.`==`, lineinfos.hash
@@ -330,6 +331,27 @@ type
 
   TagPool* = ref object
     tags*: BiTable[TagId, string]
+      ## Tag spelling ⇔ id, and NOT bounded by the 9-bit tag field: ids past
+      ## `TagMask` are perfectly legal, they just cost a second token to spell
+      ## (see `escapeTag`).
+    escapeTag*: TagId
+      ## The **escape tag** of this adapter, or `0` if it has none.
+      ##
+      ## A tag id is 9 bits in the token (`TagBits`), so the first 511 tags cost
+      ## one token. That is ample for a language vocabulary and hopeless for an
+      ## instruction set: nativenif alone spells 282 machine mnemonics, and each
+      ## further target (Cortex-M, RISC-V) wants a few hundred more.
+      ##
+      ## Rather than cap the pool there, an adapter may nominate one tag as the
+      ## escape: an id that does not fit is then stored as `(<escapeTag> <id> …)`,
+      ## the id carried by an ordinary inline `IntLit` first child. `openTag`
+      ## does that itself and the serializers undo it, so the NIF *text* is
+      ## unchanged, the binary token format is unchanged, and the pool is
+      ## effectively unbounded. Only the ids past `TagMask` pay the extra token.
+      ##
+      ## What an adapter DOES have to know is that an escaped node's id is not
+      ## `cursorTagId` (ask `resolvedTagId`) and that its operands start one
+      ## token later.
 
 proc newPool*(): Pool =
   Pool(strings:   initBiTable[StrId, string](),
@@ -341,12 +363,20 @@ proc newTagPool*(): TagPool =
   ## Adapters whose enum has ordinal 0 as the first real value bridge
   ## the gap with a `+/- 1` shim in their `tagId` / `myKind` helpers
   ## (see jsonnif/htmlnif).
-  TagPool(tags: initBiTable[TagId, string]())
+  TagPool(tags: initBiTable[TagId, string](), escapeTag: TagId(0))
 
 proc registerTag*(tp: TagPool; tag: string): TagId =
   ## Intern a tag string. Adapters call this in enum-ordinal order at
   ## startup so the returned TagId equals the enum ordinal (1-based).
   tp.tags.getOrIncl(tag)
+
+const
+  FirstEscapeId* = TagMask + 1'u32
+    ## The first tag id that no longer fits the 9-bit tag field, hence the first
+    ## one an adapter must spell through its `escapeTag`. Registering tags is
+    ## otherwise unaffected: `registerTag` keeps counting.
+
+template hasEscapes*(tp: TagPool): bool = tp.escapeTag != TagId(0)
 
 proc createTags*[E: enum](): TagPool =
   ## One-shot tag-pool builder for an adapter's enum. Registers every
@@ -432,6 +462,23 @@ proc tags*(c: Cursor): TagPool {.inline.} =
   ## to expect, so callers typically reach for
   ## `cast[MyTag](c.cursorTagId.uint32)` instead of consulting `c.tags`.
   if c.owner != nil and c.owner.tags != nil: c.owner.tags else: fallbackTags
+
+proc escapeTagOf*(c: Cursor): TagId {.inline.} =
+  ## The adapter's escape tag, or `TagId(0)` when it declares none — which is
+  ## also what a cursor with no tag pool at all answers, since "no escape space"
+  ## is exactly what `TagId(0)` means.
+  ##
+  ## Exists to be read WITHOUT `tags`. `tags` returns the pool BY VALUE, and a
+  ## `ref` returned by value is an owned temporary: ARC pairs every call with an
+  ## incRef and a decRef, and the decRef has to carry the pool's whole destructor
+  ## behind it — a `BiTable` of strings — so the one-line accessor lowers to
+  ## several thousand tokens of Leng and stops being inlinable at all. On nifbench
+  ## `tags` plus that destructor cost more than `skip` and `symId` together, for a
+  ## pool that outlives the program. Reading the field through the raw owner
+  ## pointer takes no reference and reaches no hook.
+  if c.owner != nil and c.owner.tags != nil: c.owner.tags.escapeTag
+  elif fallbackTags != nil: fallbackTags.escapeTag
+  else: TagId(0)
 
 proc toUniqueId*(c: Cursor): int {.inline.} =
   ## A stable identity for the cursor's *position*: two cursors over the same
@@ -643,7 +690,16 @@ proc strVal*(c: Cursor; pool: Pool): string =
   else:
     pool.strings[StrId(combinedPayload(c) shr 1)]
 
-proc strVal*(c: Cursor): string {.inline.} = strVal(c, c.pool)
+# The one-argument accessors below spell the pool lookup out rather than calling
+# `pool(c)`. `pool` returns the pool BY VALUE, and a `ref` returned by value is an
+# owned temporary — ARC pairs the call with an incRef and a decRef, and the decRef
+# carries the `Pool`'s whole destructor (three `BiTable`s) behind it, for a pool
+# that outlives the program. Passed as an ARGUMENT the same field is borrowed and
+# costs nothing, so the branch is written here where the value is consumed
+# immediately. Same reasoning as `escapeTagOf`; measured together on nifbench.
+proc strVal*(c: Cursor): string {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: strVal(c, c.owner.pool)
+  else: strVal(c, fallbackPool)
 
 proc strId*(c: Cursor; pool: Pool): StrId =
   ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
@@ -657,7 +713,9 @@ proc strId*(c: Cursor; pool: Pool): StrId =
   else:
     StrId(combinedPayload(c) shr 1)
 
-proc strId*(c: Cursor): StrId {.inline.} = strId(c, c.pool)
+proc strId*(c: Cursor): StrId {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: strId(c, c.owner.pool)
+  else: strId(c, fallbackPool)
 
 proc symName*(c: Cursor; pool: Pool): string =
   checkKind c.kind in {Symbol, SymbolDef}, "symName on ", c.kind
@@ -667,7 +725,9 @@ proc symName*(c: Cursor; pool: Pool): string =
   else:
     pool.syms[SymId(combinedPayload(c) shr 1)]
 
-proc symName*(c: Cursor): string {.inline.} = symName(c, c.pool)
+proc symName*(c: Cursor): string {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: symName(c, c.owner.pool)
+  else: symName(c, fallbackPool)
 
 proc symId*(c: Cursor; pool: Pool): SymId =
   ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
@@ -680,7 +740,9 @@ proc symId*(c: Cursor; pool: Pool): SymId =
   else:
     SymId(combinedPayload(c) shr 1)
 
-proc symId*(c: Cursor): SymId {.inline.} = symId(c, c.pool)
+proc symId*(c: Cursor): SymId {.inline.} =
+  if c.owner != nil and c.owner.pool != nil: symId(c, c.owner.pool)
+  else: symId(c, fallbackPool)
 
 # Int/UInt/Float: pure-inline via chainable ExtendedSuffix.
 #
@@ -796,14 +858,14 @@ proc lineInfoFile*(c: Cursor): string =
 
 # ── inc / skip / into ────────────────────────────────────────────────────
 
-proc inc*(c: var Cursor) {.inline.} =
+proc inc*(c: var Cursor) {.inline, nifAdvance.} =
   ## Advance past the *head* of the current value (kinded token plus its
   ## suffix, if any). For a TagLit this lands at the first body token;
   ## use `skip` to jump past the whole subtree.
   assert c.rem != 0, "advancing past end of scope"
   advanceBy(c, tokenWidth(c))
 
-proc skip*(c: var Cursor) =
+proc skip*(c: var Cursor) {.nifAdvance.} =
   ## Advance past the current value, including all descendants of a TagLit.
   if c.kind == TagLit:
     let span = int(tokenWidth(c).uint64 + c.cursorJump)
@@ -849,7 +911,27 @@ proc sub*(c: Cursor): Cursor =
   result = c
   discard enterScope(result)
 
+proc isEscapedTag*(c: Cursor): bool {.inline.} =
+  ## Is the node at `c` spelled through its adapter's escape tag — i.e. does its
+  ## real id sit in a leading `IntLit` child, one token in front of the operands?
+  let esc = escapeTagOf(c)
+  result = esc != TagId(0) and c.load.kind == TagLit and
+           c.cursorTagId == esc and
+           (let body = sub(c); body.hasMore and body.load.kind == IntLit)
+
+proc resolvedTagId*(c: Cursor): TagId =
+  ## The tag id of the node at `c`, undoing the escape. Equal to `cursorTagId`
+  ## for everything that fits the 9-bit field, which is every tag of an adapter
+  ## that declares no escape space — so this is the accessor to reach for, and
+  ## `cursorTagId` the one for when you truly mean the token.
+  if isEscapedTag(c):
+    let body = sub(c)
+    result = TagId(uint32(intVal(body)))
+  else:
+    result = c.cursorTagId
+
 template into*(c: var Cursor; body: untyped) =
+  {.nifWrap.}
   ## Enters the current `TagLit`, runs `body`, then restores the outer bounds.
   ## `body` must consume every child.
   let cursorScope = enterScope(c)
@@ -857,6 +939,7 @@ template into*(c: var Cursor; body: untyped) =
   leaveScope(c, cursorScope)
 
 template loopInto*(c: var Cursor; body: untyped) =
+  {.nifWrap.}
   into c:
     while c.hasMore: body
 
@@ -869,6 +952,7 @@ proc leaveScopePartial*(c: var Cursor; scope: CursorScope) =
   skip c
 
 template peekInto*(c: var Cursor; body: untyped) =
+  {.nifWrap.}
   ## Like `into`, but `body` need not consume every child — any unconsumed
   ## remainder is skipped. Use for early-out searches over a node's children
   ## (e.g. `break` out on the first match). The finish is a single `skip`
@@ -946,6 +1030,11 @@ proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
   ## tag namespace — adapters typically create their own fresh
   ## `TagPool` per buffer so `cast[Enum](c.cursorTagId.uint32)` lines
   ## up with the adapter's enum ordinals.
+  # `cap == 0` must NOT reach `alloc(0)`: Nim's allocator maps a zero-sized
+  # request to size class 0, which hands the SAME address to every caller and
+  # (on Nim <= 2.2.x) releases the whole page on the first `dealloc` — every
+  # other live zero-cap buffer is then a dangling pointer into a recycled page.
+  let cap = max(cap, 1)
   result = TokenBuf(
     data: cast[Storage](alloc(sizeof(NifToken) * cap)),
     len: 0, cap: cap,
@@ -1007,7 +1096,9 @@ proc prepareMutation*(b: var TokenBuf) {.inline.} =
       decRcAndFree(b.owner)
       b.owner = nil
     else:
-      let newData = cast[Storage](alloc(sizeof(NifToken) * b.cap))
+      # `max(.., 1)`: never `alloc(0)` — see `createTokenBuf`. A borrowed
+      # zero-token block (`adoptForeignTokens(_, 0)`) reaches this with cap 0.
+      let newData = cast[Storage](alloc(sizeof(NifToken) * max(b.cap, 1)))
       copyMem(newData, b.data, sizeof(NifToken) * b.len)
       decRcAndFree(b.owner)
       b.owner = nil
@@ -1153,11 +1244,11 @@ template addSuffixIfNeeded(b: var TokenBuf; payload: uint64) =
 template lowBits(x: uint32): uint32 = x and PayloadMask
 template lowBits(x: uint64): uint32 = uint32(x and uint64(PayloadMask))
 
-proc addDotToken*(b: var TokenBuf) {.inline.} =
+proc addDotToken*(b: var TokenBuf) {.inline, nifEmits: "Dot".} =
   ## Appends an empty dot placeholder.
   b.add dotToken()
 
-proc addCharLit*(b: var TokenBuf; c: char) {.inline.} =
+proc addCharLit*(b: var TokenBuf; c: char) {.inline, nifEmits: "LIT".} =
   ## Appends a character literal.
   b.add charToken(c)
 
@@ -1179,19 +1270,40 @@ template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped)
     b.add NifToken(toX(kind, lowBits(payload)))
     addSuffixIfNeeded(b, payload)
 
-proc addStrLit*(b: var TokenBuf; s: string) =
+proc addStrLit*(b: var TokenBuf; s: string) {.nifEmits: "LIT".} =
   ## Appends a string literal, using inline storage when possible.
   addStringLike(b, StrLit, s, b.pool.strings)
 
-proc addIdent*(b: var TokenBuf; s: string) =
+proc encodeInlineStrView(s: openArray[char]): uint32 {.inline.} =
+  result = StrInlineFlag or (uint32(s.len) shl StrLengthShift)
+  for i in 0 ..< s.len:
+    result = result or (uint32(byte(s[i])) shl (StrDataShift + uint32(i) * 8))
+
+proc addStrLit*(b: var TokenBuf; s: openArray[char]) {.nifEmits: "LIT".} =
+  ## Appends a string literal taken straight from a byte view. For a parser
+  ## reading someone else's buffer this saves cutting a slice out of it first:
+  ## a short value costs nothing at all, and a long one costs the single copy
+  ## the pool was going to make anyway.
+  ensurePools(b)
+  if s.len <= StrInlineMaxLen:
+    b.add NifToken(toX(StrLit, encodeInlineStrView(s)))
+  else:
+    var tmp = newString(s.len)
+    for i in 0 ..< s.len: tmp[i] = s[i]
+    let id = uint32 b.pool.strings.getOrIncl(tmp)
+    let payload = uint64(id) shl 1               # bit 0 = 0 => pool ref
+    b.add NifToken(toX(StrLit, lowBits(payload)))
+    addSuffixIfNeeded(b, payload)
+
+proc addIdent*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
   ## Appends an identifier, using inline storage when possible.
   addStringLike(b, Ident,  s, b.pool.strings)
 
-proc addSymUse*(b: var TokenBuf; s: string) =
+proc addSymUse*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
   ## Appends a symbol use, interning `s` when it does not fit inline.
   addStringLike(b, Symbol, s, b.pool.syms)
 
-proc addSymDef*(b: var TokenBuf; s: string) =
+proc addSymDef*(b: var TokenBuf; s: string) {.nifEmits: "D".} =
   ## Appends a symbol definition, interning `s` when it does not fit inline.
   addStringLike(b, SymbolDef, s, b.pool.syms)
 
@@ -1221,11 +1333,11 @@ proc internedSymToken*(p: Pool; kind: NifKind; id: SymId): NifToken =
       "symbol id " & $id & " needs an ExtendedSuffix chain: no single token fits"
     NifToken(toX(kind, uint32(id) shl 1))
 
-proc addSymDef*(b: var TokenBuf; id: SymId) =
+proc addSymDef*(b: var TokenBuf; id: SymId) {.nifEmits: "D".} =
   ## Emits a symbol definition already interned in `b.pool`.
   addInternedSymbol(b, SymbolDef, id)
 
-proc addSymUse*(b: var TokenBuf; id: SymId) =
+proc addSymUse*(b: var TokenBuf; id: SymId) {.nifEmits: "Y".} =
   ## Emit a symbol already interned in `b.pool`. Short symbols remain inline;
   ## longer symbols reuse `id` without a second hash-table lookup.
   addInternedSymbol(b, Symbol, id)
@@ -1241,7 +1353,7 @@ template emitChained(b: var TokenBuf; kind: NifKind; bits: uint64) =
     if bits shr (PayloadBits * 2) != 0'u64:
       b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
-proc addIntLit*(b: var TokenBuf; v: int64) =
+proc addIntLit*(b: var TokenBuf; v: int64) {.nifEmits: "LIT".} =
   ## Pure inline. Writer picks the shortest carrier whose SIGNED width holds `v`:
   ##   28-bit (one token)    for v in [-2^27, 2^27),
   ##   56-bit (two tokens)   for v in [-2^55, 2^55),
@@ -1261,21 +1373,42 @@ proc addIntLit*(b: var TokenBuf; v: int64) =
     b.add extendedSuffixToken(uint32((bits shr PayloadBits) and uint64(PayloadMask)))
     b.add extendedSuffixToken(uint32(bits shr (PayloadBits * 2)))
 
-proc addUIntLit*(b: var TokenBuf; v: uint64) =
+proc addUIntLit*(b: var TokenBuf; v: uint64) {.nifEmits: "LIT".} =
   ## Appends an unsigned integer literal using the shortest token chain.
   emitChained(b, UIntLit, v)
 
-proc addFloatLit*(b: var TokenBuf; v: float64) =
+proc addFloatLit*(b: var TokenBuf; v: float64) {.nifEmits: "LIT".} =
   ## Appends a floating-point literal using its exact bit representation.
   emitChained(b, FloatLit, cast[uint64](v))
 
 # ── Open / close tags (the only mutations that touch `openTags`) ─────────
 
-proc openTag*(b: var TokenBuf; t: TagId) {.inline.} =
+proc openTagEscaped(b: var TokenBuf; t: TagId) =
+  ## Slow path of `openTag`: a tag id past the 9-bit field, spelled
+  ## `(<escapeTag> <id> …)` — see `TagPool.escapeTag`. The id is an ordinary
+  ## child, so `closeTag`'s jump counts it and every cursor walk works
+  ## unchanged; what an adapter must know is that operands start one token
+  ## later.
+  assert b.tags != nil and b.tags.escapeTag != TagId(0),
+    "tag id " & $uint32(t) & " exceeds the 9-bit tag field and this tag pool " &
+    "declares no escape tag"
+  ensureCap(b)
+  b.openTags.add b.len
+  b.data[b.len] = tagLitToken(b.tags.escapeTag, 0)
+  inc b.len
+  b.addIntLit int64(uint32(t))
+
+proc openTag*(b: var TokenBuf; t: TagId) {.inline, nifOpens.} =
   ## Begin a new tagged subtree. The matching `closeTag` patches the
   ## emitted TagLit's jump in place (or splices in an `ExtendedSuffix`
   ## right after the TagLit if the body overflows the 19-bit jump field).
+  ##
+  ## An id past `TagMask` does not fit the token and goes through the adapter's
+  ## escape tag instead; callers never have to sort the two apart.
   if b.owner != nil: prepareMutation(b)
+  if uint32(t) >= FirstEscapeId:
+    openTagEscaped(b, t)
+    return
   ensureCap(b)
   b.openTags.add b.len
   b.data[b.len] = tagLitToken(t, 0)
@@ -1289,7 +1422,7 @@ proc reopenLastTree*(b: var TokenBuf; pos: int) =
   assert b.data[pos].kind == TagLit, "reopenLastTree: no TagLit at pos"
   b.openTags.add pos
 
-proc closeTag*(b: var TokenBuf) =
+proc closeTag*(b: var TokenBuf) {.nifCloses.} =
   ## Seal the most recently opened tag.
   if b.owner != nil: prepareMutation(b)
   assert b.openTags.len > 0, "closeTag with no matching openTag"
@@ -1433,30 +1566,52 @@ proc peekPastEnd*(n: Cursor): Cursor =
   result = n
   result.rem = high(int)
 
+proc sharesPools*(c: Cursor; p: Pool; t: TagPool): bool {.inline.} =
+  ## `p == c.pool and t == c.tags`, WITHOUT materializing either of the cursor's
+  ## pools. `pool`/`tags` return a `ref` by value, which is an owned temporary —
+  ## an incRef, a decRef, and the pool's whole destructor behind the decRef — so
+  ## the fast-path test in `addSubtree`, whose entire job is to compare two
+  ## pointers, was paying for two of those per copied subtree. Read through the
+  ## raw owner pointer instead: as `==` operands both sides are borrowed paths.
+  ## The `nil` fallbacks are what `pool`/`tags` answer, spelled out.
+  (if c.owner != nil and c.owner.pool != nil: p == c.owner.pool
+   else: p == fallbackPool) and
+  (if c.owner != nil and c.owner.tags != nil: t == c.owner.tags
+   else: t == fallbackTags)
+
 # ── Subtree copy ─────────────────────────────────────────────────────────
 
-proc reinternLineInfo(dest: var TokenBuf; c: Cursor): NifLineInfo =
+proc reinternLineInfo(dest: var TokenBuf; c: Cursor;
+                      srcPool: Pool): NifLineInfo =
   ## Map the source head's trailing line info into `dest`'s pools — the filename
   ## and, if present, the `#comment#` string. Returns `NoNifLineInfo` when none.
+  ##
+  ## Takes the source pool rather than asking `c` for it: as a parameter the ref
+  ## is borrowed, while `c.pool` would return an owned temporary and pay an
+  ## incRef/decRef — twice, here — per token copied. See `sharesPools`.
   ensurePools(dest)
   let li = rawLineInfo(c)
   if not li.isValid: return NoNifLineInfo
-  let fname = if c.pool != nil: c.pool.filenames[li.file] else: ""
+  let fname = if srcPool != nil: srcPool.filenames[li.file] else: ""
   var comment = StrId(0)
-  if uint32(li.comment) != 0'u32 and c.pool != nil:
-    comment = dest.pool.strings.getOrIncl(c.pool.strings[li.comment])
+  if uint32(li.comment) != 0'u32 and srcPool != nil:
+    comment = dest.pool.strings.getOrIncl(srcPool.strings[li.comment])
   result = NifLineInfo(file: dest.pool.filenames.getOrIncl(fname),
                        line: li.line, col: li.col, comment: comment)
 
-proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
+proc addAcrossPools(dest: var TokenBuf; c: var Cursor;
+                    srcPool: Pool; srcTags: TagPool) =
   ## Internal: copy one value (atom or whole TagLit subtree) from `c`
   ## into `dest`, re-interning literals (via the literals pool), tag names
   ## (via the tag pool) and line-info filenames. Recurses through children.
   ## The trailing `LineInfoLit` is part of the head's width (skipped by
   ## `c.inc`), so it is re-emitted explicitly via `appendLineInfo`.
-  let srcPool = c.pool
-  let srcTags = c.tags
-  let destLi = reinternLineInfo(dest, c)
+  ##
+  ## The source pools are THREADED, not re-read: they are the same for every node
+  ## of one subtree, and `let srcPool = c.pool` at each level cost an owned `ref`
+  ## — an incRef, a decRef, and the pool's destructor behind the decRef — per
+  ## token. The public wrapper below reads them once.
+  let destLi = reinternLineInfo(dest, c, srcPool)
   case c.kind
   of TagLit:
     let tagStr = srcTags.tags[c.cursorTagId]
@@ -1465,7 +1620,7 @@ proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
     dest.appendLineInfo destLi          # right after the tag head
     c.into:
       while c.hasMore:
-        addAcrossPools(dest, c)
+        addAcrossPools(dest, c, srcPool, srcTags)
     dest.closeTag()
   of StrLit:    dest.addStrLit  strVal(c, srcPool);  dest.appendLineInfo destLi; c.inc
   of IntLit:    dest.addIntLit  intVal(c);           dest.appendLineInfo destLi; c.inc
@@ -1483,12 +1638,12 @@ proc addAcrossPools(dest: var TokenBuf; c: var Cursor) =
   of UnknownToken, EofToken, ParLe, ParRi:
     assert false, "reader-level lexical kind cannot appear in a token buffer"
 
-proc addSubtree*(dest: var TokenBuf; c: Cursor) =
+proc addSubtree*(dest: var TokenBuf; c: Cursor) {.nifEmits: "Any".} =
   ## Copy the subtree rooted at `c` into `dest`. When both pools AND
   ## both tag pools match, this is a single bulk `copyMem`; otherwise
   ## the source's literals and tag names are re-interned into `dest`'s
   ## pools token-by-token. Callers don't need to know which case applies.
-  if dest.pool == c.pool and dest.tags == c.tags:
+  if sharesPools(c, dest.pool, dest.tags):
     let n = subtreeWidth(c)
     if dest.owner != nil: prepareMutation(dest)
     if dest.len + n > dest.cap:
@@ -1498,10 +1653,16 @@ proc addSubtree*(dest: var TokenBuf; c: Cursor) =
     dest.len += n
   else:
     assert c.pool != nil and c.tags != nil
-    var c = c
-    addAcrossPools(dest, c)
+    # Read the source pools ONCE for the whole subtree and hand them down; see
+    # `addAcrossPools`. These two are still owned locals — a mutable `c` may not
+    # be passed alongside anything read out of it — but that is now one
+    # incRef/decRef pair per SUBTREE where it used to be one per token.
+    let srcPool = c.pool
+    let srcTags = c.tags
+    var cc = c
+    addAcrossPools(dest, cc, srcPool, srcTags)
 
-proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
+proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) {.nifEmits: "Any".} =
   ## Append a closed buffer that shares `dest`'s literal and tag pools.
   ##
   ## The source is borrowed and remains usable. Matching pools make the
@@ -1530,7 +1691,7 @@ proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) =
           src.len * sizeof(NifToken))
   dest.len += src.len
 
-proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) =
+proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) {.nifEmits: "Any".} =
   ## Append all complete top-level values from `src` to `dest`.
   ##
   ## Matching pools permit one bulk copy. Otherwise values are re-interned

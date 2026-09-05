@@ -1,0 +1,6 @@
+tests/nimony/errmsgs/tundeclaredrettype_variants.nim(8, 5) Error: undeclared identifier: NotAType
+tests/nimony/errmsgs/tundeclaredrettype_variants.nim(9, 18) Error: could not infer type for T.0.tunyag5ck
+tests/nimony/errmsgs/tundeclaredrettype_variants.nim(11, 5) Error: undeclared identifier: NotAType
+tests/nimony/errmsgs/tundeclaredrettype_variants.nim(14, 5) Error: undeclared identifier: NotAType
+tests/nimony/errmsgs/tundeclaredrettype_variants.nim(18, 5) Error: undeclared identifier: NotAType
+tests/nimony/errmsgs/tundeclaredrettype_variants.nim(20, 10) Error: type mismatch: got: int64 but wanted: NotAType

@@ -47,6 +47,11 @@ type
                         ## its pointee)
     escapes*: bool      ## param's graph is stored into a global or passed to a
                         ## callee with no summary
+    constRef*: bool     ## the parameter carries `(constref)`: it is a pointer
+                        ## `lengcgen` introduced for a source-level BY-VALUE
+                        ## parameter, so nothing may write through it. Not a
+                        ## result of the analysis below — the precondition that
+                        ## licensed passing by reference. See `paramMayWrite`.
 
   FunctionSummary* = object
     writesGlobal*: bool
@@ -70,8 +75,18 @@ proc isReadOnly*(s: FunctionSummary): bool {.inline.} =
 proc paramMayWrite*(s: FunctionSummary; idx: int): bool {.inline.} =
   ## Conservative: an out-of-range index (e.g. a varargs actual) or an unknown
   ## callee is assumed to write.
-  if s.callsUnknown: return true
+  ##
+  ## `constRef` is the one fact that survives `callsUnknown`. That blanket
+  ## exists because an unseen callee might write through some pointer it was
+  ## handed — but a `(constref)` parameter stands for a by-value source
+  ## parameter, and the only way to pass it onwards is another by-value
+  ## parameter (again `(constref)`) or a copy. Nothing the body does, seen or
+  ## unseen, can turn it into a write. Note this says nothing about the
+  ## POINTEE: another argument may alias the same object and be written
+  ## through, which is why every argument position is asked separately.
   if idx < 0 or idx >= s.params.len: return true
+  if s.params[idx].constRef: return false
+  if s.callsUnknown: return true
   result = s.params[idx].writes or s.params[idx].slotWritten
 
 proc paramDirectEscapes*(s: FunctionSummary; idx: int): bool {.inline.} =
@@ -103,6 +118,9 @@ type
     paramLookup: Table[SymId, int]
     localRoots: Table[SymId, seq[int]] ## local sym -> interface elements it aliases
     reads, writes, slotW, escapes: seq[bool]  ## per element, length nParams+1
+    constRef: seq[bool]                ## per PARAM (length nParams): carries
+                                       ## `(constref)`. Not derived from the
+                                       ## body — see `ParamEffect.constRef`.
     writesGlobal, readsGlobal, callsUnknown, raises: bool
     calls: seq[CallFact]
 
@@ -277,6 +295,34 @@ proc collectParamSyms(params: Cursor): seq[SymId] =
         inc q
         if q.kind == SymbolDef:
           result.add q.symId
+      skip p
+
+proc paramIsConstRef(param: Cursor): bool =
+  ## Does this param carry `(constref)`? A **Leng** param is
+  ## `(param :name PRAGMAS TYPE)` — `trLocal` drops the export marker the
+  ## Nimony form has, so the pragmas are the second child, not the third.
+  var q = param
+  q = sub(q)
+  if not q.hasMore: return false
+  skip q                      # name
+  if not q.hasMore: return false
+  if not q.isTagLit or q.substructureKind != PragmasU: return false
+  result = false
+  q.loopInto:
+    if q.isTagLit and q.pragmaKind == ConstrefP: return true
+    skip q
+
+proc collectParamConstRef(params: Cursor): seq[bool] =
+  result = @[]
+  if not params.isTagLit: return
+  var p = params
+  p.into:
+    while p.hasMore:
+      if p.substructureKind == ParamU:
+        var q = p
+        inc q
+        if q.kind == SymbolDef:
+          result.add paramIsConstRef(p)
       skip p
 
 proc exprRoots(a: var ProcAnalysis; n: Cursor): seq[int] =
@@ -493,11 +539,25 @@ proc markAllUnknown(a: var ProcAnalysis) =
     a.slotW[i] = true
     a.escapes[i] = true
 
+proc isExternProc(pragmas: Cursor): bool =
+  ## A proc whose implementation lives outside the NIF world: `importc` /
+  ## `importcpp`. Its body is `(stmts .)` — an EMPTY body, not an effect-free
+  ## one, so walking it would "prove" that `time(addr x)` neither writes
+  ## through nor escapes its argument and copyprop would then keep believing
+  ## `x`'s pre-call value. There is nothing to analyse; say so.
+  if not pragmas.isTagLit: return false
+  var p = pragmas
+  result = false
+  p.loopInto:
+    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP}: return true
+    skip p
+
 proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   var p = procDecl
   let d = takeProcDecl(p)
   let paramSyms = collectParamSyms(d.params)
   result = ProcAnalysis(nParams: paramSyms.len)
+  result.constRef = collectParamConstRef(d.params)
   result.uf = newSeq[int](paramSyms.len + 1)
   for i in 0 .. paramSyms.len: result.uf[i] = i
   result.reads = newSeq[bool](paramSyms.len + 1)
@@ -505,7 +565,7 @@ proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =
   result.slotW = newSeq[bool](paramSyms.len + 1)
   result.escapes = newSeq[bool](paramSyms.len + 1)
   for i, s in paramSyms: result.paramLookup[s] = i
-  if d.body.isTagLit:
+  if d.body.isTagLit and not isExternProc(d.pragmas):
     var body = d.body
     walkStmt(result, body)
   else:
@@ -520,7 +580,8 @@ proc finalizeSummary(a: var ProcAnalysis): FunctionSummary =
     result.params[i] = ParamEffect(
       cls: uint32(ufFind(a.uf, i)),
       reads: a.reads[i], writes: a.writes[i],
-      slotWritten: a.slotW[i], escapes: a.escapes[i])
+      slotWritten: a.slotW[i], escapes: a.escapes[i],
+      constRef: i < a.constRef.len and a.constRef[i])
   result.resultCls = uint32(ufFind(a.uf, a.nParams))
   result.resultEscapes = a.escapes[a.nParams]
 
@@ -623,6 +684,7 @@ proc readParamSummary(n: var Cursor; outSummary: var FunctionSummary) =
           of "writes": outSummary.params[idx].writes = true
           of "slot": outSummary.params[idx].slotWritten = true
           of "escapes": outSummary.params[idx].escapes = true
+          of "constref": outSummary.params[idx].constRef = true
           else: discard
           inc n
         else:
@@ -693,6 +755,7 @@ proc addSummaryPragma(dest: var TokenBuf; summary: FunctionSummary; info: NifLin
     if p.writes: dest.addIdent "writes", info
     if p.slotWritten: dest.addIdent "slot", info
     if p.escapes: dest.addIdent "escapes", info
+    if p.constRef: dest.addIdent "constref", info
     dest.addParRi()
   if int(summary.resultCls) != summary.params.len or summary.resultEscapes:
     dest.addIdent "result", info
@@ -887,5 +950,26 @@ when isMainModule:
     let s = twoParams(
       "(asgn obj.0 (cast (ptr (i +32)) (add (u +64) (cast (u +64) x.0) 8)))")
     doAssert not s.writesGlobal
+
+  block constref_param_outlives_callsUnknown:
+    # `(constref)` marks a pointer standing for a BY-VALUE source parameter.
+    # A call to a callee with no summary sets `callsUnknown`, which otherwise
+    # forces "may write" on every parameter; the marked one keeps its answer,
+    # because no body — seen or unseen — can turn a by-value parameter into a
+    # write. The unmarked sibling still degrades.
+    var s = summaryOf("""
+      (proc :f.0
+        (params
+          (param :p.0 (pragmas (constref)) (ptr (i +64)))
+          (param :q.0 . (ptr (i +64))))
+        . . (stmts))""")
+    doAssert s.params[0].constRef      # read off the param's pragmas
+    doAssert not s.params[1].constRef
+    # What an unresolved callee does to the summary downstream:
+    s.callsUnknown = true
+    doAssert not paramMayWrite(s, 0)
+    doAssert paramMayWrite(s, 1)
+    # Out-of-range stays conservative even with a marked param present.
+    doAssert paramMayWrite(s, 2)
 
   echo "ok"

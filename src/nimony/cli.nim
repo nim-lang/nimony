@@ -56,6 +56,18 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     quit(if versionMsg.len > 0: versionMsg else: "No version available", QuitSuccess)
   of "compat":
     config.compat = true
+  of "mm":
+    # Stored normalized: the name is spelled in camelCase but names a file, and
+    # files stay all-lowercase (`--mm:atomicArc` -> `system/atomicarc.nim`).
+    # Rejecting separators here keeps `--mm` a strategy name and not a way to
+    # `include` an arbitrary path.
+    let name = normalize(val)
+    var valid = name.len > 0
+    for ch in name:
+      if ch notin {'a'..'z', '0'..'9'}: valid = false
+    if not valid:
+      quit "invalid value for --mm; expected a strategy name like arc or atomicArc"
+    config.mm = name
   of "path", "p":
     config.paths.add val
   of "define", "d":
@@ -74,6 +86,8 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     of "32": config.bits = 32
     of "16": config.bits = 16
     else: quit "invalid value for --bits"
+    # Pin it, so a `--cpu` on either side of this flag leaves it alone.
+    config.bitsExplicit = true
   of "cpu":
     if not config.setTargetCPU(val):
       quit "unknown CPU: " & val
@@ -99,6 +113,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.ccKey = extractCCKey(val)
   of "linker":
     config.linker = val
+  of "layout":
+    # The board description a bare-metal image is built against (see
+    # nativenif's doc/layout.md). Only the native backend can use it, and
+    # arkham is what reads it — this only carries the path there.
+    config.layoutFile = val
+    forwardArg = false
+    forwardArgLengc = false
   of "base":
     config.baseDir = val
   of "nimcache":
@@ -140,6 +161,13 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "flags":
     # Flags are forwarded but not processed here
     discard
+  of "inlineframes":
+    # Must reach nimsem: the marking happens during template expansion, which
+    # is nimsem's job, and lengc reads the result out of the line info.
+    case normalize(val)
+    of "", "on": config.inlineFrames = true
+    of "off": config.inlineFrames = false
+    else: quit "invalid value for --inlineframes; expected on or off"
   of "novalidate":
     config.noValidate = true
   of "verbose":

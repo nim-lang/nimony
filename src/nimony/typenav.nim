@@ -14,7 +14,7 @@ include ".." / lib / nifprelude
 
 import std/tables
 from std/strutils import endsWith
-import ".." / njvl / njvl_model
+import ".." / finalir / finalir_model
 import nimony_model, builtintypes, decls, programs, typeprops
 
 const
@@ -43,7 +43,7 @@ type
     mem: seq[TokenBuf]
     current: TypeScope
 
-proc createTypeCache*(bits: int = 64): TypeCache =
+proc createTypeCache*(bits: int): TypeCache =
   TypeCache(builtins: createBuiltinTypes(bits))
 
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;
@@ -209,6 +209,19 @@ proc skipToObjectBody(n: Cursor): Cursor =
     else:
       break
 
+proc skipTypeAliases(n: Cursor): Cursor =
+  ## Follow `type A = B` chains until a structural type is reached. Bounded so
+  ## a cyclic alias cannot hang the navigator.
+  var counter = 20
+  result = n
+  while counter > 0 and result.isSymbol:
+    dec counter
+    let d = getTypeSection(result.symId)
+    if d.kind == TypeY:
+      result = d.body
+    else:
+      break
+
 proc fieldDecl(c: var TypeCache; n: var Cursor; fld: SymId): Local =
   ## Find `fld`'s declaration in an object body, inheritance and case
   ## sections included. Not-found is signalled by `result.typ` being the
@@ -250,7 +263,7 @@ proc fieldDecl(c: var TypeCache; n: var Cursor; fld: SymId): Local =
   else:
     result = default(Local)
     let tk = n.typeKind
-    if tk in {ObjectT, TupleT}:
+    if tk in {ObjectT} + TupleTypes:
       var baseObj = default(Cursor)
       n.into:
         if tk == ObjectT:
@@ -287,7 +300,7 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   inc n # into tuple
   var tupType = getTypeImpl(c, n, flags)
   tupType = skipModifier(tupType)
-  if tupType.typeKind == TupleT:
+  if tupType.typeKind in TupleTypes:
     skip n # skip tuple expression
     if n.isIntLit:
       var idx = n.intVal
@@ -296,6 +309,23 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         skip tupType
         dec idx
       result = getTupleFieldType(tupType)
+  elif tupType.typeKind in {ProctypeT, ItertypeT} and procHasPragma(tupType, ClosureP):
+    # A `.closure` value is the pair (fn, env) once hexer's lambdalifting has
+    # lowered it: `(tupat v 0)` is the routine, `(tupat v 1)` its environment.
+    # Hexer keeps querying the semchecked, precisely annotated type of `v` —
+    # a closure global declared in another module is never rewritten, only
+    # its uses are — so the projection has to follow from the annotation.
+    skip n # skip the closure expression
+    if n.isIntLit:
+      if n.intVal == 0:
+        result = tupType
+      elif n.intVal == 1:
+        var buf = createTokenBuf(4)
+        buf.addParLe(RefT, n.info)
+        buf.addSymUse pool.syms.getOrIncl("RootObj.0." & SystemModuleSuffix), n.info
+        buf.addParRi()
+        c.mem.add buf
+        result = cursorAt(c.mem[c.mem.len-1], 0)
   elif BeStrict in flags:
     assert false, "wanted tuple type but got: " & toString(tupType, false)
 
@@ -379,7 +409,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       of StmtsS, RetS, CommentS:
         result = c.builtins.voidType
       else:
-        case njvlKind(n)
+        case finalIrKind(n)
         of VV:
           result = getTypeImpl(c, n.childCursor, flags)
         of EtupatV:
@@ -609,23 +639,35 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   of EnvpX:
     result = c.builtins.autoType
   of ToClosureX:
-    let srcProc = getTypeImpl(c, n.childCursor, flags).asRoutine
-    assert srcProc.kind != NoSym
+    # `sigmatch.procTypeMatch` wraps *any* nimcall source in `(toClosure X)`,
+    # not only a routine symbol: a variable, field or parameter of nimcall proc
+    # type lands here too (nim-lang/nimony#2404). Whatever the source is, the
+    # type of the wrapper is a proctype/itertype carrying `(closure)` -- the
+    # same shape `sigmatch.procTypeOfRoutineSym` builds for the matching side.
+    var t = skipTypeAliases(getTypeImpl(c, n.childCursor, flags))
+    let kind = t.typeKind
+    if kind notin RoutineTypes:
+      # not a proc type at all: report it unchanged instead of inventing a
+      # type the rest of the pipeline cannot use.
+      return t
+    var nilTag = t
+    inc nilTag                    # slot 0, the nilability tag of a type form
+    skipToParams t                # the params, for a decl and a type form alike
     var buf = createTokenBuf()
-    copyIntoKind(buf, srcProc.kind, n.info):
-      buf.addDotToken() # name
-      buf.addDotToken() # exported
-      buf.addSubtree srcProc.pattern
-      buf.addDotToken() # typevars
-      buf.addSubtree srcProc.params
-      buf.addSubtree srcProc.retType
-      copyIntoKind(buf, PragmasU, srcProc.pragmas.info):
-        if not srcProc.pragmas.isDotToken:
-          var n2 = srcProc.pragmas
-          loopInto n2:
-            buf.takeTree n2
+    copyIntoKind(buf, (if kind in {IteratorT, ItertypeT}: ItertypeT else: ProctypeT), n.info):
+      if kind in {ProctypeT, ItertypeT}:
+        buf.takeTree nilTag       # nilability
+      else:
+        buf.addDotToken()         # a routine decl has no nilability tag
+      buf.takeTree t              # params
+      buf.takeTree t              # return type
+      copyIntoKind(buf, PragmasU, t.info):
+        if t.isDotToken:
+          inc t
+        else:
+          loopInto t:
+            buf.takeTree t
         buf.addParPair(ClosureP)
-      buf.addDotToken # effects
     c.mem.add buf
     result = cursorAt(c.mem[c.mem.len-1], 0)
 
@@ -646,7 +688,7 @@ proc getType*(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag] = {}): Cursor
         break
   assert result.hasMore
 
-proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool =
+proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: var Cursor): bool {.nifReads.} =
   # returns false if the routine is generic
   result = true # assume it is concrete
   assert n.isSymbolDef, "expected SymbolDef, got: " & toString(n, false)
@@ -658,7 +700,7 @@ proc takeRoutineHeader*(c: var TypeCache; dest: var TokenBuf; decl: Cursor; n: v
       result = n.substructureKind != TypevarsU
     takeTree dest, n
 
-proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
+proc takeLocalHeader*(c: var TypeCache; dest: var TokenBuf; n: var Cursor; kind: SymKind) {.nifReads.} =
   let name = n.symId
   takeTree dest, n # name
   takeTree dest, n # export marker

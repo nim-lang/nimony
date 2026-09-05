@@ -205,15 +205,25 @@ proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: NifLineInfo
     dest.addDotToken() # value
   publish c, dest, result, declStart
 
+proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor)
+
+type
+  ConceptParent = object
+    head: SymId
+    body: TokenBuf
+
 proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                         ownerSym: SymId; parents: var seq[SymId];
-                         hadError: var bool) =
+                         ownerSym: SymId; parents: var seq[ConceptParent]; hadError: var bool) =
   let info = n.info
   let parentName = if n.kind == Ident: pool.strings[n.strId] else: ""
   let before = dest.len
-  semLocalTypeImpl c, dest, n, InLocalDecl
+  if n.exprKind == AtX or n.typeKind == AtT:
+    semInvoke c, dest, n
+  else:
+    semLocalTypeImpl c, dest, n, InLocalDecl
   let parentType = cursorAt(dest, before)
-  if parentType.kind != Symbol:
+  let ps = conceptParentHeadSym(parentType)
+  if ps == SymId(0):
     # An ambiguous name (e.g. a concept redeclared next to `system`'s) sems to a
     # symbol choice, not a symbol: report the redeclaration instead of the
     # misleading "can only inherit from other concepts" (nim-lang/nimony#2260).
@@ -226,7 +236,6 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     else:
       c.buildErr dest, info, "concept can only inherit from other concepts"
     return
-  let ps = parentType.symId
   dest.shrink before
   if not isConceptSym(ps):
     hadError = true
@@ -237,9 +246,11 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     c.buildErr dest, info, "concept inheritance cycle detected"
     return
   for existing in parents:
-    if existing == ps:
+    if existing.head == ps:
       return
-  parents.add ps
+  var parent = ConceptParent(head: ps, body: createTokenBuf(8))
+  parent.body.addSubtree parentType
+  parents.add parent
 
 proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
                       ownerSym: SymId; hadError: var bool): bool =
@@ -247,7 +258,7 @@ proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   if n.isDotToken:
     takeTree dest, n
     return false
-  var parents: seq[SymId] = @[]
+  var parents: seq[ConceptParent] = @[]
   if n.exprKind == ParX:
     n.into ParX:
       while n.hasMore:
@@ -257,11 +268,11 @@ proc semConceptParents(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   if parents.len == 0:
     dest.addDotToken()
   elif parents.len == 1:
-    dest.addSymUse(parents[0], info)
+    dest.add parents[0].body
   else:
     dest.addParLe(AndT, info)
     for p in parents:
-      dest.addSymUse(p, info)
+      dest.add p.body
     dest.addParRi()
   result = parents.len > 0
 
@@ -274,7 +285,14 @@ proc semConceptType(c: var SemContext; dest: var TokenBuf; n: var Cursor; ownerS
     var parentsFailed = false
     let hasParents = semConceptParents(c, dest, n, ownerSym, parentsFailed)
     if n.symKind == TypevarY:
+      let selfStart = dest.len
       takeTree dest, n
+      # Generic instantiations copy Self from the concept body; publish it so
+      # requirement signatures can resolve the instantiated Self sym.
+      var selfNode = cursorAt(dest, selfStart)
+      inc selfNode
+      if selfNode.isSymbolDef:
+        publish c, dest, selfNode.symId, selfStart
     else:
       declareConceptSelf c, dest, n.info
     let bodyInfo = n.info
@@ -619,7 +637,10 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
       c.buildErr dest, info, "cannot attempt to instantiate a non-type"
 
   var params = default(Cursor)
-  if decl.kind == TypeY:
+  if ok:
+    # only a generic type has a `(typevars ...)` list to walk; `ok` already
+    # implies it, whereas `decl.kind == TypeY` also holds for a concrete type
+    # like `Foo` in `Foo[T]`, whose `typevars` is a DotToken (#2440).
     params = decl.typevars
     params = sub(params) # bound the parameter walk
   var paramCount = 0
@@ -1275,7 +1296,8 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       n = routineStart; skip n
     of InvokeT:
       semInvoke c, dest, n
-    of ErrT:
+    of ErrT, ClosureTupleT:
+      # `ClosureTupleT` is a hexer-internal lowering and never reaches sem.
       takeTree dest, n
   of DotToken:
     if context in {InReturnTypeDecl, InGenericConstraint}:

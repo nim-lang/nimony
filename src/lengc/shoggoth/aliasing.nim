@@ -81,6 +81,19 @@ proc pointerBearing(m: ptr MainModule; typ: Cursor; depth = 0): bool =
         if body.substructureKind == FldU:
           let fld = takeFieldDecl(body)
           if pointerBearing(m, fld.typ, depth+1): return true
+        elif isUnionBranch(body):
+          # A discriminated-union branch holds its fields in a payload object.
+          # Skipping it would report a variant whose only pointer lives in a
+          # branch as pointer-free - an *under*-merge, which is exactly the
+          # unsound direction for this analysis (a missed invalidation).
+          let b = takeUnionBranch(body)
+          if b.body.typeKind == ObjectT and pointerBearing(m, b.body, depth+1):
+            return true
+        elif body.typeKind in {ObjectT, UnionT}:
+          # Anonymous object/union nested in this body. Same reasoning: the
+          # `skip` below would hide any pointer inside it.
+          if pointerBearing(m, body, depth+1): return true
+          skip body
         else:
           skip body
   of NoType:
@@ -108,7 +121,9 @@ proc sourceMayBePointer(m: ptr MainModule; n: Cursor): bool =
     result = false
   of TagLit:
     case n.exprKind
-    of AddrC, HaddrC, DerefC, PatC, NilC, CallC:
+    of AddrC, HaddrC, DerefC, PatC, NilC, CallC, InstrC:
+      # `InstrC` for the same reason as `CallC`: a `volatileLoad` of a `ptr ptr T`
+      # cell yields a pointer, and nothing about the node says otherwise.
       result = true
     of TrueC, FalseC, InfC, NeginfC, NanC, SizeofC, AlignofC, OffsetofC:
       result = false
@@ -197,7 +212,9 @@ proc accessRoots*(c: Cursor; roots: var seq[SymId]; m: ptr MainModule = nil) =
       skip r                                    # type
       skip r                                    # inheritance-depth intlit
       accessRoots(r, roots, m)
-    of CallC:
+    of CallC, InstrC:
+      # An intrinsic's pointer operand escapes exactly as a call's does — that is
+      # what `volatileStore(dest, x)` is.
       var r = c
       r.into:                                   # bounded to the call's children
         if r.hasMore: skip r                    # callee

@@ -196,7 +196,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   ## (mangled symbol plus embedded line info), which says nothing a reader wants.
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   # `Error: `, not the `[Error] ` of the rendering `error` above: this is a
   # user-facing diagnostic, and that is the spelling every other user-facing
@@ -210,7 +210,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
@@ -306,6 +306,9 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # Static-import library annotation for the NATIVE backend (arkham);
         # meaningless for C output — the linker resolves the symbol.
         skip n
+      of ConstrefP:
+        # A PARAMETER pragma; never legal on a proc.
+        error c.m, "invalid proc pragma: ", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.hasMore and n.kind == StrLit:
@@ -332,12 +335,21 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
         # `genProcDecl` then emits nothing for the declaration itself.
         result.flags.incl pk
         skip n
-      of AssemblerP:
-        # `{.assembler.}` bodies are transliterated by arkham, not compiled to C.
+      of AssemblerP, NakedP:
+        # `{.assembler.}`/`{.naked.}` bodies are transliterated by arkham, not
+        # compiled to C.
         # Routing them into a C build means assembling them separately and
         # linking the object — see `nativenif/doc/asm-c-interop.md`, which is not
         # built yet. Reject loudly rather than emit a prototype that will fail to
         # link with no explanation.
+        result.flags.incl pk
+        skip n
+      of InterruptP:
+        # An interrupt-table entry, and a C build has no such table to install it
+        # in. Emitting the function anyway would compile and link and simply
+        # never be reached — a device that does not respond to the interrupt,
+        # with nothing at the failure site to say why. `{.exportc: "…".}` is
+        # what binds a handler by name against a vendor startup file.
         result.flags.incl pk
         skip n
       of RegisterP, StackP:
@@ -406,6 +418,11 @@ proc genParamPragmas(c: var GeneratedCode; n: var Cursor) =
           while n.hasMore: skip n
       of WasP:
         genWasPragma c, n
+      of ConstrefP:
+        # Provenance only (see `doc/tags.md`): the pointer stands for a
+        # by-value source parameter. Nothing to emit — it exists for
+        # `funcsummary`/the optimizer.
+        skip n
       else:
         error c.m, "invalid pragma: ", n
   else:
@@ -627,9 +644,14 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
   var prc = takeProcDecl(n)
 
   let prag = parseProcPragmas(c, prc.pragmas)
-  if AssemblerP in prag.flags:
+  if prag.flags * {AssemblerP, NakedP} != {}:
     errorAt c.m, "the C backend cannot compile an `{.assembler.}` proc; it must " &
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
+      prc.name
+  if InterruptP in prag.flags:
+    errorAt c.m, "the C backend has no interrupt table to install an `{.interrupt.}` " &
+      "handler in; use `{.exportc: \"...\".}` to bind one by name against a " &
+      "startup file, or compile it with arkham",
       prc.name
   if prag.flags * {InstructionP, IntrinsicP} != {}:
     # No C declaration: an intrinsic has no definition to link against, and

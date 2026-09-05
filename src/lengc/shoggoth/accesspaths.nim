@@ -184,9 +184,11 @@ proc collectReadPaths*(n: Cursor; acc: var seq[AccessPath]) =
         skip idx                     # the base
         collectReadPaths(idx, acc)
       else: discard
-    of CallC:
-      # A call's value is not described by any path (`isPureExpr` keeps calls out
-      # of the load cache; guard facts can still hold one).
+    of CallC, InstrC:
+      # Neither a call's value nor an intrinsic's is described by any path
+      # (`isPureExpr` keeps both out of the load cache; guard facts can still hold
+      # one). Conservative for a PURE intrinsic too, and free: a pure row's value
+      # is not a memory path either, so there was never a path to lose.
       acc.add unknownPath()
     else:
       # Constructors, arithmetic, comparisons: the union of the operands' reads.

@@ -267,7 +267,9 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
 
 proc getFileSize*(file: string): int64 {.tags: [ReadIOEffect], raises.} =
   ## Returns the file size of `file` (in bytes).
-  when defined(windows):
+  when not supportedSystem:
+    {.error: "no filesystem on a freestanding target".}
+  elif defined(windows):
     var a {.noinit.}: WIN32_FIND_DATA
     let resA = findFirstFile(file, a)
     if resA == INVALID_HANDLE_VALUE: raiseOSError(osLastError(), file)

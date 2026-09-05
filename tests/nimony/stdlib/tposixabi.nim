@@ -178,6 +178,18 @@ when defined(posix):
     let sa = cast[ptr SockAddr](addr scratch[0])
     ck("offsetof(struct sockaddr, sa_family)", off(sa, addr sa.sa_family))
     ck("offsetof(struct sockaddr, sa_data)", off(sa, addr sa.sa_data))
+    # sockaddr_in's tail padding is not decorative: bind(2)/connect(2) take
+    # `sizeof` it as the address length and the kernel rejects anything short of
+    # the full struct, so a transcription that drops sin_zero fails every bind.
+    let sin = cast[ptr Sockaddr_in](addr scratch[0])
+    ck("sizeof(struct sockaddr_in)", int64(sizeof(Sockaddr_in)))
+    ck("offsetof(struct sockaddr_in, sin_family)", off(sin, addr sin.sin_family))
+    ck("offsetof(struct sockaddr_in, sin_port)", off(sin, addr sin.sin_port))
+    ck("offsetof(struct sockaddr_in, sin_addr)", off(sin, addr sin.sin_addr))
+    ck("sizeof(struct in_addr)", int64(sizeof(InAddr)))
+    # Only the size of sockaddr_storage matters (accept/recvfrom get it as the
+    # caller's buffer length); its contents are opaque.
+    ck("sizeof(struct sockaddr_storage)", int64(sizeof(Sockaddr_storage)))
     let mh = cast[ptr Tmsghdr](addr scratch[0])
     ck("sizeof(struct msghdr)", int64(sizeof(Tmsghdr)))
     ck("offsetof(struct msghdr, msg_name)", off(mh, addr mh.msg_name))

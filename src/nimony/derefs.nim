@@ -62,6 +62,7 @@ type
 
   CurrentRoutine = object
     returnExpects: Expects
+    returnType: Cursor  # so `(ret (nil))` knows what the `nil` is
     firstParamKind: TypeKind
     props: set[RoutineProp]
     firstParam: SymId
@@ -168,15 +169,72 @@ proc isAddressable*(n: Cursor): bool =
       else:
         break
 
-proc tr(c: var Context; n: var Cursor; e: Expects)
+proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cursor))
 
-proc trSons(c: var Context; n: var Cursor; e: Expects) =
+proc trSons(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cursor)) =
   if not n.isTagLit:
     takeTree c, n
   else:
     takeInto c.dest, n:
       while n.hasMore:
-        tr c, n, e
+        tr c, n, e, expected
+
+const
+  NilableTypes = {PtrT, RefT, PointerT, CstringT}
+    ## Data pointers only. A `nil` of a proc/iterator type is deliberately left
+    ## bare: the CPS transform rewrites a passive proc's type *after* the
+    ## frontend is done, so a type stamped here would name the pre-transform
+    ## signature and disagree with the local it initializes. `sigmatch` already
+    ## writes `(nil <proctype> (nil))` where a closure needs its environment.
+
+proc resolvedTypeKind(typ: Cursor): TypeKind =
+  ## `typ.typeKind`, but a type alias (`type PNode = ptr Node`) is followed to
+  ## the type it names. Bounded so a broken cycle cannot hang the compiler.
+  var t = skipModifier(typ)
+  var counter = 20
+  while counter > 0 and t.isSymbol:
+    dec counter
+    let res = tryLoadSym(t.symId)
+    if res.status != LacksNothing: return NoType
+    let decl = asTypeDecl(res.decl)
+    if decl.kind != TypeY: return NoType
+    t = skipModifier(decl.body)
+  result = t.typeKind
+
+proc typeForNil(typ: Cursor): Cursor =
+  ## The type a bare `(nil)` sitting in a slot declared as `typ` should carry,
+  ## or a nil cursor when `typ` is nothing a `nil` can be typed with (`.`, an
+  ## unresolved typevar, `nilt` itself, a non-pointer).
+  result = default(Cursor)
+  if cursorIsNil(typ) or typ.kind in {DotToken, UnknownToken, EofToken}:
+    return
+  var t = skipModifier(typ)
+  if t.typeKind == VarargsT:
+    t = t.childCursor
+    if not t.hasMore: return
+  if resolvedTypeKind(t) in NilableTypes:
+    result = t
+
+proc trNil(c: var Context; n: var Cursor; expected: Cursor) =
+  ## `nil` is the language's one type-polymorphic literal, and this is the last
+  ## place that still knows what it was written for: give it its type here so
+  ## no later pass has to reconstruct one. A `(nil)` that gets *moved* — the
+  ## intra-module inliner splices a literal argument at each use instead of
+  ## binding it to a `(var :p T arg)` copy — otherwise arrives at the backend
+  ## untyped, and `(dot (deref (nil)) f)` is `(*NIM_NIL).f` there. See
+  ## nimony#2317.
+  if n.childCursor.hasMore:
+    # already typed: sigmatch writes `(nil <proctype> (nil))` for a closure.
+    takeTree c, n
+  else:
+    let t = typeForNil(expected)
+    if cursorIsNil(t):
+      takeTree c, n
+    else:
+      c.dest.addParLe(NilX, n.info)
+      c.dest.addSubtree t
+      c.dest.addParRi()
+      skip n
 
 proc validBorrowsFrom(c: var Context; n: Cursor): bool =
   # --------------------------------------------------------------------------
@@ -354,7 +412,7 @@ proc trReturn(c: var Context; n: var Cursor) =
           if checkTupleConstrBorrowing(c, n) != Valid:
             err = true
         if not err:
-          tr c, n, c.r.returnExpects
+          tr c, n, c.r.returnExpects, c.r.returnType
         else:
           skip n
 
@@ -464,8 +522,10 @@ proc trProcDecl(c: var Context; n: var Cursor) =
         takeTree c.dest, n
       elif i == ProcPragmasPos and not isGeneric:
         trProcPragmas(c, n)
-      elif i == ReturnTypePos and n.typeKind in {MutT, OutT, LentT}:
-        c.r.returnExpects = WantVarTResult
+      elif i == ReturnTypePos:
+        c.r.returnType = n
+        if n.typeKind in {MutT, OutT, LentT}:
+          c.r.returnExpects = WantVarTResult
         takeTree c.dest, n
       else:
         takeTree c.dest, n
@@ -512,7 +572,7 @@ proc trCallArgs(c: var Context; n: var Cursor; fnType: Cursor) =
       elif pk == VarargsT:
         # do not advance formal parameter:
         fnType = previousFormalParam
-      tr c, n, e
+      tr c, n, e, param.typ
     while fnType.hasMore: skip fnType
   # skip return type:
   skip fnType
@@ -651,7 +711,8 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   else:
     c.dest.add callBuf
 
-proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
+proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects;
+               expected: Cursor = default(Cursor)) =
   if ri.exprKind in CallKinds:
     var dangerous = false
     trCall c, ri, e, dangerous
@@ -660,7 +721,7 @@ proc trAsgnRhs(c: var Context; le: Cursor; ri: var Cursor; e: Expects) =
       if s != NoSymId:
         c.r.dangerousLocations[s] = ri.info
   else:
-    tr c, ri, e
+    tr c, ri, e, expected
 
 proc trAsgn(c: var Context; n: var Cursor) =
   takeInto c.dest, n:
@@ -699,7 +760,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
         skip n
         #tr c, n, e
       else:
-        trAsgnRhs c, le, n, e
+        trAsgnRhs c, le, n, e, getType(c.typeCache, le)
 
 proc trSonsLocation(c: var Context; n: var Cursor; e: Expects) =
   if not n.isTagLit:
@@ -771,19 +832,20 @@ proc trLocal(c: var Context; n: var Cursor) =
       c.dest.addParRi()
     else:
       let e = if typ.typeKind in {OutT, MutT, LentT}: WantVarT else: WantT
-      trAsgnRhs c, name, n, e
+      trAsgnRhs c, name, n, e, typ
     when defined(debugSigmatch):
       if n.hasMore:
         let u = n.info
         echo "LOCAL LEFTOVER kind=", n.kind,
           (if n.isTagLit: " tag=" & globalTags.tags[n.tagId] else: ""),
-          " at ", pool.filenames[u.file], ":", u.line, ":", u.col
+          " at ", realFile(pool.filenames[u.file]), ":", u.line, ":", u.col
 
-proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects) =
+proc trStmtListExpr(c: var Context; n: var Cursor; outerE: Expects;
+                    expected: Cursor = default(Cursor)) =
   takeInto c.dest, n:
     while n.hasMore:
       if isLastSon(n):
-        tr c, n, outerE
+        tr c, n, outerE, expected
       else:
         tr c, n, WantT
 
@@ -807,12 +869,13 @@ proc trObjConstr(c: var Context; n: var Cursor; outerE: Expects) =
         # inside the owning type decl), so use `typenav.lookupField` which
         # walks the object body.
         var fieldKind: TypeKind = NoType
+        var fieldType = default(Cursor)
         if n.isSymbol:
-          let fieldType = lookupField(c.typeCache, objType, n.symId)
+          fieldType = lookupField(c.typeCache, objType, n.symId)
           if not cursorIsNil(fieldType):
             fieldKind = fieldType.typeKind
         takeTree c.dest, n # key
-        tr c, n, fieldMode(fieldKind, outerE)
+        tr c, n, fieldMode(fieldKind, outerE), fieldType
         if n.hasMore:
           # optional inheritance
           takeTree c.dest, n
@@ -830,9 +893,9 @@ proc trTupleConstr(c: var Context; n: var Cursor; outerE: Expects) =
       if n.substructureKind == KvU:
         takeInto c.dest, n:
           takeTree c.dest, n # skip key
-          tr c, n, e
+          tr c, n, e, fieldType
       else:
-        tr c, n, e
+        tr c, n, e, fieldType
 
 proc trVarHook(c: var Context; n: var Cursor) =
   takeInto c.dest, n:
@@ -1036,7 +1099,7 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
       c.dest.copyIntoKind AsgnS, info:
         c.dest.addSymUse excSym, info
         c.dest.addSymUse errSym, info
-      # Bare re-raise: `(raise .)`. njvl is expected to lower this into
+      # Bare re-raise: `(raise .)`. finalir is expected to lower this into
       # propagation that preserves the current `errorTracker` value.
       c.dest.copyIntoKind RaiseS, info:
         c.dest.addDotToken()
@@ -1323,7 +1386,7 @@ proc trType(c: var Context; n: var Cursor) =
     c.dest.takeTree n # body
     c.dest.addParRi(n.endInfo)
 
-proc tr(c: var Context; n: var Cursor; e: Expects) =
+proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cursor)) =
   case n.kind
   of Symbol:
     # Closures are now implemented
@@ -1369,11 +1432,14 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       else:
         trTupleConstr c, n, e
     of ExprX:
-      trStmtListExpr c, n, e
+      trStmtListExpr c, n, e, expected
+    of NilX:
+      trNil c, n, expected
     of DconvX:
       takeInto c.dest, n:
+        let target = n
         takeTree c.dest, n # takes the type as it is
-        tr c, n, e
+        tr c, n, e, target
     of BaseobjX:
       if e.wantMutable:
         # Passing a derived location to a `var Base` parameter: take the
@@ -1391,7 +1457,9 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
       else:
         trSons c, n, WantT
     of ParX:
-      trSons c, n, e
+      trSons c, n, e, expected
+    of EmoveX:
+      trSons c, n, WantT, expected
     of CopyX, WasmovedX, SinkhX, TraceX:
       trVarHook c, n
     of DupX, DestroyX:
@@ -1401,7 +1469,12 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
-        trSons c, n, WantT
+        # `(conv T X)`: the target type is what a bare `nil` operand is.
+        takeInto c.dest, n:
+          let target = n
+          takeTree c.dest, n # the type slot is a type, never an expression
+          while n.hasMore:
+            tr c, n, WantT, target
     of DerefX:
       if e.wantMutable:
         # allows ptr indirection: e.g. `inc x.id[]` for `id: ptr int`
@@ -1416,7 +1489,28 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
         cannotPassToVar c.dest, n.info, n
         skip n
       else:
-        trSons c, n, e
+        trSons c, n, e, expected
+
+    of EqX, NeqX, LeX, LtX:
+      # `(eq T X X)` and friends carry the operand type up front: that is what
+      # tells the `nil` in `p == nil` which pointer it is.
+      takeInto c.dest, n:
+        let opType = n
+        takeTree c.dest, n
+        while n.hasMore:
+          tr c, n, WantT, opType
+
+    of AconstrX:
+      # `(aconstr (array E N) X*)`
+      takeInto c.dest, n:
+        var elemType = n
+        if elemType.typeKind == ArrayT:
+          elemType = elemType.childCursor
+        else:
+          elemType = default(Cursor)
+        takeTree c.dest, n
+        while n.hasMore:
+          tr c, n, WantT, elemType
 
     else:
       case n.stmtKind
@@ -1461,7 +1555,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
                    thisModuleSuffix: string; bits: int): TokenBuf =
-  var c = Context(typeCache: createTypeCache(),
+  var c = Context(typeCache: createTypeCache(bits),
     r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),

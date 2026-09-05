@@ -157,7 +157,12 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = false
   of RetS, BreakS, ContinueS, RaiseS:
     result = true
-  else:
+  of NoStmt, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS, CursorS, PatternvarS,
+     ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS, EmitS,
+     AsgnS, ScopeS, WhenS, ForS, WhileS, CoroforS, LabS, JmpS, YldS, StmtsS, PragmasS,
+     PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS,
+     ExportS, ExportexceptS, CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS, StaticstmtS,
+     BindS, MixinS, UsingS, AsmS, DeferS:
     result = false
 
 proc isNoReturn(n: Cursor): bool {.inline.} =
@@ -1018,10 +1023,30 @@ proc visibilityModule(c: SemContext; info: NifLineInfo): string =
   ## expanded routine's module; an argument is the caller's own code and stays
   ## judged against the module being compiled. Walking outwards handles
   ## expansions nested inside expansions.
-  for i in countdown(c.visOwner.len-1, 0):
-    if c.visOwner[i].file == info.file.uint32:
-      return c.visOwner[i].module
+  ##
+  ## Comparing `FileId`s is enough unless `--inlineframes:on` forged some
+  ## filenames: a forged name is interned under its own `FileId`, so an
+  ## expansion's tokens would stop matching the owner's raw id. Only then is
+  ## the comparison lifted to the *real* file (see `comesfrom`), which costs a
+  ## string compare per frame and is why the id path stays.
   result = c.thisModuleSuffix
+  if c.visOwner.len > 0 and info.file.isValid:
+    if not c.g.config.inlineFrames:
+      var i = c.visOwner.len - 1
+      while i >= 0:
+        if c.visOwner[i].file == info.file.uint32:
+          result = c.visOwner[i].module
+          break
+        dec i
+    else:
+      let infoFile = realFile(pool.filenames[info.file])
+      var i = c.visOwner.len - 1
+      while i >= 0:
+        let ownerId = FileId(c.visOwner[i].file)
+        if ownerId.isValid and realFile(pool.filenames[ownerId]) == infoFile:
+          result = c.visOwner[i].module
+          break
+        dec i
 
 proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
                               bindings: Table[SymId, Cursor];
@@ -1124,6 +1149,15 @@ proc tryBuiltinDot(c: var SemContext; dest: var TokenBuf; it: var Item; lhs: Ite
       result = MatchedDotSym
       dest.shrink exprStart
       let s = semQualifiedIdent(c, dest, moduleSym, fieldName, info)
+      if s.kind == NoSym:
+        # A module qualifier has no UFCS fallback, so a miss is a hard failure
+        # and every caller gets to say "undeclared identifier in module".
+        # `AllowUndeclared` (how `a.b(x)` stays open for `b(a, x)`) must not
+        # suppress it: leaving the bare identifier behind made overload
+        # resolution fail later with no name left to report, i.e. the
+        # "undeclared identifier: ''" of nim-lang/nimony#2308.
+        dest.shrink exprStart
+        return FailedDot
       semExprSym c, dest, it, s, exprStart, flags
       return
     let t = skipModifier(lhs.typ)
@@ -1456,7 +1490,7 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
     discard
   of NoType, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT, TemplateT,
      ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, UntypedT, TypedT,
      CstringT, PointerT, OrdinalT:
     # otherwise, is a static value
@@ -1472,6 +1506,12 @@ proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: 
   var it = Item(n: n, typ: c.types.autoType)
   semExpr c, dest, it
   n = it.n
+  if context == AllowValues:
+    let emitted = cursorAt(dest, start)
+    if emitted.exprKind == ExprX and isPureTypeValueExpr(emitted):
+      var buf = createTokenBuf(4)
+      buf.addSubtree typeValueExpr(emitted)
+      dest.replace cursorAt(buf, 0), start
   exprToType c, dest, it.typ, start, context, info
   swap c.phase, phase
 
@@ -1726,6 +1766,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
         let b = getConstOrdinalValue(r); skip r
         if a.isNaN or b.isNaN:
           buildErr c, dest, rInfo, "expected constant ordinal value"
+          skip value   # the error path must still consume the element
         else:
           if seen.doesOverlapOrIncl(a, b):
             buildErr c, dest, rInfo, "overlapping values"
@@ -2329,15 +2370,17 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: NifLineInf
   for s in items(seen):
     total = total + s[1] - s[0] + createXint(1'i32)
 
+  # Peel the selector down to the enum declaration. This was a loop with a fuel
+  # counter, but it could never take a second hop: the only assignment to `typ`
+  # was followed by `break`, so every other path left `typ` -- and therefore the
+  # whole loop state -- exactly as it was and simply burned the fuel. An alias
+  # chain (`type A = B`) is still not followed; the `total == lengthOrd` count
+  # below is what covers those.
   var typ = selectorType
-  var counter = 20
-  while typ.isSymbol:
-    dec counter
-    if counter <= 0: break
+  if typ.isSymbol:
     let impl = getTypeSection(typ.symId)
     if impl.kind == TypeY and impl.body.typeKind in {EnumT, HoleyEnumT, AnumT}:
       typ = impl.body
-      break
 
   if typ.typeKind != HoleyEnumT:
     # quick check based on the `total` count:
@@ -2901,6 +2944,22 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
     # the diagnostic should point at the `case` statement anyway:
     checkExhaustiveness c, dest, info, selectorType, seen
 
+  # `of`* `else`? is the whole grammar this pass implements, but nifler parses
+  # every branch form Nim's `case` admits — including the `elif` chain Nim allows
+  # after the `of`s. Anything still unconsumed here used to be dropped WITHOUT a
+  # diagnostic: the `of` loop stopped at the first `elif`, the `else` test then
+  # saw an `elif` and declined, and the close below sealed a `case` missing every
+  # branch from the `elif` onwards. That is a compiler silently deleting code —
+  # a `case`+`elif` in `hexer/coro_transform` compiled clean and produced a hexer
+  # whose `coroTr` had lost its default branch, which broke the self-host. Say so
+  # instead. (Supporting the form — desugaring the tail into an `if` inside the
+  # `else` — is a separate change; erroring is what keeps it from being silent.)
+  while it.n.hasMore:
+    let what = if it.n.substructureKind == ElifU: "`elif`" else: "this"
+    buildErr c, dest, it.n.info,
+      what & " branch in a `case` is not supported; use `else:` with a nested `if`"
+    skip it.n
+
   dest.addParRi(it.n.endInfo)
   it.n = caseStart; skip it.n
   if typeKind(it.typ) == AutoT:
@@ -3082,7 +3141,10 @@ proc tryForLoopPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
           semForLoopTupleVar c, vb, it, loopVarType
         else:
           buildErr c, vb, it.n.info, "tuple types expected, but got: " & typeToString(loopVarType)
-    else:
+    of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+       StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,
+       DeferexpansionU, NeedtypesU:
       buildErr c, vb, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
     inc c.routine.inLoop
@@ -3218,7 +3280,10 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
           semForLoopTupleVar c, dest, it, iterCall.typ
         else:
           buildErr c, dest, it.n.info, "tuple types expected, but got: " & typeToString(iterCall.typ)
-    else:
+    of NoSub, NilU, NotnilU, UncheckedU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU,
+       StaticTypevarU, EfldU, FldU, GfldU, WhenU, ElifU, ElseU, TypevarsU, CaseU, OfU,
+       StmtsU, ParamsU, PragmasU, EitherU, JoinU, CallargsU, ForcallU, ExceptU, FinU,
+       DeferexpansionU, NeedtypesU:
       buildErr c, dest, it.n.info, "illformed AST: `unpackflat` or `unpacktup` inside `for` expected"
       skip it.n
 
@@ -3403,14 +3468,34 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     dest.addParLe(Delay0X, info)
     dest.addParRi()
     it.n = delayStart; skip it.n
-  elif it.n.exprKind in CallKinds:
-    # delay(call) form: produce (delay fn args)
+  elif it.n.exprKind in CallKinds and (var probe = it.n; skip probe; not probe.hasMore):
+    # delay(call): the call is delay's sole child, the shape before flattening.
     dest.addParLe(DelayX, info)
     it.n.into:                         # descend past inner call's tag
       while it.n.hasMore:
         takeTree dest, it.n            # copy fn and args verbatim (already semchecked)
     dest.addParRi()
     it.n = delayStart; skip it.n       # skip outer delay's )
+  elif it.n.hasMore:
+    # (delay fn args), the flattened shape: a generic body re-semmed on
+    # instantiation. Re-sem it as a call so a generic callee is instantiated,
+    # then flatten again; copied verbatim the callee stays uninstantiated and
+    # hexer emits no coro frame for it.
+    var callBuf = createTokenBuf(16)
+    callBuf.addParLe(CallX, info)
+    while it.n.hasMore:
+      takeTree callBuf, it.n           # fn + args → (call fn args)
+    callBuf.addParRi()
+    it.n = delayStart; skip it.n       # skip delay's )
+    var call = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
+    var callDest = createTokenBuf(16)
+    semExpr c, callDest, call          # instantiates a generic callee
+    dest.addParLe(DelayX, info)
+    var semmed = cursorAt(callDest, 0)
+    semmed.into:                       # strip the (call …) wrapper
+      while semmed.hasMore:
+        takeTree dest, semmed
+    dest.addParRi()
   else:
     buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
     skip it.n
@@ -3434,7 +3519,10 @@ proc semSuspend(c: var SemContext; dest: var TokenBuf; it: var Item) =
     buildErr c, dest, it.n.info, "`suspend` takes no argument"
     skip it.n
     it.n = suspendStart; skip it.n
-  it.typ = c.types.continuationType
+  # `suspend` is declared void. The first pass never comes through here
+  # (SuspendX is not in MagicCallNeedsSemcheck); instantiation re-sem does, and
+  # a Continuation-typed result would fail the discard check.
+  it.typ = c.types.voidType
   commonType c, dest, it, beforeExpr, expected
 
 type ArrayConstrContext = object
@@ -3501,7 +3589,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
       it.n = bracketStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-       StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       # unknown expected type, give empty literal auto type, then match it
@@ -3525,7 +3613,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
   of AutoT: discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     discard
@@ -3568,7 +3656,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
     discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     var convMatch = default(Match)
@@ -3607,7 +3695,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
       it.n = curlyStart; skip it.n
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-       StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
        UntypedT, TypedT, CstringT, PointerT, OrdinalT:
       # unknown expected type, give empty literal auto type, then match it
@@ -3631,7 +3719,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
   of AutoT: discard
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT:
     buildErr c, dest, info, "invalid expected type for set constructor: " & typeToString(it.typ)
@@ -4824,9 +4912,6 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
           isZero = true
         if not isZero:
           dest.addSubtree first
-      # skip the index type information in case we re-semcheck this node
-      while it.n.hasMore:
-        skip it.n
     of UarrayT:
       it.typ = typ
       inc it.typ
@@ -4836,10 +4921,15 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
       it.typ = c.types.uint8Type
     of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
-       StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+       StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT,
        PointerT, OrdinalT:
       c.buildErr dest, lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
+    # Skip the index type information in case we re-semcheck this node: a
+    # generic body's `array` index may instantiate to a different lhs type,
+    # so this must happen regardless of the branch taken above.
+    while it.n.hasMore:
+      skip it.n
   commonType c, dest, it, beforeExpr, expected
 
 proc semConv(c: var SemContext; dest: var TokenBuf; it: var Item) =
@@ -5116,7 +5206,7 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           skip it.n
         of ErrT:
           dest.takeTree it.n
-        of ObjectT, EnumT, HoleyEnumT, AnumT, DistinctT, ConceptT:
+        of ObjectT, EnumT, HoleyEnumT, AnumT, DistinctT, ConceptT, ClosureTupleT:
           buildErr c, dest, it.n.info, "expression expected"
           skip it.n
         of IntT, FloatT, CharT, BoolT, UIntT, VoidT, NiltT, AutoT, SymkindT,
@@ -5167,6 +5257,10 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
           semWhile c, dest, it
       of CoroforS:
         buildErr c, dest, it.n.info, "`corofor` is a hexer-internal shape and must not appear in source"
+        skip it.n
+      of LabS, JmpS:
+        buildErr c, dest, it.n.info, "`" & $stmtKind(it.n) &
+          "` is a hexer-internal shape and must not appear in source"
         skip it.n
       of VarS:
         localSigGuard c:

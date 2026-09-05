@@ -218,6 +218,14 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     expandedInto.addDotToken() # sentinel so the final `inc` stays in bounds
     var a = Item(n: cursorAt(expandedInto, 0), typ: c.types.autoType)
     let aInfo = a.n.info
+    # make sure template body expression matches return type, mirrored with `semProcBody`:
+    # Hoisted above `semExpr` so the void case can be known before emitting:
+    # both `m.returnType` and `m.inferred` are fixed by `sigmatch` before we run.
+    let returnType =
+      if m.inferred.len == 0 or m.returnType.isDotToken:
+        m.returnType
+      else:
+        instantiateType(c, m.returnType, m.inferred)
     inc c.routine.inInst
     # An `untyped` template's body is published unresolved, so its field
     # accesses resolve HERE for the first time and must be judged against the
@@ -228,12 +236,6 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     c.visOwner.add VisOwner(module: extractModule(pool.syms[fnId]),
                             file: res.decl.info.file.uint32)
     semExpr c, dest, a, flags
-    # make sure template body expression matches return type, mirrored with `semProcBody`:
-    let returnType =
-      if m.inferred.len == 0 or m.returnType.isDotToken:
-        m.returnType
-      else:
-        instantiateType(c, m.returnType, m.inferred)
     case returnType.typeKind
     of UntypedT:
       # untyped return type ignored, maybe could be handled in commonType
@@ -244,6 +246,20 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
       commonType c, dest, a, beforeCall, returnType
     discard c.visOwner.pop()
     dec c.routine.inInst
+    # Record where this expansion came from (#1987). The provenance rides in the
+    # line-info filename of the emitted heads - `__crucial\0<fn>\0<realfile>` -
+    # so the debug backend can emit them as a DWARF inlined frame while every
+    # other consumer just sees `realFile()`.
+    #
+    # After `semExpr`, not before: a template called *inside* this body has
+    # already expanded and marked its own heads by now, so a body that is
+    # nothing but another template call prepends onto the existing chain and
+    # the order comes out outermost first, which is what nesting `inlinedAt`
+    # needs.
+    #
+    # Tokens substituted in from the call site keep their own file: they belong
+    # to the caller's frame, and are recognised by already carrying `callInfo`'s.
+    forgeExpansionInfo(c, dest, beforeCall, fnId, res.decl.info, callInfo)
     # now match to expected type:
     it.kind = a.kind
     typeofCallIs c, dest, it, beforeCall, a.typ
@@ -533,6 +549,13 @@ proc semSumTypeConstrFromCall(c: var SemContext; dest: var TokenBuf;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
+proc anyArgTypeIsError(cs: CallState): bool =
+  ## True when an argument already carries an `(err)` type, i.e. semchecking it
+  ## failed and reported a diagnostic of its own.
+  for a in cs.args:
+    if a.typ.typeKind == ErrT: return true
+  result = false
+
 proc buildCallSource(buf: var TokenBuf; cs: CallState; callee: Cursor) =
   case cs.source
   of RegularCall:
@@ -593,7 +616,7 @@ proc buildCallSource(buf: var TokenBuf; cs: CallState; callee: Cursor) =
     buf.addSubtree cs.args[valueIndex].n
   buf.addParRi()
 
-proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[CallArg], genericArgs: Cursor, hasNamedArgs: bool) =
+proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; args: openArray[CallArg], genericArgs: Cursor, hasNamedArgs: bool, expected: TypeCursor) =
   # scope extension: procs attached to argument types are also considered
   # If the type is Typevar and it has attached
   # a concept, use the concepts symbols too:
@@ -612,7 +635,7 @@ proc considerTypeboundOps(c: var SemContext; m: var seq[Match]; fnName: StrId; a
         addTypeboundOps c, fnName, root, candidates
     # now match them:
     for candidate in candidates.a:
-      m.add createMatch(addr c)
+      m.add createMatch(addr c, expected)
       sigmatchNamedArgs(m[^1], candidate, args, genericArgs, hasNamedArgs)
 
 proc addArgsInstConverters(c: var SemContext; dest: var TokenBuf; m: var Match; origArgs: openArray[CallArg]) =
@@ -952,27 +975,16 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
   else:
     buildErr c, dest, cs.callNodeInfo, "macro '" & pool.syms[finalFn] & "' not compiled"
 
-proc inferTypevarsFromExpected(c: var SemContext; m: var Match; expected: TypeCursor) =
-  ## When argument matching leaves a generic routine's typevars unbound but the
-  ## call site has a concrete expected type, unify the routine's return type with
-  ## it to bind the rest — e.g. `let r: Result[int, string] = ok(5)` infers `E`
-  ## from the target even though only `T` appears in `ok`'s argument. Runs after
-  ## overload selection, so it cannot affect which candidate is chosen; it only
-  ## fills in bindings before `buildTypeArgs` checks they are all present. Merges
-  ## only on a clean (non-converting) unify, so a conversion-to-expected (handled
-  ## later by `commonType`) is left untouched.
-  if m.err or m.fn.kind notin RoutineKinds or m.fn.sym == SymId(0): return
-  if cursorIsNil(expected) or expected.isDotToken or
-     expected.typeKind in {AutoT, VoidT} or containsGenericParams(expected): return
-  if cursorIsNil(m.returnType) or m.returnType.isDotToken: return
-  var rtMatch = createMatch(addr c)
-  rtMatch.inferred = m.inferred  # seed with the bindings already found from args
-  var rt = m.returnType
-  typematch(rtMatch, rt, Item(n: emptyNode(c), typ: expected))
-  if not rtMatch.err and classifyMatch(rtMatch) in {EqualMatch, GenericMatch}:
-    m.inferred = rtMatch.inferred
-
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
+  # Everything the candidate collection below writes to `dest` is a
+  # DIAGNOSTIC ("attempt to call routine", a symchoice element that cannot be
+  # loaded, ...) and every one of them falls through to the error tail, which
+  # emits an error tree of its own. Two trees out of one `semExpr` breaks its
+  # one-expression contract: `(cast T (err ...) (err ...))` then has three
+  # children and the next reader trips over the unconsumed rest
+  # (nim-lang/nimony#2301). So remember where the diagnostics start and move
+  # them out of `dest` once the candidate set is known.
+  let errStart = dest.len
   let genericArgs =
     if cs.hasGenericArgs: cursorAt(cs.genericDest, 0)
     else: emptyNode(c)
@@ -989,12 +1001,12 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         let maybeProc = typ.skipModifier
         if maybeProc.typeKind in RoutineTypes:
           let candidate = FnCandidate(kind: s.kind, sym: sym, typ: maybeProc)
-          m.add createMatch(addr c)
+          m.add createMatch(addr c, it.typ)
           sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
       else:
         buildErr c, dest, cs.fn.n.info, "`choice` node does not contain `symbol`"
       inc f
-    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
+    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
     if m.len == 0:
       # symchoice contained no callable symbols and no typebound ops
       assert cs.fnName != StrId(0)
@@ -1004,7 +1016,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     # for dot-call desugaring and generic bodies). Still run ADL / concept
     # lookup on the argument types so e.g. `t.one()` → `one(t)` can match a
     # concept requirement without a real `one` in scope yet.
-    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
+    considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
   elif cs.fn.typ.typeKind == TypedescT and cs.args.len == 1:
     closeArgsScope c, cs
     semConvFromCall c, dest, it, cs
@@ -1024,9 +1036,9 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
     let maybeProc = typ.skipModifier
     if maybeProc.typeKind in RoutineTypes:
       let candidate = FnCandidate(kind: cs.fnKind, sym: sym, typ: maybeProc)
-      m.add createMatch(addr c)
+      m.add createMatch(addr c, it.typ)
       sigmatchNamedArgs(m[^1], candidate, cs.args, genericArgs, cs.hasNamedArgs)
-      considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs)
+      considerTypeboundOps(c, m, cs.fnName, cs.args, genericArgs, cs.hasNamedArgs, it.typ)
     elif sym != SymId(0):
       # non-callable symbol, look up all overloads
       assert cs.fnName != StrId(0)
@@ -1038,6 +1050,17 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       return
     else:
       buildErr c, dest, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
+  # From here on exactly one tree is appended to `dest`: the call, or a single
+  # `(err ...)`. `earlyErr` keeps the first diagnostic so the error tail can
+  # still report it instead of its generic fallback. It stays a `default`
+  # buffer on the overwhelmingly common path where nothing errored — that
+  # costs no allocation, while `createTokenBuf` always allocates storage plus
+  # a literals and a tag pool.
+  var earlyErr = default(TokenBuf)
+  if dest.len > errStart:
+    earlyErr = createTokenBuf(4)
+    earlyErr.addSubtree readonlyCursorAt(dest, errStart)
+    dest.shrink errStart
   var idx = pickBestMatch(c, m, cs.flags)
 
   if idx < 0:
@@ -1049,7 +1072,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       csArgsOrig = move cs.args
     for mi in 0 ..< L:
       if not m[mi].err: continue
-      var newMatch = createMatch(addr c)
+      var newMatch = createMatch(addr c, it.typ)
       var newArgs: seq[CallArg] = @[]
       var newArgBufs: seq[TokenBuf] = @[] # to keep alive
       var param = skipProcTypeToParams(m[mi].fn.typ)
@@ -1125,8 +1148,6 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         compatBundleVarargsInMatch c, m[idx], varargsElem, cs.callNodeInfo
     addArgsInstConverters(c, dest, m[idx], cs.args)
     leaveCall dest, it, cs
-    if m[idx].hasUnboundTypevars:
-      inferTypevarsFromExpected(c, m[idx], it.typ)
     buildTypeArgs(m[idx])
 
     if m[idx].err:
@@ -1139,7 +1160,12 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         # the call this is an argument of in the case of AllowEmpty
         typeofCallIs c, dest, it, cs.beforeCall, c.types.autoType
       else:
-        buildErr c, dest, cs.callNodeInfo, getErrorMsg(m[idx])
+        # `leaveCall` has already closed the call tree at `cs.beforeCall`, so
+        # the error has to REPLACE it: appended, it would be a second child of
+        # whatever encloses the call, and a node with a fixed arity — `(ret X)`
+        # above all — then has one child too many. The next reader trips over
+        # the leftover (`defer` lowering asserted on it, nim-lang/nimony#2400).
+        buildErrAt c, dest, cs.beforeCall, getErrorMsg(m[idx])
     elif finalFn.kind == TemplateY:
       if c.templateInstCounter <= MaxNestedTemplates:
         c.expanded.addSymUse finalFn.sym, cs.callNodeInfo
@@ -1148,7 +1174,8 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           semTemplateCall c, dest, it, finalFn.sym, cs.beforeCall, m[idx], cs.flags
         dec c.templateInstCounter
       else:
-        buildErr c, dest, cs.callNodeInfo, "recursion limit exceeded for template expansions"
+        # same as above: replace the closed call tree, never append to it
+        buildErrAt c, dest, cs.beforeCall, "recursion limit exceeded for template expansions"
     elif finalFn.kind == MacroY:
       # Run compiled macro plugin
       runCompiledMacroPlugin(c, dest, it, cs, finalFn.sym)
@@ -1248,6 +1275,24 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       if cs.args.len != 0: # just to be safe
         errorMsg.add " for type "
         errorMsg.add typeToString(cs.args[0].typ)
+    elif m.len > 0 and anyArgTypeIsError(cs):
+      # Every candidate failed only because an argument is already erroneous;
+      # the diagnostic was reported where that argument was produced. Emit a
+      # message-less `(err …)` — `reportErrors` counts it (so the module still
+      # fails) but prints nothing — instead of dumping the whole overload set
+      # on top of an error the user has already been shown. Otherwise a single
+      # bad operand turns into one `expected: <candidate> but got: <type error>`
+      # line per candidate, eleven of them for `*` alone.
+      dest.buildTree ErrT, cs.callNodeInfo:
+        dest.addSubtree erroredN
+        dest.addStrLit("", cs.callNodeInfo)
+      return
+    elif allUninstantiable(m):
+      # Not a type mismatch — the arguments matched. `sigmatch` dropped every
+      # candidate because a type parameter of it can never be bound, and that
+      # message says so precisely.
+      buildErr c, dest, cs.callNodeInfo, getErrorMsg(m[0])
+      return
     elif m.len > 0:
       errorMsg = "Type mismatch at [position]\n"
       errorMsg.add asNimCode erroredN
@@ -1258,6 +1303,15 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
           let res = tryLoadSym(m[i].fn.sym)
           if res.status == LacksNothing:
             errorMsg.add " (declared in " & res.decl.info.infoToStr & ")"
+    elif earlyErr.len > 0:
+      # A precise diagnostic was already produced while collecting candidates
+      # (typically "attempt to call routine: 'x'" for a non-callable symbol).
+      # Use it as the callee of the reconstructed source instead of claiming
+      # the name is undeclared — it is declared, just not callable.
+      var calleeN = beginRead(earlyErr)
+      buildCallSource dest, cs, calleeN
+      endRead calleeN
+      return
     else:
       errorMsg = "undeclared identifier: '"
       if cs.fnName != StrId(0):
@@ -1414,9 +1468,18 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     let dotState = tryBuiltinDot(c, dest, cs.fn, lhs, fieldName, dotInfo,
                                   dotFlags, dotAccessToken)
     if dotState == FailedDot and dotLhsModuleSym(lhs) != SymId(0):
+      # `m.nosuchproc(...)`: a module qualifier has no UFCS fallback, so the
+      # miss is simply an error. Report it and leave instead of running the
+      # rest of the call machinery on an `(err ...)` callee, which buries this
+      # message under "cannot call expression of type auto" (#2308).
       dest.shrink dotStart
+      swap dest, cs.dest
+      closeArgsScope c, cs, merge = false
       buildErr c, dest, dotInfo, "undeclared identifier in module: '" &
                  pool.strings[fieldName] & "'"
+      it.n = cs.scope; skip it.n
+      it.typ = c.types.autoType
+      return
     elif dotState == FailedDot or
         # also ignore non-proc fields:
         (dotState == MatchedDotField and cs.fn.typ.typeKind notin RoutineTypes):

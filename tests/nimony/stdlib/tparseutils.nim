@@ -169,3 +169,36 @@ block:
   assert ret.classify == fcInf
   assert parseBiggestFloat("-inf", ret) == 4
   assert ret.classify == fcNegInf
+
+block: # correctly rounded decimal -> float64, no `strtod`
+  # The slow path is a big-decimal reader, so these must come out bit for bit
+  # as the C library reads them: an exact halfway between two doubles goes
+  # half-to-even, and digits past the 17th still decide the result.
+  var ret: float64 = 3.0
+  assert parseBiggestFloat("2.2250738585072011e-308", ret) == 23
+  assert cast[int64](ret) == 0x000FFFFFFFFFFFFF'i64   # the largest subnormal
+  assert parseBiggestFloat("2.2250738585072012e-308", ret) == 23
+  assert cast[int64](ret) == 0x0010000000000000'i64   # rounds up to the smallest normal
+  assert parseBiggestFloat("9007199254740993", ret) == 16        # 2^53 + 1
+  assert cast[int64](ret) == 0x4340000000000000'i64
+  assert parseBiggestFloat("9007199254740992.5", ret) == 18      # a tie, to even
+  assert cast[int64](ret) == 0x4340000000000000'i64
+  assert parseBiggestFloat("2.4703282292062327e-324", ret) == 23 # just under half of
+  assert cast[int64](ret) == 0x0000000000000000'i64              # the smallest subnormal
+  assert parseBiggestFloat("2.4703282292062328e-324", ret) == 23
+  assert cast[int64](ret) == 0x0000000000000001'i64
+  assert parseBiggestFloat("7.8459735791271921e65", ret) == 21
+  assert cast[int64](ret) == 0x4D9DCD0089C1314E'i64
+  assert parseBiggestFloat("123456789012345678901234567890", ret) == 30
+  assert cast[int64](ret) == 0x45F8EE90FF6C373E'i64
+  # The exact expansion of the double nearest 0.1, and one digit past it.
+  assert parseBiggestFloat("0.1000000000000000055511151231257827021181583404541015625", ret) == 57
+  assert cast[int64](ret) == 0x3FB999999999999A'i64
+  assert parseBiggestFloat("0.10000000000000000555111512312578270211815834045410156251", ret) == 58
+  assert cast[int64](ret) == 0x3FB999999999999A'i64
+  assert parseBiggestFloat("1e-323", ret) == 6
+  assert cast[int64](ret) == 0x0000000000000002'i64
+  assert parseBiggestFloat("1.7976931348623158e308", ret) == 22  # still finite
+  assert cast[int64](ret) == 0x7FEFFFFFFFFFFFFF'i64
+  assert parseBiggestFloat("1e309", ret) == 5
+  assert ret.classify == fcInf

@@ -15,9 +15,10 @@ There are five kinds of plugins:
 | **For-loop plugin** | `iterator foo(...) {.plugin: "path".}` | Rewrites a `for` loop using the iterator |
 | **Module plugin** | `{.plugin: "path".}` as statement | Transforms the entire module |
 | **Type plugin** | `type T {.plugin: "path".} = ...` | Invoked for every module that uses `T` |
-| **Import plugin** | `import (path/foo) {.plugin: "std/v2".}` | Imports the module `path/foo` **from the plugin** `std/v2` |
+| **Import plugin** | `import (path/foo) {.plugin: "v2".}` | Imports the module `path/foo` **from the plugin** `v2` |
 
-All plugins share the same API (`plugins`) and execution model.
+The first four share the same API (`plugins`) and execution model. Import
+plugins are different in both respects; see [Import plugins](#import-plugins).
 
 
 ## Quick start
@@ -141,17 +142,26 @@ in the plugin rather than a malformed NIF tree at runtime.
 
 ## How plugins are compiled and run
 
-1. The compiler finds the `.plugin` pragma and resolves the path relative to the
-   source file containing the pragma string literal.
-2. The plugin is compiled with Nimony.
-   The compiled executable is cached in the nimcache directory and reused until the source changes.
+1. The parser (nifler) lists every `.plugin` pragma in the module's deps file,
+   and the dependency scanner resolves the path relative to the source file
+   containing the pragma string literal.
+2. The plugin is compiled with Nimony as a node of the build graph: nifmake
+   builds the executable exactly once, before any of the module compilations
+   that may run it (the declaring module and everything importing it), and
+   rebuilds it — and them — when the plugin's source changes. The executable
+   is cached in the nimcache directory. Should a plugin reach the compiler
+   without a build-graph node (a pragma the parser could not see), it is
+   built on demand instead; that path shares nothing between processes, so
+   concurrent compilations of one module set stay safe.
 3. At the call site, the compiler writes the input AST to a `.nif` file and invokes
    the plugin executable as a subprocess.
 4. The plugin reads the input, transforms it, writes output, and exits.
 5. The compiler reads the output NIF and splices it back into the AST.
 
 Plugins are deterministic: same input produces same output. The compiler caches
-results and skips re-execution when possible.
+results and skips re-execution when possible — the cache key is the input tree,
+so a plugin that reads a file its input does not mention has to say so with
+`dependsOn` (see [Reading files](#reading-files)).
 
 The input files are written in NIF's *binary* form (bif) for speed — the names
 keep their `.nif` extension and the plugin API sniffs the file header, so it
@@ -408,10 +418,21 @@ The `import` statement can be combined with a plugin pragma to load a module
 whose NIF is produced by a plugin:
 
 ```nim
-import (path/foo) {.plugin: "std/v2".}
+import (path/foo) {.plugin: "v2".}
 ```
 
 This is used for compatibility layers that translate between different NIF formats.
+
+Import plugins do not follow the rules above: the string is **not** a path to a
+`.nim` file resolved against the importing module, and the compiler does not
+build it. It names an already-built executable, looked up first relative to the
+current directory and then in the toolchain's `bin` directory. The plugin is run
+as `<plugin> <path/foo.nim> <nimcache/<plugin>/<module>.s.nif>` and is
+responsible for filling `nimcache/<plugin>` with the semchecked NIF **and** the
+matching index files.
+
+The `v2` plugin (`src/v2`) is the in-tree example; it shells out to a Nim 2
+compiler to translate Nim 2 modules. Build it with `nim c src/v2/v2.nim`.
 
 
 ## The plugin API (`plugins`)
@@ -560,6 +581,45 @@ proc saveTree*(tree: sink NifBuilder)                  # writes to paramStr(2)
 proc saveTree*(tree: sink NifBuilder; filename: string)
 proc renderTree*(tree: var NifBuilder): string         # debug rendering (no line info)
 ```
+
+
+### Reading files
+
+```nim
+proc dependsOn*(path: string)
+```
+
+A plugin's output is cached under a checksum of its *input tree*, so a plugin
+that reads anything else — a schema, a template, a table of constants — would
+otherwise be memoized forever: the file changes, the input does not, and the
+build keeps the old expansion. `dependsOn` reports the read, and the compiler
+re-runs the plugin (and re-checks the module) when the file changes.
+
+```nim
+proc tr(n: NifCursor): NifBuilder =
+  let schema = getCurrentDir() / "schema.json"
+  dependsOn schema
+  ...
+```
+
+Call it for every file the plugin opens, before or after the read. Paths are
+made absolute against the plugin's working directory, which is the compiler's.
+
+Two limits are worth knowing:
+
+* Only a path that exists is recorded, so *creating* a file the plugin looked
+  for and did not find invalidates nothing. Deleting a recorded one does force
+  a rebuild.
+* Naming a **directory** tracks add/remove of its direct entries and nothing
+  else, because that is all a directory mtime says. To follow the contents of a
+  tree, name each file.
+
+Under the hood the paths travel back as a leading `(dependency …)` tree next to
+the gensym hint. The compiler peels both off before the output becomes part of
+the module, compares the listed files against the cached output to decide
+whether to rerun the plugin, and writes the list into the module's
+`.s.deps.nif`, where the next build picks it up as extra inputs of the
+module's `nimsem` node.
 
 
 ### Error reporting

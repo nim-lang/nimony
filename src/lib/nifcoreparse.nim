@@ -25,6 +25,11 @@ import stringviews
 import lineinfos  # for `==`(FileId) used by NifLineInfo's structural `==`
 
 export nifcore
+import comesfrom
+# Travels with the reader for the same reason it travels with the pool API:
+# any consumer of a line-info filename may need `realFile` to strip the
+# template-expansion provenance the front end forged into it.
+export comesfrom
 
 type
   Parent = tuple[file: FileId; line, col: int32]
@@ -91,6 +96,9 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
       break
     of rd.ParLe:
       let info = resolveInfo(b, tok, parents)
+      # No escape handling here: `openTag` folds an id that does not fit the
+      # 9-bit tag field into the adapter's escape tag by itself, and the
+      # line-info suffix lands on the head either way.
       b.openTag b.tags.tags.getOrInclFromView(tok.data)
       emit info
       parents.add (info.file, info.line, info.col)
@@ -203,10 +211,12 @@ proc emitValueWithLineInfo(bld: var Builder; c: var Cursor;
     cur.comment = StrId(0)   # a comment is a one-shot decoration, never inherited
   case c.kind
   of TagLit:
-    bld.addTree(tags.tags[c.cursorTagId])
+    let escaped = isEscapedTag(c)
+    bld.addTree(tags.tags[resolvedTagId(c)])
     emitRelLineInfo(bld, abs, parents[^1], pool)
     parents.add abs
     c.into:
+      if escaped: c.inc               # the escaped id IS the tag name above
       while c.hasMore:
         emitValueWithLineInfo(bld, c, cur, parents, tags, pool)
     discard parents.pop()
@@ -253,8 +263,10 @@ proc emitValueWithoutLineInfo(bld: var Builder; c: var Cursor;
   ## Fast diagnostic serializer: no location decoding or parent stack.
   case c.kind
   of TagLit:
-    bld.addTree(tags.tags[c.cursorTagId])
+    let escaped = isEscapedTag(c)
+    bld.addTree(tags.tags[resolvedTagId(c)])
     c.into:
+      if escaped: c.inc
       while c.hasMore:
         emitValueWithoutLineInfo(bld, c, tags, pool)
     bld.endTree()
@@ -336,10 +348,12 @@ proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
   case c.kind
   of TagLit:
     mostRecentOffset = bld.offset            # offset of this `(`
-    bld.addTree(tags.tags[c.cursorTagId])
+    let escaped = isEscapedTag(c)
+    bld.addTree(tags.tags[resolvedTagId(c)])
     emitRelLineInfo(bld, abs, parents[^1], pool)
     parents.add abs
     c.into:
+      if escaped: c.inc
       while c.hasMore:
         emitValueIndexed(bld, c, cur, parents, tags, pool, index, dottedSuffix,
                          mostRecentOffset, previousOffset, rootInfo)
@@ -416,7 +430,7 @@ proc toModuleString*(b: var TokenBuf; dottedSuffix = ""; sizeHint = 0;
   result.add index.extract()
 
 when isMainModule:
-  import std / syncio
+  import std / [syncio, strutils]
   proc sameTokens(a, b: var TokenBuf): bool =
     if a.len != b.len: return false
     for i in 0 ..< a.len:
@@ -458,5 +472,45 @@ when isMainModule:
     b1.addStrLit "z";        b1.appendLineInfo f, 40000'i32, 9'i32  # wide layout
     b1.closeTag()
     doAssert roundTrips(b1)
+
+  block escape_space:
+    # An adapter whose vocabulary outgrew the 9-bit tag field. `registerTag`
+    # just keeps counting; the ids past `TagMask` cost a second token and
+    # nothing else. The escape must be invisible in BOTH directions — the text
+    # never says `other`, and parsing that text back yields the same tokens.
+    proc escTags(): TagPool =
+      result = newTagPool()
+      result.escapeTag = result.registerTag("other")
+      discard result.registerTag("stmts")
+      discard result.registerTag("mov")
+      # Pad the pool out to the edge of the tag field, so the next two
+      # spellings genuinely do not fit and take the escape.
+      while uint32(result.tags.len) < TagMask: discard result.registerTag("pad" & $result.tags.len)
+      doAssert uint32(result.registerTag("movzx")) == FirstEscapeId
+      doAssert uint32(result.registerTag("syscall")) == FirstEscapeId + 1'u32
+
+    let src = "(stmts (mov (rax) +1) (movzx (rax) (rbx) +8) (syscall))"
+    var b1 = parseFromBuffer(src, "t", sharedTags = escTags())
+    # In the BUFFER the two overflowing tags are escape headers carrying their
+    # id inline; `mov` is untouched, so a tag that fits still costs one token.
+    var c = b1.beginRead()
+    var seen = 0
+    c.into:
+      while c.hasMore:
+        if isEscapedTag(c):
+          doAssert uint32(resolvedTagId(c)) >= FirstEscapeId
+          inc seen
+        else:
+          doAssert uint32(resolvedTagId(c)) == uint32(c.cursorTagId)
+        skip c
+    doAssert seen == 2, "expected two escaped nodes, got " & $seen
+    let txt = toString(b1)
+    doAssert txt.find("other") < 0, txt
+    doAssert txt.find("movzx") >= 0 and txt.find("syscall") >= 0, txt
+    var b2 = parseFromBuffer(txt, "t", sharedTags = escTags())
+    doAssert sameTokens(b1, b2), txt
+    # The escape survives the indexed (full-module) serializer too.
+    var b3 = parseFromBuffer(toModuleString(b1), "t", sharedTags = escTags())
+    doAssert sameTokens(b1, b3)
 
   echo "nifcoreparse self-tests passed"

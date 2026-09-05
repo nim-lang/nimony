@@ -122,7 +122,7 @@ type
     typ*: Cursor
     val*: Cursor
 
-proc takeLocal*(c: var Cursor; mode: SkipMode): Local =
+proc takeLocal*(c: var Cursor; mode: SkipMode): Local {.nifReads.} =
   let kind = symKind c
   result = Local(kind: kind)
   if isLocal(kind):
@@ -152,7 +152,7 @@ proc takeLocal*(c: var Cursor; mode: SkipMode): Local =
         result.val = c
         skip c
 
-proc asLocal*(c: Cursor; mode = SkipInclBody): Local =
+proc asLocal*(c: Cursor; mode = SkipInclBody): Local {.nifReads.} =
   var c = c
   result = takeLocal(c, mode)
 
@@ -175,7 +175,7 @@ type
 proc isGeneric*(r: Routine): bool {.inline.} =
   r.typevars.substructureKind == TypevarsU
 
-proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine =
+proc takeRoutine*(c: var Cursor; mode: SkipMode): Routine {.nifReads.} =
   let kind = symKind c
   result = Routine(kind: kind)
   if isRoutine(kind):
@@ -228,7 +228,7 @@ const
   ProcPragmasPos* = 6
   BodyPos* = 8
 
-proc asRoutine*(c: Cursor; mode = SkipExclBody): Routine =
+proc asRoutine*(c: Cursor; mode = SkipExclBody): Routine {.nifReads.} =
   var c = c
   result = takeRoutine(c, mode)
 

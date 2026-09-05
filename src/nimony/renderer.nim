@@ -5,7 +5,7 @@
 # distribution, for details about the copyright.
 
 import ".." / lib / [bitabs, nifpools, filelinecache, symparser]
-import ".." / njvl / njvl_model
+import ".." / finalir / finalir_model
 
 import nimony_model, decls
 
@@ -1006,7 +1006,9 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
     of ConceptT:
       gconcept(g, n, c)
 
-    of TupleT:
+    of TupleT, ClosureTupleT:
+      # A `ClosureTupleT` only ever shows up in hexer-stage diagnostics; render
+      # it like the plain tuple it is laid out as.
       n.into:
         put(g, tkTuple, "tuple")
         put(g, tkBracketLe, "[")
@@ -1439,7 +1441,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         else:
           if n.typeKind != NoType:
             gtype(g, n, c)
-          elif n.njvlKind == VV:
+          elif n.finalIrKind == VV:
             n.into:
               gsub g, n, c, fromStmtList, isTopLevel
               skip n # version

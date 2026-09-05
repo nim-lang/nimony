@@ -51,6 +51,87 @@ const
   ContinuationName* = "Continuation.0." & SystemModuleSuffix
   OpenArrayHeadName* = "openArray.0." & SystemModuleSuffix
 
+proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo) =
+  ## The type a `.raises` routine's result actually travels in: `ErrorCode`
+  ## alone when the routine returns nothing, `(tuple ErrorCode T)` when it
+  ## returns a `T`. Prefer `addLengReturnType` unless the caller has already
+  ## established that the routine raises.
+  if retType.isDotToken or retType.typeKind == VoidT:
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+  else:
+    dest.addParLe TupleT, info
+    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+    dest.addSubtree retType
+    dest.addParRi()
+
+proc addRaisedCode*(dest: var TokenBuf; loweredRetType: Cursor; code, resultSym: SymId;
+                    info: NifLineInfo) =
+  ## The operand of a `(raise ...)` emitted into a routine whose signature has
+  ## ALREADY been through `addSuccessTupleType`: a bare `ErrorCode` when the
+  ## routine returns nothing, else `(code, result[1])` — the code paired with
+  ## whatever the result slot holds so far.
+  ##
+  ## Exception lowering happens once, early. A pass that runs after it and
+  ## still needs to signal an error — the duplifier's out-of-memory check is
+  ## the only such case — cannot emit a bare `(raise code)` and leave the
+  ## typing to somebody downstream, because there is no longer anybody
+  ## downstream. It emits the finished payload through here.
+  if loweredRetType.typeKind != TupleT:
+    dest.addSymUse code, info
+  else:
+    dest.addParLe TupconstrX, info
+    dest.addSubtree loweredRetType
+    dest.addSymUse code, info
+    if resultSym != SymId(0):
+      dest.addParLe TupatX, info
+      dest.addSymUse resultSym, info
+      dest.addIntLit 1, info
+      dest.addParRi()
+    dest.addParRi()
+
+proc addLengReturnType*(dest: var TokenBuf; retType, pragmas: Cursor;
+                        info: NifLineInfo) =
+  ## THE mapping from a routine's Nimony return type to its Leng one, and the
+  ## only place it is decided.
+  ##
+  ## Hexer keeps asking the Nimony type system what things are, and that answer
+  ## stays in Nimony's terms: a `.raises` routine returns `T` and says so with
+  ## a pragma. Leng has no exceptions, so at the boundary that becomes a value
+  ## and a code travelling together. Whoever crosses the boundary applies this,
+  ## and everyone who does agrees by construction — which is the whole
+  ## requirement, because the two type systems are allowed to differ and are
+  ## not allowed to differ INCONSISTENTLY. A signature rewritten one way and a
+  ## proctype rewritten the other is a function pointer that does not match its
+  ## function, and nothing but the C compiler is going to notice.
+  ##
+  ## The `eraiser` is the one pass that BAKES the answer into the
+  ## declarations it emits, because `cps` runs after it and builds a
+  ## coroutine's frame and result slot out of the return type. Everything that
+  ## still queries Nimony afterwards — `cps` for a callee, `lengcgen` for a
+  ## foreign proctype, which is pulled in as a type and never as code — has to
+  ## come back here for the same answer.
+  if hasPragma(pragmas, RaisesP):
+    addSuccessTupleType(dest, retType, info)
+  else:
+    dest.addSubtree retType
+
+proc addPragmasWithoutRaises*(dest: var TokenBuf; pragmas: Cursor) =
+  ## Copy a pragma list minus `(raises)`. Used where the raising-ness of a
+  ## routine has already been spent — the `eraiser` has put the success tuple
+  ## in the signature, so leaving the pragma on would have `lengcgen` wrap the
+  ## return type a second time — and on the procs `cps` generates FOR a
+  ## coroutine, which return a `Continuation` and never fail.
+  if pragmas.isDotToken or not pragmas.isTagLit:
+    dest.addDotToken()
+    return
+  var n = pragmas
+  dest.addParLe(n.cursorTagId, n.info)
+  n = sub(n)
+  while n.hasMore:
+    if n.pragmaKind == RaisesP: skip n
+    else: dest.takeTree n
+  dest.addParRi()
+
 proc createBuiltinTypes*(bits: int): BuiltinTypes =
   # Positions are recorded while building rather than hardcoded, so the
   # layout stays correct when `-d:virtualParRi` elides the `)` tokens.

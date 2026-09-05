@@ -12,8 +12,8 @@ type
     DotL = (ord(DotTagId), "dot")  ## object field selection; optional integer is the inheritance depth of the field; optional trailing `STRLIT` is an *access token* carrying the suffix of the module the access was written in. When present, re-checks at expansion/serialization sites judge the private-field access against that module instead of against the module they are running in, so a template body keeps its author's visibility wherever it is expanded. The reserved value `"*"` means "already validated, originating module no longer comparable" and is used by `exprexec`, whose sub-compile runs under a synthesized module suffix. Emitted by sem whenever it resolves a non-exported field.
     ParL = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrL = (ord(AddrTagId), "addr")  ## address of operation
-    NilL = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
-    OconstrL = (ord(OconstrTagId), "oconstr")  ## object constructor
+    NilL = (ord(NilTagId), "nil")  ## nil pointer value; `T` is the pointer type it stands for. `nil` is the one type-polymorphic literal, so the frontend types every `ptr`/`ref`/`pointer`/`cstring` one (`derefs.nim`) and `T` survives into Leng; only a `nil` a later pass synthesizes is bare. A closure `nil` carries the proc type plus `X`, a nil environment
+    OconstrL = (ord(OconstrTagId), "oconstr")  ## object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named
     BracketL = (ord(BracketTagId), "bracket")  ## untyped array constructor
     CurlyL = (ord(CurlyTagId), "curly")  ## untyped set constructor
     CurlyatL = (ord(CurlyatTagId), "curlyat")  ## curly expression `a{i}`
@@ -43,14 +43,14 @@ type
     IfL = (ord(IfTagId), "if")  ## if statement header
     WhenL = (ord(WhenTagId), "when")  ## when statement header
     ElifL = (ord(ElifTagId), "elif")  ## pair of (condition, action)
-    ElseL = (ord(ElseTagId), "else")  ## `else` action
+    ElseL = (ord(ElseTagId), "else")  ## `else` action, or the default branch of a Leng discriminated `union`
     TypevarsL = (ord(TypevarsTagId), "typevars")  ## type variable/generic parameters; after sem an entry may also be a `(staticTypevar ...)`
     BreakL = (ord(BreakTagId), "break")  ## `break` statement
     ContinueL = (ord(ContinueTagId), "continue")  ## `continue` statement
     ForL = (ord(ForTagId), "for")  ## for statement
     WhileL = (ord(WhileTagId), "while")  ## `while` statement
     CaseL = (ord(CaseTagId), "case")  ## `case` statement
-    OfL = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
+    OfL = (ord(OfTagId), "of")  ## `of` branch within a `case` statement, or of a Leng discriminated `union`
     RetL = (ord(RetTagId), "ret")  ## `return` instruction
     YldL = (ord(YldTagId), "yld")  ## yield statement
     StmtsL = (ord(StmtsTagId), "stmts")  ## list of statements

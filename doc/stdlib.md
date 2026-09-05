@@ -74,6 +74,53 @@ are copy-on-write internally.
 - `setOomHandler`: By default the runtime tries to continue after
   out-of-memory. For many applications, just quitting is the more robust solution — set a handler that calls `quit`.
 
+#### Strategies (`--mm:`)
+
+`--mm:NAME` selects the strategy. `system.nim` says `include "$MM"` and the
+compiler expands `$MM` to `system/<name>`, lowercased — so `--mm:atomicArc`
+includes `lib/std/system/atomicarc.nim`. Adding a strategy is adding a file
+under `lib/std/system/`; nothing in `system.nim` enumerates them.
+
+| `--mm:` | file | notes |
+| --- | --- | --- |
+| `atomicArc` | `system/atomicarc.nim` | default; the reference count is updated atomically, so a `ref` may be shared between threads |
+| `arc` | `system/arc.nim` | the same, minus the atomics: cheaper counters, but a `ref` must stay on one thread |
+
+A strategy module defines exactly three primitives — `arcInc`, `arcDec` (true
+when the count reached zero) and `arcIsUnique`. What is built on top of them
+(`GC_ref` / `GC_unref`) is strategy independent and lives in `system/refops`.
+
+`--mm:NAME` also defines `gcName`, so `--mm:arc` makes `defined(gcArc)` true and
+`--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
+the cached build configuration and therefore forces a rebuild.
+
+#### The uniquely-referenced fast path
+
+`atomicArc`'s `arcDec` reads the count first and skips the atomic
+read-modify-write when it is already zero. A zero count means the caller holds
+the only reference, so there is nothing to adjudicate against another thread and
+nothing to write back into a cell that is about to be freed. See the comment on
+`arcDec` for why that is sound, and why a strategy that ever gains a collector
+must not inherit it.
+
+That makes the caller's contract load-bearing: **free the cell when `arcDec`
+returns true, or already know the count is non-zero.** A caller that discards a
+`true` leaves the count untouched rather than at -1.
+
+On `bench/gcbench.nim` (`-d:danger`, median of 31 pinned runs) the fast path is
+worth -36%, which puts atomicArc level with non-atomic `arc`:
+
+| | |
+| --- | --- |
+| `--mm:atomicArc`, `-d:nimNoAtomicArcFastPath` | 0.1334 s |
+| `--mm:atomicArc` | 0.0847 s |
+| `--mm:arc` | 0.0881 s |
+
+The worst case -- a decRef that always sees a non-zero count, so the load never
+pays off -- measures +0.1%. `-d:nimNoAtomicArcFastPath` restores the previous
+code path. The same trick does *not* belong in `arc`: measured there it is a
+2--4% loss, because a non-atomic store is cheaper than the branch that avoids it.
+
 ### Iterators
 
 - `..` is inclusive: `0..3` yields 0, 1, 2, 3.
@@ -323,3 +370,34 @@ Low-level thread creation.
 - `pinnedToCpu` is best-effort — some platforms (macOS) do not
   support CPU pinning.
 - Always `join` threads before the program exits.
+
+
+## stacktraces
+
+[Source](../lib/std/stacktraces.nim)
+
+`getStackTrace()` returns the call stack as one proc name per line,
+innermost frame first. `getStackTrace` itself is never listed; pass
+`skip = n` to drop that many further frames, which is what a panic
+handler wants so its own frame does not head the trace.
+
+- **Native backend only.** `stackTracesAvailable` is a `const`: true for
+  `nimony n` on amd64, false everywhere else, where `getStackTrace`
+  returns `""`. On the C backend the frames belong to the C compiler and
+  are described by its unwind tables; reading those is a different
+  implementation rather than a missing branch of this one. Branch on the
+  const rather than on the result, so the difference is visible at
+  compile time.
+- **Names, not source positions.** There is no line-number table yet, and
+  the disambiguator and module suffix a NIF symbol carries
+  (`leaf.3.stagd0hts`) are dropped — the frame *sequence* is what
+  distinguishes two procs of the same name.
+- **Inlined frames do not appear.** A proc the inliner spliced into its
+  caller has no frame to find, so the caller is what the trace names.
+  Mark a proc `{.noinline.}` if you need to see it.
+- It allocates the result string like any other proc; there is no
+  allocation-free variant yet.
+
+How it works — nifasm lays a per-proc table (code range, frame size, name)
+at the end of `.text`, and the walk is a binary search per frame. See
+`nativenif/doc/tracetable.md`.

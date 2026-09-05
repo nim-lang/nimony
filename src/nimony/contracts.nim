@@ -41,6 +41,7 @@ type
     startInstr: Cursor
     errors: TokenBuf
     procCanRaise: bool
+    bits: int                ## target `int` width, for the CF's type cache
 
 proc buildErr(c: var Context; info: NifLineInfo; msg: string) =
   when defined(debug):
@@ -741,7 +742,9 @@ proc traverseBasicBlock(c: var Context; pc: Cursor): Continuation =
         of RetS:
           # check if `result` fullfills the `.ensures` contract.
           return Continuation(thenPart: BasicBlockReturn, elsePart: NoBasicBlock)
-        of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
+        of StmtsS, ScopeS, BlockS, ContinueS, BreakS, LabS, JmpS:
+          # `lab`/`jmp` cannot actually reach here: `controlflow.trJmp`/`trLab`
+          # consume them into the goto instructions this walker reads.
           inc pc
           inc nested
         of PragmaxS:
@@ -838,7 +841,7 @@ proc pushFacts(c: var Context; bb: var BasicBlock) =
     c.facts.add bb.indegreeFacts[i]
 
 proc checkContracts(c: var Context; n: Cursor) =
-  c.cf = toControlflow(n)
+  c.cf = toControlflow(n, c.bits)
   c.facts = createFacts()
   #echo "CF IS ", codeListing(c.cf)
 
@@ -933,12 +936,13 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
      UnpackdeclS, StaticstmtS, AsmS, DeferS,
      CallKindsS, GvarS, TvarS, VarS, ConstS, ResultS,
      GletS, TletS, LetS, CursorS, PatternvarS, BlockS, EmitS, AsgnS, ScopeS,
-     BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS, NoStmt:
+     BreakS, ContinueS, RetS, InclS, ExclS, DiscardS, AssumeS, AssertS,
+     LabS, JmpS, NoStmt:
     c.toplevelStmts.takeTree n
 
-proc analyzeContracts*(input: var TokenBuf): TokenBuf =
+proc analyzeContracts*(input: var TokenBuf; bits: int): TokenBuf =
   #let oldInfos = prepare(input)
-  var c = Context(typeCache: createTypeCache())
+  var c = Context(typeCache: createTypeCache(bits), bits: bits)
   c.typeCache.openScope()
   var n = beginRead(input)
   traverseToplevel c, n
@@ -956,7 +960,8 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parseFromFile(infile)
-    discard analyzeContracts(input)
+    # A standalone debug driver: no target, so the host's width is stated.
+    discard analyzeContracts(input, sizeof(int)*8)
     #echo toString(outp, false)
 
   main(paramStr(1))

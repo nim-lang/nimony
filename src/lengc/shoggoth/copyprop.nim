@@ -30,7 +30,11 @@
 ## **address is never taken**. Such a local cannot be mutated by a call or a
 ## through-pointer store — only by a direct assignment to it. That removes all the
 ## aliasing reasoning: the copy `y = x` stays valid until something assigns to `x`
-## or to `y`.
+## or to `y`. The read-only addr-taken classification (`computeStableAT`) extends the
+## club: an addr-taken local whose storage is provably never written — every escape
+## of its address only feeds reads, per the callee function summaries — is just as
+## safe, and a copy of such a frozen local may even be substituted on an `addr`
+## spine, deleting the inliner's defensive by-value copies.
 ##
 ## * A flow-sensitive `copyOf: SymId -> SymId` (a branch-aware `Tracker`) records
 ##   that `y` currently holds the same value as `x`. At a value-use of `y` we
@@ -60,6 +64,11 @@ import std / [tables, sets, hashes, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import trackers, patchsets
+import cse                                    # FunctionSummary + SummaryResolver:
+                                              # the read-only addr-taken
+                                              # classification consults callee
+                                              # summaries (see `scanStab`)
+import ".." / nifmodules                      # MainModule (foreign summary lookup)
 
 # ---- nifcore helpers ------------------------------------------------------
 
@@ -113,6 +122,68 @@ proc isLeafLit(n: Cursor): bool {.inline.} =
     else: false
   else: false
 
+proc isStableAddrExpr(c: Cursor; deps: var seq[SymId]): bool =
+  ## `(haddr L)` / `(addr L)` over a *stable spine*: a projection chain whose
+  ## address is computed from slot VALUES alone — symbols, field offsets,
+  ## constant or symbol indices, a `deref`/`pat` step through a pointer symbol.
+  ## Evaluating such an expression reads no memory beyond the named slots in
+  ## `deps`, so the address stays valid exactly as long as none of `deps` is
+  ## assigned — the invalidation copyprop already tracks. This is the compound
+  ## sibling of the inliner's bare-symbol `isStableAddrArg`: `inc st.tags`
+  ## splices as `(var :p (ptr T) (haddr (dot (deref st) tags)))` and the temp
+  ## must be propagated here for the rewriter's `deref_addr` rule to fold it.
+  if c.kind != TagLit or c.exprKind notin AddrKinds: return false
+  proc spine(n: var Cursor; deps: var seq[SymId]): bool =
+    ## Consume exactly one value node; false on any shape whose evaluation
+    ## could read memory or have effects.
+    case n.kind
+    of Symbol:
+      deps.add symId(n)
+      skip n
+      result = true
+    of IntLit, UIntLit:
+      skip n
+      result = true
+    of TagLit:
+      case n.exprKind
+      of DotC:
+        result = true
+        n.into:
+          if n.hasMore: result = spine(n, deps)   # base
+          while n.hasMore: skip n                 # field selector, inheritance
+      of DerefC:
+        result = false
+        n.into:
+          if n.hasMore: result = spine(n, deps)   # pointer value: a slot read
+          while n.hasMore:
+            skip n
+            result = false
+      of AtC, PatC:
+        result = false
+        n.into:
+          if n.hasMore: result = spine(n, deps)   # base
+          if n.hasMore:                           # index is a value too
+            if not spine(n, deps): result = false
+          while n.hasMore:
+            skip n
+            result = false
+      of ConvC, CastC:
+        result = false
+        n.into:
+          if n.hasMore: skip n                    # the type
+          if n.hasMore: result = spine(n, deps)
+          while n.hasMore:
+            skip n
+            result = false
+      else:
+        skip n
+        result = false
+    else:
+      inc n
+      result = false
+  var op = child0(c)
+  result = spine(op, deps)
+
 proc writtenRoot(c: Cursor): SymId =
   ## The local whose STORAGE this lvalue writes. A through-pointer store
   ## (`(*p).f = v`, `p[i] = v`) writes the pointee, not `p` — `p` is only
@@ -137,7 +208,25 @@ type
     orig: ptr TokenBuf
     copyOf: Tracker[SymId, SymId]      ## y -> x: y currently aliases x
     litOf: Tracker[SymId, int]         ## y -> (litPos+1): y currently holds that leaf
+    addrOf: Tracker[SymId, int]        ## p -> (addrPos+1): p holds that stable `(haddr …)`
+    addrDeps: Table[int, seq[SymId]]   ## addrPos -> spine symbols the address depends on
+    pinned: HashSet[SymId]             ## spine symbols a snapshot may splice: never delete
     addrTaken: HashSet[SymId]          ## syms whose address is taken anywhere
+    stableAT: HashSet[SymId]           ## addr-taken syms proven READ-ONLY for the
+                                       ## whole body (see `computeStableAT`): they
+                                       ## participate in copy prop like any other
+                                       ## local, and a copy OF such a frozen local
+                                       ## may even be substituted on an addr spine
+    scalarHomed: HashSet[SymId]        ## locals declared with a register-sized
+                                       ## type (int/float/char/bool/ptr): eliding
+                                       ## their copy on an ADDR spine would move
+                                       ## the addr-taken-ness onto the source and
+                                       ## pin a register-homed value to the stack
+                                       ## — a measured pessimization (bif's
+                                       ## appendU64 varint writer, +8% wall), so
+                                       ## the storage substitution skips them
+    writtenEver: HashSet[SymId]        ## storage roots of every direct or
+                                       ## deref-of-addr store in the body
     localDefs: HashSet[SymId]          ## syms declared by a local `(var …)`
     useCount: Table[SymId, int]        ## every `Symbol` (read) token per sym
     substCount: Table[SymId, int]      ## uses we rewrote away per sym
@@ -153,7 +242,13 @@ proc createContext(orig: ptr TokenBuf): Context =
   result = Context(orig: orig,
           copyOf: initTracker[SymId, SymId](),
           litOf: initTracker[SymId, int](),
+          addrOf: initTracker[SymId, int](),
+          addrDeps: initTable[int, seq[SymId]](),
+          pinned: initHashSet[SymId](),
           addrTaken: initHashSet[SymId](),
+          stableAT: initHashSet[SymId](),
+          scalarHomed: initHashSet[SymId](),
+          writtenEver: initHashSet[SymId](),
           localDefs: initHashSet[SymId](),
           useCount: initTable[SymId, int](),
           substCount: initTable[SymId, int](),
@@ -188,20 +283,35 @@ proc invalidate(c: var Context; s: SymId) =
   if s == SymId(0): return
   c.copyOf[s] = SymId(0)
   c.litOf[s] = 0
+  c.addrOf[s] = 0
   var toClear: seq[SymId] = @[]
   for k, v in c.copyOf.pairs:
     if v == s: toClear.add k
   for k in toClear:
     c.copyOf[k] = SymId(0)
+  # An address snapshot is a value computed from its spine symbols' slots;
+  # a write to any of them recomputes to a DIFFERENT address, so unlike a
+  # literal snapshot it does not survive.
+  toClear.setLen 0
+  for k, v in c.addrOf.pairs:
+    if v != 0 and s in c.addrDeps.getOrDefault(v - 1): toClear.add k
+  for k in toClear:
+    c.addrOf[k] = 0
 
 proc isEligible(c: Context; s: SymId): bool {.inline.} =
-  s != SymId(0) and s in c.localDefs and s notin c.addrTaken
+  ## A local can participate in copy prop when nothing can mutate it behind the
+  ## pass's back: either its address is never taken (only direct assignments —
+  ## which `trAsgn` sees — change it), or it is `stableAT` — its address IS
+  ## taken but the whole-body classification proved it is never written at all.
+  s != SymId(0) and s in c.localDefs and
+    (s notin c.addrTaken or s in c.stableAT)
 
 proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
   ## Record that `dest` now holds `src`'s value. A leaf literal is snapshotted
   ## (survives a later write to a symbol that happened to hold the same bits);
   ## a symbol copy lasts until either side is assigned.
   if not c.isEligible(dest): return
+  c.addrOf[dest] = 0
   if isLeafLit(src):
     c.litOf[dest] = cursorToPosition(c.orig[], src) + 1
     c.copyOf[dest] = SymId(0)
@@ -221,25 +331,44 @@ proc bindCopy(c: var Context; dest: SymId; src: Cursor) =
   else:
     c.copyOf[dest] = SymId(0)
     c.litOf[dest] = 0
+    # The inliner's by-address residue: `var p = (haddr LVAL)` for a compound
+    # LVAL (`inc st.tags`). Snapshot the address expression when its spine is
+    # stable (every spine symbol a non-addr-taken local/param): substituting it
+    # into `(deref p)` re-forms `(deref (haddr LVAL))`, which the rewrite
+    # engine's `deref_addr` rule then folds back to the plain lvalue.
+    var deps: seq[SymId] = @[]
+    if isStableAddrExpr(src, deps):
+      var ok = true
+      for d in deps:
+        if not c.isEligible(d):
+          ok = false
+          break
+      if ok:
+        let pos = cursorToPosition(c.orig[], src)
+        c.addrOf[dest] = pos + 1
+        c.addrDeps[pos] = deps
+        # The spliced copies keep reading the spine symbols, but `useCount`
+        # was taken before splicing — never delete their decls.
+        for d in deps: c.pinned.incl d
 
 # ---- branch-state forwarding (same surface as cse.nim) --------------------
 
 proc openBranches(c: var Context) =
-  c.copyOf.openBranches(); c.litOf.openBranches()
+  c.copyOf.openBranches(); c.litOf.openBranches(); c.addrOf.openBranches()
 proc openBranch(c: var Context) =
-  c.copyOf.openBranch(); c.litOf.openBranch()
+  c.copyOf.openBranch(); c.litOf.openBranch(); c.addrOf.openBranch()
 proc openFinalBranch(c: var Context) =
-  c.copyOf.openFinalBranch(); c.litOf.openFinalBranch()
+  c.copyOf.openFinalBranch(); c.litOf.openFinalBranch(); c.addrOf.openFinalBranch()
 proc closeBranch(c: var Context) =
-  c.copyOf.closeBranch(); c.litOf.closeBranch()
+  c.copyOf.closeBranch(); c.litOf.closeBranch(); c.addrOf.closeBranch()
 proc closeBranches(c: var Context) =
-  c.copyOf.closeBranches(); c.litOf.closeBranches()
+  c.copyOf.closeBranches(); c.litOf.closeBranches(); c.addrOf.closeBranches()
 proc gotoLabel(c: var Context; L: LabelId) =
-  c.copyOf.gotoLabel L; c.litOf.gotoLabel L
+  c.copyOf.gotoLabel L; c.litOf.gotoLabel L; c.addrOf.gotoLabel L
 proc landLabel(c: var Context; L: LabelId) =
-  c.copyOf.landLabel L; c.litOf.landLabel L
+  c.copyOf.landLabel L; c.litOf.landLabel L; c.addrOf.landLabel L
 proc clearAll(c: var Context) =
-  c.copyOf.clearAll(); c.litOf.clearAll()
+  c.copyOf.clearAll(); c.litOf.clearAll(); c.addrOf.clearAll()
 
 # ---- substitution synthesis -----------------------------------------------
 
@@ -260,13 +389,17 @@ proc substituteLit(c: var Context; n: Cursor; litPos: int) =
   c.substCount.mgetOrPut(symId(n), 0) += 1
 
 proc trySubstitute(c: var Context; n: Cursor) =
-  ## Prefer a snapshotted literal, then a symbol copy.
+  ## Prefer a snapshotted literal, then a snapshotted address, then a symbol copy.
   let s = symId(n)
   let root = resolve(c, s)
   var lp = c.litOf[s]
   if lp == 0: lp = c.litOf[root]
+  var ap = c.addrOf[s]
+  if ap == 0: ap = c.addrOf[root]
   if lp != 0:
     substituteLit(c, n, lp - 1)
+  elif ap != 0:
+    substituteLit(c, n, ap - 1)     # splices the whole `(haddr …)` subtree
   elif root != s:
     substituteSym(c, n, root)
 
@@ -307,11 +440,12 @@ proc trExpr(c: var Context; n: var Cursor) =
       # copy `p2 = p` whose only uses are `&((*p2)…)`.
       n.into:
         while n.hasMore: trAddrOperand(c, n)
-    of CallC:
+    of CallC, InstrC:
       n.into:
         if n.hasMore: skip n             # callee
         while n.hasMore: trExpr(c, n)    # args
-      # A call cannot touch a non-addr-taken local, so nothing to invalidate.
+      # Neither a call nor an intrinsic can touch a non-addr-taken local, so
+      # nothing to invalidate.
     of DotC:
       # `(dot OBJ FIELD inheritance)`: only OBJ is a value expression. FIELD is a
       # field-selector symbol — NEVER a value read. A local var can share a field's
@@ -343,7 +477,24 @@ proc trAddrOperand(c: var Context; n: var Cursor) =
   ## and normal substitution (`trExpr`) resumes. Array indices are values too.
   case n.kind
   of Symbol:
-    skip n                                 # storage root — never substitute
+    # Storage root — normally never substituted (`&y` ≠ `&x`: distinct
+    # storage). The one exception is the read-only copy: when this local is
+    # `stableAT` (bytes frozen after init, its address only reaching provably
+    # non-writing callees) and its copy source is likewise never written
+    # anywhere in the body, both storages hold identical bytes at every point
+    # the formed address can be read through, so handing out the source's
+    # address instead is observationally equivalent. This is what deletes the
+    # inliner's defensive by-value string copies
+    # (`var s2 = s; … readRawData(haddr s2) …` → reads `s` directly).
+    # `scalarHomed` copies are exempt: for them the copy IS the optimization
+    # (the source stays register-homed; see the field's doc).
+    let s = symId(n)
+    if s in c.stableAT and s notin c.scalarHomed:
+      let root = resolve(c, s)
+      if root != s and c.isEligible(root) and root notin c.writtenEver:
+        substituteSym(c, n, root)
+        c.pinned.incl root                 # its decl must survive the new uses
+    skip n
   of TagLit:
     case n.exprKind
     of DerefC, PatC:
@@ -384,12 +535,13 @@ proc trVar(c: var Context; n: var Cursor) =
       let initStart = n
       let initKind = initStart.kind
       trExpr(c, n)                       # propagate inside the initializer
-      if isLocal and nameSym != SymId(0) and nameSym notin c.addrTaken:
+      if isLocal and c.isEligible(nameSym):
         bindCopy(c, nameSym, initStart)
         # Deletable if its initializer is a side-effect-free leaf or empty:
         # dead once all its reads are rewritten away (copy) or it was never
-        # used (pure store).
-        if initKind in LeafKinds or initKind == DotToken or isLeafLit(initStart):
+        # used (pure store). A snapshotted stable address is pure too.
+        if initKind in LeafKinds or initKind == DotToken or
+           isLeafLit(initStart) or c.addrOf[nameSym] != 0:
           c.delCandidates[nameSym] = defPos
     while n.hasMore: skip n
 
@@ -420,9 +572,11 @@ proc trAsgn(c: var Context; n: var Cursor) =
     invalidate(c, writtenRoot(lhs))
     if lhs.kind == Symbol:
       let dest = symId(lhs)
-      if haveRhs and (isLeafLit(rhs) or rhs.kind == Symbol):
-        c.writeSites.mgetOrPut(dest, @[]).add asgnPos
       if haveRhs:
+        var depsIgnored: seq[SymId] = @[]
+        if isLeafLit(rhs) or rhs.kind == Symbol or
+           isStableAddrExpr(rhs, depsIgnored):
+          c.writeSites.mgetOrPut(dest, @[]).add asgnPos
         bindCopy(c, dest, rhs)
 
 proc trCallStmt(c: var Context; n: var Cursor) =
@@ -590,6 +744,12 @@ proc preScan(c: var Context; n: Cursor) =
       let nameCur = child0(n)
       if nameCur.kind == SymbolDef:
         c.localDefs.incl symId(nameCur)
+        var t = nameCur
+        skip t                             # name
+        skip t                             # pragmas
+        if t.kind == TagLit and
+           t.typeKind in {IT, UT, FT, CT, BoolT, PtrT, AptrT}:
+          c.scalarHomed.incl symId(nameCur)
     if n.exprKind in AddrKinds:
       # Only a local whose OWN storage is addressed is excluded from copy prop. An
       # `addr((*p).f)` addresses the pointee (computed from p's value), so `p` stays
@@ -602,6 +762,351 @@ proc preScan(c: var Context; n: Cursor) =
       skip m
   else:
     discard
+
+# ---- read-only addr-taken classification ----------------------------------
+# An addr-taken local is normally poisoned for copy prop: a call or a
+# through-pointer store could rewrite it invisibly. But the hot shapes the
+# inliner leaves behind — `var s2 = s; … readRawData(haddr s2) …` — take the
+# address only to READ through it. When we can prove the local's storage is
+# never written after its initializer, its bytes are frozen for the whole body
+# and it is as safe as a never-addressed local ("reads of addr-taken read-only
+# locals are stable").
+#
+# The proof is fully static, no flow needed, because it accounts for EVERY
+# pointer that could reach the local:
+#  * The local is never the storage root of an `asgn`/`store` — including a
+#    `(deref (haddr s))`-shaped LHS.
+#  * Every `(addr/haddr s…)` occurrence is a direct argument of a call whose
+#    summary says that param is not written (`paramMayWrite`). If the summary
+#    also says the param ESCAPES, the pointer may leave the callee — but
+#    `escapes` (funcsummary) means "stored into a global or passed to an
+#    unknown callee", and either of those would ALSO set `writesGlobal` /
+#    `callsUnknown` on the summary. So for a known callee with neither flag
+#    (nor `resultEscapes`), the address can leave ONLY through the result
+#    value: if that result is discarded, nothing survives; if it is bound
+#    directly to a local `p`, `p` is recorded as a DERIVED pointer.
+#  * A derived pointer must only ever be consumed as the base of a load
+#    (`deref`/`pat`/`at`/`dot`): appearing inside a store LHS, escaping as a
+#    bare value (assignment RHS, unknown call arg, `ret`, arithmetic, cast) or
+#    having its own address taken disqualifies the origin.
+# Any shape the scan does not model taints conservatively. `(instr …)` blocks
+# disable the classification for the body. Note self-pointers cannot sneak
+# through: creating one requires an addr-taking event, and every such event is
+# judged above.
+
+type
+  StabScan = object
+    r: SummaryResolver
+    hasInstr: bool
+    addrTainted: HashSet[SymId]     ## addr escaped into an unmodelled context
+    storeLhsSyms: HashSet[SymId]    ## every Symbol inside a compound store LHS
+    valueEscaped: HashSet[SymId]    ## bare-symbol value uses outside a load
+                                    ## base / benign call arg (only ever
+                                    ## consulted for derived pointers)
+    derived: Table[SymId, seq[SymId]] ## local p -> addr-taken syms whose
+                                      ## storage p may point into
+
+proc flagSyms(sc: var StabScan; sub: Cursor) =
+  ## Conservatively mark every Symbol in the subtree as value-escaped — and
+  ## taint the root of every nested `(addr/haddr …)`: an address formed inside
+  ## an opaque subtree (`(conv (ptr (void)) (addr v))`, a cast, an unmodelled
+  ## call operand) can travel anywhere.
+  var n = sub
+  case n.kind
+  of Symbol:
+    sc.valueEscaped.incl symId(n)
+  of TagLit:
+    if n.exprKind in AddrKinds:
+      let root = addrRootOf(child0(n))
+      if root != SymId(0): sc.addrTainted.incl root
+    n.loopInto:
+      flagSyms(sc, n)
+      skip n
+  else: discard
+
+proc collectLhsDeep(c: var Context; sc: var StabScan; sub: Cursor) =
+  ## Compound store LHS: every Symbol goes to `storeLhsSyms` (a derived pointer
+  ## there means a write through it); a nested `(haddr s)` means the store
+  ## writes s's own storage (`(asgn (deref (haddr s)) v)`).
+  var n = sub
+  case n.kind
+  of Symbol:
+    sc.storeLhsSyms.incl symId(n)
+  of TagLit:
+    if n.exprKind in AddrKinds:
+      let root = addrRootOf(child0(n))
+      if root != SymId(0): c.writtenEver.incl root
+    n.loopInto:
+      collectLhsDeep(c, sc, n)
+      skip n
+  else: discard
+
+proc scanStabExpr(c: var Context; sc: var StabScan; n: var Cursor)  # forward
+
+proc pointerCompRoots(c: var Context; sc: var StabScan; n: Cursor;
+                      roots: var seq[SymId]): bool =
+  ## True when `n` is a pure pointer COMPUTATION: `addr`/`haddr` leaves glued
+  ## together by `conv`/`cast`/`add`/`sub` with value operands — the inlined
+  ## `readRawData` computes `cast[aptr](cast[u64](addr s.bytes) + 1)`. A cast
+  ## or an offset only re-types/moves the pointer; the derived-pointer USE
+  ## judgment still provides the safety, so a binding position treats the
+  ## whole computation like a bare addr. `roots` collects every local whose
+  ## own storage the result may point into (an addr over a `deref`-crossing
+  ## spine points into a pointee and contributes none). Bare symbols are
+  ## value-escaped — a derived pointer fed back into such a computation must
+  ## taint its origins (derived-of-derived is not tracked). Loads inside are
+  ## ordinary reads. False ⇒ the caller falls back to the conservative path
+  ## (any flags already set only over-approximate).
+  case n.kind
+  of Symbol:
+    sc.valueEscaped.incl symId(n)
+    result = true
+  of IntLit, UIntLit, CharLit:
+    result = true
+  of TagLit:
+    case n.exprKind
+    of AddrC, HaddrC:
+      let root = addrRootOf(child0(n))
+      if root != SymId(0): roots.add root
+      result = true                   # spine symbols are reads; nothing to flag
+    of ConvC, CastC:
+      var m = child0(n)               # the type
+      skip m                          # -> the operand
+      result = pointerCompRoots(c, sc, m, roots)
+    of AddC, SubC:
+      result = true
+      var m = n
+      var first = true
+      m.into:
+        while m.hasMore:
+          if first:
+            skip m                    # the type child
+            first = false
+          else:
+            if not pointerCompRoots(c, sc, m, roots): result = false
+            skip m
+    of DotC, DerefC, PatC, AtC:
+      var t = n
+      scanStabExpr(c, sc, t)          # a load: a pure value, normal flagging
+      result = true
+    of SufC, TrueC, FalseC:
+      result = true
+    else:
+      result = false
+  else:
+    result = false
+
+proc scanStabCall(c: var Context; sc: var StabScan; n: var Cursor;
+                  resultDest: SymId; resultDropped: bool) =
+  ## `(call F args…)` in any position. `resultDest` is the local the result is
+  ## bound to when the call is a direct `var p = (call …)` / `p = (call …)`
+  ## initializer; `resultDropped` marks a statement-position call whose result
+  ## vanishes. Everything else must treat an escaping address as a taint.
+  var smry = FunctionSummary()
+  var known = false
+  n.into:
+    if n.hasMore:
+      if n.kind == Symbol:
+        known = resolveCallee(sc.r, symId(n), smry)
+        skip n
+      else:
+        flagSyms(sc, n)                   # indirect callee expression
+        skip n
+    var idx = 0
+    while n.hasMore:
+      var roots: seq[SymId] = @[]
+      if n.kind == Symbol:
+        # A bare-symbol actual: safe for a derived pointer only when the callee
+        # provably neither writes through nor re-escapes it.
+        if not (known and not paramMayWrite(smry, idx) and
+                not paramEscapes(smry, idx)):
+          sc.valueEscaped.incl symId(n)
+        skip n
+      elif n.kind == TagLit and n.exprKind notin {CallC, InstrC} and
+           pointerCompRoots(c, sc, n, roots):
+        for root in roots:
+          var ok = known and not paramMayWrite(smry, idx)
+          if ok and paramEscapes(smry, idx):
+            if smry.writesGlobal or smry.callsUnknown or smry.resultEscapes:
+              ok = false                  # could have left via a global
+            elif resultDest != SymId(0):
+              sc.derived.mgetOrPut(resultDest, @[]).add root
+            elif not resultDropped:
+              ok = false                  # flows into a bigger expression
+          if not ok: sc.addrTainted.incl root
+        skip n
+      else:
+        scanStabExpr(c, sc, n)
+      inc idx
+
+proc scanStabExpr(c: var Context; sc: var StabScan; n: var Cursor) =
+  ## Value-position expression walk. A bare Symbol consumed as the BASE of a
+  ## load (`deref`/`pat`/`at`/`dot`) is a plain read; every other bare-Symbol
+  ## use lets the VALUE escape to another name (only relevant for derived
+  ## pointers, so over-flagging integers is free).
+  case n.kind
+  of Symbol:
+    sc.valueEscaped.incl symId(n)
+    inc n
+  of TagLit:
+    case n.exprKind
+    of DerefC, PatC, AtC:
+      n.into:
+        if n.hasMore:
+          if n.kind == Symbol: skip n     # load base: a read, not an escape
+          else: scanStabExpr(c, sc, n)
+        while n.hasMore: scanStabExpr(c, sc, n)   # indices are value uses
+    of DotC:
+      n.into:
+        if n.hasMore:
+          if n.kind == Symbol: skip n     # slot read of the base
+          else: scanStabExpr(c, sc, n)
+        while n.hasMore: skip n           # field selector, inheritance depth
+    of AddrC, HaddrC:
+      let root = addrRootOf(child0(n))
+      if root != SymId(0): sc.addrTainted.incl root
+      flagSyms(sc, n)
+      skip n
+    of CallC, InstrC:
+      # An intrinsic that writes through a pointer operand is as much a reason to
+      # stop propagating a copy as a call is; one that does not costs only the
+      # propagation it would have allowed.
+      scanStabCall(c, sc, n, SymId(0), resultDropped = false)
+    of ConvC, CastC:
+      flagSyms(sc, n)                     # pointer laundering — conservative
+      skip n
+    else:
+      n.loopInto:
+        scanStabExpr(c, sc, n)
+  else:
+    inc n
+
+proc scanStab(c: var Context; sc: var StabScan; n: var Cursor) =
+  if not n.hasMore: return
+  case n.kind
+  of TagLit:
+    case n.stmtKind
+    of VarS, GvarS, TvarS, ConstS:
+      let isLocal = n.stmtKind == VarS
+      var nameSym = SymId(0)
+      n.into:
+        if n.hasMore:
+          if n.kind == SymbolDef: nameSym = symId(n)
+          skip n                           # name
+        if n.hasMore: skip n               # pragmas
+        if n.hasMore: skip n               # type
+        if n.hasMore:                      # initializer
+          var roots: seq[SymId] = @[]
+          if n.kind == TagLit and n.exprKind == CallC:
+            let dest = if isLocal: nameSym else: SymId(0)
+            scanStabCall(c, sc, n, dest, resultDropped = false)
+          elif n.kind == TagLit and pointerCompRoots(c, sc, n, roots):
+            for root in roots:
+              if isLocal and nameSym != SymId(0):
+                sc.derived.mgetOrPut(nameSym, @[]).add root
+              else:
+                sc.addrTainted.incl root   # a global now holds the address
+            skip n
+          else:
+            scanStabExpr(c, sc, n)
+        while n.hasMore: skip n
+    of AsgnS, StoreS:
+      let isStore = n.stmtKind == StoreS
+      var first, second = default(Cursor)
+      var haveFirst, haveSecond = false
+      n.into:
+        if n.hasMore:
+          first = n; haveFirst = true; skip n
+        if n.hasMore:
+          second = n; haveSecond = true; skip n
+        while n.hasMore: skip n
+      let lhs = if isStore: second else: first
+      let rhs = if isStore: first else: second
+      let haveLhs = if isStore: haveSecond else: haveFirst
+      let haveRhs = if isStore: haveFirst else: haveSecond
+      var destSym = SymId(0)
+      if haveLhs:
+        if lhs.kind == Symbol:
+          destSym = symId(lhs)
+          c.writtenEver.incl destSym
+        else:
+          let root = writtenRoot(lhs)
+          if root != SymId(0): c.writtenEver.incl root
+          collectLhsDeep(c, sc, lhs)
+      if haveRhs:
+        var r = rhs
+        var roots: seq[SymId] = @[]
+        if r.kind == Symbol:
+          sc.valueEscaped.incl symId(r)   # `q = p`: p's value now has 2 names
+        elif r.kind == TagLit and r.exprKind == CallC:
+          let dest = if destSym != SymId(0) and destSym in c.localDefs: destSym
+                     else: SymId(0)
+          scanStabCall(c, sc, r, dest, resultDropped = false)
+        elif r.kind == TagLit and pointerCompRoots(c, sc, r, roots):
+          for root in roots:
+            if destSym != SymId(0) and destSym in c.localDefs:
+              sc.derived.mgetOrPut(destSym, @[]).add root
+            else:
+              sc.addrTainted.incl root
+        else:
+          scanStabExpr(c, sc, r)
+    of CallS:
+      scanStabCall(c, sc, n, SymId(0), resultDropped = true)
+    of RetS, RaiseS:
+      n.into:
+        while n.hasMore:
+          if n.kind == Symbol:
+            sc.valueEscaped.incl symId(n)   # a returned derived pointer escapes
+            skip n
+          elif n.kind == TagLit and n.exprKind in AddrKinds:
+            let root = addrRootOf(child0(n))
+            if root != SymId(0): sc.addrTainted.incl root
+            flagSyms(sc, n)
+            skip n
+          elif n.kind == DotToken:
+            inc n
+          else:
+            scanStabExpr(c, sc, n)
+    of InstrS:
+      sc.hasInstr = true
+      skip n
+    of JmpS, LabS, BreakS:
+      skip n
+    of IfS, CaseS, WhileS, LoopS, ScopeS, StmtsS:
+      n.loopInto:
+        scanStab(c, sc, n)
+    else:
+      if n.substructureKind in {ElifU, ElseU, OfU}:
+        n.loopInto:
+          scanStab(c, sc, n)
+      else:
+        scanStabExpr(c, sc, n)              # a condition / bare expression
+  else:
+    inc n
+
+proc computeStableAT(c: var Context; sc: StabScan) =
+  if sc.hasInstr: return
+  for s in c.addrTaken:
+    if s notin c.localDefs: continue
+    when defined(stabDbg):
+      var why = ""
+      if s in c.writtenEver: why.add " writtenEver"
+      if s in sc.addrTainted: why.add " addrTainted"
+      for p, origins in sc.derived:
+        if s in origins:
+          if p in sc.storeLhsSyms: why.add " derived-storeLhs:" & c.names.getOrDefault(p)
+          if p in sc.valueEscaped: why.add " derived-valEsc:" & c.names.getOrDefault(p)
+          if p in c.addrTaken: why.add " derived-addrTaken:" & c.names.getOrDefault(p)
+      echo "stabDbg ", c.names.getOrDefault(s), (if why.len == 0: " STABLE" else: why)
+    if s in c.writtenEver or s in sc.addrTainted: continue
+    var ok = true
+    for p, origins in sc.derived:
+      if s in origins:
+        # every pointer that may aim at s must stay a pure read base
+        if p in sc.storeLhsSyms or p in sc.valueEscaped or p in c.addrTaken:
+          ok = false
+          break
+    if ok: c.stableAT.incl s
 
 # ---- public entry ---------------------------------------------------------
 
@@ -627,21 +1132,35 @@ proc registerParams(c: var Context; params: Cursor) =
         c.scopeDecls[0].add s
     skip p
 
-proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor)) =
+proc runCopyProp*(buf: var TokenBuf; params: Cursor = default(Cursor);
+                  summaries: ptr FunctionSummaryTable = nil;
+                  m: ptr MainModule = nil) =
   ## In-place copy propagation + dead-binding elimination for a single proc body.
   ## `params` is the enclosing proc's `(params …)` node (empty for a bare body);
   ## its parameters become eligible copy sources (see `registerParams`).
+  ## `summaries`/`m` feed the read-only addr-taken classification (nil ⇒ every
+  ## call taking an address taints conservatively, the pre-extension behavior).
   var ctx = createContext(addr buf)
   registerParams(ctx, params)
   block:
     let pn = beginRead(buf)
     preScan(ctx, pn)
+  block:
+    var sc = StabScan(r: initSummaryResolver(summaries, m),
+                      addrTainted: initHashSet[SymId](),
+                      storeLhsSyms: initHashSet[SymId](),
+                      valueEscaped: initHashSet[SymId](),
+                      derived: initTable[SymId, seq[SymId]]())
+    var sn = beginRead(buf)
+    scanStab(ctx, sc, sn)
+    computeStableAT(ctx, sc)
   var n = beginRead(buf)
   tr(ctx, n)
   # Delete every candidate decl whose every read was rewritten away (or which
   # had no reads) and which has no impure writes left. Pure `y = x` / `y = 5`
   # assignments to a now-dead local go with it.
   for s, defPos in ctx.delCandidates:
+    if s in ctx.pinned: continue   # an address snapshot's spliced copies read it
     let uses = ctx.useCount.getOrDefault(s)
     let subst = ctx.substCount.getOrDefault(s)
     let sites = ctx.writeSites.getOrDefault(s)
@@ -824,6 +1343,47 @@ when isMainModule:
       "(asgn y.0.M x.0.M) (call inner.0.M x.0.M))) " &
       "(call outer.0.M y.0.M))")
 
+  block addr_snapshot_inlined_inc:
+    # The inliner's by-address residue for a COMPOUND lvalue: `inc st.tags`
+    # splices as a pointer temp. Substitute the address into both derefs
+    # (the rewriter later folds `(deref (haddr …))`) and delete the temp.
+    chk(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(asgn (deref p.0.M) (add (i 64) (deref p.0.M) 1)))",
+      "(stmts (var :st.0.M . . (call f.0.M)) . " &
+      "(asgn (deref (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(add (i 64) (deref (haddr (dot (deref st.0.M) tags.0.M 0))) 1)))")
+
+  block addr_snapshot_spine_write_blocks:
+    # The spine symbol is reassigned between binding and use: the address
+    # would differ, so the use may not be substituted (and the decl stays).
+    assertUnchanged(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(asgn st.0.M (call g.0.M)) " &
+      "(asgn (deref p.0.M) 1))")
+
+  block addr_snapshot_loop_spine_write_blocks:
+    # Same across a loop back-edge: st is written in the body, so the
+    # snapshot cannot be carried into it.
+    assertUnchanged(
+      "(stmts (var :st.0.M . . (call f.0.M)) " &
+      "(while c.0.M (stmts " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (dot (deref st.0.M) tags.0.M 0))) " &
+      "(asgn st.0.M (call g.0.M)) " &
+      "(asgn (deref p.0.M) 1))))")
+
+  block addr_snapshot_pins_spine_local:
+    # q's only counted read sits inside the snapshot; splicing duplicates it,
+    # so q's decl must survive even though that read is "rewritten away".
+    chk(
+      "(stmts (var :q.0.M . . (call f.0.M)) " &
+      "(var :p.0.M . (ptr (i 64)) (haddr (deref q.0.M))) " &
+      "(asgn (deref p.0.M) 1))",
+      "(stmts (var :q.0.M . . (call f.0.M)) . " &
+      "(asgn (deref (haddr (deref q.0.M))) 1))")
+
   block inlined_callee_with_early_returns:
     # THE miscompile the literal snapshots were disabled for. An inlined callee
     # with early `return`s lowers to `… (jmp ret) … (lab ret) …` *inside* one
@@ -847,5 +1407,177 @@ when isMainModule:
       "(else (stmts (asgn r.0.M (false))))) " &
       "(lab :ret.0.M) " &
       "(if (elif r.0.M (call use.0.M))))")
+
+  # ---- read-only addr-taken extension -------------------------------------
+  # These need callee summaries: parse a module carrying `(smry …)` pragma
+  # procs SHARING the body buffer's pool/tags so SymIds line up, then collect.
+
+  proc summariesFor(buf: var TokenBuf; modSrc: string): FunctionSummaryTable =
+    var mb = parseFromBuffer(modSrc, "M", 100, sharedPool = buf.pool,
+                             sharedTags = buf.tags)
+    collectFunctionSummaries(mb)
+
+  const
+    RoDecl =                       # reads through param 0, keeps nothing
+      "(stmts (proc :ro.0.M (params (param p.0.M (ptr (i 64)))) . " &
+      "(pragmas (smry (param 0 0 reads))) (stmts)))"
+    EscDecl =                      # reads through param 0, pointer into it
+                                   # leaves via the RESULT (no global store)
+      "(stmts (proc :esc.0.M (params (param p.0.M (ptr (i 64)))) (ptr (c 8)) " &
+      "(pragmas (smry (param 0 0 reads escapes))) (stmts)))"
+    WrDecl =                       # writes through param 0
+      "(stmts (proc :wr.0.M (params (param p.0.M (ptr (i 64)))) . " &
+      "(pragmas (smry (param 0 0 reads writes))) (stmts)))"
+
+  template chkS(input, decls, expected: string) =
+    var buf = parse(input)
+    var smt = summariesFor(buf, decls)
+    runCopyProp(buf, default(Cursor), addr smt, nil)
+    let got = toString(buf)
+    let want = canon(expected)
+    doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
+
+  template assertUnchangedS(input, decls: string) =
+    var buf = parse(input)
+    var smt = summariesFor(buf, decls)
+    let before = toString(buf)
+    runCopyProp(buf, default(Cursor), addr smt, nil)
+    doAssert toString(buf) == before, "expected unchanged:\n  " & input
+
+  block readonly_addr_taken_copy_elided:
+    # THE target shape: an inliner's defensive copy whose address only feeds a
+    # non-writing, non-escaping callee. The copy folds away entirely — even
+    # the `(haddr y)` storage use is redirected to the source.
+    chkS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(call ro.0.M (haddr y.0.M)) " &
+      "(call use.0.M y.0.M))",
+      RoDecl,
+      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(call ro.0.M (haddr x.0.M)) " &
+      "(call use.0.M x.0.M))")
+
+  block escape_to_result_derived_read_ok:
+    # `readRawData` shape: the address escapes, but only into the result,
+    # and the derived pointer is only ever a load base.
+    chkS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :p.0.M . . (call esc.0.M (haddr y.0.M))) " &
+      "(call use.0.M (pat p.0.M 0)))",
+      EscDecl,
+      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(var :p.0.M . . (call esc.0.M (haddr x.0.M))) " &
+      "(call use.0.M (pat p.0.M 0)))")
+
+  block escape_result_discarded_ok:
+    # Escaping param, but the call result is dropped: nothing survives.
+    chkS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(call esc.0.M (haddr y.0.M)) " &
+      "(call use.0.M y.0.M))",
+      EscDecl,
+      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(call esc.0.M (haddr x.0.M)) " &
+      "(call use.0.M x.0.M))")
+
+  block derived_pointer_written_blocks:
+    # A store through the derived pointer writes y's storage: no folding.
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :p.0.M . . (call esc.0.M (haddr y.0.M))) " &
+      "(asgn (pat p.0.M 0) 1) " &
+      "(call use.0.M y.0.M))",
+      EscDecl)
+
+  block derived_pointer_escapes_blocks:
+    # The derived pointer is handed to an unknown callee: no folding.
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :p.0.M . . (call esc.0.M (haddr y.0.M))) " &
+      "(call sink.0.M p.0.M) " &
+      "(call use.0.M y.0.M))",
+      EscDecl)
+
+  block writing_callee_blocks:
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(call wr.0.M (haddr y.0.M)) " &
+      "(call use.0.M y.0.M))",
+      WrDecl)
+
+  block escape_into_nested_expr_blocks:
+    # The escaping call's result flows into a bigger expression: untrackable.
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :q.0.M . . (add (i 64) (call esc.0.M (haddr y.0.M)) 1)) " &
+      "(call use.0.M y.0.M))",
+      EscDecl)
+
+  block deref_haddr_store_blocks:
+    # `(asgn (deref (haddr y)) 1)` writes y's own storage.
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(call ro.0.M (haddr y.0.M)) " &
+      "(asgn (deref (haddr y.0.M)) 1) " &
+      "(call use.0.M y.0.M))",
+      RoDecl)
+
+  block cast_addr_binding_tracked:
+    # The inlined `readRawData` SHORT branch: a cast only re-types the pointer,
+    # so `var p = (conv (aptr (c 8)) (haddr y))` is a tracked derived binding;
+    # with p read-only-used the copy still folds.
+    chkS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :p.0.M . . (conv (aptr (c 8)) (haddr y.0.M))) " &
+      "(call ro.0.M p.0.M) " &
+      "(call use.0.M (pat p.0.M 0)))",
+      RoDecl,
+      "(stmts (var :x.0.M . . (call f.0.M)) . " &
+      "(var :p.0.M . . (conv (aptr (c 8)) (haddr x.0.M))) " &
+      "(call ro.0.M p.0.M) " &
+      "(call use.0.M (pat p.0.M 0)))")
+
+  block addr_in_arithmetic_blocks:
+    # An address disappearing into integer arithmetic can travel anywhere —
+    # the bif `appendU64` hazard class must still taint.
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(var :q.0.M . . (add (i 64) (cast (i 64) (haddr y.0.M)) 1)) " &
+      "(call use.0.M y.0.M q.0.M))",
+      RoDecl)
+
+  block scalar_copy_keeps_storage:
+    # A register-sized copy is stable, but rewriting its `(haddr y)` would pin
+    # the SOURCE to the stack — value uses substitute, the storage use stays.
+    chkS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . (u 64) x.0.M) " &
+      "(call ro.0.M (haddr y.0.M)) " &
+      "(call use.0.M y.0.M))",
+      RoDecl,
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . (u 64) x.0.M) " &
+      "(call ro.0.M (haddr y.0.M)) " &
+      "(call use.0.M x.0.M))")
+
+  block written_source_keeps_haddr:
+    # y is frozen, but its source x is reassigned later: the storage
+    # substitution must NOT happen (the derived reads would see NEW x bytes).
+    assertUnchangedS(
+      "(stmts (var :x.0.M . . (call f.0.M)) " &
+      "(var :y.0.M . . x.0.M) " &
+      "(call ro.0.M (haddr y.0.M)) " &
+      "(asgn x.0.M (call g.0.M)))",
+      RoDecl)
 
   echo "copyprop.nim: all self-tests passed"

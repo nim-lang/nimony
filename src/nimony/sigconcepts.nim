@@ -20,23 +20,6 @@ import ".." / lib / symparser
 proc isConceptType*(a: Cursor): bool {.inline.} =
   a.isSymbol and isConceptSym(a.symId)
 
-proc conceptTargetNeedsStrictCheck*(a: Cursor): bool =
-  ## Standalone concepts keep lenient matching for generic typevars and for
-  ## all types except user `distinct` types. Distinct types must satisfy
-  ## requirements structurally so they cannot inherit base-type operators
-  ## silently; other types (including `string` objects and ranges) keep the
-  ## legacy acceptance until full requirement matching is complete.
-  if a.isDotToken:
-    return false
-  if a.isSymbol:
-    let res = tryLoadSym(a.symId)
-    if res.status == LacksNothing and res.decl.symKind == TypevarY:
-      return false
-  var t = a
-  if t.isSymbol:
-    t = typeImpl(t.symId)
-  t.typeKind == DistinctT
-
 proc conceptRoutineBasename*(routine: Cursor): StrId =
   var prc = routine
   assert prc.symKind in RoutineKinds
@@ -45,22 +28,6 @@ proc conceptRoutineBasename*(routine: Cursor): StrId =
   var name = pool.syms[prc.symId]
   extractBasename(name)
   pool.strings.getOrIncl(name)
-
-proc collectSelfSymsInType*(typ: Cursor; result: var seq[SymId]) =
-  ## Collect every `Self` typevar referenced inside a type tree.
-  var typ = typ
-  case typ.kind
-  of Symbol:
-    let res = tryLoadSym(typ.symId)
-    if res.status == LacksNothing and res.decl.symKind == TypevarY:
-      if typ.symId notin result:
-        result.add typ.symId
-  of TagLit:
-    typ.loopInto:
-      collectSelfSymsInType(typ, result)
-      skip typ
-  else:
-    discard
 
 proc conceptSelfSymFromSlot*(body: Cursor): SymId =
   let selfSlot = conceptSelfSlot(body)
@@ -73,10 +40,53 @@ proc conceptSelfSymFromSlot*(body: Cursor): SymId =
   else:
     SymId(0)
 
-proc conceptSelfSyms*(body: Cursor; routine: Cursor): seq[SymId] =
+proc isConceptSelfSym(s: SymId; headerSelf: SymId): bool =
   ## The `Self` slot in the concept header and the `Self` referenced in
-  ## requirement signatures can be different syms after sema; bind them all.
-  result = @[]
+  ## requirement signatures can be different syms after sema, so match the
+  ## name as well. Other typevars in a signature — the requirement's own
+  ## generic parameters, or an enclosing generic's — are not `Self` and stay
+  ## open.
+  if s == headerSelf:
+    return true
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing or res.decl.symKind != TypevarY:
+    return false
+  var name = pool.syms[s]
+  extractBasename(name)
+  name == "Self"
+
+proc collectSelfSymsInType(typ: Cursor; headerSelf: SymId; result: var seq[SymId]) =
+  var typ = typ
+  case typ.kind
+  of Symbol:
+    if typ.symId notin result and isConceptSelfSym(typ.symId, headerSelf):
+      result.add typ.symId
+  of TagLit:
+    typ.loopInto:
+      collectSelfSymsInType(typ, headerSelf, result)
+      skip typ
+  else:
+    discard
+
+proc collectOpenTypevars*(typ: Cursor; result: var HashSet[SymId]) =
+  ## Every typevar symbol referenced inside a type tree.
+  var typ = typ
+  case typ.kind
+  of Symbol:
+    if isOpenTypevar(typ):
+      result.incl typ.symId
+  of TagLit:
+    typ.loopInto:
+      collectOpenTypevars(typ, result)
+      skip typ
+  else:
+    discard
+
+proc scanSignature(body: Cursor; routine: Cursor;
+                   selfSyms: var seq[SymId]; openTvs: var HashSet[SymId]) =
+  ## One walk over a requirement's parameter types and its return type,
+  ## collecting the `Self` syms it names and every typevar it names.
+  let headerSelf = conceptSelfSymFromSlot(body)
   var n = routine
   skipToParams n
   if n.substructureKind == ParamsU:
@@ -84,13 +94,81 @@ proc conceptSelfSyms*(body: Cursor; routine: Cursor): seq[SymId] =
     n.into ParamsU:
       while n.hasMore:
         let param = takeLocal(n, SkipFinalParRi)
-        collectSelfSymsInType(param.typ, result)
+        collectSelfSymsInType(param.typ, headerSelf, selfSyms)
+        collectOpenTypevars(param.typ, openTvs)
   else:
     skip n # void params slot
-  collectSelfSymsInType(n, result) # n now at the return type
+  collectSelfSymsInType(n, headerSelf, selfSyms) # n now at the return type
+  collectOpenTypevars(n, openTvs)
+
+proc conceptSelfSymsInSignature(body: Cursor; routine: Cursor): seq[SymId] =
+  ## The `Self` syms the requirement's own signature refers to. Empty means the
+  ## requirement says nothing about the checked type.
+  result = @[]
+  var openTvs = initHashSet[SymId]()
+  scanSignature(body, routine, result, openTvs)
+
+proc conceptSelfSyms*(body: Cursor; routine: Cursor): seq[SymId] =
+  ## Every `Self` sym a requirement signature refers to, plus the header's.
+  result = conceptSelfSymsInSignature(body, routine)
   let headerSelf = conceptSelfSymFromSlot(body)
   if headerSelf != SymId(0) and headerSelf notin result:
     result.add headerSelf
+
+proc conceptRequirementOwnTypevars*(routine: Cursor): seq[SymId] =
+  ## The generic parameters a requirement declares for itself, as in
+  ## `proc sample[G: HasNext](s: Self; g: var G)`.
+  result = @[]
+  var tv = asRoutine(routine).typevars
+  if tv.substructureKind == TypevarsU:
+    tv.loopInto:
+      if isTypevarLike(tv.symKind):
+        var name = tv
+        inc name
+        if name.isSymbolDef:
+          result.add name.symId
+      skip tv
+
+proc conceptRoutineUsesSelf*(body: Cursor; routine: Cursor): bool {.inline.} =
+  ## Does the requirement's signature mention `Self`? That is what ties a
+  ## requirement to the type being checked; one that does not says nothing
+  ## about it.
+  conceptSelfSymsInSignature(body, routine).len > 0
+
+proc conceptRoutineTypevars*(body: Cursor; routine: Cursor): seq[SymId] =
+  ## The typevars a requirement's signature names, minus the generic parameters
+  ## the requirement declares for itself: those are universally quantified and
+  ## are never inferred. What is left are the concept's container parameters and
+  ## an enclosing generic's.
+  var selfSyms: seq[SymId] = @[]
+  var open = initHashSet[SymId]()
+  scanSignature(body, routine, selfSyms, open)
+  for own in conceptRequirementOwnTypevars(routine):
+    open.excl own
+  result = @[]
+  for tv in open: result.add tv
+
+proc substituteTypevars*(dest: var TokenBuf; typ: Cursor; bindings: Table[SymId, Cursor]) =
+  ## Copies the type tree `typ` into `dest`, replacing every symbol that has a
+  ## binding by the bound type. Token-level, like `subs` in sem.nim, but with
+  ## no renaming: this is for probing, nothing here is declared.
+  var n = typ
+  case n.kind
+  of Symbol:
+    let arg = bindings.getOrDefault(n.symId)
+    if arg != default(Cursor):
+      dest.addSubtree arg
+    else:
+      dest.addSubtree n
+  of TagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        substituteTypevars(dest, n, bindings)
+        skip n
+      dest.addParRi(n.endInfo)
+  else:
+    dest.addSubtree n
 
 iterator visibleNamedSyms*(c: ptr SemContext; basename: StrId): SymId {.sideEffect.} =
   let ignoreStyle = IgnoreStyleFeature in c.features
@@ -107,10 +185,13 @@ iterator visibleNamedSyms*(c: ptr SemContext; basename: StrId): SymId {.sideEffe
         for defId in m[].iface.getOrDefault(k):
           yield defId
 
-iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId): SymId {.sideEffect.} =
-  ## All routines named `basename` that could satisfy a concept requirement:
-  ## the defining module's syms, every imported interface, and the visible
-  ## scope. Deduplicated across those sources.
+iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId;
+                                   typeRoot: SymId): SymId {.sideEffect.} =
+  ## All routines named `basename` that could satisfy a concept requirement,
+  ## mirroring what a call resolves against: the concept's declaring module,
+  ## the checked type's type-bound operations (the module that declares the
+  ## type), and what the checking module sees (every imported interface and
+  ## the visible scope). Deduplicated across those sources.
   var seen = initHashSet[SymId]()
   if c != nil:
     let ignoreStyle = IgnoreStyleFeature in c.features
@@ -120,6 +201,12 @@ iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basenam
         for cand in loadSyms(modSuffix, basename):
           if not seen.containsOrIncl(cand):
             yield cand
+      if typeRoot != SymId(0):
+        let typeModule = extractModule(pool.syms[typeRoot])
+        if typeModule != "" and typeModule != c.thisModuleSuffix:
+          for cand in loadSyms(typeModule, basename):
+            if not seen.containsOrIncl(cand):
+              yield cand
       for _, im in c.importedModules:
         for k in stylesOfIface(im.iface, basename, ignoreStyle):
           for defId in im.iface.getOrDefault(k):
@@ -129,14 +216,16 @@ iterator conceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basenam
       if not seen.containsOrIncl(cand):
         yield cand
 
-proc collectConceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId): seq[SymId] =
-  let (hit, cached) = tryCandidatesFromCache(c, conceptSym, basename)
+proc collectConceptRoutineCandidates*(c: ptr SemContext; conceptSym: SymId; basename: StrId;
+                                      a: Cursor): seq[SymId] =
+  let typeRoot = nominalRoot(a)
+  let (hit, cached) = tryCandidatesFromCache(c, conceptSym, basename, typeRoot)
   if hit:
     return cached
   result = default(seq[SymId])
-  for cand in conceptRoutineCandidates(c, conceptSym, basename):
+  for cand in conceptRoutineCandidates(c, conceptSym, basename, typeRoot):
     result.add cand
-  storeCandidates(c, conceptSym, basename, result)
+  storeCandidates(c, conceptSym, basename, typeRoot, result)
 
 proc routineHasNoSideEffect*(routine: Cursor): bool {.inline.} =
   let r = asRoutine(routine)
@@ -145,10 +234,14 @@ proc routineHasNoSideEffect*(routine: Cursor): bool {.inline.} =
 proc conceptRoutineKindsCompatible*(requirement, implementation: SymKind;
                                    implementationDecl: Cursor = default(Cursor)): bool {.inline.} =
   ## A `func` or `template` implementation may satisfy a `proc` requirement.
-  ## A `proc` with the `noSideEffect` pragma may satisfy a `func` requirement.
+  ## A `proc` with the `noSideEffect` pragma may satisfy a `func` requirement,
+  ## and so may a `template`: its expansion is effect-checked where it lands,
+  ## which for a `func` body is exactly the check the requirement asks for.
   if requirement == implementation:
     return true
   if requirement == ProcY and implementation in {FuncY, TemplateY}:
+    return true
+  if requirement == FuncY and implementation == TemplateY:
     return true
   if requirement == FuncY and implementation == ProcY:
     if cursorIsNil(implementationDecl):

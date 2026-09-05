@@ -42,7 +42,7 @@ proc needsTemp(n: Cursor): bool =
   # while-loop, so it cannot prove `result` is set on the normal exit of
   # the AtX branch. `result = false` here is the bool default anyway —
   # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
-  # removed) to see the NJ IR that trips the checker.
+  # removed) to see the Final IR that trips the checker.
   result = false
   case n.kind
   of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:
@@ -185,6 +185,15 @@ proc trRequires(c: var Context; dest: var TokenBuf; pragmas: Cursor) =
     if not cursorIsNil(req):
       let info = req.info
       emitRequires(c, dest, req, infoToStr(pragmas.info), info)
+
+proc isCoroutine(n: Cursor): bool =
+  ## Does this `(iterator …)` decl survive as a real routine? `.closure` and
+  ## `.passive` become state machines (`coro_transform`); everything else is
+  ## inlined away by `elimForLoops` before this pass. The test mirrors the one
+  ## `transformCoroutineDecl` makes.
+  let r = asRoutine(n)
+  result = r.kind == IteratorY and
+           (hasPragma(r.pragmas, ClosureP) or hasPragma(r.pragmas, PassiveP))
 
 proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.openScope()
@@ -729,9 +738,23 @@ proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # not constant
     genSetConstrRuntime(c, dest, n)
   of 1, 2, 4, 8:
-    # hopefully this is correct?
+    # A word-sized set IS its bit pattern, so the constant folds to one unsigned
+    # literal — SUFFIXED with the set's own width. Unsuffixed, the literal is
+    # polymorphic and everything downstream has to guess: `xelim`'s `declareTemp`
+    # asks `getType` for the type of the `if` expression it is hoisting, gets `u64`
+    # off a bare `2u`, and declares a `u64` temp for a `set[RoutineProp]` that is one
+    # byte wide. C narrows that on assignment without a word, so the C backend never
+    # saw it; nifasm types its registers and rejected the `(mov props.0 (u 8) <-
+    # x.16 (u 64))` it became — `derefs.trProcDecl`'s
+    # `if …: {IsNoSideEffect} else: {}`, which is what kept `nimony.nim` off the
+    # native bootstrap ladder. The suffix is how sem writes literals in
+    # `defaults.nim`, and how `hexer/defaultvalues` writes its zeros.
+    let width = bytes.len * 8
     bytes.setLen(8)
+    dest.addParLe(SufX, info)
     dest.addUIntLit(cast[ptr uint64](addr bytes[0])[], info)
+    dest.addStrLit("u" & $width, info)
+    dest.addParRi()
     skip n
   else:
     dest.addParLe(AconstrX, info)
@@ -1041,7 +1064,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     tr(c, dest, n)
   dest.addParRi()
   while scopes.len > 0:
-    n = scopes.pop(); skip n
+    n = scopes.pop(); skip n, SkipFull
 
 proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Lower `(a, b, ...) = rhs` (LHS is `tup`/`tupconstr`) into:
@@ -1065,7 +1088,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var lhsItems: seq[Cursor] = @[]
   while n.hasMore:
     lhsItems.add n
-    skip n
+    skip n, SkipExpr
   n = lhsStart; skip n # past LHS close
 
   dest.addParLe StmtsS, info
@@ -1164,7 +1187,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         of ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT,
             ConverterT, MethodT, MacroT, TemplateT, ObjectT,
             EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT,
-            PtrT, ArrayT, VarargsT, StaticT, TupleT, OnumT,
+            PtrT, ArrayT, VarargsT, StaticT, TupleT, ClosureTupleT, OnumT,
             AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT,
             ConceptT, DistinctT, ItertypeT, RangetypeT, UarrayT,
             AutoT, SymkindT, TypekindT, TypedescT, UntypedT,
@@ -1190,10 +1213,27 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         trLocal c, dest, n
       of ProcS, FuncS, MethodS, ConverterS:
         trProc c, dest, n
-      of MacroS, IteratorS, TemplateS, EmitS, BreakS, ContinueS,
+      of IteratorS:
+        # An INLINE iterator's decl is dead by the time desugar runs —
+        # `elimForLoops` spliced its body into each caller before this pass, and
+        # what is left reaches no back end — so lowering it would be wasted work,
+        # which is why iterators sat with the macros and templates below.
+        #
+        # A COROUTINE iterator is not that. `.closure` (and `.passive`) survive as
+        # real routines: lambdalifting and cps turn the body into a state machine
+        # and it goes all the way to `lengcgen`. Skipping it meant nothing ever
+        # lowered the constructs desugar owns, so a `set` literal in a closure
+        # iterator reached the back end as a live `(setconstr …)` and died there
+        # ("BUG: not eliminated"). The same held for every other form this pass is
+        # responsible for — set operations, `card`, `incl`/`excl`.
+        if isCoroutine(n):
+          trProc c, dest, n
+        else:
+          takeTree dest, n
+      of MacroS, TemplateS, EmitS, BreakS, ContinueS,
         ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
         ExportS, CommentS,
-        PragmasS:
+        PragmasS, LabS, JmpS:
         takeTree dest, n
       of TypeS:
         if isTopScope:
@@ -1277,7 +1317,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
 
 proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), hoisted: createTokenBuf(), bits: pass.bits)
+  var c = Context(counter: 0, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), hoisted: createTokenBuf(), bits: pass.bits)
   c.typeCache.openScope()
   # Process the root `(stmts` manually (mirroring trSons' copyInto) but
   # keep it OPEN until `pending` has been appended: an emitted close

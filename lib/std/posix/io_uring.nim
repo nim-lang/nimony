@@ -29,12 +29,106 @@ type
     TIMEOUT_ETIME_SUCCESS
   TimeoutFlags* = set[TimeoutFlag]
 
-  PollFlag* {.size: sizeof(uint16).} = enum
+  PollFlag* {.size: sizeof(uint32).} = enum
+    ## `IORING_POLL_*`. These do *not* travel in the SQE's event field: the
+    ## kernel reads them from `len`, which is a `__u32` — hence the size.
     POLL_ADD_MULTI
     POLL_UPDATE_EVENTS
     POLL_UPDATE_USER_DATA
     POLL_ADD_LEVEL
   PollFlags* = set[PollFlag]
+
+  PollEvent* {.size: sizeof(uint32).} = enum
+    ## A poll(2) event, which is what `OP_POLL_ADD` arms on and reports back.
+    ## Distinct from `PollFlag`: these are the `POLL*` bits every poll-style
+    ## interface uses, the other set is io_uring's own arming modes.
+    POLL_IN         ## POLLIN
+    POLL_PRI        ## POLLPRI
+    POLL_OUT        ## POLLOUT
+    POLL_ERR        ## POLLERR (reported only, never requested)
+    POLL_HUP        ## POLLHUP (reported only, never requested)
+    POLL_NVAL       ## POLLNVAL (reported only, never requested)
+    POLL_RDNORM     ## POLLRDNORM
+    POLL_RDBAND     ## POLLRDBAND
+    POLL_WRNORM     ## POLLWRNORM
+    POLL_WRBAND     ## POLLWRBAND
+    POLL_MSG        ## POLLMSG
+    POLL_RESERVED11 ## unused by the kernel; holds the bit positions in place
+    POLL_REMOVE     ## POLLREMOVE
+    POLL_RDHUP      ## POLLRDHUP
+  PollEvents* = set[PollEvent]
+
+  MsgFlag* {.size: sizeof(uint32).} = enum
+    ## Socket message flags, as passed to send(2)/recv(2) and their io_uring
+    ## equivalents. Stops at `MSG_WAITFORONE`: the kernel's remaining flags
+    ## (MSG_ZEROCOPY and friends) sit far up the word behind unnamed gaps.
+    MSG_OOB
+    MSG_PEEK
+    MSG_DONTROUTE
+    MSG_CTRUNC
+    MSG_PROXY
+    MSG_TRUNC
+    MSG_DONTWAIT
+    MSG_EOR
+    MSG_WAITALL
+    MSG_FIN
+    MSG_SYN
+    MSG_CONFIRM
+    MSG_RST
+    MSG_ERRQUEUE
+    MSG_NOSIGNAL
+    MSG_MORE
+    MSG_WAITFORONE
+  MsgFlags* = set[MsgFlag]
+
+  SyncFileRangeFlag* {.size: sizeof(uint32).} = enum
+    SYNC_FILE_RANGE_WAIT_BEFORE
+    SYNC_FILE_RANGE_WRITE
+    SYNC_FILE_RANGE_WAIT_AFTER
+  SyncFileRangeFlags* = set[SyncFileRangeFlag]
+
+  SpliceFlag* {.size: sizeof(uint32).} = enum
+    SPLICE_F_MOVE
+    SPLICE_F_NONBLOCK
+    SPLICE_F_MORE
+    SPLICE_F_GIFT
+  SpliceFlags* = set[SpliceFlag]
+
+  RenameFlag* {.size: sizeof(uint32).} = enum
+    RENAME_NOREPLACE
+    RENAME_EXCHANGE
+    RENAME_WHITEOUT
+  RenameFlags* = set[RenameFlag]
+
+  StatxField* {.size: sizeof(uint32).} = enum
+    ## `STATX_*`: which fields `statx` should fill in. `STATX_BASIC_STATS` and
+    ## `STATX_ALL` below name the usual combinations.
+    STATX_TYPE
+    STATX_MODE
+    STATX_NLINK
+    STATX_UID
+    STATX_GID
+    STATX_ATIME
+    STATX_MTIME
+    STATX_CTIME
+    STATX_INO
+    STATX_SIZE
+    STATX_BLOCKS
+    STATX_BTIME
+    STATX_MNT_ID
+    STATX_DIOALIGN
+  StatxFields* = set[StatxField]
+
+  XattrFlag* {.size: sizeof(uint32).} = enum
+    XATTR_CREATE
+    XATTR_REPLACE
+  XattrFlags* = set[XattrFlag]
+
+  ShutdownHow* {.size: sizeof(uint32).} = enum
+    ## `how` for shutdown(2): not a flag set, a choice of one.
+    SHUT_RD
+    SHUT_WR
+    SHUT_RDWR
 
   AsyncCancelFlag* {.size: sizeof(uint32).} = enum
     ASYNC_CANCEL_ALL
@@ -62,21 +156,24 @@ type
   InnerSqeFlags* {.union.} = object
     rwFlags*: KernelRwfT
     fsyncFlags*: FsyncFlags
-    pollEvents*: PollFlags
-    poll32Events*: uint32
-    syncRangeFlags*: uint32
-    msgFlags*: uint32
+    poll32Events*: PollEvents
+      ## The kernel's `poll32_events`. Its `poll_events` alias is the low half
+      ## of these same bytes, so there is nothing separate to declare.
+    syncRangeFlags*: SyncFileRangeFlags
+    msgFlags*: MsgFlags
     timeoutFlags*: TimeoutFlags
     acceptFlags*: uint32
-    cancelFlags*: uint32
+    cancelFlags*: AsyncCancelFlags
     openFlags*: uint32
     statxFlags*: uint32
     fadviseAdvice*: uint32
     spliceFlags*: uint32
-    renameFlags*: uint32
+      ## Untyped on purpose: `SpliceFlags` covers the low four bits, but
+      ## `SPLICE_F_FD_IN_FIXED` is io_uring's own bit high up the same word.
+    renameFlags*: RenameFlags
     unlinkFlags*: uint32
     hardlinkFlags*: uint32
-    xattrFlags*: uint32
+    xattrFlags*: XattrFlags
     msgRingFlags*: MsgRingOpFlags
     uringCmdFlags*: uint32
 
@@ -95,7 +192,7 @@ type
 
   InnerSqeCmd* {.union.} = object
     addr3* {.importc: "addr3".}: nil pointer
-    pad2* {.importc: "__pad2".}: array[1, uint64]
+    pad2* {.importc: "__pad2".}: array[2, uint64]
     cmd* {.importc: "cmd".}: uint8
   
   Op* {.size: sizeof(uint8).} = enum
@@ -390,7 +487,7 @@ type
   SyncCancelReg* = object
     `addr`*: uint64
     fd*: int32
-    flags*: uint32
+    flags*: AsyncCancelFlags
     timeout*: Timespec
     pad*: array[4, uint64]
   
@@ -403,9 +500,13 @@ type
     namelen*: uint32
     controllen*: uint32
     payloadlen*: uint32
-    flags*: uint32
+    flags*: MsgFlags
 
 const
+  STATX_BASIC_STATS* = {STATX_TYPE, STATX_MODE, STATX_NLINK, STATX_UID,
+                        STATX_GID, STATX_ATIME, STATX_MTIME, STATX_CTIME,
+                        STATX_INO, STATX_SIZE, STATX_BLOCKS}
+  STATX_ALL* = STATX_BASIC_STATS + {STATX_BTIME}
   FILE_INDEX_ALLOC* = not 0u
   URING_CMD_FIXED* = not 0u
   TIMEOUT_CLOCK_MASK* = {TIMEOUT_BOOTTIME, TIMEOUT_REALTIME}
@@ -425,6 +526,18 @@ const
   OP_SUPPORTED* = 1u shl 0
 
 proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
+
+# There is no errno here. A Linux syscall reports failure by *returning*
+# `-errno`, which is the whole convention this file talks to the kernel in;
+# `posix.pcall` normalizes the libc wrapper's `-1`-plus-a-global back to it, so
+# the error is in the result and nowhere else. (Reading a global was not merely
+# uglier: `posix.errno` under the default `-d:nimNativeIo` is a variable that
+# only posix.nim's own freestanding wrappers maintain, while `syscall`/`mmap`/
+# `munmap` here go through libc — so every failure reported `0`, which maps to
+# `Success`, `raiseOSError` raised nothing, `setup`'s `-1` fd travelled on into
+# `mmap`, and `newRing` wrote through the `MAP_FAILED` it got back. The ioring
+# init that is supposed to fall back to epoll segfaulted instead.)
+
 const
   # Arch-independent since their introduction in Linux 5.1 (io_uring was added
   # after the syscall tables were unified).
@@ -433,40 +546,47 @@ const
   SYS_io_uring_register = cint(427)
 
 proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} =
-  result = syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
+  result = cint pcall(syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0))
   if result < 0:
-    raiseOSError(osLastError(), "io_uring setup syscall failed")
+    raiseOSError(OSErrorCode(-result), "io_uring setup syscall failed")
 
 proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
-            flags: cint, sig: nil pointer, sz: cint): cint {.raises, tags: [].} =
+            flags: EnterFlags, sig: nil pointer, sz: cint): cint {.raises, tags: [].} =
   ## `sig` points to a kernel sigset (8 bytes on Linux) or is nil.
-  result = syscall(SYS_io_uring_enter, fd, toSubmit, minComplete, flags, sig, sz)
+  var f = flags
+  result = cint pcall(syscall(SYS_io_uring_enter, fd, toSubmit, minComplete,
+                              cast[ptr cint](f.addr)[], sig, sz))
   if result < 0:
-    raiseOSError(osLastError(), "io_uring enter syscall failed")
+    raiseOSError(OSErrorCode(-result), "io_uring enter syscall failed")
 
-proc register*(fd: cint, op: cint, arg: nil pointer, nr_args: cint): cint {.raises, tags: [].} =
-  result = syscall(SYS_io_uring_register, fd, op, arg, nr_args, 0, 0)
+proc register*(fd: cint, op: RegisterOp, arg: nil pointer, nr_args: cint): cint {.raises, tags: [].} =
+  result = cint pcall(syscall(SYS_io_uring_register, fd, cint(op), arg,
+                              nr_args, 0, 0))
   if result < 0:
-    raiseOSError(osLastError(), "io_uring register syscall failed")
+    raiseOSError(OSErrorCode(-result), "io_uring register syscall failed")
 
 # ============= QUEUE ==================
 
 proc `+`(p: pointer; i: uint32): pointer =
   result = cast[pointer](cast[uint](p) + i.uint)
 
-proc uringMap(offset: Off; fd: FileHandle; begin: uint32;
-               count: uint32; typSize: int): pointer {.raises, tags: [].} =
-  let size = int(begin + count * typSize.uint32)
+proc mapBytes(begin: uint32; count: uint32; typSize: int): int {.inline.} =
+  ## The byte length of a ring mapping. The kernel puts the ring's head, tail,
+  ## mask and flags words in front of the array it hands out, so the mapping is
+  ## that leading offset plus the array itself.
+  int(begin) + int(count) * typSize
+
+proc uringMap(offset: Off; fd: FileHandle; size: int): pointer {.raises, tags: [].} =
   result = mmap(nil, csize_t(size), PROT_READ or PROT_WRITE, MAP_SHARED or MAP_POPULATE,
                 fd.cint, offset)
   if mmapFailed(result):
-    raiseOSError(osLastError(), "io_uring uringMap failed")
+    raiseOSError(OSErrorCode(mmapErrno(result)), "io_uring uringMap failed")
 
 proc uringUnmap(p: pointer; size: int) {.raises, tags: [].} =
   ## interface to tear down some memory (probably mmap'd)
-  let code = munmap(p, csize_t(size))
+  let code = pcall(munmap(p, csize_t(size)))
   if code < 0:
-    raiseOSError(osLastError(), "io_uring uringUnmap failed")
+    raiseOSError(OSErrorCode(-code), "io_uring uringUnmap failed")
 
 type
   Ring = object of RootObj
@@ -476,12 +596,18 @@ type
     entries*: ptr uint32
     size*: uint32
     ring*: pointer
+    mapLen*: int
+      ## Byte length of `ring`'s mapping, kept so `teardown` unmaps exactly
+      ## what was mapped rather than recomputing it — the two had drifted, and
+      ## the shortfall was a page per ring that munmap left behind without
+      ## complaining, because a partial unmap is legal.
 
   SqRing* = object of Ring
     flags*: ptr SqringFlags
     dropped*: pointer
     array*: pointer
     sqes*: ptr Sqe
+    sqesLen*: int        ## byte length of the separate `sqes` mapping
     sqeTail*: uint32
     sqeHead*: uint32
 
@@ -501,9 +627,10 @@ const
 
 proc newRing(fd: FileHandle; offset: ptr CqringOffsets; size: uint32): CqRing {.raises, tags: [].} =
   ## mmap a Cq ring from the given file-descriptor, using the size spec'd
-  let ring = OFF_CQ_RING.uringMap(fd, offset.cqes, size, sizeof(Cqe))
+  let mapLen = mapBytes(offset.cqes, size, sizeof(Cqe))
+  let ring = OFF_CQ_RING.uringMap(fd, mapLen)
   result = CqRing(
-    size: size, ring: ring,
+    size: size, ring: ring, mapLen: mapLen,
     cqes: ring + offset.cqes,
     overflow: cast[ptr int](ring + offset.overflow),
     flags: cast[ptr CqringFlags](ring + offset.flags),
@@ -516,45 +643,59 @@ proc newRing(fd: FileHandle; offset: ptr CqringOffsets; size: uint32): CqRing {.
 
 proc newRing(fd: FileHandle; offset: ptr SqringOffsets; size: uint32): SqRing {.raises, tags: [].} =
   ## mmap a Sq ring from the given file-descriptor, using the size spec'd
-  let ring = OFF_SQ_RING.uringMap(fd, offset.array, size, sizeof(pointer))
+  # The SQ ring's array holds `__u32` indices into the SQE array, not pointers:
+  # sizing it for pointers mapped twice what the kernel asks for.
+  let mapLen = mapBytes(offset.array, size, sizeof(uint32))
+  let sqesLen = mapBytes(0, size, sizeof(Sqe))
+  let ring = OFF_SQ_RING.uringMap(fd, mapLen)
   result = SqRing(
-    size: size, ring: ring,
+    size: size, ring: ring, mapLen: mapLen, sqesLen: sqesLen,
     dropped: ring + offset.dropped,
     array: ring + offset.array,
     flags: cast[ptr SqringFlags](ring + offset.flags),
-    sqes: cast[ptr Sqe](OFF_SQES.uringMap(fd, 0, size, sizeof(Sqe))),
+    sqes: cast[ptr Sqe](OFF_SQES.uringMap(fd, sqesLen)),
     head: cast[ptr uint32](ring + offset.head),
     tail: cast[ptr uint32](ring + offset.tail),
     mask: cast[ptr uint32](ring + offset.ringMask),
     entries: cast[ptr uint32](ring + offset.ringEntries))
-  # Directly map SQ slots to SQEs
+  # Directly map SQ slots to SQEs. `0 ..< size`, not `0 .. size`: the array has
+  # exactly `size` entries, and the inclusive form wrote one past the last —
+  # out of bounds of what is now mapped, and always out of bounds of the ring.
   var arr = cast[ptr UncheckedArray[uint32]](result.array)
-  for i in 0..size.int:
+  for i in 0..<size.int:
     arr[i] = i.uint32
   # if offset.ringEntries <= 0:
   #   raise ERROR_io_uring_not_initializes
 
-# XXX: is it ok that =destroy can raise error?
-proc `=destroy`(queue: Queue) {.raises, tags: [].} =
+proc teardown*(queue: var Queue) {.tags: [].} =
+  try:
+    if queue.fd != 0:
+      discard close(queue.fd)
+    if queue.cq.ring != nil:
+      uringUnmap(queue.cq.ring, queue.cq.mapLen)
+    if queue.sq.ring != nil:
+      uringUnmap(queue.sq.ring, queue.sq.mapLen)
+    if queue.sq.sqes != nil:
+      uringUnmap(queue.sq.sqes, queue.sq.sqesLen)
+    if queue.params != nil:
+      # deallocShared(queue.params)
+      dealloc(queue.params)
+  except ErrorCode as e:
+    stderr.writeLine("io_uring: teardown failed: " & $e)
+  `=wasMoved`(queue)
+
+proc `=destroy`(queue: var Queue) {.tags: [].} =
   ## tear down the queue
-  if queue.fd != 0:
-    discard close(queue.fd)
-  if queue.cq.ring != nil:
-    uringUnmap(queue.cq.ring, queue.params.cqEntries.int * sizeof(Cqe))
-  if queue.sq.ring != nil:
-    uringUnmap(queue.sq.ring, queue.params.sqEntries.int * sizeof(pointer))
-  if queue.sq.sqes != nil:
-    uringUnmap(queue.sq.sqes, queue.params.sqEntries.int * sizeof(Sqe))
-  if queue.params != nil:
-    # deallocShared(queue.params)
-    dealloc(queue.params)
+  teardown(queue)
 
-proc `=sink`(dest: var Queue, source: Queue) =
-  # avoid unmapping uring object after moving
-  copyMem(dest.addr, source.addr, sizeof Queue)
-
-proc `=copy`(dest: var Queue; source: Queue) {.error: "Queue can has only one owner".}
-
+proc `=wasMoved`(queue: var Queue) {.tags: [].} =
+  ## A Queue owns the fd, parameters, and mapped rings. Clear every owner
+  ## field after moving it so the temporary value cannot tear down the queue.
+  queue.params = nil
+  queue.fd = 0
+  queue.cq.ring = nil
+  queue.sq.ring = nil
+  queue.sq.sqes = nil
 proc isPowerOfTwo(x: int): bool = (x != 0) and ((x and (x - 1)) == 0)
 
 proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;
@@ -563,7 +704,11 @@ proc newQueue*(sqEntries: int;  flags = defaultFlags; sqThreadCpu = 0;
   # if not sqEntries.isPowerOfTwo:
   #   raise ERROR_entries_must_be_power_of_two
   # var params = createShared(Params)
-  var params = cast[ptr Params](alloc(sizeof(Params)))
+  # `alloc0`, not `alloc`: `io_uring_setup` rejects a `Params` whose `resv`
+  # words are non-zero with EINVAL, so an uninitialised one fails or succeeds
+  # according to what the allocator last held there. That is why this crashed
+  # in a program with a warm heap and worked in a small one.
+  var params = cast[ptr Params](alloc0(sizeof(Params)))
   params.flags = flags
   params.sqThreadCpu = sqThreadCpu.uint32
   params.sqThreadIdle = sqThreadIdle.uint32
@@ -665,9 +810,44 @@ proc submit*(queue: var Queue; waitNr: uint = 0): int {.raises, tags: [], discar
   if queue.sqNeedsEnter(submited, flags) or cqNeedsEnter:
     if cqNeedsEnter:
       flags.incl(ENTER_GETEVENTS)
-    result = enter(queue.fd, submited.cint, waitNr.cint, cast[ptr cint](flags.addr)[], nil, 0.cint)
+    result = enter(queue.fd, submited.cint, waitNr.cint, flags, nil, 0.cint)
   else:
     result = submited
+
+proc hasExtArg*(queue: var Queue): bool {.inline.} =
+  ## Can this ring's `io_uring_enter` carry a timeout? Linux 5.11 and up.
+  ## Without it there is no way to bound a wait from inside the ring, and a
+  ## caller that must not block forever has to stay in the non-blocking path.
+  FEAT_EXT_ARG in queue.params.features
+
+proc submitAndWait*(queue: var Queue; waitNr: uint; ts: nil ptr Timespec): int
+    {.raises, tags: [], discardable.} =
+  ## Submit, then WAIT in the kernel for `waitNr` completions, giving up after
+  ## `ts` (a RELATIVE duration; `nil` waits indefinitely). One syscall for both
+  ## halves — which is the point: `submit` never blocks, so a caller that wants
+  ## to sleep until something happens otherwise sleeps somewhere else, and a
+  ## completion arriving a microsecond into that nap waits out the rest of it.
+  ##
+  ## Needs `FEAT_EXT_ARG`; ask `hasExtArg` first.
+  ##
+  ## A timeout is not an error here: `ETIME` comes back as `0`, and so do
+  ## `EINTR`, `EAGAIN` and `EBUSY`. In every one of those cases the caller's
+  ## next move is the same — read whatever CQEs are there — so a raise would
+  ## only be something to catch and discard.
+  let submited = queue.sqFlush
+  var flags: EnterFlags = {ENTER_GETEVENTS, ENTER_EXT_ARG}
+  discard queue.sqNeedsEnter(submited, flags)
+  var arg = GeteventsArg(sigmask: 0'u64, sigmaskSz: 0'u32, pad: 0'u32,
+                         ts: cast[uint64](ts))
+  let r = pcall(syscall(SYS_io_uring_enter, queue.fd, submited.cint, waitNr.cint,
+                        cast[ptr cint](flags.addr)[], arg.addr,
+                        cint(sizeof(GeteventsArg))))
+  if r < 0:
+    let e = cint(-r)
+    if e == ETIME or e == EINTR or e == EAGAIN or e == EBUSY:
+      return 0
+    raiseOSError(OSErrorCode(e), "io_uring enter (submit and wait) failed")
+  result = int(r)
 
 proc sqReady*(queue: var Queue): uint32 =
   ## Returns the number of flushed and unflushed SQEs pending in the submission queue.
@@ -689,11 +869,10 @@ proc cqReady*(queue: var Queue): uint32 =
 proc waitReady(queue: var Queue; waitNr: uint = 0): uint32 {.raises, tags: [], inline.} =
   result = queue.cqReady
   if result == 0 and (queue.cqNeedsFlush or waitNr > 0):
-    var flags = {ENTER_GETEVENTS}
-    discard enter(queue.fd, 0.cint, waitNr.cint, cast[ptr cint](flags.addr)[], nil, 0.cint)
+    discard enter(queue.fd, 0.cint, waitNr.cint, {ENTER_GETEVENTS}, nil, 0.cint)
     result = queue.cqReady
 
-proc copyCqesToSeq(queue: var Queue; cqes: seq[Cqe]; ready: uint32) {.inline.} =
+proc copyCqesToSeq(queue: var Queue; cqes: openArray[Cqe]; ready: uint32) {.inline.} =
   var
     head = queue.cq.head[]
     tail = head + ready
@@ -728,12 +907,22 @@ proc copyCqes*(queue: var Queue; waitNr: uint = 0): seq[Cqe] {.raises, tags: [].
   newSeq[Cqe](result, ready.int)
   copyCqesToSeq(queue, result, ready)
 
-proc copyCqes*(queue: var Queue; cqes: seq[Cqe]; waitNr: uint = 0): int {.raises, tags: [].} =
+proc copyCqes*(queue: var Queue; cqes: openArray[Cqe]; waitNr: uint = 0): int {.raises, tags: [].} =
   ## same as copyCqes(queue, waitNr) but copy cqes to your array
   ## returns copied cqe count
+  ##
+  ## Copies at most `cqes.len`; the rest stay in the ring for the next call,
+  ## which is what `io_uring_peek_batch_cqe(ring, cqes, count)` does with its
+  ## `count`. Without the clamp this writes `cqReady` entries into the caller's
+  ## array whatever its size — and `copyCqesToSeq` does it with `copyMem`, so a
+  ## fixed-size destination is a straight overflow the moment more completions
+  ## are ready than it can hold. That needs no unusual workload, just enough
+  ## concurrent operations: the ring's own backend passes `array[128, Cqe]`.
   var ready = queue.waitReady(waitNr)
   if ready == 0:
-    return ready.int
+    return 0
+  if ready > uint32(cqes.len):
+    ready = uint32(cqes.len)
   copyCqesToSeq(queue, cqes, ready)
   return ready.int
 
@@ -748,7 +937,7 @@ proc registerFiles*(q: var Queue; fds: seq[FileHandle]): int {.raises, tags: [],
   ## Registering file descriptors will wait for the ring to idle.
   ## Files are automatically unregistered by the kernel when the ring is torn down.
   ## An application need unregister only if it wants to register a new array of file descriptors.
-  return register(q.fd.cint, REGISTER_FILES.cint, fds[0].addr, fds.len.cint)
+  return register(q.fd.cint, REGISTER_FILES, fds[0].addr, fds.len.cint)
 
 proc registerFilesUpdate*(q: var Queue; offset: Off; fds: seq[FileHandle]): int {.raises, tags: [], discardable.} =
   ## Updates registered file descriptors.
@@ -763,28 +952,28 @@ proc registerFilesUpdate*(q: var Queue; offset: Off; fds: seq[FileHandle]): int 
     offset: offset.uint32,
     data: cast[uint64](fds[0].addr)
   )
-  return register(q.fd.cint, REGISTER_FILES_UPDATE.cint, update.addr, fds.len.cint)
+  return register(q.fd.cint, REGISTER_FILES_UPDATE, update.addr, fds.len.cint)
 
 proc unregisterFiles*(q: var Queue;): int {.raises, tags: [], discardable.} =
   ## Unregisters all registered file descriptors previously associated with the ring.
-  return register(q.fd.cint, UNREGISTER_FILES.cint, nil, 0)
+  return register(q.fd.cint, UNREGISTER_FILES, nil, 0)
 
 proc registerEventFd*(q: var Queue; fd: FileHandle): int {.raises, tags: [], discardable.} =
   ## Registers the file descriptor for an eventfd that will be notified of completion events on
   ##  an io_uring instance.
   ## Only a single a eventfd can be registered at any given point in time.
-  return register(q.fd.cint, REGISTER_EVENTFD.cint, fd.addr, 1)
+  return register(q.fd.cint, REGISTER_EVENTFD, fd.addr, 1)
 
 proc registerEventFdAsync*(q: var Queue; fd: FileHandle): int {.raises, tags: [], discardable.} =
   ## Registers the file descriptor for an eventfd that will be notified of completion events on
   ## an io_uring instance. Notifications are only posted for events that complete in an async manner.
   ## This means that events that complete inline while being submitted do not trigger a notification event.
   ## Only a single eventfd can be registered at any given point in time.
-  return register(q.fd.cint, REGISTER_EVENTFD_ASYNC.cint, fd.addr, 1)
+  return register(q.fd.cint, REGISTER_EVENTFD_ASYNC, fd.addr, 1)
 
 proc unregisterEventFd*(q: var Queue;): int {.raises, tags: [], discardable.} =
   ## Unregister the registered eventfd file descriptor.
-  return register(q.fd.cint, UNREGISTER_EVENTFD.cint, nil, 0)
+  return register(q.fd.cint, UNREGISTER_EVENTFD, nil, 0)
 
 proc registerBuffers*(q: var Queue; buffers: seq[IOVec]): int {.raises, tags: [], discardable.} =
   ## Registers an array of buffers for use with `read_fixed` and `write_fixed`.
@@ -793,11 +982,11 @@ proc registerBuffers*(q: var Queue; buffers: seq[IOVec]): int {.raises, tags: []
   ##   User buffers point to file-backed memory.
   ##   error occured then you try to pass pointer allocated on stack
   ##   use alloc or alloc0
-  return register(q.fd.cint, REGISTER_BUFFERS.cint, buffers[0].addr, buffers.len.cint)
+  return register(q.fd.cint, REGISTER_BUFFERS, buffers[0].addr, buffers.len.cint)
 
 proc unregisterBuffers*(q: var Queue;): int {.raises, tags: [], discardable.} =
   ## Unregister the registered buffers.
-  return register(q.fd.cint, UNREGISTER_BUFFERS.cint, nil, 0)
+  return register(q.fd.cint, UNREGISTER_BUFFERS, nil, 0)
 
 # ============= OPS ==================
 
@@ -819,7 +1008,7 @@ proc nop*(sqe: ptr Sqe): ptr Sqe =
 
 
 proc prepRw[
-  FD: FileHandle | SocketHandle,
+  FD: FileHandle | SocketHandle | int,
   ADDR: pointer | SomeNumber,
   OFF: pointer | SomeNumber,
   LEN: SomeNumber
@@ -840,9 +1029,14 @@ proc fsync*(sqe: ptr Sqe; fd: FileHandle; flags: FsyncFlags = {}): ptr Sqe =
 proc fallocate*(sqe: ptr Sqe; fd: FileHandle; mode: FileMode; offset: Off; len: int): ptr Sqe =
   sqe.prepRw(OP_FALLOCATE, fd, len, mode.int, offset)
 
-proc statx*(sqe: ptr Sqe; fd: FileHandle; path: var string; flags: uint32; mask: uint32; buf: ptr Stat): ptr Sqe =
+proc statx*(sqe: ptr Sqe; fd: FileHandle; path: var string; flags: uint32;
+            mask: StatxFields; buf: ptr Stat): ptr Sqe =
+  ## `flags` stays a raw `AT_*` word: those bits start at `AT_SYMLINK_NOFOLLOW`
+  ## (0x100) with nothing below them, so they do not form a set of enum.
+  var m = mask
   sqe.opFlags.statxFlags = flags
-  sqe.prepRw(OP_STATX, fd, cast[pointer](path.toCString), mask, cast[pointer](buf))
+  sqe.prepRw(OP_STATX, fd, cast[pointer](path.toCString),
+             cast[ptr uint32](m.addr)[], cast[pointer](buf))
 
 proc read*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int = 0): ptr Sqe =
   sqe.prepRw(OP_READ, fd, buffer, len, offset)
@@ -890,60 +1084,77 @@ proc connect*(sqe: ptr Sqe; sock: SocketHandle, `addr`: ptr SockAddr, addrLen: S
 proc epoll_ctl*(sqe: ptr Sqe; epfd: FileHandle; fd: FileHandle; op: uint32; ev: ptr EpollEvent): ptr Sqe =
   sqe.prepRw(OP_EPOLL_CTL, epfd, cast[pointer](ev), op, fd)
 
-# XXX: needs std/endians
+proc toPollEvents*(mask: uint32): PollEvents {.inline.} =
+  ## Reinterpret a raw poll(2) mask — such as the `res` an `OP_POLL_ADD`
+  ## completion reports — as a set. Bits above `POLL_RDHUP` are dropped: the
+  ## kernel does not set them for a poll, and keeping them would leave the set
+  ## holding values that are not `PollEvent`s.
+  var m = mask and ((1'u32 shl (ord(POLL_RDHUP) + 1)) - 1)
+  result = cast[ptr PollEvents](m.addr)[]
 
-# proc poll_add*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
-#   littleEndian32(addr result.opFlags.poll32Events, addr pollMask)
-#   sqe.prepRw(OP_POLL_ADD, fd, nil, 1, 0)
-
-# proc poll_multi*(sqe: ptr Sqe; fd: FileHandle; pollMask: uint32): ptr Sqe =
-#   var flags = PollFlags({POLL_ADD_MULTI})
-#   sqe.len = cast[ptr int](flags.addr)[]
-#   sqe.poll_add(fd, pollMask)
-
-# proc poll_remove*(sqe: ptr Sqe; targetUserData: UserData): ptr Sqe =
-#   sqe.prepRw(OP_POLL_REMOVE, -1, target_user_data, 0, 0)
-
-# proc poll_update*(sqe: ptr Sqe; oldUserData: UserData; newUserData: UserData; pollMask: uint32, flags: uint32): ptr Sqe =
-#   littleEndian32(addr result.opFlags.poll32Events, addr pollMask)
-#   sqe.prepRw(OP_POLL_REMOVE, -1, oldUserData, int flags, cast[int](newUserData))
+proc poll_add*(sqe: ptr Sqe; fd: FileHandle; events: PollEvents): ptr Sqe =
+  ## Single-shot `OP_POLL_ADD`: completes once with the fired poll events, then
+  ## disarms until re-armed. Matches liburing's io_uring_prep_poll_add, which
+  ## stores the mask in the poll32_events field.
+  sqe.opFlags.poll32Events = events
+  sqe.prepRw(OP_POLL_ADD, fd, cast[pointer](nil), 0, 0)
 
 
-proc recv*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: cint = 0): ptr Sqe =
-  sqe.opFlags.msgFlags = flags.uint32
+proc poll_multi*(sqe: ptr Sqe; fd: FileHandle; events: PollEvents): ptr Sqe =
+  ## Multishot `OP_POLL_ADD`: stays armed and completes on every readiness edge.
+  var flags = PollFlags({POLL_ADD_MULTI})
+  result = sqe.poll_add(fd, events)
+  # After `poll_add`, not before: it goes through `prepRw`, which writes
+  # `len = 0` — and `len` is exactly where the multishot flag lives, so setting
+  # it first left the SQE a plain one-shot poll.
+  result.len = cast[ptr int32](flags.addr)[]
+
+proc poll_remove*[UserData: SomeNumber | pointer](sqe: ptr Sqe; target_user_data: UserData): ptr Sqe =
+  sqe.prepRw(OP_POLL_REMOVE, -1, target_user_data, 0, 0)
+
+proc poll_update*[UserData: SomeNumber | pointer](sqe: ptr Sqe; oldUserData: UserData; newUserData: UserData; events: PollEvents, flags: PollFlags): ptr Sqe =
+  ## `flags` says *what* to update (`POLL_UPDATE_EVENTS` / `POLL_UPDATE_USER_DATA`);
+  ## it travels in `len`, which is where the kernel reads the `IORING_POLL_*` bits.
+  var f = flags
+  sqe.opFlags.poll32Events = events
+  sqe.prepRw(OP_POLL_REMOVE, -1, oldUserData, cast[ptr int32](f.addr)[], cast[int](newUserData))
+
+
+proc recv*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: MsgFlags = {}): ptr Sqe =
+  sqe.opFlags.msgFlags = flags
   sqe.prepRw(OP_RECV, sock, buffer, len, 0)
 
-proc recv_multishot*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: cint): ptr Sqe =
+proc recv_multishot*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: MsgFlags): ptr Sqe =
   sqe.ioprio.incl(RECV_MULTISHOT)
   sqe.recv(sock, buffer, len, flags)
 
-proc send*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: cint = 0): ptr Sqe =
-  sqe.opFlags.msgFlags = flags.uint32
+proc send*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: MsgFlags = {}): ptr Sqe =
+  sqe.opFlags.msgFlags = flags
   sqe.prepRw(OP_SEND, sock, buffer, len, 0)
 
-proc send*(sqe: ptr Sqe; sock: SocketHandle; str: var string; flags: cint = 0): ptr Sqe =
-  sqe.send(sock, cast[pointer](str.toCString), str.len, 0)
+proc send*(sqe: ptr Sqe; sock: SocketHandle; str: var string; flags: MsgFlags = {}): ptr Sqe =
+  sqe.send(sock, cast[pointer](str.toCString), str.len, flags)
 
-proc send_zc*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: uint32; zc_flags: uint; buf_index: uint): ptr Sqe =
+proc send_zc*(sqe: ptr Sqe; sock: SocketHandle; buffer: pointer; len: int; flags: MsgFlags; zcFlags: IoprioFlags; buf_index: uint): ptr Sqe =
   sqe.opFlags.msgFlags = flags
-  sqe.ioprio = cast[ptr IoprioFlags](zc_flags.addr)[]
+  sqe.ioprio = zcFlags
   sqe.prepRw(OP_SEND_ZC, sock, buffer, len, 0)
 
 
-proc recvmsg*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: cint): ptr Sqe =
-  sqe.opFlags.msgFlags = flags.uint32
+proc recvmsg*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: MsgFlags = {}): ptr Sqe =
+  sqe.opFlags.msgFlags = flags
   sqe.prepRw(OP_RECVMSG, sock, cast[pointer](msghdr), 1, 0)
 
-proc recvmsg_multishot*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: cint): ptr Sqe =
+proc recvmsg_multishot*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: MsgFlags): ptr Sqe =
   sqe.ioprio.incl(RECV_MULTISHOT)
   sqe.recvmsg(sock, msghdr, flags)
 
-proc sendmsg*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: cint): ptr Sqe =
-  sqe.opFlags.msgFlags = flags.uint32
+proc sendmsg*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: MsgFlags = {}): ptr Sqe =
+  sqe.opFlags.msgFlags = flags
   sqe.prepRw(OP_SENDMSG, sock, cast[pointer](msghdr), 1, 0)
 
-proc sendmsg_zc*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: cint): ptr Sqe =
-  sqe.opFlags.msgFlags = flags.uint32
+proc sendmsg_zc*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: MsgFlags = {}): ptr Sqe =
+  sqe.opFlags.msgFlags = flags
   sqe.prepRw(OP_SENDMSG_ZC, sock, cast[pointer](msghdr), 1, 0)
 
 
@@ -956,7 +1167,7 @@ proc close*[T: FileHandle | SocketHandle](sqe: ptr Sqe; fd: T): ptr Sqe =
   sqe.fd = cast[int32](fd)
   return sqe
 
-proc renameat*(sqe: ptr Sqe; oldDirFd: FileHandle; oldPath: var string; newDirFd: FileHandle; newPath: var string; flags: uint32): ptr Sqe =
+proc renameat*(sqe: ptr Sqe; oldDirFd: FileHandle; oldPath: var string; newDirFd: FileHandle; newPath: var string; flags: RenameFlags = {}): ptr Sqe =
   sqe.opFlags.renameFlags = flags
   sqe.prepRw(OP_RENAMEAT, oldDirFd, cast[pointer](oldPath.toCString), newDirFd.int, cast[int](newPath.toCString))
 
@@ -988,12 +1199,20 @@ proc link_timeout*(sqe: ptr Sqe; ts: Timespec; flags: TimeoutFlags): ptr Sqe =
   sqe.prepRw(OP_LINK_TIMEOUT, -1.cint, cast[pointer](ts.addr), 1, 0)
 
 
-proc cancel*[T: SomeNumber | pointer](sqe: ptr Sqe; cancelUserData: T; flags: uint32): ptr Sqe =
+proc cancel*[T: SomeNumber | pointer](sqe: ptr Sqe; cancelUserData: T; flags: AsyncCancelFlags = {}): ptr Sqe =
   sqe.opFlags.cancelFlags = flags
   sqe.prepRw(OP_ASYNC_CANCEL, -1.cint, cancelUserData, 0, 0)
 
-proc shutdown*(sqe: ptr Sqe; sockfd: FileHandle; how: uint32): ptr Sqe =
-  sqe.prepRw(OP_SHUTDOWN, sockfd, 0, how.int, 0)
+proc cancelFd*(sqe: ptr Sqe; fd: FileHandle): ptr Sqe =
+  ## Cancel every still-in-flight op submitted against `fd` (IORING_ASYNC_CANCEL_FD),
+  ## as opposed to `cancel`, which matches a single op by its user_data. Used
+  ## when a fd is being closed so the kernel does not later complete into a
+  ## slot index that the arena has since freed and reused for something else.
+  sqe.opFlags.cancelFlags = {ASYNC_CANCEL_FD}
+  sqe.prepRw(OP_ASYNC_CANCEL, fd, 0, 0, 0)
+
+proc shutdown*(sqe: ptr Sqe; sockfd: FileHandle; how: ShutdownHow): ptr Sqe =
+  sqe.prepRw(OP_SHUTDOWN, sockfd, 0, ord(how), 0)
 
 
 proc provide_buffers*(sqe: ptr Sqe; buffers: pointer; bufferSize: int; buffersCount: int; groupId: uint; bufferId: uint): ptr Sqe =
@@ -1004,7 +1223,7 @@ proc remove_buffers*(sqe: ptr Sqe; buffersCount: int; groupId: uint;): ptr Sqe =
   sqe.buf.bufIndex = groupId.uint16
   sqe.prepRw(OP_REMOVE_BUFFERS, cast[FileHandle](buffersCount), 0, 0, 0)
 
-proc sync_file_range*(sqe: ptr Sqe; fd: FileHandle; len: int; flags: uint32; offset: Off = 0): ptr Sqe =
+proc sync_file_range*(sqe: ptr Sqe; fd: FileHandle; len: int; flags: SyncFileRangeFlags; offset: Off = 0): ptr Sqe =
   sqe.opFlags.syncRangeFlags = flags
   sqe.prepRw(OP_SYNC_FILE_RANGE, fd, 0, len, offset)
 
@@ -1019,45 +1238,43 @@ proc madvice*(sqe: ptr Sqe; `addr`: pointer; len: int; advice: int): ptr Sqe =
   sqe.opFlags.fadviseAdvice = advice.uint32
   sqe.prepRw(OP_MADVISE, -1.cint, `addr`, len, 0)
 
-proc splice*(sqe: ptr Sqe; fd_in: FileHandle; off_in: int; fd_out: FileHandle; off_out: int; len: int; flags: int = 0, fixed: bool = false): ptr Sqe =
+proc splice*(sqe: ptr Sqe; fd_in: FileHandle; off_in: int; fd_out: FileHandle; off_out: int; len: int; flags: SpliceFlags = {}, fixed: bool = false): ptr Sqe =
   sqe.opcode = OP_SPLICE
   sqe.fd = fd_out
   sqe.len = len.int32
   sqe.off = cast[ptr InnerSqeOffset](off_out.addr)[]
   sqe.splice.spliceFdIn = fd_in.uint32
   sqe.`addr`.spliceOffIn = off_in
-  var spliceFlags = 
-    if fixed:
-      flags.uint32 or SPLICE_F_FD_IN_FIXED.uint32
-    else:
-      flags.uint32
+  var f = flags
+  var spliceFlags = cast[ptr uint32](f.addr)[]
+  if fixed:
+    spliceFlags = spliceFlags or SPLICE_F_FD_IN_FIXED.uint32
   sqe.opFlags.spliceFlags = spliceFlags
   return sqe
 
-proc tee*(sqe: ptr Sqe, fd_in: FileHandle, fd_out: FileHandle; len: int; flags: int = 0, fixed: bool = false): ptr Sqe =
+proc tee*(sqe: ptr Sqe, fd_in: FileHandle, fd_out: FileHandle; len: int; flags: SpliceFlags = {}, fixed: bool = false): ptr Sqe =
   sqe.opcode = OP_TEE
   sqe.fd = fd_out
   sqe.len = len.int32
   sqe.splice.spliceFdIn = fd_in.uint32
-  var spliceFlags = 
-    if fixed:
-      flags.uint32 or SPLICE_F_FD_IN_FIXED.uint32
-    else:
-      flags.uint32
+  var f = flags
+  var spliceFlags = cast[ptr uint32](f.addr)[]
+  if fixed:
+    spliceFlags = spliceFlags or SPLICE_F_FD_IN_FIXED.uint32
   sqe.opFlags.spliceFlags = spliceFlags
   return sqe
 
-proc msg_ring*(sqe: ptr Sqe; ring_fd: FileHandle; res: int; user_data: uint64; user_flags: uint32 = 0; opcode_flags: uint32 = 0): ptr Sqe =
-  sqe.opFlags.msgRingFlags = cast[ptr MsgRingOpFlags](opcode_flags.addr)[]
+proc msg_ring*(sqe: ptr Sqe; ring_fd: FileHandle; res: int; user_data: uint64; user_flags: uint32 = 0; opcode_flags: MsgRingOpFlags = {}): ptr Sqe =
+  sqe.opFlags.msgRingFlags = opcode_flags
   sqe.prepRw(OP_MSG_RING, ring_fd, MSG_DATA.cint, res, user_data)
 
-proc fsetxattr*(sqe: ptr Sqe; fd: FileHandle; name: var string; value: var string; flags: int = 0): ptr Sqe =
-  sqe.opFlags.xattrFlags = flags.uint32
+proc fsetxattr*(sqe: ptr Sqe; fd: FileHandle; name: var string; value: var string; flags: XattrFlags = {}): ptr Sqe =
+  sqe.opFlags.xattrFlags = flags
   # TODO: which len?
   sqe.prepRw(OP_FSETXATTR, fd, cast[pointer](name.toCString), name.len, cast[pointer](value.toCString))
 
-proc setxattr*(sqe: ptr Sqe, name: var string; value: var string; path: var string; flags: int = 0): ptr Sqe =
-  sqe.opFlags.xattrFlags = flags.uint32
+proc setxattr*(sqe: ptr Sqe, name: var string; value: var string; path: var string; flags: XattrFlags = {}): ptr Sqe =
+  sqe.opFlags.xattrFlags = flags
   sqe.cmd.addr3 = cast[pointer](path.toCString)
   sqe.prepRw(OP_SETXATTR, 0.cint, cast[pointer](name.toCString), name.len, cast[pointer](value.toCString))
 

@@ -56,6 +56,24 @@ proc genDIBasicType(c: var LLVMCode; name: string; sizeBits,
     ", encoding: " & $encoding & ")")
   c.debug.diBasicTypeCache[key] = result
 
+proc getOrCreateDIFileByName(c: var LLVMCode; path: string): int =
+  ## Get or create a DIFile metadata node for a plain source path. Keyed on the
+  ## path itself, since the declaration sites carried in a forged filename have
+  ## no `FileId` of their own.
+  let cached = c.debug.fileIdsByName.getOrDefault(path, -1)
+  if cached >= 0:
+    return cached
+  let (dir, name, ext) = splitFile(path)
+  let fullName = name & ext
+  let directory = absoluteDirOrQuit(dir)
+  result = c.addMetadata("!DIFile(filename: \"" & fullName &
+      "\", directory: \"" & directory & "\")")
+  c.debug.fileIdsByName[path] = result
+  # First real source file → create the compile unit using this file
+  if c.debug.cuId == 0:
+    c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
+      $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
+
 proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   ## Get or create a DIFile metadata node for the given FileId.
   let key = int(fid)
@@ -64,35 +82,114 @@ proc getOrCreateDIFile(c: var LLVMCode; fid: FileId): int =
   let cached = c.debug.fileIds.getOrDefault(key, -1)
   if cached >= 0:
     return cached
-  let path = c.m.pool.filenames[fid]
-  let (dir, name, ext) = splitFile(path)
-  let fullName = name & ext
-  let directory = absoluteDirOrQuit(dir)
-  result = c.addMetadata("!DIFile(filename: \"" & fullName &
-      "\", directory: \"" & directory & "\")")
+  # A forged filename carries template-expansion provenance (`__crucial\0…`);
+  # the DIFile must name the real source, and `dbgLocationId` reads the chain
+  # separately to build the inlined frames.
+  result = getOrCreateDIFileByName(c, realFile(c.m.pool.filenames[fid]))
   c.debug.fileIds[key] = result
-  # First real source file → create the compile unit using this file
-  if c.debug.cuId == 0:
-    c.debug.cuId = c.addMetadata("distinct !DICompileUnit(language: DW_LANG_C99, file: !" &
-      $result & ", producer: \"lengc\", isOptimized: false, runtimeVersion: 0, emissionKind: FullDebug)")
 
-proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
-  ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
-  if not info.isValid: return ""
+proc getOrCreateInlineSP(c: var LLVMCode; origin: CrucialOrigin;
+                         fallbackFileId, fallbackLine: int): int
+
+proc dbgLocationId(c: var LLVMCode; info: NifLineInfo): int =
+  ## Build a DILocation metadata node for the given source location and return
+  ## its id, or 0 if the location is invalid.
+  ##
+  ## When the walk is inside a template expansion - `currentProc.frameStack` is
+  ## non-empty, pushed by `pushExpansionFrames` on entering a node whose head
+  ## carries a forged filename (see `comesfrom`) - the stack is turned into
+  ## DWARF inlined frames: one synthetic DISubprogram per expanded routine,
+  ## the location scoped to the innermost and chained outwards through
+  ## `inlinedAt` until it reaches the enclosing proc. That is what makes a
+  ## debugger show a template as an inlined frame instead of jumping into its
+  ## definition file (#1987).
+  if not info.isValid: return 0
   let rawInfo = info
-  if not rawInfo.file.isValid: return ""
+  if not rawInfo.file.isValid: return 0
   let fileId = getOrCreateDIFile(c, rawInfo.file)
-  let scopeId =
+
+  # The call site: the location this expansion was written at, in the enclosing
+  # proc. Everything the chain builds hangs off it.
+  proc scopeInProc(c: var LLVMCode; fileId: int): int =
     if fileId == c.currentProc.subprogramFileId:
       c.currentProc.subprogramId
     else:
       c.addMetadata("!DILexicalBlockFile(scope: !" &
           $c.currentProc.subprogramId &
         ", file: !" & $fileId & ", discriminator: 0)")
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+
+  if c.currentProc.frameStack.len == 0:
+    result = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+      ", column: " & $(rawInfo.col + 1) &
+      ", scope: !" & $scopeInProc(c, fileId) & ")")
+    return
+
+  # Outermost first, so each iteration nests one level deeper. The call-site
+  # location is the same for every level: expansions carry no separate location
+  # for where each nested template was invoked, so the whole chain attributes
+  # back to the statement the outermost expansion replaced.
+  var inlinedAt = c.addMetadata("!DILocation(line: " & $rawInfo.line &
     ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $scopeId & ")")
-  result = ", !dbg !" & $locId
+    ", scope: !" & $scopeInProc(c, fileId) & ")")
+  var scopeId = 0
+  for origin in c.currentProc.frameStack:
+    let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
+    if spId == 0: continue
+    if scopeId != 0:
+      # The previous level's location becomes this one's call site.
+      inlinedAt = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+        ", column: " & $(rawInfo.col + 1) &
+        ", scope: !" & $scopeId &
+        ", inlinedAt: !" & $inlinedAt & ")")
+    scopeId = spId
+  if scopeId == 0:
+    result = inlinedAt
+  else:
+    result = c.addMetadata("!DILocation(line: " & $rawInfo.line &
+      ", column: " & $(rawInfo.col + 1) &
+      ", scope: !" & $scopeId &
+      ", inlinedAt: !" & $inlinedAt & ")")
+
+proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string =
+  ## Return a `, !dbg !N` suffix for the given source location, or "" if invalid.
+  let locId = dbgLocationId(c, info)
+  result = if locId == 0: "" else: ", !dbg !" & $locId
+
+proc getOrCreateInlineSP(c: var LLVMCode; origin: CrucialOrigin;
+                         fallbackFileId, fallbackLine: int): int =
+  ## Get or create the synthetic DISubprogram for an expanded routine, shared by
+  ## every call site of it. Returns 0 when none can be built.
+  ##
+  ## The frame is placed at the routine's *declaration* site, which the forged
+  ## filename carries for exactly this reason: a template declaration does not
+  ## survive into Leng, and the expanded code's own line info points at whatever
+  ## file the body came from. The fallbacks cover a chain written before the
+  ## declaration site was encoded.
+  let cached = c.debug.inlineSpCache.getOrDefault(origin.sym, -1)
+  if cached >= 0: return cached
+  var fileId = fallbackFileId
+  var line = fallbackLine
+  if origin.declFile.len > 0:
+    fileId = getOrCreateDIFileByName(c, origin.declFile)
+    line = int(origin.declLine)
+  if fileId == 0: return 0
+  # A subprogram definition needs a type and a unit; the signature is opaque
+  # (`!{null}`: unknown return, no formals) because a template has neither a
+  # calling convention nor materialized parameters.
+  if c.debug.nullSigId == 0:
+    c.debug.nullSigId = c.addMetadata("!DISubroutineType(types: !{null})")
+  var isGlobal = false
+  var shortName = extractBasename(origin.sym, isGlobal)
+  if shortName.len == 0: shortName = origin.sym
+  result = c.addMetadata("distinct !DISubprogram(name: \"" &
+    shortName &
+    "\", scope: !" & $fileId &
+    ", file: !" & $fileId &
+    ", line: " & $line &
+    ", type: !" & $c.debug.nullSigId &
+    ", scopeLine: " & $line &
+    ", spFlags: DISPFlagDefinition, unit: !" & $c.debug.cuId & ")")
+  c.debug.inlineSpCache[origin.sym] = result
 
 proc createSubprogram(c: var LLVMCode; name: string; info: NifLineInfo): int =
   ## Create a DISubprogram metadata node for a function.
@@ -147,18 +244,33 @@ proc emitDbgDeclare(c: var LLVMCode; localName: string; symId: SymId;
     useType = genDIBasicType(c, "int " & $bits, bits, DW_ATE_signed)
   let debugName = if wasName.len > 0: wasName else: nifSymBaseName(c, symId)
   let fileId = getOrCreateDIFile(c, rawInfo.file)
+  # A variable declared inside a template expansion belongs to that template's
+  # synthetic subprogram, and its declare location must carry the matching
+  # `inlinedAt` chain: LLVM's verifier rejects a #dbg_declare whose variable
+  # scope and location scope disagree. `template t = (var x = ...)` is ordinary
+  # code, so this is required, not polish.
+  #
+  # Both come from the same place - the active frame stack - so they cannot
+  # drift: the innermost origin names the SP that `dbgLocationId` will scope to.
+  let inFrame = c.currentProc.frameStack.len > 0
+  var varScopeId = c.currentProc.subprogramId
+  for origin in c.currentProc.frameStack:
+    let spId = getOrCreateInlineSP(c, origin, fileId, rawInfo.line)
+    if spId != 0: varScopeId = spId
   var varMetadata = "!DILocalVariable(name: \"" & debugName & "\""
   if argNo > 0:
     varMetadata.add ", arg: " & $argNo
-  varMetadata.add ", scope: !" & $c.currentProc.subprogramId &
+  varMetadata.add ", scope: !" & $varScopeId &
     ", file: !" & $fileId &
     ", line: " & $rawInfo.line &
     ", type: !" & $useType & ")"
   let varId = c.addMetadata(varMetadata)
-  c.currentProc.retainedNodes.add varId
-  let locId = c.addMetadata("!DILocation(line: " & $rawInfo.line &
-    ", column: " & $(rawInfo.col + 1) &
-    ", scope: !" & $c.currentProc.subprogramId & ")")
+  if not inFrame:
+    # `retainedNodes` lists the variables scoped to *this* subprogram; one
+    # scoped to a template's synthetic SP does not belong in the proc's list.
+    c.currentProc.retainedNodes.add varId
+  let locId = dbgLocationId(c, info)
+  if locId == 0: return
   c.emitRaw "#dbg_declare(ptr " & localName & ", !" & $varId &
       ", !DIExpression(), !" & $locId & ")"
 
@@ -410,8 +522,57 @@ proc genDITypeForSymbol(c: var LLVMCode; symId: SymId): int =
 
 # ---- Composite type (struct / union) ----------------------------------
 
-proc genDIUnionType(c: var LLVMCode; n: var Cursor): int
-proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int
+proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType: Cursor = default(Cursor)): int
+proc genDIAnonObject(c: var LLVMCode; n: var Cursor; name = ""): int
+
+proc enumFieldName(c: var LLVMCode; enumType: Cursor; value: int64): string =
+  ## Map a discriminant value back to its enum field name. `lengcgen` folds enum
+  ## symbols to plain integers when it copies a branch's `(ranges ...)`, so the
+  ## name has to be recovered from the selector's own `(enum ...)` declaration,
+  ## which sits in the same module.
+  result = ""
+  if cursorIsNil(enumType): return
+  var t = enumType
+  if t.kind == Symbol:
+    let d = c.m.getDeclOrNil(t.symId)
+    if d == nil or d.kind != TypeY: return
+    t = asTypeDecl(d.pos).body
+  if t.typeKind != EnumT: return
+  t.into:
+    skip t  # underlying integer type
+    while t.hasMore:
+      if t.substructureKind == EfldU and result.len == 0:
+        var f = t
+        f.into:
+          if f.kind == SymbolDef:
+            let nameSym = f.symId
+            inc f
+            var v = int64(0)
+            if f.kind == IntLit: v = intVal(f)
+            elif f.kind == UIntLit: v = int64(uintVal(f))
+            if v == value:
+              result = nifSymBaseName(c, nameSym)
+          while f.hasMore: skip f
+      skip t
+
+proc branchName(c: var LLVMCode; b: UnionBranch; selectorType: Cursor): string =
+  ## Name a union branch after the first discriminant value that selects it.
+  ## An `else` branch has no `ranges` to name it after, but leaving it unnamed
+  ## reproduces the very problem this is fixing, so it gets the literal name.
+  result = ""
+  if cursorIsNil(b.ranges) or b.ranges.substructureKind != RangesU:
+    return "else"
+  var r = b.ranges
+  r.into:
+    if r.hasMore:
+      var v = r
+      if v.substructureKind == RangeU:  # `(range lo hi)`: name after `lo`
+        v = v.childCursor
+      if v.kind == IntLit:
+        result = enumFieldName(c, selectorType, intVal(v))
+      elif v.kind == UIntLit:
+        result = enumFieldName(c, selectorType, int64(uintVal(v)))
+    while r.hasMore: skip r
 
 proc diElemsList(members: seq[int]): string =
   result = ""
@@ -449,12 +610,14 @@ proc addFieldMember(c: var LLVMCode; fd: FieldDecl; members: var seq[int];
   fieldOffset += fieldSize
 
 proc addUnionMember(c: var LLVMCode; n: var Cursor; members: var seq[int];
-                    fieldOffset: var int) =
+                    fieldOffset: var int; selectorType: Cursor) =
   ## Add the embedded union ``n`` (UnionT) as a single member whose baseType
   ## is an anonymous DICompositeType union. Consumes ``n``.
+  ## ``selectorType`` is the discriminator field's type for a case object, used
+  ## to name each branch after the enum value that selects it.
   let uSize = typeSizeBits(c, n)
   let uAlign = typeAlignBits(c, n)
-  let udi = genDIUnionType(c, n)
+  let udi = genDIUnionType(c, n, selectorType)
   if uAlign > 0:
     fieldOffset = ((fieldOffset + uAlign - 1) div uAlign) * uAlign
   if udi != 0:
@@ -468,13 +631,16 @@ proc addUnionMember(c: var LLVMCode; n: var Cursor; members: var seq[int];
     members.add c.addMetadata(mStr)
   fieldOffset += uSize
 
-proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int =
-  ## Generate an anonymous DICompositeType struct for an inline object body.
+proc genDIAnonObject(c: var LLVMCode; n: var Cursor; name = ""): int =
+  ## Generate a DICompositeType struct for an inline object body. ``name`` is
+  ## set for a case object's branch payload so a debugger can print which
+  ## branch it is looking at; otherwise the struct stays anonymous.
   var members: seq[int] = @[]
   var fieldOffset = 0
   let oSize = typeSizeBits(c, n)
   let oAlign = typeAlignBits(c, n)
   let kind = n.typeKind
+  var selectorType = default(Cursor)
   n.into:
     if kind == ObjectT:
       if n.kind == DotToken: inc n
@@ -482,19 +648,28 @@ proc genDIAnonObject(c: var LLVMCode; n: var Cursor): int =
     while n.hasMore:
       if n.substructureKind == FldU:
         var fd = takeFieldDecl(n)
+        selectorType = fd.typ   # a union sees the field just before it
         addFieldMember(c, fd, members, fieldOffset)
       elif n.typeKind == UnionT:
-        addUnionMember(c, n, members, fieldOffset)
+        addUnionMember(c, n, members, fieldOffset, selectorType)
       else:
         skip n
-  result = c.addMetadata("!DICompositeType(tag: DW_TAG_structure_type" &
-    ", elements: !{" & diElemsList(members) & "}" &
+  var s = "!DICompositeType(tag: DW_TAG_structure_type"
+  if name.len > 0:
+    s.add ", name: \"" & name & "\""
+  s.add ", elements: !{" & diElemsList(members) & "}" &
     ", size: " & $oSize &
-    ", align: " & $oAlign & ")")
+    ", align: " & $oAlign & ")"
+  result = c.addMetadata(s)
 
-proc genDIUnionType(c: var LLVMCode; n: var Cursor): int =
+proc genDIUnionType(c: var LLVMCode; n: var Cursor; selectorType: Cursor = default(Cursor)): int =
   ## Generate an anonymous DICompositeType union for an inline union body.
   ## Each branch (nested object / field) becomes an overlapping member.
+  ##
+  ## For a case object the branches arrive tagged (`(of RANGES BODY)`), and each
+  ## member is named after the enum value that selects it. Without those names
+  ## a debugger prints the branches as unnamed members, which is what
+  ## nim-lang/nimony#2068 reports.
   var members: seq[int] = @[]
   let uSize = typeSizeBits(c, n)
   let uAlign = typeAlignBits(c, n)
@@ -514,6 +689,21 @@ proc genDIUnionType(c: var LLVMCode; n: var Cursor): int =
         if ndi != 0:
           members.add c.addMetadata("!DIDerivedType(tag: DW_TAG_member" &
             ", baseType: !" & $ndi & ")")
+      elif isUnionBranch(n):
+        let b = asUnionBranch(n)
+        if b.body.typeKind == ObjectT:
+          let bname = branchName(c, b, selectorType)
+          var body = b.body
+          let bdi = genDIAnonObject(c, body, bname)
+          if bdi != 0:
+            var mStr = "!DIDerivedType(tag: DW_TAG_member"
+            if bname.len > 0:
+              mStr.add ", name: \"" & bname & "\""
+            mStr.add ", baseType: !" & $bdi &
+              ", size: " & $typeSizeBits(c, b.body) &
+              ", align: " & $typeAlignBits(c, b.body) & ")"
+            members.add c.addMetadata(mStr)
+        skip n
       else:
         skip n
   result = c.addMetadata("!DICompositeType(tag: DW_TAG_union_type" &
@@ -579,12 +769,17 @@ proc genDICompositeType(c: var LLVMCode; n: var Cursor): int =
             ", offset: 0, flags: 0)")
         inc body
 
+    var selectorType = default(Cursor)
     while body.hasMore:
       if body.substructureKind == FldU:
         var fd = takeFieldDecl(body)
+        # A case object's discriminator is the field directly before the union
+        # (an invariant of `lengcgen.trObjFields`), so remembering the last
+        # field is enough to name the branches.
+        selectorType = fd.typ
         addFieldMember(c, fd, members, fieldOffset)
       elif body.typeKind == UnionT:
-        addUnionMember(c, body, members, fieldOffset)
+        addUnionMember(c, body, members, fieldOffset, selectorType)
       elif body.typeKind == ObjectT:
         skip body
       else:

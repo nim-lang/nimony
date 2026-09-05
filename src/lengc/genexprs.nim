@@ -80,41 +80,68 @@ proc genInstr(c: var GeneratedCode; n: var Cursor) =
   n.into:
     var bits = 0
     let op = intrinsicOfCallee(c, n, bits)
-    var builtin = ""
-    if op == NoIntrinsicOp:
-      error c.m, "callee of (instr ...) carries no instruction/intrinsic pragma: ", start
+    if op == VolatileLoadOp or op == VolatileStoreOp:
+      # NB: no early `return` from inside `n.into:` — its epilogue drains the
+      # scope, and skipping that left the statement generator closing a brace it
+      # had not opened.
+      # Not a builtin call: C spells a volatile access as a CAST, which is also
+      # how Nim's own `std/volatile` emits it. `__typeof__` keeps this free of any
+      # type rendering — the pointee's type is whatever the operand already has,
+      # and naming it again is a chance to name it differently.
+      #
+      # An assignment is an expression in C, so the store needs no separate
+      # statement form and both arms compose wherever `(instr …)` may appear.
+      skip n                                # the callee symbol
+      c.add ParLe
+      c.add "*(volatile __typeof__(*("
+      var p0 = n
+      genx c, p0
+      c.add ")) *)("
+      genx c, n                             # the pointer operand
+      c.add ")"
+      c.add ParRi
+      if op == VolatileStoreOp:
+        c.add " = "
+        c.add ParLe
+        genx c, n                           # the value
+        c.add ParRi
+      while n.hasMore: skip n
     else:
-      builtin = cBuiltinFor(op, bits)
-      if builtin.len == 0:
-        let row = IntrinsicRows[op]
-        if row.isFlagRead or row.isFlagWrite:
-          # No portable form exists or ever will: C has no notion of a condition
-          # code, and what makes a flag usable at all — that nothing runs between
-          # its definition and its read — is exactly what a C compiler will not
-          # promise. Say that, rather than suggesting `{.intrinsic.}`.
-          errorAt c.m, "`" & IntrinsicNames[op] & "` is a machine flag " &
-            "instruction; C has no condition codes, so it is only available " &
-            "inside an `{.assembler.}` proc compiled by arkham", start
-        elif row.inoutOperand >= 0:
-          # A two-address row. C has no destructive-operand form, and suggesting
-          # `{.intrinsic.}` would be wrong advice: the portable spelling of
-          # `add(d, s)` is not another intrinsic, it is `d = d + s`.
-          errorAt c.m, "`" & IntrinsicNames[op] & "` is a two-address machine " &
-            "instruction; C has no such form, so write `d = d " &
-            "<op> s` for the portable path or guard the call with a `when`", start
-        else:
-          error c.m, "the C backend has no lowering for the target-pinned instruction `" &
-            IntrinsicNames[op] & "`; use the portable `{.intrinsic: ....}` form " &
-            "or guard the call with a `when`: ", start
-    c.add builtin
-    skip n                                  # the callee symbol
-    c.add ParLe
-    var i = 0
-    while n.hasMore:
-      if i > 0: c.add Comma
-      genx c, n
-      inc i
-    c.add ParRi
+     var builtin = ""
+     if op == NoIntrinsicOp:
+       error c.m, "callee of (instr ...) carries no instruction/intrinsic pragma: ", start
+     else:
+       builtin = cBuiltinFor(op, bits)
+       if builtin.len == 0:
+         let row = IntrinsicRows[op]
+         if row.isFlagRead or row.isFlagWrite:
+           # No portable form exists or ever will: C has no notion of a condition
+           # code, and what makes a flag usable at all — that nothing runs between
+           # its definition and its read — is exactly what a C compiler will not
+           # promise. Say that, rather than suggesting `{.intrinsic.}`.
+           errorAt c.m, "`" & IntrinsicNames[op] & "` is a machine flag " &
+             "instruction; C has no condition codes, so it is only available " &
+             "inside an `{.assembler.}` proc compiled by arkham", start
+         elif row.inoutOperand >= 0:
+           # A two-address row. C has no destructive-operand form, and suggesting
+           # `{.intrinsic.}` would be wrong advice: the portable spelling of
+           # `add(d, s)` is not another intrinsic, it is `d = d + s`.
+           errorAt c.m, "`" & IntrinsicNames[op] & "` is a two-address machine " &
+             "instruction; C has no such form, so write `d = d " &
+             "<op> s` for the portable path or guard the call with a `when`", start
+         else:
+           error c.m, "the C backend has no lowering for the target-pinned instruction `" &
+             IntrinsicNames[op] & "`; use the portable `{.intrinsic: ....}` form " &
+             "or guard the call with a `when`: ", start
+     c.add builtin
+     skip n                                  # the callee symbol
+     c.add ParLe
+     var i = 0
+     while n.hasMore:
+       if i > 0: c.add Comma
+       genx c, n
+       inc i
+     c.add ParRi
 
 proc genCallCanRaise(c: var GeneratedCode; n: var Cursor) =
   genCLineDir(c, info(n))
@@ -137,7 +164,22 @@ proc genDeref(c: var GeneratedCode; n: var Cursor) =
     c.add ParLe
     let starAt = c.code.len
     c.add "*"
-    genx c, n
+    # `*NIM_NIL` is a dereference of `void*` and `(*NIM_NIL).f` does not even
+    # compile. The dereference is dead code — the intra-module inliner
+    # substitutes a literal argument at every use, including uses under a
+    # guard it could not fold — but it still has to be *emitted*, so give the
+    # null the pointer type the frontend attached to it. See nimony#2317.
+    if n.exprKind == NilC and n.childCursor.hasMore:
+      var t = n.childCursor
+      c.add ParLe
+      c.add ParLe
+      genType c, t
+      c.add ParRi
+      c.add NullPtr
+      c.add ParRi
+      skip n
+    else:
+      genx c, n
     c.add ParRi
     if n.hasMore and n.typeQual == CpprefQ:
       if c.m.config.backend == backendCpp:
@@ -343,9 +385,27 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
       c.add s
       inc n
     of StrLit:
+      # The cast and the literal must be emitted as ONE parenthesized unit.
+      # C's postfix operators bind tighter than a cast, so an unwrapped
+      # `(NC8*)"lit"` that a caller then subscripts yields
+      # `(NC8*)"lit"[i]` = `(NC8*)("lit"[i])` — a char cast to a pointer,
+      # not the i-th char of the string. The subscript emitters (AtC/PatC)
+      # and DotC append directly to whatever `genx` produced, so making the
+      # literal self-parenthesizing here fixes every one of those call
+      # sites at once. Same shape `suffixConv` above already uses for its
+      # own cast. Reached in practice by inlining a string-literal argument
+      # into a `cstring` parameter that is indexed (only at --opt:speed,
+      # since without inlining the parameter stays a variable).
       if gfInCallImportC notin c.flags and gfInFlexArray notin c.flags:
+        c.add ParLe
         c.add "(NC8*)"
-      c.add makeCString(c.m.pool.strings[n.litId])
+        c.add makeCString(c.m.pool.strings[n.litId])
+        c.add ParRi
+      else:
+        # No cast emitted in these contexts, so there is nothing for a
+        # postfix operator to bind past — and a bare literal is what an
+        # importC call / flexible-array initializer expects.
+        c.add makeCString(c.m.pool.strings[n.litId])
       inc n
     else:
       genLvalue c, n
@@ -356,6 +416,12 @@ proc genx(c: var GeneratedCode; n: var Cursor) =
     c.add "NIM_TRUE"
     skip n
   of NilC:
+    # A bare `NIM_NIL`, NOT a cast to the `(nil T)` type the frontend attaches.
+    # `NIM_NIL` is assignment-compatible with every pointer type, and casting
+    # would make an `{.importc.}` signature whose C spelling differs from
+    # Nimony's (`cstring` is `unsigned char*`, `strtod` wants `char**`) a hard
+    # `-Wincompatible-pointer-types` error. `genDeref` casts where C insists on
+    # knowing the pointee.
     c.add NullPtr
     skip n
   of InfC:

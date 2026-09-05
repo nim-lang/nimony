@@ -1,0 +1,3 @@
+two-reads got=2 r1=1 r2=2
+same-fd wrote=1 read=1 in1=Y
+write-only wrote=1

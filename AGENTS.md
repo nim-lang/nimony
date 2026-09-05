@@ -1,6 +1,6 @@
 # Development Guidelines
 
-This repo is a Nim compiler reimplementation built around NIF. The compilation
+This repo is a Nim compiler reimplementation built around [NIF](https://github.com/nim-lang/nifspec). The compilation
 pipeline is split into tools and phases:
 
 - Nifler: parses Nim to NIF.
@@ -14,11 +14,11 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 ## Quick Debug Workflow
 
 1. Build the Nimony toolchain (Nimony + Hexer):
-   - `nim c -r src/hastur build nimony`
+   - `nim c -r src/hastur/hastur build nimony`
 2. Produce `nimcache/` artifacts:
    - `bin/nimony c mybug.nim`
    - Or use the convenience command:
-     - `nim c -r src/hastur debug mybug.nim`
+     - `nim c -r src/hastur/hastur debug mybug.nim`
 3. Inspect `nimcache/` for `.nif` artifacts (for example `.s.nif` and
    other lowered NIF files). These show the transformations across phases.
 
@@ -27,7 +27,8 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 - `src/nimony/` for semantic analysis and front-end phases.
 - `src/hexer/` for lowering passes and Leng generation steps.
 - `src/nifler/` and `src/lengc/` only when evidence points there.
-- `src/hastur.nim` for test/build tooling and command behavior.
+- `src/hastur/` for test/build tooling and command behavior (`hastur.nim` is the
+  CLI; the logic lives in its sibling modules).
 
 ## Debugging Tips
 
@@ -35,6 +36,27 @@ stable. Most problems tend to be in `Nimony` or `Hexer`.
 - Use `hastur test <file>` or `hastur test <dir>` to validate a regression.
 - Many tests live in `tests/nimony/` and are a good source of minimal cases.
 - Use `hastur bug` and `hastur rep` for quick turnaround times during development.
+
+## Style guidelines
+
+See `src/lengc/shoggoth/vectorizer.nim` for good style:
+
+- Prefer explicit state objects (`Matcher`, `Emitter`) over many parallel
+  local maps/sets. Thread one mutable object through helpers instead of
+  widening function signatures.
+- Avoid closures. Use flat procs.
+- Keep matching strict and grammar-driven: if a loop construct is not fully
+  understood, reject it instead of partially vectorizing it.
+- Track local symbol roles explicitly (pointer pending/bound, index, value)
+  rather than inferring roles repeatedly from ad-hoc sets.
+- Preserve loop-invariance checks and disjointness guards as first-class logic;
+  correctness checks must remain obvious in code structure.
+- Keep helper procs single-purpose (`matchGuardCmp`, `matchPtrBind`,
+  `collectBroadcasts`, `emitSlot`) so refactors stay behavior-preserving and
+  reviewable.
+- Prefer structured control over early-return mazes; but do not take it too extremes, use good judgement.
+- Temporary-name generation must follow the NIF standard which has clear rules. Do not make up your own rules. **DO NOT GET CONFUSED BY TRAILING DOTS**, these are completed to the current module suffix by the NIF API.
+
 
 ## Tests results overwrite
 

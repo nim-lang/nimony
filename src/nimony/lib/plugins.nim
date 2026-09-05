@@ -10,13 +10,15 @@
 
 {.feature: "untyped".}
 
-import std / [assertions, hashes, syncio, cmdline]
+import std / [assertions, hashes, syncio, cmdline, os]
 import ".." / ".." / "lib" / nifcore except symId, `$`, addSymUse, addSymDef
 import ".." / ".." / "lib" / nifcoreparse except symId, `$`, addSymUse, addSymDef
-from ".." / ".." / "lib" / bif import isBifFile, load, store, UnusedNameTag
+from ".." / ".." / "lib" / bif import isBifFile, load, store, UnusedNameTag, DependencyTag
 import ".." / ".." / "lib" / [bitabs, symparser]
 import ".." / ".." / "models" / [tags, nimony_tags]
 import ".." / nif_annotations
+import ".." / ".." / "lib" / nifroles
+export nifroles
 export NimonyType, NimonyExpr, NimonyStmt, NimonyPragma, NimonyOther
 export NifKind, SymId, TagId
 export DotToken, CharLit, StrLit, IntLit, UIntLit, FloatLit
@@ -51,11 +53,53 @@ let
   pluginPool = newPool()
   pluginTags = createPluginTags()
 
+# A plugin process shares ONE pool world across every buffer in it, which is
+# exactly the case `nifcore.fallbackPool`/`fallbackTags` exist for — and this
+# API never declared it. `NifBuilder` is an alias for `TokenBuf`, so a builder
+# `createTree` did not mint (an object field, `default(...)`, a `seq` slot) has
+# nil pools; `nifcore.ensurePools` then minted a PRIVATE pool, and the first
+# `withTree` died in `openTagEscaped` — a fresh pool declares no escape tag —
+# as a bare `[Assertion Failure]` with no file and no line. Kind queries
+# dispatch on `pluginTags` *identity* too, so such a builder also read back as
+# `NoStmt`/`NoExpr` throughout.
+#
+# The compiler side gets this from `nifpools`, which plugins do not import.
+# Stating it here is what makes the API total: every shape of `NifBuilder`
+# lands in the plugin's own pools, not in a private one.
+nifcore.fallbackPool = pluginPool
+nifcore.fallbackTags = pluginTags
+
 var
   unusedNameBase = ""
   nextUnusedName = 0
+  fileDependencies: seq[string] = @[]
 
-proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline.} =
+proc dependsOn*(path: string) =
+  ## Records that this plugin run READ `path`, so that a later build reruns the
+  ## plugin when the file changes. Without it a plugin that reads outside its
+  ## input is memoized forever: the compiler keys its cache on the input tree,
+  ## which did not change (nim-lang/nimony#1378).
+  ##
+  ## Call it for every file the plugin opens. The path is made absolute against
+  ## the plugin's working directory, which is the compiler's.
+  ##
+  ## Two limits worth knowing:
+  ## * Only a path that exists is recorded: a file cannot be watched before it
+  ##   is there, and a stale entry would force a rerun on every build. So
+  ##   *creating* a file the plugin looked for and did not find invalidates
+  ##   nothing, while deleting a recorded one does.
+  ## * Naming a *directory* tracks add/remove of its direct entries and nothing
+  ##   else, because that is all a directory mtime says; to follow the contents
+  ##   of a tree, name each file.
+  var full = ""
+  try:
+    full = absolutePath(path)
+  except:
+    discard "no working directory to resolve against: nothing to record"
+  if (fileExists(full) or dirExists(full)) and full notin fileDependencies:
+    fileDependencies.add full
+
+proc appendInfo(buf: var NifBuilder; info: LineInfo) {.inline, nifEmits: "None".} =
   buf.appendLineInfo(info)
 
 proc isEmpty*(tree: NifBuilder): bool {.inline.} =
@@ -174,6 +218,7 @@ template withTree*(
     kind: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
     info: LineInfo;
     body: untyped) =
+  {.nifWrap.}
   ## Emits a tagged tree around the values produced by `body`.
   t.openTag(cast[TagId](kind))
   appendInfo(t, info)
@@ -181,22 +226,22 @@ template withTree*(
   t.closeTag()
 
 proc openTree*(t: var NifBuilder; tag: TagId;
-               info: LineInfo = NoLineInfo) =
+               info: LineInfo = NoLineInfo) {.nifOpens.} =
   ## Opens a tree using an existing plugin-pool tag handle.
   t.openTag(tag)
   appendInfo(t, info)
 
 proc openTree*(t: var NifBuilder; tag: string;
-               info: LineInfo = NoLineInfo) =
+               info: LineInfo = NoLineInfo) {.nifOpens.} =
   ## Opens a tree using a textual tag, interning it when necessary.
   t.openTag(pluginTags.tags.getOrIncl(tag))
   appendInfo(t, info)
 
-proc closeTree*(t: var NifBuilder) =
+proc closeTree*(t: var NifBuilder) {.nifCloses.} =
   ## Seals the most recently opened tree.
   t.closeTag()
 
-proc takeTree*(t: var NifBuilder; n: var NifCursor) =
+proc takeTree*(t: var NifBuilder; n: var NifCursor) {.nifBalanced.} =
   ## Copies the current value or subtree into `t` and advances `n`.
   t.addSubtree(n)
   n.skip()
@@ -208,6 +253,7 @@ proc leavePluginScope(n: var NifCursor; scope: nifcore.CursorScope) =
   nifcore.leaveScope(n, scope)
 
 template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
+  {.nifWrap.}
   ## Copies `n`'s tag, transforms its children with `body`, and advances `n`.
   assert n.kind == TagLit, "copyInto requires cursor at TagLit"
   t.openTree(n.tagId, n.info)
@@ -216,30 +262,30 @@ template copyInto*(t: var NifBuilder; n: var NifCursor; body: untyped) =
   leavePluginScope(n, inputScope)
   t.closeTree()
 
-proc addTree*(t: var NifBuilder; child: NifBuilder) =
+proc addTree*(t: var NifBuilder; child: NifBuilder) {.nifEmits: "Any".} =
   ## Appends every complete top-level value from `child`.
   t.addBufferSamePool(child)
 
 proc addSymUse*(t: var NifBuilder; s: SymId;
-                info: LineInfo = NoLineInfo) =
+                info: LineInfo = NoLineInfo) {.nifEmits: "Y".} =
   ## Appends a symbol use from a plugin-pool symbol handle.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
 
 proc addSymUse*(t: var NifBuilder; s: string;
-                info: LineInfo) =
+                info: LineInfo) {.nifEmits: "Y".} =
   ## Appends a symbol use from its textual name with source information.
   nifcore.addSymUse(t, s)
   appendInfo(t, info)
 
 proc addSymDef*(t: var NifBuilder; s: SymId;
-                info: LineInfo = NoLineInfo) =
+                info: LineInfo = NoLineInfo) {.nifEmits: "D".} =
   ## Appends a symbol definition from a plugin-pool symbol handle.
   nifcore.addSymDef(t, s)
   appendInfo(t, info)
 
 proc addSymDef*(t: var NifBuilder; s: string;
-                info: LineInfo = NoLineInfo) =
+                info: LineInfo = NoLineInfo) {.nifEmits: "D".} =
   ## Appends a symbol definition from its textual name.
   nifcore.addSymDef(t, s)
   appendInfo(t, info)
@@ -383,7 +429,7 @@ proc bindSym*(t: var NifBuilder; name: string;
   ##
   ## `name` must be a string literal — sem rejects non-literal arguments.
 
-proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) =
+proc addEmptyNode*(t: var NifBuilder; info: LineInfo = NoLineInfo) {.nifEmits: "Dot".} =
   ## Appends a single empty placeholder node (`.`) to `t`.
   t.addDotToken()
   appendInfo(t, info)
@@ -415,6 +461,7 @@ proc firstChild*(n: NifCursor): NifCursor {.inline.} =
 # Pure traversal helpers for reading/analyzing a tree without producing output.
 
 template linearScan*(n: var NifCursor; body: untyped) =
+  {.nifWrap.}
   ## Deep-scans all `TagLit` nodes in the subtree rooted at `n`.
   ## Inside `body`, `n` is positioned at each `TagLit` node in turn.
   ## `body` must **not** advance `n` — the template handles traversal.
@@ -598,119 +645,120 @@ proc assertTag(n: NifCursor; expected: NimonyOther) {.inline.} =
 
 # ── Core operations ───────────────────────────────────────────────────────
 
-proc keep*(t: var Replacer; expected: ChildKind) =
+proc keep*(t: var Replacer; expected: ChildKind) {.nifBalanced.} =
   ## Copy one child verbatim from input to output.
   assertChild(t.src, expected)
   t.dest.takeTree(t.src)
 
-proc keep*(t: var Replacer; expected: NimonyStmt) =
+proc keep*(t: var Replacer; expected: NimonyStmt) {.nifBalanced.} =
   ## Copy one child, asserting a specific statement tag.
   assertTag(t.src, expected)
   t.dest.takeTree(t.src)
 
-proc keep*(t: var Replacer; expected: NimonyExpr) =
+proc keep*(t: var Replacer; expected: NimonyExpr) {.nifBalanced.} =
   ## Copy one child, asserting a specific expression tag.
   assertTag(t.src, expected)
   t.dest.takeTree(t.src)
 
-proc keep*(t: var Replacer; expected: NimonyType) =
+proc keep*(t: var Replacer; expected: NimonyType) {.nifBalanced.} =
   ## Copy one child, asserting a specific type tag.
   assertTag(t.src, expected)
   t.dest.takeTree(t.src)
 
-proc keep*(t: var Replacer; expected: NimonyPragma) =
+proc keep*(t: var Replacer; expected: NimonyPragma) {.nifBalanced.} =
   ## Copy one child, asserting a specific pragma tag.
   assertTag(t.src, expected)
   t.dest.takeTree(t.src)
 
-proc keep*(t: var Replacer; expected: NimonyOther) =
+proc keep*(t: var Replacer; expected: NimonyOther) {.nifBalanced.} =
   ## Copy one child, asserting a specific substructure tag.
   assertTag(t.src, expected)
   t.dest.takeTree(t.src)
 
-proc drop*(t: var Replacer; expected: ChildKind) =
+proc drop*(t: var Replacer; expected: ChildKind) {.nifReads.} =
   ## Skip one child from input without emitting.
   assertChild(t.src, expected)
   t.src.skip()
 
-proc drop*(t: var Replacer; expected: NimonyStmt) =
+proc drop*(t: var Replacer; expected: NimonyStmt) {.nifReads.} =
   ## Skip one child, asserting a specific statement tag.
   assertTag(t.src, expected)
   t.src.skip()
 
-proc drop*(t: var Replacer; expected: NimonyExpr) =
+proc drop*(t: var Replacer; expected: NimonyExpr) {.nifReads.} =
   ## Skip one child, asserting a specific expression tag.
   assertTag(t.src, expected)
   t.src.skip()
 
-proc drop*(t: var Replacer; expected: NimonyType) =
+proc drop*(t: var Replacer; expected: NimonyType) {.nifReads.} =
   ## Skip one child, asserting a specific type tag.
   assertTag(t.src, expected)
   t.src.skip()
 
-proc drop*(t: var Replacer; expected: NimonyPragma) =
+proc drop*(t: var Replacer; expected: NimonyPragma) {.nifReads.} =
   ## Skip one child, asserting a specific pragma tag.
   assertTag(t.src, expected)
   t.src.skip()
 
-proc drop*(t: var Replacer; expected: NimonyOther) =
+proc drop*(t: var Replacer; expected: NimonyOther) {.nifReads.} =
   ## Skip one child, asserting a specific substructure tag.
   assertTag(t.src, expected)
   t.src.skip()
 
-proc replace*(t: var Replacer; expected: ChildKind; replacement: NifCursor) =
+proc replace*(t: var Replacer; expected: ChildKind; replacement: NifCursor) {.nifBalanced.} =
   ## Skip one child from input, emit replacement cursor tree instead.
   assertChild(t.src, expected)
   t.src.skip()
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: ChildKind;
-              replacement: NifBuilder) =
+              replacement: NifBuilder) {.nifBalanced.} =
   ## Skip one child from input, emit replacement builder tree instead.
   assertChild(t.src, expected)
   t.src.skip()
   t.dest.addTree(replacement)
 
-proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifCursor) =
+proc replace*(t: var Replacer; expected: NimonyStmt; replacement: NifCursor) {.nifBalanced.} =
   ## Skip one child, asserting a specific statement tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyStmt;
-              replacement: NifBuilder) =
+              replacement: NifBuilder) {.nifBalanced.} =
   ## Skip one child, asserting a specific statement tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
   t.dest.addTree(replacement)
 
-proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifCursor) =
+proc replace*(t: var Replacer; expected: NimonyExpr; replacement: NifCursor) {.nifBalanced.} =
   ## Skip one child, asserting a specific expression tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyExpr;
-              replacement: NifBuilder) =
+              replacement: NifBuilder) {.nifBalanced.} =
   ## Skip one child, asserting a specific expression tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
   t.dest.addTree(replacement)
 
-proc replace*(t: var Replacer; expected: NimonyType; replacement: NifCursor) =
+proc replace*(t: var Replacer; expected: NimonyType; replacement: NifCursor) {.nifBalanced.} =
   ## Skip one child, asserting a specific type tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
   t.dest.addSubtree(replacement)
 
 proc replace*(t: var Replacer; expected: NimonyType;
-              replacement: NifBuilder) =
+              replacement: NifBuilder) {.nifBalanced.} =
   ## Skip one child, asserting a specific type tag, emit replacement.
   assertTag(t.src, expected)
   t.src.skip()
   t.dest.addTree(replacement)
 
 template keepTag*(t: var Replacer; body: untyped) =
+  {.nifWrap.}
   ## Copy the opening tag from input to output, run `body` for children,
   ## close the output node and advance past the input subtree.
   assert t.src.kind == TagLit, "keepTag requires cursor at TagLit"
@@ -727,6 +775,7 @@ template loopKeepTag*(t: var Replacer; body: untyped) =
 template replaceHead*(t: var Replacer;
                       tag: NimonyType|NimonyExpr|NimonyStmt|NimonyOther|NimonyPragma;
                       info: LineInfo; body: untyped) =
+  {.nifWrap.}
   ## Like `keepTag` but emits a new tag instead of copying the input's tag.
   ## Enters the input tree via `into`, runs `body`
   ## (which must consume the children), then closes both input and output
@@ -811,6 +860,13 @@ proc writePluginTree(tree: var NifBuilder; filename: string) =
   if unusedNameBase.len > 0:
     buf.openTag(buf.tags.registerTag(UnusedNameTag))
     nifcore.addSymUse(buf, unusedNameBase & "." & $nextUnusedName)
+    buf.closeTag()
+  if fileDependencies.len > 0:
+    # `(dependency …)`: the second sidecar tree, peeled off by `semos.runPlugin`
+    # like the gensym hint above.
+    buf.openTag(buf.tags.registerTag(DependencyTag))
+    for d in fileDependencies:
+      nifcore.addStrLit(buf, d)
     buf.closeTag()
   if tree.len > 0:
     var c = beginRead(tree)

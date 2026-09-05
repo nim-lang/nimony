@@ -46,7 +46,7 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     c.buildErr dest, info, "wrong `include` statement"
   else:
     for f1 in items(files):
-      let f2 = resolveFile(c.g.config.paths, getFile(info), f1.path)
+      let f2 = resolveFile(c.g.config.paths, getFile(info), c.g.config.expandMM(f1.path))
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false
@@ -100,6 +100,14 @@ proc importSingleFile*(c: var SemContext; dest: var TokenBuf; f1: ImportedFilena
   else:
     result = c.processedModules.getOrQuit(suffix)
   let s = Sym(kind: ModuleY, name: result, pos: ImportedPos)
+  # An import that lands under THIS module's own name shadows the implicit
+  # self-module symbol, exactly like in Nim: after `import std/math as m`
+  # inside `m.nim`, `m.sin` is math's `sin` and `m` no longer qualifies this
+  # module. Without the removal both symbols sit in the same scope under the
+  # same name, so every qualified use resolves to a two-element sym choice and
+  # dies with "ambiguous identifier" (nim-lang/nimony#2308). A no-op whenever
+  # the names differ, which is the normal case.
+  c.currentScope.removeOverloadable(moduleName, c.selfModuleSym)
   c.currentScope.addOverloadable(moduleName, s)
   let module = addr c.importedModules.mgetOrPut(result, ImportedModule(path: f2, fromPlugin: f1.plugin))
   loadInterface suffix, module.iface, result, c.importTab, c.converters,

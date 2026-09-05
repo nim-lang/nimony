@@ -17,10 +17,10 @@
 when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
-import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths]
+import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
-import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder]
+import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs]
 import ".." / models / nifindex_tags
 
 include ".." / lib / nifprelude
@@ -73,6 +73,30 @@ proc docIdxFile(config: NifConfig; f: FilePair): string =
   ## HTML is redirected via `--outdir`. Not user-relevant; uses the modname
   ## hash so it can't collide regardless of source layout.
   config.nifcachePath / "docs" / f.modname & ".docidx"
+proc backendDirName(config: NifConfig; f: FilePair): string =
+  ## Name of the per-main-module directory that holds everything from DCE
+  ## onward. Those artifacts are main-specific (a different main means a
+  ## different live set) AND backend-specific: hexer runs with `--native` or
+  ## without, which changes the main module's `.x.nif` (the synthesized entry
+  ## point terminates through `cExit` only on the native backend), and the
+  ## generated code, objects and executable below it obviously differ too.
+  ##
+  ## nifmake decides whether to rerun a node from its declared input and
+  ## output FILES, not from the tool's flags, so two backends sharing this
+  ## directory do not merely overwrite each other -- whichever ran first wins
+  ## and the second reuses its artifacts, because from nifmake's side nothing
+  ## changed. Giving each backend its own directory is the same split that
+  ## keeps `nimony doc` from fighting `nimony c` over `.p.nif`/`.pc.nif`.
+  ##
+  ## The C backend keeps the bare module name so existing caches, and every
+  ## path a tool derives from one, stay valid.
+  result = f.modname
+  case config.backend
+  of backendC: result.add BackendDirC
+  of backendLLVM: result.add BackendDirLLVM
+  of backendNative: result.add BackendDirNative
+  of backendWasm: result.add BackendDirWasm
+
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
 proc lengcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -99,11 +123,27 @@ proc asmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   ## no reindex pass is needed.
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".asm.nif"
+proc wasmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  ## ithaqua's whole-program output; the appConsole naming rules of `exeFile`
+  ## (`--out`/`--outdir` overrides, else nimcache) with a fixed `.wasm` ext.
+  let baseName = f.nimFile.splitFile.name
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  if config.outFile.len > 0 or config.outDir.len > 0:
+    let nameOnly = if config.outFile.len > 0: config.outFile else: baseName
+    let withExt =
+      if nameOnly.splitFile.ext.len > 0: nameOnly
+      else: nameOnly.addFileExt("wasm")
+    if config.outDir.len > 0: config.outDir / withExt
+    else: withExt
+  else:
+    base / baseName.addFileExt("wasm")
+
 proc genFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   case config.backend
   of backendC: config.cFile(f, backendDir)
   of backendLLVM: config.llFile(f, backendDir)
   of backendNative: config.asmFile(f, backendDir)
+  of backendWasm: config.lengcFile(f, backendDir)  # ithaqua consumes Leng directly
 proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".o"
@@ -158,7 +198,12 @@ type
     isSystem: bool
     plugin: string
     cyclicFiles: seq[int] ## indices into `files` that are cyclic module members (need separate outputs)
-    depsPlugins: HashSet[StrId] ## Set of plugins `files` uses except import plugins
+    plugins: HashSet[string] ## exe basenames of the `{.plugin.}`s this module may
+                             ## run: the ones it declares plus, after
+                             ## `propagatePlugins`, those of its import closure
+    fileDeps: seq[string] ## the `(dependency …)` list the PREVIOUS build's nimsem
+                          ## left in `.s.deps.nif`: files a plugin or a `slurp`
+                          ## read while semchecking this module
 
   Command* = enum
     DoCheck, # like `nim check`
@@ -211,6 +256,8 @@ type
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
     foundPlugins: HashSet[string]
+    pluginSources: Table[string, string] ## exe basename -> resolved `.nim` source
+                                         ## of every `{.plugin.}` in the graph
     toBuild: seq[CFile]
     backendTools: seq[BackendTool]
     bundles: seq[Bundle]
@@ -244,7 +291,8 @@ proc processInclude(c: var DepContext; it: var Cursor; current: Node) =
           if f1.plugin.len > 0:
             discard "ignore plugin include file, will cause an error in sem.nim"
             continue
-          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile, f1.path)
+          let f2 = resolveFileWrapper(c.config.paths, current.files[current.active].nimFile,
+                                      c.config.expandMM(f1.path))
           # check for recursive include files:
           var isRecursive = false
           for a in c.includeStack:
@@ -479,6 +527,45 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
         processPluginImport c, f, info, current
       break
 
+proc cmpNames(a, b: string): int =
+  ## `sort` needs an explicit comparator under Nimony, whose stdlib has no `cmp`.
+  if a < b: -1 elif a > b: 1 else: 0
+
+proc pluginExe(c: DepContext; name: string): string =
+  ## Where `semos.runPlugin` looks for the plugin: keep the two in sync.
+  c.config.nifcachePath / name.addFileExt(ExeExt)
+
+proc processPlugin(c: var DepContext; it: var Cursor; current: Node) =
+  ## `(plugin [(when COND...)] "name")`: nifler's deps-file entry for a
+  ## `{.plugin: "name".}` pragma. The name resolves relative to the declaring
+  ## file exactly as `semos.runPlugin` resolves it.
+  ##
+  ## Ignored when this build IS a plugin build (`-d:nimonyPlugin`, set by
+  ## `semos.pluginCompileCmd`): plugins are leaves of the build graph. A plugin
+  ## whose source imports its declaring module would otherwise require itself,
+  ## and the nested builds would recurse without end. Should such a plugin
+  ## actually run another plugin at compile time, `runPlugin`'s lazy fallback
+  ## still builds that one on demand.
+  var x = it
+  skip it
+  if c.config.isDefined("nimonyPlugin"):
+    return
+  x.into:  # (plugin …)
+    if x.stmtKind == WhenS:
+      if not whenMarkerHolds(c, x):
+        return
+      skip x, SkipCond
+    while x.hasMore:
+      if x.isStringLit:
+        let name = pool.strings[x.strId]
+        let src = resolveFile(c.config.paths, current.files[current.active].nimFile, name)
+        if semos.fileExists(src):
+          let exeName = splitFile(name).name
+          current.plugins.incl exeName
+          if not c.pluginSources.hasKey(exeName):
+            c.pluginSources[exeName] = src
+      skip x
+
 proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
   it.into:  # (build …)
     while it.hasMore:
@@ -554,6 +641,8 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
       processBuild c, n, current
     elif n.cursorTagId == TagId(BundleIdx):
       processBundle c, n
+    elif n.cursorTagId == TagId(PluginP):
+      processPlugin c, n, current
     elif n.cursorTagId == TagId(PassLP):
       n.into:  # (passL …)
         while n.hasMore:
@@ -630,45 +719,63 @@ proc importSystem(c: var DepContext; current: Node) =
     existingNode = imported.id
   current.deps.add existingNode
 
+proc loadDepsFile(depsFile: string): TokenBuf =
+  var r = rd.open(depsFile)
+  result = createTokenBuf()
+  parse(r, result)
+  rd.close(r)
+
+proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
+  ## Reads the `(dependency …)` list out of the `.s.deps.nif` the previous
+  ## build's nimsem wrote (nim-lang/nimony#1378). The classic depfile pattern:
+  ## the first build has nothing to read and runs regardless, every later one
+  ## is exact. Nothing else in that file is looked at: its imports are last
+  ## build's, and the caller has just read the current ones from nifler.
+  let depsFile = c.config.deps2File(p)
+  if semos.fileExists(depsFile):
+    var buf = loadDepsFile(depsFile)
+    var n = beginRead(buf)
+    if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
+      n.into:
+        while n.hasMore:
+          if n.cursorTagId == TagId(DependencyIdx):
+            n.into:
+              while n.hasMore:
+                assert n.isStringLit
+                current.fileDeps.add pool.strings[n.strId]
+                inc n
+          else:
+            skip n
+
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
   if not c.isGeneratingFinal:
     execNifler c, p
     depsFile = c.config.depsFile(p, c.cmd == DoDoc)
+    processFileDeps c, p, current
   else:
     depsFile = c.config.deps2File(p)
 
-  var r = rd.open(depsFile)
-  var buf = createTokenBuf()
-  parse(r, buf)
-  rd.close(r)
+  var buf = loadDepsFile(depsFile)
   processDeps c, beginRead(buf), current
   if {SkipSystem, IsSystem} * c.moduleFlags == {} and not current.isSystem:
     importSystem c, current
 
-proc traverseDeps2(c: var DepContext) =
-  # Get the list of used plugins from deps2File so that Nimony generates a build file that
-  # automatically rebuild modules using the plugins when the plugins are modified.
-  # So don't need to get the list when deps2File doesn't exist as modules are semchecked then.
-  # Plugins used under `when false:` or template plugins used with templates never called are not listed in deps2File.
-  for current in c.nodes:
-    for p in current.files:
-      let depsFile = c.config.deps2File(p)
-      if semos.fileExists(depsFile):
-        var r = rd.open(depsFile)
-        var buf = createTokenBuf()
-        parse(r, buf)
-        rd.close(r)
-        var n = beginRead(buf)
-        if n.stmtKind == StmtsS:
-          n.loopInto:
-            if n.pragmaKind == PluginP:
-              n.loopInto:
-                if n.isStringLit:
-                  current.depsPlugins.incl n.strId
-                skip n
-            else:
-              skip n
+proc propagatePlugins(c: var DepContext) =
+  ## A plugin declared in module A runs whenever a module importing A is
+  ## semchecked (a `.plugin` template of A expands at its call site in B), so
+  ## a nimsem run needs the plugins of its whole import closure. A fixpoint
+  ## over `deps` rather than a DFS: cyclic modules make the graph a general
+  ## digraph and it is small.
+  var changed = true
+  while changed:
+    changed = false
+    for v in c.nodes:
+      for d in v.deps:
+        if d == v.id: continue   # never iterate a set while growing it
+        for p in c.nodes[d].plugins:
+          if not v.plugins.containsOrIncl(p):
+            changed = true
 
 proc rootPath(c: DepContext): string =
   # XXX: Relative paths in build files are relative to current working directory, not the location of the build file.
@@ -924,6 +1031,29 @@ proc writeLinkManifest(path, exe, apptype: string;
   b.close()
   result = path
 
+proc addInlineSourceInputs(b: var Builder; c: DepContext; v: Node; backend: string) =
+  ## Declare the `.c.nif` of every module `v` imports as an input of `v`'s
+  ## codegen node.
+  ##
+  ## All three consumers of a `.c.nif` -- `lengc`, `arkham` and Shoggoth's
+  ## `optimize` -- resolve foreign symbols by loading the *callee* module's
+  ## `.c.nif` on demand, and splice imported `.inline` bodies out of it. That
+  ## makes those files real inputs: nifmake decides whether to rerun a node
+  ## from its declared inputs, so without these edges an edit that only
+  ## changes a callee leaves every importer's already-generated code in place,
+  ## with a stale copy of the body spliced into it. The result is a link error
+  ## when the edit renames a symbol the splice references, and a silently
+  ## wrong binary when it does not (nim-lang/nimony#1897).
+  ##
+  ## Only input[0] reaches the tool's command line, so the extra inputs cost
+  ## nothing but the ordering and the freshness check.
+  var seen = initHashSet[string]()
+  for depIdx in v.deps:
+    let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
+    if not seen.containsOrIncl(depNif):
+      b.withTree "input":
+        b.addStrLit depNif
+
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
   var b = nifbuilder.open(result)
@@ -937,6 +1067,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # The experimental Shoggoth optimizer runs only when optimization is
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
+    let wasm = c.config.backend == backendWasm
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
     # A native program that uses the `.compile`/`{.build…}` pragma (in ANY module)
@@ -956,7 +1087,20 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     if useOptimizer:
       shoggoth = findTool("shoggoth")
 
-    if native:
+    if wasm:
+      # Wasm backend: ithaqua is codegen AND linker in one — it reads the MAIN
+      # module's `.c.nif` and pulls every dependent module from disk through
+      # the embedded index (whole-program emission), so there is exactly one
+      # command and it runs once. Only input[0] reaches its command line.
+      b.withTree "cmd":
+        b.addSymbolDef "ithaqua"
+        b.addStrLit findTool("ithaqua")
+        b.withTree "output":
+          b.addStrLit "-o:"
+        b.withTree "input":
+          b.addIntLit 0
+          b.addIntLit 0
+    elif native:
       # Native backend: arkham (Leng -> typed asm-NIF) replaces lengc. Output is
       # passed as the single token `-o:<path>` (the colon form; `addFilename`
       # concatenates the `-o:` prefix directly onto the output path).
@@ -967,6 +1111,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # and errors on an unsupported combination (no silent host fallback).
         b.addStrLit "--os:" & platform.OS[c.config.targetOS].name
         b.addStrLit "--cpu:" & platform.CPU[c.config.targetCPU].name
+        # The board, when one was given. A bare-metal image has no OS to ask how
+        # much RAM it may have, so the layout file IS that answer — and arkham
+        # forwards it into the asm-NIF so nifasm places segments from the same
+        # description rather than reading the file a second time.
+        if c.config.layoutFile.len > 0:
+          b.addStrLit "--layout:" & c.config.layoutFile
         b.withTree "output":
           b.addStrLit "-o:"
         b.addKeyw "input"
@@ -991,6 +1141,18 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addSymbolDef "optimize"
         b.addStrLit shoggoth
         b.addStrLit "c"
+        let cpuName = platform.CPU[c.config.targetCPU].name
+        if native and cpuName in ["arm64", "amd64"]:
+          # the 128-bit loop vectorizer: emits (instr ...) rows only the native
+          # back ends lower — AArch64 via AdvSIMD, x86-64 via SSE2 — so it stays
+          # target-gated. (The flag is part of the command line, so nifmake's
+          # cache key separates vectorized .oc.nif files from C-backend ones.)
+          # Spelled with a plain local rather than an `if` expression: nimony
+          # compiles this file, and its initialization analysis cannot prove a
+          # temp bound by a branch expression is initialized here.
+          var vecFlag = "--vectorize"
+          if cpuName == "amd64": vecFlag = "--vectorize:sse"
+          b.addStrLit vecFlag
         b.addKeyw "input"
         b.addKeyw "output"
 
@@ -1163,7 +1325,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
 
     # Build rules
     if c.cmd in {DoCompile, DoRun}:
-      let backend = c.rootNode.files[0].modname  # DCE and after are main-specific
+      let backend = c.config.backendDirName(c.rootNode.files[0])
       let backendDir = c.config.nifcachePath / backend
       let liveFile = backendDir / c.rootNode.files[0].modname & ".live.nif"
 
@@ -1236,7 +1398,27 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
 
       # Link executable
       var objFiles = initHashSet[string]()
-      if customLinkerName.len > 0 or (not native and not nativeSysLink):
+      if wasm:
+        b.withTree "do":
+          b.addIdent "ithaqua"
+          proc wasmInput(c: DepContext; f: FilePair; backend: string; useOptimizer: bool): string =
+            # under the optimizer the whole module set switches to `.oc.nif`
+            # together — ithaqua derives sibling filenames from the MAIN
+            # input's extension, exactly like arkham's native chain.
+            if useOptimizer: result = c.config.optimizedFile(f, backend)
+            else: result = c.config.lengcFile(f, backend)
+          let mainCNif = wasmInput(c, c.rootNode.files[0], backend, useOptimizer)
+          b.withTree "input":
+            b.addStrLit mainCNif
+          objFiles.incl mainCNif
+          for v in c.nodes:
+            let cn = wasmInput(c, v.files[0], backend, useOptimizer)
+            if not objFiles.containsOrIncl(cn):
+              b.withTree "input":
+                b.addStrLit cn
+          b.withTree "output":
+            b.addStrLit c.config.wasmFile(c.rootNode.files[0], backend)
+      elif customLinkerName.len > 0 or (not native and not nativeSysLink):
         # Manifest-based link. The plain C/LLVM backend links through the default
         # `link` command (== `niflink`); a `{.bundle.}` module overrides it with
         # its own tool. Either way the linker is handed a manifest NIF describing
@@ -1385,7 +1567,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        if not native:
+        if not native and not wasm:
           let obj = c.config.objFile(v.files[0], backend)
           if not objFiles.containsOrIncl(obj):
             b.withTree "do":
@@ -1406,18 +1588,23 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
             # Shoggoth's inter-module inliner also reads the imported modules'
-            # `.c.nif`, but they need no edge here: nifmake runs the DAG in
-            # depth batches and finishes one before starting the next, and
-            # every `dceEmit` shares the `.live.nif` input, so all the `.c.nif`
-            # are written in the batch before this node's. Verified by counting
-            # foreign loads that missed their file: zero.
+            # `.c.nif`. Ordering alone would be free (nifmake runs the DAG in
+            # depth batches, and every `dceEmit` shares the `.live.nif` input,
+            # so those files are all written in the batch before this node's),
+            # but they have to be inputs for FRESHNESS too: without the edge a
+            # changed callee body leaves this node's output untouched and the
+            # splice inside it stale (nim-lang/nimony#1897).
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized
         else:
           lengcInput = c.config.lengcFile(v.files[0], backend)
 
-        if native:
+        if wasm:
+          discard  # no per-module codegen: ithaqua's single whole-program
+                   # node (see "Link executable" above) consumes the .c.nif
+        elif native:
           # arkham: per-module Leng -> typed asm-NIF. arkham additionally loads
           # imported modules' `.c.nif` on demand (cross-module type/sig
           # resolution), so list those as dependency inputs to order them before
@@ -1427,16 +1614,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "arkham"
             b.withTree "input":
               b.addStrLit lengcInput
-            var seenDeps = initHashSet[string]()
-            for depIdx in v.deps:
-              let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
-              if not seenDeps.containsOrIncl(depNif):
-                b.withTree "input":
-                  b.addStrLit depNif
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit c.config.asmFile(v.files[0], backend)
         else:
-          # Build C/LLVM IR files from .c.nif files
+          # Build C/LLVM IR files from .c.nif files. lengc splices the bodies
+          # of imported `.inline` procs into this translation unit, reading
+          # them out of the callee module's `.c.nif` under `--nimcache`, so
+          # those files are inputs of this node exactly as they are of
+          # `arkham`'s (nim-lang/nimony#1897). Only input[0] (this module's
+          # `lengcInput`) reaches lengc's command line (the cmd uses `(input)`).
           b.withTree "do":
             b.addIdent "lengc"
             b.withTree "args":
@@ -1446,6 +1633,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit "--isMain"
             b.withTree "input":
               b.addStrLit lengcInput
+            addInlineSourceInputs(b, c, v, backend)
             b.withTree "output":
               b.addStrLit c.config.genFile(v.files[0], backend)
 
@@ -1521,15 +1709,34 @@ proc generateSemInstructions(c: DepContext; v: Node; b: var Builder; isMain: boo
       if not seenDeps.containsOrIncl(idxFile):
         b.withTree "input":
           b.addStrLit idxFile
-    # Input: cached config file
-    b.withTree "input":
-      b.addStrLit c.config.cachedConfigFile()
-    # Input: plugins
-    for p in v.depsPlugins:
+    # Input: the executables of the plugins this module may run. They are
+    # outputs of `pluginbuild` nodes, so nifmake builds them first and re-sems
+    # the module when one of them changes.
+    var plugins: seq[string] = @[]
+    for p in v.plugins: plugins.add p
+    sort plugins, cmpNames
+    for p in plugins:
       b.withTree "input":
-        b.addStrLit pool.strings[p]
+        b.addStrLit c.pluginExe(p)
+    # Input: the files last build's sem READ — what `plugins.dependsOn`
+    # reported and what `slurp` folded. Nothing in the module's own source
+    # names them, so without this a changed data file leaves the `.s.nif`
+    # looking current.
+    var lostFileDep = false
+    for f in v.fileDeps:
+      if not semos.fileExists(f):
+        lostFileDep = true
+      elif not seenDeps.containsOrIncl(f):
+        b.withTree "input":
+          b.addStrLit f
     # Outputs: semmed file and index file for primary module
     let docMode = c.cmd == DoDoc
+    if lostFileDep:
+      # A deleted file cannot be an input (nifmake wants a file or a rule for
+      # each), so the re-sem is forced by removing the output instead. That
+      # settles after one build: the re-sem no longer finds the file and so no
+      # longer records it.
+      vfsRemove(c.config.semmedFile(v.files[0], v.plugin, docMode))
     b.withTree "output":
       b.addStrLit c.config.semmedFile(v.files[0], v.plugin, docMode)
     b.withTree "output":
@@ -1591,6 +1798,17 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
           b.addIntLit 0
           b.addIntLit -1 # all inputs
 
+    if c.pluginSources.len > 0:
+      # `nimsem <frontend args> plugin <source> <exe>`: builds a `{.plugin.}`
+      # executable, validator included. One node per plugin, below.
+      b.withTree "cmd":
+        b.addSymbolDef "pluginbuild"
+        b.addStrLit c.nimsem
+        emitFrontendArgs(b, c.config.baseDir, commandLineArgs)
+        b.addStrLit "plugin"
+        b.addKeyw "input"
+        b.addKeyw "output"
+
     for plugin in c.foundPlugins:
       b.withTree "cmd":
         b.addSymbolDef plugin
@@ -1603,6 +1821,20 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
         # index file output is not explicitly passed to the plugin!
         #b.withTree "output":
         #  b.addIntLit 1  # index file output
+
+    # Build rules for plugin executables. Every sem node that may run one
+    # lists it as an input, which is what orders the build and makes it happen
+    # exactly once, however many modules share the plugin.
+    var pluginNames: seq[string] = @[]
+    for name in c.pluginSources.keys: pluginNames.add name
+    sort pluginNames, cmpNames
+    for name in pluginNames:
+      b.withTree "do":
+        b.addIdent "pluginbuild"
+        b.withTree "input":
+          b.addStrLit c.pluginSources.getOrDefault(name)
+        b.withTree "output":
+          b.addStrLit c.pluginExe(name)
 
     # Build rules for semantic checking
     var i = 0
@@ -1639,9 +1871,32 @@ proc generateFrontendBuildFile(c: DepContext; commandLineArgs: string; cmd: Comm
           b.withTree "input":
             b.addStrLit s
 
-proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
+proc generateCachedConfigFile(c: DepContext; passC, passL: string): bool =
+  ## Returns true when the configuration differs from the one the nimcache was
+  ## last built with, i.e. when the sem results in it are for another set of
+  ## options and have to be produced again.
+  ##
+  ## This is a MEMO nimony keeps for itself, NOT an `(input)` of the sem nodes.
+  ## It used to be one, and that was the wrong model twice over: sem does not
+  ## read this file, and an mtime cannot express "already built against this".
+  ## Once the file was newer than outputs that a re-run had legitimately left
+  ## untouched (nimsem writes OnlyIfChanged, so identical results keep their old
+  ## mtime), every sem node stayed stale against it on every subsequent build —
+  ## for good. Flipping a `-d:` flag and flipping it back was enough. The answer
+  ## is not to fake a newer output; it is that "the options changed" means
+  ## RE-RUN THIS STAGE, which is what the caller now says outright.
   let path = c.config.cachedConfigFile()
-  let configStr = c.config.getOptionsAsOneString() & " " & c.rootNode.files[0].nimFile &
+  # The ROOT MODULE is deliberately NOT part of this string. Every sem node
+  # takes this file as an input (see `generateSemInstructions`), so anything in
+  # here that differs between two builds sharing a nimcache invalidates all of
+  # the other's sem results — and `executeExpr`'s const-eval sub-compile is
+  # exactly such a second build: same nimcache, same options, but a generated
+  # root (`nim<checksum>.p.nif`). With the root name in here the two overwrote
+  # each other's entry on every run, so each build re-semmed everything the
+  # other had just done, forever. The OPTIONS do belong here: two roots
+  # compiled with different options really must invalidate each other, because
+  # the `.s.nif` artifacts are keyed by module name and shared between them.
+  let configStr = c.config.getOptionsAsOneString() &
                   " --passC:" & passC & " --passL:" & passL
 
   let needUpdate = if semos.fileExists(path) and not c.forceRebuild:
@@ -1650,6 +1905,7 @@ proc generateCachedConfigFile(c: DepContext; passC, passL: string) =
                      true
   if needUpdate:
     onRaiseQuit writeFile(path, configStr)
+  result = needUpdate
 
 proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
@@ -1662,7 +1918,7 @@ proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, fo
   result.processedModules[p.modname] = 0
   traverseDeps result, p, root
   if not isFinal:
-    traverseDeps2 result
+    propagatePlugins result
 
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     flags: set[BuildFlag]; moduleFlags: set[ModuleFlag]) =
@@ -1887,18 +2143,25 @@ proc buildGraph*(config: sink NifConfig; project: string;
       onRaiseQuit createDir(Path(config.nifcachePath))
 
   var c = initDepContext(config, project, nifler, false, forceRebuild, moduleFlags, cmd)
-  generateCachedConfigFile c, passC, passL
+  let configChanged = generateCachedConfigFile(c, passC, passL)
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
   when defined(windows) and not defined(nimony):
     putEnv("CC", "gcc")
     putEnv("CXX", "g++")
-  let nifmakeCommand = quoteShell(nifmake) &
+  let nifmakeBase = quoteShell(nifmake) &
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
     (if Profile in flags: " --profile" else: "") &
     (if Report in flags: " --report" else: "") &
-    " --base:" & quoteShell(config.baseDir) &
-    " -j run "
+    " --base:" & quoteShell(config.baseDir)
+  let nifmakeCommand = nifmakeBase & " -j run "
+  # A changed configuration invalidates every sem result, and now says so
+  # directly instead of through a file the sem nodes pretended to read.
+  # `--rerun`, not `--force`: the outputs must stay in place so nimsem's
+  # OnlyIfChanged writes can still find a result unchanged and spare the
+  # entire backend.
+  let frontendCommand = nifmakeBase &
+    (if configChanged: " --rerun" else: "") & " -j run "
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation
@@ -1906,7 +2169,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
   # indicator across the separate processes instead of restarting per phase.
   let twoPhase = cmd != DoCheck
 
-  exec nifmakeCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
+  exec frontendCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
@@ -1933,7 +2196,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # It is generated by nimsem and doesn't contains modules imported under `when false:`.
     # https://github.com/nim-lang/nimony/issues/985
     c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
-    let backend = c.config.nifcachePath / c.rootNode.files[0].modname
+    let backend = c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0])
     onRaiseQuit createDir(path(backend))
     onRaiseQuit createDir(path(sharedObjDir()))
     let buildFinalFilename = generateFinalBuildFile(c, commandLineArgsLengc, passC, passL)
@@ -1941,7 +2204,9 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # Linkers (gcc/clang/ld/ar) don't auto-create the output directory.
     # When the user passes `--out:bin/foo` or `--outdir:bin`, materialise
     # `bin/` here. Nim does the same in `prepareToWriteOutput`.
-    let exeOutPath = c.config.exeFile(c.rootNode.files[0], c.rootNode.files[0].modname)
+    var exeOutPath = c.config.exeFile(c.rootNode.files[0], c.config.backendDirName(c.rootNode.files[0]))
+    if c.config.backend == backendWasm:
+      exeOutPath = c.config.wasmFile(c.rootNode.files[0], c.config.backendDirName(c.rootNode.files[0]))
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
@@ -1979,5 +2244,12 @@ proc buildGraph*(config: sink NifConfig; project: string;
 
   if cmd != DoCheck:
     if cmd == DoRun:
-      let backend = c.rootNode.files[0].modname
-      exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs
+      let backend = c.config.backendDirName(c.rootNode.files[0])
+      if c.config.backend == backendWasm:
+        # A .wasm module needs a host; run it under node with the standard
+        # shim (tests/ithaqua/run_wasm.js provides env.nim_write/nim_exit).
+        let shim = compilerDir() / "tests" / "ithaqua" / "run_wasm.js"
+        exec "node " & quoteShell(shim) & " " &
+             quoteShell(c.config.wasmFile(c.rootNode.files[0], backend)) & executableArgs
+      else:
+        exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs

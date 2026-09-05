@@ -25,6 +25,20 @@ proc uhashBase36*(s: string): string =
     result.add Base36[int(id mod 36'u32)]
     id = id div 36'u32
 
+const
+  ## Tag appended to a main module's suffix to name the `<nimcache>/` directory
+  ## that holds everything from DCE onward (`deps.backendDirName`). Those
+  ## artifacts differ per backend -- hexer alone runs with or without
+  ## `--native` -- while nifmake reruns a node only when its input or output
+  ## FILES changed, never when a tool's flags did. Sharing one directory
+  ## therefore does not overwrite, it makes whichever backend ran first win.
+  ## Kept here so `hastur`, which shells out to the compiler, can name the same
+  ## directory without duplicating the mapping.
+  BackendDirC* = ""        ## `nimony c`: the bare suffix, so existing caches stay valid
+  BackendDirLLVM* = ".ll"  ## `nimony l`
+  BackendDirNative* = ".n" ## `nimony n`
+  BackendDirWasm* = ".wasm" ## `nimony w`
+
 proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
   # `getCurrentDir`/`relativePath` are `.raises`, but the only reason they can
   # fail in practice is a transient filesystem error that would break every

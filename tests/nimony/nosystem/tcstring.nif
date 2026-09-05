@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 1310             )
+(.indexat 1335             )
 (stmts@,2,tests/nimony/nosystem/tcstring.nim
  (type@2,1 :int.0.
   (i 64).
@@ -54,7 +54,9 @@
  (gvar@4,F :y.0. . .
   (pointer@7
    (nil))
-  (nil@H))
+  (nil@H
+   (pointer~A
+    (nil))))
  (const@2,I :myconst.0. . .
   (cstring
    (notnil))
@@ -75,5 +77,5 @@
  (x <=.0. 170)
  (h x.0. 167)
  (h y.0. 63)
- (h myconst.0. 55)
+ (h myconst.0. 80)
  (h zz.0. 73))

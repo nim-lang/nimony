@@ -60,6 +60,9 @@ Options:
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
+  --mm:STRATEGY             select the memory management strategy; the name
+                            maps to `system/<strategy>.nim` in the stdlib.
+                            Possible values: atomicArc (default), arc
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
@@ -69,6 +72,10 @@ Options:
                             counts on stdout (one line per nifmake call)
   --stats                   after build, print total LOC and module count
                             across the dep graph
+  --layout:FILE             native backend, bare-metal targets only: the BOARD
+                            description (memory regions, stack slots, heap) that
+                            arkham and nifasm build the image against. See
+                            nativenif's doc/layout.md
   --nimcache:PATH           set the path used for generated files
                             (default `nimcache`; in --compat mode a `nimcache`
                             entry from the `nim.cfg` hierarchy is honored)
@@ -90,8 +97,11 @@ Options:
   --opt:speed|size|none     C compiler optimization level
                             (default: -O1, opt:speed -> -O3, opt:size -> -Os,
                              opt:none -> -O0)
+  --inlineframes:on|off     record which template an expansion came from, so a
+                            debug build shows template calls as inlined frames
+                            (default: off)
   --novalidate              skip running the plugin validator on plugin sources
-  --verbose                 dump NJVL IR (and other diagnostics) on contract
+  --verbose                 dump Final IR (and other diagnostics) on contract
                             analysis failures
   --version                 show the version
   --help                    show this help
@@ -132,6 +142,13 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     config.backend = backendNative
     config.addDefine "nimNativeAlloc"
     config.addDefine "nimNativeIo"
+    FullProject
+  of "w":
+    # Wasm backend: Leng -> ithaqua, producing one whole-program `.wasm`
+    # module (no C compiler, no linker — the JS/wasm host resolves the fixed
+    # env import set). The target is implied after CLI parsing (see the
+    # backendWasm block in handleCmdLine): wasm32/standalone/32 bits.
+    config.backend = backendWasm
     FullProject
   of "check":
     CheckProject
@@ -335,6 +352,23 @@ proc compileProgram(c: var CmdOptions) =
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
   # `-d:` does, and record them in config.defines so the cache key tracks them.
+  if c.config.backend == backendWasm:
+    # The wasm backend has exactly one target; imply it here — after CLI
+    # parsing — so `nimony w x.nim` works bare. Forwarded like user flags
+    # because nimsem sees only its command line (appended last, so it also
+    # wins over a contradictory explicit --cpu/--os).
+    #
+    # `--os:standalone`, NOT `embedded`. Both are freestanding and it is easy to
+    # read them as the same target, but they pick different stdlib arms and only
+    # one of them is wasm's. `embedded` is BARE METAL: `syncio`'s arm writes
+    # through ARM semihosting and `osalloc`'s takes the heap from nifasm's
+    # `(heapstart)`/`(heapsize)` board-layout constants — neither exists here.
+    # `standalone` falls into the raw-`write`/`read`/`open` arm instead, and
+    # those are exactly the names ithaqua resolves to the host's import set.
+    discard c.config.setTargetCPU("wasm32")
+    discard c.config.setTargetOS("standalone")
+    c.config.bits = 32
+    c.commandLineArgs.add " --cpu:wasm32 --os:standalone --bits:32"
   let nativeBackend = c.config.backend == backendNative
   let optOutAll = c.config.isDefined("useLibc")
   if nativeBackend or not (optOutAll or c.config.isDefined("useMimalloc")):

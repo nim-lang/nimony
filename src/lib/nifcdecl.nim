@@ -140,6 +140,41 @@ proc takeFieldDecl*(n: var Cursor): FieldDecl =
     skip n
 
 type
+  UnionBranch* = object
+    ranges*: Cursor  ## the `(ranges ...)` selecting this branch; `.` for `else`
+    body*: Cursor    ## the branch's anonymous `(object ...)`, or `.` if it
+                     ## declares no fields (`of x: nil`)
+
+proc isUnionBranch*(n: Cursor): bool {.inline.} =
+  ## True if `n` is a discriminated-union branch, i.e. a case object lowered by
+  ## hexer rather than the untagged `{.union.}` form. The two shapes never mix,
+  ## so testing the child tag is enough - see `doc/leng-spec.md`, UnionBranch.
+  n.substructureKind in {OfU, ElseU}
+
+proc takeUnionBranch*(n: var Cursor): UnionBranch =
+  ## Read a `(of RANGES BODY)` / `(else BODY)` branch and advance past it.
+  ## Callers that only need the fields use `result.body`; debug info also reads
+  ## `result.ranges` to name the branch after its discriminant values.
+  ##
+  ## Start from the nil-cursor default: an `else` branch has no ranges, so
+  ## without this `result.ranges` is whatever the stack held — and
+  ## `cursorIsNil(branch.ranges)` is exactly how `contracts_fir` and
+  ## `llvmdebug` tell the two shapes apart. `strictdefs` rejects the field
+  ## write into an uninitialized `result` for that reason.
+  let isOf = n.substructureKind == OfU
+  result = default(UnionBranch)
+  n.into:
+    if isOf:
+      result.ranges = n
+      skip n
+    result.body = n
+    skip n
+
+proc asUnionBranch*(n: Cursor): UnionBranch =
+  var n = n
+  takeUnionBranch(n)  # local cursor is dropped on return
+
+type
   ParamDecl* = object
     name*, pragmas*, typ*: Cursor
 

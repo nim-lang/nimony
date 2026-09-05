@@ -53,6 +53,36 @@
 ## therefore contain `… jmp L … lab L …` and go on contributing to the join —
 ## which is exactly what an inlined callee with early `return`s looks like.
 ##
+## ### No jumps into nested statements
+##
+## The merge rule above is only sound for *structured* jumps: a `jmp L` may
+## leave nested statements, never enter them. Concretely, the `lab L` must sit
+## in the same branch as the `jmp`, or in one enclosing it. A jump the other
+## way — into a sibling `if` arm, into a `case` branch, into a loop body —
+## would reach `landLabel` with the label already inside a sibling group whose
+## pre-state the stashed snapshot never saw, so the intersection would merge
+## two states that are not on a common path, and every fact the entered
+## construct assumed on entry would silently survive.
+##
+## `gotoLabel` therefore records the *branch path* — the stack of ids of the
+## currently open branches — next to each snapshot, and `landLabel` asserts
+## that the label's own path is a prefix of every incoming jump's. The check
+## sees exactly the nesting the walker announces via `openBranches`, which for
+## every current user is `if` / `case` / loop / `try` — i.e. precisely the
+## statement-nesting constructs a jump could illegally enter.
+## `jumpsAreWellScoped` exposes the same predicate without asserting.
+##
+## ### Forward jumps only
+##
+## The second half of the same rule: a `jmp L` must appear *before* its
+## `lab L` in the walk. A backward jump is a loop the tracker cannot see, so
+## the facts it carries to the label would never be invalidated by the second
+## iteration — the exact unsoundness `clearAll` exists to prevent for real
+## loops. `landLabel` therefore remembers which labels it has landed, and
+## `gotoLabel` asserts its target is not among them; `landLabel` also rejects
+## a second landing of the same label, which is either a duplicate `lab` or a
+## walker visiting one twice. `isForwardTarget` is the non-asserting form.
+##
 ## ## Loops
 ##
 ## `clearAll` discards every tracked value (logging the writes, so the loss
@@ -89,6 +119,16 @@ type
     key: K
     prev, next: V
 
+  BranchPath = seq[uint32]
+    ## Stack of branch ids, outermost first — one entry per open sibling group,
+    ## naming the branch of that group we are currently inside. Two program
+    ## points are on a common structured path iff one's path is a prefix of the
+    ## other's.
+
+  LabelIncoming[K: Keyable, V] = object
+    state: Table[K, V]    ## absolute snapshot at the `gotoLabel`
+    path: BranchPath      ## where that jump sat, for the scoping check
+
   SibGroup = object
     sibStarts: seq[int]   ## one entry per closed fall-through branch; each
                           ## value is the index into `log` at which that
@@ -97,6 +137,10 @@ type
                           ## at `log.len` if no branch is currently open.
     sibOpen: bool
     curSibStart: int      ## valid only if `sibOpen`
+    sibId: uint32         ## identity of the currently open branch; part of the
+                          ## `BranchPath` used by the jump-scoping check. Fresh
+                          ## per `openBranch`, so two arms of the same `if` are
+                          ## as distinguishable as two different `if`s.
     exhaustive: bool      ## true once `openFinalBranch` was called — tells
                           ## `closeBranches` that *some* branch in this group
                           ## is guaranteed to execute, so the join does *not*
@@ -110,7 +154,12 @@ type
     base: Table[K, V]                 ## current view (non-default entries only)
     log: seq[LogEntry[K, V]]          ## append-only journal of writes
     groups: seq[SibGroup]             ## stack of open `openBranches` scopes
-    labels: Table[LabelId, seq[Table[K, V]]]  ## incoming deltas per label
+    labels: Table[LabelId, seq[LabelIncoming[K, V]]]  ## incoming deltas per label
+    branchCounter: uint32             ## allocator for `SibGroup.sibId`
+    landed: HashSet[LabelId]          ## labels `landLabel` has already merged.
+                                      ## A later `gotoLabel` at one of them is
+                                      ## a backward jump; a later `landLabel`
+                                      ## is a duplicate `lab`.
     pathDiverged: bool                ## did the current straight-line path
                                       ## already leave the block (return / raise
                                       ## / break / a fully-diverging inner
@@ -213,7 +262,7 @@ proc consumeOpenSibling[K: Keyable, V](t: var Tracker[K, V]) =
 
 proc openBranches*[K: Keyable, V](t: var Tracker[K, V]) =
   t.groups.add SibGroup(sibStarts: @[], sibOpen: false, curSibStart: 0,
-                        exhaustive: false)
+                        sibId: 0, exhaustive: false)
 
 proc markDiverged*[K: Keyable, V](t: var Tracker[K, V]) =
   ## The walker reached an unconditional `return` / `raise` / `break`: the
@@ -234,6 +283,8 @@ proc openBranch*[K: Keyable, V](t: var Tracker[K, V]) =
   assert not t.groups[^1].sibOpen, "previous branch not closed"
   t.groups[^1].sibOpen = true
   t.groups[^1].curSibStart = t.log.len
+  inc t.branchCounter
+  t.groups[^1].sibId = t.branchCounter # fresh identity for the scoping check
   t.pathDiverged = false               # each branch is a fresh path
 
 proc openFinalBranch*[K: Keyable, V](t: var Tracker[K, V]) =
@@ -413,6 +464,37 @@ proc snapshotCurrent[K: Keyable, V](t: Tracker[K, V]): Table[K, V] =
   for k, v in t.base.pairs:
     result[k] = v
 
+proc currentPath[K: Keyable, V](t: Tracker[K, V]): BranchPath =
+  ## The branch path of the current program point (see `BranchPath`).
+  result = newSeqOfCap[uint32](t.groups.len)
+  for i in 0 ..< t.groups.len:
+    result.add t.groups[i].sibId
+
+proc enclosedBy(labelPath, jumpPath: BranchPath): bool =
+  ## True iff `labelPath` is a prefix of `jumpPath`, i.e. the `lab` sits in the
+  ## same branch as the `jmp` or in one enclosing it — the only two positions a
+  ## structured forward jump may target.
+  if labelPath.len > jumpPath.len: return false
+  for i in 0 ..< labelPath.len:
+    if labelPath[i] != jumpPath[i]: return false
+  result = true
+
+proc jumpsAreWellScoped*[K: Keyable, V](t: Tracker[K, V]; L: LabelId): bool =
+  ## Would `landLabel L` here be a legal landing for every jump stashed so far?
+  ## False means some `jmp L` would be entering nested statements — see
+  ## "No jumps into nested statements" above. `landLabel` asserts this; call it
+  ## directly to diagnose instead of aborting.
+  result = true
+  let here = currentPath(t)
+  for incoming in t.labels.getOrDefault(L):
+    if not enclosedBy(here, incoming.path): return false
+
+proc isForwardTarget*[K: Keyable, V](t: Tracker[K, V]; L: LabelId): bool =
+  ## Would a `jmp L` here be a forward jump? False once `landLabel L` has run —
+  ## see "Forward jumps only" above. `gotoLabel` asserts this; call it directly
+  ## to diagnose instead of aborting.
+  L notin t.landed
+
 proc gotoLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId) =
   ## The current branch jumps to `L`. Stash an absolute snapshot of the
   ## current state under `L`, then *rewind* the open sibling: its state has
@@ -427,16 +509,30 @@ proc gotoLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId) =
   ## and returned without reverting them, so they leaked past the whole
   ## `if`/`case` as if they were unconditional. That is how a `result = x`
   ## in one arm survived a join with `result = false` in the other.
-  t.labels.mgetOrPut(L, @[]).add t.snapshotCurrent()
+  assert L notin t.landed,
+    "gotoLabel: backward jump — label " & $uint32(L) & " was already landed"
+  t.labels.mgetOrPut(L, @[]).add LabelIncoming[K, V](state: t.snapshotCurrent(),
+                                                    path: t.currentPath())
   t.rewindOpenSibling()
   t.pathDiverged = true
 
 proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1) =
   ## Merge every incoming snapshot of `L` with the current fall-through
-  ## state. If `arity >= 0`, assert it matches the number of `gotoLabel`
+  ## state. Marks `L` landed, so a later `jmp L` is rejected as a backward jump. If `arity >= 0`, assert it matches the number of `gotoLabel`
   ## calls that targeted `L` (the fall-through path is counted separately).
+  assert L notin t.landed,
+    "landLabel: label " & $uint32(L) & " landed twice"
+  t.landed.incl L
   var incomings = t.labels.getOrDefault(L)
   t.labels.del L
+  let here = t.currentPath()
+  for incoming in incomings:
+    # A `jmp` may leave nested statements, never enter them: this `lab` must be
+    # in the jump's branch or in one enclosing it. Otherwise the snapshot below
+    # would be intersected with a fall-through state it shares no path with.
+    assert enclosedBy(here, incoming.path),
+      "landLabel: jump into a nested statement — label " & $uint32(L) &
+      " is not in scope for one of its jumps"
   if arity >= 0:
     assert incomings.len == arity,
       "landLabel: expected " & $arity & " jumps, got " & $incomings.len
@@ -447,22 +543,22 @@ proc landLabel*[K: Keyable, V](t: var Tracker[K, V]; L: LabelId; arity: int = -1
   # (lab L)` pair that ends every inlined callee, the "fall-through" is the
   # pre-jump state that `gotoLabel` has already rewound.
   if not t.pathDiverged:
-    incomings.add t.snapshotCurrent()
+    incomings.add LabelIncoming[K, V](state: t.snapshotCurrent(), path: here)
 
   # Keys touched by any incoming.
   var touched = initHashSet[K]()
-  for snap in incomings:
-    for k in snap.keys: touched.incl k
+  for incoming in incomings:
+    for k in incoming.state.keys: touched.incl k
   # Plus keys currently set (so they can be cleared on disagreement).
   for k in t.base.keys: touched.incl k
 
   # Intersect by equality.
   var merged = initTable[K, V]()
   var disagreed = initHashSet[K]()
-  for i, snap in incomings:
+  for i, incoming in incomings:
     for k in touched:
       if k in disagreed: continue
-      let v = snap.getOrDefault(k)
+      let v = incoming.state.getOrDefault(k)
       if i == 0:
         merged[k] = v
       elif merged.getOrDefault(k) != v:
@@ -737,5 +833,96 @@ when isMainModule:
     t.landLabel L, arity = 1
     doAssert t[1] == 0                # jump had 1=11, fall-through had 2=22
     doAssert t[2] == 0
+
+  block jump_out_of_a_branch_is_in_scope:
+    # The everyday shape: `if c: … jmp L …` with `lab L` after the whole `if`.
+    # The label's path is empty, which prefixes anything, so it is in scope.
+    var t = initTracker[int, bool]()
+    let L = LabelId(20)
+    t.openBranches()
+    t.openBranch()
+    t[1] = true
+    t.gotoLabel L
+    t.closeBranch()
+    t.openFinalBranch()
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t.jumpsAreWellScoped(L)
+    t.landLabel L, arity = 1
+
+  block jump_within_the_same_branch_is_in_scope:
+    # The inlined-callee shape: `… jmp L … lab L …` inside one arm. Identical
+    # paths, so the prefix test holds.
+    var t = initTracker[int, bool]()
+    let L = LabelId(21)
+    t.openBranches()
+    t.openBranch()
+    t.gotoLabel L
+    doAssert t.jumpsAreWellScoped(L)
+    t.landLabel L, arity = 1
+    t.closeBranch()
+    t.closeBranches()
+
+  block jump_into_a_sibling_branch_is_rejected:
+    # `if a: jmp L elif b: lab L` — the two arms are different paths, so the
+    # label is unreachable from the jump without entering the second arm.
+    var t = initTracker[int, bool]()
+    let L = LabelId(22)
+    t.openBranches()
+    t.openBranch()
+    t.gotoLabel L
+    t.closeBranch()
+    t.openBranch()
+    doAssert not t.jumpsAreWellScoped(L)
+    t.closeBranch()
+    t.closeBranches()
+
+  block jump_into_a_nested_construct_is_rejected:
+    # `jmp L; while c: … lab L …` — entering the loop body. The label's path is
+    # one branch deep, the jump's is empty, so no prefix relation exists.
+    var t = initTracker[int, bool]()
+    let L = LabelId(23)
+    t.gotoLabel L
+    t.openBranches()               # the loop
+    t.openBranch()
+    doAssert not t.jumpsAreWellScoped(L)
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t.jumpsAreWellScoped(L)   # in scope again once the loop is over
+
+  block deeper_jump_into_an_enclosing_label_is_in_scope:
+    # Two levels out at once: `if a: (case x: of 1: jmp L); lab L` — the label
+    # sits at depth 0 and the jump at depth 2, prefix holds.
+    var t = initTracker[int, bool]()
+    let L = LabelId(24)
+    t.openBranches()
+    t.openBranch()
+    t.openBranches()
+    t.openBranch()
+    t.gotoLabel L
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t.jumpsAreWellScoped(L)   # still legal from inside the outer arm
+    t.closeBranch()
+    t.closeBranches()
+    doAssert t.jumpsAreWellScoped(L)
+    t.landLabel L, arity = 1
+
+  block a_jump_before_its_label_is_forward:
+    var t = initTracker[int, bool]()
+    let L = LabelId(30)
+    doAssert t.isForwardTarget(L)
+    t.gotoLabel L
+    doAssert t.isForwardTarget(L)      # still unlanded
+    t.landLabel L, arity = 1
+    doAssert not t.isForwardTarget(L)  # a `jmp L` from here would go backward
+
+  block a_label_with_no_jumps_still_counts_as_landed:
+    # `lab L` alone is legal (its only predecessor is the fall-through), but it
+    # closes the label: nothing may jump to it afterwards.
+    var t = initTracker[int, bool]()
+    let L = LabelId(31)
+    t.landLabel L, arity = 0
+    doAssert not t.isForwardTarget(L)
 
   echo "trackers.nim: all self-tests passed"

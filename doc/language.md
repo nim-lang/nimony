@@ -863,6 +863,8 @@ matching classic Nim behavior:
 A procedural type is internally a pointer to a proc. Like other pointer types,
 procedural types cannot be `nil` by default. Use `nil proc (...)` to declare
 a nullable procedural type.
+A procedural type is not a closure type: only a `proc (...) {.closure.}` type
+can store a proc that captured its environment, see [Closures](#closures).
 
 Examples:
 
@@ -884,12 +886,6 @@ Nim supports these `calling conventions`:idx:\:
 `nimcall`:idx:
 :   is the default convention used for a Nim **proc**. It is the
     same as `fastcall`, but only for C compilers that support `fastcall`.
-
-`closure`:idx:
-:   indicates that the proc has a hidden
-    implicit parameter (an *environment*). Proc vars that have the calling
-    convention `closure` take up two machine words: One for the proc pointer
-    and another one for the pointer to implicitly passed environment.
 
 `stdcall`:idx:
 :   This is the stdcall convention as specified by Microsoft. The generated C
@@ -938,6 +934,9 @@ Nim supports these `calling conventions`:idx:\:
 Most calling conventions exist only for the Windows 32-bit platform.
 
 The default calling convention is `nimcall`.
+
+`closure` is not a calling convention in Nimony, it is a pragma that gives a
+proc or a proc type a hidden *environment*, see [Closures](#closures).
 
 
 ## Distinct type
@@ -1144,15 +1143,26 @@ Conceptually, every routine has one extra implicit parameter of type
 `Scope`. The compiler synthesizes the corresponding argument at every
 call site:
 
+- when the routine is a **concept requirement** — a phantom declaration
+  taken from a concept body, with no implementation of its own — the
+  argument has type `ConceptScope`;
 - when the routine is declared in the calling module, the argument has
-  type `Scope` and the parameter matches **exactly**;
+  type `Scope`, where `Scope = object of ConceptScope`, and the
+  parameter matches as a **subtype** (depth 1);
 - when the routine is imported from another module, the argument has
   type `ImportScope`, where `ImportScope = object of Scope`, and the
-  parameter matches as a **subtype** (depth 1).
+  parameter matches as a **subtype** (depth 2).
 
 So `import` is treated as a form of inheritance between scopes, in the
-same spirit as Eiffel's inheritance between classes. No new ranking
-category is introduced; the existing rules do the work:
+same spirit as Eiffel's inheritance between classes. Concept requirements
+likewise participate in this hierarchy: they are the most specific scope,
+so they win ties against same-module and imported candidates when every
+real-argument metric is equal. A call that selects a concept requirement
+is not executed as written — the compiler defers it and **re-resolves**
+the call at generic instantiation time, when concrete argument types can
+pick a real overload.
+
+No new ranking category is introduced; the existing rules do the work:
 
 - two candidates that tie on real-argument matches → the local one wins
   because the imported one carries one extra unit of subtype distance;
@@ -1163,7 +1173,26 @@ category is introduced; the existing rules do the work:
 - a local candidate that matches via subtyping on a real argument vs.
   an imported candidate that matches exactly on its real arguments →
   ambiguous, because each side contributes one unit of subtype distance
-  and the categories tie.
+  and the categories tie;
+- inside a generic body whose type parameter is constrained by a concept,
+  a concept requirement that ties with real overloads on every other
+  metric wins the tie via `ConceptScope` and is re-resolved once the
+  generic is instantiated with a concrete type.
+
+  ```nim
+  type
+    Foo = concept
+      func bar(x: Self): int
+
+  func bar[T](x: T): int = 1
+  func bar(x: float64): int = 2
+
+  func doBar[T: Foo](x: T): int = bar(x)
+
+  doBar(1.0'f64) # 2, not ambiguous: inside `doBar`, `bar` is bound to the
+                 # Foo concept requirement (ConceptScope wins the tie), which
+                 # defers resolution; at instantiation, `bar(x: float64)` wins
+  ```
 
   ```nim
   # module m:
@@ -2575,12 +2604,16 @@ do:
 
 ## Closures
 
-A closure is a proc that captures variables from its surrounding scope. In Nimony, closures are created by declaring a proc inside another proc or block:
+A closure is a proc that captures variables from its surrounding scope. Unlike
+in Nim 2 a closure is never inferred: both the proc and the proc type that
+stores it are annotated with `.closure.`. A `.closure.` proc value is a pair of
+a proc pointer and a pointer to an implicitly passed *environment*, so it takes
+up two machine words.
 
 ```nim
-proc createCounter(): proc(): int =
+proc createCounter(): (proc(): int {.closure.}) =
   var count = 0
-  result = proc(): int =
+  result = proc(): int {.closure.} =
     inc count
     return count
 
@@ -2590,11 +2623,24 @@ echo counter() # 2
 echo counter() # 3
 ```
 
-Closures capture variables by reference, so modifications to captured variables are visible to all instances of the closure:
+Without the annotation on the literal the capture is an error, even when the
+assignment target already is a `.closure.` proc type:
 
 ```nim
-proc createAdder(x: int): proc(y: int): int =
-  result = proc(y: int): int =
+proc main =
+  var n = 3
+  # Error: cannot access local variable `n` from another routine;
+  # mark the proc with `.closure`
+  let cb: proc(): bool {.closure.} = proc(): bool = n > 0
+  discard cb()
+```
+
+Closures capture variables by reference, so modifications to captured variables
+are visible to all instances of the closure:
+
+```nim
+proc createAdder(x: int): (proc(y: int): int {.closure.}) =
+  result = proc(y: int): int {.closure.} =
     return x + y
 
 let add5 = createAdder(5)
@@ -2606,9 +2652,9 @@ echo add10(3) # 13
 Closures can capture multiple variables and can modify them:
 
 ```nim
-proc createAccumulator(): proc(x: int): int =
+proc createAccumulator(): (proc(x: int): int {.closure.}) =
   var total = 0
-  result = proc(x: int): int =
+  result = proc(x: int): int {.closure.} =
     total += x
     return total
 
@@ -2618,7 +2664,48 @@ echo acc(3)  # 8
 echo acc(7)  # 15
 ```
 
-The lifetime of captured variables extends beyond the scope where they were declared, as long as the closure exists. This is handled automatically by the garbage collector for traced references.
+A captured variable lives in the environment, not on the stack of the routine
+that declared it, so its lifetime is the lifetime of the closure. The
+environment is a traced `ref` and is destroyed by the ordinary memory
+management once the last closure referring to it is gone.
+
+A proc that is not a closure converts implicitly to a `.closure.` proc type; it
+is then paired with an empty environment:
+
+```nim
+proc double(x: int): int = x * 2
+
+proc apply(f: proc(x: int): int {.closure.}; v: int): int = f(v)
+
+echo apply(double, 21) # 42
+```
+
+### The autoclosures feature
+
+Annotating every capturing proc literal is tedious when porting Nim 2 code,
+where a capturing proc becomes a closure implicitly. `.feature: "autoclosures".`
+restores that behavior for *routine declarations*: a proc, func, method or
+converter that is nested inside another proc, func, method or converter is
+marked `.closure.` implicitly, whether it captures anything or not.
+
+```nim
+{.feature: "autoclosures".}
+
+proc createCounter(): (proc(): int {.closure.}) =
+  var count = 0
+  result = proc(): int =   # implicitly `.closure.`
+    inc count
+    return count
+
+let counter = createCounter()
+echo counter() # 1
+echo counter() # 2
+echo counter() # 3
+```
+
+The feature does not affect proc *types*: `proc(): int` stays a plain proc
+pointer and only `proc(): int {.closure.}` can store a closure. The feature is
+also implied by the `"v2"` meta feature.
 
 
 ## Func
@@ -3593,6 +3680,22 @@ type
 
 A concept is a pure compile-time mechanism that is required to type-check generic code, it is not a runtime mechanism! It is **not** comparable to a C#/Java interface.
 
+### Satisfying a concept
+
+A type `A` satisfies a concept when every requirement, read as a call, resolves for `A`. For each requirement, `Self` is replaced by `A` in the signature and the resulting call is resolved with the ordinary overload resolution rules: implicit conversions and subtyping apply, and a generic candidate only counts if `A` meets the candidate's own constraints. The candidate's result type must then be assignable to the requirement's return type. This is exactly the check that instantiating a generic body with `A` performs later, so a type that satisfies a concept can be used with every generic that requires it.
+
+Some consequences of this rule:
+
+- `int8` satisfies `Stringable` even though `$` is only declared for `int64`: the call `$(x)` widens the argument.
+- A `var Self` parameter is only met by a candidate that takes a `var` parameter, and a plain `Self` parameter cannot be passed to a `var` parameter.
+- A `func` requirement is met by a `func`, by a `proc` marked `noSideEffect`, or by a `template`; a `proc` requirement is met by any of these plus a `proc`.
+- An `iterator` requirement is only met by an iterator.
+- If several candidates match the call, the requirement is satisfied; whether the call is ambiguous is decided at instantiation. (This leniency applies only while **checking** that a type satisfies a concept. A call inside an instantiated generic body uses ordinary overload resolution, including the `ConceptScope` preference described under [Module-of-origin](#module-of-origin).)
+- A candidate whose own constraint is the concept being checked, such as `proc <=[T: Orderable](x, y: T)` while checking `Orderable`, does not count: a type satisfies a concept only through a derivation that does not assume the conclusion.
+- Candidates are looked up by name where a call would find them: in the module that declares the concept, in the module that declares the checked type (operations are attached to their type by living in its module), and in every module visible where the check happens.
+
+A concept that inherits with `concept of` adds its parents' requirements to its own; all of them are checked the same way.
+
 ### Atoms and containers
 
 Concepts come in two forms: Atoms and containers. A container is a generic concept like `Iterable[T]`, an atom always lacks any kind of generic parameter (as in `Comparable`).
@@ -3653,6 +3756,17 @@ type
     proc `[]=`(a: var Self; key: K; value: V)
 ```
 
+
+Inference of a generic parameter is anchored to `Self`: it is `Self` that ties a requirement to the type being checked. A requirement may leave `Self` out, but only once every generic parameter it names is already bound by an earlier requirement:
+
+```nim
+type
+  Findable[T] = concept
+    iterator items(x: Self): T   # the first usage binds `T`
+    proc `==`(a, b: T): bool     # no `Self`, but `T` is bound by now
+```
+
+A requirement that neither names `Self` nor has all its parameters bound states nothing about the checked type and is never satisfied — otherwise a candidate would bind the open parameter to whatever type it happens to name, and every type would satisfy the concept.
 
 ## Generics
 
@@ -4218,14 +4332,14 @@ The following features are available:
 | Feature | Description |
 |---------|-------------|
 | `"lenientnils"` | Makes `ref`, `ptr`, `pointer`, `cstring` and proc types nullable by default, matching Nim 2 behavior. See [lenientnils.md](lenientnils.md). |
-| `"autoclosures"` | Enables implicit conversion of expressions to closures at call sites. |
+| `"autoclosures"` | Marks a routine that is nested inside another routine as `.closure.` implicitly, so that capturing proc literals need no annotation. For compatibility with Nim 2. See [Closures](#closures). |
 | `"canraise"` | Allows procs without a `raises` annotation to raise exceptions. |
 | `"lenientconverters"` | Allows the definition of converters for basic types such as `int`. For compatibility with Nim 2. |
 | `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |
-| `"resemchoice"` | Re-resolves overloaded choice nodes during generic instantiation. |
 | `"earlymagics"` | Resolves magic procs before overload resolution. For compatibility with Nim 2. |
 | `"ignoreStyle"` | Be compatible with Nim 2's style insensitivity rules. |
 | `"varToverloads"` | Allow for overloading via `var T`. For compatibility with Nim 2. |
+| `"lenientFloats"` | Allows implicit narrowing of float *values* (named constants and arbitrary expressions, not just literals) to a smaller float type. Off by default because the narrowing can lose precision. For compatibility with Nim 2. |
 | `"lenientAliasing"` | Allow for aliasing like `f(#[byvar]# x, x)` in function calls. For compatibility with Nim 2. |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
 
@@ -4559,9 +4673,13 @@ While the code for the avoidtemps plugin is beyond the scope of this document, t
 The `import` statement can be combined with a plugin pragma to load a module that is the result of a plugin output:
 
 ```nim
-import (path/foo) {.plugin: "std/v2".}
+import (path/foo) {.plugin: "v2".}
 ```
 
-This syntax imports the module `path/foo` **from the plugin** `std/v2`. This mechanism can be used to import code from a foreign programming language.
+This syntax imports the module `path/foo` **from the plugin** `v2`. This mechanism can be used to import code from a foreign programming language.
+
+Unlike the other plugin kinds, the string names an already-built executable
+(looked up relative to the current directory and then in the toolchain's `bin`
+directory) rather than a `.nim` file the compiler compiles for you.
 
 The plugin does not receive Nim code but only the path `path/foo`.

@@ -21,7 +21,7 @@ already leave" with materialized control-flow flags (`mflag`/`jtrue`) and an
 - `(try body (except ...)* (fin ...)?)`, `(ret ...)`, `(raise ...)`
 - `(store value dest)` for assignments
 
-"Did we already leave" is now positional: the `Tracker` (`njvl/tracker.nim`)
+"Did we already leave" is now positional: the `Tracker` (`finalir/tracker.nim`)
 carries fall-through reachability and the per-target exit summaries, and a
 `(lab)` multi-join resolves them in one forward pass. Per the chosen design the
 state is *hybrid*: `inferle` facts stay imperative (`save`/`restore` at branch
@@ -39,7 +39,7 @@ include ".." / lib / compat2
 
 import ".." / models / tags
 import ".." / lib / symparser
-import ".." / njvl / [njvl_model, finalir]
+import ".." / finalir / [finalir_model, finalir]
 import flowtracker
 import ".." / hexer / passes
 import nimony_model, programs, decls, typenav, sembasics, reporters,
@@ -59,7 +59,7 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: NifLineInfo
 
-  NjvlContext = object
+  FirContext = object
     flow: FlowState                    # the journaled analysis state: the
                                        # definite-assignment init-set and the
                                        # `inferle` facts, mutated in place.
@@ -87,27 +87,36 @@ type
 
 # `c.facts` reads/writes the fact set inside the journaled `FlowState`; the bulk
 # of the pass mutates facts through this alias, so it stays spelled `c.facts`.
-template facts(c: NjvlContext): untyped = c.flow.facts
+template facts(c: FirContext): untyped = c.flow.facts
 
-proc markInit(c: var NjvlContext; symId: SymId) {.inline.} =
+proc markInit(c: var FirContext; symId: SymId) {.inline.} =
   c.flow.inits.incl symId
 
-proc isInitialized(c: NjvlContext; symId: SymId): bool {.inline.} =
+proc isInitialized(c: FirContext; symId: SymId): bool {.inline.} =
   symId in c.flow.inits
 
-proc dumpCurrentProc(c: var NjvlContext; info: NifLineInfo; msg: string) =
-  ## Dump the NJ IR of the proc currently under analysis to stderr. Used
+proc dumpCurrentProc(c: var FirContext; info: NifLineInfo; msg: string) =
+  ## Dump the Final IR of the proc currently under analysis to stderr. Used
   ## by `--verbose` so the user can see the lowered form that caused
   ## a contract/init failure. Gated on `c.verbose` — callers still invoke
   ## it unconditionally; this proc is the single decision point.
   if not c.verbose: return
   if cursorIsNil(c.currentProcStart): return
-  stderr.writeLine "--- NJ IR (--verbose) for: " & msg
+  stderr.writeLine "--- Final IR (--verbose) for: " & msg
   stderr.writeLine "--- at " & infoToStr(info) & ":"
   stderr.writeLine toString(c.currentProcStart, false)
-  stderr.writeLine "--- end NJ IR dump ---"
+  stderr.writeLine "--- end Final IR dump ---"
 
-proc buildErr(c: var NjvlContext; info: NifLineInfo; msg: string) =
+proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
+  # This pass runs on the FINAL IR, where the node an error is pinned to is
+  # often one the compiler synthesized -- the epilogue's `(ret result)` is what
+  # an uninitialized `result` is reported at -- and those carry no line info.
+  # Printed, such an error is a bare `???`; worse, `reporters` deduplicates by
+  # line info, so the second and every later one in a module is swallowed and
+  # the user fixes them one recompile at a time. Fall back to the enclosing
+  # proc's declaration, which is where the reader has to look anyway.
+  let info = if rawInfo.isValid or cursorIsNil(c.currentProcStart): rawInfo
+             else: c.currentProcStart.info
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
@@ -115,12 +124,12 @@ proc buildErr(c: var NjvlContext; info: NifLineInfo; msg: string) =
   dumpCurrentProc(c, info, msg)
   var hintedMsg = msg
   if not c.verbose:
-    hintedMsg.add " [pass --verbose for the NJ IR]"
+    hintedMsg.add " [pass --verbose for the Final IR]"
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
     c.errors.addStrLit(hintedMsg, info)
 
-proc contractViolation(c: var NjvlContext; orig: Cursor; fact: LeXplusC; report: bool) =
+proc contractViolation(c: var FirContext; orig: Cursor; fact: LeXplusC; report: bool) =
   if report:
     echo "known facts in this context: "
     for i in 0 ..< c.facts.len:
@@ -129,9 +138,9 @@ proc contractViolation(c: var NjvlContext; orig: Cursor; fact: LeXplusC; report:
   error "contract violation: ", orig
 
 # Forward declarations
-proc traverseStmt(c: var NjvlContext; n: var Cursor)
-proc traverseExpr(c: var NjvlContext; pc: var Cursor)
-proc analyseCall(c: var NjvlContext; n: var Cursor)
+proc traverseStmt(c: var FirContext; n: var Cursor)
+proc traverseExpr(c: var FirContext; pc: var Cursor)
+proc analyseCall(c: var FirContext; n: var Cursor)
 
 proc extractSymId(n: Cursor): SymId {.inline.} =
   var n = n
@@ -148,7 +157,7 @@ proc extractSymIdForStore(n: Cursor): SymId =
   # idea both (etupat result.0 +0) and (etupat result.0 +1) create
   # a full store to `result.0`.
   var n = n
-  if n.njvlKind == EtupatV:
+  if n.finalIrKind == EtupatV:
     inc n
   result = extractSymId(n)
 
@@ -165,7 +174,7 @@ proc skipSymbol(r: var Cursor): SymId {.inline.} =
 
 # --- Borrow checking ---
 
-proc establishesBorrow(c: var NjvlContext; n: Cursor): bool =
+proc establishesBorrow(c: var FirContext; n: Cursor): bool =
   ## True if `n` is a call to a routine marked `.establishesBorrow.`, i.e. one
   ## whose result keeps aliasing its first argument after the call returns.
   ##
@@ -182,7 +191,7 @@ proc establishesBorrow(c: var NjvlContext; n: Cursor): bool =
   skip fnType # return type
   result = hasPragma(fnType, EstablishesBorrowP)
 
-proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
+proc extractBorrowPath(c: var FirContext; n: Cursor; result: var BorrowInfo; followInlineVars=true) =
   ## Extract a path (root :: field1 :: field2 :: ...) from an expression,
   ## expanding inline variables.
   if n.isTagLit:
@@ -235,11 +244,11 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
       extractBorrowPath(c, r, result, followInlineVars)
     elif ek in {AconstrX, SetconstrX, TupconstrX, OconstrX, NilX, TrueX, FalseX}:
       result.mode = IsBorrowableFromConst
-    elif n.njvlKind == EtupatV:
+    elif n.finalIrKind == EtupatV:
       var r = n
       inc r
       extractBorrowPath(c, r, result, followInlineVars)
-    elif n.njvlKind == VV:
+    elif n.finalIrKind == VV:
       extractBorrowPath(c, n.childCursor, result, followInlineVars)
   elif (n.isIntLit or n.isUIntLit or n.isCharLit or n.isFloatLit or n.isStringLit):
     result.mode = IsBorrowableFromConst
@@ -264,7 +273,7 @@ proc extractBorrowPath(c: var NjvlContext; n: Cursor; result: var BorrowInfo; fo
             result.mode = IsBorrowableFromGlobal
       result.path.add s
 
-proc extractPath(c: var NjvlContext; n: Cursor; followInlineVars=true): BorrowInfo =
+proc extractPath(c: var FirContext; n: Cursor; followInlineVars=true): BorrowInfo =
   result = BorrowInfo(path: @[], mode: NotBorrowable, info: n.info)
   extractBorrowPath(c, n, result, followInlineVars)
 
@@ -284,13 +293,13 @@ proc pathsOverlap(a, b: BorrowInfo): bool =
       return false
   result = true
 
-proc checkBorrowConflict(c: var NjvlContext; mutPath: BorrowInfo; info: NifLineInfo) =
+proc checkBorrowConflict(c: var FirContext; mutPath: BorrowInfo; info: NifLineInfo) =
   for b in c.activeBorrows:
     if pathsOverlap(mutPath, b):
       buildErr c, info, "'" & pool.syms[mutPath.path[0]] & "' is borrowed and cannot be mutated"
       return
 
-proc localInfoOf(c: var NjvlContext; s: SymId): LocalInfo =
+proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
   ## `getLocalInfo` only knows the locals of the proc under analysis; a global
   ## carries a module suffix and has to be loaded from disk.
   result = getLocalInfo(c.typeCache, s)
@@ -300,11 +309,11 @@ proc localInfoOf(c: var NjvlContext; s: SymId): LocalInfo =
       let l = asLocal(res.decl)
       result = LocalInfo(kind: l.kind, typ: l.typ, val: l.val)
 
-proc diesWithProc(c: var NjvlContext; s: SymId): bool =
+proc diesWithProc(c: var FirContext; s: SymId): bool =
   ## Locals are gone once the proc returns; params, globals and consts are not.
   result = localInfoOf(c, s).kind in {VarY, LetY, CursorY}
 
-proc outlivesProc(c: var NjvlContext; s: SymId): bool =
+proc outlivesProc(c: var FirContext; s: SymId): bool =
   ## Storing here makes the value observable after the proc has returned:
   ## `result` flows out through the return, a global simply stays, and a
   ## `var`/`out` param writes through to a location the caller owns.
@@ -313,7 +322,7 @@ proc outlivesProc(c: var NjvlContext; s: SymId): bool =
   result = x.kind in {GvarY, TvarY, GletY, TletY} or
            (x.kind == ParamY and x.typ.typeKind in {MutT, OutT})
 
-proc borrowCarriedBy(c: var NjvlContext; value: Cursor): BorrowInfo =
+proc borrowCarriedBy(c: var FirContext; value: Cursor): BorrowInfo =
   ## The borrow `value` carries, if any: one already held by the symbol
   ## (`let v = toOpenArray(a)` … `g = v`), one the expression establishes on the
   ## spot (`g = toOpenArray(a)`), or one held by the inline temp the value was
@@ -329,7 +338,7 @@ proc borrowCarriedBy(c: var NjvlContext; value: Cursor): BorrowInfo =
   if establishesBorrow(c, value):
     result = extractPath(c, value)
 
-proc canCarryBorrow(c: var NjvlContext; n: Cursor): bool =
+proc canCarryBorrow(c: var FirContext; n: Cursor): bool =
   ## Only a reference-like value can carry a borrow past the expression that
   ## produced it. `for x in s: return x` reads through an iteration borrow but
   ## hands back a copy, and a case-of temp holding a plain field value is no
@@ -338,7 +347,7 @@ proc canCarryBorrow(c: var NjvlContext; n: Cursor): bool =
   let t = getType(c.typeCache, n)
   result = t.typeKind in {MutT, LentT, OutT} or isViewType(t)
 
-proc checkBorrowOutlivesProc(c: var NjvlContext; value: Cursor) =
+proc checkBorrowOutlivesProc(c: var FirContext; value: Cursor) =
   ## A borrow must not outlive what it borrows from. `g = toOpenArray(a)` for a
   ## local `a` leaves `g` pointing into a dead frame, which no amount of
   ## mutation checking downstream can catch — by then the owner is gone.
@@ -349,11 +358,11 @@ proc checkBorrowOutlivesProc(c: var NjvlContext; value: Cursor) =
     buildErr c, value.info, "borrow of '" & pool.syms[borrowed.path[0]] &
       "' escapes the proc; it does not live long enough"
 
-proc checkEscapingBorrow(c: var NjvlContext; value: Cursor; destRoot: SymId) =
+proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
   if destRoot != NoSymId and outlivesProc(c, destRoot):
     checkBorrowOutlivesProc(c, value)
 
-proc endBorrow(c: var NjvlContext; sym: SymId) =
+proc endBorrow(c: var FirContext; sym: SymId) =
   var i = 0
   while i < c.activeBorrows.len:
     if c.activeBorrows[i].borrower == sym:
@@ -362,7 +371,7 @@ proc endBorrow(c: var NjvlContext; sym: SymId) =
     else:
       inc i
 
-template getVarId(c: var NjvlContext; symId: SymId): VarId = VarId(symId)
+template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 
 # --- Range (`range[lo..hi]`) checking ---
 #
@@ -400,7 +409,7 @@ proc staticRangeBounds(typ: Cursor; lo, hi: var xint): bool =
   else: return false
   result = lo <= hi
 
-proc checkRangeAssign(c: var NjvlContext; targetType, value: Cursor) =
+proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
   ## Emit and discharge the `lo <= value <= hi` obligation for a value bound to a
   ## `range[lo..hi]`-typed target. Value conversions are handled at the
   ## conversion site (see the `ConvX`/`HconvX` case in `traverseExpr`), so we
@@ -452,7 +461,7 @@ proc checkRangeAssign(c: var NjvlContext; targetType, value: Cursor) =
     else:
       buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
 
-proc seedRangeFacts(c: var NjvlContext; sym: SymId; typ: Cursor) =
+proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
   ## Record that a `range[lo..hi]`-typed parameter holds a value within its
   ## bounds on entry, so obligations that pass it on to an equal-or-wider range
   ## are provable from facts even when the value's static type is erased (e.g.
@@ -467,7 +476,7 @@ proc seedRangeFacts(c: var NjvlContext; sym: SymId; typ: Cursor) =
 
 # --- Fact extraction from conditions ---
 
-proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool =
+proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
   if pc.exprKind in {AddX, SubX}:
     pc.into:
@@ -509,7 +518,7 @@ proc rightHandSide(c: var NjvlContext; pc: var Cursor; fact: var LeXplusC): bool
   else:
     traverseExpr c, pc
 
-proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): LeXplusC =
+proc translateCond(c: var FirContext; pc: var Cursor; wasEquality: var bool): LeXplusC =
   var r = pc
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
 
@@ -591,7 +600,7 @@ proc translateCond(c: var NjvlContext; pc: var Cursor; wasEquality: var bool): L
 
   pc = r
 
-proc analyseCondition(c: var NjvlContext; pc: var Cursor): int =
+proc analyseCondition(c: var FirContext; pc: var Cursor): int =
   ## Returns number of facts added
   var wasEquality = false
   let fact = translateCond(c, pc, wasEquality)
@@ -636,7 +645,7 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
   else:
     discard
 
-proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
+proc analysableRoot(c: var FirContext; n: Cursor): SymId =
   var n = n
   while true:
     case n.exprKind
@@ -661,7 +670,7 @@ proc analysableRoot(c: var NjvlContext; n: Cursor): SymId =
   else:
     result = NoSymId
 
-proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
+proc isNonNilExpr(c: var FirContext; n: Cursor): bool =
   ## Check if an expression is trivially non-nil without needing dataflow analysis.
   case n.exprKind
   of AddrX, HaddrX:
@@ -698,7 +707,7 @@ proc isNonNilExpr(c: var NjvlContext; n: Cursor): bool =
       else:
         result = false
 
-proc wantNotNil(c: var NjvlContext; n: Cursor) =
+proc wantNotNil(c: var FirContext; n: Cursor) =
   case n.exprKind
   of NilX:
     buildErr(c, n.info, "expected non-nil value")
@@ -733,11 +742,11 @@ proc wantNotNil(c: var NjvlContext; n: Cursor) =
         else:
           buildErr c, n.info, "cannot prove expression is not nil: " & asNimCode(n)
 
-proc checkNilMatch(c: var NjvlContext; n: Cursor; expected: Cursor) =
+proc checkNilMatch(c: var FirContext; n: Cursor; expected: Cursor) =
   if markedAs(expected, NotnilU):
     wantNotNil c, n
 
-proc wantNotNilDeref(c: var NjvlContext; n: Cursor) =
+proc wantNotNilDeref(c: var FirContext; n: Cursor) =
   let e = getType(c.typeCache, n)
   if markedAs(e, NilU):
     wantNotNil c, n
@@ -777,7 +786,7 @@ proc argAt(call: Cursor; pos: int): Cursor =
   inc result
   for i in 0 ..< pos: skip result
 
-proc mapSymbol(c: var NjvlContext; paramMap: Table[SymId, int]; call: Cursor; symId: SymId): VarId =
+proc mapSymbol(c: var FirContext; paramMap: Table[SymId, int]; call: Cursor; symId: SymId): VarId =
   result = VarId(0)
   let pos = paramMap.getOrDefault(symId)
   if pos > 0:
@@ -786,7 +795,7 @@ proc mapSymbol(c: var NjvlContext; paramMap: Table[SymId, int]; call: Cursor; sy
     if sid != NoSymId:
       result = getVarId(c, sid)
 
-proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
+proc compileCmp(c: var FirContext; paramMap: Table[SymId, int]; req, call: Cursor): LeXplusC =
   var r = req
   var a = InvalidVarId
   var b = InvalidVarId
@@ -824,7 +833,7 @@ proc compileCmp(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Curs
       error "expected symbol but got: ", r
   result = query(a, b, cnst)
 
-proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor): ProofRes =
+proc checkReq(c: var FirContext; paramMap: Table[SymId, int]; req, call: Cursor): ProofRes =
   case req.exprKind
   of AndX:
     var r = req
@@ -889,7 +898,7 @@ proc checkReq(c: var NjvlContext; paramMap: Table[SymId, int]; req, call: Cursor
 
 # --- Expression analysis ---
 
-proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
+proc analyseOconstr(c: var FirContext; n: var Cursor) =
   n.into:
     let objType = n
     skip n # type
@@ -906,7 +915,7 @@ proc analyseOconstr(c: var NjvlContext; n: var Cursor) =
           # optional inheritance
           skip n
 
-proc analyseArrayConstr(c: var NjvlContext; n: var Cursor) =
+proc analyseArrayConstr(c: var FirContext; n: var Cursor) =
   n.into:
     let expected = n.childCursor # element type of the array
     skip n # type
@@ -914,7 +923,7 @@ proc analyseArrayConstr(c: var NjvlContext; n: var Cursor) =
       checkNilMatch c, n, expected
       skip n
 
-proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
+proc analyseTupConstr(c: var FirContext; n: var Cursor) =
   n.into:
     var expected = n.childCursor # type of the first field
     skip n # type
@@ -929,7 +938,7 @@ proc analyseTupConstr(c: var NjvlContext; n: var Cursor) =
       skip n
       skip expected # type of the next field
 
-proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
+proc traverseExpr(c: var FirContext; pc: var Cursor) =
   case pc.kind
   of Symbol:
     let symId = pc.symId
@@ -997,7 +1006,7 @@ proc traverseExpr(c: var NjvlContext; pc: var Cursor) =
   else:
     inc pc  # ParRi/close (classic) or stray suffix (nifcore)
 
-proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
+proc borrowCheckForCall(c: var FirContext; args: Cursor) =
   var mutPaths: seq[BorrowInfo] = @[]
   var immPaths: seq[BorrowInfo] = @[]
   var n = args
@@ -1038,7 +1047,7 @@ proc borrowCheckForCall(c: var NjvlContext; args: Cursor) =
         buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
         break
 
-proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
+proc analyseCallArgs(c: var FirContext; n: var Cursor) =
   let callCursor = n
   let tt = getType(c.typeCache, n)
   let calleeKind = tt.stmtKind
@@ -1095,7 +1104,7 @@ proc analyseCallArgs(c: var NjvlContext; n: var Cursor) =
       if res != Proven:
         error "contract violation: ", req
 
-proc analyseCall(c: var NjvlContext; n: var Cursor) =
+proc analyseCall(c: var FirContext; n: var Cursor) =
   # A `{.noreturn.}` callee (e.g. `quit`, an out-of-range raiser) does not fall
   # through. Mark the path dead after it, so a sibling branch that assigns
   # `result` is correctly seen as the only way out (matches nj.nim, which emits
@@ -1115,18 +1124,18 @@ proc analyseCall(c: var NjvlContext; n: var Cursor) =
 
 # --- Assignment fact tracking ---
 
-proc addAsgnFact(c: var NjvlContext; fact: LeXplusC) =
+proc addAsgnFact(c: var FirContext; fact: LeXplusC) =
   if fact.isValid:
     c.facts.add fact
     c.facts.add fact.geXplusC
 
-proc cannotBeNil(c: var NjvlContext; n: Cursor): bool {.inline.} =
+proc cannotBeNil(c: var FirContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
   result = markedAs(t, NotnilU) or isNonNilExpr(c, n)
 
-# --- NJVL-specific traversal ---
+# --- Final-IR-specific traversal ---
 
-proc traverseStore(c: var NjvlContext; n: var Cursor) =
+proc traverseStore(c: var FirContext; n: var Cursor) =
   ## Handle (store value dest) - note reversed order from asgn
   let storeStart = n # skip store tag
   n = sub(n)
@@ -1142,7 +1151,8 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
   if destMutPath.path.len > 0:
     checkEscapingBorrow(c, valueStart, destMutPath.path[0])
 
-  # Now handle the destination (Symbol or NJVL versioned variable (v symId version))
+  # Now handle the destination (a Symbol; the NJVL `(v symId version)` form
+  # is no longer produced, see the `VV` branch of `traverseStmt`)
   let destSymId = extractSymIdForStore(n)
   # `outer = toOpenArray(a)` rebinds what `outer` aliases, exactly as the
   # `let outer = toOpenArray(a)` form does in `traverseLocal`. Destinations that
@@ -1210,12 +1220,12 @@ proc traverseStore(c: var NjvlContext; n: var Cursor) =
 # fall-through, and an `ite`/`case`/`try` checkpoints once and rolls back rather
 # than copying the state per branch.
 
-proc leaveToLabel(c: var NjvlContext; label: SymId) = gotoLabel(c.tr, c.flow, label)
-proc leaveToReturn(c: var NjvlContext) = gotoReturn(c.tr, c.flow)
-proc leaveToRaise(c: var NjvlContext) = gotoRaise(c.tr, c.flow)
-proc leaveToContinue(c: var NjvlContext) = gotoContinue(c.tr, c.flow)
+proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.tr, c.flow, label)
+proc leaveToReturn(c: var FirContext) = gotoReturn(c.tr, c.flow)
+proc leaveToRaise(c: var FirContext) = gotoRaise(c.tr, c.flow)
+proc leaveToContinue(c: var FirContext) = gotoContinue(c.tr, c.flow)
 
-proc traverseIte(c: var NjvlContext; n: var Cursor) =
+proc traverseIte(c: var FirContext; n: var Cursor) =
   ## `(ite cond then else)`. Each arm is analyzed under the condition's polarity;
   ## the tracker merges the fall-through state (inits + facts) by liveness — a
   ## branch that always leaves drops out, unifying guard-clause and if-else
@@ -1258,7 +1268,7 @@ proc traverseIte(c: var NjvlContext; n: var Cursor) =
 
   n = iteStart; skip n
 
-proc traverseLoop(c: var NjvlContext; n: var Cursor) =
+proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
   ## forward via `(jmp loopExit)`. The while-condition is the leading guard
   ## `(ite (not cond) (jmp loopExit) .)` *inside* the body, so it needs no
@@ -1283,12 +1293,12 @@ proc traverseLoop(c: var NjvlContext; n: var Cursor) =
     c.activeBorrows.setLen(savedBorrows)
   # The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it) is
   # *this* loop's exit. Record it so `traverseLabel` uses `bindLoopExit`.
-  if n.isTagLit and n.njvlKind == LabV:
+  if n.isTagLit and n.finalIrKind == LabV:
     var peek = n
     inc peek
     c.loopExitLabels.incl peek.symId
 
-proc traverseLabel(c: var NjvlContext; n: var Cursor) =
+proc traverseLabel(c: var FirContext; n: var Cursor) =
   ## `(lab L)` — the multi-join. Every forward `jmp L` has already been seen.
   var label = NoSymId
   n.into:
@@ -1299,7 +1309,7 @@ proc traverseLabel(c: var NjvlContext; n: var Cursor) =
   else:
     bindLabel(c.tr, c.flow, label)
 
-proc traverseJmp(c: var NjvlContext; n: var Cursor) =
+proc traverseJmp(c: var FirContext; n: var Cursor) =
   ## `(jmp L)` — a forward structural transfer (loop-`break` included).
   var label = NoSymId
   n.into:
@@ -1307,7 +1317,7 @@ proc traverseJmp(c: var NjvlContext; n: var Cursor) =
     inc n # symuse
   leaveToLabel(c, label)
 
-proc traverseRet(c: var NjvlContext; n: var Cursor) =
+proc traverseRet(c: var FirContext; n: var Cursor) =
   ## `(ret .X)` — primitive return, bound by the proc root. A `return value`
   ## with a non-`result` operand *provides* the result directly (the NJVL path
   ## rewrote this to `result = value`), so it initializes `result` on this exit.
@@ -1326,7 +1336,7 @@ proc traverseRet(c: var NjvlContext; n: var Cursor) =
         markInit(c, c.resultSym)
   leaveToReturn(c)
 
-proc traverseRaise(c: var NjvlContext; n: var Cursor) =
+proc traverseRaise(c: var FirContext; n: var Cursor) =
   ## `(raise .X)` — primitive raise, bound by the nearest enclosing `except`.
   n.into:
     if n.isDotToken:
@@ -1335,7 +1345,7 @@ proc traverseRaise(c: var NjvlContext; n: var Cursor) =
       traverseExpr c, n
   leaveToRaise(c)
 
-proc addCaseFacts(c: var NjvlContext; selSym: SymId; ranges: Cursor) =
+proc addCaseFacts(c: var FirContext; selSym: SymId; ranges: Cursor) =
   ## Inside an `of` branch the selector is known to lie in `ranges`. When the
   ## branch lists exactly one value/range and the selector is a plain variable,
   ## add the corresponding bound facts (`sel == v`, or `lo <= sel <= hi`).
@@ -1363,7 +1373,7 @@ proc addCaseFacts(c: var NjvlContext; selSym: SymId; ranges: Cursor) =
     c.facts.add f            # sel <= v
     c.facts.add f.geXplusC   # sel >= v
 
-proc traverseCase(c: var NjvlContext; n: var Cursor) =
+proc traverseCase(c: var FirContext; n: var Cursor) =
   ## `(case selector (of (ranges...) body)+ (else body)?)`. An N-way merge:
   ## every branch starts from the pre-case state, plus the bound facts implied
   ## by its `ranges`; the post-case fall-through is the intersection of the
@@ -1418,7 +1428,7 @@ proc traverseCase(c: var NjvlContext; n: var Cursor) =
     c.flow.rollbackTo cp
   c.activeBorrows.setLen(savedBorrows)
 
-proc traverseTry(c: var NjvlContext; n: var Cursor) =
+proc traverseTry(c: var FirContext; n: var Cursor) =
   ## `(try body (except ...)* (fin ...)?)`. Conservative: an `except` handler
   ## may run after *any* point of the body, so it can only assume the pre-try
   ## state; a `fin` is analyzed on the merged fall-through (its inits are not
@@ -1476,7 +1486,7 @@ proc traverseTry(c: var NjvlContext; n: var Cursor) =
       traverseStmt c, n # finally body, on the merged fall-through
   n = tryStart; skip n # close 'try'
 
-proc traverseLocal(c: var NjvlContext; n: var Cursor) =
+proc traverseLocal(c: var FirContext; n: var Cursor) =
   let kind = n.symKind
   let localStart = n
   n = sub(n)
@@ -1534,7 +1544,7 @@ proc traverseLocal(c: var NjvlContext; n: var Cursor) =
   # record that for downstream obligations that reference this symbol.
   seedRangeFacts c, name, localType
 
-proc traverseAssume(c: var NjvlContext; n: var Cursor) =
+proc traverseAssume(c: var FirContext; n: var Cursor) =
   n.into:
     var wasEquality = false
     let fact = translateCond(c, n, wasEquality)
@@ -1545,7 +1555,7 @@ proc traverseAssume(c: var NjvlContext; n: var Cursor) =
       if wasEquality:
         c.facts.add fact.geXplusC
 
-proc traverseAssert(c: var NjvlContext; n: var Cursor) =
+proc traverseAssert(c: var FirContext; n: var Cursor) =
   let orig = n
   n.into:
     var report = false
@@ -1580,7 +1590,7 @@ proc traverseAssert(c: var NjvlContext; n: var Cursor) =
       else:
         contractViolation(c, orig, fact, report)
 
-proc traverseProc(c: var NjvlContext; n: var Cursor) =
+proc traverseProc(c: var FirContext; n: var Cursor) =
   let decl = n
   # Fresh, journaling flow state (init-set + facts) for this proc; the enclosing
   # proc's state (with its live checkpoints) is restored on the way out.
@@ -1662,8 +1672,8 @@ proc traverseProc(c: var NjvlContext; n: var Cursor) =
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
 
-proc traverseStmt(c: var NjvlContext; n: var Cursor) =
-  case n.njvlKind
+proc traverseStmt(c: var FirContext; n: var Cursor) =
+  case n.finalIrKind
   of IteV, ItecV:
     traverseIte c, n
   of LoopV:
@@ -1678,17 +1688,13 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
     traverseLabel c, n
   of JmpV:
     traverseJmp c, n
-  of MflagV, VflagV:
-    # A control-flow flag declaration may still arrive from xelim; the bool
-    # storage is harmless. Register it so its later use is not flagged.
-    var s = NoSymId
-    n.into:
-      s = n.symId
-      skip n # symdef
-    markInit(c, s)
-  of JtrueV:
-    # Final IR has no `jtrue`; if one survives from xelim, it is inert here.
-    skip n
+  of MflagV, VflagV, JtrueV:
+    # NJVL control-flow flags and their `jtrue` setter. `xelim` used to
+    # materialise short-circuit conditions into these for `nj.nim`; that
+    # lowering went out with the pass, so nothing produces one any more. The
+    # tags stay in the NIF spec (doc/tags.md) for the historical form, so the
+    # branch has to exist.
+    bug "cfvar in Final IR"
   of KillV:
     # Variables going out of scope. NJ emits one `kill` per scope, which is what
     # makes this the place to catch a borrow whose source dies under it.
@@ -1792,7 +1798,7 @@ proc traverseStmt(c: var NjvlContext; n: var Cursor) =
       # Unknown statement - skip it wholesale
       skip n
 
-proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
+proc traverseToplevel(c: var FirContext; n: var Cursor) =
   case n.stmtKind
   of StmtsS:
     n.into:
@@ -1819,23 +1825,23 @@ proc traverseToplevel(c: var NjvlContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n
 
-proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string): TokenBuf =
+proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
   ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
   var buf = createTokenBuf(input.len)
   buf.addSubtree n
-  var pass = initPass(move buf, moduleSuffix, "xelim_finalir", 0)
+  var pass = initPass(move buf, moduleSuffix, "xelim_finalir", bits)
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; verbose = false): TokenBuf =
+proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
   ## Main entry point: lowers `input` to the Final IR and analyzes contracts.
   ## When `verbose` is true, every contract/init failure dumps the enclosing
   ## proc's IR to stderr to aid debugging.
-  var finalBuf = lowerToFinalIr(input, moduleSuffix)
+  var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
 
-  var c = NjvlContext(
-    typeCache: createTypeCache(),
+  var c = FirContext(
+    typeCache: createTypeCache(bits),
     moduleSuffix: moduleSuffix,
     tr: initFlowTracker(),
     flow: initFlowState(),
@@ -1855,6 +1861,7 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile: string) =
     var input = parseFromFile(infile)
-    discard analyzeContractsFinalIr(input, "main", {})
+    # A standalone debug driver: no target, so the host's width is stated.
+    discard analyzeContractsFinalIr(input, "main", {}, sizeof(int)*8)
 
   main(paramStr(1))

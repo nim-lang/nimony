@@ -56,29 +56,44 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # Pass 1: Desugar
   desugar(pass, c.activeChecks)
 
-  # Pass 3: Lambda Lifting
+  # Pass 2: Lambda Lifting
   pass.prepareForNext("lambdalift")
   elimLambdas(pass)
 
-  # Pass 6: Inject Raising Calls (Exception Handling)
-  pass.prepareForNext("eraiser")
-  var needsXelimIgnored = false
-  injectRaisingCalls(pass, c.bits div 8, needsXelimIgnored)
-
-  # Pass 4: Lower Expressions (first time)
+  # Pass 4: Lower Expressions — establishes the statement-based normal form
+  # every later pass now PRESERVES instead of breaking and re-fixing:
+  # expression-`if`/`case`/`try` become statements, `and`/`or` become bool
+  # temps, and an impure `while` condition becomes a leading body guard. See
+  # `doc/final_ir.md`.
   pass.prepareForNext("xelim1")
   lowerExprs(pass)
 
-  # Pass 5: Inject Duplication Points
+  # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
+  # a check, and the success tuple lands in the same pass: signatures, the
+  # `result` slot, the temps, and every use projected onto its value half.
+  # Emitted as STATEMENTS in front of the enclosing statement, so it does not
+  # re-introduce the `(expr (stmts ...) tmp)` nesting that used to require a
+  # second `xelim` run right after it.
+  #
+  # Everything downstream therefore sees a finished shape: the destroyer sees a
+  # tuple-typed temp like any other local and `cps` sees a coroutine that
+  # happens to return a tuple. The cost of deciding it here is the one
+  # `eraiser.nim`'s header describes — the lifter synthesises a hook per
+  # `(ErrorCode, T)` that only delegates to `T`'s, which the inliner prunes.
+  #
+  # The flip side: nothing lowers raises after this point, so a later pass that
+  # needs to signal an error emits the finished form (the duplifier's
+  # out-of-memory check, via `builtintypes.addRaisedCode`).
+  pass.prepareForNext("eraiser")
+  injectRaisingCalls(pass, c.bits div 8)
+
+  # Pass 6: Inject Duplication Points. Like the eraiser it emits its owning
+  # temps as statements (`bindToTemp` → `c.hoisted`), which is what removed the
+  # `xelim2` run that used to sit between this pass and the destroyer.
   pass.prepareForNext("duplifier")
   injectDups(pass, c.liftingCtx)
 
-
-  # Pass 7: Lower Expressions (second time, after raises)
-  pass.prepareForNext("xelim2")
-  lowerExprs(pass)
-
-  # Pass 8: Inject Destructors (RAII/Cleanup)
+  # Pass 6: Inject Destructors (RAII/Cleanup)
   pass.prepareForNext("destroyer")
   injectDestructors(pass, c.liftingCtx)
 
@@ -104,6 +119,7 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
         stderr.writeLine "verify_arc diagnostics for ", pass.moduleSuffix, ":"
         stderr.writeLine toString(arcErrs, false)
 
+  # Pass 7: CPS transform (coroutines)
   pass.prepareForNext("cps")
   transformToCps(pass)
 
@@ -116,9 +132,12 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   pass.prepareForNext("constparams")
   injectConstParamDerefs(pass, c.bits div 8, needsXelimAgain)
 
-  # Final pass: Lower expressions and casts.
-  # LowerCasts mode also lowers expressions, so this replaces
-  # the previously conditional xelim_final pass.
+  # Pass 11: the remaining REAL lowering step, not a repair pass: `LowerCasts`
+  # unnests calls (the Final-IR "calls are unnested statements" rule) and binds
+  # a cast's source and result to variables. `vtables`/`constparams` still emit
+  # `(expr (stmts ...) v)` for their temps, so this run also flattens those —
+  # converting them to the `hoisted` discipline is what would leave this pass
+  # with nothing but its own two jobs. See `doc/final_ir.md`.
   pass.prepareForNext("xelim_final")
   lowerExprs(pass, LowerCasts)
   pass.finishPass()

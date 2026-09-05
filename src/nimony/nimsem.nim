@@ -33,6 +33,9 @@ Options:
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
+  --mm:STRATEGY             select the memory management strategy; the name
+                            maps to `system/<strategy>.nim` in the stdlib.
+                            Possible values: atomicArc (default), arc
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
@@ -42,7 +45,7 @@ Options:
   --nimcache:PATH           set the path used for generated files
   --flags:FLAGS             undocumented flags
   --novalidate              skip running the plugin validator on plugin sources
-  --verbose                 dump NJVL IR (and other diagnostics) on contract
+  --verbose                 dump Final IR (and other diagnostics) on contract
                             analysis failures
   --version                 show the version
   --help                    show this help
@@ -53,7 +56,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 type
   Command = enum
-    None, SingleModule, GenerateIdx, Execute, Idetools
+    None, SingleModule, GenerateIdx, Execute, Idetools, BuildPlugin
 
 proc processModules(infiles: seq[string]; config: sink NifConfig;
                     moduleFlags: set[ModuleFlag]; commandLineArgs: string) =
@@ -115,6 +118,8 @@ proc handleCmdLine() =
           cmd = Execute
         of "idetools":
           cmd = Idetools
+        of "plugin":
+          cmd = BuildPlugin
         else:
           quit "command expected"
       else:
@@ -157,6 +162,10 @@ proc handleCmdLine() =
     if args.len == 0:
       quit "want more than 0 command line argument"
     executeNif args, ensureMove config
+  of BuildPlugin:
+    if args.len != 2:
+      quit "want exactly 2 command line arguments: <plugin.nim> <executable>"
+    buildPlugin(config, args[0], args[1])
   of Idetools:
     if args.len == 0:
       quit "want more than 0 command line argument"

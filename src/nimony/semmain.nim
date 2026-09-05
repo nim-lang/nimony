@@ -103,10 +103,10 @@ proc writeNewDepsFile(c: var SemContext; outfile: string) =
       deps.buildTree TagId(PassCP), NoLineInfo:
         for i in c.passC:
           deps.addStrLit i
-    if c.depsPlugins.len != 0:
-      deps.buildTree TagId(PluginP), NoLineInfo:
-        for p in c.depsPlugins:
-          deps.addStrLit p, NoLineInfo
+    if c.fileDeps.len != 0:
+      deps.buildTree TagId(DependencyIdx), NoLineInfo:
+        for f in c.fileDeps:
+          deps.addStrLit f
   let depsFile = changeModuleExt(outfile, ".s.deps.nif")
   onRaiseQuit writeFile(deps, depsFile, OnlyIfChanged)
 
@@ -527,7 +527,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
           syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
           endRead(r)
     when true: #defined(enableContracts):
-      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.verbose)
+      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
   else:
@@ -603,7 +603,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
   if reportErrors(dest) == 0:
     var afterSem = move dest
     when true:
-      var moreErrors = analyzeContractsFinalIr(afterSem, c.thisModuleSuffix, c.features, c.g.config.verbose)
+      var moreErrors = analyzeContractsFinalIr(afterSem, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
         quit 1
     if c.genericInnerProcs.len > 0:

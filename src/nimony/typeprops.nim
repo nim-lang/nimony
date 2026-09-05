@@ -229,8 +229,39 @@ proc containsGenericParamsAux(n: var TypeCursor): bool =
     inc n
   return false
 
+proc typeValueExpr*(n: Cursor): Cursor =
+  ## In a static type slot, a template expansion is emitted as `(expr … value)`.
+  ## Peel to `value` when present; otherwise return `n` unchanged.
+  result = n
+  if n.exprKind != ExprX: return
+  var e = n
+  inc e
+  while e.hasMore and not isLastSon(e):
+    skip e
+  if e.hasMore:
+    result = e
+
+proc isPureTypeValueExpr*(n: Cursor): bool =
+  ## True when `n` is an `(expr …)` whose prefix statements are only empty
+  ## `(stmts)` nodes — the shape produced by expanding a single-expression
+  ## template in a type context.
+  if n.exprKind != ExprX: return true
+  var e = n
+  inc e
+  while e.hasMore and not isLastSon(e):
+    if e.stmtKind == StmtsS:
+      var probe = e
+      probe.peekInto:
+        if probe.hasMore: return false
+    else:
+      return false
+    skip e
+  result = e.hasMore
+
 proc containsGenericParams*(n: TypeCursor): bool =
   var n = n
+  if n.exprKind == ExprX and isPureTypeValueExpr(n):
+    n = typeValueExpr(n)
   result = containsGenericParamsAux(n)
 
 proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId =
@@ -630,10 +661,27 @@ proc conceptParentsSlot*(body: Cursor): Cursor =
   skip result
   skip result
 
+proc isConceptParentInst(p: Cursor): bool {.inline.} =
+  p.typeKind == AtT or p.exprKind == AtX
+
+proc conceptParentHeadSym*(p: Cursor): SymId =
+  ## Concept symbol named by a parent slot: bare sym or `(at Concept ...)`.
+  if p.isSymbol:
+    p.symId
+  elif isConceptParentInst(p):
+    var pt = p
+    inc pt
+    if pt.isSymbol:
+      pt.symId
+    else:
+      SymId(0)
+  else:
+    SymId(0)
+
 proc conceptParentsWellFormed*(parents: Cursor): bool =
   ## False when parent sem produced an `(err ...)` node or other garbage.
   parents.kind == DotToken or parents.kind == Symbol or
-    parents.typeKind == AndT or parents.exprKind == ParX
+    parents.typeKind == AndT or isConceptParentInst(parents) or parents.exprKind == ParX
 
 proc conceptHasParents*(parents: Cursor): bool =
   conceptParentsWellFormed(parents) and not parents.isDotToken
@@ -646,11 +694,16 @@ iterator conceptParentSyms*(parents: Cursor): SymId {.sideEffect.} =
     discard
   elif p.isSymbol:
     yield p.symId
+  elif isConceptParentInst(p):
+    let h = conceptParentHeadSym(p)
+    if h != SymId(0):
+      yield h
   elif p.typeKind == AndT or p.exprKind == ParX:
     p.into:
       while p.hasMore:
-        if p.isSymbol:
-          yield p.symId
+        let h = conceptParentHeadSym(p)
+        if h != SymId(0):
+          yield h
         skip p
 
 proc conceptSelfSlot*(body: Cursor): Cursor =

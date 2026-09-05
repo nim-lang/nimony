@@ -39,6 +39,11 @@ proc builtinClear(p: pointer; mem: cint) {.intrinsic: "AtomicClear".}
 proc builtinThreadFence(mem: cint) {.intrinsic: "AtomicThreadFence".}
 proc builtinSignalFence(mem: cint) {.intrinsic: "AtomicSignalFence".}
 
+# The spin-wait hint. A row rather than `{.emit.}` for the reason the atomics are
+# rows: `emit` is a C-backend feature, so a native build had nothing to lower and
+# `cpuRelax` was the one thing in this module `nimony n` could not compile at all.
+proc builtinCpuRelax() {.intrinsic: "CpuRelax".}
+
 # Access operations
 
 proc atomicLoad*[T: Trivial](location: var T;
@@ -119,10 +124,11 @@ proc cpuRelax*() {.inline.} =
   ## Hints the CPU that we are in a spin-wait loop.
   ## Reduces power consumption and avoids memory-order violations
   ## on hyper-threaded cores.
-  when defined(amd64) or defined(i386):
-    {.emit: "asm volatile(\"pause\");".}
-  elif defined(arm64) or defined(arm):
-    {.emit: "asm volatile(\"yield\");".}
+  ##
+  ## `pause` on x86-64, `yield` on AArch64, and nothing at all on a target with
+  ## neither — a hint that does not exist is a hint that can be skipped, so no
+  ## `when` guards this call and no target has to be enumerated here.
+  builtinCpuRelax()
 
 # Convenience
 

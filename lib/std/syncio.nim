@@ -134,6 +134,25 @@ when defined(nimNativeIo):
         ## `system/exits` hook (and on `quit`/`abort`).
       stderr* = newFile(getStdHandle(STD_ERROR_HANDLE), {ffWritable, ffUnbuf})
         ## Standard error file handle. Unbuffered.
+  elif defined(embedded):
+    # --- bare metal: the console is the debug agent -------------------------
+    # Every one of these is the honest answer for a target with no filesystem
+    # and no OS, rather than a stub: semihosting has ONE console, so `fd` names
+    # nothing, and a program that opens a file on a part with no storage should
+    # be told so at the call rather than handed a handle that does nothing.
+    proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =
+      semihostWrite(buf, int(n))
+    proc sysRead(fd: OsFileHandle; buf: pointer; n: uint): int = -1
+    proc sysOpen(path: cstring; flags: cint): cint = -1
+    proc sysClose(fd: OsFileHandle): cint = 0
+    proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 = -1
+    const
+      O_RDONLY = 0'i32
+      O_WRONLY = 1'i32
+      O_RDWR = 2'i32
+      O_CREAT = 0o100'i32
+      O_TRUNC = 0o1000'i32
+      O_APPEND = 0o2000'i32
   else:
     # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}

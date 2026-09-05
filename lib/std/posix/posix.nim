@@ -250,14 +250,18 @@ when defined(posix):
       importc: "mmap".}
   proc munmap*(a1: nil pointer, a2: csize_t): cint {.importc: "munmap".}
 
-  when defined(nimNativeIo):
+  # `nimNoLibc`, NOT `nimNativeIo` — the same distinction `linuxA64Raw` draws
+  # above, and for the same reason. The C backend uses the raw-syscall stdlib
+  # but still LINKS libc, so a bare `importc` there is a libc wrapper that
+  # reports `-1` and sets libc's errno. Gating on `nimNativeIo` made every such
+  # failure read a native variable libc never writes: not a wrong message but a
+  # wrong branch, since the `0` it answered maps to `Success`.
+  when defined(nimNoLibc):
     var errnoVar: cint = 0
-      ## Native errno maintained by this module's freestanding syscall wrappers
-      ## (currently the directory ops). Mirrors libc's `errno`. NOTE: on the
-      ## C-backend native build the bare-importc syscalls still set libc's
-      ## `errno`, not this one, so error codes are only fully accurate on the
-      ## raw-syscall (arkham) target — happy paths work in both (see `pcall`'s
-      ## caveat).
+      ## Native errno for the truly freestanding build, maintained by this
+      ## module's own syscall wrappers (currently the directory ops). Nothing
+      ## else needs it: a raw syscall reports failure by returning `-errno`,
+      ## which is what `pcall` hands back.
     proc errno*(): cint {.inline.} = errnoVar
       ## The last error code. Consumers like `std/dirs` report errors via
       ## `posixToErrorCode(errno())` with no libc involved.
@@ -278,8 +282,11 @@ when defined(posix):
     ## Normalizes a syscall-style call to the Linux raw convention: returns the
     ## non-negative result on success, or `-errno` on failure. Hides whether the
     ## error is signalled by the raw syscall's negative return (freestanding /
-    ## arkham, `-d:nimNativeIo`) or by libc's `-1` + the `errno` global.
-    when defined(nimNativeIo):
+    ## arkham, `-d:nimNoLibc`) or by libc's `-1` + the `errno` global.
+    ##
+    ## Wrap every syscall-shaped call in this and read the error out of the
+    ## result. Nothing above this module should touch an errno global.
+    when defined(nimNoLibc):
       clong(x)
     else:
       let r = clong(x)
@@ -293,7 +300,7 @@ when defined(posix):
 
   template mmapErrno*(p: pointer): cint =
     ## `errno` for a failed `mmap` (see `mmapFailed`).
-    when defined(nimNativeIo): cint(-cast[int](p))
+    when defined(nimNoLibc): cint(-cast[int](p))
     else: errno()
 
   proc clock_gettime*(a1: ClockId, a2: var Timespec): cint {.importc: "clock_gettime", sideEffect.}
@@ -353,7 +360,7 @@ when defined(posix):
       ## The write matters even under libc — this module's own readdir must
       ## zero errno at end-of-directory, or consumers would misread a stale
       ## value as a failure.
-      when defined(nimNativeIo):
+      when defined(nimNoLibc):
         errnoVar = e
       else:
         errnoLocation()[] = e

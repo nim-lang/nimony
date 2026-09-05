@@ -48,6 +48,7 @@ type
     TooFewArguments
     NameNotFound
     ParamAlreadyGiven
+    ExplicitGenericArgNotAType
 
   MatchError* = object
     info: NifLineInfo
@@ -60,10 +61,26 @@ type
   Match* = object
     inferred*: Table[SymId, Cursor]
     tvars: HashSet[SymId]
+    unboundTvars: int ## how many of `tvars` still lack a binding; counted down
+                      ## by `bindTypevar` as the bindings happen, so "can this
+                      ## candidate be instantiated at all?" never has to walk
+                      ## the generic parameters again. Concept probing restores
+                      ## `inferred` wholesale (`inferenceBase`), which can put a
+                      ## typevar back to unbound behind the count's back; that
+                      ## direction only makes `sigmatch` MISS a rejection —
+                      ## never invent one — and `buildTypeArgs` still catches it
+                      ## the way it always did.
     fn*: FnCandidate
     args*, typeArgs*: TokenBuf
     err*, flipped*: bool
     concreteMatch: bool
+    inferable: HashSet[SymId] ## concept probing only: typevars on the ARGUMENT
+                              ## side that the candidate's formals may bind —
+                              ## a container concept's own parameter, or an
+                              ## enclosing generic's, following the "first use
+                              ## infers `T`" rule. Never a requirement's own
+                              ## generic parameter: that one is universally
+                              ## quantified and must be accepted as is.
     ignoreConstraints: bool ## tie-breaking only: let a typevar formal bind any
                             ## arg regardless of its constraint, so relative
                             ## specificity ("concrete beats typevar") is decided
@@ -74,6 +91,12 @@ type
     pos, opened: int
     inheritanceCosts, intLitCosts, intConvCosts, convCosts: int
     returnType*: Cursor
+    expected*: TypeCursor ## the type the CALL SITE wants, or a nil/`auto`
+                          ## cursor when it wants nothing in particular. The
+                          ## last thing that can bind a leftover typevar (see
+                          ## `inferTypevarsFromExpected`), so matching needs it
+                          ## in hand to tell an uninstantiable candidate from
+                          ## one the target type still completes.
     context: ptr SemContext
     error: MatchError
     firstVarargPosition*: int
@@ -81,8 +104,19 @@ type
     genericConverter*, refineArgType*, insertedParam*: bool
     missingConstraints*: OrderedTable[string, Cursor]
 
-proc createMatch*(context: ptr SemContext): Match =
-  Match(context: context, firstVarargPosition: -1, varargsEndPosition: -1)
+proc createMatch*(context: ptr SemContext; expected: TypeCursor = default(Cursor)): Match =
+  Match(context: context, expected: expected,
+        firstVarargPosition: -1, varargsEndPosition: -1)
+
+proc bindTypevar(m: var Match; fs: SymId; a: Cursor) =
+  ## Record a FRESH binding for the formal typevar `fs`. Every call site is
+  ## already inside the "not `inferred.contains(fs)`" branch, so the count is
+  ## never decremented twice for the same typevar. Typevars that are not the
+  ## candidate's own — an enclosing generic's, or the argument's under
+  ## `InferActualTypevar` — are bound but not counted, exactly as
+  ## `matchTypevars` did not count them.
+  m.inferred[fs] = a
+  if fs in m.tvars: dec m.unboundTvars
 
 proc addMissingConstraint*(m: var Match; routine: Cursor) =
   let key = asNimCode(routine, {renderNoBody})
@@ -105,8 +139,13 @@ proc scopeBump(m: Match): int =
   ## Models an implicit `Scope` parameter on every routine. Same-module
   ## calls pass `Scope` (exact match); cross-module calls pass
   ## `ImportScope`, where `ImportScope = object of Scope` (subtype match,
-  ## depth 1). Returns the phantom parameter's contribution to
-  ## `inheritanceCosts`: 0 for a same-module candidate, 1 otherwise.
+  ## depth 1). Concept requirement stubs are phantom declarations with no
+  ## body; they are modeled as `ConceptScope`, where `Scope = object of
+  ## ConceptScope`, so they beat same-module candidates when everything
+  ## else ties and `addFn`'s `fromConcept` path can defer the call to
+  ## instantiation. Returns the phantom parameter's contribution to
+  ## `inheritanceCosts`: -1 for a concept requirement, 0 for same-module,
+  ## 1 for cross-module.
   ##
   ## Treating module-of-origin as a subtyping dimension makes overload
   ## resolution prefer locally defined routines over imported ones
@@ -118,6 +157,7 @@ proc scopeBump(m: Match): int =
   ## Evaluated lazily by `cmpMatches`, so unique-resolution call sites
   ## pay nothing: only candidates that actually compete with another
   ## successful match are inspected.
+  if m.fn.fromConcept: return -1
   if m.context == nil or m.fn.sym == SymId(0): return 0
   let s = pool.syms[m.fn.sym]
   # Locate the dot that introduces the module suffix without allocating
@@ -234,6 +274,8 @@ proc getErrorMsg*(m: Match): string =
     "named argument not found"
   of ParamAlreadyGiven:
     "parameter already given"
+  of ExplicitGenericArgNotAType:
+    "not a type: " & typeToString(m.error.got)
 
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
@@ -285,6 +327,9 @@ proc isEnumType*(n: Cursor): bool =
 
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool
+proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
+proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
+               explicitTypeVars: Cursor)
 
 type LinearMatchFlag = enum
   ExactBits ## do not normalize bits
@@ -544,6 +589,9 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
       var n = a
       inc n
       result = foldValueExpr(m, n, depth+1)
+    of ExprX:
+      if not isPureTypeValueExpr(a): return
+      result = foldValueExpr(m, typeValueExpr(a), depth+1)
     else:
       if a.typeKind == RangetypeT and m.context != nil:
         result = lengthOrd(m.context[], a)
@@ -677,7 +725,7 @@ proc bindStaticTypevar(m: var Match; fs: SymId; elemType: Cursor; a: Cursor): bo
     if pv.isNaN: return false
     let av2 = foldValueExpr(m, av)
     return not av2.isNaN and pv == av2
-  m.inferred[fs] = av
+  bindTypevar m, fs, av
   return true
 
 proc bindStaticTypevar(m: var Match; fs: SymId; a: Cursor): bool =
@@ -697,158 +745,187 @@ proc matchesConstraint(m: var Match; f: SymId; a: Cursor): bool =
     assert typevar.kind == TypevarY
     result = matchesConstraint(m, typevar.typ, a)
 
-proc conceptReturnTypesMatch(m: var Match; cRet, aRet: Cursor): bool =
-  var c = cRet
-  var a = aRet
-  if tryLinearMatch(m, c, a, ConstraintMatchFlags):
-    return true
-  c = cRet
-  a = aRet
-  if tryLinearMatch(m, a, c, ConstraintMatchFlags):
-    return true
-  if matchesConstraint(m, c, a):
-    return true
-  c = cRet
-  a = aRet
-  if matchesConstraint(m, a, c):
-    return true
-  if sameTreesButIgnoreSymIds(cRet, aRet):
-    return true
-  c = cRet
-  a = aRet
-  if c.isTagLit and a.isTagLit and c.cursorTagId == a.cursorTagId:
-    let kind = c.typeKind
-    inc c
-    inc a
-    skipRoutineDeclPrefix(c, kind)
-    skipRoutineDeclPrefix(a, kind)
-    return tryLinearMatch(m, c, a, ConstraintMatchFlags)
-  false
-
-proc matchConceptParamTypes(m: var Match; conceptTyp, implTyp: Cursor): bool =
-  var c = conceptTyp
-  var i = implTyp
-  if tryLinearMatch(m, c, i, ConstraintMatchFlags):
-    return true
-  c = conceptTyp
-  i = implTyp
-  if tryLinearMatch(m, i, c, ConstraintMatchFlags):
-    return true
-  false
-
-proc matchConceptRoutineSig(m: var Match; conceptR, implR: Cursor): bool =
-  if not conceptRoutineKindsCompatible(conceptR.symKind, implR.symKind, implR):
-    return false
-  var cf = conceptR
-  var ca = implR
-  skipToParams cf
-  skipToParams ca
-  if cf.substructureKind != ParamsU or ca.substructureKind != ParamsU:
-    return false
-  cf.into ParamsU:
-    ca.into ParamsU:
-      while cf.hasMore and ca.hasMore:
-        let cTyp = takeLocal(cf, SkipFinalParRi).typ
-        let aTyp = takeLocal(ca, SkipFinalParRi).typ
-        if not matchConceptParamTypes(m, cTyp, aTyp):
-          return false
-      if cf.hasMore:
-        return false
-      while ca.hasMore:
-        let extra = takeLocal(ca, SkipFinalParRi)
-        if extra.val.isDotToken:
-          return false
-  # The `into` blocks advanced `cf`/`ca` past the params subtree, so they now
-  # sit on the return types — no need to re-skip from the routine head.
-  conceptReturnTypesMatch(m, cf, ca)
-
 proc matchConceptSym(m: var Match; conceptSym: SymId; a: Cursor): bool =
   if isConceptType(a):
     if conceptExtends(a.symId, conceptSym):
       return true
   matchConceptBody(m, conceptSym, getTypeSection(conceptSym).body, a)
 
-proc restoreConceptSelfInference(m: var Match; selfSyms: seq[SymId];
-                                 savedSelf: openArray[(SymId, Cursor)]) =
-  var restored = initHashSet[SymId]()
-  for entry in savedSelf:
-    let (selfSym, saved) = entry
-    m.inferred[selfSym] = saved
-    restored.incl selfSym
-  for selfSym in selfSyms:
-    if selfSym notin restored:
-      m.inferred.del(selfSym)
+proc conceptCallArgs(m: var Match; routine: Cursor; bindings: Table[SymId, Cursor];
+                     buf: var TokenBuf): seq[CallArg] =
+  ## The arguments of the call a checked generic body makes for `routine`:
+  ## one per parameter, typed as the parameter with `Self` (and every typevar
+  ## already inferred) substituted. The formal's own modifiers stay on the
+  ## arg type, so a `var Self` parameter becomes a `(mut A)` argument, which
+  ## `singleArgImpl` accepts for a `var` formal without an lvalue behind it,
+  ## while a plain `Self` stays an rvalue that a `var` candidate must reject.
+  ## The expression slot is a placeholder `(nil)`: never a dot token, which
+  ## `sigmatchLoop` would read as "use the default value".
+  buf.addParPair(NilX, routine.info)
+  var starts: seq[int] = @[]
+  var n = routine
+  skipToParams n
+  if n.substructureKind == ParamsU:
+    n.into ParamsU:
+      while n.hasMore:
+        let param = takeLocal(n, SkipFinalParRi)
+        starts.add buf.len
+        substituteTypevars(buf, param.typ, bindings)
+  # cursors are taken only once `buf` is complete, so they stay valid
+  result = @[]
+  let placeholder = cursorAt(buf, 0)
+  for s in starts:
+    result.add CallArg(n: placeholder, typ: cursorAt(buf, s))
+
+proc conceptReturnFits(m: var Match; reqRet, candRet: Cursor): bool =
+  ## Would the candidate's result be assignable to the requirement's return
+  ## type? `reqRet` is the requirement's type with `Self` substituted; it may
+  ## still name open typevars of an enclosing generic — the "first use infers
+  ## `T`" rule of container concepts — and those get bound here.
+  var chk = createMatch(m.context)
+  chk.inferred = m.inferred
+  var f = reqRet
+  singleArg chk, f, CallArg(n: emptyNode(m.context[]), typ: candRet)
+  if chk.err:
+    return false
+  for k, v in chk.inferred:
+    if not m.inferred.hasKey(k):
+      bindTypevar m, k, v
+  true
+
+proc adoptInferred(m: var Match; probe: Match; adopted: var seq[SymId]) =
+  ## Carry the bindings the probe made for inferable typevars over to the
+  ## enclosing match, remembering them so a failed candidate can undo them.
+  for k, v in probe.inferred:
+    if k in probe.inferable and not m.inferred.hasKey(k) and
+        not (v.isSymbol and v.symId == k) and isCacheableConcreteType(v):
+      bindTypevar m, k, v
+      adopted.add k
+
+proc undoInferred(m: var Match; adopted: openArray[SymId]) =
+  for k in adopted:
+    m.inferred.del k
+    if k in m.tvars: inc m.unboundTvars
+
+type
+  ConceptProbe = object
+    ## One requirement, prepared for probing candidates: the call it stands
+    ## for, the result type it demands, and the typevars a candidate may bind.
+    args: seq[CallArg]
+    reqRet: Cursor
+    inferable: HashSet[SymId]
+
+proc conceptCandidateMatches(m: var Match; candSym: SymId; candDecl: Cursor;
+                             req: ConceptProbe): bool =
+  ## Simulated overload resolution: does `candDecl` accept the call `req.args`
+  ## and produce a result that fits `req.reqRet`? Exactly the check
+  ## instantiation will run later, so widening, subtype and range conversions
+  ## and the candidate's own generic constraints all count. Ambiguity between
+  ## candidates does not matter here: one acceptable candidate satisfies the
+  ## requirement.
+  let cand = asRoutine(candDecl)
+  var probe = createMatch(m.context)
+  probe.inferable = req.inferable
+  sigmatch(probe, FnCandidate(kind: candDecl.symKind, sym: candSym, typ: cand.params),
+           req.args, emptyNode(m.context[]))
+  if probe.err:
+    return false
+  var adopted: seq[SymId] = @[]
+  adoptInferred(m, probe, adopted)
+  let candRet = cand.retType
+  result = false
+  if candDecl.symKind in {TemplateY, MacroY} and candRet.typeKind in {UntypedT, TypedT}:
+    # the result type is only known after expansion, as at a real call site
+    result = true
+  elif isVoidType(req.reqRet):
+    result = isVoidType(candRet) or hasPragma(cand.pragmas, DiscardableP)
+  elif isVoidType(candRet):
+    result = false
+  elif probe.unboundTvars > 0:
+    # only an expected type could bind the rest; nothing to judge here
+    result = true
+  else:
+    var retBuf = createTokenBuf(16)
+    substituteTypevars(retBuf, candRet, probe.inferred)
+    let instRet = typeToCursor(m.context[], retBuf, 0)
+    result = conceptReturnFits(m, req.reqRet, instRet)
+  if not result:
+    undoInferred(m, adopted)
 
 proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool =
   if m.context == nil:
     return true
   if isConceptType(a):
     return conceptRequirementInBody(routine, actualBody)
-  let reqSym = conceptRequirementSym(routine)
-  let (hit, cachedImpl) = tryRoutineImplFromCache(m.context, conceptSym, reqSym, a)
-  if hit:
-    return cachedImpl.found
-  let selfSyms = conceptSelfSyms(body, routine)
-  var savedSelf: seq[(SymId, Cursor)] = @[]
-  for selfSym in selfSyms:
-    if m.inferred.hasKey(selfSym):
-      savedSelf.add (selfSym, m.inferred.getOrDefault(selfSym, default(Cursor)))
-    m.inferred[selfSym] = a
+  var bindings = m.inferred
+  for selfSym in conceptSelfSyms(body, routine):
+    bindings[selfSym] = a
+  if not conceptRoutineUsesSelf(body, routine):
+    # `Self` is what ties a requirement to the checked type. A requirement that
+    # never names it may still be checked — but only once every typevar it names
+    # is bound, which an earlier requirement does under the "first use infers
+    # `T`" rule. While one is still open nothing relates the requirement to `a`,
+    # and candidate matching would bind that typevar to whatever type the
+    # candidate happens to name, so *every* type would satisfy the concept
+    # (issue #2430).
+    for tv in conceptRoutineTypevars(body, routine):
+      if not bindings.hasKey(tv):
+        return false
+  var argBuf = createTokenBuf(32)
+  var retBuf = createTokenBuf(16)
+  substituteTypevars(retBuf, asRoutine(routine).retType, bindings)
+  var req = ConceptProbe(args: conceptCallArgs(m, routine, bindings, argBuf),
+                         reqRet: cursorAt(retBuf, 0), inferable: initHashSet[SymId]())
+  # What is still open in the arguments after substitution is either the
+  # requirement's own generic parameter (kept open) or a typevar the
+  # candidate may bind: the concept's container parameter, or the enclosing
+  # generic's.
+  for arg in req.args:
+    collectOpenTypevars(arg.typ, req.inferable)
+  for own in conceptRequirementOwnTypevars(routine):
+    req.inferable.excl own
   let basename = conceptRoutineBasename(routine)
-  let inferenceBase = m.inferred
-  for cand in collectConceptRoutineCandidates(m.context, conceptSym, basename):
+  for cand in collectConceptRoutineCandidates(m.context, conceptSym, basename, a):
     let res = tryLoadSym(cand)
-    if res.status != LacksNothing:
+    if res.status != LacksNothing or res.decl.symKind notin RoutineKinds:
       continue
-    if res.decl.symKind notin RoutineKinds:
+    if not conceptRoutineKindsCompatible(routine.symKind, res.decl.symKind, res.decl):
       continue
-    m.inferred = inferenceBase
-    for selfSym in selfSyms:
-      m.inferred[selfSym] = a
-    let oldErr = m.err
-    let oldHasError = m.hasError
-    m.err = false
-    m.hasError = false
-    let sigMatch = matchConceptRoutineSig(m, routine, res.decl)
-    m.err = oldErr
-    m.hasError = oldHasError
-    if sigMatch:
-      restoreConceptSelfInference(m, selfSyms, savedSelf)
-      storeRoutineImpl(m.context, conceptSym, reqSym, a,
-                       ConceptRoutineImplResult(found: true, impl: cand))
+    if conceptCandidateMatches(m, cand, res.decl, req):
       return true
-  restoreConceptSelfInference(m, selfSyms, savedSelf)
-  storeRoutineImpl(m.context, conceptSym, reqSym, a, ConceptRoutineImplResult(found: false))
   false
 
 proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor): bool =
+  if a.isDotToken:
+    # An unconstrained typevar reaches us as an empty (`.`) constraint: it
+    # provably fulfils no requirement, so it must not satisfy the concept
+    # (issue #755).
+    return false
   let (hit, cached) = tryBodyCheckFromCache(m.context, conceptSym, a)
-  if hit and cached.satisfied:
-    return true
+  if hit:
+    if not cached.satisfied:
+      for reqSym in cached.missing:
+        let res = tryLoadSym(reqSym)
+        if res.status == LacksNothing:
+          addMissingConstraint(m, res.decl)
+    return cached.satisfied
   if isOpenTypevar(a):
-    storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: true))
     return true
+  if not enterBodyCheck(m.context, conceptSym, a):
+    # re-entrant: a candidate needs the very verdict under construction
+    return false
+  let hitsBefore = conceptAssumptionHits(m.context)
   let actualIsConcept = isConceptType(a)
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
-  let meta = getConceptMetadata(m.context, conceptSym, body)
-  # Until concrete-type requirement matching is complete, standalone concepts
-  # match any concrete type (legacy stub behaviour). Concept-to-concept
-  # subsumption always checks requirements structurally.
-  if not actualIsConcept and meta.parents.len == 0:
-    if not conceptTargetNeedsStrictCheck(a):
-      # An unconstrained typevar reaches us as an empty (`.`) constraint: it
-      # provably fulfils no requirement, so it must not satisfy the concept
-      # (issue #755). Genuine concrete types stay leniently accepted.
-      let satisfied = not a.isDotToken
-      storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied))
-      return satisfied
-  var hasMissing = false
+  var missing: seq[SymId] = @[]
   for cbody, routine in conceptHierarchyRoutines(body):
     if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
       addMissingConstraint(m, routine)
-      hasMissing = true
-  let satisfied = not hasMissing
-  storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied))
+      missing.add conceptRequirementSym(routine)
+  leaveBodyCheck(m.context, conceptSym, a)
+  let satisfied = missing.len == 0
+  if conceptVerdictIsFinal(m.context, hitsBefore):
+    storeBodyCheck(m.context, conceptSym, a, ConceptBodyResult(satisfied: satisfied, missing: missing))
   satisfied
 
 proc isTypevar(s: SymId): bool =
@@ -993,12 +1070,13 @@ proc linearMatchTree(m: var Match; f, a: var Cursor; fOrig, aOrig: Cursor;
       var prev = m.inferred.getOrQuit(fs)
       rematchInferredTypevar(m, fs, prev, f, a, fOrig, aOrig, flags)
     elif matchesConstraint(m, fs, a):
-      m.inferred[fs] = a # NOTICE: Can introduce modifiers for a type var!
+      bindTypevar m, fs, a # NOTICE: Can introduce modifiers for a type var!
       inc f
       skip a
     else:
       m.error(ConstraintMismatch, f, a)
-  elif InferActualTypevar in flags and a.isSymbol and isTypevar(a.symId):
+  elif a.isSymbol and isTypevar(a.symId) and
+      (InferActualTypevar in flags or a.symId in m.inferable):
     let aSym = a.symId
     if m.concreteMatch:
       if matchesConstraint(m, aSym, f):
@@ -1306,7 +1384,6 @@ proc useArg(m: var Match; arg: CallArg; f: Cursor) =
     m.args.addSubtree arg.n
 
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg)
-proc singleArg(m: var Match; f: var Cursor; arg: CallArg)
 proc isEmptyContainer*(n: Cursor): bool
 
 proc matchObjectInheritance*(m: var Match; f, a: Cursor; fsym, asym: SymId; ptrKind: TypeKind) =
@@ -1493,7 +1570,7 @@ proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
       # specificity probe: there the candidates already matched the real call,
       # so we measure which formal is more specialized without re-validating
       # the constraint (a concrete `int` arg need not satisfy `T`'s concept).
-      m.inferred[fs] = a
+      bindTypevar m, fs, a
     else:
       m.error ConstraintMismatch, f, a
   elif isObjectType(fs):
@@ -1761,7 +1838,52 @@ proc isMutableLvalue(n: Cursor): bool =
   else:
     result = false
 
+proc inferArgTypevar(m: var Match; f: var Cursor; arg: CallArg; aSym: SymId) =
+  ## The argument's type is the inferable typevar `aSym` (see
+  ## `Match.inferable`): a first use binds it to the formal, a later use must
+  ## agree with what it was bound to.
+  if m.inferred.contains(aSym):
+    let prev = m.inferred.getOrQuit(aSym)
+    m.concreteMatch = true
+    singleArgImpl(m, f, CallArg(n: arg.n, typ: prev, orig: arg.orig))
+    m.concreteMatch = false
+  elif matchesConstraint(m, aSym, f):
+    m.inferred[aSym] = f
+    skip f
+  else:
+    m.error ConstraintMismatch, f, arg.typ
+
+proc inferableArgTypevar(m: Match; f: Cursor; arg: CallArg): SymId =
+  ## The typevar to infer from `f`, or `NoSymId` when `arg` is not an inferable
+  ## typevar or `f` is not yet the shape it can bind to: a modifier is peeled
+  ## by `singleArgOnFormal` first, and a typevar formal binds the arg the usual
+  ## way. An arg-side modifier is irrelevant to the binding and dropped.
+  result = NoSymId
+  if m.inferable.len > 0:
+    let a = skipModifier(arg.typ)
+    if a.isSymbol and a.symId in m.inferable and
+        f.typeKind notin {MutT, OutT, SinkT, LentT} and
+        not (f.isSymbol and isTypevar(f.symId)):
+      result = a.symId
+
+proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg)
+
 proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
+  ## Entry for matching one argument against the formal `f`, and the point every
+  ## refinement of the formal re-enters through: `singleArgOnFormal` peels a
+  ## modifier, resolves an alias, replaces a bound typevar or picks a typeclass
+  ## branch and comes back here with the narrower formal. The one decision
+  ## taken here — is the argument an inferable typevar that this formal now
+  ## binds? — depends on that shape, so it has to be re-asked at each step.
+  let aSym = inferableArgTypevar(m, f, arg)
+  if aSym != NoSymId:
+    inferArgTypevar(m, f, arg, aSym)
+  else:
+    singleArgOnFormal(m, f, arg)
+
+proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
+  ## Matches `arg` by the shape of the formal `f`. Every recursion goes through
+  ## `singleArgImpl`, never directly back here.
   case f.kind
   of Symbol:
     matchSymbol m, f, arg
@@ -2029,7 +2151,9 @@ proc singleArgImpl(m: var Match; f: var Cursor; arg: CallArg) =
           m.error InvalidMatch, f, arg.typ
         skip f
     of NoType, ErrT, ObjectT, EnumT, HoleyEnumT, AnumT, NiltT, AndT, NotT,
-        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT:
+        DistinctT, StaticT, AutoT, TypekindT, OrdinalT, ConceptT, SymkindT,
+        ClosureTupleT:
+      # `ClosureTupleT` is a hexer-internal lowering; it never reaches sem.
       m.error UnhandledTypeBug, f, f
   else:
     m.error MismatchBug, f, arg.typ
@@ -2371,12 +2495,34 @@ proc collectDefaultValues(m: var Match; f: Cursor): seq[CallArg] =
     result.add CallArg(n: emptyNode(m.context[]), typ: m.context.types.autoType)
     skip f
 
+proc notATypeArg(e: Cursor): bool =
+  ## True when the explicit generic argument `e` names something that is not a
+  ## type at all — most often a template parameter still sitting in type
+  ## position while a template body is semchecked generically (`symKind ==
+  ## ParamY`), as in `newSeq[F](n)` inside `template def(F: untyped)`.
+  ##
+  ## Binding a typevar to such a symbol is what used to drag the whole generic
+  ## body in behind it: `newSeq[F]` got instantiated with `T := F`, `F` became
+  ## `(err)` inside the instance, and every generic that body touches
+  ## (`capInBytes`, `memSizeInBytes`, the `seq` hooks) reported its own
+  ## `got: ptr UncheckedArray[<type error>] but wanted: …` on the way down.
+  ## Rejecting the binding here keeps the diagnostic at the call site.
+  ##
+  ## Typevars are legitimate arguments (a generic instantiated from inside
+  ## another generic), and a non-symbol argument is a structural type tree.
+  if not e.isSymbol: return false
+  let res = tryLoadSym(e.symId)
+  if res.status != LacksNothing: return false
+  result = res.decl.stmtKind != TypeS and not isTypevarLike(res.decl.symKind)
+
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
   m.tvars = default(HashSet[SymId])
+  m.unboundTvars = 0
   if fn.kind in RoutineKinds:
     var e = explicitTypeVars
     for v in typeVars(fn.sym):
       m.tvars.incl v
+      inc m.unboundTvars
       if e.isDotToken: discard
       elif not e.hasMore:
         m.error0Typevar MissingExplicitGenericParameter, v
@@ -2390,7 +2536,9 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
           if not bindStaticTypevar(m, v, typevar.typ, e):
             m.error ConstraintMismatch, typevar.typ, e
         elif matchesConstraint(m, v, e):
-          m.inferred[v] = e
+          bindTypevar m, v, e
+        elif notATypeArg(e):
+          m.error ExplicitGenericArgNotAType, typevar.typ, e
         else:
           assert typevar.kind == TypevarY
           m.error ConstraintMismatch, typevar.typ, e
@@ -2402,6 +2550,40 @@ proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
     if m.tvars.len == 0:
       m.error0 RoutineIsNotGeneric
       return
+
+proc inferTypevarsFromExpected(m: var Match) =
+  ## Last chance to bind a generic routine's leftover typevars: unify its
+  ## RETURN type with the type the call site expects — `let r: Result[int,
+  ## string] = ok(5)` infers `E` that way, as `ok`'s argument only mentions
+  ## `T`. This is part of MATCHING, not a touch-up applied to the winner
+  ## afterwards: whether the expected type completes a candidate is exactly
+  ## what separates one that can be instantiated from one that cannot, and the
+  ## latter must not reach `pickBestMatch` at all. Merges only on a clean
+  ## (non-converting) unify, so a conversion-to-expected — `commonType`'s job,
+  ## much later — is left untouched.
+  if m.fn.kind notin RoutineKinds or m.fn.sym == SymId(0): return
+  if cursorIsNil(m.expected) or m.expected.isDotToken or
+     m.expected.typeKind in {AutoT, VoidT} or containsGenericParams(m.expected): return
+  if cursorIsNil(m.returnType) or m.returnType.isDotToken: return
+  var rtMatch = createMatch(m.context)
+  rtMatch.inferred = m.inferred # seed with the bindings already found from args
+  var rt = m.returnType
+  typematch(rtMatch, rt, Item(n: emptyNode(m.context[]), typ: m.expected))
+  if not rtMatch.err and classifyMatch(rtMatch) in {EqualMatch, GenericMatch}:
+    # `bindTypevar` rather than assigning `inferred` wholesale: it is what keeps
+    # `unboundTvars` — the count the caller is about to test — honest.
+    for v, inf in rtMatch.inferred:
+      if not m.inferred.hasKey(v):
+        bindTypevar m, v, inf
+
+proc anArgIsStillUntyped(args: openArray[CallArg]): bool =
+  ## `auto` on an argument is not a type, it is "not decided yet": an empty
+  ## literal (`@[]`) whose element type only the enclosing context can supply.
+  ## A typevar the arguments left unbound is then unbound because the ARGUMENT
+  ## is unfinished, not because the candidate is uninstantiable — so the
+  ## rejection below has nothing to say about it.
+  for a in args:
+    if not cursorIsNil(a.typ) and a.typ.typeKind == AutoT: return true
 
 proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
                explicitTypeVars: Cursor) =
@@ -2431,14 +2613,40 @@ proc sigmatch*(m: var Match; fn: FnCandidate; args: openArray[CallArg];
     f = paramsStart; skip f
     m.returnType = f # return type follows the parameters in the token stream
 
-proc hasUnboundTypevars*(m: Match): bool =
-  ## True if `m.fn`'s generic typevars (as collected by `matchTypevars`) still
-  ## lack a binding after argument matching. Cheap: just consults the
-  ## `tvars`/`inferred` bookkeeping already built up, no extra lookups.
-  for v in m.tvars:
-    if not m.inferred.hasKey(v):
-      return true
-  return false
+  if m.unboundTvars > 0 and not m.err and not m.insertedParam and
+      not anArgIsStillUntyped(args):
+    # The arguments have had their say. Two things can still bind a typevar:
+    # the call site's expected type, through the return type (right below),
+    # and — when a parameter was left to its default — `addArgsInstConverters`,
+    # which instantiates that default expression and matches it against the
+    # formal (`proc foo6[T](x: T = 3)` called as `foo6()` infers `T` from the
+    # `3`). Hence `insertedParam` bows out here.
+    inferTypevarsFromExpected m
+    if m.unboundTvars > 0:
+      # A typevar still unbound now is one that NOTHING will ever bind, so the
+      # candidate cannot be instantiated — and a candidate that cannot be
+      # instantiated is not a match at all. Left in the running it either ties
+      # a viable overload at `pickBestMatch` and turns a clear call into
+      # "ambiguous call" (#2392), or outright beats it by binding fewer
+      # typevars — `matrix[R, C: static int, T](fill: T)` swallowing the call
+      # meant for `matrix(elems: array[R, array[C, T]])` and orphaning `R` and
+      # `C` (#2442). Walking the typevars is confined to this failure path: it
+      # only serves to name the culprit, in declaration order.
+      for v in typeVars(m.fn.sym):
+        if not m.inferred.hasKey(v):
+          m.error0Typevar CouldNotInferTypeVar, v
+          break
+
+proc allUninstantiable*(m: openArray[Match]): bool =
+  ## Every candidate was dropped for the same reason: a type parameter nothing
+  ## can bind (see the end of `sigmatch`). The overload-set "Type mismatch"
+  ## report would then bury the one fact that matters under a position marker
+  ## for an argument that matched fine, so `resolveOverloads` reports the first
+  ## candidate's "could not infer type for T" on its own instead.
+  result = m.len > 0
+  for i in 0..<m.len:
+    if not (m[i].err and m[i].error.kind == CouldNotInferTypeVar):
+      return false
 
 proc buildTypeArgs*(m: var Match) =
   # check all type vars have a value:

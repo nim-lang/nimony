@@ -33,8 +33,8 @@ when defined(cseSummaryStats):
   import cse
   import std / syncio
 
-proc runOne(input, output: string; verify, stats: bool) =
-  let st = processFile(input, output, verify)
+proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode) =
+  let st = processFile(input, output, verify, vecMode)
   if stats:
     var parts: seq[string] = @[]
     if st.intermodChanged > 0: parts.add "intermodinliner=" & $st.intermodChanged
@@ -47,10 +47,13 @@ proc optimizeMain(args: seq[string]) =
   var outdir = ""
   var verify = false
   var stats = false
+  var vecMode = vecOff
   for a in args:
     if a.startsWith("--outdir:"): outdir = a["--outdir:".len .. ^1]
     elif a == "--verify": verify = true
     elif a == "--stats": stats = true
+    elif a == "--vectorize": vecMode = vecNeon
+    elif a == "--vectorize:sse": vecMode = vecSse
     elif a.startsWith("-"): quit "unknown option: " & a
     else: positional.add a
 
@@ -60,13 +63,13 @@ proc optimizeMain(args: seq[string]) =
   if outdir.len > 0:
     createDir outdir
     for inp in positional:
-      runOne(inp, outdir / extractFilename(inp), verify, stats)
+      runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode)
   elif positional.len == 2:
-    runOne(positional[0], positional[1], verify, stats)
+    runOne(positional[0], positional[1], verify, stats, vecMode)
   else:
     # in-place rewrite of each input
     for inp in positional:
-      runOne(inp, inp, verify, stats)
+      runOne(inp, inp, verify, stats, vecMode)
 
 proc main =
   var rest: seq[string] = @[]

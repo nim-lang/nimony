@@ -61,6 +61,11 @@ type
     typeCache: TypeCache
     resultSym: SymId
     keepReturns: bool
+    pendingJmps: seq[(SymId, Label)]
+      ## Forward `(jmp L)`s that have not seen their `(lab L)` yet. `jmp` is
+      ## forward-only and scoped (see `doc/final_ir.md`), so a single forward
+      ## pass with a fixup list is a complete model: by the time `(lab L)` is
+      ## reached, every predecessor of `L` has been emitted.
 
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
@@ -153,6 +158,8 @@ proc patch(c: var ControlFlow; p: Label) =
   c.dest[p.int] = tok
 proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target)
 proc trStmt(c: var ControlFlow; n: var Cursor)
+proc trJmp(c: var ControlFlow; n: var Cursor)
+proc trLab(c: var ControlFlow; n: var Cursor)
 
 proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
@@ -674,7 +681,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
       of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS,
          LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS, ConverterS,
          MethodS, MacroS, TemplateS, TypeS, EmitS, AsgnS, ScopeS, WhenS,
-         BreakS, ContinueS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS,
+         BreakS, ContinueS, JmpS, LabS, ForS, WhileS, CoroforS, RetS, YldS, StmtsS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
          DiscardS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
@@ -728,7 +735,6 @@ proc trCoroFor(c: var ControlFlow; n: var Cursor) =
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
-  let orig = n
   var it {.cursor.} = c.currentBlock
   var control {.cursor.}: BlockOrLoop = nil
   while it != nil and it.kind != IsRoutine:
@@ -751,9 +757,20 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
     elif (n.isSymbol and n.symId == c.resultSym) or (n.isDotToken):
       discard "do not generate `result = result`"
       inc n
+    elif c.resultSym == NoSymId:
+      # `(ret x)` in a routine that declares no `result`. Front-end IR never
+      # has this, but hexer's IR does and runs this builder over it (the
+      # duplifier's last-read analysis): the eraiser gives a VOID `.raises`
+      # routine an `ErrorCode` return type and a trailing `(ret Success)`,
+      # and the code goes straight out with no slot to pass through. There is
+      # nothing to assign, but the expression's reads must stay visible to the
+      # dataflow, so model it as a discard.
+      var aa = Target(m: IsEmpty)
+      trExpr c, n, aa
+      c.dest.addParLe(DiscardS, n.endInfo)
+      c.flush aa
+      c.dest.addParRi()
     else:
-      if c.resultSym == NoSymId:
-        bug "result symbol not found " & toString(orig, false)
       var aa = Target(m: IsEmpty)
       trExpr c, n, aa
       c.dest.addParLe(AsgnS, n.endInfo)
@@ -761,6 +778,35 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
       c.flush aa
       c.dest.addParRi()
   control.breakInstrs.add c.jmpForw(n.endInfo)
+
+proc trJmp(c: var ControlFlow; n: var Cursor) =
+  ## `(jmp L)`: an unconditional forward transfer to `(lab L)`. Recorded as a
+  ## fixup; `trLab` patches it.
+  let info = n.info
+  n.into:
+    if n.isSymbol:
+      let lab = n.symId
+      inc n
+      c.pendingJmps.add (lab, c.jmpForw(info))
+    else:
+      bug "invalid jmp statement"
+
+proc trLab(c: var ControlFlow; n: var Cursor) =
+  ## `(lab L)`: the join every `(jmp L)` lands on. Forward-only means all of
+  ## them have already been emitted, so the join is complete right here.
+  n.into:
+    if n.isSymbolDef or n.isSymbol:
+      let lab = n.symId
+      inc n
+      var i = 0
+      while i < c.pendingJmps.len:
+        if c.pendingJmps[i][0] == lab:
+          c.patch c.pendingJmps[i][1]
+          c.pendingJmps.del i
+        else:
+          inc i
+    else:
+      bug "invalid lab statement"
 
 proc trBreak(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
@@ -840,7 +886,7 @@ proc trResult(c: var ControlFlow; n: var Cursor) =
 proc trLocal(c: var ControlFlow; n: var Cursor) =
   let kind = n.symKind
   let orig = n
-  inc n
+  inc n, SkipTag
   skip n, SkipName # name
   skip n, SkipExport # export marker
   skip n, SkipPragmas # pragmas
@@ -1015,6 +1061,10 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trBreak c, n
   of ContinueS:
     trContinue c, n
+  of JmpS:
+    trJmp c, n
+  of LabS:
+    trLab c, n
   of RetS:
     trReturn c, n
   of ResultS:
@@ -1063,8 +1113,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of CoroforS:
     trCoroFor c, n
 
-proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): TokenBuf =
-  var c = ControlFlow(typeCache: createTypeCache(), keepReturns: keepReturns)
+proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]; bits: int): TokenBuf =
+  var c = ControlFlow(typeCache: createTypeCache(bits), keepReturns: keepReturns)
   c.srcBase = n
   c.typeCache.openScope()
   let sk = n.stmtKind
@@ -1073,32 +1123,41 @@ proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]): To
     trProc c, n
   else:
     assert sk == StmtsS
+    # Module-level statements are a routine too, as far as control flow goes:
+    # hexer's IR has `(ret ...)` out here (the eraiser turns a bare re-raise
+    # outside a `.raises` routine into one), and it means "leave the module
+    # init", which is exactly what `addRet` below is. Without a root block
+    # `trReturn` would find no enclosing routine and bug out.
+    let thisModule = BlockOrLoop(kind: IsRoutine, sym: SymId(0), parent: c.currentBlock)
+    c.currentBlock = thisModule
     c.dest.addParLe(n.cursorTagId, n.info)
     n.into:
       while n.hasMore:
         trStmt c, n
+    for ret in thisModule.breakInstrs: c.patch ret
     addRet c
     c.dest.addParRi()
+    c.currentBlock = c.currentBlock.parent
   c.typeCache.closeScope()
   c.pad()                       # fill trailing synthesized tokens with -1
   srcMap = ensureMove c.destSrc
   result = ensureMove c.dest
   #echo "result: ", codeListing(result)
 
-proc toControlflow*(n: Cursor; keepReturns = false): TokenBuf =
+proc toControlflow*(n: Cursor; bits: int; keepReturns = false): TokenBuf =
   ## Build the goto-based control-flow representation. The source-position
   ## side-channel is discarded — for callers (e.g. contracts) that only need
   ## the CF graph, not the back-mapping to the original trees.
   var srcMap: seq[int32] = @[]
-  result = toControlflowImpl(n, keepReturns, srcMap)
+  result = toControlflowImpl(n, keepReturns, srcMap, bits)
 
-proc toControlflowWithMap*(n: Cursor; srcMap: var seq[int32];
+proc toControlflowWithMap*(n: Cursor; srcMap: var seq[int32]; bits: int;
                            keepReturns = false): TokenBuf =
   ## As `toControlflow`, but also returns `srcMap`, a seq parallel to the result
   ## buffer: `srcMap[i]` is the position (relative to `n`) of the source token
   ## that produced CF token `i`, or -1 for a synthesized token. The mover inverts
   ## this to locate an `emove` operand's landing site in the CF.
-  result = toControlflowImpl(n, keepReturns, srcMap)
+  result = toControlflowImpl(n, keepReturns, srcMap, bits)
 
 proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
   # Create a sequence to track which instructions are reachable
@@ -1161,7 +1220,9 @@ when isMainModule:
   import std / [syncio, os]
   proc main(infile, outputfile: string; keepReturns: bool) =
     var input = parseFromFile(infile)
-    var cf = toControlflow(beginRead(input), keepReturns=keepReturns)
+    # A standalone debug driver: it has no target, so the host's width is the
+    # only answer available and is stated rather than defaulted to.
+    var cf = toControlflow(beginRead(input), sizeof(int)*8, keepReturns=keepReturns)
     try:
       writeFile(outputfile, codeListing(cf))
     except:

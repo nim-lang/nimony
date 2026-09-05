@@ -117,17 +117,15 @@ proc hasturTests(overwrite: bool) =
   if os.getEnv("CI").len > 0:
     args = "--release " & args
   # Build hastur once into `bin/` as a dedicated step, then drive the suite
-  # with the compiled binary. Previously `nim c -r src/hastur … all` fused
-  # the compile and the run, so a hastur *compile* error surfaced as a bogus
-  # test failure, and hastur's parallel runner re-exec'd itself via a
+  # with the compiled binary. Previously `nim c -r src/hastur/hastur … all`
+  # fused the compile and the run, so a hastur *compile* error surfaced as a
+  # bogus test failure, and hastur's parallel runner re-exec'd itself via a
   # nimcache temp binary (`getAppFilename`) instead of a stable `bin/hastur`.
-  # `--warningAsError:{ProveInit,Uninit}:off` mirrors hastur's own
-  # `nimcPrefix`: `src/config.nims` promotes those to errors, which Nim
-  # 2.2.10's `typedthreads` (`createThread`, used by the parallel runner)
-  # trips.
+  # `src/hastur/nim.cfg` carries the `--outdir` and the
+  # `--warningAsError:{ProveInit,Uninit}:off` overrides Nim 2.2.10's
+  # `typedthreads` needs, so the command line only has to name the output.
   let hastur = ("bin" / "hastur").addFileExt(ExeExt)
-  exec "nim c --warningAsError:ProveInit:off --warningAsError:Uninit:off " &
-       "-o:" & hastur & " src/hastur"
+  exec "nim c -o:" & hastur & " src/hastur/hastur"
   exec hastur & " " & args & " all"
 
 hasturTests(overwrite)

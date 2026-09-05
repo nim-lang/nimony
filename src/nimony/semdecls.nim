@@ -63,7 +63,7 @@ proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Ite
     typecheck(c, dest, lastSonInfo, it.typ, c.routine.returnType)
   of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, PtrT, ArrayT, VarargsT,
-     StaticT, TupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+     StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
      TypedT, CstringT, PointerT, OrdinalT:
     commonType c, dest, it, beforeLastSon, c.routine.returnType
@@ -778,9 +778,11 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
   let paramsNode = params
   var root = SymId(0)
   var signature = StrId(0)
+  var hasFirstParam = false
   if params.isTagLit:
     inc params
     if params.substructureKind == ParamU:
+      hasFirstParam = true
       inc params
       skip params, SkipName # name
       skip params, SkipExport # export marker
@@ -789,10 +791,14 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
       var methodName = pool.syms[symId]
       extractBasename methodName
       signature = pool.strings.getOrIncl(methodKey(methodName, paramsNode))
-  if root == SymId(0) or not isObjectType(root):
-    let typ = typeToString(params)
+  if not hasFirstParam or root == SymId(0) or not isObjectType(root):
     var errBuf = createTokenBuf(16)
-    buildErr c, errBuf, info, "cannot attach method to type " & typ
+    if not hasFirstParam:
+      # `params` is not sitting on a type here, so don't render one: without a
+      # first parameter there is nothing a method could dispatch on (#2279).
+      buildErr c, errBuf, info, "'method' needs a parameter that has an object type"
+    else:
+      buildErr c, errBuf, info, "cannot attach method to type " & typeToString(params)
     dest.insert errBuf, declStart
   else:
     let methodIsInstance = dest[beforeGenericParams].kind == TagLit and dest[beforeGenericParams].tagId == TagId(InvokeT)
@@ -1090,9 +1096,14 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       # params and the return type are already in `dest`. The message lands in
       # the `effects` slot — the one routine slot that already accepts an
       # `(err …)`, so the tree stays positionally intact.
+      # `{.interrupt.}` is checked in the same place and lands in the same slot:
+      # its rule is also about the params and the return type, and also cannot be
+      # stated until they are in `dest`.
       let intrinsicErr =
         if crucial.intrinsic != NoIntrinsicOp:
           intrinsicSignatureError(c, dest, beforeParams, crucial.intrinsic)
+        elif InterruptP in crucial.flags:
+          interruptSignatureError(dest, beforeParams)
         else:
           ""
       if it.n.isDotToken:
@@ -1151,6 +1162,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
   if newName == NoSymId:
     producesVoid c, dest, info, it.typ
   publish c, dest, symId, declStart
+  onRoutineDeclSem c
 
   if kind == MacroY and pass == checkBody:
     let macroDecl = cursorAt(dest, declStart)
@@ -1195,7 +1207,7 @@ proc copyExcept(dest: var TokenBuf; n: var Cursor; excl: seq[Cursor]; i: var int
   ## Copies the subtree at `n` while dropping the subtrees listed in `excl`
   ## (which must appear in document order).
   if i < excl.len and n == excl[i]:
-    skip n
+    skip n, SkipFull
     inc i
   elif n.isTagLit:
     dest.addParLe(n.cursorTagId, n.info)
@@ -1445,7 +1457,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
             semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
         of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
            TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
-           StaticT, TupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
+           StaticT, TupleT, ClosureTupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
            DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
            UntypedT, TypedT, CstringT, PointerT, OrdinalT:
           semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name

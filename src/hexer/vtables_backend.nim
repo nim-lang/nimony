@@ -324,13 +324,39 @@ proc trProcCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tr c, dest, n
     dest.addParRi(n.endInfo)
 
-proc classData(typ: Cursor): (int, UHash) =
+proc classSym(typ: Cursor): SymId =
+  ## The type operand of `of` reaches us in two different spellings: as the
+  ## expanded type (`(ref A.Obj.0. (notnil))`, produced when the expression is
+  ## re-semchecked, e.g. inside a template) or as the bare type symbol `A.0.`
+  ## (produced by the direct `of` magic call, whose argument is a `typedesc`
+  ## *expression*). `A.0.` is an alias for `(ref A.Obj.0.)`, not the object
+  ## type itself, so it has to be followed to `A.Obj.0.` before it can be
+  ## hashed or walked up the inheritance chain.
+  result = SymId(0)
   var n = typ
-  if n.typeKind in {RefT, PtrT}:
-    inc n
+  var counter = 20
+  while counter > 0:
+    dec counter
+    if n.typeKind in {RefT, PtrT}:
+      inc n
+    elif n.kind == Symbol:
+      let s = n.symId
+      result = s
+      let res = tryLoadSym(s)
+      if res.status != LacksNothing or res.decl.symKind != TypeY:
+        break
+      let body = asTypeDecl(res.decl).body
+      # a nominal type is the class itself; anything else is an alias to follow
+      if isNominal(body.typeKind):
+        break
+      n = body
+    else:
+      break
+
+proc classData(typ: Cursor): (int, UHash) =
   result = (0, UHash(0))
-  if n.kind == Symbol:
-    let s = n.symId
+  let s = classSym(typ)
+  if s != SymId(0):
     for _ in inheritanceChain(s): inc result[0]
     result[1] = uhash(pool.syms[s])
 
@@ -619,7 +645,20 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trBaseobj c, dest, n
     of InstanceofX:
       trInstanceof c, dest, n
-    else:
+    of NoExpr, ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX, InfX, NeginfX, NanX,
+       FalseX, TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, AconstrX,
+       BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX,
+       BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX, ConvX, CchoiceX,
+       OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
+       TupconstrX, SetconstrX, TabconstrX, AshrX, HconvX, DconvX, CompilesX, DeclaredX,
+       DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX,
+       FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+       Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
+       EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
+       SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
+       ToClosureX:
+      # not an expression this pass rewrites, so it is a statement, a type or a
+      # container to walk through:
       case n.stmtKind
       of ProcS, FuncS, MethodS, ConverterS:
         trProcDecl c, dest, n
@@ -629,7 +668,12 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trScope c, dest, n
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
-      else:
+      of NoStmt, CallS, CmdS, IteratorS, BlockS, EmitS, AsgnS, IfS, WhenS, BreakS, ContinueS,
+         ForS, WhileS, CoroforS, CaseS, LabS, JmpS, RetS, YldS, StmtsS, PragmasS, PragmaxS,
+         InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS, ImportexceptS, ExportS,
+         ExportexceptS, CommentS, DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS,
+         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
+         DeferS:
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore: tr c, dest, n
@@ -770,7 +814,7 @@ proc collectMethods(c: var Context; n: var Cursor) =
      FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
      DiscardS, TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
      InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS, AsmS,
-     DeferS, NoStmt:
+     DeferS, LabS, JmpS, NoStmt:
     skip n
 
 proc emitVTables(c: var Context; dest: var TokenBuf) =
@@ -844,7 +888,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
 proc transformVTables*(pass: var Pass; needsXelim: var bool) =
   var n = pass.n  # Extract cursor locally
   var c = Context(
-    typeCache: createTypeCache(),
+    typeCache: createTypeCache(pass.bits),
     moduleSuffix: pass.moduleSuffix,
     needsXelim: needsXelim,
     getRttiSym: pool.syms.getOrIncl("getRtti.0." & SystemModuleSuffix)

@@ -1,0 +1,7 @@
+timer fired res=0 late=true
+read timed out res=-110
+read beat its deadline n=1
+ordered: 1 2 3
+fd-less ops nops=1 timers=2
+connect ok res=0
+connect refused neg=true

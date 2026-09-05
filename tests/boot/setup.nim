@@ -3,7 +3,7 @@
 ## with just this file. Requires a fully built `bin/` (all self + carry
 ## tools); the tree walk's `tests/setup.hastur` builds them first.
 import std / [os, strutils]
-import "../../src/hastur"
+import "../../src/hastur/kit"
 
 proc arg(name: string): string =
   let prefix = "--" & name & ":"

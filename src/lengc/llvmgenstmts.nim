@@ -499,6 +499,13 @@ proc genEmitStmtLLVM(c: var LLVMCode; n: var Cursor) =
     c.emitRaw comment
 
 proc genStmtLLVM(c: var LLVMCode; n: var Cursor) =
+  # A statement whose head carries a forged filename opens a template
+  # expansion; everything lowered from inside it belongs to that frame, so the
+  # push spans the whole subtree rather than a single `setLoc` (#1987).
+  withExpansionFrames(c, n.info):
+    genStmtBodyLLVM(c, n)
+
+proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
     if n.kind == DotToken:

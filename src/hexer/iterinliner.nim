@@ -56,7 +56,7 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
   of Symbol:
     let val = c.symId
     res[destSym] = val
-    inc c
+    inc c, SkipName
   else:
     var typ = local.typ
     # Fresh SymId per yield expansion
@@ -104,7 +104,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
       if c.isSymbol:
         tmpId = c.symId
         info = c.info
-        inc c
+        inc c, SkipName
       else:
         tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
         info = c.info
@@ -317,7 +317,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
         ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
         PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, CoroforS, NoStmt:
+        AsmS, DeferS, CoroforS, LabS, JmpS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
         takeInto dest, c:
@@ -381,7 +381,7 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, NoStmt:
+        AsmS, DeferS, LabS, JmpS, NoStmt:
       takeInto dest, c:
         while c.hasMore:
           inlineIteratorBody(e, dest, c, forStmt, yieldType)
@@ -420,7 +420,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
         ExportS, ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
         UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
         PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, NoStmt:
+        AsmS, DeferS, LabS, JmpS, NoStmt:
       if c.substructureKind == KvU:
         # In KvU: first element is field name, don't substitute it
         takeInto dest, c:
@@ -874,7 +874,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         takeTree(buf, c)
         publish iterSym, buf
       else:
-        skip(c)
+        skip(c, SkipFull)
     of TemplateS:
       dest.takeTree c
     of FuncS, ProcS, ConverterS, MethodS:
@@ -945,7 +945,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
         TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
         InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS,
-        UsingS, AsmS, DeferS, CoroforS, NoStmt:
+        UsingS, AsmS, DeferS, CoroforS, LabS, JmpS, NoStmt:
       takeInto dest, c:
         while c.hasMore:
           transformStmt(e, dest, c)

@@ -61,6 +61,9 @@ type
     subprogramId*: int
     subprogramFileId*: int
     retainedNodes*: seq[int]
+    frameStack*: seq[CrucialOrigin] # active template expansions, outermost first;
+                                    # pushed when the walk enters a node whose
+                                    # head info carries a forged filename
 
   DebugInfo* = object
     nextMetadataId*: int
@@ -71,6 +74,9 @@ type
     diBasicTypeCache*: Table[string, int] # "i32"/"float"/… -> DIBasicType id
     compositeTypeDone*: HashSet[SymId]    # symIds with fully built DICompositeType
     globalExprs*: seq[int] # DIGlobalVariableExpression IDs for DICompileUnit globals
+    fileIdsByName*: Table[string, int]  # source path -> DIFile meta
+    inlineSpCache*: Table[string, int] # expanded routine (mangled) -> spId
+    nullSigId*: int # shared `!DISubroutineType(types: !{null})` for template SPs
 
 type
   PrimTypes* = object
@@ -124,7 +130,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   ## what is wrong in prose (the render would append the raw mangled symbol).
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   # `Error: `, not the `[Error] ` of the rendering `error` above: this is a
   # user-facing diagnostic, and that is the spelling every other user-facing
@@ -138,7 +144,7 @@ proc errorAt(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
 proc error(m: MainModule; msg: string; n: Cursor) {.noreturn.} =
   let info = rawLineInfo(n)
   if info.isValid:
-    write stdout, m.pool.filenames[info.file]
+    write stdout, realFile(m.pool.filenames[info.file])
     write stdout, "(" & $info.line & ", " & $(info.col+1) & ") "
   write stdout, "[Error] "
   write stdout, msg
@@ -172,6 +178,35 @@ proc absoluteDirOrQuit(dir: string): string =
 
 proc dbgLocation(c: var LLVMCode; info: NifLineInfo): string
 
+proc pushExpansionFrames(c: var LLVMCode; info: NifLineInfo): int =
+  ## Enter the template expansions named by `info`'s filename, if it is a
+  ## forged one, and return how many levels were pushed so the caller can pop
+  ## exactly that many. Zero for ordinary code, which is the common case.
+  ##
+  ## The frame is a property of a *region* of the tree, not of one token: the
+  ## front end marks only the head of an expansion (see
+  ## `templates.forgeExpansionInfo`), and everything the walk reaches while
+  ## that head is open belongs to the same expansion. Instructions lowered
+  ## from inside it therefore get the frame even though their own tokens carry
+  ## plain line info.
+  result = 0
+  if not info.isValid or not info.file.isValid: return
+  let fname = c.m.pool.filenames[info.file]
+  if not isCrucialFile(fname): return
+  for origin in crucialOrigins(fname):
+    c.currentProc.frameStack.add origin
+    inc result
+
+proc popExpansionFrames(c: var LLVMCode; n: int) {.inline.} =
+  for i in 0 ..< n: discard c.currentProc.frameStack.pop()
+
+template withExpansionFrames(c: var LLVMCode; info: NifLineInfo; body: untyped) =
+  ## Run `body` with `info`'s expansion frames active. The pop is unconditional
+  ## rather than in a `finally`: the generator quits the process on error, so
+  ## there is no unwinding path to protect against.
+  let pushed = pushExpansionFrames(c, info)
+  body
+  popExpansionFrames(c, pushed)
 
 proc funcByIndex(c: var LLVMCode; idx: int): var LLFunc {.inline.} =
   if idx == InitFuncIdx:
@@ -335,7 +370,9 @@ proc baseTypeOfObject*(m: var MainModule; objBody: Cursor): Cursor =
 # ---- Forward declarations (visible to included files) ----
 
 proc genStmtLLVM(c: var LLVMCode; n: var Cursor)
+proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor)
 proc genExprLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
+proc genExprBodyLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 proc genLvalueLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 proc genCondLLVM(c: var LLVMCode; n: var Cursor; result: var LLValue)
 proc genOnErrorLLVM(c: var LLVMCode; n: var Cursor)
@@ -595,6 +632,9 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         # Static-import library annotation for the NATIVE backend (arkham);
         # meaningless for LLVM output — the linker resolves the symbol.
         skip n
+      of ConstrefP:
+        # A PARAMETER pragma; never legal on a proc.
+        error c.m, "invalid proc pragma: ", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.kind == StrLit:
@@ -617,7 +657,11 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
         # nothing to emit for the declaration itself.
         result.flags.incl pk
         skip n
-      of AssemblerP, RegisterP, StackP:
+      of InterruptP:
+        # No interrupt table here either; see the C backend's `parseProcPragmas`.
+        result.flags.incl pk
+        skip n
+      of AssemblerP, NakedP, RegisterP, StackP:
         # `{.assembler.}` bodies are arkham's; the location pins are assertions
         # inside one. See the C backend's `parseProcPragmas` for the reasoning.
         result.flags.incl pk
@@ -662,6 +706,11 @@ proc genParamPragmasLLVM(c: var LLVMCode; n: var Cursor) =
       case n.pragmaKind
       of AttrP, WasP:
         skip n
+      of ConstrefP:
+        # Provenance only (see `doc/tags.md`): the pointer stands for a
+        # by-value source parameter. Nothing to emit — it exists for
+        # `funcsummary`/the optimizer.
+        skip n
       else:
         error c.m, "invalid pragma: ", n
   else:
@@ -689,13 +738,18 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
     c.currentProc = oldProc
     c.currentBlockIdx = oldBlock
     return
-  if AssemblerP in prag.flags:
+  if prag.flags * {AssemblerP, NakedP} != {}:
     # Same reasoning as the C backend (see its `genProcDecl`): an `{.assembler.}`
     # body names machine registers and promises a one-to-one instruction mapping,
     # which no IR-level backend can honour. Refuse it by name instead of emitting
     # a body that silently means something else.
     errorAt c.m, "the LLVM backend cannot compile an `{.assembler.}` proc; it must " &
       "be assembled by arkham and linked as an object (see doc/asm-c-interop.md)",
+      prc.name
+  if InterruptP in prag.flags:
+    errorAt c.m, "the LLVM backend has no interrupt table to install an " &
+      "`{.interrupt.}` handler in; use `{.exportc: \"...\".}` to bind one by name " &
+      "against a startup file, or compile it with arkham",
       prc.name
 
   let name = genSymDefLLVM(c, prc.name, prag)

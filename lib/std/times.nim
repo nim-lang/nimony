@@ -150,7 +150,15 @@ func `-`*(t: Time; d: Duration): Time =
 
 # --- Current time via C library ---
 
-when defined(posix):
+when defined(wasm32) and defined(standalone):
+  proc getTime*(): Time {.tags: [TimeEffect].} =
+    ## Freestanding wasm has no wall clock: epoch zero, honestly. A real
+    ## host clock (Date.now via an env import) arrives with the ward-bridge
+    ## host-imports mechanism; this is the same placement as monotimes'
+    ## wasmMonoTicks.
+    result = Time(seconds: 0, nanosecond: 0)
+
+elif defined(posix):
   import posix/posix
 
   proc getTime*(): Time {.tags: [TimeEffect].} =

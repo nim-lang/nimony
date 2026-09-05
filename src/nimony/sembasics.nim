@@ -271,29 +271,6 @@ proc buildErr*(c: var SemContext; dest: var TokenBuf; info: NifLineInfo; msg: st
   orig.addDotToken()
   c.buildErr dest, info, msg, cursorAt(orig, 0)
 
-proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string; orig: Cursor) =
-  ## Builds ErrT node and combine it with the node at `pos` so that no nodes are added outside of
-  ## the node at `pos`.
-  ## When there is no node at `pos`, New ErrT node is added to `c.dest`.
-  ## Assumes the node at `pos` is the last node.
-  var needsParRi = false
-  if dest.len > pos:
-    needsParRi = true
-    if dest[pos].stmtKind == StmtsS:
-      dest.reopenLastTree pos
-    else:
-      # nifcore cannot splice an unbalanced open; skip the stmts wrapper for
-      # this error-recovery path (the err node is still emitted below).
-      needsParRi = false
-  buildErr c, dest, info, msg, orig
-  if needsParRi:
-    dest.addParRi
-
-proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string) =
-  var orig = createTokenBuf(1)
-  orig.addDotToken()
-  c.combineErr dest, pos, info, msg, cursorAt(orig, 0)
-
 proc buildErrAt*(c: var SemContext; dest: var TokenBuf; pos: int; msg: string) =
   ## Builds ErrT node on the existing node at `pos` and it becomes the origin of the error.
   ## If the node at `pos` is a tag node, it must be closed.
@@ -310,6 +287,38 @@ proc buildErrAt*(c: var SemContext; dest: var TokenBuf; pos: int; msg: string) =
     buildErr c, tmpBuf, n.info, msg, n
   let errAt = beginRead(tmpBuf)
   replace dest, errAt, pos
+
+proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string; orig: Cursor) =
+  ## Builds an ErrT node and combines it with the node at `pos` so that what
+  ## spans from `pos` on is still a SINGLE node.
+  ##
+  ## That is the entire contract, and it is not cosmetic. A caller that had
+  ## emitted one child of the node it is building must still have emitted one
+  ## child afterwards, or the enclosing node silently grows an arity nobody
+  ## reading it expects — an `(elif cond body)` becomes `(elif cond err body)`,
+  ## and the next pass to walk it takes `err` for the body and `body` for
+  ## nothing at all.
+  ##
+  ## Assumes the node at `pos` is the last node in `dest`.
+  if dest.len <= pos:
+    # Nothing was emitted at all, so the error node *is* the node.
+    buildErr c, dest, info, msg, orig
+  elif dest[pos].stmtKind == StmtsS:
+    # A statement list can hold the error as one more child of itself.
+    dest.reopenLastTree pos
+    buildErr c, dest, info, msg, orig
+    dest.addParRi
+  else:
+    # Anything else gets wrapped, so one node stays one node. The node at
+    # `pos` becomes the error's origin, which is also the better diagnostic:
+    # it is the expression that was actually wrong, where `orig` is a dot at
+    # every call site there is.
+    buildErrAt c, dest, pos, msg
+
+proc combineErr*(c: var SemContext; dest: var TokenBuf; pos: int; info: NifLineInfo; msg: string) =
+  var orig = createTokenBuf(1)
+  orig.addDotToken()
+  c.combineErr dest, pos, info, msg, cursorAt(orig, 0)
 
 proc buildLocalErr*(dest: var TokenBuf; info: NifLineInfo; msg: string; orig: Cursor) =
   when defined(debug):
@@ -385,10 +394,14 @@ proc makeLocalSym*(c: var SemContext; result: var string) =
   result.add '.'
   result.addInt counter[]
 
-proc newSymId*(c: var SemContext; s: SymId): SymId =
+proc newSymId*(c: var SemContext; s: SymId; forceGlobal = false): SymId =
+  ## A fresh name for a copy of `s`, keeping its layout — `forceGlobal` promotes
+  ## a local-layout one because the copy lands at MODULE scope where the original
+  ## did not (a template body declares in the template's scope; expanding it at
+  ## toplevel puts the declaration in the module). See `expandTemplateImpl`.
   var isGlobal = false
   var name = extractBasename(pool.syms[s], isGlobal)
-  if isGlobal:
+  if isGlobal or forceGlobal:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
@@ -410,15 +423,37 @@ proc hasErrorSince*(dest: TokenBuf; start: int): bool =
       break
     inc i
 
-proc makeTemplateSym*(c: var SemContext; result: var string) =
+const RoutineLikeSyms* = {TypevarY, StaticTypevarY, ProcY, FuncY, ConverterY,
+                          MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}
+  ## The kinds that get GLOBAL symbol layout wherever they are written, because
+  ## the backends lift every one of them out to module scope regardless of the
+  ## scope it was declared in. `identToSym` and `makeTemplateSym` must agree on
+  ## this set or the same declaration is named two different ways depending on
+  ## whether a template introduced it.
+
+proc makeTemplateSym*(c: var SemContext; result: var string; kind: SymKind) =
   ## Make a fresh symbol for a name introduced by a template body. Templates
   ## need a separate mechanism from `makeLocalSym` so that cross-module
   ## interference can be addressed without promoting the sym to global
   ## layout — i.e. without mangling in `c.thisModuleSuffix`.
-  var counter = addr c.locals.mgetOrPut(result, -1)
-  counter[] += 1
-  result.add '.'
-  result.addInt counter[]
+  ##
+  ## Except for the kinds that are module-level declarations no matter where
+  ## they are WRITTEN. A gensym'd `proc` inside an untyped template used to come
+  ## out as `helper.1`, a local-layout name, on a declaration the backends emit
+  ## at module scope: `nifcoreparse.toModuleString` indexes a decl only when its
+  ## name says global, so nothing named it in the module's `(.index …)`, and the
+  ## module was fine to compile and impossible to IMPORT — nifasm resolves a
+  ## foreign module's decls through that index and reported "Unknown symbol:
+  ## helper.1" in the importer. A local name on a module-level decl is also two
+  ## modules' `helper.1` in one link, which is the same bug waiting for a name
+  ## collision.
+  if kind in RoutineLikeSyms:
+    c.makeGlobalSym(result)
+  else:
+    var counter = addr c.locals.mgetOrPut(result, -1)
+    counter[] += 1
+    result.add '.'
+    result.addInt counter[]
 
 type
   SymStatus* = enum
@@ -440,7 +475,7 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
   if kind in {FldY, GfldY}:
     c.makeFieldSym(name)
   elif c.currentScope.kind == ToplevelScope or
-      kind in {TypevarY, StaticTypevarY, ProcY, FuncY, ConverterY, MethodY, TemplateY, MacroY, IteratorY, TypeY, EfldY}:
+      kind in RoutineLikeSyms:
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)

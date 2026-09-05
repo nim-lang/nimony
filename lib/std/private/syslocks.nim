@@ -136,7 +136,16 @@ elif defined(nimNativeIo):
   var tlsSelf {.threadvar.}: byte
   proc selfToken(): int {.inline.} = cast[int](addr tlsSelf)
 
-  when defined(linux):
+  when defined(wasm32) and defined(standalone):
+    # Single-threaded wasm: there is exactly one thread, so a contended lock
+    # is a self-deadlock bug, not a wait condition. futexWait returning
+    # immediately preserves the callers' re-check loops (they'll spin on the
+    # bug rather than silently corrupt), and wake has no one to wake.
+    proc futexWait(p: var uint32; expected: uint32) {.inline.} =
+      discard
+    proc futexWake(p: var uint32; all: bool) {.inline.} =
+      discard
+  elif defined(linux):
     const
       FUTEX_WAIT_PRIVATE = clong(128)  # FUTEX_WAIT or FUTEX_PRIVATE_FLAG
       FUTEX_WAKE_PRIVATE = clong(129)  # FUTEX_WAKE or FUTEX_PRIVATE_FLAG

@@ -1,0 +1,2 @@
+tests/nimony/errmsgs/tundeclaredrettype_defer.nim(25, 5) Error: undeclared identifier: NotAType
+tests/nimony/errmsgs/tundeclaredrettype_defer.nim(27, 18) Error: could not infer type for T.0.tunmf12sg1

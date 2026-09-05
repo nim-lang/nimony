@@ -76,8 +76,32 @@ type
     AlwaysWrite,
     OnlyIfChanged
 
+# --- atomic replacement ---------------------------------------------------
+#
+# Never truncate a .nif or .bif that a reader may have mmap'd.
+
+import std / atomics
+
+when defined(windows):
+  proc osProcessId(): int32 {.importc: "GetCurrentProcessId", stdcall,
+                              dynlib: "kernel32".}
+else:
+  proc osProcessId(): int32 {.importc: "getpid".}
+
+when defined(nimony):
+  var atomicWriteCounter: int = 0
+  proc nextTempSeq(): int = atomicFetchAdd(atomicWriteCounter, 1)
+else:
+  var atomicWriteCounter: Atomic[int]
+  proc nextTempSeq(): int = atomicWriteCounter.fetchAdd(1)
+
+proc atomicTempPath*(target: string): string =
+  ## A sibling temp path for an atomic replacement of `target`
+  result = target & ".tmp." & $int(osProcessId()) & "." & $nextTempSeq()
+
 when defined(nimony):
   import std / [os, dirs, paths]
+  import std / private / oscommons
   # Nimony's stdlib procs are `.raises`. Wrap them so vfs.nim stays
   # non-raising (the rest of the compiler is wired that way).
   proc unixModTime(p: string): int64 =
@@ -89,10 +113,30 @@ when defined(nimony):
     except: 0'i64
   proc rmPath(p: string) =
     try: removeFile(path(p)) except: discard
+  proc moveIntoImpl(src, dst: string): bool =
+    try: tryMoveFSObject(src, dst, false) except: false
+  proc removeTreeImpl(d: string) =
+    try:
+      for it in walkDir(path(d)):
+        if it.kind == pcDir: removeTreeImpl($it.path)
+        else: discard tryRemoveFile(it.path)
+      discard tryRemoveFinalDir(path(d))
+    except: discard
   proc readBytes(p: string): string =
     try: readFile(p) except: ""
+
   proc writeBytes(p, c: string) =
-    try: writeFile(p, c) except: quit "vfs: write failed: " & p
+    let tmp = atomicTempPath(p)
+    var ok = false
+    try:
+      writeFile(tmp, c)
+      ok = moveIntoImpl(tmp, p)
+    except:
+      ok = false
+    if not ok:
+      try: removeFile(path(tmp)) except: discard   # no `.tmp.NNN` litter
+      quit "vfs: write failed: " & p
+
   proc fileMaybeExists(p: string): bool =
     try: fileExists(p) except: false
   proc openMmapImpl(p: string): MemFile =
@@ -106,10 +150,40 @@ else:
     let t = getTime()
     toUnix(t) * nanosPerSec + int64(t.nanosecond)
   proc rmPath(path: string) = removeFile(path)
+  proc moveIntoImpl(src, dst: string): bool =
+    try: moveFile(src, dst); true except CatchableError: false
+  proc removeTreeImpl(d: string) =
+    try: removeDir(d) except CatchableError: discard
   proc readBytes(p: string): string = readFile(p)
-  proc writeBytes(p, c: string) = writeFile(p, c)
+  proc writeBytes(p, c: string) =
+    let tmp = atomicTempPath(p)
+    try:
+      writeFile(tmp, c)
+      if not moveIntoImpl(tmp, p): raise newException(IOError, "move failed: " & p)
+    except CatchableError:
+      try: removeFile(tmp) except CatchableError: discard   # no `.tmp.NNN` litter
+      raise
   proc fileMaybeExists(p: string): bool = fileExists(p)
   proc openMmapImpl(p: string): MemFile = memfiles.open(p)
+
+proc vfsMoveInto*(src, dst: string): bool =
+  ## Move `src` onto `dst` as a single filesystem operation, replacing whatever
+  ## was there. The point is that `dst` is never opened for writing: a reader
+  ## that mmap'd it, or a process currently EXECUTING it, keeps the old inode
+  ## and is undisturbed, while everyone who opens the path afterwards sees the
+  ## complete new file. There is no window in which `dst` is half-written.
+  ##
+  ## This is what makes a build artefact safe to publish from several processes
+  ## at once. Writing one in place is not: a concurrent `execve` of a partially
+  ## written executable fails with ETXTBSY ("Text file busy"), and so does
+  ## writing one that somebody else is executing.
+  moveIntoImpl(src, dst)
+
+proc vfsRemoveTree*(dir: string) =
+  ## Remove `dir` and everything below it. Best effort: it exists to clean up
+  ## a scratch directory this process created for itself, and failing to do
+  ## so must never fail a build.
+  removeTreeImpl(dir)
 
 # --- relays ---------------------------------------------------------------
 #

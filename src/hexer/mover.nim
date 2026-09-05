@@ -40,6 +40,7 @@ type
     ## into an O(1) array index.
     cf*: TokenBuf
     index*: FindStartIndex
+    bits*: int      ## target `int` width, for the CF's own type cache
 
 proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
@@ -382,7 +383,9 @@ proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
         of IfS, WhenS, WhileS, ForS, CoroforS, CaseS, TryS, RaiseS,
            ExportS, IncludeS, ImportS, FromimportS, ImportexceptS, CommentS,
            PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
-           UnpackdeclS, StaticstmtS, AsmS, DeferS:
+           UnpackdeclS, StaticstmtS, AsmS, DeferS, LabS, JmpS:
+          # `lab`/`jmp` cannot reach here: `controlflow.trJmp`/`trLab` consume
+          # them into the goto instructions this walker reads.
           bug "statement not eliminated: " & $pc.stmtKind
         of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
            AssumeS, AssertS:
@@ -426,7 +429,7 @@ proc isLastUse*(n: Cursor; buf: var TokenBuf;
     # in a dedicated seq instead). The same scan then inverts `srcMap` into the
     # source-position → position index so `findStart` runs in O(1) per query.
     var srcMap: seq[int32] = @[]
-    mover.cf = toControlflowWithMap(beginRead buf, srcMap)
+    mover.cf = toControlflowWithMap(beginRead buf, srcMap, mover.bits)
     mover.index = buildFindStartIndex(mover.cf, srcMap)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
@@ -453,7 +456,7 @@ when isMainModule:
     var input = parseFromBuffer(s, "")
     var otherUsage = NoLineInfo
     let n = findX(beginRead(input))
-    var mover = MoverContext(cf: createTokenBuf(300))
+    var mover = MoverContext(cf: createTokenBuf(300), bits: sizeof(int)*8)
     let res = isLastUse(n, input, otherUsage, mover)
     if res != expected:
       echo "FAILED Test case: ", s

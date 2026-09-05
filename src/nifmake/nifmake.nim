@@ -77,7 +77,7 @@ type
     cmdRun, cmdMakefile, cmdHelp, cmdVersion
 
   CliOption = enum
-    Parallel, Force, Verbose, Profile, Report, Progress
+    Parallel, Force, Rerun, Verbose, Profile, Report, Progress
 
   ProfileData* = object
     parseTime: float
@@ -339,7 +339,7 @@ proc countToBuild(dag: var Dag; sortedNodes: seq[int]; opt: set[CliOption]): int
   result = 0
   var willBuild = newSeq[bool](dag.nodes.len)
   for nodeId in sortedNodes:
-    var w = Force in opt or needsRebuild(dag.nodes[nodeId])
+    var w = Force in opt or Rerun in opt or needsRebuild(dag.nodes[nodeId])
     if not w:
       for depId in dag.nodes[nodeId].deps:
         if willBuild[depId]: w = true; break
@@ -401,7 +401,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
       # Collect all commands at the current depth
       while i < sortedNodes.len and dag.nodes[sortedNodes[i]].depth == currentDepth:
         let node = addr dag.nodes[sortedNodes[i]]
-        if Force in opt or needsRebuild(node[]):
+        if Force in opt or Rerun in opt or needsRebuild(node[]):
           if Force in opt:
             removeOutdatedArtifacts(node[], opt)
           if Verbose in opt:
@@ -455,7 +455,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     # Sequential execution
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
-      if Force in opt or needsRebuild(node[]):
+      if Force in opt or Rerun in opt or needsRebuild(node[]):
         if Force in opt:
           removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
@@ -659,7 +659,13 @@ Commands:
 Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
   --makefile <name>     Output Makefile name (default: Makefile)
-  --force               Force rebuild of all targets
+  --force               Force rebuild of all targets (removes their outputs first)
+  --rerun               Run every command regardless of staleness, but KEEP the
+                        existing outputs, so a tool writing OnlyIfChanged can
+                        still report "unchanged" and spare everything
+                        downstream. For a caller that knows the results are
+                        stale for a reason no input mtime can express — e.g.
+                        nimony when the compilation options changed.
   --verbose             Show verbose output
   --base:<dir>          Use <dir> as base directory for `.args` files.
                         If not set, no `.args` files are processed.
@@ -770,6 +776,7 @@ proc main() =
           if gMaxJobs < 1: quit "--parallel value must be >= 1"
       of "makefile": outputMakefile = val
       of "force": opt.incl Force
+      of "rerun": opt.incl Rerun
       of "verbose": opt.incl Verbose
       of "base": baseDir = val
       of "profile": opt.incl Profile

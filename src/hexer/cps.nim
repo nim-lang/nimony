@@ -105,9 +105,12 @@ proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
   let typ = c.typeCache.getType(n.childCursor, {SkipAliases})
   let retType = getType(c.typeCache, n)
-  let hasResult = not isVoidType(retType)
-  if hasResult:
+  if not isVoidType(retType):
     assert not cursorIsNil(target), "passive call without target"
+  # A `.raises` coroutine hands its ErrorCode back through the result slot, so
+  # it has one even when it returns nothing — see `patchParamList`.
+  let hasResult = (procHasPragma(typ, RaisesP) or not isVoidType(retType)) and
+                  not cursorIsNil(target)
   case c.currentProc.kind
   of IsNormal:
     # passive call from within a normal proc:
@@ -127,6 +130,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
           let callStart = n
           n = sub(n)
           if n.kind == Symbol and typ.childCursor.kind == SymbolDef:
+            publishWrapperSignature(n.symId, c.thisModuleSuffix)
             dest.addSymUse coroWrapperProc(c, n.symId), info
             inc n
           else:
@@ -220,6 +224,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
       let callStart = n
       n = sub(n)
       if n.kind == Symbol and typ.childCursor.kind == SymbolDef:
+        publishWrapperSignature(n.symId, c.thisModuleSuffix)
         dest.addSymUse coroWrapperProc(c, n.symId), info
         inc n
       else:
@@ -282,7 +287,7 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = sub(n)
   if n.kind == Symbol:
     let sym = n.symId
-    inc n    # skip fn symbol
+    inc n, SkipName    # the fn symbol, re-emitted below
     # Create a child coroutine and return it as a Continuation without
     # yielding. The callee's frame is heap-allocated via allocFrame.
     copyIntoKind dest, CallS, info:
@@ -300,12 +305,12 @@ proc trDelay(c: var Context; dest: var TokenBuf; n: var Cursor) =
         dest.copyIntoKind KvU, info:
           dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
           dest.addParPair NilX, info
-    n = delayStart; skip n # skip close of delay
+    n = delayStart; skip n, SkipFull # the delay, already translated
   else:
     dest.copyIntoKind ErrT, info:
       dest.addStrLit "`delay` expects a call expression"
-    while n.hasMore: skip n # skip rest
-    n = delayStart; skip n
+    while n.hasMore: skip n, SkipFull # drop the malformed arguments
+    n = delayStart; skip n, SkipFull
 
 # ---------------------------------------------------------------------
 # Proctype / itertype shape rewrite — coroutine-shaped types get the
@@ -320,7 +325,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let isPassiveProc = nk == ProctypeT and procHasPragma(n, PassiveP)
     # An itertype is a coroutine-shaped value type. `.closure` iter values
     # carry a captured environment, so they lower to a
-    # `(tuple <wrapper-proctype> (ref RootObj))` — same runtime shape as
+    # `(closureTuple <wrapper-proctype> (ref RootObj))` — same runtime shape as
     # closure procs. `.passive` iters have NO environment (their wrapper
     # always allocates a fresh frame, see `generateCoroutineHelpers`), so
     # — exactly like a `.passive` proc — they lower to a bare wrapper
@@ -330,8 +335,8 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     if isPassiveProc or isClosureIterType or isPassiveIterType:
       var info = n.info
       if isClosureIterType:
-        # open the (tuple … (ref RootObj)) wrapper
-        dest.addParLe TupleT, info
+        # open the (closureTuple … (ref RootObj)) wrapper
+        dest.addParLe ClosureTupleT, info
       var ptStart = default(Cursor)
       if isPassiveProc:
         dest.addParLe(n.cursorTagId, n.info)  # proctype tag (passive proc)
@@ -355,7 +360,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
             trProctype(c, dest, n)
           dest.addDotToken() # default value
       else:
-        skip n
+        skip n, SkipType
       # here we add caller param
       dest.copyIntoKind ParamU, info:
         dest.addSymDef pool.syms.getOrIncl(CallerParamName), info
@@ -404,9 +409,10 @@ proc passiveHooks(): Hooks =
 proc transformToCps*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(thisModuleSuffix: pass.moduleSuffix,
-    typeCache: createTypeCache(), coroTypes: createTokenBuf(10),
+    typeCache: createTypeCache(pass.bits), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl(),
-    hooks: passiveHooks(), nextTemp: pass.nextTemp)
+    hooks: passiveHooks(), nextTemp: pass.nextTemp,
+    ptrSize: pass.bits div 8)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   c.coroTypes.addParLe(n.cursorTagId, n.info) # the `(stmts` open tag
@@ -451,5 +457,7 @@ when isMainModule:
 
  )"""
   var buf = parseFromBuffer(inp, "slaldpees1")
-  var pass = Pass(n: beginRead(buf), dest: createTokenBuf(10), moduleSuffix: "slaldpees1")
+  # A standalone debug driver: no target, so the host's width is stated.
+  var pass = Pass(n: beginRead(buf), dest: createTokenBuf(10),
+                  moduleSuffix: "slaldpees1", bits: sizeof(int)*8)
   transformToCps(pass)

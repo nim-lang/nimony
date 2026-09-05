@@ -57,6 +57,18 @@ when defined(nimony):
       elif defined(ios): "ios"
       else: "linux"
 
+const
+  DefaultMM* = "atomicarc"
+    ## `--mm:atomicArc`: the default strategy. Reference counting with atomic
+    ## increments/decrements, so a `ref` may be shared between threads.
+  MmPlaceholder* = "$MM"
+    ## What `system.nim` writes instead of naming a strategy: `include "$MM"`.
+    ## Expanded by `expandMM` to the module `--mm` selected. A new strategy is
+    ## then a new file under `MmDir` and nothing else -- no `when` chain in
+    ## `system.nim` that every strategy has to be added to.
+  MmDir* = "system/"
+    ## Where the strategy modules live, relative to `system.nim`.
+
 type
   TrackMode* = enum
     TrackNone, TrackUsages, TrackDef
@@ -75,6 +87,7 @@ type
     backendC = "c"
     backendLLVM = "llvm"
     backendNative = "native"  # C-free: Leng -> arkham -> nifasm (static, libc-free)
+    backendWasm = "wasm"      # C-free: Leng -> ithaqua (whole-program .wasm, no linker)
 
   OptLevel* = enum
     optDebug   # default: -O1 (debug-friendly but avoids dumb codegen)
@@ -84,24 +97,37 @@ type
 
   NifConfig* = object
     defines*: seq[string]
+    mm*: string  ## `--mm:NAME`: the memory management strategy. Stored
+                 ## `normalize`d, because it is used as a FILENAME (`MmDir & mm`)
+                 ## and filenames stay all-lowercase, while the option is spelled
+                 ## in camelCase (`--mm:atomicArc` -> `system/atomicarc`).
     paths*, nimblePaths*: seq[string]
     baseDir*: string # base directory for the configuration system
     nifcachePath*: string
     nifcacheFromCli*: bool # `--nimcache` was given explicitly; config files
                            # must not override it
     bits*: int
+    bitsExplicit*: bool  ## `--bits:N` (or an `intbits` config row) was given, so
+                         ## `--cpu` must NOT overwrite it. Without this the two
+                         ## flags would resolve by ORDER, and `--bits:32 --cpu:arm32`
+                         ## and `--cpu:arm32 --bits:32` would not mean the same thing.
     compat*: bool
     targetCPU*: TSystemCPU
     targetOS*: TSystemOS
     toTrack*: TrackPosition
     cc*: string
     linker*: string
+    layoutFile*: string  # `--layout:FILE` — the BOARD, for a bare-metal target:
+                         # its memory regions, stack slots and heap. Forwarded to
+                         # arkham verbatim; empty on a hosted target, which has an
+                         # OS to ask for memory instead of a file that says what
+                         # the part has.
     ccKey*: string
     appType*: AppType
     backend*: Backend
     optLevel*: OptLevel
     noValidate*: bool # skip running the validator on plugin sources
-    verbose*: bool    # --verbose: dump NJ IR on contract/init failures
+    verbose*: bool    # --verbose: dump Final IR on contract/init failures
     outFile*: string  # filename portion set by `--out:PATH` / `-o:PATH`
                       # (empty = derive from module basename).
     outDir*: string   # directory portion set by `--out:DIR/NAME` (its
@@ -109,6 +135,11 @@ type
     checkFlags*: string  # active check modes as a `genFlags` string (e.g. "br"),
                          # forwarded to `hexer c` so nifcgen injects only the
                          # requested runtime checks (empty = none).
+    inlineFrames*: bool  # --inlineframes:on: record which template an expansion
+                         # came from, so a debug backend can emit DWARF inlined
+                         # frames for it (#1987). Off by default: it costs work
+                         # in every template expansion and only a debug build
+                         # reads it.
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
@@ -118,6 +149,7 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
     baseDir: baseDir,
     nifcachePath: "nimcache",
     defines: @["nimony"],
+    mm: DefaultMM,
     bits: sizeof(int)*8,
     targetCPU: platform.nameToCPU(hostCPU),
     targetOS: platform.nameToOS(hostOS),
@@ -129,18 +161,20 @@ proc initNifConfig*(baseDir: sink string): NifConfig =
   )
 
 proc setTargetCPU*(config: var NifConfig; symbol: string): bool =
-  result = false
-  let cpu = platform.nameToCPU(symbol)
-  if cpu != cpuNone:
-    config.targetCPU = cpu
-    result = true
+  ## The CPU also decides how wide `int` is. It is not a separate question — a
+  ## target whose `int` is not its word is a target nobody asked for — so naming
+  ## the CPU answers it, and `--bits` stays for the rare case of contradicting
+  ## the table on purpose. Before this, `--cpu:arm32` left `bits` at the HOST's
+  ## width: the whole 32-bit target was type-checked with a 64-bit `int`.
+  result = platform.findCPU(symbol, config.targetCPU)
+  if result and not config.bitsExplicit:
+    config.bits = platform.CPU[config.targetCPU].intSize
 
 proc setTargetOS*(config: var NifConfig; symbol: string): bool =
-  result = false
-  let os = platform.nameToOS(symbol)
-  if os != osNone:
-    config.targetOS = os
-    result = true
+  # `findOS`, not `nameToOS`: the first enum value is the bare-metal target now
+  # (`osEmbedded`), so a typo must still be rejected rather than quietly
+  # selecting it.
+  result = platform.findOS(symbol, config.targetOS)
 
 proc parseConfig(c: Cursor; result: var NifConfig) =
   ## Interprets the single tree at `c`; unknown tags are searched
@@ -170,6 +204,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       c.into:
         if c.isIntLit:
           result.bits = int c.intVal
+          result.bitsExplicit = true
         while c.hasMore: skip c
     of "compat":
       c.into:
@@ -184,6 +219,10 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
           let path = pool.strings[c.strId]
           if path.len > 0 and not result.nifcacheFromCli:
             result.nifcachePath = path
+    of "mm":
+      c.into:
+        if c.isStringLit:
+          result.mm = normalize(pool.strings[c.strId])
         while c.hasMore: skip c
     else:
       c.into:
@@ -205,9 +244,24 @@ proc getOptionsAsOneString*(config: NifConfig): string =
   for i in config.defines:
     result.add(" -d:" & i)
 
+  result.add " --mm:" & config.mm
   result.add " --bits:" & $config.bits
   result.add " --cpu:" & platform.CPU[config.targetCPU].name
   result.add " --os:" & platform.OS[config.targetOS].name
+
+proc expandMM*(config: NifConfig; path: string): string =
+  ## Expands the `$MM` placeholder in an `include` path to the module implementing
+  ## the selected memory management strategy: `"$MM"` -> `"system/atomicarc"`.
+  ## Applied before the path is resolved, so `resolveFile`'s own `$VAR` (environment
+  ## variable) rule never sees it.
+  result = path
+  if result.endsWith(MmPlaceholder):
+    when defined(nimony):
+      result.shrink result.len - MmPlaceholder.len
+    else:
+      result.setLen result.len - MmPlaceholder.len
+    result.add MmDir
+    result.add config.mm
 
 proc isDefined*(config: NifConfig; symbol: string): bool =
   if symbol in config.defines:
@@ -220,6 +274,9 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     result = true
   else:
     case symbol.normalize
+    # `arm` is what code that predates the `arm32` rename says, and what code
+    # shared with Nim says. The canonical name moved; the predicate did not.
+    of "arm": result = config.targetCPU == cpuArm
     of "x86": result = config.targetCPU == cpuI386
     of "itanium": result = config.targetCPU == cpuIa64
     of "x8664": result = config.targetCPU == cpuAmd64
@@ -261,7 +318,10 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "staticlib": result = config.appType == appStaticLib
     of "consoleapp": result = config.appType == appConsole
     of "guiapp": result = config.appType == appGui
-    else: result = false
+    # `--mm:arc` makes `defined(gcArc)` true, `--mm:atomicArc` `defined(gcAtomicArc)`,
+    # and so on for a strategy this compiler has never heard of: `mm` is already
+    # normalized, and so is `symbol` here, so the two spellings meet.
+    else: result = config.mm.len > 0 and symbol.normalize == "gc" & config.mm
 
 when isMainModule:
   var conf = default(NifConfig)

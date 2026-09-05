@@ -12,7 +12,7 @@ type
     PatC = (ord(PatTagId), "pat")  ## pointer indexing operation
     ParC = (ord(ParTagId), "par")  ## syntactic parenthesis
     AddrC = (ord(AddrTagId), "addr")  ## address of operation
-    NilC = (ord(NilTagId), "nil")  ## nil pointer value; closure `nil` carries the proc type and a nil environment
+    NilC = (ord(NilTagId), "nil")  ## nil pointer value; `T` is the pointer type it stands for. `nil` is the one type-polymorphic literal, so the frontend types every `ptr`/`ref`/`pointer`/`cstring` one (`derefs.nim`) and `T` survives into Leng; only a `nil` a later pass synthesizes is bare. A closure `nil` carries the proc type plus `X`, a nil environment
     InfC = (ord(InfTagId), "inf")  ## positive infinity floating point value
     NeginfC = (ord(NeginfTagId), "neginf")  ## negative infinity floating point value
     NanC = (ord(NanTagId), "nan")  ## NaN floating point value
@@ -25,7 +25,7 @@ type
     SizeofC = (ord(SizeofTagId), "sizeof")  ## `sizeof` operation
     AlignofC = (ord(AlignofTagId), "alignof")  ## `alignof` operation
     OffsetofC = (ord(OffsetofTagId), "offsetof")  ## `offsetof` operation
-    OconstrC = (ord(OconstrTagId), "oconstr")  ## object constructor
+    OconstrC = (ord(OconstrTagId), "oconstr")  ## object constructor. **Total**: it names every field of `T` — inherited ones included, in any order — so a consumer may store exactly the fields listed and zero nothing, which is what the native back end does. Sem fills in whatever the source omitted (`buildDefaultObjConstr`); a hexer pass that synthesizes a constructor for a type it invented owes the same and gets its defaults from `hexer/defaultvalues`. A `(union)` type is the exception: its members share storage, so only the active one is named
     AconstrC = (ord(AconstrTagId), "aconstr")  ## array constructor
     OvfC = (ord(OvfTagId), "ovf")  ## access overflow flag
     AddC = (ord(AddTagId), "add")
@@ -73,8 +73,8 @@ type
     BreakS = (ord(BreakTagId), "break")  ## `break` statement
     WhileS = (ord(WhileTagId), "while")  ## `while` statement
     CaseS = (ord(CaseTagId), "case")  ## `case` statement
-    LabS = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction
-    JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction
+    LabS = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
+    JmpS = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
     RetS = (ord(RetTagId), "ret")  ## `return` instruction
     StmtsS = (ord(StmtsTagId), "stmts")  ## list of statements
     DiscardS = (ord(DiscardTagId), "discard")  ## `discard` statement; optional expression to discard
@@ -96,7 +96,7 @@ type
   LengType* = enum
     NoType
     ParamsT = (ord(ParamsTagId), "params")  ## list of proc parameters, also used as a "proc type"
-    UnionT = (ord(UnionTagId), "union")  ## first one is Leng union declaration, second one is Nimony union pragma
+    UnionT = (ord(UnionTagId), "union")  ## first two are Leng union declarations (untagged, and discriminated from a case object - see `doc/internals/leng-spec.md`), third is the Nimony union pragma
     ObjectT = (ord(ObjectTagId), "object")  ## object type declaration
     EnumT = (ord(EnumTagId), "enum")  ## enum type declaration
     ProctypeT = (ord(ProctypeTagId), "proctype")  ## Nimony proc type. Slot 0 carries the nilability tag — either a `.` placeholder or one of `(notnil)`, `(nil)`, `(unchecked)`. Leng proc type, same shape as `(proc D ...)` with anonymous name slot (varargs spec; effects/body slots present but unused).
@@ -127,8 +127,8 @@ type
     EfldU = (ord(EfldTagId), "efld")  ## enum field declaration; slot 2 carries the export marker *or* the compile-time value (may be `.`)
     FldU = (ord(FldTagId), "fld")  ## field declaration
     ElifU = (ord(ElifTagId), "elif")  ## pair of (condition, action)
-    ElseU = (ord(ElseTagId), "else")  ## `else` action
-    OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement
+    ElseU = (ord(ElseTagId), "else")  ## `else` action, or the default branch of a Leng discriminated `union`
+    OfU = (ord(OfTagId), "of")  ## `of` branch within a `case` statement, or of a Leng discriminated `union`
     PragmasU = (ord(PragmasTagId), "pragmas")  ## begin of pragma section
 
 proc rawTagIsLengOther*(raw: TagEnum): bool {.inline.} =
@@ -162,9 +162,12 @@ type
     StackP = (ord(StackTagId), "stack")  ## pins a local to a stack slot rather than a register (`{.stack.}`) — the memory counterpart of `(register …)`
     AssemblerP = (ord(AssemblerTagId), "assembler")  ## the `{.assembler.}` **proc pragma** (no children): every construct in the body maps one-to-one to assembler, in source order, with no temporaries invented and no operand materialised. The back end (arkham) owns that checking — see `nativenif/doc/intrinsics.md` §8. Spelled `assembler` rather than `asm` because Nim's parser reads a pragma entry as an expression and so cannot accept a keyword there; it is unrelated to the `(asm X+)` statement
     AlwaysInlineP = (ord(AlwaysInlineTagId), "alwaysInline")  ## the `{.alwaysInline.}` proc pragma: splice this proc at every call site, unconditionally — no size bound, no per-call-site score. Unlike `(inline)`, which is an *emission* annotation the inlining policy deliberately ignores, this one overrides the policy. It is the author asserting what a token count cannot see: typically "my hot path is two instructions and the bulk is a cold tail behind a `(noinline)` callee". Only the recursion guard still applies — that is termination, not heuristics
+    NakedP = (ord(NakedTagId), "naked")  ## the `{.naked.}` **proc pragma** (no children): emit NO prologue and NO epilogue — the proc never touches SP, so on entry SP still points straight at the return address the `call` pushed. That is the one thing an ordinary proc cannot observe about its caller, and it is what lets `getStackTrace` seed a stack walk with a frame it did not create. Only legal together with `(assembler)`: without a frame there is nowhere to spill, so every location must already be declared. The back end (arkham) owns the checking
+    InterruptP = (ord(InterruptTagId), "interrupt")  ## the `{.interrupt: "SysTick".}` **proc pragma**: this routine is the handler for the named exception or interrupt, and the back end installs its address in the interrupt table. WHICH names exist is a target question — arkham's, exactly as for `(register)` — so sem checks only what is true of every part: a handler is invoked by hardware, which passes no arguments and has nowhere to put a result, so the routine must take no parameters and return nothing. It is also a DCE ROOT: nothing in the program calls it, it is reached only through the table, and without that it is deleted and the device silently never responds. The C and LLVM backends refuse it — they have no interrupt table to install anything into, and `{.exportc.}` is what binds a handler by name against a vendor startup file
+    ConstrefP = (ord(ConstrefTagId), "constref")  ## **parameter** pragma marking a pointer that `lengcgen.maybeByConstRef` introduced for a source-level BY-VALUE parameter (`sizeof.passByConstRef`, which excludes `sink`/`var`/`out`). It records provenance, and the useful consequence is that nothing writes through this pointer — not because the body was analysed, but because that is the precondition under which passing by reference was legal at all. `funcsummary` therefore keeps such a parameter's `writes` effect clear even when the body sets `callsUnknown`, which otherwise forces every parameter to "may write". **Not** a claim that the pointee is immutable: another alias may write the same object (`f(x, addr x)`, or a global the callee mutates), so it must never license moving a load across an unrelated store
 
 proc rawTagIsLengPragma*(raw: TagEnum): bool {.inline.} =
-  raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, PackedTagId, InstructionTagId, IntrinsicTagId, RegisterTagId, StackTagId, AssemblerTagId, AlwaysInlineTagId}
+  raw in {InlineTagId, NoinlineTagId, AttrTagId, SmryTagId, WasTagId, SelectanyTagId, AlignTagId, BitsTagId, VectorTagId, NodeclTagId, RaisesTagId, ErrsTagId, StaticTagId, ImportcTagId, ImportcppTagId, DynlibTagId, ExportcTagId, HeaderTagId, PackedTagId, InstructionTagId, IntrinsicTagId, RegisterTagId, StackTagId, AssemblerTagId, AlwaysInlineTagId, NakedTagId, InterruptTagId, ConstrefTagId}
 
 type
   LengTypeQualifier* = enum
@@ -189,7 +192,7 @@ type
     FldY = (ord(FldTagId), "fld")  ## field declaration
     ProcY = (ord(ProcTagId), "proc")  ## proc declaration
     TypeY = (ord(TypeTagId), "type")  ## type declaration
-    LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction
+    LabY = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
     MflagY = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
     VflagY = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`
 

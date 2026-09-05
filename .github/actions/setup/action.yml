@@ -178,12 +178,130 @@ runs:
       shell: bash
       run: "gcc -v"
 
+    # `setup-nim` resolves exactly one tag — the rolling `latest-<branch>` alias
+    # in nim-lang/nightlies — and fails outright when it is absent. On
+    # 2026-08-27 it was absent for `devel`: that day's nightlies run BUILT devel
+    # fine (its dated release carries all nine assets), but the "Push
+    # latest-devel tag" job failed, and that job deletes the alias before it
+    # recreates it:
+    #
+    #     gh release delete -y "$tag" || :
+    #     git push --delete origin "$tag" || :
+    #     gh release create ... "$tag" ...
+    #
+    # so a failure after the deletes leaves no alias at all, and every consumer
+    # stops at "Could not find any release named 'latest-devel'". The dated
+    # releases are what the alias points AT, so the newest one for the branch is
+    # the same compiler reached by a different name.
+    #
+    # This step only decides WHICH of the two following steps runs. When the
+    # alias is there — the normal case — nothing changes: the action installs it
+    # exactly as before.
+    - name: Resolve the Nim nightly
+      id: nim
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -uo pipefail
+        branch='${{ inputs.nim_branch }}'
+        # Byte-for-byte the probe `setup-nim`'s own `setup.sh` makes, so this
+        # can never disagree with what the action would then do.
+        if curl -fsI "https://github.com/nim-lang/nightlies/releases/latest-$branch" >/dev/null 2>&1; then
+          echo "alias=true" >> "$GITHUB_OUTPUT"
+          echo "latest-$branch is present; installing it with setup-nim."
+          exit 0
+        fi
+        echo "alias=false" >> "$GITHUB_OUTPUT"
+        echo "::warning::latest-$branch is missing from nim-lang/nightlies (upstream alias job); falling back to the newest dated nightly"
+
+        # The archive names `setup-nim` derives, and the same mapping: a dated
+        # release spells its assets `nim-<version>-<os>_<arch>.<ext>` while the
+        # alias renames them to `<os>_<arch>.<ext>`, so match on the suffix and
+        # let the version float.
+        case '${{ runner.os }}' in
+          Linux)   os=linux ;;
+          macOS)   os=macosx ;;
+          Windows) os=windows ;;
+          *) echo "::error::setup: unknown runner OS '${{ runner.os }}'"; exit 1 ;;
+        esac
+        case '${{ inputs.cpu }}' in
+          amd64) arch=x64 ;;
+          i386)  arch=x32 ;;
+          arm64) arch=arm64 ;;
+          *) echo "::error::setup: unknown cpu '${{ inputs.cpu }}'"; exit 1 ;;
+        esac
+        # `if`, not `[ … ] && …`: the runner's shell is `bash -e`, and a
+        # trailing AND-list whose test is false is a failed command — the step
+        # would have exited 1 on every host that is not Windows.
+        if [ "$os" = windows ]; then ext=.zip; else ext=.tar.xz; fi
+        suffix="-${os}_${arch}${ext}"
+
+        # Newest first is the API's own order, so `first` after the date-prefix
+        # filter is the newest dated build of this branch. The filter anchors on
+        # the date so it cannot match `latest-version-2-4` and friends.
+        # Authenticated when there is a token (there always is in Actions, and
+        # the unauthenticated API rate limit is per runner IP — i.e. shared).
+        auth=()
+        if [ -n "${GH_TOKEN:-}" ]; then auth=(-H "Authorization: Bearer $GH_TOKEN"); fi
+        url=$(curl -fsSL "${auth[@]}" \
+                "https://api.github.com/repos/nim-lang/nightlies/releases?per_page=100" |
+              jq -r --arg br "$branch" --arg sfx "$suffix" '
+                [ .[] | select(.tag_name | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}-" + $br + "-")) ]
+                | first
+                | .assets[] | select(.name | endswith($sfx)) | .browser_download_url')
+        if [ -z "$url" ] || [ "$url" = null ]; then
+          echo "::error::setup: no dated nightly for branch '$branch' carries a '*$suffix' asset"
+          exit 1
+        fi
+        echo "url=$url" >> "$GITHUB_OUTPUT"
+        echo "Falling back to $url"
+
     - name: Setup Nim
+      if: steps.nim.outputs.alias == 'true'
       uses: alaviss/setup-nim@0.1.1
       with:
         path: 'nim'
         version: ${{ inputs.nim_branch }}
         architecture: ${{ inputs.cpu }}
+
+    - name: Setup Nim from a dated nightly
+      # The fallback path. Does what `setup-nim` does — unpack the archive into
+      # `nim/` stripping its one top-level directory, then put `nim/bin` and
+      # nimble's bin on PATH — for the one tag it cannot ask for. The action's
+      # third step, its problem matcher, is inside the action and stays behind;
+      # it only annotates compiler diagnostics in the run log.
+      if: steps.nim.outputs.alias != 'true'
+      shell: bash
+      run: |
+        set -euo pipefail
+        mkdir -p nim
+        cd nim
+        url='${{ steps.nim.outputs.url }}'
+        archive=${url##*/}
+        curl -fsSL -o "$archive" "$url"
+        if [[ $archive == *.zip ]]; then
+          tmp=$(mktemp -d)
+          7z x "$archive" "-o$tmp" > /dev/null
+          extracted=( "$tmp"/* )
+          mv "${extracted[0]}"/* .
+          rm -rf "$tmp"
+        else
+          tar -xf "$archive" --strip-components 1
+        fi
+        rm -f "$archive"
+        nimbin=$(cd bin && pwd -P)
+        nimblebin="$HOME/.nimble/bin"
+        if [ '${{ runner.os }}' = Windows ]; then
+          nimbin=$(cygpath -aw "$nimbin")
+          nimblebin=$(cygpath -aw "$nimblebin")
+        fi
+        echo "$nimbin" >> "$GITHUB_PATH"
+        echo "$nimblebin" >> "$GITHUB_PATH"
+        # `sed -n 1p`, not `head -1`: head closes the pipe on line two and the
+        # shell runs with `pipefail`, so the SIGPIPE would fail this step over a
+        # log line.
+        "$PWD/bin/nim" --version | sed -n 1p
 
     - name: Overlay current Nim compiler source (devel parser fixes)
       shell: bash
@@ -196,9 +314,17 @@ runs:
         # as `type C = concept of D`. The nightly's `bin/nim` is fine as the
         # bootstrap compiler; we only need fresh *compiler sources* overlaid on
         # top so parser fixes land when Nifler is (re)built.
+        #
+        # `lib/packages/docutils` comes along because the compiler's docgen is
+        # its consumer and upstream changes the two in one commit: nim-lang/Nim
+        # #26139 (2026-09-03) widened `rstgen.mergeIndexes` together with the
+        # call in `docgen.nim`, and the overlaid compiler stopped type-checking
+        # against the nightly's older lib. It is the only part of `lib/` outside
+        # `std/` that `compiler/` imports.
         git clone --depth 1 --branch ${{ inputs.nim_branch }} \
           https://github.com/nim-lang/Nim nim-src
         cp -a nim-src/compiler/. nim/compiler/
+        cp -a nim-src/lib/packages/docutils/. nim/lib/packages/docutils/
 
     - name: Cache host-Nim build artifacts
       uses: actions/cache@v5

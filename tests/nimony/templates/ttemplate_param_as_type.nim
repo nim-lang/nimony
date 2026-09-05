@@ -9,6 +9,11 @@
 # `matchSymbol` must simply not CRASH when a non-type formal reaches it: it now
 # rejects with the normal diagnostic instead of asserting in `typeImpl`.
 #
+# The call itself no longer adds a second diagnostic: `x`/`y` are already typed
+# `<type error>`, so the overload dump for `gvec2(x, y)` is suppressed (see
+# `semcall.anyArgTypeIsError`) rather than restating an error the two lines
+# above already made.
+#
 # To actually USE this pattern (vmath's genVecConstructor), the template must be
 # `{.untyped.}` (or the module `{.feature: "untyped".}`) — only then does the
 # body go through the untyped walk (`semTemplBody`) instead of typed sigmatch.

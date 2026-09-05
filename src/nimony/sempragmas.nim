@@ -81,6 +81,21 @@ proc customPragmaSym*(c: SemContext; name: StrId): SymId =
 proc isCustomPragmaTemplate*(c: SemContext; name: StrId): bool =
   name in c.customPragmaTemplates or customPragmaSym(c, name) != NoSymId
 
+proc resolveCustomPragma(c: SemContext; n: Cursor): SymId =
+  ## The `{.pragma.}` template an annotation refers to.
+  ##
+  ## A template body is semchecked in the scope the template was *declared*
+  ## in, so an annotation written there arrives already bound and must be
+  ## taken as it is: looking its name up again where the template expands is
+  ## the hygiene bug -- `std/json` wraps `nifcore.into`, so `into`'s body ends
+  ## up expanded in a module that never imported the annotation's own module,
+  ## and the name resolves to nothing there.
+  if n.kind == Symbol and symbolIsCustomPragmaTemplate(n.symId):
+    result = n.symId
+  else:
+    let name = getIdent(n)
+    result = if name != StrId(0): c.customPragmaSym(name) else: NoSymId
+
 proc isPreservedCustomPragma(n: Cursor): bool =
   ## True when `n` is a previously-preserved custom-pragma attachment
   ## `(pragma <sym>)` (the `pragma` tag with a symbol child), as opposed to the
@@ -162,17 +177,24 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         var read = beginRead(pragBuf[])
         while read.hasMore:
           semPragma c, dest, read, crucial, kind
-      elif name != StrId(0) and (let psym = c.customPragmaSym(name); psym != NoSymId):
+      elif (let psym = c.resolveCustomPragma(n); psym != NoSymId):
         # Pragma that resolves to a `template X {.pragma.}` declaration. Unlike
-        # Nim (which drops `sfCustomPragma`), preserve it as `(pragma <sym>)`
-        # so it survives into the serialized decl and plugins can introspect it
-        # (e.g. `.linear`). Arguments are not yet supported and are dropped.
+        # Nim (which drops `sfCustomPragma`), preserve it as
+        # `(pragma <sym> <args>)` so it survives into the serialized decl and
+        # can be introspected -- by a plugin (`.linear`), or by the validator,
+        # which reads `{.ensuresNif: addedExpr(dest).}` off the declaration.
+        #
+        # The arguments are preserved exactly as written, not semchecked:
+        # `{.pragma.}` declares the template's parameters `untyped`, and the
+        # arguments are routinely not expressions at all -- `addedExpr(dest)`
+        # names a predicate of the validator's own vocabulary, and semchecking
+        # it would only report that no such proc exists.
         let info = n.info
         toPragmaArgs()
-        if hasParRi:
-          while n.hasMore: skip n
         dest.addParLe(PragmaP, info)
         dest.addSymUse(psym, info)
+        if hasParRi:
+          while n.hasMore: takeTree dest, n
         dest.addParRi()
       else:
         buildErr c, dest, n.info, "expected pragma"
@@ -212,6 +234,42 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       toPragmaArgs()
       if hasParRi:
         while n.hasMore: skip n
+  of NakedP:
+    # `{.naked.}` — no prologue, no epilogue. Like `assembler` (which it may only
+    # accompany) the machine-level checking belongs to the back end; sem records
+    # the flag and forwards the tag.
+    crucial.flags.incl pk
+    if not kind.isRoutine:
+      buildErr c, dest, n.info, "`naked` pragma is only allowed on routines"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+    else:
+      dest.addParLe(pk, n.info)
+      dest.addParRi()
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+  of InterruptP:
+    # `{.interrupt: "SysTick".}` — this routine handles the named vector. WHICH
+    # names a part has is a target question, arkham's exactly as for `register`
+    # below; what sem owns is the shape, checked in `interruptSignatureError`
+    # once the params and the return type are known.
+    crucial.flags.incl pk
+    let pinfo = n.info
+    if not kind.isRoutine:
+      buildErr c, dest, pinfo, "`interrupt` pragma is only allowed on routines"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+    else:
+      dest.addParLe(pk, pinfo)
+      toPragmaArgs()
+      if hasParRi and n.hasMore:
+        semConstStrExprIgnoreTopLevel c, dest, n
+      else:
+        buildErr c, dest, pinfo, "`interrupt` pragma takes a vector name"
+      dest.addParRi()
   of RegisterP:
     # `{.register: "rdi".}` on a parameter, result or local. Which register names
     # exist, and whether the annotation is consistent with the proc's ABI, is a
@@ -491,8 +549,14 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
   of EmitP, BuildP, BundleP, CompileP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
-    if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0):
+    if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
+        not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
+      # `isPreservedCustomPragma` guard keeps a custom pragma *attached to* a
+      # template out of this branch: re-sem sees the attachment as `(pragma
+      # <sym>)`, which is shaped like a declaration marker with an argument,
+      # and this branch would reject it as "`pragma` takes no arguments". Only
+      # the bare `(pragma)` marker declares one.
       # body is not expanded at attachment sites — the annotation is
       # recorded as a known custom-pragma name that will be silently
       # accepted (and dropped) wherever it is later attached. Mirrors Nim's
@@ -636,6 +700,14 @@ proc intBitsOf(c: var SemContext; typ: Cursor): int =
     inc bits
     if bits.kind == IntLit: result = typebits(bits.load)
 
+proc floatBitsOf(typ: Cursor): int =
+  ## Bit width of `(f N)`, or -1 for anything else.
+  result = -1
+  if typ.kind == TagLit and typ.typeKind == FloatT:
+    var bits = typ
+    inc bits
+    if bits.kind == IntLit: result = typebits(bits.load)
+
 proc matchAtomicCell(c: var SemContext; typ: Cursor;
                      w: var int; widths: set[uint8]): bool =
   ## The type an atomic operates ON: `ptValW`, and the pointee of `ptPtrW`.
@@ -722,6 +794,31 @@ proc matchPat(c: var SemContext; pat: PatKind; typ: Cursor;
     # enumeration" and gains a real check; today such a check would only forbid
     # spellings that behave identically.
     result = true
+  of ptVec128:
+    # The opaque 128-bit SIMD value, spelled `(f 128)`: a bag of bits whose lane
+    # meaning lives in the opcode. Never binds `W` — the lane width is the
+    # trailing `ptLaneBits` literal, not a property of the value's type.
+    result = floatBitsOf(typ) == 128
+  of ptFloatW:
+    let bits = floatBitsOf(typ)
+    if bits <= 0 or uint8(bits) notin widths:
+      result = false
+    else:
+      if w == 0: w = bits
+      result = w == bits
+  of ptAnyPtr:
+    # `aptr` is a Leng-level spelling; the frontend's pointer kinds are these two.
+    result = typ.kind == TagLit and typ.typeKind in {PtrT, PointerT}
+  of ptLaneBits:
+    # An int the back end reads as a LITERAL (32/64) at the call site; the
+    # declared parameter type is any integer.
+    result = intBitsOf(c, typ) > 0
+  of ptImmLit:
+    # Same shape as `ptLaneBits` and checked the same way: the DECLARATION only
+    # has to say "an integer". That the argument must be a literal is a fact
+    # about the instruction's encoding, so it is checked where the encoding is —
+    # at the call site, by the back end.
+    result = intBitsOf(c, typ) > 0
 
 proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
                               paramsAt: int; op: IntrinsicOp): string =
@@ -774,6 +871,34 @@ proc intrinsicSignatureError*(c: var SemContext; dest: var TokenBuf;
       if not matchPat(c, row.ret, ret, w, row.widths):
         result = "the result type of `" & opName & "` does not match the " &
                  "instruction's destination"
+  endRead n
+
+proc interruptSignatureError*(dest: var TokenBuf; paramsAt: int): string =
+  ## The mismatch message for `{.interrupt: "…".}`, or "" when the declaration
+  ## is the shape a handler must have. Read through cursors only and emitted by
+  ## the caller into the `effects` slot, for the same reason
+  ## `intrinsicSignatureError` is.
+  ##
+  ## The rule is not a target's: hardware enters a handler with no arguments and
+  ## with nowhere to put a result, on every part that has a interrupt table. A
+  ## parameter would be read from whatever the interrupted code left in r0, and a
+  ## result would be written into a register the hardware restores on the way out
+  ## — neither is a diagnosable failure at run time, so both are refused here.
+  result = ""
+  var n = cursorAt(dest, paramsAt)
+  if n.substructureKind == ParamsU:
+    var p = sub(n)
+    if p.hasMore:
+      result = "an `interrupt` handler is entered by hardware, which passes no " &
+               "arguments, so it must take no parameters"
+    endRead n
+    if result.len > 0: return
+    n = cursorAt(dest, paramsAt)
+  var ret = n
+  skip ret                           # past the (params …) → the return type
+  if not ret.isDotToken:
+    result = "an `interrupt` handler returns to the interrupted code, not to a " &
+             "caller, so it must not return a value"
   endRead n
 
 proc semAssumeAssert*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: StmtKind) =
@@ -985,6 +1110,18 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     semBoolExpr c, dest, it.n
     dest.addParRi()
     closePragmaLine()
+  of ErrorP:
+    # Statement-level `{.error: "msg".}` — distinct from `{.error.}` on a routine
+    # decl (handled in `semPragma`). Classic Nim calls `localError` here; dead
+    # branches (`when false: ... else: {.error.}`) never reach this.
+    let info = it.n.info
+    toPragmaArgs()
+    let start = dest.len
+    let s = evalConstStrExpr(c, dest, it.n, c.types.stringType)
+    closePragmaLine()
+    if s != StrId(0):
+      dest.shrink start
+      buildErr c, dest, info, pool.strings[s]
   of KeepOverflowFlagP:
     if not isPragmaBlock:
       buildErr c, dest, it.n.info, "`keepOverflowFlag` pragma must be used in a pragma block"
@@ -1135,9 +1272,29 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       while it.n.hasMore: skip it.n
       buildErr c, dest, info, "`feature` pragma takes a string literal"
   else:
-    buildErr c, dest, it.n.info, "unsupported pragma", it.n
-    skip it.n
-    while it.n.hasMore: skip it.n
+    if (let psym = c.resolveCustomPragma(it.n); psym != NoSymId):
+      # A custom pragma as a *statement*. It marks the region it stands in
+      # rather than a declaration, which is what a wrapper template needs: the
+      # marker is written in the template's body, so every expansion carries it
+      # without the reader having to work out which template it came from.
+      #
+      # Preserved as a `(pragmas (pragma <sym> <args>))` statement. Nothing
+      # downstream has to learn anything: hexer's passes already take such a
+      # statement through untouched and lengcgen already skips it.
+      let info = it.n.info
+      toPragmaArgs()
+      dest.addParLe(PragmasS, info)
+      dest.addParLe(PragmaP, info)
+      dest.addSymUse(psym, info)
+      while it.n.hasMore: takeTree dest, it.n
+      dest.addParRi()
+      dest.addParRi()
+      closePragmaLine()
+      producesVoid c, dest, info, it.typ
+    else:
+      buildErr c, dest, it.n.info, "unsupported pragma", it.n
+      skip it.n
+      while it.n.hasMore: skip it.n
 
 proc semPragmasLine*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let info = it.n.info

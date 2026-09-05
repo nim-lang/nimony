@@ -197,25 +197,107 @@ elif defined(windows) and not defined(StandaloneHeapSize):
         rawQuit 1
     #VirtualFree(p, size, MEM_DECOMMIT)
 
-elif hostOS == "standalone" or defined(StandaloneHeapSize):
-  const StandaloneHeapSize {.intdefine.}: int = 1024 * PageSize
+elif defined(wasm32) and defined(standalone):
+  # Growing page provider over wasm linear memory (ward-bridge B0): the
+  # allocator draws pages from the END of linear memory, growing it on
+  # demand via memory.grow — no fixed reservation, so a small module
+  # stays small and a viewer's caches can budget in the hundreds of MB.
+  # An optional CEILING (set by the host at startup from device signals —
+  # D8: budgets are device-derived) turns growth failures into ordinary
+  # out-of-memory before the browser's own tab limit does it for us.
+  const WasmPageSize = 65536
   var
-    theHeap: array[StandaloneHeapSize div sizeof(float64), float64] # 'float64' for alignment
-    bumpPointer = cast[int](addr theHeap)
+    wasmBump: int = 0        # next free byte; 64 KiB-aligned start (> PageSize)
+    heapCeiling: int = 0     # 0 = uncapped (the host's tab limit rules)
+
+  proc wasmMemorySize(): int32 {.importc: "__builtin_wasm_memory_size".}
+  proc wasmMemoryGrow(delta: int32): int32 {.importc: "__builtin_wasm_memory_grow".}
+
+  proc setWasmHeapCeiling*(bytes: int) =
+    ## Host-set upper bound on total linear memory (bytes; 0 = uncapped).
+    ## Public Nim API; apps that let the host set it export a main-module
+    ## wrapper (ithaqua export roots are main-module exportc procs only).
+    heapCeiling = bytes
+
+  proc ensureCapacity(needEnd: int): bool =
+    let haveEnd = int(wasmMemorySize()) * WasmPageSize
+    if needEnd <= haveEnd: return true
+    if heapCeiling > 0 and needEnd > heapCeiling: return false
+    let deltaPages = (needEnd - haveEnd + WasmPageSize - 1) div WasmPageSize
+    result = wasmMemoryGrow(int32(deltaPages)) >= 0
 
   proc osAllocPages(size: int): pointer {.inline.} =
-    if size+bumpPointer < cast[int](addr theHeap) + sizeof(theHeap):
+    if wasmBump == 0:
+      # first use: start at the current end of memory (above the module's
+      # static data + shadow stack), 64 KiB-page aligned by construction
+      wasmBump = int(wasmMemorySize()) * WasmPageSize
+    if not ensureCapacity(wasmBump + size):
+      raiseOutOfMem()
+    result = cast[pointer](wasmBump)
+    inc wasmBump, size
+
+  proc osTryAllocPages(size: int): pointer {.inline.} =
+    result = nil   # explicit: nimony's init prover rejects the implicit zero
+    if wasmBump == 0:
+      wasmBump = int(wasmMemorySize()) * WasmPageSize
+    if not ensureCapacity(wasmBump + size): return nil
+    result = cast[pointer](wasmBump)
+    inc wasmBump, size
+
+  proc osDeallocPages(p: pointer, size: int) {.inline.} =
+    # bump arena: only the most recent block can be returned
+    if wasmBump - size == cast[int](p):
+      dec wasmBump, size
+
+elif defined(embedded) or defined(StandaloneHeapSize):
+  # `defined(embedded)` is `--os:embedded`: bare metal, where there is no OS to
+  # ask for pages and the heap is whatever the image reserved for itself.
+  #
+  # This used to read `hostOS == "standalone"`. Nimony does not expose `hostOS`
+  # (see `nifconfig`, which derives its own `hostCPU`/`hostOS` consts precisely
+  # because the magics are missing), so that arm was not merely unreachable — the
+  # identifier is undeclared, and naming it in the condition is an ERROR even
+  # when an earlier `or` operand already decided the branch.
+  # The heap is the one the BOARD LAYOUT reserved, not a `.bss` array standing in
+  # for it. An array would be a second answer to "how much RAM may the allocator
+  # have?" — the layout file already says, and it says it where the stacks and the
+  # globals are sized too, so the three cannot silently add up to more than the
+  # part has. `heapStart`/`heapSize` are link-time constants the image writer
+  # patches in (`nifasm`'s `(heapstart)`/`(heapsize)`).
+  proc heapStart(): pointer {.intrinsic: "HeapStart".}
+  proc heapSize(): uint {.intrinsic: "HeapSize".}
+
+  var bumpPointer = 0
+
+  proc heapLimit(): int {.inline.} =
+    cast[int](heapStart()) + int(heapSize())
+
+  proc bumpFrom(size: int): pointer {.inline.} =
+    ## The shared arm. `nil` when the request does not fit, which is the whole
+    ## difference between the two callers below.
+    if bumpPointer == 0: bumpPointer = cast[int](heapStart())
+    if size >= 0 and bumpPointer + size <= heapLimit():
       result = cast[pointer](bumpPointer)
       inc bumpPointer, size
     else:
-      raiseOutOfMem()
+      result = nil
+
+  proc osAllocPages(size: int): pointer {.inline.} =
+    result = bumpFrom(size)
+    if result == nil: raiseOutOfMem()
 
   proc osTryAllocPages(size: int): pointer {.inline.} =
-    if size+bumpPointer < cast[int](addr theHeap) + sizeof(theHeap):
-      result = cast[pointer](bumpPointer)
-      inc bumpPointer, size
+    # `nil` on failure is the whole difference between this and `osAllocPages`,
+    # and the branch did not say it: with no `else`, `result` was whatever the
+    # slot held. Nim zero-initialises it and hid the bug; nimony's
+    # initialisation analysis refuses to prove it and found it.
+    result = bumpFrom(size)
 
   proc osDeallocPages(p: pointer, size: int) {.inline.} =
+    # A bump allocator can only give back the LAST thing it handed out; anything
+    # else stays lost until reset. That is the trade a firmware image makes for a
+    # page allocator with no bookkeeping of its own, and `alloc.nim` recycles
+    # within its own chunks regardless.
     if bumpPointer-size == cast[int](p):
       dec bumpPointer, size
 

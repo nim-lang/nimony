@@ -90,9 +90,9 @@ func isOom*(s: string): bool {.inline.} =
 
 # ---- hashing ----
 #
-# `std/hashes` cannot see this representation and `system` cannot import
-# `std/hashes`, so the mixing steps are restated here. THEY MUST STAY IN LOCK-STEP
-# WITH `hashes.!&` AND `hashes.!$` — `hash(string)` is just an inline shim for
+# `system/hashes` is included after this file and cannot see this representation,
+# so the mixing steps are restated here. THEY MUST STAY IN LOCK-STEP
+# WITH `!&` AND `!$` from `system/hashes` — `hash(string)` is just an inline shim for
 # `hashStr`, and two different mixes would silently split every table.
 
 template hashMix(h: uint; val: uint): uint =
@@ -391,6 +391,10 @@ func prepareMutation*(s: var string) =
   let sl = ssLen(s)
   if sl == StaticSlen or (sl == HeapSlen and not arcIsUnique(s.more.rc)):
     if sl == HeapSlen:
+      # Reached only when `not arcIsUnique`, i.e. the count is non-zero and
+      # another owner remains to free the block. That guard is what makes
+      # discarding the result safe: `arcDec` may answer "you are the last one"
+      # without writing the decrement back, and here nobody would act on it.
       discard arcDec(s.more.rc)
     let old = s.more
     let oldLen = old.fullLen
