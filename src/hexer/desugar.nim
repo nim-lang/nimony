@@ -1044,6 +1044,52 @@ proc tryFoldFloatExpr(dest: var TokenBuf; exprStart: int; targetBits: int) =
     dest.addParLe(if truthy: TrueX else: FalseX, info)
     dest.addParRi()
 
+proc isClosureValueType(typ: Cursor): bool =
+  ## The (fn, env) pair: the lowered `ClosureTupleT`, a `.closure` proctype whose
+  ## decl has not been rewritten yet, or a `.closure` iterator. A `.passive`
+  ## iterator is NOT one — it lowers to a bare wrapper proctype.
+  typ.typeKind == ClosureTupleT or
+    (typ.typeKind == ProctypeT and procHasPragma(typ, ClosureP)) or
+    (typ.typeKind == ItertypeT and not procHasPragma(typ, PassiveP))
+
+
+proc tryClosureCompare(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
+  ## `(eq|neq <closure> a b)` -> compare the fn slots AND the env slots.
+  ##
+  ## Both halves, because two closures are equal when they are the same
+  ## function over the same environment — the same `proc` captured twice is
+  ## not the same closure. Against `nil` this still does the right thing: a
+  ## nil closure is nil in both slots, so the added env test is true for the
+  ## nil literal and cannot make a non-nil closure compare equal to it.
+  let head = n
+  var probe = n
+  probe = sub(probe)
+  let typ = probe
+  if not isClosureValueType(typ): return false
+
+  let info = head.info
+  let isNeq = head.exprKind == NeqX
+  skip probe                     # past the type
+  var lhs = probe; skip probe
+  var rhs = probe
+
+  # (and (eq fn fn) (eq env env))   /   (or (neq …) (neq …)) for `!=`
+  let outer = if isNeq: OrX else: AndX
+  let inner = if isNeq: NeqX else: EqX
+  copyIntoKind dest, outer, info:
+    for slot in 0..1:
+      # `(pointer)` for both halves: the fn slot is a function pointer and the
+      # env slot a `ref RootObj`, and identity is all either comparison means.
+      copyIntoKind dest, inner, info:
+        dest.addParPair PointerT, info
+        for side in [lhs, rhs]:
+          var e = side
+          dest.copyIntoKind TupatX, info:
+            tr(c, dest, e)
+            dest.addIntLit slot, info
+  n = head; skip n
+  result = true
+
 proc trFloatArith(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Emits an arithmetic/comparison node normally, then attempts a
   ## max-precision constant fold over the finished subtree. Children fold
@@ -1292,17 +1338,33 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         genStringConcatChain(c, dest, n)
       else:
         trSons(c, dest, n)
-    of AddX, SubX, MulX, DivX, NegX, EqX, LeX, LtX:
+    of HconvX, ConvX:
+      trSons(c, dest, n)
+    of EqX, NeqX:
+      # A `.closure` value is an (fn, env) pair, so C's `==` cannot compare it:
+      # the operands are structs. Project the halves and compare those instead.
+      #
+      # This belongs HERE, on the typed `(eq <type> a b)` node, because the type
+      # is right there — no need to guess from the shape of the operand
+      # expression. An earlier attempt did exactly that, in coro_transform,
+      # by intercepting the `(hconv (pointer …) g)` that sem used to emit for
+      # `g == nil` and pattern-matching the inner expression against a list of
+      # value shapes (symbol, field, tupat…). Every new shape that could hold a
+      # closure — a seq element read through an inlined `for`, say — had to be
+      # added to that list. Comparing is the comparator's job.
+      if not tryClosureCompare(c, dest, n):
+        trFloatArith(c, dest, n)
+    of AddX, SubX, MulX, DivX, NegX, LeX, LtX:
       trFloatArith(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
         InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
         NotX, SizeofX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
-        BitnotX, NeqX, CastX, ConvX,
+        BitnotX, CastX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
-        AshrX, BaseobjX, HconvX, DconvX,
+        AshrX, BaseobjX, DconvX,
         CompilesX, DeclaredX, DefinedX, ProccallX, DelayX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,

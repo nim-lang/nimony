@@ -332,7 +332,10 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # proctype function pointer, NOT a tuple.
     let isClosureIterType = nk == ItertypeT and not procHasPragma(n, PassiveP)
     let isPassiveIterType = nk == ItertypeT and procHasPragma(n, PassiveP)
-    if isPassiveProc or isClosureIterType or isPassiveIterType:
+    # A childless routine type is the bare typeclass, as written in `[T: proc]`
+    # / `[T: iterator]`: no signature to lower, so copy it through.
+    let isTypeclass = nk in {ProctypeT, ItertypeT} and cursorJump(n) == 0
+    if not isTypeclass and (isPassiveProc or isClosureIterType or isPassiveIterType):
       var info = n.info
       if isClosureIterType:
         # open the (closureTuple … (ref RootObj)) wrapper
