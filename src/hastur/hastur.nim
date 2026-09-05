@@ -29,7 +29,7 @@ Usage:
 
 Commands:
   build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
-                       `nifbench` is the NIF micro-benchmark suite (src/nifbench),
+                       `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
                        `all` builds arkham + nifasm too when the sibling
@@ -319,9 +319,17 @@ proc handleCmdLine =
   of "all":
     # `all` is now the tree walk: `tests/` (each suite via its setup.nim or the
     # built-in nimony runner; `tests/setup.hastur` builds the toolchain first)
-    # plus `examples/`. Directories marked `hastur.mode = skip` (dagon, hexer)
-    # stay out of the sweep but remain runnable via `hastur tests/<dir>`.
-    walkRoots(["tests", "examples"], forward, overwrite)
+    # plus `examples/` and `bench/`. Directories marked `hastur.mode = skip`
+    # (dagon, hexer) stay out of the sweep but remain runnable via
+    # `hastur tests/<dir>`.
+    #
+    # `bench/` is in the sweep so the benchmarks cannot rot unnoticed — they are
+    # not run by anything else, and a benchmark that stopped compiling is only
+    # discovered when someone reaches for it. Its `hastur.mode = bench` compiles
+    # them with `-d:benchSmoke`, which shrinks every workload to a deterministic
+    # smoke run: the question here is "does it build and does it still compute
+    # the same numbers", never "how fast".
+    walkRoots(["tests", "examples", "bench"], forward, overwrite)
 
   of "tiers":
     # `buildNimonyToolchain`, not `buildNimony`: every module on the tier list is

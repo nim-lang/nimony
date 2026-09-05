@@ -16,7 +16,7 @@
 ## continues.
 
 import std / [syncio, os, osproc, strutils, times, algorithm]
-import context, counters, category, joined, nativelist, parallel, runner
+import context, counters, category, joined, nativelist, parallel, runner, coverage
 
 proc runSetupHastur*(dir: string) =
   ## Prep step for a built-in-runner directory: run each line of
@@ -88,6 +88,11 @@ proc collectTests*(c: var TestCounters; plan: var WalkPlan; dir, forward: string
   # default `all` run yet remains explicitly runnable via `hastur tests/dagon`.
   let cat = categoryOfDir(dir)
   if cat == Skip and not isRoot: return
+  # Asserted here rather than in `all` so it fires for whoever is actually
+  # editing the stdlib — `hastur tests/nimony/stdlib` reaches this line too —
+  # and only when that directory is part of the run.
+  if normalizeDirKey(dir) == normalizeDirKey(StdlibAllTest.parentDir):
+    checkStdlibCoverage()
   if fileExists(dir / "setup.nim"):
     # A `setup.nim` owns its subtree and runs its own tests right here — it is
     # a self-contained runner, not part of the shared file pool.

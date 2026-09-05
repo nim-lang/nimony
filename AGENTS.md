@@ -62,6 +62,29 @@ See `src/lengc/shoggoth/vectorizer.nim` for good style:
 
 Tests often include large amounts of produced NIF code. Use `hastur --overwrite` to overwrite all test results or `hastur --overwrite test ...` to overwrite a specific test case. The resulting diffs are always part of the code review process.
 
+## Benchmarks and the stdlib coverage check
+
+`hastur all` sweeps `bench/` alongside `tests/` and `examples/`, so a benchmark
+that stops compiling is caught by the suite rather than by whoever next reaches
+for it. `bench/hastur.mode` puts the directory in the `bench` category, which
+compiles with `-d:benchSmoke`: each benchmark shrinks its workload to something
+that costs milliseconds and prints only deterministic values (checksums,
+digests), which is what its `.output` golden holds. The suite's question there
+is "does it still build and still compute the same numbers" — never "how fast".
+Add a benchmark the same way: a `when smoke:` shape for the workload and the
+reporting, then `hastur --overwrite bench` or a hand-written `.output`.
+
+`tests/nimony/stdlib/tall.nim` imports every module in `lib/std` and is checked
+against that directory on every run that reaches it (`src/hastur/coverage.nim`).
+A new stdlib module must be added there: `tall.nim` is the only test that
+compiles the stdlib modules together, and `dagon` walks it as the aggregator
+driver for the website's documentation, so a module missing from it is a module
+missing from the docs. Subdirectories count too (`std/http/httpmsg`) — the
+check carries a deny list of the ones that hold no importable module
+(`system/`, `private/`, `posix/`, …), so a new *public* subdirectory fails the
+check rather than being silently skipped, and a new internals one needs a line
+on that list with its reason.
+
 ## Joined tests
 
 A test directory's plain tests (no `.msgs`, no golden `.nim.c`/`.nif`, exit code

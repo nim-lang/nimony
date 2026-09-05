@@ -20,11 +20,18 @@ proc newNode(l, r: sink PNode): PNode =
   result = PNode(left: l, right: r)
 
 const
-  kStretchTreeDepth = 18    # about 16Mb
-  kLongLivedTreeDepth = 16  # about 4Mb
-  kArraySize = 500_000      # about 4Mb
+  smoke = defined(benchSmoke)
+    ## `hastur` compiles this file with `-d:benchSmoke` (see `bench/hastur.mode`).
+    ## The suite asks whether the benchmark still builds and still survives its
+    ## own invariants, not how long it takes, so the smoke run walks every phase
+    ## at depths that cost milliseconds and prints a fixed word instead of a
+    ## wall time — a duration has no golden to diff against.
+
+  kStretchTreeDepth = when smoke: 10 else: 18    # about 16Mb
+  kLongLivedTreeDepth = when smoke: 8 else: 16   # about 4Mb
+  kArraySize = when smoke: 5_000 else: 500_000   # about 4Mb
   kMinTreeDepth = 4
-  kMaxTreeDepth = 16
+  kMaxTreeDepth = when smoke: 8 else: 16
 
 proc treeSize(i: int): int = (1 shl (i + 1)) - 1
 
@@ -82,7 +89,12 @@ proc main =
   if longLivedTree == nil or myarray[1000] == 0.0:
     quit "gcbench failed"
 
-let t0 = getMonoTime().ticks
-main()
-let dt = getMonoTime().ticks - t0
-echo dt div 1000
+when smoke:
+  main()
+  # `main` quits on any broken invariant, so reaching this line IS the result.
+  echo "gcbench ok"
+else:
+  let t0 = getMonoTime().ticks
+  main()
+  let dt = getMonoTime().ticks - t0
+  echo dt div 1000

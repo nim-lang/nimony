@@ -154,7 +154,7 @@ proc buildNifbench*(showProgress = false) =
   ## `nimony n` and diff the per-phase timings, so this one has to exist for
   ## the other two to mean anything. Kept out of `all` — it is a measuring
   ## instrument, not part of the toolchain.
-  buildTool("nifbench", "src/nifbench/nifbench.nim", showProgress)
+  buildTool("nifbench", "bench/nifbench.nim", showProgress)
 
 proc buildValidator*(showProgress = false) =
   buildTool("validator", "src/validator/validator.nim", showProgress)
