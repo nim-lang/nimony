@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tprocredecl.nim(2, 1) Error: redefinition of 'foo'; previous declaration here: tests/nimony/errmsgs/tprocredecl.nim(1, 1)
