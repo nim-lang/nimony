@@ -589,6 +589,9 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
       var n = a
       inc n
       result = foldValueExpr(m, n, depth+1)
+    of ExprX:
+      if not isPureTypeValueExpr(a): return
+      result = foldValueExpr(m, typeValueExpr(a), depth+1)
     else:
       if a.typeKind == RangetypeT and m.context != nil:
         result = lengthOrd(m.context[], a)

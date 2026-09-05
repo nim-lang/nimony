@@ -229,8 +229,39 @@ proc containsGenericParamsAux(n: var TypeCursor): bool =
     inc n
   return false
 
+proc typeValueExpr*(n: Cursor): Cursor =
+  ## In a static type slot, a template expansion is emitted as `(expr … value)`.
+  ## Peel to `value` when present; otherwise return `n` unchanged.
+  result = n
+  if n.exprKind != ExprX: return
+  var e = n
+  inc e
+  while e.hasMore and not isLastSon(e):
+    skip e
+  if e.hasMore:
+    result = e
+
+proc isPureTypeValueExpr*(n: Cursor): bool =
+  ## True when `n` is an `(expr …)` whose prefix statements are only empty
+  ## `(stmts)` nodes — the shape produced by expanding a single-expression
+  ## template in a type context.
+  if n.exprKind != ExprX: return true
+  var e = n
+  inc e
+  while e.hasMore and not isLastSon(e):
+    if e.stmtKind == StmtsS:
+      var probe = e
+      probe.peekInto:
+        if probe.hasMore: return false
+    else:
+      return false
+    skip e
+  result = e.hasMore
+
 proc containsGenericParams*(n: TypeCursor): bool =
   var n = n
+  if n.exprKind == ExprX and isPureTypeValueExpr(n):
+    n = typeValueExpr(n)
   result = containsGenericParamsAux(n)
 
 proc nominalRoot*(t: TypeCursor; allowTypevar = false; skipPtrs = false): SymId =
