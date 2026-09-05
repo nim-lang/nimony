@@ -63,6 +63,12 @@ proc buildTool(name, source: string; showProgress: bool; extraFlags = "") =
        (binDir() / name.addFileExt(ExeExt)).quoteShell & " " & source, showProgress
 
 proc buildNifler*(showProgress = false) =
+  ## Nifler parses `.nim` with Nim's OWN `compiler/parser.nim`, which this repo
+  ## does not carry: `syncNimParser` checks it out at the pinned commit first,
+  ## the same assume-nothing arrangement `buildArkham` has with the sibling
+  ## nativenif checkout. It is a no-op once the file is on the pin, so this
+  ## costs a `fileExists` on every build but the first.
+  syncNimParser()
   buildTool("nifler", "src/nifler/nifler.nim", showProgress)
 
 proc buildNimsem*(showProgress = false) =

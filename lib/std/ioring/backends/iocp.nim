@@ -68,7 +68,7 @@
 
 when defined(windows):
   {.feature: "lenientnils".}   # nil proc values (the AcceptEx pointer)
-  import std/[threadpool, ticketlocks, tables, syncio, assertions]
+  import std/[threadpool, ticketlocks, tables, syncio, assertions, atomics]
   import std/windows/winlean   # Handle, DWORD, closeHandle, INVALID_HANDLE_VALUE
   import ../core/types
   import ../core/slots
@@ -191,6 +191,8 @@ when defined(windows):
     gOwnerLock: TicketLock
     gAcceptEx: AcceptExFn
     gConnectEx: ConnectExFn
+    gAcceptExState: int            ## 0 unloaded, 1 loading, 2 published
+    gConnectExState: int           ## — see `loadAcceptEx`
 
   proc socketOf(fd: cint): SocketHandle {.inline.} = SocketHandle(cast[uint32](fd))
   proc fdOf(s: SocketHandle): cint {.inline.} = cint(cast[uint32](s))
@@ -223,23 +225,35 @@ when defined(windows):
       result = owner == lane
     gOwnerLock.release()
 
-  # WSAIoctl writes the function pointer straight into a proc-typed slot: a
-  # pointer→proc cast is not allowed on this toolchain. It writes into the
-  # GLOBAL rather than into a local that is then assigned across, because a
-  # `nil`-initialised local of proc type is what the native backend cannot
-  # assemble — `mov <proctype>, nil` is not among the pairings nifasm's `mov`
-  # rule admits, so `var fn: AcceptExFn = nil` fails to build for some proc
-  # types and (depending on whether the type resolved at all) silently passes
-  # for others. The global needs no such store: it starts out zero, and a
-  # WSAIoctl that fails writes nothing, so a failed load leaves it nil.
+  # WSAIoctl writes the function pointer straight into the proc-typed GLOBAL: a
+  # pointer→proc cast is not allowed on this toolchain, so there is nothing to
+  # assign across from a local.
+  #
+  # Which means the STATE, not the pointer, is what carries the load between
+  # lanes. Every lane's first accept/connect runs this, and neither the guard
+  # (`gAcceptEx != nil`) nor ws2_32's write into those eight bytes is atomic or
+  # ordered on its own — two lanes could both pass the guard and both call
+  # WSAIoctl while a third reads the pointer mid-write. The CAS makes the load
+  # happen once per process; the release/acquire pair is what makes the pointer
+  # it wrote visible to everyone else. Same shape as `ioring.init` and
+  # `threadpool.initPool`, and for the same reason.
+  #
+  # A failed WSAIoctl writes nothing, so the global stays nil and the state
+  # still reaches 2: callers test the pointer, and "not available" is as final
+  # an answer as an address.
   proc loadAcceptEx(s: SocketHandle) =
     ## AcceptEx is an extension: fetched once per process through WSAIoctl.
-    if gAcceptEx != nil: return
+    if atomicLoad(gAcceptExState, moAcquire) == 2: return
+    var expected = 0
+    if not atomicCompareExchange(gAcceptExState, expected, 1):
+      while atomicLoad(gAcceptExState, moAcquire) != 2: discard
+      return
     var guid = Guid(data1: 0xb5367df1'u32, data2: 0xcbac'u16, data3: 0x11cf'u16,
                     data4: [0x95'u8, 0xca'u8, 0x00'u8, 0x80'u8, 0x5f'u8, 0x48'u8, 0xa1'u8, 0x92'u8])
     var got = 0'u32
     discard wsaIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, addr guid, uint32(sizeof(guid)),
                      addr gAcceptEx, uint32(sizeof(gAcceptEx)), addr got, nil, nil)
+    atomicStore(gAcceptExState, 2, moRelease)
 
   proc listenerFamily(s: SocketHandle): cint =
     ## The listener's address family, so the accept socket matches it.
@@ -255,13 +269,19 @@ when defined(windows):
 
   proc loadConnectEx(s: SocketHandle) =
     ## ConnectEx, fetched the same way as AcceptEx and for the same reason: it
-    ## is a Winsock extension, not an export.
-    if gConnectEx != nil: return
+    ## is a Winsock extension, not an export — including how it is published
+    ## (see `loadAcceptEx`).
+    if atomicLoad(gConnectExState, moAcquire) == 2: return
+    var expected = 0
+    if not atomicCompareExchange(gConnectExState, expected, 1):
+      while atomicLoad(gConnectExState, moAcquire) != 2: discard
+      return
     var guid = Guid(data1: 0x25a207b9'u32, data2: 0xddf3'u16, data3: 0x4660'u16,
                     data4: [0x8e'u8, 0xe9'u8, 0x76'u8, 0xe5'u8, 0x8c'u8, 0x74'u8, 0x06'u8, 0x3e'u8])
     var got = 0'u32
     discard wsaIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, addr guid, uint32(sizeof(guid)),
                      addr gConnectEx, uint32(sizeof(gConnectEx)), addr got, nil, nil)
+    atomicStore(gConnectExState, 2, moRelease)
 
   proc allocAux(lane: int): int32 =
     ## An OVERLAPPED block the kernel is not using. `NoAux` when every block is
@@ -431,18 +451,27 @@ when defined(windows):
     var i = 0
     while i < n:
       let slotIdx = gSlots[lane].allocSlot(buf[i])
-      assert slotIdx < MaxOps, "ioring/iocp: slot arena grew past MaxOps (OVERLAPPED storage)"
-      # The slot is fresh, so whatever its previous op bound here is gone; the
-      # kinds `issue` handles without an OVERLAPPED never write it at all.
-      gSlotAux[lane][slotIdx] = NoAux
-      armDeadline(lane, slotIdx)
-      # An fd-less op (nop, timer) has no socket to associate, and a readiness
-      # probe is served by WSAPoll rather than by the port.
-      if buf[i].kind != opNop and buf[i].kind != opTimeout and
-          buf[i].kind != opPollAdd and not ensureAssociated(buf[i].fd, lane):
-        complete(slotIdx, ECancelled)   # closed or foreign handle: never issued
+      if slotIdx >= MaxOps:
+        # The arena took its documented cold path and grew past the OVERLAPPED
+        # storage sized for it (`gAux`/`gSlotAux` are exactly `MaxOps` long and
+        # never grow, so that pointers into them stay valid while the kernel
+        # writes through one). There is no block for this slot, so the op
+        # cannot be issued and failing it is the only answer left. A CHECK and
+        # not an `assert`: under `-d:danger` the alternative is a silent
+        # out-of-bounds write into `gSlotAux` one line below.
+        complete(slotIdx, -1)
       else:
-        issue(lane, slotIdx)
+        # The slot is fresh, so whatever its previous op bound here is gone; the
+        # kinds `issue` handles without an OVERLAPPED never write it at all.
+        gSlotAux[lane][slotIdx] = NoAux
+        armDeadline(lane, slotIdx)
+        # An fd-less op (nop, timer) has no socket to associate, and a readiness
+        # probe is served by WSAPoll rather than by the port.
+        if buf[i].kind != opNop and buf[i].kind != opTimeout and
+            buf[i].kind != opPollAdd and not ensureAssociated(buf[i].fd, lane):
+          complete(slotIdx, ECancelled) # closed or foreign handle: never issued
+        else:
+          issue(lane, slotIdx)
       i = i + 1
     result = servePollAdds(lane)
     # Readiness probes are re-checked every millisecond while any are pending,

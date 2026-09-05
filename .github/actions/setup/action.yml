@@ -347,8 +347,12 @@ runs:
         # `src/nativenif.commit` is in the key for the same reason the sources
         # are: `bin/` holds arkham and nifasm, and which nativenif commit they
         # were built from is an input to them. Without it a re-pin would restore
-        # the previous commit's pair.
-        key: hastur-release-${{ runner.os }}-${{ inputs.cpu }}-${{ inputs.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims', 'nimony/src/nativenif.commit') }}
+        # the previous commit's pair. `nimparser/upstream.commit` is there for
+        # the same reason and needs saying out loud: the file it pins, Nim's own
+        # `compiler/parser.nim`, is NOT in the tree (hastur checks it out), so
+        # the `src/**/*.nim` glob cannot see it and moving the pin would
+        # otherwise restore a `bin/nifler` built with the parser before it.
+        key: hastur-release-${{ runner.os }}-${{ inputs.cpu }}-${{ inputs.nim_branch }}-${{ hashFiles('nimony/src/**/*.nim', 'nimony/src/**/*.cfg', 'nimony/src/**/*.nims', 'nimony/src/nativenif.commit', 'nimony/src/nifler/nimparser/upstream.commit') }}
         restore-keys: |
           hastur-release-${{ runner.os }}-${{ inputs.cpu }}-${{ inputs.nim_branch }}-
 
