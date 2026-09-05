@@ -267,10 +267,34 @@ iterator pairs*(s: string): (int, char) {.inline.} =
 func `=wasMoved`*(s: var string) {.exportc: "nimStrWasMoved", inline.} =
   s.bytes = 0
 
-func `=destroy`*(s: string) {.exportc: "nimStrDestroy", inline.} =
+func destroyHeapStr(more: ptr LongString) {.noinline.} =
+  ## The cold half of `=destroy`. Only a HEAP string reaches here, and on the
+  ## compiler's own workload that is 0.17% of destroys — so this is the same
+  ## split, for the same reason, as `hashStr`/`hashStrLong` above.
+  ##
+  ## The size is the whole point. `arcDec` is `{.inline.}`, so by the time the
+  ## inliner scores `=destroy` its body has already absorbed the atomic
+  ## acquire-load plus the LL/SC decrement loop — well past `InlineTinyBound`
+  ## (100 tokens), which is why `=destroy` stayed an out-of-line call at every
+  ## site despite carrying `{.inline.}` (a pragma `computeInlineInfo`
+  ## deliberately does not consult; only `.alwaysInline` is). Splitting the
+  ## check from the tail is what makes the half that is worth splicing small
+  ## enough to splice.
+  ##
+  ## `ptr LongString` rather than `string`: a `string` parameter would drag the
+  ## lifecycle hooks back into the cold half, which is the thing being escaped.
+  if arcDec(more.rc):
+    dealloc(more)
+
+func `=destroy`*(s: string) {.exportc: "nimStrDestroy", alwaysInline.} =
+  ## The check, and nothing else. Out of line this costs a `bl` and — on
+  ## AArch64, where `bl` clobbers the link register — a frame in the callee for
+  ## the sole benefit of a branch that is not taken: measured on `nifbench`,
+  ## 788,157 calls of which 3 reached `dealloc`, and 1,576,308 of the 1,576,314
+  ## instructions spent saving and restoring `lr` were on paths that never
+  ## called anything.
   if ssLen(s) == HeapSlen:
-    if arcDec(s.more.rc):
-      dealloc(s.more)
+    destroyHeapStr(s.more)
 
 func `=copy`*(dest: var string; src: string) {.exportc: "nimStrCopy", nodestroy.} =
   let ssrc = ssLen(src)
