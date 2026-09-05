@@ -55,6 +55,11 @@ proc setupRing() =
   initPlatformBackend()
   gReactor = backendRelays.poll
   gReactorWaits = backendRelays.waits
+  # The release half of `threadpool.reactorReady`: the workers have been running
+  # since `initPool` above, so everything the reactor reaches — the op queues,
+  # the slot arenas, the timer heaps, the backend's own arenas — has to be
+  # visible to them BEFORE the reactor itself is.
+  atomicStore(gReactorState, 1, moRelease)
 
 proc initIoRing*() =
   ## Bring the default ring up. **Idempotent**, and it has to be: this module
@@ -107,9 +112,15 @@ proc enqueueOp(op: OpContext) =
     if op.fd >= 0:
       let owner = iocpOwnerLane(op.fd)
       if owner >= 0: lane = owner
+    let foreign = lane != ioLane()
     while not gOpQueues[lane].tryEnqueue(op):
+      # Draining OUR lane cannot make room in someone else's, so the wake goes
+      # inside the retry and not only after a successful enqueue: only the owner
+      # empties that stripe, and it is asleep in its completion wait. Without
+      # this the producer spins until the owner surfaces on its own idle budget.
+      if foreign: iocpWake(lane)
       discard backendRelays.poll(0)
-    if lane != ioLane():
+    if foreign:
       iocpWake(lane)
   else:
     while not gOpQueues[ioLane()].tryEnqueue(op):

@@ -6,7 +6,12 @@
 tdoc_smoke.html: <h1>tdoc_smoke</h1>
 tdoc_smoke.html: <code><span class="kw">proc</span> <span class="name">square</span>
 tdoc_smoke.html: <code><span class="kw">proc</span> <span class="name">shout</span>
-tdoc_smoke.html: <span class="prim">int</span>
+# `int64`, not `int`: `builtintypes.nim` builds the `int` entry as
+# `(i <configBits>)`, so a source `int` and a source `int64` are the same NIF by
+# the time sem is done and the spelling cannot be recovered here. Leng's IR does
+# keep the distinction (`(i -1)`, resolved by `--bits:N`); nimony's front end
+# does not. Change this line the day it does.
+tdoc_smoke.html: <span class="prim">int64</span>
 tdoc_smoke.html: <a class="typeref" href="std/system.html#string.0.sysvq0asl">
 tdoc_smoke.html: id="square.0.
 tdoc_smoke.html: id="shout.0.

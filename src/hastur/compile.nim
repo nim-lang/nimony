@@ -62,7 +62,7 @@ proc nimonyCmdFor*(file: string; cat: Category; forward: string): string =
   ## in the same `nimcache/`, and differing flags would thrash it.
   result = "--isMain"
   case cat
-  of Normal, Valgrind, Optimized, Skip: discard
+  of Normal, Valgrind, Optimized, Bench, Skip: discard
   of Basics:
     result.add " --noSystem"
   of Tracked:

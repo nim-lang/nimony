@@ -29,7 +29,7 @@ Usage:
 
 Commands:
   build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
-                       `nifbench` is the NIF micro-benchmark suite (src/nifbench),
+                       `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
                        `all` builds arkham + nifasm too when the sibling
@@ -104,6 +104,13 @@ Commands:
                        it (a dirty nativenif tree is left alone, with a
                        warning). The file is read at run time; an empty or
                        absent one means "build whatever is checked out".
+  update parser        re-pin `src/nifler/nimparser/upstream.commit` — Nim's
+                       own `compiler/parser.nim`, which nifler parses `.nim`
+                       source with — to the tip of nim-lang/Nim `devel`, and
+                       check it out. `build nifler` checks out the pin (from a
+                       Nim git checkout on this machine if it has the commit,
+                       else one HTTPS fetch); an empty or absent pin means
+                       "use whatever parser the host compiler ships".
   install              write activation script(s) at the project root that
                        prepend the toolchain dirs to `$PATH` for the current
                        shell. On Windows, also download MinGW+LLVM (gcc,
@@ -319,9 +326,17 @@ proc handleCmdLine =
   of "all":
     # `all` is now the tree walk: `tests/` (each suite via its setup.nim or the
     # built-in nimony runner; `tests/setup.hastur` builds the toolchain first)
-    # plus `examples/`. Directories marked `hastur.mode = skip` (dagon, hexer)
-    # stay out of the sweep but remain runnable via `hastur tests/<dir>`.
-    walkRoots(["tests", "examples"], forward, overwrite)
+    # plus `examples/` and `bench/`. Directories marked `hastur.mode = skip`
+    # (dagon, hexer) stay out of the sweep but remain runnable via
+    # `hastur tests/<dir>`.
+    #
+    # `bench/` is in the sweep so the benchmarks cannot rot unnoticed — they are
+    # not run by anything else, and a benchmark that stopped compiling is only
+    # discovered when someone reaches for it. Its `hastur.mode = bench` compiles
+    # them with `-d:benchSmoke`, which shrinks every workload to a deterministic
+    # smoke run: the question here is "does it build and does it still compute
+    # the same numbers", never "how fast".
+    walkRoots(["tests", "examples", "bench"], forward, overwrite)
 
   of "tiers":
     # `buildNimonyToolchain`, not `buildNimony`: every module on the tier list is
@@ -517,9 +532,13 @@ proc handleCmdLine =
         for f in walkDirRec(root):
           if isGeneratedTestFile(f) and f.endsWith(".nim"): removeFile f
   of "update":
-    # `update deps` rather than a bare `update`, because the sibling repos are
-    # not the only thing this could come to re-pin.
+    # `update <what>` rather than a bare `update`: there is more than one pin,
+    # and they do not move together. `deps` is the sibling nativenif checkout;
+    # `parser` is Nim's own `compiler/parser.nim` that nifler is built with,
+    # whose bump can break the build on an older host install and so is never
+    # something to inherit from a nativenif re-pin.
     if args.len == 1 and args[0] == "deps": updateDepsCmd()
+    elif args.len == 1 and args[0] == "parser": updateParserCmd()
     else: writeHelp()
   of "install":
     runInstall(args)

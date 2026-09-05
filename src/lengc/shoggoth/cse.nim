@@ -1544,6 +1544,40 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     # Don't: on the arkham targets the address folds into the load/store addressing mode
     # for free, so caching it saves nothing and ties up a register across the live range.
     # Leave the lvalue inline (no temp) — NOT value-CSE'd (unsound across its own writes).
+    #
+    # This also blocks VALUE-CSE of every lvalue that is written anywhere in the
+    # body, which is the compiler's dominant idiom: the fields of a `var`
+    # parameter. `enterScope` reads `c.p` seven times and assigns it once at the
+    # end, and all seven reads are refused because of that one assignment. That
+    # is 2073 refused loads over nifbench's modules — so it looks like the reason
+    # the emitted arm64 code reloads the same `[base, #off]` inside one basic
+    # block 6.2% of the time, against gcc's 0.3%.
+    #
+    # It is not, and this was measured rather than argued (2026-09-05, nifbench,
+    # `nimony n -d:danger`). Narrowing the refusal to the addr-of'd subset — a
+    # plain store target is invalidated precisely by `invalidateForStore`, which
+    # is strictly sharper than refusing it body-wide — does eliminate the loads,
+    # and LOSES:
+    #
+    #     loads          75.63M -> 73.02M   -2.61M
+    #     frame push/pop 50.36M -> 52.82M   +2.46M
+    #     reg-to-reg mov 44.93M -> 45.88M   +0.95M
+    #     TOTAL         439.52M -> 440.32M  +0.80M
+    #
+    # A CSE temp trades N loads for one load plus a value that must live in a
+    # register across its whole range. A load here is a single `ldr` with the
+    # offset folded in, so eliminating one saves exactly one instruction; a range
+    # that straddles a call can only be homed callee-saved, and arkham charges a
+    # whole prologue/epilogue PAIR for that on every entry to the proc. Refusing
+    # ranges that straddle a call turns the loss into a 0.35M win (-0.08%) —
+    # still not worth the machinery, because arkham's volatile local pool is five
+    # registers (x9-x13; x0-x7 are withheld) so even a call-free temp lands in a
+    # callee-saved register as soon as anything else is live.
+    #
+    # So this refusal is not what makes CSE ineffective on these targets: the
+    # register cost is. Revisit it when a cross-call value stops costing a
+    # prologue pair — shrink-wrapping, or spending callee-saved registers only on
+    # values that genuinely cross a call — and the same 2.61M becomes a real win.
     if addrMode or isAddrOf: return false
   let usePos = cursorToPosition(c.orig[], n)          # node to rewrite
   let lvaluePos = cursorToPosition(c.orig[], lvalueCur)  # `L`, what the decl caches
@@ -1830,7 +1864,19 @@ proc trAsgn(c: var Context; n: var Cursor) =
     # recurs it is address-CSE'd — `handleCandidate` rewrites it to `(deref t)`,
     # still a valid assignment target. Then invalidate the aliasing class; the
     # address temp of this exact location survives (its address didn't move).
-    discard handleCandidate(c, lhsStart)
+    #
+    # The `when` is load-bearing, not tidiness. This call is sound ONLY in
+    # address mode, where the rewrite `L` → `(deref t)` is still an assignment
+    # target. A VALUE temp is not: rewriting an LHS to a bare symbol turns
+    # `p.pos = p.pos + 1` into `t = p.pos; t = t + 1` and drops the store. With
+    # `AddressCSE` off nothing reaches here today only because `handleCandidate`
+    # refuses every `writeTargets` key outright — so the guard is invisible until
+    # someone narrows that refusal, and then it is a silent miscompile (measured:
+    # parseopt's `next` stopped advancing and walked off the string). Keep the
+    # write-vs-read distinction here, where it belongs, instead of relying on a
+    # refusal three modules away.
+    when AddressCSE:
+      discard handleCandidate(c, lhsStart)
     invalidateForStore(c, lhsStart)
   else: discard
 

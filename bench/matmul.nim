@@ -82,6 +82,13 @@ proc toInt(s: string; fallback: int): int =
   except: result = fallback
 
 const
+  smoke = defined(benchSmoke)
+    ## `hastur` compiles this file with `-d:benchSmoke` (see `bench/hastur.mode`).
+    ## The suite asks whether the kernels still build and still agree with the
+    ## checksums they used to produce, not how fast they run, so a smoke build
+    ## drops to one repetition of a 64x64 problem and prints the digest column
+    ## alone: a timing has no golden to diff against, a digest does.
+
   Version = "0.1.0"
   Tile = 32
     ## Chosen so the three live blocks fit L1 together: at `float64` that is
@@ -89,10 +96,11 @@ const
     ## element type — the tiled kernel is a fixed control-flow shape that the
     ## three backends are compared on, and a tile size that moved with the
     ## type would make the two rows incomparable.
-  DefaultSize = 256
+  DefaultSize = when smoke: 64 else: 256
     ## 2*256^3 = 33.5 MFLOP per call: long enough that one iteration is far
     ## past timer noise, small enough that the three `float64` matrices
-    ## (1.5 MB) do not turn the tiled kernel into a DRAM benchmark.
+    ## (1.5 MB) do not turn the tiled kernel into a DRAM benchmark. Still twice
+    ## `Tile` under `smoke`, so the blocked kernel keeps its blocking.
 
 # ── deterministic pseudo-randomness ─────────────────────────────────────────
 # The same 64-bit LCG (Knuth's MMIX constants) `nifbench` uses, for the same
@@ -245,7 +253,7 @@ type Result = object
 var
   results: seq[Result] = @[]
   only = ""
-  reps = 3
+  reps = when smoke: 1 else: 3
   curDigest: int64 = 0
     ## Written by each benchmark body, read by `measure` after the timed loop.
     ## A template that took the checksum as a second block would be tidier and
@@ -292,17 +300,25 @@ proc fmtRate(flops, ns: int64): string =
 proc pad(s: string; w: int): string = s & repeat(' ', max(1, w - s.len))
 
 proc printTable(csv: bool) =
-  if csv:
-    echo "name,ns,flops,checksum"
+  when smoke:
+    # Digests only. They are integral and normalized by `n*n` precisely so they
+    # render identically under every backend, which is what makes them diffable
+    # against a checked-in golden; the times next to them would not be.
+    discard csv
     for r in results:
-      echo r.name, ",", r.ns, ",", r.flops, ",", r.digest
+      echo r.name, " ", r.digest
   else:
-    echo "benchmark       time            throughput        checksum"
-    echo "--------------- --------------- ----------------- ---------"
-    for r in results:
-      let ms = hundredths(r.ns div 10_000) & " ms"
-      echo pad(r.name, 16) & pad(ms, 16) & pad(fmtRate(r.flops, r.ns), 18) &
-           $r.digest
+    if csv:
+      echo "name,ns,flops,checksum"
+      for r in results:
+        echo r.name, ",", r.ns, ",", r.flops, ",", r.digest
+    else:
+      echo "benchmark       time            throughput        checksum"
+      echo "--------------- --------------- ----------------- ---------"
+      for r in results:
+        let ms = hundredths(r.ns div 10_000) & " ms"
+        echo pad(r.name, 16) & pad(ms, 16) & pad(fmtRate(r.flops, r.ns), 18) &
+             $r.digest
 
 # ── main ────────────────────────────────────────────────────────────────────
 

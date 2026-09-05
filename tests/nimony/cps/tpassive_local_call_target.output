@@ -1,0 +1,8 @@
+inIf 11
+inWhile 10
+inWhile 11
+seqInLoop 10
+seqInLoop 11
+forOverSeq 110
+forOverSeq 110
+notTheTarget 17

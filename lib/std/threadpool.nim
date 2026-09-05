@@ -57,6 +57,14 @@ var
   stopFlag: bool # accessed atomically
   workerCount* = 0
   gReactor*: proc(timeoutMs: int): bool {.nimcall.} = poolPollIo
+var gReactorState*: int = 0
+  ## 0 until `gReactor`/`gReactorWaits` — and everything they reach — are fully
+  ## set up. It has to be PUBLISHED rather than merely assigned: `initPool`
+  ## starts the workers, and only then does `ioring.setupRing` allocate the
+  ## per-lane arenas the reactor indexes and finally point `gReactor` at itself.
+  ## Nothing orders those plain stores against each other, so on a weakly
+  ## ordered machine a worker could see the new reactor and an arena seq that is
+  ## still empty. `reactorReady` pairs an acquire with `setupRing`'s release.
 var gReactorWaits* = false
   ## Does `gReactor(ms)` actually sleep for up to `ms`? Set from the I/O
   ## backend (see `BackendRelays.waits`). While it is false an idle worker has
@@ -219,6 +227,15 @@ when defined(useMimalloc):
     ## tests/leak_repro*.nim). An idle-time collect converges it to a small
     ## per-worker steady state.
 
+proc reactorReady*(): bool {.inline.} =
+  ## Has the I/O ring published its reactor? See `gReactorState`.
+  atomicLoad(gReactorState, moAcquire) != 0
+
+proc reactorPoll*(timeoutMs: int): bool {.inline.} =
+  ## Drive the I/O reactor if there is one, and the do-nothing default until
+  ## there is. Every caller of `gReactor` goes through this.
+  if reactorReady(): gReactor(timeoutMs) else: poolPollIo(timeoutMs)
+
 proc workerLoop(arg: pointer) {.nimcall.} =
   threadIdx = cast[int](arg)
   isWorker = true
@@ -230,7 +247,7 @@ proc workerLoop(arg: pointer) {.nimcall.} =
     #    each continuation, re-submitting any that yield more work.
     let busy = drainOnce(threadIdx)
     # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
-    let eventFired = gReactor(if busy: 0.cint else: 1.cint)
+    let eventFired = reactorPoll(if busy: 0.cint else: 1.cint)
     if not eventFired and not busy and not gReactorWaits:
       # Only when the reactor did not wait for us. Behind one that did, this
       # nap is the difference between noticing a completion when it arrives

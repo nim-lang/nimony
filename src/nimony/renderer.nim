@@ -449,6 +449,13 @@ proc takeObjectFields(g: var SrcGen, fields: var Cursor) =
     gcase(g, fields, isCaseObject = true)
   of FldU, GfldU:
     takeField(g, fields)
+  of NilU:
+    # A fieldless sum-type branch (`of None: discard` in `std/opt`) carries
+    # `(nil)` as its entire body. There is no field to render and `discard` is
+    # how the source spells it.
+    skip fields
+    put(g, tkDiscard, "discard")
+    optNL(g)
   else:
     raiseAssert "todo"
 
@@ -957,13 +964,7 @@ proc gtype(g: var SrcGen, n: var Cursor, c: Context) =
       fields.into:
         skip fields, AnyType  # parent type / inheritance slot
         while fields.hasMore:
-          case fields.substructureKind
-          of CaseU:
-            gcase(g, fields, isCaseObject = true)
-          of FldU, GfldU:
-            takeField(g, fields)
-          else:
-            raiseAssert "todo"
+          takeObjectFields(g, fields)
 
       dedent(g)
 

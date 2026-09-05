@@ -47,7 +47,7 @@ const
     # test-by-test and failed as a group, on three backend bugs that only a
     # module compiled as an import can reach (see `NativeJoinSkip`).
     #
-    # `tests/nimony/stdlib`: 45 of its 53 pass; the rest are in `NativeTestSkip`.
+    # `tests/nimony/stdlib`: 44 of its 53 pass; the rest are in `NativeTestSkip`.
     # This is the suite that covers the process vectors the Windows entry point
     # does not receive (`tcmdline`, `tenvvars`, `tos`) — the reason it is worth
     # running natively at all rather than only through the C backend.
@@ -126,24 +126,49 @@ const
     "tests/nimony/stdlib/trandom",
     # The one test on Windows that drives the ring on real sockets — every other
     # test in `tests/nimony/threads` either stubs itself out here or never
-    # reaches `rawthreads.create`. Two native gaps were found through it and
-    # fixed in arkham/nifasm (a `stdcall` proc DEFINITION is now entered under
-    # the Win64 ABI, and `nil` is now a legal proc value). What is left is a
-    # THIRD, undiagnosed one: about one run in eight the native build trips a
-    # seq bound check somewhere inside the ring —
-    #   lib/std/system/seqimpl.nim(167, 41): i < s.len   (also: 0 <= i)
-    # — at a point that varies with timing. The same program built with `nimony
-    # c` is clean over 25+ runs under Wine, and both backends enforce that
-    # contract identically (checked with a fixture that indexes past the end),
-    # so this is the native code computing a different index, not the ring
-    # asking for one. It is NOT in anything the deadline/connect coverage added:
-    # cutting the test back to the accept/read/write/polladd/abort surface it
-    # had before still fails 4 runs in 30.
+    # reaches `rawthreads.create`. Three native gaps have been found through it;
+    # the first two are fixed in arkham/nifasm (a `stdcall` proc DEFINITION is
+    # entered under the Win64 ABI, and `nil` is a legal proc value), and so is
+    # the third:
+    #
+    #   `{.threadvar.}` USED TO BE A PLAIN GLOBAL in a native Windows build.
+    #
+    # arkham collected thread-locals as ordinary globals on win_x64 on the
+    # premise that the PE image is single-threaded. `std/rawthreads` calls
+    # `CreateThread`, so every thread shared one copy of every thread-local —
+    # `threadpool.threadIdx` included, which made `ioLane()` answer the same lane
+    # for the main thread AND every worker: 32 threads on one unlocked slot
+    # arena, hence the double `complete()` that surfaced as
+    #   lib/std/system/seqimpl.nim(167, 41): i < s.len
+    # It is fixed with real PE static TLS (nativenif `4dc7e7a`).
+    #
+    # It stays skipped for a FOURTH problem, which only became reachable once the
+    # lanes were finally distinct: the native build now HANGS instead. The main
+    # thread spins in `waitCompletions` while all 31 workers sleep in their
+    # completion wait, i.e. a completion it is waiting for never arrives. What
+    # says this is code generation and not the ring: the same library built with
+    # `nimony c` passes 10 runs out of 10 under Wine while the native build hangs
+    # 6 out of 6, and ANY perturbation of `waitCompletions` — adding two locals
+    # and a branch — makes the native build pass 10 out of 10 too. The obvious
+    # suspect is register pressure: `&threadvar` went from one FS-relative load
+    # to a five-instruction walk through the TEB, and `ioLane()` does two of them.
     "tests/nimony/threads/tioringwin",
     # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
     # fails to run ("vfs: open failed"), and the C backend fails it identically,
     # so nothing here would fix it.
-    "tests/nimony/stdlib/ttypetraits"
+    "tests/nimony/stdlib/ttypetraits",
+    # `tall` imports EVERY stdlib module, which is the point of it: that they
+    # still compile together, and that `dagon` can document them. Nothing about
+    # it is a native assertion, and running it as one asks a much larger question
+    # than the file was written to ask — it reaches `threadpool`, `parfor`,
+    # `ticketlocks`, `socket`, `ioring` and the http modules, so it needs every
+    # threadvar the pinned arkham gets wrong on win_x64. It compiles and then
+    # faults on a null read before its first `echo`. nativenif #157 (`arkham/
+    # nifasm: real thread-locals on win_x64`) fixes exactly that — verified with
+    # `nimony n --os:windows` under wine, where all 45 of this directory's
+    # native-eligible tests pass with it and `tall` prints `ok` — but that commit
+    # is not the pin yet. Delete this line when it is.
+    "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —

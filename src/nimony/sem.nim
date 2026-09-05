@@ -3986,6 +3986,16 @@ proc callDefault(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: NifLi
   discard buildSymChoice(c, callBuf, pool.strings.getOrIncl("default"), info, FindAll)
   callBuf.addSubtree typ
   callBuf.addParRi()
+  if containsGenericParams(typ):
+    # In a generic body the default's overloads (e.g. `default[I: Ordinal;
+    # T: HasDefault](array[I, T])`) cannot be matched against a type that
+    # still carries generic params: a symbolic array length like `bump(N)`
+    # is no ordinal index type, and an abstract element `T` satisfies no
+    # concrete `default` overload. Defer the call unresolved; instantiation
+    # re-`semExpr`s it with a concrete type, where the array length folds
+    # (`semArrayType`) and the proper overload matches.
+    dest.addSubtree cursorAt(callBuf, 0)
+    return
   var it = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
   semCall c, dest, it, {}
 
