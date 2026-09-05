@@ -51,3 +51,13 @@ let f = foo[2, 1]()
 assert typeof(f) is Span[3]
 assert typeof(f) is range[0..3]
 assert f == 2
+
+proc makeSized[N: static[int]; T: HasDefault](): Sized[N, T] = Sized[N, T]()
+
+let s2 = makeSized[5, int]()
+assert sizeof(s2.data) == 48, "makeSized[5, int]() default-constructs array[6, int]"
+
+proc makeGrid[R, C: static[int]; T](): Grid[R, C, T] = Grid[R, C, T]()
+
+let g2 = makeGrid[2, 3, int]()
+assert sizeof(g2.data) == 56, "makeGrid[2, 3, int]() default-constructs array[7, int]"
