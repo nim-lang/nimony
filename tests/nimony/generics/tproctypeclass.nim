@@ -10,6 +10,7 @@ import std/syncio
 
 proc bothProcs*[T: proc](a, b: T): bool = true
 proc oneProc*[T: proc](a: T): int = 7
+proc oneIter*[T: iterator](a: T): int = 9
 
 proc plain(x: int) = discard
 
@@ -26,3 +27,10 @@ let c = mkClosure()
 echo bothProcs(p, p)      # a plain proc type
 echo bothProcs(c, c)      # a .closure proc type — the shape that crashed
 echo oneProc(c)
+
+# `[T: iterator]` crashed the same way, one layer along: trProctype classified
+# the childless `(itertype)` as a closure iterator and walked to its params tag.
+iterator counter(): int {.closure.} =
+  yield 1
+let it: iterator (): int {.closure.} = counter
+echo oneIter(it)

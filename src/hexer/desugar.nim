@@ -1045,52 +1045,13 @@ proc tryFoldFloatExpr(dest: var TokenBuf; exprStart: int; targetBits: int) =
     dest.addParRi()
 
 proc isClosureValueType(typ: Cursor): bool =
-  ## The (fn, env) pair: the lowered `ClosureTupleT`, or a `.closure` proctype
-  ## whose decl has not been rewritten yet (a closure global from another
-  ## module keeps its semchecked type).
+  ## The (fn, env) pair: the lowered `ClosureTupleT`, a `.closure` proctype whose
+  ## decl has not been rewritten yet, or a `.closure` iterator. A `.passive`
+  ## iterator is NOT one — it lowers to a bare wrapper proctype.
   typ.typeKind == ClosureTupleT or
-    (typ.typeKind == ProctypeT and procHasPragma(typ, ClosureP))
+    (typ.typeKind == ProctypeT and procHasPragma(typ, ClosureP)) or
+    (typ.typeKind == ItertypeT and not procHasPragma(typ, PassiveP))
 
-proc isClosureIterType(typ: Cursor): bool =
-  ## A `.closure` iterator value is also an (fn, env) pair. A `.passive` one is
-  ## NOT: it is a bare wrapper proctype (see cps.trProctype), so it converts to
-  ## a pointer directly and must not be field-extracted.
-  typ.typeKind == ItertypeT and not procHasPragma(typ, PassiveP)
-
-proc tryClosurePtrConv(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
-  ## `(hconv (pointer) it)` where `it` is a closure ITERATOR value: project the
-  ## fn slot and convert that scalar, because the value is a two-field struct
-  ## and the cast cannot typecheck.
-  ##
-  ## Closures proper do not come through here — they have a comparator now
-  ## (`==` over the `proc` typeclass), so sem never emits the conversion for
-  ## them. Iterators cannot: `[T: iterator]` is not a typeclass nimony accepts,
-  ## so `it == nil` still resolves to `==(x, y: nil pointer)` and the coercion
-  ## survives. Hence this, and only for them.
-  ##
-  ## Keyed on the SOURCE TYPE, never on the shape of the operand expression.
-  ## The version this replaces lived in coro_transform and matched the inner
-  ## expression against a list of shapes (symbol, field, tupat…), so every new
-  ## way of holding an iterator — a seq element read through an inlined `for`,
-  ## say — had to be added to the list.
-  let head = n
-  var probe = n
-  probe = sub(probe)
-  let dstType = probe
-  if dstType.typeKind notin {PtrT, PointerT}: return false
-  var operand = probe; skip operand
-  let srcTyp = c.typeCache.getType(operand, {SkipAliases})
-  if not isClosureIterType(srcTyp): return false
-
-  let info = head.info
-  copyIntoKind dest, head.exprKind, info:
-    dest.addSubtree dstType
-    dest.copyIntoKind TupatX, info:
-      var e = operand
-      tr(c, dest, e)
-      dest.addIntLit 0, info
-  n = head; skip n
-  result = true
 
 proc tryClosureCompare(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
   ## `(eq|neq <closure> a b)` -> compare the fn slots AND the env slots.
@@ -1378,10 +1339,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
       else:
         trSons(c, dest, n)
     of HconvX, ConvX:
-      # Only a closure ITERATOR needs anything special here; see
-      # `tryClosurePtrConv`. Everything else is an ordinary conversion.
-      if not tryClosurePtrConv(c, dest, n):
-        trSons(c, dest, n)
+      trSons(c, dest, n)
     of EqX, NeqX:
       # A `.closure` value is an (fn, env) pair, so C's `==` cannot compare it:
       # the operands are structs. Project the halves and compare those instead.
