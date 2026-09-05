@@ -90,6 +90,29 @@ proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
     dest.addUnstructured reemit
     endRead reemit
     dest.addParRi()
+  elif classifyType(c, c.routine.returnType) == VoidT and
+       classifyType(c, it.typ) notin {AutoT, NoType}:
+    # A VOID routine whose body's TAIL is an expression of a CONCRETE non-void
+    # type. This used to fall through to `commonType` against `void`, reporting
+    #   type mismatch: got: bool but wanted: void
+    # without ever consulting `{.discardable.}` — so a discardable call written
+    # as the LAST statement of a void proc was rejected, while the SAME call
+    # followed by any other statement compiled, because `semStmt` applies the
+    # discard rule and this path did not. A one-line `register*Routes` proc is
+    # exactly that shape (15 of 21 `addAsyncHandler` call sites in the kaitake
+    # estate). Apply the rule `semStmt` applies, which also yields the correct
+    # diagnostic for the non-discardable case.
+    #
+    # `AutoT`/`NoType` are EXCLUDED deliberately: a `defer` as the tail of a
+    # void proc classifies as `auto`, and treating it as a discardable-eligible
+    # expression breaks tests/nimony/exceptions/tdefer.nim. Those keep the old
+    # `commonType` path.
+    var ex = cursorAt(dest, beforeLastSon)
+    let isDiscardable = implicitlyDiscardable(ex, dest)
+    endRead ex
+    if not isDiscardable:
+      buildErr c, dest, lastSonInfo,
+        "expression of type `" & typeToString(it.typ) & "` must be discarded"
   else:
     commonType c, dest, it, beforeLastSon, c.routine.returnType
 
