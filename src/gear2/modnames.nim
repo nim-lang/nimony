@@ -38,6 +38,7 @@ const
   BackendDirLLVM* = ".ll"  ## `nimony l`
   BackendDirNative* = ".n" ## `nimony n`
   BackendDirWasm* = ".wasm" ## `nimony w`
+  BackendDirJs* = ".js"     ## `nimony j`
 
 proc moduleSuffix*(path: string; searchPaths: openArray[string]): string =
   # `getCurrentDir`/`relativePath` are `.raises`, but the only reason they can

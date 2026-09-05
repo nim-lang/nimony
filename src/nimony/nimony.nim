@@ -41,6 +41,10 @@ Command:
   l project.nim               compile the full project via LLVM backend
   n project.nim               compile the full project via the native backend
                               (arkham + nifasm; static, libc-free executable)
+  w project.nim               compile the full project via the wasm backend
+                              (ithaqua; one whole-program .wasm, no linker)
+  j project.nim               compile the full project via the JS backend
+                              (jorogumo; one self-contained .js, no linker)
   check project.nim           check the full project for errors; can be
                               combined with `--usages`, `--def` for
                               editor integration
@@ -147,6 +151,13 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     # env import set). The target is implied after CLI parsing (see the
     # backendWasm block in handleCmdLine): wasm32/standalone/32 bits.
     config.backend = backendWasm
+    FullProject
+  of "j":
+    # JS backend: Leng -> jorogumo, producing one self-contained `.js` program
+    # (no C compiler, no linker, no host import object — the file runs on a
+    # bare `node file.js`). The target is implied after CLI parsing, exactly
+    # as for wasm: the two backends share one 32-bit freestanding model.
+    config.backend = backendJs
     FullProject
   of "check":
     CheckProject
@@ -350,19 +361,25 @@ proc compileProgram(c: var CmdOptions) =
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
   # `-d:` does, and record them in config.defines so the cache key tracks them.
-  if c.config.backend == backendWasm:
-    # The wasm backend has exactly one target; imply it here — after CLI
-    # parsing — so `nimony w x.nim` works bare. Forwarded like user flags
-    # because nimsem sees only its command line (appended last, so it also
-    # wins over a contradictory explicit --cpu/--os).
+  if c.config.backend in {backendWasm, backendJs}:
+    # The wasm and JS backends have exactly one target each, and they are the
+    # same target: 32-bit, freestanding, wasm32 word size. Imply it here —
+    # after CLI parsing — so `nimony w x.nim` / `nimony j x.nim` work bare.
+    # Forwarded like user flags because nimsem sees only its command line
+    # (appended last, so it also wins over a contradictory explicit
+    # --cpu/--os).
     #
     # `--os:standalone`, NOT `embedded`. Both are freestanding and it is easy to
     # read them as the same target, but they pick different stdlib arms and only
-    # one of them is wasm's. `embedded` is BARE METAL: `syncio`'s arm writes
+    # one of them is this one's. `embedded` is BARE METAL: `syncio`'s arm writes
     # through ARM semihosting and `osalloc`'s takes the heap from nifasm's
     # `(heapstart)`/`(heapsize)` board-layout constants — neither exists here.
     # `standalone` falls into the raw-`write`/`read`/`open` arm instead, and
-    # those are exactly the names ithaqua resolves to the host's import set.
+    # those are exactly the names ithaqua resolves to the wasm host's import set
+    # and jorogumo implements in its JS preamble (`nim_write`/`nim_exit`,
+    # `memorySize`/`memoryGrow`). The `wasm32` cpu is what selects osalloc's
+    # memory-growth arm; JS borrows it for the same 32-bit pointer model, it
+    # does not run wasm.
     discard c.config.setTargetCPU("wasm32")
     discard c.config.setTargetOS("standalone")
     c.config.bits = 32

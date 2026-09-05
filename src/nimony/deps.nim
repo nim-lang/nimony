@@ -96,6 +96,7 @@ proc backendDirName(config: NifConfig; f: FilePair): string =
   of backendLLVM: result.add BackendDirLLVM
   of backendNative: result.add BackendDirNative
   of backendWasm: result.add BackendDirWasm
+  of backendJs: result.add BackendDirJs
 
 proc hexedFile(config: NifConfig; f: FilePair): string = config.nifcachePath / f.modname & ".x.nif"
 proc lengcFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
@@ -138,12 +139,28 @@ proc wasmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   else:
     base / baseName.addFileExt("wasm")
 
+proc jsFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
+  ## jorogumo's whole-program output; the naming rules of `exeFile`
+  ## (`--out`/`--outdir` overrides, else nimcache) with a fixed `.js` ext.
+  let baseName = f.nimFile.splitFile.name
+  let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
+  if config.outFile.len > 0 or config.outDir.len > 0:
+    let nameOnly = if config.outFile.len > 0: config.outFile else: baseName
+    let withExt =
+      if nameOnly.splitFile.ext.len > 0: nameOnly
+      else: nameOnly.addFileExt("js")
+    if config.outDir.len > 0: config.outDir / withExt
+    else: withExt
+  else:
+    base / baseName.addFileExt("js")
+
 proc genFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   case config.backend
   of backendC: config.cFile(f, backendDir)
   of backendLLVM: config.llFile(f, backendDir)
   of backendNative: config.asmFile(f, backendDir)
   of backendWasm: config.lengcFile(f, backendDir)  # ithaqua consumes Leng directly
+  of backendJs: config.lengcFile(f, backendDir)    # jorogumo consumes Leng directly
 proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".o"
@@ -1074,6 +1091,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # actually requested (`--opt:speed` / `--opt:size`); default/debug builds
     # are byte-for-byte unaffected.
     let wasm = c.config.backend == backendWasm
+    let js = c.config.backend == backendJs
+    # "Whole program" is the shape wasm and JS share: one tool is codegen AND
+    # linker, it reads the MAIN module's `.c.nif` and pulls every dependent
+    # module from disk through the embedded index, and there is exactly one
+    # command for it, running once, with only input[0] on its command line.
+    # No per-module codegen command, no object files, no link step.
+    let wholeProgram = wasm or js
+    var wholeProgTool = "ithaqua"
+    if js: wholeProgTool = "jorogumo"
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
     # A native program that uses the `.compile`/`{.build…}` pragma (in ANY module)
@@ -1093,14 +1119,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     if useOptimizer:
       shoggoth = findTool("shoggoth")
 
-    if wasm:
-      # Wasm backend: ithaqua is codegen AND linker in one — it reads the MAIN
-      # module's `.c.nif` and pulls every dependent module from disk through
-      # the embedded index (whole-program emission), so there is exactly one
-      # command and it runs once. Only input[0] reaches its command line.
+    if wholeProgram:
       b.withTree "cmd":
-        b.addSymbolDef "ithaqua"
-        b.addStrLit findTool("ithaqua")
+        b.addSymbolDef wholeProgTool
+        b.addStrLit findTool(wholeProgTool)
         b.withTree "output":
           b.addStrLit "-o:"
         b.withTree "input":
@@ -1404,26 +1426,30 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
 
       # Link executable
       var objFiles = initHashSet[string]()
-      if wasm:
+      if wholeProgram:
         b.withTree "do":
-          b.addIdent "ithaqua"
-          proc wasmInput(c: DepContext; f: FilePair; backend: string; useOptimizer: bool): string =
+          b.addIdent wholeProgTool
+          proc wholeProgInput(c: DepContext; f: FilePair; backend: string;
+                              useOptimizer: bool): string =
             # under the optimizer the whole module set switches to `.oc.nif`
-            # together — ithaqua derives sibling filenames from the MAIN
+            # together — the generator derives sibling filenames from the MAIN
             # input's extension, exactly like arkham's native chain.
             if useOptimizer: result = c.config.optimizedFile(f, backend)
             else: result = c.config.lengcFile(f, backend)
-          let mainCNif = wasmInput(c, c.rootNode.files[0], backend, useOptimizer)
+          let mainCNif = wholeProgInput(c, c.rootNode.files[0], backend, useOptimizer)
           b.withTree "input":
             b.addStrLit mainCNif
           objFiles.incl mainCNif
           for v in c.nodes:
-            let cn = wasmInput(c, v.files[0], backend, useOptimizer)
+            let cn = wholeProgInput(c, v.files[0], backend, useOptimizer)
             if not objFiles.containsOrIncl(cn):
               b.withTree "input":
                 b.addStrLit cn
           b.withTree "output":
-            b.addStrLit c.config.wasmFile(c.rootNode.files[0], backend)
+            if wasm:
+              b.addStrLit c.config.wasmFile(c.rootNode.files[0], backend)
+            else:
+              b.addStrLit c.config.jsFile(c.rootNode.files[0], backend)
       elif customLinkerName.len > 0 or (not native and not nativeSysLink):
         # Manifest-based link. The plain C/LLVM backend links through the default
         # `link` command (== `niflink`); a `{.bundle.}` module overrides it with
@@ -1573,7 +1599,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit obj
 
       for i, v in pairs c.nodes:
-        if not native and not wasm:
+        if not native and not wholeProgram:
           let obj = c.config.objFile(v.files[0], backend)
           if not objFiles.containsOrIncl(obj):
             b.withTree "do":
@@ -1606,9 +1632,9 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         else:
           lengcInput = c.config.lengcFile(v.files[0], backend)
 
-        if wasm:
-          discard  # no per-module codegen: ithaqua's single whole-program
-                   # node (see "Link executable" above) consumes the .c.nif
+        if wholeProgram:
+          discard  # no per-module codegen: the single whole-program node
+                   # (see "Link executable" above) consumes the .c.nif
         elif native:
           # arkham: per-module Leng -> typed asm-NIF. arkham additionally loads
           # imported modules' `.c.nif` on demand (cross-module type/sig
@@ -2207,6 +2233,8 @@ proc buildGraph*(config: sink NifConfig; project: string;
     var exeOutPath = c.config.exeFile(c.rootNode.files[0], c.config.backendDirName(c.rootNode.files[0]))
     if c.config.backend == backendWasm:
       exeOutPath = c.config.wasmFile(c.rootNode.files[0], c.config.backendDirName(c.rootNode.files[0]))
+    elif c.config.backend == backendJs:
+      exeOutPath = c.config.jsFile(c.rootNode.files[0], c.config.backendDirName(c.rootNode.files[0]))
     let exeOutDir = exeOutPath.parentDir
     if exeOutDir.len > 0:
       onRaiseQuit createDir(path(exeOutDir))
@@ -2251,5 +2279,11 @@ proc buildGraph*(config: sink NifConfig; project: string;
         let shim = compilerDir() / "tests" / "ithaqua" / "run_wasm.js"
         exec "node " & quoteShell(shim) & " " &
              quoteShell(c.config.wasmFile(c.rootNode.files[0], backend)) & executableArgs
+      elif c.config.backend == backendJs:
+        # The .js program IS host-native: the preamble defines its own
+        # `nim_write`/`nim_exit`/memory face, so unlike wasm it needs no shim
+        # around it — node runs the file as it stands.
+        exec "node " &
+             quoteShell(c.config.jsFile(c.rootNode.files[0], backend)) & executableArgs
       else:
         exec c.config.exeFile(c.rootNode.files[0], backend) & executableArgs

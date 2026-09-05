@@ -137,6 +137,17 @@ proc buildIthaqua*(showProgress = false) =
   exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
        "/src/ithaqua/ithaqua.nim", showProgress
 
+proc buildJorogumo*(showProgress = false) =
+  ## `jorogumo` (Leng -> whole-program `.js`) — sibling repo, same
+  ## assume-exists arrangement as `buildIthaqua`. Only `nimony j` needs it
+  ## today — the `jsdiff` sweep over `tests/jorogumo/`, the sibling of
+  ## `hastur wasmdiff`, is the M9 item that would put it in the sweep — so it
+  ## stays off the default build.
+  syncNativenif()
+  createDir binDir()
+  exec nativeToolPrefix() & "--outdir:" & binDir() & " " & NativenifDir &
+       "/src/jorogumo/jorogumo.nim", showProgress
+
 proc buildNativeTools*(showProgress = false) =
   ## arkham + nifasm for `build all`. They are part of the toolchain now — a
   ## native boot and every `nimony n` need them in `bin/`, and leaving them to a

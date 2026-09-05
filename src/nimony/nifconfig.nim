@@ -88,6 +88,7 @@ type
     backendLLVM = "llvm"
     backendNative = "native"  # C-free: Leng -> arkham -> nifasm (static, libc-free)
     backendWasm = "wasm"      # C-free: Leng -> ithaqua (whole-program .wasm, no linker)
+    backendJs = "js"          # C-free: Leng -> jorogumo (whole-program .js, no linker)
 
   OptLevel* = enum
     optDebug   # default: -O1 (debug-friendly but avoids dumb codegen)
