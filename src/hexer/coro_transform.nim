@@ -2522,45 +2522,6 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         c.hooks.trSuspend(c, dest, n)
       of TypeofX:
         takeTree dest, n
-      of HconvX, ConvX:
-        # `g == nil` / `g != nil` over a closure / iter value: sem
-        # emits `(hconv (pointer (nil)) g)` so NIFC can compare via a
-        # pointer cast. For a `.closure` iter / closure proc the value is
-        # a `(closureTuple <proctype> (ref RootObj))`, so cast-to-pointer no
-        # longer typechecks — peel off the fn-slot via tupat and convert
-        # that scalar instead. A `.passive` iter value is a bare wrapper
-        # proctype (no tuple, see `trProctype`), so it converts to
-        # pointer directly and must NOT be field-extracted.
-        let info = n.info
-        let tag = n.exprKind
-        var inner = n
-        let convStart = inner # past tag
-        inner = sub(inner)
-        var dstType = inner
-        skip inner           # past target type
-        if inner.kind == Symbol or inner.exprKind in {TupatX, DotX}:
-          let srcTyp = c.typeCache.getType(inner, {SkipAliases})
-          # A `.closure` proctype value is the same (fn, env) pair: a closure
-          # global declared in another module keeps its semchecked type here,
-          # only a local one's decl was rewritten to the tuple.
-          let isFnEnvTuple = srcTyp.typeKind == ClosureTupleT or
-              (srcTyp.typeKind == ProctypeT and procHasPragma(srcTyp, ClosureP))
-          let isClosureIterType = srcTyp.typeKind == ItertypeT and
-              not procHasPragma(srcTyp, PassiveP)
-          if (isClosureIterType or isFnEnvTuple) and
-              dstType.typeKind in {PtrT, PointerT}:
-            dest.addParLe tag, info
-            dest.takeTree dstType
-            dest.copyIntoKind TupatX, info:
-              takeTree dest, inner
-              dest.addIntLit 0, info
-            dest.addParRi()
-            n = inner
-            n = convStart; skip n
-          else:
-            coroTrSons c, dest, n
-        else:
-          coroTrSons c, dest, n
       of DotX, DdotX:
         # The selector is a field identity, not a value use. It can share a
         # SymId with a lifted local or parameter of the same spelling; running
@@ -2571,7 +2532,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           takeTree dest, n # field
           if n.hasMore: takeTree dest, n # optional inheritance depth
           if n.hasMore: takeTree dest, n # optional private-access token
-      of ErrX, SufX, AtX, DerefX, PatX, ParX,
+      of ErrX, SufX, AtX, DerefX, PatX, ParX, HconvX, ConvX,
           AddrX, NilX, InfX, NeginfX, NanX, FalseX,
           TrueX, AndX, OrX, XorX, NotX, NegX, SizeofX,
           AlignofX, OffsetofX, OconstrX, AconstrX,
