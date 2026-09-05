@@ -205,7 +205,7 @@ proc declareConceptSelf(c: var SemContext; dest: var TokenBuf; info: NifLineInfo
     dest.addDotToken() # value
   publish c, dest, result, declStart
 
-proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor)
+proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = InLocalDecl)
 
 type
   ConceptParent = object
@@ -579,7 +579,7 @@ proc constraintMismatchMsg(m: var Match; constraint, arg: Cursor): string =
   for key, _ in m.missingConstraints:
     result.add "\nmissing: " & key
 
-proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
+proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = InLocalDecl) =
   let typeStart = dest.len
   let info = n.info
   dest.addParLe(n.cursorTagId, n.info) # copy `at`
@@ -592,6 +592,11 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     # substituted by now, so put the call back together and let the ordinary
     # expression path drive the plugin again — including a second deferral,
     # which lands back here.
+    #
+    # `context` is forwarded so a value-returning plugin deferred into a
+    # value-allowing slot (e.g. an `array[binomial(N, K), T]` length) re-checks
+    # under `AllowValues`; its ordinal result is then accepted as a length
+    # instead of being misread as an (invalid) index *type*.
     dest.shrink typeStart
     var callBuf = createTokenBuf(16)
     callBuf.addParLe(CallX, info)
@@ -601,7 +606,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     callBuf.addParRi()
     n = invokeStart; skip n
     var call = beginRead(callBuf)
-    semTypeExpr c, dest, call, InLocalDecl, info
+    semTypeExpr c, dest, call, context, info
     endRead call
     return
   semLocalTypeImpl c, dest, n, InInvokeHead
@@ -1295,7 +1300,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       dest.addParRi(n.endInfo)
       n = routineStart; skip n
     of InvokeT:
-      semInvoke c, dest, n
+      semInvoke c, dest, n, context
     of ErrT, ClosureTupleT:
       # `ClosureTupleT` is a hexer-internal lowering and never reaches sem.
       takeTree dest, n
