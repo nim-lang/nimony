@@ -550,11 +550,11 @@ proc matchesConstraint*(m: var Match; f: var Cursor; a: Cursor): bool =
   result = matchesConstraintAux(m, f, a)
 
 proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
-  ## The tiny fixed-opcode evaluator for compile-time *values* in type
-  ## positions: folds `+ - *` over integer literals and rewrites an
-  ## array-index `rangetype` to its length. Anything else — in particular a
-  ## still-symbolic expression — yields NaN and is compared syntactically
-  ## instead; matching never solves for a value parameter backwards.
+  ## Folds a compile-time *value* expression in a type position to an integer,
+  ## when possible. Handles literals, bound value generic parameters, `+ - *`,
+  ## user-defined routine calls, and `rangetype` lengths. Anything still
+  ## symbolic yields NaN and is compared structurally instead; matching never
+  ## solves for a value parameter backwards.
   result = createNaN()
   if depth > 10: return
   case a.kind
@@ -563,8 +563,8 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
   of UIntLit:
     result = createXint(a.uintVal)
   of Symbol:
-    # an already-inferred value typevar (e.g. `R` in `array[R * C, T]`): fold to
-    # the value it was bound to, so array-length matching resolves once bound.
+    # an already-inferred value typevar (e.g. `R` in `R * C`): fold to the
+    # value it was bound to so length matching resolves once bound.
     if isStaticTypevar(a.symId) and m.inferred.contains(a.symId):
       let inferred = m.inferred.getOrQuit(a.symId)
       result = foldValueExpr(m, inferred, depth+1)
@@ -594,6 +594,22 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
         result = lengthOrd(m.context[], a)
   else:
     discard
+  if not result.isNaN or depth > 0 or m.context == nil: return
+  result = lengthOrd(m.context[], a)
+  if not result.isNaN: return
+  var err = false
+  let val = asSigned(evalOrdinal(m.context[], a), err)
+  if not err:
+    result = createXint(val)
+    return
+  if m.inferred.len == 0: return
+  var subBuf = createTokenBuf(16)
+  substituteTypevars(subBuf, a, m.inferred)
+  var sub = cursorAt(subBuf, 0)
+  err = false
+  let subVal = asSigned(evalOrdinal(m.context[], sub), err)
+  if not err:
+    result = createXint(subVal)
 
 proc foldStaticArg(m: var Match; elemType, a: Cursor): Cursor =
   ## Fold `a` to the canonical typed value a value (`static`) parameter should
@@ -1711,11 +1727,10 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
     inc f1
     skip a1
     skip f1
-    # fold already-bound value typevars first (`array[R * C, T]`), falling back
-    # to the plain array-length ordinal for concrete/rangetype lengths.
+    # fold already-bound value typevars first (i.e. `array[R * C, T]`
+    # or `array[foo(R, C), T]`), falling back to the plain array-length
+    # ordinal for concrete/rangetype lengths.
     var fLen = foldValueExpr(m, f1)
-    if fLen.isNaN:
-      fLen = lengthOrd(m.context[], f1)
     var aLen = foldValueExpr(m, a1)
     if aLen.isNaN:
       aLen = lengthOrd(m.context[], a1)

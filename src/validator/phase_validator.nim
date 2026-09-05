@@ -112,6 +112,8 @@ const
     "low", "high", "add", "sub", "mul", "div", "mod", "shr", "shl", "ashr",
     "bitand", "bitor", "bitxor", "bitnot", "eq", "neq", "le", "lt", "conv",
     "cast", "deref", "pat", "tupat", "arrat",
+    # compile-time value expressions in type slots
+    "call",
     # decl kinds that may appear nullary as kind markers
     "const"
   ]
