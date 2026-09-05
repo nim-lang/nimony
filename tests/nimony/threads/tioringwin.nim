@@ -47,6 +47,8 @@ else:
     stdcall, importc: "connect", dynlib: "ws2_32.dll".}
   proc wsGetsockname(s: SocketHandle; name: pointer; namelen: ptr cint): cint {.
     stdcall, importc: "getsockname", dynlib: "ws2_32.dll".}
+  proc wsBind(s: SocketHandle; name: pointer; namelen: cint): cint {.
+    stdcall, importc: "bind", dynlib: "ws2_32.dll".}
   proc wsRecv(s: SocketHandle; buf: pointer; len, flags: cint): cint {.
     stdcall, importc: "recv", dynlib: "ws2_32.dll".}
   proc wsSend(s: SocketHandle; buf: pointer; len, flags: cint): cint {.
@@ -166,13 +168,26 @@ else:
   echo "read deadline res=", dl.result, " op=", dl.op == opRead
   closeFd(cs); closeFd(lfd3)
 
-  # Nothing is listening: bind a port, learn its number, close it. The result
-  # is only checked for its shape — a Winsock refusal is -10061 where the POSIX
-  # arm reports -ECONNREFUSED, and the WSAPoll backend on a host older than
-  # Windows 10 2004 does not see the failure at all and reports the deadline.
-  let probe = listenTcp(0'u16)
-  let deadPort = boundPort(probe)
-  closeFd(probe)
+  # Nothing is listening. The port is BOUND and held open for the whole attempt
+  # rather than bound-and-closed: a closed ephemeral port is one the kernel may
+  # hand straight back, and the client's own implicit bind is the likeliest
+  # taker — a socket that connects to the port it was just given is a TCP
+  # simultaneous open, and SUCCEEDS. Holding the socket rules that out and
+  # leaves only the refusal.
+  #
+  # The result is only checked for its shape: a Winsock refusal is -10061 where
+  # the POSIX arm reports -ECONNREFUSED, and the WSAPoll backend on a host older
+  # than Windows 10 2004 does not see the failure at all and reports the
+  # deadline instead.
+  let dead = wsSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+  assert dead != InvalidSocket, "socket() for the dead port"
+  var da = default(SockAddrIn)
+  da.sin_family = int16(AF_INET)
+  da.sin_port = 0'u16
+  da.sin_addr = 0x0100007F'u32
+  assert wsBind(dead, addr da, cint(sizeof(da))) == 0, "bind failed"
+  let deadPort = boundPort(cint(cast[uint32](dead)))
+  assert deadPort != 0'u16, "no port was bound"
   let rs = socketNonBlocking()
   var sa2 = default(Sockaddr_storage)
   var slen2 = SockLen(0)
@@ -182,6 +197,7 @@ else:
   assert rf.op == opConnect
   echo "connect refused neg=", rf.result < 0
   closeFd(rs)
+  discard wsClosesocket(dead)
 
   discard wsClosesocket(client)
   echo "close ok"

@@ -124,16 +124,21 @@ const
     "tests/nimony/stdlib/tbitops",
     "tests/nimony/stdlib/tencodings",
     "tests/nimony/stdlib/trandom",
-    # The one test on Windows that actually spawns a thread — every other test in
-    # `tests/nimony/threads` either stubs itself out here or never reaches
-    # `rawthreads.create`, so this is where the gap first shows. `CreateThread`
-    # calls `threadProcWrapper` with the Win64 ABI, but arkham applies that ABI
-    # only to a `stdcall` PROCTYPE (`isForeignAbiProctype` — a pointer to foreign
-    # code arkham calls out through); a `stdcall` proc DEFINITION, which is code
-    # the OS calls into, keeps arkham's own SysV convention. So the wrapper reads
-    # its closure from rdi while Windows put it in rcx, and the first worker
-    # faults on a null `t.dataFn` before the program prints anything. Green on
-    # the C backend under Wine, both ioring backends.
+    # The one test on Windows that drives the ring on real sockets — every other
+    # test in `tests/nimony/threads` either stubs itself out here or never
+    # reaches `rawthreads.create`. Two native gaps were found through it and
+    # fixed in arkham/nifasm (a `stdcall` proc DEFINITION is now entered under
+    # the Win64 ABI, and `nil` is now a legal proc value). What is left is a
+    # THIRD, undiagnosed one: about one run in eight the native build trips a
+    # seq bound check somewhere inside the ring —
+    #   lib/std/system/seqimpl.nim(167, 41): i < s.len   (also: 0 <= i)
+    # — at a point that varies with timing. The same program built with `nimony
+    # c` is clean over 25+ runs under Wine, and both backends enforce that
+    # contract identically (checked with a fixture that indexes past the end),
+    # so this is the native code computing a different index, not the ring
+    # asking for one. It is NOT in anything the deadline/connect coverage added:
+    # cutting the test back to the accept/read/write/polladd/abort surface it
+    # had before still fails 4 runs in 30.
     "tests/nimony/threads/tioringwin",
     # The odd one out: NOT a native gap. Its `std/typetraits` compile-time plugin
     # fails to run ("vfs: open failed"), and the C backend fails it identically,
