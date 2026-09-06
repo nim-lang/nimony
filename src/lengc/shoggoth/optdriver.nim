@@ -30,7 +30,6 @@ import vectorizer                             # runVectorizer (map loops -> (ins
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
 import tailcalls                              # runTailCalls (the tail-call encoding)
-import livesplit                              # runLiveSplit (live-range splitting)
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
@@ -48,8 +47,7 @@ let disabledPasses = block:
   ## one pass; it stays, spelled `vectorize` here as well.
   ##
   ## Names: imi, rewrite, ctorproj, scalarize, copyprop, unswitch, indvars, cse,
-  ## split, vectorize, sinkret, tailcall. (`split` is off by default and turned on
-  ## with `SHOGGOTH_ENABLE`; naming it here still wins.)
+  ## vectorize, sinkret, tailcall.
   var res = initHashSet[string]()
   for part in getEnv("SHOGGOTH_DISABLE").split(','):
     let name = part.strip()
@@ -57,27 +55,7 @@ let disabledPasses = block:
   if getEnv("SHOGGOTH_NO_VECTORIZE").len > 0: res.incl "vectorize"
   res
 
-let enabledPasses = block:
-  ## `SHOGGOTH_ENABLE=split,…` turns individual passes ON that are off by default.
-  ##
-  ## The mirror of `SHOGGOTH_DISABLE`, and it exists for one situation: a pass that
-  ## is implemented, tested and sound, but whose measured payoff does not currently
-  ## justify the tokens it adds — `split` is the case that introduced it (see
-  ## `doc/internals/split_opt.md`). Deleting such a pass loses the mechanism;
-  ## leaving it on charges every build for nothing. One env var makes the next
-  ## re-measurement a run rather than a resurrection.
-  var res = initHashSet[string]()
-  for part in getEnv("SHOGGOTH_ENABLE").split(','):
-    let name = part.strip()
-    if name.len > 0: res.incl name
-  res
-
 template passOn(name: string): bool = name notin disabledPasses
-template passOptIn(name: string): bool =
-  ## For OFF-by-default passes: on only when `SHOGGOTH_ENABLE` names it, and
-  ## `SHOGGOTH_DISABLE` still wins, so a bisection script need not know which
-  ## default a pass has.
-  name in enabledPasses and name notin disabledPasses
 
 
 type
@@ -85,7 +63,6 @@ type
     procs*, bodies*, intermodChanged*: int
     checksRemoved*: int
     vectorized*: int
-    rangesSplit*: int
 
 proc extractModuleSuffix(filename: string): string =
   ## Pure copy of `nifreader.extractModuleSuffix` (basename up to the first
@@ -143,21 +120,6 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
   if passOn("cse"):
     st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
-  # Live-range splitting runs AFTER every pass that wants fewer names. `copyprop`
-  # collapses `y = x` chains and `cse` shares subexpressions across names, so
-  # splitting earlier would hand them more names to reason about and more reasons
-  # to bail; splitting here operates on the final name set, which is also the set
-  # arkham sees. Nothing downstream undoes it — it inserts no copies, so there is
-  # nothing for a re-run of `copyprop` to propagate away — and it runs before the
-  # vectorizer, whose `(instr …)` output is selection-final, and before the `ret`
-  # rewrites below.
-  #
-  # OFF by default: measured at 5 of 1187 prologue pairs and 0 of 501 frames on
-  # the nifbench corpus once the death-point exemption (nativenif a42f158) had
-  # taken the same values first — see `doc/internals/split_opt.md` for the 2x2.
-  # `SHOGGOTH_ENABLE=split` turns it on to re-measure.
-  if passOptIn("split"):
-    st.rangesSplit += runLiveSplit(buf, bodySuffix)
   # The vectorizer runs last of the passes that OPTIMIZE: its emitted
   # `(instr ...)` applications are final (selection-final by the tag's contract)
   # and no later pass needs to look at them; the scalar remainder loop it leaves

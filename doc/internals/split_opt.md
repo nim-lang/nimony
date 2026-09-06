@@ -4,14 +4,16 @@ A plan for a Shoggoth pass that renames a local's independent value ranges
 apart, so that a value which merely *shares a name* with a value living across
 a call does not pay for that call.
 
-Status: **implemented, measured, and OFF by default.** Phase 1 lives in
-`src/lengc/shoggoth/livesplit.nim` with its own self-tests, and
-`SHOGGOTH_ENABLE=split` turns it on. It is off because the payoff it was
-designed for was collected first by a cheaper change in arkham — the
-death-point exemption this document predicted (nativenif `a42f158`) — and what
-remains on top of that is 5 prologue pairs out of 1187. **Read "The verdict"
-below before spending time here.** The design that follows is unchanged and
-still correct; only its value estimate was wrong.
+Status: **implemented, measured, and deleted.** Phase 1 was written, passed its
+own self-tests and `hastur tiers native`, and moved 5 prologue pairs out of
+1187 — because the payoff it was designed for had already been collected by a
+cheaper change in arkham, the death-point exemption this document predicted
+(nativenif `a42f158`). It is not in the tree. The implementation, its eleven
+self-tests and the driver wiring are in nimony commit `9fc87ab7`
+(`src/lengc/shoggoth/livesplit.nim`), one `git show` away should the balance
+ever shift. **Read "The verdict" below before spending time here.** The design
+that follows is unchanged and still correct; only its value estimate was
+wrong.
 
 Numbers below are from the nifbench corpus (42 `.oc.nif` modules) on
 2026-09-05 (design, 670 procs) and 2026-09-06 (verdict, 682 procs — the corpus
@@ -26,7 +28,7 @@ assume), `doc/internals/cse.md` (the path model), `src/lengc/shoggoth/scalarizer
 
 ## The verdict (2026-09-06)
 
-Phase 1 is implemented exactly as specified below, with one simplification that
+Phase 1 was implemented exactly as specified below, with one simplification that
 turned out not to cost anything measurable: instead of a `Tracker`-based web
 analysis, a split point is any whole-variable assignment that is
 **unconditionally executed** with respect to its own declaration — same region
@@ -82,9 +84,9 @@ conclusion.
 
 ### Where the candidates go
 
-Instrumentation (`SHOGGOTH_SPLIT_STATS=1`, one line per body) over every module
-compiled for a nifbench build — 114 shoggoth processes, 62,802 candidate
-locals:
+Instrumentation in that implementation (a per-gate counter dumped once per
+body) over every module compiled for a nifbench build — 114 shoggoth processes,
+62,802 candidate locals:
 
 | gate | count | |
 |---|---:|---|
@@ -115,8 +117,10 @@ register), which is an arkham change and not a Shoggoth one. See the
 attempt at it measured dead for its own reasons.
 
 If the balance ever shifts — a change that creates many more multi-value locals,
-or an arkham allocator that makes a call-free range worth more — the pass is one
-env var away and its self-tests still pass.
+or an arkham allocator that makes a call-free range worth more — start from
+`9fc87ab7` rather than from this document: the mechanism there is finished and
+its self-tests are the specification of what each gate refuses. What that
+revival would have to beat is the 5-pair column, not the 1310.
 
 ---
 
@@ -457,8 +461,8 @@ emitted-prologue delta is on the table.
   to drop too; see "Why the estimate was wrong" — that number is unreachable for
   any register-allocation change, since a proc with a call must save `x30` in a
   pair.) A version that renames widely but does not move `pairs` is a loss and
-  should not be tuned. The measured answer is 5 of 1187, which is why the pass
-  ships off.
+  should not be tuned. The measured answer is 5 of 1187, which is why the pass was
+  deleted rather than tuned.
 - **Performance:** nifbench, `valgrind --tool=callgrind` instruction counts on
   the walk benchmark, checksum unchanged at 929433840.
 
