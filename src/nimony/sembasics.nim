@@ -132,12 +132,23 @@ proc buildSymChoiceForForeignModule*(c: var SemContext; dest: var TokenBuf; modu
     dest.addIdent(identifier, info)
 
 proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
-                       option = FindAll): int =
+                       option: ChoiceOption; nearestIsUnique: var bool): int =
+  ## Gathers every candidate for `identifier` into `dest`, innermost level
+  ## first. A module's own toplevel scope and everything imported into it are
+  ## the SAME, outermost level: `import` is not a shadowing boundary, it is the
+  ## `Scope` / `ImportScope` distance that overload resolution already ranks by
+  ## (see "Identifier lookup" and "Module-of-origin" in doc/language.md).
+  ##
+  ## `nearestIsUnique` reports whether the nearest level that contributed
+  ## anything contributed exactly one candidate; that is what lets a consumer
+  ## fall back to scope distance once type information has had its say.
   result = 0
+  var nearest = -1
   let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
   while it != nil:
     var nonOverloadable = 0
+    let before = result
     for k in stylesOfScope(it, identifier, ignoreStyle):
       for sym in it.tab.getOrDefault(k):
         # when resolving a caller `fn`, keep the module symbol out of the sym
@@ -147,23 +158,34 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
           inc result
           if sym.kind.isNonOverloadable:
             inc nonOverloadable
-    if result == 1 and (option == InnerMost or
-        (option == FindOverloads and nonOverloadable == 1)):
-      # unambiguous local symbol found
-      # in case of FindOverloads, if symbol is overloadable, consider other overloads
+    if nearest < 0 and result > before: nearest = result - before
+    # A lone NON-overloadable declaration (let, var, const, type, param, …)
+    # shadows: nothing further out is visible. Overloadable ones — routines
+    # and enum fields — never shadow; they accumulate, and context plus scope
+    # distance sort them out later. `FindAll` wants everything regardless.
+    if result == 1 and nonOverloadable == 1 and option != FindAll:
+      nearestIsUnique = true
       return
     it = it.up
+  let beforeImports = result
   inc result, considerImportedSymbols(c, dest, identifier, info, option)
+  if nearest < 0 and result > beforeImports: nearest = result - beforeImports
+  nearestIsUnique = nearest == 1
 
 proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
-                    option: ChoiceOption): int =
+                    option: ChoiceOption; nearestIsUnique: var bool): int =
   let oldLen = dest.len
   dest.buildTree OchoiceX, info:
-    result = rawBuildSymChoice(c, dest, identifier, info, option)
+    result = rawBuildSymChoice(c, dest, identifier, info, option, nearestIsUnique)
   # if the sym choice is empty, create an ident node:
   if result == 0:
     dest.shrink oldLen
     dest.addIdent(identifier, info)
+
+proc buildSymChoice*(c: var SemContext; dest: var TokenBuf; identifier: StrId; info: NifLineInfo;
+                    option: ChoiceOption): int =
+  var nearestIsUnique = false
+  result = buildSymChoice(c, dest, identifier, info, option, nearestIsUnique)
 
 proc addSymChoiceSyms*(c: var SemContext; dest: var TokenBuf; identifier: StrId; marker: var HashSet[SymId]; info: NifLineInfo) =
   # like rawBuildSymChoice but adds to an existing symchoice, ignoring duplicates
