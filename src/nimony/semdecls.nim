@@ -1414,13 +1414,12 @@ proc invokeInnerObj(c: var SemContext; dest: var TokenBuf; genericsPos: int; obj
     # enough to use object sym directly
     dest.addSymUse(objSym, info)
 
-proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner: SymId = SymId(0)) =
+proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let startCursor = n
   let declStart = dest.len
   var delayed = default(DelayedSym)
   var isEnumTypeDecl = false
   var isRefPtrObj = false
-  var refOwner = SymId(0)
   var innerObjDecl = default(TokenBuf)
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
@@ -1447,6 +1446,10 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
       isGeneric = true
 
     let crucial = semTypePragmas(c, dest, n, delayed.s.name, beforeExportMarker)
+    # `type T = ref object` is split into the alias `T` and the object `T.Obj`.
+    # The type a user names -- and the one a sum type constructor must produce
+    # -- is `T`, so it is `T` that owns a synthesized `anum`, not `T.Obj`.
+    let ownerSym = c.refObjOwners.getOrDefault(delayed.s.name, delayed.s.name)
     if delayed.status == OkExistingFresh and InjectP in crucial.flags:
       # symbol is injected, add it to scope
       delayed.status = OkNew
@@ -1468,22 +1471,22 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
           inc obj
           if obj.typeKind == ObjectT:
             isRefPtrObj = true
-            refOwner = delayed.s.name # outer type sym before mutation
             var objSym = delayed.s.name
             innerObjDecl = buildInnerObjDecl(c, startCursor, objSym)
+            c.refObjOwners[objSym] = delayed.s.name
             dest.addParLe(n.cursorTagId, n.info) # ref/ptr tag
             n.into:
               invokeInnerObj(c, dest, beforeGenerics, objSym, n.info)
               skip n
               dest.addParRi(n.endInfo)
           else:
-            semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
+            semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, ownerSym
         of NoType, ErrT, AtT, AndT, OrT, NotT, ProcT, FuncT, IteratorT, ConverterT, MethodT, MacroT,
            TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
            StaticT, TupleT, ClosureTupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
            DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
            UntypedT, TypedT, CstringT, PointerT, OrdinalT:
-          semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, delayed.s.name
+          semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, ownerSym
         fitTypeToPragmas(c, dest, crucial, typeStart)
     else:
       if n.typeKind in {RefT, PtrT}:
@@ -1492,9 +1495,9 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
         if obj.typeKind == ObjectT:
           # handle these here too for better forward decls
           isRefPtrObj = true
-          refOwner = delayed.s.name
           var objSym = delayed.s.name
           innerObjDecl = buildInnerObjDecl(c, startCursor, objSym)
+          c.refObjOwners[objSym] = delayed.s.name
           dest.addParLe(n.cursorTagId, n.info) # ref/ptr tag
           n.into:
             invokeInnerObj(c, dest, beforeGenerics, objSym, n.info)
@@ -1538,7 +1541,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
       var topLevelRead = beginRead(innerObjDecl)
       var phase = SemcheckTopLevelSyms
       swap c.phase, phase
-      semTypeSection c, topLevelDest, topLevelRead, refOwner
+      semTypeSection c, topLevelDest, topLevelRead
       swap c.phase, phase
       innerObjDecl = topLevelDest
     if c.phase > SemcheckSignatures:
@@ -1547,11 +1550,11 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerR
       var sigRead = beginRead(innerObjDecl)
       var phase = SemcheckSignatures
       swap c.phase, phase
-      semTypeSection c, sigDest, sigRead, refOwner
+      semTypeSection c, sigDest, sigRead
       swap c.phase, phase
       innerObjDecl = sigDest
     var decl = beginRead(innerObjDecl)
-    semTypeSection c, dest, decl, refOwner
+    semTypeSection c, dest, decl
 
 proc addTupleAccess(buf: var TokenBuf; lvalue: SymId; i: int; info: NifLineInfo) =
   buf.addParLe(TupatX, info)
