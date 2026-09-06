@@ -1526,7 +1526,10 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
       namedStart = arg.n
       arg.n = sub(arg.n)
       takeTree dest, arg.n
-    semExpr c, dest, arg, {AllowEmpty}
+    # `KeepChoices`: an argument that is a symbol choice stays one — the formal
+    # parameter it ends up matching is what picks the candidate, so lookup must
+    # not collapse it by scope distance nor declare it ambiguous here.
+    semExpr c, dest, arg, {AllowEmpty, KeepChoices}
     if named:
       dest.addParRi(arg.n.endInfo)
       # reset only reachable inside `if named:`, where namedStart was set:

@@ -102,6 +102,9 @@ type
     firstVarargPosition*: int
     varargsEndPosition*: int
     genericConverter*, refineArgType*, insertedParam*: bool
+    resolvedChoice: SymId  ## the formal parameter narrowed this argument's
+                           ## symbol choice down to this symbol; `useArg`
+                           ## emits it in place of the choice
     missingConstraints*: OrderedTable[string, Cursor]
 
 proc createMatch*(context: ptr SemContext; expected: TypeCursor = default(Cursor)): Match =
@@ -1377,7 +1380,10 @@ proc commonType(f, a: Cursor): Cursor =
 
 
 proc useArg(m: var Match; arg: CallArg; f: Cursor) =
-  if f.typeKind == UntypedT and not cursorIsNil(arg.orig):
+  if m.resolvedChoice != SymId(0):
+    m.args.addSymUse(m.resolvedChoice, m.argInfo)
+    m.resolvedChoice = SymId(0)
+  elif f.typeKind == UntypedT and not cursorIsNil(arg.orig):
     # pass arg tree before semchecking to untyped args:
     m.args.addSubtree arg.orig
   else:
@@ -1542,6 +1548,24 @@ proc tryMatchProcChoice*(context: ptr SemContext; choice, f: Cursor): SymId =
     skip a
   if matchCount != 1:
     result = SymId(0)
+
+proc tryNarrowChoice*(context: ptr SemContext; choice, expected: Cursor): SymId =
+  ## Narrows a symbol choice by the expected type: an enum type selects the
+  ## enum field of that type, a routine type selects the overload with that
+  ## signature. A named type is followed to its implementation, so a formal
+  ## declared as `MyIter` narrows exactly like the `iterator(...)` it aliases.
+  ## Returns `SymId(0)` when the expectation leaves zero or several candidates.
+  result = SymId(0)
+  var t = expected
+  if t.isSymbol:
+    let s = t.symId
+    let impl = typeImpl(s)
+    if impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
+      result = tryMatchEnumChoice(choice, s)
+    elif impl.typeKind in RoutineTypes:
+      result = tryMatchProcChoice(context, choice, impl)
+  elif t.typeKind in RoutineTypes:
+    result = tryMatchProcChoice(context, choice, t)
 
 proc matchSymbol(m: var Match; f: Cursor; arg: CallArg) =
   let a = skipModifier(arg.typ)
@@ -2103,15 +2127,16 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
       of RoutineTypes:
         procTypeMatch m, f, a
       else:
-        if arg.n.exprKind in {OchoiceX, CchoiceX} and
-            tryMatchProcChoice(m.context, arg.n, f) != SymId(0):
-          # An overloaded routine was passed to a proc-typed parameter. Defer
-          # the actual overload selection to `semConvArg` via an `hconv`, the
-          # same mechanism enum choices use.
-          m.refineArgType = true
-          m.args.addParLe HconvX, m.argInfo
-          m.args.addSubtree f
-          inc m.opened
+        let chosen =
+          if arg.n.exprKind in {OchoiceX, CchoiceX}: tryNarrowChoice(m.context, arg.n, f)
+          else: SymId(0)
+        if chosen != SymId(0):
+          # An overloaded routine passed to a routine-typed parameter: the
+          # formal picks the candidate (nim-lang/nimony#1973). Record it so
+          # `useArg` emits the resolved symbol; wrapping the choice in an
+          # `hconv` instead would hide an iterator symbol from the coroutine
+          # lowering, which has to replace it by its wrapper proc.
+          m.resolvedChoice = chosen
           skip f
         else:
           m.error InvalidMatch, f, a
