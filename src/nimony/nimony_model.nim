@@ -300,6 +300,14 @@ template takeInto*(dest: var TokenBuf; n: var Cursor; body: untyped) =
 
 proc isAtom*(n: Cursor): bool {.inline.} = n.hasMore and not n.isTagLit
 
+proc isChildless*(n: Cursor): bool {.inline.} =
+  ## True for a sealed `TagLit` with an empty body, like the bare `proc`
+  ## typeclass `(proctype)` written as `[T: proc]`. `hasMore` on the node
+  ## ITSELF answers a different question -- "are there more tokens left in
+  ## this scope" -- and is true of every node that is there at all; only the
+  ## body cursor carries the child count.
+  n.isTagLit and not sub(n).hasMore
+
 proc copyIntoSymUse*(dest: var TokenBuf; s: SymId; info: NifLineInfo) {.inline, nifEmits: "Y".} =
   dest.addSymUse(s, info)
 
@@ -479,7 +487,7 @@ proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
   if typ.typeKind in RoutineTypes:
     # A childless routine type is the bare `proc` typeclass, as written in
     # `[T: proc]`: nothing to walk to, and no pragmas to find.
-    if not hasMore(typ): return false
+    if isChildless(typ): return false
     skipToReturnType typ
     skip typ, SkipType # return type
     result = hasPragma(typ, kind)

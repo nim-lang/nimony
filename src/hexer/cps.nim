@@ -334,7 +334,7 @@ proc trProctype(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let isPassiveIterType = nk == ItertypeT and procHasPragma(n, PassiveP)
     # A childless routine type is the bare typeclass, as written in `[T: proc]`
     # / `[T: iterator]`: no signature to lower, so copy it through.
-    let isTypeclass = nk in {ProctypeT, ItertypeT} and not hasMore(n)
+    let isTypeclass = nk in {ProctypeT, ItertypeT} and isChildless(n)
     if not isTypeclass and (isPassiveProc or isClosureIterType or isPassiveIterType):
       var info = n.info
       if isClosureIterType:
