@@ -789,26 +789,13 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
 
   var srcType = skipModifier(arg.typ)
 
-  # Check if arg contains a symchoice that needs resolution for enum types
+  # A symchoice that the destination type can narrow: an enum field, or an
+  # overloaded routine passed where a routine type is expected.
   if arg.n.exprKind in {OchoiceX, CchoiceX}:
-    # Try to resolve the symchoice based on the destination type
-    var destSym = destType
-    if destSym.isSymbol:
-      let destSymId = destSym.symId
-      let impl = typeImpl(destSymId)
-      if impl.typeKind in {EnumT, HoleyEnumT, AnumT}:
-        # Try to match the enum choice
-        let matchedSym = tryMatchEnumChoice(arg.n, destSymId)
-        if matchedSym != SymId(0):
-          # Successfully resolved the overload choice
-          dest.addSymUse(matchedSym, info)
-          return
-    elif destType.typeKind in {ProctypeT, ItertypeT}:
-      # Resolve an overloaded routine against the expected proc type.
-      let matchedSym = tryMatchProcChoice(addr c, arg.n, destType)
-      if matchedSym != SymId(0):
-        dest.addSymUse(matchedSym, info)
-        return
+    let matchedSym = tryNarrowChoice(addr c, arg.n, destType)
+    if matchedSym != SymId(0):
+      dest.addSymUse(matchedSym, info)
+      return
     # If we couldn't resolve it, fall through to normal error handling
 
   # distinct type conversion?
@@ -1110,7 +1097,8 @@ proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ide
   else:
     result = Sym(kind: if count == 0: NoSym else: CchoiceY)
 
-proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int; flags: set[SemFlag])
+proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int;
+                flags: set[SemFlag]; nearestIsUnique = false)
 
 proc findEnumField(decl: EnumDecl; name: StrId): SymId =
   result = SymId(0)
@@ -1388,14 +1376,15 @@ proc patchType(c: var SemContext; dest: var TokenBuf; typ: TypeCursor; patchPosi
   let t = skipModifier(typ)
   dest.replace t, patchPosition
 
-proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: StrId; flags: set[SemFlag]): Sym =
+proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: StrId;
+                  flags: set[SemFlag]; nearestIsUnique: var bool): Sym =
   let mode =
     if AllowOverloads in flags: FindOverloads
     else: InnerMost
   let insertPos = dest.len
   let info = n.endInfo # `semQuoted` calls this with `n` already past the
                        # quoted subtree, possibly at a scope's end
-  var count = buildSymChoice(c, dest, ident, info, mode)
+  var count = buildSymChoice(c, dest, ident, info, mode, nearestIsUnique)
   if count == 0 and c.deferredLocals.hasKey(ident):
     # On-demand resolution (nim-lang/nimony#1974): a signature-phase `when`
     # condition referenced a toplevel let/var that is otherwise deferred to
@@ -1405,7 +1394,7 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     # just its signature now, then retry the lookup.
     dest.shrink insertPos
     discard resolveDeferredLocal(c, ident)
-    count = buildSymChoice(c, dest, ident, info, mode)
+    count = buildSymChoice(c, dest, ident, info, mode, nearestIsUnique)
   if count == 1:
     let sym = childCursor(readonlyCursorAt(dest, insertPos)).symId
     dest.shrink insertPos
@@ -1414,13 +1403,23 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
   else:
     result = Sym(kind: if count == 0: NoSym else: CchoiceY)
 
+proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: StrId;
+                  flags: set[SemFlag]): Sym =
+  var nearestIsUnique = false
+  result = semIdentImpl(c, dest, n, ident, flags, nearestIsUnique)
+
 proc semIdent(c: var SemContext; dest: var TokenBuf; n: var Cursor; flags: set[SemFlag]): Sym =
   result = semIdentImpl(c, dest, n, n.strId, flags)
   inc n
 
-proc semQuoted(c: var SemContext; dest: var TokenBuf; n: var Cursor; flags: set[SemFlag]): Sym =
+proc semQuoted(c: var SemContext; dest: var TokenBuf; n: var Cursor; flags: set[SemFlag];
+               nearestIsUnique: var bool): Sym =
   let nameId = takeUnquoted(n)
-  result = semIdentImpl(c, dest, n, nameId, flags)
+  result = semIdentImpl(c, dest, n, nameId, flags, nearestIsUnique)
+
+proc semQuoted(c: var SemContext; dest: var TokenBuf; n: var Cursor; flags: set[SemFlag]): Sym =
+  var nearestIsUnique = false
+  result = semQuoted(c, dest, n, flags, nearestIsUnique)
 
 proc addWithInfoRewrite(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
   ## Copies the tree/token at `n`, rewriting every token's line info to
@@ -1815,7 +1814,8 @@ proc isParameterlessRoutine(s: SymId): bool =
                        # so a raw `inc` would read past an empty (params)
   result = not params.hasMore
 
-proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int; flags: set[SemFlag]) =
+proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; start: int;
+                flags: set[SemFlag]; nearestIsUnique = false) =
   it.kind = s.kind
   let expected = it.typ
   if s.kind == NoSym:
@@ -1836,16 +1836,33 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
     it.typ = c.types.autoType
   elif s.kind == CchoiceY:
     if KeepMagics notin flags and c.routine.kind != TemplateY:
-      # Try to disambiguate based on expected type (e.g., enum fields in case branches)
+      # A symbol choice is narrowed by context first and by scope distance only
+      # as a last resort; see "Identifier lookup" in doc/language.md.
+      var matchedSym = SymId(0)
       if typeKind(expected) != AutoT:
-        let choice = cursorAt(dest, start)
-        let matchedSym = tryMatchEnumChoice(choice, expected.symId)
-        if matchedSym != SymId(0):
-          let info = readonlyCursorAt(dest, start).info
-          dest.shrink start
-          dest.addSymUse(matchedSym, info)
-          return
-      c.buildErr dest, readonlyCursorAt(dest, start).info, "ambiguous identifier"
+        # e.g. an enum field in a `case` branch, or an overloaded routine
+        # where a proc type is expected
+        matchedSym = tryNarrowChoice(addr c, cursorAt(dest, start), expected)
+      if matchedSym != SymId(0):
+        let info = readonlyCursorAt(dest, start).info
+        dest.shrink start
+        dest.addSymUse(matchedSym, info)
+        return
+      if KeepChoices in flags:
+        discard "the consumer resolves the choice against the formal parameters"
+      elif nearestIsUnique:
+        # Nothing narrowed the choice, so the nearest declaration wins: an inner
+        # scope beats an outer one and the module's own declaration beats an
+        # imported one (`Scope` is a subtype of `ImportScope`). Candidates are
+        # emitted nearest-first, so that is the first one.
+        let info = readonlyCursorAt(dest, start).info
+        let sym = childCursor(readonlyCursorAt(dest, start)).symId
+        dest.shrink start
+        dest.addSymUse(sym, info)
+        semExprSym c, dest, it, fetchSym(c, sym), start, flags
+        return
+      else:
+        c.buildErr dest, readonlyCursorAt(dest, start).info, "ambiguous identifier"
     it.typ = c.types.autoType
   elif s.kind == BlockY:
     it.typ = c.types.autoType
@@ -5193,8 +5210,9 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
     literal c, dest, it, c.types.charType
   of Ident:
     let start = dest.len
-    let s = semIdentImpl(c, dest, it.n, it.n.strId, flags)
-    semExprSym c, dest, it, s, start, flags
+    var nearestIsUnique = false
+    let s = semIdentImpl(c, dest, it.n, it.n.strId, flags, nearestIsUnique)
+    semExprSym c, dest, it, s, start, flags, nearestIsUnique
     inc it.n
   of Symbol:
     let start = dest.len
@@ -5205,8 +5223,9 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
     case exprKind(it.n)
     of QuotedX:
       let start = dest.len
-      let s = semQuoted(c, dest, it.n, flags)
-      semExprSym c, dest, it, s, start, flags
+      var nearestIsUnique = false
+      let s = semQuoted(c, dest, it.n, flags, nearestIsUnique)
+      semExprSym c, dest, it, s, start, flags, nearestIsUnique
     of NoExpr:
       case stmtKind(it.n)
       of NoStmt:

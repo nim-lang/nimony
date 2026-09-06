@@ -49,6 +49,10 @@ type
   SemFlag* = enum
     KeepMagics
     AllowOverloads
+    KeepChoices  ## the consumer resolves a symbol choice itself (overload
+                 ## resolution against the formal parameter types), so lookup
+                 ## must not collapse it by scope distance nor call it
+                 ## ambiguous: context has not spoken yet
     PreferIterators
     AllowUndeclared
     AllowModuleSym

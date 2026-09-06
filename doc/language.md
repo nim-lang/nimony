@@ -1075,6 +1075,80 @@ An expression `b` can be assigned to an expression `a` iff `a` is an
 `l-value` and `isImplicitlyConvertible(b.typ, a.typ)` holds.
 
 
+## Identifier lookup
+
+An identifier does not denote a single declaration; it denotes a
+`symbol choice`:idx: — every declaration that is visible under that name.
+Lookup only *collects* the candidates. Deciding which one is meant is the
+job of overload resolution and overload disambiguation, described in the
+two sections that follow.
+
+Candidates are collected level by level, from the innermost scope outward.
+The outermost level is **the module's own toplevel scope together with
+everything imported into it**: `import` is not a separate lookup mechanism
+and not a shadowing boundary. All it contributes is the scope distance that
+the ["Module-of-origin"](#module-of-origin) rule already ranks by.
+
+Whether the walk continues past a level is decided by the *kind* of the
+declarations found there, never by which module they came from:
+
+- A **non-overloadable** declaration — `let`, `var`, `const`, `type`, a
+  routine parameter, a generic parameter, an object field, `result`, a
+  block label — *shadows*.
+  Once one is found on its own, the walk stops and nothing further out is
+  visible under that name.
+- An **overloadable** declaration — a proc, func, converter, template,
+  macro, iterator, or an **enum field** — never shadows. Overloadable
+  declarations accumulate into the symbol choice across every level,
+  including across `import`.
+
+  ```nim
+  # module m:
+  type Color* = enum
+    red, green
+
+  # caller:
+  import m
+  proc red() = discard
+  proc paint(c: Color) = discard
+
+  paint(red)   # `red` is a choice of {the local proc, m.Color.red};
+               # the parameter type picks the enum field
+  ```
+
+  Had `Color` been declared in the calling module instead, the same choice
+  would arise and resolve the same way: an overloadable declaration is never
+  hidden merely because a same-named one exists closer in, or closer to
+  home.
+
+Once collected, a choice is resolved in this order:
+
+1. **Context.** In a call, overload resolution picks the candidate. In any
+   position where a type is expected — an argument, `x: T = p`, a
+   constructor field, a `case` branch — overload disambiguation picks the
+   candidate of that type.
+2. **Scope distance.** If context did not narrow the choice to one
+   candidate, the nearest declaration wins: an inner scope beats an outer
+   one, and the module's own declaration beats an imported one, by the same
+   `Scope` / `ImportScope` relation used for calls.
+
+   ```nim
+   type E = enum A, B
+
+   block:
+     type E = enum A, B
+     let x = A       # the block's `E.A`: nearer, and nothing else narrows it
+   ```
+3. **Otherwise it is ambiguous** and a static error is reported. Ambiguity
+   is only possible between candidates at the *same* distance — most
+   importantly two different modules exporting the same name, which stays
+   an error and must be resolved by qualifying the name.
+
+Note that shadowing and ambiguity are decided in that order: a declaration
+that shadows removes candidates before any of this runs, so a `let` in an
+inner scope can never be ambiguous against anything outside it.
+
+
 ## Overload resolution
 
 In a call `p(args)` where `p` may refer to more than one
@@ -1278,14 +1352,22 @@ overload resolution called *overload disambiguation* that is performed when an
 overloaded symbol is used in a context where there is additional type information
 available. Let `p` be an overloaded symbol. These contexts are:
 
-- In a function call `q(..., p, ...)` when the corresponding formal parameter
-  of `q` is a `proc` type. If `q` itself is overloaded then the cartesian product
-  of every interpretation of `q` and `p` must be considered.
-- In an object constructor `Obj(..., field: p, ...)` when `field` is a `proc`
-  type. Analogous rules exist for array/set/tuple constructors.
-- In a declaration like `x: T = p` when `T` is a `proc` type.
+- In a function call `q(..., p, ...)`, against the type of the corresponding
+  formal parameter of `q`. If `q` itself is overloaded then the cartesian
+  product of every interpretation of `q` and `p` must be considered.
+- In an object constructor `Obj(..., field: p, ...)`, against the type of
+  `field`. Analogous rules exist for array/set/tuple constructors.
+- In a declaration like `x: T = p`, against `T`.
+- In a `case` branch, against the type of the selector.
 
-As usual, ambiguous matches produce a compile-time error.
+The expected type may be of any kind, not only a `proc` type: a choice
+between a routine and an enum field is disambiguated by an expected enum
+type exactly as a choice between two routines is disambiguated by an
+expected `proc` type.
+
+When the context leaves more than one candidate, scope distance decides;
+see [Identifier lookup](#identifier-lookup). As usual, matches that remain
+ambiguous after that produce a compile-time error.
 
 
 
