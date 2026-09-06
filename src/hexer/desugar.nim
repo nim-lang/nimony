@@ -1338,8 +1338,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         genStringConcatChain(c, dest, n)
       else:
         trSons(c, dest, n)
-    of HconvX, ConvX:
-      trSons(c, dest, n)
     of EqX, NeqX:
       # A `.closure` value is an (fn, env) pair, so C's `==` cannot compare it:
       # the operands are structs. Project the halves and compare those instead.
@@ -1364,7 +1362,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         BitnotX, CastX,
         CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX,
         HaddrX, NewrefX, NewobjX, TupX, TupconstrX, TabconstrX,
-        AshrX, BaseobjX, DconvX,
+        AshrX, BaseobjX, DconvX, HconvX, ConvX,
         CompilesX, DeclaredX, DefinedX, ProccallX, DelayX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
         FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,

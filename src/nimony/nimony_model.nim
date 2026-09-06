@@ -479,7 +479,7 @@ proc procHasPragma*(typ: Cursor; kind: PragmaKind): bool =
   if typ.typeKind in RoutineTypes:
     # A childless routine type is the bare `proc` typeclass, as written in
     # `[T: proc]`: nothing to walk to, and no pragmas to find.
-    if cursorJump(typ) == 0: return false
+    if not hasMore(typ): return false
     skipToReturnType typ
     skip typ, SkipType # return type
     result = hasPragma(typ, kind)
