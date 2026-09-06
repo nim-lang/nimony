@@ -58,4 +58,11 @@ assert depth(v) == 0
 assert depth(add) == 1
 assert depth(nested) == 2
 
+# A constructor used directly as an argument has no expected type to guide it
+# (#2480). The branch belongs to `Node`, which is a `ref object`, so the
+# constructor must produce the `ref` -- not the split-off `Node.Obj`:
+assert eval(AddOpr(a: Value(val: 10), b: Value(val: 32))) == 42
+assert eval(v2) == 42
+assert depth(SubOpr(a: Value(val: 1), b: AddOpr(a: v, b: v))) == 2
+
 echo "tsumtype: OK"

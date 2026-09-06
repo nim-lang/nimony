@@ -486,7 +486,7 @@ proc semLocalType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context 
   assert dest.len > insertPos
   result = typeToCursor(c, dest, insertPos)
 
-proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor; outerRefOwner: SymId = SymId(0))
+proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor)
 
 proc instantiateType*(c: var SemContext; typ: Cursor; bindings: Table[SymId, Cursor]): Cursor =
   var destB = createTokenBuf(30)
@@ -1592,7 +1592,8 @@ type
     isExported: bool
     isAnum: bool
     guarded: bool # true when inside a case with DotToken selector (sum type)
-    ownerSym: SymId
+    ownerSym: SymId # the type a sum type constructor must produce: for
+                    # `type T = ref object` that is `T`, not the split-off `T.Obj`
 
 proc semWhenImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: WhenMode;
                  state: var SemObjectState)
@@ -2478,12 +2479,16 @@ type
     sym: SymId
     typ: TypeCursor
 
-proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField] =
-  ## Find the fields belonging to the branch identified by `efldSym`.
-  ## Matches by name so it works across generic instantiations where
-  ## the efld syms differ from the original definition.
-  result = @[]
-  let res = tryLoadSym(objTypeSym)
+proc sumTypeObjDecl(ownerTypeSym: SymId): TypeDecl =
+  ## The object type declaration behind a sum type's owner. For
+  ## `type T = ref object` the owner is `T` and the object is the split-off
+  ## `T.Obj`, which carries its own, freshly named, copies of `T`'s typevars --
+  ## so the caller needs the object's declaration, not the alias's.
+  ## `result.body` is the `(object ...)` itself, which for an inline
+  ## `(ref (object ...))` body is one level below `result`'s own body.
+  ## `result.kind` is `TypeY` iff an object was found.
+  result = default(TypeDecl)
+  let res = tryLoadSym(ownerTypeSym)
   if res.status != LacksNothing: return
   var decl = asTypeDecl(res.decl)
   if decl.kind != TypeY: return
@@ -2497,7 +2502,17 @@ proc findBranchFields(objTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField
       if decl.kind != TypeY: return
       body = decl.body
   if body.typeKind != ObjectT: return
-  let obj = asObjectDecl(body)
+  result = decl
+  result.body = body
+
+proc findBranchFields(ownerTypeSym: SymId; efldSym: SymId): seq[SumTypeBranchField] =
+  ## Find the fields belonging to the branch identified by `efldSym`.
+  ## Matches by name so it works across generic instantiations where
+  ## the efld syms differ from the original definition.
+  result = @[]
+  let decl = sumTypeObjDecl(ownerTypeSym)
+  if decl.kind != TypeY: return
+  let obj = asObjectDecl(decl.body)
   var n = obj.body
   n = sub(n)  # past (object; bounds the walk under vpr
   skip n  # parent type / inheritance slot
@@ -2743,8 +2758,9 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
   typeBuf.addDotToken()
   typeBuf.addParLe(AnumT, info)
   typeBuf.addSubtree c.types.uint8Type
-  # Store the owning object type sym so that generic type inference
-  # can trace efld → anum → object type (works cross-module):
+  # Store the owning type sym so that constructor type inference can trace
+  # efld → anum → owner type (works cross-module). For a `ref`/`ptr` object
+  # this is the outer alias, so that `Add(...)` yields the `ref`:
   if state.ownerSym != SymId(0):
     typeBuf.addSymUse(state.ownerSym, info)
   else:
@@ -4288,8 +4304,10 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
   dest.addParRi()
 
 proc getAnumOwnerType(efldSym: SymId): SymId =
-  ## Given an efld symbol, trace efld → anum type → owning object type.
-  ## The owner is stored in the anum body after the base type.
+  ## Given an efld symbol, trace efld → anum type → owning type. The owner is
+  ## stored in the anum body after the base type. It is the type as the user
+  ## spelled it: for `type T = ref object` that is `T`, not the split-off
+  ## `T.Obj`, so a constructor produces a `ref`.
   let efldRes = tryLoadSym(efldSym)
   if efldRes.status != LacksNothing or efldRes.decl.substructureKind != EfldU:
     return SymId(0)
@@ -4353,15 +4371,18 @@ proc inferFieldTypes(c: var SemContext; args: Cursor;
     else:
       skip scan
 
-proc buildInferredInvoke(c: var SemContext; objTypeSym: SymId;
-                          decl: TypeDecl; inferred: Table[SymId, Cursor];
+proc buildInferredInvoke(c: var SemContext; rootSym: SymId;
+                          typevars: Cursor; inferred: Table[SymId, Cursor];
                           info: NifLineInfo): TypeCursor =
-  ## Build an InvokeT from inferred type params and instantiate it.
+  ## Build an InvokeT of `rootSym` from inferred type params and instantiate it.
+  ## `typevars` are the ones `inferred` is keyed by; they are matched to
+  ## `rootSym`'s parameters positionally, which is what lets a `ref` sum type
+  ## infer through `T.Obj`'s typevars and invoke `T`.
   ## Returns default if not all params were inferred.
   var typeBuf = createTokenBuf(16)
   typeBuf.addParLe(InvokeT, info)
-  typeBuf.addSymUse(objTypeSym, info)
-  var tv = decl.typevars
+  typeBuf.addSymUse(rootSym, info)
+  var tv = typevars
   tv = sub(tv) # skip TypevarsU tag
   while tv.hasMore:
     let tvar = asLocal(tv)
@@ -4395,25 +4416,30 @@ proc inferSumTypeFromFields(c: var SemContext; dest: var TokenBuf;
                              efldSym: SymId; args: Cursor;
                              info: NifLineInfo): TypeCursor =
   ## Infer generic type for a sum type constructor like `Some(val: 4)`.
-  let objTypeSym = getAnumOwnerType(efldSym)
-  if objTypeSym == SymId(0): return default(TypeCursor)
+  let ownerTypeSym = getAnumOwnerType(efldSym)
+  if ownerTypeSym == SymId(0): return default(TypeCursor)
 
-  let decl = getTypeSection(objTypeSym)
+  let decl = getTypeSection(ownerTypeSym)
   if not decl.isGeneric:
     var typeBuf = createTokenBuf(1)
-    typeBuf.addSymUse(objTypeSym, info)
+    typeBuf.addSymUse(ownerTypeSym, info)
     var instDest = createTokenBuf(16)
     var instRead = cursorAt(typeBuf, 0)
     return semLocalType(c, instDest, instRead)
 
-  let branchFields = findBranchFields(objTypeSym, efldSym)
+  # The branch field types are written in terms of the object type's typevars,
+  # which for a `ref`/`ptr` sum type are not the owner alias's:
+  let objDecl = sumTypeObjDecl(ownerTypeSym)
+  if objDecl.kind != TypeY: return default(TypeCursor)
+
+  let branchFields = findBranchFields(ownerTypeSym, efldSym)
   var fieldTypesByName = initTable[StrId, TypeCursor]()
   for bf in branchFields:
     fieldTypesByName[symToIdent(bf.sym)] = bf.typ
 
   var inferred = initTable[SymId, Cursor]()
   inferFieldTypes(c, args, fieldTypesByName, inferred)
-  result = buildInferredInvoke(c, objTypeSym, decl, inferred, info)
+  result = buildInferredInvoke(c, ownerTypeSym, objDecl.typevars, inferred, info)
 
 proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
                              decl: TypeDecl; args: Cursor;
@@ -4422,7 +4448,7 @@ proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
   let fieldTypesByName = fieldTypesByNameFromObj(decl)
   var inferred = initTable[SymId, Cursor]()
   inferFieldTypes(c, args, fieldTypesByName, inferred)
-  result = buildInferredInvoke(c, objTypeSym, decl, inferred, info)
+  result = buildInferredInvoke(c, objTypeSym, decl.typevars, inferred, info)
 
 proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
                           efldSym: SymId; expected: TypeCursor; info: NifLineInfo;

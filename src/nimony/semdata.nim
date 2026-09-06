@@ -166,6 +166,12 @@ type
       ## syms of type instantiations to add their declarations to module
     pendingSumtypes*: TokenBuf
       ## synthesized oneof type declarations to emit at module end
+    refObjOwners*: Table[SymId, SymId]
+      ## `T.Obj` → `T` for every `type T = ref|ptr object` split off by
+      ## `semTypeSection`. The split runs in `SemcheckTopLevelSyms`, but the
+      ## object body -- and with it a sum type's synthesized `anum` -- is
+      ## semchecked one phase later, by which time `T.Obj` is an ordinary
+      ## sibling declaration with nothing pointing back at `T`.
     includeStack*: seq[string]
     importedModules*: OrderedTable[SymId, ImportedModule]
     selfModuleSym*: SymId
