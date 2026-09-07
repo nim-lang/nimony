@@ -2508,7 +2508,7 @@ when isMainModule:
     # `SymId` keys line up; mirror that here via `sharedPool`.
     var body = parseFromBuffer(bodyIn, "M", 100,
                                sharedPool = mb.pool, sharedTags = createLengTagPool())
-    runCSE(body, "M", addr summaries)
+    runCSE(body, addr summaries)
     let got = toString(body)
     let want = canon(bodyExpected)
     doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
@@ -2519,7 +2519,7 @@ when isMainModule:
     var body = parseFromBuffer(bodyIn, "M", 100,
                                sharedPool = mb.pool, sharedTags = createLengTagPool())
     let before = toString(body)
-    runCSE(body, "M", addr summaries)
+    runCSE(body, addr summaries)
     doAssert toString(body) == before, "expected unchanged:\n  " & bodyIn
 
   block summary_disjoint_survives:
