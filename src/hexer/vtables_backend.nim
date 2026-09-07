@@ -715,8 +715,7 @@ proc processMethods(c: var Context) =
         mine[].signatureToIndex = parentSig
       for m in c.methodDecls:
         if m.cls == cls:
-          var methodName = pool.syms[m.name]
-          extractBasename methodName
+          var methodName = pool.symBasename(m.name)
           # The synthesized virtual `=destroy`/`=trace` object hooks are named
           # `=destroy_<mangledType>` / `=trace_<mangledType>`. Normalize to the
           # bare hook name so `methodKey` routes them through the canonical

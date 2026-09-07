@@ -450,6 +450,29 @@ proc sym*(p: Pool; id: SymId): NifSymbol =
     result.module = p.strings.getOrIncl(substr(s, sl.moduleStart,
                                                sl.moduleStart+sl.moduleLen-1))
 
+proc symBasename*(p: Pool; id: SymId): string =
+  ## The identifier of `id`, without disambiguator, key or module suffix:
+  ## `abc.12.Ikey.mod` gives `abc`. A name may contain dots itself
+  ## (`Pool.Obj.0` gives `Pool.Obj`), and an atom that is not a symbol at all
+  ## gives `""` -- it has no identifier to name.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  if sl.wellFormed:
+    result = substr(s, 0, sl.nameLen-1)
+  else:
+    result = ""
+
+proc symNameId*(p: Pool; id: SymId): StrId =
+  ## `symBasename` interned -- the id to compare identifiers by. Interns only
+  ## the name, so it stays cheaper than `sym(p, id).name` while the pool holds
+  ## strings; after the flip the two are the same field.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  if sl.wellFormed:
+    result = p.strings.getOrIncl(substr(s, 0, sl.nameLen-1))
+  else:
+    result = p.strings.getOrIncl("")
+
 proc symModule*(p: Pool; id: SymId): string =
   ## The module suffix of `id`, `""` when it is local. For the places that need
   ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while

@@ -16,8 +16,7 @@ import decls, nimony_model, programs, semos
 import ".." / models / nifindex_tags
 
 proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
-  var name = pool.syms[symId]
-  extractBasename(name)
+  var name = pool.symBasename(symId)
 
   attackedOp = case name
     of "=destroy": attachedDestroy
@@ -50,8 +49,7 @@ proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): 
       result.addParLe(TagId(FromexportIdx))
       result.addStrLit(path, NoLineInfo)
       for s in syms:
-        var isGlobal = false
-        let ident = extractBasename(pool.syms[s], isGlobal)
+        let ident = pool.symBasename(s)
         result.addIdent(ident, NoLineInfo)
       result.addParRi()
 

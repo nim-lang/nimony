@@ -115,8 +115,8 @@ proc makeLocalSym*(c: var Context; result: var string) =
   result.addInt counter[]
 
 proc newSymId(c: var Context; s: SymId): SymId =
-  var isGlobal = false
-  var name = "`" & extractBasename(pool.syms[s], isGlobal)
+  let isGlobal = not pool.symIsLocal(s)
+  var name = "`" & pool.symBasename(s)
   if isGlobal:
     c.makeGlobalSym(name)
   else:

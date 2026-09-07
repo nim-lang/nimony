@@ -69,10 +69,8 @@ proc kindLabel(k: NimonyStmt): string =
   of GletS, TletS: "let"
   else: "?"
 
-proc basename(symName: string): string =
-  var work = symName
-  extractBasename(work)
-  result = work
+proc basename(sym: SymId): string =
+  result = pool.symBasename(sym)
 
 const UnreservedUrlChar = {'A'..'Z', 'a'..'z', '0'..'9', '-', '.', '_', '~'}
 proc urlEscape(s: string): string =
@@ -136,7 +134,7 @@ proc emitTyperef(b: var HtmlBuilder; ctx: RenderCtx; sym: SymId) =
   ## Cross-module-aware type reference. HTML: `<a class="typeref" href="…">name</a>`.
   ## NIF: `(typeref "href" "name")` — the href becomes the link target if a
   ## downstream tool wants to re-resolve.
-  let name = basename(pool.syms[sym])
+  let name = basename(sym)
   let href = symHref(ctx, sym)
   case b.format
   of hofHtml:
@@ -302,7 +300,7 @@ template emitDeclItem(b: var HtmlBuilder; sym: SymId; body: untyped) =
 proc recordEntry(idx: var seq[DocIdxEntry]; sk: NimonyStmt; sym: SymId; doc: string) =
   idx.add DocIdxEntry(
     kind: kindLabel(sk),
-    basename: basename(pool.syms[sym]),
+    basename: basename(sym),
     symid: pool.syms[sym],
     summary: summarise(doc))
 
@@ -323,7 +321,7 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
     emitTag(b, "code"):
       emitKw(b, kindLabel(sk))
       emitText(b, " ")
-      emitName(b, basename(pool.syms[r.name.symId]))
+      emitName(b, basename(r.name.symId))
       emitOp(b, "(")
       var p = r.params
       if p.isTagLit and p.substructureKind == ParamsU:
@@ -333,7 +331,7 @@ proc renderRoutine(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
           if not first: emitOp(b, "; ")
           first = false
           let local = asLocal(p)
-          emitText(b, basename(pool.syms[local.name.symId]))
+          emitText(b, basename(local.name.symId))
           emitOp(b, ": ")
           var typ = local.typ
           renderTypeExpr(b, ctx,typ)
@@ -370,14 +368,14 @@ proc renderTypeDecl(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
       emitTagAttr(b, wrapper, [("class", "sig")]):
         emitKw(b, "type")
         emitText(b, " ")
-        emitName(b, basename(pool.syms[t.name.symId]))
+        emitName(b, basename(t.name.symId))
         emitOp(b, " = ")
         emitSrcGen(b, ctx, bodyG)
     else:
       emitTag(b, wrapper):
         emitKw(b, "type")
         emitText(b, " ")
-        emitName(b, basename(pool.syms[t.name.symId]))
+        emitName(b, basename(t.name.symId))
         if hasBody:
           emitOp(b, " = ")
           emitSrcGen(b, ctx, bodyG)
@@ -396,7 +394,7 @@ proc renderLocal(b: var HtmlBuilder; idx: var seq[DocIdxEntry];
     emitTag(b, "code"):
       emitKw(b, kindLabel(sk))
       emitText(b, " ")
-      emitName(b, basename(pool.syms[l.name.symId]))
+      emitName(b, basename(l.name.symId))
       var typ = l.typ
       if typ.hasMore and typ.kind != DotToken:
         emitOp(b, ": ")
@@ -442,8 +440,7 @@ proc buildNameLookup(ctx: var RenderCtx) =
     let modid = pool.symModule(sid)
     if modid.len > 0 and modid != ctx.currentModule and modid notin ctx.importMap:
       continue
-    var base = full
-    extractBasename(base)
+    var base = pool.symBasename(sid)
     if base.len == 0: continue
     let old = ctx.nameToSym.getOrDefault(base, 0)
     if old == 0:

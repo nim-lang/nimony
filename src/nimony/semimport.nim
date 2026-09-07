@@ -359,9 +359,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
       c.buildErr dest, info, "exporting local symbol not implemented"
       return
     let moduleSym = c.processedModules.getOrQuit(suffix)
-    var basename = name
-    extractBasename(basename)
-    registerExportName(c, moduleSym, pool.strings.getOrIncl(basename))
+    registerExportName(c, moduleSym, pool.symNameId(sym))
     # Enum types carry their fields as separately-named symbols. Exporting only
     # the type name leaves the field names filtered out at the import site
     # (e.g. `export NifKind` wouldn't bring `TagLit`/`DotToken` into scope).
@@ -382,8 +380,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
             if enumBody.substructureKind == EfldU:
               let local = asLocal(enumBody)
               if local.name.isSymbolDef:
-                var fname = pool.syms[local.name.symId]
-                extractBasename(fname)
+                var fname = pool.symBasename(local.name.symId)
                 registerExportName(c, moduleSym, pool.strings.getOrIncl(fname))
             skip enumBody
 
@@ -426,8 +423,7 @@ proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId
       c.processedModules.getOrQuit(suffix) != moduleSym:
     # doesn't belong to exported module, no need to consider
     return
-  var basename = ensureMove name
-  extractBasename(basename)
+  var basename = pool.symBasename(sym)
   let strId = pool.strings.getOrIncl(basename)
   if c.exports.hasKey(moduleSym):
     let entry = addr c.exports.getOrQuit(moduleSym)

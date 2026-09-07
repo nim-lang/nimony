@@ -96,9 +96,7 @@ proc externName*(s: SymId; n: Cursor): StrId =
   if nn.kind == StrLit:
     result = p.strings.getOrIncl(strVal(nn, p))
   else:
-    var base = p.syms[s]
-    extractBasename base
-    result = p.strings.getOrIncl(base)
+    result = p.symNameId(s)
 
 proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
                    isImport: var bool; bareImport: var bool): StrId =

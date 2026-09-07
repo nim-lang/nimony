@@ -55,9 +55,7 @@ proc rewriteSymsToIdentsImpl(newBuf: var TokenBuf; n: var Cursor) =
   if not n.hasMore: return
   case n.kind
   of Symbol, SymbolDef:
-    var name = pool.syms[n.symId]
-    extractBasename name
-    newBuf.addIdent(pool.strings.getOrIncl(name), n.info)
+    newBuf.addIdent(pool.symNameId(n.symId), n.info)
     inc n
   of TagLit:
     let ek = n.exprKind
@@ -66,9 +64,7 @@ proc rewriteSymsToIdentsImpl(newBuf: var TokenBuf; n: var Cursor) =
     if (ek == OchoiceX or ek == CchoiceX) and firstChild.isSymbol:
       # unwrap the choice to a single ident:
       n.into:
-        var name = pool.syms[n.symId]
-        extractBasename name
-        newBuf.addIdent(pool.strings.getOrIncl(name), n.info)
+        newBuf.addIdent(pool.symNameId(n.symId), n.info)
         while n.hasMore: skip n
     else:
       newBuf.addParLe(n.cursorTagId, n.info)

@@ -548,9 +548,7 @@ proc resolveCyclicImports(c: var SemContext) =
       let symName = pool.syms[symId]
       let modSuffix = pool.symModule(symId)
       if modSuffix == targetSuffix:
-        var baseName = symName
-        extractBasename(baseName)
-        let nameId = pool.strings.getOrIncl(baseName)
+        let nameId = pool.symNameId(symId)
         c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
 

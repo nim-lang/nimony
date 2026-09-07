@@ -263,8 +263,7 @@ proc stateToProcName*(c: Context; sym: SymId; state: int): SymId =
   coroHelperName(sym, "s" & $state, c.thisModuleSuffix)
 
 proc localToFieldname*(c: var Context; local: SymId): SymId =
-  var name = pool.syms[local]
-  extractBasename name
+  var name = pool.symBasename(local)
   name.add "`f."
   name.add $c.counter
   inc c.counter

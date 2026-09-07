@@ -110,26 +110,27 @@ proc sliceSymbol*(s: string): SymbolSlices =
     result.disambIsNumeric = d == head
 
 proc extractBasename*(s: string; isGlobal: var bool): string =
-  # From "abc.12.Mod132a3bc" extract "abc".
-  # From "abc.12" extract "abc".
-  # From "a.b.c.23" extract "a.b.c".
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}:
-        return substr(s, 0, i-1)
-      isGlobal = true # we skipped one dot so it's a global name
-    dec i
-  return ""
+  ## The identifier of the symbol `s`: `abc.12.Mod132a3bc` and `abc.12` both
+  ## give `abc`, and `a.b.c.23` gives `a.b.c` -- a name may contain dots itself.
+  ## `isGlobal` says whether the symbol carries a module suffix.
+  ##
+  ## The string-level answer, for a caller with no `Pool` to ask (module index
+  ## keys, the LLVM debug writer's cached name strings). Code that HAS a pool
+  ## asks `nifcore.symBasename` / `symNameId`.
+  ##
+  ## An atom with no numeric disambiguator is not a symbol and has no
+  ## identifier to name, so the answer is `""` -- as it has always been.
+  let sl = sliceSymbol(s)
+  if not sl.wellFormed: return ""
+  isGlobal = sl.moduleLen > 0
+  result = substr(s, 0, sl.nameLen-1)
 
 proc extractBasename*(s: var string) =
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}:
-        s.setLen i
-        return
-    dec i
+  ## `extractBasename` in place. A non-symbol is left ALONE rather than
+  ## emptied, which is what the callers of this overload have always seen.
+  let sl = sliceSymbol(s)
+  if sl.wellFormed:
+    s.setLen sl.nameLen
 
 proc extractModule*(s: string): string =
   ## The module suffix of the symbol `s`, `""` when it is local -- the

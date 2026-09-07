@@ -306,8 +306,7 @@ proc localToField(c: var Context; n: Cursor; local, typ: SymId; isCursor = false
   if c.currentProc.localToEnv.hasKey((typ, local)):
     result = c.currentProc.localToEnv.getOrQuit((typ, local)).field
   else:
-    var name = pool.syms[local]
-    extractBasename name
+    var name = pool.symBasename(local)
     name.add "`f."
     name.add $c.counter
     inc c.counter

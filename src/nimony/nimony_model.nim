@@ -329,10 +329,7 @@ proc addEmpty3*(dest: var TokenBuf; info: NifLineInfo = NoLineInfo) =
   dest.addDotToken(info)
   dest.addDotToken(info)
 
-proc symNameId(s: SymId): StrId =
-  var name = pool.syms[s]
-  extractBasename name
-  pool.strings.getOrIncl(name)
+proc symNameId(s: SymId): StrId = pool.symNameId(s)
 
 proc sameTreesNC(a, b: Cursor): bool =
   ## Structural equality on nifcore cursors, ignoring sparse line-info

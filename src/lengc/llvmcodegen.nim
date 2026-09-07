@@ -313,11 +313,9 @@ proc mangleSym(c: var LLVMCode; s: SymId): string =
 proc nifSymBaseName*(c: var LLVMCode; symId: SymId): string =
   ## Extract the original Nim identifier from a NIF symbol like
   ## ``myVar.0.module`` → ``myVar``.
-  let full = c.m.pool.syms[symId]
-  var isGlobal = false
-  result = extractBasename(full, isGlobal)
+  result = c.m.pool.symBasename(symId)
   if result.len == 0:
-    result = full
+    result = c.m.pool.symString(symId)
 
 # ---- Pragma / type helpers ----
 
@@ -690,8 +688,7 @@ proc genSymDefLLVM(c: var LLVMCode; n: Cursor; prag: PragmaInfo): string =
       if prag.extern != StrId(0):
         result = c.m.pool.strings[prag.extern]
       else:
-        result = c.m.pool.syms[lit]
-        extractBasename(result)
+        result = c.m.pool.symBasename(lit)
     else:
       result = mangleToC(c.m.pool.syms[lit])
   else:

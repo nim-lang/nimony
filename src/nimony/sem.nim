@@ -536,8 +536,7 @@ proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; 
 
 proc fetchSym*(c: var SemContext; s: SymId): Sym =
   # yyy find a better solution
-  var name = pool.syms[s]
-  extractBasename name
+  var name = pool.symBasename(s)
   let identifier = pool.strings.getOrIncl(name)
   var it {.cursor.} = c.currentScope
   while it != nil:
@@ -609,19 +608,11 @@ proc semGetSize*(c: var SemContext; n: Cursor; strict=false): xint =
   getSize(n, c.g.config.bits div 8, strict)
 
 proc sameIdent(sym: SymId; str: StrId): bool =
-  # XXX speed this up by using the `fieldCache` idea
-  var name = pool.syms[sym]
-  extractBasename(name)
-  result = pool.strings.getOrIncl(name) == str
+  result = pool.symNameId(sym) == str
 
 proc sameIdent(a, b: SymId): bool =
   # not used yet
-  # XXX speed this up by using the `fieldCache` idea
-  var x = pool.syms[a]
-  extractBasename(x)
-  var y = pool.syms[b]
-  extractBasename(y)
-  result = x == y
+  result = pool.symNameId(a) == pool.symNameId(b)
 
 proc requestRoutineInstance*(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
@@ -1110,8 +1101,7 @@ proc findEnumField(decl: EnumDecl; name: StrId): SymId =
     while f.hasMore:
       let field = takeLocal(f, SkipFinalParRi)
       let symId = field.name.symId
-      var isGlobal = false
-      let basename = extractBasename(pool.syms[symId], isGlobal)
+      let basename = pool.symBasename(symId)
       let strId = pool.strings.getOrIncl(basename)
       if name == strId:
         return symId
@@ -1707,8 +1697,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
     return
   assert modeTok.isSymbol
   var semFlags: set[SemFlag] = {}
-  var modeSym = pool.syms[readonlyCursorAt(dest, beforeMode).symId]
-  modeSym.extractBasename
+  let modeSym = pool.symBasename(readonlyCursorAt(dest, beforeMode).symId)
   case modeSym
   of "typeOfProc":
     discard
@@ -2428,8 +2417,7 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: NifLineInf
           v = semEnumOrdinalValue(c, dummyDest, vnode)
         if not seen.contains(v):
           if missing.len > 0: missing.add ", "
-          var isGlobal = false
-          missing.add extractBasename(pool.syms[f.name.symId], isGlobal)
+          missing.add pool.symBasename(f.name.symId)
     if missing.len > 0:
       buildErr c, dest, info, "not all cases are covered; missing: {" & missing & "}"
   else:
@@ -4090,8 +4078,7 @@ proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymI
       break
 
 proc asNimSym(symId: SymId): string =
-  result = pool.syms[symId]
-  extractBasename(result)
+  result = pool.symBasename(symId)
 
 template conflictingBranchesError(c: var SemContext; dest: var TokenBuf, info: NifLineInfo, prevFields: SymId, currentFields: SymId) =
   c.buildErr dest, info, "The fields '" & asNimSym(prevFields) &
@@ -5206,8 +5193,7 @@ proc expandSymChoice(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   takeInto dest, n:
     assert n.isSymbol
-    var name = pool.syms[n.symId]
-    extractBasename(name)
+    var name = pool.symBasename(n.symId)
     var marker = initHashSet[SymId]()
     while n.hasMore:
       assert n.isSymbol

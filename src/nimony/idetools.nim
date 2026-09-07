@@ -210,8 +210,7 @@ proc locateSymImpl(n: var Cursor; buf: TokenBuf; sym: SymId; toTrack: NifLineInf
 proc findLocal(file: string; sym: SymId; toTrack: NifLineInfo; mode: TrackMode; bits: int) =
   var buf = parseFromFile(file)
 
-  var name = pool.syms[sym]
-  extractBasename name
+  var name = pool.symBasename(sym)
 
   var offset = -1
   var parentOffset = 0

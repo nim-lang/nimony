@@ -146,8 +146,7 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
       # Foreign type — keep as Symbol so visibility is bypassed.
       buf.addSymUse(sym, info)
       return
-  var basename = symStr
-  extractBasename basename
+  var basename = pool.symBasename(sym)
   buf.addIdent(pool.strings.getOrIncl(basename), info)
 
 proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) =
@@ -158,8 +157,7 @@ proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) 
   of SymbolDef:
     # SymbolDefs only appear at decl sites; always strip to basename
     # so the sub-compile creates fresh decls via re-semchecking.
-    var basename = pool.syms[n.symId]
-    extractBasename basename
+    var basename = pool.symBasename(n.symId)
     newDest.addIdent(pool.strings.getOrIncl(basename), n.info)
     inc n
   of TagLit:

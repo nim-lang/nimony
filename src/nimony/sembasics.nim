@@ -421,8 +421,8 @@ proc newSymId*(c: var SemContext; s: SymId; forceGlobal = false): SymId =
   ## a local-layout one because the copy lands at MODULE scope where the original
   ## did not (a template body declares in the template's scope; expanding it at
   ## toplevel puts the declaration in the module). See `expandTemplateImpl`.
-  var isGlobal = false
-  var name = extractBasename(pool.syms[s], isGlobal)
+  let isGlobal = not pool.symIsLocal(s)
+  var name = pool.symBasename(s)
   if isGlobal or forceGlobal:
     c.makeGlobalSym(name)
   else:
@@ -507,13 +507,12 @@ proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
   result = identToSym(c, pool.strings[lit], kind)
 
 proc symToIdent*(s: SymId): StrId =
-  var name = pool.syms[s]
-  extractBasename name
   when false:
     # XXX activate this later!
+    var name = pool.symBasename(s)
     for i in 0..<name.len:
       if name[i] == ' ': name[i] = '.'
-  result = pool.strings.getOrIncl name
+  result = pool.symNameId(s)
 
 proc declareSym*(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymKind): SymStatus =
   let info = it.n.info

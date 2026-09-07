@@ -1511,9 +1511,8 @@ proc trTry(c: var Context; n: var Cursor) =
       takeInto c.dest, n:
         tr c, n, WantNonOwner
 
-proc readableHookname(s: string): string =
-  result = s
-  extractBasename(result)
+proc readableHookname(fn: SymId): string =
+  result = pool.symBasename(fn)
   if result.len > 2 and result[0] == '=' and result[1] in {'a'..'z'}:
     var i = 2
     while i < result.len and result[i] != '_':
@@ -1526,7 +1525,7 @@ proc checkForErrorRoutine(r: var Reporter; fn: SymId; info: NifLineInfo): int =
   if res.status == LacksNothing:
     let routine = asRoutine(res.decl)
     if routine.kind.isRoutine and hasPragma(routine.pragmas, ErrorP):
-      let fnName = readableHookname(pool.syms[fn])
+      let fnName = readableHookname(fn)
       var m = "'" & fnName & "' is not available"
       var arg = routine.params
       if arg.substructureKind == ParamsU:

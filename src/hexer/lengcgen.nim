@@ -989,8 +989,7 @@ template moveToTopLevel(c: var EContext; dest: var TokenBuf; mode: TraverseMode;
 
 proc makeLocalDeclName(c: var EContext; s: SymId): string =
   # for proc and type decls
-  result = pool.syms[s]
-  extractBasename(result)
+  result = pool.symBasename(s)
   result.add "."
   result.addInt c.localDeclCounters
   inc c.localDeclCounters

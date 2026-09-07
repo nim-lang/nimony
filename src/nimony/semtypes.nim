@@ -68,8 +68,7 @@ proc countInheritedFieldNames(objType: Cursor; counts: var Table[string, int]; d
     var f = n
     inc f # skip fld/gfld tag
     if f.isSymbolDef:
-      var name = pool.syms[f.symId]
-      extractBasename(name)
+      var name = pool.symBasename(f.symId)
       counts[name] = counts.getOrDefault(name, 0) + 1
     skip n # advance past this whole field
   if not baseType.isDotToken:

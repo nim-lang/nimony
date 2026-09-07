@@ -119,8 +119,7 @@ proc declFileOf*(s: SymId): string =
 proc baseName*(s: SymId): string =
   ## `skip.0.nifcore` -> `skip`.
   if s == NoSymId: return ""
-  result = pool.syms[s]
-  extractBasename result
+  result = pool.symBasename(s)
 
 proc isDeclaredIn*(s: SymId; fileTail: string): bool =
   ## True when `s` was declared in a file whose path ends in `fileTail`
