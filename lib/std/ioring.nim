@@ -263,7 +263,7 @@ proc waitCompletions*(comps: var openArray[IoCompletion]): int =
     result = pollCompletions(comps)
     if result > 0: return
 
-proc cancelPendingOps(fd: cint) =
+proc cancelPendingOps(fd: cint): int {.discardable.} =
   ## The platform-neutral half of `closeFd`: cancel any ops still in flight on
   ## `fd` so their continuations are resumed (with a cancellation result)
   ## instead of leaking, and deregister the fd from the backend — all BEFORE
@@ -283,6 +283,10 @@ proc cancelPendingOps(fd: cint) =
   ## needs a cross-lane request the owning lane drains from its own `poll`
   ## (and, on io_uring, an `IORING_OP_ASYNC_CANCEL` — the kernel still owns
   ## the slot's buffers until it acknowledges), which this does not do yet.
+  ##
+  ## Returns how many ops were cancelled, which is what lets `submitPollRemove`
+  ## tell its caller whether anything was actually in flight.
+  result = 0
   let lane = ioLane()
   if backendRelays.forgetFd != nil:
     backendRelays.forgetFd(fd)
@@ -292,6 +296,43 @@ proc cancelPendingOps(fd: cint) =
     # the slot. This used to resume continuations only, so a cancelled op that
     # had none (a `waitCompletions` driver) vanished and its waiter hung.
     complete(idx, ECancelled)
+    inc result
+
+proc submitPollRemove*(fd: cint): int {.discardable.} =
+  ## **Cancel without closing.** Take back every op this lane still has in
+  ## flight on `fd` — each completes with `ECancelled`, so its continuation is
+  ## resumed and its slot returned to the arena — and drop the backend's per-fd
+  ## registration. `fd` itself is left open. Returns how many ops were
+  ## cancelled; `0` means nothing was armed, which is the common case.
+  ##
+  ## `closeFd` was the only way to cancel, and it also closes the descriptor —
+  ## no use to a library that owns its own sockets and merely wants to stop
+  ## watching one (libcurl's `CURL_POLL_REMOVE`, whose slots leak for the life
+  ## of the process without this; harness `doc/ioring-2390-port.md`).
+  ##
+  ## Named for `IORING_OP_POLL_REMOVE`, but it is not a `submit*` in behaviour:
+  ## those enqueue an op and return a `SeqNum` to wait on. Cancelling is not
+  ## something you wait for, so this acts on THIS lane and answers at once.
+  ##
+  ## ⚠ **This lane only**, exactly like `closeFd` — see `cancelPendingOps`.
+  ##
+  ## ⚠ **The drain is load-bearing; do not remove it.** `submitPollAdd` only
+  ## ENQUEUES, and the op becomes a slot when the lane next polls. Without the
+  ## drain an op submitted moments ago has no slot yet: this reports `0`, the op
+  ## is armed immediately afterwards, and the slot leaks — the exact bug the
+  ## proc exists to fix. `pollCompletions` drains for the same reason.
+  ## (`closeFd` still does not, and keeps that narrow gap.)
+  when hasIocp:
+    # No safe cancel-without-close here: the kernel owns each op's OVERLAPPED
+    # until it acknowledges, and `closesocket` — what aborts them — is what this
+    # proc must not do. Completing the slots locally would hand their buffers
+    # back while the kernel may still write through them. Refuse, don't pretend.
+    if backendRelays.forgetFd != nil:
+      backendRelays.forgetFd(fd)
+    result = 0
+  else:
+    discard backendRelays.poll(0)
+    result = cancelPendingOps(fd)
 
 proc htons(x: uint16): uint16 {.inline.} =
   ## Header macro/libc shim; a byte swap on the little-endian targets.
