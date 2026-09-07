@@ -5,6 +5,77 @@
 # distribution, for details about the copyright.
 
 ## Parses NIF symbols into their components.
+##
+## `sliceSymbol` is the one place that knows the grammar; everything else here
+## is (for now) the older per-question scanners it replaces. See #2457: the
+## goal is that a symbol is taken apart ONCE, into `nifcore.NifSymbol`, and
+## that these scanners then have no callers left.
+
+const
+  Digits = {'0'..'9'}
+
+type
+  SymbolSlices* = object
+    ## Where each component of a NIF symbol sits inside the string that spells
+    ## it: `<name>.<disamb>`, `<name>.<disamb>.<module>` or
+    ## `<name>.<disamb>.<dedup>.<module>`. The name always starts at 0, and a
+    ## component the symbol does not have has a length of 0.
+    nameLen*: int
+    disamb*: int
+    dedupStart*, dedupLen*: int
+    moduleStart*, moduleLen*: int
+    wellFormed*: bool
+      ## False for an atom that is not a symbol at all -- no `.` followed by a
+      ## digit anywhere in it, which is what an operator definition (`[]=`)
+      ## looks like. Every other field is then 0 and the whole string is the
+      ## name.
+
+proc sliceSymbol*(s: string): SymbolSlices =
+  ## Take a symbol apart without copying anything out of it.
+  ##
+  ## The name ends at the LAST `.` that is followed by a digit -- a name may
+  ## well contain dots itself (`a.b.c.23`), only the disambiguator's dot ends
+  ## it. What follows is split at dots: the first component is the
+  ## disambiguator, the last (if there is another) is the module, and anything
+  ## between them is the deduplication key of a generic instantiation. This is
+  ## the same rule `nifreader`'s split-symbol mode applies to the raw bytes.
+  result = SymbolSlices(nameLen: s.len, disamb: 0,
+                        dedupStart: 0, dedupLen: 0,
+                        moduleStart: 0, moduleLen: 0, wellFormed: false)
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.' and s[i+1] in Digits: break
+    dec i
+  if i <= 0: return
+
+  result.wellFormed = true
+  result.nameLen = i
+  let restStart = i+1
+  var j = restStart
+  while j < s.len and s[j] in Digits:
+    result.disamb = result.disamb * 10 + (ord(s[j]) - ord('0'))
+    inc j
+
+  var firstDot = -1
+  var k = restStart
+  while k < s.len:
+    if s[k] == '.':
+      firstDot = k
+      break
+    inc k
+  if firstDot < 0: return # a local symbol: no module, no dedup key
+
+  var lastDot = firstDot
+  k = firstDot+1
+  while k < s.len:
+    if s[k] == '.': lastDot = k
+    inc k
+  if lastDot != firstDot:
+    result.dedupStart = firstDot+1
+    result.dedupLen = lastDot - (firstDot+1)
+  result.moduleStart = lastDot+1
+  result.moduleLen = s.len - (lastDot+1)
+
 
 proc extractBasename*(s: string; isGlobal: var bool): string =
   # From "abc.12.Mod132a3bc" extract "abc".
@@ -216,6 +287,53 @@ proc `$`*(s: SplittedModulePath): string =
 
 when isMainModule:
   import std/[assertions]
+
+  proc hasDot(s: string): bool =
+    result = false
+    for c in s:
+      if c == '.': return true
+
+  # `sliceSymbol` answers every question the scanners below answer, and must
+  # answer them the same way -- that is what lets the scanners go away.
+  proc agrees(s: string) =
+    let sl = sliceSymbol(s)
+    var isGlobal = false
+    let base = extractBasename(s, isGlobal)
+    if sl.wellFormed:
+      assert substr(s, 0, sl.nameLen-1) == base, s
+      assert substr(s, sl.moduleStart, sl.moduleStart+sl.moduleLen-1) == extractModule(s), s
+      # `isLocalName` counts dots instead of parsing, so it only agrees for a
+      # name without dots -- for `Pool.Obj.0` or `..<.3` it says "not local"
+      # about a symbol that has no module at all. Real symbols have such names
+      # (`dollar`.CaseMode`, `Pool.Obj`, `..<`), so this is a divergence to
+      # settle at the call sites, not to paper over here.
+      if not hasDot(substr(s, 0, sl.nameLen-1)):
+        assert (sl.moduleLen == 0) == isLocalName(s), s
+      assert isInstantiation(s) ==
+        (sl.dedupLen > 0 and s[sl.dedupStart] == 'I'), s
+      assert substr(s, 0, sl.nameLen) & $sl.disamb == extractVersionedBasename(s), s
+    else:
+      assert base == "", s
+      # `extractModule` does answer for such an atom -- it says "bar" for
+      # `foo.bar` -- because it looks for a trailing dotted segment without
+      # first establishing that there is a disambiguator. There is no symbol
+      # here to have a module, so `sliceSymbol` says so instead.
+
+  for s in ["abc.12.Mod132a3bc", "abc.12", "a.b.c.23", "abc.12.Iabcdefghi.mod2",
+            "tmp.14", "outer`env.0.mymod", "gen.12.Iaaaa`coro.0.mymod",
+            "[]=", "foo.bar", "x.0"]:
+    agrees s
+
+  let ls = sliceSymbol("abc.12.Ikey.mod")
+  assert ls.nameLen == 3
+  assert ls.disamb == 12
+  assert substr("abc.12.Ikey.mod", ls.dedupStart, ls.dedupStart+ls.dedupLen-1) == "Ikey"
+  assert substr("abc.12.Ikey.mod", ls.moduleStart, ls.moduleStart+ls.moduleLen-1) == "mod"
+  let lt = sliceSymbol("tmp.14")
+  assert lt.wellFormed and lt.nameLen == 3 and lt.disamb == 14
+  assert lt.dedupLen == 0 and lt.moduleLen == 0
+  let lo = sliceSymbol("[]=")
+  assert not lo.wellFormed and lo.nameLen == 3
   assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"
   assert extractVersionedBasename("abc.Mod132a3bc") == ""
 
