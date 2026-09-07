@@ -350,7 +350,7 @@ proc doExport(c: var SemContext; dest: var TokenBuf; sym: SymId; info: NifLineIn
     c.exports[sym] = ImportFilter(kind: ImportAll)
   else:
     let name = pool.syms[sym]
-    let suffix = extractModule(name)
+    let suffix = pool.symModule(sym)
     if suffix == "":
       c.buildErr dest, info, "cannot export non-global symbol"
       return
@@ -421,7 +421,7 @@ proc semExport*(c: var SemContext; dest: var TokenBuf; it: var Item) =
 
 proc doExportExcept(c: var SemContext; dest: var TokenBuf; moduleSym, sym: SymId; info: NifLineInfo) =
   let name = pool.syms[sym]
-  let suffix = extractModule(name)
+  let suffix = pool.symModule(sym)
   if not c.processedModules.hasKey(suffix) or
       c.processedModules.getOrQuit(suffix) != moduleSym:
     # doesn't belong to exported module, no need to consider

@@ -233,7 +233,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # token instead and takes the `bypassVis` path.) Tokens in the expanded
     # tree that come from another file are call-site arguments substituted in,
     # and stay judged against the caller's module — see `visibilityModule`.
-    c.visOwner.add VisOwner(module: extractModule(pool.syms[fnId]),
+    c.visOwner.add VisOwner(module: pool.symModule(fnId),
                             file: res.decl.info.file.uint32)
     semExpr c, dest, a, flags
     case returnType.typeKind
@@ -371,7 +371,7 @@ proc addTypeboundOps(c: var SemContext; fn: StrId; s: SymId; cands: var FnCandid
   assert res.status == LacksNothing
   let decl = asTypeDecl(res.decl)
   if decl.kind == TypeY:
-    let moduleSuffix = extractModule(pool.syms[s])
+    let moduleSuffix = pool.symModule(s)
     if moduleSuffix == "" or
         # with --noSystem, magic types can have the system module suffix
         # without the system module being loaded
@@ -960,10 +960,10 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
       # arguments it echoed back keep the caller's — see `visibilityModule`.
       let macroRes = tryLoadSym(finalFn)
       if macroRes.status == LacksNothing:
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[finalFn]),
+        c.visOwner.add VisOwner(module: pool.symModule(finalFn),
                                 file: macroRes.decl.info.file.uint32)
       else:
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[finalFn]),
+        c.visOwner.add VisOwner(module: pool.symModule(finalFn),
                                 file: cs.callNodeInfo.file.uint32)
       semExpr c, dest, a
       discard c.visOwner.pop()

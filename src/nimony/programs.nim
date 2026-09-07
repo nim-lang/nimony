@@ -334,7 +334,7 @@ proc tryLoadSym*(s: SymId): LoadResult =
     result = LoadResult(status: LacksNothing, decl: cursorAt(prog.mem[s].buffer, 0))
   else:
     let nifName = pool.syms[s]
-    let modname = extractModule(nifName)
+    let modname = pool.symModule(s)
     if modname == "":
       result = LoadResult(status: LacksModuleName)
     else:
@@ -586,4 +586,4 @@ proc skipParRi*(n: var Cursor) {.nifBalanced.} =
     bug "expected ')', but got: ", n
 
 template isLocalDecl*(s: SymId): bool =
-  extractModule(pool.syms[s]) == ""
+  pool.symIsLocal(s)

@@ -259,7 +259,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   # For types from the current module, use typeHooks (hooks haven't been embedded
   # in type pragmas yet - that happens in injectDerefs at the end).
   # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
-  let moduleSuffix = extractModule(pool.syms[symId])
+  let moduleSuffix = pool.symModule(symId)
   let hooks = if moduleSuffix == c.thisModuleSuffix:
       c.typeHooks.getOrDefault(symId)
     else:
@@ -546,7 +546,7 @@ proc resolveCyclicImports(c: var SemContext) =
     let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
     for symId in prog.mem.symIds:
       let symName = pool.syms[symId]
-      let modSuffix = extractModule(symName)
+      let modSuffix = pool.symModule(symId)
       if modSuffix == targetSuffix:
         var baseName = symName
         extractBasename(baseName)

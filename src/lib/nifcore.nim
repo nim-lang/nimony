@@ -426,9 +426,19 @@ type
     module*: StrId  ## `StrId(0)` for a local symbol
 
 proc sym*(p: Pool; id: SymId): NifSymbol =
-  ## The symbol `id`, taken apart.
+  ## The symbol `id`, taken apart. For code that wants SEVERAL of the parts:
+  ## while the pool still stores strings this interns each of them, so a site
+  ## asking ONE question should ask it directly (`symModule`, `symIsLocal`).
+  ## After the flip this is a field read and the distinction stops mattering.
   let s = p.syms[id]
   let sl = sliceSymbol(s)
+  # `disamb: int32` cannot hold what the inliners mint (`p.0h107`,
+  # `returnLabel.0i3`) or what arkham reserves (`_exit.sys.…`): reconstructing
+  # such a symbol from this record would produce `p.0` and alias two different
+  # symbols. Until #2457 settles how the disambiguator is modelled, say so
+  # loudly rather than let the flip turn it into a miscompile.
+  assert sl.disambIsNumeric,
+    "symbol with a non-numeric disambiguator does not fit NifSymbol yet: " & s
   result = NifSymbol(name: p.strings.getOrIncl(substr(s, 0, sl.nameLen-1)),
                      disamb: int32(sl.disamb),
                      dedup: StrId(0), module: StrId(0))
@@ -438,6 +448,28 @@ proc sym*(p: Pool; id: SymId): NifSymbol =
   if sl.moduleLen > 0:
     result.module = p.strings.getOrIncl(substr(s, sl.moduleStart,
                                                sl.moduleStart+sl.moduleLen-1))
+
+proc symModule*(p: Pool; id: SymId): string =
+  ## The module suffix of `id`, `""` when it is local. For the places that need
+  ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while
+  ## `sym(p, id).module` is what a COMPARISON should use.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  result = substr(s, sl.moduleStart, sl.moduleStart+sl.moduleLen-1)
+
+proc symIsLocal*(p: Pool; id: SymId): bool =
+  ## Whether `id` has no module suffix. Asks the grammar, not the dot count.
+  sliceSymbol(p.syms[id]).moduleLen == 0
+
+proc symModuleIs*(p: Pool; id: SymId; suffix: string): bool =
+  ## Whether `id` comes from the module `suffix`. Builds nothing, so this is
+  ## the one to ask on a hot path that has a suffix string in hand.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  if sl.moduleLen != suffix.len: return false
+  for j in 0 ..< sl.moduleLen:
+    if s[sl.moduleStart+j] != suffix[j]: return false
+  result = true
 
 proc isLocal*(s: NifSymbol): bool {.inline.} = s.module == StrId(0)
   ## A local symbol is one with no module suffix -- and that is a question

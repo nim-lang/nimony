@@ -382,7 +382,7 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   ## ForeignModule`, so subsequent table growth can't move the
   ## TokenBuf out from under us. Returns false when we don't have a
   ## body for `calleeSym` (extern decl, missing `.x.nif`, etc.).
-  let modul = extractModule(pool.syms[calleeSym])
+  let modul = pool.symModule(calleeSym)
   if modul == c.moduleSuffix:
     if calleeSym in c.bodies:
       outCur = cursorAt(c.src[], c.bodies.getOrQuit(calleeSym))
@@ -453,7 +453,7 @@ proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
   ## The callee's `(inline THRESHOLD w…)` annotation, or `DefaultInlineInfo`
   ## (threshold 100 — never inline) when it has none, is in another module we
   ## cannot find, or is an extern with no body at all.
-  let modul = extractModule(pool.syms[calleeSym])
+  let modul = pool.symModule(calleeSym)
   if modul == c.moduleSuffix:
     return c.ownInfo.getOrDefault(calleeSym, DefaultInlineInfo)
   if not loadForeign(c, modul): return DefaultInlineInfo

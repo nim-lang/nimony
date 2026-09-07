@@ -22,6 +22,16 @@ type
     ## component the symbol does not have has a length of 0.
     nameLen*: int
     disamb*: int
+      ## The leading digits of the disambiguator. Meaningless unless
+      ## `disambIsNumeric` -- see it.
+    disambStart*, disambLen*: int
+    disambIsNumeric*: bool
+      ## Whether the disambiguator is a plain number. It is NOT always: the
+      ## inliners mint `returnLabel.0h3` / `p.0i7` / `x.0d2` (a per-pass letter
+      ## keeps hexer-, intra- and dce2-minted names from colliding), and arkham
+      ## reserves `.sys.` / `.c.` for its syprocs and extprocs. `disamb` alone
+      ## does not identify such a symbol -- `p.0h107` and `p.0h2` both read as
+      ## 0 -- so anything that RECONSTRUCTS a symbol must use the text.
     dedupStart*, dedupLen*: int
     moduleStart*, moduleLen*: int
     wellFormed*: bool
@@ -33,49 +43,71 @@ type
 proc sliceSymbol*(s: string): SymbolSlices =
   ## Take a symbol apart without copying anything out of it.
   ##
-  ## The name ends at the LAST `.` that is followed by a digit -- a name may
-  ## well contain dots itself (`a.b.c.23`), only the disambiguator's dot ends
-  ## it. What follows is split at dots: the first component is the
-  ## disambiguator, the last (if there is another) is the module, and anything
-  ## between them is the deduplication key of a generic instantiation. This is
-  ## the same rule `nifreader`'s split-symbol mode applies to the raw bytes.
+  ## The module is the LAST dot-separated component -- unless it STARTS with a
+  ## digit, which makes it the disambiguator and the symbol local. That question
+  ## needs no anchor, which is what makes it answerable for the symbols arkham
+  ## mints with a reserved non-numeric disambiguator (`_exit.sys.sysvq0asl`,
+  ## `write.c.sysvq0asl`).
+  ##
+  ## "Starts with a digit" rather than "is a number" is deliberate and is what
+  ## every scanner here has always done: `p.0h107` is a LOCAL symbol whose
+  ## disambiguator the inliner minted, not a symbol from a module called
+  ## `0h107`. The flip side is that a module whose suffix begins with a digit
+  ## cannot be told apart from a disambiguator -- a hazard that predates this
+  ## and that only the file naming avoids.
+  ##
+  ## The name/disambiguator boundary DOES need the anchor -- the last `.`
+  ## followed by a digit -- because a name may contain dots itself
+  ## (`Pool.Obj.0`, `a.b.c.23`) and only the digit tells the two apart. A symbol
+  ## with a reserved disambiguator therefore reports `wellFormed = false`, with
+  ## everything but the module counted as the name, which is what
+  ## `splitSymName` has always answered for it.
   result = SymbolSlices(nameLen: s.len, disamb: 0,
+                        disambStart: 0, disambLen: 0, disambIsNumeric: false,
                         dedupStart: 0, dedupLen: 0,
                         moduleStart: 0, moduleLen: 0, wellFormed: false)
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.' and s[i+1] in Digits: break
-    dec i
-  if i <= 0: return
-
-  result.wellFormed = true
-  result.nameLen = i
-  let restStart = i+1
-  var j = restStart
-  while j < s.len and s[j] in Digits:
-    result.disamb = result.disamb * 10 + (ord(s[j]) - ord('0'))
-    inc j
-
-  var firstDot = -1
-  var k = restStart
-  while k < s.len:
-    if s[k] == '.':
-      firstDot = k
-      break
-    inc k
-  if firstDot < 0: return # a local symbol: no module, no dedup key
-
-  var lastDot = firstDot
-  k = firstDot+1
+  var lastDot = -1
+  var k = 0
   while k < s.len:
     if s[k] == '.': lastDot = k
     inc k
-  if lastDot != firstDot:
-    result.dedupStart = firstDot+1
-    result.dedupLen = lastDot - (firstDot+1)
-  result.moduleStart = lastDot+1
-  result.moduleLen = s.len - (lastDot+1)
 
+  var head = s.len ## everything that is not the module suffix
+  if lastDot >= 0 and lastDot+1 < s.len and s[lastDot+1] notin Digits:
+    result.moduleStart = lastDot+1
+    result.moduleLen = s.len - (lastDot+1)
+    head = lastDot
+  elif lastDot == s.len-1:
+    # a trailing dot is the "my own module" shorthand, which the reader expands
+    # before anyone sees it; there is no module suffix spelled here.
+    head = lastDot
+  result.nameLen = head
+
+  var i = head - 2
+  while i > 0:
+    if s[i] == '.' and s[i+1] in Digits: break
+    dec i
+  if i <= 0: return # not a symbol, or a reserved disambiguator (`_exit.sys.…`)
+
+  result.wellFormed = true
+  result.nameLen = i
+  result.disambStart = i+1
+  var d = i+1
+  while d < head and s[d] in Digits:
+    result.disamb = result.disamb * 10 + (ord(s[d]) - ord('0'))
+    inc d
+  if d < head and s[d] == '.':
+    # whatever sits between the disambiguator and the module is the key a
+    # generic instantiation is deduplicated by
+    result.disambLen = d - result.disambStart
+    result.disambIsNumeric = true
+    result.dedupStart = d+1
+    result.dedupLen = head - (d+1)
+  else:
+    # `p.0h107`: the disambiguator runs to the end of the head and is not a
+    # number.
+    result.disambLen = head - result.disambStart
+    result.disambIsNumeric = d == head
 
 proc extractBasename*(s: string; isGlobal: var bool): string =
   # From "abc.12.Mod132a3bc" extract "abc".
@@ -99,21 +131,21 @@ proc extractBasename*(s: var string) =
         return
     dec i
 
+proc extractModule*(s: string): string =
+  ## The module suffix of the symbol `s`, `""` when it is local -- the
+  ## string-level answer, for a caller that has no `Pool` to ask (nifasm reads
+  ## NIF symbols with no compiler around it). Code that HAS a pool asks
+  ## `nifcore.symModule` / `sym(p, id).module` instead, so that after #2457 it
+  ## reads a field rather than re-deriving one.
+  ##
+  ## Answered by `sliceSymbol`, byte-for-byte as the hand-rolled scanner this
+  ## replaced -- including for arkham's `_exit.sys.sysvq0asl`, whose reserved
+  ## non-numeric disambiguator is exactly what nifasm asks about.
+  let sl = sliceSymbol(s)
+  result = substr(s, sl.moduleStart, sl.moduleStart+sl.moduleLen-1)
+
 proc genericTypeName*(key, modname: string): string =
   result = "`t.0.I" & key & "." & modname
-
-proc extractModule*(s: string): string =
-  # From "abc.12.Mod132a3bc" extract "Mod132a3bc".
-  # From "abc.12" extract "".
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}:
-        return ""
-      else:
-        return substr(s, i+1)
-    dec i
-  return ""
 
 type
   SplittedSymName* = object
@@ -299,9 +331,9 @@ when isMainModule:
     let sl = sliceSymbol(s)
     var isGlobal = false
     let base = extractBasename(s, isGlobal)
+    assert extractModule(s) == splitSymName(s).module, s
     if sl.wellFormed:
       assert substr(s, 0, sl.nameLen-1) == base, s
-      assert substr(s, sl.moduleStart, sl.moduleStart+sl.moduleLen-1) == extractModule(s), s
       # `isLocalName` counts dots instead of parsing, so it only agrees for a
       # name without dots -- for `Pool.Obj.0` or `..<.3` it says "not local"
       # about a symbol that has no module at all. Real symbols have such names
@@ -314,15 +346,46 @@ when isMainModule:
       assert substr(s, 0, sl.nameLen) & $sl.disamb == extractVersionedBasename(s), s
     else:
       assert base == "", s
-      # `extractModule` does answer for such an atom -- it says "bar" for
-      # `foo.bar` -- because it looks for a trailing dotted segment without
-      # first establishing that there is a disambiguator. There is no symbol
-      # here to have a module, so `sliceSymbol` says so instead.
 
   for s in ["abc.12.Mod132a3bc", "abc.12", "a.b.c.23", "abc.12.Iabcdefghi.mod2",
             "tmp.14", "outer`env.0.mymod", "gen.12.Iaaaa`coro.0.mymod",
-            "[]=", "foo.bar", "x.0"]:
+            "[]=", "foo.bar", "x.0", "_exit.sys.sysvq0asl", "write.c.sysvq0asl"]:
     agrees s
+
+  assert extractModule("abc.12.Mod132a3bc") == "Mod132a3bc"
+  assert extractModule("abc.12.Iabcdefghi.mod2") == "mod2"
+  assert extractModule("abc.12") == ""
+  assert extractModule("a.b.c.23") == ""
+  # arkham mints these with a RESERVED non-numeric disambiguator; the module is
+  # still the last component, and nifasm resolves the symbol by it.
+  assert extractModule("_exit.sys.sysvq0asl") == "sysvq0asl"
+  assert extractModule("write.c.sysvq0asl") == "sysvq0asl"
+  # `foo.bar` is not a symbol at all; the last component answers anyway, as it
+  # always has.
+  assert extractModule("foo.bar") == "bar"
+  # ...and a disambiguator the inliner minted is NOT a module, however
+  # non-numeric it looks after its first character.
+  assert extractModule("p.0h107") == ""
+  assert extractModule("returnLabel.0h3") == ""
+  assert extractModule("returnLabel.0h3.mymod") == "mymod"
+
+  let minted = sliceSymbol("p.0h107")
+  assert minted.wellFormed and minted.nameLen == 1
+  assert not minted.disambIsNumeric
+  assert substr("p.0h107", minted.disambStart, minted.disambStart+minted.disambLen-1) == "0h107"
+  let plain = sliceSymbol("abc.12.Ikey.mod")
+  assert plain.disambIsNumeric and plain.disamb == 12
+  assert substr("abc.12.Ikey.mod", plain.disambStart, plain.disambStart+plain.disambLen-1) == "12"
+
+  # A reserved disambiguator has no numeric anchor, so name and disambiguator
+  # are not meaningful -- everything but the module is the name, which is what
+  # `splitSymName` has always answered here (arkham/programs.nim relies on it).
+  let sysSym = sliceSymbol("_exit.sys.sysvq0asl")
+  assert not sysSym.wellFormed
+  assert substr("_exit.sys.sysvq0asl", 0, sysSym.nameLen-1) ==
+         splitSymName("_exit.sys.sysvq0asl").name
+  assert extractModule("_exit.sys.sysvq0asl") ==
+         splitSymName("_exit.sys.sysvq0asl").module
 
   let ls = sliceSymbol("abc.12.Ikey.mod")
   assert ls.nameLen == 3

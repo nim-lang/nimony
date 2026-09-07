@@ -95,7 +95,7 @@ proc symHref(ctx: RenderCtx; sym: SymId): string =
   ## *current* page to the target page under the shared outdir, so the link
   ## works without any web-server config.
   let s = pool.syms[sym]
-  let m = extractModule(s)
+  let m = pool.symModule(sym)
   let anchor = urlEscape(s)
   if m.len == 0 or m == ctx.currentModule:
     return "#" & anchor
@@ -439,7 +439,7 @@ proc buildNameLookup(ctx: var RenderCtx) =
   for i in 1 ..< pool.syms.len:
     let sid = SymId(i)
     let full = pool.syms[sid]
-    let modid = extractModule(full)
+    let modid = pool.symModule(sid)
     if modid.len > 0 and modid != ctx.currentModule and modid notin ctx.importMap:
       continue
     var base = full

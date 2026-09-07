@@ -1073,7 +1073,7 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
           let visMod =
             if tokenModule.len > 0: tokenModule
             else: visibilityModule(c, info)
-          let ownerModule = extractModule(pool.syms[owner])
+          let ownerModule = pool.symModule(owner)
           visible = ownerModule == "" or ownerModule == visMod
       if not visible:
         # treat as undeclared

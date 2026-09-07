@@ -139,7 +139,7 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
     buf.addParRi()
     return
   let symStr = pool.syms[sym]
-  let owner = extractModule(symStr)
+  let owner = pool.symModule(sym)
   if owner.len > 0 and owner != thisMod:
     let res = tryLoadSym(sym)
     if res.status == LacksNothing and res.decl.symKind == TypeY:
@@ -714,7 +714,7 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
         # would miscompile (e.g. an instantiated `@` with empty body
         # returns garbage and the loop iterates billions of times).
         continue
-      let owner = extractModule(symStr)
+      let owner = pool.symModule(sym)
       if owner == c.thisModuleSuffix:
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:

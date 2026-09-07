@@ -162,22 +162,11 @@ proc scopeBump(m: Match): int =
   ## successful match are inspected.
   if m.fn.fromConcept: return -1
   if m.context == nil or m.fn.sym == SymId(0): return 0
-  let s = pool.syms[m.fn.sym]
-  # Locate the dot that introduces the module suffix without allocating
-  # a substring. Mirrors `extractModule` in lib/symparser.nim: a trailing
-  # numeric segment means no module suffix at all (treated as local).
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}: return 0
-      let suf = m.context.thisModuleSuffix
-      let mLen = s.len - i - 1
-      if mLen != suf.len: return 1
-      for j in 0 ..< mLen:
-        if s[i+1+j] != suf[j]: return 1
-      return 0
-    dec i
-  return 0
+  # A local symbol has no module to be from, so it costs nothing. Neither
+  # question builds a string.
+  if pool.symIsLocal(m.fn.sym): return 0
+  if pool.symModuleIs(m.fn.sym, m.context.thisModuleSuffix): return 0
+  return 1
 
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   m.err = true

@@ -90,8 +90,7 @@ proc indexFromNif*(infile: string) =
             while n.hasMore:
               assert n.isSymbol
               let sym = n.symId
-              let name = pool.syms[sym]
-              let suffix = extractModule(name)
+              let suffix = pool.symModule(sym)
               assert suffix != ""
               exports.mgetOrPut(suffix, default(HashSet[SymId])).incl sym
               inc n, AnyExpr

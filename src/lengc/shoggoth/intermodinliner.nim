@@ -113,7 +113,8 @@ proc runInterModuleInliner*(buf: var TokenBuf; suffix: string;
   ## `trySpliceVarInit` at every statement-position call and bound-form
   ## `(var :t … (call …))`. The cross-module body fetch is automatic once
   ## `xnifDir` is set — `lookupBody` resolves the callee's module via the
-  ## symbol name (`extractModule`) and lazy-loads the foreign `.c.nif`.
+  ## symbol's module suffix (`pool.symModule`) and lazy-loads the foreign
+  ## `.c.nif`.
   ##
   ## The size-driven policy (`computeInlineInfo`) bounds what gets spliced:
   ## the bodies measured here are the post-flattening `.c.nif` bodies, i.e.

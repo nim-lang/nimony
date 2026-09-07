@@ -589,7 +589,7 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     if origin.isSymbol:
       let originRes = tryLoadSym(origin.symId)
       if originRes.status == LacksNothing:
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[origin.symId]),
+        c.visOwner.add VisOwner(module: pool.symModule(origin.symId),
                                 file: originRes.decl.info.file.uint32)
     takeTree dest, n
   else:
@@ -1093,7 +1093,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         # e.g. a type's `=destroy` hook semchecked lazily while a generic from
         # another module is being instantiated would otherwise be judged
         # against that generic's module and lose access to its own fields.
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[symId]),
+        c.visOwner.add VisOwner(module: pool.symModule(symId),
                                 file: info.file.uint32)
       if c.routine.inGeneric > 0 and c.routine.parent.kind != NoSym and c.routine.parent.inGeneric == 0:
         c.genericInnerProcs.incl(symId)

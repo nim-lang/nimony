@@ -54,7 +54,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
 
   while worklist.len > 0:
     let sym = translate(resolved, worklist.pop())
-    let moduleName = extractModule(pool.syms[sym])
+    let moduleName = pool.symModule(sym)
     assert moduleName.len > 0, "moduleName is empty for " & pool.syms[sym]
 
     # Check if symbol is already live in its owning module
@@ -65,7 +65,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
         if sym in graph.uses:
           for dep in graph.uses.getOrQuit(sym):
             let s = translate(resolved, dep)
-            let sowner = extractModule(pool.syms[s])
+            let sowner = pool.symModule(s)
             # Check if dependency is already live in its owning module
             if sowner.len > 0:
               assert sowner in result, "sowner is not in result for " & pool.syms[s]
