@@ -37,7 +37,7 @@ proc main =
   c.endRead()
 
   var syms = createTokenBuf()
-  let sym = syms.pool.syms.getOrIncl("already.interned")
+  let sym = syms.pool.symId("already.interned")
   syms.addSymUse(sym)
   var symCursor = syms.beginRead()
   assert symCursor.symId == sym

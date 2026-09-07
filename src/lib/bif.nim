@@ -155,7 +155,7 @@ proc findDeclaration*(module: var BifModule; name: string): Cursor =
   ## Returns the indexed declaration for ``name``, or a nil cursor when absent.
   result = default(Cursor)
   for entry in module.index:
-    if poolSym(module.buf.pool, entry.sym) == name:
+    if symString(module.buf.pool, entry.sym) == name:
       return module.buf.cursorAt(entry.pos)
 
 iterator declarations*(module: var BifModule):
@@ -164,7 +164,7 @@ iterator declarations*(module: var BifModule):
   # installs the buffer's cursor owner (a refcount write).
   ## Iterates all indexed global declarations in storage order.
   for entry in module.index:
-    yield (poolSym(module.buf.pool, entry.sym), entry.vis,
+    yield (symString(module.buf.pool, entry.sym), entry.vis,
       module.buf.cursorAt(entry.pos))
 
 proc isGlobalSymbol(s, dottedSuffix: string): bool =
@@ -496,7 +496,8 @@ proc loadFromFile*(f: File): BifModule =
   # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(readStr(f))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(readStr(f))
-  for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(readStr(f))
+  for _ in 1 .. nSyms:
+    discard result.buf.pool.syms.addOrdered(symRecord(result.buf.pool, readStr(f)))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(readStr(f))
   # symbol index (we are now positioned exactly at indexOffset).
   result.index = readIndex(f)
@@ -580,7 +581,8 @@ proc load*(filename: string): BifModule =
   # an explicit `ensureIndexed`, for `getKeyId`) builds it if one ever comes.
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(rStr(r))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(rStr(r))
-  for _ in 1 .. nSyms:    discard result.buf.pool.syms.addOrdered(rStr(r))
+  for _ in 1 .. nSyms:
+    discard result.buf.pool.syms.addOrdered(symRecord(result.buf.pool, rStr(r)))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(rStr(r))
   # symbol index (we are now positioned exactly at indexOffset).
   let nIndex = int rVarint(r)

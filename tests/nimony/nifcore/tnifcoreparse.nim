@@ -66,7 +66,7 @@ proc main =
   assert toString(hinted, includeLineInfo = false) == "(stmts)"
 
   var symbols = createTokenBuf()
-  let fresh = symbols.pool.syms.getOrIncl("tmp.14")
+  let fresh = symbols.pool.symId("tmp.14")
   symbols.addSymDef(fresh)
   assert toString(symbols, includeLineInfo = false) == ":tmp.14"
   var rendered = nifbuilder.open(32)

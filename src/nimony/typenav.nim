@@ -18,6 +18,11 @@ import ".." / finalir / finalir_model
 import nimony_model, builtintypes, decls, programs, typeprops
 
 const
+  # `.00`, not `.0`: a disambiguator is a NUMBER and a number has no leading
+  # zero, so `r.00` is a name no user symbol can collide with -- which is the
+  # point, since these three are injected into types the user also writes
+  # fields into. The pool keeps such a name whole rather than reading `00` as a
+  # disambiguator (#2457), so it stays distinct from `r.0`.
   RcField* = "r.00"
   DataField* = "d.00"
   VTableField* = "vt.00"

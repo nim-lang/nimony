@@ -116,6 +116,14 @@ proc sliceSymbol*(s: string): SymbolSlices =
     # number.
     result.disambLen = head - result.disambStart
     result.disambIsNumeric = d == head
+  # A NUMBER has no leading zero: `d.00` and `d.0` are two different symbols,
+  # and one that spells its disambiguator `00` cannot be rebuilt from an `int`
+  # (#2457). Nothing mints such a name any more; stale artifacts still carry
+  # them, and they have to come back out unchanged rather than collapse onto
+  # their canonical twin.
+  if result.disambIsNumeric and result.disambLen > 1 and
+      s[result.disambStart] == '0':
+    result.disambIsNumeric = false
 
 proc extractBasename*(s: string; isGlobal: var bool): string =
   ## The identifier of the symbol `s`: `abc.12.Mod132a3bc` and `abc.12` both
@@ -361,6 +369,12 @@ when isMainModule:
   assert huge.wellFormed and huge.disamb == high(int)
   assert substr("tmp.99999999999999999999999", huge.disambStart,
                 huge.disambStart+huge.disambLen-1) == "99999999999999999999999"
+
+  # A leading zero is not how a number is spelled, so `d.00` keeps its
+  # disambiguator inside the name and stays distinct from `d.0`.
+  assert not sliceSymbol("d.00").disambIsNumeric
+  assert sliceSymbol("d.0").disambIsNumeric
+  assert sliceSymbol("d.10").disambIsNumeric
 
   let minted = sliceSymbol("p.0h107")
   assert minted.wellFormed and minted.nameLen == 1
