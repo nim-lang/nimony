@@ -17,11 +17,13 @@
 import std / [tables, sets, assertions]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
+import ".." / ".." / "lib" / symparser        # derivedName -- one spelling for a derived name
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import intrinsiceffects                       # is this `(instr …)` a pure value?
 import ".." / typenav                         # getNominalType — the temp's declared type
+import scalarizer                             # bodyTag: the shared body uniquifier
 
 type
   AccessInfo = object
@@ -50,7 +52,11 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
 
 proc freshTempName(c: var Context): string =
   inc c.tempCounter
-  result = "iv.p." & $c.tempCounter & "." & c.moduleSuffix
+  # A pointer induction variable is a LOCAL, so the body uniquifier goes into
+  # the identifier and not after the disambiguator, where it made the module
+  # suffix a middle segment (nimony#2457). The backtick keeps the name out of
+  # the source namespace, like every other minted name here.
+  result = derivedName("`iv.p." & $c.tempCounter, bodyTag(c.moduleSuffix))
 
 # ---- pattern detection ----------------------------------------------------
 
@@ -432,18 +438,18 @@ when isMainModule:
       "(stmts (asgn i.0.M 0) (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (asgn i.0.M 0) (var :iv.p.1.M . . (addr (at arr.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn iv.p.1.M (addr (pat iv.p.1.M 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
+      "(stmts (asgn i.0.M 0) (var :`iv.p`M.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p`M.1)) " &
+      "(asgn `iv.p`M.1 (addr (pat `iv.p`M.1 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
 
   block multiple_accesses_same_array:
     var buf = parse(
       "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) (asgn y.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (var :iv.p.1.M . . (addr (at arr.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn y.0.M (deref iv.p.1.M)) (asgn iv.p.1.M (addr (pat iv.p.1.M 1))) " &
+      "(stmts (var :`iv.p`M.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p`M.1)) " &
+      "(asgn y.0.M (deref `iv.p`M.1)) (asgn `iv.p`M.1 (addr (pat `iv.p`M.1 1))) " &
       "(asgn i.0.M (add (i 32) i.0.M 1)))))")
 
   block multiple_arrays:
@@ -451,11 +457,11 @@ when isMainModule:
       "(stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr1.0.M i.0.M)) (asgn y.0.M (at arr2.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (var :iv.p.1.M . . (addr (at arr1.0.M i.0.M))) " &
-      "(var :iv.p.2.M . . (addr (at arr2.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn y.0.M (deref iv.p.2.M)) (asgn iv.p.1.M (addr (pat iv.p.1.M 1))) " &
-      "(asgn iv.p.2.M (addr (pat iv.p.2.M 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
+      "(stmts (var :`iv.p`M.1 . . (addr (at arr1.0.M i.0.M))) " &
+      "(var :`iv.p`M.2 . . (addr (at arr2.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p`M.1)) " &
+      "(asgn y.0.M (deref `iv.p`M.2)) (asgn `iv.p`M.1 (addr (pat `iv.p`M.1 1))) " &
+      "(asgn `iv.p`M.2 (addr (pat `iv.p`M.2 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))")
 
   block iv_used_outside_at:
     assertUnchanged(
@@ -499,8 +505,8 @@ when isMainModule:
       "(stmts (while c.0.M (stmts (while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (at arr.0.M i.0.M)) (asgn i.0.M (add (i 32) i.0.M 1)))))))")
     runInductionVariables buf
     assertSame(buf,
-      "(stmts (while c.0.M (stmts (var :iv.p.1.M . . (addr (at arr.0.M i.0.M))) " &
-      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref iv.p.1.M)) " &
-      "(asgn iv.p.1.M (addr (pat iv.p.1.M 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))))")
+      "(stmts (while c.0.M (stmts (var :`iv.p`M.1 . . (addr (at arr.0.M i.0.M))) " &
+      "(while (lt (i 32) i.0.M 10) (stmts (asgn x.0.M (deref `iv.p`M.1)) " &
+      "(asgn `iv.p`M.1 (addr (pat `iv.p`M.1 1))) (asgn i.0.M (add (i 32) i.0.M 1)))))))")
 
   echo "induction_variables.nim: all self-tests passed"

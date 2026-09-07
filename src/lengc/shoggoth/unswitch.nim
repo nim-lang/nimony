@@ -47,6 +47,8 @@ import std / [assertions, tables, sets]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import ".." / ".." / "models" / tags         # tag ids for synthesis
+import ".." / ".." / "lib" / symparser       # derivedName -- one spelling for a derived name
+import scalarizer                            # bodyTag: the shared body uniquifier
 import patchsets
 
 const
@@ -311,7 +313,7 @@ proc collectDefs(n: Cursor; c: var Context; rename: var Table[SymId, string]) =
   of SymbolDef:
     if not rename.hasKey(it.symId):
       inc c.counter
-      rename[it.symId] = "`us" & $c.counter & "." & c.suffix
+      rename[it.symId] = derivedName("`us." & $c.counter, bodyTag(c.suffix))
   of TagLit:
     it.loopInto:
       collectDefs(it, c, rename)

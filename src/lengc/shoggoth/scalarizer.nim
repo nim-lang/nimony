@@ -60,6 +60,7 @@
 import std / [tables, sets, hashes, assertions, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore (incl. rootOf, symId)
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
+import ".." / ".." / "lib" / symparser        # derivedName -- one spelling for a derived name
 import ".." / ".." / "models" / tags          # VarTagId for synthesis
 import patchsets
 import ".." / nifmodules                      # MainModule (type context, threaded through)
@@ -185,9 +186,25 @@ type
                                        ## backend re-infer (the pre-existing behaviour, kept
                                        ## for the self-tests, which parse a body in isolation)
 
+proc bodyTag*(suffix: string): string =
+  ## The per-body uniquifier as an identifier TAG rather than a dotted segment.
+  ## The driver's `bodySuffix` is `<module>.<body>`, and pasting that after a
+  ## counter gave `` `sroa.12.<module>.114 ``: a symbol whose module suffix sits
+  ## in the middle, so it reads as the LOCAL `` `sroa.12.<module> `` with
+  ## disambiguator 114 (nimony#2457 -- a symbol is
+  ## `<name>.<disamb>[.<key>].<module>`, and the module is last or absent).
+  ##
+  ## These scalars ARE locals, so the fix is to keep the module out of the
+  ## symbol's structure and put the uniquifier where NIF puts a tag: inside the
+  ## identifier. The dot becomes `_` so the tag stays one segment.
+  result = newStringOfCap(suffix.len)
+  for ch in suffix:
+    if ch == '.': result.add '_'
+    else: result.add ch
+
 proc freshScalarName(c: var Context): string =
   inc c.counter
-  result = "`sroa." & $c.counter & "." & c.suffix
+  result = derivedName("`sroa." & $c.counter, bodyTag(c.suffix))
 
 # ---- candidate collection -------------------------------------------------
 
@@ -577,15 +594,15 @@ when isMainModule:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1) (kv g.0.M 2))) " &
       "(asgn x.0.M (dot o.0.M f.0.M)) (asgn y.0.M (dot o.0.M g.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) (var :`sroa.2.M . . 2) " &
-      "(asgn x.0.M `sroa.1.M) (asgn y.0.M `sroa.2.M))")
+      "(stmts (var :`sroa`M.1 . . 1) (var :`sroa`M.2 . . 2) " &
+      "(asgn x.0.M `sroa`M.1) (asgn y.0.M `sroa`M.2))")
 
   block field_write_then_read:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1))) " &
       "(asgn (dot o.0.M f.0.M) 5) (asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) " &
-      "(asgn `sroa.1.M 5) (asgn x.0.M `sroa.1.M))")
+      "(stmts (var :`sroa`M.1 . . 1) " &
+      "(asgn `sroa`M.1 5) (asgn x.0.M `sroa`M.1))")
 
   block whole_object_use_disqualifies:
     # `o` is passed whole to a call → it must materialize → left alone.
@@ -606,7 +623,7 @@ when isMainModule:
     # `var o = src` (the inliner's by-value param copy). Fields come from `src.f`.
     chk(
       "(stmts (var :o.0.M . T.0.M src.0.M) (asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa.1.M))")
+      "(stmts (var :`sroa`M.1 . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa`M.1))")
 
   block uninitialised_field_access_disqualifies:
     # `o.g` is read but the constructor never set `g` (think: other variant arm).
@@ -621,8 +638,8 @@ when isMainModule:
       "(stmts (var :p.0.M . . (oconstr U.0.M (kv a.0.M 1))) " &
       "(var :o.0.M . . (oconstr T.0.M (kv f.0.M (dot p.0.M a.0.M)))) " &
       "(asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) (var :`sroa.2.M . . `sroa.1.M) " &
-      "(asgn x.0.M `sroa.2.M))")
+      "(stmts (var :`sroa`M.1 . . 1) (var :`sroa`M.2 . . `sroa`M.1) " &
+      "(asgn x.0.M `sroa`M.2))")
 
   block unused_object_keeps_value_side_effects:
     # `o` is never used, but its field value is a call: explode so the call stays
@@ -630,15 +647,15 @@ when isMainModule:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M (call mk.0.M)))) " &
       "(call other.0.M))",
-      "(stmts (var :`sroa.1.M . . (call mk.0.M)) (call other.0.M))")
+      "(stmts (var :`sroa`M.1 . . (call mk.0.M)) (call other.0.M))")
 
   block nested_field_access_through_scalar:
     # `o.inner` is itself an object; `o.inner.x` becomes `(dot `sroa.1 x)`.
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv inner.0.M q.0.M))) " &
       "(asgn r.0.M (dot (dot o.0.M inner.0.M) x.0.M)))",
-      "(stmts (var :`sroa.1.M . . q.0.M) " &
-      "(asgn r.0.M (dot `sroa.1.M x.0.M)))")
+      "(stmts (var :`sroa`M.1 . . q.0.M) " &
+      "(asgn r.0.M (dot `sroa`M.1 x.0.M)))")
 
   # ---- #3: inline constructor projection ----------------------------------
 
@@ -697,7 +714,7 @@ when isMainModule:
     runConstructorProjection buf
     runScalarize buf
     let got = toString(buf)
-    let want = canon("(stmts (var :`sroa.1.M . . 5) (asgn r.0.M `sroa.1.M))")
+    let want = canon("(stmts (var :`sroa`M.1 . . 5) (asgn r.0.M `sroa`M.1))")
     doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
 
   echo "scalarizer.nim: all self-tests passed"
