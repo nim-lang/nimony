@@ -54,8 +54,8 @@ when not defined(nimony):
   proc tr(c: var Context; dest: var TokenBuf; n: var Cursor)
 
 proc computeVTableName(c: var Context; cls: SymId; tag = "vt"): SymId =
-  let clsName = splitSymName pool.syms[cls]
-  result = pool.syms.getOrIncl(derivedName(clsName.name, tag) & "." & clsName.module)
+  result = pool.syms.getOrIncl(
+    derivedName(pool.symWithoutModule(cls), tag) & "." & pool.symModule(cls))
 
 proc getVTableName(c: var Context; cls: SymId): SymId =
   if c.vtableNames.hasKey(cls):

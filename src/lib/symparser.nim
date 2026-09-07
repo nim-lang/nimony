@@ -154,15 +154,18 @@ type
     module*: string
 
 proc splitSymName*(s: string): SplittedSymName =
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}:
-        return SplittedSymName(name: s, module: "")
-      else:
-        return SplittedSymName(name: substr(s, 0, i-1), module: substr(s, i+1))
-    dec i
-  return SplittedSymName(name: s, module: "")
+  ## The symbol split into everything-but-the-module and the module suffix:
+  ## `abc.12.Ikey.mod` gives `("abc.12.Ikey", "mod")`, and a local symbol gives
+  ## itself with an empty module. The string-level answer, for a caller with no
+  ## `Pool` to ask (arkham resolves foreign symbols by it); code that HAS a pool
+  ## asks `nifcore.symWithoutModule` / `symModule`.
+  let sl = sliceSymbol(s)
+  if sl.moduleLen == 0:
+    result = SplittedSymName(name: s, module: "")
+  else:
+    result = SplittedSymName(name: substr(s, 0, sl.moduleStart-2),
+                             module: substr(s, sl.moduleStart,
+                                            sl.moduleStart+sl.moduleLen-1))
 
 proc `$`*(s: SplittedSymName): string =
   if s.module.len > 0:

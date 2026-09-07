@@ -245,13 +245,14 @@ proc coroHelperName*(routineSym: SymId; tag, fallbackSuffix: string): SymId =
   ## to link up. `fallbackSuffix` covers a bare symbol (no module segment),
   ## which is what a symbol this pass minted itself looks like.
   ##
-  ## `splitSymName(...).name` — not `extractVersionedBasename` — because it
+  ## `symWithoutModule` — not `extractVersionedBasename` — because it
   ## preserves an intermediate `I<hash>` segment: two instantiations of one
   ## generic (`gen.12.Iaaaa.mod`, `gen.12.Ibbbb.mod`) would otherwise share
   ## the stem `gen.12` and collide on every helper name.
-  let split = splitSymName(pool.syms[routineSym])
-  let module = if split.module.len > 0: split.module else: fallbackSuffix
-  result = pool.syms.getOrIncl(derivedName(split.name, tag) & "." & module)
+  let owning = pool.symModule(routineSym)
+  let module = if owning.len > 0: owning else: fallbackSuffix
+  result = pool.syms.getOrIncl(
+    derivedName(pool.symWithoutModule(routineSym), tag) & "." & module)
 
 proc coroTypeForProc*(c: Context; procId: SymId): SymId =
   coroHelperName(procId, "coro", c.thisModuleSuffix)
