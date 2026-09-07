@@ -33,7 +33,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
           let symName = pool.syms[n.symId]
           if isInstantiation(symName):
             a.offers.incl(n.symId)
-          if not isLocalName(symName):
+          if not pool.symIsLocal(n.symId):
             newOwner = n.symId
         while n.hasMore:
           tr n, a, newOwner
@@ -63,7 +63,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
           while n.hasMore:
             tr n, a, owner
   of Symbol:
-    if not isLocalName(pool.syms[n.symId]):
+    if not pool.symIsLocal(n.symId):
       if owner == SymId(0):
         a.roots.incl(n.symId)
       else:

@@ -244,12 +244,6 @@ proc isInstantiation*(s: string): bool =
     dec i
   result = false
 
-proc isLocalName*(s: string): bool =
-  var dots = 0
-  for c in s:
-    if c == '.': inc dots
-  result = dots <= 1
-
 proc splitLocalSymName*(s: string; basename: var string;
                         disamb: var int): bool =
   ## Splits a local symbol such as `tmp.14` into `tmp` and `14`.
@@ -321,11 +315,6 @@ proc `$`*(s: SplittedModulePath): string =
 when isMainModule:
   import std/[assertions]
 
-  proc hasDot(s: string): bool =
-    result = false
-    for c in s:
-      if c == '.': return true
-
   # `sliceSymbol` answers every question the scanners below answer, and must
   # answer them the same way -- that is what lets the scanners go away.
   proc agrees(s: string) =
@@ -335,13 +324,6 @@ when isMainModule:
     assert extractModule(s) == splitSymName(s).module, s
     if sl.wellFormed:
       assert substr(s, 0, sl.nameLen-1) == base, s
-      # `isLocalName` counts dots instead of parsing, so it only agrees for a
-      # name without dots -- for `Pool.Obj.0` or `..<.3` it says "not local"
-      # about a symbol that has no module at all. Real symbols have such names
-      # (`dollar`.CaseMode`, `Pool.Obj`, `..<`), so this is a divergence to
-      # settle at the call sites, not to paper over here.
-      if not hasDot(substr(s, 0, sl.nameLen-1)):
-        assert (sl.moduleLen == 0) == isLocalName(s), s
       assert isInstantiation(s) ==
         (sl.dedupLen > 0 and s[sl.dedupStart] == 'I'), s
       assert substr(s, 0, sl.nameLen) & $sl.disamb == extractVersionedBasename(s), s
@@ -369,6 +351,16 @@ when isMainModule:
   assert extractModule("p.0h107") == ""
   assert extractModule("returnLabel.0h3") == ""
   assert extractModule("returnLabel.0h3.mymod") == "mymod"
+
+  # A local symbol is one with no MODULE, which is not the same question as
+  # "few enough dots": the `isLocalName` this replaced counted dots and so
+  # called these three non-local although none of them has a module. Real
+  # symbols have names with dots in them (`dollar`.CaseMode`, `Pool.Obj`,
+  # `..<`), and an anonymous object type of a local is minted as one.
+  assert sliceSymbol("Pool.Obj.0").moduleLen == 0
+  assert sliceSymbol("a.b.c.23").moduleLen == 0
+  assert sliceSymbol("..<.3").moduleLen == 0
+  assert sliceSymbol("Pool.Obj.0.mymod").moduleLen == 5
 
   let minted = sliceSymbol("p.0h107")
   assert minted.wellFormed and minted.nameLen == 1

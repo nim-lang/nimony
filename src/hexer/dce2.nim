@@ -104,7 +104,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       n.into:
         if n.isSymbolDef:
           let def = n.symId
-          if isLocalName(pool.syms[def]):
+          if pool.symIsLocal(def):
             dest.addParLe(headTag, headInfo)
             dest.addSymDef def.toLengName, n.info
             inc n # skip symbol def

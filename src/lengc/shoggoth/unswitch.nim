@@ -46,7 +46,6 @@
 import std / [assertions, tables, sets]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
-import ".." / ".." / "lib" / symparser       # isLocalName
 import ".." / ".." / "models" / tags         # tag ids for synthesis
 import patchsets
 
@@ -69,8 +68,8 @@ proc child0(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
 
-proc symNameOf(c: Context; s: SymId): string {.inline.} =
-  c.orig[].pool.syms[s]
+proc isLocalSym(c: Context; s: SymId): bool {.inline.} =
+  c.orig[].pool.symIsLocal(s)
 
 # ── structural equality ──────────────────────────────────────────────────────
 
@@ -250,7 +249,7 @@ proc invariantConds(c: var Context; n: Cursor;
             var ok = true
             for s in syms:
               if s in assigned: ok = false
-              elif (s in c.procAddrTaken or not isLocalName(symNameOf(c, s))) and
+              elif (s in c.procAddrTaken or not isLocalSym(c, s)) and
                    opaque: ok = false
             if ok:
               conds.add cursorToPosition(c.orig[], cond)

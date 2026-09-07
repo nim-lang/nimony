@@ -398,10 +398,10 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   result = true
 
 proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
-  ## Mint a fresh local sym for an inlined body's local. Local names must
-  ## have ≤ 1 dot (per `isLocalName`) so dce2's per-module rewrite emits
-  ## them unconditionally instead of consulting the global live set —
-  ## these syms were minted post-`markLive` and aren't tracked there.
+  ## Mint a fresh local sym for an inlined body's local. The name must carry
+  ## NO module suffix, so dce2's per-module rewrite emits it unconditionally
+  ## instead of consulting the global live set — these syms were minted
+  ## post-`markLive` and aren't tracked there.
   ## The pass letter goes INTO the identifier (`` result`i.5 ``), which is what
   ## keeps it out of the DISAMBIGUATOR, where a NIF symbol is specified to carry
   ## a number and nothing else (#2457). The backtick makes the result
@@ -711,7 +711,7 @@ proc writeTargetIsLocalSlot(dst: Cursor): bool =
   ## no deref/index-through-pointer step (`slotRootOf` answers 0 for those), and
   ## a *local* name, since assigning a global is visible to the caller.
   let s = slotRootOf(dst)
-  result = s != SymId(0) and isLocalName(pool.syms[s])
+  result = s != SymId(0) and pool.symIsLocal(s)
 
 proc scanParamUsage(c: Cursor; params: HashSet[SymId];
                     assigned, addrTaken: var HashSet[SymId];
@@ -790,7 +790,7 @@ proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
   scanRets(b, resultSym, found, ok)
   if not (found and ok) or resultSym == SymId(0): return SymId(0)
   if resultSym in pSyms: return SymId(0)          # a param: bound to its arg
-  if not isLocalName(pool.syms[resultSym]): return SymId(0)
+  if not pool.symIsLocal(resultSym): return SymId(0)
   result = resultSym
 
 proc countSymUses(n: Cursor; sym: SymId): int =
@@ -864,7 +864,7 @@ proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
   skip a
   if a.hasMore: return SymId(0)
   if src == resultSym or src in pSyms: return SymId(0)
-  if not isLocalName(pool.syms[src]): return SymId(0)
+  if not pool.symIsLocal(src): return SymId(0)
   # `resultSym` must be mentioned nowhere but those two statements.
   if countSymUses(body, resultSym) != 2: return SymId(0)
   result = src
@@ -1219,7 +1219,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       # is excluded because the body may assign a global directly (that write
       # targets a named slot, so it does not set `opaqueEffects`) — a local
       # cannot be written by any means the scan admits.
-      if not opaqueEffects and arg.isSymbol and isLocalName(pool.syms[arg.symId]):
+      if not opaqueEffects and arg.isSymbol and pool.symIsLocal(arg.symId):
         result.subst[pSyms[i]] = arg
       continue                               # else: address observed → copy
     # A read-only param (value-stable per `scanParamUsage`) may be replaced by
@@ -1230,7 +1230,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
     if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
-       (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
+       (arg.isSymbol and pool.symIsLocal(arg.symId)):
       result.subst[pSyms[i]] = arg
     elif callerReadOnly and isPurePathArg(arg) and
          uses.getOrDefault(pSyms[i]) <= MaxPathSubstUses:
@@ -1387,7 +1387,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   let tmpSym = probe.symId
   # Local syms only — global vars with call initializers are out of
   # scope for this splice (their lifetime / module placement differs).
-  if not isLocalName(pool.syms[tmpSym]): return 0
+  if not pool.symIsLocal(tmpSym): return 0
   inc probe                                # past name
   let pragmasCursor = probe
   skip probe                               # past pragmas slot
@@ -1626,7 +1626,7 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   inc probe                                # past `var` tag
   if not probe.isSymbolDef: return 0
   let tmpSym = probe.symId
-  if not isLocalName(pool.syms[tmpSym]): return 0
+  if not pool.symIsLocal(tmpSym): return 0
   inc probe                                # past name
   skip probe                               # past pragmas
   skip probe                               # past type
