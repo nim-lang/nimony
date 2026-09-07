@@ -70,6 +70,7 @@ type
     pending: StringView
     pendingLeft, pendingTotal: int32
     pendingFlags: set[TokenFlag]
+    pendingHasDisamb, pendingHasModule: bool
 
 proc `$`*(t: ExpandedToken): string =
   case t.tk
@@ -432,9 +433,11 @@ proc splitSymbols*(r: var Reader; enable = true) {.inline.} =
   ## me" kind; a symbol component is exactly that, so no new token kind is
   ## needed and every existing `case` over `NifKind` still compiles.
   ##
-  ## An atom that does not have the shape of a symbol (no `.<digit>` in it,
-  ## which the reader still classifies as a `Symbol` if it contains a dot at
-  ## all) is left whole: `suffixes` is 0 and the token is what it always was.
+  ## An atom with no dot to split on at all -- an operator definition such as
+  ## `[]=` -- is left whole: `suffixes` is 0 and the token is what it always
+  ## was. A symbol whose disambiguator is not a number (arkham's legacy
+  ## `_exit.sys.mod`) still yields its module; only the name/disambiguator
+  ## boundary needs the digit, so everything but the module is the name.
   r.splitSyms = enable
 
 proc symbolsAreSplit*(r: Reader): bool {.inline.} = r.splitSyms
@@ -451,22 +454,58 @@ proc splitSymbol(r: var Reader; result: var ExpandedToken) =
   ## follow it, which subsequent `next` calls hand out as `ExtendedSuffix`
   ## tokens. `result.data` is shortened to the name.
   ##
-  ## The boundary is the LAST `.` that is followed by a digit, which is the
-  ## same rule `symparser` applies to the decoded string — but applied here to
-  ## the raw bytes, where an escaped dot (`\2E`) is still three bytes and so
-  ## cannot be mistaken for a separator. A name may well contain dots itself
-  ## (`a.b.c.23`); only the disambiguator's dot ends it.
-  var i = result.data.len - 2
+  ## Same grammar as `symparser.sliceSymbol`, applied to the RAW bytes, where
+  ## an escaped dot (`\2E`) is still three bytes and so cannot be mistaken for
+  ## a separator: the module is the last dot-separated component unless it
+  ## STARTS with a digit (`p.0h107` is a local symbol, not one from a module
+  ## called `0h107`), and the name ends at the last `.` followed by a digit,
+  ## because a name may contain dots itself (`a.b.c.23`).
+  let origLen = result.data.len
+  var lastDot = -1
+  var k = 0
+  while k < origLen:
+    if result.data[k] == '.': lastDot = k
+    inc k
+
+  var head = origLen
+  var moduleStart = -1
+  if lastDot >= 0:
+    if lastDot+1 < origLen:
+      if result.data[lastDot+1] notin Digits:
+        moduleStart = lastDot+1
+        head = lastDot
+    else:
+      # a trailing dot is the "my own module" shorthand: the module is there,
+      # spelled as nothing at all
+      moduleStart = lastDot+1
+      head = lastDot
+
+  var i = head - 2
   while i > 0:
     if result.data[i] == '.' and result.data[i+1] in Digits: break
     dec i
-  if i <= 0: return # not a symbol after all; leave it whole
 
-  let rest = result.data.len - (i+1)
-  r.pending = StringView(p: result.data.p +! (i+1), len: rest)
+  var start = 0
+  if i > 0:
+    r.pendingHasDisamb = true
+    start = i+1
+    result.data.len = i
+  elif moduleStart >= 0:
+    # no numeric disambiguator (`_exit.sys.mod`): everything but the module is
+    # the name, which is what `splitSymName` has always answered here
+    r.pendingHasDisamb = false
+    start = moduleStart
+    result.data.len = head
+  else:
+    return # not a symbol at all; leave it whole
+
+  r.pendingHasModule = moduleStart >= 0
+  # `result.data.len` is the name by now; the components run from `start` to the
+  # symbol's ORIGINAL end.
+  r.pending = StringView(p: result.data.p +! start, len: origLen - start)
   var comps = 1'i32
-  for k in 0 ..< rest:
-    if r.pending[k] == '.': inc comps
+  for j in 0 ..< r.pending.len:
+    if r.pending[j] == '.': inc comps
   r.pendingTotal = comps
   r.pendingLeft = comps
   r.pendingFlags = result.flags
@@ -475,17 +514,16 @@ proc splitSymbol(r: var Reader; result: var ExpandedToken) =
   # (module suffix expansion) belongs to the last component, and escapes
   # only to the components that actually contain a backslash.
   result.flags.excl TokenHasModuleSuffixExpansion
-  if TokenHasEscapes in result.flags and not hasEscapes(result.data, 0, i-1):
+  if TokenHasEscapes in result.flags and not hasEscapes(result.data, 0, result.data.len-1):
     result.flags.excl TokenHasEscapes
-  result.data.len = i
 
 proc nextSymbolPart(r: var Reader; result: var ExpandedToken) =
   ## Hand out the next component of the symbol returned earlier.
   result = default(ExpandedToken)
   result.tk = ExtendedSuffix
   result.part =
-    if r.pendingLeft == r.pendingTotal: SymDisamb
-    elif r.pendingLeft == 1: SymModule
+    if r.pendingLeft == r.pendingTotal and r.pendingHasDisamb: SymDisamb
+    elif r.pendingLeft == 1 and r.pendingHasModule: SymModule
     else: SymDedup
   var n = 0
   while n < r.pending.len and r.pending[n] != '.': inc n
@@ -797,10 +835,16 @@ when isMainModule and not defined(nimony):
   # separator; the escapes stay with the component that has them.
   assert tokens("a\\2Eb.5.mod", true) ==
     @["sym2:a.b", "SymDisamb:5=5", "SymModule:mod"]
-  # A dotted atom that is not a symbol at all is left whole, and so is an
-  # operator definition, which has no dot to split on in the first place.
-  assert tokens("foo.bar", true) == @["sym0:foo.bar"]
+  # An operator definition has no dot to split on and is left whole.
+  assert tokens("foo.bar", true) == @["sym1:foo", "SymModule:bar"]
   assert tokens(":\\5B\\5D=", true) == @["def0:[]="]
+  # A disambiguator the inliner minted is NOT a module, however non-numeric it
+  # looks after its first character.
+  assert tokens("p.0h107", true) == @["sym1:p", "SymDisamb:0h107=0"]
+  # ...and one with no numeric part at all (arkham's legacy syproc names) still
+  # yields its module; everything before it is the name.
+  assert tokens("_exit.sys.sysvq0asl", true) ==
+    @["sym1:_exit.sys", "SymModule:sysvq0asl"]
   # Line info and comments ride on the head, as before.
   assert tokens("abc.12.mod@3,4#hi#", true) ==
     @["sym2:abc", "SymDisamb:12=12", "SymModule:mod"]

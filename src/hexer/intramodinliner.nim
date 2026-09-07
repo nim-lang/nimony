@@ -294,8 +294,8 @@ type
 proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
                      xnifDir = ""; maxDepth = 0;
                      counterPrefix = "i"): InlinerCtx =
-  ## `counterPrefix` is woven into fresh local sym names (`base.0i<n>`,
-  ## `returnLabel.0i<n>`). The hexer same-module pass uses `"h"` and
+  ## `counterPrefix` is woven into fresh local sym names (`` base`i.<n> ``,
+  ## `` returnLabel`i.<n> ``). The hexer same-module pass uses `"h"` and
   ## dce2's cross-module pass uses `"d"` so freshly-minted dce2 syms
   ## can never collide with hexer-minted syms that survive in the
   ## `.x.nif` body dce2 is rewriting.
@@ -402,20 +402,22 @@ proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
   ## have ≤ 1 dot (per `isLocalName`) so dce2's per-module rewrite emits
   ## them unconditionally instead of consulting the global live set —
   ## these syms were minted post-`markLive` and aren't tracked there.
-  ## The `0<prefix>` prefix on the counter avoids colliding with existing
-  ## numeric-suffixed locals like `result.26`; the `prefix` further
-  ## disambiguates between the hexer-stage same-module pass and the
-  ## dce2-stage cross-module pass so the latter's fresh syms can't
-  ## collide with hexer-minted ones already baked into the `.x.nif`.
+  ## The pass letter goes INTO the identifier (`` result`i.5 ``), which is what
+  ## keeps it out of the DISAMBIGUATOR, where a NIF symbol is specified to carry
+  ## a number and nothing else (#2457). The backtick makes the result
+  ## unspellable, so it can collide neither with a user's `result.26` nor with
+  ## the other passes' fresh syms: the hexer-stage same-module pass, the
+  ## dce2-stage cross-module pass and shoggoth each own a letter, so one pass's
+  ## minted syms can never collide with those already baked into the `.x.nif`
+  ## it is rewriting.
   inc c.counter
   let original = pool.syms[orig]
   var base = original
   let dotPos = base.find('.')
   if dotPos >= 0: base.setLen dotPos
-  base.add ".0"
-  base.add c.counterPrefix
+  base.add '.'
   base.addInt c.counter
-  result = pool.syms.getOrIncl(base)
+  result = pool.syms.getOrIncl(derivedName(base, c.counterPrefix))
 
 proc scoreArg(a: Cursor): int =
   ## Argument score for the inline heuristic (planned in dce1: 0-100).
@@ -1094,7 +1096,7 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
   let info = body.info
   inc c.counter
   let returnLabel = pool.syms.getOrIncl(
-    "returnLabel.0" & c.counterPrefix & $c.counter)
+    derivedName("returnLabel." & $c.counter, c.counterPrefix))
   # Emit the inlined body as a real variable SCOPE, not a bare `(stmts)`: the
   # callee's fresh locals then belong to *this* scope frame, so the backend frees
   # their registers at the inlined body's end instead of leaking their live range

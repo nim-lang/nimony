@@ -432,13 +432,14 @@ proc sym*(p: Pool; id: SymId): NifSymbol =
   ## After the flip this is a field read and the distinction stops mattering.
   let s = p.syms[id]
   let sl = sliceSymbol(s)
-  # `disamb: int32` cannot hold what the inliners mint (`p.0h107`,
-  # `returnLabel.0i3`) or what arkham reserves (`_exit.sys.…`): reconstructing
-  # such a symbol from this record would produce `p.0` and alias two different
-  # symbols. Until #2457 settles how the disambiguator is modelled, say so
-  # loudly rather than let the flip turn it into a miscompile.
+  # `disamb: int32` holds a NUMBER, which is what a NIF disambiguator is. The
+  # minters that used to put a word there -- the inliners' `p.0h107`, arkham's
+  # `_exit.sys.…` -- now put their tag in the identifier instead, where NIF puts
+  # a tag. Reconstructing such a symbol from this record would have produced
+  # `p.0` and aliased two different symbols, so the invariant is asserted rather
+  # than assumed.
   assert sl.disambIsNumeric,
-    "symbol with a non-numeric disambiguator does not fit NifSymbol yet: " & s
+    "symbol with a non-numeric disambiguator does not fit NifSymbol: " & s
   result = NifSymbol(name: p.strings.getOrIncl(substr(s, 0, sl.nameLen-1)),
                      disamb: int32(sl.disamb),
                      dedup: StrId(0), module: StrId(0))
