@@ -304,11 +304,10 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
     inc n
   of Symbol:
     # for nested instantiations i.e. `Foo[Bar[int]]`
-    let s = pool.syms[n.symId]
-    if isInstantiation(s):
-      b.addSymbol(removeModule(s))
+    if pool.symIsInstantiation(n.symId):
+      b.addSymbol(pool.symWithoutModule(n.symId))
     else:
-      b.addSymbol(s)
+      b.addSymbol(pool.symString(n.symId))
     inc n
   of IntLit:
     b.addIntLit(n.intVal)
@@ -352,7 +351,7 @@ proc instToSuffix(buf: TokenBuf, start: int): string =
 
 proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
   # abc.123.Iabcdefgh.instmod
-  var name = removeModule(pool.syms[orig])
+  var name = pool.symWithoutModule(orig)
   name.add(".I")
   name.add(suffix)
   name.add '.'
@@ -624,7 +623,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     # Use the `.I<hash>.<mod>` instantiation naming convention (same as
     # type instantiations via `newInstSymId`). Mixing in plain `newSymId`
     # produced names like `@.0.<userMod>` that are indistinguishable from
-    # regular module-local procs, so `isInstantiation` can't detect them
+    # regular module-local procs, so `symIsInstantiation` can't detect them
     # and downstream consumers (e.g. `exprexec.collectUsedSymsFromExpr`)
     # can't tell the body-less stub apart from a real local proc.
     #
@@ -633,7 +632,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     # instantiated with identical args — e.g. `Table.[]=` and `Tracker.[]=` over
     # `[SymId, HashSet[int]]` — would otherwise both mint `[]=.0.I<hash>.<mod>`
     # and collide in codegen. `newInstSymId` keeps only the base name
-    # (`removeModule(origin)`), so the routine identity must enter through the
+    # (`symWithoutModule(origin)`), so the routine identity must enter through the
     # suffix. This mirrors the type-instance path, whose suffix is hashed over
     # the `(head args)` invocation (and so already distinguishes heads), and the
     # `(invok …)` shape is the same one written into the signature's pattern

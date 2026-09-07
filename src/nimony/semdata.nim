@@ -339,10 +339,9 @@ proc typeToCanonAux(result: var string; c: var Cursor) =
     elif c.isSymbolDef:
       result.add " !symdef"
     elif c.isSymbol:
-      let s = pool.syms[c.symId]
-      if isInstantiation(s):
+      if pool.symIsInstantiation(c.symId):
         result.add " s\""
-        result.add removeModule(s)
+        result.add pool.symWithoutModule(c.symId)
         result.add '"'
       else:
         result.add " s"

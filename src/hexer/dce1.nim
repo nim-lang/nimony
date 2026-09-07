@@ -30,8 +30,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
       n.into:
         var newOwner = owner
         if n.isSymbolDef:
-          let symName = pool.syms[n.symId]
-          if isInstantiation(symName):
+          if pool.symIsInstantiation(n.symId):
             a.offers.incl(n.symId)
           if not pool.symIsLocal(n.symId):
             newOwner = n.symId
@@ -57,8 +56,7 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         let isFld = n.substructureKind == FldU
         n.into:
           if isFld and n.kind == SymbolDef:
-            let symName = pool.syms[n.symId]
-            if isInstantiation(symName):
+            if pool.symIsInstantiation(n.symId):
               a.offers.incl(n.symId)
           while n.hasMore:
             tr n, a, owner

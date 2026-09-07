@@ -942,14 +942,9 @@ proc cmpExactTypeBits(f, a: Cursor): int =
     result = -1
 
 proc sameSymbol(a, b: SymId): bool =
-  if a == b:
-    return true
   # symbols might be different for instantiations from different modules,
   # consider this case by checking if the instantiation keys are equal:
-  let sa = pool.syms[a]
-  let sb = pool.syms[b]
-  result = isInstantiation(sa) and isInstantiation(sb) and
-    removeModule(sa) == removeModule(sb)
+  result = pool.symSameEntity(a, b)
 
 proc expectParRi(m: var Match; f: var Cursor; start: Cursor) =
   ## Closes a type-tree scope opened via `sub`: the tree must be

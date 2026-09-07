@@ -73,7 +73,7 @@ proc instantiationTypevars(sym: SymId): Cursor =
   ## Returns the instantiated proc/type decl's `typevars` slot if `sym`
   ## is a generic instance (typevars is an `InvokeT` recording the origin
   ## and the type args). Returns `default(Cursor)` otherwise. Procs use
-  ## counter-based names that don't match `isInstantiation`, so this
+  ## counter-based names that don't match `symIsInstantiation`, so this
   ## decl-based check is the reliable cross-kind detector.
   result = default(Cursor)
   let res = tryLoadSym(sym)
@@ -702,8 +702,7 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
     let sym = stack.pop()
     if sym in inlineDefs: continue
     if not handledSyms.containsOrIncl(sym):
-      let symStr = pool.syms[sym]
-      if isInstantiation(symStr):
+      if pool.symIsInstantiation(sym):
         # Instantiated generic procs/types don't cross sub-compile
         # boundaries — they're stored header-only here. After
         # `rewriteSymsToIdents` the call becomes an ident lookup; the

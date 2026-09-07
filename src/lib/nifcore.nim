@@ -473,6 +473,55 @@ proc symNameId*(p: Pool; id: SymId): StrId =
   else:
     result = p.strings.getOrIncl("")
 
+proc symIsInstantiation*(p: Pool; id: SymId): bool =
+  ## Whether `id` carries a deduplication key -- the `Ikey` of
+  ## `abc.12.Ikey.mod`, which every module needing that instantiation derives
+  ## the same way. That is what makes `symWithoutModule` a cross-module
+  ## identity for it and only for it.
+  ##
+  ## ONE key, spelled the way nimony spells one: a name with two of them
+  ## (`foo.0.Ia.Ib.mod`) is not an instantiation of anything this toolchain
+  ## minted, and nifasm merges symbols by this answer -- it once hand-rolled
+  ## its own and merged such a name wrongly.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  if sl.dedupLen == 0 or s[sl.dedupStart] != 'I': return false
+  for i in sl.dedupStart ..< sl.dedupStart+sl.dedupLen:
+    if s[i] == '.': return false
+  result = true
+
+proc symWithoutModule*(p: Pool; id: SymId): string =
+  ## `id` minus its module suffix: `abc.12.Ikey.mod` gives `abc.12.Ikey`, and a
+  ## local symbol gives itself. For an instantiation this is the name every
+  ## module that needs it arrives at independently, so it is the key to merge
+  ## the copies by -- DCE, the type-key builder and overload resolution all use
+  ## it for exactly that.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  if sl.moduleLen == 0:
+    result = s
+  else:
+    result = substr(s, 0, sl.moduleStart-2)
+
+proc symSameEntity*(p: Pool; a, b: SymId): bool =
+  ## Whether two DIFFERENT symbols name the same entity seen from two modules:
+  ## both are instantiations and everything but the module suffix matches.
+  ## Builds nothing -- it compares the bytes in place.
+  if a == b: return true
+  let sa = p.syms[a]
+  let sb = p.syms[b]
+  let la = sliceSymbol(sa)
+  let lb = sliceSymbol(sb)
+  if la.dedupLen == 0 or lb.dedupLen == 0: return false
+  # everything before the module suffix, which both of them have (a dedup key
+  # sits between the disambiguator and the module)
+  let na = la.moduleStart-1
+  let nb = lb.moduleStart-1
+  if na != nb: return false
+  for i in 0 ..< na:
+    if sa[i] != sb[i]: return false
+  result = true
+
 proc symModule*(p: Pool; id: SymId): string =
   ## The module suffix of `id`, `""` when it is local. For the places that need
   ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while

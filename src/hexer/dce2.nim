@@ -28,17 +28,15 @@ proc resolveSymbolConflicts(modules: Table[string, ModuleAnalysis]): ResolveTabl
   result = initTable[string, SymId]()
   for m in modules.values:
     for offer in m.offers:
-      let offerName = pool.syms[offer]
-      let key = removeModule(offerName)
+      let key = pool.symWithoutModule(offer)
       let existing = result.getOrDefault(key, SymId(0))
-      if existing == SymId(0) or offerName < pool.syms[existing]:
+      # deterministic pick among the copies: the smallest spelling wins
+      if existing == SymId(0) or pool.symString(offer) < pool.symString(existing):
         result[key] = offer
 
 proc translate(resolved: ResolveTable; sym: SymId): SymId =
-  let symName = pool.syms[sym]
-  if isInstantiation(symName):
-    let key = removeModule(symName)
-    result = resolved.getOrDefault(key, sym)
+  if pool.symIsInstantiation(sym):
+    result = resolved.getOrDefault(pool.symWithoutModule(sym), sym)
   else:
     result = sym
 

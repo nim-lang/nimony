@@ -231,18 +231,21 @@ proc derivedName*(stem, tag: string): string =
     result = stem & "`" & tag & ".0"
 
 proc isInstantiation*(s: string): bool =
-  # abc.12.Iabcdefghi.mod2
-  var i = s.len - 2
-  var dots = 3
-  while i > 0:
-    if s[i] == '.':
-      dec dots
-      if s[i+1] in {'0'..'9'}:
-        return dots == 0
-      elif dots == 1 and s[i+1] != 'I':
-        return false
-    dec i
-  result = false
+  ## Whether the symbol `s` carries a deduplication key: `abc.12.Iabc.mod`.
+  ## The string-level answer, for a caller with no `Pool` to ask (nifasm merges
+  ## the copies of an instantiation by exactly this rule); code that HAS a pool
+  ## asks `nifcore.symIsInstantiation`, and both are this one grammar.
+  ##
+  ## ONE key, spelled the way nimony spells one -- a name with two of them
+  ## (`foo.0.Ia.Ib.mod`) is not an instantiation of anything the toolchain
+  ## minted. Roles private to one module (a closure environment, a vtable, a
+  ## coroutine frame) never reach this test: `derivedName` keeps them inside
+  ## the identifier.
+  let sl = sliceSymbol(s)
+  if sl.dedupLen == 0 or s[sl.dedupStart] != 'I': return false
+  for i in sl.dedupStart ..< sl.dedupStart+sl.dedupLen:
+    if s[i] == '.': return false
+  result = true
 
 proc splitLocalSymName*(s: string; basename: var string;
                         disamb: var int): bool =
@@ -266,19 +269,6 @@ proc splitLocalSymName*(s: string; basename: var string;
   basename = substr(s, 0, dot - 1)
   disamb = value
   result = true
-
-proc removeModule*(s: string): string =
-  # From "abc.12.Mod132a3bc" extract "abc.12".
-  # From "abc.12" extract "abc.12".
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}:
-        return s
-      else:
-        return substr(s, 0, i-1)
-    dec i
-  return s
 
 type
   SplittedModulePath* = object
@@ -407,6 +397,12 @@ when isMainModule:
   assert not isInstantiation(derivedName("outer.0", "env") & ".mymod")
   assert not isInstantiation(derivedName("gen.12.Iaaaa", "coro") & ".mymod")
   assert isInstantiation("gen.12.Iaaaa.mymod")
+  # ONE key: nifasm merges symbols by this answer and must not merge a name
+  # that carries two.
+  assert not isInstantiation("foo.0.Ia.Ib.mymod")
+  # ...and the key is spelled the way nimony spells one.
+  assert not isInstantiation("foo.0.xyz.mymod")
+  assert not isInstantiation("foo.0.mymod")
   # ...and the module suffix must still be recoverable.
   assert extractModule(derivedName("gen.12.Iaaaa", "coro") & ".mymod") == "mymod"
   assert extractModule(derivedName("outer.0", "env") & ".mymod") == "mymod"

@@ -1305,7 +1305,7 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineI
       #    to link. A content hash is stable: the name changes only when the
       #    string does.
       #
-      # 2. The instantiation form (`isInstantiation` → true) lets DCE's
+      # 2. The instantiation form (`symIsInstantiation` → true) lets DCE's
       #    `resolveSymbolConflicts` collapse identical strings program-wide: one
       #    module keeps the definition, the rest drop their copies and reference
       #    the winner. This holds in partial builds too (e.g. the compile-time-
