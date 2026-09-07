@@ -13,7 +13,8 @@ else:
   import std / [http/httpconn, http/httpmsg, http/httpparse, socket,
                 ioring, threadpool, atomics, assertions, syncio]
   import std/posix/posix
-  let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
+  let tags = newHttpTags()   # this test's own tag space
+  let hApiKey = registerHeader(tags, "x-api-key")   # the header this test indexes on
 
   const
     AF_UNIX = 1.cint
@@ -63,11 +64,11 @@ else:
     # visible: an uncaught raise inside a passive chain goes into the frame's
     # result slot, which nothing here would ever look at — the test would pass
     # by saying nothing. Logging it puts it in the expected output instead.
-    var c = initHttpConn(srvFd, afterMs(5000))
+    var c = initHttpConn(srvFd, afterMs(5000), tags)
     try:
-      var m = initHttpMsg()
+      var m = initHttpMsg(tags)
       c.readRequest(m)
-      serverLog.add "server saw " & name(m.methodOf) & " " & m.target &
+      serverLog.add "server saw " & name(tags, m.methodOf) & " " & m.target &
                     " keepalive=" & $m.isKeepAlive & "\n"
       assert m.getStr(hApiKey) == "t-9"
       c.respond(200, "hello world!")
@@ -84,9 +85,9 @@ else:
     atomicStore(serverDone, 1, moRelease)
 
   proc client() {.passive.} =
-    var c = initHttpConn(cliFd, afterMs(5000))
+    var c = initHttpConn(cliFd, afterMs(5000), tags)
     try:
-      var req = initHttpMsg()
+      var req = initHttpMsg(tags)
       req.startRequest(tag(mGet), "/hello")
       req.addHeader(hHost, "example.com")
       req.addHeader(hApiKey, "t-9")
@@ -94,7 +95,7 @@ else:
       req.finish()
       c.sendHead(req)
 
-      var res = initHttpMsg()
+      var res = initHttpMsg(tags)
       c.readResponse(res)
       let n = res.contentLength
       var body = default(array[64, char])
@@ -132,9 +133,9 @@ else:
   var chSrv, chCli: cint
 
   proc chunkSender() {.passive.} =
-    var c = initHttpConn(chSrv, afterMs(5000))
+    var c = initHttpConn(chSrv, afterMs(5000), tags)
     try:
-      var m = initHttpMsg()
+      var m = initHttpMsg(tags)
       m.startResponse(200)
       m.addHeader(hTransferEncoding, vChunked)
       m.finish()
@@ -150,9 +151,9 @@ else:
     atomicStore(serverDone, 1, moRelease)
 
   proc chunkReceiver() {.passive.} =
-    var c = initHttpConn(chCli, afterMs(5000))
+    var c = initHttpConn(chCli, afterMs(5000), tags)
     try:
-      var m = initHttpMsg()
+      var m = initHttpMsg(tags)
       c.readResponse(m)
       assert m.isChunked, "the response should be chunk-framed"
       assert m.bodyLength == -1, "a chunked body has no declared length"
@@ -182,8 +183,8 @@ else:
   var deadFd: cint
 
   proc readsDeadPeer() {.passive.} =
-    var c = initHttpConn(deadFd, afterMs(5000))
-    var m = initHttpMsg()
+    var c = initHttpConn(deadFd, afterMs(5000), tags)
+    var m = initHttpMsg(tags)
     try:
       c.readRequest(m)
       serverLog.add "read past a dead peer: no error\n"
@@ -205,8 +206,8 @@ else:
   proc readsIdlePeer() {.passive.} =
     # The connection's own budget is what expires here; nothing else would
     # ever wake this up.
-    var c = initHttpConn(idleFd, afterMs(40))
-    var m = initHttpMsg()
+    var c = initHttpConn(idleFd, afterMs(40), tags)
+    var m = initHttpMsg(tags)
     try:
       c.readRequest(m)
       serverLog.add "idle connection timed out: no error\n"

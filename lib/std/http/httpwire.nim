@@ -141,7 +141,7 @@ proc reasonPhrase*(status: int): string =
 
 # ---------------------------------------------------------------- values ---
 
-proc writeValue(dest: var openArray[char]; i: int; v: Cursor): int =
+proc writeValue(tags: HttpTags; dest: var openArray[char]; i: int; v: Cursor): int =
   ## One header value, whatever shape it is stored in.
   if i < 0: return i
   case v.kind
@@ -158,52 +158,52 @@ proc writeValue(dest: var openArray[char]; i: int; v: Cursor): int =
   of TagLit:
     # A value that was resolved to a tag on the way in spells itself on the
     # way out, so the round trip is byte-identical.
-    result = writeBytes(dest, i, spelling(v.cursorTagId))
+    result = writeBytes(dest, i, spelling(tags, v.cursorTagId))
   else:
     result = WriteFull
 
-proc valueLen(v: Cursor): int =
+proc valueLen(tags: HttpTags; v: Cursor): int =
   case v.kind
   of StrLit:
     if v.isInlineLit: v.strVal.len else: poolStr(v.pool, v.strId).len
   of IntLit:
     let x = int(v.intVal)
     if x < 0: 0 else: digitCount(x)
-  of TagLit: spelling(v.cursorTagId).len
+  of TagLit: spelling(tags, v.cursorTagId).len
   else: 0
 
-proc writeHeaderNode(dest: var openArray[char]; i: int; c: Cursor): int =
+proc writeHeaderNode(tags: HttpTags; dest: var openArray[char]; i: int; c: Cursor): int =
   ## `name: value[, value]*CRLF` for one header node.
   var j: int
   var body = c.sub()
   if c.cursorTagId == tag(tXhdr):
     # (xhdr "name" "value") — the name is a payload, not a tag.
-    j = writeValue(dest, i, body)
+    j = writeValue(tags, dest, i, body)
     body.skip
   else:
-    j = writeBytes(dest, i, spelling(c.cursorTagId))
+    j = writeBytes(dest, i, spelling(tags, c.cursorTagId))
   j = writeBytes(dest, j, ": ")
   var first = true
   while body.hasMore:
     if not first:
       j = writeBytes(dest, j, ", ")
-    j = writeValue(dest, j, body)
+    j = writeValue(tags, dest, j, body)
     first = false
     body.skip
   result = writeCrLf(dest, j)
 
-proc headerNodeLen(c: Cursor): int =
+proc headerNodeLen(tags: HttpTags; c: Cursor): int =
   var body = c.sub()
   if c.cursorTagId == tag(tXhdr):
-    result = valueLen(body)
+    result = valueLen(tags, body)
     body.skip
   else:
-    result = spelling(c.cursorTagId).len
+    result = spelling(tags, c.cursorTagId).len
   result = result + 2                      # ": "
   var first = true
   while body.hasMore:
     if not first: result = result + 2      # ", "
-    result = result + valueLen(body)
+    result = result + valueLen(tags, body)
     first = false
     body.skip
   result = result + 2                      # CRLF
@@ -274,14 +274,14 @@ proc writeRequestHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
   var body = root.sub()
   body.skip                                # (METHOD)
 
-  var j = writeBytes(dest, i, spelling(m.methodOf))
+  var j = writeBytes(dest, i, spelling(m.tags, m.methodOf))
   j = writeByte(dest, j, ' ')
-  j = writeValue(dest, j, body)
+  j = writeValue(m.tags, dest, j, body)
   j = writeByte(dest, j, ' ')
   j = writeBytes(dest, j, versionText(m.versionOf))
   j = writeCrLf(dest, j)
   for c in m.headerNodes:
-    j = writeHeaderNode(dest, j, c)
+    j = writeHeaderNode(m.tags, dest, j, c)
   result = writeCrLf(dest, j)
 
 proc writeResponseHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
@@ -295,7 +295,7 @@ proc writeResponseHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
   j = writeBytes(dest, j, reasonPhrase(status))
   j = writeCrLf(dest, j)
   for c in m.headerNodes:
-    j = writeHeaderNode(dest, j, c)
+    j = writeHeaderNode(m.tags, dest, j, c)
   result = writeCrLf(dest, j)
 
 proc writeHead*(dest: var openArray[char]; i: int; m: HttpMsg): int =
@@ -313,7 +313,7 @@ proc headLen*(m: HttpMsg): int =
     var body = root.sub()
     let meth = body.cursorTagId
     body.skip
-    result = spelling(meth).len + 1 + valueLen(body) + 1 +
+    result = spelling(m.tags, meth).len + 1 + valueLen(m.tags, body) + 1 +
              versionText(m.versionOf).len + 2
   elif m.isResponse:
     let status = m.statusOf
@@ -322,5 +322,5 @@ proc headLen*(m: HttpMsg): int =
   else:
     return 0
   for c in m.headerNodes:
-    result = result + headerNodeLen(c)
+    result = result + headerNodeLen(m.tags, c)
   result = result + 2                      # the blank line

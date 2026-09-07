@@ -95,13 +95,13 @@ proc parseUntilEol*(buf: openArray[char]): int =
 
 # ---------------------------------------------------------- request line ---
 
-proc parseMethod*(buf: openArray[char]; meth: var TagId): int =
+proc parseMethod*(tags: HttpTags; buf: openArray[char]; meth: var TagId): int =
   ## A method name followed by one space.
   let n = parseToken(buf)
   if n < 0: return n
   if n >= buf.len: return ParseIncomplete    # the name may not be complete yet
   if buf[n] != ' ': return ParseBad
-  meth = lookupMethod(toOpenArray(buf, 0, n - 1))
+  meth = lookupMethod(tags, toOpenArray(buf, 0, n - 1))
   if meth.uint32 == 0'u32: return ParseBad   # extension methods are not served
   result = n + 1
 
@@ -126,7 +126,7 @@ proc parseVersion*(buf: openArray[char]; v: var TagId): int =
 proc parseRequestLine*(buf: openArray[char]; m: var HttpMsg): int =
   ## `METHOD SP target SP HTTP/1.1 CRLF`, opening the message node.
   var meth = TagId(0)
-  var j = parseMethod(buf, meth)
+  var j = parseMethod(m.tags, buf, meth)
   if j < 0: return j
 
   let target = parseUntil(toOpenArray(buf, j, buf.len - 1), ' ')
@@ -196,7 +196,7 @@ proc parseHeaderLine*(buf: openArray[char]; m: var HttpMsg): int =
   let eol = parseCrLf(toOpenArray(buf, j + valueLen, buf.len - 1))
   if eol < 0: return eol
 
-  let h = lookupHeader(toOpenArray(buf, 0, nameLen - 1))
+  let h = lookupHeader(m.tags, toOpenArray(buf, 0, nameLen - 1))
   if h.uint32 == 0'u32:
     m.addOtherHeader(toOpenArray(buf, 0, nameLen - 1),
                      toOpenArray(buf, j, stop - 1))
@@ -205,7 +205,7 @@ proc parseHeaderLine*(buf: openArray[char]; m: var HttpMsg): int =
     if not parseContentLength(toOpenArray(buf, j, stop - 1), n): return ParseBad
     m.addHeader(h, n)
   elif valueIsTagged(h):
-    let v = lookupValue(toOpenArray(buf, j, stop - 1))
+    let v = lookupValue(m.tags, toOpenArray(buf, j, stop - 1))
     if v.uint32 != 0'u32:
       m.addHeader(h, v)
     else:

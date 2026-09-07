@@ -164,7 +164,7 @@ const
     ## miss anyway — cheaply, and without touching the pool.
 
 type
-  HttpTags = object
+  HttpTags* = ref object
     ## The tag space and the index `lookupHeader` searches, in one object
     ## because the second is a *function* of the first: an index that has not
     ## seen a registration answers `TagId(0)` for a name that is in the pool.
@@ -172,7 +172,7 @@ type
     ## `registerHeader`, read by everyone else" a thing you can check by
     ## looking, rather than a protocol spread over three variables and a
     ## rebuild-if-stale test on the hot path.
-    pool: TagPool
+    pool*: TagPool
       ## Deliberately has NO `escapeTag`: with one, ids past 511 stay legal at
       ## the cost of a second token and there is no wall to detect, so any cap
       ## would be a number we invented. Without one, `MaxHttpTags` is
@@ -187,12 +187,7 @@ type
       ## `byLen[lenStart[n] ..< lenStart[n+1]]` are the tags spelled with `n`
       ## bytes.
 
-var gTags: HttpTags
-  ## Process-global, because the tag space is: an id has to mean the same
-  ## thing in every message the process handles, which is the whole reason a
-  ## header name can be compared as an integer.
-
-proc rebuildIndex(t: var HttpTags) =
+proc rebuildIndex(t: HttpTags) =
   ## Group the pool's spellings by length. Called from the two places that
   ## grow the pool, both of which run during init, so the lookup path never
   ## has to wonder whether the index is current.
@@ -215,20 +210,19 @@ proc rebuildIndex(t: var HttpTags) =
       t.byLen[cursor[L].int] = tg
       inc cursor[L]
 
-proc initHttpTags() =
-  gTags.pool = newTagPool()
+proc newHttpTags*(): HttpTags =
+  ## A fresh tag space, seeded with the built-in vocabulary. An application
+  ## makes ONE during init and threads it: into every `HttpMsg` it builds, into
+  ## every `HttpConn` it serves, and into `registerHeader` for the headers it
+  ## indexes on. An id only means anything against the space it came from, so
+  ## passing it is what makes "the same id everywhere" a property you can see
+  ## in the signatures rather than one the process has to promise.
+  result = HttpTags(pool: newTagPool())
   for e in HttpTag.low..HttpTag.high:
-    let id = gTags.pool.registerTag(TagNames[e])
+    let id = result.pool.registerTag(TagNames[e])
     assert id.uint32 == e.uint32 + 1'u32,
       "httpmsg: tag/enum misalignment at " & TagNames[e]
-  rebuildIndex(gTags)
-
-initHttpTags()
-
-proc httpTags*(): TagPool {.inline.} =
-  ## The shared tag pool. Messages are built against it; nothing else should
-  ## need it.
-  gTags.pool
+  rebuildIndex(result)
 
 template tag*(e: HttpTag): TagId =
   ## The pool id of a built-in tag. Ids are `ord + 1` by construction, so this
@@ -241,35 +235,35 @@ proc isMethod*(t: TagId): bool {.inline.} =
 proc isKnownHeader*(t: TagId): bool {.inline.} =
   t.uint32 >= tag(HeaderLow).uint32 and t.uint32 <= tag(HeaderHigh).uint32
 
-proc name*(t: TagId): string =
+proc name*(tags: HttpTags; t: TagId): string =
   ## The wire spelling of a registered tag; `""` for an id nobody registered.
-  if t.uint32 == 0'u32 or t.uint32 > gTags.pool.tags.len.uint32: ""
-  else: gTags.pool.tagName(t)
+  if t.uint32 == 0'u32 or t.uint32 > tags.pool.tags.len.uint32: ""
+  else: tags.pool.tagName(t)
 
-template spelling*(t: TagId): lent string =
+template spelling*(tags: HttpTags; t: TagId): lent string =
   ## The wire spelling, borrowed rather than copied — a template so it inlines
   ## to the table access. This is what a serializer wants; `name` copies.
-  gTags.pool.tagName(t)
+  tags.pool.tagName(t)
 
-proc registerHeader*(name: string): TagId =
+proc registerHeader*(tags: HttpTags; name: string): TagId =
   ## Register a header the application indexes on, so it gets the same
   ## integer-compare treatment as `hHost`. Call during init, before the first
-  ## connection: the pool is process-global and monotonic, so a name added
-  ## later is one every message parsed so far reported as `(xhdr …)`.
+  ## connection: a tag space is monotonic, so a name added later is one every
+  ## message parsed against it so far reported as `(xhdr …)`.
   ##
   ## Returns `TagId(0)` when the tag space is full — a startup error, and the
   ## only reason this can fail.
   ##
   ## Idempotent: a name already registered comes back with the pool untouched,
-  ## so several independent components (or several tests sharing one process)
+  ## so several independent components (or several tests sharing one tag space)
   ## can each ask for the headers they need without having to agree on who
   ## goes first.
   assert name.len > 0, "registerHeader: empty name"
-  let existing = gTags.pool.tags.getKeyId(name)
+  let existing = tags.pool.tags.getKeyId(name)
   if existing.uint32 != 0'u32: return existing
-  if gTags.pool.tags.len >= MaxHttpTags: return TagId(0)
-  result = gTags.pool.registerTag(name)
-  rebuildIndex(gTags)
+  if tags.pool.tags.len >= MaxHttpTags: return TagId(0)
+  result = tags.pool.registerTag(name)
+  rebuildIndex(tags)
 
 type
   FoldBuf = array[MaxTagNameLen, char]
@@ -284,17 +278,17 @@ proc foldAscii(dest: var FoldBuf; name: openArray[char]): bool {.inline.} =
     dest[i] = if c >= 'A' and c <= 'Z': chr(ord(c) + 32) else: c
   result = true
 
-proc sameBytes(t: TagId; folded: FoldBuf; n: int): bool {.inline.} =
-  let spelling = gTags.pool.tagName(t)
+proc sameBytes(tags: HttpTags; t: TagId; folded: FoldBuf; n: int): bool {.inline.} =
+  let spelling = tags.pool.tagName(t)
   if spelling.len != n: return false
   for i in 0..<n:
     if spelling[i] != folded[i]: return false
   result = true
 
-proc lookupTag(name: openArray[char]; fold: bool): TagId =
+proc lookupTag(tags: HttpTags; name: openArray[char]; fold: bool): TagId =
   ## The pool's own hash table is not used and must not be: `getKeyId` takes a
   ## `string`, and building one per header of every request is exactly the
-  ## allocation this layer exists to avoid. `gTags.byLen` answers from the
+  ## allocation this layer exists to avoid. `tags.byLen` answers from the
   ## caller's bytes.
   var buf = default(FoldBuf)
   if name.len == 0 or name.len > MaxTagNameLen: return TagId(0)
@@ -303,32 +297,32 @@ proc lookupTag(name: openArray[char]; fold: bool): TagId =
   else:
     for i in 0..<name.len: buf[i] = name[i]
   let n = name.len
-  var k = gTags.lenStart[n]
-  while k < gTags.lenStart[n + 1]:
-    let t = gTags.byLen[k.int]
-    if sameBytes(t, buf, n): return t
+  var k = tags.lenStart[n]
+  while k < tags.lenStart[n + 1]:
+    let t = tags.byLen[k.int]
+    if sameBytes(tags, t, buf, n): return t
     inc k
   result = TagId(0)
 
-proc lookupHeader*(name: openArray[char]): TagId =
+proc lookupHeader*(tags: HttpTags; name: openArray[char]): TagId =
   ## Wire bytes to a `TagId`, folding ASCII case as HTTP requires. Answers
   ## `TagId(0)` for a name nobody registered — those become `(xhdr …)`.
   ##
   ## **This never interns**, and it never allocates. It is the one lookup the
   ## parser is allowed to perform on attacker-controlled bytes.
-  lookupTag(name, fold = true)
+  lookupTag(tags, name, fold = true)
 
-proc lookupValue*(name: openArray[char]): TagId =
+proc lookupValue*(tags: HttpTags; name: openArray[char]): TagId =
   ## Like `lookupHeader`, but answers only for spellings in the header-*value*
   ## range — so `Connection: host` does not come back as the `host` tag.
-  let t = lookupTag(name, fold = true)
+  let t = lookupTag(tags, name, fold = true)
   result = if t.uint32 >= tag(ValueLow).uint32 and
               t.uint32 <= tag(ValueHigh).uint32: t else: TagId(0)
 
-proc lookupMethod*(name: openArray[char]): TagId =
+proc lookupMethod*(tags: HttpTags; name: openArray[char]): TagId =
   ## Wire bytes to a method tag, case-sensitively as HTTP requires. Answers
   ## `TagId(0)` for anything that is not one of the nine built-in methods.
-  let t = lookupTag(name, fold = false)
+  let t = lookupTag(tags, name, fold = false)
   result = if t.isMethod: t else: TagId(0)
 
 # ----------------------------------------------------------------- message --
@@ -338,6 +332,14 @@ type
     ## A request or a response. Move-only: `TokenBuf` is `=copy {.error.}`, so
     ## this inherits that and a message has exactly one owner at a time.
     buf: TokenBuf
+    tags*: HttpTags
+      ## The tag space every id in `buf` is an index into. Carried by the
+      ## message rather than looked up, so a `TagId` read out of one is always
+      ## interpreted against the space it was written against, and so the
+      ## layers that take a message — the parser, the wire writer — need no tag
+      ## parameter of their own. Public because those layers reach it on the
+      ## hot path and a field read borrows where an accessor would hand back an
+      ## owned `ref`.
     live: bool
 
 proc `=wasMoved`*(m: var HttpMsg) {.nodestroy, inline.} =
@@ -347,6 +349,7 @@ proc `=wasMoved`*(m: var HttpMsg) {.nodestroy, inline.} =
   ## no longer has — which is exactly the question the event loop asks when it
   ## decides whether to reclaim `e.msg`.
   `=wasMoved`(m.buf)
+  `=wasMoved`(m.tags)
   m.live = false
 
 proc hasBuf*(m: HttpMsg): bool {.inline.} =
@@ -354,9 +357,10 @@ proc hasBuf*(m: HttpMsg): bool {.inline.} =
   ## is how the event loop tells "the handler took it" from "it is still mine".
   m.live
 
-proc initHttpMsg*(cap = 64): HttpMsg =
-  ## A message with its own literal pool, sharing the global tag space.
-  HttpMsg(buf: createTokenBuf(cap, sharedTags = gTags.pool), live: true)
+proc initHttpMsg*(tags: HttpTags; cap = 64): HttpMsg =
+  ## A message with its own literal pool, sharing `tags`' tag space.
+  HttpMsg(buf: createTokenBuf(cap, sharedTags = tags.pool), tags: tags,
+          live: true)
 
 proc reset*(m: var HttpMsg) =
   ## Drop the content, keeping the token buffer's allocation — which is the
@@ -632,7 +636,7 @@ proc getStr*(m: HttpMsg; h: TagId): string =
       case v.kind
       of StrLit: return v.strVal
       of IntLit: return $v.intVal
-      of TagLit: return name(v.cursorTagId)
+      of TagLit: return name(m.tags, v.cursorTagId)
       else: return ""
     c.skip
   result = ""

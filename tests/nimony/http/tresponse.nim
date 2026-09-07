@@ -2,9 +2,10 @@
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
 
-let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
+let tags = newHttpTags()   # this test's own tag space
+let hApiKey = registerHeader(tags, "x-api-key")   # the header this test indexes on
 
-let poolSizeAtInit = httpTags().tags.len
+let poolSizeAtInit = tags.pool.tags.len
 
 var wbuf = default(array[4096, char])
 
@@ -19,7 +20,7 @@ proc render(m: var HttpMsg): string =
   for k in 0..<n: result.add wbuf[k]
 
 proc testSimple =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let res = "HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"
   assert parseAll(res, m) == res.len
   assert m.isResponse and not m.isRequest
@@ -31,7 +32,7 @@ proc testSimple =
 
 proc testStatusLineShapes =
   proc statusOf(res: string): int =
-    var m = initHttpMsg()
+    var m = initHttpMsg(tags)
     if parseAll(res, m) < 0: return -1
     result = m.statusOf
 
@@ -46,7 +47,7 @@ proc testStatusLineShapes =
 
 proc testRejections =
   proc bad(res: string): bool =
-    var m = initHttpMsg()
+    var m = initHttpMsg(tags)
     result = parseAll(res, m) == ParseBad
 
   assert bad("HTTP/1.1 20 OK\r\n\r\n"), "status must be three digits"
@@ -65,14 +66,14 @@ proc testIncomplete =
   # As with requests: every proper prefix says "not yet", never "bad".
   let res = "HTTP/1.1 404 Not Found\r\nServer: x\r\nContent-Length: 0\r\n\r\n"
   for n in 1..<res.len:
-    var m = initHttpMsg()
+    var m = initHttpMsg(tags)
     let r = parseResponseHead(toOpenArray(res, 0, n - 1), m)
     assert r == ParseIncomplete, "prefix of length " & $n & " gave " & $r
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   assert parseResponseHead(toOpenArray(res, 0, res.len - 1), m) == res.len
 
 proc testTypedValues =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let res = "HTTP/1.1 200 OK\r\n" &
             "Content-Length: 1234\r\n" &
             "Connection: close\r\n" &
@@ -88,21 +89,21 @@ proc testTypedValues =
   var others = ""
   for k, v in m.otherHeaders: others.add k & "=" & v & ";"
   assert others == "X-Odd=raw;", others
-  assert httpTags().tags.len == poolSizeAtInit
+  assert tags.pool.tags.len == poolSizeAtInit
 
 proc testRoundTrip =
   # The tree round-trips; the reason phrase deliberately does not.
   let res = "HTTP/1.1 404 Not Found\r\n" &
             "Content-Length: 0\r\n" &
             "Connection: keep-alive\r\n\r\n"
-  var m1 = initHttpMsg()
+  var m1 = initHttpMsg(tags)
   assert parseAll(res, m1) == res.len
   let once = render(m1)
   assert once == "HTTP/1.1 404 Not Found\r\n" &
                  "content-length: 0\r\n" &
                  "connection: keep-alive\r\n\r\n", once
 
-  var m2 = initHttpMsg()
+  var m2 = initHttpMsg(tags)
   assert parseAll(once, m2) == once.len
   assert render(m2) == once, "re-serializing is idempotent"
   assert m2.statusOf == 404
@@ -113,13 +114,13 @@ proc testReasonIsDropped =
   # A non-standard phrase is parsed and thrown away; the canonical one comes
   # back instead. This is the one place a response is not byte-preserving,
   # and it is on purpose.
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let res = "HTTP/1.1 404 Totally Not Here\r\n\r\n"
   assert parseAll(res, m) == res.len
   assert m.statusOf == 404
   assert render(m) == "HTTP/1.1 404 Not Found\r\n\r\n", render(m)
   # …but re-parsing that is still stable.
-  var m2 = initHttpMsg()
+  var m2 = initHttpMsg(tags)
   let once = render(m)
   assert parseAll(once, m2) == once.len
   assert render(m2) == once
@@ -139,7 +140,7 @@ proc testFindHeadEndOnResponses =
 proc testPipelinedAndRecycled =
   let two = "HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n" &
             "HTTP/1.1 500 Internal Server Error\r\nContent-Length: 0\r\n\r\n"
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let n = parseResponseHead(toOpenArray(two, 0, two.len - 1), m)
   assert n > 0 and m.statusOf == 200
   m.reset()
