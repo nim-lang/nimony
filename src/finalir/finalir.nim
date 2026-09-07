@@ -95,7 +95,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   c.typeCache.closeScope()
 
 proc freshLabel(c: var Context; prefix: string): SymId =
-  result = pool.syms.getOrIncl(prefix & $c.current.tmpCounter)
+  result = pool.symId(prefix & $c.current.tmpCounter)
   inc c.current.tmpCounter
 
 proc emitLab(dest: var TokenBuf; name: SymId; info: NifLineInfo) =

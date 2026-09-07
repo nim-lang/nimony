@@ -645,7 +645,7 @@ proc buildRemap*(src: var TokenBuf; pool: Pool; tags: TagPool): PoolRemap =
   let nSyms = src.pool.syms.len
   result.syms = newSeq[SymId](nSyms + 1)
   for i in 1 .. nSyms:
-    let id = pool.syms.getOrIncl(src.pool.symString(SymId(i)))
+    let id = pool.symId(src.pool.symString(SymId(i)))
     result.syms[i] = id
     if uint32(id) != uint32(i): result.identity = false
   let nFiles = src.pool.filenames.len
@@ -1008,7 +1008,7 @@ when isMainModule:
     let tags = newTagPool()
     discard tags.registerTag("unrelated")
     discard pool.strings.getOrIncl("some other string")
-    discard pool.syms.getOrIncl("prior.symbol.0.othermod")
+    discard pool.symId("prior.symbol.0.othermod")
     for i in 0 ..< 200: discard pool.filenames.getOrIncl("file" & $i & ".nim")
 
     var m = loadInto(tmp, pool, tags)
@@ -1031,7 +1031,7 @@ when isMainModule:
     # ids, so `SymId` equality is a valid identity test against anything else
     # interned there.
     doAssert m.index.len == 1, "expected 1 global sym, got " & $m.index.len
-    doAssert m.index[0].sym == pool.syms.getOrIncl("foo.3.mymod")
+    doAssert m.index[0].sym == pool.symId("foo.3.mymod")
     doAssert m.index[0].vis == ivExported
     var decl = cursorAt(m.buf, int m.index[0].pos)
     doAssert decl.kind == TagLit and tags.tags[decl.cursorTagId] == "sdef",
@@ -1058,7 +1058,7 @@ when isMainModule:
     doAssert uint32(firstSymUse(m)) != 0'u32
     doAssert firstSymUse(m) == firstSymUse(m2),
              "the shared symbol got different SymIds in two modules"
-    doAssert firstSymUse(m) == pool.syms.getOrIncl("shared.1.othermod")
+    doAssert firstSymUse(m) == pool.symId("shared.1.othermod")
     # …and the tag pools agree too, which is what makes `cursorTagId` castable.
     doAssert m2.buf.tags == tags
     # Guard against a vacuous comparator: two genuinely different modules must
@@ -1088,7 +1088,7 @@ when isMainModule:
     # out a token block that dies with the temporary buffer.
     let pool2 = newPool()
     let tags2 = newTagPool()
-    discard pool2.syms.getOrIncl("prior.symbol.0.othermod")   # force a rewrite
+    discard pool2.symId("prior.symbol.0.othermod")   # force a rewrite
     var ff = open(tmp, fmRead)
     var fm = loadFromFileInto(ff, pool2, tags2)
     close(ff)
@@ -1097,6 +1097,6 @@ when isMainModule:
     doAssert sameTree(a, b), "loadFromFileInto disagrees with loadInto"
     a.endRead()
     b.endRead()
-    doAssert fm.index[0].sym == pool2.syms.getOrIncl("foo.3.mymod")
+    doAssert fm.index[0].sym == pool2.symId("foo.3.mymod")
 
   echo "bif self-tests passed"

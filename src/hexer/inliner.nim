@@ -121,7 +121,7 @@ proc newSymId(c: var Context; s: SymId): SymId =
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
-  result = pool.syms.getOrIncl(name)
+  result = pool.symId(name)
 
 proc addVarReplacement(dest: var TokenBuf; v: VarReplacement; info: NifLineInfo) =
   if v.needsDeref:
@@ -255,7 +255,7 @@ proc doInline(outer: var Context; dest: var TokenBuf; procCall: var Cursor; rout
   copyIntoKind dest, BlockS, info:
     var labelName = "returnLabel"
     makeLocalSym outer, labelName
-    c.returnLabel = pool.syms.getOrIncl(labelName)
+    c.returnLabel = pool.symId(labelName)
     dest.addSymDef c.returnLabel, info
 
     copyIntoKind dest, StmtsS, info:

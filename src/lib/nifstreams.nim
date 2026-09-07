@@ -171,9 +171,9 @@ proc next*(s: var Stream): NifToken =
   of StrLit:
     result = strLitToken(pool.strings.getOrIncl(decodeStr(s.r, t)))
   of Symbol:
-    result = symToken(pool.syms.getOrIncl(decodeStr(s.r, t)))
+    result = symToken(pool.symId(decodeStr(s.r, t)))
   of SymbolDef:
-    result = symdefToken(pool.syms.getOrIncl(decodeStr(s.r, t)))
+    result = symdefToken(pool.symId(decodeStr(s.r, t)))
   else:
     # ParRi/EofToken/DotToken/CharLit/numbers: correct kind, no payload.
     result = NifToken(uint32(t.tk))

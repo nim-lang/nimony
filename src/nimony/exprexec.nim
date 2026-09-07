@@ -220,7 +220,7 @@ proc genProcHeader(c: var SynthesizeSerializerCtx; dest: var TokenBuf; sym: SymI
   dest.addEmpty3 c.info # export marker, pattern, generics
   copyIntoKind dest, ParamsU, c.info:
     copyIntoKind dest, ParamY, c.info:
-      addSymDef dest, pool.syms.getOrIncl(ParamSymName), c.info
+      addSymDef dest, pool.symId(ParamSymName), c.info
       dest.addEmpty2 c.info # export marker, pragmas
       copyTree dest, typ
       dest.addEmpty c.info # value
@@ -233,7 +233,7 @@ proc requestProc(c: var SynthesizeSerializerCtx; t: TypeCursor): SymId =
   result = c.structuralTypeToProc.getOrDefault(key)
   if result == SymId(0):
     let name = generateName(c, key)
-    result = pool.syms.getOrIncl(name)
+    result = pool.symId(name)
     c.requests.add GenProcRequest(sym: result, typ: t)
     c.structuralTypeToProc[key] = result
 
@@ -250,12 +250,12 @@ when not defined(nimony):
 
 proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
   c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
+    c.dest.addSymUse pool.symId(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addStrLit arg, c.info
 
 proc genParRiCall(c: var SynthesizeSerializerCtx) =
   c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl("writeNifParRi.0." & writeNifModuleSuffix), c.info
+    c.dest.addSymUse pool.symId("writeNifParRi.0." & writeNifModuleSuffix), c.info
 
 proc accessObjField(c: var SynthesizeSerializerCtx; obj: TokenBuf; name: Cursor; needsDeref: bool; depth = 0): TokenBuf =
   assert name.isSymbolDef
@@ -438,7 +438,7 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
   inc n
   let baseType = n
 
-  let indexVar = pool.syms.getOrIncl("idx.0")
+  let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "aconstr")
@@ -471,7 +471,7 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
   inc ft # past uarray tag
   let baseType = ft
 
-  let indexVar = pool.syms.getOrIncl("idx.0")
+  let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "addr")
@@ -509,7 +509,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
   genStringCall(c, "writeNifParLe", "setconstr")
   genStringCall(c, "writeNifRaw", toString(orig, false))
 
-  let indexVar = pool.syms.getOrIncl("idx.0")
+  let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
   var indexVarAsBuf = createTokenBuf(1)
   indexVarAsBuf.addSymUse indexVar, c.info
@@ -549,7 +549,7 @@ proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenB
 
 proc primitiveCall(c: var SynthesizeSerializerCtx; name: string; arg: Cursor) =
   c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
+    c.dest.addSymUse pool.symId(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addSubtree arg
 
 proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
@@ -634,7 +634,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
     c.errorMsg = "unsupported type for compile-time evaluation: " & asNimCode(orig)
 
 proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
-  let paramA = pool.syms.getOrIncl(ParamSymName)
+  let paramA = pool.symId(ParamSymName)
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
 
@@ -752,7 +752,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
     c.dest.add s.importSnippets
 
   c.dest.copyIntoKind CallS, info:
-    c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
+    c.dest.addSymUse pool.symId("setup.0." & writeNifModuleSuffix), info
     c.dest.addStrLit toAbsolutePath(s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif"), info
 
   var retTypeBuf = createTokenBuf(4)
@@ -778,7 +778,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
             discard
 
   c.dest.copyIntoKind CallS, info:
-    c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
+    c.dest.addSymUse pool.symId("teardown.0." & writeNifModuleSuffix), info
 
   genMissingProcs c
   c.dest.addParRi() # StmtsS

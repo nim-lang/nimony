@@ -66,7 +66,7 @@ proc methodKeyImpl(name: string; params: Cursor): string =
       # .raises without type defaults to ErrorCode - mangle the default
       b.addKeyw "raises"
       var errorCodeBuf = createTokenBuf(1)
-      errorCodeBuf.addSymUse pool.syms.getOrIncl(ErrorCodeName), NoLineInfo
+      errorCodeBuf.addSymUse pool.symId(ErrorCodeName), NoLineInfo
       let errorCodeCursor = cursorAt(errorCodeBuf, 0)
       mangle b, errorCodeCursor, Frontend
   else:

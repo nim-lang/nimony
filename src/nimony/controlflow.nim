@@ -186,7 +186,7 @@ proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
 
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: NifLineInfo): SymId =
   assert not typ.isDotToken
-  result = pool.syms.getOrIncl("`cf." & $c.nextVar)
+  result = pool.symId("`cf." & $c.nextVar)
   inc c.nextVar
   c.dest.addParLe kind, info
   c.dest.addSymDef result, info
@@ -314,7 +314,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
 proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if c.keepReturns and tar.m == IsAppend:
     # bind to a temporary variable:
-    let tmp = pool.syms.getOrIncl("`cf." & $c.nextVar)
+    let tmp = pool.symId("`cf." & $c.nextVar)
     inc c.nextVar
     let info = n.info
     c.dest.addParLe LetS, info
@@ -506,7 +506,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
       var aa = Target(m: IsEmpty)
       trExpr c, n, aa
 
-      selector = pool.syms.getOrIncl("`cf." & $c.nextVar)
+      selector = pool.symId("`cf." & $c.nextVar)
       inc c.nextVar
       c.dest.addParLe VarS, info
       c.dest.addSymDef selector, info
@@ -908,7 +908,7 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
     var aa = Target(m: IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, info)
-    c.dest.addSymUse pool.syms.getOrIncl("localErr.0." & SystemModuleSuffix), info
+    c.dest.addSymUse pool.symId("localErr.0." & SystemModuleSuffix), info
     c.flush aa
     c.dest.addParRi()
   var it {.cursor.} = c.currentBlock
@@ -969,7 +969,7 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     var stmts = createTokenBuf(40)
     var stmtsSrc: seq[int32] = @[]
 
-    let tmp = pool.syms.getOrIncl("`cf." & $c.nextVar)
+    let tmp = pool.symId("`cf." & $c.nextVar)
     inc c.nextVar
     stmts.addParLe LetS, info
     stmts.addSymDef tmp, info

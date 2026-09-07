@@ -417,7 +417,7 @@ proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
   if dotPos >= 0: base.setLen dotPos
   base.add '.'
   base.addInt c.counter
-  result = pool.syms.getOrIncl(derivedName(base, c.counterPrefix))
+  result = pool.symId(derivedName(base, c.counterPrefix))
 
 proc scoreArg(a: Cursor): int =
   ## Argument score for the inline heuristic (planned in dce1: 0-100).
@@ -1095,7 +1095,7 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
     return
   let info = body.info
   inc c.counter
-  let returnLabel = pool.syms.getOrIncl(
+  let returnLabel = pool.symId(
     derivedName("returnLabel." & $c.counter, c.counterPrefix))
   # Emit the inlined body as a real variable SCOPE, not a bare `(stmts)`: the
   # callee's fresh locals then belong to *this* scope frame, so the backend frees

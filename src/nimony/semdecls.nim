@@ -1373,7 +1373,7 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
   var objName = basename & ".Obj"
   if isGlobal: c.makeGlobalSym(objName)
   else: c.makeLocalSym(objName)
-  sym = pool.syms.getOrIncl(objName)
+  sym = pool.symId(objName)
 
   var n = decl
   result.addParLe(n.cursorTagId, n.info) # (type

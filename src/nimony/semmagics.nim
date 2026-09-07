@@ -431,7 +431,7 @@ proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
       let typeSymId = typ.symId
       let typeName = pool.symString(typeSymId)
       let dollorName = "dollar`." & typeName
-      let dollorSymId = pool.syms.getOrIncl(dollorName)
+      let dollorSymId = pool.symId(dollorName)
       shrink dest, beforeExpr
       dest.addParLe(CallX, info)
       dest.addSymUse(dollorSymId, info)

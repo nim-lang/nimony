@@ -356,7 +356,7 @@ proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
   name.add(suffix)
   name.add '.'
   name.add c.thisModuleSuffix
-  result = pool.syms.getOrIncl(name)
+  result = pool.symId(name)
 
 type
   SubsContext = object
@@ -2751,7 +2751,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
 
   var typeNameStr = "`sumtype"
   c.makeGlobalSym(typeNameStr)
-  let oneofTypeSym = pool.syms.getOrIncl(typeNameStr)
+  let oneofTypeSym = pool.symId(typeNameStr)
 
   var efldSyms: seq[(SymId, StrId)] = @[]
   var typeBuf = createTokenBuf(30)
@@ -2794,7 +2794,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
 
   var fldNameStr = "`kind"
   c.makeFieldSym(fldNameStr)
-  let fldSym = pool.syms.getOrIncl(fldNameStr)
+  let fldSym = pool.symId(fldNameStr)
   dest.addParLe(FldY, info)
   dest.addSymDef(fldSym, info)
   if state.isExported:
@@ -2838,7 +2838,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
         needsExprClose = true
         var tmpName = "`case"
         c.makeLocalSym(tmpName)
-        let tmpSym = pool.syms.getOrIncl(tmpName)
+        let tmpSym = pool.symId(tmpName)
         let tmpDeclStart = dest.len
         dest.addParLe(VarS, info)
         dest.addSymDef(tmpSym, info)
@@ -2911,7 +2911,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
             for b in bindings:
               var bindName = pool.strings[b.ident]
               c.makeLocalSym(bindName)
-              let bindSym = pool.syms.getOrIncl(bindName)
+              let bindSym = pool.symId(bindName)
               let declStart = dest.len
               dest.addParLe(PatternvarS, b.info)
               dest.addSymDef(bindSym, b.info)

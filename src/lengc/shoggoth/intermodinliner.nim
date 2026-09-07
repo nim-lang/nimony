@@ -140,7 +140,7 @@ when isMainModule:
     result = parseFromBuffer(src, "M")
 
   for s in ["x.0.M", "cond.0.M"]:
-    discard pool.syms.getOrIncl(s)
+    discard pool.symId(s)
 
   block matches_guard_prologue:
     var buf = parse(

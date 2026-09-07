@@ -531,7 +531,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       # No type specified - default to system.ErrorCode
       let typeStart = dest.len
-      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.endInfo
+      dest.addSymUse pool.symId(ErrorCodeName), n.endInfo
       crucial.raisesType = c.typeToCursor(dest, typeStart)
       dest.addParRi()
   of CallConvP:

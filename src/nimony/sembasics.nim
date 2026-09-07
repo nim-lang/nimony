@@ -427,7 +427,7 @@ proc newSymId*(c: var SemContext; s: SymId; forceGlobal = false): SymId =
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
-  result = pool.syms.getOrIncl(name)
+  result = pool.symId(name)
 
 proc classifyType*(c: var SemContext; n: Cursor): TypeKind =
   result = typeKind(n)
@@ -501,7 +501,7 @@ proc identToSym*(c: var SemContext; str: sink string; kind: SymKind): SymId =
     c.makeGlobalSym(name)
   else:
     c.makeLocalSym(name)
-  result = pool.syms.getOrIncl(name)
+  result = pool.symId(name)
 
 proc identToSym*(c: var SemContext; lit: StrId; kind: SymKind): SymId =
   result = identToSym(c, pool.strings[lit], kind)
@@ -602,7 +602,7 @@ proc handleSymDef*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: S
   elif n.isDotToken:
     var name = "`anon"
     c.makeLocalSym(name)
-    let symId = pool.syms.getOrIncl(name)
+    let symId = pool.symId(name)
     let s = Sym(kind: kind, name: symId, pos: dest.len)
     result = DelayedSym(status: OkExisting, s: s, info: info)
     dest.addSymDef(symId, info)

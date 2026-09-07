@@ -360,7 +360,7 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   else:
     let typ = getType(c.typeCache, le)
     let info = le.info
-    let tmp = pool.syms.getOrIncl("`lhs." & $c.tmpCounter)
+    let tmp = pool.symId("`lhs." & $c.tmpCounter)
     inc c.tmpCounter
     # The decl is a plain statement and must precede whatever the right hand
     # side hoists in front of this assignment: an RHS that moves out of a
@@ -414,7 +414,7 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: NifLineIn
 proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   var n = n
   let info = n.info
-  result = pool.syms.getOrIncl("`lhs." & $c.tmpCounter)
+  result = pool.symId("`lhs." & $c.tmpCounter)
   inc c.tmpCounter
   copyIntoKind c.dest, CursorS, info:
     addSymDef c.dest, result, info
@@ -727,7 +727,7 @@ proc derefsBoxedRef(c: var Context; ptrOperand: Cursor): bool =
 proc addDataFieldHop(c: var Context; info: NifLineInfo) =
   ## Emit the `d 0` that follows an already-emitted `(deref refptr)` to reach the
   ## object payload of a boxed `ref` cell.
-  c.dest.addSymUse(pool.syms.getOrIncl(DataField), info)
+  c.dest.addSymUse(pool.symId(DataField), info)
   c.dest.addIntLit(0, info) # inheritance
 
 proc trOnlyEssentials(c: var Context; n: var Cursor)
@@ -801,8 +801,8 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
           var field = probe
           skip field # object operand -> field name
           if field.kind == Symbol and
-             field.symId != pool.syms.getOrIncl(DataField) and
-             field.symId != pool.syms.getOrIncl(RcField):
+             field.symId != pool.symId(DataField) and
+             field.symId != pool.symId(RcField):
             doHop = true
       if doHop:
         let info = n.info
@@ -909,7 +909,7 @@ proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): Ow
   ## check and payload assignment) into `c.hoisted`, replacing it in the
   ## expression by a bare use of the temp. No `(expr (stmts ...) tmp)` is ever
   ## built, so nothing downstream has to flatten one back out.
-  let s = pool.syms.getOrIncl("`tmp." & $c.tmpCounter)
+  let s = pool.symId("`tmp." & $c.tmpCounter)
   inc c.tmpCounter
 
   result = OwningTemp(active: true, s: s, info: info, pos: c.dest.len)
@@ -1040,7 +1040,7 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
       copyIntoKind c.dest, StmtsS, info:
         copyIntoKind c.dest, RaiseS, info:
           addRaisedCode(c.dest, c.retType,
-                        pool.syms.getOrIncl("OutOfMemError.0." & SystemModuleSuffix),
+                        pool.symId("OutOfMemError.0." & SystemModuleSuffix),
                         c.resultSym, info)
 
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
@@ -1056,12 +1056,12 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
   let baseType = refType.childCursor
   var refTypeCopy = refType
   let typeKey = takeMangle(refTypeCopy, Frontend, c.lifter.bits)
-  let typeSym = pool.syms.getOrIncl(genericTypeName(typeKey, c.moduleSuffix))
+  let typeSym = pool.symId(genericTypeName(typeKey, c.moduleSuffix))
 
   copyIntoKind c.dest, CastX, info:
     c.dest.addSubtree refType
     copyIntoKind c.dest, CallX, info:
-      c.dest.addSymUse(pool.syms.getOrIncl("allocFixed.0." & SystemModuleSuffix), info)
+      c.dest.addSymUse(pool.symId("allocFixed.0." & SystemModuleSuffix), info)
       copyIntoKind c.dest, SizeofX, info:
         c.dest.addSymUse(typeSym, info)
   c.dest.addParRi() # finish temp declaration
@@ -1076,11 +1076,11 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     copyIntoKind c.dest, OconstrX, info:
       c.dest.addSymUse(typeSym, info)
       copyIntoKind c.dest, KvU, info:
-        let rcField = pool.syms.getOrIncl(RcField)
+        let rcField = pool.symId(RcField)
         c.dest.addSymUse(rcField, info)
         c.dest.addIntLit(0, info)
       copyIntoKind c.dest, KvU, info:
-        let dataField = pool.syms.getOrIncl(DataField)
+        let dataField = pool.symId(DataField)
         c.dest.addSymUse(dataField, info)
         if kind == NewobjX:
           copyIntoKind c.dest, OconstrX, info:
@@ -1331,7 +1331,7 @@ proc bindPendingMoves(c: var Context; start: int; typ: Cursor; info: NifLineInfo
   ## moves run once the expression has read everything it needs. The temp is a
   ## `cursor` for the same reason `genLastRead`'s is: whatever consumes this
   ## expression is the rightful owner of the value.
-  let tmp = pool.syms.getOrIncl("`tmp." & $c.tmpCounter)
+  let tmp = pool.symId("`tmp." & $c.tmpCounter)
   inc c.tmpCounter
   var wrapped = createTokenBuf(64)
   copyIntoKind wrapped, ExprX, info:

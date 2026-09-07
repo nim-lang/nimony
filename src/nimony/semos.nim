@@ -530,7 +530,7 @@ proc registerGeneratedSymbols(c: var SemContext; firstDisamb: int;
 
   for disamb in firstDisamb ..< nextDisamb:
     let name = pluginTempBase & "." & $disamb
-    c.freshSyms.incl pool.syms.getOrIncl(name)
+    c.freshSyms.incl pool.symId(name)
 
   if nextDisamb > firstDisamb:
     c.locals[pluginTempBase] = nextDisamb - 1

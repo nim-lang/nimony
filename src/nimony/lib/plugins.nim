@@ -296,7 +296,9 @@ proc genSym*(): SymId =
   ## Pass the result to the regular `addSymDef` and `addSymUse` operations.
   assert unusedNameBase.len > 0,
     "genSym requires plugin input with an .unusedname directive"
-  result = pluginPool.syms.getOrIncl(
+  # Qualified: this module imports nifcore `except symId` (it has its own
+  # `symId(Replacer)`), so the pool accessor has to be named through nifcore.
+  result = nifcore.symId(pluginPool,
     unusedNameBase & "." & $nextUnusedName)
   inc nextUnusedName
 

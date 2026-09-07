@@ -65,7 +65,7 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   let enumSymId = decl.name.symId
   let enumSymInfo = decl.name.info
   let dollorName = "dollar`." & pool.symString(enumSymId)
-  let dollorSymId = pool.syms.getOrIncl(dollorName)
+  let dollorSymId = pool.symId(dollorName)
 
   dest.addParLe("func", enumSymInfo)
   dest.addSymDef(dollorSymId, enumSymInfo)
@@ -82,7 +82,7 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
 
   var paramName = "e"
   c.makeLocalSym(paramName)
-  let paramSymId = pool.syms.getOrIncl(paramName)
+  let paramSymId = pool.symId(paramName)
   dest.addParLe("params", enumSymInfo)
   dest.addParLe("param", enumSymInfo)
   dest.addSymDef(paramSymId, enumSymInfo)

@@ -322,7 +322,7 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       elif n.intVal == 1:
         var buf = createTokenBuf(4)
         buf.addParLe(RefT, n.info)
-        buf.addSymUse pool.syms.getOrIncl("RootObj.0." & SystemModuleSuffix), n.info
+        buf.addSymUse pool.symId("RootObj.0." & SystemModuleSuffix), n.info
         buf.addParRi()
         c.mem.add buf
         result = cursorAt(c.mem[c.mem.len-1], 0)
