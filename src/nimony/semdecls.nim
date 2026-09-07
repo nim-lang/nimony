@@ -1420,7 +1420,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   var delayed = default(DelayedSym)
   var isEnumTypeDecl = false
   var isRefPtrObj = false
-  var innerObjDecl = default(TokenBuf)
+  var innerObjDecl = initTokenBuf()
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
     # name, export marker, generic params, pragmas, body

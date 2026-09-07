@@ -1878,7 +1878,8 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
 
 proc elimLambdas*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix)
+  var c = Context(counter: 0, dest: initTokenBuf(),
+                  typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix)
   c.coroCtx = coro_transform.Context(
     thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(pass.bits),   # placeholder; swapped with c.typeCache per call
