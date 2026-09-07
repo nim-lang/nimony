@@ -38,7 +38,7 @@
 ##  * the loop is small enough to duplicate (`MaxUnswitchSpan` tokens).
 ##
 ## The second copy's declarations (labels AND locals) are freshened
-## (`` `usN.<suffix> ``) so the module keeps unique symbols. Fixpoint driver:
+## (`` `us.<n> ``, locals of the body being duplicated). Fixpoint driver:
 ## one loop per round; iterated rounds hoist a condition out of nested loops
 ## level by level (the inner unswitch leaves `(if C (while…)…)` directly in the
 ## outer body, which the next round can hoist again).
@@ -47,8 +47,6 @@ import std / [assertions, tables, sets]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
 import ".." / ".." / "models" / tags         # tag ids for synthesis
-import ".." / ".." / "lib" / symparser       # derivedName -- one spelling for a derived name
-import scalarizer                            # bodyTag: the shared body uniquifier
 import patchsets
 
 const
@@ -62,7 +60,6 @@ type
 
   Context = object
     orig: ptr TokenBuf
-    suffix: string
     counter: int
     procAddrTaken: HashSet[SymId]
 
@@ -313,7 +310,7 @@ proc collectDefs(n: Cursor; c: var Context; rename: var Table[SymId, string]) =
   of SymbolDef:
     if not rename.hasKey(it.symId):
       inc c.counter
-      rename[it.symId] = derivedName("`us." & $c.counter, bodyTag(c.suffix))
+      rename[it.symId] = "`us." & $c.counter
   of TagLit:
     it.loopInto:
       collectDefs(it, c, rename)
@@ -465,7 +462,7 @@ proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
 
 # ── public entry ─────────────────────────────────────────────────────────────
 
-proc runUnswitch*(buf: var TokenBuf; suffix = "us"): int {.discardable.} =
+proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
   ## Fixpoint: unswitch one loop per round (the innermost candidate), rebuild,
   ## rescan. Returns the number of loops unswitched.
   result = 0
@@ -473,7 +470,7 @@ proc runUnswitch*(buf: var TokenBuf; suffix = "us"): int {.discardable.} =
   var minted = 0
   while rounds < MaxRounds:
     inc rounds
-    var c = Context(orig: addr buf, suffix: suffix, counter: minted,
+    var c = Context(orig: addr buf, counter: minted,
                     procAddrTaken: initHashSet[SymId]())
     block:
       let root = beginRead(buf)

@@ -84,12 +84,15 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
                   params: Cursor = default(Cursor); eng: Engine = nil;
                   vecMode = vecOff) =
   ## Per-body optimization pipeline. The nifcore passes plug in here as they
-  ## are ported. The suffix is made unique per body (`st.bodies` is the body's
-  ## index in the module): the passes name synthesized temps `<kind>.<n>.<suffix>`
-  ## with a per-body counter, so without a per-body suffix two procs' first temps
-  ## would collide on one module-pool symbol and the C codegen — which declares
-  ## each symbol once — would leave later functions' uses undeclared.
-  let bodySuffix = suffix & "." & $st.bodies
+  ## are ported.
+  ##
+  ## The temps these passes mint are LOCALS of the body, so they are named like
+  ## locals -- `` `sroa.1 ``, `` `cse.1 `` -- and two bodies' first temps do
+  ## share a pool symbol. That is what a local name IS: every proc in the module
+  ## already has its own `result.0`, and both backends scope a local to its
+  ## function. This used to paste a per-body `<module>.<n>` after the counter to
+  ## avoid the sharing, which made the module suffix a MIDDLE segment of the
+  ## symbol (nimony#2457) -- a global's spelling for something that is not one.
   # The structural rewriter runs FIRST so its `deref_addr` rules fold the
   # inliner's by-address residue — `inc i` splices as `(deref (haddr i))` — before
   # anything else looks at the body. Removing those `addr` nodes un-poisons the
@@ -102,31 +105,31 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # propagation then cleans up the resulting scalar copies and dead stores, so the
   # later passes see simpler, scalar code.
   if passOn("ctorproj"): runConstructorProjection(buf)
-  if passOn("scalarize"): runScalarize(buf, bodySuffix, m)
+  if passOn("scalarize"): runScalarize(buf, m)
   if passOn("copyprop"): runCopyProp(buf, params, summaries, m)
   # Hoist loop-invariant `if` conditions out of small loops by duplicating them
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally
   # identical conditions actually identical.
-  if passOn("unswitch"): runUnswitch(buf, bodySuffix)
+  if passOn("unswitch"): runUnswitch(buf)
   # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
   # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
   # after those substitutions actually fold. Cheap: the DFA walk is linear
   # and a miss is a no-op.
   if eng != nil and passOn("rewrite"):
     runRewritesFix(eng, buf)
-  if passOn("indvars"): runInductionVariables(buf, bodySuffix, m)
+  if passOn("indvars"): runInductionVariables(buf, m)
   # CSE also deletes index checks a dominating identical check already made:
   # same expression keys, same invalidation, same walk (see `cse.guardCondition`).
   if passOn("cse"):
-    st.checksRemoved += runCSE(buf, bodySuffix, summaries, m, params)
+    st.checksRemoved += runCSE(buf, summaries, m, params)
   # The vectorizer runs last of the passes that OPTIMIZE: its emitted
   # `(instr ...)` applications are final (selection-final by the tag's contract)
   # and no later pass needs to look at them; the scalar remainder loop it leaves
   # behind was already optimized by everything above. Only the encoding passes
   # below follow it, and they rewrite `ret`s, which it never emits.
   if vecMode != vecOff and passOn("vectorize"):
-    if runVectorizer(buf, bodySuffix, "vec." & suffix):
+    if runVectorizer(buf, "vec." & suffix):
       inc st.vectorized
   # The tail-call encoding runs after EVERYTHING, the vectorizer included.
   # `(ret (call …))` deliberately violates the Leng rule that calls are bound and

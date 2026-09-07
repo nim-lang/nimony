@@ -269,7 +269,6 @@ type
                                 ## dominates the first occurrence and sits AFTER
                                 ## every store/decl preceding it in that block
     tempCounter: int
-    moduleSuffix: string
     resolver: SummaryResolver       ## module table + foreign-module fallback,
                                     ## memoized (see `resolveCallee`)
     aa: Aliasing                ## intra-proc alias partition of this body
@@ -311,7 +310,7 @@ type
     loopStack: seq[LoopFrame]   ## enclosing loops, outermost first; LICM reads
                                 ## this to hoist invariant loads to a pre-header
 
-proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
+proc createContext(orig: ptr TokenBuf;
                    summaries: ptr FunctionSummaryTable): Context =
   result = Context(orig: orig,
           cache: initTracker[string, CachedEntry](),
@@ -325,7 +324,6 @@ proc createContext(orig: ptr TokenBuf; moduleSuffix: string;
           stmtStack: @[],
           curStmt: -1,
           tempCounter: 0,
-          moduleSuffix: moduleSuffix,
           resolver: initSummaryResolver(summaries, nil),
           localDefPos: initTable[SymId, int](),
           proven: initTracker[string, int](),
@@ -2161,7 +2159,7 @@ proc registerParams(c: var Context; params: Cursor) =
       if nameCur.kind == SymbolDef: c.paramSyms.incl symId(nameCur)
     skip p
 
-proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
+proc runCSE*(buf: var TokenBuf;
              summaries: ptr FunctionSummaryTable = nil;
              m: ptr MainModule = nil;
              params: Cursor = default(Cursor)): int {.discardable.} =
@@ -2170,7 +2168,7 @@ proc runCSE*(buf: var TokenBuf; moduleSuffix = "M";
   ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
   ## module type context (proc params already registered in the current scope) —
   ## nil falls back to the coarse, type-agnostic alias partition.
-  var ctx = createContext(addr buf, moduleSuffix, summaries)
+  var ctx = createContext(addr buf, summaries)
   ctx.m = m                          # type context: skip value-CSE of aggregates
   ctx.resolver.m = m                 # foreign-summary fallback resolves through it
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
