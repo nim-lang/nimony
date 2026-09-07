@@ -92,7 +92,9 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
     rd.next(r, tok)
     case tok.tk
     of rd.EofToken, rd.UnknownToken, TagLit, ExtendedSuffix, LineInfoLit:
-      # the last three are binary-only kinds the textual reader never yields
+      # `TagLit`/`LineInfoLit` are binary-only kinds the textual reader never
+      # yields, and `ExtendedSuffix` only reaches it in the reader's split-symbol
+      # mode, which this parser does not switch on (it wants whole symbols).
       break
     of rd.ParLe:
       let info = resolveInfo(b, tok, parents)
