@@ -13,6 +13,11 @@
 
 const
   Digits = {'0'..'9'}
+  DisambMax = (high(int) - 9) div 10
+    ## Largest disambiguator that can still absorb another digit. A symbol whose
+    ## disambiguator does not fit an `int` is malformed -- but it can arrive in
+    ## a `.nif` file all the same, so the parse SATURATES instead of trapping,
+    ## and a caller that cares (`splitLocalSymName`) re-reads the digits.
 
 type
   SymbolSlices* = object
@@ -94,7 +99,10 @@ proc sliceSymbol*(s: string): SymbolSlices =
   result.disambStart = i+1
   var d = i+1
   while d < head and s[d] in Digits:
-    result.disamb = result.disamb * 10 + (ord(s[d]) - ord('0'))
+    if result.disamb <= DisambMax:
+      result.disamb = result.disamb * 10 + (ord(s[d]) - ord('0'))
+    else:
+      result.disamb = high(int)
     inc d
   if d < head and s[d] == '.':
     # whatever sits between the disambiguator and the module is the key a
@@ -240,24 +248,29 @@ proc isInstantiation*(s: string): bool =
 
 proc splitLocalSymName*(s: string; basename: var string;
                         disamb: var int): bool =
-  ## Splits a local symbol such as `tmp.14` into `tmp` and `14`.
+  ## Splits a LOCAL symbol such as `tmp.14` into `tmp` and `14`; false when `s`
+  ## is not one -- it carries a module suffix or a key, or its disambiguator is
+  ## not a number, or that number does not fit an `int`.
+  ##
+  ## The string-level answer, for a caller with no `Pool` to ask: both callers
+  ## validate a name a macro PLUGIN handed back in a `.unusedname` directive,
+  ## which is a string off a file and not a symbol anyone interned.
+  ##
+  ## The overflow rejection is the point of parsing the digits here rather than
+  ## trusting `sliceSymbol.disamb`: the number comes from outside the compiler
+  ## and is counted up to, so a wrapped one would be a hang or worse.
   basename = ""
   disamb = 0
-  var dot = s.len - 1
-  while dot >= 0 and s[dot] in {'0'..'9'}:
-    dec dot
-  if dot <= 0 or dot == s.len - 1 or s[dot] != '.':
-    return false
-  for i in 0 ..< dot:
-    if s[i] == '.':
-      return false
+  let sl = sliceSymbol(s)
+  if not sl.wellFormed or not sl.disambIsNumeric: return false
+  if sl.moduleLen > 0 or sl.dedupLen > 0: return false
   var value = 0
-  for i in dot + 1 ..< s.len:
+  for i in sl.disambStart ..< sl.disambStart+sl.disambLen:
     let digit = ord(s[i]) - ord('0')
     if value > (high(int) - digit) div 10:
       return false
     value = value * 10 + digit
-  basename = substr(s, 0, dot - 1)
+  basename = substr(s, 0, sl.nameLen-1)
   disamb = value
   result = true
 
@@ -342,6 +355,13 @@ when isMainModule:
   assert sliceSymbol("..<.3").moduleLen == 0
   assert sliceSymbol("Pool.Obj.0.mymod").moduleLen == 5
 
+  # A disambiguator that cannot fit an `int` saturates rather than trapping:
+  # this is a parser, and it is fed files.
+  let huge = sliceSymbol("tmp.99999999999999999999999")
+  assert huge.wellFormed and huge.disamb == high(int)
+  assert substr("tmp.99999999999999999999999", huge.disambStart,
+                huge.disambStart+huge.disambLen-1) == "99999999999999999999999"
+
   let minted = sliceSymbol("p.0h107")
   assert minted.wellFormed and minted.nameLen == 1
   assert not minted.disambIsNumeric
@@ -415,5 +435,14 @@ when isMainModule:
   assert splitLocalSymName("tmp.14", basename, disamb)
   assert basename == "tmp"
   assert disamb == 14
+  # A module suffix means it is not local.
   assert not splitLocalSymName("tmp.14.mod", basename, disamb)
-  assert not splitLocalSymName("tmp.part.14", basename, disamb)
+  # A name may contain dots, and such a symbol is still local -- the scan this
+  # replaced counted dots and rejected it for having one.
+  assert splitLocalSymName("tmp.part.14", basename, disamb)
+  assert basename == "tmp.part"
+  assert splitLocalSymName("Pool.Obj.7", basename, disamb)
+  assert basename == "Pool.Obj"
+  assert disamb == 7
+  # A number that does not fit is not a disambiguator we can count up to.
+  assert not splitLocalSymName("tmp.99999999999999999999999", basename, disamb)
