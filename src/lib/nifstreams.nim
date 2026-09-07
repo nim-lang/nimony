@@ -13,6 +13,9 @@
 ##   `ParLe`/`ParRi`/`EofToken` members, so structural scanners (deps.nim)
 ##   see the exact classic kinds. Ident/StringLit/Symbol payloads are interned
 ##   into the global `pool`, so `pool.strings[t.litId]` works as before.
+##   SYMBOLS are the one thing that changed shape: `pool.syms` holds the
+##   taken-apart `NifSymbol` (nimony#2457), so a classic consumer that reached
+##   into it for a string asks `symString(pool, id)` / `symId(pool, name)`.
 ##   Number tokens keep their KIND only (a 4-byte token cannot always carry
 ##   the value); classic scanners never read those payloads.
 
