@@ -2,7 +2,8 @@
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
 
-let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
+let tags = newHttpTags()   # this test's own tag space
+let hApiKey = registerHeader(tags, "x-api-key")   # the header this test indexes on
 
 var wbuf = default(array[4096, char])
 
@@ -16,7 +17,7 @@ proc render(m: var HttpMsg): string =
   for k in 0..<n: result.add wbuf[k]
 
 proc testResponse =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   m.startResponse(404)
   m.addHeader(hContentLength, 0)
   m.addHeader(hConnection, vClose)
@@ -26,7 +27,7 @@ proc testResponse =
     render(m)
 
 proc testRequest =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   m.startRequest(tag(mPost), "/submit", tag(tV10))
   m.addHeader(hHost, "example.com")
   m.addHeader(hContentLength, 1234)
@@ -41,7 +42,7 @@ proc testRequest =
     "X-Weird: 1\r\n\r\n", render(m)
 
 proc testMultiValue =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   m.startResponse(200)
   m.addHeader(hAccept, ["text/html", "application/xhtml+xml", "*/*"])
   m.finish()
@@ -81,7 +82,7 @@ proc testInt =
 proc testTooSmall =
   # Every buffer shorter than the head must be refused, and refused cleanly:
   # the answer is WriteFull, never a partial index the caller would trust.
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   m.startResponse(200)
   m.addHeader(hContentLength, 5)
   m.finish()
@@ -94,7 +95,7 @@ proc testTooSmall =
 
 proc testOffset =
   # Writing at a non-zero offset must not disturb what is already there.
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   m.startResponse(204)
   m.finish()
   var b = default(array[256, char])
@@ -116,11 +117,11 @@ proc testRoundTrip =
              "Content-Encoding: gzip\r\n" &
              "X-API-Key: t-1\r\n" &
              "X-Unregistered: raw\r\n\r\n"
-  var m1 = initHttpMsg()
+  var m1 = initHttpMsg(tags)
   assert parseRequestHead(toOpenArray(wire, 0, wire.len - 1), m1) == wire.len
   let once = render(m1)
 
-  var m2 = initHttpMsg()
+  var m2 = initHttpMsg(tags)
   let n = parseRequestHead(toOpenArray(once, 0, once.len - 1), m2)
   assert n == once.len, "re-parsing our own output: " & $n & " of " & $once.len
   let twice = render(m2)
@@ -138,7 +139,7 @@ proc testRoundTrip =
   assert others == "X-Unregistered=raw;", others
 
 proc testRecycle =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   for i in 0..<50:
     m.reset()
     m.startResponse(200 + (i mod 3))

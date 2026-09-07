@@ -53,16 +53,31 @@ skipping O(1) either way, and the wrapper would only cost a token.
 
 This distinction is the whole design, so it is worth stating plainly:
 
-- The **tag space** is a single process-global `TagPool`, filled during init
-  and not touched again once connections are being served. Known header names,
-  known
-  methods, known header *values* and the structural tags live here — and so do
-  whatever custom headers the application registers.
+- The **tag space** is an `HttpTags`, filled during init and not touched again
+  once connections are being served. Known header names, known methods, known
+  header *values* and the structural tags live here — and so do whatever custom
+  headers the application registers.
 - The **payload space** is a `Pool` per message, created with the message and
   destroyed with it.
 
-`createTokenBuf(cap, sharedTags = gHttpTags)` gives exactly this: the tag
+`createTokenBuf(cap, sharedTags = tags.pool)` gives exactly this: the tag
 namespace is shared, the literal pool is not.
+
+The tag space is **threaded, not global**. An application makes one with
+`newHttpTags()` during init and passes it to `initHttpMsg` and `initHttpConn`;
+from there `HttpMsg.tags` carries it, so the parser and the wire writer — which
+already take a message — need no tag parameter of their own. A `TagId` only
+means something against the space it was written against, and threading is what
+makes that visible in the signatures instead of a promise the process has to
+keep. Two spaces in one process are two vocabularies and cannot leak into each
+other, which is what `tmsg`'s `testSpacesAreIndependent` pins down.
+
+```nim
+let tags = newHttpTags()                        # init
+let hTraceId = registerHeader(tags, "X-Trace-Id")
+var c = initHttpConn(fd, afterMs(30_000), tags)
+var m = initHttpMsg(tags)
+```
 
 `createTags[E]` cannot be used directly, because it registers `$e` and
 `content-length` is not a Nim identifier — a parallel
@@ -81,11 +96,11 @@ loop asserts enum/id alignment, which is what caught that collision.
 An application's own headers — `X-Request-Id`, a custom auth header, whatever
 the proxy in front adds — are usually the ones it indexes on. They are not
 unknown to the *application*, only to the stdlib. So the application registers
-them during init and they get the same process-stable ids and integer
-compares as `Host`:
+them during init and they get the same stable ids and integer compares as
+`Host`, for every message built against that space:
 
 ```nim
-let hTraceId = registerHeader("X-Trace-Id")   # init, before the first accept
+let hTraceId = registerHeader(tags, "X-Trace-Id")  # init, before the first accept
 ```
 
 `registerHeader` is the only thing that grows the pool, and the parser does not
@@ -94,10 +109,11 @@ registered spellings and has no way to add one. So interning is off the request
 path by construction — there is no flag to set and nothing to enforce at
 runtime. A name nobody registered simply becomes `(xhdr "name" "value")`.
 
-Which is what we want anyway, because the pool is process-global and monotonic:
-growing it from incoming bytes would make exhaustion permanent and shared. As
-it is, "the pool is full" can only be reached from `registerHeader` during
-init, where it is a startup error and a programmer mistake.
+Which is what we want anyway, because a tag space is monotonic and outlives
+every message built against it: growing it from incoming bytes would make
+exhaustion permanent for the whole space. As it is, "the pool is full" can only
+be reached from `registerHeader` during init, where it is a startup error and a
+programmer mistake.
 
 The HTTP pool deliberately nominates **no `escapeTag`**. With one, ids past 511
 stay legal at the cost of a second token and there is no wall to detect, so any
@@ -709,11 +725,12 @@ And two things about the tests rather than the code. `tconn`'s
 time: 200M iterations is somewhere between 40ms and 60ms depending on the
 machine, and the idle-connection block is waiting on a 40ms deadline — so it
 failed about half the time with "a passive chain never finished" when nothing
-had gone wrong. It is a wall-clock budget now. And the tag pool is
+had gone wrong. It is a wall-clock budget now. And the tag pool used to be
 process-global while a joined group is one process, so each test registering
-for itself made the first member's init decide what ids the rest saw;
-`tests/nimony/http/httptags.nim` is the one place that registers, which is the
-shape §1 prescribes for an application anyway.
+for itself made the first member's init decide what ids the rest saw. Threading
+the space removed that coupling at the root: each test now calls `newHttpTags()`
+and owns its own vocabulary, so a joined group behaves like six separate
+processes again.
 
 ## 8. Open
 

@@ -3,8 +3,9 @@
 # HTTP over a connection: framing and keep-alive on top of `std/socket`.
 # See doc/internals/http.md.
 #
-#   var c = initHttpConn(fd, afterMs(30_000))
-#   var m = initHttpMsg()
+#   let tags = newHttpTags()                       # once, during init
+#   var c = initHttpConn(fd, afterMs(30_000), tags)
+#   var m = initHttpMsg(tags)
 #   if c.readRequest(m) == Success:
 #     discard c.respond(200, "hello\n")
 #
@@ -44,14 +45,19 @@ type
       ## that wants to speak something else over the same connection — an
       ## upgrade to WebSocket, say — needs the socket rather than a copy of
       ## its API forwarded one proc at a time.
+    tags*: HttpTags
+      ## The tag space this connection's messages are built and parsed
+      ## against. A connection serves many messages and they all have to agree
+      ## on what an id means, so the space is threaded in once here rather than
+      ## looked up per message.
     scan: HeadScanner
     chunk: ChunkState
     chunkLeft: int
 
-proc initHttpConn*(fd: cint; deadline: Deadline): HttpConn =
+proc initHttpConn*(fd: cint; deadline: Deadline; tags: HttpTags): HttpConn =
   ## `fd` must already be non-blocking. The deadline has no default: a
   ## connection with no budget is one a quiet peer can hold forever.
-  HttpConn(sock: initSocket(fd, deadline),
+  HttpConn(sock: initSocket(fd, deadline), tags: tags,
            scan: default(HeadScanner), chunk: csHeader, chunkLeft: 0)
 
 proc fd*(c: HttpConn): cint {.inline.} = c.sock.fd
@@ -242,7 +248,7 @@ proc respond*(c: var HttpConn; status: int; body: openArray[char];
   ## A complete response: status, `Content-Length`, `Connection`, and the
   ## body. The length is always sent — a response whose end the peer has to
   ## infer from a close is a response that cannot be followed by another.
-  var m = initHttpMsg()
+  var m = initHttpMsg(c.tags)
   m.startResponse(status)
   m.addHeader(hContentLength, body.len)
   m.addHeader(hConnection, vKeepAlive)
