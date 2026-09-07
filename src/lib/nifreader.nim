@@ -229,6 +229,13 @@ proc decodeStr*(r: Reader; t: ExpandedToken): string =
       copyMem(beginStore(result, result.len), t.data.p, t.data.len)
       endStore(result)
 
+proc needsDecoding*(t: ExpandedToken): bool {.inline.} =
+  ## Whether `decodeStr` would do anything but copy `t.data`: an escape to
+  ## expand, or a module suffix to append. When it is false the bytes ARE the
+  ## value, so a client that interns them (`getOrInclFromView`) can skip
+  ## building a string at all.
+  TokenHasEscapes in t.flags or TokenHasModuleSuffixExpansion in t.flags
+
 proc decodeComment*(t: ExpandedToken): string =
   ## Decode the captured `#…#` comment, expanding `\HH` escapes. Returns "" if
   ## no comment is attached.

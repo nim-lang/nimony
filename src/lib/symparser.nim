@@ -13,11 +13,29 @@
 
 const
   Digits = {'0'..'9'}
-  DisambMax = (high(int) - 9) div 10
-    ## Largest disambiguator that can still absorb another digit. A symbol whose
-    ## disambiguator does not fit an `int` is malformed -- but it can arrive in
-    ## a `.nif` file all the same, so the parse SATURATES instead of trapping,
-    ## and a caller that cares (`splitLocalSymName`) re-reads the digits.
+  DisambMax* = int(high(int32))
+    ## Largest disambiguator a `NifSymbol` can hold. One that does not fit is
+    ## not a number this format can carry, and is treated as part of the name --
+    ## which keeps such a spelling (only stale artifacts have one) intact.
+
+proc parseDisamb*(s: string; start, len: int): int =
+  ## The value of the disambiguator spelled by `s[start ..< start+len]`, or -1
+  ## when that is not how NIF spells a number. THE one rule, because both the
+  ## string parse (`sliceSymbol`) and the reader's split-symbol path have to
+  ## reach the same verdict about the same bytes or a symbol would land in the
+  ## pool under two identities:
+  ##
+  ## * digits only -- `p.0h107` names no `p` with a disambiguator;
+  ## * no leading zero -- `d.00` is a NAME, and deliberately so: no user symbol
+  ##   can collide with a field the compiler injects (`typenav.DataField`);
+  ## * small enough to fit the field.
+  if len == 0: return -1
+  if len > 1 and s[start] == '0': return -1
+  result = 0
+  for i in start ..< start+len:
+    if s[i] notin Digits: return -1
+    result = result * 10 + (ord(s[i]) - ord('0'))
+    if result > DisambMax: return -1
 
 type
   SymbolSlices* = object
@@ -98,32 +116,20 @@ proc sliceSymbol*(s: string): SymbolSlices =
   result.nameLen = i
   result.disambStart = i+1
   var d = i+1
-  while d < head and s[d] in Digits:
-    if result.disamb <= DisambMax:
-      result.disamb = result.disamb * 10 + (ord(s[d]) - ord('0'))
-    else:
-      result.disamb = high(int)
-    inc d
+  while d < head and s[d] in Digits: inc d
   if d < head and s[d] == '.':
     # whatever sits between the disambiguator and the module is the key a
     # generic instantiation is deduplicated by
     result.disambLen = d - result.disambStart
-    result.disambIsNumeric = true
     result.dedupStart = d+1
     result.dedupLen = head - (d+1)
   else:
-    # `p.0h107`: the disambiguator runs to the end of the head and is not a
-    # number.
+    # `p.0h107`: the disambiguator runs to the end of the head, and whether it
+    # is a number is `parseDisamb`'s call, not this loop's.
     result.disambLen = head - result.disambStart
-    result.disambIsNumeric = d == head
-  # A NUMBER has no leading zero: `d.00` and `d.0` are two different symbols,
-  # and one that spells its disambiguator `00` cannot be rebuilt from an `int`
-  # (#2457). Nothing mints such a name any more; stale artifacts still carry
-  # them, and they have to come back out unchanged rather than collapse onto
-  # their canonical twin.
-  if result.disambIsNumeric and result.disambLen > 1 and
-      s[result.disambStart] == '0':
-    result.disambIsNumeric = false
+  let v = parseDisamb(s, result.disambStart, result.disambLen)
+  result.disambIsNumeric = v >= 0
+  if v >= 0: result.disamb = v
 
 proc extractBasename*(s: string; isGlobal: var bool): string =
   ## The identifier of the symbol `s`: `abc.12.Mod132a3bc` and `abc.12` both
@@ -363,12 +369,15 @@ when isMainModule:
   assert sliceSymbol("..<.3").moduleLen == 0
   assert sliceSymbol("Pool.Obj.0.mymod").moduleLen == 5
 
-  # A disambiguator that cannot fit an `int` saturates rather than trapping:
-  # this is a parser, and it is fed files.
+  # A disambiguator too large for the field is not a number this format can
+  # carry: it stays part of the name, so the spelling survives. (This is a
+  # parser, and it is fed files.)
   let huge = sliceSymbol("tmp.99999999999999999999999")
-  assert huge.wellFormed and huge.disamb == high(int)
+  assert not huge.disambIsNumeric
   assert substr("tmp.99999999999999999999999", huge.disambStart,
                 huge.disambStart+huge.disambLen-1) == "99999999999999999999999"
+  assert sliceSymbol("tmp.2147483647").disambIsNumeric      # high(int32)
+  assert not sliceSymbol("tmp.2147483648").disambIsNumeric  # one past it
 
   # A leading zero is not how a number is spelled, so `d.00` keeps its
   # disambiguator inside the name and stays distinct from `d.0`.
