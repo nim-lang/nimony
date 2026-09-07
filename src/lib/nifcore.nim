@@ -59,6 +59,7 @@ else:
 
 import std / [assertions, hashes]
 import bitabs, lineinfos, nifroles
+import symparser  # the ONE place that knows how a symbol is spelled
 export nifroles  # a `{.nifWrap.}` in a template body is resolved where it expands
 export bitabs  # adapters touching pool.strings / tags need getOrIncl etc.
 export lineinfos.FileId, lineinfos.NoFile, lineinfos.isValid,
@@ -399,6 +400,91 @@ template tagName*(tp: TagPool; t: TagId): lent string = tp.tags[t]
 # `symName(c)` accessors which handle both modes transparently.
 template poolStr*(p: Pool; s: StrId): lent string = p.strings[s]
 template poolSym*(p: Pool; s: SymId): lent string = p.syms[s]
+
+# ── Symbols are objects, not strings (#2457) ─────────────────────────────
+#
+# A NIF symbol is `<name>.<disamb>`, `<name>.<disamb>.<module>` or
+# `<name>.<disamb>.<dedup>.<module>`, and the rest of the compiler kept taking
+# that apart again at every question it asked. `NifSymbol` is the taken-apart
+# form and `sym(p, id)` is how everything asks; `symString` is the only way
+# left to get the whole spelling, and it says in its name that it builds one.
+#
+# The pool still STORES strings for now, so these are exactly as cheap (and as
+# expensive) as the scanners they replace. Once nothing outside this file reads
+# `p.syms[id]` as a string, `syms` becomes a `BiTable[SymId, NifSymbol]` and
+# `sym` turns into a field read.
+
+type
+  NifSymbol* = object
+    ## A NIF symbol, taken apart. The three names are ids into `Pool.strings`:
+    ## a module suffix is repeated by every symbol that comes from that module
+    ## (54 modules for 8044 symbols in a typical nimsem module), so asking
+    ## "same module?" must not mean building two strings and comparing them.
+    name*: StrId
+    disamb*: int32
+    dedup*: StrId   ## `StrId(0)` unless the symbol is a generic instantiation
+    module*: StrId  ## `StrId(0)` for a local symbol
+
+proc sym*(p: Pool; id: SymId): NifSymbol =
+  ## The symbol `id`, taken apart.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  result = NifSymbol(name: p.strings.getOrIncl(substr(s, 0, sl.nameLen-1)),
+                     disamb: int32(sl.disamb),
+                     dedup: StrId(0), module: StrId(0))
+  if sl.dedupLen > 0:
+    result.dedup = p.strings.getOrIncl(substr(s, sl.dedupStart,
+                                              sl.dedupStart+sl.dedupLen-1))
+  if sl.moduleLen > 0:
+    result.module = p.strings.getOrIncl(substr(s, sl.moduleStart,
+                                               sl.moduleStart+sl.moduleLen-1))
+
+proc isLocal*(s: NifSymbol): bool {.inline.} = s.module == StrId(0)
+  ## A local symbol is one with no module suffix -- and that is a question
+  ## about the module field, never about how many dots the spelling has: real
+  ## names contain dots (`Pool.Obj`, `dollar`.CaseMode`, `..<`).
+
+proc symString*(p: Pool; id: SymId): string {.inline.} =
+  ## The whole spelling of `id`. Builds a string, so it is for the places that
+  ## genuinely need one -- the C mangler, error messages, serialization -- and
+  ## never for asking a question that `sym` answers.
+  p.syms[id]
+
+proc symString*(p: Pool; s: NifSymbol): string =
+  ## The spelling `s` would be interned under.
+  result = p.strings[s.name]
+  result.add '.'
+  result.addInt s.disamb
+  if s.dedup != StrId(0):
+    result.add '.'
+    result.add p.strings[s.dedup]
+  if s.module != StrId(0):
+    result.add '.'
+    result.add p.strings[s.module]
+
+proc symId*(p: Pool; s: string): SymId {.inline.} =
+  ## Intern a symbol given its whole spelling. This is what the reader and the
+  ## deserializers have; code that MINTS a symbol should say what its parts are
+  ## instead (the overload below).
+  assert s.len == 0 or s[s.len-1] != '.',
+    "a symbol reaches the pool with its module suffix expanded, never as `" & s & "`"
+  p.syms.getOrIncl(s)
+
+proc symId*(p: Pool; name: string; disamb: int; module = ""; dedup = ""): SymId =
+  ## Intern a symbol from its parts. `module` empty means a local symbol.
+  var s = name
+  s.add '.'
+  s.addInt disamb
+  if dedup.len > 0:
+    s.add '.'
+    s.add dedup
+  if module.len > 0:
+    s.add '.'
+    s.add module
+  result = p.syms.getOrIncl(s)
+
+proc symId*(p: Pool; s: NifSymbol): SymId {.inline.} =
+  result = p.syms.getOrIncl(symString(p, s))
 
 # ── Storage / CursorOwner / Cursor ───────────────────────────────────────
 

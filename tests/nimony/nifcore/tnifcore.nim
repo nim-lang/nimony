@@ -86,6 +86,37 @@ proc main =
   appendedCursor.skip()
   appendedCursor.skip()
   assert appendedCursor.strVal == "foreign"
+
+  # A symbol is an object, not a string (#2457): `sym` takes one apart and the
+  # parts are ids, so asking "same module?" is an integer comparison.
+  var symbols = createTokenBuf()
+  let p = symbols.pool
+  let inst = p.symId("gen.12.Ikey.mymod")
+  let glob = p.symId("other.3.mymod")
+  let loc = p.symId("tmp.14")
+  let dotted = p.symId("Pool.Obj.0")
+
+  assert p.sym(inst).disamb == 12
+  assert p.strings[p.sym(inst).name] == "gen"
+  assert p.strings[p.sym(inst).dedup] == "Ikey"
+  assert p.sym(inst).module == p.sym(glob).module
+  assert not p.sym(inst).isLocal
+
+  assert p.sym(loc).isLocal
+  assert p.sym(loc).dedup == StrId(0)
+  assert p.strings[p.sym(loc).name] == "tmp"
+
+  # A name may contain dots; only the disambiguator's dot ends it.
+  assert p.sym(dotted).isLocal
+  assert p.strings[p.sym(dotted).name] == "Pool.Obj"
+
+  # The parts and the spelling are the same symbol.
+  assert p.symId("gen", 12, "mymod", "Ikey") == inst
+  assert p.symId("tmp", 14) == loc
+  assert p.symString(inst) == "gen.12.Ikey.mymod"
+  assert p.symString(p.sym(inst)) == "gen.12.Ikey.mymod"
+  assert p.symId(p.sym(glob)) == glob
+
   echo "ok"
 
 main()
