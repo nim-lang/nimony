@@ -59,7 +59,6 @@ else:
 
 import std / [assertions, hashes]
 import bitabs, lineinfos, nifroles
-import symparser  # the ONE place that knows how a symbol is spelled
 export nifroles  # a `{.nifWrap.}` in a template body is resolved where it expands
 export bitabs  # adapters touching pool.strings / tags need getOrIncl etc.
 export lineinfos.FileId, lineinfos.NoFile, lineinfos.isValid,
@@ -567,6 +566,83 @@ proc symString*(p: Pool; id: SymId): string {.inline.} =
   ## never for asking a question the accessors above answer.
   symString(p, p.symbols[id])
 
+const
+  DisambMax* = int(high(int32))
+    ## Largest disambiguator `NifSymbol.disamb` can hold.
+
+proc parseDisamb*(s: string; start, len: int): int =
+  ## The value of the disambiguator spelled by `s[start ..< start+len]`, or -1
+  ## when that is not how NIF spells a number:
+  ##
+  ## * digits only -- `p.0h107` names no `p` with a disambiguator;
+  ## * no leading zero -- `d.00` is a NAME, and deliberately so: no user symbol
+  ##   can collide with a field the compiler injects (`typenav.DataField`);
+  ## * small enough to fit the field.
+  ##
+  ## A spelling that fails any of these keeps its tail inside the NAME, which is
+  ## what lets every symbol round-trip through the pool unchanged. The reader's
+  ## split-symbol path asks this too, so the two agree about the same bytes.
+  if len == 0: return -1
+  if len > 1 and s[start] == '0': return -1
+  result = 0
+  for i in start ..< start+len:
+    if s[i] notin {'0'..'9'}: return -1
+    result = result * 10 + (ord(s[i]) - ord('0'))
+    if result > DisambMax: return -1
+
+type
+  Spelling = object
+    ## Where each part of `<name>.<disamb>[.<dedup>].<module>` sits inside the
+    ## string that spells it. Private: it exists to build a `NifSymbol` and to
+    ## look one up, and both are here.
+    nameLen: int
+    disamb: int32          ## `NoDisamb` when there is none that is a number
+    dedupStart, dedupLen: int
+    moduleStart, moduleLen: int
+
+proc splitSpelling(s: string): Spelling =
+  ## The module is the LAST dot-separated component -- unless it STARTS with a
+  ## digit, which makes it the disambiguator and the symbol local. `p.0h107` is
+  ## a local whose disambiguator an inliner minted, not a symbol from a module
+  ## called `0h107`.
+  ##
+  ## The name/disambiguator boundary needs the digit anchor, because a name may
+  ## contain dots itself (`Pool.Obj.0`, `a.b.c.23`, `..<.3`) and only the digit
+  ## tells the two apart. Everything not accounted for stays in the name.
+  result = Spelling(nameLen: s.len, disamb: NoDisamb,
+                    dedupStart: 0, dedupLen: 0, moduleStart: 0, moduleLen: 0)
+  var lastDot = -1
+  for k in 0 ..< s.len:
+    if s[k] == '.': lastDot = k
+  var head = s.len
+  if lastDot >= 0:
+    if lastDot+1 < s.len and s[lastDot+1] notin {'0'..'9'}:
+      result.moduleStart = lastDot+1
+      result.moduleLen = s.len - (lastDot+1)
+      head = lastDot
+    elif lastDot == s.len-1:
+      head = lastDot
+  result.nameLen = head
+
+  var i = head - 2
+  while i > 0:
+    if s[i] == '.' and s[i+1] in {'0'..'9'}: break
+    dec i
+  if i <= 0: return  # no numeric disambiguator: the head is all name
+
+  var d = i+1
+  while d < head and s[d] in {'0'..'9'}: inc d
+  var disambLen = head - (i+1)
+  if d < head and s[d] == '.':
+    disambLen = d - (i+1)
+  let v = parseDisamb(s, i+1, disambLen)
+  if v < 0: return   # `p.0h107`, `d.00`: it belongs to the name
+  result.nameLen = i
+  result.disamb = int32(v)
+  if d < head and s[d] == '.':
+    result.dedupStart = d+1
+    result.dedupLen = head - (d+1)
+
 proc symRecord*(p: Pool; s: string): NifSymbol =
   ## Take a spelling apart into the record the pool stores, interning each
   ## component. Every spelling round-trips: one whose disambiguator is not a
@@ -574,21 +650,15 @@ proc symRecord*(p: Pool; s: string): NifSymbol =
   ## artifacts carry (`_exit.sys.mod`, `p.0h107`) come back out unchanged.
   assert s.len == 0 or s[s.len-1] != '.',
     "a symbol reaches the pool with its module suffix expanded, never as `" & s & "`"
-  let sl = sliceSymbol(s)
-  let head = if sl.moduleLen > 0: sl.moduleStart-1 else: s.len
-  result = NifSymbol(name: StrId(0), disamb: NoDisamb,
-                     dedup: StrId(0), module: StrId(0))
+  let sl = splitSpelling(s)
+  result = NifSymbol(name: p.strings.getOrIncl(substr(s, 0, sl.nameLen-1)),
+                     disamb: sl.disamb, dedup: StrId(0), module: StrId(0))
+  if sl.dedupLen > 0:
+    result.dedup = p.strings.getOrIncl(substr(s, sl.dedupStart,
+                                              sl.dedupStart+sl.dedupLen-1))
   if sl.moduleLen > 0:
     result.module = p.strings.getOrIncl(substr(s, sl.moduleStart,
                                                sl.moduleStart+sl.moduleLen-1))
-  if sl.wellFormed and sl.disambIsNumeric:
-    result.name = p.strings.getOrIncl(substr(s, 0, sl.nameLen-1))
-    result.disamb = int32(sl.disamb)
-    if sl.dedupLen > 0:
-      result.dedup = p.strings.getOrIncl(substr(s, sl.dedupStart,
-                                                sl.dedupStart+sl.dedupLen-1))
-  else:
-    result.name = p.strings.getOrIncl(substr(s, 0, head-1))
 
 proc symId*(p: Pool; s: string): SymId {.inline.} =
   ## Intern a symbol given its whole spelling. This is what the reader and the
@@ -658,23 +728,17 @@ proc getKeyId*(s: SymPool; name: string): SymId =
   ## proof the symbol is not in it, which is the answer the caller wanted.
   ensureIndexed s.pool.strings
   ensureIndexed s.pool.symbols
-  let sl = sliceSymbol(name)
-  let head = if sl.moduleLen > 0: sl.moduleStart-1 else: name.len
-  var r = NifSymbol(name: StrId(0), disamb: NoDisamb,
-                    dedup: StrId(0), module: StrId(0))
+  let sl = splitSpelling(name)
+  var r = NifSymbol(name: s.pool.strings.getKeyId(substr(name, 0, sl.nameLen-1)),
+                    disamb: sl.disamb, dedup: StrId(0), module: StrId(0))
+  if sl.dedupLen > 0:
+    r.dedup = s.pool.strings.getKeyId(substr(name, sl.dedupStart,
+                                             sl.dedupStart+sl.dedupLen-1))
+    if r.dedup == StrId(0): return SymId(0)
   if sl.moduleLen > 0:
     r.module = s.pool.strings.getKeyId(substr(name, sl.moduleStart,
-                                           sl.moduleStart+sl.moduleLen-1))
+                                              sl.moduleStart+sl.moduleLen-1))
     if r.module == StrId(0): return SymId(0)
-  if sl.wellFormed and sl.disambIsNumeric:
-    r.name = s.pool.strings.getKeyId(substr(name, 0, sl.nameLen-1))
-    r.disamb = int32(sl.disamb)
-    if sl.dedupLen > 0:
-      r.dedup = s.pool.strings.getKeyId(substr(name, sl.dedupStart,
-                                            sl.dedupStart+sl.dedupLen-1))
-      if r.dedup == StrId(0): return SymId(0)
-  else:
-    r.name = s.pool.strings.getKeyId(substr(name, 0, head-1))
   if r.name == StrId(0): return SymId(0)
   result = s.pool.symbols.getKeyId(r)
 

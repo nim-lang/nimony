@@ -22,7 +22,6 @@ import nifcore
 import nifreader as rd
 import nifbuilder
 import stringviews
-import symparser  # parseDisamb -- the one rule about what a disambiguator is
 import lineinfos  # for `==`(FileId) used by NifLineInfo's structural `==`
 
 export nifcore

@@ -461,7 +461,7 @@ proc splitSymbol(r: var Reader; result: var ExpandedToken) =
   ## follow it, which subsequent `next` calls hand out as `ExtendedSuffix`
   ## tokens. `result.data` is shortened to the name.
   ##
-  ## Same grammar as `symparser.sliceSymbol`, applied to the RAW bytes, where
+  ## Same grammar as `nifcore.splitSpelling`, applied to the RAW bytes, where
   ## an escaped dot (`\2E`) is still three bytes and so cannot be mistaken for
   ## a separator: the module is the last dot-separated component unless it
   ## STARTS with a digit (`p.0h107` is a local symbol, not one from a module

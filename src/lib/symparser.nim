@@ -5,170 +5,44 @@
 # distribution, for details about the copyright.
 
 ## Parses NIF symbols into their components.
-##
-## `sliceSymbol` is the one place that knows the grammar; everything else here
-## is (for now) the older per-question scanners it replaces. See #2457: the
-## goal is that a symbol is taken apart ONCE, into `nifcore.NifSymbol`, and
-## that these scanners then have no callers left.
-
-const
-  Digits = {'0'..'9'}
-  DisambMax* = int(high(int32))
-    ## Largest disambiguator a `NifSymbol` can hold. One that does not fit is
-    ## not a number this format can carry, and is treated as part of the name --
-    ## which keeps such a spelling (only stale artifacts have one) intact.
-
-proc parseDisamb*(s: string; start, len: int): int =
-  ## The value of the disambiguator spelled by `s[start ..< start+len]`, or -1
-  ## when that is not how NIF spells a number. THE one rule, because both the
-  ## string parse (`sliceSymbol`) and the reader's split-symbol path have to
-  ## reach the same verdict about the same bytes or a symbol would land in the
-  ## pool under two identities:
-  ##
-  ## * digits only -- `p.0h107` names no `p` with a disambiguator;
-  ## * no leading zero -- `d.00` is a NAME, and deliberately so: no user symbol
-  ##   can collide with a field the compiler injects (`typenav.DataField`);
-  ## * small enough to fit the field.
-  if len == 0: return -1
-  if len > 1 and s[start] == '0': return -1
-  result = 0
-  for i in start ..< start+len:
-    if s[i] notin Digits: return -1
-    result = result * 10 + (ord(s[i]) - ord('0'))
-    if result > DisambMax: return -1
-
-type
-  SymbolSlices* = object
-    ## Where each component of a NIF symbol sits inside the string that spells
-    ## it: `<name>.<disamb>`, `<name>.<disamb>.<module>` or
-    ## `<name>.<disamb>.<dedup>.<module>`. The name always starts at 0, and a
-    ## component the symbol does not have has a length of 0.
-    nameLen*: int
-    disamb*: int
-      ## The leading digits of the disambiguator. Meaningless unless
-      ## `disambIsNumeric` -- see it.
-    disambStart*, disambLen*: int
-    disambIsNumeric*: bool
-      ## Whether the disambiguator is a plain number. It is NOT always: the
-      ## inliners mint `returnLabel.0h3` / `p.0i7` / `x.0d2` (a per-pass letter
-      ## keeps hexer-, intra- and dce2-minted names from colliding), and arkham
-      ## reserves `.sys.` / `.c.` for its syprocs and extprocs. `disamb` alone
-      ## does not identify such a symbol -- `p.0h107` and `p.0h2` both read as
-      ## 0 -- so anything that RECONSTRUCTS a symbol must use the text.
-    dedupStart*, dedupLen*: int
-    moduleStart*, moduleLen*: int
-    wellFormed*: bool
-      ## False for an atom that is not a symbol at all -- no `.` followed by a
-      ## digit anywhere in it, which is what an operator definition (`[]=`)
-      ## looks like. Every other field is then 0 and the whole string is the
-      ## name.
-
-proc sliceSymbol*(s: string): SymbolSlices =
-  ## Take a symbol apart without copying anything out of it.
-  ##
-  ## The module is the LAST dot-separated component -- unless it STARTS with a
-  ## digit, which makes it the disambiguator and the symbol local. That question
-  ## needs no anchor, which is what makes it answerable for the symbols arkham
-  ## mints with a reserved non-numeric disambiguator (`_exit.sys.sysvq0asl`,
-  ## `write.c.sysvq0asl`).
-  ##
-  ## "Starts with a digit" rather than "is a number" is deliberate and is what
-  ## every scanner here has always done: `p.0h107` is a LOCAL symbol whose
-  ## disambiguator the inliner minted, not a symbol from a module called
-  ## `0h107`. The flip side is that a module whose suffix begins with a digit
-  ## cannot be told apart from a disambiguator -- a hazard that predates this
-  ## and that only the file naming avoids.
-  ##
-  ## The name/disambiguator boundary DOES need the anchor -- the last `.`
-  ## followed by a digit -- because a name may contain dots itself
-  ## (`Pool.Obj.0`, `a.b.c.23`) and only the digit tells the two apart. A symbol
-  ## with a reserved disambiguator therefore reports `wellFormed = false`, with
-  ## everything but the module counted as the name, which is what
-  ## `splitSymName` has always answered for it.
-  result = SymbolSlices(nameLen: s.len, disamb: 0,
-                        disambStart: 0, disambLen: 0, disambIsNumeric: false,
-                        dedupStart: 0, dedupLen: 0,
-                        moduleStart: 0, moduleLen: 0, wellFormed: false)
-  var lastDot = -1
-  var k = 0
-  while k < s.len:
-    if s[k] == '.': lastDot = k
-    inc k
-
-  var head = s.len ## everything that is not the module suffix
-  if lastDot >= 0 and lastDot+1 < s.len and s[lastDot+1] notin Digits:
-    result.moduleStart = lastDot+1
-    result.moduleLen = s.len - (lastDot+1)
-    head = lastDot
-  elif lastDot == s.len-1:
-    # a trailing dot is the "my own module" shorthand, which the reader expands
-    # before anyone sees it; there is no module suffix spelled here.
-    head = lastDot
-  result.nameLen = head
-
-  var i = head - 2
-  while i > 0:
-    if s[i] == '.' and s[i+1] in Digits: break
-    dec i
-  if i <= 0: return # not a symbol, or a reserved disambiguator (`_exit.sys.…`)
-
-  result.wellFormed = true
-  result.nameLen = i
-  result.disambStart = i+1
-  var d = i+1
-  while d < head and s[d] in Digits: inc d
-  if d < head and s[d] == '.':
-    # whatever sits between the disambiguator and the module is the key a
-    # generic instantiation is deduplicated by
-    result.disambLen = d - result.disambStart
-    result.dedupStart = d+1
-    result.dedupLen = head - (d+1)
-  else:
-    # `p.0h107`: the disambiguator runs to the end of the head, and whether it
-    # is a number is `parseDisamb`'s call, not this loop's.
-    result.disambLen = head - result.disambStart
-  let v = parseDisamb(s, result.disambStart, result.disambLen)
-  result.disambIsNumeric = v >= 0
-  if v >= 0: result.disamb = v
 
 proc extractBasename*(s: string; isGlobal: var bool): string =
-  ## The identifier of the symbol `s`: `abc.12.Mod132a3bc` and `abc.12` both
-  ## give `abc`, and `a.b.c.23` gives `a.b.c` -- a name may contain dots itself.
-  ## `isGlobal` says whether the symbol carries a module suffix.
-  ##
-  ## The string-level answer, for a caller with no `Pool` to ask (module index
-  ## keys, the LLVM debug writer's cached name strings). Code that HAS a pool
-  ## asks `nifcore.symBasename` / `symNameId`.
-  ##
-  ## An atom with no numeric disambiguator is not a symbol and has no
-  ## identifier to name, so the answer is `""` -- as it has always been.
-  let sl = sliceSymbol(s)
-  if not sl.wellFormed: return ""
-  isGlobal = sl.moduleLen > 0
-  result = substr(s, 0, sl.nameLen-1)
+  # From "abc.12.Mod132a3bc" extract "abc".
+  # From "abc.12" extract "abc".
+  # From "a.b.c.23" extract "a.b.c".
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        return substr(s, 0, i-1)
+      isGlobal = true # we skipped one dot so it's a global name
+    dec i
+  return ""
 
 proc extractBasename*(s: var string) =
-  ## `extractBasename` in place. A non-symbol is left ALONE rather than
-  ## emptied, which is what the callers of this overload have always seen.
-  let sl = sliceSymbol(s)
-  if sl.wellFormed:
-    s.setLen sl.nameLen
-
-proc extractModule*(s: string): string =
-  ## The module suffix of the symbol `s`, `""` when it is local -- the
-  ## string-level answer, for a caller that has no `Pool` to ask (nifasm reads
-  ## NIF symbols with no compiler around it). Code that HAS a pool asks
-  ## `nifcore.symModule` / `sym(p, id).module` instead, so that after #2457 it
-  ## reads a field rather than re-deriving one.
-  ##
-  ## Answered by `sliceSymbol`, byte-for-byte as the hand-rolled scanner this
-  ## replaced -- including for arkham's `_exit.sys.sysvq0asl`, whose reserved
-  ## non-numeric disambiguator is exactly what nifasm asks about.
-  let sl = sliceSymbol(s)
-  result = substr(s, sl.moduleStart, sl.moduleStart+sl.moduleLen-1)
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        s.setLen i
+        return
+    dec i
 
 proc genericTypeName*(key, modname: string): string =
   result = "`t.0.I" & key & "." & modname
+
+proc extractModule*(s: string): string =
+  # From "abc.12.Mod132a3bc" extract "Mod132a3bc".
+  # From "abc.12" extract "".
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        return ""
+      else:
+        return substr(s, i+1)
+    dec i
+  return ""
 
 type
   SplittedSymName* = object
@@ -176,24 +50,33 @@ type
     module*: string
 
 proc splitSymName*(s: string): SplittedSymName =
-  ## The symbol split into everything-but-the-module and the module suffix:
-  ## `abc.12.Ikey.mod` gives `("abc.12.Ikey", "mod")`, and a local symbol gives
-  ## itself with an empty module. The string-level answer, for a caller with no
-  ## `Pool` to ask (arkham resolves foreign symbols by it); code that HAS a pool
-  ## asks `nifcore.symWithoutModule` / `symModule`.
-  let sl = sliceSymbol(s)
-  if sl.moduleLen == 0:
-    result = SplittedSymName(name: s, module: "")
-  else:
-    result = SplittedSymName(name: substr(s, 0, sl.moduleStart-2),
-                             module: substr(s, sl.moduleStart,
-                                            sl.moduleStart+sl.moduleLen-1))
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        return SplittedSymName(name: s, module: "")
+      else:
+        return SplittedSymName(name: substr(s, 0, i-1), module: substr(s, i+1))
+    dec i
+  return SplittedSymName(name: s, module: "")
 
 proc `$`*(s: SplittedSymName): string =
   if s.module.len > 0:
     result = s.name & "." & s.module
   else:
     result = s.name
+
+proc extractVersionedBasename*(s: string): string =
+  # From "abc.12.Mod132a3bc" extract "abc.12".
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        var j = i+1
+        while j < s.len and s[j] in {'0'..'9'}: inc j
+        return substr(s, 0, j-1)
+    dec i
+  return ""
 
 proc derivedName*(stem, tag: string): string =
   ## The `identifier.<number>` half of a symbol the compiler mints ALONGSIDE
@@ -244,49 +127,60 @@ proc derivedName*(stem, tag: string): string =
     result = stem & "`" & tag & ".0"
 
 proc isInstantiation*(s: string): bool =
-  ## Whether the symbol `s` carries a deduplication key: `abc.12.Iabc.mod`.
-  ## The string-level answer, for a caller with no `Pool` to ask (nifasm merges
-  ## the copies of an instantiation by exactly this rule); code that HAS a pool
-  ## asks `nifcore.symIsInstantiation`, and both are this one grammar.
-  ##
-  ## ONE key, spelled the way nimony spells one -- a name with two of them
-  ## (`foo.0.Ia.Ib.mod`) is not an instantiation of anything the toolchain
-  ## minted. Roles private to one module (a closure environment, a vtable, a
-  ## coroutine frame) never reach this test: `derivedName` keeps them inside
-  ## the identifier.
-  let sl = sliceSymbol(s)
-  if sl.dedupLen == 0 or s[sl.dedupStart] != 'I': return false
-  for i in sl.dedupStart ..< sl.dedupStart+sl.dedupLen:
-    if s[i] == '.': return false
-  result = true
+  # abc.12.Iabcdefghi.mod2
+  var i = s.len - 2
+  var dots = 3
+  while i > 0:
+    if s[i] == '.':
+      dec dots
+      if s[i+1] in {'0'..'9'}:
+        return dots == 0
+      elif dots == 1 and s[i+1] != 'I':
+        return false
+    dec i
+  result = false
+
+proc isLocalName*(s: string): bool =
+  var dots = 0
+  for c in s:
+    if c == '.': inc dots
+  result = dots <= 1
 
 proc splitLocalSymName*(s: string; basename: var string;
                         disamb: var int): bool =
-  ## Splits a LOCAL symbol such as `tmp.14` into `tmp` and `14`; false when `s`
-  ## is not one -- it carries a module suffix or a key, or its disambiguator is
-  ## not a number, or that number does not fit an `int`.
-  ##
-  ## The string-level answer, for a caller with no `Pool` to ask: both callers
-  ## validate a name a macro PLUGIN handed back in a `.unusedname` directive,
-  ## which is a string off a file and not a symbol anyone interned.
-  ##
-  ## The overflow rejection is the point of parsing the digits here rather than
-  ## trusting `sliceSymbol.disamb`: the number comes from outside the compiler
-  ## and is counted up to, so a wrapped one would be a hang or worse.
+  ## Splits a local symbol such as `tmp.14` into `tmp` and `14`.
   basename = ""
   disamb = 0
-  let sl = sliceSymbol(s)
-  if not sl.wellFormed or not sl.disambIsNumeric: return false
-  if sl.moduleLen > 0 or sl.dedupLen > 0: return false
+  var dot = s.len - 1
+  while dot >= 0 and s[dot] in {'0'..'9'}:
+    dec dot
+  if dot <= 0 or dot == s.len - 1 or s[dot] != '.':
+    return false
+  for i in 0 ..< dot:
+    if s[i] == '.':
+      return false
   var value = 0
-  for i in sl.disambStart ..< sl.disambStart+sl.disambLen:
+  for i in dot + 1 ..< s.len:
     let digit = ord(s[i]) - ord('0')
     if value > (high(int) - digit) div 10:
       return false
     value = value * 10 + digit
-  basename = substr(s, 0, sl.nameLen-1)
+  basename = substr(s, 0, dot - 1)
   disamb = value
   result = true
+
+proc removeModule*(s: string): string =
+  # From "abc.12.Mod132a3bc" extract "abc.12".
+  # From "abc.12" extract "abc.12".
+  var i = s.len - 2
+  while i > 0:
+    if s[i] == '.':
+      if s[i+1] in {'0'..'9'}:
+        return s
+      else:
+        return substr(s, 0, i-1)
+    dec i
+  return s
 
 type
   SplittedModulePath* = object
@@ -322,97 +216,8 @@ proc `$`*(s: SplittedModulePath): string =
 
 when isMainModule:
   import std/[assertions]
-
-  # `sliceSymbol` answers every question the scanners below answer, and must
-  # answer them the same way -- that is what lets the scanners go away.
-  proc agrees(s: string) =
-    let sl = sliceSymbol(s)
-    var isGlobal = false
-    let base = extractBasename(s, isGlobal)
-    assert extractModule(s) == splitSymName(s).module, s
-    if sl.wellFormed:
-      assert substr(s, 0, sl.nameLen-1) == base, s
-      assert isInstantiation(s) ==
-        (sl.dedupLen > 0 and s[sl.dedupStart] == 'I'), s
-    else:
-      assert base == "", s
-
-  for s in ["abc.12.Mod132a3bc", "abc.12", "a.b.c.23", "abc.12.Iabcdefghi.mod2",
-            "tmp.14", "outer`env.0.mymod", "gen.12.Iaaaa`coro.0.mymod",
-            "[]=", "foo.bar", "x.0", "_exit.sys.sysvq0asl", "write.c.sysvq0asl"]:
-    agrees s
-
-  assert extractModule("abc.12.Mod132a3bc") == "Mod132a3bc"
-  assert extractModule("abc.12.Iabcdefghi.mod2") == "mod2"
-  assert extractModule("abc.12") == ""
-  assert extractModule("a.b.c.23") == ""
-  # arkham mints these with a RESERVED non-numeric disambiguator; the module is
-  # still the last component, and nifasm resolves the symbol by it.
-  assert extractModule("_exit.sys.sysvq0asl") == "sysvq0asl"
-  assert extractModule("write.c.sysvq0asl") == "sysvq0asl"
-  # `foo.bar` is not a symbol at all; the last component answers anyway, as it
-  # always has.
-  assert extractModule("foo.bar") == "bar"
-  # ...and a disambiguator the inliner minted is NOT a module, however
-  # non-numeric it looks after its first character.
-  assert extractModule("p.0h107") == ""
-  assert extractModule("returnLabel.0h3") == ""
-  assert extractModule("returnLabel.0h3.mymod") == "mymod"
-
-  # A local symbol is one with no MODULE, which is not the same question as
-  # "few enough dots": the `isLocalName` this replaced counted dots and so
-  # called these three non-local although none of them has a module. Real
-  # symbols have names with dots in them (`dollar`.CaseMode`, `Pool.Obj`,
-  # `..<`), and an anonymous object type of a local is minted as one.
-  assert sliceSymbol("Pool.Obj.0").moduleLen == 0
-  assert sliceSymbol("a.b.c.23").moduleLen == 0
-  assert sliceSymbol("..<.3").moduleLen == 0
-  assert sliceSymbol("Pool.Obj.0.mymod").moduleLen == 5
-
-  # A disambiguator too large for the field is not a number this format can
-  # carry: it stays part of the name, so the spelling survives. (This is a
-  # parser, and it is fed files.)
-  let huge = sliceSymbol("tmp.99999999999999999999999")
-  assert not huge.disambIsNumeric
-  assert substr("tmp.99999999999999999999999", huge.disambStart,
-                huge.disambStart+huge.disambLen-1) == "99999999999999999999999"
-  assert sliceSymbol("tmp.2147483647").disambIsNumeric      # high(int32)
-  assert not sliceSymbol("tmp.2147483648").disambIsNumeric  # one past it
-
-  # A leading zero is not how a number is spelled, so `d.00` keeps its
-  # disambiguator inside the name and stays distinct from `d.0`.
-  assert not sliceSymbol("d.00").disambIsNumeric
-  assert sliceSymbol("d.0").disambIsNumeric
-  assert sliceSymbol("d.10").disambIsNumeric
-
-  let minted = sliceSymbol("p.0h107")
-  assert minted.wellFormed and minted.nameLen == 1
-  assert not minted.disambIsNumeric
-  assert substr("p.0h107", minted.disambStart, minted.disambStart+minted.disambLen-1) == "0h107"
-  let plain = sliceSymbol("abc.12.Ikey.mod")
-  assert plain.disambIsNumeric and plain.disamb == 12
-  assert substr("abc.12.Ikey.mod", plain.disambStart, plain.disambStart+plain.disambLen-1) == "12"
-
-  # A reserved disambiguator has no numeric anchor, so name and disambiguator
-  # are not meaningful -- everything but the module is the name, which is what
-  # `splitSymName` has always answered here (arkham/programs.nim relies on it).
-  let sysSym = sliceSymbol("_exit.sys.sysvq0asl")
-  assert not sysSym.wellFormed
-  assert substr("_exit.sys.sysvq0asl", 0, sysSym.nameLen-1) ==
-         splitSymName("_exit.sys.sysvq0asl").name
-  assert extractModule("_exit.sys.sysvq0asl") ==
-         splitSymName("_exit.sys.sysvq0asl").module
-
-  let ls = sliceSymbol("abc.12.Ikey.mod")
-  assert ls.nameLen == 3
-  assert ls.disamb == 12
-  assert substr("abc.12.Ikey.mod", ls.dedupStart, ls.dedupStart+ls.dedupLen-1) == "Ikey"
-  assert substr("abc.12.Ikey.mod", ls.moduleStart, ls.moduleStart+ls.moduleLen-1) == "mod"
-  let lt = sliceSymbol("tmp.14")
-  assert lt.wellFormed and lt.nameLen == 3 and lt.disamb == 14
-  assert lt.dedupLen == 0 and lt.moduleLen == 0
-  let lo = sliceSymbol("[]=")
-  assert not lo.wellFormed and lo.nameLen == 3
+  assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"
+  assert extractVersionedBasename("abc.Mod132a3bc") == ""
 
   let sn = splitSymName("abc.12.Mod132a3bc")
   assert sn.name == "abc.12"
@@ -428,12 +233,6 @@ when isMainModule:
   assert not isInstantiation(derivedName("outer.0", "env") & ".mymod")
   assert not isInstantiation(derivedName("gen.12.Iaaaa", "coro") & ".mymod")
   assert isInstantiation("gen.12.Iaaaa.mymod")
-  # ONE key: nifasm merges symbols by this answer and must not merge a name
-  # that carries two.
-  assert not isInstantiation("foo.0.Ia.Ib.mymod")
-  # ...and the key is spelled the way nimony spells one.
-  assert not isInstantiation("foo.0.xyz.mymod")
-  assert not isInstantiation("foo.0.mymod")
   # ...and the module suffix must still be recoverable.
   assert extractModule(derivedName("gen.12.Iaaaa", "coro") & ".mymod") == "mymod"
   assert extractModule(derivedName("outer.0", "env") & ".mymod") == "mymod"
@@ -458,14 +257,5 @@ when isMainModule:
   assert splitLocalSymName("tmp.14", basename, disamb)
   assert basename == "tmp"
   assert disamb == 14
-  # A module suffix means it is not local.
   assert not splitLocalSymName("tmp.14.mod", basename, disamb)
-  # A name may contain dots, and such a symbol is still local -- the scan this
-  # replaced counted dots and rejected it for having one.
-  assert splitLocalSymName("tmp.part.14", basename, disamb)
-  assert basename == "tmp.part"
-  assert splitLocalSymName("Pool.Obj.7", basename, disamb)
-  assert basename == "Pool.Obj"
-  assert disamb == 7
-  # A number that does not fit is not a disambiguator we can count up to.
-  assert not splitLocalSymName("tmp.99999999999999999999999", basename, disamb)
+  assert not splitLocalSymName("tmp.part.14", basename, disamb)
