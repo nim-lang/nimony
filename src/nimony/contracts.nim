@@ -942,7 +942,9 @@ proc traverseToplevel(c: var Context; n: var Cursor) =
 
 proc analyzeContracts*(input: var TokenBuf; bits: int): TokenBuf =
   #let oldInfos = prepare(input)
-  var c = Context(typeCache: createTypeCache(bits), bits: bits)
+  var c = Context(cf: initTokenBuf(), toplevelStmts: initTokenBuf(),
+                  errors: initTokenBuf(),
+                  typeCache: createTypeCache(bits), bits: bits)
   c.typeCache.openScope()
   var n = beginRead(input)
   traverseToplevel c, n

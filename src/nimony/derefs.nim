@@ -1556,7 +1556,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
                    thisModuleSuffix: string; bits: int): TokenBuf =
   var c = Context(typeCache: createTypeCache(bits),
-    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
+    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: initTokenBuf(),
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),
     lifter: nil) # set below after hooks is moved

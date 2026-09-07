@@ -42,7 +42,7 @@ type
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
-    return default(TokenBuf)
+    return initTokenBuf()
   result = createTokenBuf(32)
   for m, ex in c.exports:
     let path = toAbsolutePath(c.importedModules.getOrQuit(m).path)
@@ -563,7 +563,12 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
+    pendingSumtypes: initTokenBuf(),
+    toBuild: initTokenBuf(),
+    toBundle: initTokenBuf(),
     pending: createTokenBuf(),
+    importSnippets: initTokenBuf(),
+    expanded: initTokenBuf(),
     executeExpr: exprexec.executeExpr,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
@@ -645,7 +650,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
 
   var modules = newSeqOfCap[ModuleState](infiles.len)
   for i in 0..<infiles.len:
-    var ms = ModuleState(outfile: outfiles[i])
+    var ms = ModuleState(outfile: outfiles[i], buf1: initTokenBuf())
     ms.owningBuf = createTokenBuf(300)
     if i == 0:
       ms.n0 = setupProgram(infiles[i], outfiles[i], ms.owningBuf)

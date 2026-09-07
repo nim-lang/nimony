@@ -54,8 +54,13 @@ let
   pluginTags = createPluginTags()
 
 # A plugin process shares ONE pool world across every buffer in it, which is
-# exactly the case `nifcore.fallbackPool`/`fallbackTags` exist for — and this
-# API never declared it. `NifBuilder` is an alias for `TokenBuf`, so a builder
+# exactly the case `nifcore.fallbackPool`/`fallbackTags` exist for — and they
+# now exist for it ALONE: nifcore declares them only under `-d:nimonyPlugin`,
+# the define every plugin sub-compile carries, because the compiler side has
+# been purged of them (nim-lang/nimony#2456). This is the global the plugin
+# system is allowed to keep, and this is where it is installed.
+#
+# `NifBuilder` is an alias for `TokenBuf`, so a builder
 # `createTree` did not mint (an object field, `default(...)`, a `seq` slot) has
 # nil pools; `nifcore.ensurePools` then minted a PRIVATE pool, and the first
 # `withTree` died in `openTagEscaped` — a fresh pool declares no escape tag —
@@ -63,11 +68,15 @@ let
 # dispatch on `pluginTags` *identity* too, so such a builder also read back as
 # `NoStmt`/`NoExpr` throughout.
 #
-# The compiler side gets this from `nifpools`, which plugins do not import.
 # Stating it here is what makes the API total: every shape of `NifBuilder`
-# lands in the plugin's own pools, not in a private one.
-nifcore.fallbackPool = pluginPool
-nifcore.fallbackTags = pluginTags
+# lands in the plugin's own pools, not in a private one. The compiler side
+# instead threads its pools into every buffer it mints and has no fallback at
+# all, which is why the two globals below are the plugin build's alone — the
+# `when` matches nifcore's own, so that `import plugins` from ordinary code
+# (tests of the `ensuresNif` annotations, say) still compiles.
+when defined(nimonyPlugin):
+  nifcore.fallbackPool = pluginPool
+  nifcore.fallbackTags = pluginTags
 
 var
   unusedNameBase = ""

@@ -2,7 +2,8 @@
 
 import std / [http/httpmsg, http/httpparse, http/httpwire, assertions, syncio]
 
-let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
+let tags = newHttpTags()   # this test's own tag space
+let hApiKey = registerHeader(tags, "x-api-key")   # the header this test indexes on
 
 proc testParseChunkSize =
   proc sz(s: string; expect: int; consumed: int) =
@@ -137,7 +138,7 @@ proc testFramingRejections =
   # The head-level half of the same problem: exactly one thing may say where
   # the body ends.
   proc bad(res: string): bool =
-    var m = initHttpMsg()
+    var m = initHttpMsg(tags)
     result = parseResponseHead(toOpenArray(res, 0, res.len - 1), m) == ParseBad
 
   assert bad("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n" &
@@ -145,7 +146,7 @@ proc testFramingRejections =
   assert bad("HTTP/1.1 200 OK\r\nContent-Length: 5\r\nContent-Length: 5\r\n\r\n")
 
   # …and a message framed by exactly one of them is fine.
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let ok = "HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n"
   assert parseResponseHead(toOpenArray(ok, 0, ok.len - 1), m) == ok.len
   assert m.getTag(hTransferEncoding) == tag(vChunked)

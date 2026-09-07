@@ -67,6 +67,11 @@ type
       ## pass with a fixup list is a complete model: by the time `(lab L)` is
       ## reached, every predecessor of `L` has been emitted.
 
+proc initTarget(m: Mode): Target {.inline.} =
+  ## Every `Target` buffer is bound to the global pools up front: a `Target`
+  ## left at `default` would reach the builders with no tag pool.
+  Target(m: m, t: initTokenBuf())
+
 proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
   # for debugging purposes
   # first iteration: compute all necessary labels:
@@ -202,7 +207,7 @@ type
 proc makeVar(c: var ControlFlow; info: NifLineInfo; tar: var Target; typ: Cursor): TargetWrapper =
   case tar.m
   of IsVar:
-    result = TargetWrapper(m: IsVar)
+    result = TargetWrapper(m: IsVar, t: initTokenBuf())
   of IsEmpty, IsIgnored, IsAppend:
     result = TargetWrapper(m: tar.m, t: move(tar.t), src: move(tar.src))
     let tmp = openTempVar(c, VarS, typ, info)
@@ -229,7 +234,7 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
 
   n.into:
-    var aa = Target(m: IsEmpty)
+    var aa = initTarget(IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(IteF, info)
     c.flush aa
@@ -241,7 +246,7 @@ proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
     for t in tjmp: c.patch t
     assert tar.m == IsVar
     # tar = y
-    var bb = Target(m: IsEmpty)
+    var bb = initTarget(IsEmpty)
     trExpr c, n, bb
     c.dest.copyIntoKind AsgnS, info:
       c.flush tar
@@ -263,7 +268,7 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
   var w = makeVar(c, info, tar, c.typeCache.builtins.boolType)
 
   n.into:
-    var aa = Target(m: IsEmpty)
+    var aa = initTarget(IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(IteF, info)
     c.flush aa
@@ -283,7 +288,7 @@ proc trOrValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
 
     # tar = y
     assert tar.m == IsVar
-    var bb = Target(m: IsEmpty)
+    var bb = initTarget(IsEmpty)
     trExpr c, n, bb
     c.dest.copyIntoKind AsgnS, info:
       c.flush tar
@@ -323,19 +328,19 @@ proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
     let typ = c.typeCache.getType(n)
     c.dest.copyTree typ
 
-    var callTarget = Target(m: IsAppend)
+    var callTarget = initTarget(IsAppend)
     trExprLoop c, n, callTarget
     c.flush callTarget
     c.dest.addParRi()
 
     if tar.m == IsEmpty:
-      tar = Target(m: IsVar)
+      tar = initTarget(IsVar)
     tar.t.addSymUse tmp, info
   else:
     trExprLoop c, n, tar
 
 proc trVoidCall(c: var ControlFlow; n: var Cursor) =
-  var tar = Target(m: IsAppend)
+  var tar = initTarget(IsAppend)
   c.addSource(tar, n)
   n.into:
     while n.hasMore:
@@ -387,7 +392,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
      FailedX, IsX, EnvpX, ToClosureX, NoExpr:
     # cannot exploit a special case here:
     let info = NoLineInfo # NoLineInfo is crucial here!
-    var bb = Target(m: IsEmpty)
+    var bb = initTarget(IsEmpty)
     trExpr c, n, bb
     c.dest.addParLe(IteF, info)
     c.flush bb
@@ -396,13 +401,13 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
     c.dest.addParRi()
 
 proc trUseExpr(c: var ControlFlow; n: var Cursor) =
-  var aa = Target(m: IsEmpty)
+  var aa = initTarget(IsEmpty)
   trExpr c, n, aa
   c.flush aa
 
 proc trStmtOrExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   if tar.m != IsIgnored:
-    var aa = Target(m: IsEmpty)
+    var aa = initTarget(IsEmpty)
     # Capture the info up front: `trExpr` consumes `n`, so afterwards it may
     # sit on a (virtual) ParRi where `n.info` would assert under vpr.
     let info = n.info
@@ -503,7 +508,7 @@ proc trCase(c: var ControlFlow; n: var Cursor; tar: var Target) =
       selector = n.symId
       inc n
     else:
-      var aa = Target(m: IsEmpty)
+      var aa = initTarget(IsEmpty)
       trExpr c, n, aa
 
       selector = pool.symId("`cf." & $c.nextVar)
@@ -614,7 +619,7 @@ proc trIfCaseTryBlockExpr(c: var ControlFlow; n: var Cursor; kind: ControlFlowAs
     let temp = openTempVar(c, VarS, c.typeCache.getType(n), NoLineInfo)
     c.dest.addDotToken()
     c.dest.addParRi() # close temp var declaration
-    var aa = Target(m: IsVar)
+    var aa = initTarget(IsVar)
     aa.t.addSymUse temp, info
     case kind
     of IfExpr:
@@ -722,7 +727,7 @@ proc trCoroFor(c: var ControlFlow; n: var Cursor) =
     # First child is the iter call. cps.nim will rewrite this into the init+advance
     # trampoline; for CFG purposes treat it as a side-effecting expression whose
     # result is discarded.
-    var aa = Target(m: IsAppend)
+    var aa = initTarget(IsAppend)
     trExpr c, n, aa
     if aa.t.len > 0:
       c.flush aa
@@ -749,7 +754,7 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
   let info = n.info
   n.into: # skip `(ret`
     if c.keepReturns:
-      var aa = Target(m: IsEmpty)
+      var aa = initTarget(IsEmpty)
       trExpr c, n, aa
       c.dest.addParLe(RetS, info)
       c.flush aa
@@ -765,13 +770,13 @@ proc trReturn(c: var ControlFlow; n: var Cursor) =
       # and the code goes straight out with no slot to pass through. There is
       # nothing to assign, but the expression's reads must stay visible to the
       # dataflow, so model it as a discard.
-      var aa = Target(m: IsEmpty)
+      var aa = initTarget(IsEmpty)
       trExpr c, n, aa
       c.dest.addParLe(DiscardS, n.endInfo)
       c.flush aa
       c.dest.addParRi()
     else:
-      var aa = Target(m: IsEmpty)
+      var aa = initTarget(IsEmpty)
       trExpr c, n, aa
       c.dest.addParLe(AsgnS, n.endInfo)
       c.dest.addSymUse c.resultSym, n.endInfo
@@ -893,7 +898,7 @@ proc trLocal(c: var ControlFlow; n: var Cursor) =
   #c.typeCache.registerLocal(name, kind, n)
   skip n, SkipType # type
 
-  var aa = Target(m: IsEmpty)
+  var aa = initTarget(IsEmpty)
   trExpr c, n, aa
   n = orig
   copyInto c.dest, n:
@@ -905,7 +910,7 @@ proc trRaise(c: var ControlFlow; n: var Cursor) =
   # we map `raise x` to `localErr = x; return`.
   let info = n.info
   n.into:
-    var aa = Target(m: IsEmpty)
+    var aa = initTarget(IsEmpty)
     trExpr c, n, aa
     c.dest.addParLe(AsgnS, info)
     c.dest.addSymUse pool.symId("localErr.0." & SystemModuleSuffix), info
@@ -937,8 +942,8 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   # do it afterwards:
   let asgnBegin = c.dest.len
   let info = n.info
-  var aa = Target(m: IsEmpty)
-  var bb = Target(m: IsEmpty)
+  var aa = initTarget(IsEmpty)
+  var bb = initTarget(IsEmpty)
   let headTag = n.cursorTagId
   var typ = default(Cursor)
 
@@ -1036,12 +1041,12 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    var aa = Target(m: IsAppend)
+    var aa = initTarget(IsAppend)
     trExpr c, n, aa
     if aa.t.len > 0:
       c.flush aa
   of IfS:
-    var aa = Target(m: IsIgnored)
+    var aa = initTarget(IsIgnored)
     trIf c, n, aa
   of WhileS:
     trWhile c, n
@@ -1072,17 +1077,17 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of VarS, LetS, CursorS, PatternvarS, ConstS, GvarS, TvarS, GletS, TletS:
     trLocal c, n
   of BlockS:
-    var aa = Target(m: IsIgnored)
+    var aa = initTarget(IsIgnored)
     trBlock c, n, aa
   of ForS:
     trFor c, n
   of AsgnS:
     trAsgn c, n
   of CaseS:
-    var aa = Target(m: IsIgnored)
+    var aa = initTarget(IsIgnored)
     trCase c, n, aa
   of TryS:
-    var aa = Target(m: IsIgnored)
+    var aa = initTarget(IsIgnored)
     trTry c, n, aa
   of RaiseS:
     trRaise c, n
@@ -1095,7 +1100,7 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of CallKindsS, InclS, ExclS, AssumeS, AssertS:
     trVoidCall c, n
   of YldS, DiscardS, AsmS, DeferS:
-    var tar = Target(m: IsAppend)
+    var tar = initTarget(IsAppend)
     let headTag = n.cursorTagId
     let headInfo = n.info
     n.into:
@@ -1114,7 +1119,8 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     trCoroFor c, n
 
 proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]; bits: int): TokenBuf =
-  var c = ControlFlow(typeCache: createTypeCache(bits), keepReturns: keepReturns)
+  var c = ControlFlow(dest: initTokenBuf(), typeCache: createTypeCache(bits),
+                      keepReturns: keepReturns)
   c.srcBase = n
   c.typeCache.openScope()
   let sk = n.stmtKind

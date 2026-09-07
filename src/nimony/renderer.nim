@@ -374,8 +374,13 @@ proc gpragmas(g: var SrcGen, n: var Cursor) =
 
       put(g, tkSymbol, globalTags.tags[n.cursorTagId])
       n.into:
-        if n.hasMore:
-          putWithSpace(g, tkColon, ":")
+        var firstArg = true
+        while n.hasMore:
+          if firstArg:
+            putWithSpace(g, tkColon, ":")
+            firstArg = false
+          else:
+            gcomma(g)
           gsub(g, n)
 
     put(g, tkCurlyDotRi, ".}")

@@ -1035,7 +1035,9 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
     dest.add c.dest
 
 proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil): ref LiftingCtx =
-  (ref LiftingCtx)(op: attachedDestroy, info: NoLineInfo, thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY, frontendHooks: frontendHooks)
+  (ref LiftingCtx)(dest: initTokenBuf(), op: attachedDestroy, info: NoLineInfo,
+                   thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY,
+                   frontendHooks: frontendHooks)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: NifLineInfo): SymId =
   c.op = op

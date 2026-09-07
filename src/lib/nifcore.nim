@@ -650,27 +650,45 @@ proc decRcAndFree(owner: CursorOwner) =
       owner.tags = nil
     dealloc(owner)
 
-var
-  fallbackPool*: Pool = nil
-    ## Application-default literals pool: cursor accessors use it when the
-    ## underlying buffer carries no pool (e.g. a `default(TokenBuf)` that was
-    ## filled via raw/interned adds). Applications that share ONE pool across
-    ## all buffers (like the nimony toolchain) set this once at startup;
-    ## adapters with per-buffer pools leave it nil.
-  fallbackTags*: TagPool = nil
-    ## Application-default tag pool, same contract as `fallbackPool`.
+when defined(nimonyPlugin):
+  # ── The plugin build's process-wide pools ──────────────────────────────
+  #
+  # A nimony PLUGIN is an executable that transforms one tree in one tag
+  # namespace, and `plugins.NifBuilder` is a plain alias for `TokenBuf`, so a
+  # plugin author can hand the API a builder `createTree` never minted: an
+  # object field, a `default(...)`, a `seq` slot. That API is public and stays
+  # total, so the plugin build keeps a process-wide default to bind such a
+  # buffer to — `src/nimony/lib/plugins.nim` installs it at module init.
+  #
+  # `-d:nimonyPlugin` is set by `semos.pluginCompileCmd` for every plugin
+  # sub-compile and by nothing else, so the compiler's own nifcore — the
+  # subject of nim-lang/nimony#2456 — contains no mutable module-level state
+  # whatsoever, and every buffer in it carries pools threaded in at
+  # construction.
+  var
+    fallbackPool*: Pool = nil
+      ## Plugin-process default literals pool; nil in every other build.
+    fallbackTags*: TagPool = nil
+      ## Plugin-process default tag pool, same contract as `fallbackPool`.
+
+  template defaultPool(): Pool = fallbackPool
+  template defaultTags(): TagPool = fallbackTags
+else:
+  template defaultPool(): Pool = nil
+  template defaultTags(): TagPool = nil
 
 proc pool*(c: Cursor): Pool {.inline.} =
-  ## Pool pool the cursor's underlying buffer was built against,
-  ## or `fallbackPool` when the buffer carries none.
-  if c.owner != nil and c.owner.pool != nil: c.owner.pool else: fallbackPool
+  ## Literals pool the cursor's underlying buffer was built against, or the
+  ## plugin build's default (`nil` everywhere else) when it carries none.
+  if c.owner != nil and c.owner.pool != nil: c.owner.pool else: defaultPool()
 
 proc tags*(c: Cursor): TagPool {.inline.} =
-  ## Tag pool the cursor's underlying buffer was built against (or
-  ## `fallbackTags`). Adapter code is expected to know which TagPool layout
-  ## to expect, so callers typically reach for
-  ## `cast[MyTag](c.cursorTagId.uint32)` instead of consulting `c.tags`.
-  if c.owner != nil and c.owner.tags != nil: c.owner.tags else: fallbackTags
+  ## Tag pool the cursor's underlying buffer was built against, or the plugin
+  ## build's default (`nil` everywhere else) when it carries none. Adapter code
+  ## is expected to know which TagPool layout to expect, so callers typically
+  ## reach for `cast[MyTag](c.cursorTagId.uint32)` instead of consulting
+  ## `c.tags`.
+  if c.owner != nil and c.owner.tags != nil: c.owner.tags else: defaultTags()
 
 proc escapeTagOf*(c: Cursor): TagId {.inline.} =
   ## The adapter's escape tag, or `TagId(0)` when it declares none — which is
@@ -685,9 +703,12 @@ proc escapeTagOf*(c: Cursor): TagId {.inline.} =
   ## `tags` plus that destructor cost more than `skip` and `symId` together, for a
   ## pool that outlives the program. Reading the field through the raw owner
   ## pointer takes no reference and reaches no hook.
-  if c.owner != nil and c.owner.tags != nil: c.owner.tags.escapeTag
-  elif fallbackTags != nil: fallbackTags.escapeTag
-  else: TagId(0)
+  if c.owner != nil and c.owner.tags != nil:
+    result = c.owner.tags.escapeTag
+  else:
+    result = TagId(0)
+    when defined(nimonyPlugin):
+      if fallbackTags != nil: result = fallbackTags.escapeTag
 
 proc toUniqueId*(c: Cursor): int {.inline.} =
   ## A stable identity for the cursor's *position*: two cursors over the same
@@ -907,8 +928,13 @@ proc strVal*(c: Cursor; pool: Pool): string =
 # costs nothing, so the branch is written here where the value is consumed
 # immediately. Same reasoning as `escapeTagOf`; measured together on nifbench.
 proc strVal*(c: Cursor): string {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: strVal(c, c.owner.pool)
-  else: strVal(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: strVal(c, c.owner.pool)
+    else: strVal(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "strVal on a cursor with no literals pool"
+    strVal(c, c.owner.pool)
 
 proc strId*(c: Cursor; pool: Pool): StrId =
   ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
@@ -923,8 +949,13 @@ proc strId*(c: Cursor; pool: Pool): StrId =
     StrId(combinedPayload(c) shr 1)
 
 proc strId*(c: Cursor): StrId {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: strId(c, c.owner.pool)
-  else: strId(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: strId(c, c.owner.pool)
+    else: strId(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "strId on a cursor with no literals pool"
+    strId(c, c.owner.pool)
 
 proc symName*(c: Cursor; pool: Pool): string =
   checkKind c.kind in {Symbol, SymbolDef}, "symName on ", c.kind
@@ -935,8 +966,13 @@ proc symName*(c: Cursor; pool: Pool): string =
     symString(pool, SymId(combinedPayload(c) shr 1))
 
 proc symName*(c: Cursor): string {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: symName(c, c.owner.pool)
-  else: symName(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: symName(c, c.owner.pool)
+    else: symName(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "symName on a cursor with no literals pool"
+    symName(c, c.owner.pool)
 
 proc symId*(c: Cursor; pool: Pool): SymId =
   ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
@@ -950,8 +986,13 @@ proc symId*(c: Cursor; pool: Pool): SymId =
     SymId(combinedPayload(c) shr 1)
 
 proc symId*(c: Cursor): SymId {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: symId(c, c.owner.pool)
-  else: symId(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: symId(c, c.owner.pool)
+    else: symId(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "symId on a cursor with no literals pool"
+    symId(c, c.owner.pool)
 
 # Int/UInt/Float: pure-inline via chainable ExtendedSuffix.
 #
@@ -1241,14 +1282,24 @@ else:
     if dest.owner != nil: decRcAndFree(dest.owner)
     elif dest.data != nil: dealloc(dest.data)
 
-template ensurePools*(b: var TokenBuf) =
-  ## Bind the application-default pools to a buffer that was created without
-  ## any (e.g. `default(TokenBuf)`), so interning builders and cross-pool
-  ## copies work on it. No-op when the buffer already has pools.
-  if b.pool == nil:
-    b.pool = (if fallbackPool != nil: fallbackPool else: newPool())
-  if b.tags == nil:
-    b.tags = (if fallbackTags != nil: fallbackTags else: newTagPool())
+template requirePools*(b: var TokenBuf) =
+  ## A buffer the interning builders and the cross-pool copy are about to write
+  ## through must carry both of its pools. They are THREADED in at construction
+  ## (`createTokenBuf` / `initTokenBuf`) and never invented here: a literals
+  ## pool decides what a token's payload id means and a tag pool is the
+  ## buffer's whole kind space, so substituting a fresh one for either silently
+  ## reinterprets everything already in the buffer. `default(TokenBuf)` is not
+  ## a usable buffer; `initTokenBuf` is the zero-allocation way to spell one.
+  ##
+  ## The plugin build is the exception, and only there: it binds its
+  ## process-wide pools rather than reject the buffer, because
+  ## `plugins.NifBuilder` is a public alias whose `default` shape must keep
+  ## working. See the `nimonyPlugin` block above.
+  when defined(nimonyPlugin):
+    if b.pool == nil: b.pool = fallbackPool
+    if b.tags == nil: b.tags = fallbackTags
+  assert b.pool != nil, "TokenBuf has no literals pool"
+  assert b.tags != nil, "TokenBuf has no tag pool"
 
 proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
                      sharedTags: TagPool = nil): TokenBuf =
@@ -1269,6 +1320,14 @@ proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
     pool: (if sharedPool != nil: sharedPool else: newPool()),
     tags: (if sharedTags != nil: sharedTags else: newTagPool())
   )
+
+proc initTokenBuf*(sharedPool: Pool; sharedTags: TagPool): TokenBuf {.inline.} =
+  ## A buffer bound to `sharedPool`/`sharedTags` that owns NO storage yet — the
+  ## first `add` allocates it. This is what an object field, a `seq` slot or any
+  ## other buffer that used to be spelled `default(TokenBuf)` must be
+  ## initialized with: the tag pool is a buffer's whole kind space, so it is
+  ## THREADED in at construction and never fallen back to.
+  TokenBuf(data: nil, len: 0, cap: 0, pool: sharedPool, tags: sharedTags)
 
 proc adoptForeignTokens*(data: pointer; count: int;
                          sharedPool: Pool = nil; sharedTags: TagPool = nil): TokenBuf =
@@ -1440,7 +1499,7 @@ proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32;
   ## none) — a NIF `#…#` decoration on this head. A non-zero comment forces the
   ## overflow position layout and rides as one further `ExtendedSuffix` (a second
   ## only for ids past 2^28), so `rawLineInfo` recovers it unambiguously.
-  ensurePools(b)
+  requirePools(b)
   if not file.isValid: return
   var line = line
   var col = col
@@ -1489,7 +1548,7 @@ proc encodeInlineStr(s: string): uint32 {.inline.} =
 template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped) =
   ## Shared body for StrLit/Ident/Symbol/SymbolDef. Inlines bytes for
   ## `s.len <= 3`; otherwise interns in the given `pool` BiTable.
-  ensurePools(b)
+  requirePools(b)
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(kind, encodeInlineStr(s)))
   else:
@@ -1512,7 +1571,7 @@ proc addStrLit*(b: var TokenBuf; s: openArray[char]) {.nifEmits: "LIT".} =
   ## reading someone else's buffer this saves cutting a slice out of it first:
   ## a short value costs nothing at all, and a long one costs the single copy
   ## the pool was going to make anyway.
-  ensurePools(b)
+  requirePools(b)
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(StrLit, encodeInlineStrView(s)))
   else:
@@ -1530,7 +1589,7 @@ proc addIdent*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
 template addSymLike(b: var TokenBuf; kind: NifKind; s: string) =
   ## `addStringLike` for the SYMBOL pool, which does not take a spelling: the
   ## pool stores the taken-apart form, so interning goes through `symId`.
-  ensurePools(b)
+  requirePools(b)
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(kind, encodeInlineStr(s)))
   else:
@@ -1547,7 +1606,7 @@ proc addSymDef*(b: var TokenBuf; s: string) {.nifEmits: "D".} =
   addSymLike(b, SymbolDef, s)
 
 proc addInternedSymbol(b: var TokenBuf; kind: NifKind; id: SymId) =
-  ensurePools(b)
+  requirePools(b)
   # `symSpellingLen` rather than `symString`: this runs on every emitted
   # symbol, and only the rare name short enough to live inside the token is
   # worth building.
@@ -1769,14 +1828,27 @@ proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   (cast[int](c.p) - cast[int](b.data)) div sizeof(NifToken)
 
 proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor =
-  ## Like `cursorAt` but does not require `var b` (the buffer must already be
-  ## owned — i.e. previously `beginRead`/`cursorAt`'d — or the cursor is
-  ## ownerless and valid only while `b` outlives it).
+  ## Like `cursorAt` but does not require `var b`.
+  ##
+  ## The `CursorOwner` header is minted on demand — through a cast, since `b`
+  ## is only borrowed here. It has to be: the owner is where a cursor's pools
+  ## live, so an ownerless cursor answers `nil` for both `pool` and `tags` and
+  ## every pool-backed payload read and every `addSubtree` off it would have to
+  ## guess which pool world it came from. That guess is what the compiler's
+  ## former `fallbackPool`/`fallbackTags` globals used to make. Minting the
+  ## header also
+  ## makes the cursor keep the tokens alive like any other cursor instead of
+  ## dangling the moment `b` dies.
+  ##
+  ## The header costs one small allocation, and only for a buffer that has none
+  ## yet; a following mutation reclaims it on the cheap `rc == 1` path.
   assert i >= 0 and i < b.len
-  result = Cursor(p: cast[ptr NifToken](unsafeAddr b.data[i]), rem: b.len - i)
-  if b.owner != nil:
-    inc b.owner.rc
-    result.owner = b.owner
+  let mb = cast[ptr TokenBuf](unsafeAddr b)
+  ensureOwner(mb[])
+  inc mb.owner.rc
+  result = Cursor(owner: mb.owner,
+                  p: cast[ptr NifToken](unsafeAddr b.data[i]),
+                  rem: b.len - i)
 
 proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
   ## Advance `c` by `diff` tokens, keeping the bounded `rem` correct (used by CF
@@ -1815,9 +1887,9 @@ proc sharesPools*(c: Cursor; p: Pool; t: TagPool): bool {.inline.} =
   ## raw owner pointer instead: as `==` operands both sides are borrowed paths.
   ## The `nil` fallbacks are what `pool`/`tags` answer, spelled out.
   (if c.owner != nil and c.owner.pool != nil: p == c.owner.pool
-   else: p == fallbackPool) and
+   else: p == defaultPool()) and
   (if c.owner != nil and c.owner.tags != nil: t == c.owner.tags
-   else: t == fallbackTags)
+   else: t == defaultTags())
 
 # ── Subtree copy ─────────────────────────────────────────────────────────
 
@@ -1829,7 +1901,7 @@ proc reinternLineInfo(dest: var TokenBuf; c: Cursor;
   ## Takes the source pool rather than asking `c` for it: as a parameter the ref
   ## is borrowed, while `c.pool` would return an owned temporary and pay an
   ## incRef/decRef — twice, here — per token copied. See `sharesPools`.
-  ensurePools(dest)
+  requirePools(dest)
   let li = rawLineInfo(c)
   if not li.isValid: return NoNifLineInfo
   let fname = if srcPool != nil: srcPool.filenames[li.file] else: ""
@@ -1913,12 +1985,12 @@ proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) {.nifEmits: "Any".} =
     # refs nil — nothing to copy, nothing to check
     return
   assert dest.data != src.data, "cannot append a TokenBuf to itself"
-  # A buffer filled only via raw/`openTag` adds may still carry nil pool
-  # refs; its interned ids belong to the application fallback pools, so
-  # compare the EFFECTIVE pools.
-  ensurePools(dest)
-  let spool = (if src.pool != nil: src.pool else: fallbackPool)
-  let stags = (if src.tags != nil: src.tags else: fallbackTags)
+  # Both buffers carry their pools from construction (a plugin build's may be
+  # the process defaults), so this is a plain identity test — a bulk copy is
+  # only valid when the two interned id spaces are literally the same objects.
+  requirePools(dest)
+  let spool = (if src.pool != nil: src.pool else: defaultPool())
+  let stags = (if src.tags != nil: src.tags else: defaultTags())
   assert dest.pool == spool and dest.tags == stags,
          "addBufferSamePool requires matching pools"
   if dest.owner != nil:

@@ -109,6 +109,7 @@ type
 
 proc createMatch*(context: ptr SemContext; expected: TypeCursor = default(Cursor)): Match =
   Match(context: context, expected: expected,
+        args: initTokenBuf(), typeArgs: initTokenBuf(),
         firstVarargPosition: -1, varargsEndPosition: -1)
 
 proc bindTypevar(m: var Match; fs: SymId; a: Cursor) =
