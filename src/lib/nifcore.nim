@@ -611,13 +611,18 @@ proc isLocal*(s: NifSymbol): bool {.inline.} = s.module == StrId(0)
 
 # ── The classic string-shaped view of the symbol pool ────────────────────
 #
-# The Nim compiler's IC modules (`ast2nif`, `idetools`, its own copy of
-# `nifstreams`) speak to the symbol pool as `pool.syms.getOrIncl(name)`,
-# `pool.syms[id]` and `pool.syms.getKeyId(name)` -- a `BiTable[SymId, string]`.
-# That is the surface `lib/nifstreams.nim` exists to keep working, and it must
-# keep working THROUGH the flip (#2457): the pool stores `NifSymbol` records
-# now, so `syms` is a view that speaks the old three questions and answers them
-# with `symId` / `symString`.
+# The Nim compiler's IC modules speak to the symbol pool as a
+# `BiTable[SymId, string]`, and ask it exactly four things:
+# `pool.syms.getOrIncl(name)`, `pool.syms[id]`, `pool.syms.getKeyId(name)` and
+# `poolSym(pool, id)`. That is the surface `lib/nifstreams.nim` exists to keep
+# working, and it must keep working THROUGH the flip (#2457): the pool stores
+# `NifSymbol` records now, so `syms` is a view answering those questions with
+# `symId` / `symString`.
+#
+# Twelve files in `nim/compiler` import this library, and CI is the only place
+# they are COMPILED against it: its setup symlinks `nim/dist/nimony` to the
+# nimony checkout, while a local Nim has a copy of its own. So a change to the
+# names below builds green here and red there -- keep them, or fix Nim first.
 #
 # Nimony's own code does not use it: it asks the accessors above, which do not
 # build a string to ask a question.
@@ -630,6 +635,13 @@ type
     pool: Pool
 
 template syms*(p: Pool): SymPool = SymPool(pool: p)
+
+template poolSym*(p: Pool; s: SymId): string = symString(p, s)
+  ## The classic name for `symString`, and the fourth thing the Nim compiler's
+  ## IC modules ask (`ast2nif.indexFromBif`). It used to yield `lent string`
+  ## straight out of the pool; the pool has no string to lend now, so this
+  ## builds one -- the callers all wanted a copy anyway (a table key, a name to
+  ## re-emit).
 
 proc getOrIncl*(s: SymPool; name: string): SymId {.inline.} =
   symId(s.pool, name)
