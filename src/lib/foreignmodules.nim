@@ -83,7 +83,7 @@ proc openForeignModule*(path: string): ForeignModule =
                            hasEmbeddedIndex: true)  # a bif always carries one
     var bm = bif.load(path)
     for e in bm.index:
-      result.index[poolSym(bm.buf.pool, e.sym)] = int e.pos
+      result.index[symString(bm.buf.pool, e.sym)] = int e.pos
     result.bifBuf = ensureMove bm.buf
   else:
     result = ForeignModule(r: nifreader.open(path),

@@ -30,10 +30,9 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
       n.into:
         var newOwner = owner
         if n.isSymbolDef:
-          let symName = pool.syms[n.symId]
-          if isInstantiation(symName):
+          if pool.symIsInstantiation(n.symId):
             a.offers.incl(n.symId)
-          if not isLocalName(symName):
+          if not pool.symIsLocal(n.symId):
             newOwner = n.symId
         while n.hasMore:
           tr n, a, newOwner
@@ -57,13 +56,12 @@ proc tr(n: var Cursor; a: var ModuleAnalysis; owner: SymId) =
         let isFld = n.substructureKind == FldU
         n.into:
           if isFld and n.kind == SymbolDef:
-            let symName = pool.syms[n.symId]
-            if isInstantiation(symName):
+            if pool.symIsInstantiation(n.symId):
               a.offers.incl(n.symId)
           while n.hasMore:
             tr n, a, owner
   of Symbol:
-    if not isLocalName(pool.syms[n.symId]):
+    if not pool.symIsLocal(n.symId):
       if owner == SymId(0):
         a.roots.incl(n.symId)
       else:
@@ -87,15 +85,15 @@ proc prepDce(outputFilename: string; n: Cursor; dottedSuffix: string) =
   b.withTree "stmts":
     b.withTree rootName:
       for root in a.roots:
-        b.addSymbol pool.syms[root], dottedSuffix
+        b.addSymbol pool.symString(root), dottedSuffix
     for owner, uses in mpairs(a.uses):
       b.withTree depName:
-        b.addSymbol pool.syms[owner], dottedSuffix
+        b.addSymbol pool.symString(owner), dottedSuffix
         for dep in uses:
-          b.addSymbol pool.syms[dep], dottedSuffix
+          b.addSymbol pool.symString(dep), dottedSuffix
     b.withTree offerName:
       for offer in a.offers:
-        b.addSymbol pool.syms[offer], dottedSuffix
+        b.addSymbol pool.symString(offer), dottedSuffix
   b.close()
 
 proc readModuleAnalysis*(infile: string): ModuleAnalysis =

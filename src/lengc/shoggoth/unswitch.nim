@@ -38,7 +38,7 @@
 ##  * the loop is small enough to duplicate (`MaxUnswitchSpan` tokens).
 ##
 ## The second copy's declarations (labels AND locals) are freshened
-## (`` `usN.<suffix> ``) so the module keeps unique symbols. Fixpoint driver:
+## (`` `us.<n> ``, locals of the body being duplicated). Fixpoint driver:
 ## one loop per round; iterated rounds hoist a condition out of nested loops
 ## level by level (the inner unswitch leaves `(if C (while…)…)` directly in the
 ## outer body, which the next round can hoist again).
@@ -46,7 +46,6 @@
 import std / [assertions, tables, sets]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
-import ".." / ".." / "lib" / symparser       # isLocalName
 import ".." / ".." / "models" / tags         # tag ids for synthesis
 import patchsets
 
@@ -61,7 +60,6 @@ type
 
   Context = object
     orig: ptr TokenBuf
-    suffix: string
     counter: int
     procAddrTaken: HashSet[SymId]
 
@@ -69,8 +67,8 @@ proc child0(c: Cursor): Cursor {.inline.} =
   result = c
   inc result
 
-proc symNameOf(c: Context; s: SymId): string {.inline.} =
-  c.orig[].pool.syms[s]
+proc isLocalSym(c: Context; s: SymId): bool {.inline.} =
+  c.orig[].pool.symIsLocal(s)
 
 # ── structural equality ──────────────────────────────────────────────────────
 
@@ -250,7 +248,7 @@ proc invariantConds(c: var Context; n: Cursor;
             var ok = true
             for s in syms:
               if s in assigned: ok = false
-              elif (s in c.procAddrTaken or not isLocalName(symNameOf(c, s))) and
+              elif (s in c.procAddrTaken or not isLocalSym(c, s)) and
                    opaque: ok = false
             if ok:
               conds.add cursorToPosition(c.orig[], cond)
@@ -312,7 +310,7 @@ proc collectDefs(n: Cursor; c: var Context; rename: var Table[SymId, string]) =
   of SymbolDef:
     if not rename.hasKey(it.symId):
       inc c.counter
-      rename[it.symId] = "`us" & $c.counter & "." & c.suffix
+      rename[it.symId] = "`us." & $c.counter
   of TagLit:
     it.loopInto:
       collectDefs(it, c, rename)
@@ -464,7 +462,7 @@ proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
 
 # ── public entry ─────────────────────────────────────────────────────────────
 
-proc runUnswitch*(buf: var TokenBuf; suffix = "us"): int {.discardable.} =
+proc runUnswitch*(buf: var TokenBuf): int {.discardable.} =
   ## Fixpoint: unswitch one loop per round (the innermost candidate), rebuild,
   ## rescan. Returns the number of loops unswitched.
   result = 0
@@ -472,7 +470,7 @@ proc runUnswitch*(buf: var TokenBuf; suffix = "us"): int {.discardable.} =
   var minted = 0
   while rounds < MaxRounds:
     inc rounds
-    var c = Context(orig: addr buf, suffix: suffix, counter: minted,
+    var c = Context(orig: addr buf, counter: minted,
                     procAddrTaken: initHashSet[SymId]())
     block:
       let root = beginRead(buf)

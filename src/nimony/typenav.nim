@@ -18,6 +18,11 @@ import ".." / finalir / finalir_model
 import nimony_model, builtintypes, decls, programs, typeprops
 
 const
+  # `.00`, not `.0`: a disambiguator is a NUMBER and a number has no leading
+  # zero, so `r.00` is a name no user symbol can collide with -- which is the
+  # point, since these three are injected into types the user also writes
+  # fields into. The pool keeps such a name whole rather than reading `00` as a
+  # disambiguator (#2457), so it stays distinct from `r.0`.
   RcField* = "r.00"
   DataField* = "d.00"
   VTableField* = "vt.00"
@@ -322,7 +327,7 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       elif n.intVal == 1:
         var buf = createTokenBuf(4)
         buf.addParLe(RefT, n.info)
-        buf.addSymUse pool.syms.getOrIncl("RootObj.0." & SystemModuleSuffix), n.info
+        buf.addSymUse pool.symId("RootObj.0." & SystemModuleSuffix), n.info
         buf.addParRi()
         c.mem.add buf
         result = cursorAt(c.mem[c.mem.len-1], 0)
@@ -354,7 +359,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     of Symbol:
       result = lookupSymbol(c, n.symId)
       if cursorIsNil(result):
-        bug "could not find symbol: " & pool.syms[n.symId]
+        bug "could not find symbol: " & pool.symString(n.symId)
     of IntLit:
       result = c.builtins.intType
     of UIntLit:
@@ -507,10 +512,10 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
 
     result = typeOfField(c, objType, fld)
     if cursorIsNil(result):
-      if pool.syms[fld] == VTableField:
+      if pool.symString(fld) == VTableField:
         # VTableField is a magic internal field for RTTI
         result = c.builtins.vtableType
-      elif pool.syms[fld] == DataField and
+      elif pool.symString(fld) == DataField and
             obj.exprKind in {DerefX, HderefX}:
         inc obj
         var t = getTypeImpl(c, obj, flags)

@@ -444,11 +444,11 @@ proc mangleSym(c: var GeneratedCode; s: SymId): string =
       # `genProcDecl`). Using the libc identifier here would collide with a
       # header prototype whenever a splice moves the reference into a module
       # that includes that header.
-      result = mangleToC(c.m.pool.syms[s])
+      result = mangleToC(c.m.pool.symString(s))
     else:
       result = c.m.pool.strings[x.extern]
   else:
-    result = mangleToC(c.m.pool.syms[s])
+    result = mangleToC(c.m.pool.symString(s))
 
 proc genType(c: var GeneratedCode; n: var Cursor; name = ""; isConst = false) =
   case n.typeKind
@@ -506,7 +506,7 @@ proc mangleField(c: var GeneratedCode; s: SymId; pragmas: Cursor; skipDecl: var 
           discard
         skip p
     if result.len > 0: return result
-  result = mangleToC(c.m.pool.syms[s])
+  result = mangleToC(c.m.pool.symString(s))
 
 proc mangleDecl(c: var GeneratedCode; n, pragmas: Cursor; skipDecl: var bool): string =
   if n.kind == SymbolDef:
@@ -591,7 +591,7 @@ proc genEnumDecl(c: var GeneratedCode; n: var Cursor; name: string) =
       if n.substructureKind == EfldU:
         n.into:
           if n.kind == SymbolDef:
-            let enumFieldName = mangleToC(c.m.pool.syms[n.symId])
+            let enumFieldName = mangleToC(c.m.pool.symString(n.symId))
             inc n
             c.add "#define "
             c.add enumFieldName

@@ -125,7 +125,6 @@ type
     patchset: Patchset
     synth: seq[TokenBuf]
     tempCounter: int
-    moduleSuffix: string
     vecSuffix: string       ## suffix of the module-level intrinsic decls
     allowSub: bool          ## may a lane tree contain `sub`? False on the SSE
                             ## path: `vfsub` has no x86-64 lowering, because the
@@ -135,10 +134,10 @@ type
                             ## rather than failing to compile.
     vectorized*: bool
 
-proc createContext(orig: ptr TokenBuf; moduleSuffix, vecSuffix: string;
+proc createContext(orig: ptr TokenBuf; vecSuffix: string;
                    allowSub: bool): Context =
   Context(orig: orig, patchset: initPatchset(orig), synth: @[],
-          tempCounter: 0, moduleSuffix: moduleSuffix, vecSuffix: vecSuffix,
+          tempCounter: 0, vecSuffix: vecSuffix,
           allowSub: allowSub)
 
 # ── small tree utilities ────────────────────────────────────────────────────
@@ -863,7 +862,6 @@ type
     plan: LoopPlan
     vf, bits: int
     tempCounter: int
-    moduleSuffix: string
     iFldrq, iFstrq, iVfadd, iVfsub, iVfmul, iVfmla, iVdup, iVaddv: string
     ptrs: seq[UniquePtr]    ## unique access points (loads + store)
     ptrOfAccess: Table[SymId, int]  ## load ptr temp → ptrs index
@@ -876,8 +874,11 @@ type
     unrolled: bool
 
 proc freshName(e: var Emitter; kind: string): string =
+  ## A broadcast or accumulator slot is a LOCAL of the loop being vectorized,
+  ## so its name is a local's: `<ident>.<disamb>`. (The module-level intrinsic
+  ## DECLS are the ones that need a module suffix; `vecSuffix` names those.)
   inc e.tempCounter
-  result = "vec." & kind & "." & $e.tempCounter & "." & e.moduleSuffix
+  result = "vec." & kind & "." & $e.tempCounter
 
 proc uniquePtr(e: var Emitter; acc: VecAccess): int =
   result = 0
@@ -1186,7 +1187,7 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
           plan.values.setLen plan.values.len - 1
 
   var e = Emitter(plan: plan, vf: 128 div plan.elemBits, bits: plan.elemBits,
-                  tempCounter: c.tempCounter, moduleSuffix: c.moduleSuffix,
+                  tempCounter: c.tempCounter,
                   iFldrq: "fldrq." & c.vecSuffix, iFstrq: "fstrq." & c.vecSuffix,
                   iVfadd: "vfadd." & c.vecSuffix, iVfsub: "vfsub." & c.vecSuffix,
                   iVfmul: "vfmul." & c.vecSuffix, iVfmla: "vfmla." & c.vecSuffix,
@@ -1496,12 +1497,12 @@ proc addVecIntrinsicDecls*(dest: var TokenBuf; vecSuffix: string) =
     dest.addDotToken()                        # no body
     dest.closeTag()                           # proc
 
-proc runVectorizer*(buf: var TokenBuf; moduleSuffix, vecSuffix: string;
+proc runVectorizer*(buf: var TokenBuf; vecSuffix: string;
                     allowSub = true): bool =
   ## Vectorize every matching innermost loop of one proc body. Returns true
   ## when something was vectorized — the caller then appends the intrinsic
   ## declarations once per module via `addVecIntrinsicDecls`.
-  var ctx = createContext(addr buf, moduleSuffix, vecSuffix, allowSub)
+  var ctx = createContext(addr buf, vecSuffix, allowSub)
   var n = beginRead(buf)
   tr(ctx, n)
   if not ctx.patchset.isEmpty:

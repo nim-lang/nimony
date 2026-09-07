@@ -104,18 +104,16 @@ proc mangleImpl(b: var Mangler; c: var Cursor; mm: MangleMode) =
     # in both `Frontend` and `Backend` modes because the two callers
     # disagree about which mode they pass — keeping the names aligned
     # across them is the whole point.
-    let s = pool.syms[c.symId]
-    if isInstantiation(s):
-      b.addSymbol(removeModule(s))
+    if pool.symIsInstantiation(c.symId):
+      b.addSymbol(pool.symWithoutModule(c.symId))
     else:
-      b.addSymbol(s)
+      b.addSymbol(pool.symString(c.symId))
     inc c
   of SymbolDef:
-    let s = pool.syms[c.symId]
-    if isInstantiation(s):
-      b.addSymbolDef(removeModule(s))
+    if pool.symIsInstantiation(c.symId):
+      b.addSymbolDef(pool.symWithoutModule(c.symId))
     else:
-      b.addSymbolDef(s)
+      b.addSymbolDef(pool.symString(c.symId))
     inc c
   of StrLit:
     b.addStrLit(pool.strings[c.strId])

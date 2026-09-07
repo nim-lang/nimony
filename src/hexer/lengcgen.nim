@@ -229,7 +229,7 @@ proc trField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[Type
 
 proc ithTupleField(c: var EContext; counter: int, typ: Cursor): SymId {.inline.} =
   #var typ = typ
-  pool.syms.getOrIncl("fld." & $counter)
+  pool.symId("fld." & $counter)
   # & "." & takeMangle(typ, Backend, c.bits))
 
 proc genTupleField(c: var EContext; dest: var TokenBuf; typ: var Cursor; counter: int) =
@@ -262,7 +262,7 @@ proc trEnumField(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[
 
 proc genStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   # now unused
-  let s = pool.syms.getOrIncl(StringName)
+  let s = pool.symId(StringName)
   dest.addParLe("type", info)
   dest.addSymDef(s, info)
 
@@ -272,7 +272,7 @@ proc genStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
 
   when sso:
     dest.addParLe("fld", info)
-    let bytesField = pool.syms.getOrIncl(StringBytesField)
+    let bytesField = pool.symId(StringBytesField)
     dest.addSymDef(bytesField, info)
     dest.addDotToken()
     dest.addParLe("u", info)
@@ -281,16 +281,16 @@ proc genStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
     dest.addParRi() # "fld"
 
     dest.addParLe("fld", info)
-    let moreField = pool.syms.getOrIncl(StringMoreField)
+    let moreField = pool.symId(StringMoreField)
     dest.addSymDef(moreField, info)
     dest.addDotToken()
     dest.addParLe("ptr", info)
-    dest.addSymUse(pool.syms.getOrIncl(LongStringName), info)
+    dest.addSymUse(pool.symId(LongStringName), info)
     dest.addParRi() # "ptr"
     dest.addParRi() # "fld"
   else:
     dest.addParLe("fld", info)
-    let strField = pool.syms.getOrIncl(StringAField)
+    let strField = pool.symId(StringAField)
     dest.addSymDef(strField, info)
     dest.addDotToken()
     dest.addParLe("ptr", info)
@@ -301,7 +301,7 @@ proc genStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
     dest.addParRi() # "fld"
 
     dest.addParLe("fld", info)
-    let lenField = pool.syms.getOrIncl(StringIField)
+    let lenField = pool.symId(StringIField)
     dest.addSymDef(lenField, info)
     dest.addDotToken()
     dest.addParLe("i", info)
@@ -313,7 +313,7 @@ proc genStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   dest.addParRi() # "type"
 
 proc useStringType(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
-  let s = pool.syms.getOrIncl(StringName)
+  let s = pool.symId(StringName)
   dest.addSymUse(s, info)
 
 proc trTupleBody(c: var EContext; dest: var TokenBuf; n: var Cursor) =
@@ -408,7 +408,7 @@ proc trRefBody(c: var EContext; dest: var TokenBuf; n: var Cursor; key: string) 
   dest.addDotToken()
 
   dest.addParLe("fld", info)
-  let rcField = pool.syms.getOrIncl(RcField)
+  let rcField = pool.symId(RcField)
   dest.addSymDef(rcField, info)
   dest.addDotToken() # pragmas
   dest.addParLe("i", info)
@@ -416,7 +416,7 @@ proc trRefBody(c: var EContext; dest: var TokenBuf; n: var Cursor; key: string) 
   dest.addParRi() # "i"
   dest.addParRi() # "fld"
 
-  let dataField = pool.syms.getOrIncl(DataField)
+  let dataField = pool.symId(DataField)
   dest.addParLe("fld", info)
   dest.addSymDef(dataField, info)
   dest.addDotToken() # pragmas
@@ -434,7 +434,7 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
   var val = c.newTypes.getOrDefault(key)
   if val == SymId(0):
-    val = pool.syms.getOrIncl(genericTypeName(key, c.main))
+    val = pool.symId(genericTypeName(key, c.main))
     c.newTypes[key] = val
 
     var buf = createTokenBuf(30)
@@ -473,10 +473,10 @@ proc trAsNamedType(c: var EContext; dest: var TokenBuf; n: var Cursor) =
 
 proc addRttiField(c: var EContext; dest: var TokenBuf; info: NifLineInfo) =
   dest.addParLe("fld", info)
-  dest.addSymDef(pool.syms.getOrIncl(VTableField), info)
+  dest.addSymDef(pool.symId(VTableField), info)
   dest.addEmpty() # pragmas
   dest.addParLe PtrT, info
-  let rttiSym = pool.syms.getOrIncl("Rtti.0." & SystemModuleSuffix)
+  let rttiSym = pool.symId("Rtti.0." & SystemModuleSuffix)
   dest.addSymUse rttiSym, info
   dest.addParRi() # "ptr"
   dest.addParRi() # "fld"
@@ -636,7 +636,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
       if cursorIsNil(hint):
         takeTree dest, n
       else:
-        let hintSym = pool.syms.getOrIncl(pool.strings[hint.strId])
+        let hintSym = pool.symId(pool.strings[hint.strId])
         dest.addSymUse(hintSym, info)
         skip n
     of MutT, LentT:
@@ -989,8 +989,7 @@ template moveToTopLevel(c: var EContext; dest: var TokenBuf; mode: TraverseMode;
 
 proc makeLocalDeclName(c: var EContext; s: SymId): string =
   # for proc and type decls
-  result = pool.syms[s]
-  extractBasename(result)
+  result = pool.symBasename(s)
   result.add "."
   result.addInt c.localDeclCounters
   inc c.localDeclCounters
@@ -999,7 +998,7 @@ proc makeLocalDeclName(c: var EContext; s: SymId): string =
 
 proc makeLocalSymId(c: var EContext; s: SymId): SymId =
   let newName = makeLocalDeclName(c, s)
-  result = pool.syms.getOrIncl(newName)
+  result = pool.symId(newName)
 
 proc trHoistedConst(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: TraverseMode) =
   ## A const that still exists inside a proc body HERE has an aggregate value
@@ -1250,8 +1249,8 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineI
     let alwaysAvail = c.bits div 8 - 1 # 7 on 64-bit, 3 on 32-bit
     let staticSlen = 254'u # StaticSlen sentinel
 
-    let bytesField = pool.syms.getOrIncl(StringBytesField)
-    let moreField  = pool.syms.getOrIncl(StringMoreField)
+    let bytesField = pool.symId(StringBytesField)
+    let moreField  = pool.symId(StringMoreField)
 
     # Pack up to alwaysAvail chars into the `bytes` uint alongside slen.
     # LE layout: slen at bits 0..7 (LSB/byte0), chars at bits 8, 16, ...
@@ -1306,7 +1305,7 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineI
       #    to link. A content hash is stable: the name changes only when the
       #    string does.
       #
-      # 2. The instantiation form (`isInstantiation` → true) lets DCE's
+      # 2. The instantiation form (`symIsInstantiation` → true) lets DCE's
       #    `resolveSymbolConflicts` collapse identical strings program-wide: one
       #    module keeps the definition, the rest drop their copies and reference
       #    the winner. This holds in partial builds too (e.g. the compile-time-
@@ -1318,35 +1317,35 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineI
       # `strLits` keeps emission to one const per distinct string per module.
       var litName = c.strLits.getOrDefault(s)
       if litName == SymId(0):
-        litName = pool.syms.getOrIncl("strlit.0.I" & $uint64(hash(s)) & "." & c.main)
+        litName = pool.symId("strlit.0.I" & $uint64(hash(s)) & "." & c.main)
         c.strLits[s] = litName
 
         c.strLitBuf.addParLe("const", info)
         c.strLitBuf.addSymDef(litName, info)
         c.strLitBuf.addDotToken() # no pragmas
         # type: LongString
-        c.strLitBuf.addSymUse(pool.syms.getOrIncl(LongStringName), info)
+        c.strLitBuf.addSymUse(pool.symId(LongStringName), info)
         # value: (oconstr LongStringName (kv fullLen len) (kv rc 0) (kv capImpl 0) (kv data "s"))
         c.strLitBuf.addParLe("oconstr", info)
-        c.strLitBuf.addSymUse(pool.syms.getOrIncl(LongStringName), info)
+        c.strLitBuf.addSymUse(pool.symId(LongStringName), info)
 
         c.strLitBuf.addParLe(KvU, info)
-        c.strLitBuf.addSymUse(pool.syms.getOrIncl(LongStringFullLenField), info)
+        c.strLitBuf.addSymUse(pool.symId(LongStringFullLenField), info)
         c.strLitBuf.addIntLit(s.len, info)
         c.strLitBuf.addParRi() # "kv"
 
         c.strLitBuf.addParLe(KvU, info)
-        c.strLitBuf.addSymUse(pool.syms.getOrIncl(LongStringRcField), info)
+        c.strLitBuf.addSymUse(pool.symId(LongStringRcField), info)
         c.strLitBuf.addIntLit(0, info)
         c.strLitBuf.addParRi() # "kv"
 
         c.strLitBuf.addParLe(KvU, info)
-        c.strLitBuf.addSymUse(pool.syms.getOrIncl(LongStringCapImplField), info)
+        c.strLitBuf.addSymUse(pool.symId(LongStringCapImplField), info)
         c.strLitBuf.addIntLit(0, info)
         c.strLitBuf.addParRi() # "kv"
 
         c.strLitBuf.addParLe(KvU, info)
-        c.strLitBuf.addSymUse(pool.syms.getOrIncl(LongStringDataField), info)
+        c.strLitBuf.addSymUse(pool.symId(LongStringDataField), info)
         c.strLitBuf.addStrLit(s)
         c.strLitBuf.addParRi() # "kv"
 
@@ -1365,13 +1364,13 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineI
     useStringType c, dest, info
 
     dest.addParLe(KvU, info)
-    let strField = pool.syms.getOrIncl(StringAField)
+    let strField = pool.symId(StringAField)
     dest.addSymUse(strField, info)
     dest.addStrLit(s)
     dest.addParRi() # "kv"
 
     dest.addParLe(KvU, info)
-    let lenField = pool.syms.getOrIncl(StringIField)
+    let lenField = pool.symId(StringIField)
     dest.addSymUse(lenField, info)
     # length also contains the "isConst" flag:
     dest.addIntLit(s.len * 2, info)
@@ -1451,7 +1450,7 @@ proc trConv(c: var EContext; dest: var TokenBuf; n: var Cursor) =
       when sso:
         bug "cannot convert a string to cstring at runtime"
       else:
-        let strField = pool.syms.getOrIncl(StringAField)
+        let strField = pool.symId(StringAField)
         dest.addParLe("dot", info)
         trExpr(c, dest, n)
         dest.addSymUse(strField, info)
@@ -1540,7 +1539,7 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         if BoundCheck in c.activeChecks:
           let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckAB" else: "nimIcheckAB", true)
           dest.copyIntoUnchecked "call", info:
-            dest.addSymUse(pool.syms.getOrIncl(abProcName), info)
+            dest.addSymUse(pool.symId(abProcName), info)
             dest.add indexDest
             dest.addSubtree indexA
             dest.addSubtree indexB
@@ -1557,7 +1556,7 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         if BoundCheck in c.activeChecks:
           let abProcName = getCompilerProc(c, if isUnsigned: "nimUcheckB" else: "nimIcheckB", true)
           dest.copyIntoUnchecked "call", info:
-            dest.addSymUse(pool.syms.getOrIncl(abProcName), info)
+            dest.addSymUse(pool.symId(abProcName), info)
             dest.add indexDest
             dest.addSubtree indexB
         else:
@@ -1615,7 +1614,7 @@ proc trAddrAconstrUarray(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   arrTypeBuf.addIntLit(elemCount, info)
   arrTypeBuf.addParRi()
 
-  let anonName = pool.syms.getOrIncl("anonArr." & $c.strLitCounter & "." & c.main)
+  let anonName = pool.symId("anonArr." & $c.strLitCounter & "." & c.main)
   inc c.strLitCounter
 
   var constBuf = createTokenBuf(30)
@@ -2338,7 +2337,7 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
   ## that an `asgn` to a dead global is dead would restore that.)
   for key, vals in c.dynlibs:
     let dynlib = pool.strings[key]
-    var tmp = pool.syms.getOrIncl "Dl." & dynlib & "." & $getTmpId(c) & "." & c.main
+    var tmp = pool.symId("Dl." & dynlib & "." & $getTmpId(c) & "." & c.main)
 
     # Expand the dynlib name pattern at compile time (e.g. "libX11.so(|.6)"
     # -> ["libX11.so", "libX11.so.6"]) and load the library handle from the
@@ -2349,9 +2348,9 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
     var candidates: seq[string] = @[]
     libCandidates(dynlib, candidates)
 
-    let loadSym = pool.syms.getOrIncl(getCompilerProc(c, "nimLoadLibrary", false))
-    let stepSym = pool.syms.getOrIncl(getCompilerProc(c, "nimDynlibLoadStep", false))
-    let checkSym = pool.syms.getOrIncl(getCompilerProc(c, "nimDynlibCheck", false))
+    let loadSym = pool.symId(getCompilerProc(c, "nimLoadLibrary", false))
+    let stepSym = pool.symId(getCompilerProc(c, "nimDynlibLoadStep", false))
+    let checkSym = pool.symId(getCompilerProc(c, "nimDynlibCheck", false))
 
     dest.addParLe("gvar", rootInfo)
     dest.addSymDef(tmp, rootInfo)
@@ -2389,7 +2388,7 @@ proc initDynlib(c: var EContext; dest: var TokenBuf; initDest: var TokenBuf;
       initDest.addParLe("cast", rootInfo)
       initDest.addSymUse(typeSym, rootInfo)
       initDest.addParLe("call", rootInfo)
-      initDest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimGetProcAddr", false)), rootInfo)
+      initDest.addSymUse(pool.symId(getCompilerProc(c, "nimGetProcAddr", false)), rootInfo)
       initDest.addSymUse(tmp, rootInfo) # library
       initDest.addStrLit procName # proc name
       initDest.addParRi()   # close call
@@ -2404,8 +2403,8 @@ proc genInitProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo; imp
   ## 1. Guards against double-initialization
   ## 2. Calls imported modules' init procs in order
   ## 3. Contains this module's top-level executable code (via a call from NIFC's init section)
-  let initSym = pool.syms.getOrIncl(initProcName(c.main))
-  let guardSym = pool.syms.getOrIncl("`iniGuard.0." & c.main)
+  let initSym = pool.symId(initProcName(c.main))
+  let guardSym = pool.symId("`iniGuard.0." & c.main)
 
   # Emit the guard variable: (gvar :InitGuard.suffix . (bool) .)
   dest.addParLe("gvar", rootInfo)
@@ -2450,7 +2449,7 @@ proc genInitProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo; imp
 
   # Call each imported module's init proc:
   for suffix in importedSuffixes:
-    let importInitSym = pool.syms.getOrIncl(initProcName(suffix))
+    let importInitSym = pool.symId(initProcName(suffix))
     dest.addParLe("call", rootInfo)
     dest.addSymUse(importInitSym, rootInfo)
     dest.addParRi()
@@ -2472,15 +2471,15 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   ## `GetEnvironmentStringsW`. So `main` takes no parameters and the process
   ## vectors are not emitted at all; `std/cmdline` and `std/envvars` ask the
   ## Windows API for those two directly instead.
-  let initSym = pool.syms.getOrIncl(initProcName(c.main))
+  let initSym = pool.symId(initProcName(c.main))
 
-  let ccharSym = pool.syms.getOrIncl("`cchar.0." & c.main)
-  let cmdCountSym = pool.syms.getOrIncl("`cmdCount.0." & c.main)
-  let cmdLineSym = pool.syms.getOrIncl("`cmdLine.0." & c.main)
-  let nimEnvironSym = pool.syms.getOrIncl("`nimEnviron.0." & c.main)
-  let argcSym = pool.syms.getOrIncl("`argc.0." & c.main)
-  let argvSym = pool.syms.getOrIncl("`argv.0." & c.main)
-  let envpSym = pool.syms.getOrIncl("`envp.0." & c.main)
+  let ccharSym = pool.symId("`cchar.0." & c.main)
+  let cmdCountSym = pool.symId("`cmdCount.0." & c.main)
+  let cmdLineSym = pool.symId("`cmdLine.0." & c.main)
+  let nimEnvironSym = pool.symId("`nimEnviron.0." & c.main)
+  let argcSym = pool.symId("`argc.0." & c.main)
+  let argvSym = pool.symId("`argv.0." & c.main)
+  let envpSym = pool.symId("`envp.0." & c.main)
 
   if not isWindows:
     # Declare a nodecl importc "char" type alias so argv/cmdLine use plain C `char`
@@ -2561,7 +2560,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   # Generate: (proc :main (params (param :argc . (i 32)) (param :argv . (ptr (ptr cchar))) (param :envp . (ptr (ptr cchar)))) (i 32) (pragmas (exportc "main")) (stmts ...))
   # On Windows the params list is empty — nothing is handed to the entry point
   # there, so there is nothing to name.
-  let mainSym = pool.syms.getOrIncl("`main.0." & c.main)
+  let mainSym = pool.symId("`main.0." & c.main)
   dest.addParLe("proc", rootInfo)
   dest.addSymDef(mainSym, rootInfo)
   # params
@@ -2656,7 +2655,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
     # path. The backend synthesizes no process-exit of its own, so it needs
     # no OS-specific import knowledge for the entry.
     dest.addParLe("call", rootInfo)
-    dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "cExit")), rootInfo)
+    dest.addSymUse(pool.symId(getCompilerProc(c, "cExit")), rootInfo)
     dest.addIntLit(0, rootInfo)
     dest.addParRi() # call
   else:
@@ -2664,7 +2663,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
     # output is not lost when `main` returns without going through `quit`. A
     # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo).
     dest.addParLe("call", rootInfo)
-    dest.addSymUse(pool.syms.getOrIncl(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
+    dest.addSymUse(pool.symId(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
     dest.addParRi() # call
   # (ret 0) — unreachable on the native path (`cExit` is noreturn), kept for a
   # well-formed proc body; the C `main` returns normally.

@@ -155,10 +155,10 @@ proc produceSuccessTuple(c: var Context; dest: var TokenBuf; typ: Cursor;
   else:
     dest.addParLe TupconstrX, info
     dest.addParLe TupleT, info
-    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+    dest.addSymUse pool.symId(ErrorCodeName), info
     dest.addSubtree typ
     dest.addParRi()
-    dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+    dest.addSymUse pool.symId(SuccessName), info
     result = true
 
 proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo) =
@@ -167,7 +167,7 @@ proc produceRaiseTuple(c: var Context; dest: var TokenBuf; typ: Cursor; info: Ni
   if not isVoidType(c.retType):
     dest.addParLe TupconstrX, info
     dest.addParLe TupleT, info
-    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), info
+    dest.addSymUse pool.symId(ErrorCodeName), info
     dest.addSubtree typ
     dest.addParRi()
 
@@ -208,7 +208,7 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
     let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
     copyInto dest, n:
       if isLocalDecl and n.isSymbolDef:
-        let repl = pool.syms.getOrIncl("`ffv." & $idgen)
+        let repl = pool.symId("`ffv." & $idgen)
         newVars[n.symId] = repl
         dest.addSymDef(repl, n.info)
         inc idgen
@@ -223,7 +223,7 @@ proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
     raiseAssert "BUG: unexpected ParRi in eraiser.freshVars" # classic ParRi only
 
 proc freshLabel(c: var Context; prefix: string): SymId =
-  result = pool.syms.getOrIncl(prefix & $c.tmpCounter)
+  result = pool.symId(prefix & $c.tmpCounter)
   inc c.tmpCounter
 
 proc emitFinCopy(c: var Context; dest: var TokenBuf; fin: Cursor) =
@@ -346,12 +346,12 @@ proc takeLocalHeader(c: var TypeCache; dest: var TokenBuf; n: var Cursor;
   takeTree dest, n # pragmas
   c.registerLocal(name, kind, n)
   if isVoidType(n) and isTuple:
-    dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+    dest.addSymUse pool.symId(ErrorCodeName), n.info
     skip n
   else:
     if isTuple:
       dest.addParLe TupleT, n.info
-      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.info
+      dest.addSymUse pool.symId(ErrorCodeName), n.info
     takeTree dest, n # type
     if isTuple:
       dest.addParRi()
@@ -386,7 +386,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor; targetIsTuple: bo
     if isVoid:
       dest.addParLe(StmtsS, info)
     block:
-      let symId = pool.syms.getOrIncl("`canRaise." & $c.tmpCounter)
+      let symId = pool.symId("`canRaise." & $c.tmpCounter)
       inc c.tmpCounter
       # The temp holds the call's RETURN VALUE — an owned, freshly
       # constructed value — so it must be an owning local. As a CursorS the
@@ -460,7 +460,7 @@ proc trResultDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
       copyIntoKind dest, TupatX, info:
         dest.addSymUse c.resultSym, info
         dest.addIntLit 0, info
-      dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+      dest.addSymUse pool.symId(SuccessName), info
 
 # -------------------- statements -------------------------------------------
 
@@ -521,7 +521,7 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # A void raising routine returns its code and nothing else, so it
           # needs a trailing "nothing went wrong".
           copyIntoKind dest, RetS, info:
-            dest.addSymUse pool.syms.getOrIncl(SuccessName), info
+            dest.addSymUse pool.symId(SuccessName), info
       c2.typeCache.closeScope()
     else:
       takeTree dest, n
@@ -533,7 +533,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if c.canRaise:
     copyInto dest, n:
       if n.kind == DotToken:
-        dest.addSymUse pool.syms.getOrIncl(SuccessName), n.info
+        dest.addSymUse pool.symId(SuccessName), n.info
         inc n
       elif n.kind == Symbol and n.symId == c.resultSym:
         # `(ret result)` — the trailing return every value-returning routine
@@ -569,7 +569,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip n # the whole bare `(raise .)`
     if c.canRaise:
       var code = createTokenBuf(2)
-      code.addSymUse pool.syms.getOrIncl(FailureName), info
+      code.addSymUse pool.symId(FailureName), info
       emitUnwind c, dest, code, info
     else:
       emitFinsDownTo c, dest, 0

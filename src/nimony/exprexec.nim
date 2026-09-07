@@ -73,7 +73,7 @@ proc instantiationTypevars(sym: SymId): Cursor =
   ## Returns the instantiated proc/type decl's `typevars` slot if `sym`
   ## is a generic instance (typevars is an `InvokeT` recording the origin
   ## and the type args). Returns `default(Cursor)` otherwise. Procs use
-  ## counter-based names that don't match `isInstantiation`, so this
+  ## counter-based names that don't match `symIsInstantiation`, so this
   ## decl-based check is the reliable cross-kind detector.
   result = default(Cursor)
   let res = tryLoadSym(sym)
@@ -138,16 +138,15 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
         skip tv
     buf.addParRi()
     return
-  let symStr = pool.syms[sym]
-  let owner = extractModule(symStr)
+  let symStr = pool.symString(sym)
+  let owner = pool.symModule(sym)
   if owner.len > 0 and owner != thisMod:
     let res = tryLoadSym(sym)
     if res.status == LacksNothing and res.decl.symKind == TypeY:
       # Foreign type — keep as Symbol so visibility is bypassed.
       buf.addSymUse(sym, info)
       return
-  var basename = symStr
-  extractBasename basename
+  var basename = pool.symBasename(sym)
   buf.addIdent(pool.strings.getOrIncl(basename), info)
 
 proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) =
@@ -158,8 +157,7 @@ proc rewriteTreeToIdents(newDest: var TokenBuf; n: var Cursor; thisMod: string) 
   of SymbolDef:
     # SymbolDefs only appear at decl sites; always strip to basename
     # so the sub-compile creates fresh decls via re-semchecking.
-    var basename = pool.syms[n.symId]
-    extractBasename basename
+    var basename = pool.symBasename(n.symId)
     newDest.addIdent(pool.strings.getOrIncl(basename), n.info)
     inc n
   of TagLit:
@@ -222,7 +220,7 @@ proc genProcHeader(c: var SynthesizeSerializerCtx; dest: var TokenBuf; sym: SymI
   dest.addEmpty3 c.info # export marker, pattern, generics
   copyIntoKind dest, ParamsU, c.info:
     copyIntoKind dest, ParamY, c.info:
-      addSymDef dest, pool.syms.getOrIncl(ParamSymName), c.info
+      addSymDef dest, pool.symId(ParamSymName), c.info
       dest.addEmpty2 c.info # export marker, pragmas
       copyTree dest, typ
       dest.addEmpty c.info # value
@@ -235,7 +233,7 @@ proc requestProc(c: var SynthesizeSerializerCtx; t: TypeCursor): SymId =
   result = c.structuralTypeToProc.getOrDefault(key)
   if result == SymId(0):
     let name = generateName(c, key)
-    result = pool.syms.getOrIncl(name)
+    result = pool.symId(name)
     c.requests.add GenProcRequest(sym: result, typ: t)
     c.structuralTypeToProc[key] = result
 
@@ -252,12 +250,12 @@ when not defined(nimony):
 
 proc genStringCall(c: var SynthesizeSerializerCtx; name, arg: string) =
   c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
+    c.dest.addSymUse pool.symId(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addStrLit arg, c.info
 
 proc genParRiCall(c: var SynthesizeSerializerCtx) =
   c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl("writeNifParRi.0." & writeNifModuleSuffix), c.info
+    c.dest.addSymUse pool.symId("writeNifParRi.0." & writeNifModuleSuffix), c.info
 
 proc accessObjField(c: var SynthesizeSerializerCtx; obj: TokenBuf; name: Cursor; needsDeref: bool; depth = 0): TokenBuf =
   assert name.isSymbolDef
@@ -290,7 +288,7 @@ proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: Token
 
   genStringCall(c, "writeNifParLe", "kv")
   genStringCall(c, "writeNifRaw", " ")
-  genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
+  genStringCall(c, "writeNifSymbol", pool.symString(r.name.symId))
 
   # ptr-to-nif special case: a `ptr UncheckedArray[T]` field can't be
   # serialised structurally — there's no pointer value that survives the
@@ -440,7 +438,7 @@ proc unravelArray(c: var SynthesizeSerializerCtx;
   inc n
   let baseType = n
 
-  let indexVar = pool.syms.getOrIncl("idx.0")
+  let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "aconstr")
@@ -473,7 +471,7 @@ proc unravelPtrUarrayField(c: var SynthesizeSerializerCtx;
   inc ft # past uarray tag
   let baseType = ft
 
-  let indexVar = pool.syms.getOrIncl("idx.0")
+  let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
 
   genStringCall(c, "writeNifParLe", "addr")
@@ -511,7 +509,7 @@ proc unravelSet(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBu
   genStringCall(c, "writeNifParLe", "setconstr")
   genStringCall(c, "writeNifRaw", toString(orig, false))
 
-  let indexVar = pool.syms.getOrIncl("idx.0")
+  let indexVar = pool.symId("idx.0")
   declareIndexVar c, indexVar
   var indexVarAsBuf = createTokenBuf(1)
   indexVarAsBuf.addSymUse indexVar, c.info
@@ -546,12 +544,12 @@ proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenB
           let esym = enumField.name.symId
           c.dest.addSymUse esym, enumDeclInfo
         c.dest.copyIntoKind StmtsS, enumDeclInfo:
-          genStringCall(c, "writeNifSymbol", pool.syms[esym])
+          genStringCall(c, "writeNifSymbol", pool.symString(esym))
   c.dest.addParRi() # case
 
 proc primitiveCall(c: var SynthesizeSerializerCtx; name: string; arg: Cursor) =
   c.dest.copyIntoKind CallS, c.info:
-    c.dest.addSymUse pool.syms.getOrIncl(name & ".0." & writeNifModuleSuffix), c.info
+    c.dest.addSymUse pool.symId(name & ".0." & writeNifModuleSuffix), c.info
     c.dest.addSubtree arg
 
 proc entryPoint(c: var SynthesizeSerializerCtx; orig: TypeCursor; arg: Cursor) =
@@ -636,7 +634,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
     c.errorMsg = "unsupported type for compile-time evaluation: " & asNimCode(orig)
 
 proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =
-  let paramA = pool.syms.getOrIncl(ParamSymName)
+  let paramA = pool.symId(ParamSymName)
   var paramTreeA = createTokenBuf(4)
   copyIntoSymUse paramTreeA, paramA, c.info
 
@@ -704,8 +702,7 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
     let sym = stack.pop()
     if sym in inlineDefs: continue
     if not handledSyms.containsOrIncl(sym):
-      let symStr = pool.syms[sym]
-      if isInstantiation(symStr):
+      if pool.symIsInstantiation(sym):
         # Instantiated generic procs/types don't cross sub-compile
         # boundaries — they're stored header-only here. After
         # `rewriteSymsToIdents` the call becomes an ident lookup; the
@@ -714,7 +711,7 @@ proc collectUsedSymsFromExpr(c: var SynthesizeSerializerCtx; s: var SemContext; 
         # would miscompile (e.g. an instantiated `@` with empty body
         # returns garbage and the loop iterates billions of times).
         continue
-      let owner = extractModule(symStr)
+      let owner = pool.symModule(sym)
       if owner == c.thisModuleSuffix:
         let res = tryLoadSym(sym)
         if res.status == LacksNothing:
@@ -755,7 +752,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
     c.dest.add s.importSnippets
 
   c.dest.copyIntoKind CallS, info:
-    c.dest.addSymUse pool.syms.getOrIncl("setup.0." & writeNifModuleSuffix), info
+    c.dest.addSymUse pool.symId("setup.0." & writeNifModuleSuffix), info
     c.dest.addStrLit toAbsolutePath(s.g.config.nifcachePath / c.newModuleSuffix & ".out.nif"), info
 
   var retTypeBuf = createTokenBuf(4)
@@ -781,7 +778,7 @@ proc executeExpr*(s: var SemContext; expr: Cursor; expectedType: TypeCursor;
             discard
 
   c.dest.copyIntoKind CallS, info:
-    c.dest.addSymUse pool.syms.getOrIncl("teardown.0." & writeNifModuleSuffix), info
+    c.dest.addSymUse pool.symId("teardown.0." & writeNifModuleSuffix), info
 
   genMissingProcs c
   c.dest.addParRi() # StmtsS

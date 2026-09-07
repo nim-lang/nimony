@@ -81,7 +81,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   # golden files need deterministic output (kill order is a set)
   for i in 1 ..< locals.len:
     var j = i
-    while j > 0 and pool.syms[locals[j-1]] > pool.syms[locals[j]]:
+    while j > 0 and pool.symString(locals[j-1]) > pool.symString(locals[j]):
       swap locals[j-1], locals[j]
       dec j
   var i = 0
@@ -95,7 +95,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   c.typeCache.closeScope()
 
 proc freshLabel(c: var Context; prefix: string): SymId =
-  result = pool.syms.getOrIncl(prefix & $c.current.tmpCounter)
+  result = pool.symId(prefix & $c.current.tmpCounter)
   inc c.current.tmpCounter
 
 proc emitLab(dest: var TokenBuf; name: SymId; info: NifLineInfo) =

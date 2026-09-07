@@ -589,7 +589,7 @@ proc semGenericParams(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     if origin.isSymbol:
       let originRes = tryLoadSym(origin.symId)
       if originRes.status == LacksNothing:
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[origin.symId]),
+        c.visOwner.add VisOwner(module: pool.symModule(origin.symId),
                                 file: originRes.decl.info.file.uint32)
     takeTree dest, n
   else:
@@ -738,8 +738,7 @@ proc registerHook(c: var SemContext; obj: SymId, symId: SymId, op: HookKind; isG
   c.typeHooks.getOrQuit(obj).a[attachedOp] = symId
 
 proc getHookName(symId: SymId): string =
-  result = pool.syms[symId]
-  extractBasename(result)
+  result = pool.symBasename(symId)
   #result = result.normalize
 
 proc semHook(c: var SemContext; dest: var TokenBuf; name: string; beforeParams: int; symId: SymId, info: NifLineInfo): TypeCursor =
@@ -811,8 +810,7 @@ proc attachMethod(c: var SemContext; dest: var TokenBuf; symId: SymId;
       skip params, SkipExport # export marker
       skip params, SkipPragmas # pragmas
       root = getClass(params) # can be a generic instance symbol
-      var methodName = pool.syms[symId]
-      extractBasename methodName
+      var methodName = pool.symBasename(symId)
       signature = pool.strings.getOrIncl(methodKey(methodName, paramsNode))
   if not hasFirstParam or root == SymId(0) or not isObjectType(root):
     var errBuf = createTokenBuf(16)
@@ -1093,7 +1091,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
         # e.g. a type's `=destroy` hook semchecked lazily while a generic from
         # another module is being instantiated would otherwise be judged
         # against that generic's module and lose access to its own fields.
-        c.visOwner.add VisOwner(module: extractModule(pool.syms[symId]),
+        c.visOwner.add VisOwner(module: pool.symModule(symId),
                                 file: info.file.uint32)
       if c.routine.inGeneric > 0 and c.routine.parent.kind != NoSym and c.routine.parent.inGeneric == 0:
         c.genericInnerProcs.incl(symId)
@@ -1111,8 +1109,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       if status == OkExistingFresh and InjectP in crucial.flags:
         # symbol is injected, add it to scope
         let s = Sym(kind: kind, name: symId, pos: beforeName)
-        var name = pool.syms[symId]
-        extractBasename(name)
+        var name = pool.symBasename(symId)
         # go up a scope for the parameter scope:
         c.currentScope.up.addOverloadable(pool.strings.getOrIncl(name), s)
       # An intrinsic's signature is unified against its row here, where the
@@ -1371,12 +1368,12 @@ proc buildInnerObjDecl(c: var SemContext; decl: Cursor; sym: var SymId): TokenBu
   result = createTokenBuf(64)
 
   # make anon object symbol from `sym` and set `sym` to it:
-  var isGlobal = false
-  let basename = extractBasename(pool.syms[sym], isGlobal)
+  let isGlobal = not pool.symIsLocal(sym)
+  let basename = pool.symBasename(sym)
   var objName = basename & ".Obj"
   if isGlobal: c.makeGlobalSym(objName)
   else: c.makeLocalSym(objName)
-  sym = pool.syms.getOrIncl(objName)
+  sym = pool.symId(objName)
 
   var n = decl
   result.addParLe(n.cursorTagId, n.info) # (type

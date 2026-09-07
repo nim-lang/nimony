@@ -290,7 +290,7 @@ proc loadInterface*(suffix: string; iface: var Iface;
     var base = k
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
-    let symId = pool.syms.getOrIncl(k)
+    let symId = pool.symId(k)
     if not alreadyLoaded:
       iface.mgetOrPut(strId, @[]).add symId
     let symMarked =
@@ -305,8 +305,8 @@ proc loadInterface*(suffix: string; iface: var Iface;
     let nameId = pool.strings.getOrIncl(name)
     # check that the converter is imported, slow but better to be slow here:
     if nameId in importTab and module in importTab.getOrDefault(nameId):
-      let key = if k == ".": SymId(0) else: pool.syms.getOrIncl(k)
-      let val = pool.syms.getOrIncl(v)
+      let key = if k == ".": SymId(0) else: pool.symId(k)
+      let val = pool.symId(v)
       converters.mgetOrPut(key, @[]).addUnique(val)
   for ex in m.index.exports:
     let (path, kind, names) = ex
@@ -333,8 +333,8 @@ proc tryLoadSym*(s: SymId): LoadResult =
   if prog.mem.hasKey(s):
     result = LoadResult(status: LacksNothing, decl: cursorAt(prog.mem[s].buffer, 0))
   else:
-    let nifName = pool.syms[s]
-    let modname = extractModule(nifName)
+    let nifName = pool.symString(s)
+    let modname = pool.symModule(s)
     if modname == "":
       result = LoadResult(status: LacksModuleName)
     else:
@@ -430,7 +430,7 @@ proc loadSyms*(suffix: string; identifier: StrId): seq[SymId] =
     extractBasename(base)
     let strId = pool.strings.getOrIncl(base)
     if strId == identifier:
-      let symId = pool.syms.getOrIncl(k)
+      let symId = pool.symId(k)
       result.add symId
 
 proc knowsSym*(s: SymId): bool {.inline.} = prog.mem.hasKey(s)
@@ -458,8 +458,8 @@ proc publish*(s: SymId; dest: TokenBuf; start: int; phase = SemcheckBodies) =
 
 proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   when defined(debugPublish):
-    if pool.syms[s].startsWith("\x2E."):
-      echo "PUBSIG ", pool.syms[s], " src=", toString(readonlyCursorAt(dest, start), false)
+    if pool.symString(s).startsWith("\x2E."):
+      echo "PUBSIG ", pool.symString(s), " src=", toString(readonlyCursorAt(dest, start), false)
   var buf = createTokenBuf(dest.len - start + 3)
   # the span is the routine's open tag followed by complete signature
   # subtrees; open the tag properly so the final close seals it, and copy
@@ -470,20 +470,20 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   buf.addDotToken() # body is empty for a signature
   buf.addParRi()
   when defined(debugPublish):
-    if pool.syms[s].startsWith("\x2E."):
+    if pool.symString(s).startsWith("\x2E."):
       echo "PUBSIG OUT ", toString(readonlyCursorAt(buf, 0), false)
   publish s, buf, SemcheckSignatures
 
 proc publishStringType*() =
   # This logic is not strictly necessary for "system.nim" itself, but
   # for modules that emulate system via --isSystem.
-  let symId = pool.syms.getOrIncl(StringName)
+  let symId = pool.symId(StringName)
   let exportMarker = pool.strings.getOrIncl("x")
   var str = createTokenBuf(10)
   when sso:
-    let bytesId = pool.syms.getOrIncl(StringBytesField)
-    let moreId  = pool.syms.getOrIncl(StringMoreField)
-    let longStrSymId = pool.syms.getOrIncl(LongStringName)
+    let bytesId = pool.symId(StringBytesField)
+    let moreId  = pool.symId(StringMoreField)
+    let longStrSymId = pool.symId(LongStringName)
     str.copyIntoUnchecked "type", NoLineInfo:
       str.addSymDef(symId, NoLineInfo)
       str.addIdent(exportMarker, NoLineInfo)
@@ -509,8 +509,8 @@ proc publishStringType*() =
             str.addSymUse(longStrSymId, NoLineInfo)
           str.addDotToken() # default value
   else:
-    let aId = pool.syms.getOrIncl(StringAField)
-    let iId = pool.syms.getOrIncl(StringIField)
+    let aId = pool.symId(StringAField)
+    let iId = pool.symId(StringIField)
     str.copyIntoUnchecked "type", NoLineInfo:
       str.addSymDef(symId, NoLineInfo)
       str.addIdent(exportMarker, NoLineInfo)
@@ -586,4 +586,4 @@ proc skipParRi*(n: var Cursor) {.nifBalanced.} =
     bug "expected ')', but got: ", n
 
 template isLocalDecl*(s: SymId): bool =
-  extractModule(pool.syms[s]) == ""
+  pool.symIsLocal(s)

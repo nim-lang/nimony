@@ -28,17 +28,15 @@ proc resolveSymbolConflicts(modules: Table[string, ModuleAnalysis]): ResolveTabl
   result = initTable[string, SymId]()
   for m in modules.values:
     for offer in m.offers:
-      let offerName = pool.syms[offer]
-      let key = removeModule(offerName)
+      let key = pool.symWithoutModule(offer)
       let existing = result.getOrDefault(key, SymId(0))
-      if existing == SymId(0) or offerName < pool.syms[existing]:
+      # deterministic pick among the copies: the smallest spelling wins
+      if existing == SymId(0) or pool.symString(offer) < pool.symString(existing):
         result[key] = offer
 
 proc translate(resolved: ResolveTable; sym: SymId): SymId =
-  let symName = pool.syms[sym]
-  if isInstantiation(symName):
-    let key = removeModule(symName)
-    result = resolved.getOrDefault(key, sym)
+  if pool.symIsInstantiation(sym):
+    result = resolved.getOrDefault(pool.symWithoutModule(sym), sym)
   else:
     result = sym
 
@@ -54,8 +52,8 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
 
   while worklist.len > 0:
     let sym = translate(resolved, worklist.pop())
-    let moduleName = extractModule(pool.syms[sym])
-    assert moduleName.len > 0, "moduleName is empty for " & pool.syms[sym]
+    let moduleName = pool.symModule(sym)
+    assert moduleName.len > 0, "moduleName is empty for " & pool.symString(sym)
 
     # Check if symbol is already live in its owning module
     if not result.getOrQuit(moduleName).containsOrIncl(sym):
@@ -65,10 +63,10 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
         if sym in graph.uses:
           for dep in graph.uses.getOrQuit(sym):
             let s = translate(resolved, dep)
-            let sowner = extractModule(pool.syms[s])
+            let sowner = pool.symModule(s)
             # Check if dependency is already live in its owning module
             if sowner.len > 0:
-              assert sowner in result, "sowner is not in result for " & pool.syms[s]
+              assert sowner in result, "sowner is not in result for " & pool.symString(s)
             if sowner.len > 0 and s notin result.getOrQuit(sowner):
               worklist.add(s)
 
@@ -104,7 +102,7 @@ proc tr(dest: var TokenBuf; n: var Cursor; alive: HashSet[SymId]; resolved: Reso
       n.into:
         if n.isSymbolDef:
           let def = n.symId
-          if isLocalName(pool.syms[def]):
+          if pool.symIsLocal(def):
             dest.addParLe(headTag, headInfo)
             dest.addSymDef def.toLengName, n.info
             inc n # skip symbol def
@@ -219,13 +217,13 @@ proc writeLiveFile*(outfile: string; resolved: ResolveTable;
       for key, winner in pairs(resolved):
         b.withTree "kv":
           b.addStrLit key
-          b.addSymbol pool.syms[winner], ""
+          b.addSymbol pool.symString(winner), ""
     b.withTree liveTag:
       for modName, syms in pairs(live):
         b.withTree modTag:
           b.addStrLit modName
           for s in syms:
-            b.addSymbol pool.syms[s], ""
+            b.addSymbol pool.symString(s), ""
   b.close()
 
 type

@@ -163,22 +163,11 @@ proc scopeBump(m: Match): int =
   ## successful match are inspected.
   if m.fn.fromConcept: return -1
   if m.context == nil or m.fn.sym == SymId(0): return 0
-  let s = pool.syms[m.fn.sym]
-  # Locate the dot that introduces the module suffix without allocating
-  # a substring. Mirrors `extractModule` in lib/symparser.nim: a trailing
-  # numeric segment means no module suffix at all (treated as local).
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}: return 0
-      let suf = m.context.thisModuleSuffix
-      let mLen = s.len - i - 1
-      if mLen != suf.len: return 1
-      for j in 0 ..< mLen:
-        if s[i+1+j] != suf[j]: return 1
-      return 0
-    dec i
-  return 0
+  # A local symbol has no module to be from, so it costs nothing. Neither
+  # question builds a string.
+  if pool.symIsLocal(m.fn.sym): return 0
+  if pool.symModuleIs(m.fn.sym, m.context.thisModuleSuffix): return 0
+  return 1
 
 proc error(m: var Match; k: MatchErrorKind; expected, got: Cursor) =
   m.err = true
@@ -234,7 +223,7 @@ proc getErrorMsg*(m: Match): string =
   of InvalidMatch:
     "expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of InvalidRematch:
-    "Could not match again: " & pool.syms[m.error.typeVar] & " expected " &
+    "Could not match again: " & pool.symString(m.error.typeVar) & " expected " &
       typeToString(m.error.expected) & " but got " & typeToString(m.error.got)
   of ConstraintMismatch:
     typeToString(m.error.got) & " does not match constraint " &
@@ -263,13 +252,13 @@ proc getErrorMsg*(m: Match): string =
   of MismatchBug:
     "BUG: expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of MissingExplicitGenericParameter:
-    "missing explicit generic parameter for " & pool.syms[m.error.typeVar]
+    "missing explicit generic parameter for " & pool.symString(m.error.typeVar)
   of ExtraGenericParameter:
     "extra generic parameter"
   of RoutineIsNotGeneric:
     "routine is not generic"
   of CouldNotInferTypeVar:
-    "could not infer type for " & pool.syms[m.error.typeVar]
+    "could not infer type for " & pool.symString(m.error.typeVar)
   of TooManyArguments:
     "too many arguments"
   of TooFewArguments:
@@ -954,14 +943,9 @@ proc cmpExactTypeBits(f, a: Cursor): int =
     result = -1
 
 proc sameSymbol(a, b: SymId): bool =
-  if a == b:
-    return true
   # symbols might be different for instantiations from different modules,
   # consider this case by checking if the instantiation keys are equal:
-  let sa = pool.syms[a]
-  let sb = pool.syms[b]
-  result = isInstantiation(sa) and isInstantiation(sb) and
-    removeModule(sa) == removeModule(sb)
+  result = pool.symSameEntity(a, b)
 
 proc expectParRi(m: var Match; f: var Cursor; start: Cursor) =
   ## Closes a type-tree scope opened via `sub`: the tree must be
@@ -1787,7 +1771,7 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
     return false
   if a.typeKind == InvokeT:
     inc a # tag
-    result = a.isSymbol and pool.syms[a.symId] == "seq.0." & SystemModuleSuffix
+    result = a.isSymbol and pool.symString(a.symId) == "seq.0." & SystemModuleSuffix
     if result:
       inc a
       elemType = a
@@ -1804,7 +1788,7 @@ proc isSomeOpenArrayType*(a: Cursor, elemType: var Cursor): bool =
     return false
   if a.typeKind == InvokeT:
     inc a # tag
-    result = a.isSymbol and pool.syms[a.symId] == "openArray.0." & SystemModuleSuffix
+    result = a.isSymbol and pool.symString(a.symId) == "openArray.0." & SystemModuleSuffix
     if result:
       inc a
       elemType = a
@@ -2199,7 +2183,7 @@ proc isEmptyCall*(n: Cursor): bool =
   var n = n
   n = sub(n) # bound the argument walk
   # overload of `@` with empty array param:
-  result = n.isSymbol and pool.syms[n.symId] == "@.1." & SystemModuleSuffix
+  result = n.isSymbol and pool.symString(n.symId) == "@.1." & SystemModuleSuffix
   inc n
   if not isEmptyLiteral(n):
     return false
@@ -2217,9 +2201,9 @@ proc isEmptyOpenArrayCall*(n: Cursor): bool =
   n = sub(n) # bound the argument walk
   result = n.isSymbol and
     # normal overload of `toOpenArray` for arrays:
-    (pool.syms[n.symId] == "toOpenArray.0." & SystemModuleSuffix or
+    (pool.symString(n.symId) == "toOpenArray.0." & SystemModuleSuffix or
       # normal overload of `toOpenArray` for seqs:
-      pool.syms[n.symId] == "toOpenArray.1." & SystemModuleSuffix)
+      pool.symString(n.symId) == "toOpenArray.1." & SystemModuleSuffix)
   inc n
   if not isEmptyContainer(n):
     return false

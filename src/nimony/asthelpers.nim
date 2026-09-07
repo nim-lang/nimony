@@ -29,9 +29,7 @@ proc takeIdent*(n: var Cursor): StrId =
     result = n.strId
     inc n
   elif n.isSymbol or n.isSymbolDef:
-    let sym = pool.syms[n.symId]
-    var isGlobal = false
-    result = pool.strings.getOrIncl(extractBasename(sym, isGlobal))
+    result = pool.symNameId(n.symId)
     inc n
   elif n.isTagLit:
     if exprKind(n) in {OchoiceX, CchoiceX}:

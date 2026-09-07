@@ -536,7 +536,7 @@ proc tr(c: var Context; n: var Cursor) =
 proc injectDestructors*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, currentScope: createEntryScope(n.info),
-    anonBlock: pool.syms.getOrIncl("`anonblock.0"),
+    anonBlock: pool.symId("`anonblock.0"),
     dest: move(pass.dest), flow: initTracker[SymId, bool]())
   assert n.stmtKind == StmtsS
   c.dest.addParLe(n.cursorTagId, n.info)

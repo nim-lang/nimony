@@ -807,7 +807,7 @@ proc eval*(c: var EvalContext; n: var Cursor): Cursor =
         inc local.val # takes the first counter field
         return eval(c, local.val)
       else: discard
-    error "cannot evaluate symbol at compile time: " & pool.syms[symId], info
+    error "cannot evaluate symbol at compile time: " & pool.symString(symId), info
   of StrLit, CharLit, IntLit, UIntLit, FloatLit:
     result = n
     inc n

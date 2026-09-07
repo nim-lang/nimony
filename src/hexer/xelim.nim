@@ -115,7 +115,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
   let info = n.info
   let typ = getType(c, n)
   let s = tempSymName(c)
-  result = pool.syms.getOrIncl(s)
+  result = pool.symId(s)
   copyIntoKind dest, VarS, info:
     dest.addSymDef result, info
     dest.addDotToken() # export, pragmas
@@ -125,7 +125,7 @@ proc declareTemp(c: var Context; dest: var TokenBuf; n: Cursor): SymId =
 
 proc declareTempBool(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
   let s = tempSymName(c)
-  result = pool.syms.getOrIncl(s)
+  result = pool.symId(s)
   copyIntoKind dest, VarS, info:
     dest.addSymDef result, info
     dest.addDotToken() # export, pragmas
@@ -325,7 +325,7 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   var childTar = initTarget(IsBound)
   trExpr c, dest, n, childTar
 
-  let tmp = pool.syms.getOrIncl(tempSymName(c))
+  let tmp = pool.symId(tempSymName(c))
   dest.addParLe CursorS, info
   dest.addSymDef tmp, info
   dest.addEmpty2 info  # export marker, pragmas
@@ -421,7 +421,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     dest.add nestedDest
 
     # Now create the let binding for this call
-    let tmp = pool.syms.getOrIncl(tempSymName(c))
+    let tmp = pool.symId(tempSymName(c))
     # `call() = 4` via a `var T` cannot be bound to a let variable
     # as the analysis in constracts_njvl is too simplistic.
     # It would produce: "Cannot reassign a let variable".
@@ -637,7 +637,7 @@ proc mayBindToTemp(n: Cursor): bool =
 # ---------------------------------------------------------------------------
 
 proc freshLabel(c: var Context): SymId =
-  result = pool.syms.getOrIncl("`L." & $c.counter)
+  result = pool.symId("`L." & $c.counter)
   inc c.counter
 
 proc addJmp(dest: var TokenBuf; lab: SymId; info: NifLineInfo) =
@@ -1225,7 +1225,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
           var tar = initTarget(IsBound)
           trExpr c, dest, n, tar
           # we must bind the result to a temporary variable!
-          let tmp = pool.syms.getOrIncl("`x." & $c.counter)
+          let tmp = pool.symId("`x." & $c.counter)
           inc c.counter
           let info = n.endInfo # the discard operand is consumed: `n` is at
                                # the (possibly elided) close
@@ -1373,7 +1373,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   if srcCur.kind == Symbol:
     srcSym = srcCur.symId
   else:
-    srcSym = pool.syms.getOrIncl(tempSymName(c))
+    srcSym = pool.symId(tempSymName(c))
     copyIntoKind dest, VarS, info:
       dest.addSymDef srcSym, info
       dest.addDotToken() # export marker
@@ -1383,7 +1383,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
       dest.addTarget srcTarget # value
 
   # Create dest variable (uninitialized)
-  let dstSym = pool.syms.getOrIncl(tempSymName(c))
+  let dstSym = pool.symId(tempSymName(c))
   copyIntoKind dest, VarS, info:
     dest.addSymDef dstSym, info
     dest.addDotToken() # export marker
@@ -1393,7 +1393,7 @@ proc trCast(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     dest.addDotToken() # no initializer
 
   # Emit: copyMem(addr dstSym, addr srcSym, sizeof(DstType))
-  let copyMemSym = pool.syms.getOrIncl("copyMem.0." & SystemModuleSuffix)
+  let copyMemSym = pool.symId("copyMem.0." & SystemModuleSuffix)
   copyIntoKind dest, CallX, info:
     dest.addSymUse copyMemSym, info
     dest.copyIntoKind AddrX, info:
@@ -1520,7 +1520,7 @@ proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
   # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
   # runs three times in `pipeline.transform` (xelim1, xelim2, xelim_final);
   # restarting from 0 each time produces colliding `\`x.<n>` SymIds whose
-  # Lengc-emitted C names clash within a single function. `pool.syms.getOrIncl`
+  # Lengc-emitted C names clash within a single function. `pool.symId`
   # is identity-by-name, so two semantically distinct temps would otherwise
   # share an identifier.
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal)

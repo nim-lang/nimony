@@ -24,7 +24,7 @@ from std / os import fileExists           # NOT a whole `os` import: it exports 
 import ".." / "lib" / nifcoreparse        # re-exports nifcore + parse
 import ".." / "lib" / nifcdecl              # stmtKind/symKind/pragmaKind, decls
 import ".." / "lib" / nifreader as rd       # Reader, jumpTo, indexStartsAt
-import ".." / "lib" / symparser             # splitSymName, splitModulePath, basename
+import ".." / "lib" / symparser             # splitModulePath
 import ".." / "lib" / foreignmodules         # shared lazy loader (ForeignModule)
 import ".." / "lib" / bif                    # binary NIF: isBifFile probe + load
 import noptions                              # ConfigRef
@@ -65,21 +65,22 @@ type
     prog: NifProgram
     requestedForeignSyms*: seq[Cursor]
 
-proc loadForeign(c: var MainModule; s: SplittedSymName): Cursor =
+proc loadForeign(c: var MainModule; s: SymId): Cursor =
   ## Resolve a foreign symbol's declaration through the shared `ForeignModule`
   ## lazy loader: open (and cache) the owning module, then jump to the symbol's
   ## indexed offset and parse just that one decl. The cursor stays valid because
   ## the `ForeignModule` owns the per-decl buffer.
-  if s.module == "":
-    raiseAssert "Cannot lookup declaration without module name: " & s.name
+  let module = c.pool.symModule(s)
+  if module == "":
+    raiseAssert "Cannot lookup declaration without module name: " & c.pool.symString(s)
   var m: ForeignModule
-  if c.prog.mods.hasKey(s.module):
-    m = getOrQuit(c.prog.mods, s.module)
+  if c.prog.mods.hasKey(module):
+    m = getOrQuit(c.prog.mods, module)
   else:
-    c.prog.scheme.name = s.module
+    c.prog.scheme.name = module
     m = openForeignModule($c.prog.scheme)
-    c.prog.mods[s.module] = m
-  let key = $s
+    c.prog.mods[module] = m
+  let key = c.pool.symString(s)
   if not hasDecl(m, key):
     raiseAssert "Symbol not found in NIF module: " & key
   result = getDecl(m, key, c.tags, c.pool)   # share the main module's pool (SymId-keyed)
@@ -96,9 +97,7 @@ proc externName*(s: SymId; n: Cursor): StrId =
   if nn.kind == StrLit:
     result = p.strings.getOrIncl(strVal(nn, p))
   else:
-    var base = p.syms[s]
-    extractBasename base
-    result = p.strings.getOrIncl(base)
+    result = p.symNameId(s)
 
 proc extractExtern(c: var MainModule; n: var Cursor; pragmasAt: int;
                    isImport: var bool; bareImport: var bool): StrId =
@@ -153,23 +152,22 @@ proc canLoadForeign*(c: var MainModule; s: SymId): bool =
   ## looking for a function summary) needs "no" to be an answer. Warms the
   ## module cache, so a following `getDeclOrNil` costs one table hit.
   if c.defs.hasKey(s): return true
-  let splitted = splitSymName(c.pool.syms[s])
-  if splitted.module == "": return false
+  let module = c.pool.symModule(s)
+  if module == "": return false
   var m: ForeignModule
-  if c.prog.mods.hasKey(splitted.module):
-    m = getOrQuit(c.prog.mods, splitted.module)
+  if c.prog.mods.hasKey(module):
+    m = getOrQuit(c.prog.mods, module)
   else:
-    c.prog.scheme.name = splitted.module
+    c.prog.scheme.name = module
     if not fileExists($c.prog.scheme): return false
     m = openForeignModule($c.prog.scheme)
-    c.prog.mods[splitted.module] = m
-  result = hasDecl(m, $splitted)
+    c.prog.mods[module] = m
+  result = hasDecl(m, c.pool.symString(s))
 
 proc getDeclOrNil*(c: var MainModule; s: SymId): ptr Definition =
   if not c.defs.hasKey(s):
-    let splitted = splitSymName(c.pool.syms[s])
-    if splitted.module == "": return nil
-    let pos = loadForeign(c, splitted)
+    if c.pool.symIsLocal(s): return nil
+    let pos = loadForeign(c, s)
     if firstChild(pos).kind == SymbolDef:
       let sk = pos.symKind
       var extern = StrId(0)

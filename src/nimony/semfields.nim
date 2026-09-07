@@ -13,7 +13,7 @@ proc addFieldsAccessToken(buf: var TokenBuf; info: NifLineInfo; ownerSym: SymId)
   ## token it would be judged against the module the `for` loop was written
   ## in, which for a generic `==` is `system`, and rejected (#1988).
   buf.addIntLit(0, info)
-  buf.addStrLit(extractModule(pool.syms[ownerSym]), info)
+  buf.addStrLit(pool.symModule(ownerSym), info)
 
 proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId; fieldSym, ownerSym: SymId; body: Cursor) =
   ## Copies the single tree/token at `body` into `buf`, substituting the
@@ -27,7 +27,7 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
       if fieldSym == SymId(0):
         buf.addStrLit(fieldName, n.info)
       else:
-        buf.addStrLit pool.syms[fieldSym]
+        buf.addStrLit pool.symString(fieldSym)
     elif s == iter.fieldVar1:
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj1

@@ -304,11 +304,10 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
     inc n
   of Symbol:
     # for nested instantiations i.e. `Foo[Bar[int]]`
-    let s = pool.syms[n.symId]
-    if isInstantiation(s):
-      b.addSymbol(removeModule(s))
+    if pool.symIsInstantiation(n.symId):
+      b.addSymbol(pool.symWithoutModule(n.symId))
     else:
-      b.addSymbol(s)
+      b.addSymbol(pool.symString(n.symId))
     inc n
   of IntLit:
     b.addIntLit(n.intVal)
@@ -320,7 +319,7 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
     b.addFloatLit(n.floatVal)
     inc n
   of SymbolDef:
-    b.addSymbolDef(pool.syms[n.symId])
+    b.addSymbolDef(pool.symString(n.symId))
     inc n
   of CharLit:
     b.addCharLit char(n.uoperand)
@@ -352,12 +351,12 @@ proc instToSuffix(buf: TokenBuf, start: int): string =
 
 proc newInstSymId(c: var SemContext; orig: SymId; suffix: string): SymId =
   # abc.123.Iabcdefgh.instmod
-  var name = removeModule(pool.syms[orig])
+  var name = pool.symWithoutModule(orig)
   name.add(".I")
   name.add(suffix)
   name.add '.'
   name.add c.thisModuleSuffix
-  result = pool.syms.getOrIncl(name)
+  result = pool.symId(name)
 
 type
   SubsContext = object
@@ -536,8 +535,7 @@ proc instantiateExprIntoBuf(c: var SemContext; buf: var TokenBuf; it: var Item; 
 
 proc fetchSym*(c: var SemContext; s: SymId): Sym =
   # yyy find a better solution
-  var name = pool.syms[s]
-  extractBasename name
+  var name = pool.symBasename(s)
   let identifier = pool.strings.getOrIncl(name)
   var it {.cursor.} = c.currentScope
   while it != nil:
@@ -609,19 +607,11 @@ proc semGetSize*(c: var SemContext; n: Cursor; strict=false): xint =
   getSize(n, c.g.config.bits div 8, strict)
 
 proc sameIdent(sym: SymId; str: StrId): bool =
-  # XXX speed this up by using the `fieldCache` idea
-  var name = pool.syms[sym]
-  extractBasename(name)
-  result = pool.strings.getOrIncl(name) == str
+  result = pool.symNameId(sym) == str
 
 proc sameIdent(a, b: SymId): bool =
   # not used yet
-  # XXX speed this up by using the `fieldCache` idea
-  var x = pool.syms[a]
-  extractBasename(x)
-  var y = pool.syms[b]
-  extractBasename(y)
-  result = x == y
+  result = pool.symNameId(a) == pool.symNameId(b)
 
 proc requestRoutineInstance*(c: var SemContext; origin: SymId;
                             typeArgs: TokenBuf;
@@ -633,7 +623,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     # Use the `.I<hash>.<mod>` instantiation naming convention (same as
     # type instantiations via `newInstSymId`). Mixing in plain `newSymId`
     # produced names like `@.0.<userMod>` that are indistinguishable from
-    # regular module-local procs, so `isInstantiation` can't detect them
+    # regular module-local procs, so `symIsInstantiation` can't detect them
     # and downstream consumers (e.g. `exprexec.collectUsedSymsFromExpr`)
     # can't tell the body-less stub apart from a real local proc.
     #
@@ -642,7 +632,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     # instantiated with identical args — e.g. `Table.[]=` and `Tracker.[]=` over
     # `[SymId, HashSet[int]]` — would otherwise both mint `[]=.0.I<hash>.<mod>`
     # and collide in codegen. `newInstSymId` keeps only the base name
-    # (`removeModule(origin)`), so the routine identity must enter through the
+    # (`symWithoutModule(origin)`), so the routine identity must enter through the
     # suffix. This mirrors the type-instance path, whose suffix is hashed over
     # the `(head args)` invocation (and so already distinguishes heads), and the
     # `(invok …)` shape is the same one written into the signature's pattern
@@ -655,7 +645,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     let targetSym = newInstSymId(c, origin, instSuffix)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
-    assert decl.typevars.substructureKind == TypevarsU, pool.syms[origin]
+    assert decl.typevars.substructureKind == TypevarsU, pool.symString(origin)
     var invokeStart = -1
     buildTree signature, decl.kind, info:
       signature.addSymDef(targetSym, info)
@@ -1073,7 +1063,7 @@ proc findObjFieldConsiderVis(c: var SemContext; decl: TypeDecl; name: StrId;
           let visMod =
             if tokenModule.len > 0: tokenModule
             else: visibilityModule(c, info)
-          let ownerModule = extractModule(pool.syms[owner])
+          let ownerModule = pool.symModule(owner)
           visible = ownerModule == "" or ownerModule == visMod
       if not visible:
         # treat as undeclared
@@ -1110,8 +1100,7 @@ proc findEnumField(decl: EnumDecl; name: StrId): SymId =
     while f.hasMore:
       let field = takeLocal(f, SkipFinalParRi)
       let symId = field.name.symId
-      var isGlobal = false
-      let basename = extractBasename(pool.syms[symId], isGlobal)
+      let basename = pool.symBasename(symId)
       let strId = pool.strings.getOrIncl(basename)
       if name == strId:
         return symId
@@ -1707,8 +1696,7 @@ proc semTypeof(c: var SemContext; dest: var TokenBuf; it: var Item) =
     return
   assert modeTok.isSymbol
   var semFlags: set[SemFlag] = {}
-  var modeSym = pool.syms[readonlyCursorAt(dest, beforeMode).symId]
-  modeSym.extractBasename
+  let modeSym = pool.symBasename(readonlyCursorAt(dest, beforeMode).symId)
   case modeSym
   of "typeOfProc":
     discard
@@ -1827,7 +1815,7 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       dest.shrink identStart
       let ident = cursorAt(orig, 0)
       if s.name != SymId(0):
-        c.buildErr dest, ident.info, "undeclared identifier: " & pool.syms[s.name], ident
+        c.buildErr dest, ident.info, "undeclared identifier: " & pool.symString(s.name), ident
       else:
         let s = getIdent(ident)
         if s != StrId(0):
@@ -1930,13 +1918,13 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         n = beginRead(procTypeBuf)
       elif s.kind == ModuleY:
         if AllowModuleSym notin flags:
-          c.buildErr dest, readonlyCursorAt(dest, start).info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"
+          c.buildErr dest, readonlyCursorAt(dest, start).info, "module symbol '" & pool.symString(s.name) & "' not allowed in this context"
       else:
         assert false, "not implemented"
       it.typ = n
       commonType c, dest, it, start, expected
     else:
-      c.buildErr dest, readonlyCursorAt(dest, start).info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
+      c.buildErr dest, readonlyCursorAt(dest, start).info, "could not load symbol: " & pool.symString(s.name) & "; errorCode: " & $res.status
       it.typ = c.types.autoType
 
 proc semLocalTypeExpr(c: var SemContext; dest: var TokenBuf, it: var Item) =
@@ -2428,8 +2416,7 @@ proc checkExhaustiveness(c: var SemContext; dest: var TokenBuf; info: NifLineInf
           v = semEnumOrdinalValue(c, dummyDest, vnode)
         if not seen.contains(v):
           if missing.len > 0: missing.add ", "
-          var isGlobal = false
-          missing.add extractBasename(pool.syms[f.name.symId], isGlobal)
+          missing.add pool.symBasename(f.name.symId)
     if missing.len > 0:
       buildErr c, dest, info, "not all cases are covered; missing: {" & missing & "}"
   else:
@@ -2764,7 +2751,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
 
   var typeNameStr = "`sumtype"
   c.makeGlobalSym(typeNameStr)
-  let oneofTypeSym = pool.syms.getOrIncl(typeNameStr)
+  let oneofTypeSym = pool.symId(typeNameStr)
 
   var efldSyms: seq[(SymId, StrId)] = @[]
   var typeBuf = createTokenBuf(30)
@@ -2807,7 +2794,7 @@ proc synthSumTypeDiscriminator(c: var SemContext; dest: var TokenBuf;
 
   var fldNameStr = "`kind"
   c.makeFieldSym(fldNameStr)
-  let fldSym = pool.syms.getOrIncl(fldNameStr)
+  let fldSym = pool.symId(fldNameStr)
   dest.addParLe(FldY, info)
   dest.addSymDef(fldSym, info)
   if state.isExported:
@@ -2851,7 +2838,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
         needsExprClose = true
         var tmpName = "`case"
         c.makeLocalSym(tmpName)
-        let tmpSym = pool.syms.getOrIncl(tmpName)
+        let tmpSym = pool.symId(tmpName)
         let tmpDeclStart = dest.len
         dest.addParLe(VarS, info)
         dest.addSymDef(tmpSym, info)
@@ -2924,7 +2911,7 @@ proc semCaseImpl(c: var SemContext; dest: var TokenBuf; it: var Item; mode: Case
             for b in bindings:
               var bindName = pool.strings[b.ident]
               c.makeLocalSym(bindName)
-              let bindSym = pool.syms.getOrIncl(bindName)
+              let bindSym = pool.symId(bindName)
               let declStart = dest.len
               dest.addParLe(PatternvarS, b.info)
               dest.addSymDef(bindSym, b.info)
@@ -4090,8 +4077,7 @@ proc fieldsPresentInInitExpr(c: var SemContext; n: Cursor; setFields: Table[SymI
       break
 
 proc asNimSym(symId: SymId): string =
-  result = pool.syms[symId]
-  extractBasename(result)
+  result = pool.symBasename(symId)
 
 template conflictingBranchesError(c: var SemContext; dest: var TokenBuf, info: NifLineInfo, prevFields: SymId, currentFields: SymId) =
   c.buildErr dest, info, "The fields '" & asNimSym(prevFields) &
@@ -5206,8 +5192,7 @@ proc expandSymChoice(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   takeInto dest, n:
     assert n.isSymbol
-    var name = pool.syms[n.symId]
-    extractBasename(name)
+    var name = pool.symBasename(n.symId)
     var marker = initHashSet[SymId]()
     while n.hasMore:
       assert n.isSymbol

@@ -151,7 +151,7 @@ proc trConstRef(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.needsXelim = true
     copyIntoKind dest, ExprX, info:
       copyIntoKind dest, StmtsS, info:
-        let symId = pool.syms.getOrIncl("`constRefTemp." & $c.tmpCounter)
+        let symId = pool.symId("`constRefTemp." & $c.tmpCounter)
         inc c.tmpCounter
         copyIntoKind dest, VarS, info:
           addSymDef dest, symId, info
@@ -219,7 +219,7 @@ proc checkedArithOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe(StmtsS, info)
   let typ = n.childCursor
 
-  let target = pool.syms.getOrIncl("`constRefTemp." & $c.tmpCounter)
+  let target = pool.symId("`constRefTemp." & $c.tmpCounter)
   inc c.tmpCounter
   copyIntoKind dest, VarS, info:
     addSymDef dest, target, info

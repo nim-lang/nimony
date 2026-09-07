@@ -294,8 +294,8 @@ type
 proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
                      xnifDir = ""; maxDepth = 0;
                      counterPrefix = "i"): InlinerCtx =
-  ## `counterPrefix` is woven into fresh local sym names (`base.0i<n>`,
-  ## `returnLabel.0i<n>`). The hexer same-module pass uses `"h"` and
+  ## `counterPrefix` is woven into fresh local sym names (`` base`i.<n> ``,
+  ## `` returnLabel`i.<n> ``). The hexer same-module pass uses `"h"` and
   ## dce2's cross-module pass uses `"d"` so freshly-minted dce2 syms
   ## can never collide with hexer-minted syms that survive in the
   ## `.x.nif` body dce2 is rewriting.
@@ -382,7 +382,7 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   ## ForeignModule`, so subsequent table growth can't move the
   ## TokenBuf out from under us. Returns false when we don't have a
   ## body for `calleeSym` (extern decl, missing `.x.nif`, etc.).
-  let modul = extractModule(pool.syms[calleeSym])
+  let modul = pool.symModule(calleeSym)
   if modul == c.moduleSuffix:
     if calleeSym in c.bodies:
       outCur = cursorAt(c.src[], c.bodies.getOrQuit(calleeSym))
@@ -398,24 +398,26 @@ proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   result = true
 
 proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
-  ## Mint a fresh local sym for an inlined body's local. Local names must
-  ## have ≤ 1 dot (per `isLocalName`) so dce2's per-module rewrite emits
-  ## them unconditionally instead of consulting the global live set —
-  ## these syms were minted post-`markLive` and aren't tracked there.
-  ## The `0<prefix>` prefix on the counter avoids colliding with existing
-  ## numeric-suffixed locals like `result.26`; the `prefix` further
-  ## disambiguates between the hexer-stage same-module pass and the
-  ## dce2-stage cross-module pass so the latter's fresh syms can't
-  ## collide with hexer-minted ones already baked into the `.x.nif`.
+  ## Mint a fresh local sym for an inlined body's local. The name must carry
+  ## NO module suffix, so dce2's per-module rewrite emits it unconditionally
+  ## instead of consulting the global live set — these syms were minted
+  ## post-`markLive` and aren't tracked there.
+  ## The pass letter goes INTO the identifier (`` result`i.5 ``), which is what
+  ## keeps it out of the DISAMBIGUATOR, where a NIF symbol is specified to carry
+  ## a number and nothing else (#2457). The backtick makes the result
+  ## unspellable, so it can collide neither with a user's `result.26` nor with
+  ## the other passes' fresh syms: the hexer-stage same-module pass, the
+  ## dce2-stage cross-module pass and shoggoth each own a letter, so one pass's
+  ## minted syms can never collide with those already baked into the `.x.nif`
+  ## it is rewriting.
   inc c.counter
-  let original = pool.syms[orig]
+  let original = pool.symString(orig)
   var base = original
   let dotPos = base.find('.')
   if dotPos >= 0: base.setLen dotPos
-  base.add ".0"
-  base.add c.counterPrefix
+  base.add '.'
   base.addInt c.counter
-  result = pool.syms.getOrIncl(base)
+  result = pool.symId(derivedName(base, c.counterPrefix))
 
 proc scoreArg(a: Cursor): int =
   ## Argument score for the inline heuristic (planned in dce1: 0-100).
@@ -453,7 +455,7 @@ proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
   ## The callee's `(inline THRESHOLD w…)` annotation, or `DefaultInlineInfo`
   ## (threshold 100 — never inline) when it has none, is in another module we
   ## cannot find, or is an extern with no body at all.
-  let modul = extractModule(pool.syms[calleeSym])
+  let modul = pool.symModule(calleeSym)
   if modul == c.moduleSuffix:
     return c.ownInfo.getOrDefault(calleeSym, DefaultInlineInfo)
   if not loadForeign(c, modul): return DefaultInlineInfo
@@ -709,7 +711,7 @@ proc writeTargetIsLocalSlot(dst: Cursor): bool =
   ## no deref/index-through-pointer step (`slotRootOf` answers 0 for those), and
   ## a *local* name, since assigning a global is visible to the caller.
   let s = slotRootOf(dst)
-  result = s != SymId(0) and isLocalName(pool.syms[s])
+  result = s != SymId(0) and pool.symIsLocal(s)
 
 proc scanParamUsage(c: Cursor; params: HashSet[SymId];
                     assigned, addrTaken: var HashSet[SymId];
@@ -788,7 +790,7 @@ proc resultLocalOf(body: Cursor; pSyms: seq[SymId]): SymId =
   scanRets(b, resultSym, found, ok)
   if not (found and ok) or resultSym == SymId(0): return SymId(0)
   if resultSym in pSyms: return SymId(0)          # a param: bound to its arg
-  if not isLocalName(pool.syms[resultSym]): return SymId(0)
+  if not pool.symIsLocal(resultSym): return SymId(0)
   result = resultSym
 
 proc countSymUses(n: Cursor; sym: SymId): int =
@@ -862,7 +864,7 @@ proc tailCopySource(body: Cursor; resultSym: SymId; pSyms: seq[SymId]): SymId =
   skip a
   if a.hasMore: return SymId(0)
   if src == resultSym or src in pSyms: return SymId(0)
-  if not isLocalName(pool.syms[src]): return SymId(0)
+  if not pool.symIsLocal(src): return SymId(0)
   # `resultSym` must be mentioned nowhere but those two statements.
   if countSymUses(body, resultSym) != 2: return SymId(0)
   result = src
@@ -1093,8 +1095,8 @@ proc emitBody(c: var InlinerCtx; dest: var TokenBuf; body: var Cursor;
     return
   let info = body.info
   inc c.counter
-  let returnLabel = pool.syms.getOrIncl(
-    "returnLabel.0" & c.counterPrefix & $c.counter)
+  let returnLabel = pool.symId(
+    derivedName("returnLabel." & $c.counter, c.counterPrefix))
   # Emit the inlined body as a real variable SCOPE, not a bare `(stmts)`: the
   # callee's fresh locals then belong to *this* scope frame, so the backend frees
   # their registers at the inlined body's end instead of leaking their live range
@@ -1217,7 +1219,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
       # is excluded because the body may assign a global directly (that write
       # targets a named slot, so it does not set `opaqueEffects`) — a local
       # cannot be written by any means the scan admits.
-      if not opaqueEffects and arg.isSymbol and isLocalName(pool.syms[arg.symId]):
+      if not opaqueEffects and arg.isSymbol and pool.symIsLocal(arg.symId):
         result.subst[pSyms[i]] = arg
       continue                               # else: address observed → copy
     # A read-only param (value-stable per `scanParamUsage`) may be replaced by
@@ -1228,7 +1230,7 @@ proc bindingsFor(c: var InlinerCtx; pSyms: seq[SymId]; argCursors: seq[Cursor];
     # are excluded — a nested call in the body could mutate one between uses,
     # whereas the copy captured its entry value.
     if isSubstitutableArg(arg) or isStableAddrArg(arg) or isStableDerefArg(arg) or
-       (arg.isSymbol and isLocalName(pool.syms[arg.symId])):
+       (arg.isSymbol and pool.symIsLocal(arg.symId)):
       result.subst[pSyms[i]] = arg
     elif callerReadOnly and isPurePathArg(arg) and
          uses.getOrDefault(pSyms[i]) <= MaxPathSubstUses:
@@ -1270,7 +1272,7 @@ when defined(inlinerStats):
   var inlinerStats*: Table[string, tuple[count, tokens: int]]
 
   proc recordSplice(calleeSym: SymId; tokens: int) =
-    let nm = pool.syms[calleeSym]
+    let nm = pool.symString(calleeSym)
     var e = inlinerStats.getOrDefault(nm)
     inc e.count
     e.tokens += tokens
@@ -1385,7 +1387,7 @@ proc trySpliceVarInit*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor): in
   let tmpSym = probe.symId
   # Local syms only — global vars with call initializers are out of
   # scope for this splice (their lifetime / module placement differs).
-  if not isLocalName(pool.syms[tmpSym]): return 0
+  if not pool.symIsLocal(tmpSym): return 0
   inc probe                                # past name
   let pragmasCursor = probe
   skip probe                               # past pragmas slot
@@ -1624,7 +1626,7 @@ proc trySpliceCond*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor;
   inc probe                                # past `var` tag
   if not probe.isSymbolDef: return 0
   let tmpSym = probe.symId
-  if not isLocalName(pool.syms[tmpSym]): return 0
+  if not pool.symIsLocal(tmpSym): return 0
   inc probe                                # past name
   skip probe                               # past pragmas
   skip probe                               # past type
