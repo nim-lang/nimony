@@ -497,7 +497,7 @@ proc loadFromFile*(f: File): BifModule =
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(readStr(f))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(readStr(f))
   for _ in 1 .. nSyms:
-    discard result.buf.pool.syms.addOrdered(symRecord(result.buf.pool, readStr(f)))
+    discard result.buf.pool.symbols.addOrdered(symRecord(result.buf.pool, readStr(f)))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(readStr(f))
   # symbol index (we are now positioned exactly at indexOffset).
   result.index = readIndex(f)
@@ -582,7 +582,7 @@ proc load*(filename: string): BifModule =
   for _ in 1 .. nTags:    discard result.buf.tags.tags.addOrdered(rStr(r))
   for _ in 1 .. nStrings: discard result.buf.pool.strings.addOrdered(rStr(r))
   for _ in 1 .. nSyms:
-    discard result.buf.pool.syms.addOrdered(symRecord(result.buf.pool, rStr(r)))
+    discard result.buf.pool.symbols.addOrdered(symRecord(result.buf.pool, rStr(r)))
   for _ in 1 .. nFiles:   discard result.buf.pool.filenames.addOrdered(rStr(r))
   # symbol index (we are now positioned exactly at indexOffset).
   let nIndex = int rVarint(r)

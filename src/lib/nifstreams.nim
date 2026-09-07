@@ -13,9 +13,11 @@
 ##   `ParLe`/`ParRi`/`EofToken` members, so structural scanners (deps.nim)
 ##   see the exact classic kinds. Ident/StringLit/Symbol payloads are interned
 ##   into the global `pool`, so `pool.strings[t.litId]` works as before.
-##   SYMBOLS are the one thing that changed shape: `pool.syms` holds the
-##   taken-apart `NifSymbol` (nimony#2457), so a classic consumer that reached
-##   into it for a string asks `symString(pool, id)` / `symId(pool, name)`.
+##   SYMBOLS are stored taken apart now (nimony#2457), but `pool.syms` still
+##   answers the three questions this surface ever asked of it --
+##   `getOrIncl(name)`, `[id]`, `getKeyId(name)` -- through `nifcore.SymPool`.
+##   The spellings below are deliberately the classic ones: the Nim compiler
+##   ships its own copy of this file, so what compiles here compiles there.
 ##   Number tokens keep their KIND only (a 4-byte token cannot always carry
 ##   the value); classic scanners never read those payloads.
 
@@ -174,9 +176,9 @@ proc next*(s: var Stream): NifToken =
   of StrLit:
     result = strLitToken(pool.strings.getOrIncl(decodeStr(s.r, t)))
   of Symbol:
-    result = symToken(pool.symId(decodeStr(s.r, t)))
+    result = symToken(pool.syms.getOrIncl(decodeStr(s.r, t)))
   of SymbolDef:
-    result = symdefToken(pool.symId(decodeStr(s.r, t)))
+    result = symdefToken(pool.syms.getOrIncl(decodeStr(s.r, t)))
   else:
     # ParRi/EofToken/DotToken/CharLit/numbers: correct kind, no payload.
     result = NifToken(uint32(t.tk))

@@ -117,6 +117,21 @@ proc main =
   assert p.symString(p.sym(inst)) == "gen.12.Ikey.mymod"
   assert p.symId(p.sym(glob)) == glob
 
+  # The three questions the Nim compiler's IC modules ask of `pool.syms`,
+  # spelled the way its own copy of `nifstreams` spells them. The pool stores
+  # `NifSymbol` records; this surface is what keeps that copy compiling.
+  let classicA = p.syms.getOrIncl("abc.12.Ikey.mymod")
+  let classicB = p.syms.getOrIncl("tmp.7")
+  assert p.syms[classicA] == "abc.12.Ikey.mymod"
+  assert p.syms[classicB] == "tmp.7"
+  assert p.syms.getOrIncl("abc.12.Ikey.mymod") == classicA
+  assert p.syms.getKeyId("abc.12.Ikey.mymod") == classicA
+  assert p.syms.getKeyId("never.9.seen") == SymId(0)
+  # a miss must intern nothing, or the next one would be a hit
+  let stringsBefore = p.strings.len
+  assert p.syms.getKeyId("nothing.0.here") == SymId(0)
+  assert p.strings.len == stringsBefore
+
   echo "ok"
 
 main()

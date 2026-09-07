@@ -364,7 +364,7 @@ type
     ## `ExtendedSuffix` tokens to widen the carrier), so there's no
     ## pool for them — no hash lookups, no auto-tune machinery.
     strings*:   BiTable[StrId, string]
-    syms*:      BiTable[SymId, NifSymbol]
+    symbols*:   BiTable[SymId, NifSymbol]
     filenames*: BiTable[FileId, string]
       ## Source filenames referenced by `LineInfoLit` tokens. Line/col are
       ## encoded inline in the token; only the filename is interned here.
@@ -395,7 +395,7 @@ type
 
 proc newPool*(): Pool =
   Pool(strings:   initBiTable[StrId, string](),
-       syms:      initBiTable[SymId, NifSymbol](),
+       symbols:   initBiTable[SymId, NifSymbol](),
        filenames: initBiTable[FileId, string]())
 
 proc newTagPool*(): TagPool =
@@ -443,7 +443,7 @@ template poolStr*(p: Pool; s: StrId): lent string = p.strings[s]
 
 proc sym*(p: Pool; id: SymId): NifSymbol {.inline.} =
   ## The symbol `id`, taken apart. A field read.
-  p.syms[id]
+  p.symbols[id]
 
 proc strOrEmpty(p: Pool; s: StrId): string {.inline.} =
   if s == StrId(0): "" else: p.strings[s]
@@ -453,19 +453,19 @@ proc symBasename*(p: Pool; id: SymId): string =
   ## `abc.12.Ikey.mod` gives `abc`. A name may contain dots itself
   ## (`Pool.Obj.0` gives `Pool.Obj`), and an atom that is not a symbol at all
   ## gives `""` -- it has no identifier to name.
-  let s = p.syms[id]
+  let s = p.symbols[id]
   if s.disamb == NoDisamb: "" else: p.strings[s.name]
 
 proc symNameId*(p: Pool; id: SymId): StrId {.inline.} =
   ## `symBasename` as an id -- the one to compare identifiers by.
-  p.syms[id].name
+  p.symbols[id].name
 
 proc symVersionedBasename*(p: Pool; id: SymId): string =
   ## The identifier AND its disambiguator, without key or module suffix:
   ## `abc.12.Ikey.mod` gives `abc.12`. That is a name for the ROUTINE, not for
   ## one instantiation of it -- `symWithoutModule` is the one that keeps the
   ## key. An atom that is not a symbol gives `""`.
-  let s = p.syms[id]
+  let s = p.symbols[id]
   if s.disamb == NoDisamb:
     result = ""
   else:
@@ -483,7 +483,7 @@ proc symIsInstantiation*(p: Pool; id: SymId): bool =
   ## (`foo.0.Ia.Ib.mod`) is not an instantiation of anything this toolchain
   ## minted, and nifasm merges symbols by this answer -- it once hand-rolled
   ## its own and merged such a name wrongly.
-  let d = p.syms[id].dedup
+  let d = p.symbols[id].dedup
   if d == StrId(0): return false
   let key = p.strings[d]
   if key.len == 0 or key[0] != 'I': return false
@@ -497,7 +497,7 @@ proc symWithoutModule*(p: Pool; id: SymId): string =
   ## module that needs it arrives at independently, so it is the key to merge
   ## the copies by -- DCE, the type-key builder and overload resolution all use
   ## it for exactly that.
-  let s = p.syms[id]
+  let s = p.symbols[id]
   result = p.strings[s.name]
   if s.disamb != NoDisamb:
     result.add '.'
@@ -510,8 +510,8 @@ proc symSameEntity*(p: Pool; a, b: SymId): bool =
   ## Whether two DIFFERENT symbols name the same entity seen from two modules:
   ## both are instantiations and everything but the module suffix matches.
   if a == b: return true
-  let sa = p.syms[a]
-  let sb = p.syms[b]
+  let sa = p.symbols[a]
+  let sb = p.symbols[b]
   result = sa.dedup != StrId(0) and sa.dedup == sb.dedup and
            sa.name == sb.name and sa.disamb == sb.disamb
 
@@ -519,17 +519,17 @@ proc symModule*(p: Pool; id: SymId): string {.inline.} =
   ## The module suffix of `id`, `""` when it is local. For the places that need
   ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while
   ## `sym(p, id).module` is what a COMPARISON should use.
-  strOrEmpty(p, p.syms[id].module)
+  strOrEmpty(p, p.symbols[id].module)
 
 proc symIsLocal*(p: Pool; id: SymId): bool {.inline.} =
   ## Whether `id` has no module suffix. A question about the module, never
   ## about how many dots the spelling has: real names contain dots
   ## (`Pool.Obj`, `dollar`.CaseMode`, `..<`).
-  p.syms[id].module == StrId(0)
+  p.symbols[id].module == StrId(0)
 
 proc symModuleIs*(p: Pool; id: SymId; suffix: string): bool =
   ## Whether `id` comes from the module `suffix`. Builds nothing.
-  let m = p.syms[id].module
+  let m = p.symbols[id].module
   result = m != StrId(0) and p.strings[m] == suffix
 
 proc digitCount(x: int32): int {.inline.} =
@@ -542,7 +542,7 @@ proc digitCount(x: int32): int {.inline.} =
 proc symSpellingLen*(p: Pool; id: SymId): int =
   ## How long `symString` would be, without building it. The token writers ask
   ## only to decide whether the name fits inside the token itself.
-  let s = p.syms[id]
+  let s = p.symbols[id]
   result = p.strings[s.name].len
   if s.disamb != NoDisamb: result += 1 + digitCount(s.disamb)
   if s.dedup != StrId(0): result += 1 + p.strings[s.dedup].len
@@ -565,7 +565,7 @@ proc symString*(p: Pool; id: SymId): string {.inline.} =
   ## The whole spelling of `id`. Builds a string, so it is for the places that
   ## genuinely need one -- the C mangler, error messages, serialization -- and
   ## never for asking a question the accessors above answer.
-  symString(p, p.syms[id])
+  symString(p, p.symbols[id])
 
 proc symRecord*(p: Pool; s: string): NifSymbol =
   ## Take a spelling apart into the record the pool stores, interning each
@@ -594,7 +594,7 @@ proc symId*(p: Pool; s: string): SymId {.inline.} =
   ## Intern a symbol given its whole spelling. This is what the reader and the
   ## deserializers have; code that MINTS a symbol should say what its parts are
   ## instead (the overload below).
-  p.syms.getOrIncl(symRecord(p, s))
+  p.symbols.getOrIncl(symRecord(p, s))
 
 proc symId*(p: Pool; name: string; disamb: int; module = ""; dedup = ""): SymId =
   ## Intern a symbol from its parts. `module` empty means a local symbol.
@@ -602,12 +602,69 @@ proc symId*(p: Pool; name: string; disamb: int; module = ""; dedup = ""): SymId 
                     dedup: StrId(0), module: StrId(0))
   if dedup.len > 0: r.dedup = p.strings.getOrIncl(dedup)
   if module.len > 0: r.module = p.strings.getOrIncl(module)
-  result = p.syms.getOrIncl(r)
+  result = p.symbols.getOrIncl(r)
 
 proc symId*(p: Pool; s: NifSymbol): SymId {.inline.} =
-  p.syms.getOrIncl(s)
+  p.symbols.getOrIncl(s)
 
 proc isLocal*(s: NifSymbol): bool {.inline.} = s.module == StrId(0)
+
+# ── The classic string-shaped view of the symbol pool ────────────────────
+#
+# The Nim compiler's IC modules (`ast2nif`, `idetools`, its own copy of
+# `nifstreams`) speak to the symbol pool as `pool.syms.getOrIncl(name)`,
+# `pool.syms[id]` and `pool.syms.getKeyId(name)` -- a `BiTable[SymId, string]`.
+# That is the surface `lib/nifstreams.nim` exists to keep working, and it must
+# keep working THROUGH the flip (#2457): the pool stores `NifSymbol` records
+# now, so `syms` is a view that speaks the old three questions and answers them
+# with `symId` / `symString`.
+#
+# Nimony's own code does not use it: it asks the accessors above, which do not
+# build a string to ask a question.
+
+type
+  SymPool* = object
+    # NOT named `p`: the constructor below is written inside a template whose
+    # parameter would then substitute the FIELD name too, and the expansion
+    # stops parsing.
+    pool: Pool
+
+template syms*(p: Pool): SymPool = SymPool(pool: p)
+
+proc getOrIncl*(s: SymPool; name: string): SymId {.inline.} =
+  symId(s.pool, name)
+
+proc `[]`*(s: SymPool; id: SymId): string {.inline.} =
+  symString(s.pool, id)
+
+proc len*(s: SymPool): int {.inline.} =
+  s.pool.symbols.len
+
+proc getKeyId*(s: SymPool; name: string): SymId =
+  ## The id `name` already has, or `SymId(0)` when the pool does not hold it.
+  ## Looks up without interning ANYTHING: a component this pool never saw is
+  ## proof the symbol is not in it, which is the answer the caller wanted.
+  ensureIndexed s.pool.strings
+  ensureIndexed s.pool.symbols
+  let sl = sliceSymbol(name)
+  let head = if sl.moduleLen > 0: sl.moduleStart-1 else: name.len
+  var r = NifSymbol(name: StrId(0), disamb: NoDisamb,
+                    dedup: StrId(0), module: StrId(0))
+  if sl.moduleLen > 0:
+    r.module = s.pool.strings.getKeyId(substr(name, sl.moduleStart,
+                                           sl.moduleStart+sl.moduleLen-1))
+    if r.module == StrId(0): return SymId(0)
+  if sl.wellFormed and sl.disambIsNumeric:
+    r.name = s.pool.strings.getKeyId(substr(name, 0, sl.nameLen-1))
+    r.disamb = int32(sl.disamb)
+    if sl.dedupLen > 0:
+      r.dedup = s.pool.strings.getKeyId(substr(name, sl.dedupStart,
+                                            sl.dedupStart+sl.dedupLen-1))
+      if r.dedup == StrId(0): return SymId(0)
+  else:
+    r.name = s.pool.strings.getKeyId(substr(name, 0, head-1))
+  if r.name == StrId(0): return SymId(0)
+  result = s.pool.symbols.getKeyId(r)
 
 # ── Storage / CursorOwner / Cursor ───────────────────────────────────────
 
