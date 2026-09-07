@@ -31,7 +31,7 @@ proc getAttachedOp(symId: SymId, attackedOp: var AttachedOp): bool =
   return true
 
 proc buildIndexExports(exports: Table[string, HashSet[SymId]]; infile: string): TokenBuf =
-  result = default(TokenBuf)
+  result = initTokenBuf()
   let mp = splitModulePath infile
   if exports.len != 0:
     result = createTokenBuf(32)

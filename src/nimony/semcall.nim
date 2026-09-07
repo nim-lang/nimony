@@ -1052,14 +1052,14 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       buildErr c, dest, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
   # From here on exactly one tree is appended to `dest`: the call, or a single
   # `(err ...)`. `earlyErr` keeps the first diagnostic so the error tail can
-  # still report it instead of its generic fallback. It stays a `default`
-  # buffer on the overwhelmingly common path where nothing errored — that
-  # costs no allocation, while `createTokenBuf` always allocates storage plus
-  # a literals and a tag pool.
-  var earlyErr = default(TokenBuf)
+  # still report it instead of its generic fallback. `initTokenBuf` binds the
+  # global pools without allocating storage, so on the overwhelmingly common
+  # path where nothing errored it costs nothing; `createTokenBuf` below
+  # allocates only once there is a diagnostic to keep.
+  var earlyErr = initTokenBuf()
   if dest.len > errStart:
     earlyErr = createTokenBuf(4)
-    earlyErr.addSubtree readonlyCursorAt(dest, errStart)
+    earlyErr.addSubtree cursorAt(dest, errStart)
     dest.shrink errStart
   var idx = pickBestMatch(c, m, cs.flags)
 
@@ -1389,6 +1389,7 @@ proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Sem
     callNode: it.n.load(),
     callNodeInfo: it.n.info,
     dest: createTokenBuf(16),
+    genericDest: initTokenBuf(),
     source: source,
     flags: {InTypeContext, AllowEmpty, PreferIterators}*flags
   )

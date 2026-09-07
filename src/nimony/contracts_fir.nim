@@ -1847,6 +1847,7 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
   var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
 
   var c = FirContext(
+    errors: initTokenBuf(),
     typeCache: createTypeCache(bits),
     moduleSuffix: moduleSuffix,
     tr: initFlowTracker(),

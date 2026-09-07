@@ -1593,7 +1593,7 @@ proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, typeCache: createTypeCache(pass.bits),
     dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix,
-    hoisted: createTokenBuf(16), mover: MoverContext(bits: pass.bits))
+    hoisted: createTokenBuf(16), mover: MoverContext(cf: initTokenBuf(), bits: pass.bits))
   c.typeCache.openScope()
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]

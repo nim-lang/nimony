@@ -157,7 +157,7 @@ proc del*(t: var ToplevelEntries; s: SymId) =
   ## Remove an entry by SymId. The entry is cleared but not removed from the seq.
   if t.bySymId.hasKey(s):
     let idx = t.bySymId.getOrDefault(s)
-    t.entries[idx].buffer = default(TokenBuf)  # clear the buffer
+    t.entries[idx].buffer = initTokenBuf()  # clear the buffer
     t.bySymId.del(s)
 
 iterator items*(t: ToplevelEntries): lent ToplevelEntry =

@@ -166,7 +166,7 @@ proc implicitlyDiscardable(n: Cursor, dest: var TokenBuf, noreturnOnly = false):
     result = false
 
 proc isNoReturn(n: Cursor): bool {.inline.} =
-  var dummy = default(TokenBuf)
+  var dummy = initTokenBuf()
   result = implicitlyDiscardable(n, dummy, noreturnOnly = true)
 
 proc requestRoutineInstance*(c: var SemContext; origin: SymId;
@@ -991,7 +991,7 @@ proc findObjFieldAux(c: var SemContext; t: Cursor; name: StrId; bindings: Table[
         error "invalid parent object type", baseType
       let objType = decl.objBody
       # build bindings for parent type:
-      var newBindingBuf = default(TokenBuf)
+      var newBindingBuf = initTokenBuf()
       let newBindings = bindSubsInvokeArgs(c, decl, newBindingBuf, bindings, baseInvokeArgs)
       result = findObjFieldAux(c, objType, name, newBindings, level+1)
       if result.level == level+1:
@@ -1608,7 +1608,7 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
   # Only consider "real" phases, not InProgress markers
   const realPhases = [SemcheckTopLevelSyms, SemcheckSignatures, SemcheckBodies]
   if c.phase <= firstPhase:
-    var lastBuf = default(TokenBuf)
+    var lastBuf = initTokenBuf()
     var usingBuf = false
     for ph in realPhases:
       if ph >= c.phase:
@@ -1823,7 +1823,7 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
     if AllowUndeclared notin flags:
       let identStart = lastValueStart(dest)
       var orig = createTokenBuf(2)
-      orig.addSubtree readonlyCursorAt(dest, identStart)
+      orig.addSubtree cursorAt(dest, identStart)
       dest.shrink identStart
       let ident = cursorAt(orig, 0)
       if s.name != SymId(0):
@@ -4275,7 +4275,7 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
   if not obj.parentType.isDotToken:
     # copy original bindings to bring back when iterating the original type:
     let origBindings = bindings
-    var bindingBuf = default(TokenBuf) # to store subsequent parent args
+    var bindingBuf = initTokenBuf() # to store subsequent parent args
     var parentType = obj.parentType
     var depth = 1
     while not parentType.isDotToken:
@@ -4294,7 +4294,7 @@ proc buildDefaultObjConstr(c: var SemContext; dest: var TokenBuf; typ: Cursor;
         error "invalid parent object type", parentImpl
 
       # build bindings for parent type:
-      var newBindingBuf = default(TokenBuf)
+      var newBindingBuf = initTokenBuf()
       let newBindings = bindSubsInvokeArgs(c, parentDecl, newBindingBuf, bindings, parentInvokeArgs)
       # set to current bindings so the next parent type can substitute based on them:
       bindingBuf = newBindingBuf

@@ -2808,6 +2808,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     typeCache: createTypeCache(bits),
     pending: createTokenBuf(),
     strLitBuf: createTokenBuf(),
+    initBody: initTokenBuf(),
     bits: bits,
     bigEndian: bigEndian,
     nativeBackend: native,
