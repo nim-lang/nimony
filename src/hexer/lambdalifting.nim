@@ -299,7 +299,7 @@ proc trIterDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc envTypeForProc(c: var Context; procId: SymId): SymId =
-  let s = extractVersionedBasename(pool.syms[procId])
+  let s = pool.symVersionedBasename(procId)
   result = pool.syms.getOrIncl(derivedName(s, "env") & "." & c.thisModuleSuffix)
 
 proc localToField(c: var Context; n: Cursor; local, typ: SymId; isCursor = false): SymId =

@@ -473,6 +473,18 @@ proc symNameId*(p: Pool; id: SymId): StrId =
   else:
     result = p.strings.getOrIncl("")
 
+proc symVersionedBasename*(p: Pool; id: SymId): string =
+  ## The identifier AND its disambiguator, without key or module suffix:
+  ## `abc.12.Ikey.mod` gives `abc.12`. That is a name for the ROUTINE, not for
+  ## one instantiation of it -- `symWithoutModule` is the one that keeps the
+  ## key. An atom that is not a symbol gives `""`.
+  let s = p.syms[id]
+  let sl = sliceSymbol(s)
+  if sl.wellFormed:
+    result = substr(s, 0, sl.disambStart+sl.disambLen-1)
+  else:
+    result = ""
+
 proc symIsInstantiation*(p: Pool; id: SymId): bool =
   ## Whether `id` carries a deduplication key -- the `Ikey` of
   ## `abc.12.Ikey.mod`, which every module needing that instantiation derives

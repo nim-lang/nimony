@@ -245,7 +245,7 @@ proc coroHelperName*(routineSym: SymId; tag, fallbackSuffix: string): SymId =
   ## to link up. `fallbackSuffix` covers a bare symbol (no module segment),
   ## which is what a symbol this pass minted itself looks like.
   ##
-  ## `symWithoutModule` — not `extractVersionedBasename` — because it
+  ## `symWithoutModule` — not `symVersionedBasename` — because it
   ## preserves an intermediate `I<hash>` segment: two instantiations of one
   ## generic (`gen.12.Iaaaa.mod`, `gen.12.Ibbbb.mod`) would otherwise share
   ## the stem `gen.12` and collide on every helper name.
@@ -1051,7 +1051,7 @@ proc newLocalProc*(c: var Context; dest: var TokenBuf; state: int; sym: SymId) =
     dest.copyIntoKind CmdS, info:
       dest.addSymUse pool.syms.getOrIncl("write.0.syn1lfpjv"), info
       dest.addSymUse pool.syms.getOrIncl("stdout.0.syn1lfpjv"), info
-      dest.addStrLit extractVersionedBasename(pool.syms[sym]) & ".s" & $state & "\n"
+      dest.addStrLit pool.symVersionedBasename(sym) & ".s" & $state & "\n"
 
 proc gotoNextState*(c: var Context; dest: var TokenBuf; state: int; info: NifLineInfo) =
   # generate: `return state(this)`

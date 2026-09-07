@@ -173,18 +173,6 @@ proc `$`*(s: SplittedSymName): string =
   else:
     result = s.name
 
-proc extractVersionedBasename*(s: string): string =
-  # From "abc.12.Mod132a3bc" extract "abc.12".
-  var i = s.len - 2
-  while i > 0:
-    if s[i] == '.':
-      if s[i+1] in {'0'..'9'}:
-        var j = i+1
-        while j < s.len and s[j] in {'0'..'9'}: inc j
-        return substr(s, 0, j-1)
-    dec i
-  return ""
-
 proc derivedName*(stem, tag: string): string =
   ## The `identifier.<number>` half of a symbol the compiler mints ALONGSIDE
   ## another one — a closure's environment type, a class's vtable, a coroutine's
@@ -319,7 +307,6 @@ when isMainModule:
       assert substr(s, 0, sl.nameLen-1) == base, s
       assert isInstantiation(s) ==
         (sl.dedupLen > 0 and s[sl.dedupStart] == 'I'), s
-      assert substr(s, 0, sl.nameLen) & $sl.disamb == extractVersionedBasename(s), s
     else:
       assert base == "", s
 
@@ -383,8 +370,6 @@ when isMainModule:
   assert lt.dedupLen == 0 and lt.moduleLen == 0
   let lo = sliceSymbol("[]=")
   assert not lo.wellFormed and lo.nameLen == 3
-  assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"
-  assert extractVersionedBasename("abc.Mod132a3bc") == ""
 
   let sn = splitSymName("abc.12.Mod132a3bc")
   assert sn.name == "abc.12"
