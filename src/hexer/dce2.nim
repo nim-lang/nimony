@@ -53,7 +53,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
   while worklist.len > 0:
     let sym = translate(resolved, worklist.pop())
     let moduleName = pool.symModule(sym)
-    assert moduleName.len > 0, "moduleName is empty for " & pool.syms[sym]
+    assert moduleName.len > 0, "moduleName is empty for " & pool.symString(sym)
 
     # Check if symbol is already live in its owning module
     if not result.getOrQuit(moduleName).containsOrIncl(sym):
@@ -66,7 +66,7 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
             let sowner = pool.symModule(s)
             # Check if dependency is already live in its owning module
             if sowner.len > 0:
-              assert sowner in result, "sowner is not in result for " & pool.syms[s]
+              assert sowner in result, "sowner is not in result for " & pool.symString(s)
             if sowner.len > 0 and s notin result.getOrQuit(sowner):
               worklist.add(s)
 
@@ -217,13 +217,13 @@ proc writeLiveFile*(outfile: string; resolved: ResolveTable;
       for key, winner in pairs(resolved):
         b.withTree "kv":
           b.addStrLit key
-          b.addSymbol pool.syms[winner], ""
+          b.addSymbol pool.symString(winner), ""
     b.withTree liveTag:
       for modName, syms in pairs(live):
         b.withTree modTag:
           b.addStrLit modName
           for s in syms:
-            b.addSymbol pool.syms[s], ""
+            b.addSymbol pool.symString(s), ""
   b.close()
 
 type

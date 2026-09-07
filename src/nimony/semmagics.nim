@@ -283,14 +283,14 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let forceOpen = ruleName == "brForceOpen"
   var nifText = ""
   if resolved.len == 1 and not forceOpen:
-    nifText = pool.syms[resolved[0]]
+    nifText = pool.symString(resolved[0])
   else:
     let tag = if ruleName == "brClosed": "cchoice" else: "ochoice"
     nifText.add "("
     nifText.add tag
     for s in resolved:
       nifText.add " "
-      nifText.add pool.syms[s]
+      nifText.add pool.symString(s)
     nifText.add ")"
 
   # Synthesize: bindSymHelper(<t expr>, "<nifText>") and re-sem so the helper
@@ -381,14 +381,14 @@ proc semBindSym*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if resolved.len == 1 and not forceOpen:
     synthBuf.copyIntoKind CallS, info:
       synthBuf.addIdent "newSymNode", info
-      synthBuf.addStrLit pool.syms[resolved[0]], info
+      synthBuf.addStrLit pool.symString(resolved[0]), info
   else:
     synthBuf.copyIntoKind CallS, info:
       synthBuf.addIdent "newSymChoiceNode", info
       synthBuf.addIdent ruleName, info
       synthBuf.copyIntoKind BracketX, info:
         for s in resolved:
-          synthBuf.addStrLit pool.syms[s], info
+          synthBuf.addStrLit pool.symString(s), info
   # no sentinel closer: nifcore's closeTag asserts on an unmatched ParRi and
   # the bounded cursor already stops at the buffer end
   var inner = Item(n: cursorAt(synthBuf, 0), typ: it.typ)
@@ -429,7 +429,7 @@ proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
           "'$' is not available for type <" & typeToString(x.typ) & ">"
         return
       let typeSymId = typ.symId
-      let typeName = pool.syms[typeSymId]
+      let typeName = pool.symString(typeSymId)
       let dollorName = "dollar`." & typeName
       let dollorSymId = pool.syms.getOrIncl(dollorName)
       shrink dest, beforeExpr
@@ -869,7 +869,7 @@ proc semInternalTypeName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
     if containsGenericParams(typ):
       isGeneric = true
     else:
-      typeName = pool.syms[typ.symId]
+      typeName = pool.symString(typ.symId)
   if not isGeneric:
     # only after `copyInto` closed its tag: shrinking away an OPEN tag would
     # leave the close unmatched (nifcore's closeTag asserts)

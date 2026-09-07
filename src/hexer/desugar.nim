@@ -869,7 +869,7 @@ proc isStringConcatCall(n: Cursor): bool =
   if n.exprKind in CallKinds:
     var c = n
     inc c                       # past call tag
-    if c.kind == Symbol and startsWith(pool.syms[c.symId], "&."):
+    if c.kind == Symbol and startsWith(pool.symString(c.symId), "&."):
       result = isConcat(c.symId)
 
 proc isChainedStringConcatCall(n: Cursor): bool =

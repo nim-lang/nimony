@@ -124,7 +124,7 @@ proc symText*(n: NifCursor): string {.inline.} =
 
 proc symText*(s: SymId): string {.inline.} =
   ## Resolves a plugin-pool symbol handle to its name.
-  pluginPool.syms[s]
+  pluginPool.symString(s)
 
 proc identText*(n: NifCursor): string {.inline.} =
   ## Returns the current `Ident` text.

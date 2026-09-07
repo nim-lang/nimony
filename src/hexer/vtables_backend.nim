@@ -172,7 +172,7 @@ proc getMethodIndex(c: var Context; cls, fn: SymId): int =
 
   result = c.vtables.getOrQuit(cls).methods.find(fn)
   if result == -1:
-    error "method `" & pool.syms[fn] & "` not found in class " & pool.syms[cls]
+    error "method `" & pool.symString(fn) & "` not found in class " & pool.symString(cls)
 
 proc isLocalVar(c: var Context; n: Cursor): bool {.inline.} =
   n.kind == Symbol and getLocalInfo(c.typeCache, n.symId).kind in {VarY, LetY, ResultY, GvarY, GletY, TvarY, TletY}
@@ -208,7 +208,7 @@ proc trMethodCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let cls = getClass(typ)
   if cls == SymId(0):
     dest.add fnNode
-    error "cannot call method `" & pool.syms[fn] & "` on type " & typeToString(typ)
+    error "cannot call method `" & pool.symString(fn) & "` on type " & typeToString(typ)
   elif canUseStaticCall:
     dest.add fnNode
   else:
@@ -358,7 +358,7 @@ proc classData(typ: Cursor): (int, UHash) =
   let s = classSym(typ)
   if s != SymId(0):
     for _ in inheritanceChain(s): inc result[0]
-    result[1] = uhash(pool.syms[s])
+    result[1] = uhash(pool.symString(s))
 
 proc genBaseobj(c: var Context; dest: var TokenBuf; x: var Cursor; class: ClassInfo; info: NifLineInfo) =
   if class.ptrKind != NoType:
@@ -836,7 +836,7 @@ proc emitVTables(c: var Context; dest: var TokenBuf) =
             dest.copyIntoKind UT, NoLineInfo:
               dest.addIntLit 32, NoLineInfo
           for d in vtab.display:
-            dest.addUIntLit uhash(pool.syms[d]), NoLineInfo
+            dest.addUIntLit uhash(pool.symString(d)), NoLineInfo
 
     dest.copyIntoKind ConstS, NoLineInfo:
       dest.addSymDef getVTableName(c, cls), NoLineInfo

@@ -432,7 +432,7 @@ proc isFinal*(n: Cursor): bool =
   result = typeHasPragma(n, FinalP, ObjectT)
 
 proc hasRtti*(s: SymId): bool =
-  if pool.syms[s].startsWith("`t.0.IAref"):
+  if pool.symString(s).startsWith("`t.0.IAref"):
     # This `startsWith` is a minor hack but we know that types of this
     # internal name only have a refcount and a payload, hence no RTTI
     return false
@@ -455,7 +455,7 @@ proc hasRtti*(pragmas: Cursor): bool =
 
 proc getTypeSection*(s: SymId): TypeDecl =
   let res = tryLoadSym(s)
-  assert res.status == LacksNothing, "could not load type declaration: " & pool.syms[s]
+  assert res.status == LacksNothing, "could not load type declaration: " & pool.symString(s)
   result = asTypeDecl(res.decl)
 
 proc skipDistinct*(n: TypeCursor; isDistinct: var bool): TypeCursor =
@@ -647,7 +647,7 @@ proc toTypeImpl*(n: Cursor): Cursor =
       if local.kind == TypeY:
         result = local.body
     else:
-      bug "could not load: " & pool.syms[result.symId]
+      bug "could not load: " & pool.symString(result.symId)
 
 proc isConceptSym*(s: SymId): bool =
   let section = getTypeSection(s)

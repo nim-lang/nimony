@@ -81,7 +81,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
   # golden files need deterministic output (kill order is a set)
   for i in 1 ..< locals.len:
     var j = i
-    while j > 0 and pool.syms[locals[j-1]] > pool.syms[locals[j]]:
+    while j > 0 and pool.symString(locals[j-1]) > pool.symString(locals[j]):
       swap locals[j-1], locals[j]
       dec j
   var i = 0

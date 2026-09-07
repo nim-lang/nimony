@@ -171,7 +171,7 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
           if tk.isTagLit:
             echo "  [", k, "] TagLit ", globalTags.tags[tk.tagId], " jump=", uint32(tk) shr JumpShift
           elif tk.kind in {Symbol, SymbolDef}:
-            echo "  [", k, "] ", tk.kind, " ", pool.syms[tk.symId]
+            echo "  [", k, "] ", tk.kind, " ", pool.symString(tk.symId)
           else:
             echo "  [", k, "] ", tk.kind
         break
@@ -301,7 +301,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
           inc counter
         discard requestRoutineInstance(c, hook, typeArgs, inferred, info)
       else:
-        quit "BUG: Could not load hook: " & pool.syms[hook]
+        quit "BUG: Could not load hook: " & pool.symString(hook)
 
 proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, typeInstSym: SymId): SymId =
   # check if instance actually matches method
@@ -328,8 +328,8 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
     while typevars.hasMore:
       let name = takeLocal(typevars, SkipFinalParRi).name.symId
       if name notin inferred:
-        c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.syms[methodSym] &
-          ", cannot infer generic parameter " & pool.syms[name]
+        c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.symString(methodSym) &
+          ", cannot infer generic parameter " & pool.symString(name)
         return SymId(0)
       typeArgsBuf.addSubtree inferred.getOrQuit(name)
     let instance = requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
@@ -545,7 +545,7 @@ proc resolveCyclicImports(c: var SemContext) =
   for (targetSuffix, moduleSym) in c.deferredCyclicImports:
     let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
     for symId in prog.mem.symIds:
-      let symName = pool.syms[symId]
+      let symName = pool.symString(symId)
       let modSuffix = pool.symModule(symId)
       if modSuffix == targetSuffix:
         let nameId = pool.symNameId(symId)

@@ -170,7 +170,7 @@ proc forgeExpansionInfo*(c: var SemContext; dest: var TokenBuf; start: int;
   ## pay for it, and only a debug build reads the result.
   if not c.g.config.inlineFrames: return
   if start >= dest.len: return
-  let originSym = pool.syms[origin]
+  let originSym = pool.symString(origin)
   let originDeclFile =
     if declInfo.file.isValid: realFile(pool.filenames[declInfo.file]) else: ""
 

@@ -457,7 +457,7 @@ proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLine
   ## at iter-sym-as-value and iter-nil sites where we don't have an
   ## itertype tree on hand.
   let res = tryLoadSym(iterSym)
-  assert res.status == LacksNothing, "iter sym not loaded: " & pool.syms[iterSym]
+  assert res.status == LacksNothing, "iter sym not loaded: " & pool.symString(iterSym)
   let fn = asRoutine(res.decl)
   dest.copyIntoKind ClosureTupleT, info:
     dest.copyIntoKind ProctypeT, info:

@@ -493,7 +493,7 @@ proc compileFlipFlop(c: var Context; it, mode: string, n: var Cursor): string =
 proc compileLet(c: var Context; it: string, n: var Cursor): string =
   var key = ""
   if n.isSymbolDef:
-    key = pool.syms[n.symId]
+    key = pool.symString(n.symId)
     skip n
   else:
     result = ""
@@ -550,7 +550,7 @@ proc compileStack(c: var Context; it: string, n: var Cursor): string =
 proc compilePop(c: var Context; it: string, n: var Cursor): string =
   var varName = ""
   if n.isSymbolDef:
-    varName = pool.syms[n.symId]
+    varName = pool.symString(n.symId)
     skip n
   else:
     result = ""
@@ -617,7 +617,7 @@ proc compileExpr(c: var Context; it: string, n: var Cursor): string =
 proc compileRule(c: var Context; it: string, n: var Cursor) =
   ## `n` is bounded to the `(RULE …)` node's children.
   c.tmpCounter = 0
-  c.currentRule = pool.syms[n.symId]
+  c.currentRule = pool.symString(n.symId)
   c.localPopCounts = @[0]
   c.localPopVars = @[]
   c.seenRules.incl c.currentRule
@@ -810,7 +810,7 @@ proc scanPop(c: var ScanContext, popVars: var seq[string], popCounts: var seq[in
   ## `n` is at the `(POP …)` head; consumes the whole node.
   var ch = sub(n)
   if ch.isSymbolDef:
-    popVars.add pool.syms[ch.symId]
+    popVars.add pool.symString(ch.symId)
     inc popCounts[^1]
   else:
     error c, ":SYMBOLDEF after POP expected"
@@ -847,7 +847,7 @@ proc scanRule(c: var ScanContext, n: var Cursor) =
   ## `n` is bounded to the `(RULE …)` node's children.
   if not n.isSymbolDef:
     error c, "SymbolDef expected, but got "
-  c.currentRule = pool.syms[n.symId] # TODO: save only symid in currentRule
+  c.currentRule = pool.symString(n.symId) # TODO: save only symid in currentRule
   if c.currentRule in c.rules:
     error c, "attempt to redeclare RULE named " & c.currentRule
   c.rules.add c.currentRule

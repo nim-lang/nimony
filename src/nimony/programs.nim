@@ -333,7 +333,7 @@ proc tryLoadSym*(s: SymId): LoadResult =
   if prog.mem.hasKey(s):
     result = LoadResult(status: LacksNothing, decl: cursorAt(prog.mem[s].buffer, 0))
   else:
-    let nifName = pool.syms[s]
+    let nifName = pool.symString(s)
     let modname = pool.symModule(s)
     if modname == "":
       result = LoadResult(status: LacksModuleName)
@@ -458,8 +458,8 @@ proc publish*(s: SymId; dest: TokenBuf; start: int; phase = SemcheckBodies) =
 
 proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   when defined(debugPublish):
-    if pool.syms[s].startsWith("\x2E."):
-      echo "PUBSIG ", pool.syms[s], " src=", toString(readonlyCursorAt(dest, start), false)
+    if pool.symString(s).startsWith("\x2E."):
+      echo "PUBSIG ", pool.symString(s), " src=", toString(readonlyCursorAt(dest, start), false)
   var buf = createTokenBuf(dest.len - start + 3)
   # the span is the routine's open tag followed by complete signature
   # subtrees; open the tag properly so the final close seals it, and copy
@@ -470,7 +470,7 @@ proc publishSignature*(dest: TokenBuf; s: SymId; start: int) =
   buf.addDotToken() # body is empty for a signature
   buf.addParRi()
   when defined(debugPublish):
-    if pool.syms[s].startsWith("\x2E."):
+    if pool.symString(s).startsWith("\x2E."):
       echo "PUBSIG OUT ", toString(readonlyCursorAt(buf, 0), false)
   publish s, buf, SemcheckSignatures
 

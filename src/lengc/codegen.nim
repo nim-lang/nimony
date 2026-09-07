@@ -391,13 +391,13 @@ proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo;
     let lit = n.symId
     if {ImportcP, ImportcppP, ExportcP} * prag.flags != {}:
       if isProc and isBareImportProc(prag):
-        result = mangleToC(c.m.pool.syms[lit])
+        result = mangleToC(c.m.pool.symString(lit))
       elif prag.extern != StrId(0):
         result = c.m.pool.strings[prag.extern]
       else:
         result = c.m.pool.symBasename(lit)
     else:
-      result = mangleToC(c.m.pool.syms[lit])
+      result = mangleToC(c.m.pool.symString(lit))
     c.add result
   else:
     result = ""

@@ -308,7 +308,7 @@ proc mangleSym(c: var LLVMCode; s: SymId): string =
   if x != nil and x.extern != StrId(0):
     result = c.m.pool.strings[x.extern]
   else:
-    result = mangleToC(c.m.pool.syms[s])
+    result = mangleToC(c.m.pool.symString(s))
 
 proc nifSymBaseName*(c: var LLVMCode; symId: SymId): string =
   ## Extract the original Nim identifier from a NIF symbol like
@@ -513,7 +513,7 @@ proc genGlobalVarDeclLLVM(c: var LLVMCode; n: var Cursor; vk: VarKindLLVM;
       return
 
     let name = if externName != StrId(0): c.m.pool.strings[externName]
-               else: mangleToC(c.m.pool.syms[lit])
+               else: mangleToC(c.m.pool.symString(lit))
 
     var t = d.typ
     let typ = genTypeLLVM(c, t)
@@ -690,7 +690,7 @@ proc genSymDefLLVM(c: var LLVMCode; n: Cursor; prag: PragmaInfo): string =
       else:
         result = c.m.pool.symBasename(lit)
     else:
-      result = mangleToC(c.m.pool.syms[lit])
+      result = mangleToC(c.m.pool.symString(lit))
   else:
     result = ""
     error c.m, "expected SymbolDef but got: ", n
@@ -776,7 +776,7 @@ proc genProcDeclLLVM(c: var LLVMCode; n: var Cursor; isExtern: bool) =
         let paramType = genTypeLLVM(c, t)
         if d.typ.typeKind != VarargsT:
           paramTypes.add paramType
-          let paramName = mangleToC(c.m.pool.syms[s])
+          let paramName = mangleToC(c.m.pool.symString(s))
           paramNames.add paramName
           paramWasNames.add extractWasPragma(d.pragmas)
           paramSyms.add s

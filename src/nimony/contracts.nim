@@ -318,7 +318,7 @@ proc analyseOconstr(c: var Context; n: var Cursor) =
       n.into:
         assert n.isSymbol
         let expected = lookupField(c.typeCache, objType, n.symId)
-        assert not cursorIsNil(expected), "could not lookup type for " & pool.syms[n.symId]
+        assert not cursorIsNil(expected), "could not lookup type for " & pool.symString(n.symId)
         skip n # field name
         checkNilMatch c, n, expected
         skip n # value
@@ -352,7 +352,7 @@ proc analyseExpr(c: var Context; pc: var Cursor) =
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {VarY, LetY, CursorY, PatternvarY}:
       if symId notin c.directlyInitialized and symId notin c.writesTo:
-        buildErr(c, pc.info, "cannot prove that " & pool.syms[symId] & " has been initialized")
+        buildErr(c, pc.info, "cannot prove that " & pool.symString(symId) & " has been initialized")
         # do not name the same variable twice:
         c.writesTo.add symId
     inc pc

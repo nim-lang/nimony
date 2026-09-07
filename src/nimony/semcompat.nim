@@ -152,7 +152,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       inc elemCursor    # past `(varargs` to the element type
       let inst = compatOpenArrayInstance(c, elemCursor, info)
       let hintStr =
-        if inst.isSymbol: pool.syms[inst.symId]
+        if inst.isSymbol: pool.symString(inst.symId)
         else: ""
       rebuilt.addStrLit hintStr, info
       rebuilt.addParRi()
@@ -172,7 +172,7 @@ proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
     if m.args[start].exprKind == HcallX:
       let callee = childCursor(readonlyCursorAt(m.args, start))
       if callee.hasMore and callee.kind == Symbol:
-        result = pool.syms[callee.symId].startsWith("toOpenArray.")
+        result = pool.symString(callee.symId).startsWith("toOpenArray.")
 
 proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
                                  elemType: Cursor; info: NifLineInfo) =

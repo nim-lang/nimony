@@ -354,7 +354,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     of Symbol:
       result = lookupSymbol(c, n.symId)
       if cursorIsNil(result):
-        bug "could not find symbol: " & pool.syms[n.symId]
+        bug "could not find symbol: " & pool.symString(n.symId)
     of IntLit:
       result = c.builtins.intType
     of UIntLit:
@@ -507,10 +507,10 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
 
     result = typeOfField(c, objType, fld)
     if cursorIsNil(result):
-      if pool.syms[fld] == VTableField:
+      if pool.symString(fld) == VTableField:
         # VTableField is a magic internal field for RTTI
         result = c.builtins.vtableType
-      elif pool.syms[fld] == DataField and
+      elif pool.symString(fld) == DataField and
             obj.exprKind in {DerefX, HderefX}:
         inc obj
         var t = getTypeImpl(c, obj, flags)

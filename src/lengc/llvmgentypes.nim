@@ -619,7 +619,7 @@ proc ensureTypeDef(c: var LLVMCode; symId: SymId): LLType =
   ## (enum→scalar, array) resolve inline — LLVM forbids forward refs to non-struct
   ## named types. The placeholder is inserted before the body so recursion returns
   ## a ref instead of looping.
-  let name = mangleToC(c.m.pool.syms[symId])
+  let name = mangleToC(c.m.pool.symString(symId))
   if typeDefByName(c, name) >= 0:
     return LLType(kind: llStruct, name: name) # already registered aggregate (incl. placeholder)
   let d = c.m.getDeclOrNil(symId)
@@ -699,7 +699,7 @@ proc getStructFieldTypes(c: var LLVMCode; typeSym: Cursor): seq[LLType] =
         var bitfieldUnit = 0
         body.into:
           if body.kind == Symbol:
-            let baseName = mangleToC(c.m.pool.syms[body.symId])
+            let baseName = mangleToC(c.m.pool.symString(body.symId))
             result.add LLType(kind: llStruct, name: baseName)
             inc body
           elif body.kind == DotToken:

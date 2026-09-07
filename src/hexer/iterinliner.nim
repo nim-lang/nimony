@@ -600,7 +600,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     let iterSym = symProbe.symId
     let res = tryLoadSym(iterSym)
     if res.status != LacksNothing:
-      error e, "could not load closure-iter sym: " & pool.syms[iterSym]
+      error e, "could not load closure-iter sym: " & pool.symString(iterSym)
     let routine = asRoutine(res.decl, SkipInclBody)
     var retType = routine.retType
     if retType.typeKind in {MutT, LentT}:

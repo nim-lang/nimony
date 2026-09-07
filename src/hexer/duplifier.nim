@@ -872,7 +872,7 @@ proc trProcDecl(c: var Context; n: var Cursor; parentNodestroy = false) =
       trOnlyEssentials c, r.body
     else:
       tr c, r.body, DontCare
-      assert c.pendingMoves.len == 0, "deferred =wasMoved escaped " & pool.syms[r.name.symId]
+      assert c.pendingMoves.len == 0, "deferred =wasMoved escaped " & pool.symString(r.name.symId)
     c.typeCache.closeScope()
   else:
     copyTree c.dest, r.body

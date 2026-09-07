@@ -138,7 +138,7 @@ proc emitSymAsIdent(buf: var TokenBuf; sym: SymId; info: NifLineInfo;
         skip tv
     buf.addParRi()
     return
-  let symStr = pool.syms[sym]
+  let symStr = pool.symString(sym)
   let owner = pool.symModule(sym)
   if owner.len > 0 and owner != thisMod:
     let res = tryLoadSym(sym)
@@ -288,7 +288,7 @@ proc unravelObjField(c: var SynthesizeSerializerCtx; n: var Cursor; param: Token
 
   genStringCall(c, "writeNifParLe", "kv")
   genStringCall(c, "writeNifRaw", " ")
-  genStringCall(c, "writeNifSymbol", pool.syms[r.name.symId])
+  genStringCall(c, "writeNifSymbol", pool.symString(r.name.symId))
 
   # ptr-to-nif special case: a `ptr UncheckedArray[T]` field can't be
   # serialised structurally — there's no pointer value that survives the
@@ -544,7 +544,7 @@ proc unravelEnum(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenB
           let esym = enumField.name.symId
           c.dest.addSymUse esym, enumDeclInfo
         c.dest.copyIntoKind StmtsS, enumDeclInfo:
-          genStringCall(c, "writeNifSymbol", pool.syms[esym])
+          genStringCall(c, "writeNifSymbol", pool.symString(esym))
   c.dest.addParRi() # case
 
 proc primitiveCall(c: var SynthesizeSerializerCtx; name: string; arg: Cursor) =

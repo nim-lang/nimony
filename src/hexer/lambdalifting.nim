@@ -631,7 +631,7 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
     # pass 1) and an iterator's locals live in its coroutine frame instead,
     # so there is nothing to hand over. Loud beats a nil env at run time.
     bug "capturing the locals of an enclosing iterator is not supported: " &
-        pool.syms[iterSym] & " at " & infoToStr(info)
+        pool.symString(iterSym) & " at " & infoToStr(info)
   var frameSym = SymId(0)
   if captures:
     frameSym = pool.syms.getOrIncl("`iterFrame." & $c.counter & "." & c.thisModuleSuffix)

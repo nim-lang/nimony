@@ -115,7 +115,7 @@ proc staticOpenArrayElemType*(t: Cursor): Cursor =
     inc depth
   if t.typeKind == InvokeT:
     inc t
-    if t.isSymbol and pool.syms[t.symId] == OpenArrayHeadName:
+    if t.isSymbol and pool.symString(t.symId) == OpenArrayHeadName:
       inc t
       result = t
   elif t.typeKind == VarargsT:

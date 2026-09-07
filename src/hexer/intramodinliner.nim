@@ -411,7 +411,7 @@ proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
   ## minted syms can never collide with those already baked into the `.x.nif`
   ## it is rewriting.
   inc c.counter
-  let original = pool.syms[orig]
+  let original = pool.symString(orig)
   var base = original
   let dotPos = base.find('.')
   if dotPos >= 0: base.setLen dotPos
@@ -1272,7 +1272,7 @@ when defined(inlinerStats):
   var inlinerStats*: Table[string, tuple[count, tokens: int]]
 
   proc recordSplice(calleeSym: SymId; tokens: int) =
-    let nm = pool.syms[calleeSym]
+    let nm = pool.symString(calleeSym)
     var e = inlinerStats.getOrDefault(nm)
     inc e.count
     e.tokens += tokens

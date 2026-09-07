@@ -64,7 +64,7 @@ proc genEnumToStrProc*(c: var SemContext; dest: var TokenBuf; typeDecl: var Curs
   let decl = asTypeDecl(typeDecl)
   let enumSymId = decl.name.symId
   let enumSymInfo = decl.name.info
-  let dollorName = "dollar`." & pool.syms[enumSymId]
+  let dollorName = "dollar`." & pool.symString(enumSymId)
   let dollorSymId = pool.syms.getOrIncl(dollorName)
 
   dest.addParLe("func", enumSymInfo)

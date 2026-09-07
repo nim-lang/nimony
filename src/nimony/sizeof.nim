@@ -151,7 +151,7 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
         if n.kind != Symbol:
           pragmas = parseTypePragmas local.pragmas
     else:
-      bug "could not load: " & pool.syms[n.symId]
+      bug "could not load: " & pool.symString(n.symId)
 
   case n.typeKind
   of IntT, UIntT, FloatT:

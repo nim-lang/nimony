@@ -353,7 +353,7 @@ proc storeToString*(b: var TokenBuf; dottedSuffix = ""): string =
   # pools, each in id order (ids are 1-based, dense up to len).
   for i in 1 .. b.tags.tags.len:      appendStr(result, b.tags.tags[TagId(i)])
   for i in 1 .. b.pool.strings.len:   appendStr(result, b.pool.strings[StrId(i)])
-  for i in 1 .. b.pool.syms.len:      appendStr(result, b.pool.syms[SymId(i)])
+  for i in 1 .. b.pool.syms.len:      appendStr(result, b.pool.symString(SymId(i)))
   for i in 1 .. b.pool.filenames.len: appendStr(result, b.pool.filenames[FileId(i)])
   # symbol index — self-contained at the offset we now know. `pos` is a token
   # index (always >= 0) and `vis` a 0/1 enum, so plain varints suffice.
@@ -645,7 +645,7 @@ proc buildRemap*(src: var TokenBuf; pool: Pool; tags: TagPool): PoolRemap =
   let nSyms = src.pool.syms.len
   result.syms = newSeq[SymId](nSyms + 1)
   for i in 1 .. nSyms:
-    let id = pool.syms.getOrIncl(src.pool.syms[SymId(i)])
+    let id = pool.syms.getOrIncl(src.pool.symString(SymId(i)))
     result.syms[i] = id
     if uint32(id) != uint32(i): result.identity = false
   let nFiles = src.pool.filenames.len
@@ -943,12 +943,12 @@ when isMainModule:
     doAssert m.index.len == 2, "expected 2 global syms, got " & $m.index.len
     # entry 0: foo, exported; its pos points at the enclosing (sdef tag.
     let e0 = m.index[0]
-    doAssert m.buf.pool.syms[e0.sym] == "foo.3.mymod"
+    doAssert m.buf.pool.symString(e0.sym) == "foo.3.mymod"
     doAssert e0.vis == ivExported
     var c = cursorAt(m.buf, int e0.pos)
     doAssert c.kind == TagLit and m.buf.tags.tagName(c.cursorTagId) == "sdef"
     # entry 1: bar, hidden.
-    doAssert m.buf.pool.syms[m.index[1].sym] == "bar.4.mymod"
+    doAssert m.buf.pool.symString(m.index[1].sym) == "bar.4.mymod"
     doAssert m.index[1].vis == ivHidden
 
     let foo = m.findDeclaration("foo.3.mymod")

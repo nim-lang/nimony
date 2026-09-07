@@ -233,7 +233,7 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       if hasHook(c, typ.symId): return false
       return isTrivialTypeDecl(c, res.decl)
     else:
-      bug "could not load: " & pool.syms[typ.symId]
+      bug "could not load: " & pool.symString(typ.symId)
 
   case typ.typeKind
   of IntT, UIntT, FloatT, BoolT, CharT, PtrT,
@@ -1060,6 +1060,6 @@ when isMainModule:
     quit 1
   let res = tryLoadHook(attachedDestroy, pool.syms.getOrIncl(StringName))
   if res != SymId(0):
-    echo pool.syms[res]
+    echo pool.symString(res)
   else:
     echo "no hook"

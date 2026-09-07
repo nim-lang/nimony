@@ -319,7 +319,7 @@ proc instToStringRec(b: var Builder; n: var Cursor) =
     b.addFloatLit(n.floatVal)
     inc n
   of SymbolDef:
-    b.addSymbolDef(pool.syms[n.symId])
+    b.addSymbolDef(pool.symString(n.symId))
     inc n
   of CharLit:
     b.addCharLit char(n.uoperand)
@@ -645,7 +645,7 @@ proc requestRoutineInstance*(c: var SemContext; origin: SymId;
     let targetSym = newInstSymId(c, origin, instSuffix)
     var signature = createTokenBuf(30)
     let decl = getProcDecl(origin)
-    assert decl.typevars.substructureKind == TypevarsU, pool.syms[origin]
+    assert decl.typevars.substructureKind == TypevarsU, pool.symString(origin)
     var invokeStart = -1
     buildTree signature, decl.kind, info:
       signature.addSymDef(targetSym, info)
@@ -1815,7 +1815,7 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
       dest.shrink identStart
       let ident = cursorAt(orig, 0)
       if s.name != SymId(0):
-        c.buildErr dest, ident.info, "undeclared identifier: " & pool.syms[s.name], ident
+        c.buildErr dest, ident.info, "undeclared identifier: " & pool.symString(s.name), ident
       else:
         let s = getIdent(ident)
         if s != StrId(0):
@@ -1918,13 +1918,13 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         n = beginRead(procTypeBuf)
       elif s.kind == ModuleY:
         if AllowModuleSym notin flags:
-          c.buildErr dest, readonlyCursorAt(dest, start).info, "module symbol '" & pool.syms[s.name] & "' not allowed in this context"
+          c.buildErr dest, readonlyCursorAt(dest, start).info, "module symbol '" & pool.symString(s.name) & "' not allowed in this context"
       else:
         assert false, "not implemented"
       it.typ = n
       commonType c, dest, it, start, expected
     else:
-      c.buildErr dest, readonlyCursorAt(dest, start).info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
+      c.buildErr dest, readonlyCursorAt(dest, start).info, "could not load symbol: " & pool.symString(s.name) & "; errorCode: " & $res.status
       it.typ = c.types.autoType
 
 proc semLocalTypeExpr(c: var SemContext; dest: var TokenBuf, it: var Item) =

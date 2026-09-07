@@ -16,7 +16,7 @@ proc fetchCallableType(c: var SemContext; dest: var TokenBuf; n: Cursor; s: Sym)
         skipToLocalType d
       result = d
     else:
-      c.buildErr dest, n.info, "could not load symbol: " & pool.syms[s.name] & "; errorCode: " & $res.status
+      c.buildErr dest, n.info, "could not load symbol: " & pool.symString(s.name) & "; errorCode: " & $res.status
       result = c.types.autoType
 
 proc pickBestMatch(c: var SemContext; m: openArray[Match]; flags: set[SemFlag] = {}): int =
@@ -30,7 +30,7 @@ proc pickBestMatch(c: var SemContext; m: openArray[Match]; flags: set[SemFlag] =
         case cmpMatches(m[result], m[i], preferIterators = PreferIterators in flags)
         of NobodyWins:
           other = i
-          #echo "ambiguous ", pool.syms[m[result].fn.sym], " vs ", pool.syms[m[i].fn.sym]
+          #echo "ambiguous ", pool.symString(m[result].fn.sym), " vs ", pool.symString(m[i].fn.sym)
         of FirstWins:
           discard "result remains the same"
         of SecondWins:
@@ -264,7 +264,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     it.kind = a.kind
     typeofCallIs c, dest, it, beforeCall, a.typ
   else:
-    c.buildErr dest, it.n.info, "could not load symbol: " & pool.syms[fnId] & "; errorCode: " & $res.status
+    c.buildErr dest, it.n.info, "could not load symbol: " & pool.symString(fnId) & "; errorCode: " & $res.status
 
 type
   FnCandidates = object
@@ -814,9 +814,9 @@ proc tryConverterMatch(c: var SemContext; convMatch: var Match; f: TypeCursor, a
     var isEmptyOpenArray = false
     if arg.typ.typeKind == AutoT and isEmptyContainer(arg.n) and
         # normal overload of `toOpenArray` for arrays:
-        (pool.syms[conv] == "toOpenArray.0." & SystemModuleSuffix or
+        (pool.symString(conv) == "toOpenArray.0." & SystemModuleSuffix or
           # normal overload of `toOpenArray` for seqs:
-          pool.syms[conv] == "toOpenArray.1." & SystemModuleSuffix):
+          pool.symString(conv) == "toOpenArray.1." & SystemModuleSuffix):
       # infer generic params of openarray converter, then match instantiated empty array/seq arg:
       isEmptyOpenArray = true
       var returnTypeMatch = createMatch(addr c)
@@ -973,7 +973,7 @@ proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item;
     else:
       buildErr c, dest, cs.callNodeInfo, "macro plugin execution failed"
   else:
-    buildErr c, dest, cs.callNodeInfo, "macro '" & pool.syms[finalFn] & "' not compiled"
+    buildErr c, dest, cs.callNodeInfo, "macro '" & pool.symString(finalFn) & "' not compiled"
 
 proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState) =
   # Everything the candidate collection below writes to `dest` is a
@@ -1154,7 +1154,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       # adding args or type args may have errored
       if finalFn.sym != SymId(0) and
           # overload of `@` with empty array param:
-          pool.syms[finalFn.sym] == "@.1." & SystemModuleSuffix and
+          pool.symString(finalFn.sym) == "@.1." & SystemModuleSuffix and
           (AllowEmpty in cs.flags or isSomeSeqType(it.typ) or isSomeOpenArrayType(it.typ)):
         # empty seq will be handled, either by `commonType` now or
         # the call this is an argument of in the case of AllowEmpty

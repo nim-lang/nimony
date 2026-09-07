@@ -222,7 +222,7 @@ proc getErrorMsg*(m: Match): string =
   of InvalidMatch:
     "expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of InvalidRematch:
-    "Could not match again: " & pool.syms[m.error.typeVar] & " expected " &
+    "Could not match again: " & pool.symString(m.error.typeVar) & " expected " &
       typeToString(m.error.expected) & " but got " & typeToString(m.error.got)
   of ConstraintMismatch:
     typeToString(m.error.got) & " does not match constraint " &
@@ -251,13 +251,13 @@ proc getErrorMsg*(m: Match): string =
   of MismatchBug:
     "BUG: expected: " & typeToString(m.error.expected) & " but got: " & typeToString(m.error.got)
   of MissingExplicitGenericParameter:
-    "missing explicit generic parameter for " & pool.syms[m.error.typeVar]
+    "missing explicit generic parameter for " & pool.symString(m.error.typeVar)
   of ExtraGenericParameter:
     "extra generic parameter"
   of RoutineIsNotGeneric:
     "routine is not generic"
   of CouldNotInferTypeVar:
-    "could not infer type for " & pool.syms[m.error.typeVar]
+    "could not infer type for " & pool.symString(m.error.typeVar)
   of TooManyArguments:
     "too many arguments"
   of TooFewArguments:
@@ -1770,7 +1770,7 @@ proc isSomeSeqType*(a: Cursor, elemType: var Cursor): bool =
     return false
   if a.typeKind == InvokeT:
     inc a # tag
-    result = a.isSymbol and pool.syms[a.symId] == "seq.0." & SystemModuleSuffix
+    result = a.isSymbol and pool.symString(a.symId) == "seq.0." & SystemModuleSuffix
     if result:
       inc a
       elemType = a
@@ -1787,7 +1787,7 @@ proc isSomeOpenArrayType*(a: Cursor, elemType: var Cursor): bool =
     return false
   if a.typeKind == InvokeT:
     inc a # tag
-    result = a.isSymbol and pool.syms[a.symId] == "openArray.0." & SystemModuleSuffix
+    result = a.isSymbol and pool.symString(a.symId) == "openArray.0." & SystemModuleSuffix
     if result:
       inc a
       elemType = a
@@ -2182,7 +2182,7 @@ proc isEmptyCall*(n: Cursor): bool =
   var n = n
   n = sub(n) # bound the argument walk
   # overload of `@` with empty array param:
-  result = n.isSymbol and pool.syms[n.symId] == "@.1." & SystemModuleSuffix
+  result = n.isSymbol and pool.symString(n.symId) == "@.1." & SystemModuleSuffix
   inc n
   if not isEmptyLiteral(n):
     return false
@@ -2200,9 +2200,9 @@ proc isEmptyOpenArrayCall*(n: Cursor): bool =
   n = sub(n) # bound the argument walk
   result = n.isSymbol and
     # normal overload of `toOpenArray` for arrays:
-    (pool.syms[n.symId] == "toOpenArray.0." & SystemModuleSuffix or
+    (pool.symString(n.symId) == "toOpenArray.0." & SystemModuleSuffix or
       # normal overload of `toOpenArray` for seqs:
-      pool.syms[n.symId] == "toOpenArray.1." & SystemModuleSuffix)
+      pool.symString(n.symId) == "toOpenArray.1." & SystemModuleSuffix)
   inc n
   if not isEmptyContainer(n):
     return false

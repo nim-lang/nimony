@@ -27,7 +27,7 @@ proc expandNamedFieldBody(buf: var TokenBuf; iter: FieldsIter; fieldName: StrId;
       if fieldSym == SymId(0):
         buf.addStrLit(fieldName, n.info)
       else:
-        buf.addStrLit pool.syms[fieldSym]
+        buf.addStrLit pool.symString(fieldSym)
     elif s == iter.fieldVar1:
       buf.addParLe(DotX, n.info)
       buf.addSubtree iter.obj1

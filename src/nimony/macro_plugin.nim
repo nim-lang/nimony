@@ -240,7 +240,7 @@ proc buildPluginNif*(macroDecl: Cursor; macroSym: SymId;
   ## Symbols from the post-sem macro decl are rewritten to idents at the end
   ## so the plugin module re-runs through sem with its own scope.
   result = createTokenBuf(128)
-  let macroName = cleanSymbolName(pool.syms[macroSym])
+  let macroName = cleanSymbolName(pool.symString(macroSym))
   let implName = macroName & "Impl"
   let paramCount = countParams(macroDecl)
 
@@ -259,7 +259,7 @@ proc buildPluginNif*(macroDecl: Cursor; macroSym: SymId;
 # ----------------------------------------------------------------------------
 
 proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
-  let symName = pool.syms[macroSym]
+  let symName = pool.symString(macroSym)
   var cleanName = ""
   for ch in symName:
     if ch in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
@@ -330,7 +330,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
     echo "Macro plugin: failed to invoke ", cmd
     return ""
   if exitCode != 0:
-    echo "Error compiling macro plugin for '", cleanSymbolName(pool.syms[macroSym]), "':"
+    echo "Error compiling macro plugin for '", cleanSymbolName(pool.symString(macroSym)), "':"
     echo output
     return ""
 

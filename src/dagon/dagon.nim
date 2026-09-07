@@ -92,7 +92,7 @@ proc symHref(ctx: RenderCtx; sym: SymId): string =
   ## `<relative-path-to-target>#…`, computed as the relative path from the
   ## *current* page to the target page under the shared outdir, so the link
   ## works without any web-server config.
-  let s = pool.syms[sym]
+  let s = pool.symString(sym)
   let m = pool.symModule(sym)
   let anchor = urlEscape(s)
   if m.len == 0 or m == ctx.currentModule:
@@ -283,7 +283,7 @@ proc summarise(doc: string): string =
 proc declAnchor(sym: SymId): string =
   ## Anchor id for a decl. Same value byte-for-byte as the URL fragment
   ## produced by `symHref`, so internal links land cleanly.
-  urlEscape(pool.syms[sym])
+  urlEscape(pool.symString(sym))
 
 template emitDeclItem(b: var HtmlBuilder; sym: SymId; body: untyped) =
   ## `<li id="…"><code>…</code></li>` (or NIF `(li "anchor" (code …))`).
@@ -301,7 +301,7 @@ proc recordEntry(idx: var seq[DocIdxEntry]; sk: NimonyStmt; sym: SymId; doc: str
   idx.add DocIdxEntry(
     kind: kindLabel(sk),
     basename: basename(sym),
-    symid: pool.syms[sym],
+    symid: pool.symString(sym),
     summary: summarise(doc))
 
 proc isExported(exported: Cursor): bool =
@@ -436,7 +436,7 @@ proc parseImports(n: var Cursor; ctx: var RenderCtx) =
 proc buildNameLookup(ctx: var RenderCtx) =
   for i in 1 ..< pool.syms.len:
     let sid = SymId(i)
-    let full = pool.syms[sid]
+    let full = pool.symString(sid)
     let modid = pool.symModule(sid)
     if modid.len > 0 and modid != ctx.currentModule and modid notin ctx.importMap:
       continue
