@@ -30,7 +30,20 @@ proc main =
       "(stmts (call foo 42 \"hi\") (asgn x 3.14) (ret -7))",
       "(proc :myproc.0 . . (params (param x.1 (i +32))) (i +32) (stmts (ret 0)))",
       "(x \"longer than three bytes\" 'a' +18446744073709551615u -9223372036854775808)",
-      "(nested (a (b (c (d .)))))"]:
+      "(nested (a (b (c (d .)))))",
+      # Every shape the parser's split-symbol path has to get right: the pool
+      # stores symbols taken apart, so each of these must come back out of it
+      # spelled exactly as it went in (#2457).
+      "(stmts glob.12.mymod gen.12.Ikey.mymod loc.7 a.0 :def.3.mymod)",
+      # a disambiguator that is not a number, so the whole thing is the name
+      "(stmts p.0h107 _exit.sys.mymod d.00)",
+      # two keys is not one instantiation; and a name with dots in it
+      "(stmts foo.0.Ia.Ib.mymod Pool.Obj.0 ..<.3.mymod)",
+      # a trailing dot is this module, which the reader expands before the pool
+      # ever sees it
+      "(stmts self.4. :selfdef.5.)",
+      # escapes inside the name, and an operator definition with none at all
+      "(stmts \\5B\\5D=.0.mymod :\\5B\\5D=)"]:
     var b1 = parseFromBuffer(s, "t")
     assert roundTrips(b1)
 
@@ -66,7 +79,7 @@ proc main =
   assert toString(hinted, includeLineInfo = false) == "(stmts)"
 
   var symbols = createTokenBuf()
-  let fresh = symbols.pool.syms.getOrIncl("tmp.14")
+  let fresh = symbols.pool.symId("tmp.14")
   symbols.addSymDef(fresh)
   assert toString(symbols, includeLineInfo = false) == ":tmp.14"
   var rendered = nifbuilder.open(32)

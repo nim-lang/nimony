@@ -68,8 +68,7 @@ proc countInheritedFieldNames(objType: Cursor; counts: var Table[string, int]; d
     var f = n
     inc f # skip fld/gfld tag
     if f.isSymbolDef:
-      var name = pool.syms[f.symId]
-      extractBasename(name)
+      var name = pool.symBasename(f.symId)
       counts[name] = counts.getOrDefault(name, 0) + 1
     skip n # advance past this whole field
   if not baseType.isDotToken:
@@ -693,7 +692,7 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
   n = invokeStart; skip n
   if ok and paramCount != argCount:
     dest.shrink typeStart
-    c.buildErr dest, info, "wrong amount of generic parameters for type " & pool.syms[headId] &
+    c.buildErr dest, info, "wrong amount of generic parameters for type " & pool.symString(headId) &
       ", expected " & $paramCount & " but got " & $argCount
     return
 

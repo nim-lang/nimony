@@ -11,7 +11,8 @@
 ##     per-TokenBuf. We bridge by threading the globals through every
 ##     `createTokenBuf`, so ids are comparable across buffers. nifcore's
 ##     `Pool.strings/syms/filenames` are plain `BiTable[_,string]`s, so
-##     `pool.syms.getOrIncl` / `pool.strings[id]` are direct field access.
+##     `pool.strings[id]` is direct field access; symbols go through the
+##     `sym*` accessors in nifcore (#2457).
 ##
 ##  2. Line info.  The frontend speaks nifcore's `NifLineInfo` struct
 ##     directly: `.info` reads decode the token's `LineInfoLit` suffix, the
@@ -74,8 +75,6 @@ const NoLineInfo* = NoNifLineInfo
 # separate `TagPool`, and int/float have no pool, so `pool.tags` / `.files` /
 # `.integers` / `.man` are accessors (below, after the proxy types).
 var pool*: Pool = newPool()
-nifcore.fallbackPool = pool
-nifcore.fallbackTags = globalTags
 
 # ── Type aliases ─────────────────────────────────────────────────────────
 
@@ -85,6 +84,13 @@ proc createTokenBuf*(cap = 16): TokenBuf =
   ## Every shim buffer shares the one global literals + tag namespace, so ids
   ## are comparable across buffers (the nifstreams global-`pool` invariant).
   nifcore.createTokenBuf(cap, sharedPool = pool, sharedTags = globalTags)
+
+proc initTokenBuf*(): TokenBuf {.inline.} =
+  ## `createTokenBuf` without the eager storage allocation: the buffer is bound
+  ## to the global pools, the first `add` allocates. Use it wherever a buffer
+  ## used to be left as `default(TokenBuf)` — an object field, a `seq` slot —
+  ## and would otherwise reach the builders with no tag pool at all.
+  nifcore.initTokenBuf(pool, globalTags)
 
 proc registerTag*(tag: string): TagId = registerTag(globalTags, tag)
 

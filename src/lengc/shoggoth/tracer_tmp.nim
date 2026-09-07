@@ -39,23 +39,22 @@ proc dump(stage: string; buf: var TokenBuf) =
 proc optimizeBodyTraced(buf: var TokenBuf; suffix: string; bodies: int;
                         summaries: ptr FunctionSummaryTable; m: ptr MainModule;
                         params: Cursor; eng: Engine; traced: bool) =
-  let bodySuffix = suffix & "." & $bodies
   if traced: dump("(input body)", buf)
   if eng != nil:
     runRewritesFix(eng, buf)
     if traced: dump("rewriter#1", buf)
   runConstructorProjection(buf)
   if traced: dump("constructorProjection", buf)
-  runScalarize(buf, bodySuffix, m)
+  runScalarize(buf, m)
   if traced: dump("scalarize", buf)
   runCopyProp(buf, params, summaries, m)
   if traced: dump("copyProp", buf)
   if eng != nil:
     runRewritesFix(eng, buf)
     if traced: dump("rewriter#2", buf)
-  runInductionVariables(buf, bodySuffix, m)
+  runInductionVariables(buf, m)
   if traced: dump("inductionVars", buf)
-  discard runCSE(buf, bodySuffix, summaries, m)
+  discard runCSE(buf, summaries, m)
   if traced: dump("cse", buf)
 
 proc rebuildTree(dest: var TokenBuf; n: var Cursor; suffix: string;

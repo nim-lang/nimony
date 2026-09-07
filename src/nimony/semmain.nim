@@ -42,7 +42,7 @@ type
 
 proc buildIndexExports(c: var SemContext): TokenBuf =
   if c.exports.len == 0:
-    return default(TokenBuf)
+    return initTokenBuf()
   result = createTokenBuf(32)
   for m, ex in c.exports:
     let path = toAbsolutePath(c.importedModules.getOrQuit(m).path)
@@ -171,7 +171,7 @@ proc writeOutput(c: var SemContext; dest: var TokenBuf; outfile: string) =
           if tk.isTagLit:
             echo "  [", k, "] TagLit ", globalTags.tags[tk.tagId], " jump=", uint32(tk) shr JumpShift
           elif tk.kind in {Symbol, SymbolDef}:
-            echo "  [", k, "] ", tk.kind, " ", pool.syms[tk.symId]
+            echo "  [", k, "] ", tk.kind, " ", pool.symString(tk.symId)
           else:
             echo "  [", k, "] ", tk.kind
         break
@@ -259,7 +259,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
   # For types from the current module, use typeHooks (hooks haven't been embedded
   # in type pragmas yet - that happens in injectDerefs at the end).
   # For types from other modules, use tryLoadAllHooks which reads from type pragmas.
-  let moduleSuffix = extractModule(pool.syms[symId])
+  let moduleSuffix = pool.symModule(symId)
   let hooks = if moduleSuffix == c.thisModuleSuffix:
       c.typeHooks.getOrDefault(symId)
     else:
@@ -301,7 +301,7 @@ proc requestHookInstance(c: var SemContext; decl: Cursor) =
           inc counter
         discard requestRoutineInstance(c, hook, typeArgs, inferred, info)
       else:
-        quit "BUG: Could not load hook: " & pool.syms[hook]
+        quit "BUG: Could not load hook: " & pool.symString(hook)
 
 proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, typeInstSym: SymId): SymId =
   # check if instance actually matches method
@@ -328,8 +328,8 @@ proc instantiateMethodForType(c: var SemContext; dest: var TokenBuf; methodSym, 
     while typevars.hasMore:
       let name = takeLocal(typevars, SkipFinalParRi).name.symId
       if name notin inferred:
-        c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.syms[methodSym] &
-          ", cannot infer generic parameter " & pool.syms[name]
+        c.buildErr dest, res.decl.info, "cannot instantiate method " & pool.symString(methodSym) &
+          ", cannot infer generic parameter " & pool.symString(name)
         return SymId(0)
       typeArgsBuf.addSubtree inferred.getOrQuit(name)
     let instance = requestRoutineInstance(c, methodSym, typeArgsBuf, inferred, res.decl.info)
@@ -545,12 +545,10 @@ proc resolveCyclicImports(c: var SemContext) =
   for (targetSuffix, moduleSym) in c.deferredCyclicImports:
     let module = addr c.importedModules.mgetOrPut(moduleSym, ImportedModule())
     for symId in prog.mem.symIds:
-      let symName = pool.syms[symId]
-      let modSuffix = extractModule(symName)
+      let symName = pool.symString(symId)
+      let modSuffix = pool.symModule(symId)
       if modSuffix == targetSuffix:
-        var baseName = symName
-        extractBasename(baseName)
-        let nameId = pool.strings.getOrIncl(baseName)
+        let nameId = pool.symNameId(symId)
         c.importTab.mgetOrPut(nameId, @[]).addIfAbsent(moduleSym)
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
 
@@ -565,7 +563,12 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
     canSelfExec: canSelfExec,
+    pendingSumtypes: initTokenBuf(),
+    toBuild: initTokenBuf(),
+    toBundle: initTokenBuf(),
     pending: createTokenBuf(),
+    importSnippets: initTokenBuf(),
+    expanded: initTokenBuf(),
     executeExpr: exprexec.executeExpr,
     semStmtCallback: semStmtCallback,
     semGetSize: semGetSize,
@@ -647,7 +650,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
 
   var modules = newSeqOfCap[ModuleState](infiles.len)
   for i in 0..<infiles.len:
-    var ms = ModuleState(outfile: outfiles[i])
+    var ms = ModuleState(outfile: outfiles[i], buf1: initTokenBuf())
     ms.owningBuf = createTokenBuf(300)
     if i == 0:
       ms.n0 = setupProgram(infiles[i], outfiles[i], ms.owningBuf)

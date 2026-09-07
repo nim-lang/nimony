@@ -170,7 +170,7 @@ proc forgeExpansionInfo*(c: var SemContext; dest: var TokenBuf; start: int;
   ## pay for it, and only a debug build reads the result.
   if not c.g.config.inlineFrames: return
   if start >= dest.len: return
-  let originSym = pool.syms[origin]
+  let originSym = pool.symString(origin)
   let originDeclFile =
     if declInfo.file.isValid: realFile(pool.filenames[declInfo.file]) else: ""
 
@@ -388,8 +388,7 @@ proc addTemplFormalsToScope(c: var SemContext; buf: TokenBuf; at: int) =
       while p.hasMore:
         let param = asLocal(p)
         if param.name.isSymbolDef:
-          var nameStr = pool.syms[param.name.symId]
-          extractBasename(nameStr)
+          var nameStr = pool.symBasename(param.name.symId)
           if nameStr.len > 0:
             # `param.kind` is the decl's own `ParamY` / `TypevarY`, so the two
             # call sites cannot disagree with the structure they pass.

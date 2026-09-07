@@ -977,7 +977,7 @@ proc shouldCollapseTry(c: var Context; tryAfterTag: Cursor): bool =
 proc emitRefExceptionType(dest: var TokenBuf; info: NifLineInfo) =
   ## Emits `(ref Exception)` into `dest`.
   dest.copyIntoKind RefT, info:
-    dest.addSymUse pool.syms.getOrIncl(ExceptionName), info
+    dest.addSymUse pool.symId(ExceptionName), info
 
 proc trTryCollapsed(c: var Context; n: var Cursor) =
   ## Lower a try with ref-typed except arms into a single catchall
@@ -1000,8 +1000,8 @@ proc trTryCollapsed(c: var Context; n: var Cursor) =
 
     # Mint a fresh symbol for `err` (moved-out exc).
     inc c.tmpCounter
-    let errSym = pool.syms.getOrIncl("`err." & $c.tmpCounter)
-    let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+    let errSym = pool.symId("`err." & $c.tmpCounter)
+    let excSym = pool.symId(ExcThreadVarName)
 
     # Open the synthesized `(except . (stmts ...))`
     c.dest.addParLe ExceptU, info
@@ -1155,7 +1155,7 @@ proc trRaise(c: var Context; n: var Cursor) =
   if lookahead.isDotToken:
     if c.handlerStack.len > 0:
       let h = c.handlerStack[^1]
-      let excSym = pool.syms.getOrIncl(ExcThreadVarName)
+      let excSym = pool.symId(ExcThreadVarName)
       c.dest.copyIntoKind StmtsS, info:
         c.dest.copyIntoKind AsgnS, info:
           c.dest.addSymUse excSym, info
@@ -1173,8 +1173,8 @@ proc trRaise(c: var Context; n: var Cursor) =
 
   let opType = getType(c.typeCache, lookahead, {SkipAliases})
   if opType.typeKind == RefT:
-    let excSym = pool.syms.getOrIncl(ExcThreadVarName)
-    let failureSym = pool.syms.getOrIncl(FailureName)
+    let excSym = pool.symId(ExcThreadVarName)
+    let failureSym = pool.symId(FailureName)
     c.dest.copyIntoKind StmtsS, info:
       c.dest.addParLe AsgnS, info
       c.dest.addSymUse excSym, info
@@ -1556,7 +1556,7 @@ proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
                    thisModuleSuffix: string; bits: int): TokenBuf =
   var c = Context(typeCache: createTypeCache(bits),
-    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: TokenBuf(),
+    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: initTokenBuf(),
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),
     lifter: nil) # set below after hooks is moved

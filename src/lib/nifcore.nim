@@ -316,6 +316,45 @@ proc setTag*(n: var NifToken; t: TagId) {.inline.} =
 #   pool across adapters destroys that property and gives no benefit
 #   (tag namespaces don't overlap meaningfully).
 
+# ── Symbols are objects, not strings (#2457) ─────────────────────────────
+#
+# A NIF symbol is `<name>.<disamb>`, `<name>.<disamb>.<module>` or
+# `<name>.<disamb>.<dedup>.<module>`, and the rest of the compiler used to take
+# that apart again at every question it asked. The pool STORES the taken-apart
+# form, so every question below is a field read and nothing re-derives anything.
+
+type
+  NifSymbol* = object
+    ## A NIF symbol, taken apart. The three names are ids into `Pool.strings`:
+    ## a module suffix is repeated by every symbol that comes from that module
+    ## (54 modules for 8044 symbols in a typical nimsem module), so asking
+    ## "same module?" must not mean building two strings and comparing them.
+    name*: StrId
+    disamb*: int32
+      ## `NoDisamb` when the spelling has none that is a NUMBER -- then `name`
+      ## holds everything up to the module suffix, and the symbol round-trips
+      ## unchanged. That covers an atom that is not a symbol at all (`[]=`) and
+      ## the reserved disambiguators older artifacts still carry
+      ## (`_exit.sys.mod`, `p.0h107`).
+    dedup*: StrId   ## `StrId(0)` unless the symbol is a generic instantiation
+    module*: StrId  ## `StrId(0)` for a local symbol
+
+const
+  NoDisamb* = -1'i32
+
+proc `==`*(a, b: NifSymbol): bool {.inline.} =
+  a.name == b.name and a.disamb == b.disamb and
+  a.dedup == b.dedup and a.module == b.module
+
+proc hash*(s: NifSymbol): Hash =
+  ## Four ids mixed, not a string walked: this is what the pool hashes on every
+  ## intern, and the reason interning a symbol stopped costing a string hash.
+  var h = uint64(uint32(s.name)) * 0x9E3779B97F4A7C15'u64
+  h = (h xor uint64(uint32(s.disamb))) * 0x9E3779B97F4A7C15'u64
+  h = (h xor uint64(uint32(s.dedup))) * 0x9E3779B97F4A7C15'u64
+  h = (h xor uint64(uint32(s.module))) * 0x9E3779B97F4A7C15'u64
+  result = cast[Hash](h)
+
 type
   Pool* = ref object
     ## Pool pool — only categories where dedup genuinely pays:
@@ -324,7 +363,7 @@ type
     ## `ExtendedSuffix` tokens to widen the carrier), so there's no
     ## pool for them — no hash lookups, no auto-tune machinery.
     strings*:   BiTable[StrId, string]
-    syms*:      BiTable[SymId, string]
+    symbols*:   BiTable[SymId, NifSymbol]
     filenames*: BiTable[FileId, string]
       ## Source filenames referenced by `LineInfoLit` tokens. Line/col are
       ## encoded inline in the token; only the filename is interned here.
@@ -355,7 +394,7 @@ type
 
 proc newPool*(): Pool =
   Pool(strings:   initBiTable[StrId, string](),
-       syms:      initBiTable[SymId, string](),
+       symbols:   initBiTable[SymId, NifSymbol](),
        filenames: initBiTable[FileId, string]())
 
 proc newTagPool*(): TagPool =
@@ -398,7 +437,310 @@ template tagName*(tp: TagPool; t: TagId): lent string = tp.tags[t]
 # strings/syms don't have ids). Prefer the cursor-side `strVal(c)` /
 # `symName(c)` accessors which handle both modes transparently.
 template poolStr*(p: Pool; s: StrId): lent string = p.strings[s]
-template poolSym*(p: Pool; s: SymId): lent string = p.syms[s]
+
+# ── Asking a symbol what it is ───────────────────────────────────────────
+
+proc sym*(p: Pool; id: SymId): NifSymbol {.inline.} =
+  ## The symbol `id`, taken apart. A field read.
+  p.symbols[id]
+
+proc strOrEmpty(p: Pool; s: StrId): string {.inline.} =
+  if s == StrId(0): "" else: p.strings[s]
+
+proc symBasename*(p: Pool; id: SymId): string =
+  ## The identifier of `id`, without disambiguator, key or module suffix:
+  ## `abc.12.Ikey.mod` gives `abc`. A name may contain dots itself
+  ## (`Pool.Obj.0` gives `Pool.Obj`), and an atom that is not a symbol at all
+  ## gives `""` -- it has no identifier to name.
+  let s = p.symbols[id]
+  if s.disamb == NoDisamb: "" else: p.strings[s.name]
+
+proc symNameId*(p: Pool; id: SymId): StrId {.inline.} =
+  ## `symBasename` as an id -- the one to compare identifiers by.
+  p.symbols[id].name
+
+proc symVersionedBasename*(p: Pool; id: SymId): string =
+  ## The identifier AND its disambiguator, without key or module suffix:
+  ## `abc.12.Ikey.mod` gives `abc.12`. That is a name for the ROUTINE, not for
+  ## one instantiation of it -- `symWithoutModule` is the one that keeps the
+  ## key. An atom that is not a symbol gives `""`.
+  let s = p.symbols[id]
+  if s.disamb == NoDisamb:
+    result = ""
+  else:
+    result = p.strings[s.name]
+    result.add '.'
+    result.addInt s.disamb
+
+proc symIsInstantiation*(p: Pool; id: SymId): bool =
+  ## Whether `id` carries a deduplication key -- the `Ikey` of
+  ## `abc.12.Ikey.mod`, which every module needing that instantiation derives
+  ## the same way. That is what makes `symWithoutModule` a cross-module
+  ## identity for it and only for it.
+  ##
+  ## ONE key, spelled the way nimony spells one: a name with two of them
+  ## (`foo.0.Ia.Ib.mod`) is not an instantiation of anything this toolchain
+  ## minted, and nifasm merges symbols by this answer -- it once hand-rolled
+  ## its own and merged such a name wrongly.
+  let d = p.symbols[id].dedup
+  if d == StrId(0): return false
+  let key = p.strings[d]
+  if key.len == 0 or key[0] != 'I': return false
+  for c in key:
+    if c == '.': return false
+  result = true
+
+proc symWithoutModule*(p: Pool; id: SymId): string =
+  ## `id` minus its module suffix: `abc.12.Ikey.mod` gives `abc.12.Ikey`, and a
+  ## local symbol gives itself. For an instantiation this is the name every
+  ## module that needs it arrives at independently, so it is the key to merge
+  ## the copies by -- DCE, the type-key builder and overload resolution all use
+  ## it for exactly that.
+  let s = p.symbols[id]
+  result = p.strings[s.name]
+  if s.disamb != NoDisamb:
+    result.add '.'
+    result.addInt s.disamb
+  if s.dedup != StrId(0):
+    result.add '.'
+    result.add p.strings[s.dedup]
+
+proc symSameEntity*(p: Pool; a, b: SymId): bool =
+  ## Whether two DIFFERENT symbols name the same entity seen from two modules:
+  ## both are instantiations and everything but the module suffix matches.
+  if a == b: return true
+  let sa = p.symbols[a]
+  let sb = p.symbols[b]
+  result = sa.dedup != StrId(0) and sa.dedup == sb.dedup and
+           sa.name == sb.name and sa.disamb == sb.disamb
+
+proc symModule*(p: Pool; id: SymId): string {.inline.} =
+  ## The module suffix of `id`, `""` when it is local. For the places that need
+  ## the suffix as a string -- a table key, a file name, a `(strlit)` -- while
+  ## `sym(p, id).module` is what a COMPARISON should use.
+  strOrEmpty(p, p.symbols[id].module)
+
+proc symIsLocal*(p: Pool; id: SymId): bool {.inline.} =
+  ## Whether `id` has no module suffix. A question about the module, never
+  ## about how many dots the spelling has: real names contain dots
+  ## (`Pool.Obj`, `dollar`.CaseMode`, `..<`).
+  p.symbols[id].module == StrId(0)
+
+proc symModuleIs*(p: Pool; id: SymId; suffix: string): bool =
+  ## Whether `id` comes from the module `suffix`. Builds nothing.
+  let m = p.symbols[id].module
+  result = m != StrId(0) and p.strings[m] == suffix
+
+proc digitCount(x: int32): int {.inline.} =
+  result = 1
+  var v = x div 10
+  while v > 0:
+    inc result
+    v = v div 10
+
+proc symSpellingLen*(p: Pool; id: SymId): int =
+  ## How long `symString` would be, without building it. The token writers ask
+  ## only to decide whether the name fits inside the token itself.
+  let s = p.symbols[id]
+  result = p.strings[s.name].len
+  if s.disamb != NoDisamb: result += 1 + digitCount(s.disamb)
+  if s.dedup != StrId(0): result += 1 + p.strings[s.dedup].len
+  if s.module != StrId(0): result += 1 + p.strings[s.module].len
+
+proc symString*(p: Pool; s: NifSymbol): string =
+  ## The spelling `s` would be interned under.
+  result = p.strings[s.name]
+  if s.disamb != NoDisamb:
+    result.add '.'
+    result.addInt s.disamb
+  if s.dedup != StrId(0):
+    result.add '.'
+    result.add p.strings[s.dedup]
+  if s.module != StrId(0):
+    result.add '.'
+    result.add p.strings[s.module]
+
+proc symString*(p: Pool; id: SymId): string {.inline.} =
+  ## The whole spelling of `id`. Builds a string, so it is for the places that
+  ## genuinely need one -- the C mangler, error messages, serialization -- and
+  ## never for asking a question the accessors above answer.
+  symString(p, p.symbols[id])
+
+const
+  DisambMax* = int(high(int32))
+    ## Largest disambiguator `NifSymbol.disamb` can hold.
+
+proc parseDisamb*(s: string; start, len: int): int =
+  ## The value of the disambiguator spelled by `s[start ..< start+len]`, or -1
+  ## when that is not how NIF spells a number:
+  ##
+  ## * digits only -- `p.0h107` names no `p` with a disambiguator;
+  ## * no leading zero -- `d.00` is a NAME, and deliberately so: no user symbol
+  ##   can collide with a field the compiler injects (`typenav.DataField`);
+  ## * small enough to fit the field.
+  ##
+  ## A spelling that fails any of these keeps its tail inside the NAME, which is
+  ## what lets every symbol round-trip through the pool unchanged. The reader's
+  ## split-symbol path asks this too, so the two agree about the same bytes.
+  if len == 0: return -1
+  if len > 1 and s[start] == '0': return -1
+  result = 0
+  for i in start ..< start+len:
+    if s[i] notin {'0'..'9'}: return -1
+    result = result * 10 + (ord(s[i]) - ord('0'))
+    if result > DisambMax: return -1
+
+type
+  Spelling = object
+    ## Where each part of `<name>.<disamb>[.<dedup>].<module>` sits inside the
+    ## string that spells it. Private: it exists to build a `NifSymbol` and to
+    ## look one up, and both are here.
+    nameLen: int
+    disamb: int32          ## `NoDisamb` when there is none that is a number
+    dedupStart, dedupLen: int
+    moduleStart, moduleLen: int
+
+proc splitSpelling(s: string): Spelling =
+  ## The module is the LAST dot-separated component -- unless it STARTS with a
+  ## digit, which makes it the disambiguator and the symbol local. `p.0h107` is
+  ## a local whose disambiguator an inliner minted, not a symbol from a module
+  ## called `0h107`.
+  ##
+  ## The name/disambiguator boundary needs the digit anchor, because a name may
+  ## contain dots itself (`Pool.Obj.0`, `a.b.c.23`, `..<.3`) and only the digit
+  ## tells the two apart. Everything not accounted for stays in the name.
+  result = Spelling(nameLen: s.len, disamb: NoDisamb,
+                    dedupStart: 0, dedupLen: 0, moduleStart: 0, moduleLen: 0)
+  var lastDot = -1
+  for k in 0 ..< s.len:
+    if s[k] == '.': lastDot = k
+  var head = s.len
+  if lastDot >= 0:
+    if lastDot+1 < s.len and s[lastDot+1] notin {'0'..'9'}:
+      result.moduleStart = lastDot+1
+      result.moduleLen = s.len - (lastDot+1)
+      head = lastDot
+    elif lastDot == s.len-1:
+      head = lastDot
+  result.nameLen = head
+
+  var i = head - 2
+  while i > 0:
+    if s[i] == '.' and s[i+1] in {'0'..'9'}: break
+    dec i
+  if i <= 0: return  # no numeric disambiguator: the head is all name
+
+  var d = i+1
+  while d < head and s[d] in {'0'..'9'}: inc d
+  var disambLen = head - (i+1)
+  if d < head and s[d] == '.':
+    disambLen = d - (i+1)
+  let v = parseDisamb(s, i+1, disambLen)
+  if v < 0: return   # `p.0h107`, `d.00`: it belongs to the name
+  result.nameLen = i
+  result.disamb = int32(v)
+  if d < head and s[d] == '.':
+    result.dedupStart = d+1
+    result.dedupLen = head - (d+1)
+
+proc symRecord*(p: Pool; s: string): NifSymbol =
+  ## Take a spelling apart into the record the pool stores, interning each
+  ## component. Every spelling round-trips: one whose disambiguator is not a
+  ## NUMBER keeps it inside the name (`NoDisamb`), so the reserved forms older
+  ## artifacts carry (`_exit.sys.mod`, `p.0h107`) come back out unchanged.
+  assert s.len == 0 or s[s.len-1] != '.',
+    "a symbol reaches the pool with its module suffix expanded, never as `" & s & "`"
+  let sl = splitSpelling(s)
+  result = NifSymbol(name: p.strings.getOrIncl(substr(s, 0, sl.nameLen-1)),
+                     disamb: sl.disamb, dedup: StrId(0), module: StrId(0))
+  if sl.dedupLen > 0:
+    result.dedup = p.strings.getOrIncl(substr(s, sl.dedupStart,
+                                              sl.dedupStart+sl.dedupLen-1))
+  if sl.moduleLen > 0:
+    result.module = p.strings.getOrIncl(substr(s, sl.moduleStart,
+                                               sl.moduleStart+sl.moduleLen-1))
+
+proc symId*(p: Pool; s: string): SymId {.inline.} =
+  ## Intern a symbol given its whole spelling. This is what the reader and the
+  ## deserializers have; code that MINTS a symbol should say what its parts are
+  ## instead (the overload below).
+  p.symbols.getOrIncl(symRecord(p, s))
+
+proc symId*(p: Pool; name: string; disamb: int; module = ""; dedup = ""): SymId =
+  ## Intern a symbol from its parts. `module` empty means a local symbol.
+  var r = NifSymbol(name: p.strings.getOrIncl(name), disamb: int32(disamb),
+                    dedup: StrId(0), module: StrId(0))
+  if dedup.len > 0: r.dedup = p.strings.getOrIncl(dedup)
+  if module.len > 0: r.module = p.strings.getOrIncl(module)
+  result = p.symbols.getOrIncl(r)
+
+proc symId*(p: Pool; s: NifSymbol): SymId {.inline.} =
+  p.symbols.getOrIncl(s)
+
+proc isLocal*(s: NifSymbol): bool {.inline.} = s.module == StrId(0)
+
+# ── The classic string-shaped view of the symbol pool ────────────────────
+#
+# The Nim compiler's IC modules speak to the symbol pool as a
+# `BiTable[SymId, string]`, and ask it exactly four things:
+# `pool.syms.getOrIncl(name)`, `pool.syms[id]`, `pool.syms.getKeyId(name)` and
+# `poolSym(pool, id)`. That is the surface `lib/nifstreams.nim` exists to keep
+# working, and it must keep working THROUGH the flip (#2457): the pool stores
+# `NifSymbol` records now, so `syms` is a view answering those questions with
+# `symId` / `symString`.
+#
+# Twelve files in `nim/compiler` import this library, and CI is the only place
+# they are COMPILED against it: its setup symlinks `nim/dist/nimony` to the
+# nimony checkout, while a local Nim has a copy of its own. So a change to the
+# names below builds green here and red there -- keep them, or fix Nim first.
+#
+# Nimony's own code does not use it: it asks the accessors above, which do not
+# build a string to ask a question.
+
+type
+  SymPool* = object
+    # NOT named `p`: the constructor below is written inside a template whose
+    # parameter would then substitute the FIELD name too, and the expansion
+    # stops parsing.
+    pool: Pool
+
+template syms*(p: Pool): SymPool = SymPool(pool: p)
+
+template poolSym*(p: Pool; s: SymId): string = symString(p, s)
+  ## The classic name for `symString`, and the fourth thing the Nim compiler's
+  ## IC modules ask (`ast2nif.indexFromBif`). It used to yield `lent string`
+  ## straight out of the pool; the pool has no string to lend now, so this
+  ## builds one -- the callers all wanted a copy anyway (a table key, a name to
+  ## re-emit).
+
+proc getOrIncl*(s: SymPool; name: string): SymId {.inline.} =
+  symId(s.pool, name)
+
+proc `[]`*(s: SymPool; id: SymId): string {.inline.} =
+  symString(s.pool, id)
+
+proc len*(s: SymPool): int {.inline.} =
+  s.pool.symbols.len
+
+proc getKeyId*(s: SymPool; name: string): SymId =
+  ## The id `name` already has, or `SymId(0)` when the pool does not hold it.
+  ## Looks up without interning ANYTHING: a component this pool never saw is
+  ## proof the symbol is not in it, which is the answer the caller wanted.
+  ensureIndexed s.pool.strings
+  ensureIndexed s.pool.symbols
+  let sl = splitSpelling(name)
+  var r = NifSymbol(name: s.pool.strings.getKeyId(substr(name, 0, sl.nameLen-1)),
+                    disamb: sl.disamb, dedup: StrId(0), module: StrId(0))
+  if sl.dedupLen > 0:
+    r.dedup = s.pool.strings.getKeyId(substr(name, sl.dedupStart,
+                                             sl.dedupStart+sl.dedupLen-1))
+    if r.dedup == StrId(0): return SymId(0)
+  if sl.moduleLen > 0:
+    r.module = s.pool.strings.getKeyId(substr(name, sl.moduleStart,
+                                              sl.moduleStart+sl.moduleLen-1))
+    if r.module == StrId(0): return SymId(0)
+  if r.name == StrId(0): return SymId(0)
+  result = s.pool.symbols.getKeyId(r)
 
 # ── Storage / CursorOwner / Cursor ───────────────────────────────────────
 
@@ -441,27 +783,45 @@ proc decRcAndFree(owner: CursorOwner) =
       owner.tags = nil
     dealloc(owner)
 
-var
-  fallbackPool*: Pool = nil
-    ## Application-default literals pool: cursor accessors use it when the
-    ## underlying buffer carries no pool (e.g. a `default(TokenBuf)` that was
-    ## filled via raw/interned adds). Applications that share ONE pool across
-    ## all buffers (like the nimony toolchain) set this once at startup;
-    ## adapters with per-buffer pools leave it nil.
-  fallbackTags*: TagPool = nil
-    ## Application-default tag pool, same contract as `fallbackPool`.
+when defined(nimonyPlugin):
+  # ── The plugin build's process-wide pools ──────────────────────────────
+  #
+  # A nimony PLUGIN is an executable that transforms one tree in one tag
+  # namespace, and `plugins.NifBuilder` is a plain alias for `TokenBuf`, so a
+  # plugin author can hand the API a builder `createTree` never minted: an
+  # object field, a `default(...)`, a `seq` slot. That API is public and stays
+  # total, so the plugin build keeps a process-wide default to bind such a
+  # buffer to — `src/nimony/lib/plugins.nim` installs it at module init.
+  #
+  # `-d:nimonyPlugin` is set by `semos.pluginCompileCmd` for every plugin
+  # sub-compile and by nothing else, so the compiler's own nifcore — the
+  # subject of nim-lang/nimony#2456 — contains no mutable module-level state
+  # whatsoever, and every buffer in it carries pools threaded in at
+  # construction.
+  var
+    fallbackPool*: Pool = nil
+      ## Plugin-process default literals pool; nil in every other build.
+    fallbackTags*: TagPool = nil
+      ## Plugin-process default tag pool, same contract as `fallbackPool`.
+
+  template defaultPool(): Pool = fallbackPool
+  template defaultTags(): TagPool = fallbackTags
+else:
+  template defaultPool(): Pool = nil
+  template defaultTags(): TagPool = nil
 
 proc pool*(c: Cursor): Pool {.inline.} =
-  ## Pool pool the cursor's underlying buffer was built against,
-  ## or `fallbackPool` when the buffer carries none.
-  if c.owner != nil and c.owner.pool != nil: c.owner.pool else: fallbackPool
+  ## Literals pool the cursor's underlying buffer was built against, or the
+  ## plugin build's default (`nil` everywhere else) when it carries none.
+  if c.owner != nil and c.owner.pool != nil: c.owner.pool else: defaultPool()
 
 proc tags*(c: Cursor): TagPool {.inline.} =
-  ## Tag pool the cursor's underlying buffer was built against (or
-  ## `fallbackTags`). Adapter code is expected to know which TagPool layout
-  ## to expect, so callers typically reach for
-  ## `cast[MyTag](c.cursorTagId.uint32)` instead of consulting `c.tags`.
-  if c.owner != nil and c.owner.tags != nil: c.owner.tags else: fallbackTags
+  ## Tag pool the cursor's underlying buffer was built against, or the plugin
+  ## build's default (`nil` everywhere else) when it carries none. Adapter code
+  ## is expected to know which TagPool layout to expect, so callers typically
+  ## reach for `cast[MyTag](c.cursorTagId.uint32)` instead of consulting
+  ## `c.tags`.
+  if c.owner != nil and c.owner.tags != nil: c.owner.tags else: defaultTags()
 
 proc escapeTagOf*(c: Cursor): TagId {.inline.} =
   ## The adapter's escape tag, or `TagId(0)` when it declares none — which is
@@ -476,9 +836,12 @@ proc escapeTagOf*(c: Cursor): TagId {.inline.} =
   ## `tags` plus that destructor cost more than `skip` and `symId` together, for a
   ## pool that outlives the program. Reading the field through the raw owner
   ## pointer takes no reference and reaches no hook.
-  if c.owner != nil and c.owner.tags != nil: c.owner.tags.escapeTag
-  elif fallbackTags != nil: fallbackTags.escapeTag
-  else: TagId(0)
+  if c.owner != nil and c.owner.tags != nil:
+    result = c.owner.tags.escapeTag
+  else:
+    result = TagId(0)
+    when defined(nimonyPlugin):
+      if fallbackTags != nil: result = fallbackTags.escapeTag
 
 proc toUniqueId*(c: Cursor): int {.inline.} =
   ## A stable identity for the cursor's *position*: two cursors over the same
@@ -698,8 +1061,13 @@ proc strVal*(c: Cursor; pool: Pool): string =
 # costs nothing, so the branch is written here where the value is consumed
 # immediately. Same reasoning as `escapeTagOf`; measured together on nifbench.
 proc strVal*(c: Cursor): string {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: strVal(c, c.owner.pool)
-  else: strVal(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: strVal(c, c.owner.pool)
+    else: strVal(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "strVal on a cursor with no literals pool"
+    strVal(c, c.owner.pool)
 
 proc strId*(c: Cursor; pool: Pool): StrId =
   ## Stable pool id of the StrLit/Ident at `c` — the inverse of `strVal`.
@@ -714,8 +1082,13 @@ proc strId*(c: Cursor; pool: Pool): StrId =
     StrId(combinedPayload(c) shr 1)
 
 proc strId*(c: Cursor): StrId {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: strId(c, c.owner.pool)
-  else: strId(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: strId(c, c.owner.pool)
+    else: strId(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "strId on a cursor with no literals pool"
+    strId(c, c.owner.pool)
 
 proc symName*(c: Cursor; pool: Pool): string =
   checkKind c.kind in {Symbol, SymbolDef}, "symName on ", c.kind
@@ -723,11 +1096,16 @@ proc symName*(c: Cursor; pool: Pool): string =
   if (payload and StrInlineFlag) != 0'u32:
     readInlineStr(payload)
   else:
-    pool.syms[SymId(combinedPayload(c) shr 1)]
+    symString(pool, SymId(combinedPayload(c) shr 1))
 
 proc symName*(c: Cursor): string {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: symName(c, c.owner.pool)
-  else: symName(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: symName(c, c.owner.pool)
+    else: symName(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "symName on a cursor with no literals pool"
+    symName(c, c.owner.pool)
 
 proc symId*(c: Cursor; pool: Pool): SymId =
   ## Stable pool id of the Symbol/SymbolDef at `c` — the inverse of `symName`.
@@ -736,13 +1114,18 @@ proc symId*(c: Cursor; pool: Pool): SymId =
   checkKind c.kind in {Symbol, SymbolDef}, "symId on ", c.kind
   let payload = c.load.uoperand
   if (payload and StrInlineFlag) != 0'u32:
-    pool.syms.getOrIncl(readInlineStr(payload))
+    symId(pool, readInlineStr(payload))
   else:
     SymId(combinedPayload(c) shr 1)
 
 proc symId*(c: Cursor): SymId {.inline.} =
-  if c.owner != nil and c.owner.pool != nil: symId(c, c.owner.pool)
-  else: symId(c, fallbackPool)
+  when defined(nimonyPlugin):
+    if c.owner != nil and c.owner.pool != nil: symId(c, c.owner.pool)
+    else: symId(c, fallbackPool)
+  else:
+    assert c.owner != nil and c.owner.pool != nil,
+      "symId on a cursor with no literals pool"
+    symId(c, c.owner.pool)
 
 # Int/UInt/Float: pure-inline via chainable ExtendedSuffix.
 #
@@ -1032,14 +1415,24 @@ else:
     if dest.owner != nil: decRcAndFree(dest.owner)
     elif dest.data != nil: dealloc(dest.data)
 
-template ensurePools*(b: var TokenBuf) =
-  ## Bind the application-default pools to a buffer that was created without
-  ## any (e.g. `default(TokenBuf)`), so interning builders and cross-pool
-  ## copies work on it. No-op when the buffer already has pools.
-  if b.pool == nil:
-    b.pool = (if fallbackPool != nil: fallbackPool else: newPool())
-  if b.tags == nil:
-    b.tags = (if fallbackTags != nil: fallbackTags else: newTagPool())
+template requirePools*(b: var TokenBuf) =
+  ## A buffer the interning builders and the cross-pool copy are about to write
+  ## through must carry both of its pools. They are THREADED in at construction
+  ## (`createTokenBuf` / `initTokenBuf`) and never invented here: a literals
+  ## pool decides what a token's payload id means and a tag pool is the
+  ## buffer's whole kind space, so substituting a fresh one for either silently
+  ## reinterprets everything already in the buffer. `default(TokenBuf)` is not
+  ## a usable buffer; `initTokenBuf` is the zero-allocation way to spell one.
+  ##
+  ## The plugin build is the exception, and only there: it binds its
+  ## process-wide pools rather than reject the buffer, because
+  ## `plugins.NifBuilder` is a public alias whose `default` shape must keep
+  ## working. See the `nimonyPlugin` block above.
+  when defined(nimonyPlugin):
+    if b.pool == nil: b.pool = fallbackPool
+    if b.tags == nil: b.tags = fallbackTags
+  assert b.pool != nil, "TokenBuf has no literals pool"
+  assert b.tags != nil, "TokenBuf has no tag pool"
 
 proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
                      sharedTags: TagPool = nil): TokenBuf =
@@ -1060,6 +1453,14 @@ proc createTokenBuf*(cap = 16; sharedPool: Pool = nil;
     pool: (if sharedPool != nil: sharedPool else: newPool()),
     tags: (if sharedTags != nil: sharedTags else: newTagPool())
   )
+
+proc initTokenBuf*(sharedPool: Pool; sharedTags: TagPool): TokenBuf {.inline.} =
+  ## A buffer bound to `sharedPool`/`sharedTags` that owns NO storage yet — the
+  ## first `add` allocates it. This is what an object field, a `seq` slot or any
+  ## other buffer that used to be spelled `default(TokenBuf)` must be
+  ## initialized with: the tag pool is a buffer's whole kind space, so it is
+  ## THREADED in at construction and never fallen back to.
+  TokenBuf(data: nil, len: 0, cap: 0, pool: sharedPool, tags: sharedTags)
 
 proc adoptForeignTokens*(data: pointer; count: int;
                          sharedPool: Pool = nil; sharedTags: TagPool = nil): TokenBuf =
@@ -1231,7 +1632,7 @@ proc appendLineInfo*(b: var TokenBuf; file: FileId; line, col: int32;
   ## none) — a NIF `#…#` decoration on this head. A non-zero comment forces the
   ## overflow position layout and rides as one further `ExtendedSuffix` (a second
   ## only for ids past 2^28), so `rawLineInfo` recovers it unambiguously.
-  ensurePools(b)
+  requirePools(b)
   if not file.isValid: return
   var line = line
   var col = col
@@ -1280,7 +1681,7 @@ proc encodeInlineStr(s: string): uint32 {.inline.} =
 template addStringLike(b: var TokenBuf; kind: NifKind; s: string; pool: untyped) =
   ## Shared body for StrLit/Ident/Symbol/SymbolDef. Inlines bytes for
   ## `s.len <= 3`; otherwise interns in the given `pool` BiTable.
-  ensurePools(b)
+  requirePools(b)
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(kind, encodeInlineStr(s)))
   else:
@@ -1303,7 +1704,7 @@ proc addStrLit*(b: var TokenBuf; s: openArray[char]) {.nifEmits: "LIT".} =
   ## reading someone else's buffer this saves cutting a slice out of it first:
   ## a short value costs nothing at all, and a long one costs the single copy
   ## the pool was going to make anyway.
-  ensurePools(b)
+  requirePools(b)
   if s.len <= StrInlineMaxLen:
     b.add NifToken(toX(StrLit, encodeInlineStrView(s)))
   else:
@@ -1318,19 +1719,32 @@ proc addIdent*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
   ## Appends an identifier, using inline storage when possible.
   addStringLike(b, Ident,  s, b.pool.strings)
 
+template addSymLike(b: var TokenBuf; kind: NifKind; s: string) =
+  ## `addStringLike` for the SYMBOL pool, which does not take a spelling: the
+  ## pool stores the taken-apart form, so interning goes through `symId`.
+  requirePools(b)
+  if s.len <= StrInlineMaxLen:
+    b.add NifToken(toX(kind, encodeInlineStr(s)))
+  else:
+    let payload = uint64(uint32(symId(b.pool, s))) shl 1  # bit 0 = 0 => pool ref
+    b.add NifToken(toX(kind, lowBits(payload)))
+    addSuffixIfNeeded(b, payload)
+
 proc addSymUse*(b: var TokenBuf; s: string) {.nifEmits: "Y".} =
   ## Appends a symbol use, interning `s` when it does not fit inline.
-  addStringLike(b, Symbol, s, b.pool.syms)
+  addSymLike(b, Symbol, s)
 
 proc addSymDef*(b: var TokenBuf; s: string) {.nifEmits: "D".} =
   ## Appends a symbol definition, interning `s` when it does not fit inline.
-  addStringLike(b, SymbolDef, s, b.pool.syms)
+  addSymLike(b, SymbolDef, s)
 
 proc addInternedSymbol(b: var TokenBuf; kind: NifKind; id: SymId) =
-  ensurePools(b)
-  let s = b.pool.syms[id]
-  if s.len <= StrInlineMaxLen:
-    b.add NifToken(toX(kind, encodeInlineStr(s)))
+  requirePools(b)
+  # `symSpellingLen` rather than `symString`: this runs on every emitted
+  # symbol, and only the rare name short enough to live inside the token is
+  # worth building.
+  if symSpellingLen(b.pool, id) <= StrInlineMaxLen:
+    b.add NifToken(toX(kind, encodeInlineStr(symString(b.pool, id))))
   else:
     let payload = uint64(uint32(id)) shl 1
     b.add NifToken(toX(kind, lowBits(payload)))
@@ -1344,9 +1758,8 @@ proc internedSymToken*(p: Pool; kind: NifKind; id: SymId): NifToken =
   ## breaks the same-string ⇒ same-payload invariant the writer rule
   ## establishes (and hence every payload-level equality test).
   assert kind == Symbol or kind == SymbolDef, "not a symbol kind: " & $kind
-  let s = p.syms[id]
-  if s.len <= StrInlineMaxLen:
-    NifToken(toX(kind, encodeInlineStr(s)))
+  if symSpellingLen(p, id) <= StrInlineMaxLen:
+    NifToken(toX(kind, encodeInlineStr(symString(p, id))))
   else:
     assert uint32(id) <= IdPayloadMax,
       "symbol id " & $id & " needs an ExtendedSuffix chain: no single token fits"
@@ -1548,14 +1961,27 @@ proc cursorToPosition*(b: TokenBuf; c: Cursor): int {.inline.} =
   (cast[int](c.p) - cast[int](b.data)) div sizeof(NifToken)
 
 proc readonlyCursorAt*(b: TokenBuf; i: int): Cursor =
-  ## Like `cursorAt` but does not require `var b` (the buffer must already be
-  ## owned — i.e. previously `beginRead`/`cursorAt`'d — or the cursor is
-  ## ownerless and valid only while `b` outlives it).
+  ## Like `cursorAt` but does not require `var b`.
+  ##
+  ## The `CursorOwner` header is minted on demand — through a cast, since `b`
+  ## is only borrowed here. It has to be: the owner is where a cursor's pools
+  ## live, so an ownerless cursor answers `nil` for both `pool` and `tags` and
+  ## every pool-backed payload read and every `addSubtree` off it would have to
+  ## guess which pool world it came from. That guess is what the compiler's
+  ## former `fallbackPool`/`fallbackTags` globals used to make. Minting the
+  ## header also
+  ## makes the cursor keep the tokens alive like any other cursor instead of
+  ## dangling the moment `b` dies.
+  ##
+  ## The header costs one small allocation, and only for a buffer that has none
+  ## yet; a following mutation reclaims it on the cheap `rc == 1` path.
   assert i >= 0 and i < b.len
-  result = Cursor(p: cast[ptr NifToken](unsafeAddr b.data[i]), rem: b.len - i)
-  if b.owner != nil:
-    inc b.owner.rc
-    result.owner = b.owner
+  let mb = cast[ptr TokenBuf](unsafeAddr b)
+  ensureOwner(mb[])
+  inc mb.owner.rc
+  result = Cursor(owner: mb.owner,
+                  p: cast[ptr NifToken](unsafeAddr b.data[i]),
+                  rem: b.len - i)
 
 proc `+!`*(c: Cursor; diff: int): Cursor {.inline.} =
   ## Advance `c` by `diff` tokens, keeping the bounded `rem` correct (used by CF
@@ -1594,9 +2020,9 @@ proc sharesPools*(c: Cursor; p: Pool; t: TagPool): bool {.inline.} =
   ## raw owner pointer instead: as `==` operands both sides are borrowed paths.
   ## The `nil` fallbacks are what `pool`/`tags` answer, spelled out.
   (if c.owner != nil and c.owner.pool != nil: p == c.owner.pool
-   else: p == fallbackPool) and
+   else: p == defaultPool()) and
   (if c.owner != nil and c.owner.tags != nil: t == c.owner.tags
-   else: t == fallbackTags)
+   else: t == defaultTags())
 
 # ── Subtree copy ─────────────────────────────────────────────────────────
 
@@ -1608,7 +2034,7 @@ proc reinternLineInfo(dest: var TokenBuf; c: Cursor;
   ## Takes the source pool rather than asking `c` for it: as a parameter the ref
   ## is borrowed, while `c.pool` would return an owned temporary and pay an
   ## incRef/decRef — twice, here — per token copied. See `sharesPools`.
-  ensurePools(dest)
+  requirePools(dest)
   let li = rawLineInfo(c)
   if not li.isValid: return NoNifLineInfo
   let fname = if srcPool != nil: srcPool.filenames[li.file] else: ""
@@ -1692,12 +2118,12 @@ proc addBufferSamePool*(dest: var TokenBuf; src: TokenBuf) {.nifEmits: "Any".} =
     # refs nil — nothing to copy, nothing to check
     return
   assert dest.data != src.data, "cannot append a TokenBuf to itself"
-  # A buffer filled only via raw/`openTag` adds may still carry nil pool
-  # refs; its interned ids belong to the application fallback pools, so
-  # compare the EFFECTIVE pools.
-  ensurePools(dest)
-  let spool = (if src.pool != nil: src.pool else: fallbackPool)
-  let stags = (if src.tags != nil: src.tags else: fallbackTags)
+  # Both buffers carry their pools from construction (a plugin build's may be
+  # the process defaults), so this is a plain identity test — a bulk copy is
+  # only valid when the two interned id spaces are literally the same objects.
+  requirePools(dest)
+  let spool = (if src.pool != nil: src.pool else: defaultPool())
+  let stags = (if src.tags != nil: src.tags else: defaultTags())
   assert dest.pool == spool and dest.tags == stags,
          "addBufferSamePool requires matching pools"
   if dest.owner != nil:

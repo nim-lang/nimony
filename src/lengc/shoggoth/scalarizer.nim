@@ -60,6 +60,7 @@
 import std / [tables, sets, hashes, assertions, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore (incl. rootOf, symId)
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/substructureKind
+import ".." / ".." / "lib" / symparser        # derivedName -- one spelling for a derived name
 import ".." / ".." / "models" / tags          # VarTagId for synthesis
 import patchsets
 import ".." / nifmodules                      # MainModule (type context, threaded through)
@@ -140,7 +141,7 @@ proc runConstructorProjection*(buf: var TokenBuf) =
   ## Fold field projections off inline (never-bound) object constructors.
   ## Iterated to a fixpoint so chains (`T(a: U(x: 1)).a.x`) collapse fully;
   ## each round removes at least one `oconstr`, so it terminates. Mints no new
-  ## symbols, so (unlike `runScalarize`) it needs no suffix.
+  ## symbols.
   var rounds = 0
   while rounds < 100:
     inc rounds
@@ -179,15 +180,17 @@ type
     accesses: seq[(SymId, SymId, int)] ## (object, field, dot-node position)
     patchset: Patchset
     synth: seq[TokenBuf]
-    suffix: string
     counter: int
     m: ptr MainModule                  ## module type context; nil ⇒ emit `.` and let the
                                        ## backend re-infer (the pre-existing behaviour, kept
                                        ## for the self-tests, which parse a body in isolation)
 
 proc freshScalarName(c: var Context): string =
+  ## A field scalar is a LOCAL of the body being scalarized, so its name is a
+  ## local's: `<ident>.<disamb>` and nothing else. Two bodies both minting
+  ## `` `sroa.1 `` is no more a problem than both having a `result.0`.
   inc c.counter
-  result = "`sroa." & $c.counter & "." & c.suffix
+  result = "`sroa." & $c.counter
 
 # ---- candidate collection -------------------------------------------------
 
@@ -467,11 +470,9 @@ proc synthCursor(c: var Context; idx: int): Cursor {.inline.} =
 
 # ---- public entry ---------------------------------------------------------
 
-proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
-                   m: ptr MainModule = nil) =
+proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
   ## Scalar-replace non-escaping local objects in a single proc body. Names the
-  ## field scalars `` `sroa.<n>.<suffix> ``; pass a per-body-unique suffix (the
-  ## driver uses `bodySuffix`) so two bodies' scalars get distinct module symbols.
+  ## field scalars `` `sroa.<n> ``, which are locals of that body.
   ## `m` is the module type context each scalar's declared type is resolved through;
   ## without it the type slots are left empty and the backend re-infers them.
   var c = Context(orig: addr buf,
@@ -479,7 +480,6 @@ proc runScalarize*(buf: var TokenBuf; moduleSuffix = "M";
                   accesses: @[],
                   patchset: initPatchset(addr buf),
                   synth: @[],
-                  suffix: moduleSuffix,
                   counter: 0,
                   m: m)
   block:
@@ -577,15 +577,15 @@ when isMainModule:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1) (kv g.0.M 2))) " &
       "(asgn x.0.M (dot o.0.M f.0.M)) (asgn y.0.M (dot o.0.M g.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) (var :`sroa.2.M . . 2) " &
-      "(asgn x.0.M `sroa.1.M) (asgn y.0.M `sroa.2.M))")
+      "(stmts (var :`sroa.1 . . 1) (var :`sroa.2 . . 2) " &
+      "(asgn x.0.M `sroa.1) (asgn y.0.M `sroa.2))")
 
   block field_write_then_read:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M 1))) " &
       "(asgn (dot o.0.M f.0.M) 5) (asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) " &
-      "(asgn `sroa.1.M 5) (asgn x.0.M `sroa.1.M))")
+      "(stmts (var :`sroa.1 . . 1) " &
+      "(asgn `sroa.1 5) (asgn x.0.M `sroa.1))")
 
   block whole_object_use_disqualifies:
     # `o` is passed whole to a call → it must materialize → left alone.
@@ -606,7 +606,7 @@ when isMainModule:
     # `var o = src` (the inliner's by-value param copy). Fields come from `src.f`.
     chk(
       "(stmts (var :o.0.M . T.0.M src.0.M) (asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa.1.M))")
+      "(stmts (var :`sroa.1 . . (dot src.0.M f.0.M)) (asgn x.0.M `sroa.1))")
 
   block uninitialised_field_access_disqualifies:
     # `o.g` is read but the constructor never set `g` (think: other variant arm).
@@ -621,8 +621,8 @@ when isMainModule:
       "(stmts (var :p.0.M . . (oconstr U.0.M (kv a.0.M 1))) " &
       "(var :o.0.M . . (oconstr T.0.M (kv f.0.M (dot p.0.M a.0.M)))) " &
       "(asgn x.0.M (dot o.0.M f.0.M)))",
-      "(stmts (var :`sroa.1.M . . 1) (var :`sroa.2.M . . `sroa.1.M) " &
-      "(asgn x.0.M `sroa.2.M))")
+      "(stmts (var :`sroa.1 . . 1) (var :`sroa.2 . . `sroa.1) " &
+      "(asgn x.0.M `sroa.2))")
 
   block unused_object_keeps_value_side_effects:
     # `o` is never used, but its field value is a call: explode so the call stays
@@ -630,15 +630,15 @@ when isMainModule:
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv f.0.M (call mk.0.M)))) " &
       "(call other.0.M))",
-      "(stmts (var :`sroa.1.M . . (call mk.0.M)) (call other.0.M))")
+      "(stmts (var :`sroa.1 . . (call mk.0.M)) (call other.0.M))")
 
   block nested_field_access_through_scalar:
     # `o.inner` is itself an object; `o.inner.x` becomes `(dot `sroa.1 x)`.
     chk(
       "(stmts (var :o.0.M . . (oconstr T.0.M (kv inner.0.M q.0.M))) " &
       "(asgn r.0.M (dot (dot o.0.M inner.0.M) x.0.M)))",
-      "(stmts (var :`sroa.1.M . . q.0.M) " &
-      "(asgn r.0.M (dot `sroa.1.M x.0.M)))")
+      "(stmts (var :`sroa.1 . . q.0.M) " &
+      "(asgn r.0.M (dot `sroa.1 x.0.M)))")
 
   # ---- #3: inline constructor projection ----------------------------------
 
@@ -697,7 +697,7 @@ when isMainModule:
     runConstructorProjection buf
     runScalarize buf
     let got = toString(buf)
-    let want = canon("(stmts (var :`sroa.1.M . . 5) (asgn r.0.M `sroa.1.M))")
+    let want = canon("(stmts (var :`sroa.1 . . 5) (asgn r.0.M `sroa.1))")
     doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
 
   echo "scalarizer.nim: all self-tests passed"

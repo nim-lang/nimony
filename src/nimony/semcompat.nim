@@ -51,7 +51,7 @@ proc compatOpenArrayInstance(c: var SemContext; elemType: Cursor;
   ## hand back the same instance Symbol.
   var invokeBuf = createTokenBuf(8)
   invokeBuf.addParLe(InvokeT, info)
-  invokeBuf.addSymUse(pool.syms.getOrIncl(OpenArrayHeadName), info)
+  invokeBuf.addSymUse(pool.symId(OpenArrayHeadName), info)
   invokeBuf.addSubtree elemType
   invokeBuf.addParRi()
   var scratch = createTokenBuf(16)
@@ -104,7 +104,7 @@ proc compatToOpenArrayTypevars(): (SymId, SymId) =
   ## Return the SymIds of `toOpenArray.0[I, T]`'s typevars in declaration
   ## order. Mirrors `openarrays.nim`'s `converter toOpenArray*[I, T]…`.
   result = (SymId(0), SymId(0))
-  let origin = pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix)
+  let origin = pool.symId("toOpenArray.0." & SystemModuleSuffix)
   let res = tryLoadSym(origin)
   if res.status == LacksNothing:
     let routine = asRoutine(res.decl)
@@ -152,7 +152,7 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
       inc elemCursor    # past `(varargs` to the element type
       let inst = compatOpenArrayInstance(c, elemCursor, info)
       let hintStr =
-        if inst.isSymbol: pool.syms[inst.symId]
+        if inst.isSymbol: pool.symString(inst.symId)
         else: ""
       rebuilt.addStrLit hintStr, info
       rebuilt.addParRi()
@@ -172,7 +172,7 @@ proc compatVarargsSlotIsBundled(m: Match; start: int): bool =
     if m.args[start].exprKind == HcallX:
       let callee = childCursor(readonlyCursorAt(m.args, start))
       if callee.hasMore and callee.kind == Symbol:
-        result = pool.syms[callee.symId].startsWith("toOpenArray.")
+        result = pool.symString(callee.symId).startsWith("toOpenArray.")
 
 proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
                                  elemType: Cursor; info: NifLineInfo) =
@@ -231,7 +231,7 @@ proc compatBundleVarargsInMatch*(c: var SemContext; m: var Match;
     let elemTypeC = typeToCursor(c, elemBuf, 0)
 
     let (iSym, tSym) = compatToOpenArrayTypevars()
-    let origin = pool.syms.getOrIncl("toOpenArray.0." & SystemModuleSuffix)
+    let origin = pool.symId("toOpenArray.0." & SystemModuleSuffix)
     var inferred = initTable[SymId, Cursor]()
     inferred[iSym] = rangeType
     inferred[tSym] = elemTypeC

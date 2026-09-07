@@ -391,14 +391,13 @@ proc genSymDef(c: var GeneratedCode; n: Cursor; prag: PragmaInfo;
     let lit = n.symId
     if {ImportcP, ImportcppP, ExportcP} * prag.flags != {}:
       if isProc and isBareImportProc(prag):
-        result = mangleToC(c.m.pool.syms[lit])
+        result = mangleToC(c.m.pool.symString(lit))
       elif prag.extern != StrId(0):
         result = c.m.pool.strings[prag.extern]
       else:
-        result = c.m.pool.syms[lit]
-        extractBasename(result)
+        result = c.m.pool.symBasename(lit)
     else:
-      result = mangleToC(c.m.pool.syms[lit])
+      result = mangleToC(c.m.pool.symString(lit))
     c.add result
   else:
     result = ""
@@ -724,8 +723,7 @@ proc genProcDecl(c: var GeneratedCode; n: var Cursor; isExtern: bool) =
       if prag.extern != StrId(0):
         asmName = c.m.pool.strings[prag.extern]
       else:
-        asmName = c.m.pool.syms[prc.name.symId]
-        extractBasename(asmName)
+        asmName = c.m.pool.symBasename(prc.name.symId)
       c.add " __asm__(NIM_ASM_PREFIX "
       c.add makeCString(asmName)
       c.add ")"

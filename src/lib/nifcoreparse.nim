@@ -70,6 +70,87 @@ proc peekRootInfo*(r: var rd.Reader; pool: Pool): NifLineInfo =
     result = NoNifLineInfo
   rd.jumpTo(r, start)
 
+proc internPart(b: var TokenBuf; r: rd.Reader; t: rd.ExpandedToken): StrId =
+  ## One component of a split symbol, interned. When the bytes ARE the value --
+  ## no escape, no module suffix to append, which is the overwhelming case --
+  ## they go into the string pool straight from the reader's mapped file.
+  if rd.needsDecoding(t):
+    b.pool.strings.getOrIncl(rd.decodeStr(r, t))
+  else:
+    b.pool.strings.getOrInclFromView(t.data)
+
+proc addSplitSymbol(b: var TokenBuf; r: var rd.Reader;
+                    head: rd.ExpandedToken; isDef: bool) =
+  ## Emit the symbol whose `<name>` is `head` and whose remaining components
+  ## follow it as `ExtendedSuffix` tokens (see `nifreader.splitSymbols`). The
+  ## pool stores exactly those components, so the common shape is interned
+  ## straight from the reader's bytes: the spelling is never assembled and
+  ## never parsed back apart.
+  ##
+  ## Three shapes fall back to handing `symId` a spelling, because only it can
+  ## decide where the name ends: a disambiguator that is not a number, a name
+  ## carrying two keys (`foo.0.Ia.Ib.mod`), and one short enough to live inside
+  ## the token, which the pool must not gain an entry for.
+  var disambTok = default(rd.ExpandedToken)
+  var dedupTok = default(rd.ExpandedToken)
+  var moduleTok = default(rd.ExpandedToken)
+  var dedupStr = ""
+  var dedups = 0
+  var hasDisamb = false
+  var rawLen = head.data.len
+  for _ in 1 .. int(head.suffixes):
+    var t = default(rd.ExpandedToken)
+    rd.next(r, t)
+    rawLen += 1 + t.data.len
+    case t.part
+    of rd.SymDisamb:
+      disambTok = t
+      hasDisamb = true
+    of rd.SymDedup:
+      inc dedups
+      if dedups == 1:
+        dedupTok = t
+      else:
+        if dedups == 2: dedupStr = rd.decodeStr(r, dedupTok)
+        dedupStr.add '.'
+        dedupStr.add rd.decodeStr(r, t)
+    of rd.SymModule:
+      moduleTok = t
+
+  var disamb = -1
+  var disambText = ""
+  if hasDisamb:
+    disambText = rd.decodeStr(r, disambTok)  # 1-3 bytes, and the value is needed
+    disamb = parseDisamb(disambText, 0, disambText.len)
+
+  # `rawLen` is an upper bound on the spelling (an escape shrinks, and a module
+  # suffix to expand only ever grows it past this test anyway), so it is a sound
+  # way to ask "could this fit inside the token?".
+  if (hasDisamb and disamb < 0) or dedups > 1 or rawLen <= StrInlineMaxLen:
+    var spelling = rd.decodeStr(r, head)
+    if hasDisamb:
+      spelling.add '.'
+      spelling.add disambText
+    if dedups == 1:
+      spelling.add '.'
+      spelling.add rd.decodeStr(r, dedupTok)
+    elif dedups > 1:
+      spelling.add '.'
+      spelling.add dedupStr
+    if moduleTok.tk == ExtendedSuffix:
+      spelling.add '.'
+      spelling.add rd.decodeStr(r, moduleTok)
+    if isDef: b.addSymDef spelling else: b.addSymUse spelling
+    return
+
+  var s = NifSymbol(name: internPart(b, r, head), disamb: int32(disamb),
+                    dedup: StrId(0), module: StrId(0))
+  if not hasDisamb: s.disamb = NoDisamb
+  if dedups == 1: s.dedup = internPart(b, r, dedupTok)
+  if moduleTok.tk == ExtendedSuffix: s.module = internPart(b, r, moduleTok)
+  let id = symId(b.pool, s)
+  if isDef: b.addSymDef id else: b.addSymUse id
+
 proc parse*(r: var rd.Reader; b: var TokenBuf;
             parentSeed: NifLineInfo = NoNifLineInfo;
             denseLineInfo = false) =
@@ -79,6 +160,10 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
   ## compound's parent info; whole-file reads pass `NoNifLineInfo`).
   ## With `denseLineInfo`, every positioned value receives its effective
   ## location instead of only changes in the location stream.
+  # Symbols arrive taken apart, so their components go into the pool directly
+  # (see `readSymbol`). Idempotent, and `jumpTo` drops any components a caller
+  # skipped over.
+  rd.splitSymbols(r)
   var parents = @[(file: parentSeed.file, line: parentSeed.line,
                    col: parentSeed.col)]
   var last = NoNifLineInfo
@@ -92,7 +177,9 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
     rd.next(r, tok)
     case tok.tk
     of rd.EofToken, rd.UnknownToken, TagLit, ExtendedSuffix, LineInfoLit:
-      # the last three are binary-only kinds the textual reader never yields
+      # `TagLit`/`LineInfoLit` are binary-only kinds the textual reader never
+      # yields. An `ExtendedSuffix` never reaches HERE either: `readSymbol`
+      # consumes a split symbol's components as part of the symbol.
       break
     of rd.ParLe:
       let info = resolveInfo(b, tok, parents)
@@ -115,10 +202,14 @@ proc parse*(r: var rd.Reader; b: var TokenBuf;
       b.addIdent rd.decodeStr(r, tok); emit info
     of rd.Symbol:
       let info = resolveInfo(b, tok, parents)
-      b.addSymUse rd.decodeStr(r, tok); emit info
+      if tok.suffixes > 0'u8: addSplitSymbol(b, r, tok, isDef = false)
+      else: b.addSymUse rd.decodeStr(r, tok)
+      emit info
     of rd.SymbolDef:
       let info = resolveInfo(b, tok, parents)
-      b.addSymDef rd.decodeStr(r, tok); emit info
+      if tok.suffixes > 0'u8: addSplitSymbol(b, r, tok, isDef = true)
+      else: b.addSymDef rd.decodeStr(r, tok)
+      emit info
     of rd.StringLit:
       let info = resolveInfo(b, tok, parents)
       b.addStrLit rd.decodeStr(r, tok); emit info

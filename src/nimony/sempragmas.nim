@@ -338,8 +338,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     if hasParRi and n.hasMore:
       semConstStrExprIgnoreTopLevel c, dest, n
     elif crucial.sym != SymId(0):
-      var name = pool.syms[crucial.sym]
-      extractBasename name
+      var name = pool.symBasename(crucial.sym)
       dest.addStrLit(name, info)
     else:
       c.buildErr dest, info, "invalid import/export symbol"
@@ -532,7 +531,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     else:
       # No type specified - default to system.ErrorCode
       let typeStart = dest.len
-      dest.addSymUse pool.syms.getOrIncl(ErrorCodeName), n.endInfo
+      dest.addSymUse pool.symId(ErrorCodeName), n.endInfo
       crucial.raisesType = c.typeToCursor(dest, typeStart)
       dest.addParRi()
   of CallConvP:
@@ -567,8 +566,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         buildErr c, dest, info, "`pragma` takes no arguments"
         while n.hasMore: skip n
       else:
-        var basename = pool.syms[crucial.sym]
-        extractBasename basename
+        var basename = pool.symBasename(crucial.sym)
         c.customPragmaTemplates.incl pool.strings.getOrIncl(basename)
         dest.addParLe(PragmaP, info)
         dest.addParRi()

@@ -28,14 +28,14 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
     # var-init position — a call buried in the `elif` condition is opaque to it
     # (the same pipeline-ordering issue the array bound checks had). The bound
     # form below is exactly what the inliner's `trySpliceVarInit` recognises.
-    let condTmp = pool.syms.getOrIncl("`tc." & $c.getTmpId)
+    let condTmp = pool.symId("`tc." & $c.getTmpId)
     dest.copyIntoUnchecked "var", info:
       dest.addSymDef(condTmp, info)
       dest.addDotToken() # pragmas
       dest.addParLe("bool", info)
       dest.addParRi()
       dest.copyIntoUnchecked "call", info:
-        dest.addSymUse(pool.syms.getOrIncl(StrAtLeOp), info)
+        dest.addSymUse(pool.symId(StrAtLeOp), info)
         dest.addSymUse(selector, info)
         dest.addIntLit(f.best[1], info)
         dest.addCharLit(f.best[0], info)
@@ -54,12 +54,12 @@ proc decodeSolution(c: var EContext; dest: var TokenBuf; s: seq[SearchNode]; i: 
       for x in s[i].choices:
         dest.copyIntoUnchecked "elif", info:
           dest.copyIntoUnchecked "call", info:
-            dest.addSymUse(pool.syms.getOrIncl(EqStringsOp), info)
+            dest.addSymUse(pool.symId(EqStringsOp), info)
             dest.addSymUse(selector, info)
             genStringLit c, dest, x[0], info
           dest.copyIntoUnchecked "stmts", info:
             dest.copyIntoUnchecked "jmp", info:
-              dest.addSymUse(pool.syms.getOrIncl(x[1]), info)
+              dest.addSymUse(pool.symId(x[1]), info)
 
 proc getSimpleStringLit(c: var EContext; n: var Cursor): StrId =
   if n.isStringLit:
@@ -101,22 +101,22 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   let selectorType = getType(c.typeCache, selectorNode)
   if selectorType.typeKind == CstringT:
     # the other overload of `borrowCStringUnsafe`
-    selector = pool.syms.getOrIncl("`tc." & $c.getTmpId)
+    selector = pool.symId("`tc." & $c.getTmpId)
     dest.copyIntoUnchecked "var", sinfo:
       dest.addSymDef(selector, sinfo)
       dest.addDotToken() # pragmas
-      dest.addSymUse(pool.syms.getOrIncl(StringName), sinfo)
+      dest.addSymUse(pool.symId(StringName), sinfo)
       dest.copyIntoUnchecked "call", sinfo:
-        dest.addSymUse(pool.syms.getOrIncl(BorrowCStringUnsafeOp), sinfo)
+        dest.addSymUse(pool.symId(BorrowCStringUnsafeOp), sinfo)
         trExpr(c, dest, selectorNode)
   elif selectorNode.isSymbol:
     selector = selectorNode.symId
   else:
-    selector = pool.syms.getOrIncl("`tc." & $c.getTmpId)
+    selector = pool.symId("`tc." & $c.getTmpId)
     dest.copyIntoUnchecked "var", sinfo:
       dest.addSymDef(selector, sinfo)
       dest.addDotToken() # pragmas
-      dest.addSymUse(pool.syms.getOrIncl(StringName), sinfo)
+      dest.addSymUse(pool.symId(StringName), sinfo)
       trExpr(c, dest, selectorNode)
   skip nb # selector
 
@@ -141,9 +141,9 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   nb = sub(nb)
 
   skip nb # selector
-  let afterwards = pool.syms.getOrIncl("`sc." & $getTmpId(c))
+  let afterwards = pool.symId("`sc." & $getTmpId(c))
 
-  let elseLabel = pool.syms.getOrIncl("`sc." & $getTmpId(c))
+  let elseLabel = pool.symId("`sc." & $getTmpId(c))
   dest.copyIntoUnchecked "jmp", selectorNode.info:
     dest.addSymUse(elseLabel, selectorNode.info)
   var hasElse = false
@@ -151,7 +151,7 @@ proc transformStringCase*(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     let info = nb.info
     if nb.substructureKind == OfU:
       dest.copyIntoUnchecked "lab", info:
-        dest.addSymDef(pool.syms.getOrIncl(pairs[i][1]), info)
+        dest.addSymDef(pool.symId(pairs[i][1]), info)
       nb.into:                                # (of ...)
         nb.into:                              # (ranges ...)
           while nb.hasMore:

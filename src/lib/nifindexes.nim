@@ -194,7 +194,7 @@ type
     exports*: seq[(string, NifIndexKind, seq[StrId])] # module, export kind, filtered names
 
 proc symOrIdentOrDot(n: var Cursor): string =
-  if n.isSymbol: result = pool.syms[n.symId]
+  if n.isSymbol: result = pool.symString(n.symId)
   elif n.isIdent: result = pool.strings[n.strId]
   elif n.isDotToken: result = "."
   else: result = ""

@@ -395,8 +395,7 @@ proc evalDepCond(config: NifConfig; n: Cursor): bool =
         if n.isIdent:
           result = config.isDefined(pool.strings[n.strId])
         elif n.isSymbol:
-          var name = pool.syms[n.symId]
-          extractBasename(name)
+          var name = pool.symBasename(n.symId)
           result = config.isDefined(name)
         else:
           result = true

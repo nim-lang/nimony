@@ -60,7 +60,7 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
   else:
     var typ = local.typ
     # Fresh SymId per yield expansion
-    let freshSym = pool.syms.getOrIncl("`ii." & $e.getTmpId)
+    let freshSym = pool.symId("`ii." & $e.getTmpId)
     res[destSym] = freshSym
     createDecl(e, dest, freshSym, typ, c, info, VarS, needsAddr=false)
 
@@ -106,7 +106,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
         info = c.info
         inc c, SkipName
       else:
-        tmpId = pool.syms.getOrIncl("`ii." & $e.getTmpId)
+        tmpId = pool.symId("`ii." & $e.getTmpId)
         info = c.info
         var typCur = yieldType
         createDecl(e, dest, tmpId, typCur, c, info, LetS, needsAddr=false)
@@ -296,7 +296,7 @@ proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping:
     of VarS, LetS, CursorS, PatternvarS, ResultS:
       takeInto dest, c:
         let oldName = c.symId
-        let freshLocal = pool.syms.getOrIncl("`ii." & $e.getTmpId)
+        let freshLocal = pool.symId("`ii." & $e.getTmpId)
         mapping[oldName] = freshLocal
         dest.addSymDef(freshLocal, c.info) # name
 
@@ -354,7 +354,7 @@ proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
 
       let loopBodyHasContinueStmt = hasContinueStmt(forStmt.body)
       if loopBodyHasContinueStmt:
-        let lab = pool.syms.getOrIncl("continueLabel." & $getTmpId(e))
+        let lab = pool.symId("continueLabel." & $getTmpId(e))
         dest.addParLe($BlockS, c.info)
         dest.addSymDef(lab, c.info)
         dest.addParLe("stmts", c.info)
@@ -398,7 +398,7 @@ proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations
     of VarS, LetS, CursorS, PatternvarS:
       takeInto dest, c:
         let oldName = c.symId
-        let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+        let newName = pool.symId("`lf." & $e.instId)
         inc e.instId
         relations[oldName] = newName
         dest.addSymDef(newName, c.info)
@@ -488,7 +488,7 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
   ## destroyer sees a typed asgn to a `result` local and injects the proper
   ## `=destroy old; =copy/move new` hooks. cps.nim's existing ResultS handling
   ## then lifts `synth` to `(deref env.result.0)`.
-  let synthResultSym = pool.syms.getOrIncl(
+  let synthResultSym = pool.symId(
     "`coroResult." & $getTmpId(e) & "." & e.main)
 
   dest.addParLe(c.cursorTagId, c.info) # IteratorS tag
@@ -575,7 +575,7 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   let info = iterCur.info
   let forVars = getForVars(e, forStmt.vars)
 
-  let innerLab = pool.syms.getOrIncl("`coroInner." & $getTmpId(e))
+  let innerLab = pool.symId("`coroInner." & $getTmpId(e))
   e.continues.add innerLab
 
   # `forLoopVarSym` is the symbol whose `addr` is passed to the iter. For the
@@ -600,12 +600,12 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     let iterSym = symProbe.symId
     let res = tryLoadSym(iterSym)
     if res.status != LacksNothing:
-      error e, "could not load closure-iter sym: " & pool.syms[iterSym]
+      error e, "could not load closure-iter sym: " & pool.symString(iterSym)
     let routine = asRoutine(res.decl, SkipInclBody)
     var retType = routine.retType
     if retType.typeKind in {MutT, LentT}:
       inc retType
-    forLoopVarSym = pool.syms.getOrIncl("`coroTup." & $getTmpId(e))
+    forLoopVarSym = pool.symId("`coroTup." & $getTmpId(e))
     dest.addParLe LetS, info
     dest.addSymDef forLoopVarSym, info
     dest.addDotToken() # exported
@@ -699,7 +699,7 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
       let name = param.name
       let symId = name.symId
 
-      let newName = pool.syms.getOrIncl("`lf." & $e.instId)
+      let newName = pool.symId("`lf." & $e.instId)
       inc e.instId
       createDecl(e, dest, newName, typ, iter, name.info, if constructsValue(iter): VarS else: CursorS, needsAddr=false)
       relationsMap[symId] = newName
@@ -790,7 +790,7 @@ proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   ]#
   let forStmt = asForStmt(c)
 
-  let lab = pool.syms.getOrIncl("forStmtLabel." & $getTmpId(e))
+  let lab = pool.symId("forStmtLabel." & $getTmpId(e))
   dest.addParLe($BlockS, c.info)
   dest.addSymDef(lab, c.info)
   dest.addParLe("stmts", c.info)
@@ -809,7 +809,7 @@ proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
 proc transformLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   let loopBodyHasContinueStmt = hasContinueStmt(c)
   if loopBodyHasContinueStmt:
-    let lab = pool.syms.getOrIncl("continueLabel." & $getTmpId(e))
+    let lab = pool.symId("continueLabel." & $getTmpId(e))
     dest.addParLe($BlockS, c.info)
     dest.addSymDef(lab, c.info)
     dest.addParLe("stmts", c.info)
@@ -823,7 +823,7 @@ proc transformLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor) =
     dest.addParRi() # block
 
 proc transformWhileStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  let lab = pool.syms.getOrIncl("whileStmtLabel." & $getTmpId(e))
+  let lab = pool.symId("whileStmtLabel." & $getTmpId(e))
   dest.addParLe($BlockS, c.info)
   dest.addSymDef(lab, c.info)
   dest.addParLe("stmts", c.info)
@@ -927,7 +927,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         else:
           let info = c.info
           skip c
-          let s = pool.syms.getOrIncl("`lab." & $getTmpId(e))
+          let s = pool.symId("`lab." & $getTmpId(e))
           dest.addSymDef(s, info)
           e.breaks.add s
         transformStmt(e, dest, c)

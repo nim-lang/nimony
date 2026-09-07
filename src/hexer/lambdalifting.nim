@@ -299,21 +299,20 @@ proc trIterDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.closeScope()
 
 proc envTypeForProc(c: var Context; procId: SymId): SymId =
-  let s = extractVersionedBasename(pool.syms[procId])
-  result = pool.syms.getOrIncl(derivedName(s, "env") & "." & c.thisModuleSuffix)
+  let s = pool.symVersionedBasename(procId)
+  result = pool.symId(derivedName(s, "env") & "." & c.thisModuleSuffix)
 
 proc localToField(c: var Context; n: Cursor; local, typ: SymId; isCursor = false): SymId =
   if c.currentProc.localToEnv.hasKey((typ, local)):
     result = c.currentProc.localToEnv.getOrQuit((typ, local)).field
   else:
-    var name = pool.syms[local]
-    extractBasename name
+    var name = pool.symBasename(local)
     name.add "`f."
     name.add $c.counter
     inc c.counter
     name.add "."
     name.add c.thisModuleSuffix
-    result = pool.syms.getOrIncl(name)
+    result = pool.symId(name)
     let localTyp = c.typeCache.getType(n)
     c.currentProc.localToEnv[(typ, local)] = EnvField(objType: typ, field: result, typ: localTyp, isCursor: isCursor)
     c.envFieldType[result] = localTyp
@@ -561,7 +560,7 @@ const
 proc addRootRef(dest: var TokenBuf; info: NifLineInfo)
   {.ensuresNif: addedType(dest).} =
   dest.copyIntoKind RefT, info:
-    dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+    dest.addSymUse pool.symId(BareRootObjName), info
 
 type
   UntypedEnvMode = enum
@@ -632,10 +631,10 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
     # pass 1) and an iterator's locals live in its coroutine frame instead,
     # so there is nothing to hand over. Loud beats a nil env at run time.
     bug "capturing the locals of an enclosing iterator is not supported: " &
-        pool.syms[iterSym] & " at " & infoToStr(info)
+        pool.symString(iterSym) & " at " & infoToStr(info)
   var frameSym = SymId(0)
   if captures:
-    frameSym = pool.syms.getOrIncl("`iterFrame." & $c.counter & "." & c.thisModuleSuffix)
+    frameSym = pool.symId("`iterFrame." & $c.counter & "." & c.thisModuleSuffix)
     inc c.counter
     dest.addParLe ExprX, info
     dest.addParLe StmtsS, info
@@ -661,7 +660,7 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
     dest.addSymUse coro_transform.coroWrapperForExternIter(iterSym), info
     dest.copyIntoKind CastX, info:
       dest.copyIntoKind RefT, info:
-        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), info
+        dest.addSymUse pool.symId(BareRootObjName), info
       if captures:
         dest.addSymUse frameSym, info
       else:
@@ -726,7 +725,7 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId): TokenBuf =
   let info = n.info
   var init = createTokenBuf(10)
   let oldEnv = c.currentProc.env
-  c.currentProc.env = CurrentEnv(s: pool.syms.getOrIncl(ClosureEnvParamName),
+  c.currentProc.env = CurrentEnv(s: pool.symId(ClosureEnvParamName),
                                  typ: c.envTypeForProc(c.procStack[0]),
                                  mode: EnvIsParam,
                                  needsHeap: true)
@@ -737,7 +736,7 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId): TokenBuf =
     init.addRootRef info
     init.copyIntoKind DotX, info:
       init.copyIntoKind DerefX, info:
-        init.addSymUse pool.syms.getOrIncl(coro_transform.EnvParamName), info
+        init.addSymUse pool.symId(coro_transform.EnvParamName), info
       init.addSymUse coro_transform.coroEnvFieldForIter(iterSym), info
   c.procStack.add iterSym
   var isConcrete = true
@@ -899,7 +898,7 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # with no way to reach our environment; so bind a proper iter
       # value here — env and all — and drive the loop through that,
       # exactly as for an iter value that arrived from somewhere else.
-      let valSym = pool.syms.getOrIncl("`iterVal." & $c.counter & "." & c.thisModuleSuffix)
+      let valSym = pool.symId("`iterVal." & $c.counter & "." & c.thisModuleSuffix)
       inc c.counter
       valInfoForEnv = n.info
       dest.copyIntoKind LetS, valInfoForEnv:
@@ -957,14 +956,14 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # env-slot ref (so `caller.env != nil` → wrapper reuse branch).
     # For direct iter-sym calls the callerCont is the Stop sentinel
     # (`caller.env == nil` → wrapper fresh-frame branch).
-    let itSym = pool.syms.getOrIncl("`coroIt." & $c.counter & "." & c.thisModuleSuffix)
+    let itSym = pool.symId("`coroIt." & $c.counter & "." & c.thisModuleSuffix)
     inc c.counter
     c.typeCache.registerLocal(itSym, VarY, default(Cursor))
     dest.copyIntoKind VarS, info:
       dest.addSymDef itSym, info
       dest.addDotToken() # exported
       dest.addDotToken() # pragmas
-      dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+      dest.addSymUse pool.symId(ContinuationName), info
       dest.copyIntoKind CallS, info:
         dest.add targetBuf
         var w = argsStart
@@ -981,15 +980,15 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # peels the ARC header and yields the underlying object's
           # address, which is the right shape for `ptr CoroutineBase`.
           dest.copyIntoKind OconstrX, info:
-            dest.addSymUse pool.syms.getOrIncl(ContinuationName), info
+            dest.addSymUse pool.symId(ContinuationName), info
             dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(FnFieldName), info
+              dest.addSymUse pool.symId(FnFieldName), info
               dest.addParPair NilX, info
             dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.syms.getOrIncl(EnvFieldName), info
+              dest.addSymUse pool.symId(EnvFieldName), info
               dest.copyIntoKind CastX, info:
                 dest.copyIntoKind PtrT, info:
-                  dest.addSymUse pool.syms.getOrIncl(coro_transform.RootObjName), info
+                  dest.addSymUse pool.symId(coro_transform.RootObjName), info
                 dest.copyIntoKind HaddrX, info:
                   dest.copyIntoKind HderefX, info:
                     if upstreamEnvArg:
@@ -1007,7 +1006,7 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `emitWhileEnd`. The body walk uses `tre` (capture-rewriting), as
     # opposed to cps's `tr` (passive-state-machine emission); that's the
     # only behavioural difference between the two corofor expansions.
-    let myEnvSym = pool.syms.getOrIncl("`coroEnv." & $c.counter & "." & c.thisModuleSuffix)
+    let myEnvSym = pool.symId("`coroEnv." & $c.counter & "." & c.thisModuleSuffix)
     inc c.counter
     c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
 
@@ -1175,15 +1174,15 @@ proc treParams(c: var Context; dest, init: var TokenBuf; n: var Cursor; doAddEnv
               if ownsEnvLocal:
                 if envTyp == SymId(0):
                   init.copyIntoKind DerefX, paramInfo:
-                    init.addSymUse pool.syms.getOrIncl(EnvLocalName), paramInfo
+                    init.addSymUse pool.symId(EnvLocalName), paramInfo
                 else:
-                  init.addSymUse pool.syms.getOrIncl(EnvLocalName), paramInfo
+                  init.addSymUse pool.symId(EnvLocalName), paramInfo
               elif doAddEnvParam:
                 init.copyIntoKind DerefX, paramInfo:
                   init.copyIntoKind CastX, paramInfo:
                     init.copyIntoKind (if envTyp == SymId(0): RefT else: PtrT), paramInfo:
                       init.addSymUse fld.objType, paramInfo
-                    init.addSymUse pool.syms.getOrIncl(ClosureEnvParamName), paramInfo
+                    init.addSymUse pool.symId(ClosureEnvParamName), paramInfo
               else:
                 bug "lambdalifting treParams: captured param but no environment access at " & infoToStr(paramInfo)
               init.addSymUse fld.field, paramInfo
@@ -1198,7 +1197,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
       let oldEnv = c.currentProc.env
       if c.createsEnv.contains(sym):
         let envTyp = c.envTypeForProc(sym)
-        c.currentProc.env = CurrentEnv(s: pool.syms.getOrIncl(EnvLocalName), mode: EnvIsLocal, typ: envTyp, needsHeap: needsHeap)
+        c.currentProc.env = CurrentEnv(s: pool.symId(EnvLocalName), mode: EnvIsLocal, typ: envTyp, needsHeap: needsHeap)
         dest.copyIntoKind VarS, NoLineInfo:
           dest.addSymDef c.currentProc.env.s, NoLineInfo
           dest.addDotToken() # no export marker
@@ -1233,7 +1232,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
         # captures always target `procStack[0]`'s env (one shared env,
         # see the outerA/outerB note in pass 1) — so type it as that,
         # not as this closure's own (never materialized) env type.
-        c.currentProc.env = CurrentEnv(s: pool.syms.getOrIncl(ClosureEnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(c.procStack[0]), needsHeap: needsHeap)
+        c.currentProc.env = CurrentEnv(s: pool.symId(ClosureEnvParamName), mode: EnvIsParam, typ: c.envTypeForProc(c.procStack[0]), needsHeap: needsHeap)
       else:
         c.currentProc.env = CurrentEnv(s: SymId(0), mode: EnvIsParam, typ: SymId(0), needsHeap: needsHeap)
       dest.add init
@@ -1496,7 +1495,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
         else:
           dest.addParLe(ExprX, info)
         copyIntoKind dest, StmtsS, info:
-          tmp = pool.syms.getOrIncl("`llTemp." & $c.counter)
+          tmp = pool.symId("`llTemp." & $c.counter)
           inc c.counter
           copyIntoKind dest, VarS, info:
             dest.addSymDef tmp, info
@@ -1852,7 +1851,7 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
       dest.addDotToken() # no pragmas
       dest.copyIntoKind ObjectT, NoLineInfo:
         # inherits from RootObj:
-        dest.addSymUse pool.syms.getOrIncl(BareRootObjName), NoLineInfo
+        dest.addSymUse pool.symId(BareRootObjName), NoLineInfo
         for field in items fields:
           let beforeField = dest.len
           dest.copyIntoKind FldY, NoLineInfo:
@@ -1878,7 +1877,8 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
 
 proc elimLambdas*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix)
+  var c = Context(counter: 0, dest: initTokenBuf(),
+                  typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix)
   c.coroCtx = coro_transform.Context(
     thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(pass.bits),   # placeholder; swapped with c.typeCache per call

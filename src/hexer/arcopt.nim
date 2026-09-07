@@ -54,8 +54,7 @@ const
   NoLabel = SymId(0)
 
 proc getAttachedOp(symId: SymId; attachedOp: var AttachedOp): bool =
-  var name = pool.syms[symId]
-  extractBasename(name)
+  var name = pool.symBasename(symId)
   # A specialized hook is minted by `lifter.generateHookName` as
   # `=<hookName>_<typeKey>`, so cut the type key off. `hookName` also spells
   # the op in lower case, hence the second spelling of `wasmoved`/`sinkh`

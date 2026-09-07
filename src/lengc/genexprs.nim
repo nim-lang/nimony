@@ -204,12 +204,10 @@ proc genField(c: var GeneratedCode; fld: Cursor; objBody: Cursor; objTypeIsImpor
           else:
             discard
           skip p
-    var x = c.m.pool.syms[s]
     if objTypeIsImported:
-      extractBasename x
-      c.add x
+      c.add c.m.pool.symBasename(s)
     else:
-      c.add mangleToC(x)
+      c.add mangleToC(c.m.pool.symString(s))
   else:
     error c.m, "expected field name but got: ", fld
 

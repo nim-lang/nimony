@@ -2,16 +2,17 @@
 
 import std / [http/httpmsg, http/httpparse, assertions, syncio]
 
-let hApiKey = registerHeader("x-api-key")   # the header this test indexes on
+let tags = newHttpTags()   # this test's own tag space
+let hApiKey = registerHeader(tags, "x-api-key")   # the header this test indexes on
 
-let poolSizeAtInit = httpTags().tags.len
+let poolSizeAtInit = tags.pool.tags.len
 
 proc parseAll(s: string; m: var HttpMsg): int =
   ## Parse a complete head held in one buffer.
   parseRequestHead(toOpenArray(s, 0, s.len - 1), m)
 
 proc testSimple =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let req = "GET /index.html HTTP/1.1\r\nHost: example.com\r\n\r\n"
   let n = parseAll(req, m)
   assert n == req.len, $n
@@ -22,7 +23,7 @@ proc testSimple =
   assert m.getStr(hHost) == "example.com"
 
 proc testTypedValues =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let req = "POST /submit HTTP/1.1\r\n" &
             "Host: h\r\n" &
             "Content-Length: 1234\r\n" &
@@ -38,7 +39,7 @@ proc testTypedValues =
   assert m.getTag(hContentEncoding) == tag(vGzip)
 
 proc testCaseAndWhitespace =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let req = "GET / HTTP/1.1\r\n" &
             "HOST:   example.com   \r\n" &          # folded name, OWS both sides
             "CoNtEnT-lEnGtH:0\r\n" &                # no space after colon
@@ -49,24 +50,24 @@ proc testCaseAndWhitespace =
   assert m.getStr(hApiKey) == "abc"
 
 proc testUnknownHeader =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let req = "GET / HTTP/1.1\r\nX-Weird: 1\r\nX-Other: two\r\n\r\n"
   assert parseAll(req, m) == req.len
   var got = ""
   for k, v in m.otherHeaders: got.add k & "=" & v & ";"
   assert got == "X-Weird=1;X-Other=two;", got
-  assert httpTags().tags.len == poolSizeAtInit,
+  assert tags.pool.tags.len == poolSizeAtInit,
          "unknown names never reach the pool"
 
 proc testEmptyValue =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let req = "GET / HTTP/1.1\r\nHost:\r\n\r\n"
   assert parseAll(req, m) == req.len
   assert hHost in m
   assert m.getStr(hHost) == ""
 
 proc testLfOnly =
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let req = "GET /x HTTP/1.0\nHost: h\n\n"
   assert parseAll(req, m) == req.len
   assert m.target == "/x"
@@ -84,7 +85,7 @@ proc testVersions =
 
 proc testRejections =
   proc bad(req: string): bool =
-    var m = initHttpMsg()
+    var m = initHttpMsg(tags)
     result = parseAll(req, m) == ParseBad
 
   assert bad("BREW / HTTP/1.1\r\n\r\n"), "unknown method"
@@ -123,10 +124,10 @@ proc testIncomplete =
   # Every proper prefix of a complete head must say "not yet", never "bad".
   let req = "GET /a HTTP/1.1\r\nHost: h\r\nContent-Length: 5\r\n\r\n"
   for n in 1..<req.len:
-    var m = initHttpMsg()
+    var m = initHttpMsg(tags)
     let r = parseRequestHead(toOpenArray(req, 0, n - 1), m)
     assert r == ParseIncomplete, "prefix of length " & $n & " gave " & $r
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   assert parseRequestHead(toOpenArray(req, 0, req.len - 1), m) == req.len
 
 proc testFindHeadEnd =
@@ -164,7 +165,7 @@ proc testPipelined =
   # second, so the caller can carry on from the returned index.
   let two = "GET /one HTTP/1.1\r\nHost: a\r\n\r\n" &
             "GET /two HTTP/1.1\r\nHost: b\r\n\r\n"
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   let n = parseRequestHead(toOpenArray(two, 0, two.len - 1), m)
   assert n > 0
   assert m.target == "/one"
@@ -178,7 +179,7 @@ proc testPipelined =
 
 proc testRecycleAcrossParses =
   # The keep-alive shape: one message reused for every request on a connection.
-  var m = initHttpMsg()
+  var m = initHttpMsg(tags)
   for i in 0..<50:
     m.reset()
     let req = "GET /p" & $i & " HTTP/1.1\r\nHost: h" & $i & "\r\n" &

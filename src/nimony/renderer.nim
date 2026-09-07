@@ -374,8 +374,13 @@ proc gpragmas(g: var SrcGen, n: var Cursor) =
 
       put(g, tkSymbol, globalTags.tags[n.cursorTagId])
       n.into:
-        if n.hasMore:
-          putWithSpace(g, tkColon, ":")
+        var firstArg = true
+        while n.hasMore:
+          if firstArg:
+            putWithSpace(g, tkColon, ":")
+            firstArg = false
+          else:
+            gcomma(g)
           gsub(g, n)
 
     put(g, tkCurlyDotRi, ".}")
@@ -600,8 +605,7 @@ proc bracketKind(g: SrcGen, n: Cursor): BracketKind =
       inc childCursor
       result = bracketKind(g, childCursor)
     elif n.isSymbol:
-      var name = pool.syms[n.symId]
-      extractBasename(name)
+      var name = pool.symBasename(n.symId)
 
       case name
       of "[]": result = bkBracket
@@ -1992,13 +1996,11 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
     put(g, tkCharLit, lit)
     inc n
   of Symbol:
-    var name = pool.syms[n.symId]
-    extractBasename(name)
+    var name = pool.symBasename(n.symId)
     put(g, tkSymbol, name, n.symId)
     inc n
   of SymbolDef:
-    var name = pool.syms[n.symId]
-    extractBasename(name)
+    var name = pool.symBasename(n.symId)
     put(g, tkSymbol, name, n.symId, isDef = true)
     inc n
   of Ident:

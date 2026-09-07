@@ -13,6 +13,11 @@
 ##   `ParLe`/`ParRi`/`EofToken` members, so structural scanners (deps.nim)
 ##   see the exact classic kinds. Ident/StringLit/Symbol payloads are interned
 ##   into the global `pool`, so `pool.strings[t.litId]` works as before.
+##   SYMBOLS are stored taken apart now (nimony#2457), but `pool.syms` still
+##   answers the three questions this surface ever asked of it --
+##   `getOrIncl(name)`, `[id]`, `getKeyId(name)` -- through `nifcore.SymPool`.
+##   The spellings below are deliberately the classic ones: the Nim compiler
+##   ships its own copy of this file, so what compiles here compiles there.
 ##   Number tokens keep their KIND only (a 4-byte token cannot always carry
 ##   the value); classic scanners never read those payloads.
 

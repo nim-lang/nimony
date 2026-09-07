@@ -25,12 +25,7 @@ proc isStaticTypevar*(s: SymId): bool =
   result = res.decl.symKind == StaticTypevarY
 
 proc sameStaticSymbol*(a, b: SymId): bool =
-  if a == b:
-    return true
-  let sa = pool.syms[a]
-  let sb = pool.syms[b]
-  result = isInstantiation(sa) and isInstantiation(sb) and
-    removeModule(sa) == removeModule(sb)
+  result = pool.symSameEntity(a, b)
 
 proc isStaticValue*(n: Cursor): bool =
   ## A canonical compile-time value as bound to a `staticTypevar`: a primitive
@@ -120,7 +115,7 @@ proc staticOpenArrayElemType*(t: Cursor): Cursor =
     inc depth
   if t.typeKind == InvokeT:
     inc t
-    if t.isSymbol and pool.syms[t.symId] == OpenArrayHeadName:
+    if t.isSymbol and pool.symString(t.symId) == OpenArrayHeadName:
       inc t
       result = t
   elif t.typeKind == VarargsT:
