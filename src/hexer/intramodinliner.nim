@@ -24,6 +24,9 @@
 ## unconditionally up to that size and is ignored beyond it, so an
 ## ill-considered `.inline` on a fat proc cannot blow the program up, while a
 ## proc nobody thought to annotate still inlines when it is trivially cheap.
+## "Unconditionally" always means "within the caller's growth budget"
+## (`growthLeft`): every splice, tiny ones included, is charged to that one
+## pot, which is what keeps the cross-module pass from compounding.
 ##
 ## Two passes share this machinery, one per pipeline stage, and each stays in
 ## the file format of its stage:
@@ -331,17 +334,6 @@ type
     src: ptr TokenBuf                       # the module's parsed buffer
     xnifDir: string                         # directory holding the `.c.nif`s
     maxDepth*: int                          # 0 = unlimited; cross-module mode sets a cap
-    hintedLeft*: int
-      # The same budget, kept separately for threshold-0 bodies (tiny, `.inline`
-      # within `InlineHintBound`, small-total). Two pots because one pot is
-      # first-come, first-served: the score-based splices a walk meets early
-      # spent it before the 11-token `copyMem` and nifcore's `inc` behind them
-      # were reached (measured: those two were the residual call frames in the
-      # native `nifbench` build). Unbudgeted they are not an option either —
-      # threshold-0 bodies call threshold-0 bodies, and the re-walk of spliced
-      # content compounds that (measured: 13x IR growth on `nifbench`, 7 MB →
-      # 96 MB). So each class doubles the proc at most, and neither can
-      # starve the other.
     growthLeft*: int
       # Remaining tokens the proc currently being walked may gain from
       # splices. Set per top-level `(proc …)` from `growthBudget` (a caller
@@ -352,6 +344,18 @@ type
       # heuristic thinks: without it a chain of individually-approved
       # splices compounds multiplicatively (measured: 8.4x IR blowup and
       # multi-GB hexer RSS on nimsem).
+      #
+      # ONE pot, and every class draws on it — tiny bodies included. Exempting
+      # the tiny ones (and giving the threshold-0 class a 4x pot of its own)
+      # looks harmless per module and is not: `shoggoth`'s inter-module inliner
+      # runs this same policy across module boundaries at `maxDepth = 4`, where
+      # an uncharged class compounds. Measured on nimsem, `.c.nif` → `.oc.nif`:
+      # 2.65x with one charged pot, 7.15x with tiny free (51 MB → 197 MB of
+      # optimized IR, a 3.96 MB binary → 9.55 MB). What the exemption bought
+      # was ~4% on `bench/nifbench` (69 ms against 72 ms here, best of 7
+      # interleaved runs; the pre-hint policy is 75 ms), which is not worth 4x
+      # the program — and the native boot pays for it twice, in 55.4s against
+      # 28.7s.
     foreign: Table[string, ref ForeignModule]
       # Cached cross-module bodies. `ref` so growing the table doesn't
       # invalidate cursors that point into a previously-fetched buffer.
@@ -380,7 +384,6 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
              xnifDir: xnifDir,
              maxDepth: maxDepth,
              growthLeft: high(int),
-             hintedLeft: high(int),
              counterPrefix: counterPrefix,
              foreign: initTable[string, ref ForeignModule](),
              inProgress: initHashSet[SymId]())
@@ -390,15 +393,6 @@ proc growthBudget*(bodySize: int): int =
   ## double, and small procs get a floor so a forwarder can still swallow a
   ## couple of tiny callees.
   max(1000, bodySize)
-
-proc hintedBudget*(bodySize: int): int =
-  ## The pot for `.inline`-hinted bodies: four times the score pot. The author
-  ## asked for these, each is bounded by `InlineHintBound`, and the C compiler
-  ## splices every `static inline` of that size at every site. What the pot
-  ## still stops is the cascade: hinted allocator internals pulling their hinted
-  ## callees into every proc that allocates (measured at 13x IR growth with no
-  ## pot at all).
-  4 * growthBudget(bodySize)
 
 proc countCalls(n: var Cursor; counts: var Table[SymId, int]) =
   ## `(call f …)` sites per callee under `n`, statement or expression position.
@@ -649,29 +643,18 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
   # charged, keeping the budget honest for every ordinary decision after it.
   if argContainsConstructor(callNode): decide(false, "ctor arg")
   if info.forced: decide(true, "forced")
-  # Threshold-0 bodies — tiny, `.inline` within `InlineHintBound`, small-total —
-  # draw on their own pot (`hintedLeft`), the score-based splices on
-  # `growthLeft`; see the fields for why one pot starved the cheap splices.
-  if info.threshold == 0:
-    # Tiny bodies are free: each is on the order of the call sequence it
-    # replaces, so a proc's tiny splices add at most a constant factor of its
-    # call count — the cascade the pots exist for runs through the bigger
-    # bodies, and those ARE charged.
-    if info.size <= InlineTinyBound: decide(true, "tiny")
-    if info.size > c.hintedLeft: decide(false, "hint budget")
-    decide(true, "hinted")
+  # The budget is checked BEFORE the threshold, so every class — tiny, `.inline`
+  # within `InlineHintBound`, small-total, scored — is bounded by the one pot;
+  # see `growthLeft` for what an exempt class costs cross-module.
   if info.size > c.growthLeft: decide(false, "growth budget")   # caller's growth budget is spent
+  if info.threshold == 0: decide(true, "threshold0")
   let scores = computeArgScores(callNode)
   decide(shouldInline(info, scores), "score")
 
 proc chargeSplice(c: var InlinerCtx; calleeSym: SymId) =
-  ## Book the committed splice against the pot its class draws on.
-  let info = lookupInlineInfo(c, calleeSym)
-  if info.size <= InlineTinyBound: discard        # free, see `shouldInlineCall`
-  elif info.threshold == 0:
-    c.hintedLeft = max(0, c.hintedLeft - info.size)
-  else:
-    c.growthLeft = max(0, c.growthLeft - info.size)
+  ## Book the committed splice against the current caller's growth budget.
+  let size = lookupInlineInfo(c, calleeSym).size
+  c.growthLeft = max(0, c.growthLeft - max(size, 1))
 
 proc analyzeModule(buf: var TokenBuf): ModuleAnalysis =
   result = ModuleAnalysis(inlineInfo: initTable[SymId, InlineInfo]())
@@ -2299,16 +2282,13 @@ proc trIntra*(c: var InlinerCtx; dest: var TokenBuf; n: var Cursor) =
         let pd = takeProcDecl(probe)
         let bodySize = (if pd.body.isTagLit: tokenCount(pd.body) else: 0)
         let savedGrowth = c.growthLeft
-        let savedHinted = c.hintedLeft
         c.growthLeft = growthBudget(bodySize)
-        c.hintedLeft = hintedBudget(bodySize)
         dest.addParLe(n.cursorTagId, n.info)
         into n:
           while n.hasMore:
             trIntra(c, dest, n)
         dest.addParRi()
         c.growthLeft = savedGrowth
-        c.hintedLeft = savedHinted
         return
       if sk == VarS:
         var probe = n
