@@ -297,7 +297,7 @@ proc pathsOverlap(a, b: BorrowInfo): bool =
 proc checkBorrowConflict(c: var FirContext; mutPath: BorrowInfo; info: NifLineInfo) =
   for b in c.activeBorrows:
     if pathsOverlap(mutPath, b):
-      buildErr c, info, "'" & pool.symString(mutPath.path[0]) & "' is borrowed and cannot be mutated"
+      buildErr c, info, "'" & asNimCode(mutPath.path[0]) & "' is borrowed and cannot be mutated"
       return
 
 proc localInfoOf(c: var FirContext; s: SymId): LocalInfo =
@@ -356,7 +356,7 @@ proc checkBorrowOutlivesProc(c: var FirContext; value: Cursor) =
   let borrowed = borrowCarriedBy(c, value)
   if borrowed.mode == IsBorrowable and borrowed.path.len > 0 and
      diesWithProc(c, borrowed.path[0]):
-    buildErr c, value.info, "borrow of '" & pool.symString(borrowed.path[0]) &
+    buildErr c, value.info, "borrow of '" & asNimCode(borrowed.path[0]) &
       "' escapes the proc; it does not live long enough"
 
 proc checkEscapingBorrow(c: var FirContext; value: Cursor; destRoot: SymId) =
@@ -462,7 +462,7 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
     if isLit:
       buildErr c, value.info, "value out of range: " & $off & " notin " & $lo & ".." & $hi
     elif sym != NoSymId:
-      buildErr c, value.info, "cannot prove '" & pool.symString(sym) &
+      buildErr c, value.info, "cannot prove '" & asNimCode(sym) &
         "' is in range " & $lo & ".." & $hi
     else:
       buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
@@ -951,7 +951,7 @@ proc traverseExpr(c: var FirContext; pc: var Cursor) =
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {VarY, LetY, CursorY, PatternvarY, ResultY}:
       if c.tr.live and not isInitialized(c, symId):
-        buildErr(c, pc.info, "cannot prove that " & pool.symString(symId) & " has been initialized")
+        buildErr(c, pc.info, "cannot prove that " & asNimCode(pc) & " has been initialized")
         # don't report the same symbol twice from later references
         markInit(c, symId)
     inc pc
@@ -1664,10 +1664,10 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
     # exit, so the init obligation is vacuous — e.g. `proc f: string = raise X`.
     if c.tr.live:
       if c.resultSym != NoSymId and not isInitialized(c, c.resultSym):
-        buildErr c, info, "cannot prove that " & pool.symString(c.resultSym) & " has been initialized"
+        buildErr c, info, "cannot prove that " & asNimCode(c.resultSym) & " has been initialized"
       for sym in outParams:
         if not isInitialized(c, sym):
-          buildErr c, info, "cannot prove that " & pool.symString(sym) & " has been initialized"
+          buildErr c, info, "cannot prove that " & asNimCode(sym) & " has been initialized"
   else:
     skip n
   n = procStart; skip n
@@ -1715,7 +1715,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
         skip m
       for b in c.activeBorrows:
         if b.path.len > 0 and b.path[0] in dying and b.borrower notin dying:
-          buildErr c, b.info, "borrow of '" & pool.symString(b.path[0]) &
+          buildErr c, b.info, "borrow of '" & asNimCode(b.path[0]) &
             "' escapes its scope; it does not live long enough"
       # ... then the borrows held *by* the dying variables end here.
       while n.hasMore:
