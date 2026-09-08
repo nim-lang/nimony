@@ -111,7 +111,17 @@ proc optimizeBody(buf: var TokenBuf; suffix: string; st: var Stats;
   # (loop unswitching): an inlined string accessor's SSO test runs once instead
   # of per character. AFTER copyprop so propagated copies make structurally
   # identical conditions actually identical.
-  if passOn("unswitch"): runUnswitch(buf)
+  if passOn("unswitch") and runUnswitch(buf) > 0 and passOn("copyprop"):
+    # A specialized copy no longer READS the temps that fed the hoisted test —
+    # but it still computes them, once per iteration, which is most of what the
+    # unswitch was meant to remove. Copy propagation's dead-store elimination is
+    # what actually deletes them, so it has to see the loop again. They come in
+    # CHAINS (`x = bytes and 255` over `bytes = b.bytes`) and one round only
+    # deletes the last link, so run until the body stops shrinking.
+    for _ in 0 ..< 3:
+      let before = buf.len
+      runCopyProp(buf, params, summaries, m)
+      if buf.len >= before: break
   # Copy-prop inlines symbol and literal bindings; re-run the rewriter so
   # `(add T x 0)` / `(mul T x 1)` / `(add T 1 2)` that only became foldable
   # after those substitutions actually fold. Cheap: the DFA walk is linear

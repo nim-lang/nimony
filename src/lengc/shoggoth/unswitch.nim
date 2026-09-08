@@ -52,6 +52,12 @@ import patchsets
 const
   MaxUnswitchSpan = 600   ## max tokens of a `while` we are willing to duplicate
   MaxRounds = 16
+  MaxSubstDepth = 8       ## how deep the loop-local temp chase goes
+  SingleTestMinCost = 3   ## what a ONCE-tested condition must cost to qualify
+
+  ControlStmts = {IfS, CaseS, WhileS, TryS, IteS, ItecS, LoopS, OnerrS}
+    ## statements a definition can hide inside: a def under one of these does
+    ## not necessarily run before the test does, so it is not chased.
 
 type
   Candidate = object
@@ -62,6 +68,10 @@ type
     orig: ptr TokenBuf
     counter: int
     procAddrTaken: HashSet[SymId]
+    defs: Table[SymId, int]
+      ## the loop currently under consideration: every loop-local symbol with
+      ## exactly ONE straight-line definition, mapped to the position of the
+      ## defining expression. See `scanLoopDefs`.
 
 proc child0(c: Cursor): Cursor {.inline.} =
   result = c
@@ -121,10 +131,19 @@ proc pureCondImpl(n: var Cursor; syms: var seq[SymId]): bool =
       # (suf LIT "suffix")
       skip n
       result = true
-    of NotC, AndC, OrC, EqC, NeqC, LeC, LtC, AddC, SubC, MulC, NegC,
-       ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC:
+    of NotC, AndC, OrC, EqC, NeqC, LeC, LtC:
       result = true
       n.into:
+        while n.hasMore:
+          if not pureCondImpl(n, syms): result = false
+    of AddC, SubC, MulC, NegC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC:
+      # arithmetic carries its result TYPE as the first operand — `(bitand
+      # (u 64) x 255u)` — and a type subtree is metadata, not a value. Walking
+      # it as one made every inlined accessor's mask look impure, which is why
+      # the SSO shape never reached the invariance test at all.
+      result = true
+      n.into:
+        if n.hasMore: skip n                  # the result type
         while n.hasMore:
           if not pureCondImpl(n, syms): result = false
     of ConvC, CastC:
@@ -222,6 +241,157 @@ proc collectAddrTaken(c: Cursor; acc: var HashSet[SymId]) =
     collectAddrTaken(n, acc)
     skip n
 
+# ── loop-local definition chasing ────────────────────────────────────────────
+
+proc scanLoopDefs(orig: ptr TokenBuf; n: Cursor; straight: bool;
+                  defs: var Table[SymId, int]; multi: var HashSet[SymId];
+                  blocked: var bool) =
+  ## The inlined-accessor shape does not test a symbol the caller can see; it
+  ## tests a temp the loop body computes for itself:
+  ##
+  ##   (var :bytes`h … (dot b bytes 0))
+  ##   (asgn `x (conv (i 64) (bitand (u 64) bytes`h 255u)))
+  ##   (if (elif (lt 14 `x) …))
+  ##
+  ## `x` is written every iteration, so the plain "never assigned in the loop"
+  ## test rejects it although its VALUE is loop-invariant. This collects the
+  ## temps whose definition may be substituted back into the condition: exactly
+  ## ONE definition, on the loop's straight-line path — not under an `if`, a
+  ## `case` or an inner `while` — so the value the test reads is always that
+  ## expression, evaluated from that expression's symbols.
+  if n.kind != TagLit: return
+  case n.stmtKind
+  of JmpS:
+    # a jump can skip a definition, so "textually before" stops implying "ran"
+    blocked = true
+  of VarS, ConstS:
+    var s = SymId(0)
+    var pos = -1
+    var it = n
+    it.into:
+      if it.hasMore:
+        if it.kind == SymbolDef: s = symId(it)
+        skip it                                  # name
+      if it.hasMore: skip it                     # pragmas
+      if it.hasMore: skip it                     # type
+      if it.hasMore:
+        if it.kind != DotToken: pos = cursorToPosition(orig[], it)
+        skip it                                  # initializer
+      while it.hasMore: skip it
+    if s != SymId(0):
+      if pos < 0:
+        # `(var :x . T .)` — a slot declaration with no initializer. It is not
+        # a definition, so it neither provides nor destroys one: the `asgn` that
+        # follows is what defines `x`. (The inliner emits exactly this pair for
+        # every inlined result.)
+        discard
+      elif straight and not defs.hasKey(s): defs[s] = pos
+      else: multi.incl s
+  of AsgnS, StoreS:
+    var first = child0(n)
+    var second = first
+    skip second
+    let dst = if n.stmtKind == StoreS: second else: first
+    let val = if n.stmtKind == StoreS: first else: second
+    if dst.kind == Symbol:
+      let s = symId(dst)
+      if straight and not defs.hasKey(s): defs[s] = cursorToPosition(orig[], val)
+      else: multi.incl s
+    else:
+      let s = slotRoot(dst)
+      if s != SymId(0): multi.incl s
+  else: discard
+  let inner = straight and n.stmtKind notin ControlStmts
+  var it = n
+  it.loopInto:
+    scanLoopDefs(orig, it, inner, defs, multi, blocked)
+    skip it
+
+proc collectLoopDefs(c: var Context; whileCur: Cursor) =
+  ## Fill `c.defs` for one loop. A symbol defined twice, or defined anywhere but
+  ## the straight-line path, is dropped: only a single unconditional definition
+  ## lets the condition be rewritten in terms of the definition's own symbols.
+  c.defs = initTable[SymId, int]()
+  var multi = initHashSet[SymId]()
+  var blocked = false
+  var body = whileCur
+  body.into:
+    if body.hasMore: skip body                   # the loop condition
+    while body.hasMore:
+      scanLoopDefs(c.orig, body, true, c.defs, multi, blocked)
+      skip body
+  if blocked:
+    c.defs.clear()
+  else:
+    for s in multi: c.defs.del s
+
+proc expandCond(c: Context; dest: var TokenBuf; n: Cursor; bound: int;
+                depth: int; active: var HashSet[SymId]) =
+  ## Copy the expression at `n` into `dest`, replacing every chaseable symbol by
+  ## its defining expression, so the result speaks only of symbols that exist
+  ## OUTSIDE the loop. `bound` is the position of the condition being
+  ## canonicalized: a definition that comes after it did not produce the value
+  ## the test reads, so it is not substituted.
+  case n.kind
+  of Symbol:
+    let s = symId(n)
+    let dp = c.defs.getOrDefault(s, -1)
+    if dp >= 0 and dp < bound and depth < MaxSubstDepth and s notin active:
+      active.incl s
+      let d = cursorAt(c.orig[], dp)
+      expandCond(c, dest, d, bound, depth + 1, active)
+      active.excl s
+    else:
+      dest.addSubtree n
+  of TagLit:
+    let li = rawLineInfo(n)
+    dest.openTag n.cursorTagId
+    if li.isValid: dest.appendLineInfo li
+    var it = n
+    it.loopInto:
+      expandCond(c, dest, it, bound, depth, active)
+      skip it
+    dest.closeTag()
+  else:
+    dest.addSubtree n
+
+proc canonCond(c: Context; condPos: int): TokenBuf =
+  ## The condition at `condPos` with every chaseable temp substituted away.
+  ## This is what gets hoisted, and what conditions are compared BY: two tests
+  ## reading two different inlined copies of the same accessor are the same
+  ## test, and only the canonical form says so.
+  result = createTokenBuf(32, c.orig[].pool, c.orig[].tags)
+  var active = initHashSet[SymId]()
+  let cur = cursorAt(c.orig[], condPos)
+  expandCond(c, result, cur, condPos, 0, active)
+
+proc canonAt(c: Context; cond: Cursor): TokenBuf {.inline.} =
+  canonCond(c, cursorToPosition(c.orig[], cond))
+
+proc condCost(n: Cursor): int =
+  ## What the test costs per iteration, roughly: a memory read 2, an arithmetic
+  ## or compare operation 1, a conversion or literal 0. A bare `(elif flag …)`
+  ## therefore costs 0 — hoisting it would trade a `cmp` for a duplicated loop.
+  if n.kind != TagLit: return 0
+  var skipFirst = false
+  case n.exprKind
+  of DotC, DerefC, PatC, AtC: result = 2
+  of ConvC, CastC:
+    result = 0                                # the first child is the TYPE
+    skipFirst = true
+  of AddC, SubC, MulC, NegC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC:
+    result = 1                                # ditto: `(bitand (u 64) x 255u)`
+    skipFirst = true
+  of SufC:
+    return 0
+  else: result = 1
+  var it = n
+  var first = true
+  it.loopInto:
+    if first and skipFirst: first = false
+    else: result += condCost(it)
+    skip it
+
 # ── candidate discovery ──────────────────────────────────────────────────────
 
 proc subtreeSpan(orig: ptr TokenBuf; n: Cursor): int =
@@ -243,8 +413,12 @@ proc invariantConds(c: var Context; n: Cursor;
       if it.substructureKind == ElifU:
         let cond = child0(it)
         if not (cond.kind == TagLit and cond.exprKind in {TrueC, FalseC}):
+          # Purity and invariance are asked of the CANONICAL condition — the one
+          # with the loop's own temps substituted away — because that is the
+          # expression that will be evaluated before the loop.
+          var canon = canonAt(c, cond)
           var syms: seq[SymId] = @[]
-          if pureCond(cond, syms) and syms.len > 0:
+          if pureCond(cursorAt(canon, 0), syms) and syms.len > 0:
             var ok = true
             for s in syms:
               if s in assigned: ok = false
@@ -268,6 +442,7 @@ proc scanWhiles(c: var Context; n: Cursor; cands: var seq[Candidate]) =
     var assigned = initHashSet[SymId]()
     var opaque = false
     scanEffects(n, assigned, opaque)
+    collectLoopDefs(c, n)
     var conds: seq[int] = @[]
     var body = n
     body.into:
@@ -275,21 +450,33 @@ proc scanWhiles(c: var Context; n: Cursor; cands: var seq[Candidate]) =
       while body.hasMore:
         invariantConds(c, body, assigned, opaque, conds)
         skip body
-    # PROFITABILITY: only split on a condition the loop tests at least TWICE
-    # (the inlined-accessor shape — e.g. the SSO test, four times per char in
-    # `addSymbol`). A once-tested invariant would be hoisted too, but each
-    # unswitch DOUBLES the loop and the rounds compose: on real modules the
-    # unrestricted rule tripled `addSymbol` for single-occurrence conditions
-    # with no repeated test to delete. Pick the most-repeated condition.
+    # PROFITABILITY. Two ways to qualify, and both are about what the loop pays
+    # per iteration for the test itself:
+    #  * tested at least TWICE — unswitching deletes every repeat (the SSO test
+    #    runs four times per character in nifbuilder's `addSymbol`);
+    #  * tested once but EXPENSIVE — a load plus arithmetic plus the branch,
+    #    which is what an inlined `s[i]` costs (`SingleTestMinCost`). A bare
+    #    `(elif flag …)` costs 0 by `condCost` and is left alone: hoisting it
+    #    would trade one `cmp` for a duplicated loop, and doing that
+    #    indiscriminately tripled `addSymbol`'s loop count when the pass was
+    #    first written.
+    # Conditions are grouped by their CANONICAL form, so two tests reading two
+    # different inlined copies of the same accessor count as the same test.
+    var canons: seq[TokenBuf] = @[]
+    for pos in conds: canons.add canonCond(c, pos)
     var bestPos = -1
-    var bestCount = 1
+    var bestCount = 0
+    var bestCost = 0
     for i in 0 ..< conds.len:
-      let ci = cursorAt(c.orig[], conds[i])
+      let ci = cursorAt(canons[i], 0)
       var cnt = 1
       for j in i + 1 ..< conds.len:
-        if sameTree(ci, cursorAt(c.orig[], conds[j])): inc cnt
-      if cnt > bestCount:
+        if sameTree(ci, cursorAt(canons[j], 0)): inc cnt
+      let cost = condCost(ci)
+      if (cnt >= 2 or cost >= SingleTestMinCost) and
+         (cnt > bestCount or (cnt == bestCount and cost > bestCost)):
         bestCount = cnt
+        bestCost = cost
         bestPos = conds[i]
     if bestPos >= 0:
       cands.add Candidate(whilePos: cursorToPosition(c.orig[], n),
@@ -331,7 +518,7 @@ proc emitSpecChildren(c: var Context; dest: var TokenBuf; n: Cursor;
 proc emitSpec(c: var Context; dest: var TokenBuf; n: Cursor; cond: Cursor;
               condTrue: bool; rename: Table[SymId, string]) =
   ## Copy subtree `n`, renaming defs/uses per `rename` and folding every `if`
-  ## one of whose elif conditions is structurally `cond` to the `condTrue`
+  ## one of whose elif conditions canonicalizes to `cond` to the `condTrue`
   ## branch shape.
   case n.kind
   of TagLit:
@@ -343,7 +530,12 @@ proc emitSpec(c: var Context; dest: var TokenBuf; n: Cursor; cond: Cursor;
         var it = n
         it.loopInto:
           if it.substructureKind == ElifU and matchIdx < 0:
-            if sameTree(child0(it), cond): matchIdx = idx
+            # `cond` is the CANONICAL (substituted) hoisted condition, so every
+            # elif is canonicalized too before the comparison: the copies of an
+            # inlined accessor each test their own temp, and only the canonical
+            # form makes those the same test.
+            var cc = canonAt(c, child0(it))
+            if sameTree(cursorAt(cc, 0), cond): matchIdx = idx
           inc idx
           skip it
       if matchIdx < 0:
@@ -436,7 +628,13 @@ proc emitSpec(c: var Context; dest: var TokenBuf; n: Cursor; cond: Cursor;
 
 proc applyCandidate(c: var Context; cand: Candidate): TokenBuf =
   let whileCur = cursorAt(c.orig[], cand.whilePos)
-  let cond = cursorAt(c.orig[], cand.condPos)
+  # The hoisted test is the CANONICAL condition: the loop's own temps do not
+  # exist in front of the loop, so what is emitted there is the expression they
+  # were computed from. `collectLoopDefs` re-establishes this loop's def map —
+  # `scanWhiles` left `c.defs` on whatever loop it looked at last.
+  collectLoopDefs(c, whileCur)
+  var canon = canonCond(c, cand.condPos)
+  let cond = cursorAt(canon, 0)
   var repl = createTokenBuf(256, c.orig[].pool, c.orig[].tags)
   repl.openTag TagId(ord(IfTagId))
   block trueArm:
@@ -496,7 +694,7 @@ when isMainModule:
 
   proc unswitched(src: string): string =
     var b = parse(src)
-    runUnswitch(b, "t")
+    discard runUnswitch(b)
     toString(b)
 
   proc canon(src: string): string =
@@ -597,5 +795,67 @@ when isMainModule:
       "(if (elif (le k.0.M 14) (stmts (asgn b.0.M 1))) (else (stmts (asgn b.0.M 2)))) " &
       "(asgn i.0.M (add (i 64) i.0.M 1)))))")
     doAssert got.count("(le k.0.M 14)") == 1, got
+
+  block chased_temp_hoisted:
+    # THE MOTIVATING SHAPE, as `nimony c`/`n` actually produce it: the test does
+    # not read an outer symbol, it reads a temp the loop computes from one —
+    # an inlined `s[i]`'s "is this string short?" test. Tested ONCE, but a load
+    # plus a mask plus a compare, so the cost rule qualifies it.
+    let got = unswitched(
+      "(stmts (while (lt i.0 n.0) (stmts " &
+      "(var :bytes.1 . (u 64) (dot b.0.M bytes.0.M 0)) " &
+      "(var :x.1 . (i 64) (conv (i 64) (bitand (u 64) bytes.1 255u))) " &
+      "(if (elif (lt 14 x.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(asgn i.0 (add (i 64) i.0 1)))))")
+    doAssert got.count("(while") == 2, got
+    doAssert got.count("(elif") == 1, got      # the hoisted one; both ifs folded
+    doAssert "(dot b.0.M" in got, got          # hoisted in terms of `b`, not `x.1`
+
+  block chased_temps_dedup_across_copies:
+    # two tests reading two DIFFERENT temps with the same defining expression:
+    # the same test, and only the canonical form says so
+    let got = unswitched(
+      "(stmts (while (lt i.0 n.0) (stmts " &
+      "(var :u.1 . (u 64) (dot b.0.M bytes.0.M 0)) " &
+      "(if (elif (lt 14u u.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(var :v.1 . (u 64) (dot b.0.M bytes.0.M 0)) " &
+      "(if (elif (lt 14u v.1) (stmts (asgn c.0 1))) (else (stmts (asgn c.0 2)))) " &
+      "(asgn i.0 (add (i 64) i.0 1)))))")
+    doAssert got.count("(while") == 2, got
+    doAssert got.count("(elif") == 1, got
+
+  block conditional_def_not_chased:
+    # `x.1` is written under an `if`: the value the test reads is not always
+    # that expression, so the temp is not chased and the loop is left alone
+    let src =
+      "(stmts (while (lt i.0 n.0) (stmts " &
+      "(var :x.1 . (i 64) 0) " &
+      "(if (elif (lt 0 i.0) (stmts (asgn x.1 (conv (i 64) " &
+      "(bitand (u 64) (dot b.0.M bytes.0.M 0) 255u)))))) " &
+      "(if (elif (lt 14 x.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(asgn i.0 (add (i 64) i.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block jump_in_loop_blocks_chasing:
+    # a `jmp` can skip the definition, so "textually before the test" stops
+    # implying "ran before the test"
+    let src =
+      "(stmts (while (lt i.0 n.0) (stmts " &
+      "(var :bytes.1 . (u 64) (dot b.0.M bytes.0.M 0)) " &
+      "(jmp L.0) " &
+      "(if (elif (lt 14u bytes.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(lab :L.0) " &
+      "(asgn i.0 (add (i 64) i.0 1)))))"
+    doAssert unswitched(src) == canon(src)
+
+  block chased_temp_of_variant_expression_left_alone:
+    # the temp's defining expression reads the induction variable: hoisting it
+    # would evaluate a different value than the loop sees
+    let src =
+      "(stmts (while (lt i.0 n.0) (stmts " &
+      "(var :x.1 . (i 64) (add (i 64) i.0 1)) " &
+      "(if (elif (lt 14 x.1) (stmts (asgn a.0 1))) (else (stmts (asgn a.0 2)))) " &
+      "(asgn i.0 (add (i 64) i.0 1)))))"
+    doAssert unswitched(src) == canon(src)
 
   echo "unswitch.nim: all self-tests passed"
