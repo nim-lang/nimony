@@ -1470,27 +1470,46 @@ proc substUse(c: var Context; exprPos: int; tempName: string; deref: bool) =
 type
   LoadTypeClass = enum
     ltcScalar      ## a value type we can materialize a temp for
-    ltcAggregate   ## object/union/array — caching copies the whole thing
-    ltcUnknown     ## type navigation failed (`(err)` sentinel)
+    ltcAggregate   ## object/union/array/flexarray — caching copies the whole thing
+    ltcUnknown     ## type navigation failed (`(err)` sentinel, or a nominal
+                   ## type this module's context cannot resolve)
+
+const
+  ValueTypes = {IT, UT, FT, CT, BoolT, PtrT, AptrT, EnumT, ProctypeT}
+    ## The type kinds a temp can HOLD: everything that fits in a register and
+    ## whose spelling is a complete type. This is an ALLOW-list on purpose.
+    ## It used to be a deny-list of `{ObjectT, UnionT, ArrayT}`, and what a
+    ## deny-list does when a kind is missing from it is not "miss an
+    ## optimization" but "emit a temp that cannot exist": `FlexarrayT` was
+    ## missing, so the string payload `(dot (deref s.more) data)` became
+    ## `NC8 t[] = …` — gcc says "invalid initializer", arkham segfaulted. Any
+    ## type kind this list does not name is refused, including one added to
+    ## Leng tomorrow.
 
 proc classifyLoad(c: var Context; n: Cursor): LoadTypeClass =
   ## Classify the value loaded by `n` for value-CSE eligibility. Needs the type
   ## context; without it (`m == nil`, e.g. the self-tests) we assume scalar.
   ##
-  ## `ltcAggregate`: object/union/array — caching copies the whole aggregate into
-  ## a temp (a pessimization), and the temp would need its aggregate type spelled.
+  ## `ltcAggregate`: anything outside `ValueTypes` — an object/union/array copies
+  ## the whole thing into a temp (a pessimization) and needs its aggregate type
+  ## spelled; a `flexarray` cannot be spelled at all, having no size. The string
+  ## payload `(dot (deref s.more) data)` is exactly that shape, and it only
+  ## became a repeated load once loop unswitching specialized the long-string
+  ## path (`unswitch.nim`), which is how the deny-list's omission surfaced.
   ##
-  ## `ltcUnknown`: `getType` returned its `(err)` sentinel (a non-type tag) — the
-  ## value's type cannot be navigated, so a hoisted `(var :t . . load)` would force
-  ## the C backend to *infer* a type it equally cannot resolve, emitting `(err)` in
-  ## a type position. This happens after inter-module inlining splices a foreign
-  ## body whose loads reference types not in this module's context. We must not
-  ## value-CSE such a load.
+  ## `ltcUnknown`: `getType` returned its `(err)` sentinel (a non-type tag), or a
+  ## bare `Symbol` — `navigateToObjectBody` gave up because the nominal type is
+  ## not in this module's context (an inter-module-inlined foreign body's loads
+  ## do that). Either way the value's type cannot be navigated, so a hoisted
+  ## `(var :t . . load)` would force the C backend to *infer* a type it equally
+  ## cannot resolve, emitting `(err)` in a type position. We must not value-CSE
+  ## such a load — and "I could not resolve it" is no evidence that it is small.
   if c.m == nil: return ltcScalar
   let t = getType(c.m[], n)             # navigates nominal → object/array body
-  if t.typeKind in {ObjectT, UnionT, ArrayT}: ltcAggregate
-  elif t.kind == TagLit and t.typeKind == NoType: ltcUnknown
-  else: ltcScalar
+  if t.kind != TagLit: ltcUnknown
+  elif t.typeKind in ValueTypes: ltcScalar
+  elif t.typeKind == NoType: ltcUnknown
+  else: ltcAggregate
 
 proc latestLocalDef(c: Context; start: Cursor): int =
   ## The largest declaration position among the locals read anywhere in the
