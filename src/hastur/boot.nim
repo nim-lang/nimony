@@ -73,13 +73,20 @@ proc useNativeBoot*(): bool =
   ## inliner supplies the register pressure that reaches them; neither was the
   ## inliner's fault. `SHOGGOTH_DISABLE=<pass,…>` is what separated those questions.
   ##
+  ## macOS/arm64 is IN, as of 2026-09-08. What had kept it out was one nifasm bug:
+  ## `extprocLib` read the token after an `(extproc :name "extname")` without
+  ## checking the decl had one, and the Darwin form has none — so every stage-1
+  ## tool died in `resolveForeignSym` ("advancing past end of scope"). With that
+  ## fixed `--boot-backend:native` reaches the byte-identical stage1==stage2==stage3
+  ## fixed point in ~245s on an M-series laptop.
+  ##
   ## windows/amd64 is in as of #2325: arkham's win_x64 target emits a PE that
   ## imports what it needs per dll, so a native boot there needs no MinGW and no
   ## libc — which is what makes the Windows job the slowest in the matrix (601s
   ## of stages against 61s natively).
-  when defined(linux) and (defined(amd64) or defined(arm64)):
-    result = NativeBootReady and missingNativeTools().len == 0
-  elif defined(windows) and defined(amd64):
+  when (defined(linux) and (defined(amd64) or defined(arm64))) or
+       (defined(windows) and defined(amd64)) or
+       (defined(macosx) and defined(arm64)):
     result = NativeBootReady and missingNativeTools().len == 0
   else:
     result = false
@@ -97,7 +104,8 @@ proc bootBackendLine*(withValgrind: bool): string =
   if bootBackend == bbC:
     return result & " — forced by --boot-backend:c"
   when (defined(linux) and (defined(amd64) or defined(arm64))) or
-       (defined(windows) and defined(amd64)):
+       (defined(windows) and defined(amd64)) or
+       (defined(macosx) and defined(arm64)):
     if withValgrind:
       result.add " — --valgrind cannot see the native heap"
     elif not NativeBootReady:

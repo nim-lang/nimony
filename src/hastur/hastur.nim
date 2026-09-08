@@ -60,7 +60,8 @@ Commands:
                        To boot at another mode use `--forward:` so the flag
                        survives getopt intact — `--forward:-d:danger` replaces
                        the default rather than stacking on it.
-                       On linux/amd64 every stage is built with the C-FREE
+                       On linux/amd64, linux/arm64, windows/amd64 and
+                       macOS/arm64 every stage is built with the C-FREE
                        NATIVE backend (`nimony n`: arkham + nifasm, no C
                        compiler, no libc) when those two are built; otherwise
                        through the C backend.

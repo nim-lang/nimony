@@ -2435,6 +2435,27 @@ when isMainModule:
       "(asgn y.0.M (dot (dot o.0.M a.0.M) f.0.M)) " &
       "(asgn (dot o.0.M a.0.M) 7))))")
 
+  block loop_pointer_field_store_not_hoisted:
+    # The loop advances the POINTER `t.p` the load goes through — an inlined
+    # cursor `inc`. The load reads `t.p` itself, so it is not invariant even
+    # though `*(t.p)` and `t.p` never name the same storage (`collectReadPaths`
+    # must report the pointer operand of a `deref`). Measured: hoisting it
+    # miscompiled nimsem's `nominalRoot` once `inc` was inlined into it.
+    # `t` is a body local whose address is never taken — the case where no
+    # pointer can reach it and only the path rule can say the store matters.
+    assertUnchanged(
+      "(stmts (var :t.0.M . Cursor.0.M .) (while c.0.M (stmts " &
+      "(asgn y.0.M (deref (dot t.0.M p.0.M))) " &
+      "(asgn (dot t.0.M p.0.M) q.0.M))))")
+
+  block pointer_field_store_kills_deref_load:
+    # Straight-line twin: after `t.p = q`, `*(t.p)` is a different load.
+    assertUnchanged(
+      "(stmts (var :t.0.M . Cursor.0.M .) " &
+      "(asgn y.0.M (deref (dot t.0.M p.0.M))) " &
+      "(asgn (dot t.0.M p.0.M) q.0.M) " &
+      "(asgn z.0.M (deref (dot t.0.M p.0.M))))")
+
   block loop_unknown_call_not_hoisted:
     # Unknown callee in the body may clobber `pp` → not invariant.
     assertUnchanged(
@@ -2487,7 +2508,7 @@ when isMainModule:
     # `SymId` keys line up; mirror that here via `sharedPool`.
     var body = parseFromBuffer(bodyIn, "M", 100,
                                sharedPool = mb.pool, sharedTags = createLengTagPool())
-    runCSE(body, "M", addr summaries)
+    runCSE(body, addr summaries)
     let got = toString(body)
     let want = canon(bodyExpected)
     doAssert got == want, "MISMATCH\n  got:  " & got & "\n  want: " & want
@@ -2498,7 +2519,7 @@ when isMainModule:
     var body = parseFromBuffer(bodyIn, "M", 100,
                                sharedPool = mb.pool, sharedTags = createLengTagPool())
     let before = toString(body)
-    runCSE(body, "M", addr summaries)
+    runCSE(body, addr summaries)
     doAssert toString(body) == before, "expected unchanged:\n  " & bodyIn
 
   block summary_disjoint_survives:

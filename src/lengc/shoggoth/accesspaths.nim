@@ -176,14 +176,36 @@ proc collectReadPaths*(n: Cursor; acc: var seq[AccessPath]) =
     case n.exprKind
     of DotC, AtC, DerefC, PatC, AddrC, HaddrC, ConvC, CastC, BaseobjC, ParC:
       acc.add pathOfLvalue(n)
-      # The selectors themselves can read memory (`a[y.i]`), so walk the operands
-      # that are not part of the location.
-      case n.exprKind
-      of AtC, PatC:
-        var idx = firstChild(n)
-        skip idx                     # the base
-        collectReadPaths(idx, acc)
-      else: discard
+      # Walk down the lvalue chain for the reads that are NOT the location
+      # itself: index operands (`a[y.i]` reads `y.i`), and the POINTER VALUE a
+      # `deref`/`pat` goes through — `(deref (dot t p))` reads `t.p` as well as
+      # what it points to, so a store to `t.p` changes what the load sees even
+      # though the two paths never name the same storage. Missing that kept
+      # `*(t.p)` in the load cache across `t.p = …`, and hoisted it out of a
+      # loop that advanced `t.p` on every iteration (an inlined cursor `inc`;
+      # the call it replaced had clobbered the entry through its summary).
+      var m = n
+      while m.kind == TagLit:
+        case m.exprKind
+        of AtC, PatC:
+          var idx = firstChild(m)
+          skip idx                   # the base
+          collectReadPaths(idx, acc)
+          if m.exprKind == PatC:
+            collectReadPaths(firstChild(m), acc)   # the pointer operand
+            break
+          m = firstChild(m)
+        of DerefC:
+          collectReadPaths(firstChild(m), acc)     # the pointer operand
+          break
+        of DotC, AddrC, HaddrC, BaseobjC, ParC:
+          m = firstChild(m)
+        of ConvC, CastC:
+          var operand = firstChild(m)
+          skip operand               # the target type
+          m = operand
+        else:
+          break
     of CallC, InstrC:
       # Neither a call's value nor an intrinsic's is described by any path
       # (`isPureExpr` keeps both out of the load cache; guard facts can still hold
