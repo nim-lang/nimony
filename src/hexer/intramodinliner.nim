@@ -13,20 +13,30 @@
 ##   - statement-position calls only (call as a direct stmts child);
 ##   - single-return procs only (no `(ret …)` mid-body).
 ##
-## The inlining POLICY is size-driven, not annotation-driven (see
-## `computeInlineInfo`): a body of at most `InlineTinyBound` tokens is always
-## spliced — that covers forwarders, accessors and hooks whether or not the
-## author wrote `.inline` — a `.noinline` proc never is, and anything bigger
-## goes through the per-call-site weighted-score heuristic (`shouldInline`)
-## whose threshold grows with the body size, so a big body needs ever juicier
-## arguments (literals feeding conditions) to be worth its bulk. The
-## `.inline` annotation is a bounded hint (`InlineHintBound`): it splices
-## unconditionally up to that size and is ignored beyond it, so an
-## ill-considered `.inline` on a fat proc cannot blow the program up, while a
-## proc nobody thought to annotate still inlines when it is trivially cheap.
-## "Unconditionally" always means "within the caller's growth budget"
-## (`growthLeft`): every splice, tiny ones included, is charged to that one
-## pot, which is what keeps the cross-module pass from compounding.
+## The inlining POLICY is size-driven, not annotation-driven, and it asks the
+## question of the CALLEE, once (see `computeInlineInfo`): a body of at most
+## `InlineTinyBound` tokens is inlinable — that covers forwarders, accessors
+## and hooks whether or not the author wrote `.inline` — a `.noinline` proc
+## never is, and anything bigger is not inlinable either unless the
+## module-level small-total rule lifts it (`InlineSmallTotalBound`: all its
+## call sites in the module together add at most that many tokens). The
+## `.inline` annotation is a bounded hint (`InlineHintBound`): it raises the
+## bound and is ignored beyond it, so an ill-considered `.inline` on a fat
+## proc cannot blow the program up, while a proc nobody thought to annotate
+## still inlines when it is trivially cheap. `.alwaysInline` is the escape
+## hatch for the rest, and the only way to inline a big body.
+##
+## "Inlinable" always means "within the caller's growth budget" (`growthLeft`):
+## every splice, tiny ones included, is charged to that one pot, which is what
+## keeps the cross-module pass from compounding. Be aware of the shape of that
+## arrangement before adding anything here: the pot, not the policy, is what
+## actually decides. The rules above ask for about 1.5x the program in splices
+## and the pot grants about half of it, first-come-first-served in source
+## order (numbers in `computeInlineInfo` and `growthLeft`). So a rule that
+## admits more candidates does not produce more inlining — it produces
+## different, and mostly worse, inlining, because it spends the same pot on
+## bigger bodies. That is how the weighted-score tier that used to live here
+## managed to cost 22 % of all spliced tokens while being 3.4 % of the splices.
 ##
 ## Two passes share this machinery, one per pipeline stage, and each stays in
 ## the file format of its stage:
@@ -56,17 +66,15 @@ import ".." / lib / symparser
 import ".." / lengc / [leng_model]
 
 type
-  InlineWeights* = seq[int]
   InlineInfo* = object
-    threshold*: int
-    weights*: InlineWeights
-    guardThreshold*: int
-    guards*: InlineWeights
     size*: int                 ## body token count; what a splice would cost
-    forced*: bool              ## `{.alwaysInline.}`: splice regardless of size,
-                               ## score and growth budget
+    inlinable*: bool           ## the policy says yes, subject to the budget
+    forced*: bool              ## `{.alwaysInline.}`: splice regardless of size
+                               ## and growth budget
+    banned*: bool              ## a veto no rule may lift: `.noinline`, no body,
+                               ## importc, varargs, an overflow-flag body
   ModuleAnalysis = object
-    ## Hexer-stage scratch: the threshold-0 procs `analyzeModule` found, so
+    ## Hexer-stage scratch: the inlinable procs `analyzeModule` found, so
     ## `intraModuleInline` knows which bodies to flatten. Importers never see
     ## this type — they re-derive the same information from the `.c.nif` they
     ## parse anyway (`indexProcBodies`).
@@ -75,8 +83,10 @@ type
     inlineInfo: Table[SymId, InlineInfo]
 
 const
-  DefaultInlineInfo* = InlineInfo(threshold: 100, weights: @[],
-                                  guardThreshold: 100, guards: @[], forced: false)
+  DefaultInlineInfo* = InlineInfo(size: 0, inlinable: false, forced: false,
+                                  banned: true)
+    ## What a callee we know nothing about gets: not inlinable. A proc with no
+    ## `InlineInfo` in the table is one `indexProcBodies` declined to store.
   InlineTinyBound* = 100
     ## Bodies of at most this many tokens are spliced unconditionally: at that
     ## size the body is on the order of the call sequence it replaces (a
@@ -106,46 +116,12 @@ const
     ## is spliced at every one of them. This is the module-level twin of the
     ## tiny rule: it does not matter that one body is 119 tokens when there is
     ## one caller and the proc's whole footprint is 119. Measured on the native
-    ## `nifbench` build: nifreader's `skipWhitespace` (119 tokens, a `var` param
-    ## copied into locals so the score saw no use of it) was 17% of the parse
-    ## phase as a call frame the C build had folded into `next`. At 400 the rule
+    ## `nifbench` build: nifreader's `skipWhitespace` (119 tokens, just over
+    ## `InlineTinyBound`) was 17% of the parse phase as a call frame the C
+    ## build had folded into `next`. At 400 the rule
     ## also pulled medium helpers into `addAcrossPools` and cost the reintern
     ## phase 10% (same allocator pressure as `InlineHintBound`); 200 keeps the
     ## win and not the loss.
-  InlineNeverBound* = 10000
-    ## Thresholds at or above this mean "never" (`.noinline`).
-  InlineWeightCap* = 150
-    ## Ceiling for a single parameter's weight. The weight walk adds the use
-    ## context's value per occurrence, so an uncapped weight grows with the
-    ## body — and since the threshold also grows with the body (`size div 4`),
-    ## the two cancel and ANY body whose params appear in conditions more than
-    ## ~once per 100 tokens would inline at every call site. The benefit of
-    ## substituting one argument does not scale with body size (folding a
-    ## branch is worth the branch, not the whole proc), so the estimate must
-    ## not either: with the cap, a body of size S needs on the order of
-    ## S/(4*150) max-weight literal arguments to inline — big bodies need
-    ## several genuinely decisive arguments, huge bodies effectively never
-    ## qualify.
-
-proc shouldInline*(info: InlineInfo; argScores: openArray[int]): bool =
-  var sum = 0
-  for i, score in argScores:
-    if i < info.weights.len:
-      sum += (info.weights[i] * score) div 100
-  result = sum >= info.threshold
-
-proc collectParamSyms(params: Cursor): seq[SymId] =
-  result = @[]
-  if not params.isTagLit: return @[]
-  var p = params
-  p.into:
-    while p.hasMore:
-      if p.substructureKind == ParamU:
-        var q = p
-        inc q
-        if q.isSymbolDef:
-          result.add q.symId
-      skip p
 
 proc hasVarargsParam(params: Cursor): bool =
   ## A `(varargs)` parameter cannot be bound to a `(var …)` at a splice site
@@ -163,35 +139,6 @@ proc hasVarargsParam(params: Cursor): bool =
           skip q                    # past pragmas
           if q.typeKind == VarargsT: result = true
       skip p
-
-proc weightOfUse(n: Cursor): int =
-  case n.exprKind
-  of EqC, NeqC, LeC, LtC: 30
-  of AddC, SubC, MulC, DivC, ModC, ShrC, ShlC,
-     BitandC, BitorC, BitxorC, BitnotC, NegC,
-     AndC, OrC, NotC: 20
-  of AtC, PatC: 40
-  of CallC: 10
-  else:
-    case n.stmtKind
-    of IfS, WhileS, CaseS, IteS, ItecS, LoopS: 50
-    of CallS: 10
-    else: 0
-
-proc walkInlineWeights(n: var Cursor; params: Table[SymId, int];
-                       weights: var seq[int]; inherited: int) =
-  case n.kind
-  of Symbol:
-    if params.hasKey(n.symId):
-      weights[params.getOrQuit(n.symId)] += inherited
-    inc n
-  of TagLit:
-    let w = max(inherited, weightOfUse(n))
-    n.into:
-      while n.hasMore:
-        walkInlineWeights(n, params, weights, w)
-  else:
-    inc n
 
 proc tokenCountAux(n: var Cursor): int =
   case n.kind
@@ -239,26 +186,43 @@ proc bodyTouchesOverflowFlag(body: Cursor): bool =
   result = walk(b)
 
 proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
-  ## The whole inlining policy, derived from the proc decl itself:
+  ## The whole inlining policy, derived from the proc decl itself, and it is
+  ## a size question only:
   ##   - no body / `.noinline` / importc / assembler / interrupt / varargs /
-  ##     a body touching the overflow flag → never (an `InlineNeverBound`
-  ##     threshold; see `bodyTouchesOverflowFlag` for the last);
+  ##     a body touching the overflow flag → BANNED, no rule may lift it (see
+  ##     `bodyTouchesOverflowFlag` for the last);
   ##   - body ≤ `InlineTinyBound` tokens, or `.inline` and ≤ `InlineHintBound`
-  ##     → always (threshold 0);
-  ##   - anything bigger → the weighted-score heuristic, with a threshold
-  ##     that grows with the body size (`max(100, size div 4)`), so only a
-  ##     moderately-sized body with high-value arguments (literals feeding
-  ##     conditions or index expressions) clears the bar.
-  ## `.alwaysInline` wins over everything below (`forced`); the small-total
-  ## rule (`applySmallTotalRule`) lowers thresholds afterwards per module.
+  ##     → inlinable;
+  ##   - `.alwaysInline` → inlinable and `forced` (it also skips the budget);
+  ##   - anything bigger → NOT inlinable, unless the module-level small-total
+  ##     rule (`applySmallTotalRule`) lifts it afterwards.
+  ##
+  ## There used to be a fourth tier here: bodies above the bounds went through
+  ## a per-call-site weighted score (a `weightOfUse` walk over the body, an
+  ## argument score per call, a threshold growing as `size div 4`, a weight
+  ## cap to keep the two from cancelling). It is gone, and the measurement
+  ## that removed it is worth keeping: traced over a full `nimony n -d:danger`
+  ## build of nimsem, that tier produced **386 of 11,433 splices (3.4 %) but
+  ## 115,306 of 513,204 spliced tokens (22 %)** — average body 299 tokens,
+  ## largest 1,337. It spent the caller's growth budget on the biggest bodies
+  ## in the program, and the budget is a fixed pot checked before anything
+  ## else, so what it really bought was 6,450 REFUSED splices of bodies ≤ 100
+  ## tokens — the class that cannot lose — starved because a 300-token body
+  ## reached the pot first. Deleting it: `.c.nif` −19.8 %, `.oc.nif` −22.5 %,
+  ## nimsem image −17.8 %, and 12,076 splices instead of 11,433 (MORE
+  ## inlining, 17 % fewer tokens). The gate (`nimony check nimsem.nim`, 135
+  ## nimsem invocations under callgrind) went 42,104,669,900 → 41,986,537,540
+  ## Ir = −0.28 %. nifbench says +1.8 % on the native build, which is the
+  ## documented nifbench-lies-about-inlining trap: it is leaf- and
+  ## prologue-heavy, so it overvalues splicing by ~3x.
   result = DefaultInlineInfo
   var p = procDecl
   let pd = takeProcDecl(p)
   var forced = false
   if not pd.body.isTagLit:
-    result.threshold = InlineNeverBound     # extern/no body: nothing to splice
-    return
+    return                                  # extern/no body: nothing to splice
   var hinted = false
+  var vetoed = false
   if pd.pragmas.isTagLit:
     var pr = pd.pragmas
     pr.into:                            # scan all pragmas (no early break: the
@@ -282,42 +246,26 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
           # address of its own. Splicing it into some ordinary caller (which
           # would have to have called it explicitly) leaves the table pointing
           # at whatever survived.
-          result.threshold = InlineNeverBound
+          vetoed = true
         skip pr
-  if result.threshold >= InlineNeverBound:
-    return
-  if hasVarargsParam(pd.params):
-    result.threshold = InlineNeverBound
-    return
-  if bodyTouchesOverflowFlag(pd.body):
-    result.threshold = InlineNeverBound     # see `bodyTouchesOverflowFlag`
-    return
+  if vetoed: return                         # `banned` stays set
+  if hasVarargsParam(pd.params): return
+  if bodyTouchesOverflowFlag(pd.body): return   # see `bodyTouchesOverflowFlag`
 
-  let params = collectParamSyms(pd.params)
-  result.weights = newSeq[int](params.len)
+  result.banned = false
   let size = tokenCount(pd.body)
   result.size = size
   if forced:
-    # `{.alwaysInline.}` — no size bound, no score, like MSVC's `__forceinline`.
-    # Everything the heuristic below reasons about is a PROXY for cost; the
-    # annotation is a direct statement about it, so the proxy has no standing.
-    # `trySplice`'s `inProgress` cycle guard still applies: that is termination,
-    # not policy. `.noinline` above still wins, because a proc carrying both is
-    # a contradiction the author must resolve, and refusing is the safe reading.
-    result.threshold = 0
+    # `{.alwaysInline.}` — no size bound, like MSVC's `__forceinline`. The
+    # size bounds below are a PROXY for cost; the annotation is a direct
+    # statement about it, so the proxy has no standing. `trySplice`'s
+    # `inProgress` cycle guard still applies: that is termination, not policy.
+    # `.noinline` above still wins, because a proc carrying both is a
+    # contradiction the author must resolve, and refusing is the safe reading.
+    result.inlinable = true
     result.forced = true
   elif size <= InlineTinyBound or (hinted and size <= InlineHintBound):
-    result.threshold = 0
-  else:
-    result.threshold = max(DefaultInlineInfo.threshold, size div 4)
-    var lookup = initTable[SymId, int]()
-    for i, s in params:
-      lookup[s] = i
-    if lookup.len > 0:
-      var body = pd.body
-      walkInlineWeights(body, lookup, result.weights, 0)
-      for w in mitems(result.weights):
-        w = min(w, InlineWeightCap)
+    result.inlinable = true
 
 type
   ForeignModule* = object
@@ -410,16 +358,17 @@ proc countCalls(n: var Cursor; counts: var Table[SymId, int]) =
     inc n
 
 proc applySmallTotalRule(buf: var TokenBuf; infos: var seq[(SymId, InlineInfo)]) =
-  ## `InlineSmallTotalBound`: a score-gated proc whose call sites in this module
-  ## would, all spliced, add no more than the bound becomes threshold 0.
+  ## `InlineSmallTotalBound`: a proc too big for the size bounds, but whose
+  ## call sites in this module would together add no more than the bound,
+  ## becomes inlinable. `banned` is a veto this cannot lift.
   var counts = initTable[SymId, int]()
   var n = beginRead(buf)
   countCalls(n, counts)
   for entry in mitems(infos):
     let info = addr entry[1]
-    if info.threshold > 0 and info.threshold < InlineNeverBound and
+    if not info.banned and not info.inlinable and
        counts.getOrDefault(entry[0]) * info.size <= InlineSmallTotalBound:
-      info.threshold = 0
+      info.inlinable = true
 
 proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
                      infos: var Table[SymId, InlineInfo]; ownModule: bool) =
@@ -448,9 +397,7 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
   # always-splice for the whole program).
   if ownModule: applySmallTotalRule(buf, found)
   for (sym, info) in found:
-    if info.threshold == 0 or
-       (info.threshold < InlineNeverBound and info.weights.len > 0):
-      infos[sym] = info
+    if info.inlinable: infos[sym] = info
 
 proc collectProcBodies*(c: var InlinerCtx) =
   indexProcBodies(c.src[], c.bodies, c.ownInfo, ownModule = true)
@@ -533,53 +480,10 @@ proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
   base.addInt c.counter
   result = pool.symId(derivedName(base, c.counterPrefix))
 
-proc scoreArg(a: Cursor): int =
-  ## Argument score for the inline heuristic (planned in dce1: 0-100).
-  ## A higher score means substituting this argument into the inlined
-  ## body is likely to expose more optimisation (constant folding,
-  ## branch elimination, etc.).
-  case a.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLit: return 100
-  of Symbol: return 50  # treat sym refs as immutable bindings
-  of TagLit:
-    case a.exprKind
-    of TrueC, FalseC, NilC, InfC, NeginfC, NanC: return 100
-    of NegC:
-      var inner = a
-      inc inner
-      if inner.isIntLit or inner.isUIntLit or inner.isFloatLit: return 100
-      return 0
-    of AddrC, HaddrC:
-      # `(haddr x)` — a `var` parameter bound to a local. Substituting it turns
-      # every `(deref p)` in the body into a direct access of `x` (the rewriter
-      # folds `deref (haddr x)` → `x`), which un-poisons the local for SROA,
-      # copyprop and register allocation. That is worth as much as a literal:
-      # without this a `var`-taking helper (`inc c`, `skipWhitespace(r)`) could
-      # never clear the bar, its only argument always scoring 0.
-      var inner = a
-      inc inner
-      if inner.isSymbol: return 100
-      return 0
-    of DotC, AtC, PatC: return 30  # simple field / index read
-    else: return 0                  # complex expression
-  else: return 0
-
-proc computeArgScores(callNode: Cursor): seq[int] =
-  ## Walks the args of a `(call f arg…)` and builds the per-arg score
-  ## vector for `shouldInline`. Uses `into` so the walk is bounded by the
-  ## call's own subtree (the closing `)` is virtual under `virtualParRi`).
-  result = @[]
-  var a = callNode
-  a.into:
-    skip a                                # past the callee sym
-    while a.hasMore:
-      result.add scoreArg(a)
-      skip a
-
 proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
-  ## The callee's `(inline THRESHOLD w…)` annotation, or `DefaultInlineInfo`
-  ## (threshold 100 — never inline) when it has none, is in another module we
-  ## cannot find, or is an extern with no body at all.
+  ## The callee's `InlineInfo`, or `DefaultInlineInfo` (not inlinable) when we
+  ## have none — the callee is in another module we cannot find, is an extern
+  ## with no body, or the policy declined it in `indexProcBodies`.
   let modul = pool.symModule(calleeSym)
   if modul == c.moduleSuffix:
     return c.ownInfo.getOrDefault(calleeSym, DefaultInlineInfo)
@@ -617,18 +521,17 @@ proc argContainsConstructor(callNode: Cursor): bool =
 
 proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
                       callNode: Cursor): bool =
-  ## Decides whether to splice a call to `calleeSym` at this call site.
-  ## Tiny bodies (threshold 0) always win; `.noinline` / bodiless procs
-  ## (threshold ≥ `InlineNeverBound`, or no stored info at all) always lose;
-  ## everything else goes through the per-call weighted-score heuristic
-  ## against the proc's `InlineInfo`.
+  ## Decides whether to splice a call to `calleeSym` at this call site. The
+  ## policy (`computeInlineInfo`) has already answered the question for the
+  ## CALLEE; all that is left here is the two per-SITE questions: is the
+  ## splice legal (`argContainsConstructor`), and is there budget for it.
   let info = lookupInlineInfo(c, calleeSym)
   template decide(v: bool; why: string): untyped =
     when defined(inlinerTrace):
       stderr.writeLine "[inliner] ", pool.syms[calleeSym], " -> ", v, " (", why,
-        "; size=", info.size, " threshold=", info.threshold, " growthLeft=", c.growthLeft, ")"
+        "; size=", info.size, " growthLeft=", c.growthLeft, ")"
     return v
-  if info.threshold >= InlineNeverBound: decide(false, "never")
+  if not info.inlinable: decide(false, "policy")
   when defined(inlinerTrace) or defined(inlinerDeny):
     # bisect aid: INLINER_DENY="name1,name2," refuses those callees outright
     let denyList = getEnv("INLINER_DENY")
@@ -643,13 +546,16 @@ proc shouldInlineCall(c: var InlinerCtx; calleeSym: SymId;
   # charged, keeping the budget honest for every ordinary decision after it.
   if argContainsConstructor(callNode): decide(false, "ctor arg")
   if info.forced: decide(true, "forced")
-  # The budget is checked BEFORE the threshold, so every class — tiny, `.inline`
-  # within `InlineHintBound`, small-total, scored — is bounded by the one pot;
-  # see `growthLeft` for what an exempt class costs cross-module.
-  if info.size > c.growthLeft: decide(false, "growth budget")   # caller's growth budget is spent
-  if info.threshold == 0: decide(true, "threshold0")
-  let scores = computeArgScores(callNode)
-  decide(shouldInline(info, scores), "score")
+  # Every class — tiny, `.inline` within `InlineHintBound`, small-total — is
+  # bounded by the one pot; see `growthLeft` for what an exempt class costs
+  # cross-module. NOTE: the pot is spent first-come-first-served in source
+  # order, which is a real weakness — on a traced nimsem build 6,888 splices
+  # are refused here, 4,007 of them bodies ≤ 100 tokens, because a call site
+  # earlier in the same proc got there first. Spending it best-first (cost all
+  # the caller's candidates, then commit cheapest-per-benefit until the pot is
+  # gone) is the next move.
+  if info.size > c.growthLeft: decide(false, "growth budget")   # pot is spent
+  decide(true, "inlinable")
 
 proc chargeSplice(c: var InlinerCtx; calleeSym: SymId) =
   ## Book the committed splice against the current caller's growth budget.
@@ -670,7 +576,7 @@ proc analyzeModule(buf: var TokenBuf): ModuleAnalysis =
         skip n
   applySmallTotalRule(buf, found)
   for (sym, info) in found:
-    if info.threshold == 0:
+    if info.inlinable:
       result.inlineInfo[sym] = info
 
 proc collectParams(params: Cursor; outSyms: var seq[SymId];

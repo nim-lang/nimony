@@ -184,6 +184,59 @@ proc isStableAddrExpr(c: Cursor; deps: var seq[SymId]): bool =
   var op = child0(c)
   result = spine(op, deps)
 
+proc isPureValueExpr(c: Cursor): bool =
+  ## True for an expression whose evaluation has no effect and cannot fault:
+  ## symbols, literals, field reads of NAMED slots, conversions and non-trapping
+  ## arithmetic. False for a call, a `deref`/index (may fault), `div`/`mod` (may
+  ## trap), a constructor, an `ovf` — anything whose evaluation is itself an
+  ## observable event.
+  ##
+  ## What it buys: a store of such an expression to a local that nothing reads
+  ## can simply be deleted, and so can the local. That is ordinary dead-code
+  ## elimination, and it is what the specialized copies of an unswitched loop
+  ## need — the temp that fed the hoisted test is still computed once per
+  ## iteration and read nowhere, which is most of the cost the unswitch set out
+  ## to remove (`unswitch.nim`).
+  proc walk(n: var Cursor): bool =
+    case n.kind
+    of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+      skip n
+      result = true
+    of TagLit:
+      case n.exprKind
+      of TrueC, FalseC, SufC, NilC:
+        skip n
+        result = true
+      of NotC, AndC, OrC, EqC, NeqC, LeC, LtC:
+        result = true
+        n.into:
+          while n.hasMore:
+            if not walk(n): result = false
+      of AddC, SubC, MulC, NegC, ShlC, ShrC, BitandC, BitorC, BitxorC, BitnotC,
+         ConvC, CastC:
+        # all of these carry their result TYPE as the first child
+        result = true
+        n.into:
+          if n.hasMore: skip n
+          while n.hasMore:
+            if not walk(n): result = false
+      of DotC:
+        # `(dot BASE field depth)` — a field read of a named slot; the base
+        # spine must be pure too, the selector and depth are metadata
+        result = true
+        n.into:
+          if n.hasMore:
+            if not walk(n): result = false
+          while n.hasMore: skip n
+      else:
+        skip n
+        result = false
+    else:
+      inc n
+      result = false
+  var n = c
+  result = walk(n)
+
 proc writtenRoot(c: Cursor): SymId =
   ## The local whose STORAGE this lvalue writes. A through-pointer store
   ## (`(*p).f = v`, `p[i] = v`) writes the pointee, not `p` — `p` is only
@@ -541,7 +594,8 @@ proc trVar(c: var Context; n: var Cursor) =
         # dead once all its reads are rewritten away (copy) or it was never
         # used (pure store). A snapshotted stable address is pure too.
         if initKind in LeafKinds or initKind == DotToken or
-           isLeafLit(initStart) or c.addrOf[nameSym] != 0:
+           isLeafLit(initStart) or c.addrOf[nameSym] != 0 or
+           isPureValueExpr(initStart):
           c.delCandidates[nameSym] = defPos
     while n.hasMore: skip n
 
@@ -575,7 +629,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
       if haveRhs:
         var depsIgnored: seq[SymId] = @[]
         if isLeafLit(rhs) or rhs.kind == Symbol or
-           isStableAddrExpr(rhs, depsIgnored):
+           isStableAddrExpr(rhs, depsIgnored) or isPureValueExpr(rhs):
           c.writeSites.mgetOrPut(dest, @[]).add asgnPos
         bindCopy(c, dest, rhs)
 
@@ -1248,6 +1302,27 @@ when isMainModule:
     chk(
       "(stmts (var :t.0.M . . 5) (call side.0.M))",
       "(stmts . (call side.0.M))")
+
+  block dead_store_pure_expression_deleted:
+    # `var t; t = (x and 255)` with `t` never read: the shape a loop unswitch
+    # leaves behind once the test it fed was hoisted. Decl and store both go.
+    chk(
+      "(stmts (var :t.0.M . (u 64) .) " &
+      "(asgn t.0.M (bitand (u 64) x.0.M 255u)) (call side.0.M))",
+      "(stmts . . (call side.0.M))")
+
+  block dead_decl_pure_field_read_deleted:
+    # the same for a field read of a named slot, which is what the temp's own
+    # initializer is (`(dot b bytes 0)`)
+    chk(
+      "(stmts (var :t.0.M . (u 64) (dot b.0.M bytes.0.M 0)) (call side.0.M))",
+      "(stmts . (call side.0.M))")
+
+  block dead_store_keeps_faulting_expression:
+    # a `deref` can fault, so evaluating it is observable: not dead code
+    assertUnchanged(
+      "(stmts (var :t.0.M . (u 64) .) (asgn t.0.M (deref p.0.M)) " &
+      "(call side.0.M))")
 
   block dead_store_keeps_impure_binding:
     # var t = f() unused: the call's side effect must run, so it is kept.
