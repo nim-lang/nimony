@@ -2071,6 +2071,13 @@ proc asNimCode*(n: Cursor; renderFlags: RenderFlags = {}): string =
   else:
     result = renderTree(n, renderFlags = renderFlags)
 
+proc asNimCode*(s: SymId): string =
+  ## `asNimCode` for the cases where only the `SymId` is at hand and no cursor
+  ## points at the symbol's token. Produces exactly what the `Symbol` case of
+  ## the renderer produces: the name as it was written in the Nim source,
+  ## without Nimony's disambiguating suffix.
+  result = pool.symBasename(s)
+
 proc typeToString*(n: Cursor; renderFlags: RenderFlags = {}): string =
   var typ = n
   if isErrNode(typ):
