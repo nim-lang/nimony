@@ -9,7 +9,7 @@
 ## See nifc/nifc_grammar.nif for a real world example.
 
 import std / [strutils, tables, sets, assertions, syncio, sequtils]
-import "../lib" / [nifreader, nifpools, bitabs]
+import "../lib" / [nifreader, nifpools, bitabs, nimversion]
 
 type
   RuleFlag = enum
@@ -942,7 +942,6 @@ proc main(inp, outp: string;
   result = ensureMove(c.foundTags)
 
 const
-  Version = "0.6.0"
   Usage = "NifGram. Version " & Version & """
 
   (c) 2024 Andreas Rumpf

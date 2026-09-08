@@ -18,9 +18,9 @@ import std / [assertions, parseopt, strutils, os, osproc]
 import context, category, joined, nativelist, runner, walk, builders, deps,
        tiers, boot, native, record, bugcmd, gitcmds, wasmdiff
 import install
+import ".." / lib / nimversion
 
 const
-  Version = "0.6.0"
   Usage = "hastur - tester tool for Nimony Version " & Version & """
 
   (c) 2024-2026 Andreas Rumpf
