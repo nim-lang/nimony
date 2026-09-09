@@ -1731,24 +1731,26 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
 proc symbolicArrayLength(f: Cursor): Cursor =
   ## `semArrayType` stores a still-symbolic array length as the canonical index
   ## range `0 .. len-1`, so that a generic `array[N, T]` has the same shape as
-  ## every instance of it. Recover `len` from that shape: overload resolution
+  ## every instance of it. Recover `len` from that shape -- overload resolution
   ## binds a value parameter from the actual's length and needs the bare
-  ## expression back. Nil for any other index type.
+  ## expression back. The match is strict: only `(rangetype _ 0 (sub _ len 1))`
+  ## yields a cursor, every other index type yields nil.
   result = default(Cursor)
-  if f.typeKind != RangetypeT: return
-  var r = f
-  inc r # tag
-  skip r # base type
-  if r.kind != IntLit or r.intVal != 0: return
-  skip r
-  if r.exprKind != SubX: return
-  var s = r
-  inc s # tag
-  skip s # type
-  let lenExpr = s
-  skip s
-  if s.kind != IntLit or s.intVal != 1: return
-  result = lenExpr
+  if f.typeKind == RangetypeT:
+    var lo = f
+    inc lo # tag
+    skip lo # base type
+    if lo.kind == IntLit and lo.intVal == 0:
+      var hi = lo
+      skip hi # first bound
+      if hi.exprKind == SubX:
+        var lenExpr = hi
+        inc lenExpr # tag
+        skip lenExpr # type
+        var one = lenExpr
+        skip one # the length expression
+        if one.kind == IntLit and one.intVal == 1:
+          result = lenExpr
 
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor)
 
