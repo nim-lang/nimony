@@ -586,8 +586,21 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
       if not isPureTypeValueExpr(a): return
       result = foldValueExpr(m, typeValueExpr(a), depth+1)
     else:
-      if a.typeKind == RangetypeT and m.context != nil:
-        result = lengthOrd(m.context[], a)
+      if a.typeKind == RangetypeT:
+        # An array-index range. `semArrayType` stores a still-symbolic length as
+        # the canonical `0 .. len-1`, so the bounds must be folded through the
+        # current bindings; `lengthOrd` only understands literal bounds and is
+        # the fallback for enum/char ranges.
+        var r = a
+        inc r # tag
+        skip r # base type
+        let first = foldValueExpr(m, r, depth+1)
+        skip r
+        let last = foldValueExpr(m, r, depth+1)
+        if not first.isNaN and not last.isNaN:
+          result = last - first + createXint(1.uint64)
+        elif m.context != nil:
+          result = lengthOrd(m.context[], a)
   else:
     discard
 
@@ -1715,6 +1728,45 @@ proc matchIntegralType(m: var Match; f: var Cursor; arg: CallArg) =
     skip f
   expectParRi m, f, fStart
 
+proc symbolicArrayLength(f: Cursor): Cursor =
+  ## `semArrayType` stores a still-symbolic array length as the canonical index
+  ## range `0 .. len-1`, so that a generic `array[N, T]` has the same shape as
+  ## every instance of it. Recover `len` from that shape -- overload resolution
+  ## binds a value parameter from the actual's length and needs the bare
+  ## expression back. The match is strict: only `(rangetype _ 0 (sub _ len 1))`
+  ## yields a cursor, every other index type yields nil.
+  result = default(Cursor)
+  if f.typeKind == RangetypeT:
+    var lo = f
+    inc lo # tag
+    skip lo # base type
+    if lo.kind == IntLit and lo.intVal == 0:
+      var hi = lo
+      skip hi # first bound
+      if hi.exprKind == SubX:
+        var lenExpr = hi
+        inc lenExpr # tag
+        skip lenExpr # type
+        var one = lenExpr
+        skip one # the length expression
+        if one.kind == IntLit and one.intVal == 1:
+          result = lenExpr
+
+proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor)
+
+proc matchArrayElem(m: var Match; f, a: var Cursor) =
+  ## The element types of two arrays. A nested `array` has to go through
+  ## `matchArrayType` again: `linearMatch` compares index slots tree-wise and
+  ## would trip over a formal's canonical `0 .. N-1` versus an actual's folded
+  ## `0 .. 2`. `matchArrayType` leaves `a` mid-tree, so seal it here.
+  if f.typeKind == ArrayT and a.typeKind == ArrayT:
+    let aStart = a
+    matchArrayType m, f, a
+    a = aStart
+    skip a
+  else:
+    linearMatch m, f, a
+
 proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
   if a.typeKind == ArrayT:
     var a1 = a
@@ -1732,13 +1784,31 @@ proc matchArrayType(m: var Match; f: var Cursor; a: var Cursor) =
     if aLen.isNaN:
       aLen = lengthOrd(m.context[], a1)
     if fLen.isNaN or aLen.isNaN:
-      # match typevars
-      linearMatch m, f, a
+      let fLenExpr = if fLen.isNaN: symbolicArrayLength(f1) else: default(Cursor)
+      if not cursorIsNil(fLenExpr) and not aLen.isNaN:
+        # The formal's length is still symbolic (`array[N, T]`, stored as
+        # `0 .. N-1`) while the actual's is known: match the element types and
+        # then bind the length from the actual's index type. `staticValueToBind`
+        # turns that `rangetype` back into its length, so `N` binds `3` for an
+        # `array[3, T]` argument -- which is what a plain `linearMatch` over the
+        # index slot did before the slot was canonicalized.
+        let fStart = f
+        f = sub(f)
+        inc a
+        matchArrayElem m, f, a # element types; `a` lands on the index type
+        if not m.err:
+          var fl = fLenExpr
+          linearMatch m, fl, a
+        skip f # index type
+        expectParRi m, f, fStart
+      else:
+        # match typevars
+        linearMatch m, f, a
     elif fLen == aLen:
       let fStart = f
       f = sub(f)
       inc a
-      linearMatch m, f, a # element types
+      matchArrayElem m, f, a # element types
       skip f # index type
       expectParRi m, f, fStart
     else:

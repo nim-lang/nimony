@@ -741,6 +741,27 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
     assert sym.name != SymId(0)
     semTypeSym c, dest, sym, info, typeStart, InLocalDecl
 
+proc isSymbolicLength(n: Cursor): bool =
+  ## In an `array` index slot that still mentions generic parameters, tell a
+  ## symbolic *length* (`array[N, T]` for `N: static[int]`, `array[2*N, T]`)
+  ## apart from an unresolved index *type* (`array[I, T]`). Only a length may
+  ## be turned into a range type here; a type has to be left alone so that
+  ## instantiation can derive its own `low(I) .. high(I)` bounds.
+  var n = n
+  if n.exprKind == ExprX and isPureTypeValueExpr(n):
+    n = typeValueExpr(n)
+  case n.kind
+  of Symbol:
+    let res = tryLoadSym(n.symId)
+    result = res.status == LacksNothing and res.decl.symKind == StaticTypevarY
+  of TagLit:
+    # a type in tag form -- including an unresolved `(at Generic T)` invocation,
+    # whose type kind is `AtT` -- has a type kind; an arithmetic expression such
+    # as `(mul (i 64) 2 N)` has not.
+    result = n.typeKind == NoType
+  else:
+    result = false
+
 proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext) =
   let info = n.info
   dest.addParLe(n.cursorTagId, n.info)
@@ -779,8 +800,28 @@ proc semArrayType(c: var SemContext; dest: var TokenBuf; n: var Cursor; context:
         dest.addIntLit(last, index.info)
       dest.addParRi()
     elif containsGenericParams(index):
-      # unresolved types are left alone
-      dest.addSubtree index
+      if isSymbolicLength(index):
+        # A length that is still symbolic. Canonicalize it to `0 .. len-1` right
+        # here so that the generic form of the array has the same *shape* as
+        # every instance of it. Leaving the bare length in the index slot puts a
+        # value where every consumer expects a type -- `system.high` is declared
+        # as `high[I, T](x: array[I, T]): I`, so `I` would bind to `N` and the
+        # result type of `high(a.elems)` would be a value, not a type
+        # (nim-lang/nimony#2485). The bounds are folded when the type is
+        # instantiated, exactly like the `range[0..N-1]` that `addRangeBound`
+        # already keeps symbolic.
+        dest.addParLe(RangetypeT, info)
+        dest.addSubtree c.types.intType
+        dest.addIntLit 0, info
+        dest.addParLe(SubX, info)
+        dest.addSubtree c.types.intType
+        dest.addSubtree index
+        dest.addIntLit 1, info
+        dest.addParRi()
+        dest.addParRi()
+      else:
+        # unresolved index types are left alone
+        dest.addSubtree index
     elif index.typeKind != NoType:
       c.buildErr dest, index.info, "invalid array index type: " & typeToString(index)
     else:
