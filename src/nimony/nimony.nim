@@ -70,6 +70,12 @@ Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
+  --browser                 JS backend: emit for a browser host (same as
+                            `--target:browser`; `--target:node` is the
+                            default). No Node `fs`/`process` in the preamble,
+                            complete stdout/stderr lines go to
+                            console.log/console.error, and the export surface
+                            lands on globalThis.NIF.
   --silentMake              suppresses make output
   --profile                 print nifmake timing profile of executed commands
   --report                  print machine-readable per-command invocation
@@ -299,6 +305,17 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             c.config.backend = backendNative
             c.config.addDefine "nimNativeAlloc"
             c.config.addDefine "nimNativeIo"
+            forwardArg = false
+          of "browser":
+            # JS backend: emit for a browser host instead of node. Consumed here
+            # and forwarded to jorogumo as --target:browser (see deps.nim).
+            c.config.jsBrowser = true
+            forwardArg = false
+          of "target":
+            case normalize(val)
+            of "browser": c.config.jsBrowser = true
+            of "node", "": c.config.jsBrowser = false
+            else: quit "invalid value for --target (browser|node)"
             forwardArg = false
           of "passc":
             if c.passC.len > 0:

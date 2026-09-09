@@ -209,6 +209,32 @@ the status of record is what `tjsgen` prints, and *Next* is the honest to-do lis
     implemented below, **refuses at the call site** (`extern … (the JS bridge is M7)`) rather than
     emitting a silent empty stub. Remaining for M7: lower the `#`/`$1`/`$$` splice template to a JS
     call and the handle/`jsstring` bridge.
+  - **M7 splice + handle bridge — DONE.** A bodyless `importjs` call lowers to a JS splice: jorogumo
+    emits a `Raw` node `(raw NAME "tpl" ARG…)` and jsenc's `spliceTemplate` substitutes the operands
+    (`#`/`$1`/`$#`/`@`/`$$`, pinned to Nim 2.2.4). **Open:** `$1`/`$#` substitute the *internal*
+    mangled symbol, not a JS-legal proc name, so the `#.$1(#)` method idiom `dom.nim` leans on
+    generates a SyntaxError; `#`-only templates work. That is M8's gate, not a working-bridge claim.
+    A pointer/`ref object` **operand** of the splice is
+    unwrapped (`eunwrap`), a pointer/`ref` **result** is wrapped (`ewrap`) — a JS handle is an int32
+    into the host table `JSP`, confined to splices; ordinary Nim pointers stay real addresses. In
+    library mode the surface exports `__internExt: ewrap` so a host interns real JS objects (a
+    `GPUDevice`, a canvas context) as handles. Proven under node with a mock `navigator.gpu`: a host
+    interns a device, the module drives `createBuffer`/`createCommandEncoder`/`queue.submit` over it.
+    Remaining for M7: `jsstring` (UTF-8 bridge for string params/results — needed once shaders call
+    `createShaderModule({code})`) and callback wrappers (a Nim proc → JS closure, for `rAF`).
+  - **Browser target (`--browser` / `--target:browser`) — DONE.** A second host face for the JS
+    backend. `jorogumo --target:browser` (and `nimony j --browser`) drops the Node `fs`/`process`
+    contract from the preamble: `nim_write` buffers UTF-8 into `__outBuf` (drained by the exported
+    `__takeOutput()`), `nim_exit` throws instead of killing the tab, and the export surface lands on
+    `globalThis.NIF` (not `module.exports`), so a classic `<script>` and a module host both find it.
+    node/CommonJS stays the default — the node branch of the preamble is byte-identical to before
+    (jsdiff 24/24, tjsgen 229/231 unchanged). The flag is threaded `nimony j` → `NifConfig.jsBrowser`
+    → the emitted jorogumo command (`deps.nim`), materialised into the `.build.nif` so child
+    processes need not re-derive it. A full clear-canvas frame (getCurrentTexture().createView →
+    createCommandEncoder → beginRenderPass{colorAttachments:[{view,loadOp:"clear",clearValue,
+    storeOp:"store"}]} → end → queue.submit([finish()])) drives under a browser-simulating `vm`
+    context (no `require`/`module`/`process`/`Buffer` present) with a mock WebGPU, and a served
+    `index.html` host owns the async `requestAdapter`/`requestDevice`/`configure` + the `rAF` loop.
 - **M8 — DOM.** `lib/std/dom.nim` ported from Nim 2's `lib/js/dom.nim` declarations — handle-typed,
   source-compatible usage — plus DOM fixtures under jsdom.
 - **M9 — verification + docs.** `hastur jsdiff` over the full fixture set; `jorogumoTests` in

@@ -1123,6 +1123,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.withTree "cmd":
         b.addSymbolDef wholeProgTool
         b.addStrLit findTool(wholeProgTool)
+        # The browser host has no Node `fs`/`process`; jorogumo drops that face
+        # and lands the export surface on globalThis.NIF. ithaqua has no such
+        # mode, so this is JS-only.
+        if js and c.config.jsBrowser:
+          b.addStrLit "--target:browser"
         b.withTree "output":
           b.addStrLit "-o:"
         b.withTree "input":
