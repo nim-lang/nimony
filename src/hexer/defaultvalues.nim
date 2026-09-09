@@ -199,7 +199,29 @@ proc addDefaultValue*(dest: var TokenBuf; typ: Cursor; info: NifLineInfo; ptrSiz
       error "cannot determine the first value of enum type: ", typ
     else:
       dest.addIntLit(lo, info)
-  of PtrT, RefT, RoutineTypes, CstringT, PointerT, NiltT, MutT, OutT, LentT:
+  of MutT, LentT:
+    # `var T` / `lent T` is a pointer in Leng, and naturally so — `var array[8,
+    # char]` is `(ptr array)`. A VIEW is the one exception, and it is forced
+    # rather than chosen: a view IS the reference, so `var` adds no indirection
+    # and there is nothing for a pointer to point AT. `openArrays.scratch`
+    # returns `var openArray[char]` built by `toOpenArray(buf, …)` — the two
+    # words are constructed in the callee and have no storage of their own, so
+    # a `ptr openArray` return would name a temporary. `lengcgen.trType`'s
+    # `isViewType` arm is where that is decided (it drops the `ptr` it was
+    # about to write), and this consults the same predicate.
+    #
+    # The two must agree because they are one decision made twice. `(nil T)` is
+    # a nil POINTER (`doc/tags.md`), so `(nil (mut <view>))` lowers to a nil
+    # against a two-word struct — malformed Leng that only C's `.field = 0`
+    # meaning `{0}` hid. arkham rejects it, which is how it surfaced: a
+    # `var openArray` temp in a `.passive` proc becomes a coroutine-frame field
+    # and this is the constructor for that frame.
+    var base = impl.childCursor
+    if isViewType(base):
+      addDefaultValue(dest, base, info, ptrSize)
+    else:
+      addNil(dest, typ, info)
+  of PtrT, RefT, RoutineTypes, CstringT, PointerT, NiltT, OutT:
     addNil(dest, typ, info)
   of SetT:
     var err = false

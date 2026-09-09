@@ -213,6 +213,30 @@ const
     # (">8 integer params (stack TODO)"), which is what kept `nimony.nim` off the
     # native bootstrap ladder.
     "tests/nimony/calls/tstackparams",
+    # A `{.union.}` type, which lowers to a TOP-LEVEL `(union (fld …)*)` rather
+    # than to an object with a union part. arkham emitted union members only
+    # from inside `ObjectT` — the object-VARIANT shape — so a standalone one hit
+    # "type not supported: union" and took every module that imported
+    # `std/ioring` (whose io_uring SQE is nothing but these) with it. nifasm had
+    # always laid the shape out; only the declaration was missing.
+    "tests/nimony/object/tunionconstr",
+    # `{.packed.}` — the layout the OTHER side of an ABI already uses, stated as
+    # constants because only a backend that lays types out itself can get it
+    # wrong. arkham ignored the pragma entirely (and nifasm had no tag for it),
+    # which surfaced as `std/ioring`'s epoll backend HANGING: `epoll_event` is 12
+    # bytes and every entry past the first was read from the wrong address.
+    "tests/nimony/types/tpacked",
+    # The I/O ring, on the DEFAULT backend (io_uring) — the whole of `std/ioring`
+    # plus `std/posix/io_uring` through the freestanding syscall path. Native by
+    # nature: these reach the kernel with structs whose layout the C compiler
+    # owns under `nimony c`, so only a backend that lays them out itself can get
+    # them wrong — which it did, in four separate ways (`{.packed.}`, a
+    # top-level `(union …)`, a union CONSTANT, and a union field that
+    # `default()` left unzeroed, each of which the C backend hides).
+    "tests/nimony/threads/tioringhello",
+    "tests/nimony/threads/tioringrw",
+    "tests/nimony/threads/tpolladd",
+    "tests/nimony/threads/ttimers",
     # cps/* — closures & continuation-passing (indirect calls through fn-ptr values)
     "tests/nimony/cps/tbasicpassive",
     "tests/nimony/cps/tclosure",

@@ -193,6 +193,11 @@ not reclaimed by anything else.
 
 ## 2. The application pulls events
 
+> **Built, with one change.** `std/httpserver` is the loop below, per
+> *connection* rather than per process. What follows is the sketch that was
+> designed first; *What was built instead* at the end of this section says
+> what the code does and why the `ConnId` went away.
+
 Modelled on uirelays' `Event` + `pollEvent`/`waitEvent`: a flat struct with a
 kind discriminator and payload fields, filled into a caller-owned variable. No
 allocation per event, and no callbacks anywhere above the driver line.
@@ -278,6 +283,96 @@ spawned coroutine and answers later through the identical `respond`. The loop
 stays non-blocking and callback-free. Coroutine-per-connection, for anyone who
 wants it, is then a thin layer that dispatches events by `ConnId`; the reverse
 does not work, which is why the event loop is the primitive.
+
+
+### What was built instead
+
+```nim
+proc handle(c: sink HttpConnection) {.passive.} =
+  var c = c
+  while c.next():                                  # the next request, parsed
+    if c.path == "/": c.respond(200, "hello\n", "text/plain")
+    else:             c.respond(404, "")
+
+proc acceptLoop() {.passive.} =
+  var s = listenHttp(8080'u16, tags)
+  while true:
+    let c = s.accept()
+    if c.isClosed: break                           # `s.close()` said stop
+    submit(delay(handle(c)), -1)
+```
+
+Same shape — a pull, no callbacks, `next` is `waitEvent` with the parsing done
+— with the loop's subject changed from a process-wide queue of `(ConnId,
+event)` to one connection. Three things fell out of that:
+
+* **The `ConnId` and its table are gone.** They existed so a response could be
+  produced by code that was not on that connection's chain. With `.passive` it
+  does not have to be: the chain *is* the handle, work that goes away and comes
+  back suspends and the connection comes back with it, and `respond` reaches
+  the socket directly instead of through a table every response has to lock.
+  A connection is also the only scope at which HTTP/1.1 framing means
+  anything — requests on one are strictly ordered, requests on different ones
+  share nothing — so a global queue was interleaving things that have no
+  relation and then handing back the key to un-interleave them.
+* **The event kinds are gone with it.** `RequestEvent` is `next` returning
+  true, `BodyEvent` is `readBody` returning bytes, `ClosedEvent` is `next`
+  returning false, and `TimeoutEvent` was never the application's to handle —
+  a deadline that expires mid-request has exactly one right answer on the wire
+  (408) and `next` sends it. What is left of `HttpEvent.status` is that
+  `next` never raises.
+* **`accept` answers a closed connection rather than raising.** A `.raises`
+  proc cannot currently return a move-only object, and this one owns a
+  descriptor. It reads better anyway: a listener stopping is how an accept
+  loop is *supposed* to end.
+
+The half of §2 that survived unchanged is the important half. `respond` is
+`.passive`, so **suspension is the backpressure**, and the inline and
+escaped styles are the same code:
+
+```nim
+c.respond(200, "hi")                    # inline
+submit(delay(finishLater(c, …)), -1)    # escaped, answers through the same proc
+```
+
+### What the driver is actually for
+
+Everything below `httpserver` is a correct primitive and none of it is a
+policy. A server written straight on `httpconn` works on the first request and
+is wrong about the second, in six ways that are each one line and none of
+which announce themselves. All six are `tests/nimony/http/tserver.nim`:
+
+1. **An unread request body poisons keep-alive.** A handler that ignores a
+   `POST`'s body leaves those bytes in the stream and the next `readRequest`
+   parses them as a request line — so the request that fails is the *next*
+   one. `next` drains, or closes when the leftover is past `MaxDrain`, because
+   draining a body the handler did not want is work the peer chose for us.
+2. **`Connection`.** Answering `keep-alive` to a request that said `close`, or
+   to an HTTP/1.0 client that never asked, is a connection one side keeps and
+   the other drops. The header is now sent only when it says something: on a
+   close, and to a 1.0 client that asked.
+3. **`HEAD`, 204 and 304 have no body.** A client that trusts the framing
+   reads one sent anyway as the start of the next response. `HEAD` still gets
+   the `Content-Length` a `GET` would have; 204 and 304 get none.
+4. **`Date`.** RFC 9110 §6.6.1 makes it a MUST for an origin server with a
+   clock. It is formatted once per second per thread — the format has
+   one-second resolution, so every response inside a second must produce the
+   same 29 bytes and computing them again is work whose answer was known.
+5. **A malformed head deserves a 400.** `httpparse` says so in its own
+   docstring; a raise out of a handler chain just drops the connection and the
+   peer cannot tell that from a network fault. `next` answers 400, 431 for a
+   head over the limit, and 408 for a peer that stopped mid-head — which is
+   also the slowloris answer, and why the head budget is separate from and
+   shorter than the request budget.
+6. **HTTP/1.1 requires `Host`.** Without the check, a request naming no host
+   is served by whichever virtual host was first in the list.
+
+And a seventh that is not a framing bug but the same shape of omission:
+`c.path` is percent-decoded *and then* normalized, by `uri.safePath`.
+`%2e%2e%2f` is `../`, so a server that normalizes before it decodes has
+normalized a string that did not yet contain the segments it was looking for.
+That ordering is the whole of the traversal defence, which is why it is in the
+driver and not in an example.
 
 
 ## 3. Deadlines are part of the model
@@ -430,12 +525,15 @@ Two injection seams, both invisible to the code in §2:
 
 | Module | Contains |
 |---|---|
-| `std/socket` | a buffered, deadline-carrying connection. No HTTP. **Done**. |
+| `std/uri` | parsing, percent-coding, query strings, path normalization. **Done**. |
+| `std/socket` | a buffered, deadline-carrying connection, and `PeerAddr`. No HTTP. **Done**. |
 | `std/http/httpmsg` | tags, `HttpMsg`, builders, accessors. No IO — testable standalone. |
 | `std/http/httpparse` | wire → `TokenBuf`, incremental and resumable across reads. **Done** for request and response heads. |
 | `std/http/httpwire` | `TokenBuf` → wire bytes. **Done** for request and response heads. |
+| `std/http/httpdate` | IMF-fixdate out, all three formats in. **Done**. |
 | `std/http/httpconn` | HTTP framing and keep-alive on a `Socket`. **Done**. |
-| `std/httpclient`, `std/httpserver` | the loops of §2. |
+| `std/httpserver` | the loop of §2, and the protocol rules above framing. **Done**. |
+| `std/httpclient` | the other direction. |
 
 Mirrors `std/ioring.nim` plus `std/ioring/`.
 
@@ -541,8 +639,25 @@ None of this is reachable until the following exist.
 
 **Elsewhere**
 
-7. `std/uri` does not exist.
+7. ~~`std/uri`~~ — done. Parsing, percent-coding, `decodeQuery`, and
+   `normalizedPath`/`safePath`. The decoder answers a `bool` rather than
+   raising, because a request target is not known to be a URI — that is what
+   the request is *claiming*, and a 400 is the answer, not an exception.
 8. `std/monotimes` needs a `CLOCK_BOOTTIME` path.
+9. ~~The accepted peer's address~~ — done. `submitAccept` takes an optional
+   `peer: ptr Sockaddr_storage` that the kernel's own accept fills, so asking
+   costs no syscall; `socket.acceptAsync` is the parked form and
+   `socket.PeerAddr` formats it (RFC 5952 for v6, so one address has one
+   spelling and a rate-limiter key is comparable). An out-parameter and not a
+   field on `IoCompletion`: a completion is 24 bytes and there are `CqSize` of
+   them, so a 128-byte `sockaddr_storage` in the struct would make every
+   `read` pay for a field only `accept` fills.
+
+   The readiness backends and io_uring have the address in the op already.
+   IOCP does not — `AcceptEx` leaves it in a buffer that needs
+   `GetAcceptExSockaddrs` from the same late-bound table as `AcceptEx` — so
+   that arm calls `getpeername` once, after `SO_UPDATE_ACCEPT_CONTEXT` makes
+   it legal.
 
 
 ### Parsing, in practice
@@ -747,7 +862,22 @@ processes again.
 - Client-side correlation: a `ReqId` returned by `send`, matched by
   `ResponseEvent`, so pipelined or multiplexed requests can be told apart.
 - Whether one `HttpLoop` type serves both directions or client and server get
-  their own.
+  their own. Half-answered: the server side is `HttpConnection`, and the
+  client's shape should be the same object read from the other end rather than
+  a second vocabulary.
+- Request pipelining on the server. `next` reads the next request out of
+  whatever is already buffered, so a pipelined one is served — but strictly in
+  order, one response fully written before the next is read. That is correct
+  and it is not the point of pipelining.
+- `Expect: 100-continue`. The `hExpect` tag is there and nothing acts on it: a
+  client that sends it waits for a 100 before the body, and today it waits out
+  its own timeout instead. It belongs in `next`, which is the only place that
+  knows a body is coming and has not been read yet.
+- Compression. `vGzip`/`vDeflate` are tags, so `Accept-Encoding` can be read
+  and not honoured; there is no deflate implementation to honour it with.
+- Static file serving needs two things this does not have: `std/mimetypes`,
+  and a `sendfile`/`writev` op so a file is not read into memory and a head
+  and its body are not two `write(2)`s.
 - Whether cancellation stays a runtime concern that ioring implements, or wants
   the language-level support the reserved `CoroutineBase.callee` field was set
   aside for. An HTTP server is the workload that will force the answer.

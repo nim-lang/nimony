@@ -442,6 +442,12 @@ proc addHeader*(m: var HttpMsg; h, value: HttpTag) {.inline.} =
   addHeader(m, tag(h), tag(value))
 proc addHeader*(m: var HttpMsg; h: HttpTag; values: openArray[string]) {.inline.} =
   addHeader(m, tag(h), values)
+proc addHeader*(m: var HttpMsg; h: HttpTag; value: openArray[char]) {.inline.} =
+  ## The gap in the `HttpTag` set: a value that is already bytes somewhere,
+  ## which is how a header a server formats into a fixed buffer (`Date`)
+  ## arrives. Without it such a caller has to spell `tag(h)` for this one
+  ## header and not for its neighbours.
+  addHeader(m, tag(h), value)
 
 proc addOtherHeader*(m: var HttpMsg; name, value: string) =
   ## A header nobody registered: `(xhdr "name" "value")`. The application

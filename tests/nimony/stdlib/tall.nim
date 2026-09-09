@@ -37,9 +37,11 @@ import std/formatfloat
 import std/hashes
 import std/heapqueue
 import std/http/httpconn
+import std/http/httpdate
 import std/http/httpmsg
 import std/http/httpparse
 import std/http/httpwire
+import std/httpserver
 import std/intsets
 import std/ioring
 import std/json
@@ -88,6 +90,7 @@ import std/ticketlocks
 import std/times
 import std/typetraits
 import std/unicode
+import std/uri
 import std/varints
 import std/volatile
 import std/widestrs
