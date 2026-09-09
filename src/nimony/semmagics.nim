@@ -464,7 +464,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Nif
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, ClosureTupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
   of TagLit:
     case typ.typeKind
@@ -517,7 +517,7 @@ proc buildLowValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Nif
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
        StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
   else:
     c.buildErr dest, info, "invalid type for low: " & typeToString(typ)
@@ -551,7 +551,7 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Ni
        TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, ClosureTupleT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
   of TagLit:
     case typ.typeKind
@@ -610,7 +610,7 @@ proc buildHighValue(c: var SemContext; dest: var TokenBuf; typ: Cursor; info: Ni
        TemplateT, ObjectT, EnumT, ProctypeT, VoidT, PtrT, VarargsT,
        StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
   else:
     c.buildErr dest, info, "invalid type for high: " & typeToString(typ)
@@ -701,7 +701,7 @@ proc semDeref*(c: var SemContext; dest: var TokenBuf; it: var Item) =
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     c.buildErr dest, info, "invalid type for deref: " & typeToString(t)
   commonType c, dest, it, beforeExpr, expected
 

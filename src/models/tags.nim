@@ -359,6 +359,7 @@ type
     InterruptTagId
     ConstrefTagId
     DependencyTagId
+    PluginCallTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -717,5 +718,6 @@ const
     ("naked", 353),
     ("interrupt", 354),
     ("constref", 355),
-    ("dependency", 356)
+    ("dependency", 356),
+    ("pluginCall", 357)
   ]

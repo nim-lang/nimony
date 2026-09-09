@@ -366,6 +366,36 @@ proc isRoutineSym*(fnId: SymId): bool =
   let res = tryLoadSym(fnId)
   result = res.status == LacksNothing and res.decl.symKind in RoutineKinds
 
+proc pluginCallToCall*(n: var Cursor; info: NifLineInfo): TokenBuf =
+  ## Turn a parked `(pluginCall <template> <args>…)` back into a `(call …)` so
+  ## the ordinary call path drives the plugin again -- including a second
+  ## deferral, which parks it here once more. `n` is left after the node.
+  let start = n
+  n = sub(n)
+  result = createTokenBuf(16)
+  result.addParLe(CallX, info)
+  while n.hasMore:
+    result.addSubtree n
+    skip n
+  result.addParRi()
+  n = start; skip n
+
+proc pluginReturnsType*(fnId: SymId): bool =
+  ## True when the routine `fnId` declares a `typedesc` result. A plugin
+  ## template that stands for a TYPE has to say so -- `std/typetraits` spells
+  ## `distinctBase` as `[T](t: typedesc[T]): typedesc`. Anything else, `untyped`
+  ## included, stands for a VALUE: `untyped` is the result category a template
+  ## body would have resolved on expansion, and a plugin may not quietly widen
+  ## it to "maybe a typedesc".
+  let res = tryLoadSym(fnId)
+  result = false
+  if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+    var rt = asRoutine(res.decl).retType
+    # a bare `typedesc` result is sem-checked into the type class
+    # `(typekind (typedesc))` by `tryTypeClass`; `typedesc[T]` stays `(typedesc T)`
+    if rt.typeKind == TypekindT: rt = rt.childCursor
+    result = rt.typeKind == TypedescT
+
 proc addTemplFormalsToScope(c: var SemContext; buf: TokenBuf; at: int) =
   ## Put a promoted template's OWN typevars and params on the parameter scope.
   ##

@@ -2048,7 +2048,11 @@ proc singleArgOnFormal(m: var Match; f: var Cursor; arg: CallArg) =
     of ArrayT:
       var a = skipModifier(arg.typ)
       matchArrayType m, f, a
-    of SetT, UarrayT:
+    of SetT, UarrayT, PluginCallT:
+      # `PluginCallT`: a formal whose type is a still-deferred plugin call, e.g.
+      # `proc f[T](x: distinctBase(T))`. Nothing is known about it until the
+      # plugin runs, so it matches structurally, exactly as the shared `(at …)`
+      # tag used to.
       var a = skipModifier(arg.typ)
       linearMatch m, f, a
     of CstringT:

@@ -236,7 +236,8 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     getSize c, cache, n.childCursor, ptrSize
   of NoType, ErrT, VoidT, VarargsT, OrT, AndT, NotT,
      ConceptT, StaticT, InvokeT, UarrayT,
-     AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT:
+     AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT, OrdinalT,
+     PluginCallT:
     c.overflow = true
 
 type

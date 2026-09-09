@@ -90,7 +90,7 @@ proc needsTemp(n: Cursor): bool =
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, KvX, ToClosureX, NoExpr:
+        EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
       result = true
   else:
     result = true
@@ -1237,7 +1237,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
             AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT,
             ConceptT, DistinctT, ItertypeT, RangetypeT, UarrayT,
             AutoT, SymkindT, TypekindT, TypedescT, UntypedT,
-            TypedT, CstringT, PointerT, OrdinalT, NoType:
+            TypedT, CstringT, PointerT, OrdinalT, PluginCallT, NoType:
           trSons(c, dest, n)
       of InclS, ExclS:
         genInclExcl(c, dest, n)
@@ -1370,7 +1370,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         Delay0X, SuspendX, DoX, TupatX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, KvX, ToClosureX:
+        EnvpX, KvX, ToClosureX, PluginCallX:
       trSons(c, dest, n)
   else:
     bug "unexpected ')' inside"

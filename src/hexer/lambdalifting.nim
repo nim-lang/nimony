@@ -527,7 +527,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, KvX, NoExpr:
+        EnvpX, KvX, PluginCallX, NoExpr:
         if n.substructureKind == KvU:
           # `(kv FIELD value)` object-constructor pair: guard the
           # field-identity key against the capture rewrite (KvX table
@@ -1821,7 +1821,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
         EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
         InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        KvX, NoExpr:
+        KvX, PluginCallX, NoExpr:
         if isLiftedClosureTuple(n):
           # An iter-value tuple or closure-proc tuple emitted by an earlier
           # pass — don't recurse into it, otherwise treProcType would fire

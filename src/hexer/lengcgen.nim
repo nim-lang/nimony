@@ -784,7 +784,7 @@ proc trType(c: var EContext; dest: var TokenBuf; n: var Cursor; flags: set[TypeF
             var arrCursor = cursorAt(arrBuf, 0)
             trAsNamedType(c, dest, arrCursor)
         skip n
-    of VoidT, NiltT, ConceptT, InvokeT:
+    of VoidT, NiltT, ConceptT, InvokeT, PluginCallT:
       error c, "unimplemented type: ", n
   else:
     error c, "type expected but got: ", n
@@ -1499,7 +1499,7 @@ proc isSimpleLiteral(nb: var Cursor): bool =
         PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
         LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
         WasmovedX, SinkhX, TraceX, InternalTypeNameX,
-        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
+        InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
       result = false
 
 proc getCompilerProc(c: var EContext; name: string; isInline=false): string =
@@ -1846,7 +1846,8 @@ proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
        InsetX, CardX, BracketX, CurlyX, TupX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX,
        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX, DoX, CchoiceX, OchoiceX,
        EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, CurlyatX, PragmaxX, QuotedX, TabconstrX,
-       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX:
+       InstanceofX, ProccallX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX, DelayX, Delay0X, SuspendX, ToClosureX,
+       PluginCallX:
       error c, "BUG: not eliminated: ", n
       #skip n
     of NilX:

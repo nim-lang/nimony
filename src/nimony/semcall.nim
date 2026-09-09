@@ -110,14 +110,23 @@ proc typeofCallIs(c: var SemContext; dest: var TokenBuf; it: var Item; beforeCal
 
 proc deferPluginCall(c: var SemContext; dest: var TokenBuf; it: var Item;
                      beforeCall: int; info: NifLineInfo) =
-  ## The plugin answered `(deferexpansion)`. Rewrite the call into
-  ## `(at <template> <args>…)` and type it as `typedesc[…]`, so `exprToType`
-  ## installs that node as the type. `(at …)` is *already* nimony's unresolved
-  ## type application — the shape `Foo[T]` takes inside a generic body — so it
-  ## passes the post-sem validator in a type slot, compares with `sameTrees`,
-  ## and gets substituted by `subsGenericProc` for free. The instantiation's
-  ## re-sem then routes it through `semInvoke`, which recognizes the plugin head
-  ## and asks the plugin again, now with concrete arguments.
+  ## The plugin answered `(deferexpansion)`. Park the call as
+  ## `(pluginCall <template> <args>…)`. Its own tag is what makes it
+  ## unambiguous: `(at …)` also means subscript, explicit generic instantiation
+  ## and generic type invocation, so every pass that met one had to probe the
+  ## head to tell them apart. It survives `sameTrees` and `subsGenericProc`
+  ## like any other tree, and the instantiation's re-sem turns it back into a
+  ## call, which drives the plugin again with concrete arguments.
+  ##
+  ## The parked node's RESULT CATEGORY comes from the template's declared
+  ## return type, because nothing else can supply it: the plugin has produced
+  ## nothing to classify, and both categories are live (`distinctBase` returns a
+  ## type, a `thrice(n)` folder returns a value). A `typedesc` result is typed
+  ## `typedesc[…]` so that `exprToType` installs the node as the type; every
+  ## other result — `untyped` included — is a value, and the node stays an
+  ## ordinary expression of the declared type. An `untyped` plugin template
+  ## therefore behaves like an `untyped` template body: the enclosing expression
+  ## is left unchecked and re-checked once instantiation has substituted.
   ##
   ## Deferring is only well-founded when some argument can still change: with
   ## nothing left to substitute, the retry would ask the same question forever.
@@ -143,23 +152,41 @@ proc deferPluginCall(c: var SemContext; dest: var TokenBuf; it: var Item;
   var atBuf = createTokenBuf(16)
   block:
     var head = readonlyCursorAt(dest, beforeCall)
-    atBuf.addParLe(AtT, info)
+    atBuf.addParLe(PluginCallX, info)
     var ch = childCursor(head)
     while ch.hasMore:
       atBuf.addSubtree ch
       skip ch
     atBuf.addParRi()
     endRead head
-  let typeStart = dest.len
-  dest.addParLe(TypedescT, info)
+  var callee = SymId(0)
   block:
+    var head = readonlyCursorAt(dest, beforeCall)
+    let fn = childCursor(head)
+    if fn.isSymbol: callee = fn.symId
+    endRead head
+  if callee != SymId(0) and not pluginReturnsType(callee):
+    # a value: the `(at …)` node replaces the call as an ordinary expression
+    let retType = asRoutine(tryLoadSym(callee).decl).retType
+    let typeStart = dest.len
+    dest.addSubtree retType
+    it.typ = typeToCursor(c, dest, typeStart)
+    expectUnique dest
+    shrink dest, beforeCall
     var ab = beginRead(atBuf)
     dest.addSubtree ab
     endRead ab
-  dest.addParRi()
-  it.typ = typeToCursor(c, dest, typeStart)
-  expectUnique dest
-  shrink dest, typeStart
+  else:
+    let typeStart = dest.len
+    dest.addParLe(TypedescT, info)
+    block:
+      var ab = beginRead(atBuf)
+      dest.addSubtree ab
+      endRead ab
+    dest.addParRi()
+    it.typ = typeToCursor(c, dest, typeStart)
+    expectUnique dest
+    shrink dest, typeStart
 
 proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: SymId; beforeCall: int;
                      m: Match; flags: set[SemFlag]) =
