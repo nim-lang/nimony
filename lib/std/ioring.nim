@@ -333,7 +333,9 @@ when defined(posix):
   const
     AF_INET* = 2.cint
     SOCK_STREAM* = 1.cint
+    SOCK_DGRAM* = 2.cint
     IPPROTO_TCP* = 6.cint
+    IPPROTO_UDP* = 17.cint
     SOL_SOCKET* = (when defined(macosx): 0xFFFF.cint else: 1.cint)
     SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
     INADDR_ANY* = 0'u32
@@ -391,6 +393,24 @@ when defined(posix):
     setNonBlocking(fd)
     result = fd
 
+  proc createUdp*(port: uint16): cint =
+    ## A non-blocking UDP socket bound to the wildcard address on `port`;
+    ## `0` asks the kernel to pick one (`boundPort` reports it), mirroring
+    ## `listenTcp` but for datagrams — there is no listen, so what parks on
+    ## the ring is the send/recv, not a connection queue.
+    let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+    assert fd >= 0, "socket() failed"
+    var yes: cint = 1
+    discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
+    var addr4 = default(Sockaddr_in)
+    addr4.sin_family = TSa_Family(AF_INET)
+    addr4.sin_port = htons(port)
+    addr4.sin_addr.s_addr = INADDR_ANY
+    assert bindAddr(fd, cast[ptr SockAddr](addr addr4),
+                    SockLen(sizeof(addr4))) == 0, "bind failed"
+    setNonBlocking(fd)
+    result = fd
+
 when defined(windows):
   # Winsock socket surface — the ring's fd is a SOCKET narrowed to `cint`.
   #
@@ -425,7 +445,9 @@ when defined(windows):
     InvalidSocket = not 0'u
     AF_INET* = 2.cint
     SOCK_STREAM* = 1.cint
+    SOCK_DGRAM* = 2.cint
     IPPROTO_TCP* = 6.cint
+    IPPROTO_UDP* = 17.cint
     SOL_SOCKET* = 0xFFFF.cint
     SO_REUSEADDR* = 4.cint
     INADDR_ANY* = 0'u32
@@ -481,6 +503,21 @@ when defined(windows):
     addr4.sin_addr.s_addr = INADDR_ANY
     assert wsBind(s, addr addr4, cint(sizeof(addr4))) == 0, "bind failed"
     assert wsListen(s, backlog.cint) == 0, "listen failed"
+    result = cint(cast[uint32](s))
+    setNonBlocking(result)
+
+  proc createUdp*(port: uint16): cint =
+    ## A non-blocking UDP socket bound to the wildcard address on `port`;
+    ## `0` asks the kernel to pick one (`boundPort` reports it). Mirror of
+    ## `listenTcp` for datagrams: socket(), bind, non-blocking, no listen.
+    let s = wsSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
+    assert s != InvalidSocket, "socket() failed"
+    assert s <= SocketHandle(high(cint)), "SOCKET handle exceeds the ring's cint fd space"
+    var addr4 = default(Sockaddr_in)
+    addr4.sin_family = cushort(AF_INET)
+    addr4.sin_port = htons(port)
+    addr4.sin_addr.s_addr = INADDR_ANY
+    assert wsBind(s, addr addr4, cint(sizeof(addr4))) == 0, "bind failed"
     result = cint(cast[uint32](s))
     setNonBlocking(result)
 

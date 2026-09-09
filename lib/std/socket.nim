@@ -29,6 +29,8 @@
 # remember to test.
 
 import std / [ioring, assertions]
+when defined(posix):
+  from std/posix/posix import Sockaddr_storage, SockLen
 
 export ioring.Deadline, ioring.never, ioring.afterMs, ioring.after,
        ioring.earlier, ioring.monoNow
@@ -182,6 +184,120 @@ proc acceptAsync*(listenFd: cint; peer: var PeerAddr; dl: Deadline): int {.passi
   let c = delay()
   discard submitAccept(listenFd, dl, c, addr result, addr peer.raw)
   suspend()
+# ------------------------------------------------------------ the listener ---
+#
+# `listen`/`accept` are the listening half of the ring's socket surface. The
+# ring has no `submitBind`/`submitListen`: binding and listening are
+# synchronous syscalls with nothing for the ring to park on, so they live in
+# `listenTcp` and this module only adds the async `accept`. A `Listener` owns
+# its descriptor exactly like a `Socket` owns its socket, so the close is the
+# destructor's job and never a caller's afterthought.
+
+type
+  Listener* = object
+    fd*: cint
+    deadline*: Deadline
+      ## Accept's budget, used the same way a `Socket`'s deadline is: taken
+      ## from here and only ever tightened by an argument.
+
+proc `=destroy`*(l: Listener) =
+  if l.fd >= 0: closeFd(l.fd)
+
+proc `=wasMoved`*(l: var Listener) {.nodestroy, inline.} =
+  l.fd = -1
+
+proc `=copy`*(dest: var Listener; src: Listener) {.error.}
+  ## Two listeners over one descriptor, whichever dies first closes it. Like
+  ## `Socket`, this is move-only.
+
+proc listen*(port: uint16; backlog = 128; deadline = never): Listener =
+  ## A bound, listening socket on `port`; `0` asks the kernel to pick one, and
+  ## `boundPort` reports what it chose. Binding and listening are synchronous —
+  ## nothing for the ring to wait on — so only `accept` parks.
+  Listener(fd: listenTcp(port, backlog), deadline: deadline)
+
+proc boundPort*(l: Listener): uint16 {.inline.} = boundPort(l.fd)
+
+proc close*(l: var Listener) =
+  ## Close now rather than at the end of the scope, idempotently, like
+  ## `Socket.close`.
+  if l.fd >= 0:
+    closeFd(l.fd)
+    l.fd = -1
+
+proc accept*(l: Listener; dl = never): Socket {.passive, raises.} =
+  ## Take the next pending connection, parked on the ring until a peer appears
+  ## or the deadline arrives. The returned `Socket` is already non-blocking and
+  ## owns its descriptor. `0` is not a valid result here — a peer is a
+  ## descriptor, not an end of stream — so its negative results raise, exactly
+  ## as `read`/`write` report their errors.
+  result = initSocket(-1, earlier(l.deadline, dl))
+  var res = 0
+  let c = delay()
+  discard submitAccept(l.fd, earlier(l.deadline, dl), c, addr res)
+  suspend()
+  if res < 0: raise toErr(res)
+  result.fd = cint(res)
+
+proc addrFromHost(sa: var Sockaddr_storage; saLen: var SockLen;
+                  host: string; port: uint16): bool {.inline.} =
+  ## Build the sockaddr_in for `host:port`, ready for `submitConnect`. Only a
+  ## dotted-quad IPv4 literal is parsed — the loopback test's and a container's
+  ## common case; `false` when `host` is anything else. (No getaddrinfo yet:
+  ## DNS is a whole other surface and this module's reach is the local ring.)
+  ##
+  ## The layout is written directly into `sa` as raw bytes (AF_INET = 2,
+  ## family = 2 bytes, port = 2 bytes network order, addr = 4 bytes network
+  ## order, zero padding to 16 bytes) so this compiles without importing
+  ## platform-specific socket struct types.
+  sa = default(Sockaddr_storage)
+  let raw = cast[ptr UncheckedArray[uint8]](addr sa)
+  raw[0] = 2'u8   # AF_INET low byte
+  raw[1] = 0       # AF_INET high byte
+  raw[2] = byte(port shr 8)
+  raw[3] = byte(port and 0xFF)
+  var octet = 0
+  var val: uint32 = 0
+  for i in 0 ..< host.len:
+    let ch = host[i]
+    if ch in {'0'..'9'}:
+      val = val * 10 + uint32(ord(ch) - ord('0'))
+      if val > 255: return false
+    elif ch == '.':
+      raw[4 + octet] = byte(val)
+      val = 0
+      inc octet
+      if octet > 3: return false
+    else:
+      return false
+  if octet != 3: return false
+  raw[4 + octet] = byte(val)
+  saLen = SockLen(16)
+  result = true
+
+proc connect*(host: string; port: uint16; dl = never): Socket {.passive, raises.} =
+  ## A non-blocking `Socket` connected to `host:port`, parked on the ring until
+  ## the handshake completes or the deadline arrives. Raises `TimeoutError` if
+  ## the deadline arrived first, `IOError` if the address is not a dotted-quad
+  ## literal or the peer refused.
+  ##
+  ## `dl` bounds the connection attempt *only*: a socket that is left with a
+  ## deadline from its connect would expire every later read or write once that
+  ## moment passed — the connect budget is not a lifetime. The returned Socket
+  ## has no standing deadline; a protocol sets one per request via `renew`.
+  result = initSocket(-1, never)
+  var sa = default(Sockaddr_storage)
+  var saLen = SockLen(0)
+  if not addrFromHost(sa, saLen, host, port):
+    raise IOError
+  let fd = socketNonBlocking()
+  if fd < 0: raise IOError
+  result.fd = fd
+  var res = 0
+  let c = delay()
+  discard submitConnect(fd, sa, saLen, budget(result, dl), c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
 
 # ------------------------------------------------------------ the socket ---
 
@@ -215,6 +331,10 @@ proc `=wasMoved`*(s: var Socket) {.nodestroy, inline.} =
   s.fd = -1
   `=wasMoved`(s.rbuf)
   `=wasMoved`(s.wbuf)
+
+proc `=dup`*(x: Socket): Socket =
+  result = x
+  `=wasMoved`(cast[ptr Socket](unsafeAddr x)[])
 
 proc `=copy`*(dest: var Socket; src: Socket) {.error.}
   ## Move-only: two sockets over one fd means two owners of one descriptor,
@@ -326,6 +446,31 @@ proc read*(s: var Socket; dest: var openArray[char]; dl = never): int {.passive,
     got += s.take(toOpenArray(dest, got, limit - 1), limit - got)
   result = got
 
+proc readLine*(s: var Socket; dl = never): string {.passive, raises.} =
+  ## One line, up to and including its `\n`, minus the delimiter and any
+  ## trailing `\r`. An empty result is end of stream — which, like `read`
+  ## returning `0`, is an end and not a failure. A line can arrive split
+  ## across `fill`s, so this loops on the buffer rather than assuming one read
+  ## held the whole line.
+  result = ""
+  let dl2 = budget(s, dl)
+  while true:
+    let view = s.peek
+    var nl = -1
+    for i in 0 ..< view.len:
+      if view[i] == '\n':
+        nl = i
+        break
+    if nl >= 0:
+      var last = nl
+      if last > 0 and view[last - 1] == '\r':
+        dec last
+      for i in 0 ..< last:
+        result.add view[i]
+      s.consume(nl + 1)
+      return
+    if s.fill(dl2) <= 0: return
+
 # -------------------------------------------------------- the write side ---
 
 proc toErr*(n: int): ErrorCode {.inline.} =
@@ -358,6 +503,17 @@ proc write*(s: var Socket; data: openArray[char];
   if data.len == 0: return
   writeAll(s, addr data[0], data.len, dl)
 
+proc writeLine*(s: var Socket; line: string;
+                dl = never) {.passive, raises.} =
+  ## `write(line)` followed by a `\n`. Two sends rather than one: there is no
+  ## persistent frame here the way there is for `scratch`/`flush`, and a line
+  ## echoed back is not a protocol that needs its bytes coalesced — but both
+  ## the payload and its terminator are guaranteed to go out, each whole.
+  if line.len > 0:
+    write(s, toOpenArray(line, 0, line.len - 1), dl)
+  const nl = "\n"
+  write(s, toOpenArray(nl, 0, 0), dl)
+
 proc scratch*(s: var Socket; n: int): var openArray[char] =
   ## A writable staging area of at least `n` bytes, kept between calls so
   ## serializing a message does not allocate per message. Valid until the next
@@ -372,3 +528,61 @@ proc flush*(s: var Socket; n: int; dl = never) {.passive, raises.} =
   ## left half-way through.
   if n <= 0: return
   writeAll(s, addr s.wbuf[0], n, dl)
+
+# ------------------------------------------------------ the datagram socket ---
+#
+# UDP on the same ring as the TCP half: a datagram socket is bound and then
+# `udpConnect`ed to one peer, which is what makes the ring's existing read and
+# write paths work unchanged — after connect, a datagram socket's `read` is
+# "the next datagram from the peer" and its `write` is "send this datagram to
+# the peer". Datagrams are whole messages: `sendDatagram` sends exactly one,
+# `recvDatagram` receives exactly one. There is no end of stream on a datagram
+# socket — a `read` that places nothing is a datagram of length zero, which is
+# a legal (if unusual) UDP message — so neither of these reports `0` as
+# closure the way the stream side does.
+
+proc openUdp*(port: uint16; deadline = never): Socket =
+  ## A bound, non-blocking UDP socket on `port`; `0` asks the kernel to pick
+  ## one, reported by `boundPort`. Binding is synchronous — nothing for the
+  ## ring to wait on — so only the datagram exchange parks.
+  initSocket(createUdp(port), deadline)
+
+proc boundPort*(s: Socket): uint16 {.inline.} = boundPort(s.fd)
+
+proc udpConnect*(s: var Socket; host: string; port: uint16;
+                 dl = never) {.passive, raises.} =
+  ## Connect an existing, bound UDP socket to `host:port`. Connecting a
+  ## datagram socket does no traffic: it just records the peer, which is the
+  ## destination every later `sendDatagram` goes to and the only source a
+  ## later `recvDatagram` accepts — the UDP analogue of `accept`, which is why
+  ## the ring's stream-shaped read/write submit paths work here unmodified.
+  var sa = default(Sockaddr_storage)
+  var saLen = SockLen(0)
+  if not addrFromHost(sa, saLen, host, port):
+    raise IOError
+  var res = 0
+  let c = delay()
+  discard submitConnect(s.fd, sa, saLen, budget(s, dl), c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
+
+proc recvDatagram*(s: var Socket; dest: var openArray[char];
+                   dl = never): int {.passive, raises.} =
+  ## Receive one datagram into `dest`. The bytes it held, which is not a
+  ## stream count: a datagram is a whole message, so this is a full message
+  ## (never a `0`-means-closed condition). A datagram larger than `dest` is
+  ## truncated to it — that is UDP's contract, not something this proc can
+  ## repair. Raises `TimeoutError` if the deadline arrived first.
+  if dest.len == 0:
+    return 0
+  result = readAsync(s.fd, addr dest[0], dest.len, budget(s, dl))
+  if result < 0: raise toErr(result)
+
+proc sendDatagram*(s: var Socket; data: openArray[char];
+                   dl = never) {.passive, raises.} =
+  ## Send `data` as one datagram. A datagram is atomic: the whole buffer is one
+  ## message, unlike the stream side where a short write is the peer's window.
+  ## Raises `TimeoutError` if the deadline arrived first.
+  if data.len == 0: return
+  let n = writeAsync(s.fd, addr data[0], data.len, budget(s, dl))
+  if n <= 0: raise toErr(n)
