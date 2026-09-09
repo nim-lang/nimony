@@ -160,3 +160,32 @@ var rb: RBox[3, int]
 rb.data[0] = 10; rb.data[1] = 20; rb.data[2] = 30
 echo ritem(rb, 1)                                     # 20
 echo ritem(rb, 2)                                     # 30
+
+# `low`/`high` of an array whose length is a value parameter. The index slot of
+# a generic `array[N, T]` is canonicalized to the range `0 .. N-1`, so it has
+# the same shape as an instance's and `system.high[I, T](x: array[I, T])` binds
+# `I` to a *type* rather than to the value `N` (nim-lang/nimony#2485).
+template twice(n: int): untyped = 2 * n
+
+type
+  TwiceArray[N: static[int]; T] = object
+    elems: array[twice(N), T]
+
+func fill[N: static[int]; T](a: var TwiceArray[N, T]; v: T) =
+  for i in low(a.elems) .. high(a.elems):
+    a.elems[i] = v
+
+func lastIndex[N: static[int]; T](a: TwiceArray[N, T]): int = high(a.elems)
+
+var ta: TwiceArray[3, int]
+fill(ta, 9)
+echo ta.elems[0]
+echo ta.elems[5]
+echo lastIndex(ta)                 # 5
+echo high(ta.elems)                # 5
+
+# the same for a plain (non-template) length and through an ordinary parameter:
+func lastOf[N: static[int]; T](x: array[N, T]): int = high(x)
+
+var arr: array[4, int]
+echo lastOf(arr)                   # 3
