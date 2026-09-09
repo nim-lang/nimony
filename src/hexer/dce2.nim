@@ -59,7 +59,8 @@ proc markLive(moduleGraphs: Table[string, ModuleAnalysis]; resolved: ResolveTabl
     if not result.getOrQuit(moduleName).containsOrIncl(sym):
       # Process dependencies from the symbol's own module
       if moduleName in moduleGraphs:
-        let graph = moduleGraphs.getOrQuit(moduleName)
+        # Immutable view to avoid deepcopy of the graphs
+        let graph {.cursor.} = moduleGraphs.getOrQuit(moduleName)
         if sym in graph.uses:
           for dep in graph.uses.getOrQuit(sym):
             let s = translate(resolved, dep)
