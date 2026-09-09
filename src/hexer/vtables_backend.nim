@@ -656,7 +656,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
        Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX,
        EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
        SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX, FailedX, IsX, EnvpX,
-       ToClosureX:
+       ToClosureX, PluginCallX:
       # not an expression this pass rewrites, so it is a statement, a type or a
       # container to walk through:
       case n.stmtKind

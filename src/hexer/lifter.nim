@@ -265,7 +265,9 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
       skip tup
     result = true
   of NoType, ErrT, NiltT, OrT, AndT, NotT, ConceptT, DistinctT, StaticT, InvokeT,
-     TypekindT, UntypedT, TypedT:
+     TypekindT, UntypedT, TypedT, PluginCallT:
+    # `PluginCallT` is frontend-only: a deferred plugin call is resolved by
+    # every instantiation, and only instantiations reach hexer.
     echo "isTrivial: ", toString(typ, false)
     bug "bug in isTrival computation"
 

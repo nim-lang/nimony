@@ -2553,7 +2553,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           CardX, EmoveX, DestroyX, DupX, CopyX,
           WasmovedX, SinkhX, TraceX,
           InternalTypeNameX, InternalFieldPairsX,
-          FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
+          FailedX, IsX, EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
         case n.finalIrKind
         of LoopV:
           # A suspension-free Final IR `(loop (stmts BODY (continue .)))`

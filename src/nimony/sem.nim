@@ -202,6 +202,13 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
     # noreturn allowed in expression context
     # maybe use sem flags to restrict this to statement branches
     done = true
+  elif typeKind(arg.typ) == UntypedT:
+    # `untyped` means "not semantically checked yet" -- a deferred plugin call
+    # parked by `deferPluginCall`, for instance. Adopt the expected type, the
+    # way an `untyped` template body does when it expands into a typed slot;
+    # the real check happens when instantiation re-drives the node.
+    it.typ = expected
+    done = true
   elif typeKind(arg.typ) == AutoT and not isEmptyContainer(arg.n):
     # auto is valid for empty container, will be handled below
     it.typ = expected
@@ -1480,7 +1487,7 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
      ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, UntypedT, TypedT,
-     CstringT, PointerT, OrdinalT:
+     CstringT, PointerT, OrdinalT, PluginCallT:
     # otherwise, is a static value
     if context != AllowValues:
       dest.shrink start
@@ -1780,7 +1787,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-     FailedX, IsX, EnvpX, ToClosureX:
+     FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
     let a = evalConstIntExpr(c, dest, orig, expected)
     if seen.containsOrIncl(a):
       buildErr c, dest, info, "value already handled"
@@ -2078,7 +2085,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-     FailedX, IsX, EnvpX, ToClosureX:
+     FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
     dest.addParLe(AsgnS, info)
     var a = Item(n: it.n, typ: c.types.autoType)
     let beforeLhs = dest.len
@@ -3611,7 +3618,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
        StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       # unknown expected type, give empty literal auto type, then match it
       dest.addSubtree c.types.autoType
       dest.addParRi(it.n.endInfo)
@@ -3635,7 +3642,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
-     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     discard
 
   var ctx = ArrayConstrContext(
@@ -3678,7 +3685,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
-     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     var convMatch = default(Match)
     let convArg = CallArg(n: orig, typ: it.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
@@ -3717,7 +3724,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
        StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
-       UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+       UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
       # unknown expected type, give empty literal auto type, then match it
       dest.addSubtree c.types.autoType
       dest.addParRi(it.n.endInfo)
@@ -3741,7 +3748,7 @@ proc semCurly(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[Se
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, ArrayT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SymkindT, TypekindT, TypedescT,
-     UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+     UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     buildErr c, dest, info, "invalid expected type for set constructor: " & typeToString(it.typ)
   var elemStart = dest.len
   var elemInfo = elem.n.info
@@ -4876,6 +4883,16 @@ proc semBuiltinSubscript(c: var SemContext; dest: var TokenBuf; it: var Item; lh
   semCall c, dest, call, {}, SubscriptCall
   it.typ = call.typ
 
+proc semPluginCall(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## A deferred plugin call, parked by `deferPluginCall`. Its arguments have
+  ## been substituted by now, so drive the plugin again through the ordinary
+  ## call path; a plugin that still cannot answer parks it here once more.
+  let info = it.n.info
+  var callBuf = pluginCallToCall(it.n, info)
+  var call = Item(n: cursorAt(callBuf, 0), typ: it.typ)
+  semCall c, dest, call, {}
+  it.typ = call.typ
+
 proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   var n = it.n
   let atStart = n
@@ -4962,7 +4979,7 @@ proc semTypedAt(c: var SemContext; dest: var TokenBuf; it: var Item) =
        TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, PtrT, VarargsT,
        StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
        DistinctT, ItertypeT, RangetypeT, AutoT, SymkindT, TypekindT, TypedescT, UntypedT, TypedT,
-       PointerT, OrdinalT:
+       PointerT, OrdinalT, PluginCallT:
       c.buildErr dest, lhsInfo, "invalid lhs type for typed index: " & typeToString(typ)
     # Skip the index type information in case we re-semcheck this node: a
     # generic body's `array` index may instantiate to a different lhs type,
@@ -5255,8 +5272,9 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
             CstringT, PointerT, TypekindT, OrdinalT, RoutineTypes:
           # every valid local type expression
           semLocalTypeExpr c, dest, it
-        of OrT, AndT, NotT, InvokeT:
-          # should be handled in respective expression kinds
+        of OrT, AndT, NotT, InvokeT, PluginCallT:
+          # should be handled in respective expression kinds -- `PluginCallT`
+          # shares its tag with `PluginCallX`, so it never reaches `NoExpr`
           discard
       of PragmaxS:
         semPragmaExpr c, dest, it
@@ -5524,6 +5542,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semIsMainModule c, dest, it
     of AtX:
       semSubscript c, dest, it
+    of PluginCallX:
+      semPluginCall c, dest, it
     of ArratX, PatX:
       semTypedAt c, dest, it
     of UnpackX:

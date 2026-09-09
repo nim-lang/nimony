@@ -584,30 +584,6 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
   dest.addParLe(n.cursorTagId, n.info) # copy `at`
   let invokeStart = n
   n = sub(n)
-  if n.isSymbol and isRoutineSym(n.symId):
-    # A routine in the head is not a generic type instantiation: it is a plugin
-    # call that `deferPluginCall` parked here, because `(at …)` is the only
-    # unresolved type application a type slot accepts. The arguments have been
-    # substituted by now, so put the call back together and let the ordinary
-    # expression path drive the plugin again — including a second deferral,
-    # which lands back here.
-    #
-    # `context` is forwarded so a value-returning plugin deferred into a
-    # value-allowing slot (e.g. an `array[binomial(N, K), T]` length) re-checks
-    # under `AllowValues`; its ordinal result is then accepted as a length
-    # instead of being misread as an (invalid) index *type*.
-    dest.shrink typeStart
-    var callBuf = createTokenBuf(16)
-    callBuf.addParLe(CallX, info)
-    while n.hasMore:
-      callBuf.addSubtree n
-      skip n
-    callBuf.addParRi()
-    n = invokeStart; skip n
-    var call = beginRead(callBuf)
-    semTypeExpr c, dest, call, context, info
-    endRead call
-    return
   semLocalTypeImpl c, dest, n, InInvokeHead
 
   var headId: SymId = SymId(0)
@@ -755,10 +731,16 @@ proc isSymbolicLength(n: Cursor): bool =
     let res = tryLoadSym(n.symId)
     result = res.status == LacksNothing and res.decl.symKind == StaticTypevarY
   of TagLit:
-    # a type in tag form -- including an unresolved `(at Generic T)` invocation,
-    # whose type kind is `AtT` -- has a type kind; an arithmetic expression such
-    # as `(mul (i 64) 2 N)` has not.
-    result = n.typeKind == NoType
+    if n.typeKind == PluginCallT:
+      # a deferred plugin call: only the template's declared return type says
+      # whether it stands for a length or for an index type
+      var head = n
+      inc head # tag
+      result = head.isSymbol and not pluginReturnsType(head.symId)
+    else:
+      # a type in tag form -- `(at Generic T)` included -- has a type kind; an
+      # arithmetic expression such as `(mul (i 64) 2 N)` has not.
+      result = n.typeKind == NoType
   else:
     result = false
 
@@ -1341,6 +1323,17 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       n = routineStart; skip n
     of InvokeT:
       semInvoke c, dest, n, context
+    of PluginCallT:
+      # A deferred plugin call in a TYPE slot. `context` is forwarded so a
+      # value-returning plugin deferred into a value-allowing slot (an
+      # `array[binomial(N, K), T]` length, say) re-checks under `AllowValues`
+      # and its ordinal result is accepted as a length rather than misread as
+      # an (invalid) index type.
+      let info = n.info
+      var callBuf = pluginCallToCall(n, info)
+      var call = beginRead(callBuf)
+      semTypeExpr c, dest, call, context, info
+      endRead call
     of ErrT, ClosureTupleT:
       # `ClosureTupleT` is a hexer-internal lowering and never reaches sem.
       takeTree dest, n
