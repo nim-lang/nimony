@@ -195,6 +195,20 @@ the status of record is what `tjsgen` prints, and *Next* is the honest to-do lis
   Nim strings as linear-memory data. At this point non-trivial programs should pass `jsdiff`.
 - **M7 — the JS value bridge.** Handle table, `jsstring`, `importjs`, fat-pointer `var` params,
   callback wrappers.
+  - **M7 gate (nimony side) — DONE.** `{.importjs.}` now survives the whole front half to jorogumo's
+    input. nifler already passed it verbatim (a generic `(kv importjs~ "…")` pragma node, no nifler
+    change needed); nimsem resolves it to a new `ImportjsTagId` — a row appended to the end of
+    `doc/tags.md`, which is the master `TagData` nativenif builds its Leng tag pool from, so the tag's
+    *number is that row's position* and nativenif must be rebuilt against the same `doc/tags.md`
+    (`createLengTagPool` asserts every id) — and emits `(importjs "template")` in the `.s.nif`;
+    hexer forwards it into the Leng `.c.nif` (a new `ImportjsP` in `leng_tags`, an `externKind`
+    branch in `lengcgen`, and bodyless-importjs treated as a foreign proc in `funcsummary`/
+    `intramodinliner` so its empty `(stmts .)` body is neither analysed nor inlined). The other back
+    ends have no lowering for it and say so: `lengc` rejects the pragma outright instead of emitting a
+    call to nothing. jorogumo reads the tag with the template byte-intact and, until the splice is
+    implemented below, **refuses at the call site** (`extern … (the JS bridge is M7)`) rather than
+    emitting a silent empty stub. Remaining for M7: lower the `#`/`$1`/`$$` splice template to a JS
+    call and the handle/`jsstring` bridge.
 - **M8 — DOM.** `lib/std/dom.nim` ported from Nim 2's `lib/js/dom.nim` declarations — handle-typed,
   source-compatible usage — plus DOM fixtures under jsdom.
 - **M9 — verification + docs.** `hastur jsdiff` over the full fixture set; `jorogumoTests` in
@@ -217,8 +231,9 @@ the status of record is what `tjsgen` prints, and *Next* is the honest to-do lis
 ## Risks
 
 1. **EH lowering** is the historically hardest half in both backends; budget M5 accordingly.
-2. **`importjs` passthrough** through nimsem is unverified; if pragmas do not survive verbatim,
-   that is nimony-side work that gates M7/M8.
+2. **`importjs` passthrough** — **resolved.** Verified end to end: the template survives nifler →
+   nimsem (`(importjs "…")` tag) → hexer (forwarded into the Leng `.c.nif`) → jorogumo byte-intact.
+   See the *M7 gate* note under Milestones.
 3. **Handle liveness vs GC** — the never-release table is a deliberate, documented leak until the
    ARC story extends across the bridge.
 4. **ArrayBuffer sizing** — JS commits real memory up front; too big breaks low-end hosts, too

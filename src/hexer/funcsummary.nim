@@ -537,7 +537,7 @@ proc markAllUnknown(a: var ProcAnalysis) =
 
 proc isExternProc(pragmas: Cursor): bool =
   ## A proc whose implementation lives outside the NIF world: `importc` /
-  ## `importcpp`. Its body is `(stmts .)` — an EMPTY body, not an effect-free
+  ## `importcpp` / `importjs`. Its body is `(stmts .)` — an EMPTY body, not an effect-free
   ## one, so walking it would "prove" that `time(addr x)` neither writes
   ## through nor escapes its argument and copyprop would then keep believing
   ## `x`'s pre-call value. There is nothing to analyse; say so.
@@ -545,7 +545,7 @@ proc isExternProc(pragmas: Cursor): bool =
   var p = pragmas
   result = false
   p.loopInto:
-    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP}: return true
+    if p.isTagLit and p.pragmaKind in {ImportcP, ImportcppP, ImportjsP}: return true
     skip p
 
 proc computeProcAnalysis(procDecl: Cursor): ProcAnalysis =

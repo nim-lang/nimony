@@ -4385,7 +4385,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
-      isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP)
+      isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP) or hasPragma(n, ImportjsP)
       ownContract = extractPragma(n, RequiresP)
       # An iterator's `.ensures` is about what it yields, not about an exit.
       if decl.symKind != IteratorY:
