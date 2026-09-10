@@ -31,6 +31,20 @@ proc tr(n: NifCursor): NifBuilder =
         result.bindSym "&"
         result.takeTree args
         result.takeTree args
+    # `@` is the regression: a symbol name is round-tripped through NIF TEXT,
+    # and `@` introduces line info there, so the unescaped spelling came back
+    # from the re-parse as an unbalanced tree ("addBufferSamePool with unclosed
+    # source tags"). Every ControlChars operator has the same shape.
+    result.withTree CallS, info:
+      result.addIdent "echo"
+      result.withTree CallX, info:
+        result.bindSym "len"
+        result.withTree PrefixX, info:
+          result.bindSym "@"
+          result.withTree BracketX, info:
+            result.addIntLit 1
+            result.addIntLit 2
+            result.addIntLit 3
 
 var inp = loadPluginInput()
 saveTree tr(inp)

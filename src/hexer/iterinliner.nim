@@ -64,14 +64,25 @@ proc connectSingleExprToLoopVar(e: var EContext; dest: var TokenBuf; c: var Curs
     res[destSym] = freshSym
     createDecl(e, dest, freshSym, typ, c, info, VarS, needsAddr=false)
 
-proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor; left: TokenBuf; i: int; info: NifLineInfo; typ: Cursor; needsAddr: bool) =
+proc unpackTupleAccess(e: var EContext; dest: var TokenBuf; forVar: Cursor;
+                       left: TokenBuf; i: int; info: NifLineInfo; typ: Cursor;
+                       needsAddr: bool; res: var Table[SymId, SymId]) =
   assert typ.hasMore
   let local = asLocal(forVar)
-  let symId = local.name.symId
+  # A fresh symbol PER YIELD, and a mapping entry so the body reads it —
+  # exactly what `connectSingleExprToLoopVar` does for the single-variable
+  # case. Re-using the for-loop variable's own symbol declared it once per
+  # `yield`, so an iterator with two of them emitted two `(let :f.0 …)` for the
+  # same name in one proc. The C backend keeps them apart by scope; the native
+  # one resolves a symbol by name, so the second declaration took over the
+  # first's storage and `for (f, l) in it()` read `f` from the wrong yield.
+  let destSym = local.name.symId
+  let freshSym = pool.symId("`ii." & $e.getTmpId)
+  res[destSym] = freshSym
   var tupBuf = createTupleAccess(left, i, info)
   var tup = beginRead(tupBuf)
   var localTyp = local.typ
-  createDecl(e, dest, symId, localTyp, tup, info, LetS, needsAddr)
+  createDecl(e, dest, freshSym, localTyp, tup, info, LetS, needsAddr)
 
 proc startTupleAccess(s: SymId; info: NifLineInfo; needsDeref: bool): TokenBuf =
   result = createTokenBuf()
@@ -149,7 +160,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
             # = (tupat ...)` is wrapped in `(haddr ...)`.
             let innerNeedsAddr = needsDeref or hasModifier
             while unpackCursor.hasMore:
-              unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr)
+              unpackTupleAccess(e, dest, unpackCursor, leftTupleAccess, counter, info, typ, innerNeedsAddr, result)
               inc counter
               skip unpackCursor
               skip typ
@@ -157,7 +168,7 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
             typ = modStart; skip typ
         else:
           var left = startTupleAccess(tmpId, info, needsDeref)
-          unpackTupleAccess(e, dest, forVars[i], left, i, info, typ, needsDeref)
+          unpackTupleAccess(e, dest, forVars[i], left, i, info, typ, needsDeref, result)
           skip typ
 
         if isKvU:
