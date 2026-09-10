@@ -289,7 +289,6 @@ does not work, which is why the event loop is the primitive.
 
 ```nim
 proc handle(c: sink HttpConnection) {.passive.} =
-  var c = c
   while c.next():                                  # the next request, parsed
     if c.path == "/": c.respond(200, "hello\n", "text/plain")
     else:             c.respond(404, "")

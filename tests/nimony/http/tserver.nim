@@ -34,7 +34,10 @@ proc awaitFlag(flag: var int) =
 # ------------------------------------------------------------ the server --
 
 proc handle(c: sink HttpConnection) {.passive.} =
-  var c = c
+  ## `sink`, and not `var`: this chain outlives the `accept` loop that spawned
+  ## it, so a `var` parameter would leave the frame pointing at a local the
+  ## next iteration overwrites. A `sink` parameter is stored in the frame and
+  ## is mutable there, which is what `next`/`respond` need.
   while c.next():
     try:
       if c.path == "/":

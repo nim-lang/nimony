@@ -6,7 +6,6 @@
 #   let tags = newHttpTags()
 #
 #   proc handle(c: sink HttpConnection) {.passive.} =
-#     var c = c
 #     while c.next():
 #       if c.path == "/": c.respond(200, "hello\n", "text/plain")
 #       else:             c.respond(404, "")
