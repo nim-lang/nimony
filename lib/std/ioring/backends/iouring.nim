@@ -24,6 +24,8 @@ const
     ## behalf. Its low word is not a slot index any arena can hold, so the
     ## completion loop drops the CQE on the bounds check below and no slot is
     ## touched by it.
+  AtFdCwd = cint(-100)  ## resolve an AT_* path against the cwd; `posix` only
+    ## exposes its own `AT_FDCWD` under `linuxA64Raw`, so name it here.
 
 proc tagFor(idx: int; gen: uint32): uint64 {.inline.} =
   ## A CQE's `user_data`: the slot index, and the generation of the op that was
@@ -34,23 +36,44 @@ var
   sqEntries: int
   localQueues: seq[Queue]
 
+type
+  MsgSlot = object
+    ## Per-slot msghdr storage for `IORING_OP_RECVMSG`/`IORING_OP_SENDMSG`.
+    ## The kernel holds a pointer to the `msghdr` from fill time until the op
+    ## completes, so it must live in an arena that never moves; these are
+    ## sized to `MaxOps` up front like the slot arena itself, making their
+    ## addresses stable for the ring's lifetime.
+    hdr: Tmsghdr
+    iov: IOVec
+
+var gMsgs: seq[ptr UncheckedArray[MsgSlot]]   ## per lane, indexed by slot
+
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
+  gMsgs = @[]
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
+      # `alloc0`, not `newSeq`: a `MsgSlot` holds a `Tmsghdr` with pointers, so
+      # the type has no `default`, and `newSeq` would demand one.
+      gMsgs.add cast[ptr UncheckedArray[MsgSlot]](alloc0(MaxOps * sizeof(MsgSlot)))
   except ErrorCode:
     return false   # the caller falls back to the epoll backend
   return true
 
-proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
+proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
+  let op = addr gSlots[lane].slots[idx].op
   case op.kind
   of opRead:
     if op.buf != nil:
-      discard sqe.read(op.fd, cast[pointer](op.buf), op.len)
+      # `off = -1` means stream semantics: read at the fd's current position
+      # and advance it. The default (0) would make this a pread at offset 0
+      # forever — invisible on a socket (the kernel ignores `off` there), but
+      # a regular-file read that always returns the file's first bytes.
+      discard sqe.read(op.fd, cast[pointer](op.buf), op.len, -1)
   of opWrite:
     if op.buf != nil:
-      discard sqe.write(op.fd, cast[pointer](op.buf), op.len)
+      discard sqe.write(op.fd, cast[pointer](op.buf), op.len, -1)
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.sockAddr), addr op.sockAddrLen, 0)
   of opPollAdd:
@@ -69,6 +92,40 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
   of opConnect:
     discard sqe.connect(SocketHandle(op.fd),
                         cast[ptr SockAddr](addr op.sockAddr), op.sockAddrLen)
+  of opOpen:
+    # `IORING_OP_OPENAT` is the ring's own open: nothing waits on it and this
+    # backend never makes the syscall itself — the only syscalls an io_uring
+    # backend may make are the io_uring ones. The path is the caller-owned
+    # buffer carried in the op context; it stays alive until the op completes,
+    # the same contract `submitRead`'s buffer has.
+    discard sqe.openat(AtFdCwd, cast[pointer](op.buf), cint(op.openFlags), op.openMode)
+  of opRecvFrom:
+    # IORING_OP_RECVMSG has no recvfrom form: the source address travels in the
+    # msghdr (`msg_name`), which the kernel reads on submission and writes back
+    # into at completion, so it lives in the per-slot `gMsgs` arena — never on
+    # this stack. `msg_name` points at the op's own `sockAddr`, already
+    # arena-stable, so `complete` hands the storage to `peer` the way accept's
+    # does, and `msg_iov` points at the caller's buffer, which is alive until
+    # the op completes (the same contract as `submitRead`).
+    let m = addr gMsgs[lane][idx]
+    zeroMem(addr m.hdr, sizeof(m.hdr))
+    m.hdr.msg_name = addr op.sockAddr
+    m.hdr.msg_namelen = op.sockAddrLen
+    m.hdr.msg_iov = addr m.iov
+    m.hdr.msg_iovlen = csize_t(1)
+    m.iov.iov_base = cast[pointer](op.buf)
+    m.iov.iov_len = csize_t(op.len)
+    discard sqe.recvmsg(SocketHandle(op.fd), addr m.hdr)
+  of opSendTo:
+    let m = addr gMsgs[lane][idx]
+    zeroMem(addr m.hdr, sizeof(m.hdr))
+    m.hdr.msg_name = addr op.sockAddr
+    m.hdr.msg_namelen = op.sockAddrLen
+    m.hdr.msg_iov = addr m.iov
+    m.hdr.msg_iovlen = csize_t(1)
+    m.iov.iov_base = cast[pointer](op.buf)
+    m.iov.iov_len = csize_t(op.len)
+    discard sqe.sendmsg(SocketHandle(op.fd), addr m.hdr)
   of opNop, opTimeout:
     # A timer needs no SQE. The lane's deadline heap already knows when it is
     # due and bounds the `submit(waitNr)` below, so letting the kernel hold a
@@ -113,7 +170,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       # Fill from the ARENA copy, never from `buf`: an accept SQE stores
       # `addr op.sockAddr`/`addr op.sockAddrLen` and the kernel writes through
       # those at completion time, long after this stack frame is gone.
-      fillSqe(sqe, addr gSlots[lane].slots[idx].op)
+      fillSqe(sqe, lane, idx)
   # Sleep in the kernel until something is due — an I/O completion, or the
   # earliest deadline this lane is waiting on, whichever comes first. That is
   # ONE timeout for the whole lane, taken off the top of the deadline heap,
@@ -184,6 +241,12 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
           if POLL_IN in fired: ev.incl evRead
           if POLL_OUT in fired: ev.incl evWrite
           res = toEventMask(ev)
+        elif gSlots[lane].slots[idx].op.kind == opRecvFrom and res > 0:
+          # RECVMSG wrote the actual source-address length back into our
+          # msghdr; narrow `sockAddrLen` to it, exactly as the readiness
+          # backends do with their recvfrom's in-out length, so the storage
+          # `complete` hands to `peer` is described by the real length.
+          gSlots[lane].slots[idx].op.sockAddrLen = gMsgs[lane][idx].hdr.msg_namelen
         complete(idx, res)
       expireDeadlines(lane)
       return true
@@ -247,6 +310,9 @@ proc iouringClose() {.nimcall.} =
   for i in 0..<localQueues.len:
     if localQueues[i].params != nil:
       teardown(localQueues[i])
+  for m in gMsgs:
+    if m != nil: dealloc(cast[pointer](m))
+  gMsgs = @[]
 
 proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
   sqEntries = sqE

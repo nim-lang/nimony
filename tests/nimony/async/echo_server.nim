@@ -27,6 +27,8 @@ proc server() {.passive.} =
   var echoed = 0
   try:
     var s = accept(gL)
+    assert s.peer.isV4 and ip(s.peer) == "127.0.0.1"
+    assert port(s.peer) != 0
     serverLog.add "server accepted\n"
     for i in 0 ..< MessageCount:
       let line = readLine(s)
@@ -42,6 +44,8 @@ proc client() {.passive.} =
   var verified = 0
   try:
     var s = connect("127.0.0.1", thePort, afterMs(5000))
+    assert ip(s.peer) == "127.0.0.1"
+    assert port(s.peer) == int(thePort)
     clientLog.add "client connected\n"
     for i in 0 ..< MessageCount:
       let msg = "hello " & $i

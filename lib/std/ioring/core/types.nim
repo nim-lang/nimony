@@ -137,7 +137,8 @@ type
   IoEvents* = set[IoEvent]
 
   IoOp* = enum
-    opNop, opRead, opWrite, opAccept, opPollAdd, opConnect, opTimeout
+    opNop, opRead, opWrite, opAccept, opPollAdd, opConnect, opOpen,
+    opRecvFrom, opSendTo, opTimeout
 
   SeqNum* = uint32
 
@@ -147,8 +148,9 @@ type
     fd*: FileHandle
     result*: int
       ## Op-dependent: a byte count for `opRead`/`opWrite`, the accepted fd for
-      ## `opAccept`, -1 on failure — and for `opPollAdd` the fired directions
-      ## encoded as a bit mask, which `readyEvents` decodes into `IoEvents`.
+      ## `opAccept`, the opened fd for `opOpen`, -1 on failure — and for
+      ## `opPollAdd` the fired directions encoded as a bit mask, which
+      ## `readyEvents` decodes into `IoEvents`.
 
   OpContext* = object
     kind*: IoOp
@@ -156,6 +158,13 @@ type
     seqnum*: SeqNum
     buf*: nil pointer
     len*: int
+    openFlags*: int32
+      ## opOpen only: the flags argument to the backend's open(2). The caller
+      ## translates `FileMode` into the platform's O_* bits before submitting.
+    openMode*: int32
+      ## opOpen only: the mode argument. The kernel only reads it when the
+      ## flags create the file, but the value is carried anyway so the backend
+      ## has nothing to decide.
     cont*: Continuation
     res*: int
     deadline*: Deadline
@@ -170,13 +179,15 @@ type
       ## for a socket, is almost always. Since the op is oneshot, that caller's
       ## re-arm turns into a hot spin.
     sockAddr*: Sockaddr_storage
-      ## `opAccept` has the kernel fill this in; `opConnect` supplies it. The
-      ## two never coexist on one op, so they share the storage rather than
-      ## paying for both.
+      ## `opAccept` has the kernel fill this in (the connecting peer);
+      ## `opRecvFrom` has it filled in as the datagram's source; `opConnect`
+      ## and `opSendTo` supply it as the target. None of them coexist on one op,
+      ## so they share the storage rather than paying for four.
     sockAddrLen*: SockLen
     peer*: nil ptr Sockaddr_storage
-      ## `opAccept` only: where to copy `sockAddr` when the op completes, or
-      ## `nil` for a caller that does not care who connected.
+      ## `opAccept` and `opRecvFrom`: where to copy `sockAddr` when the op
+      ## completes, or `nil` for a caller that does not care who connected /
+      ## where the datagram came from.
       ##
       ## An out-parameter rather than a field on `IoCompletion`, for the same
       ## reason `res` is one: a completion is 24 bytes and there are `CqSize`

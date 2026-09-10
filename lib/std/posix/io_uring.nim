@@ -1199,6 +1199,14 @@ proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: var string; flags: int32 = 0; 
   sqe.opFlags.openFlags = cast[uint32](flags)
   sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path.toCString), cast[ptr cint](mode.addr)[], 0)
 
+proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: pointer; flags: int32; mode: int32): ptr Sqe =
+  ## Variant for a caller that already holds the NUL-terminated path in its own
+  ## buffer — the ioring op context carries it that way — rather than in a
+  ## `string`. Same SQE as the `var string` form: `len` carries `mode`, and
+  ## `open_flags` the flags.
+  sqe.opFlags.openFlags = cast[uint32](flags)
+  sqe.prepRw(OP_OPENAT, dfd, path, mode, 0)
+
 proc close*[T: FileHandle | SocketHandle](sqe: ptr Sqe; fd: T): ptr Sqe =
   sqe.opcode = OP_CLOSE
   sqe.fd = cast[int32](fd)

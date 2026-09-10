@@ -21,6 +21,7 @@ import std/algorithm
 import std/appdirs
 import std/assertions
 import std/atomics
+import std/asyncio
 import std/base64
 import std/bitops
 import std/cmdline

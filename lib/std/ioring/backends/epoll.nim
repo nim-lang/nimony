@@ -83,6 +83,12 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
         # has completed the slot and there is nothing left to arm.
         if startConnect(buf[i].fd, idx):
           submitForPoll(buf[i].fd, alreadyRegistered)
+      of opOpen:
+        # An open has no readiness to wait for — it is one syscall — so the
+        # backend performs it here and completes with the fd (or -errno).
+        completeOpen(idx, cast[cstring](buf[i].buf),
+                     cint(buf[i].openFlags),
+                     Mode(buf[i].openMode))
       else:
         submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]

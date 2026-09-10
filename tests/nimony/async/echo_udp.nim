@@ -19,8 +19,8 @@ import std/[socket, threadpool, atomics, assertions]
 const MessageCount = 100
 const BufLen = 64
 
-var gServerSock: Socket
-var gClientSock: Socket
+var gServerSock: UdpSocket
+var gClientSock: UdpSocket
 var thePort: uint16
 var clientPort: uint16
 var serverDone: int
@@ -33,6 +33,8 @@ proc server() {.passive.} =
   var echoed = 0
   try:
     udpConnect(gServerSock, "127.0.0.1", clientPort, afterMs(5000))
+    assert ip(gServerSock.peer) == "127.0.0.1"
+    assert port(gServerSock.peer) == int(clientPort)
     serverLog.add "server connected\n"
     var buf = default(array[BufLen, char])
     for i in 0 ..< MessageCount:
@@ -50,6 +52,8 @@ proc client() {.passive.} =
   var verified = 0
   try:
     udpConnect(gClientSock, "127.0.0.1", thePort, afterMs(5000))
+    assert ip(gClientSock.peer) == "127.0.0.1"
+    assert port(gClientSock.peer) == int(thePort)
     clientLog.add "client connected\n"
     var buf = default(array[BufLen, char])
     for i in 0 ..< MessageCount:

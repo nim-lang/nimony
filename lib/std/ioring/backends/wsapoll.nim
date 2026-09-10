@@ -83,6 +83,11 @@ when defined(windows):
           # that finished at once has completed the slot; the set is rebuilt
           # from the arena, so there is nothing to undo either way.
           discard startConnect(buf[i].fd, idx)
+        of opOpen:
+          # Not reachable: Windows files never enter the ring (asyncio serves
+          # them with the CRT directly). Refusing beats parking the slot until
+          # its deadline if one ever does.
+          complete(idx, -1)
         else:
           discard
     # Build this lane's set from its arena. Collect before dispatching:

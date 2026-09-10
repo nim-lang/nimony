@@ -167,6 +167,27 @@ proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
+proc submitOpen*(path: cstring; pathLen: int; openFlags, openMode: int32;
+                 deadline: Deadline;
+                 cont = Continuation(fn: nil, env: nil);
+                 resPtr: nil ptr int = nil): SeqNum =
+  ## Open `path` and complete with the fd (or a negated errno). The syscall is
+  ## made by the backend, on the polling thread: opening here would block the
+  ## caller, and opening has no readiness for the ring to park on anywhere
+  ## else.
+  ##
+  ## `path` must stay valid until the op completes — it is read by the backend,
+  ## not copied. The ring copies `OpContext` by value, and a `string` inside it
+  ## would be shared across threads for no reason; the caller's frame is parked
+  ## for the duration, so a `cstring` out of it is safe (the same arrangement
+  ## as `submitRead`'s buffer).
+  result = nextSeqNum()
+  var op = OpContext(kind: opOpen, fd: -1, seqnum: result,
+    buf: cast[pointer](path), len: pathLen,
+    openFlags: openFlags, openMode: openMode,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
 proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil;
@@ -208,6 +229,39 @@ proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
   ## default for it.
   result = nextSeqNum()
   var op = OpContext(kind: opConnect, fd: fd, seqnum: result,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  op.sockAddr = sa
+  op.sockAddrLen = saLen
+  enqueueOp(op)
+
+proc submitRecvFrom*(fd: cint; buf: pointer; len: int; deadline: Deadline;
+                     cont = Continuation(fn: nil, env: nil);
+                     resPtr: nil ptr int = nil;
+                     peer: nil ptr Sockaddr_storage = nil): SeqNum =
+  ## Receive one datagram into `buf`. Completes with the number of bytes
+  ## received, or a negative result.
+  ##
+  ## `peer`, when given, receives the sender's address — the kernel fills it
+  ## as part of the recvfrom, so asking costs no syscall beyond the one that
+  ## receives the datagram. It is written only when the receive succeeds and
+  ## it must outlive the op, like `submitAccept`'s `peer`.
+  result = nextSeqNum()
+  var op = OpContext(kind: opRecvFrom, fd: fd, seqnum: result, buf: buf, len: len,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  op.sockAddr = Sockaddr_storage()
+  op.sockAddrLen = SockLen(sizeof(op.sockAddr))
+  op.peer = peer
+  enqueueOp(op)
+
+proc submitSendTo*(fd: cint; buf: pointer; len: int; sa: Sockaddr_storage;
+                   saLen: SockLen; deadline: Deadline;
+                   cont = Continuation(fn: nil, env: nil);
+                   resPtr: nil ptr int = nil): SeqNum =
+  ## Send `buf` as one datagram to `sa`. Completes with the number of bytes
+  ## sent, or a negative result. The address is copied into the op, so it does
+  ## not need to outlive the call the way `submitConnect`'s does.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSendTo, fd: fd, seqnum: result, buf: buf, len: len,
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   op.sockAddr = sa
   op.sockAddrLen = saLen
