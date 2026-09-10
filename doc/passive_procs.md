@@ -26,6 +26,32 @@ captured environment. Continuations produced by `delay()` capture the continuati
 the code following the nearest `suspend()` and are thread-affine: they are expected to
 resume on the same thread.
 
+### `delay(call)` and parameters that alias the caller
+
+Because the continuation `delay(call)` produces is owned by a scheduler rather than by
+the code that built it, the callee's parameters must not be aliases of the building
+frame. A `var`, `out` or `lent` parameter is exactly that: the coroutine frame stores it
+as a bare pointer into the caller, and in the spawn shape
+
+```nim
+submit(delay(handle(c)), -1)     # `handle` runs later, possibly on another thread
+```
+
+the caller has moved on — reassigned `c`, or returned and run its destructors — long
+before the chain reads it. Nothing at the point of use says so, and the failure is a
+read of freed memory, so `delay` rejects such a callee outright:
+
+```
+Error: `delay` hands `handle` to a scheduler, so its continuation can outlive this
+frame; parameter `c: var HttpConnection` would alias a location that is already gone.
+Take it as `sink` instead
+```
+
+`sink` is the answer: it moves ownership into the coroutine frame, which is what makes
+the frame's lifetime self-sufficient. The rule is specific to `delay` — an ordinary
+passive call suspends its caller, whose frame is therefore alive for the whole of the
+callee, so `var` parameters stay legal there.
+
 ## How It Works
 
 ### Writing passive procs
