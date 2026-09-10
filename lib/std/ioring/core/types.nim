@@ -174,6 +174,19 @@ type
       ## two never coexist on one op, so they share the storage rather than
       ## paying for both.
     sockAddrLen*: SockLen
+    peer*: nil ptr Sockaddr_storage
+      ## `opAccept` only: where to copy `sockAddr` when the op completes, or
+      ## `nil` for a caller that does not care who connected.
+      ##
+      ## An out-parameter rather than a field on `IoCompletion`, for the same
+      ## reason `res` is one: a completion is 24 bytes and there are `CqSize`
+      ## of them, so putting a 128-byte `sockaddr_storage` in the struct would
+      ## make every `read` pay for a field only `accept` fills. The kernel
+      ## already wrote the address into the op — this is only the hand-off.
+      ##
+      ## No matching length out-parameter: `ss_family` says how to read the
+      ## bytes, and a length that only ever restates the family is a second
+      ## name for one fact and hence one of them that can be wrong.
 
 proc toEventMask*(events: IoEvents): int {.inline.} =
   ## Encode `events` for the plain `int` channels a completion travels through

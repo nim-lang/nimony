@@ -170,6 +170,8 @@ when defined(windows):
     stdcall, importc: "getsockopt", dynlib: "ws2_32.dll".}
   proc wsClosesocket(s: SocketHandle): cint {.
     stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
+  proc wsGetpeername(s: SocketHandle; name: pointer; namelen: ptr cint): cint {.
+    stdcall, importc: "getpeername", dynlib: "ws2_32.dll".}
   proc wsBind(s: SocketHandle; name: pointer; namelen: cint): cint {.
     stdcall, importc: "bind", dynlib: "ws2_32.dll".}
   proc cancelIoEx(file: Handle; ov: nil ptr Overlapped): int32 {.
@@ -517,6 +519,18 @@ when defined(windows):
           var listenSock = socketOf(op.fd)
           discard wsSetsockopt(a.acceptSock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
                                addr listenSock, cint(sizeof(listenSock)))
+          if op.peer != nil:
+            # `AcceptEx` wrote both addresses into `acceptBuf`, but reading
+            # them back needs `GetAcceptExSockaddrs` from the same late-bound
+            # extension table as `AcceptEx` itself. `getpeername` answers the
+            # same question with a call that is always there — and it is legal
+            # only now, because until `SO_UPDATE_ACCEPT_CONTEXT` above the
+            # socket does not yet know it is connected.
+            var namelen = cint(sizeof(op.sockAddr))
+            if wsGetpeername(a.acceptSock, addr op.sockAddr, addr namelen) == 0:
+              op.sockAddrLen = SockLen(namelen)
+            else:
+              op.sockAddr = Sockaddr_storage()
           if a.acceptSock <= SocketHandle(high(cint)):
             res = int(fdOf(a.acceptSock))
           else:

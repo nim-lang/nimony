@@ -42,6 +42,110 @@ const
     ## rather than us to allocate: a protocol that needs a whole message
     ## resident enforces its own, smaller limit long before this one.
 
+# ------------------------------------------------------- peer addresses ---
+
+const
+  AfInet = 2
+  AfInet6 = when defined(macosx): 30 elif defined(windows): 23 else: 10
+
+type
+  PeerAddr* = object
+    ## Who is at the other end. A `sockaddr_storage` the accept already filled,
+    ## plus the few questions anyone actually asks of one.
+    ##
+    ## The bytes are read by offset rather than through a `sockaddr_in` /
+    ## `sockaddr_in6` pair, because the two offsets that matter are the same in
+    ## both and fixed by the ABI: the port is a network-order `uint16` at 2,
+    ## and the address is at 4 (v4) or 8 (v6). That also sidesteps the BSD
+    ## `sin_len` byte, which shifts the *family* but nothing after it.
+    raw*: Sockaddr_storage
+
+proc bytesOf(p: PeerAddr): ptr UncheckedArray[uint8] {.inline.} =
+  cast[ptr UncheckedArray[uint8]](addr p.raw)
+
+proc family*(p: PeerAddr): int =
+  ## `AF_INET`, `AF_INET6`, or `0` for an address nothing filled in.
+  ## Read through `SockAddr`, whose declaration already knows whether this
+  ## platform puts a length byte in front of the family.
+  int(cast[ptr SockAddr](addr p.raw).sa_family)
+
+proc isV4*(p: PeerAddr): bool {.inline.} = p.family == AfInet
+proc isV6*(p: PeerAddr): bool {.inline.} = p.family == AfInet6
+
+proc port*(p: PeerAddr): int =
+  ## The peer's port, or `0` if there is no address. Network byte order read
+  ## as two bytes, so no host-endianness assumption is needed.
+  if p.family == 0: return 0
+  let b = p.bytesOf
+  result = (int(b[2]) shl 8) or int(b[3])
+
+proc addHex4(s: var string; x: int) =
+  ## One IPv6 group, lowercase and without leading zeros — the form RFC 5952
+  ## requires, and the one every log grep expects.
+  const Digits = "0123456789abcdef"
+  var started = false
+  for shift in [12, 8, 4, 0]:
+    let d = (x shr shift) and 0xF
+    if d != 0 or started or shift == 0:
+      s.add Digits[d]
+      started = true
+
+proc addIp*(s: var string; p: PeerAddr) =
+  ## Append the address without the port. Appends nothing for an unfilled one.
+  let b = p.bytesOf
+  if p.isV4:
+    for i in 0..3:
+      if i > 0: s.add '.'
+      s.addInt int(b[4 + i])
+  elif p.isV6:
+    # RFC 5952: lowercase, no leading zeros, and the *longest* run of zero
+    # groups — at least two — collapsed to `::`. One canonical spelling per
+    # address is what makes an allow-list or a rate-limiter key comparable at
+    # all; without it `::1` and `0:0:0:0:0:0:0:1` are two different peers.
+    var g = default(array[8, int])
+    for i in 0..7: g[i] = (int(b[8 + 2*i]) shl 8) or int(b[9 + 2*i])
+    var bestAt = -1
+    var bestLen = 0
+    var runAt = -1
+    var runLen = 0
+    for i in 0..7:
+      if g[i] == 0:
+        if runAt < 0: runAt = i; runLen = 0
+        inc runLen
+        if runLen > bestLen: bestAt = runAt; bestLen = runLen
+      else:
+        runAt = -1; runLen = 0
+    if bestLen < 2: bestAt = -1
+    var i = 0
+    while i < 8:
+      if i == bestAt:
+        s.add "::"
+        i += bestLen
+      else:
+        if i > 0 and i != bestAt + bestLen: s.add ':'
+        s.addHex4 g[i]
+        inc i
+
+proc ip*(p: PeerAddr): string =
+  ## The address without the port: `"127.0.0.1"`, `"::1"`, `""` for none.
+  result = ""
+  result.addIp p
+
+proc `$`*(p: PeerAddr): string =
+  ## Address and port in the form everything else writes them: `1.2.3.4:80`
+  ## for v4, `[::1]:80` for v6 — the brackets are not decoration, they are
+  ## what keeps the port's colon apart from the address's.
+  if p.family == 0: return "<unknown>"
+  result = ""
+  if p.isV6:
+    result.add '['
+    result.addIp p
+    result.add ']'
+  else:
+    result.addIp p
+  result.add ':'
+  result.addInt p.port
+
 # ------------------------------------------------------- ring primitives ---
 
 proc readAsync*(fd: cint; buf: pointer; len: int; dl: Deadline): int {.passive.} =
@@ -61,6 +165,22 @@ proc writeAsync*(fd: cint; buf: pointer; len: int; dl: Deadline): int {.passive.
   result = 0
   let c = delay()
   discard submitWrite(fd, buf, len, dl, c, addr result)
+  suspend()
+
+proc acceptAsync*(listenFd: cint; peer: var PeerAddr; dl: Deadline): int {.passive.} =
+  ## One `accept`, parked on the ring. The accepted fd, or negative on error —
+  ## `IoTimedOut` when the deadline arrived first.
+  ##
+  ## `peer` is filled with who connected, at no extra syscall: the kernel wrote
+  ## the address as part of the accept and this is only the hand-off. It is
+  ## left untouched when the accept fails.
+  ##
+  ## The returned fd is **not** non-blocking yet — `setNonBlocking` it before
+  ## handing it to a `Socket`, or every subsequent op on it blocks a lane.
+  result = 0
+  peer = PeerAddr(raw: Sockaddr_storage())
+  let c = delay()
+  discard submitAccept(listenFd, dl, c, addr result, addr peer.raw)
   suspend()
 
 # ------------------------------------------------------------ the socket ---

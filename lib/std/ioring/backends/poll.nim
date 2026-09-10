@@ -130,7 +130,13 @@ when defined(posix):
       of opAccept:
         if evRead in firedEvents:
           var addrLen = s.op.sockAddrLen
-          complete(j, int pcall(posixAccept(fd, addr s.op.sockAddr, addr addrLen)))
+          let client = int pcall(posixAccept(fd, addr s.op.sockAddr, addr addrLen))
+          # Write the length back. The kernel narrows it to what it actually
+          # wrote, and `complete` hands the storage to the caller — a stale
+          # `sizeof(sockaddr_storage)` here would describe a v4 address as
+          # 128 bytes of one.
+          s.op.sockAddrLen = addrLen
+          complete(j, client)
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide
@@ -271,6 +277,7 @@ else:
           if client == InvalidSocket:
             if not wouldBlock(): complete(j, -1)
           else:
+            sl.op.sockAddrLen = SockLen(addrLen)
             # The accepted SOCKET must survive the cint narrowing the ring's
             # API imposes; kernel handle values are small in practice (see
             # ioring.nim's Windows `listenTcp`).

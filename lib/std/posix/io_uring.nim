@@ -525,7 +525,6 @@ const
   REGISTER_FILES_SKIP* = -2
   OP_SUPPORTED* = 1u shl 0
 
-proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
 
 # There is no errno here. A Linux syscall reports failure by *returning*
 # `-errno`, which is the whole convention this file talks to the kernel in;
@@ -538,6 +537,27 @@ proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
 # `mmap`, and `newRing` wrote through the `MAP_FAILED` it got back. The ioring
 # init that is supposed to fall back to epoll segfaulted instead.)
 
+# ---------------------------------------------------- the three syscalls ---
+#
+# io_uring has NO libc wrapper — glibc exposes no `io_uring_enter` — so the two
+# backends reach the kernel by different routes and this is the only place that
+# knows it. Everything below calls `sysSetup`/`sysEnter`/`sysRegister` and each
+# result still goes through `pcall`, which already hides which convention
+# reported the error.
+#
+# * The C backend goes through libc's `syscall(NR, …)` multiplexer. `enter`
+#   takes six arguments, so that call has SEVEN — one past what the SysV
+#   argument registers hold, which the C compiler places on the stack.
+# * The freestanding backend (`nimony n`: arkham + nifasm, `-d:nimNoLibc`)
+#   links no libc, and cannot use the multiplexer even if it did: it is
+#   variadic and its seventh argument has nowhere to go. Naming the three
+#   directly is what lets arkham trap straight into the kernel — it lowers an
+#   `importc` whose C name is in its `LinuxSyscalls` table to a raw `syscall`
+#   instruction, and these three are in it (425/426/427, the same numbers on
+#   x86-64 and AArch64 because io_uring postdates the unified syscall tables).
+#   The C names do not have to exist anywhere: arkham consumes the name and
+#   emits no call.
+
 const
   # Arch-independent since their introduction in Linux 5.1 (io_uring was added
   # after the syscall tables were unified).
@@ -545,8 +565,26 @@ const
   SYS_io_uring_enter = cint(426)
   SYS_io_uring_register = cint(427)
 
+when defined(nimNoLibc):
+  proc sysSetup(entries: cint; params: ptr Params): cint {.
+    importc: "io_uring_setup", sideEffect.}
+  proc sysEnter(fd, toSubmit, minComplete, flags: cint; arg: nil pointer;
+                sz: cint): cint {.importc: "io_uring_enter", sideEffect.}
+  proc sysRegister(fd, op: cint; arg: nil pointer; nrArgs: cint): cint {.
+    importc: "io_uring_register", sideEffect.}
+else:
+  proc syscall(arg: cint): cint {.importc: "syscall", varargs.}
+
+  proc sysSetup(entries: cint; params: ptr Params): cint =
+    syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
+  proc sysEnter(fd, toSubmit, minComplete, flags: cint; arg: nil pointer;
+                sz: cint): cint =
+    syscall(SYS_io_uring_enter, fd, toSubmit, minComplete, flags, arg, sz)
+  proc sysRegister(fd, op: cint; arg: nil pointer; nrArgs: cint): cint =
+    syscall(SYS_io_uring_register, fd, op, arg, nrArgs, 0, 0)
+
 proc setup*(entries: cint, params: ptr Params): FileHandle {.raises, tags: [].} =
-  result = cint pcall(syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0))
+  result = cint pcall(sysSetup(entries, params))
   if result < 0:
     raiseOSError(OSErrorCode(-result), "io_uring setup syscall failed")
 
@@ -554,14 +592,13 @@ proc enter*(fd: cint, toSubmit: cint, minComplete: cint,
             flags: EnterFlags, sig: nil pointer, sz: cint): cint {.raises, tags: [].} =
   ## `sig` points to a kernel sigset (8 bytes on Linux) or is nil.
   var f = flags
-  result = cint pcall(syscall(SYS_io_uring_enter, fd, toSubmit, minComplete,
-                              cast[ptr cint](f.addr)[], sig, sz))
+  result = cint pcall(sysEnter(fd, toSubmit, minComplete,
+                               cast[ptr cint](f.addr)[], sig, sz))
   if result < 0:
     raiseOSError(OSErrorCode(-result), "io_uring enter syscall failed")
 
 proc register*(fd: cint, op: RegisterOp, arg: nil pointer, nr_args: cint): cint {.raises, tags: [].} =
-  result = cint pcall(syscall(SYS_io_uring_register, fd, cint(op), arg,
-                              nr_args, 0, 0))
+  result = cint pcall(sysRegister(fd, cint(op), arg, nr_args))
   if result < 0:
     raiseOSError(OSErrorCode(-result), "io_uring register syscall failed")
 
@@ -839,9 +876,9 @@ proc submitAndWait*(queue: var Queue; waitNr: uint; ts: nil ptr Timespec): int
   discard queue.sqNeedsEnter(submited, flags)
   var arg = GeteventsArg(sigmask: 0'u64, sigmaskSz: 0'u32, pad: 0'u32,
                          ts: cast[uint64](ts))
-  let r = pcall(syscall(SYS_io_uring_enter, queue.fd, submited.cint, waitNr.cint,
-                        cast[ptr cint](flags.addr)[], arg.addr,
-                        cint(sizeof(GeteventsArg))))
+  let r = pcall(sysEnter(queue.fd, submited.cint, waitNr.cint,
+                         cast[ptr cint](flags.addr)[], arg.addr,
+                         cint(sizeof(GeteventsArg))))
   if r < 0:
     let e = cint(-r)
     if e == ETIME or e == EINTR or e == EAGAIN or e == EBUSY:

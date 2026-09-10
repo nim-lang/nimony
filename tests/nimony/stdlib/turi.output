@@ -1,0 +1,46 @@
+scheme=http user= host=example.com port= path=/a/b query=x=1&y=2 anchor=top
+scheme=https user=user host=example.com port=8443 path=/p query= anchor=
+scheme=http user= host=::1 port=8080 path=/p query= anchor= ipv6
+scheme=http user= host=2001:db8::1 port= path=/ query= anchor= ipv6
+scheme= user= host= port= path=/just/a/path query=q=1 anchor=
+scheme= user= host= port= path=/ query= anchor=
+scheme= user= host= port= path=* query= anchor=
+scheme=mailto user= host= port= path=me@example.com query= anchor= opaque
+scheme= user= host=example.com port= path=/p query= anchor=
+scheme=localhost user= host= port= path=8080 query= anchor= opaque
+scheme=http user= host=example.com port= path=/p query= anchor=a?b
+a%20b%2Fc%3Fd
+a+b
+~-._safe
+  [a] = [1]
+  [b] = [two words]
+  [c] = []
+  [] = [empty]
+  [d] = [/]
+  <ok> = <1>
+  <also> = <2>
+a=1&b=two+words&c=
+/a/b/c
+/a/b
+/a/c
+/a/b
+/a/b/
+/a/b/
+/index.html
+/café.txt
+REFUSED
+REFUSED
+REFUSED
+REFUSED
+REFUSED
+REFUSED
+REFUSED
+REFUSED
+http://example.com/a/b/d
+http://example.com/d
+http://example.com/a/d
+http://example.com/a/b/c?new
+https://other/x
+http://h/a/b
+http://h/a/b
+http://h/a/b

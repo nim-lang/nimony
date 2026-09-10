@@ -14,8 +14,20 @@ else:
 
   proc socketpair(domain, typ, protocol: cint;
                   sv: ptr UncheckedArray[cint]): cint {.importc: "socketpair".}
-  proc send(s: cint; buf: pointer; len: int; flags: cint): int {.importc: "send".}
-  proc recv(s: cint; buf: pointer; len: int; flags: cint): int {.importc: "recv".}
+  # Through `sendto`/`recvfrom`, not `send`/`recv`: the latter two are not Linux
+  # syscalls at all — glibc implements them as `sendto(…, NULL, 0)` and
+  # `recvfrom(…, NULL, NULL)`. The C backend can call either, but the
+  # freestanding native backend traps on a syscall NUMBER keyed by the C name,
+  # and there is no number for a name the kernel does not have. Spelling out
+  # what libc would have done is one shape that works on both.
+  proc sendto(s: cint; buf: pointer; len: int; flags: cint;
+              dest: nil pointer; destLen: cint): int {.importc: "sendto".}
+  proc send(s: cint; buf: pointer; len: int; flags: cint): int {.inline.} =
+    sendto(s, buf, len, flags, nil, 0)
+  proc recvfrom(s: cint; buf: pointer; len: int; flags: cint;
+                src: nil pointer; srcLen: nil pointer): int {.importc: "recvfrom".}
+  proc recv(s: cint; buf: pointer; len: int; flags: cint): int {.inline.} =
+    recvfrom(s, buf, len, flags, nil, nil)
 
   proc mkPair(): (cint, cint) =
     var fds = default(array[2, cint])
