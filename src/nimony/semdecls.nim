@@ -65,7 +65,7 @@ proc handleTemplateReturnType(c: var SemContext; dest: var TokenBuf; it: var Ite
      TemplateT, ObjectT, EnumT, ProctypeT, IT, UT, FT, CT, BoolT, PtrT, ArrayT, VarargsT,
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-     TypedT, CstringT, PointerT, OrdinalT:
+     TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
     commonType c, dest, it, beforeLastSon, c.routine.returnType
 
 proc handleProcReturnType(c: var SemContext; dest: var TokenBuf; it: var Item;
@@ -1482,7 +1482,7 @@ proc semTypeSection(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
            TemplateT, ObjectT, ProctypeT, IT, UT, FT, CT, BoolT, VoidT, ArrayT, VarargsT,
            StaticT, TupleT, ClosureTupleT, AnumT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
            DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, AutoT, SymkindT, TypekindT, TypedescT,
-           UntypedT, TypedT, CstringT, PointerT, OrdinalT:
+           UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
           semLocalTypeImpl c, dest, n, InTypeSection, typeIsExported, ownerSym
         fitTypeToPragmas(c, dest, crucial, typeStart)
     else:

@@ -1,0 +1,77 @@
+[1] HTTP/1.1 200 OK
+date: <when>
+server: t
+connection: close
+content-type: text/plain
+content-length: 6
+
+hello
+
+[2] HTTP/1.1 200 OK
+date: <when>
+server: t
+connection: close
+content-type: text/plain
+content-length: 6
+
+END
+[3] HTTP/1.1 200 OK
+date: <when>
+server: t
+content-type: text/plain
+content-length: 8
+
+ignored
+HTTP/1.1 200 OK
+date: <when>
+server: t
+connection: close
+content-type: text/plain
+content-length: 6
+
+hello
+
+[4] HTTP/1.1 400 Bad Request
+date: <when>
+server: t
+connection: close
+content-length: 0
+
+
+[5] HTTP/1.1 400 Bad Request
+date: <when>
+server: t
+connection: close
+content-length: 0
+
+
+[6] HTTP/1.1 204 No Content
+date: <when>
+server: t
+connection: close
+
+END
+[7]
+  /../etc/passwd -> HTTP/1.1 400 Bad Request
+  /a/../../etc/passwd -> HTTP/1.1 400 Bad Request
+  /%2e%2e/etc/passwd -> HTTP/1.1 400 Bad Request
+  /a/%2e%2e%2f%2e%2e%2fetc/passwd -> HTTP/1.1 400 Bad Request
+  /a/./b -> HTTP/1.1 404 Not Found
+  /a//b -> HTTP/1.1 404 Not Found
+[8] HTTP/1.1 200 OK
+date: <when>
+server: t
+connection: close
+content-type: text/plain
+transfer-encoding: chunked
+
+4
+one 
+4
+two 
+5
+three
+0
+
+
+[9] 5 requests on one connection -> 5 responses

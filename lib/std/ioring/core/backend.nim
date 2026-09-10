@@ -181,6 +181,13 @@ proc complete*(slotIdx: int; res: int) =
   let slot = addr gSlots[lane].slots[slotIdx]
   if slot.op.res != 0:
     cast[ptr int](slot.op.res)[] = res
+  let peerOut = slot.op.peer
+  if peerOut != nil and res >= 0:
+    # Before `freeSlot`: the arena reuses the op, so the address the kernel
+    # wrote is only ours until then. Only on success — a failed accept filled
+    # nothing, and copying the storage anyway would hand the caller the last
+    # peer to use this slot.
+    peerOut[] = slot.op.sockAddr
   let cont  = slot.op.cont
   let fd    = slot.op.fd
   let seqnum = slot.op.seqnum

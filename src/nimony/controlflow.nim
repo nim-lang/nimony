@@ -389,7 +389,7 @@ proc trIte(c: var ControlFlow; n: var Cursor; tjmp, fjmp: var FixupList) =
      DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX, XorsetX, EqsetX,
      LesetX, LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
      WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-     FailedX, IsX, EnvpX, ToClosureX, NoExpr:
+     FailedX, IsX, EnvpX, ToClosureX, PluginCallX, NoExpr:
     # cannot exploit a special case here:
     let info = NoLineInfo # NoLineInfo is crucial here!
     var bb = initTarget(IsEmpty)
@@ -663,7 +663,9 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
        MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
        BracketX, CurlyX, TupX, OvfX, InstanceofX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, Delay0X, SuspendX, ToClosureX:
+       FailedX, IsX, EnvpX, Delay0X, SuspendX, ToClosureX, PluginCallX:
+      # `PluginCallX` is frontend-only: it is resolved by every instantiation
+      # and never reaches the control-flow graph. Listed to stay exhaustive.
       trExprLoop c, n, tar
     of PragmaxX:
       bug "pragmax should be handled in trStmt"

@@ -630,7 +630,7 @@ proc unravel(c: var SynthesizeSerializerCtx; orig: TypeCursor; param: TokenBuf) 
      ProctypeT,  VoidT, PtrT, VarargsT, StaticT,
      RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT, ItertypeT, UarrayT, AutoT,
      SymkindT, TypekindT, TypedescT, UntypedT, TypedT, CstringT, PointerT, OrdinalT,
-     ClosureTupleT:
+     ClosureTupleT, PluginCallT:
     c.errorMsg = "unsupported type for compile-time evaluation: " & asNimCode(orig)
 
 proc genProcDecl(c: var SynthesizeSerializerCtx; sym: SymId; typ: TypeCursor) =

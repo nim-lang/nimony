@@ -1565,7 +1565,8 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gsub(g, n)
         put(g, tkParRi, ")")
 
-    of CallX, CallstrlitX:
+    of CallX, CallstrlitX, PluginCallX:
+      # a parked plugin call reads back exactly like the call it came from
       gcall(g, n)
 
     of HighX, LowX, TypeofX,

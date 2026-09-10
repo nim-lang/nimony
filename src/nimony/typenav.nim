@@ -440,6 +440,12 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       result = c.builtins.charType
     else:
       result = c.builtins.autoType # still an error
+  of PluginCallX:
+    # A deferred plugin call only ever survives inside an unresolved generic
+    # body; every instantiation drives the plugin and replaces it. Its type is
+    # the template's declared return type, which is not reachable from here,
+    # and nothing typed enough for `typenav` to navigate ever holds one.
+    result = c.builtins.autoType
   of PatX:
     result = getTypeImpl(c, n.childCursor, flags)
     case typeKind(result)

@@ -580,7 +580,9 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
        InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
        SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
+       FailedX, IsX, EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
+      # `PluginCallX` is frontend-only and never reaches hexer; it is listed
+      # here only to keep the case exhaustive.
       trExpr c, dest, n, tar
   else:
     trExpr c, dest, n, tar
@@ -1455,7 +1457,8 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,
        WasmovedX, SinkhX, TraceX, InternalTypeNameX,
-       InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX, NoExpr:
+       InternalFieldPairsX, FailedX, IsX, EnvpX, KvX, ToClosureX,
+       PluginCallX, NoExpr:
       # `if`/`case`/`try`/`block` bind their value to a temp unless the
       # target is `IsIgnored`. A void-typed one has no value to bind, and
       # `declareTemp` would emit `(var :tmp . . .)` with an empty type slot,

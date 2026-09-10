@@ -31,6 +31,10 @@ when defined(windows):
 when defined(posix):
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
                               SockAddr, InAddr, TSa_Family
+  # `submitAccept`'s `peer` names these, so a caller has to be able to name
+  # them too. The Windows arm exports the same three from its own declarations
+  # further down; this keeps the ring's public surface identical on both.
+  export Sockaddr_storage, SockLen, FileHandle, SockAddr
 
 var ringState: int = 0
 
@@ -165,12 +169,25 @@ proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
 
 proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
-                   resPtr: nil ptr int = nil): SeqNum =
+                   resPtr: nil ptr int = nil;
+                   peer: nil ptr Sockaddr_storage = nil): SeqNum =
+  ## Accept one connection. Completes with the accepted fd, or a negative
+  ## result.
+  ##
+  ## `peer`, when given, receives the address that connected — the kernel
+  ## fills it as part of the accept, so asking costs no syscall. It is written
+  ## only when the accept succeeds, and it must outlive the op: the completion
+  ## writes through it from whichever lane ran the accept.
+  ##
+  ## Without it the address is dropped, which is what an access log, a rate
+  ## limiter and every `X-Forwarded-For` trust decision need and cannot
+  ## reconstruct afterwards.
   result = nextSeqNum()
   var op = OpContext(kind: opAccept, fd: listenFd, seqnum: result,
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   op.sockAddr = Sockaddr_storage()
   op.sockAddrLen = SockLen(sizeof(op.sockAddr))
+  op.peer = peer
   enqueueOp(op)
 
 proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
@@ -285,7 +302,15 @@ proc htons(x: uint16): uint16 {.inline.} =
 
 when defined(posix):
   proc posixClose(fd: cint): cint {.importc: "close".}
-  proc fcntl(fd: cint; cmd: cint): cint {.varargs, importc.}
+  proc fcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
+    ## FIXED arity with a defaulted third argument, not `varargs` — the same
+    ## shape and the same reason as `posix.open`: sem monomorphizes a `varargs`
+    ## importc into one variant per arity, all of them `importc "fcntl"`, and
+    ## `nimony n` lowers an importc syscall to ONE register-signature stub keyed
+    ## by the C name. Two arities would collapse into that single stub and the
+    ## two-argument call would leave a declared argument unbound.
+    ##
+    ## `F_GETFL` ignores the third argument, so passing `0` costs nothing.
   const F_GETFL* = 3.cint
   const F_SETFL* = 4.cint
   when defined(linux):
