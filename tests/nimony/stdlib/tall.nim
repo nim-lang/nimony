@@ -67,6 +67,7 @@ import std/parseutils
 import std/pathnorm
 import std/paths
 import std/random
+import std/regex
 import std/rawthreads
 import std/result
 import std/rlocks

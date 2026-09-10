@@ -438,21 +438,55 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
   var isLit = false
   var r = value
   let sym = skipSymbol(r)
-  if sym != NoSymId:
-    v = getVarId(c, sym)
-  else:
-    case value.kind
-    of IntLit: off = createXint(value.intVal); isLit = true
-    of UIntLit: off = createXint(value.uintVal); isLit = true
-    else:
-      let folded = tryEvalOrdinal(c.bits, value)
-      if not folded.isNaN:
-        off = folded
-        isLit = true
-      else:
-        # A value we cannot model cannot be proven in range, so we reject it.
-        buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
+
+  # `v + k` / `v - k`, the shape every "one past the last state" assignment
+  # takes. The obligation below is already stated as `lo <= v + off <= hi`, so
+  # a stepped value only has to fill in `off`; without this a guarded
+  # `if s < High: t = s + 1` proved nothing about `t` and the conversion had to
+  # be spelled as a `cast`.
+  if sym == NoSymId and value.exprKind in {AddX, SubX}:
+    let isSub = value.exprKind == SubX
+    var a = value
+    a = sub(a)
+    skip a # the type operand
+    let baseSym = skipSymbol(a)
+    if baseSym != NoSymId:
+      var k = createNaN()
+      case a.kind
+      of IntLit: k = createXint(a.intVal)
+      of UIntLit: k = createXint(a.uintVal)
+      else: k = tryEvalOrdinal(c.bits, a)
+      if not k.isNaN:
+        v = getVarId(c, baseSym)
+        off = if isSub: -k else: k
+        let lower0 = query(VarId(0), v, off - lo)
+        let upper0 = query(v, VarId(0), hi - off)
+        if implies(c.facts, lower0) and implies(c.facts, upper0):
+          return
+        buildErr c, value.info, "cannot prove '" & asNimCode(baseSym) &
+          "' stays in range " & $lo & ".." & $hi
         return
+
+  case value.kind
+  of IntLit: off = createXint(value.intVal); isLit = true
+  of UIntLit: off = createXint(value.uintVal); isLit = true
+  else:
+    # Folding is tried BEFORE the symbol path: a `const` is a `Symbol` here
+    # like any local, and treating it as an opaque variable left `Label(High)`
+    # with `const High = 255` unprovable — the literal spelling of the same
+    # value proved instantly. `tryEvalOrdinal` returns NaN for anything that is
+    # not compile-time constant, so a genuine variable still takes the path
+    # below.
+    let folded = tryEvalOrdinal(c.bits, value)
+    if not folded.isNaN:
+      off = folded
+      isLit = true
+    elif sym != NoSymId:
+      v = getVarId(c, sym)
+    else:
+      # A value we cannot model cannot be proven in range, so we reject it.
+      buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
+      return
 
   # lo <= v + off   <=>   0 <= v + (off - lo)
   let lower = query(VarId(0), v, off - lo)
@@ -482,9 +516,29 @@ proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
 
 # --- Fact extraction from conditions ---
 
+proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
+  ## True when `n` is a `Symbol` standing for a compile-time ordinal.
+  ##
+  ## A `const` survives into the Final IR as a plain `Symbol`, so a guard
+  ## written against a named bound — `if i <= MaxLabel:` — used to record a
+  ## fact about an opaque variable and proved nothing, while the very same
+  ## guard spelled `if i <= 255:` proved instantly. Folding it here is what
+  ## makes the named form work. `tryEvalOrdinal` answers NaN for anything that
+  ## is not constant, so an ordinary variable still takes the symbol path.
+  result = false
+  if n.kind != Symbol: return
+  val = tryEvalOrdinal(c.bits, n)
+  result = not val.isNaN
+
 proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
-  if pc.exprKind in {AddX, SubX}:
+  var cval = createXint(0'i32)
+  if constOrdinal(c, pc, cval):
+    fact.b = VarId(0)
+    fact.c = fact.c + cval
+    result = true
+    inc pc
+  elif pc.exprKind in {AddX, SubX}:
     pc.into:
       skip pc # type
       let symId2 = skipSymbol(pc)
@@ -585,6 +639,10 @@ proc translateCond(c: var FirContext; pc: var Cursor; wasEquality: var bool): Le
     result.a = VarId(0)
     result.c = -createXint(r.uintVal)
     inc r
+  elif (var lval = createXint(0'i32); constOrdinal(c, r, lval)):
+    result.a = VarId(0)
+    result.c = -lval
+    inc r
   elif (let sa = skipSymbol(r); sa != NoSymId):
     result.a = getVarId(c, sa)
   elif r.exprKind == NilX:
@@ -608,6 +666,21 @@ proc translateCond(c: var FirContext; pc: var Cursor; wasEquality: var bool): Le
 
 proc analyseCondition(c: var FirContext; pc: var Cursor): int =
   ## Returns number of facts added
+  if pc.exprKind == AndX:
+    # `a and b`: on the true path BOTH conjuncts hold, so both are facts.
+    # `translateCond` only understands a single comparison, so a conjunction
+    # used to contribute none at all and the everyday guard
+    # `if i >= 0 and i <= High: …` proved nothing inside its own branch.
+    # The else-path stays correct because `traverseIte` assumes the negation
+    # only when exactly one fact came out — never for a conjunction, whose
+    # negation is not the conjunction of the negations.
+    let start = pc
+    var r = sub(pc)
+    result = analyseCondition(c, r)
+    result = result + analyseCondition(c, r)
+    pc = start
+    skip pc
+    return result
   var wasEquality = false
   let fact = translateCond(c, pc, wasEquality)
   if fact.isValid:
