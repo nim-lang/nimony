@@ -209,6 +209,28 @@ proc readBindSymRule(arg: Cursor): string =
   else:
     result = ""
 
+proc addNifSymbol(dest: var string; s: string) =
+  ## Append `s` to `dest` the way NIF spells a symbol.
+  ##
+  ## `bindSym` round-trips the resolved symbol through TEXT (see below), and a
+  ## symbol name is not text: `@` introduces line info, `(`/`)` nest, and so on.
+  ## `@.0.sysvq0asl` — `bindSym "@"`, the `@[…]` sequence constructor — came
+  ## back from the re-parse as an unbalanced tree and the plugin died on
+  ## "addBufferSamePool with unclosed source tags". The rules mirror
+  ## `nifbuilder.addSymbolImpl`.
+  const Hex = "0123456789ABCDEF"
+  for i in 0 ..< s.len:
+    let ch = s[i]
+    let mustEscape =
+      if i == 0: ch in {'.', '0'..'9', '+', '-', '~'} or ch < ' ' or ch in ControlChars
+      else: ch == ' ' or ch < ' ' or ch in ControlChars
+    if mustEscape:
+      dest.add '\\'
+      dest.add Hex[int(ch) shr 4 and 0xF]
+      dest.add Hex[int(ch) and 0xF]
+    else:
+      dest.add ch
+
 proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   ## `bindSym(t: var NifBuilder; name: string; rule: BindSymRule = brClosed)` —
   ## sem-time magic for plugins that resolves `name` in the *current*
@@ -283,14 +305,14 @@ proc semBindSymName*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let forceOpen = ruleName == "brForceOpen"
   var nifText = ""
   if resolved.len == 1 and not forceOpen:
-    nifText = pool.symString(resolved[0])
+    addNifSymbol nifText, pool.symString(resolved[0])
   else:
     let tag = if ruleName == "brClosed": "cchoice" else: "ochoice"
     nifText.add "("
     nifText.add tag
     for s in resolved:
       nifText.add " "
-      nifText.add pool.symString(s)
+      addNifSymbol nifText, pool.symString(s)
     nifText.add ")"
 
   # Synthesize: bindSymHelper(<t expr>, "<nifText>") and re-sem so the helper

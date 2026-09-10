@@ -136,7 +136,16 @@ proc compatAnnotateVarargsParam*(c: var SemContext; dest: var TokenBuf;
     let info = typeCursor.info
     var elem = typeCursor
     elem = sub(elem)
-    if elem.hasMore:
+    if elem.hasMore and elem.typeKind in {UntypedT, TypedT}:
+      # `varargs[untyped]` / `varargs[typed]` are METAPROGRAMMING slots: the
+      # arguments reach a template or plugin as trees and never become a
+      # runtime container. Instantiating `openArray[untyped]` for them puts a
+      # `(uarray (untyped))` object into the module, which is not a type any
+      # backend can lower — hexer rejects it with "type expected but got:
+      # (untyped)". Nothing bundles these slots either (`varargsMatch`
+      # short-circuits on both), so the hint has no reader.
+      discard
+    elif elem.hasMore:
       # Capture children of the original `(varargs …)` into a fresh buffer so
       # the in-place `replace` can read its source without aliasing `dest`.
       # `loopInto` is required: under `-d:virtualParRi` the closing `)` is

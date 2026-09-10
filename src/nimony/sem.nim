@@ -850,6 +850,13 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
 proc isCastableType(t: TypeCursor): bool =
   const IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, PointerT, CstringT,
                          RefT, PtrT, NiltT, EnumT, HoleyEnumT, AnumT}
+  var t = t
+  if t.typeKind == RangetypeT:
+    # `range[0..255]` casts exactly like the ordinal it is carved out of: the
+    # value representation is the base type's and `cast` is precisely the
+    # operation that says "skip the range check". `system/setops`'s `items`
+    # iterator needs this to walk a `set[range[…]]` at all.
+    inc t # past the tag, to the base type
   result = t.typeKind in IntegralTypes or isEnumType(t)
 
 proc semCast(c: var SemContext; dest: var TokenBuf; it: var Item) =

@@ -2423,7 +2423,17 @@ proc singleArgCore(m: var Match; f: var Cursor; arg: CallArg) =
       dec m.opened
 
 proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
-  if arg.typ.typeKind == AutoT:
+  if f.typeKind == VarargsT:
+    # Must come before the `auto` cases: an argument that sem could not type
+    # (an `(err …)` node, or anything untyped) is `auto`, and routing it
+    # through `singleArgCore` would hand `useArg` the whole `(varargs T)` as
+    # the formal type. `varargs[untyped]` would then copy the SEMCHECKED arg
+    # instead of `arg.orig`, so a template — a plugin in particular — saw
+    # sem's diagnostics where the user's own tree belongs. `varargsMatch`
+    # re-dispatches on the ELEMENT type, which brings the `auto` handling
+    # below back for every element type that is not `untyped`/`typed`.
+    varargsMatch(m, f, arg)
+  elif arg.typ.typeKind == AutoT:
     if isEmptyContainer(arg.n):
       matchEmptyContainer(m, f, arg)
     elif isEmptyOpenArrayCall(arg.n):
@@ -2438,8 +2448,6 @@ proc singleArg(m: var Match; f: var Cursor; arg: CallArg) =
         singleArgCore(m, f, arg)
     else:
       singleArgCore(m, f, arg)
-  elif f.typeKind == VarargsT:
-    varargsMatch(m, f, arg)
   else:
     singleArgCore(m, f, arg)
 
