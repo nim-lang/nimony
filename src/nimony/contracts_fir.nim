@@ -1212,6 +1212,12 @@ proc cannotBeNil(c: var FirContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
   result = markedAs(t, NotnilU) or isNonNilExpr(c, n)
 
+proc storeTargetType(c: var FirContext, n: Cursor): Cursor {.inline.} =
+  var target = n
+  if target.exprKind in {AddrX, HaddrX}:
+    inc target
+  result = getType(c.typeCache, target)
+
 # --- Final-IR-specific traversal ---
 
 proc traverseStore(c: var FirContext; n: var Cursor) =
@@ -1256,7 +1262,7 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
     markInit(c, symId)
 
     # Check for not-nil type match
-    let expected = getType(c.typeCache, n)
+    let expected = storeTargetType(c, n)
     checkNilMatch c, valueStart, expected
     checkRangeAssign c, expected, valueStart
 
@@ -1286,7 +1292,9 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
 
     skip n
   else:
-    checkRangeAssign c, getType(c.typeCache, n), valueStart
+    let expected = storeTargetType(c, n)
+    checkNilMatch c, valueStart, expected
+    checkRangeAssign c, expected, valueStart
     traverseExpr c, n
 
   n = storeStart; skip n
