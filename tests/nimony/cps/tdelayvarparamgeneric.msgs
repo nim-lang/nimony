@@ -1,0 +1,1 @@
+tests/nimony/cps/tdelayvarparamgeneric.nim(11, 16) Error: `delay` hands `gleaf` to a scheduler, so its continuation can outlive this frame; parameter `x: var T` would alias a location that is already gone. Take it as `sink` instead

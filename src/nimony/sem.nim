@@ -3481,6 +3481,36 @@ proc semTypedUnaryArithmetic(c: var SemContext; dest: var TokenBuf; it: var Item
     semExpr c, dest, it
   commonType c, dest, it, beforeExpr, typ
 
+proc escapingDelayParam(c: var SemContext; dest: var TokenBuf; fn: Cursor): Local =
+  ## `delay(f(...))` builds a continuation this chain does not run. It is handed
+  ## to a scheduler, may resume on another thread, and in the spawn shape
+  ## (`submit(delay(f(x)), h)`) outlives the frame that built it outright. A
+  ## `var`/`out`/`lent` parameter is an alias of a location the caller owns, and
+  ## the coroutine frame stores it as a bare pointer — so it dangles as soon as
+  ## the caller moves on, with nothing at the use site to say so.
+  ##
+  ## Answers the first such parameter of `f`, or a `Local` whose `name` is nil.
+  result = default(Local)
+  if not fn.isSymbol: return
+  let res = declToCursor(c, dest, fetchSym(c, fn.symId))
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind): return
+  var params = asRoutine(res.decl, SkipExclBody).params
+  if params.substructureKind != ParamsU: return
+  params = sub(params) # bounded probe: sealed decl bufs elide the ParRi, so a
+                       # raw `inc` would read past an empty (params)
+  while params.hasMore:
+    let p = asLocal(params)
+    if p.typ.typeKind in {MutT, OutT, LentT}:
+      return p
+    skip params
+
+proc delayEscapeErr(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
+                    fn: Cursor; p: Local) =
+  buildErr c, dest, info,
+    "`delay` hands `" & asNimCode(fn.symId) & "` to a scheduler, so its continuation can outlive this frame; parameter `" &
+      asNimCode(p.name.symId) & ": " & typeToString(p.typ) &
+      "` would alias a location that is already gone. Take it as `sink` instead"
+
 proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
   # delay() no-arg -> (delay0)
   # delay(call fn args) -> (delay fn args)  [flatten by stripping the call wrapper]
@@ -3497,12 +3527,18 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     it.n = delayStart; skip it.n
   elif it.n.exprKind in CallKinds and (var probe = it.n; skip probe; not probe.hasMore):
     # delay(call): the call is delay's sole child, the shape before flattening.
-    dest.addParLe(DelayX, info)
-    it.n.into:                         # descend past inner call's tag
-      while it.n.hasMore:
-        takeTree dest, it.n            # copy fn and args verbatim (already semchecked)
-    dest.addParRi()
-    it.n = delayStart; skip it.n       # skip outer delay's )
+    let fn = childCursor(it.n)
+    let escaping = escapingDelayParam(c, dest, fn)
+    if not cursorIsNil(escaping.name):
+      delayEscapeErr c, dest, info, fn, escaping
+      it.n = delayStart; skip it.n
+    else:
+      dest.addParLe(DelayX, info)
+      it.n.into:                       # descend past inner call's tag
+        while it.n.hasMore:
+          takeTree dest, it.n          # copy fn and args verbatim (already semchecked)
+      dest.addParRi()
+      it.n = delayStart; skip it.n     # skip outer delay's )
   elif it.n.hasMore:
     # (delay fn args), the flattened shape: a generic body re-semmed on
     # instantiation. Re-sem it as a call so a generic callee is instantiated,
@@ -3517,12 +3553,17 @@ proc semDelay(c: var SemContext; dest: var TokenBuf; it: var Item) =
     var call = Item(n: cursorAt(callBuf, 0), typ: c.types.autoType)
     var callDest = createTokenBuf(16)
     semExpr c, callDest, call          # instantiates a generic callee
-    dest.addParLe(DelayX, info)
     var semmed = cursorAt(callDest, 0)
-    semmed.into:                       # strip the (call …) wrapper
-      while semmed.hasMore:
-        takeTree dest, semmed
-    dest.addParRi()
+    let fn = childCursor(semmed)
+    let escaping = escapingDelayParam(c, dest, fn)
+    if not cursorIsNil(escaping.name):
+      delayEscapeErr c, dest, info, fn, escaping
+    else:
+      dest.addParLe(DelayX, info)
+      semmed.into:                     # strip the (call …) wrapper
+        while semmed.hasMore:
+          takeTree dest, semmed
+      dest.addParRi()
   else:
     buildErr c, dest, it.n.info, "`delay` takes a call expression or no argument"
     skip it.n
