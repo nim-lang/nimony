@@ -2789,6 +2789,47 @@ The feature does not affect proc *types*: `proc(): int` stays a plain proc
 pointer and only `proc(): int {.closure.}` can store a closure. The feature is
 also implied by the `"v2"` meta feature.
 
+#### Iterators under the feature
+
+The feature covers two more spellings, both about closure iterators:
+
+- an *anonymous* `iterator(): T = ...` literal is marked `.closure.`
+  implicitly, wherever it appears. A named iterator is never marked — that
+  would silently turn an inline iterator into a coroutine;
+- `iterator(): T` as a **type** means `iterator(): T {.closure.}`.
+
+The second one goes further than the proc half above, and for a reason that
+does not apply to procs: `proc(): int` is a second, inhabited type — a
+one-word function pointer — so there the annotation distinguishes two real
+things. There is no bare `iterator(): int` *value*; an iterator type is either
+a closure iterator or a `.passive.` one, so without the feature the
+unannotated spelling is a type only `nil` can inhabit. `.passive.` is still
+spelled out: the feature picks the `.closure.` reading, it does not make the
+two interchangeable.
+
+```nim
+{.feature: "autoclosures".}
+
+func iter[T](s: seq[T]): iterator(): T =        # type: implicitly `.closure.`
+  return iterator(): T =                        # literal: implicitly `.closure.`
+    for x in s:
+      yield x
+
+func take[T](it: iterator(): T; n: int): iterator(): T =
+  return iterator(): T =
+    var k = 0
+    for v in it():
+      if k >= n: break
+      yield v
+      inc k
+
+for x in take(iter(@[1, 2, 3, 4]), 2)():
+  echo x # 1, 2
+```
+
+Without the feature the same program spells every iterator type and every
+iterator literal `iterator(): T {.closure.}`.
+
 
 ## Func
 
@@ -4414,7 +4455,7 @@ The following features are available:
 | Feature | Description |
 |---------|-------------|
 | `"lenientnils"` | Makes `ref`, `ptr`, `pointer`, `cstring` and proc types nullable by default, matching Nim 2 behavior. See [lenientnils.md](lenientnils.md). |
-| `"autoclosures"` | Marks a routine that is nested inside another routine as `.closure.` implicitly, so that capturing proc literals need no annotation. For compatibility with Nim 2. See [Closures](#closures). |
+| `"autoclosures"` | Marks a routine that is nested inside another routine as `.closure.` implicitly, so that capturing proc literals need no annotation; also marks anonymous iterator literals and reads the `iterator(...)` *type* as the closure-iterator one. For compatibility with Nim 2. See [Closures](#closures). |
 | `"canraise"` | Allows procs without a `raises` annotation to raise exceptions. |
 | `"lenientconverters"` | Allows the definition of converters for basic types such as `int`. For compatibility with Nim 2. |
 | `"untyped"` | Treats templates and generic procs as `.untyped` by default. For compatibility with Nim 2. |

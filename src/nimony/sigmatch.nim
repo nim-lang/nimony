@@ -851,9 +851,20 @@ proc conceptCandidateMatches(m: var Match; candSym: SymId; candDecl: Cursor;
     # only an expected type could bind the rest; nothing to judge here
     result = true
   else:
-    var retBuf = createTokenBuf(16)
-    substituteTypevars(retBuf, candRet, probe.inferred)
-    let instRet = typeToCursor(m.context[], retBuf, 0)
+    # Instantiate the result type the way a real call does (`semcall`'s
+    # `instantiateType`), not by textual substitution: a generic candidate
+    # `func \`+\`[T](a, b: Box[T]): Box[T]` probed for `Box[int]` yields
+    # `(at Box int)`, while the requirement's `Self` is the *instance symbol*
+    # `Box[int]` — and an instance symbol only ever matches another symbol.
+    # `semLocalType` folds the invocation back into that symbol (issue #2500).
+    var instRet: Cursor
+    let hook = m.context.semInstantiateType
+    if hook != nil:
+      instRet = hook(m.context[], candRet, probe.inferred)
+    else:
+      var retBuf = createTokenBuf(16)
+      substituteTypevars(retBuf, candRet, probe.inferred)
+      instRet = typeToCursor(m.context[], retBuf, 0)
     result = conceptReturnFits(m, req.reqRet, instRet)
   if not result:
     undoInferred(m, adopted)

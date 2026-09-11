@@ -1129,14 +1129,21 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor) =
 proc analyseCallArgs(c: var FirContext; n: var Cursor) =
   let callCursor = n
   let tt = getType(c.typeCache, n)
-  let calleeKind = tt.stmtKind
   var fnType = skipProcTypeToParams(tt)
+  if not fnType.isParamsTag:
+    # No signature to analyse against: the callee is an `(err ...)` a previous
+    # phase left behind (`derefs` replaces a rejected call with one), so its
+    # "type" has no params/pragmas slots to walk. The error is already
+    # reported; walk the subtree and leave the rest to it. Same guard
+    # `analyseCall` above already applies before reading `noreturn`.
+    traverseExpr c, n # the `fn` itself
+    while n.hasMore: traverseExpr c, n
+    return
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
-  let effect = whichEffect(calleeKind, fnPragmas)
+  let effect = calleeEffect(tt, fnPragmas)
   traverseExpr c, n # the `fn` itself
-  assert fnType.isParamsTag
   let paramsStart = fnType
   fnType = sub(fnType)
   var paramMap = initTable[SymId, int]()

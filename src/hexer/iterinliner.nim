@@ -688,10 +688,19 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     inc iter
   assert iter.exprKind in CallKinds
   inc iter
-  let iterSym = iter.symId
-  let res = tryLoadSym(iterSym)
-  if res.status == LacksNothing:
-    let routine = asRoutine(res.decl, SkipInclBody)
+  # The callee is an iterator DECL only when it is a symbol that loads as an
+  # `(iterator ...)`. A first-class iter value is a symbol too — and a
+  # module-level one loads just fine, as its `(let ...)`/`(var ...)` decl — so
+  # the symbol lookup alone does not tell the two apart; reading that decl as a
+  # routine walks off its end. Anything else (an iter value, a call returning
+  # one, a field access) goes through the coroutine trampoline below.
+  var iterDecl = default(Cursor)
+  if iter.kind == Symbol:
+    let res = tryLoadSym(iter.symId)
+    if res.status == LacksNothing and res.decl.stmtKind == IteratorS:
+      iterDecl = res.decl
+  if not cursorIsNil(iterDecl):
+    let routine = asRoutine(iterDecl, SkipInclBody)
     if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
       # `.closure` iters are the factory model (fresh frame per call); `.passive`
       # iters share state via the iter-value's env slot (cps.trCoroFor stashes
@@ -732,12 +741,11 @@ proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
     var transformedBody = beginRead(bodyBuf)
     inlineIteratorBody(e, dest, transformedBody, forStmt, routine.retType)
   else:
-    # No global iter decl by this name — sem must have accepted the call
-    # because the target is a local of `itertype` (a first-class iter
-    # value, `let g: iterator(...)`). Route through emitCoroFor; cps's
-    # `trCoroFor` then expands the trampoline using the local as the
-    # already-typed function pointer (its typeCache, primed by earlier
-    # passes, distinguishes iter-decl vs iter-value targets).
+    # Not an iterator decl — sem accepted the call because the target is a
+    # first-class `itertype` value (`let g: iterator(...)`), local or global.
+    # Route through emitCoroFor; cps's `trCoroFor` then expands the trampoline
+    # using it as the already-typed function pointer (its typeCache, primed by
+    # earlier passes, distinguishes iter-decl vs iter-value targets).
     emitCoroFor(e, dest, forStmt)
 
 proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
