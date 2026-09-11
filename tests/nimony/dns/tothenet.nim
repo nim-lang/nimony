@@ -5,14 +5,12 @@
 ## `/etc/hosts` path is the only environment-dependent line, and `localhost`
 ## mapping is assumed present as it is on any machine that can run the suite.
 ##
-## Layout mirrors echo_udp: the server chain answers `QueryCount` datagrams on
-## its own thread, the client chain asks them on another, and each appends to
-## its own log so the golden is deterministic after both join.
+## Layout mirrors echo_udp: the server chain runs the `httpserver`-style serve
+## loop — `next`/`answer`/`respond` — a bounded number of queries on its own
+## thread and then closes, the client chain asks it from another, and each
+## appends to its own log so the golden is deterministic after both join.
 import std/[syncio]
 import std/[socket, dns, threadpool, atomics, assertions]
-
-const QueryCount = 2
-  ## served before the server chain stops: one known name, one ghost.
 
 var gServer: DnsServer
 var thePort: uint16
@@ -21,15 +19,40 @@ var clientDone: int
 var serverLog = ""
 var clientLog = ""
 var failures = 0
+var served = 0
+
+const QueryCount = 4
+  ## The queries the client sends: hermetic, multi, alias, ghost. The serve
+  ## loop is bounded the way http's tserver bounds its accept loop — `main`
+  ## lives on a different lane than the server worker, so a cross-thread
+  ## `close` cannot cancel a parked receive, and a count is how the loop ends.
 
 proc server() {.passive.} =
+  var r = DnsRequest()
   try:
     for i in 0 ..< QueryCount:
-      serveOnce(gServer, afterMs(5000))
+      if not gServer.next(r, afterMs(10_000)): break
+      for q in r.questions:
+        case q.name
+        of "hermetic.test":
+          q.answer(name = q.name, rtype = RTypeA, ttl = 30, data = "10.0.0.7")
+        of "multi.test":
+          q.answer(name = q.name, rtype = RTypeA, ttl = 30, data = "10.0.0.1")
+          q.answer(name = q.name, rtype = RTypeA, ttl = 30, data = "10.0.0.2")
+        of "alias.test":
+          q.answer(name = q.name, rtype = RTypeCname, ttl = 30,
+                   data = "hermetic.test")
+          q.answer(name = "hermetic.test", rtype = RTypeA, ttl = 30,
+                   data = "10.0.0.7")
+        of "ghost.test":
+          r.rcode = 3             ## NXDOMAIN
+        else: discard
+      r.respond()
+      inc served
     close(gServer)
   except ErrorCode as e:
     serverLog.add "server error: " & $e & "\n"
-  serverLog.add "server served " & $QueryCount & " datagrams\n"
+  serverLog.add "server served " & $served & " datagrams\n"
   atomicStore(serverDone, 1, moRelease)
 
 proc client() {.passive.} =
@@ -49,7 +72,7 @@ proc client() {.passive.} =
     ## every builder of the question/wire/reply machinery is the same code.
     r.servers = @["127.0.0.1"]
     var m = query(r, "HermetiC.Test.", 0, thePort, afterMs(5000))
-    if (m.flags and 0x8000'u16) != 0 and (m.flags and 0x0400'u16) != 0:
+    if (m.flags and 0x8580'u16) == 0x8580'u16:   # QR|AA|RD|RA, rcode 0
       inc verified
     else:
       inc failures
@@ -58,10 +81,43 @@ proc client() {.passive.} =
       inc verified
     else:
       inc failures
-      clientLog.add "answers: " & $m.answers.len & "\n"
+      clientLog.add "single answers: " & $m.answers.len & "\n"
 
-    ## The name the table does not know is answered NXDOMAIN, and `query`
-    ## maps that rcode to `NameNotFound` — the resolver's "not a name" error.
+    ## Two `answer` calls for one question come back as two records in one
+    ## response — the multi-A round-robin shape.
+    var m2 = query(r, "multi.test", 0, thePort, afterMs(5000))
+    if m2.answers.len == 2 and m2.answers[0].ip4 == "10.0.0.1" and
+       m2.answers[1].ip4 == "10.0.0.2":
+      inc verified
+    else:
+      inc failures
+      clientLog.add "multi answers: " & $m2.answers.len & "\n"
+
+    ## The server answers the CNAME chase itself: alias carries a CNAME to
+    ## hermetic, which carries the A — the stretch `resolveOne` walks in one
+    ## response. Walked by hand here because `resolve` presumes port 53.
+    var m3 = query(r, "alias.test", 0, thePort, afterMs(5000))
+    var wanted = "alias.test"
+    for hop in 0 ..< m3.answers.len:
+      var chased = false
+      for a in m3.answers:
+        if a.rtype == RTypeCname and a.name == wanted:
+          wanted = a.cname
+          chased = true
+          break
+      if not chased: break
+    var chasedIp = ""
+    for a in m3.answers:
+      if a.rtype == RTypeA and a.name == wanted and a.ip4.len > 0:
+        chasedIp = a.ip4
+        break
+    if chasedIp == "10.0.0.7": inc verified
+    else:
+      inc failures
+      clientLog.add "cname chase: " & chasedIp & "\n"
+
+    ## The name the handler refuses is answered NXDOMAIN, and `query` maps
+    ## that rcode to `NameNotFound` — the resolver's "not a name" error.
     var nx = false
     try:
       discard query(r, "ghost.test", 0, thePort, afterMs(5000))
@@ -72,24 +128,24 @@ proc client() {.passive.} =
       inc failures
       clientLog.add "nxdomain not raised\n"
 
-    ## Wire round-trip through the *codec* (the server above only ever encodes
-    ## plain A answers, so a compressed CNAME is built by hand): one CNAME from
-    ## a host to an alias, one A on the alias. Encoding then decoding must come
+    ## Wire round-trip through the *codec* (the server only ever encodes the
+    ## shapes above, so a compressed CNAME is built by hand): one CNAME from a
+    ## host to an alias, one A on the alias. Encoding then decoding must come
     ## back as exactly that, and the alias's address must decode identically.
-    var m2 = Message(id: 0x2026'u16, flags: 0x8180'u16)
-    m2.questions.add Question(name: "pivot.example", rtype: RTypeA,
+    var m4 = Message(id: 0x2026'u16, flags: 0x8180'u16)
+    m4.questions.add Question(name: "pivot.example", rtype: RTypeA,
                              rclass: 1'u16)
-    m2.answers.add Answer(name: "pivot.example", rtype: RTypeCname, ttl: 60,
+    m4.answers.add Answer(name: "pivot.example", rtype: RTypeCname, ttl: 60,
                           cname: "alias.example")
-    m2.answers.add Answer(name: "alias.example", rtype: RTypeA, ttl: 60,
+    m4.answers.add Answer(name: "alias.example", rtype: RTypeA, ttl: 60,
                           ip4: "9.9.9.9")
     var buf: seq[char] = @[]
-    encodeMessage(m2, buf)
-    var m3 = Message(id: 0'u16, flags: 0'u16)
-    if decodeMessage(buf, m3):
-      if m3.answers.len == 2 and
-         m3.answers[0].cname == "alias.example" and
-         m3.answers[1].ip4 == "9.9.9.9":
+    encodeMessage(m4, buf)
+    var m5 = Message(id: 0'u16, flags: 0'u16)
+    if decodeMessage(buf, m5):
+      if m5.answers.len == 2 and
+         m5.answers[0].cname == "alias.example" and
+         m5.answers[1].ip4 == "9.9.9.9":
         inc verified
       else:
         inc failures
@@ -110,7 +166,6 @@ proc awaitFlag(flag: var int) =
 
 gServer = newDnsServer(0)
 thePort = boundPort(gServer)
-gServer.add "hermetic.test", "10.0.0.7"
 echo "listening"
 submit(delay(server()), 0)
 submit(delay(client()), 1)

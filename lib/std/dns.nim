@@ -13,12 +13,13 @@
 # the wire format understands CNAME chains and NXDOMAIN, so a name that needs
 # chasing or does not exist is reported, not mistranslated.
 #
-# Server (`DnsServer`): a name table answered over `recvFrom`/`sendTo` — the
-# unconnected socket procs `std/socket` exists for — so a client that was never
-# met is answered from the address its datagram came from. This is not a
-# forwarder and not a cache; it is the "here is what this box is called"
-# table for a machine private enough not to need one, and the hermetic test
-# bed the resolver's own behaviour is checked against.
+# Server (`DnsServer`): the same driver shape as `httpserver` — the server
+# owns a bound unconnected socket (`recvFrom`/`sendTo`, the socket procs
+# `std/socket` exists for), `next` delivers each query as a `DnsRequest`, the
+# handler answers the questions it wants with `answer`, and `respond` sends
+# the accumulated reply back to the address the query came from. Not a
+# forwarder and not a cache; a test bed and the "here is what this box is
+# called" table for a machine private enough not to need one.
 
 import std/socket
 import std/syncio
@@ -89,6 +90,7 @@ type
     ttl*: uint32
     ip4*: string           ## rtype == RTypeA: the address as dotted quad
     cname*: string         ## rtype == CNAME/PTR: the target, dotted
+    raw*: string           ## any other rtype: rdata bytes, verbatim
 
   Message* = object
     id*: uint16
@@ -154,7 +156,8 @@ proc encodeMessage*(m: Message; s: var seq[char]) =
       s.put16 uint16(tmp.len)
       for c in tmp: s.add c
     else:
-      s.put16 0          # unknown kinds answer nothing
+      s.put16 uint16(a.raw.len)
+      for c in a.raw: s.add c
 
 proc decodeName(buf: openArray[char]; pos: var int; name: var string): bool =
   ## One (possibly compressed) name from `buf`, lowercased into `name`.
@@ -237,7 +240,9 @@ proc decodeMessage*(buf: openArray[char]; m: var Message): bool =
       if decodeName(buf, q, target) and q <= pos + rdlen:
         a.cname = target
     else:
-      discard
+      a.raw = ""
+      for k in 0 ..< rdlen:
+        a.raw.add buf[pos + k]
     pos += rdlen
     m.answers.add a
     inc i
@@ -416,51 +421,134 @@ proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, ra
   raise NameNotFound
 
 # ------------------------------------------------------------------ server ---
+#
+# A request/response driver in the same shape as `httpserver`: the server owns
+# the bound, unconnected socket; `next` hands each query to the caller as a
+# `DnsRequest`; the handler reads `r.questions`, answers the ones it wants
+# with `answer`, and `respond` sends the accumulated reply back to the address
+# the query came from:
+#
+#   var s = newDnsServer(53)
+#   var r = DnsRequest()
+#   while s.next(r):
+#     for q in r.questions:
+#       q.answer(name = q.name, rtype = RTypeA, ttl = 30, data = "127.0.0.1")
+#     r.respond()
+#
+# Like `accept`, `next` has no deadline *of its own*: a socket with nobody
+# talking to it is idle, not stuck. It takes one — `dl`, default `never` — so
+# a serve loop that must end (a test, a bounded listener, a drain) can say
+# so; `false` is then "no query before `dl`", and `close` from the serve
+# loop's own thread is the other way a parked `next` ends. A datagram that is
+# not a query is dropped, not answered: answering noise is how DNS reflection
+# attacks start.
+#
+# `DnsRequest` is declared once at loop scope and reused. `next` resets it;
+# `respond` does not. It owns no descriptor — `respond` reaches the server's
+# socket through a pointer, so the request must not outlive the server it was
+# filled from.
 
 type
+  DnsQuestion* = object
+    ## One question in a `DnsRequest`, and the handle by which answering works:
+    ## `req` points back at the request being built, so `answer` accumulates
+    ## into it no matter which question of the loop says the words.
+    req: ptr DnsRequest
+    name*: string            ## dotted, canonical-cased
+    rtype*: uint16
+    rclass*: uint16
+
+  DnsRequest* = object
+    sock: ptr UdpSocket      ## the server's socket, for `respond`
+    id: uint16               ## the query's id; echoed in the reply
+    flags: uint16            ## the query's header flags; RD is echoed
+    rcode*: uint16           ## response code; 0 unless the handler refuses
+    peer*: PeerAddr          ## who asked; `respond` answers there
+    questions*: seq[DnsQuestion]
+    answers: seq[Answer]     ## the reply being built by `answer` calls
+    buf: array[512, char]    ## the datagram under construction
+
   DnsServer* = object
     sock: UdpSocket
-    names: StringTableRef       ## canonical name -> dotted quad
 
 proc newDnsServer*(port: uint16; deadline = never): DnsServer =
-  ## A bound, non-blocking UDP socket that answers A-queries from the table
-  ## `add` fills. `port` of 0 asks the kernel to pick one (`boundPort`).
+  ## A bound, unconnected UDP socket able to answer questions. `port` of 0
+  ## asks the kernel to pick one (`boundPort` unless the caller passes one).
   result = default(DnsServer)
   result.sock = openUdp(port, deadline)
-  result.names = newStringTable(modeCaseInsensitive)
-
-proc add*(s: var DnsServer; name, ip: string) =
-  ## Serve `name` from `ip` (a dotted quad). Questions are matched
-  ## case-insensitively and without regard to a trailing dot.
-  assert isDots4(ip), "dns: server addresses must be dotted quads"
-  s.names[canon(name)] = ip
 
 proc boundPort*(s: var DnsServer): uint16 {.inline.} = boundPort(s.sock)
 
 proc close*(s: var DnsServer) {.inline.} = close(s.sock)
 
-proc serveOnce*(s: var DnsServer; dl = never) {.passive, raises.} =
-  ## One request/response cycle: wait for a query (which can be from anyone —
-  ## the socket is unconnected), answer A from the table, or NXDOMAIN when the
-  ## name is not there. Send the reply back to the address the query came
-  ## from. Raises `TimeoutError` when no query arrives before `dl`.
-  var buf = default(array[512, char])
-  var peer = PeerAddr(raw: Sockaddr_storage())
-  let n = recvFrom(s.sock, buf, peer, dl)
-  var q = Message(id: 0'u16, flags: 0'u16)
-  if not decodeMessage(toOpenArray(buf, 0, n - 1), q):
-    return                        # garbage datagrams are dropped, not answered
-  if q.questions.len == 0:
-    return
-  let theQ = q.questions[0]
-  var resp = Message(id: q.id, flags: 0x8580'u16)   # QR|AA|RD|RA
-  resp.questions.add theQ
-  let name = canon(theQ.name)
-  if theQ.rtype == RTypeA and s.names.hasKey(name):
-    resp.answers.add Answer(name: theQ.name, rtype: RTypeA, ttl: 60,
-                            ip4: s.names[name])
+proc next*(s: var DnsServer; r: var DnsRequest; dl = never): bool {.passive.} =
+  ## The next query to arrive, decoded into `r` and ready to be answered.
+  ## `false` once there will not be a next one, which is how a serve loop is
+  ## told to stop:
+  ##
+  ##   while s.next(r):
+  ##     ...
+  ##     r.respond()
+  ##
+  ## Returns `false` when `dl` arrives with no query, or when the receive
+  ## fails — the same answer `accept` gives a listener that stops serving.
+  ## Never raises. A datagram that decodes to no question is dropped and the
+  ## wait goes on.
+  result = true
+  while result:
+    var peer = PeerAddr(raw: Sockaddr_storage())
+    var n = 0
+    try:
+      n = recvFrom(s.sock, r.buf, peer, dl)
+    except ErrorCode:
+      return false
+    r.sock = addr s.sock
+    r.peer = peer
+    r.questions = @[]
+    r.answers = @[]
+    r.rcode = 0
+    var q = Message(id: 0'u16, flags: 0'u16)
+    if not decodeMessage(toOpenArray(r.buf, 0, n - 1), q):
+      continue                 # garbage is dropped, not answered
+    if q.questions.len == 0:
+      continue
+    r.id = q.id
+    r.flags = q.flags
+    for theQ in q.questions:
+      r.questions.add DnsQuestion(req: addr r, name: theQ.name,
+                                  rtype: theQ.rtype, rclass: theQ.rclass)
+    return true
+
+proc answer*(q: DnsQuestion; name: string; rtype: uint16; ttl: uint32;
+             data: string) =
+  ## Append one answer record to the request `q` is part of. `data` is
+  ## interpreted by `rtype`: a dotted quad for `RTypeA`, a dotted name for
+  ## CNAME/PTR, rdata bytes verbatim for anything else — the three shapes a
+  ## resolver reads back are the three this accepts.
+  let req = q.req
+  case rtype
+  of RTypeA:
+    assert isDots4(data), "dns: A rdata must be a dotted quad"
+    req[].answers.add Answer(name: name, rtype: rtype, ttl: ttl, ip4: data)
+  of RTypeCname, RTypePtr:
+    req[].answers.add Answer(name: name, rtype: rtype, ttl: ttl, cname: data)
   else:
-    resp.flags = (resp.flags and 0xFFF0'u16) or 0x0003'u16   # NXDOMAIN
+    req[].answers.add Answer(name: name, rtype: rtype, ttl: ttl, raw: data)
+
+proc respond*(r: var DnsRequest; dl = never) {.passive, raises.} =
+  ## Send the reply for `r` to whoever asked: every question echoed, every
+  ## answer `answer` collected, the query's RD bit returned, `rcode` where a
+  ## handler set it. Answers accumulate across the questions of one request,
+  ## so the multi-A round-robin a resolver expects is `q.answer` twice in a
+  ## row, not two procs for one shape.
+  var resp = Message(id: r.id, flags: 0x8000'u16 or 0x0400'u16 or 0x0080'u16 or
+                              (r.flags and 0x0100'u16) or
+                              (r.rcode and 0x000F'u16))   # QR|AA|RA|RD|RCODE
+  for q in r.questions:
+    resp.questions.add Question(name: q.name, rtype: q.rtype, rclass: q.rclass)
+  for a in r.answers:
+    resp.answers.add a
   var outWire: seq[char] = @[]
   encodeMessage(resp, outWire)
-  sendTo(s.sock, outWire, peer, budget(s.sock, dl))
+  if r.sock != nil:
+    sendTo(r.sock[], outWire, r.peer, budget(r.sock[], dl))
