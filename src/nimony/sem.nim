@@ -1639,6 +1639,30 @@ proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; f
   else:
     semExpr c, dest, it
 
+proc addImpliedClosurePragma(c: var SemContext; dest: var TokenBuf;
+                             pragmasAt: int; info: NifLineInfo) =
+  ## Splice `(closure)` into the pragmas slot `semPragmas` just emitted at
+  ## `pragmasAt`. The enclosing routine tree must still be open: `replace` /
+  ## `insert` maintain the open-tag bookkeeping but cannot widen the sealed
+  ## jump of an enclosing scope (see `sem.addVarargsParameter`).
+  if dest[pragmasAt].kind == DotToken:
+    var tmp = createTokenBuf(4)
+    tmp.addParLe(PragmasU, info)
+    tmp.addParPair(ClosureP, info)
+    tmp.addParRi(info)
+    dest.replace cursorAt(tmp, 0), pragmasAt
+  else:
+    var closureBuf = createTokenBuf(2)
+    closureBuf.addParPair(ClosureP, info)
+    var n = cursorAt(dest, pragmasAt)
+    assert n.substructureKind == PragmasU
+    n = sub(n)
+    while n.hasMore: skip n
+    let insertPos = cursorToPosition(dest, n)
+    let before = dest.len
+    dest.insert closureBuf, insertPos
+    widenSealed(dest, pragmasAt, dest.len - before)
+
 proc addVarargsParameter(c: var SemContext; dest: var TokenBuf; paramsAt: int; info: NifLineInfo) =
   ## The enclosing routine tree must still be open when this runs:
   ## `insert`/`replace` maintain the open-tag bookkeeping but cannot widen
@@ -3071,6 +3095,20 @@ proc semForLoopTupleVar(c: var SemContext; dest: var TokenBuf; it: var Item; tup
 
 include semfields
 
+proc returnsIterType(c: var SemContext; dest: var TokenBuf; callee: Cursor): bool =
+  ## A `for`-head callee that is not a plain symbol but a resolved CALL:
+  ## `for x in take(it, 2)():`, `for x in relay()():` — the chained form of
+  ## composing iterator factories. Sem has no type navigator, but it does not
+  ## need one here: the inner call's routine declares the `itertype` it hands
+  ## back.
+  if callee.exprKind notin CallKinds: return false
+  let fn = childCursor(callee)
+  if not fn.isSymbol: return false
+  let sym = fetchSym(c, fn.symId)
+  let res = declToCursor(c, dest, sym)
+  if res.status != LacksNothing or not res.decl.symKind.isRoutine: return false
+  result = asRoutine(res.decl).retType.typeKind == ItertypeT
+
 proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): bool {.inline.} =
   result = dest.len > beforeCall+1
   if result:
@@ -3082,7 +3120,9 @@ proc isIteratorCall(c: var SemContext; dest: var TokenBuf; beforeCall: int): boo
     if callKind in CallKinds:
       # head+1 may be a line-info suffix; go through the child cursor
       let callee = childCursor(readonlyCursorAt(dest, beforeCall))
-      result = callee.isSymbol and c.isIterator(dest, callee.symId)
+      result =
+        if callee.isSymbol: c.isIterator(dest, callee.symId)
+        else: returnsIterType(c, dest, callee)
     else:
       result = false
 

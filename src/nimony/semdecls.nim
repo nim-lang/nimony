@@ -1047,7 +1047,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
 
     var symId = SymId(0)
     var status = OkNew
-    if it.n.isDotToken:
+    let isAnon = it.n.isDotToken
+    if isAnon:
       symId = newName
       status = OkNew
       dest.addSymDef(symId, it.n.info)
@@ -1099,7 +1100,17 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       semParams c, dest, it.n
       c.routine.returnType = semReturnType(c, dest, it.n)
       var crucial = CrucialPragma(sym: symId)
+      let beforePragmas = dest.len
       semPragmas c, dest, it.n, crucial, kind
+      if isAnon and kind == IteratorY and AutoClosuresFeature in c.features and
+          ClosureP notin crucial.flags:
+        # `autoclosures` covers the iterator literal too: an anonymous iterator
+        # can only be a CLOSURE iterator (an inline one is inlined at the `for`
+        # that names it, and this one has no name to be named by), so the
+        # feature marks it exactly as it marks a nested proc literal. Without
+        # the feature the annotation is required.
+        crucial.flags.incl ClosureP
+        addImpliedClosurePragma c, dest, beforePragmas, info
       c.routine.pragmas = crucial.flags
       c.routine.raisesType = crucial.raisesType
       if crucial.hasVarargs.isValid:

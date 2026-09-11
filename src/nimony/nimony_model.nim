@@ -507,6 +507,20 @@ proc whichEffect*(k: StmtKind; pragmas: Cursor): Effect =
   else:
     result = HasSideEffect
 
+proc calleeEffect*(calleeType: Cursor; pragmas: Cursor): Effect =
+  ## The effect of CALLING something of type `calleeType`. `calleeType` is
+  ## what `getType` answers for the callee: a routine decl tag
+  ## (`proc`/`func`/`iterator`/…) or a routine TYPE form
+  ## (`proctype`/`itertype`). `iterator` is `noSideEffect` by default
+  ## (doc/language.md), and the itertype of a first-class closure-iterator
+  ## value says the same thing about the routine behind it — otherwise a
+  ## `for` loop over an iter VALUE would be rejected inside any `func` or
+  ## iterator body, while the same loop over the iter SYM is accepted.
+  if calleeType.typeKind == ItertypeT:
+    whichEffect(IteratorS, pragmas)
+  else:
+    whichEffect(calleeType.stmtKind, pragmas)
+
 proc isNilAnnotation*(n: Cursor): bool {.inline.} =
   ## Returns true if `n` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation.
   n.isTagLit and n.substructureKind in {NotnilU, NilU, UncheckedU}
