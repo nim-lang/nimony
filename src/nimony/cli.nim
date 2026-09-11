@@ -124,6 +124,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.baseDir = val
   of "nimcache":
     config.nifcachePath = val
+    config.nifcacheFromCli = true
     forwardArgLengc = false
   of "out", "o":
     # `--out:PATH` (alias `-o:PATH`) sets the executable's output path,
