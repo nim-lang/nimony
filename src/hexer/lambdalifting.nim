@@ -609,6 +609,8 @@ proc typedEnv(dest: var TokenBuf; info: NifLineInfo; env: CurrentEnv)
 proc tre(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
+proc capturedBaseType(c: var Context; o: Cursor): Cursor
+
 proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: NifLineInfo)
     {.ensuresNif: addedExpr(dest).} =
   ## Emit the VALUE of a `.closure` iter: the `(wrapper, frame)` tuple.
@@ -704,13 +706,16 @@ proc lambdaHooks(): coro_transform.Hooks =
     trCoroutine: llTakeTree
   )
 
-proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId): TokenBuf =
+proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId;
+                  captures: bool): TokenBuf =
   ## Run pass 2's ORDINARY closure lowering over a `.closure` iter decl,
   ## before the coroutine transform gets to see it. The iter body is code
   ## like any other: it can call a closure (which needs the env argument
   ## appended), declare a closure-typed local (whose type must become the
-  ## `(closureTuple …)` shape), contain a nested proc (to be lifted out) —
-  ## and, the point of the exercise, read a local of the ENCLOSING proc.
+  ## `(closureTuple …)` shape), contain a nested proc (to be lifted out),
+  ## contain a `for` loop over another closure iter (a `(corofor ...)` that
+  ## `trClosureCoroFor` has to turn into a trampoline) — and, when it
+  ## `captures`, read a local of the ENCLOSING proc.
   ##
   ## For that last one the body is lowered exactly like a closure PROC
   ## body (`EnvIsParam`): the env pointer of a capturing iter lives in its
@@ -720,31 +725,42 @@ proc preLowerIter(c: var Context; n: var Cursor; iterSym: SymId): TokenBuf =
   ## transform's side that local is nothing special either: its own
   ## liveness pass hoists it into the frame precisely when a capture is
   ## read after a `yield`, like any other local live across a suspension.
+  ##
+  ## A capture-free iter has no such env to load, so it gets the walk
+  ## without the prologue. It still needs the WALK: everything `tre`
+  ## rewrites has to happen while the body is still one linear tree.
+  ## `transformCoroutineDecl` converts it to the Final IR and cuts it into
+  ## state procs, and a `corofor` expanded after that cut emits its
+  ## trampoline `while` as a plain construct — a `yield` inside the loop
+  ## body then lowers to a `return` that no state ever resumes
+  ## (nim-lang/nimony#2487).
   result = createTokenBuf(64)
   let decl = n
   let info = n.info
   var init = createTokenBuf(10)
   let oldEnv = c.currentProc.env
-  c.currentProc.env = CurrentEnv(s: pool.symId(ClosureEnvParamName),
-                                 typ: c.envTypeForProc(c.procStack[0]),
-                                 mode: EnvIsParam,
-                                 needsHeap: true)
-  init.copyIntoKind VarS, info:
-    init.addSymDef c.currentProc.env.s, info
-    init.addDotToken() # no export marker
-    init.addDotToken() # no pragmas
-    init.addRootRef info
-    init.copyIntoKind DotX, info:
-      init.copyIntoKind DerefX, info:
-        init.addSymUse pool.symId(coro_transform.EnvParamName), info
-      init.addSymUse coro_transform.coroEnvFieldForIter(iterSym), info
+  if captures:
+    c.currentProc.env = CurrentEnv(s: pool.symId(ClosureEnvParamName),
+                                   typ: c.envTypeForProc(c.procStack[0]),
+                                   mode: EnvIsParam,
+                                   needsHeap: true)
+    init.copyIntoKind VarS, info:
+      init.addSymDef c.currentProc.env.s, info
+      init.addDotToken() # no export marker
+      init.addDotToken() # no pragmas
+      init.addRootRef info
+      init.copyIntoKind DotX, info:
+        init.copyIntoKind DerefX, info:
+          init.addSymUse pool.symId(coro_transform.EnvParamName), info
+        init.addSymUse coro_transform.coroEnvFieldForIter(iterSym), info
   c.procStack.add iterSym
   var isConcrete = true
   copyInto result, n:
     for i in 0..<BodyPos:
       if i == ParamsPos:
         c.typeCache.openProcScope(iterSym, decl, n)
-        c.typeCache.registerLocal(c.currentProc.env.s, VarY, default(Cursor))
+        if captures:
+          c.typeCache.registerLocal(c.currentProc.env.s, VarY, default(Cursor))
         if n.substructureKind == ParamsU:
           # Parameter TYPES are copied verbatim on purpose: the iter-value
           # tuple emitters (`emitIterTupleType*`) build the wrapper's
@@ -799,30 +815,21 @@ proc transformClosureIter(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## registered keep working) and reclaim it after. `coroTypes` /
   ## `shouldPublish` stay on `coroCtx`; flushed by `elimLambdas`.
   ##
-  ## An iter that CAPTURES is pre-lowered first (see `preLowerIter`); one
-  ## that does not goes to the coroutine transform verbatim, as it always
-  ## has. Running the closure lowering over a body that has no captures
-  ## would be a change of behaviour for its own sake — and a losing one:
-  ## `tre` would rewrite a call of a `.closure` PARAM into the tuple form
-  ## while the iter's signature (which the iter-value tuple emitters build
-  ## from the unmodified decl) still says plain proctype.
+  ## Both kinds of iter are pre-lowered (see `preLowerIter`); a capture-free
+  ## one just gets the walk without the env prologue.
   let iterSym = n.childCursor.symId
   let captures = c.closureProcs.contains(iterSym)
-  var lowered = createTokenBuf(4)
-  var m = n
   if captures:
     # Pass 1 found captures in this body: tell coro_transform to grow the
     # frame by the env slot that `emitIterValue` fills in and `preLowerIter`
     # reads back.
     c.coroCtx.pendingCapturedEnvField = coro_transform.coroEnvFieldForIter(iterSym)
-    lowered = preLowerIter(c, n, iterSym)   # consumes `n`
-    m = beginRead(lowered)
+  var lowered = preLowerIter(c, n, iterSym, captures)   # consumes `n`
+  var m = beginRead(lowered)
   swap c.coroCtx.typeCache, c.typeCache
   let publishedBefore = c.coroCtx.shouldPublish.len
   coro_transform.transformCoroutineDecl(c.coroCtx, dest, m)
   swap c.coroCtx.typeCache, c.typeCache
-  if not captures:
-    n = m   # it walked our own cursor copy; take the advanced position
   # Snapshot the rewritten signature NOW, while `shouldPublish.start`
   # still indexes `dest`. For a nested iter `dest` is treProcLift's
   # local lift buffer which is concatenated (at a shifted offset) into
@@ -834,6 +841,15 @@ proc transformClosureIter(c: var Context; dest: var TokenBuf; n: var Cursor) =
     buf.copyTree dest.cursorAt(entry.start)
     c.pendingIterSigs.add (entry.sym, ensureMove buf)
   c.coroCtx.shouldPublish.setLen publishedBefore
+
+proc isIterValueType(typ: Cursor): bool {.inline.} =
+  ## The type of a first-class `.closure` iterator VALUE: the source-level
+  ## `itertype`, or the `(closureTuple <wrapper-proctype> (ref RootObj))` that
+  ## pass 1's itertype rewrite turns it into. A `.passive` itertype is not one
+  ## — those corofors belong to cps.
+  not cursorIsNil(typ) and
+    (typ.typeKind == ClosureTupleT or
+     (typ.typeKind == ItertypeT and procHasPragma(typ, ClosureP)))
 
 proc isClosureCoroFor(c: var Context; n: Cursor): bool =
   ## Peek at a `(corofor (call <target> …) …)` to decide whether this
@@ -854,12 +870,13 @@ proc isClosureCoroFor(c: var Context; n: Cursor): bool =
   inc m  # past call tag
   if m.kind == Symbol and isClosureIterSym(m.symId):
     return true
-  # Inspect the target's TYPE — covers iter-value locals (case 2)
-  # and any non-Symbol target that nonetheless has iter-shaped type.
-  let typ = c.typeCache.getType(m, {SkipAliases})
-  if typ.typeKind == ItertypeT and procHasPragma(typ, ClosureP):
-    return true
-  return typ.typeKind == ClosureTupleT
+  # Inspect the target's TYPE — covers iter-value locals (case 3) and any
+  # non-Symbol target that nonetheless has iter-shaped type (case 4).
+  # `capturedBaseType`, not `typeCache.getType`: a captured iter value has
+  # already been rewritten by pass 1 to `(envp EnvType field)`, which typenav
+  # cannot type at all (it answers `auto`) — the field's type lives only in
+  # `c.envFieldType`. `trClosureCoroFor`'s case 4 expands such a target.
+  result = isIterValueType(capturedBaseType(c, m))
 
 proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Expand `(corofor (call closure-iter args... (haddr forLoopVar)) (block ...))`
@@ -873,14 +890,20 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
     let callStart = n # past CallS tag
     n = sub(n)
-    # Extract the call target. Three shapes:
-    #   1. Symbol of an iter DECL — direct call routed through its
-    #      init wrapper.
-    #   2. Symbol of an iter-VALUE local — pull fn-slot and env-slot
+    # Extract the call target. Five shapes, in the order the branches
+    # below test for them:
+    #   1. Symbol of a CAPTURING iter decl — bound to a real iter value
+    #      first, so the loop can hand the wrapper our environment.
+    #   2. Symbol of a capture-free iter DECL — direct call routed through
+    #      its init wrapper.
+    #   3. Symbol of an iter-VALUE local — pull fn-slot and env-slot
     #      out via `(tupat g 0)` / `(tupat g 1)`. The env-slot becomes
     #      the wrapper-call's `caller.env`, triggering the wrapper's
     #      reuse branch so iter state persists across loops.
-    #   3. Pre-extracted expression (e.g. a `(tupat g 0)` already
+    #   4. An iter-VALUE expression that is not a symbol (a capture's
+    #      `(envp EnvType field)`, a call's result) — bound to a local,
+    #      then as case 3.
+    #   5. Pre-extracted expression (e.g. a `(tupat g 0)` already
     #      emitted by upstream genCall) — use verbatim and look for
     #      the trailing tupat env-arg further down.
     # Track which branch we took for the target — this is the ONLY
@@ -888,9 +911,9 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # Probing the last arg for TupatX is unsound: a regular arg like
     # `(tupat someTuple 0)` would falsely match.
     var targetBuf = createTokenBuf(4)
-    var valSymForEnv: SymId = SymId(0)  # case 2: synthesize env-arg from this
+    var valSymForEnv: SymId = SymId(0)  # cases 1/3/4: synthesize env-arg from this
     var valInfoForEnv: NifLineInfo = default(NifLineInfo)
-    var upstreamEnvArg = false           # case 3: env-arg is penultimate arg
+    var upstreamEnvArg = false           # case 5: env-arg is penultimate arg
     if n.kind == Symbol and isClosureIterSym(n.symId) and
         c.closureProcs.contains(n.symId):
       # A CAPTURING iter called directly (`for x in nested()`). The
@@ -924,6 +947,33 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
         targetBuf.addSymUse valSymForEnv, valInfoForEnv
         targetBuf.addIntLit 0, valInfoForEnv
       inc n
+    elif isIterValueType(capturedBaseType(c, n)):
+      # 4. An iter VALUE that is not a plain symbol — typically one reached
+      #    through a capture, which pass 1 rewrote to `(envp EnvType field)`.
+      #    Same trampoline as case 3, but the target is an expression, so bind
+      #    it to a local first: it is read twice (fn slot and env slot) and
+      #    re-evaluating an env access per read would be wasteful at best.
+      #    The type test is what keeps case 5's ALREADY-extracted `(tupat g 0)`
+      #    out of here: that one is a bare proctype, not an iter value.
+      let typ = capturedBaseType(c, n)
+      let valSym = pool.symId("`iterVal." & $c.counter & "." & c.thisModuleSuffix)
+      inc c.counter
+      valInfoForEnv = n.info
+      dest.copyIntoKind LetS, valInfoForEnv:
+        dest.addSymDef valSym, valInfoForEnv
+        dest.addDotToken() # no export marker
+        dest.addDotToken() # no pragmas
+        if typ.typeKind == ItertypeT:
+          var t = typ
+          emitIterTupleTypeFromParams(dest, t, valInfoForEnv)
+        else:
+          dest.copyTree typ            # already the lifted `(closureTuple …)`
+        tre c, dest, n                 # the target, capture-rewritten
+      c.typeCache.registerLocal(valSym, LetY, default(Cursor))
+      valSymForEnv = valSym
+      targetBuf.copyIntoKind TupatX, valInfoForEnv:
+        targetBuf.addSymUse valSymForEnv, valInfoForEnv
+        targetBuf.addIntLit 0, valInfoForEnv
     else:
       upstreamEnvArg = true
       targetBuf.takeTree n

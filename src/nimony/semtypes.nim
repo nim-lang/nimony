@@ -1290,7 +1290,16 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       semParams c, dest, n
       semLocalTypeImpl c, dest, n, InReturnTypeDecl
       var crucial = default CrucialPragma
+      let beforePragmas = dest.len
       semPragmas c, dest, n, crucial, ProcY
+      if tk == ItertypeT and {ClosureP, PassiveP} * crucial.flags == {}:
+        # `itertype` is the CLOSURE-iterator type; only `.passive.` opts out.
+        # So `iterator(): T` and `iterator(): T {.closure.}` are the same type,
+        # and writing the pragma out here is what makes them the same TREE —
+        # every `procHasPragma(typ, ClosureP)` downstream (typenav's closure
+        # projection, hexer's `isClosure`, the iter-value trampoline) tests for
+        # it, and none of them should have to special-case the spelling.
+        addImpliedClosurePragma c, dest, beforePragmas, info
       var hasNilSuffix = false
       if isTypeForm and not sourceIsNewLayout:
         var n2 = n

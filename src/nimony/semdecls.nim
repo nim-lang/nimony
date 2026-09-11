@@ -1047,7 +1047,8 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
 
     var symId = SymId(0)
     var status = OkNew
-    if it.n.isDotToken:
+    let isAnon = it.n.isDotToken
+    if isAnon:
       symId = newName
       status = OkNew
       dest.addSymDef(symId, it.n.info)
@@ -1099,7 +1100,16 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
       semParams c, dest, it.n
       c.routine.returnType = semReturnType(c, dest, it.n)
       var crucial = CrucialPragma(sym: symId)
+      let beforePragmas = dest.len
       semPragmas c, dest, it.n, crucial, kind
+      if isAnon and kind == IteratorY and ClosureP notin crucial.flags:
+        # An anonymous iterator can only be a CLOSURE iterator: an inline one
+        # is inlined at the `for` that names it, and this one has no name to
+        # be named by. So `.closure.` is implied rather than demanded — which
+        # is also what makes an `iterator(): T` literal assignable to the
+        # `itertype` a `proc ...: iterator(): T` returns.
+        crucial.flags.incl ClosureP
+        addImpliedClosurePragma c, dest, beforePragmas, info
       c.routine.pragmas = crucial.flags
       c.routine.raisesType = crucial.raisesType
       if crucial.hasVarargs.isValid:

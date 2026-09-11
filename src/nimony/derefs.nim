@@ -652,7 +652,6 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
     return
 
   let tt = getType(c.typeCache, n)
-  let calleeKind = tt.stmtKind
   let fnType = skipProcTypeToParams(tt.skipModifier)
   if not fnType.isParamsTag:
     bug "derefs trCall: callee type not params at " & infoToStr(n.info)
@@ -668,7 +667,7 @@ proc trCall(c: var Context; n: var Cursor; e: Expects; dangerous: var bool) =
   var pragmas = retType
   skip pragmas
   if IsNoSideEffect in c.r.props:
-    if whichEffect(calleeKind, pragmas) == HasSideEffect:
+    if calleeEffect(tt.skipModifier, pragmas) == HasSideEffect:
       swap c.dest, callBuf
       buildLocalErr c.dest, n.info, "cannot call a routine with side effects from a `.noSideEffect` context"
       n = callExpr
