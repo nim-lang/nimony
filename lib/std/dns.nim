@@ -24,7 +24,7 @@
 # called" table for a machine private enough not to need one.
 
 import std/socket
-import std/syncio
+import std/asyncio
 import std/strtabs
 import std/locks
 import std/atomics
@@ -300,9 +300,9 @@ proc nextToken(s: string; i: var int): string =
   for j in start ..< i:
     result.add s[j]
 
-proc readHosts(t: StringTableRef) =
+proc readHosts(t: StringTableRef; dl: Deadline) {.passive, raises.} =
   try:
-    let f = syncio.readFile("/etc/hosts")
+    let f = readFile("/etc/hosts", dl)
     var i = 0
     while i < f.len:
       var j = i
@@ -320,10 +320,10 @@ proc readHosts(t: StringTableRef) =
   except ErrorCode:
     discard                       # a machine without the file resolves upstream
 
-proc readResolvConf(r: var Resolver) =
+proc readResolvConf(r: var Resolver; dl: Deadline) {.passive, raises.} =
   r.servers = @[]
   try:
-    let f = syncio.readFile("/etc/resolv.conf")
+    let f = readFile("/etc/resolv.conf", dl)
     var i = 0
     while i < f.len:
       var j = i
@@ -339,15 +339,17 @@ proc readResolvConf(r: var Resolver) =
   except ErrorCode:
     discard
 
-proc initResolver*(): Resolver =
+proc initResolver*(dl = never): Resolver {.passive, raises.} =
   ## `std/dns`'s client: `/etc/hosts` wins over the resolver, which asks the
   ## first `nameserver` line of `/etc/resolv.conf`. Files that parse partially
   ## are used partially — a broken `/etc/hosts` does not take the resolver
-  ## down with it.
+  ## down with it. The two config files are read through the ring (`asyncio`),
+  ## so construction is `{.passive.}` and bounded by `dl` like everything else
+  ## that touches the wire.
   result = default(Resolver)
   result.hosts = newStringTable(modeCaseInsensitive)
-  readHosts(result.hosts)
-  readResolvConf(result)
+  readHosts(result.hosts, dl)
+  readResolvConf(result, dl)
 
 proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
             dl: Deadline): Message {.passive, raises.} =
@@ -439,24 +441,28 @@ var
 
 initLock(gDefaultResolverLock)
 
-proc defaultResolver(): Resolver =
+proc defaultResolver(dl: Deadline): Resolver {.passive, raises.} =
   ## The process-wide resolver, initialised on first use under a lock (the
   ## double-check keeps the lock off the common path). Returns a snapshot
   ## copy — a ref and a seq head — so the caller neither borrows the global
-  ## nor holds the lock for the lookup that follows.
+  ## nor holds the lock for the lookup that follows. `dl` bounds the initial
+  ## `/etc/hosts`/`/etc/resolv.conf` read, which goes through the ring like
+  ## the rest of this module.
   if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
     acquire(gDefaultResolverLock)
-    if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
-      gDefaultResolver = initResolver()
-      atomicStore(gDefaultResolverInited, 1, moRelease)
-    release(gDefaultResolverLock)
+    try:
+      if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
+        gDefaultResolver = initResolver(dl)
+        atomicStore(gDefaultResolverInited, 1, moRelease)
+    finally:
+      release(gDefaultResolverLock)
   result = gDefaultResolver
 
 proc resolve*(name: string; dl = never): string {.passive, raises.} =
   ## Resolve `name` using the process-wide default resolver. The first call
   ## reads `/etc/hosts` and `/etc/resolv.conf`; every subsequent call reuses
   ## the same table. Raises the same errors as the explicit `resolve` form.
-  var snap = defaultResolver()
+  var snap = defaultResolver(dl)
   resolve(snap, name, dl)
 
 # ------------------------------------------------------------------ server ---
