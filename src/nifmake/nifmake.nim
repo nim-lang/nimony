@@ -288,17 +288,26 @@ proc topologicalSort(dag: var Dag): seq[int] =
   let nodes = addr dag.nodes
   result.sort proc(a, b: int): int = cmp(nodes[a].depth, nodes[b].depth)
 
-proc executeCommand(command: string): bool =
-  ## Execute a shell command and return success status
+proc executeCommand(command: string): int =
+  ## Execute a shell command and return its exit code, -1 if it could not be
+  ## run at all.
   try:
-    let exitCode = execShellCmd(command)
-    result = exitCode == 0
+    result = execShellCmd(command)
   except:
-    result = false
+    result = -1
 
-proc failed(arg: string) =
-  stdout.write "nifmake: "
-  stdout.writeLine arg
+proc failed(command: string; exitCode = 0) =
+  ## Name the command that failed. A build that fans out over many processes is
+  ## only debuggable if the output that a child left behind can be tied back to
+  ## the command that produced it -- a bare "SIGSEGV" in a CI log names neither
+  ## the tool nor the module it was working on.
+  stdout.write "nifmake: command failed"
+  if exitCode != 0:
+    stdout.write " (exit code "
+    stdout.write $exitCode
+    stdout.write ")"
+  stdout.write ": "
+  stdout.writeLine command
 
 proc toSeconds(d: Duration): float =
   float(d.inNanoseconds) / 1e9
@@ -313,7 +322,7 @@ proc recordCmdTime(profile: var ProfileData; cmdName: string; sec: float) =
 
 type
   CmdStatus = enum
-    Enqueued, Running, Finished
+    Enqueued, Running, Finished, Failed
 
   Progressor = object
     ## Live percentage indicator. `total` is the number of nodes we expect to
@@ -418,6 +427,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
       # Execute all commands at this depth in parallel
       if commands.len > 0:
         var progress = newSeq[CmdStatus](commands.len)
+        var exitCodes = newSeq[int](commands.len)
         var startTimes = if profile != nil: newSeq[MonoTime](commands.len) else: @[]
         if profile != nil: startTimes.setLen(commands.len)
         let depthStart = if profile != nil: getMonoTime() else: MonoTime()
@@ -427,7 +437,12 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           if profile != nil: startTimes[idx] = getMonoTime()
 
         proc afterRunEvent(idx: int; p: Process) =
-          progress[idx] = Finished
+          # `Finished` used to be recorded whatever the child's exit code was,
+          # so by the time the failure was reported nothing was left marked
+          # `Running` and the report named no command at all.
+          let code = try: peekExitCode(p) except CatchableError: -1
+          progress[idx] = if code == 0: Finished else: Failed
+          if code != 0: exitCodes[idx] = code
           inc prog.done
           prog.draw(labels[idx])
           if profile != nil:
@@ -448,8 +463,10 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             stdout.write "\n"
             stdout.flushFile()
           for i, p in pairs(progress):
-            if p == Running:
-              failed commands[i]
+            # `Running` can only be left over from a child that never reached
+            # `afterRunEvent`; report it too rather than lose it.
+            if p == Failed or p == Running:
+              failed commands[i], exitCodes[i]
           return false
   else:
     # Sequential execution
@@ -465,13 +482,14 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
           echo "Command: ", expandedCmd
         let cmdName = dag.commands[node.cmdIdx].name
         let start = if profile != nil: getMonoTime() else: MonoTime()
-        if not executeCommand(expandedCmd):
+        let exitCode = executeCommand(expandedCmd)
+        if exitCode != 0:
           if profile != nil:
             profile[].recordCmdTime(cmdName, toSeconds(getMonoTime() - start))
           if prog.active:
             stdout.write "\n"
             stdout.flushFile()
-          failed expandedCmd
+          failed expandedCmd, exitCode
           return false
         inc prog.done
         prog.draw(nodeLabel(dag, node[]))
