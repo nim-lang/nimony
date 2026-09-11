@@ -1292,13 +1292,15 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       var crucial = default CrucialPragma
       let beforePragmas = dest.len
       semPragmas c, dest, n, crucial, ProcY
-      if tk == ItertypeT and {ClosureP, PassiveP} * crucial.flags == {}:
-        # `itertype` is the CLOSURE-iterator type; only `.passive.` opts out.
-        # So `iterator(): T` and `iterator(): T {.closure.}` are the same type,
-        # and writing the pragma out here is what makes them the same TREE —
-        # every `procHasPragma(typ, ClosureP)` downstream (typenav's closure
-        # projection, hexer's `isClosure`, the iter-value trampoline) tests for
-        # it, and none of them should have to special-case the spelling.
+      if tk == ItertypeT and AutoClosuresFeature in c.features and
+          {ClosureP, PassiveP} * crucial.flags == {}:
+        # Under `autoclosures`, `iterator(): T` means the closure-iterator
+        # type. Writing the pragma out here is what makes the two spellings the
+        # same TREE — every `procHasPragma(typ, ClosureP)` downstream (typenav's
+        # closure projection, hexer's `isClosure`, the iter-value trampoline)
+        # tests for it, and none of them should have to know about the feature.
+        # Without the feature the annotation is required, as for proc types
+        # (doc/language.md, "Closures").
         addImpliedClosurePragma c, dest, beforePragmas, info
       var hasNilSuffix = false
       if isTypeForm and not sourceIsNewLayout:
