@@ -55,16 +55,17 @@ proc failPendingForFd*(fd: cint) =
 
 proc reArmOrTransfer(fd: cint; alreadyRegistered: bool) {.inline.} =
   ## The re-arm half of a submit or a delivered event: register `fd` for every
-  ## direction still pending on it — or, when the backend will not register it
-  ## at all, satisfy those ops another way. A regular file is such a case:
-  ## epoll refuses it outright (EPERM) and kqueue registers it without ever
-  ## delivering, yet a regular file's read/write never blocks, so the transfer
-  ## itself is the readiness and is performed here on the polling thread —
-  ## exactly the role `processFd` plays for a descriptor that does deliver
-  ## events. Anything else that cannot be armed never becomes ready, so its
-  ## ops are failed.
+  ## direction still pending on it — or, when the backend will not deliver for
+  ## it, satisfy those ops another way. A regular file is such a case: epoll
+  ## refuses it outright (EPERM) and kqueue accepts the registration yet
+  ## delivers at most a first event — a file must never be armed, because
+  ## nothing after that first wake will ever come. Its read/write never blocks,
+  ## so the transfer itself is the readiness and is performed here on the
+  ## polling thread — exactly the role `processFd` plays for a descriptor that
+  ## does deliver events. Anything else that cannot be armed never becomes
+  ## ready, so its ops are failed.
+  if transferIfRegularFile(fd): return
   if not reArmEvent(fd, armEventsForFd(fd), alreadyRegistered):
-    if transferIfRegularFile(fd): return
     failPendingForFd(fd)
 
 proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
@@ -82,6 +83,9 @@ proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
   if fd < 0: return
   reArmOrTransfer(fd, alreadyRegistered)
 
+when defined(posix):
+  proc syncFileTransfers(fd: cint) {.inline.}
+
 proc transferIfRegularFile(fd: cint): bool {.inline.} =
   ## True when `fd` names a regular file — nothing for the readiness backends
   ## to wait on — and its pending ops were satisfied by performing their
@@ -90,6 +94,8 @@ proc transferIfRegularFile(fd: cint): bool {.inline.} =
   ## entering the ring at all.
   when defined(posix):
     result = isRegularFileFd(fd)
+    if result:
+      syncFileTransfers(fd)
   else:
     result = false
 
@@ -113,10 +119,13 @@ when defined(posix):
                      `addr`: pointer; addrlen: ptr SockLen): int {.importc: "recvfrom".}
   proc posixSendto(s: cint; buf: nil pointer; count: int; flags: cint;
                    `addr`: pointer; addrlen: SockLen): int {.importc: "sendto".}
-  proc posixOpen(path: cstring; flags: cint; mode: Mode): cint {.importc: "open", sideEffect.}
+  proc posixOpen(path: cstring; flags: cint): cint {.varargs, importc: "open", sideEffect.}
     ## A named `open`: `posix.open` and `syncio.open` clash wherever both are
     ## imported, and importing only the one this file needs would be a line of
-    ## housekeeping for no benefit.
+    ## housekeeping for no benefit. `varargs` keeps the C prototype variadic,
+    ## matching libc's `open` (`mode` passes through the `...`); a fixed-arity
+    ## declaration instead lets the C compiler skip the variadic save area that
+    ## libc's `open` reads `mode` from on AAPCS64 targets.
 
   proc completeOpen*(idx: int; path: cstring; flags: cint; mode: Mode) =
     ## The backend half of `submitOpen`: an `open` for an opOpen is performed
@@ -138,7 +147,9 @@ when defined(posix):
     ## file `fd`. A regular file has no readiness to wait for — its read and
     ## write answer at once (never EAGAIN: the fd is not O_NONBLOCK) — so the
     ## transfer IS the event, and this is what `processFd` is for a descriptor
-    ## that does deliver events.
+    ## that does deliver events. This runs instead of arming the fd: kqueue's
+    ## registration of a file is accepted yet, after a first delivery, never
+    ## fires again, so an armed file op would park forever on its second read.
     let lane = ioLane()
     for j in gSlots[lane].slotsForFd(fd):
       let s = addr gSlots[lane].slots[j]

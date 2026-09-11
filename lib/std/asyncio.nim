@@ -173,10 +173,6 @@ when defined(windows):
     result = np
 
 else:
-  proc posixOpen(path: cstring; flags: cint; mode: Mode): cint {.importc: "open", sideEffect.}
-  proc posixClose(fd: cint): cint {.importc: "close", sideEffect.}
-  proc posixRead(fd: cint; buf: pointer; count: int): cint {.importc: "read", sideEffect.}
-  proc posixWrite(fd: cint; buf: pointer; count: int): cint {.importc: "write", sideEffect.}
   proc posixLseek(fd: cint; off: Off; whence: cint): Off {.importc: "lseek", sideEffect.}
 
   # The O_* open flags live per-platform in `syncio`'s private shape (posix.nim

@@ -74,6 +74,18 @@ proc family*(p: PeerAddr): int =
 proc isV4*(p: PeerAddr): bool {.inline.} = p.family == AfInet
 proc isV6*(p: PeerAddr): bool {.inline.} = p.family == AfInet6
 
+proc peerLen*(p: PeerAddr): SockLen {.inline.} =
+  ## The length of the sockaddr `p.raw` actually holds — the size of its
+  ## family, not the capacity of its storage. The kernel reports the same
+  ## values for accept/recvfrom, and a `sendTo`/`connect` copies the address
+  ## with this length so the callee reads what the kernel wrote: passing
+  ## `sizeof(Sockaddr_storage)` makes sendto fail with EINVAL where the BSDs
+  ## compare it against `sin_len`.
+  case p.family
+  of AfInet: result = SockLen(16)
+  of AfInet6: result = SockLen(28)
+  else: result = SockLen(0)
+
 proc port*(p: PeerAddr): int =
   ## The peer's port, or `0` if there is no address. Network byte order read
   ## as two bytes, so no host-endianness assumption is needed.
@@ -276,14 +288,22 @@ proc addrFromHost(p: var PeerAddr; saLen: var SockLen;
   ## the local ring.) A `PeerAddr` is `family == 0` — that is, "no address
   ## yet" — only until `connect`/`udpConnect` run this over it.
   ##
-  ## The layout is written directly into `p.raw` as raw bytes (AF_INET = 2,
-  ## family = 2 bytes, port = 2 bytes network order, addr = 4 bytes network
-  ## order, zero padding to 16 bytes) so this compiles without importing
-  ## platform-specific socket struct types.
+  ## The layout is written directly into `p.raw` as raw bytes — AF_INET = 2,
+  ## port = 2 bytes network order, addr = 4 bytes network order, zero padding
+  ## to 16 bytes — so this compiles without importing platform-specific socket
+  ## struct types. The first two bytes differ between ABI families, and both
+  ## `PeerAddr.family` and the kernel read them back on the far side of the
+  ## ring, so the two layouts are written as their respective systems expect:
+  ## Linux puts a 2-byte `sa_family` at offset 0, the BSDs put a 1-byte
+  ## `sa_len` (16, the size of `sockaddr_in`) ahead of a 1-byte `sa_family`.
   p = default(PeerAddr)
   let raw = cast[ptr UncheckedArray[uint8]](addr p.raw)
-  raw[0] = 2'u8   # AF_INET low byte
-  raw[1] = 0       # AF_INET high byte
+  when defined(linux):
+    raw[0] = 2'u8   # AF_INET low byte
+    raw[1] = 0       # AF_INET high byte
+  else:
+    raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
+    raw[1] = 2'u8    # AF_INET
   raw[2] = byte(port shr 8)
   raw[3] = byte(port and 0xFF)
   var octet = 0
@@ -705,7 +725,7 @@ proc sendTo*(s: var UdpSocket; data: openArray[char]; to: PeerAddr;
   ## op, so `to` does not need to outlive the call.
   if data.len == 0: return
   let n = sendToAsync(s.fd, addr data[0], data.len, to.raw,
-                      SockLen(sizeof(to.raw)), budget(s, dl))
+                      to.peerLen, budget(s, dl))
   if n <= 0: raise toErr(n)
 
 proc sendTo*(s: var UdpSocket; data: openArray[char]; host: string; port: uint16;
