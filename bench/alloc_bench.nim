@@ -28,6 +28,16 @@ const
 var slots: array[MaxLive, pointer]
 var rngState: uint64 = 0x9E3779B97F4A7C15u64
 
+proc xalloc(size: int): pointer {.inline.} =
+  ## `alloc` hands back an *unchecked* pointer: it is nil when the heap is
+  ## exhausted. `slots` holds plain `pointer`s, which are not-nil, so the OOM
+  ## case has to be ruled out before one goes in. A benchmark has nothing
+  ## useful to say about a failed allocation, so it simply stops.
+  let p = alloc(size)
+  if p == nil:
+    quit(1)
+  result = p
+
 proc nextRand(): uint64 {.inline.} =
   var x = rngState
   x = x xor (x shl 13)
@@ -42,7 +52,7 @@ proc main() =
     # fill: varied small sizes (many size classes)
     for i in 0 ..< MaxLive:
       let size = int(nextRand() mod 240u64) + 16
-      let p = alloc(size)
+      let p = xalloc(size)
       cast[ptr uint8](p)[] = uint8(i and 0xFF)
       slots[i] = p
     # churn: free a pseudo-random live slot, allocate a replacement
@@ -51,7 +61,7 @@ proc main() =
       checksum = checksum + uint64(cast[ptr uint8](slots[j])[])
       dealloc(slots[j])
       let size = int(nextRand() mod 1000u64) + 8
-      let p = alloc(size)
+      let p = xalloc(size)
       cast[ptr uint8](p)[] = uint8(j and 0xFF)
       slots[j] = p
     # big chunks: page-and-above allocations, freed immediately

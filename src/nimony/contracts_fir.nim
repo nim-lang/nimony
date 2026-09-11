@@ -68,6 +68,10 @@ type
                                        # per-exit state accumulation (journaled).
     errors: TokenBuf
     procCanRaise: bool
+    inHook: bool                       # inside a `=destroy`/`=wasMoved`/… body:
+                                       # hooks operate on raw, possibly
+                                       # moved-from memory, so a `notnil` field
+                                       # may legitimately be set to `nil` there.
     features: set[Feature]
     moduleSuffix: string
     nestedProcs: int
@@ -1219,6 +1223,32 @@ proc cannotBeNil(c: var FirContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
   result = markedAs(t, NotnilU) or isNonNilExpr(c, n)
 
+proc storeTargetType(c: var FirContext, n: Cursor): Cursor {.inline.} =
+  var target = n
+  if target.exprKind in {AddrX, HaddrX}:
+    inc target
+  result = getType(c.typeCache, target)
+
+const HookPrefixes = ["=destroy", "=wasMoved", "=trace", "=copy", "=sink", "=dup"]
+
+proc isHookProc(symId: SymId): bool =
+  ## A type-bound hook, hand-written (`=wasMoved.0.m`) or synthesized by the
+  ## lifter (`=dup_SFoo0m.0.m`). Their bodies run on memory that is not in a
+  ## valid state: `=wasMoved` *produces* the moved-from state, `=destroy` and
+  ## `=trace` *observe* it, and the lifter drops the nilability annotation from
+  ## a hook's own signature (see `lifter.addParamType`) so that one hook serves
+  ## both `ref T` and `ref T notnil`. Nil-checking a store inside such a body
+  ## asks the impossible of it.
+  let name = pool.symBasename(symId)
+  if name.len == 0 or name[0] != '=': return false
+  for p in HookPrefixes:
+    if name.startsWith(p): return true
+  result = false
+
+proc checkStoreNilMatch(c: var FirContext; value: Cursor; expected: Cursor) {.inline.} =
+  if not c.inHook:
+    checkNilMatch c, value, expected
+
 # --- Final-IR-specific traversal ---
 
 proc traverseStore(c: var FirContext; n: var Cursor) =
@@ -1263,8 +1293,8 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
     markInit(c, symId)
 
     # Check for not-nil type match
-    let expected = getType(c.typeCache, n)
-    checkNilMatch c, valueStart, expected
+    let expected = storeTargetType(c, n)
+    checkStoreNilMatch c, valueStart, expected
     checkRangeAssign c, expected, valueStart
 
     # Try to extract facts from the value
@@ -1293,7 +1323,9 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
 
     skip n
   else:
-    checkRangeAssign c, getType(c.typeCache, n), valueStart
+    let expected = storeTargetType(c, n)
+    checkStoreNilMatch c, valueStart, expected
+    checkRangeAssign c, expected, valueStart
     traverseExpr c, n
 
   n = storeStart; skip n
@@ -1683,6 +1715,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   let oldFlow = move c.flow
   c.flow = initFlowState()
   c.procCanRaise = false
+  let oldInHook = c.inHook
   let oldTr = move c.tr
   c.tr = initFlowTracker()
   # Seed with the enclosing init-set ONLY for genuinely nested procs (closures),
@@ -1701,6 +1734,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   let procStart = n
   n = sub(n)
   let symId = n.symId
+  c.inHook = isHookProc(symId)
   var isGeneric = false
   var isExternProc = false
   var outParams: seq[SymId] = @[]
@@ -1757,6 +1791,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
+  c.inHook = oldInHook
 
 proc traverseStmt(c: var FirContext; n: var Cursor) =
   case n.finalIrKind
