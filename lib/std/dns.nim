@@ -136,6 +136,7 @@ proc encodeMessage*(m: Message; s: var seq[char]) =
     case a.rtype
     of RTypeA:
       # four raw octets built from the caller's dotted quad
+      s.put16 4
       var octet = 0
       var dot = 0
       while dot < a.ip4.len:
@@ -334,32 +335,36 @@ proc initResolver*(): Resolver =
   ## first `nameserver` line of `/etc/resolv.conf`. Files that parse partially
   ## are used partially — a broken `/etc/hosts` does not take the resolver
   ## down with it.
+  result = default(Resolver)
   result.hosts = newStringTable(modeCaseInsensitive)
   readHosts(result.hosts)
   readResolvConf(result)
 
-proc query*(r: var Resolver; host: string; serverIdx: int;
+proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
             dl: Deadline): Message {.passive, raises.} =
-  ## One question to `r.servers[serverIdx]` and one datagram back, bounded by
-  ## `dl`. Parsed but uninterpreted — the caller applies `resolve`'s rules.
+  ## One question to `r.servers[serverIdx]`, `port`, and one datagram back,
+  ## bounded by `dl`. `resolve` speaks port 53; the port parameter exists so a
+  ## caller can aim a question at an in-process server on an ephemeral port.
+  ## Parsed but uninterpreted — the caller applies `resolve`'s rules.
   ## Raises `TimeoutError` when `dl` arrives first, `ValueError` if the reply
   ## is not a response to this question, `NameNotFound` for NXDOMAIN.
-  var wire: seq[char]
-  var q = Message(id: uint16(monoNow() and 0xFFFF), flags: 0x0100'u16)   # RD
+  var wire: seq[char] = @[]
+  var q = Message(id: uint16(int64(monoNow()) and 0xFFFF),
+                  flags: 0x0100'u16)   # RD
   q.questions.add Question(name: canon(host), rtype: RTypeA, rclass: 1'u16)
   encodeMessage(q, wire)
   var sock = openUdp(0, dl)
-  udpConnect(sock, r.servers[serverIdx], 53, budget(sock, dl))
-  sendDatagram(sock, wire, budget(sock, dl))
+  var d = budget(sock, dl)
+  udpConnect(sock, r.servers[serverIdx], port, d)
+  sendDatagram(sock, wire, d)
   var respBuf = newSeq[char](512)
-  let n = recvDatagram(sock, toOpenArray(respBuf, 0, respBuf.len - 1),
-                       budget(sock, dl))
+  let n = recvDatagram(sock, toOpenArray(respBuf, 0, respBuf.len - 1), d)
   var m = Message(id: 0'u16, flags: 0'u16)
   if not decodeMessage(toOpenArray(respBuf, 0, n - 1), m):
     raise ValueError
-  if m.id != q.id or (m.flags and 0x8000) == 0:
+  if m.id != q.id or (m.flags and 0x8000'u16) == 0:
     raise ValueError
-  let rcode = m.flags and 0x000F
+  let rcode = m.flags and 0x000F'u16
   if rcode != 0:
     raise NameNotFound          # NXDOMAIN and every other refusal
   result = m
@@ -371,7 +376,7 @@ proc resolveOne(r: var Resolver; hostIn: string; serverIdx: int;
   ## that has no further CNAME — and return the first A that owns it.
   result = ""
   let host = canon(hostIn)
-  let m = query(r, host, serverIdx, dl)
+  let m = query(r, host, serverIdx, 53, dl)
   var wanted = host
   for hop in 0 ..< m.answers.len:
     var chased = false
@@ -420,6 +425,7 @@ type
 proc newDnsServer*(port: uint16; deadline = never): DnsServer =
   ## A bound, non-blocking UDP socket that answers A-queries from the table
   ## `add` fills. `port` of 0 asks the kernel to pick one (`boundPort`).
+  result = default(DnsServer)
   result.sock = openUdp(port, deadline)
   result.names = newStringTable(modeCaseInsensitive)
 
@@ -430,6 +436,8 @@ proc add*(s: var DnsServer; name, ip: string) =
   s.names[canon(name)] = ip
 
 proc boundPort*(s: var DnsServer): uint16 {.inline.} = boundPort(s.sock)
+
+proc close*(s: var DnsServer) {.inline.} = close(s.sock)
 
 proc serveOnce*(s: var DnsServer; dl = never) {.passive, raises.} =
   ## One request/response cycle: wait for a query (which can be from anyone —
@@ -445,7 +453,7 @@ proc serveOnce*(s: var DnsServer; dl = never) {.passive, raises.} =
   if q.questions.len == 0:
     return
   let theQ = q.questions[0]
-  var resp = Message(id: q.id, flags: 0x8180'u16)   # QR|AA|RD|RA
+  var resp = Message(id: q.id, flags: 0x8580'u16)   # QR|AA|RD|RA
   resp.questions.add theQ
   let name = canon(theQ.name)
   if theQ.rtype == RTypeA and s.names.hasKey(name):
@@ -453,6 +461,6 @@ proc serveOnce*(s: var DnsServer; dl = never) {.passive, raises.} =
                             ip4: s.names[name])
   else:
     resp.flags = (resp.flags and 0xFFF0'u16) or 0x0003'u16   # NXDOMAIN
-  var outWire: seq[char]
+  var outWire: seq[char] = @[]
   encodeMessage(resp, outWire)
   sendTo(s.sock, outWire, peer, budget(s.sock, dl))
