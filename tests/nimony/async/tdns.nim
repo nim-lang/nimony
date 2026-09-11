@@ -67,6 +67,17 @@ proc client() {.passive.} =
       inc failures
       clientLog.add "hosts lookup: " & localIp & "\n"
 
+    ## The no-wiring form goes through the process-wide default resolver,
+    ## initialised on first use from the same /etc/hosts under its lock.
+    try:
+      if resolve("LOCALHOST.") == "127.0.0.1": inc verified
+      else:
+        inc failures
+        clientLog.add "default resolver lookup failed\n"
+    except ErrorCode as e:
+      inc failures
+      clientLog.add "default resolver error: " & $e & "\n"
+
     ## Aim the resolver's question path at the in-process server, which sits
     ## on a random port: `query` takes the port, `resolve` presumes 53 but
     ## every builder of the question/wire/reply machinery is the same code.

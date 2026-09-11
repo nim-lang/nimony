@@ -11,7 +11,9 @@
 # construction, then `resolve` answers from `/etc/hosts` when it can and
 # otherwise asks the first nameserver over UDP. Only IPv4 is answered today;
 # the wire format understands CNAME chains and NXDOMAIN, so a name that needs
-# chasing or does not exist is reported, not mistranslated.
+# chasing or does not exist is reported, not mistranslated.  The one-liner
+# form `resolve("hostname")` uses a lazily-initialised, process-wide resolver
+# so no wiring is needed for the common case.
 #
 # Server (`DnsServer`): the same driver shape as `httpserver` — the server
 # owns a bound unconnected socket (`recvFrom`/`sendTo`, the socket procs
@@ -24,6 +26,8 @@
 import std/socket
 import std/syncio
 import std/strtabs
+import std/locks
+import std/atomics
 import std/assertions
 
 from std/posix/posix import Sockaddr_storage
@@ -419,6 +423,41 @@ proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, ra
       else:
         raise e
   raise NameNotFound
+
+# ------------------------------------------------- default resolver (client) ---
+#
+# A lazily-initialised, process-wide `Resolver` so a caller that does not need
+# a custom one can write `resolve("hostname")` and get an answer without
+# wiring one up.  The first call reads `/etc/hosts` and `/etc/resolv.conf`
+# under a lock; subsequent calls skip the lock entirely (double-checked
+# locking with `atomicLoad`/`atomicStore` on the flag).
+
+var
+  gDefaultResolver: Resolver
+  gDefaultResolverLock: Lock
+  gDefaultResolverInited: int     ## 0 = not yet, 1 = ready
+
+initLock(gDefaultResolverLock)
+
+proc defaultResolver(): Resolver =
+  ## The process-wide resolver, initialised on first use under a lock (the
+  ## double-check keeps the lock off the common path). Returns a snapshot
+  ## copy — a ref and a seq head — so the caller neither borrows the global
+  ## nor holds the lock for the lookup that follows.
+  if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
+    acquire(gDefaultResolverLock)
+    if atomicLoad(gDefaultResolverInited, moAcquire) == 0:
+      gDefaultResolver = initResolver()
+      atomicStore(gDefaultResolverInited, 1, moRelease)
+    release(gDefaultResolverLock)
+  result = gDefaultResolver
+
+proc resolve*(name: string; dl = never): string {.passive, raises.} =
+  ## Resolve `name` using the process-wide default resolver. The first call
+  ## reads `/etc/hosts` and `/etc/resolv.conf`; every subsequent call reuses
+  ## the same table. Raises the same errors as the explicit `resolve` form.
+  var snap = defaultResolver()
+  resolve(snap, name, dl)
 
 # ------------------------------------------------------------------ server ---
 #
