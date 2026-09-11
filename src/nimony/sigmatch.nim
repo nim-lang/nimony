@@ -858,10 +858,11 @@ proc conceptCandidateMatches(m: var Match; candSym: SymId; candDecl: Cursor;
     # `Box[int]` — and an instance symbol only ever matches another symbol.
     # `semLocalType` folds the invocation back into that symbol (issue #2500).
     var instRet: Cursor
-    # The hook goes through a local on purpose: `m.context.semInstantiateType(
-    # m.context[], …)` — the field called straight through the `ptr` — builds
-    # and passes the C backend but SEGFAULTS the natively built nimsem in
-    # `hastur boot` stage 2 (an arkham miscompile, not yet isolated).
+    # Note: `m.context.semInstantiateType(m.context[], …)` — the field called
+    # straight through the `ptr` — once segfaulted the natively built nimsem in
+    # `hastur boot` stage 2: arkham evaluated the indirect call target through
+    # rdi, where the hidden pointer for the 24-byte `Cursor` result already
+    # sat (fixed in nativenif, fixture `indirect_hiddenptr_target`).
     let hook = m.context.semInstantiateType
     if hook != nil:
       instRet = hook(m.context[], candRet, probe.inferred)
