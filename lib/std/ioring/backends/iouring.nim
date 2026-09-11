@@ -9,7 +9,7 @@
 # calls waitCompletions()). That avoids the "submitted on main, never
 # polled" hang.
 
-import std/[assertions, atomics, posix/posix, ticketlocks, threadpool]
+import std/[assertions, atomics, posix/posix, tables, ticketlocks, threadpool]
 import std/syncio   # quit
 import ../../posix/io_uring
 import ../core/types
@@ -38,15 +38,88 @@ var
 
 type
   MsgSlot = object
-    ## Per-slot msghdr storage for `IORING_OP_RECVMSG`/`IORING_OP_SENDMSG`.
+    ## Per-op msghdr storage for `IORING_OP_RECVMSG`/`IORING_OP_SENDMSG`.
     ## The kernel holds a pointer to the `msghdr` from fill time until the op
-    ## completes, so it must live in an arena that never moves; these are
-    ## sized to `MaxOps` up front like the slot arena itself, making their
-    ## addresses stable for the ring's lifetime.
+    ## completes, so the storage must not move for exactly as long as its op is
+    ## in flight. `hdr`/`iov` are therefore never stored by value in anything
+    ## the kernel could see move — each block lives on the heap, and only its
+    ## pointer travels.
     hdr: Tmsghdr
     iov: IOVec
 
-var gMsgs: seq[ptr UncheckedArray[MsgSlot]]   ## per lane, indexed by slot
+  MsgArena = object
+    ## Pool of `MsgSlot` blocks io_uring pins for its in-flight RECVMSG/SENDMSG
+    ## ops. A block is allocated the first time it is needed and then recycled
+    ## through `freelist` — never freed while the ring lives: each op borrows a
+    ## block for its flight and returns it on completion, so the pool's size
+    ## settles at the deepest concurrent datagram load, and allocation is not a
+    ## per-op cost. `allocs` maps the op's `tagFor(idx, gen)` — the same tag its
+    ## SQE carries — to the pool index holding its block, so a stale CQE (an op
+    ## the slot arena already completed on a blown deadline or `closeFd`) can
+    ## only release *its own* block, never one a later op registered under the
+    ## same slot index.
+    ##
+    ## Only those two ops ever touch the pool: a lane serving reads, writes,
+    ## accepts or timers alone keeps an empty pool, which is the point — no
+    ## storage is reserved for slots that never carry a datagram. An entry is
+    ## registered the moment an SQE is filled and released when the kernel
+    ## acknowledges the op with a CQE, in time or late.
+    ##
+    ## The pool holds pointers rather than `MsgSlot`s: a `Tmsghdr`'s non-nil
+    ## pointers leave `MsgSlot` a type without a `default`, which a value seq
+    ## would demand, and io_uring holds `addr msg.hdr` of an in-flight op,
+    ## which a value seq's realloc would move. The seq of pointers may itself
+    ## move as it grows, but the blocks it points at never do.
+    msgs: seq[ptr MsgSlot]       ## pool of blocks, one allocation each ever
+    freelist: seq[uint32]        ## pool indices of blocks not currently in use
+    allocs: Table[uint64, uint32]  ## tag -> pool index of the op's block
+
+proc growMsg(a: var MsgArena) =
+  ## One block for the pool, allocated once and never deallocated while the
+  ## ring lives; the freelist recycles it from there on.
+  a.msgs.add cast[ptr MsgSlot](alloc0(sizeof(MsgSlot)))
+  a.freelist.add uint32(a.msgs.len - 1)
+
+proc registerMsg(a: var MsgArena; idx: int; gen: uint32): ptr MsgSlot =
+  ## The `MsgSlot` block for the op in slot `idx` at generation `gen`, taking
+  ## a free block from the pool (allocating the pool's first as needed). Each
+  ## op gets its own block for its whole flight, so the address the SQE hands
+  ## to the kernel stays valid until the op's CQE arrives.
+  if a.freelist.len == 0: a.growMsg()
+  let bi = a.freelist.pop()
+  a.allocs[tagFor(idx, gen)] = bi
+  result = a.msgs[bi]
+
+proc releaseMsg(a: var MsgArena; idx: int; gen: uint32) =
+  ## Return the block for op `idx`/`gen` to the freelist. Called once the
+  ## kernel is done with the op's storage — whether the op finished in time or
+  ## its CQE only turned up late after a cancel, so this is also the moment a
+  ## cancelled op's block stops being the kernel's. No-ops for CQEs of ops
+  ## that never registered (reads, ...).
+  let key = tagFor(idx, gen)
+  let bi = a.allocs.getOrDefault(key, high(uint32))
+  if bi != high(uint32):
+    a.freelist.add bi
+    a.allocs.del(key)
+
+proc blockMsg(a: var MsgArena; idx: int; gen: uint32): ptr MsgSlot =
+  ## The registered block for op `idx`/`gen`, for reads that must happen
+  ## before `releaseMsg`. A live completion of a RECVMSG always has its block,
+  ## because fill registered it; a missing block is a bookkeeping bug.
+  let key = tagFor(idx, gen)
+  let bi = a.allocs.getOrDefault(key, high(uint32))
+  assert bi != high(uint32), "ioring/iouring: msghdr block missing for live op"
+  result = a.msgs[bi]
+
+proc releaseAllMsg(a: var MsgArena) =
+  ## Teardown: free the pool's blocks. Nothing is in flight at ring close.
+  for m in a.msgs:
+    if m != nil: dealloc(m)
+  a.msgs = @[]
+  a.freelist = @[]
+  a.allocs = initTable[uint64, uint32]()
+
+var gMsgs: seq[MsgArena]   ## per lane, registered by slot tag
 
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
@@ -54,15 +127,14 @@ proc tryInitLocalQueues(): bool =
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
-      # `alloc0`, not `newSeq`: a `MsgSlot` holds a `Tmsghdr` with pointers, so
-      # the type has no `default`, and `newSeq` would demand one.
-      gMsgs.add cast[ptr UncheckedArray[MsgSlot]](alloc0(MaxOps * sizeof(MsgSlot)))
+      gMsgs.add MsgArena(allocs: initTable[uint64, uint32]())
   except ErrorCode:
     return false   # the caller falls back to the epoll backend
   return true
 
 proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
-  let op = addr gSlots[lane].slots[idx].op
+  let slot = addr gSlots[lane].slots[idx]
+  let op = addr slot.op
   case op.kind
   of opRead:
     if op.buf != nil:
@@ -102,12 +174,12 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
   of opRecvFrom:
     # IORING_OP_RECVMSG has no recvfrom form: the source address travels in the
     # msghdr (`msg_name`), which the kernel reads on submission and writes back
-    # into at completion, so it lives in the per-slot `gMsgs` arena — never on
-    # this stack. `msg_name` points at the op's own `sockAddr`, already
+    # into at completion, so the msghdr lives in the lane's `MsgArena` — never
+    # on this stack. `msg_name` points at the op's own `sockAddr`, already
     # arena-stable, so `complete` hands the storage to `peer` the way accept's
     # does, and `msg_iov` points at the caller's buffer, which is alive until
     # the op completes (the same contract as `submitRead`).
-    let m = addr gMsgs[lane][idx]
+    let m = gMsgs[lane].registerMsg(idx, slot.gen)
     zeroMem(addr m.hdr, sizeof(m.hdr))
     m.hdr.msg_name = addr op.sockAddr
     m.hdr.msg_namelen = op.sockAddrLen
@@ -117,7 +189,7 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     m.iov.iov_len = csize_t(op.len)
     discard sqe.recvmsg(SocketHandle(op.fd), addr m.hdr)
   of opSendTo:
-    let m = addr gMsgs[lane][idx]
+    let m = gMsgs[lane].registerMsg(idx, slot.gen)
     zeroMem(addr m.hdr, sizeof(m.hdr))
     m.hdr.msg_name = addr op.sockAddr
     m.hdr.msg_namelen = op.sockAddrLen
@@ -166,7 +238,8 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         break
       let idx = gSlots[lane].allocSlot(buf[i])
       armDeadline(lane, idx)
-      sqe.userData = cast[pointer](tagFor(idx, gSlots[lane].slots[idx].gen))
+      let slot = addr gSlots[lane].slots[idx]
+      sqe.userData = cast[pointer](tagFor(idx, slot.gen))
       # Fill from the ARENA copy, never from `buf`: an accept SQE stores
       # `addr op.sockAddr`/`addr op.sockAddrLen` and the kernel writes through
       # those at completion time, long after this stack frame is gone.
@@ -227,26 +300,41 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # kernel is talking about; anything else is already accounted for.
         let idx = int(cqes[i].userData and 0xffff_ffff'u64)
         let gen = uint32(cqes[i].userData shr 32)
-        if idx >= gSlots[lane].slots.len: continue
-        if not gSlots[lane].slots[idx].inUse or
-           gSlots[lane].slots[idx].gen != gen: continue
+        var slot: nil ptr Slot = nil
+        if idx < gSlots[lane].slots.len:
+          slot = addr gSlots[lane].slots[idx]
+        if slot == nil or not slot.inUse or slot.gen != gen:
+          # The op is already accounted for (a deadline/`closeFd` completed it
+          # here), so its kind is no longer readable from the slot — but only a
+          # datagram op ever registered a block, so this release is inherently
+          # selective: the kernel just relinquished the msghdr it still held.
+          gMsgs[lane].releaseMsg(idx, gen)
+          continue
+        let op = addr slot.op
+        # Only RECVMSG/SENDMSG ops ever registered a block, so return it only
+        # for those; a live read, accept or poll CQE never touches the arena.
+        if op.kind == opRecvFrom or op.kind == opSendTo:
+          if op.kind == opRecvFrom and int(cqes[i].res) > 0:
+            # RECVMSG wrote the actual source-address length back into our
+            # msghdr; narrow `sockAddrLen` to it before the block goes,
+            # exactly as the readiness backends do with their recvfrom's in-out
+            # length, so the storage `complete` hands to `peer` is described by
+            # the real length.
+            op.sockAddrLen = gMsgs[lane].blockMsg(idx, gen).hdr.msg_namelen
+          # The kernel is done with the op's storage, so the block goes back
+          # to the pool it was borrowed from.
+          gMsgs[lane].releaseMsg(idx, gen)
         # For OP_POLL_ADD the kernel reports the fired mask in poll(2) form;
         # translate it to the same internal `IoEvents` the epoll/kqueue
         # backends report, so the completion's `readyEvents` are consistent no
         # matter which backend is in use.
         var res = int(cqes[i].res)
-        if gSlots[lane].slots[idx].op.kind == opPollAdd:
+        if op.kind == opPollAdd:
           var fired = toPollEvents(uint32(res))
           var ev: IoEvents = {}
           if POLL_IN in fired: ev.incl evRead
           if POLL_OUT in fired: ev.incl evWrite
           res = toEventMask(ev)
-        elif gSlots[lane].slots[idx].op.kind == opRecvFrom and res > 0:
-          # RECVMSG wrote the actual source-address length back into our
-          # msghdr; narrow `sockAddrLen` to it, exactly as the readiness
-          # backends do with their recvfrom's in-out length, so the storage
-          # `complete` hands to `peer` is described by the real length.
-          gSlots[lane].slots[idx].op.sockAddrLen = gMsgs[lane][idx].hdr.msg_namelen
         complete(idx, res)
       expireDeadlines(lane)
       return true
@@ -310,8 +398,10 @@ proc iouringClose() {.nimcall.} =
   for i in 0..<localQueues.len:
     if localQueues[i].params != nil:
       teardown(localQueues[i])
-  for m in gMsgs:
-    if m != nil: dealloc(cast[pointer](m))
+  # Free the blocks no CQE is coming for. In-flight ops are cancelled before
+  # ring teardown, so every entry here is one the kernel already gave back.
+  for i in 0..<gMsgs.len:
+    gMsgs[i].releaseAllMsg()
   gMsgs = @[]
 
 proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
