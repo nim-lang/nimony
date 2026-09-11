@@ -85,7 +85,7 @@ const
 
 when defined(windows):
   type OsFileHandle = Handle ## Win32 file `HANDLE` (pointer-sized)
-  const ClosedFile = INVALID_HANDLE_VALUE
+  let ClosedFile = INVALID_HANDLE_VALUE
 else:
   type OsFileHandle = cint   ## POSIX file descriptor
   const ClosedFile = OsFileHandle(-1)
