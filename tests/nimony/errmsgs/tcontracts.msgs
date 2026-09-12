@@ -1,0 +1,3 @@
+tests/nimony/errmsgs/tcontracts.nim(10, 3) Error: contract violated: 0 < x [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tcontracts.nim(14, 3) Error: contract violated: 0 < x [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tcontracts.nim(18, 5) Error: contract violated: 0 < x [pass --verbose for the Final IR]

@@ -304,7 +304,14 @@ proc bindLoopExit*(tr: var FlowTracker; fs: var FlowState; label: SymId) =
   ## back to. Definite-assignment is monotone, so break-site *inits* ARE joined
   ## (a var initialized before every break is initialized after the loop).
   let key = labelKey(label)
-  if key in tr.exits:
+  if key notin tr.exits:
+    # A `(lab)` with no `jmp` to it: `trFor` emits the exit of every `for` loop
+    # unconditionally, because the iterator's termination test is not generated
+    # until hexer. The label is the lowering's word that this point is reached,
+    # and `fs` already holds the conservative pre-loop state the driver rolled
+    # back to, so the only thing missing is liveness.
+    tr.live = true
+  else:
     let landed = getOrDefault(tr.exits, key)
     jDel(tr, key)
     if tr.live:

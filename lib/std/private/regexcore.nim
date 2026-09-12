@@ -161,7 +161,9 @@ proc mnExpr(r: RegexNode; m, n: int): RegexNode =
 type
   ReCtx = object
     buf: string
-    pos: int
+    pos: Natural   ## `Natural`, so `0 <= pos` is a property of the *type*: the
+                   ## scanner indexes `buf[pos]` all over, and that half of the
+                   ## bounds obligation then needs no guard anywhere.
     flags: set[RegexFlag]
     captures: int ## running count, so each `(` gets its own index
     err: string   ## first error; `""` while everything is fine

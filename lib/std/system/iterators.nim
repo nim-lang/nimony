@@ -1,18 +1,26 @@
-iterator `..<`*[T: Ordinal](a, b: T): T {.inline.} =
+iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (a <= result and result < b).} =
   ## Count up in the range `[a, b)`
+  ##
+  ## The `.ensures` is what makes `for i in 0 ..< s.len: s[i]` provable: an
+  ## inline iterator is not inlined until hexer, long after contract analysis,
+  ## so the range of the loop variable has to be *stated* rather than derived
+  ## (see `forRangeAssumes` in `finalir.nim`).
   var i = a
   while i < b:
     yield i
     inc i
 
-iterator `..`*[T: Ordinal](a, b: T): T {.inline.} =
+iterator `..`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (a <= result and result <= b).} =
   ## Count up in the range `[a, b]`
   var i = a
   while i <= b:
     yield i
     inc i
 
-iterator `>..`*[T: Ordinal](a, b: T): T {.inline.} =
+iterator `>..`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (b <= result and result <= a).} =
   ## Count down in the range `[b, a]`.
   var i = a
   while i >= b:
@@ -20,7 +28,8 @@ iterator `>..`*[T: Ordinal](a, b: T): T {.inline.} =
     if i == b: break
     dec i
 
-iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline.} =
+iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline,
+    ensures: (b <= result and result <= a).} =
   ## Counts from ordinal value `a` down to `b` (inclusive) with the given
   ## step count.
   ##
@@ -36,7 +45,8 @@ iterator countdown*[T, V: Ordinal](a, b: T; step: V = T(1)): T {.inline.} =
         break
       dec(res, step)
 
-iterator countup*[T: Ordinal](a, b: T; step: Positive = 1): T {.inline.} =
+iterator countup*[T: Ordinal](a, b: T; step: Positive = 1): T {.inline,
+    ensures: (a <= result and result <= b).} =
   ## Counts from ordinal value `a` to `b` (inclusive) with the given
   ## step count.
   ##

@@ -53,6 +53,45 @@ expression is evaluated once per iteration of" (rule 2).
 That rule is the whole point. It is what lets a pass that needs a temporary
 *emit a statement* instead of fabricating one inside an expression.
 
+## `assume`
+
+`(assume <cond>)` is a statement the lowering vouches for: it asserts nothing
+and checks nothing, it only tells the contract analysis something it could not
+have worked out on its own. One producer exists today — `forRangeAssumes` in
+`finalir.nim`.
+
+The reason it has to exist: an *inline* iterator is not inlined until hexer's
+`elimForLoops`, long after `contracts_fir` runs, so the Final IR for a `for`
+loop is a `(loop …)` that says nothing about the loop variable — it is not even
+declared there. The iterator's `.ensures` does say something, and it is exactly
+what the body needs:
+
+```nim
+iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (a <= result and result < b).}
+```
+
+`trFor` substitutes the loop variable for `result` and the arguments for the
+parameters, and emits one `(assume …)` per conjunct at the head of the loop
+body (one per conjunct because the fact engine models a single comparison; a
+conjunction as one opaque condition contributes nothing). Without it the most
+ordinary contract in the language — `s[i]` under `for i in 0 ..< s.len` — could
+not be discharged at compile time.
+
+A conjunct that does not fit the grammar the substitution rebuilds is dropped
+rather than approximated, and an `assume` the analysis cannot model contributes
+no fact: an assumption is a statement of what holds, not an obligation, so
+losing one costs precision and nothing else.
+
+Two consequences of the same "not inlined yet" fact are worth knowing:
+
+* Nothing jumps out of that `(loop …)`, so `trLoopFromBody` emits no exit
+  label and **everything after such a loop is unreachable** as far as the Final
+  IR is concerned. Analyses must not report on a dead path: the join that
+  follows one keeps both arms of the next `if`, so contradictory facts hold at
+  once there.
+* The loop variable has no declaration to attach an init-state to.
+
 ## Why `xelim` used to run three times
 
 `xelim` ("eliminate eXpressions") is the pass that establishes rule 1: it

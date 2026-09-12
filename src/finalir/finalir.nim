@@ -67,6 +67,9 @@ type
     thisModuleSuffix: string
     current: CurrentProc
     callFirstArgs: Table[SymId, TokenBuf] ## first argument of a local's init call (for for-loop borrow tracking)
+    callExprs: Table[SymId, TokenBuf] ## whole init call of a local, so a `for`
+                                      ## whose iterator xelim hoisted into a
+                                      ## temp can still be read (see `trFor`)
 
 proc openScope(c: var Context) =
   c.typeCache.openScope()
@@ -236,6 +239,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   # Record first argument of call inits for borrow tracking (used by trFor):
   if n.isTagLit and n.exprKind in CallKinds:
+    var whole = createTokenBuf(16)
+    whole.addSubtree n
+    c.callExprs[symId] = whole
     var tmp = n
     inc tmp # skip call tag
     skip tmp # skip callee
@@ -527,7 +533,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     emitLab dest, exitL, info
 
 proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
-                    forBorrow: TokenBuf) =
+                    forBorrow: TokenBuf; forceExitLabel = false) =
   ## `n` points at the loop *body* (a `(stmts ...)`). Emit the infinite
   ## `(loop (stmts <body> (continue .)))` and, if any `break` targeted it, the
   ## trailing `(lab loopExit)`.
@@ -550,7 +556,7 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
   dest.addParRi() # close `loop`
   let used = c.current.exits[^1].used
   c.current.exits.shrink(c.current.exits.len - 1)
-  if used:
+  if used or forceExitLabel:
     emitLab dest, exitL, info
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -633,6 +639,176 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: NifLineInfo): Toke
 
   addForBorrowDecls result, forStmt.vars, firstArgBuf
 
+proc emitContractOperand(dest: var TokenBuf; n: Cursor; subst: Table[SymId, TokenBuf];
+                         info: NifLineInfo; depth: int): bool =
+  ## Re-emit one side of a contract comparison with the parameters substituted.
+  ## Rebuilt node by node rather than copied: a copy would have to reproduce the
+  ## source tag ids, and those are pool-relative (an id past `TagMask` is even
+  ## stored escaped), so a verbatim token copy across buffers is not a copy at
+  ## all. The grammar accepted here is the one a proposition may use anyway —
+  ## `doc/language.md`: constants, parameters and `result`, plus arithmetic.
+  if depth > 4: return false
+  case n.kind
+  of IntLit:
+    dest.addIntLit(n.intVal, info)
+    return true
+  of UIntLit:
+    dest.addUIntLit(n.uintVal, info)
+    return true
+  of Symbol:
+    if subst.hasKey(n.symId):
+      dest.add subst.getOrQuit(n.symId)
+    else:
+      dest.addSymUse(n.symId, info)
+    return true
+  else: discard
+  case n.exprKind
+  of AddX, SubX:
+    let mark = dest.len
+    let k = n.exprKind
+    var r = n
+    r = sub(r)
+    dest.addParLe(k, info)
+    dest.addSubtree r # the type operand
+    skip r
+    if not emitContractOperand(dest, r, subst, info, depth+1):
+      dest.shrink mark
+      return false
+    skip r
+    if not emitContractOperand(dest, r, subst, info, depth+1):
+      dest.shrink mark
+      return false
+    dest.addParRi()
+    result = true
+  of HconvX, ConvX:
+    var r = n
+    r = sub(r)
+    skip r # the target type
+    result = emitContractOperand(dest, r, subst, info, depth+1)
+  else:
+    result = false
+
+proc emitAssumes(dest: var TokenBuf; cond: Cursor; subst: Table[SymId, TokenBuf];
+                 info: NifLineInfo) =
+  ## One `(assume …)` per conjunct: the fact engine models a single comparison,
+  ## and `a and b` as one opaque condition would contribute nothing. A conjunct
+  ## that does not fit the grammar is simply dropped — an assumption is a
+  ## statement of what holds, not an obligation, so losing one costs precision
+  ## and nothing else.
+  var cond = cond
+  while cond.exprKind == ExprX:
+    # sem wraps the right operand of `and` in an `(expr …)`; the proposition is
+    # its last son.
+    cond = sub(cond)
+    while cond.hasMore and not isLastSon(cond): skip cond
+  if cond.exprKind == AndX:
+    var r = cond
+    r = sub(r)
+    emitAssumes dest, r, subst, info
+    skip r
+    emitAssumes dest, r, subst, info
+    return
+  let k = cond.exprKind
+  if k notin {LeX, LtX, EqX}: return
+  let mark = dest.len
+  dest.addParLe(AssumeV, info)
+  dest.addParLe(k, info)
+  var r = cond
+  r = sub(r)
+  dest.addSubtree r # the type operand
+  skip r
+  if not emitContractOperand(dest, r, subst, info, 0):
+    dest.shrink mark
+    return
+  skip r
+  if not emitContractOperand(dest, r, subst, info, 0):
+    dest.shrink mark
+    return
+  dest.addParRi() # close the comparison
+  dest.addParRi() # close `assume`
+
+proc forRangeAssumes(c: var Context; forStmt: ForStmt; info: NifLineInfo): TokenBuf =
+  ## Turn the iterator's `.ensures` into an assumption about the loop variable.
+  ##
+  ## An *inline* iterator is not inlined until hexer's `elimForLoops`, long after
+  ## contract analysis has run, so the Final IR's `(loop …)` says nothing
+  ## whatsoever about the loop variable — not even where it was declared. The
+  ## iterator's `.ensures` does say something, and it is exactly what the body
+  ## needs: `iterator ..<[T](a, b: T): T {.ensures: (a <= result and result < b).}`
+  ## means every value the loop variable takes satisfies that. Without this the
+  ## most ordinary contract in the language, `s[i]` under `for i in 0 ..< s.len`,
+  ## could not be discharged at compile time.
+  result = createTokenBuf(0)
+
+  # 1. exactly one loop variable, and it must be a plain local
+  var vars = forStmt.vars
+  if vars.substructureKind != UnpackflatU: return
+  vars = sub(vars)
+  if not vars.hasMore or not isLocal(vars.symKind): return
+  let loopVar = asLocal(vars).name.symId
+  var afterFirst = vars
+  skip afterFirst
+  if afterFirst.hasMore: return
+
+  # 2. the iterator call, which xelim may have hoisted into a temp
+  var call = forStmt.iter
+  if call.isTagLit and call.exprKind in {HderefX, HaddrX}: inc call
+  if call.isSymbol:
+    if not c.callExprs.hasKey(call.symId): return
+    call = beginRead(c.callExprs.getOrQuit(call.symId))
+  if not call.isTagLit or call.exprKind notin CallKinds: return
+
+  var fn = call
+  fn = sub(fn)
+  if not fn.isSymbol: return
+  let sym = tryLoadSym(fn.symId)
+  if sym.status != LacksNothing: return
+  if not isRoutine(sym.decl.symKind): return
+  let r = asRoutine(sym.decl)
+  if cursorIsNil(r.pragmas): return
+  let ens = extractPragma(r.pragmas, EnsuresP)
+  if cursorIsNil(ens) or ens.exprKind != ExprX: return
+
+  # 3. `ensures` is stored as `(expr (result :res . . T .) <cond>)`, and the
+  #    wrapper nests: the generic declaration is sem-checked once and its
+  #    instance again, each pass adding a layer. Peel them all, binding every
+  #    `result` declared on the way — only the innermost is named by the
+  #    condition, but binding them all cannot go stale.
+  var resultSyms: seq[SymId] = @[]
+  var cond = ens
+  while cond.exprKind == ExprX:
+    var inner = cond
+    inner = sub(inner)
+    if not inner.hasMore: break
+    if inner.symKind == ResultY:
+      resultSyms.add asLocal(inner).name.symId
+    while inner.hasMore and not isLastSon(inner): skip inner
+    cond = inner
+  if resultSyms.len == 0: return
+
+  # 4. `result` is the loop variable; the parameters are the arguments written
+  #    at the call site.
+  var subst = initTable[SymId, TokenBuf]()
+  for rs in resultSyms:
+    var loopVarBuf = createTokenBuf(2)
+    loopVarBuf.addSymUse(loopVar, info)
+    subst[rs] = loopVarBuf
+  var params = r.params
+  if cursorIsNil(params) or not params.isParamsTag: return
+  params = sub(params)
+  var arg = call
+  arg = sub(arg)
+  skip arg # the callee
+  while params.hasMore and arg.hasMore:
+    let p = takeLocal(params, SkipFinalParRi)
+    var argBuf = createTokenBuf(8)
+    argBuf.addSubtree arg
+    subst[p.name.symId] = argBuf
+    skip arg
+  if params.hasMore: return # a defaulted parameter the call did not pass
+
+  emitAssumes result, cond, subst, info
+
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # After xelim the iterator advance/done-check already sits as a leading
   # `if done: break` inside the body, so a `for` is just a `loop` whose body
@@ -641,10 +817,19 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let forStmt = asForStmt(n) # peek at structure before advancing
   let forStart = n
   n = sub(n)
-  let borrowBuf = extractForBorrow(c, forStmt, info)
+  var borrowBuf = extractForBorrow(c, forStmt, info)
+  borrowBuf.add forRangeAssumes(c, forStmt, info)
   skip n # for loop iterator call
   skip n # for loop variables
-  trLoopFromBody c, dest, n, borrowBuf
+  # The exit label is emitted even when nothing jumps to it. An *inline*
+  # iterator is not inlined until hexer's `elimForLoops`, so at this point no
+  # `break` has been generated for the iterator's own termination test and the
+  # `(loop …)` reads as one nothing ever leaves — which would make everything
+  # after the loop unreachable. That is not a harmless imprecision: a join on a
+  # dead path keeps *both* arms of the next `if`, so `le >= 0` and `le < 0` come
+  # to hold at once and a correct index gets "disproved". A `for` terminates;
+  # the label says so.
+  trLoopFromBody c, dest, n, borrowBuf, forceExitLabel = true
   n = forStart; skip n # close `for`
 
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =

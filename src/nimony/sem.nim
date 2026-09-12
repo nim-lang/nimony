@@ -780,6 +780,14 @@ proc isStringLiteral(n: Cursor): bool =
   # supposing it's a string type
   result = n.isStringLit or n.exprKind == SufX
 
+proc skipRangeBase(t: TypeCursor): TypeCursor =
+  ## `range[lo..hi]` as the ordinal it is carved out of. Its value
+  ## representation *is* the base type's, which is why `isCastableType` below
+  ## looks through it too.
+  result = t
+  if result.typeKind == RangetypeT:
+    inc result # past the tag, to the base type
+
 proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: Item; info: NifLineInfo; beforeExpr: int) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT, AnumT}
@@ -807,9 +815,15 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
       dest.addSubtree arg.n
     else:
       c.buildErr dest, info, "Only string literals can be converted to cstring. Use `toCString` for safe conversion."
-  elif (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
+  elif (skipRangeBase(destBase).typeKind in IntegralTypes and
+        skipRangeBase(srcBase).typeKind in IntegralTypes) or
      (destBase.isSomeStringType and srcBase.isSomeStringType) or
      (destBase.containsGenericParams or srcBase.containsGenericParams):
+    # A `range[lo..hi]` on either side is an ordinary integral conversion:
+    # `uint64(x)` with `x: Natural` converts the ordinal it carries. Converting
+    # *into* a range still owes `lo <= value <= hi`, and that obligation is
+    # discharged at the conversion site by the contract analysis
+    # (`contracts_fir.checkRangeAssign`), not here.
     discard "ok"
     # XXX Add hderef here somehow
     dest.addSubtree arg.n
