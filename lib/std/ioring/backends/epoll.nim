@@ -89,6 +89,18 @@ proc epollPoll(timeoutMs: int): bool {.nimcall.} =
         completeOpen(idx, cast[cstring](buf[i].buf),
                      cint(buf[i].openFlags),
                      Mode(buf[i].openMode))
+      of opSocket:
+        # socket(2) answers at once, like open — there is no readiness to wait
+        # on, and nothing to arm afterwards: the flag's O_NONBLOCK arrives as
+        # its own ring op, not from this poller.
+        completeSocket(idx, buf[i].sockDomain, buf[i].sockType, buf[i].sockProtocol)
+      of opSetSockOpt:
+        completeSetSockOpt(idx, buf[i].fd, buf[i].optLevel, buf[i].optName,
+                           buf[i].optVal, buf[i].optLen)
+      of opBind:
+        completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+      of opSetNonBlocking:
+        completeSetNonBlocking(idx, buf[i].fd)
       else:
         submitForPoll(buf[i].fd, alreadyRegistered)
   var ioEvents {.noinit.}: array[MaxIoEvents, EpollEvent]

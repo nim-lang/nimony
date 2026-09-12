@@ -188,6 +188,69 @@ proc submitOpen*(path: cstring; pathLen: int; openFlags, openMode: int32;
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
+proc submitSocket*(domain, typ, proto: cint; deadline: Deadline;
+                   cont = Continuation(fn: nil, env: nil);
+                   resPtr: nil ptr int = nil): SeqNum =
+  ## Create a socket and complete with its fd, or a negated error. The call is
+  ## made by the backend: on the readiness backends the polling thread performs
+  ## socket(2) exactly like `submitOpen`; on io_uring it is a `IORING_OP_SOCKET`
+  ## SQE and the fd arrives in the CQE. `domain`/`typ`/`proto` are the
+  ## platform's own constants (`AF_*`, `SOCK_*`, `IPPROTO_*`), which is what
+  ## keeps the ring API call-identical on every backend.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSocket, fd: -1, seqnum: result,
+    sockDomain: int32(domain), sockType: int32(typ), sockProtocol: int32(proto),
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitSetSockOpt*(fd: cint; level, optName: cint; optVal: pointer;
+                       optLen: SockLen; deadline: Deadline;
+                       cont = Continuation(fn: nil, env: nil);
+                       resPtr: nil ptr int = nil): SeqNum =
+  ## Set a socket option (setsockopt(2)/Winsock setsockopt) and complete with
+  ## `0` or a negated error. Configuration, not I/O — and on io_uring a
+  ## `IORING_OP_URING_CMD` + `SOCKET_URING_OP_SETSOCKOPT` SQE (kernel 6.7+)
+  ## rather than a syscall. `optVal` is read while the op runs (during
+  ## submission on the readiness backends, at issue by the ring on io_uring),
+  ## so it must stay valid until the op completes — like a `submitRead` buffer;
+  ## the suspended `.passive` caller's frame is parked exactly that long.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSetSockOpt, fd: fd, seqnum: result,
+    optLevel: int32(level), optName: int32(optName), optVal: optVal, optLen: optLen,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
+proc submitBind*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
+                 deadline: Deadline;
+                 cont = Continuation(fn: nil, env: nil);
+                 resPtr: nil ptr int = nil): SeqNum =
+  ## Bind `fd` to `sa` and complete with `0` or the negated errno. The address
+  ## is copied into the op, so it does not need to outlive the call; the
+  ## backend performs bind(2) on its polling thread — one instant syscall,
+  ## nothing to wait on — making a fully passive socket creation possible.
+  result = nextSeqNum()
+  var op = OpContext(kind: opBind, fd: fd, seqnum: result,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  op.sockAddr = sa
+  op.sockAddrLen = saLen
+  enqueueOp(op)
+
+proc submitSetNonBlocking*(fd: cint; deadline: Deadline;
+                           cont = Continuation(fn: nil, env: nil);
+                           resPtr: nil ptr int = nil): SeqNum =
+  ## Make `fd` non-blocking (fcntl(F_SETFL, ... | O_NONBLOCK) / ioctlsocket
+  ## FIONBIO) and complete with `0` or a negated error. The non-blocking half
+  ## of socket creation, as its own op: the readiness backends set the flags on
+  ## the polling thread at issue time (a poller cannot watch for "not
+  ## blocking"); the io_uring backend needs no syscall for it at all — its
+  ## ring-created sockets are non-blocking from birth (`SOCK_NONBLOCK` in the
+  ## `IORING_OP_SOCKET` type, accepted sockets inherit it), so the op completes
+  ## `0` on arrival there.
+  result = nextSeqNum()
+  var op = OpContext(kind: opSetNonBlocking, fd: fd, seqnum: result,
+    cont: cont, res: cast[int](resPtr), deadline: deadline)
+  enqueueOp(op)
+
 proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil;
@@ -447,24 +510,6 @@ when defined(posix):
     setNonBlocking(fd)
     result = fd
 
-  proc createUdp*(port: uint16): cint =
-    ## A non-blocking UDP socket bound to the wildcard address on `port`;
-    ## `0` asks the kernel to pick one (`boundPort` reports it), mirroring
-    ## `listenTcp` but for datagrams — there is no listen, so what parks on
-    ## the ring is the send/recv, not a connection queue.
-    let fd = socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-    assert fd >= 0, "socket() failed"
-    var yes: cint = 1
-    discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
-    var addr4 = default(Sockaddr_in)
-    addr4.sin_family = TSa_Family(AF_INET)
-    addr4.sin_port = htons(port)
-    addr4.sin_addr.s_addr = INADDR_ANY
-    assert bindAddr(fd, cast[ptr SockAddr](addr addr4),
-                    SockLen(sizeof(addr4))) == 0, "bind failed"
-    setNonBlocking(fd)
-    result = fd
-
 when defined(windows):
   # Winsock socket surface — the ring's fd is a SOCKET narrowed to `cint`.
   #
@@ -557,21 +602,6 @@ when defined(windows):
     addr4.sin_addr.s_addr = INADDR_ANY
     assert wsBind(s, addr addr4, cint(sizeof(addr4))) == 0, "bind failed"
     assert wsListen(s, backlog.cint) == 0, "listen failed"
-    result = cint(cast[uint32](s))
-    setNonBlocking(result)
-
-  proc createUdp*(port: uint16): cint =
-    ## A non-blocking UDP socket bound to the wildcard address on `port`;
-    ## `0` asks the kernel to pick one (`boundPort` reports it). Mirror of
-    ## `listenTcp` for datagrams: socket(), bind, non-blocking, no listen.
-    let s = wsSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP)
-    assert s != InvalidSocket, "socket() failed"
-    assert s <= SocketHandle(high(cint)), "SOCKET handle exceeds the ring's cint fd space"
-    var addr4 = default(Sockaddr_in)
-    addr4.sin_family = cushort(AF_INET)
-    addr4.sin_port = htons(port)
-    addr4.sin_addr.s_addr = INADDR_ANY
-    assert wsBind(s, addr addr4, cint(sizeof(addr4))) == 0, "bind failed"
     result = cint(cast[uint32](s))
     setNonBlocking(result)
 

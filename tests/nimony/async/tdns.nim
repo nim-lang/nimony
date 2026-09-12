@@ -10,10 +10,11 @@
 ## thread and then closes, the client chain asks it from another, and each
 ## appends to its own log so the golden is deterministic after both join.
 import std/[syncio]
-import std/[socket, dns, threadpool, atomics, assertions]
+import std/[socket, dns, ioring, threadpool, atomics, assertions]
 
 var gServer: DnsServer
 var thePort: uint16
+var serverReady: int
 var serverDone: int
 var clientDone: int
 var serverLog = ""
@@ -30,6 +31,14 @@ const QueryCount = 4
 proc server() {.passive.} =
   var r = DnsRequest()
   try:
+    ## Socket creation is passive now (`openUdp`/`newDnsServer` build through
+    ## ring ops), so the server binds its own socket here, publishes the port
+    ## for the client, and only then takes queries. The client waits for
+    ## `serverReady` before its first send, so the port is always set.
+    gServer = newDnsServer(0)
+    thePort = boundPort(gServer)
+    echo "listening"
+    atomicStore(serverReady, 1, moRelease)
     for i in 0 ..< QueryCount:
       if not gServer.next(r, afterMs(10_000)): break
       for q in r.questions:
@@ -58,6 +67,7 @@ proc server() {.passive.} =
 proc client() {.passive.} =
   var verified = 0
   try:
+    awaitFlagPassive(serverReady)
     ## The `/etc/hosts` half of the resolver is the only line that reads the
     ## machine; `contributor`-less CI images still map localhost to 127.0.0.1.
     var r = initResolver()
@@ -175,9 +185,16 @@ proc awaitFlag(flag: var int) =
     if millisUntil(monoNow(), start) > 30_000: quit "timed out"
   assert atomicLoad(flag, moAcquire) == 1
 
-gServer = newDnsServer(0)
-thePort = boundPort(gServer)
-echo "listening"
+proc awaitFlagPassive(flag: var int) {.passive.} =
+  ## The ring-friendly twin of `awaitFlag`: parks on a 1ms timeout between
+  ## checks instead of busy-spinning, so a lane keeps polling and any task
+  ## sharing this worker still gets scheduled.
+  while atomicLoad(flag, moAcquire) == 0:
+    var res = 0
+    let c = delay()
+    discard submitTimeout(afterMs(1), c, addr res)
+    suspend()
+
 submit(delay(server()), 0)
 submit(delay(client()), 1)
 awaitFlag(serverDone)

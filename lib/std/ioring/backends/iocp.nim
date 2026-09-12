@@ -178,6 +178,11 @@ when defined(windows):
   proc wsGetsockopt(s: SocketHandle; level, optname: cint; optval: pointer;
                     optlen: ptr cint): cint {.
     stdcall, importc: "getsockopt", dynlib: "ws2_32.dll".}
+  proc wsSocket(af, typ, protocol: cint): SocketHandle {.
+    stdcall, importc: "socket", dynlib: "ws2_32.dll".}
+  proc wsIoctlsocket(s: SocketHandle; cmd: clong; argp: ptr culong): cint {.
+    stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
+  const FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
   proc wsClosesocket(s: SocketHandle): cint {.
     stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
   proc wsGetpeername(s: SocketHandle; name: pointer; namelen: ptr cint): cint {.
@@ -340,6 +345,44 @@ when defined(windows):
       # with the CRT directly). Refusing beats falling into the socket issue
       # path below and abusing a Winsock handle.
       complete(slotIdx, -1)
+      return
+    of opSocket:
+      # socket(2) is one instant call — never an overlapped op — so issue it
+      # here and complete with the fd (or the negated Winsock code). The flag
+      # just created is not yet associated with a port; the first real op on
+      # it claims a lane.
+      let s = wsSocket(cint(op.sockDomain), cint(op.sockType), cint(op.sockProtocol))
+      if s == InvalidSocket:
+        complete(slotIdx, -int(wsaGetLastError()))
+      elif s > SocketHandle(high(cint)):
+        discard wsClosesocket(s)   # the ring's cint fd space cannot hold it
+        complete(slotIdx, -1)
+      else:
+        complete(slotIdx, int(cast[uint32](s)))
+      return
+    of opSetSockOpt:
+      # Configuration, not I/O: no OVERLAPPED, answered in place.
+      let r = wsSetsockopt(socketOf(op.fd), cint(op.optLevel), cint(op.optName),
+                           op.optVal, cint(op.optLen))
+      if r == SocketError:
+        complete(slotIdx, -int(wsaGetLastError()))
+      else:
+        complete(slotIdx, 0)
+      return
+    of opBind:
+      let r = wsBind(socketOf(op.fd), addr op.sockAddr, cint(op.sockAddrLen))
+      if r == SocketError:
+        complete(slotIdx, -int(wsaGetLastError()))
+      else:
+        complete(slotIdx, 0)
+      return
+    of opSetNonBlocking:
+      var one: culong = 1
+      let r = wsIoctlsocket(socketOf(op.fd), FIONBIO, addr one)
+      if r == SocketError:
+        complete(slotIdx, -int(wsaGetLastError()))
+      else:
+        complete(slotIdx, 0)
       return
     else:
       discard

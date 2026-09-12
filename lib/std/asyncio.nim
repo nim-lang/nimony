@@ -246,8 +246,9 @@ else:
 
   proc seekImpl(fd: OsFileHandle; off: Off; whence: cint): Off {.raises.} =
     ## `lseek` is a positioning syscall with nothing for the ring to park on —
-    ## the same reason `listenTcp`/`createUdp` bind and listen synchronously —
-    ## so it runs here rather than as a command.
+    ## the same reason `listenTcp` binds synchronously (socket creation had the
+    ## same shape until `createUdp`/`openUdp` grew ring ops) — so it runs here
+    ## rather than as a command.
     result = pcall(posixLseek(fd, off, whence))
     if result < 0: raise toErr(int(result))
 

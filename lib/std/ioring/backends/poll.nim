@@ -39,7 +39,7 @@ proc armEventsForFd*(fd: cint): IoEvents =
     of opConnect:
       # A non-blocking connect reports its outcome as writability.
       result.incl evWrite
-    of opNop, opTimeout, opOpen:
+    of opNop, opTimeout, opOpen, opSocket, opSetSockOpt, opBind, opSetNonBlocking:
       discard
 
 const ArmFailed* = -1
@@ -101,7 +101,7 @@ proc transferIfRegularFile(fd: cint): bool {.inline.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, EINPROGRESS, pcall, Mode, Stat, fstat, S_ISREG
+  from std/posix/posix import SockLen, FileHandle, EINPROGRESS, pcall, Mode, Stat, fstat, S_ISREG
 
   # No errno anywhere below. Every call the ring makes goes through
   # `posix.pcall`, which answers the raw Linux convention — the result, or
@@ -115,6 +115,16 @@ when defined(posix):
   proc getsockopt(s: cint; level, optname: cint; val: pointer;
                   vlen: ptr SockLen): cint {.importc: "getsockopt".}
   proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "connect".}
+  proc posixSocket(domain, typ, proto: cint): cint {.importc: "socket".}
+  proc posixSetsockopt(s: cint; level, optname: cint; val: nil pointer;
+                       vlen: SockLen): cint {.importc: "setsockopt".}
+  proc posixBind(s: cint; name: pointer; namelen: SockLen): cint {.importc: "bind".}
+  proc posixFcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
+    ## FIXED arity with a defaulted third argument, not `varargs`: the same
+    ## shape and the same reason as iouring.nim's `fcntl` — nimony collapses
+    ## same-named importc stubs, so a varargs fcntl would mono-morph into
+    ## arities that fight over one register-signature stub. `F_GETFL` ignores
+    ## the third argument, so passing `0` costs nothing.
   proc posixRecvfrom(s: cint; buf: nil pointer; count: int; flags: cint;
                      `addr`: pointer; addrlen: ptr SockLen): int {.importc: "recvfrom".}
   proc posixSendto(s: cint; buf: nil pointer; count: int; flags: cint;
@@ -133,6 +143,48 @@ when defined(posix):
     ## never by the caller, who would block on a filesystem-backed open. The
     ## fd (or `-errno`) is completed to the parked caller.
     complete(idx, int pcall(posixOpen(path, flags, mode)))
+
+  const
+    F_GETFL = 3.cint
+    F_SETFL = 4.cint
+    O_NONBLOCK = (when defined(linux): 0x0800.cint else: 0x0004.cint)
+
+  proc completeSocket*(idx: int; domain, typ, proto: int32) =
+    ## The backend half of `submitSocket`: socket(2) is one syscall with no
+    ## readiness to wait on, so — exactly like `completeOpen` — the polling
+    ## thread performs it and completes with the fd (or `-errno`). The flag
+    ## just created has nothing to arm: its O_NONBLOCK comes from a ring op,
+    ## not from waiting on it.
+    complete(idx, int pcall(posixSocket(cint(domain), cint(typ), cint(proto))))
+
+  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: int32;
+                           optVal: nil pointer; optLen: SockLen) =
+    ## The backend half of `submitSetSockOpt`: setsockopt(2) answers
+    ## immediately (it is configuration, not I/O), so the polling thread makes
+    ## the call and completes with `0` or `-errno`. The option value is read
+    ## during this very call, long before the caller's frame could go away.
+    complete(idx, int pcall(posixSetsockopt(fd, cint(level), cint(optName),
+                                            optVal, optLen)))
+
+  proc completeBind*(idx: int; fd: FileHandle; sa: pointer; saLen: SockLen) =
+    ## The backend half of `submitBind`: bind(2) is one syscall the kernel
+    ## answers at once — nothing to wait on, so the polling thread performs it
+    ## and completes with `0` or `-errno`. The kernel copies the address out
+    ## of `sa` during the call; it is not kept.
+    complete(idx, int pcall(posixBind(fd, sa, saLen)))
+
+  proc completeSetNonBlocking*(idx: int; fd: FileHandle) =
+    ## The backend half of `submitSetNonBlocking`: fcntl(F_SETFL, … or
+    ## O_NONBLOCK), two instant syscalls made here on the polling thread — a
+    ## poller cannot watch for "not blocking", so this is done at issue, not
+    ## awaited. Completes with `0` or `-errno`.
+    let flags = pcall(posixFcntl(fd, F_GETFL))
+    if flags >= 0:
+      # `pcall` answers in `clong`; the flags are a small bit-mask, so the
+      # cint narrowing is exact.
+      complete(idx, int pcall(posixFcntl(fd, F_SETFL, cint(flags) or O_NONBLOCK)))
+    else:
+      complete(idx, int(flags))
 
   proc isRegularFileFd(fd: cint): bool =
     ## True when `fd` names a regular file. Nothing below gets to refuse a
@@ -256,7 +308,7 @@ when defined(posix):
             complete(j, -int(err))
           else:
             complete(j, 0)
-      of opNop, opTimeout, opOpen:
+      of opNop, opTimeout, opOpen, opSocket, opSetSockOpt, opBind, opSetNonBlocking:
         discard
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
@@ -309,6 +361,58 @@ else:
     stdcall, importc: "getsockopt", dynlib: "ws2_32.dll".}
   proc wsaGetLastError(): cint {.
     stdcall, importc: "WSAGetLastError", dynlib: "ws2_32.dll".}
+  proc wsSocket(af, typ, protocol: cint): SocketHandle {.
+    stdcall, importc: "socket", dynlib: "ws2_32.dll".}
+  proc wsSetsockopt(s: SocketHandle; level, optname: cint; optval: pointer;
+                    optlen: cint): cint {.
+    stdcall, importc: "setsockopt", dynlib: "ws2_32.dll".}
+  proc wsBindS(s: SocketHandle; name: pointer; namelen: cint): cint {.
+    stdcall, importc: "bind", dynlib: "ws2_32.dll".}
+  proc wsIoctlsocket(s: SocketHandle; cmd: clong; argp: ptr culong): cint {.
+    stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
+  const FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
+
+  proc completeSocket*(idx: int; domain, typ, proto: int32) =
+    ## Windows twin of the POSIX `completeSocket`: one instant syscall made on
+    ## the polling thread; completes with the fd (or the negated Winsock code).
+    let s = wsSocket(cint(domain), cint(typ), cint(proto))
+    if s == InvalidSocket:
+      complete(idx, -int(wsaGetLastError()))
+    elif s > SocketHandle(high(cint)):
+      discard wsClosesocket(s)      # the ring cannot hold the handle's cint
+      complete(idx, -1)
+    else:
+      complete(idx, int(cast[uint32](s)))
+
+  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: int32;
+                           optVal: nil pointer; optLen: SockLen) =
+    ## Windows twin of the POSIX `completeSetSockOpt`: one instant Winsock
+    ## call; completes with `0` or the negated Winsock code.
+    let r = wsSetsockopt(socketOf(fd), cint(level), cint(optName),
+                         optVal, cint(optLen))
+    if r == SocketError:
+      complete(idx, -int(wsaGetLastError()))
+    else:
+      complete(idx, 0)
+
+  proc completeBind*(idx: int; fd: FileHandle; sa: pointer; saLen: SockLen) =
+    ## Windows twin of the POSIX `completeBind`: one instant Winsock call;
+    ## completes with `0` or the negated Winsock code.
+    let r = wsBindS(socketOf(fd), sa, cint(saLen))
+    if r == SocketError:
+      complete(idx, -int(wsaGetLastError()))
+    else:
+      complete(idx, 0)
+
+  proc completeSetNonBlocking*(idx: int; fd: FileHandle) =
+    ## Windows twin of the POSIX `completeSetNonBlocking`: ioctlsocket(FIONBIO);
+    ## completes with `0` or the negated Winsock code.
+    var one: culong = 1
+    let r = wsIoctlsocket(socketOf(fd), FIONBIO, addr one)
+    if r == SocketError:
+      complete(idx, -int(wsaGetLastError()))
+    else:
+      complete(idx, 0)
 
   proc socketOf(fd: cint): SocketHandle {.inline.} =
     ## The ring narrows a SOCKET to `cint` (ioring.nim, Windows arm); widen it
@@ -422,7 +526,7 @@ else:
             complete(j, -int(err))
           else:
             complete(j, 0)
-      of opNop, opTimeout, opOpen:
+      of opNop, opTimeout, opOpen, opSocket, opSetSockOpt, opBind, opSetNonBlocking:
         discard
     if gSlots[lane].hasPendingForFd(fd):
       if not reArmEvent(fd, armEventsForFd(fd), true):

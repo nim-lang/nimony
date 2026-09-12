@@ -8,6 +8,31 @@
 # thread that calls poll(), which is always a worker thread (or whomever
 # calls waitCompletions()). That avoids the "submitted on main, never
 # polled" hang.
+#
+# ------------------------------------------------- the one syscall policy ---
+#
+# An io_uring backend must not make its own syscalls: the ring IS the kernel
+# for this process's I/O, and every operation here is expressed as an SQE. To
+# that end, before adding a ring op a future agent MUST first check whether
+# io_uring already has the operation (`OP_*` in lib/std/posix/io_uring.nim,
+# plus `SOCKET_URING_OP_*` commands of `IORING_OP_URING_CMD`), verified
+# against the kernel's own io_uring sources (`io_uring/net.c`,
+# `io_uring/uring_cmd.c`, `include/uapi/linux/io_uring.h`) and its kernel
+# floors (socket op: 5.19, socket uring-cmds: 6.7, see each builder's doc).
+# Only when a requested operation genuinely has NO io_uring form — as
+# bind(2) has on every released kernel, `IORING_OP_BIND` being unreleased —
+# and the syscall cannot be avoided does this backend fall back to one, and
+# only with the user's explicit allowance. Right now the ledger is:
+#
+#   socket(2)        -> IORING_OP_SOCKET, SOCK_NONBLOCK in the type (5.19+)
+#   setsockopt(2)    -> IORING_OP_URING_CMD + SOCKET_URING_OP_SETSOCKOPT (6.7+)
+#   bind(2)          -> bind(2) syscall, the ONE allowed syscall (the user
+#                       explicitly allowed it; there is no ring form on
+#                       released kernels)
+#   fcntl O_NONBLOCK -> no syscall: the ring fds are non-blocking by construction
+#
+# Every kernel >= the io_uring baseline satisfies the floors here (5.19/6.7);
+# older kernels instead get per-op -EOPNOTSUPP, never a prohibited syscall.
 
 import std/[assertions, atomics, posix/posix, tables, ticketlocks, threadpool]
 import std/syncio   # quit
@@ -15,6 +40,7 @@ import ../../posix/io_uring
 import ../core/types
 import ../core/slots
 import ../core/backend
+from ./poll import completeBind
 from ./epoll import initEpollBackendRelays
 
 const
@@ -26,6 +52,12 @@ const
     ## touched by it.
   AtFdCwd = cint(-100)  ## resolve an AT_* path against the cwd; `posix` only
     ## exposes its own `AT_FDCWD` under `linuxA64Raw`, so name it here.
+  SockNonBlock = 0x800
+    ## `SOCK_NONBLOCK` — the Linux socket-type word's flag bit. io_uring is
+    ## Linux-only, so the high bit is folded into the type of every
+    ## `IORING_OP_SOCKET`, which is where `io_socket_prep` reads the flags
+    ## from; the ring's sockets are non-blocking from birth and
+    ## `opSetNonBlocking` never touches a syscall here.
 
 proc tagFor(idx: int; gen: uint32): uint64 {.inline.} =
   ## A CQE's `user_data`: the slot index, and the generation of the op that was
@@ -203,6 +235,30 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     # due and bounds the `submit(waitNr)` below, so letting the kernel hold a
     # second copy of the same deadline would only be a second thing to cancel.
     discard sqe.nop()
+  of opSocket:
+    # IORING_OP_SOCKET: the ring creates the fd and its CQE carries it back —
+    # no socket(2) syscall anywhere. Non-blocking is folded into the type's
+    # high bits (SOCK_NONBLOCK), which is this backend's answer to
+    # `opSetNonBlocking`: the ring's sockets are non-blocking from birth, so
+    # that op only completes 0 below. The flags the kernel accepts are exactly
+    # SOCK_NONBLOCK/SOCK_CLOEXEC (anything else is EINVAL); SOCK_CLOEXEC is
+    # deliberately not set, matching the plain socket(2) the other backends
+    # make.
+    discard sqe.socket(op.sockDomain, op.sockType, op.sockProtocol, SockNonBlock)
+  of opSetSockOpt:
+    # setsockopt(2) as IORING_OP_URING_CMD + SOCKET_URING_OP_SETSOCKOPT
+    # (kernel 6.7+, the only released across the board): level/optname/optlen/
+    # optval travel in the SQE's socket-cmd slots and the ring performs the
+    # option update. `optval` must stay valid until the op completes — the
+    # same contract as a submitRead buffer; the passive caller's frame is
+    # parked exactly that long.
+    discard sqe.cmdSockSetsockopt(op.fd, op.optLevel, op.optName,
+                                  cast[pointer](op.optVal), int32(op.optLen))
+  of opBind, opSetNonBlocking:
+    # Unreachable: the two remaining config ops are completed in `iouringPoll`
+    # before an SQE is taken (bind has no ring form; non-blocking is already a
+    # property of every ring-created socket, see there).
+    discard
 
 proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   # Drain the shared deferred queue: for every pending slot, fill a fresh
@@ -222,6 +278,28 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # No SQE, but it still needs a slot so the heap can complete it.
         let idx = gSlots[lane].allocSlot(buf[i])
         armDeadline(lane, idx)
+        continue
+      if buf[i].kind in {opBind, opSetNonBlocking}:
+        # The two config ops that have NO ring form, completed here before any
+        # SQE is taken. bind(2) is this backend's ONE allowed syscall (there is
+        # no bind operation on any released kernel — IORING_OP_BIND is
+        # unreleased — and the user explicitly allowed it: it answers in
+        # microseconds and there is nothing for the ring to wait on), performed
+        # on the polling thread exactly as the readiness backends perform it.
+        # opSetNonBlocking makes no syscall at all: every ring-created socket
+        # (IORING_OP_SOCKET with SOCK_NONBLOCK, its accepted/connected
+        # siblings) is non-blocking by construction, so the op succeeds the
+        # moment it reaches a poll. socket(2) and setsockopt(2), by contrast,
+        # both have ring forms and go through SQEs below.
+        let idx = gSlots[lane].allocSlot(buf[i])
+        armDeadline(lane, idx)
+        case buf[i].kind
+        of opBind:
+          completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+        of opSetNonBlocking:
+          complete(idx, 0)
+        else:
+          discard
         continue
       var sqe: nil ptr Sqe
       try:

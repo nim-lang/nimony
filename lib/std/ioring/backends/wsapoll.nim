@@ -88,6 +88,17 @@ when defined(windows):
           # them with the CRT directly). Refusing beats parking the slot until
           # its deadline if one ever does.
           complete(idx, -1)
+        of opSocket:
+          # One instant Winsock call each — the same "issue at once, nothing
+          # to arm" shape as `opOpen`, served by the shared poll helpers.
+          completeSocket(idx, buf[i].sockDomain, buf[i].sockType, buf[i].sockProtocol)
+        of opSetSockOpt:
+          completeSetSockOpt(idx, buf[i].fd, buf[i].optLevel, buf[i].optName,
+                             buf[i].optVal, buf[i].optLen)
+        of opBind:
+          completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+        of opSetNonBlocking:
+          completeSetNonBlocking(idx, buf[i].fd)
         else:
           discard
     # Build this lane's set from its arena. Collect before dispatching:

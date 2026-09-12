@@ -637,6 +637,14 @@ proc `=wasMoved`*(s: var UdpSocket) {.nodestroy, inline.} =
   ## somewhere else entirely.
   s.fd = -1
 
+proc `=dup`*(s: UdpSocket): UdpSocket =
+  ## Move, not copy: a return through the ring's continuation ABI hands the
+  ## socket to its new owner and empties the old slot (`=wasMoved`), so no
+  ## second owner closes the descriptor. `=copy` stays an error; this is what
+  ## CPS-composed code uses in its place (see `Socket`'s `=dup`).
+  result = UdpSocket(fd: s.fd, deadline: s.deadline, peer: s.peer)
+  `=wasMoved`(cast[ptr UdpSocket](unsafeAddr s)[])
+
 proc `=copy`*(dest: var UdpSocket; src: UdpSocket) {.error.}
   ## Move-only: two sockets over one descriptor means two owners, and whichever
   ## is destroyed first closes it under the other.
@@ -647,11 +655,80 @@ proc initUdpSocket(fd: cint; deadline: Deadline): UdpSocket =
 proc budget*(s: UdpSocket; dl: Deadline): Deadline {.inline.} =
   earlier(s.deadline, dl)
 
-proc openUdp*(port: uint16; deadline = never): UdpSocket =
+proc wildcardAddr(sa: var Sockaddr_storage; saLen: var SockLen; port: uint16) =
+  ## Fill `sa` with an IPv4 wildcard (INADDR_ANY) `port`, ready for
+  ## `submitBind`. Written as raw bytes — the same layout `addrFromHost`
+  ## produces, with the address all zeros — so no platform socket type has to
+  ## be imported: two bytes of family (with the BSDs' leading `sa_len`), two
+  ## bytes of network-order port, four zero bytes of address, zero padding.
+  sa = default(Sockaddr_storage)
+  let raw = cast[ptr UncheckedArray[uint8]](addr sa)
+  when defined(linux):
+    raw[0] = 2'u8   # AF_INET low byte
+    raw[1] = 0       # AF_INET high byte
+  else:
+    raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
+    raw[1] = 2'u8    # AF_INET
+  raw[2] = byte(port shr 8)
+  raw[3] = byte(port and 0xFF)
+  saLen = SockLen(16)
+
+proc createSocket*(domain, typ, proto: cint; dl = never): cint {.passive, raises.} =
+  ## A raw non-blocking socket of `domain`/`typ`/`proto`, created entirely
+  ## through the ring: socket(2) and the non-blocking flag are ops the polling
+  ## thread performs, so this proc blocks on nothing and makes no syscall of
+  ## its own. In that it is the passive sibling of `ioring.listenTcp` — which
+  ## still binds synchronously, because a pre-assembled listener has nothing
+  ## between the syscalls to expose. Delivers the fd, or raises `toErr`'s
+  ## `ErrorCode` when the socket or the flag cannot be made.
+  var res = 0
+  var c = delay()
+  discard submitSocket(domain, typ, proto, dl, c, addr res)
+  suspend()
+  if res < 0: raise toErr(res)
+  result = cint(res)
+  res = 0
+  c = delay()
+  discard submitSetNonBlocking(result, dl, c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
+
+proc createUdp*(port: uint16; dl = never): cint {.passive, raises.} =
+  ## A non-blocking UDP socket bound to the wildcard address on `port`; `0`
+  ## asks the kernel to pick one (`boundPort` reports it), the passive sibling
+  ## of `ioring.listenTcp` — and, like `createSocket`, built only from ring
+  ## ops: nothing here blocks and nothing is this proc's own syscall.
+  result = createSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, dl)
+  when not defined(windows):
+    # SO_REUSEADDR stays a POSIX-only step: on Winsock the option lets a second
+    # bind hijack a live socket, so the POSIX "restart without TIME_WAIT"
+    # semantics are not what it means there (see `listenTcp`).
+    var yes: cint = 1
+    var reuseRes = 0
+    var reuseC = delay()
+    discard submitSetSockOpt(result, SOL_SOCKET, SO_REUSEADDR, addr yes,
+                             SockLen(sizeof(yes)), dl, reuseC, addr reuseRes)
+    suspend()
+    if reuseRes != 0: raise toErr(reuseRes)
+  var sa = default(Sockaddr_storage)
+  var saLen = SockLen(0)
+  wildcardAddr(sa, saLen, port)
+  var res = 0
+  var c = delay()
+  discard submitBind(result, sa, saLen, dl, c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
+
+proc openUdp*(port: uint16; deadline = never): UdpSocket {.passive, raises.} =
   ## A bound, non-blocking UDP socket on `port`; `0` asks the kernel to pick
-  ## one, reported by `boundPort`. Binding is synchronous — nothing for the
-  ## ring to wait on — so only the datagram exchange parks.
-  initUdpSocket(createUdp(port), deadline)
+  ## one, reported by `boundPort`. The whole creation is ring ops — the
+  ## socket, its flag, its bind — so call this from a `.passive` proc (a task
+  ## under `submit`), never from a plain thread's top level: the suspends that
+  ## await the polling thread's instant completions need a continuation to
+  ## resume into. Only the datagram exchange parks beyond that.
+  var fd: cint = createUdp(port, deadline)
+  result = UdpSocket(fd: fd, deadline: deadline,
+                     peer: PeerAddr(raw: Sockaddr_storage()))
 
 proc boundPort*(s: UdpSocket): uint16 {.inline.} = boundPort(s.fd)
 

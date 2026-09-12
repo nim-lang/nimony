@@ -516,9 +516,23 @@ type
   DnsServer* = object
     sock: UdpSocket
 
-proc newDnsServer*(port: uint16; deadline = never): DnsServer =
+proc `=dup`*(s: DnsServer): DnsServer =
+  ## Move, not copy, like the socket it wraps: `newDnsServer` returns through
+  ## the ring's continuation ABI, which hands the value to `result` via this
+  ## hook rather than `=copy` (still an error). Field-wise so the inner socket
+  ## moves too, and the old slot is emptied so no second owner closes it.
+  result = default(DnsServer)
+  result.sock.fd = s.sock.fd
+  result.sock.deadline = s.sock.deadline
+  result.sock.peer = s.sock.peer
+  let sm = cast[ptr DnsServer](unsafeAddr s)
+  `=wasMoved`(sm[].sock)
+
+proc newDnsServer*(port: uint16; deadline = never): DnsServer {.passive, raises.} =
   ## A bound, unconnected UDP socket able to answer questions. `port` of 0
   ## asks the kernel to pick one (`boundPort` unless the caller passes one).
+  ## Passive, like `openUdp` it builds on: the socket, its flag and its bind
+  ## go through the ring, so call this from a task, not a thread's top level.
   result = default(DnsServer)
   result.sock = openUdp(port, deadline)
 
