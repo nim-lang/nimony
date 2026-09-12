@@ -69,7 +69,8 @@ function: join the strings of same-named entries with `|`.
 | `x ^* sep` `x ^+ sep` | separated repetition (as in `doc/grammar.txt`) |
 | `IND{=}` `IND{>}` `IND{<}` `NO_IND` | zero-width indentation guards |
 | `indented( ... )` | `withInd`: assert `IND{>}`, rebind `currInd`, restore |
-| `&name` `!name` | semantic predicate; `name` is a proc `(p, tok) -> bool` |
+| `&name` `!name` | semantic predicate; `name` is a proc `(p) -> bool` |
+| `&name(args)` | ditto, with the rule's parameters passed along: `&inTypeDesc(mode)` is `inTypeDesc(p, mode)` |
 | `&( a \| b )` | FIRST-set lookahead, consumes nothing |
 | `tag[ ... ]` | emit `(tag …)` around what the group produces |
 | `^tag[ ... ]` | ditto, anchored at the enclosing repetition's subject |
@@ -271,8 +272,11 @@ declared predicate, never by silence.
 ## Action blocks
 
 A bare body runs after the alternative has matched, with `m` (the alternative's
-mark) and the output buffer `b` in scope. `enter:`/`leave:` wrap the match —
-both are valid Nim, `enter: stmt` being an ordinary call with a colon block.
+mark) and `p` in scope; the output buffer is reached through `p`, which is what
+every other generated call uses. `enter:`/`leave:` wrap the match — both are
+valid Nim, `enter: stmt` being an ordinary call with a colon block. `leave:`
+runs after the items and before the tag's `wrap`, so it brackets the *match*;
+the bare body runs last, once the node it inspects exists.
 
 ```nim
   pragma "'{.' optInd (exprColonEqExpr ','?)* optPar ('.}' | '}')":
@@ -280,9 +284,16 @@ both are valid Nim, `enter: stmt` being an ordinary call with a colon block.
     leave: dec p.inPragma
 
   namedParams "call[ '(' (exprColonEqExpr ','?)* ')' ]":
-    if b.arity(m) == 2 and b.secondChild(m).isKv:
-      b.setTag m, OconstrL          # nkCall -> nkObjConstr, post hoc
+    if p.arity(m) == 2 and p.secondChild(m).isKv:
+      p.setTag m, OconstrL          # nkCall -> nkObjConstr, post hoc
 ```
+
+The state a predicate reads is what these are for. `parser.nim` threads
+`commandParam`'s `isFirstParam` as a `var bool` through `commandExpr`'s loop;
+there is no notation for a loop-local variable, so it lives on the parser —
+`primarySuffix`'s `cmd` alternative sets it on `enter:` and every alternative
+of `commandParam` clears it on `leave:`, which is what `commandParam` does on
+all three of its paths.
 
 "Parse, then inspect the buffer at `m`, then retag" replaces most of
 `parser.nim`'s mid-rule fiddling, which is why there is no notation for
@@ -369,7 +380,14 @@ indefinitely.
   bookkeeping guards against, and it disappears;
 * an unguarded alternative that is not last among overlapping ones;
 * a rule that is declared and never used, or used and never declared (what
-  `grammar_nanny` does today).
+  `grammar_nanny` does today);
+* a call that does not pass a parameterized rule's arguments. This is not
+  pedantry: `simplePrimary "identOrLiteral primarySuffix*"` read perfectly
+  well and generated a `pPrimarySuffix` call with `mode` silently dropped, so
+  every `mode`-dependent decision in the rule was made on nothing. The check
+  found sixteen such calls in a grammar that reported zero conflicts;
+* a rule parameter without a type, which emitted
+  `proc pPrimary*(p: var Parser; mode)` — not Nim.
 
 ## Generated output
 
@@ -517,8 +535,13 @@ grammar does not describe the parser. Each is marked `# GRAMMAR.TXT:` in
 
 ### Known gaps in the checker
 
-* **Arity is not checked.** `primary` is called both bare and as
-  `primary(mode)`; rule parameters need defaults, as Nim's do.
+* **`identOrLiteral` still decides `'('` without `mode`.** `parser.nim` picks
+  `exprColonEqExprList(nkPar)` over `parsePar` when `mode in {pmTypeDesc,
+  pmTypeDef}`, which is `par` vs `tupleConstr` here. The grammar lists both
+  and lets the generator left-factor them, so the discriminator is missing
+  rather than wrong — the productions are right, the choice between them is
+  not made. It needs `identOrLiteral(mode)` and an `&inTypeDesc(mode)`, the
+  same shape `commandParam` now has.
 * **FOLLOW is wide.** It converges (10 rounds, 114 of 118 rules) and no pair
   needed it, but it inherits the whole-language FOLLOW through `expr`, so it
   will not be a sharp tool for error recovery without pruning.

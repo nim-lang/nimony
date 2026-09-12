@@ -78,6 +78,9 @@ type
     paramNames: seq[string]
     line: int
     hasActions: bool
+    enterCode: seq[string]   ## `enter:` -- runs before the match
+    leaveCode: seq[string]   ## `leave:` -- runs after it, match or not
+    afterCode: seq[string]   ## a bare body, with `m` bound to the mark
     body: Node
 
 proc newNode(k: NodeKind; text = ""): Node = Node(kind: k, text: text, kids: @[])
@@ -164,10 +167,13 @@ proc parsePrim(sc: var Scanner): Node =
     inc sc.pos
     ws sc
     let inner = parsePrim(sc)
-    if inner.kind == nRule and inner.kids.len == 0 and
-       inner.text notin Classes and not inner.text.startsWith("IND"):
-      # `&name` on a bare lowercase name is a semantic predicate
+    if inner.kind == nRule and inner.text notin Classes and
+       not inner.text.startsWith("IND"):
+      # `&name` on a lowercase name is a semantic predicate until
+      # `reclassify` finds a declared rule by that name. Arguments come along:
+      # `&inTypeDesc(mode)` is how `parser.nim`'s `mode` reaches a predicate.
       result = newNode(nPred, inner.text)
+      result.kids = inner.kids
     else:
       result = newNode(nAhead)
       result.kids.add inner
@@ -285,6 +291,38 @@ proc parseAlt(sc: var Scanner): Node =
 
 # --------------------------------------------------------------- extraction
 
+proc indentOf(s: string): int =
+  result = 0
+  while result < s.len and s[result] == ' ': inc result
+
+proc parseActions(e: var Entry; body: seq[string]) =
+  ## `enter: <stmt>` / `leave: <stmt>` and their block forms; anything else is
+  ## the bare body that runs once the alternative has matched.
+  var i = 0
+  while i < body.len:
+    let ln = body[i]
+    let t = ln.strip()
+    if t.len == 0 or t.startsWith("#"):
+      inc i
+      continue
+    if t.startsWith("enter:") or t.startsWith("leave:"):
+      let isEnter = t.startsWith("enter:")
+      let rest = t.substr(6).strip()
+      if rest.len > 0:
+        if isEnter: e.enterCode.add rest else: e.leaveCode.add rest
+      else:
+        let base = indentOf(ln)
+        var j = i + 1
+        while j < body.len and body[j].strip().len > 0 and
+              indentOf(body[j]) > base:
+          let stmt = body[j].substr(base + 2)
+          if isEnter: e.enterCode.add stmt else: e.leaveCode.add stmt
+          inc j
+        i = j - 1
+    else:
+      e.afterCode.add t
+    inc i
+
 proc extract(path: string): seq[Entry] =
   result = @[]
   let lines = readFile(path).splitLines()
@@ -327,6 +365,19 @@ proc extract(path: string): seq[Entry] =
         body = t.substr(k+1, close-1)
         e.hasActions = t.endsWith("\":")
       e.src = body
+      if e.hasActions:
+        var acts: seq[string] = @[]
+        var k2 = i + 1
+        while k2 < lines.len and lines[k2].strip().len > 0 and
+              indentOf(lines[k2]) >= 4:
+          acts.add lines[k2].substr(4)
+          inc k2
+        if acts.len == 0:
+          echo "[error] ", e.name, " (line ", e.line,
+               "): the `:` declares an action block, but none follows"
+          inc errors
+        parseActions(e, acts)
+        i = k2 - 1
       result.add e
     inc i
 
@@ -668,7 +719,9 @@ proc condFor(f: Table[string, IndSet]): string =
     else:
       let tag = $v
       if not plain.hasKey(tag): plain[tag] = @[]
-      plain[tag].add (if k.contains(".."): "{" & k & "}" else: k)
+      # a range goes in bare: the enclosing `{...}` is added below, and
+      # bracing it here produced `{{tkAddr..tkYield}, tkAnd}` -- a set of sets.
+      plain[tag].add k
   var parts: seq[string] = @[]
   var tags: seq[string] = @[]
   for t in plain.keys: tags.add t
@@ -685,6 +738,22 @@ proc anyInd(f: Table[string, IndSet]): Table[string, IndSet] =
   result = initTable[string, IndSet]()
   for k in f.keys: result[k] = AnyInd
 
+proc predCall(n: Node): string =
+  ## `&noSpaceBefore` is `noSpaceBefore(p)`; `&inTypeDesc(mode)` is
+  ## `inTypeDesc(p, mode)`. Without the arguments the generated dispatch drops
+  ## exactly the information `parser.nim` decides on.
+  var args: seq[string] = @["p"]
+  for k in n.kids:
+    args.add (if k.kind == nRaw: k.text else: render(k))
+  n.text & "(" & args.join(", ") & ")"
+
+proc canCall(n: Node): string =
+  ## The `canX` companion takes whatever `pX` takes, because its predicates do.
+  var args: seq[string] = @["p"]
+  for k in n.kids:
+    args.add (if k.kind == nRaw: k.text else: render(k))
+  "can" & capitalizeAscii(n.text) & "(" & args.join(", ") & ")"
+
 proc condOf(e: Emitter; n: Node): string
 
 proc guardsOf(items: seq[Node]): string =
@@ -692,7 +761,7 @@ proc guardsOf(items: seq[Node]): string =
   var parts: seq[string] = @[]
   for it in items:
     case it.kind
-    of nPred: parts.add it.text & "(p)"
+    of nPred: parts.add predCall(it)
     of nAhead: discard        # folded into the FIRST test by the caller
     of nGuard, nDefault: discard
     else: break
@@ -705,6 +774,7 @@ type Alt = object
   tag: string
   anchored: bool
   items: seq[Node]
+  enterCode, leaveCode, afterCode: seq[string]
 
 proc toAlt(n: Node): Alt =
   var inner = n
@@ -726,11 +796,11 @@ proc hasFreeAnchor(n: Node): bool =
   false
 
 proc condOf(e: Emitter; n: Node): string =
-  if n.kind == nRule and n.kids.len == 0 and e.predicated.contains(n.text):
-    "can" & capitalizeAscii(n.text) & "(p)"
+  if n.kind == nRule and e.predicated.contains(n.text):
+    canCall(n)
   elif n.kind == nSeq and n.kids.len > 0 and n.kids[0].kind == nRule and
-       n.kids[0].kids.len == 0 and e.predicated.contains(n.kids[0].text):
-    "can" & capitalizeAscii(n.kids[0].text) & "(p)"
+       e.predicated.contains(n.kids[0].text):
+    canCall(n.kids[0])
   else:
     condFor(firstOf(e.g, n))
 
@@ -774,9 +844,15 @@ proc altNullable(g: Grammar; a: Alt): bool =
 proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
   ## Left-factor what shares a prefix, then dispatch on one token.
   proc finish(e: var Emitter; a: Alt) =
+    for ln in a.enterCode: e.line ln
     emitSeq(e, a.items, mark, anchor)
+    for ln in a.leaveCode: e.line ln
     if a.tag.len > 0:
       e.line "wrap p, " & (if a.anchored: anchor else: mark) & ", \"" & a.tag & "\""
+    if a.afterCode.len > 0:
+      # the bare body inspects what was just parsed, so it needs the mark
+      e.line "let m = " & (if a.anchored: anchor else: mark)
+      for ln in a.afterCode: e.line ln
 
   if alts.len == 1:
     finish(e, alts[0])
@@ -786,7 +862,8 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
   # dispatch: `notInd = NO_IND | IND{=} | IND{<}`
   var allGuards = true
   for a in alts:
-    if a.tag.len > 0 or altFirst(e.g, a).len > 0 or not altNullable(e.g, a):
+    if a.tag.len > 0 or altFirst(e.g, a).len > 0 or not altNullable(e.g, a) or
+       a.enterCode.len + a.leaveCode.len + a.afterCode.len > 0:
       allGuards = false
   if allGuards:
     var m: IndSet = {}
@@ -827,7 +904,7 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
     for a in grp: union(f, altFirst(e.g, a))
     var cond = condFor(f)
     let gd = (if grp.len == 1: guardsOf(grp[0].items)
-              elif grp[0].items[0].kind == nPred: grp[0].items[0].text & "(p)"
+              elif grp[0].items[0].kind == nPred: predCall(grp[0].items[0])
               else: "")
     if gd.len > 0: cond = "(" & cond & ") and " & gd
     e.line (if first: "if " else: "elif ") & cond & ":"
@@ -839,7 +916,9 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
         emitNode(e, grp[0].items[0], mark, anchor)   # the shared prefix, once
         var tails: seq[Alt] = @[]
         for a in grp:
-          tails.add Alt(tag: a.tag, anchored: a.anchored, items: a.items[1 .. ^1])
+          tails.add Alt(tag: a.tag, anchored: a.anchored,
+                        items: a.items[1 .. ^1], enterCode: a.enterCode,
+                        leaveCode: a.leaveCode, afterCode: a.afterCode)
         emitAlts(e, tails, rule, mark, anchor)
 
   if defaults.len > 0:
@@ -953,15 +1032,25 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     let precP = render(n.kids[1])
     let assocP = render(n.kids[2])
     let tg = render(n.kids[3])
+    # the fifth argument names the parameter that carries the limit; the
+    # recursion tightens that one and passes every other parameter through
+    let limitExpr = if n.kids.len > 4: render(n.kids[4]) else: "limit"
     emitNode(e, opnd, mark, anchor)
     e.line "var prec = " & precP & "(p)"
     # the operator itself must not start a line -- parser.nim's rule
-    e.line "while prec >= limit and indClass(p) == icNoInd:"
+    e.line "while prec >= " & limitExpr & " and indClass(p) == icNoInd:"
     body e:
       e.line "let assoc = (if " & assocP & "(p): 0 else: 1)"
       e.line "insertLeafAt p, " & mark & ", p.tok.s"
       e.line "getTok p"
-      e.line procName(e.curRule) & "(p, prec + assoc)"
+      var args: seq[string] = @["p"]
+      if e.needsAnchor.contains(e.curRule): args.add anchor
+      if e.g.params.hasKey(e.curRule):
+        for pn in e.g.params[e.curRule]:
+          args.add (if pn == limitExpr: "prec + assoc" else: pn)
+      else:
+        args.add "prec + assoc"
+      e.line procName(e.curRule) & "(" & args.join(", ") & ")"
       e.line "wrap p, " & mark & ", \"" & tg & "\""
       e.line "prec = " & precP & "(p)"
   of nLa2:
@@ -982,7 +1071,8 @@ proc emitParser(g: Grammar; order: seq[string]): string =
   # has to respect the predicate, and a FIRST set cannot express one.
   for r in order:
     if not e.predicated.contains(r): continue
-    e.line "proc can" & capitalizeAscii(r) & "*(p: Parser): bool"
+    e.line "proc can" & capitalizeAscii(r) & "*(p: Parser" &
+           (if g.paramSig.hasKey(r): "; " & g.paramSig[r] else: "") & "): bool"
   for r in order:
     if not e.predicated.contains(r): continue
     var parts: seq[string] = @[]
@@ -992,7 +1082,8 @@ proc emitParser(g: Grammar; order: seq[string]): string =
       let gd = guardsOf(items)
       if gd.len > 0: c = "(" & c & ") and " & gd
       parts.add "(" & c & ")"
-    e.line "proc can" & capitalizeAscii(r) & "*(p: Parser): bool ="
+    e.line "proc can" & capitalizeAscii(r) & "*(p: Parser" &
+           (if g.paramSig.hasKey(r): "; " & g.paramSig[r] else: "") & "): bool ="
     inc e.indent
     e.line parts.join(" or ")
     dec e.indent
@@ -1011,7 +1102,12 @@ proc emitParser(g: Grammar; order: seq[string]): string =
     inc e.indent
     e.line "let m0 = mark(p)"
     var bodies: seq[Alt] = @[]
-    for a in alts: bodies.add toAlt(a.body)
+    for a in alts:
+      var al = toAlt(a.body)
+      al.enterCode = a.enterCode
+      al.leaveCode = a.leaveCode
+      al.afterCode = a.afterCode
+      bodies.add al
     if bodies.len == 1 and bodies[0].items.len == 0 and bodies[0].tag.len == 0:
       e.line "discard"
     else:
@@ -1136,9 +1232,10 @@ proc main =
   proc reclassify(n: Node) =
     if n.kind == nPred and g.rules.hasKey(n.text):
       let inner = newNode(nRule, n.text)
+      inner.kids = n.kids
       n.kind = nAhead
       n.text = ""
-      n.kids.add inner
+      n.kids = @[inner]
     for k in n.kids: reclassify k
   for name, es in g.rules:
     for e in es: reclassify e.body
@@ -1170,6 +1267,44 @@ proc main =
   for u in undeclared: echo "  undeclared: ", u
   for u in unused: echo "  unused:     ", u
   if undeclared.len == 0 and unused.len == 0: echo "  all resolved"
+
+  # arity: a parameterized rule called with no arguments generated a call that
+  # silently dropped them, which is how `primarySuffix*` came to be emitted
+  # without `mode`.
+  echo "\n--- arity"
+  var arityErrors = 0
+  proc checkArity(rule: string; line: int; n: Node; locals: HashSet[string]) =
+    if n.kind == nRule and n.text notin Classes and n.text notin locals:
+      if g.params.hasKey(n.text):
+        let want = g.params[n.text].len
+        if n.kids.len != want:
+          echo "  [arity] ", rule, " (line ", line, "): ", n.text, " takes ",
+               want, " argument(s), called with ", n.kids.len
+          inc arityErrors
+      elif n.kids.len > 0 and g.rules.hasKey(n.text):
+        echo "  [arity] ", rule, " (line ", line, "): ", n.text,
+             " takes no arguments, called with ", n.kids.len
+        inc arityErrors
+    if n.kind == nBinary:
+      if n.kids.len > 0: checkArity(rule, line, n.kids[0], locals)
+      return                                   # the rest are Nim procs
+    for k in n.kids: checkArity(rule, line, k, locals)
+  for name, es in g.rules:
+    for e in es:
+      var locals = initHashSet[string]()
+      for pn in e.paramNames: locals.incl pn
+      checkArity(name, e.line, e.body, locals)
+  if arityErrors == 0: echo "  all call sites pass the declared arguments"
+  errors += arityErrors
+
+  # a parameter without a type emitted `proc pPrimary*(p: var Parser; mode)`,
+  # which is not Nim
+  for name, sig in g.paramSig:
+    for piece in sig.split(','):
+      if ':' notin piece:
+        echo "  [arity] ", name, ": parameter '", piece.strip(),
+             "' needs a type"
+        inc errors
 
   # nullability to a fixed point
   for name in g.rules.keys: g.nullable[name] = false

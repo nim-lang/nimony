@@ -108,10 +108,13 @@ grammar:
   par "stmts[ '(' optInd &parKeyw (ifExpr | complexOrSimpleStmt) ^+ ';' optPar ')' ]"
   par "stmts[ '(' optInd ';' (ifExpr | complexOrSimpleStmt) ^+ ';' optPar ')' ]"
   par "par[ '(' optInd pragmaStmt optPar ')' ]"
-  par "par[ '(' optInd simpleExpr (doBlock extraPostExprBlock*) optPar ')' ]"
-  par "par[ '(' optInd simpleExpr '=' expr (';' (ifExpr | complexOrSimpleStmt) ^+ ';')? optPar ')' ]"
-  par "par[ '(' optInd simpleExpr ':' expr (',' exprColonEqExpr ^+ ',')? optPar ')' ]"
-  par "par[ '(' optInd simpleExpr optPar ')' ]"
+  par """par[ '(' optInd simpleExpr({-1}, {pmNormal})
+                 (doBlock extraPostExprBlock*) optPar ')' ]"""
+  par """par[ '(' optInd simpleExpr({-1}, {pmNormal}) '='
+                 expr (';' (ifExpr | complexOrSimpleStmt) ^+ ';')? optPar ')' ]"""
+  par """par[ '(' optInd simpleExpr({-1}, {pmNormal}) ':'
+                 expr (',' exprColonEqExpr ^+ ',')? optPar ')' ]"""
+  par "par[ '(' optInd simpleExpr({-1}, {pmNormal}) optPar ')' ]"
   # The last four share the `simpleExpr` prefix and are left-factored; the
   # first is chosen by a FIRST-set lookahead over `parKeyw`, the second by ';'.
   # GRAMMAR.TXT: does not spell out the bare `'(' simpleExpr ')'` case.
@@ -124,14 +127,20 @@ grammar:
   # PRED: `par` vs `tupleConstr` are the same prefix `'('`; parser.nim decides
   # inside one routine. Left-factored here into `par`'s entries, with
   # `tupleConstr` reachable from the `simpleExpr comma` case.
+  # GAP: parser.nim's `identOrLiteral` takes `'('` to `tupleConstr` when
+  # `mode in {pmTypeDesc, pmTypeDef}` and to `par` otherwise. That
+  # discriminator is missing here -- both productions are listed and the
+  # generator factors them, so the *choice* is not made. Needs
+  # `identOrLiteral(mode: PrimaryMode)` and `&inTypeDesc(mode)`.
 
-  primarySuffix(mode) "&noSpaceBefore ^call[ '(' (exprColonEqExpr comma?)* ')' ]"
-  primarySuffix(mode) """^dot[ '.' optInd symbolOrKeyword
+  primarySuffix(mode: PrimaryMode) "&noSpaceBefore ^call[ '(' (exprColonEqExpr comma?)* ')' ]"
+  primarySuffix(mode: PrimaryMode) """^dot[ '.' optInd symbolOrKeyword
                              ('[:' exprList ']' ('(' exprColonEqExpr ')')?)? ] generalizedLit?"""
-  primarySuffix(mode) "&dotLikeOps ^dot[ DOTLIKEOP optInd symbolOrKeyword ] generalizedLit?"
-  primarySuffix(mode) "&noSpaceBefore ^at[ '[' optInd exprColonEqExprList optPar ']' ]"
-  primarySuffix(mode) "&noSpaceBefore ^curlyat[ '{' optInd exprColonEqExprList optPar '}' ]"
-  primarySuffix(mode) "&commandStart ^cmd[ commandParam(mode)+ ]"
+  primarySuffix(mode: PrimaryMode) "&dotLikeOps ^dot[ DOTLIKEOP optInd symbolOrKeyword ] generalizedLit?"
+  primarySuffix(mode: PrimaryMode) "&noSpaceBefore ^at[ '[' optInd exprColonEqExprList optPar ']' ]"
+  primarySuffix(mode: PrimaryMode) "&noSpaceBefore ^curlyat[ '{' optInd exprColonEqExprList optPar '}' ]"
+  primarySuffix(mode: PrimaryMode) "&commandStart ^cmd[ commandParam(mode)+ ]":
+    enter: p.firstCmdParam = true
   # PRED: `noSpaceBefore` is `tsLeading notin tok.spacing` — a space before
   # '(' turns a call into a command. `dotLikeOps` is the `nimPreviewDotLikeOps`
   # switch plus `isDotLike`.
@@ -179,8 +188,10 @@ grammar:
   rawTypeDesc """(tupleType | routineType | enum[ 'enum' ] | object[ 'object' ]
               | mut[ 'var' typeDesc? ] | out[ 'out' typeDesc? ]
               | ref[ 'ref' typeDesc? ] | ptr[ 'ptr' typeDesc? ]
-              | distinct[ 'distinct' typeDesc? ]) (infix[ 'not' primary ])?"""
-  typeDescExpr "(routineType | simpleExpr) (infix[ 'not' primary ])?"
+              | distinct[ 'distinct' typeDesc? ])
+              (infix[ 'not' primary({pmTypeDesc}) ])?"""
+  typeDescExpr """(routineType | simpleExpr({-1}, {pmTypeDesc}))
+               (infix[ 'not' primary({pmTypeDesc}) ])?"""
   # PRED: `routineType` vs `simpleExpr` both start at 'proc'/'iterator';
   # left-factored by the generator.
   typeDesc "rawTypeDesc"
@@ -195,9 +206,9 @@ grammar:
   forExpr "forStmt"
 
   expr "blockExpr | ifExpr | whenExpr | caseStmt | forExpr | tryExpr"
-  expr "simpleExpr"
+  expr "simpleExpr({-1}, {pmNormal})"
 
-  simplePrimary "identOrLiteral primarySuffix*"
+  simplePrimary(mode: PrimaryMode) "identOrLiteral primarySuffix(mode)*"
   # GRAMMAR.TXT: writes `SIGILLIKEOP? identOrLiteral ...` here, but parser.nim
   # has no such alternative: an operator always takes the prefix branch, and
   # `isSigilLike` only makes the operand bind tighter (`@x.y` is `@(x.y)`'s
@@ -206,26 +217,35 @@ grammar:
   # alternative is what made SIGILLIKEOP collide with OPR in `primary`.
 
   # Not in doc/grammar.txt at all, though parser.nim has it.
-  commandParam(mode) "&inTypeDesc simpleExpr"
-  commandParam(mode) "&notFirstParam exprEqExpr"
-  commandParam(mode) "%else expr (doBlock extraPostExprBlock*)?"
+  commandParam(mode: PrimaryMode) "&inTypeDesc(mode) simpleExpr({-1}, mode)":
+    leave: p.firstCmdParam = false
+  commandParam(mode: PrimaryMode) "&notFirstParam exprEqExpr":
+    leave: p.firstCmdParam = false
+  commandParam(mode: PrimaryMode) "%else expr (doBlock extraPostExprBlock*)?":
+    leave: p.firstCmdParam = false
+  # `isFirstParam` is a `var bool` threaded through `commandExpr`'s loop in
+  # parser.nim. There is no notation for a loop-local variable, so it lives on
+  # the parser: the `cmd` alternative of `primarySuffix` sets it, and every
+  # alternative here clears it, which is what `commandParam` does on all three
+  # of its paths.
 
   commandStart """&('`' | IDENT | literal | 'cast' | 'addr' | 'type' | 'var' | 'out'
                 | 'static' | 'enum' | 'tuple' | 'object' | 'proc')"""
   # This is `parser.nim`'s `isExprStart`, written out by hand there. The
   # generator checks it against FIRST(commandParam).
 
-  primary(mode) "simplePrimary (commandStart cmd[ expr (doBlock extraPostExprBlock*)? ])?"
-  primary(mode) "&isSigilLike prefix[ prefixOperator simplePrimary ]"
-  primary(mode) "&isUnary prefix[ operatorB primary(mode) ]"
-  primary(mode) "routineExpr"
-  primary(mode) "&inTypeDesc rawTypeDesc"
-  primary(mode) "prefix[ prefixOperator primary(mode) ]"
+  primary(mode: PrimaryMode) """simplePrimary(mode)
+                               (commandStart cmd[ expr (doBlock extraPostExprBlock*)? ])?"""
+  primary(mode: PrimaryMode) "&isSigilLike prefix[ prefixOperator simplePrimary(mode) ]"
+  primary(mode: PrimaryMode) "&isUnary prefix[ operatorB primary(mode) ]"
+  primary(mode: PrimaryMode) "routineExpr"
+  primary(mode: PrimaryMode) "&inTypeDesc(mode) rawTypeDesc"
+  primary(mode: PrimaryMode) "prefix[ prefixOperator primary(mode) ]"
   # PRED: `operatorB primary` vs `prefixOperator primary` are distinguished by
   # `isUnary` (spacing) in parser.nim; the two entries are otherwise identical.
 
-  simpleExpr(limit, mode) "binary( primaryPragma(mode), getPrecedence, isRightAssoc, infix, limit )"
-  primaryPragma(mode) "primary(mode) (pragmax[ pragma ])?"
+  simpleExpr(limit: int, mode: PrimaryMode) "binary( primaryPragma(mode), getPrecedence, isRightAssoc, infix, limit )"
+  primaryPragma(mode: PrimaryMode) "primary(mode) (pragmax[ pragma ])?"
 
   # --------------------------------------------------------- post-expr blocks
 
@@ -243,12 +263,14 @@ grammar:
 
   # --------------------------------------------------------------- stmts
 
-  exprStmt "asgn[ simpleExpr '=' optInd expr postExprBlocks? ]"
-  exprStmt "cmd[ simpleExpr (exprEqExpr ^+ comma) postExprBlocks? ]"
+  exprStmt """asgn[ simpleExpr({-1}, {pmTrySimple}) '='
+                  optInd expr postExprBlocks? ]"""
+  exprStmt """cmd[ simpleExpr({-1}, {pmTrySimple})
+                 (exprEqExpr ^+ comma) postExprBlocks? ]"""
   # GRAMMAR.TXT: says `simplePrimary` here; parser.nim calls
   # `simpleExpr(p, pmTrySimple)` for all three and decides afterwards, which is
   # also what makes the three left-factor.
-  exprStmt "simpleExpr postExprBlocks?"
+  exprStmt "simpleExpr({-1}, {pmTrySimple}) postExprBlocks?"
   # The three share the `simpleExpr`/`simplePrimary` prefix; left-factored,
   # with the `asgn`/`cmd` tags inserted at the mark once the alternative is
   # known. This is the motivating case for retroactive wrapping.
@@ -345,8 +367,10 @@ grammar:
                | ref[ 'ref' (tupleDecl | objectDecl) ]
                | ptr[ 'ptr' (tupleDecl | objectDecl) ]
                | distinct[ 'distinct' (tupleDecl | objectDecl) ])
-               (infix[ 'not' primary ])?"""
-  typeDefValue "%else simpleExpr (exprEqExpr ^+ comma postExprBlocks?)? (infix[ 'not' primary ])?"
+               (infix[ 'not' primary({pmTypeDesc}) ])?"""
+  typeDefValue """%else simpleExpr({-1}, {pmTypeDef})
+               (exprEqExpr ^+ comma postExprBlocks?)?
+               (infix[ 'not' primary({pmTypeDesc}) ])?"""
 
   varTupleLhs """unpacktup[ '(' optInd (identWithPragma | varTupleLhs) ^+ comma optPar ')'
                (':' optInd typeDescExpr)? ]"""
