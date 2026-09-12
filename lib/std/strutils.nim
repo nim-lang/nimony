@@ -1330,7 +1330,9 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
   ## raised if an ill-formed format string has been passed to the `%` operator.
   result = newStringOfCap(formatstr.len + a.len shl 4)
   const PatternChars = {'a'..'z', 'A'..'Z', '0'..'9', '\128'..'\255', '_'}
-  var i = 0
+  # `Natural`, not `int`: these walk `formatstr` and the lower half of every
+  # index obligation then comes from the type, not from a guard.
+  var i: Natural = 0
   var num = 0
   while i < len(formatstr):
     if formatstr[i] == '$' and i+1 < len(formatstr):
@@ -1355,7 +1357,7 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
         if idx < 0 or idx >= a.len: invalidFormatString(formatstr)
         add result, a[idx]
       of '{':
-        var j = i+2
+        var j: Natural = i+2
         var k = 0
         var negative = formatstr[j] == '-'
         if negative: inc j
@@ -1377,7 +1379,7 @@ func `%`*(formatstr: string; a: openArray[string]): string {.raises.} =
           else: invalidFormatString(formatstr)
         i = j+1
       of 'a'..'z', 'A'..'Z', '\128'..'\255', '_':
-        var j = i+1
+        var j: Natural = i+1
         while j < formatstr.len and formatstr[j] in PatternChars: inc(j)
         var x = findNormalized(substr(formatstr, i+1, j-1), a)
         if x >= 0 and x < a.len - 1: add result, a[x+1]

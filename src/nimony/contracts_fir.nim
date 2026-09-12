@@ -943,6 +943,17 @@ proc baseTypeBounds(typ: Cursor; bits: int; lo, hi: var xint): bool =
       hi = createXint((1'i64 shl size) - 1)
   result = true
 
+proc impliesHere(c: var FirContext; fact: LeXplusC): bool =
+  ## The flow facts, plus what the locations' own `range` types state.
+  if implies(c.facts, fact): return true
+  if fact.a == VarId(0) and c.declaredRange.hasKey(fact.b):
+    # `0 <= b + k` holds when the declared `lo` is at least `-k`.
+    return c.declaredRange.getOrQuit(fact.b).lo >= -fact.c
+  if fact.b == VarId(0) and c.declaredRange.hasKey(fact.a):
+    # `a <= 0 + k` holds when the declared `hi` is at most `k`.
+    return c.declaredRange.getOrQuit(fact.a).hi <= fact.c
+  result = false
+
 proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
   ## Emit and discharge the `lo <= value <= hi` obligation for a value bound to a
   ## `range[lo..hi]`-typed target. Value conversions are handled at the
@@ -1003,8 +1014,8 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
         off = if isSub: -k else: k
         let lower0 = query(VarId(0), v, off - lo)
         let upper0 = query(v, VarId(0), hi - off)
-        if (not needLo or implies(c.facts, lower0)) and
-           (not needHi or implies(c.facts, upper0)):
+        if (not needLo or impliesHere(c, lower0)) and
+           (not needHi or impliesHere(c, upper0)):
           return
         buildErr c, value.info, "cannot prove '" & asNimCode(baseSym) &
           "' stays in range " & $lo & ".." & $hi
@@ -1030,11 +1041,11 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
     else: maskOrShift = tryEvalOrdinal(c.bits, rightOp)
     if leftLoc != InvalidVarId and not maskOrShift.isNaN and maskOrShift >= zero():
       # `0 <= a` gives `0 <= a shr k` and `0 <= a and k`.
-      let leftNonNeg = implies(c.facts, query(VarId(0), leftLoc, zero()))
+      let leftNonNeg = impliesHere(c, query(VarId(0), leftLoc, zero()))
       # `a shr k <= a`; `a and k <= k`.
       let upperOk =
         if not needHi: true
-        elif isShift: implies(c.facts, query(leftLoc, VarId(0), hi))
+        elif isShift: impliesHere(c, query(leftLoc, VarId(0), hi))
         else: maskOrShift <= hi
       if (not needLo or leftNonNeg) and upperOk:
         return
@@ -1062,8 +1073,8 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
       let zeroRight = query(VarId(0), right, zero())
       let loLeft = query(VarId(0), left, -lo)
       if not needLo or
-         (implies(c.facts, zeroLeft) and implies(c.facts, loRight)) or
-         (implies(c.facts, zeroRight) and implies(c.facts, loLeft)):
+         (impliesHere(c, zeroLeft) and impliesHere(c, loRight)) or
+         (impliesHere(c, zeroRight) and impliesHere(c, loLeft)):
         return
       buildErr c, value.info, "cannot prove '" & asNimCode(value) &
         "' is in range " & $lo & ".." & $hi
@@ -1084,8 +1095,8 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
     if left != InvalidVarId and right != InvalidVarId:
       let lower = query(right, left, -lo)
       let upper = query(left, right, hi)
-      if (not needLo or implies(c.facts, lower)) and
-         (not needHi or implies(c.facts, upper)):
+      if (not needLo or impliesHere(c, lower)) and
+         (not needHi or impliesHere(c, upper)):
         return
       buildErr c, value.info, "cannot prove '" & asNimCode(value) &
         "' is in range " & $lo & ".." & $hi
@@ -1116,8 +1127,8 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
   let lower = query(VarId(0), v, off - lo)
   # v + off <= hi   <=>   v <= 0 + (hi - off)
   let upper = query(v, VarId(0), hi - off)
-  if not ((not needLo or implies(c.facts, lower)) and
-          (not needHi or implies(c.facts, upper))):
+  if not ((not needLo or impliesHere(c, lower)) and
+          (not needHi or impliesHere(c, upper))):
     if isLit:
       buildErr c, value.info, "value out of range: " & $off & " notin " & $lo & ".." & $hi
     elif sym != NoSymId:
@@ -1673,17 +1684,6 @@ proc pureCompare(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
   result = LeXplusC(a: va, b: vb, c: kb - ka)
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
-
-proc impliesHere(c: var FirContext; fact: LeXplusC): bool =
-  ## The flow facts, plus what the locations' own `range` types state.
-  if implies(c.facts, fact): return true
-  if fact.a == VarId(0) and c.declaredRange.hasKey(fact.b):
-    # `0 <= b + k` holds when the declared `lo` is at least `-k`.
-    return c.declaredRange.getOrQuit(fact.b).lo >= -fact.c
-  if fact.b == VarId(0) and c.declaredRange.hasKey(fact.a):
-    # `a <= 0 + k` holds when the declared `hi` is at most `k`.
-    return c.declaredRange.getOrQuit(fact.a).hi <= fact.c
-  result = false
 
 proc proveFact(c: var FirContext; fact: LeXplusC): ProofRes =
   ## Three-valued and *precise*: `Disproven` is reserved for a fact whose
