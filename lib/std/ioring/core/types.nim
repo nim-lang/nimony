@@ -160,12 +160,16 @@ type
     buf*: nil pointer
     len*: int
     openFlags*: int32
-      ## opOpen only: the flags argument to the backend's open(2). The caller
-      ## translates `FileMode` into the platform's O_* bits before submitting.
+      ## opOpen only: what the backend's open needs as arguments. The caller
+      ## translates `FileMode` into the platform's bits before submitting: on
+      ## POSIX the O_* flags, on Windows the Win32 `desiredAccess` (a
+      ## truncating table, so the value is an int32 bit-pattern the backend
+      ## widens back via `cast[uint32]`).
     openMode*: int32
-      ## opOpen only: the mode argument. The kernel only reads it when the
-      ## flags create the file, but the value is carried anyway so the backend
-      ## has nothing to decide.
+      ## opOpen only: the mode argument. POSIX reads it only when the flags
+      ## create the file, but the value is carried anyway so the backend has
+      ## nothing to decide. On Windows it carries the Win32
+      ## `creationDisposition` the same way.
     sockDomain*: int32
       ## opSocket only: the `domain` argument passed to socket(2). The caller
       ## picks the platform's AF_* constant before submitting.

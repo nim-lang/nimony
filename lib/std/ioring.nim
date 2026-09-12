@@ -171,10 +171,12 @@ proc submitOpen*(path: cstring; pathLen: int; openFlags, openMode: int32;
                  deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
-  ## Open `path` and complete with the fd (or a negated errno). The syscall is
+  ## Open `path` and complete with the fd (or a negated errno). The work is
   ## made by the backend, on the polling thread: opening here would block the
   ## caller, and opening has no readiness for the ring to park on anywhere
-  ## else.
+  ## else. On Windows the same op performs the backend's `CreateFileW` (see
+  ## backends/files.nim); `openFlags`/`openMode` carry the platform's
+  ## arguments either way (O_* bits or Win32 access/disposition — core/types).
   ##
   ## `path` must stay valid until the op completes — it is read by the backend,
   ## not copied. The ring copies `OpContext` by value, and a `string` inside it

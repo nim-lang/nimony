@@ -89,9 +89,9 @@ when defined(posix):
 proc transferIfRegularFile(fd: cint): bool {.inline.} =
   ## True when `fd` names a regular file — nothing for the readiness backends
   ## to wait on — and its pending ops were satisfied by performing their
-  ## transfers right here. Windows never reaches this: the ring's descriptors
-  ## there are sockets, and files are served by the asyncio CRT arm without
-  ## entering the ring at all.
+  ## transfers right here. On Windows the ring's non-socket descriptors are
+  ## files served the same way, but by the dedicated backends/files.nim
+  ## helpers (`isFileHandle` + `fileTransfers`), so nothing arrives here.
   when defined(posix):
     result = isRegularFileFd(fd)
     if result:
@@ -368,6 +368,8 @@ else:
     stdcall, importc: "setsockopt", dynlib: "ws2_32.dll".}
   proc wsBindS(s: SocketHandle; name: pointer; namelen: cint): cint {.
     stdcall, importc: "bind", dynlib: "ws2_32.dll".}
+  proc wsClosesocket(s: SocketHandle): cint {.
+    stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
   proc wsIoctlsocket(s: SocketHandle; cmd: clong; argp: ptr culong): cint {.
     stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
   const FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
@@ -389,7 +391,7 @@ else:
     ## Windows twin of the POSIX `completeSetSockOpt`: one instant Winsock
     ## call; completes with `0` or the negated Winsock code.
     let r = wsSetsockopt(socketOf(fd), cint(level), cint(optName),
-                         optVal, cint(optLen))
+                         cast[pointer](optVal), cint(optLen))
     if r == SocketError:
       complete(idx, -int(wsaGetLastError()))
     else:

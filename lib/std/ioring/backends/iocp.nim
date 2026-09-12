@@ -35,6 +35,13 @@
 # slots are served by a WSAPoll(0) pass on each poll while any are pending,
 # with the completion wait shortened to 1 ms so they are re-checked promptly.
 #
+# Windows files are ring ops too (asyncio submits its open/read/write like the
+# POSIX arm): a file is a plain CreateFileW handle — no FILE_FLAG_OVERLAPPED —
+# whose ReadFile/WriteFile cannot block, so the transfers are made
+# synchronously here on the polling thread, the "regular file is its own
+# readiness" rule the POSIX backends apply. Such handles are never associated
+# with a completion port (`GetFileType` picks them out; backends/files.nim).
+#
 # Cancellation: `closeFd` may run on any lane. It drops the ownership record
 # and `closesocket`s; the kernel then aborts every overlapped op pending on
 # the socket — whichever lane issued it — and delivers each to the owner's
@@ -73,6 +80,7 @@ when defined(windows):
   import ../core/types
   import ../core/slots
   import ../core/backend
+  import ./files
 
   type
     SocketHandle = uint            ## Winsock SOCKET (UINT_PTR)
@@ -340,12 +348,6 @@ when defined(windows):
       gPollAdds[lane].add PendingPoll(slot: int32(slotIdx),
                                       gen: gSlots[lane].slots[slotIdx].gen)
       return
-    of opOpen:
-      # Not reachable: Windows files never enter the ring (asyncio serves them
-      # with the CRT directly). Refusing beats falling into the socket issue
-      # path below and abusing a Winsock handle.
-      complete(slotIdx, -1)
-      return
     of opSocket:
       # socket(2) is one instant call — never an overlapped op — so issue it
       # here and complete with the fd (or the negated Winsock code). The flag
@@ -536,8 +538,7 @@ when defined(windows):
     let lane = ioLane()
     var buf {.noinit.}: array[DrainBatch, OpContext]
     let n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
-    var i = 0
-    while i < n:
+    for i in 0..<n:
       let slotIdx = gSlots[lane].allocSlot(buf[i])
       if slotIdx >= MaxOps:
         # The arena took its documented cold path and grew past the OVERLAPPED
@@ -554,13 +555,31 @@ when defined(windows):
         gSlotAux[lane][slotIdx] = NoAux
         armDeadline(lane, slotIdx)
         # An fd-less op (nop, timer) has no socket to associate, and a readiness
-        # probe is served by WSAPoll rather than by the port.
-        if buf[i].kind != opNop and buf[i].kind != opTimeout and
-            buf[i].kind != opPollAdd and not ensureAssociated(buf[i].fd, lane):
-          complete(slotIdx, ECancelled) # closed or foreign handle: never issued
-        else:
+        # probe is served by WSAPoll rather than by the port. A FILE op (opOpen,
+        # or read/write on a file handle — backends/files.nim) is served here in
+        # the drain loop, never associated: its handle is a plain, non-overlapped
+        # one whose transfers are synchronous ("the file is its own readiness"),
+        # so it must not be bound to a completion port (a socket is claimed
+        # here on its first real op). These complete in place, exactly like the
+        # instant socket commands — the drain's `buf[i]` is the caller's frame,
+        # so a cstring proven from it needs no parking.
+        let fdless = buf[i].kind == opNop or buf[i].kind == opTimeout or
+                     buf[i].kind == opPollAdd
+        let isFile = buf[i].kind == opOpen or
+                     (not fdless and isFileHandle(buf[i].fd))
+        if isFile:
+          case buf[i].kind
+          of opOpen:
+            completeFileOpen(slotIdx, cast[cstring](buf[i].buf),
+                             buf[i].openFlags, buf[i].openMode)
+          of opRead:
+            completeFileRead(slotIdx, buf[i].fd, cast[pointer](buf[i].buf), buf[i].len)
+          of opWrite:
+            completeFileWrite(slotIdx, buf[i].fd, cast[pointer](buf[i].buf), buf[i].len)
+          else:
+            discard
+        elif fdless or ensureAssociated(buf[i].fd, lane):
           issue(lane, slotIdx)
-      i = i + 1
     result = servePollAdds(lane)
     # Readiness probes are re-checked every millisecond while any are pending,
     # and no wait outlasts the earliest deadline on this lane.

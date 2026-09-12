@@ -12,23 +12,22 @@
 # caller has to remember to test; `read` answering `0` is end of stream, which
 # is an end and not a failure.
 #
-# Where the work happens is the ring's business, never the caller's. On POSIX
-# the `open(2)` for `open` runs on the polling thread as a ring command
+# Where the work happens is the ring's business, never the caller's. The
+# `open(2)` for `open` runs on the polling thread as a ring command
 # (`submitOpen`), and a regular file's read/write run inside the backend too:
 # io_uring performs them as SQEs, and the readiness backends perform them the
 # moment arming a regular file is refused — a regular file's I/O never blocks,
 # so its transfer is its own readiness, made on the polling thread exactly as
 # `processFd` makes the transfers of a descriptor that does deliver events.
-# On Windows the ring's descriptors are sockets only, so the same surface is
-# served by kernel32 directly (mirroring syncio's native Windows arm):
-# correct, and deliberately not asynchronous — no file I/O overlaps a pool
-# worker there, so a deadline is accepted for API symmetry and ignored.
+# Windows is the same deal, not the exception: the Win32 arms submit the very
+# same `open`/`read`/`write` commands, the backends run the `CreateFileW` and
+# the file transfers on their polling threads precisely as the POSIX arms do,
+# and a deadline is still accepted and honoured by the ring.
 
 import std/ioring
 
 when defined(windows):
-  import std/windows/winlean
-  from std/widestrs import newWideCString, toWideCString
+  import std/windows/winlean   # Handle, DWORD, closeHandle, the GENERIC_* bits
 else:
   from std/posix/posix import Mode, Off, pcall
 
@@ -122,53 +121,66 @@ proc `=copy`*(dest: var File; src: File) {.error.}
   ## whichever is destroyed first closes it under the other.
 
 # ------------------------------------------------- platform transfer arms ---
-# The ring's `open`/`read`/`write` commands on POSIX; kernel32 calls on
-# Windows. Same names so the buffered logic below is platform-neutral.
+# The ring's `open`/`read`/`write` commands on POSIX and Windows alike: the
+# backend performs the syscall and the transfers on its polling thread, the
+# caller only parks. Same names so the buffered logic below is platform-neutral.
 
 when defined(windows):
   const FILE_APPEND_DATA = 0x00000004'u32
 
-  proc openImpl(filename: string; mode: FileMode): OsFileHandle =
-    var desiredAccess, shareMode, disposition: DWORD
-    shareMode = FILE_SHARE_READ or FILE_SHARE_WRITE
+  proc win32Mode(mode: FileMode): tuple[access, disposition: DWORD] =
+    ## What a caller's `FileMode` means once it reaches a HANDLE: the Win32
+    ## partners of the POSIX flags, carried to the backend in the open op's
+    ## `openFlags`/`openMode` words. FILE_APPEND_DATA makes every write land at
+    ## end-of-file — the counterpart of `O_APPEND` (no initial seek needed).
     case mode
-    of fmRead:
-      desiredAccess = GENERIC_READ; disposition = OPEN_EXISTING
-    of fmWrite:
-      desiredAccess = GENERIC_WRITE; disposition = CREATE_ALWAYS
-    of fmReadWrite:
-      desiredAccess = GENERIC_READ or GENERIC_WRITE; disposition = CREATE_ALWAYS
-    of fmReadWriteExisting:
-      desiredAccess = GENERIC_READ or GENERIC_WRITE; disposition = OPEN_EXISTING
-    of fmAppend:
-      # FILE_APPEND_DATA makes every write land at end-of-file — the Win32
-      # counterpart of POSIX `O_APPEND` (no initial seek needed).
-      desiredAccess = FILE_APPEND_DATA; disposition = OPEN_ALWAYS
-    var tmpFilename = filename
-    result = createFileW(newWideCString(tmpFilename).toWideCString,
-                         desiredAccess, shareMode, nil, disposition,
-                         FILE_ATTRIBUTE_NORMAL, Handle 0)
+    of fmRead: (GENERIC_READ, OPEN_EXISTING)
+    of fmWrite: (GENERIC_WRITE, CREATE_ALWAYS)
+    of fmReadWrite: (GENERIC_READ or GENERIC_WRITE, CREATE_ALWAYS)
+    of fmReadWriteExisting: (GENERIC_READ or GENERIC_WRITE, OPEN_EXISTING)
+    of fmAppend: (FILE_APPEND_DATA, OPEN_ALWAYS)
 
-  proc readImpl(h: OsFileHandle; buf: pointer; len: int;
-                dl: Deadline): int =
-    var n: int32 = 0
-    if readFile(h, buf, int32(len), addr n, nil) != WINBOOL(0): int(n) else: -1
+  proc openImpl(filename: string; mode: FileMode;
+                dl: Deadline): OsFileHandle {.passive, raises.} =
+    ## The ring half of `open`: `CreateFileW` runs on the polling thread and
+    ## completes with the narrowed descriptor (or a negated error code), so the
+    ## caller never blocks on a filesystem-backed open. `filename` stays alive
+    ## until then, and it does: the caller is parked.
+    var res = 0
+    let c = delay()
+    var fn = filename
+    let m = win32Mode(mode)
+    discard submitOpen(fn.toCString, filename.len,
+                       int32(cast[uint32](m.access)),
+                       int32(cast[uint32](m.disposition)), dl, c, addr res)
+    suspend()
+    if res < 0: raise toErr(res)
+    result = OsFileHandle(res)
 
-  proc writeImpl(h: OsFileHandle; buf: pointer; len: int;
-                 dl: Deadline): int =
-    var n: int32 = 0
-    if writeFile(h, buf, int32(len), addr n, nil) != WINBOOL(0): int(n) else: -1
+  proc readImpl(fd: OsFileHandle; buf: pointer; len: int;
+                dl: Deadline): int {.passive.} =
+    result = 0
+    let c = delay()
+    discard submitRead(cint(cast[uint32](fd)), buf, len, dl, c, addr result)
+    suspend()
 
-  proc closeImpl(h: OsFileHandle) {.inline.} =
-    discard closeHandle(h)
+  proc writeImpl(fd: OsFileHandle; buf: pointer; len: int;
+                 dl: Deadline): int {.passive.} =
+    result = 0
+    let c = delay()
+    discard submitWrite(cint(cast[uint32](fd)), buf, len, dl, c, addr result)
+    suspend()
+
+  proc closeImpl(fd: OsFileHandle) {.inline.} =
+    discard closeHandle(fd)
 
   proc setFilePointerEx(hFile: Handle; distance: int64; newPos: ptr int64;
                         moveMethod: DWORD): WINBOOL {.
     stdcall, importc: "SetFilePointerEx", dynlib: "kernel32", sideEffect.}
 
-  proc seekImpl(h: OsFileHandle; off: int64; whence: cint): int64 {.raises.} =
+  proc seekImpl(fd: OsFileHandle; off: int64; whence: cint): int64 {.raises.} =
     var np: int64 = 0
-    if setFilePointerEx(h, off, addr np, DWORD(whence)) == WINBOOL(0):
+    if setFilePointerEx(fd, off, addr np, DWORD(whence)) == WINBOOL(0):
       raise IOError
     result = np
 
@@ -268,19 +280,15 @@ proc open*(filename: string; mode: FileMode = fmRead;
            permission: set[FilePermission] = DefaultPermissions;
            dl = never): File {.passive, raises.} =
   ## Opens a file named `filename` with the given `mode`. Raises `IOError` if
-  ## the file cannot be opened, `TimeoutError` if `dl` arrived first. On POSIX
-  ## the actual `open(2)` runs on the polling thread as a ring command.
-  ##
-  ## On Windows `permission` and `dl` are accepted for API symmetry and
-  ## ignored: kernel32 has no mode bits and the open is synchronous.
+  ## the file cannot be opened, `TimeoutError` if `dl` arrived first. The
+  ## actual open runs on the polling thread as a ring command: POSIX `open(2)`
+  ## (`submitOpen`), and on Windows the backend's `CreateFileW` through the
+  ## same op — `permission` there has no Win32 equivalent and is ignored.
   when defined(windows):
-    let h = openImpl(filename, mode)
-    if h == INVALID_HANDLE_VALUE:
-      raise IOError
-    result = File(fd: h, deadline: dl, rbuf: newSeq[char](ReadChunk))
+    let fd = openImpl(filename, mode, dl)
   else:
     let fd = openImpl(filename, flagsFor(mode), modeBits(permission), dl)
-    result = File(fd: fd, deadline: dl, rbuf: newSeq[char](ReadChunk))
+  result = File(fd: fd, deadline: dl, rbuf: newSeq[char](ReadChunk))
 
 proc close*(f: var File) =
   ## Close now rather than at the end of the scope. Idempotent, and the
