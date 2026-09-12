@@ -2098,7 +2098,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   # Execute the build using nifmake
   let nifmakeCmd = quoteShell(findTool("nifmake")) &
     (if ForceRebuild in flags: " --force" else: "") &
-    " --base:" & quoteShell(config.baseDir) &
+    (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "") &
     " -j run " & quoteShell(buildFile)
   exec(nifmakeCmd)
   exec(exeFile)
@@ -2134,7 +2134,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
     (if Profile in flags: " --profile" else: "") &
     (if Report in flags: " --report" else: "") &
-    " --base:" & quoteShell(config.baseDir)
+    (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "")
   let nifmakeCommand = nifmakeBase & " -j run "
   # A changed configuration invalidates every sem result, and now says so
   # directly instead of through a file the sem nodes pretended to read.

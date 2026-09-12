@@ -676,7 +676,7 @@ Commands:
 
 Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
-  --makefile <name>     Output Makefile name (default: Makefile)
+  --makefile:<name>     Output Makefile name (default: Makefile)
   --force               Force rebuild of all targets (removes their outputs first)
   --rerun               Run every command regardless of staleness, but KEEP the
                         existing outputs, so a tool writing OnlyIfChanged can
@@ -701,7 +701,7 @@ Options:
 Examples:
   nifmake run build.nif
   nifmake makefile build.nif
-  nifmake --makefile build.mk makefile build.nif
+  nifmake --makefile:build.mk makefile build.nif
 """
   quit(0)
 
@@ -762,7 +762,8 @@ proc main() =
     progressLo = 0
     progressHi = 100
 
-  for kind, key, val in getopt():
+  var p = initOptParser(allowWhitespaceAfterColon = false)
+  for kind, key, val in p.getopt():
     case kind
     of cmdArgument:
       case key.normalize
