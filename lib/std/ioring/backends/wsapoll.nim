@@ -20,6 +20,12 @@
 # out of time is completed here even when nothing became ready — including on
 # the path where the poll set is empty and the lane holds only timers.
 #
+# Windows files are ring ops on this backend too (asyncio submits its
+# open/read/write on every Windows backend): WSAPoll cannot watch a HANDLE —
+# it fails WSAENOTSOCK — so a file fd is filtered out of the set at build time
+# and its transfers are made synchronously here, the "regular file is its own
+# readiness" rule the POSIX backends apply (backends/files.nim).
+#
 # Winsock is bound by `dynlib` (the winlean house style) rather than through
 # `<winsock2.h>`, so the generated C never has to order that header against
 # winlean's `<Windows.h>`. `WSAPOLLFD` is declared to its ABI (SOCKET + two
@@ -33,6 +39,7 @@ when defined(windows):
   import ../core/types
   import ../core/slots
   import ../core/backend
+  import ./files
   import ./poll
 
   const
@@ -83,12 +90,37 @@ when defined(windows):
           # that finished at once has completed the slot; the set is rebuilt
           # from the arena, so there is nothing to undo either way.
           discard startConnect(buf[i].fd, idx)
+        of opOpen:
+          # A Windows file open, performed here on the polling thread — same
+          # rule as POSIX opOpen's open(2). openFlags/openMode carry the
+          # desiredAccess/disposition asyncio computed from its FileMode
+          # (backends/files.nim).
+          completeFileOpen(idx, cast[cstring](buf[i].buf),
+                           buf[i].openFlags, buf[i].openMode)
+        of opSocket:
+          # One instant Winsock call each — the same "issue at once, nothing
+          # to arm" shape as `opOpen`, served by the shared poll helpers.
+          completeSocket(idx, buf[i].sockDomain, buf[i].sockType, buf[i].sockProtocol)
+        of opSetSockOpt:
+          completeSetSockOpt(idx, buf[i].fd, buf[i].optLevel, buf[i].optName,
+                             buf[i].optVal, buf[i].optLen)
+        of opBind:
+          completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+        of opSetNonBlocking:
+          completeSetNonBlocking(idx, buf[i].fd)
         else:
           discard
     # Build this lane's set from its arena. Collect before dispatching:
     # `processFd` frees slots, which mutates the fd index the set comes from.
+    # A FILE fd is its own readiness: WSAPoll cannot watch a HANDLE
+    # (WSAENOTSOCK), so it never enters the set and its transfers run after
+    # the collection loop (completing also frees slots — the same rule).
+    var fileFds: seq[cint] = @[]
     pollSets[lane].setLen(0)
     for fd in gSlots[lane].pendingFds:
+      if isFileHandle(fd):
+        fileFds.add fd
+        continue
       let events = armEventsForFd(fd)
       if events == {}: continue   # nothing to watch: the fd-less bucket (timers)
       var ev = 0
@@ -96,6 +128,8 @@ when defined(windows):
       if evWrite in events: ev = ev or POLLWRNORM
       pollSets[lane].add WsaPollFd(fd: SocketHandle(cast[uint32](fd)),
                                    events: cshort(ev), revents: cshort(0))
+    for f in fileFds:
+      fileTransfers(f)
     # Sleep no longer than the earliest deadline in this lane, so a timer
     # fires on time instead of on the next poll that happens for another
     # reason.

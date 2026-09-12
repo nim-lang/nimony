@@ -137,7 +137,9 @@ type
   IoEvents* = set[IoEvent]
 
   IoOp* = enum
-    opNop, opRead, opWrite, opAccept, opPollAdd, opConnect, opTimeout
+    opNop, opRead, opWrite, opAccept, opPollAdd, opConnect, opOpen,
+    opSocket, opSetSockOpt, opBind, opSetNonBlocking,
+    opRecvFrom, opSendTo, opTimeout
 
   SeqNum* = uint32
 
@@ -147,8 +149,9 @@ type
     fd*: FileHandle
     result*: int
       ## Op-dependent: a byte count for `opRead`/`opWrite`, the accepted fd for
-      ## `opAccept`, -1 on failure — and for `opPollAdd` the fired directions
-      ## encoded as a bit mask, which `readyEvents` decodes into `IoEvents`.
+      ## `opAccept`, the opened fd for `opOpen`, -1 on failure — and for
+      ## `opPollAdd` the fired directions encoded as a bit mask, which
+      ## `readyEvents` decodes into `IoEvents`.
 
   OpContext* = object
     kind*: IoOp
@@ -156,6 +159,37 @@ type
     seqnum*: SeqNum
     buf*: nil pointer
     len*: int
+    openFlags*: int32
+      ## opOpen only: what the backend's open needs as arguments. The caller
+      ## translates `FileMode` into the platform's bits before submitting: on
+      ## POSIX the O_* flags, on Windows the Win32 `desiredAccess` (a
+      ## truncating table, so the value is an int32 bit-pattern the backend
+      ## widens back via `cast[uint32]`).
+    openMode*: int32
+      ## opOpen only: the mode argument. POSIX reads it only when the flags
+      ## create the file, but the value is carried anyway so the backend has
+      ## nothing to decide. On Windows it carries the Win32
+      ## `creationDisposition` the same way.
+    sockDomain*: int32
+      ## opSocket only: the `domain` argument passed to socket(2). The caller
+      ## picks the platform's AF_* constant before submitting.
+    sockType*: int32
+      ## opSocket only: the `type` argument (platform SOCK_* constant).
+    sockProtocol*: int32
+      ## opSocket only: the `protocol` argument (platform IPPROTO_* constant).
+    optLevel*: int32
+      ## opSetSockOpt only: the `level` argument (platform SOL_* constant).
+    optName*: int32
+      ## opSetSockOpt only: the `optname` argument. What the option is, and
+      ## whether it is a flag or a value, is entirely the caller's business —
+      ## the backend just forwards `optVal`/`optLen` to setsockopt(2).
+    optVal*: nil pointer
+      ## opSetSockOpt only: the option value's bytes. The value does not have
+      ## to outlive the submit: these ops are completed synchronously by the
+      ## polling thread before the flag is set, so the submitter's stack is
+      ## still live when the platform call happens.
+    optLen*: SockLen
+      ## opSetSockOpt only: how many bytes `optVal` has.
     cont*: Continuation
     res*: int
     deadline*: Deadline
@@ -170,13 +204,15 @@ type
       ## for a socket, is almost always. Since the op is oneshot, that caller's
       ## re-arm turns into a hot spin.
     sockAddr*: Sockaddr_storage
-      ## `opAccept` has the kernel fill this in; `opConnect` supplies it. The
-      ## two never coexist on one op, so they share the storage rather than
-      ## paying for both.
+      ## `opAccept` has the kernel fill this in (the connecting peer);
+      ## `opRecvFrom` has it filled in as the datagram's source; `opConnect`,
+      ## `opSendTo` and `opBind` supply it as the target. None of them coexist
+      ## on one op, so they share the storage rather than paying for four.
     sockAddrLen*: SockLen
     peer*: nil ptr Sockaddr_storage
-      ## `opAccept` only: where to copy `sockAddr` when the op completes, or
-      ## `nil` for a caller that does not care who connected.
+      ## `opAccept` and `opRecvFrom`: where to copy `sockAddr` when the op
+      ## completes, or `nil` for a caller that does not care who connected /
+      ## where the datagram came from.
       ##
       ## An out-parameter rather than a field on `IoCompletion`, for the same
       ## reason `res` is one: a completion is 24 bytes and there are `CqSize`

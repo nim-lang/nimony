@@ -1,6 +1,5 @@
 import ./[posix, epoll]
 import std/[oserrors, atomics, syncio]
-import ../nativesocket
 
 type
   KernelRwfT* = int32  ## __kernel_rwf_t (a plain int in the kernel uapi)
@@ -188,12 +187,18 @@ type
   InnerSqeSplice* {.union.} = object
     spliceFdIn* {.importc: "splice_fd_in".}: uint32
     fileIndex* {.importc: "file_index".}: uint32
+    optLen*: uint32
+      ## `optlen` — the socket-uring-cmd word (SOCKET_URING_OP_GETSOCKOPT/
+      ## SETSOCKOPT) that shares this slot for entirely different ops.
     addrLen*: InnerSqeSplicePadAddrLen
 
   InnerSqeCmd* {.union.} = object
     addr3* {.importc: "addr3".}: nil pointer
     pad2* {.importc: "__pad2".}: array[2, uint64]
     cmd* {.importc: "cmd".}: uint8
+    optval*: nil pointer
+      ## `optval` — the socket-uring-cmd's user pointer to the option value,
+      ## the same eight bytes the socket-cmd ABI reuses for its own argument.
   
   Op* {.size: sizeof(uint8).} = enum
     OP_NOP
@@ -247,15 +252,28 @@ type
     OP_SENDMSG_ZC
     OP_LAST
   
+  InnerSqeSockPair = object
+    ## `struct { __u32 level; __u32 optname; }` — the socket-uring-cmd's level
+    ## and optname, as a *non-union* object: the two are a pair of consecutive
+    ## words, and a `.union.` member cannot carry two of them (every union
+    ## member overlaps at offset 0, so two `uint32`s would alias each other).
+    ## It rides in the same 8 bytes as `addr`, inside `InnerSqeAddr`.
+    level*: uint32
+    optname*: uint32
+
   InnerSqeOffset* {.union.} = object
     off*: Off
     addr2*: nil pointer
     cmdOp*: uint32
+      ## `cmd_op`: the low word of the union; the kernel's `__pad1` is the high
+      ## half of `off`, which a fresh (zeroed) SQE keeps at 0 — `io_uring_cmd_prep`
+      ## rejects a non-zero `__pad1` with EINVAL.
     pad1*: Off
 
   InnerSqeAddr* {.union.} = object
     `addr`*: nil pointer
     spliceOffIn*: Off
+    sockPair*: InnerSqeSockPair
 
   Sqe* {.pure, bycopy.} = object
     opcode*: Op
@@ -1199,6 +1217,14 @@ proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: var string; flags: int32 = 0; 
   sqe.opFlags.openFlags = cast[uint32](flags)
   sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path.toCString), cast[ptr cint](mode.addr)[], 0)
 
+proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: pointer; flags: int32; mode: int32): ptr Sqe =
+  ## Variant for a caller that already holds the NUL-terminated path in its own
+  ## buffer — the ioring op context carries it that way — rather than in a
+  ## `string`. Same SQE as the `var string` form: `len` carries `mode`, and
+  ## `open_flags` the flags.
+  sqe.opFlags.openFlags = cast[uint32](flags)
+  sqe.prepRw(OP_OPENAT, dfd, path, mode, 0)
+
 proc close*[T: FileHandle | SocketHandle](sqe: ptr Sqe; fd: T): ptr Sqe =
   sqe.opcode = OP_CLOSE
   sqe.fd = cast[int32](fd)
@@ -1322,6 +1348,37 @@ proc getxattr*(sqe: ptr Sqe; name: var string; buf: pointer; len: int; path: var
   sqe.cmd.addr3 = cast[pointer](path.toCString)
   sqe.prepRw(OP_GETXATTR, 0.cint, cast[pointer](name.toCString), len, buf)
 
-proc socket*(sqe: ptr Sqe; domain: Domain; `type`: SockType; protocol: Protocol; flags: int = 0): ptr Sqe =
-  sqe.opFlags.rwFlags = KernelRwfT(flags)
-  sqe.prepRw(OP_SOCKET, domain.cint, 0, protocol.cint, `type`.cint)
+proc socket*(sqe: ptr Sqe; domain, `type`, protocol: cint; flags: int = 0): ptr Sqe =
+  ## `IORING_OP_SOCKET`: create a socket and complete with its fd (the ring
+  ## never makes the socket(2) syscall). `domain`/`type`/`protocol` travel in
+  ## `fd`/`off`/`len` exactly as the kernel's `io_socket_prep` reads them
+  ## (verified against v6.8/6.10/master), as the values socket(2) would take
+  ## (`AF_*`, `SOCK_*`, `IPPROTO_*`). `flags` — `SOCK_NONBLOCK`, `SOCK_CLOEXEC`
+  ## — are the type word's own high bits: `io_socket_prep` extracts them with
+  ## `type & ~SOCK_TYPE_MASK`. They do NOT go into `rw_flags`: a non-zero
+  ## `rw_flags` (or `addr`) is EINVAL there.
+  sqe.prepRw(OP_SOCKET, domain, 0, protocol,
+             cast[Off](`type` or flags))
+
+const
+  SocketUringOpSock* = 0'u32  ## SOCKET_URING_OP_SIOCINQ
+  SocketUringOpGetsockopt* = 2'u32  ## SOCKET_URING_OP_GETSOCKOPT
+  SocketUringOpSetsockopt* = 3'u32  ## SOCKET_URING_OP_SETSOCKOPT
+
+proc cmdSockSetsockopt*(sqe: ptr Sqe; fd: FileHandle; level, optName: int32;
+                        optVal: pointer; optLen: int32): ptr Sqe =
+  ## setsockopt(2) as `IORING_OP_URING_CMD` + `SOCKET_URING_OP_SETSOCKOPT`
+  ## (kernel 6.7+; earlier kernels answer the SQE with `-EOPNOTSUPP`). No
+  ## syscall is made by this process: the whole request travels in the SQE —
+  ## `cmd_op` in the `off` union's low word, `level`/`optname` in the `addr`
+  ## union, `optlen` in the `file_index` slot, and `optval` (a user pointer,
+  ## read when the command runs) in the `addr3` slot. `optval` must stay valid
+  ## until the op completes, like a submitRead buffer.
+  sqe.opcode = OP_URING_CMD
+  sqe.fd = fd
+  sqe.off.cmdOp = SocketUringOpSetsockopt
+  sqe.`addr`.sockPair.level = uint32(level)
+  sqe.`addr`.sockPair.optname = uint32(optName)
+  sqe.splice.optLen = uint32(optLen)
+  sqe.cmd.optval = optVal
+  return sqe

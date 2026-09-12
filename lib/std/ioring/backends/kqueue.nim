@@ -61,6 +61,24 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
         # has completed the slot and there is nothing left to arm.
         if startConnect(buf[i].fd, idx):
           submitForPoll(buf[i].fd)
+      of opOpen:
+        # An open has no readiness to wait for — it is one syscall — so the
+        # backend performs it here and completes with the fd (or -errno).
+        completeOpen(idx, cast[cstring](buf[i].buf),
+                     cint(buf[i].openFlags),
+                     Mode(buf[i].openMode))
+      of opSocket:
+        # socket(2) answers at once, like open — there is no readiness to wait
+        # on, and nothing to arm afterwards: the flag's O_NONBLOCK arrives as
+        # its own ring op, not from this poller.
+        completeSocket(idx, buf[i].sockDomain, buf[i].sockType, buf[i].sockProtocol)
+      of opSetSockOpt:
+        completeSetSockOpt(idx, buf[i].fd, buf[i].optLevel, buf[i].optName,
+                           buf[i].optVal, buf[i].optLen)
+      of opBind:
+        completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+      of opSetNonBlocking:
+        completeSetNonBlocking(idx, buf[i].fd)
       else:
         submitForPoll(buf[i].fd)
   var kevents {.noinit.}: array[64, KEvent]

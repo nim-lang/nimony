@@ -27,9 +27,9 @@ proc armEventsForFd*(fd: cint): IoEvents =
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
     case gSlots[lane].slots[j].op.kind
-    of opRead, opAccept:
+    of opRead, opAccept, opRecvFrom:
       result.incl evRead
-    of opWrite:
+    of opWrite, opSendTo:
       result.incl evWrite
     of opPollAdd:
       # Pure readiness probe: exactly the direction(s) the caller asked for.
@@ -39,7 +39,7 @@ proc armEventsForFd*(fd: cint): IoEvents =
     of opConnect:
       # A non-blocking connect reports its outcome as writability.
       result.incl evWrite
-    of opNop, opTimeout:
+    of opNop, opTimeout, opOpen, opSocket, opSetSockOpt, opBind, opSetNonBlocking:
       discard
 
 const ArmFailed* = -1
@@ -52,6 +52,21 @@ proc failPendingForFd*(fd: cint) =
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
     complete(j, ArmFailed)
+
+proc reArmOrTransfer(fd: cint; alreadyRegistered: bool) {.inline.} =
+  ## The re-arm half of a submit or a delivered event: register `fd` for every
+  ## direction still pending on it — or, when the backend will not deliver for
+  ## it, satisfy those ops another way. A regular file is such a case: epoll
+  ## refuses it outright (EPERM) and kqueue accepts the registration yet
+  ## delivers at most a first event — a file must never be armed, because
+  ## nothing after that first wake will ever come. Its read/write never blocks,
+  ## so the transfer itself is the readiness and is performed here on the
+  ## polling thread — exactly the role `processFd` plays for a descriptor that
+  ## does deliver events. Anything else that cannot be armed never becomes
+  ## ready, so its ops are failed.
+  if transferIfRegularFile(fd): return
+  if not reArmEvent(fd, armEventsForFd(fd), alreadyRegistered):
+    failPendingForFd(fd)
 
 proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
   ## Arm `fd` for every op pending on it, including the one just allocated by
@@ -66,12 +81,27 @@ proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
   ## forever. Neither is a bug the caller can do anything about, so fd-less
   ## ops do not come here at all.
   if fd < 0: return
-  if not reArmEvent(fd, armEventsForFd(fd), alreadyRegistered):
-    failPendingForFd(fd)
+  reArmOrTransfer(fd, alreadyRegistered)
+
+when defined(posix):
+  proc syncFileTransfers(fd: cint) {.inline.}
+
+proc transferIfRegularFile(fd: cint): bool {.inline.} =
+  ## True when `fd` names a regular file — nothing for the readiness backends
+  ## to wait on — and its pending ops were satisfied by performing their
+  ## transfers right here. On Windows the ring's non-socket descriptors are
+  ## files served the same way, but by the dedicated backends/files.nim
+  ## helpers (`isFileHandle` + `fileTransfers`), so nothing arrives here.
+  when defined(posix):
+    result = isRegularFileFd(fd)
+    if result:
+      syncFileTransfers(fd)
+  else:
+    result = false
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, EINPROGRESS, pcall
+  from std/posix/posix import SockLen, FileHandle, EINPROGRESS, pcall, Mode, Stat, fstat, S_ISREG
 
   # No errno anywhere below. Every call the ring makes goes through
   # `posix.pcall`, which answers the raw Linux convention — the result, or
@@ -85,6 +115,109 @@ when defined(posix):
   proc getsockopt(s: cint; level, optname: cint; val: pointer;
                   vlen: ptr SockLen): cint {.importc: "getsockopt".}
   proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "connect".}
+  proc posixSocket(domain, typ, proto: cint): cint {.importc: "socket".}
+  proc posixSetsockopt(s: cint; level, optname: cint; val: nil pointer;
+                       vlen: SockLen): cint {.importc: "setsockopt".}
+  proc posixBind(s: cint; name: pointer; namelen: SockLen): cint {.importc: "bind".}
+  proc posixFcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
+    ## FIXED arity with a defaulted third argument, not `varargs`: the same
+    ## shape and the same reason as iouring.nim's `fcntl` — nimony collapses
+    ## same-named importc stubs, so a varargs fcntl would mono-morph into
+    ## arities that fight over one register-signature stub. `F_GETFL` ignores
+    ## the third argument, so passing `0` costs nothing.
+  proc posixRecvfrom(s: cint; buf: nil pointer; count: int; flags: cint;
+                     `addr`: pointer; addrlen: ptr SockLen): int {.importc: "recvfrom".}
+  proc posixSendto(s: cint; buf: nil pointer; count: int; flags: cint;
+                   `addr`: pointer; addrlen: SockLen): int {.importc: "sendto".}
+  proc posixOpen(path: cstring; flags: cint): cint {.varargs, importc: "open", sideEffect.}
+    ## A named `open`: `posix.open` and `syncio.open` clash wherever both are
+    ## imported, and importing only the one this file needs would be a line of
+    ## housekeeping for no benefit. `varargs` keeps the C prototype variadic,
+    ## matching libc's `open` (`mode` passes through the `...`); a fixed-arity
+    ## declaration instead lets the C compiler skip the variadic save area that
+    ## libc's `open` reads `mode` from on AAPCS64 targets.
+
+  proc completeOpen*(idx: int; path: cstring; flags: cint; mode: Mode) =
+    ## The backend half of `submitOpen`: an `open` for an opOpen is performed
+    ## here, on the polling thread, like every other command a backend runs —
+    ## never by the caller, who would block on a filesystem-backed open. The
+    ## fd (or `-errno`) is completed to the parked caller.
+    complete(idx, int pcall(posixOpen(path, flags, mode)))
+
+  const
+    F_GETFL = 3.cint
+    F_SETFL = 4.cint
+    O_NONBLOCK = (when defined(linux): 0x0800.cint else: 0x0004.cint)
+
+  proc completeSocket*(idx: int; domain, typ, proto: int32) =
+    ## The backend half of `submitSocket`: socket(2) is one syscall with no
+    ## readiness to wait on, so — exactly like `completeOpen` — the polling
+    ## thread performs it and completes with the fd (or `-errno`). The flag
+    ## just created has nothing to arm: its O_NONBLOCK comes from a ring op,
+    ## not from waiting on it.
+    complete(idx, int pcall(posixSocket(cint(domain), cint(typ), cint(proto))))
+
+  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: int32;
+                           optVal: nil pointer; optLen: SockLen) =
+    ## The backend half of `submitSetSockOpt`: setsockopt(2) answers
+    ## immediately (it is configuration, not I/O), so the polling thread makes
+    ## the call and completes with `0` or `-errno`. The option value is read
+    ## during this very call, long before the caller's frame could go away.
+    complete(idx, int pcall(posixSetsockopt(fd, cint(level), cint(optName),
+                                            optVal, optLen)))
+
+  proc completeBind*(idx: int; fd: FileHandle; sa: pointer; saLen: SockLen) =
+    ## The backend half of `submitBind`: bind(2) is one syscall the kernel
+    ## answers at once — nothing to wait on, so the polling thread performs it
+    ## and completes with `0` or `-errno`. The kernel copies the address out
+    ## of `sa` during the call; it is not kept.
+    complete(idx, int pcall(posixBind(fd, sa, saLen)))
+
+  proc completeSetNonBlocking*(idx: int; fd: FileHandle) =
+    ## The backend half of `submitSetNonBlocking`: fcntl(F_SETFL, … or
+    ## O_NONBLOCK), two instant syscalls made here on the polling thread — a
+    ## poller cannot watch for "not blocking", so this is done at issue, not
+    ## awaited. Completes with `0` or `-errno`.
+    let flags = pcall(posixFcntl(fd, F_GETFL))
+    if flags >= 0:
+      # `pcall` answers in `clong`; the flags are a small bit-mask, so the
+      # cint narrowing is exact.
+      complete(idx, int pcall(posixFcntl(fd, F_SETFL, cint(flags) or O_NONBLOCK)))
+    else:
+      complete(idx, int(flags))
+
+  proc isRegularFileFd(fd: cint): bool =
+    ## True when `fd` names a regular file. Nothing below gets to refuse a
+    ## transfer because it cannot watch the descriptor — a regular file is not
+    ## a bug in the caller's choice of I/O, it is a different readiness model.
+    var st = default(Stat)
+    if int(pcall(fstat(fd, st))) < 0: return false
+    result = S_ISREG(st.st_mode)
+
+  proc syncFileTransfers(fd: cint) =
+    ## Perform, on the polling thread, the I/O of every op pending on a regular
+    ## file `fd`. A regular file has no readiness to wait for — its read and
+    ## write answer at once (never EAGAIN: the fd is not O_NONBLOCK) — so the
+    ## transfer IS the event, and this is what `processFd` is for a descriptor
+    ## that does deliver events. This runs instead of arming the fd: kqueue's
+    ## registration of a file is accepted yet, after a first delivery, never
+    ## fires again, so an armed file op would park forever on its second read.
+    let lane = ioLane()
+    for j in gSlots[lane].slotsForFd(fd):
+      let s = addr gSlots[lane].slots[j]
+      case s.op.kind
+      of opRead:
+        complete(j, int pcall(posixRead(fd, s.op.buf, s.op.len)))
+      of opWrite:
+        complete(j, int pcall(posixWrite(fd, s.op.buf, s.op.len)))
+      of opPollAdd:
+        # Always ready: a regular file stays readable (down to EOF) and
+        # writable — there is no condition for the poller to wait on.
+        complete(j, toEventMask(s.op.pollMask))
+      else:
+        discard   # opAccept/opConnect on a file is not a transfer we can make
+    if gSlots[lane].hasPendingForFd(fd):
+      failPendingForFd(fd)
 
   const
     SOL_SOCKET = (when defined(macosx): 0xFFFF.cint else: 1.cint)
@@ -137,6 +270,19 @@ when defined(posix):
           # 128 bytes of one.
           s.op.sockAddrLen = addrLen
           complete(j, client)
+      of opRecvFrom:
+        if evRead in firedEvents:
+          var addrLen = s.op.sockAddrLen
+          let n = int pcall(posixRecvfrom(fd, s.op.buf, s.op.len, 0,
+                                          addr s.op.sockAddr, addr addrLen))
+          # Same narrowing as accept: `complete` hands the storage to `peer`,
+          # so the length that describes it has to be what the kernel wrote.
+          if n >= 0: s.op.sockAddrLen = addrLen
+          complete(j, n)
+      of opSendTo:
+        if evWrite in firedEvents:
+          complete(j, int pcall(posixSendto(fd, s.op.buf, s.op.len, 0,
+                                            addr s.op.sockAddr, s.op.sockAddrLen)))
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide
@@ -162,13 +308,12 @@ when defined(posix):
             complete(j, -int(err))
           else:
             complete(j, 0)
-      of opNop, opTimeout:
+      of opNop, opTimeout, opOpen, opSocket, opSetSockOpt, opBind, opSetNonBlocking:
         discard
     # Re-arm for whatever directions still have an op pending on this fd
     # (completions above may have freed some slots already).
     if gSlots[lane].hasPendingForFd(fd):
-      if not reArmEvent(fd, armEventsForFd(fd), true):
-        failPendingForFd(fd)
+      reArmOrTransfer(fd, true)
     # else: nothing left for this fd; the backend already consumed the
     # one-shot registration, and submit/registerEvent will re-add it the
     # next time an op targets this fd.
@@ -201,6 +346,12 @@ else:
     stdcall, importc: "recv", dynlib: "ws2_32.dll".}
   proc wsSend(s: SocketHandle; buf: nil pointer; len, flags: cint): cint {.
     stdcall, importc: "send", dynlib: "ws2_32.dll".}
+  proc wsRecvFrom(s: SocketHandle; buf: nil pointer; len, flags: cint;
+                  name: pointer; namelen: ptr cint): cint {.
+    stdcall, importc: "recvfrom", dynlib: "ws2_32.dll".}
+  proc wsSendTo(s: SocketHandle; buf: nil pointer; len, flags: cint;
+                name: pointer; namelen: cint): cint {.
+    stdcall, importc: "sendto", dynlib: "ws2_32.dll".}
   proc wsAccept(s: SocketHandle; name: pointer; namelen: ptr cint): SocketHandle {.
     stdcall, importc: "accept", dynlib: "ws2_32.dll".}
   proc wsConnect(s: SocketHandle; name: pointer; namelen: cint): cint {.
@@ -210,6 +361,60 @@ else:
     stdcall, importc: "getsockopt", dynlib: "ws2_32.dll".}
   proc wsaGetLastError(): cint {.
     stdcall, importc: "WSAGetLastError", dynlib: "ws2_32.dll".}
+  proc wsSocket(af, typ, protocol: cint): SocketHandle {.
+    stdcall, importc: "socket", dynlib: "ws2_32.dll".}
+  proc wsSetsockopt(s: SocketHandle; level, optname: cint; optval: pointer;
+                    optlen: cint): cint {.
+    stdcall, importc: "setsockopt", dynlib: "ws2_32.dll".}
+  proc wsBindS(s: SocketHandle; name: pointer; namelen: cint): cint {.
+    stdcall, importc: "bind", dynlib: "ws2_32.dll".}
+  proc wsClosesocket(s: SocketHandle): cint {.
+    stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
+  proc wsIoctlsocket(s: SocketHandle; cmd: clong; argp: ptr culong): cint {.
+    stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
+  const FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
+
+  proc completeSocket*(idx: int; domain, typ, proto: int32) =
+    ## Windows twin of the POSIX `completeSocket`: one instant syscall made on
+    ## the polling thread; completes with the fd (or the negated Winsock code).
+    let s = wsSocket(cint(domain), cint(typ), cint(proto))
+    if s == InvalidSocket:
+      complete(idx, -int(wsaGetLastError()))
+    elif s > SocketHandle(high(cint)):
+      discard wsClosesocket(s)      # the ring cannot hold the handle's cint
+      complete(idx, -1)
+    else:
+      complete(idx, int(cast[uint32](s)))
+
+  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: int32;
+                           optVal: nil pointer; optLen: SockLen) =
+    ## Windows twin of the POSIX `completeSetSockOpt`: one instant Winsock
+    ## call; completes with `0` or the negated Winsock code.
+    let r = wsSetsockopt(socketOf(fd), cint(level), cint(optName),
+                         cast[pointer](optVal), cint(optLen))
+    if r == SocketError:
+      complete(idx, -int(wsaGetLastError()))
+    else:
+      complete(idx, 0)
+
+  proc completeBind*(idx: int; fd: FileHandle; sa: pointer; saLen: SockLen) =
+    ## Windows twin of the POSIX `completeBind`: one instant Winsock call;
+    ## completes with `0` or the negated Winsock code.
+    let r = wsBindS(socketOf(fd), sa, cint(saLen))
+    if r == SocketError:
+      complete(idx, -int(wsaGetLastError()))
+    else:
+      complete(idx, 0)
+
+  proc completeSetNonBlocking*(idx: int; fd: FileHandle) =
+    ## Windows twin of the POSIX `completeSetNonBlocking`: ioctlsocket(FIONBIO);
+    ## completes with `0` or the negated Winsock code.
+    var one: culong = 1
+    let r = wsIoctlsocket(socketOf(fd), FIONBIO, addr one)
+    if r == SocketError:
+      complete(idx, -int(wsaGetLastError()))
+    else:
+      complete(idx, 0)
 
   proc socketOf(fd: cint): SocketHandle {.inline.} =
     ## The ring narrows a SOCKET to `cint` (ioring.nim, Windows arm); widen it
@@ -282,6 +487,25 @@ else:
             # API imposes; kernel handle values are small in practice (see
             # ioring.nim's Windows `listenTcp`).
             complete(j, int(cast[uint32](client)))
+      of opRecvFrom:
+        if evRead in firedEvents:
+          var addrLen = cint(sl.op.sockAddrLen)
+          let r = wsRecvFrom(s, sl.op.buf, clampLen(sl.op.len), 0.cint,
+                             addr sl.op.sockAddr, addr addrLen)
+          if r == SocketError:
+            if not wouldBlock():
+              complete(j, -1)
+          else:
+            sl.op.sockAddrLen = SockLen(addrLen)
+            complete(j, int(r))
+      of opSendTo:
+        if evWrite in firedEvents:
+          let r = wsSendTo(s, sl.op.buf, clampLen(sl.op.len), 0.cint,
+                           addr sl.op.sockAddr, cint(sl.op.sockAddrLen))
+          if r == SocketError:
+            if not wouldBlock(): complete(j, -1)
+          else:
+            complete(j, int(r))
       of opPollAdd:
         let hit = firedEvents * sl.op.pollMask
         if hit != {}:
@@ -304,7 +528,7 @@ else:
             complete(j, -int(err))
           else:
             complete(j, 0)
-      of opNop, opTimeout:
+      of opNop, opTimeout, opOpen, opSocket, opSetSockOpt, opBind, opSetNonBlocking:
         discard
     if gSlots[lane].hasPendingForFd(fd):
       if not reArmEvent(fd, armEventsForFd(fd), true):
