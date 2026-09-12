@@ -320,7 +320,7 @@ iterator splitWhitespace*(s: string; maxsplit: int = -1): string =
   ##   ```
   ##
   ## ...generates "foo", "bar", "baz".
-  var last = 0
+  var last: Natural = 0
   var splits = maxsplit
   while last < len(s):
     while last < len(s) and s[last] in Whitespace: inc(last)

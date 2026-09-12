@@ -69,3 +69,15 @@ assert stringIndexInAForLoop("") == 0
 assert openArrayIndexInAForLoop([4, 5]) == 9
 assert inclusiveRange(@[1, 2]) == 3
 contractIsAssumedInTheBody(1)
+
+proc ensuresCarriesToTheCallSite(s: string; q: seq[int]): int =
+  # `len` states `0 <= result` with a pragma rather than with a `Natural` return
+  # type: the type would change what `var x = len(s)` infers, the pragma only
+  # states the fact. `assumeEnsures` reads it at the call site.
+  var a: Natural = 0
+  var b: Natural = 0
+  a = len(s)
+  b = q.len
+  result = a + b
+
+assert ensuresCarriesToTheCallSite("ab", @[1]) == 3

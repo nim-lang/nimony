@@ -28,7 +28,7 @@ converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline, establish
 
 func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
 func low*[T](a: openArray[T]): int {.inline.} = 0
-func len*[T](a: openArray[T]): int {.inline.} = a.len
+func len*[T](a: openArray[T]): int {.inline, ensures: (0 <= result).} = a.len
 
 type
   Equatable* = concept

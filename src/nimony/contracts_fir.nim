@@ -137,6 +137,11 @@ type
       ## True while `scanLoopWrites` walks a loop body ahead of its traversal.
       ## The body's own locals are not registered with the type cache yet, so
       ## nothing may ask for a type during it.
+    substVar: Table[SymId, VarId]
+      ## While an `.ensures` is being read, the `result` it names stands for a
+      ## `VarId` rather than for an expression: either the location the call was
+      ## bound to, or the anonymous slot `checkRangeAssign` judges a call's
+      ## value in.
     declaredRange: Table[VarId, RangeBounds]
       ## The bounds a location's `range` TYPE states. Unlike a flow fact this
       ## can never go stale — every write to the location owes the range in
@@ -447,6 +452,8 @@ proc endBorrow(c: var FirContext; sym: SymId) =
       inc i
 
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
+
+proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId)
 
 proc analyseIfDerived(c: var FirContext; n: Cursor) =
   ## A guard operand that turns out to be a *derived* location (`s.len`, and so
@@ -1020,6 +1027,22 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
         buildErr c, value.info, "cannot prove '" & asNimCode(baseSym) &
           "' stays in range " & $lo & ".." & $hi
         return
+
+  # A call binding straight to its destination — the Final IR's normal form —
+  # can only be judged by what the callee promises. Its `.ensures` is read into
+  # an anonymous slot: phrasing it on the *destination* instead would make the
+  # check vacuous, since a `Natural` destination's own declared range already
+  # answers its own range question.
+  if sym == NoSymId and value.isTagLit and value.exprKind in CallKinds:
+    let slot = derivedIdOf(c, "#boundvalue", NoSymId)
+    invalidateFactsAbout(c.facts, slot)
+    assumeEnsures(c, value, slot)
+    let lowerE = query(VarId(0), slot, -lo)
+    let upperE = query(slot, VarId(0), hi)
+    let ok = (not needLo or implies(c.facts, lowerE)) and
+             (not needHi or implies(c.facts, upperE))
+    invalidateFactsAbout(c.facts, slot)
+    if ok: return
 
   # `a shr k` (arithmetic or logical) and `a and k`: non-negativity survives
   # both, which is what binds the halving step `y = y shr 1` and a masked index
@@ -1614,6 +1637,11 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
   ## zero, which is also what makes `nil` and `0` the same operand.
   v = VarId(0)
   cnst = createXint(0'i32)
+  if c.substVar.len > 0:
+    let rs = extractSymId(peelExpr(n))
+    if rs != NoSymId and c.substVar.hasKey(rs):
+      v = c.substVar.getOrQuit(rs)
+      return true
   let m = argOf(n, paramMap)
   case m.kind
   of IntLit:
@@ -1735,24 +1763,24 @@ proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): Pr
       # wants a non-negative index *type* or a guard.
       stderr.writeLine "   LEAF " & $result & " " & asNimCode(n)
 
-proc assumeCond(c: var FirContext; n: Cursor) =
-  ## Record a routine's own `.requires` as facts on entry to its body. Every
-  ## call site had to discharge it (or the module opted into `runtimeContracts`,
-  ## where the guard hexer emits at the top of this very body establishes it
-  ## dynamically), so the body may assume it — which is what lets a precondition
-  ## be passed on to an inner call that demands the same thing. Whatever is not
-  ## modelled simply contributes no fact.
-  let noArgs = initTable[SymId, Cursor]()
+proc assumeCond(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]) =
+  ## Record a proposition as fact. Two callers: a routine's own `.requires` on
+  ## entry to its body — every call site had to discharge it, so the body may
+  ## assume it, which is what lets a precondition be passed on to an inner call
+  ## that demands the same thing — and a callee's `.ensures` at the call site.
+  ## `subst` maps the proposition's parameters (and `result`) to what they stand
+  ## for here; it is empty for the `.requires` case, where the symbols already
+  ## are the ones to reason about. Whatever is not modelled contributes no fact.
   case n.exprKind
   of AndX:
     var r = sub(n)
-    assumeCond(c, r)
+    assumeCond(c, r, subst)
     skip r
-    assumeCond(c, r)
+    assumeCond(c, r, subst)
   of NotX:
     var r = sub(n)
     var wasEquality = false
-    var fact = pureCompare(c, r, noArgs, wasEquality)
+    var fact = pureCompare(c, r, subst, wasEquality)
     if fact.isValid and not wasEquality:
       negateFact(fact)
       c.facts.add fact
@@ -1761,14 +1789,73 @@ proc assumeCond(c: var FirContext; n: Cursor) =
     while r.exprKind == ExprX:
       r = sub(r)
       while r.hasMore and not isLastSon(r): skip r
-    assumeCond(c, r)
+    assumeCond(c, r, subst)
   else:
     var wasEquality = false
-    let fact = pureCompare(c, n, noArgs, wasEquality)
+    let fact = pureCompare(c, n, subst, wasEquality)
     if fact.isValid:
       c.facts.add fact
       if wasEquality:
         c.facts.add fact.geXplusC
+
+proc assumeOwnContract(c: var FirContext; n: Cursor) =
+  let noArgs = initTable[SymId, Cursor]()
+  assumeCond(c, n, noArgs)
+
+proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId) =
+  ## A callee's `.ensures`, read at the call site with its parameters standing
+  ## for the arguments and `result` for the location the call was bound to.
+  ##
+  ## This is how `len` states `0 <= result` without its *type* saying so —
+  ## `Natural` as a return type would change what `var x = len(s)` infers, which
+  ## is not a price worth paying for a fact a pragma can state directly.
+  ##
+  ## Only propositions the fact engine models contribute, and only what the
+  ## callee actually promises: an `.ensures` is the callee's word, so it is
+  ## taken at face value exactly as a `.requires` is at the other end.
+  if resultVar == InvalidVarId: return
+  if not call.isTagLit or call.exprKind notin CallKinds: return
+  var fn = call
+  fn = sub(fn)
+  var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
+  if not fnType.isParamsTag: return
+
+  # the proposition names the callee's parameters; bind them to the arguments
+  var subst = initTable[SymId, Cursor]()
+  let paramsStart = fnType
+  var p = fnType
+  p = sub(p)
+  var arg = fn
+  skip arg # past the callee
+  while p.hasMore and arg.hasMore:
+    let param = takeLocal(p, SkipFinalParRi)
+    subst[param.name.symId] = arg
+    skip arg
+
+  fnType = paramsStart
+  skip fnType # params
+  skip fnType # return type
+  let ens = extractPragma(fnType, EnsuresP)
+  if cursorIsNil(ens) or ens.exprKind != ExprX: return
+
+  # `(expr (result :r . . T .) <cond>)`, and the wrapper nests once per
+  # sem-check of the declaration — see `finalir.forRangeAssumes`.
+  var resultSyms: seq[SymId] = @[]
+  var cond = ens
+  while cond.exprKind == ExprX:
+    var inner = cond
+    inner = sub(inner)
+    if not inner.hasMore: break
+    if inner.symKind == ResultY:
+      resultSyms.add asLocal(inner).name.symId
+    while inner.hasMore and not isLastSon(inner): skip inner
+    cond = inner
+  if resultSyms.len == 0: return
+
+  for rs in resultSyms:
+    c.substVar[rs] = resultVar
+  assumeCond(c, cond, subst)
+  c.substVar.clear()
 
 proc checkRequires(c: var FirContext; req: Cursor; paramMap: Table[SymId, Cursor];
                    info: NifLineInfo) =
@@ -2188,6 +2275,8 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
     # The (re)assigned location again holds an in-range value; the fact
     # bookkeeping above may have invalidated its range facts, so restore them.
     seedRangeFacts c, symId, expected
+    # ... and whatever the callee promised about what it just returned.
+    assumeEnsures c, valueStart, getVarId(c, symId)
 
     skip n
   else:
@@ -2932,6 +3021,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor) =
   # record that for downstream obligations that reference this symbol.
   if initAccepted:
     seedRangeFacts c, name, localType
+    assumeEnsures c, initStart, getVarId(c, name)
 
 proc traverseAssume(c: var FirContext; n: var Cursor) =
   ## An assumption the lowering vouches for. `finalir.nim` states the range of a
@@ -3040,7 +3130,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   # top of this very body establishes it dynamically). Without this a contract
   # could not be passed on to an inner call with the same precondition.
   if not cursorIsNil(ownContract):
-    assumeCond c, ownContract
+    assumeOwnContract c, ownContract
 
   # Analyze body. Generic procs are only checked once instantiated. Extern
   # (importc/importcpp) procs satisfy their contract at the C level and have no
@@ -3263,6 +3353,7 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
     moduleSuffix: moduleSuffix,
     tr: initFlowTracker(),
     flow: initFlowState(),
+    substVar: initTable[SymId, VarId](),
     steppedLoc: InvalidVarId,
     loopExitLabels: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),

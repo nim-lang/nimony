@@ -156,7 +156,7 @@ func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
   inc s.len
   (s.data[L]) = elem
 
-func len*[T](s: seq[T]): int {.inline.} =
+func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result).} =
   ## Number of elements in `s`.
   s.len
 
