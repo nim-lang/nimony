@@ -116,7 +116,21 @@ proc semProposition*(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind:
     withNewScope c:
       if kind == EnsuresP:
         dest.addParLe(ExprX, n.info)
+        # An iterator's `result` is the value it yields. `declareResult` does
+        # not declare one for an iterator *body* — there is no such local — but
+        # a proposition *about* what it yields needs the name, and that is what
+        # lets `..<` state the range of a `for` loop variable.
+        #
+        # `resId` is saved because the symbol declared here belongs to the
+        # proposition, not to the routine. A proc's body re-declares its own
+        # `result` afterwards and overwrote it again, which is why this never
+        # showed; for an iterator nothing does.
+        let savedKind = c.routine.kind
+        let savedResId = c.routine.resId
+        if savedKind == IteratorY: c.routine.kind = FuncY
         discard declareResult(c, dest, n.info)
+        c.routine.kind = savedKind
+        c.routine.resId = savedResId
       #let start = dest.len
       semBoolExpr c, dest, n
       if kind == EnsuresP:

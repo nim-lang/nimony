@@ -31,6 +31,20 @@ type
       ## default because the narrowing can silently lose precision; opt in with
       ## `.feature: "lenientFloats".` (v2 implies it).
     LenientAliasingFeature
+    RuntimeContractsFeature
+      ## Check `.requires` contracts at run time only: the `if not cond: panic`
+      ## guard hexer emits into the callee becomes the sole check, and no call
+      ## site in this module is judged statically. The opt-out for code the
+      ## prover gets *wrong* — or that simply wants no compile-time diagnostics
+      ## about contracts at all.
+    StaticContractsFeature
+      ## Every `.requires` a call site in this module carries must be *proven*,
+      ## not merely not-disproven. This is where contracts are headed. It is not
+      ## the default yet for one measured reason: the prover cannot track a
+      ## container's length through its construction, so `var s = newSeq[int](4)`
+      ## followed by `s[0]` is undecided and demanding proof everywhere still
+      ## rejects a seventh of the test suite. Loops are no longer the obstacle.
+      ## `runtimeContracts` wins over it if both are given.
 
 proc normalizeFeatureName(s: string): string =
   result = newStringOfCap(s.len)
@@ -53,7 +67,10 @@ proc parseFeatures*(s: string): set[Feature] =
   of "vartoverloads": {VarToverloadsFeature}
   of "lenientfloats": {LenientFloatsFeature}
   of "lenientaliasing": {LenientAliasingFeature}
+  of "runtimecontracts": {RuntimeContractsFeature}
+  of "staticcontracts": {StaticContractsFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
-            VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature}
+            VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,
+            RuntimeContractsFeature}
   else: {}

@@ -18,7 +18,9 @@ import std/private/osseps
 
 type
   PathIter* = object ## Cursor used while scanning raw path strings component by component.
-    i, prev: int
+    i, prev: Natural   ## `Natural`, so `0 <= i` is stated by the type: every
+                       ## `x[it.i]` below then owes only the upper bound, which
+                       ## the `it.i < x.len` guard already supplies.
     notFirst: bool
 
 func hasNext*(it: PathIter; x: string): bool =

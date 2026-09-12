@@ -471,15 +471,21 @@ func addQuoted*[T](s: var string, x: T) =
     s.add($x)
 
 type
-  # TODO: change to `range[0..high(int)]` when range type is implemented
-  Natural* = int
+  Natural* = range[0 .. high(int)]
     ## is an `int` type ranging from zero to the maximum value
-    ## of an `int`. This type is often useful for documentation and debugging.
+    ## of an `int`.
+    ##
+    ## It is a real `range` type, so a `Natural` parameter *states* `0 <= x` and
+    ## the contract analysis reads it straight off the type
+    ## (`contracts_fir.seedRangeFacts`). That is what lets an indexing routine
+    ## discharge the lower half of `0 <= i and i < s.len` without a guard or a
+    ## `.requires` at any call site. Binding a value to a `Natural` owes
+    ## `0 <= value` in return, and that obligation is proven at compile time —
+    ## no range check is ever emitted.
 
-  # TODO: change to `range[1..high(int)]`
-  Positive* = int
+  Positive* = range[1 .. high(int)]
     ## is an `int` type ranging from one to the maximum value
-    ## of an `int`. This type is often useful for documentation and debugging.
+    ## of an `int`. Like `Natural`, it is a real `range` type.
 
   HSlice*[T, U] = object   ## "Heterogeneous" slice type.
     a*: T                  ## The lower bound (inclusive).
