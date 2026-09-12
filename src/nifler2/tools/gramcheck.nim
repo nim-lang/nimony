@@ -434,9 +434,13 @@ proc leadMask(g: Grammar; n: Node): IndSet =
   case n.kind
   of nGuard: result = n.ind
   of nSeq:
+    # "Matches nothing" means EVERY item matched nothing, so every item's
+    # constraint applies -- including a nullable one that *could* have consumed
+    # a token. `optInd` is `COMMENT? validInd`: skipping the comment does not
+    # excuse the indentation, and treating the optional COMMENT as the end of
+    # the mask lost `validInd` entirely.
     result = AnyInd
     for k in n.kids:
-      if firstOf(g, k).len > 0: return result
       result = result * leadMask(g, k)
       if not isNullable(g, k): return result
   of nAlt:
@@ -481,8 +485,17 @@ proc firstOf(g: Grammar; n: Node): Table[string, IndSet] =
       for a in g.argsOf[n.text]: union(result, firstOf(g, a))
   of nTag: result = firstOf(g, n.kids[0])
   of nIndented:
-    result = firstOf(g, n.kids[0])
-    restrict(result, {icGt})
+    # The body's FIRST set is measured against the INNER indentation, and
+    # `pushInd` makes the first token of the block define it -- so a token that
+    # is `IND{=}` inside is `IND{>}` outside, and one that is not `IND{=}`
+    # inside cannot be the first token at all. (`restrict` to `{icGt}` instead
+    # of this remapping made every left-recursive indented alternative
+    # unreachable: `objectPart`'s own guard is `notInd`, which excludes
+    # `IND{>}`, so the intersection was empty and the branch compiled to
+    # `if false:`.) This is the outward counterpart of `remapIn`.
+    result = initTable[string, IndSet]()
+    for k, v in firstOf(g, n.kids[0]):
+      if icEq in v: result[k] = {icGt}
   of nBinary:
     if n.kids.len > 0: result = firstOf(g, n.kids[0])   # rest are Nim procs
   of nLa2:
@@ -796,13 +809,27 @@ proc hasFreeAnchor(n: Node): bool =
   false
 
 proc condOf(e: Emitter; n: Node): string =
-  if n.kind == nRule and e.predicated.contains(n.text):
-    canCall(n)
-  elif n.kind == nSeq and n.kids.len > 0 and n.kids[0].kind == nRule and
-       e.predicated.contains(n.kids[0].text):
-    canCall(n.kids[0])
-  else:
-    condFor(firstOf(e.g, n))
+  # the item that actually decides, which is the first one that can consume a
+  # token: `(&suffixStart primarySuffix(mode))*` is entered on
+  # `canPrimarySuffix`, not on FIRST(primarySuffix).
+  var head = n
+  if n.kind == nSeq:
+    head = nil
+    for k in n.kids:
+      if k.kind notin {nPred, nAhead, nGuard, nDefault}:
+        head = k
+        break
+  var base =
+    if head != nil and head.kind == nRule and e.predicated.contains(head.text):
+      canCall(head)
+    else:
+      condFor(firstOf(e.g, n))
+  # An optional or repeated body that LEADS with a semantic predicate is only
+  # entered when the predicate holds, and a FIRST set cannot express one -- so
+  # it has to be ANDed in here, exactly as `emitAlts` does for alternatives.
+  let gd = guardsOf(if n.kind == nSeq: n.kids else: @[n])
+  if gd.len > 0: base = "(" & base & ") and " & gd
+  base
 
 proc emitNode(e: var Emitter; n: Node; mark, anchor: string)
 
@@ -929,9 +956,23 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
       body e:
         finish(e, defaults[0])
   elif not first:
-    e.line "else:"
-    body e:
-      e.line "error p, \"expected " & rule & "\""
+    # An alternative that can match the empty string makes "nothing matched" a
+    # legal outcome, so there is nothing to report: `indAndComment` is
+    # `(IND{>} COMMENT)? | COMMENT?` and both sides can match nothing. Such an
+    # alternative only needs a branch of its own if it carries a tag or an
+    # action, which an empty match still has to run.
+    var empty = -1
+    for i in 0 ..< alts.len:
+      if empty < 0 and altNullable(e.g, alts[i]): empty = i
+    if empty < 0:
+      e.line "else:"
+      body e:
+        e.line "error p, \"expected " & rule & "\""
+    elif alts[empty].tag.len > 0 or alts[empty].enterCode.len +
+         alts[empty].leaveCode.len + alts[empty].afterCode.len > 0:
+      e.line "else:"
+      body e:
+        finish(e, alts[empty])
 
 proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
   case n.kind
@@ -1012,7 +1053,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       # which is why this cannot simply be `could have continued but did not`.
       e.line "if (" & loose & ") and indClass(p) == icGt:"
       body e:
-        e.line "error p, \"invalid indentation\""
+        e.line "error p, \"invalid indentation in " & e.curRule & "\""
     e.line "discardUnused " & m2
     if n.text == "^*": dec e.indent
   of nTag:
@@ -1056,7 +1097,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
   of nLa2:
     e.line "# la2: " & render(n)
 
-proc emitParser(g: Grammar; order: seq[string]): string =
+proc emitParser(g: Grammar; order: seq[string]; runtime: string): string =
   var e = Emitter(g: g, outp: "", indent: 0, tmp: 0,
                   setNames: initTable[string, string](), setOrder: @[],
                   needsAnchor: initHashSet[string](),
@@ -1090,14 +1131,14 @@ proc emitParser(g: Grammar; order: seq[string]): string =
     e.line ""
   for r in order:
     e.line "proc " & procName(r) & "*(p: var Parser" &
-           (if e.needsAnchor.contains(r): "; anchor: int" else: "") &
+           (if e.needsAnchor.contains(r): "; anchor: Mark" else: "") &
            (if g.paramSig.hasKey(r): "; " & g.paramSig[r] else: "") & ")"
   e.line ""
   for r in order:
     let alts = g.rules[r]
     e.curRule = r
     e.line "proc " & procName(r) & "*(p: var Parser" &
-           (if e.needsAnchor.contains(r): "; anchor: int" else: "") &
+           (if e.needsAnchor.contains(r): "; anchor: Mark" else: "") &
            (if g.paramSig.hasKey(r): "; " & g.paramSig[r] else: "") & ") ="
     inc e.indent
     e.line "let m0 = mark(p)"
@@ -1121,7 +1162,7 @@ proc emitParser(g: Grammar; order: seq[string]): string =
   var head = "## GENERATED by src/nifler2/tools/gramcheck.nim -- do not edit.\n" &
              "## One proc per rule; the dispatch is an if-chain over\n" &
              "## (token kind, indentation class).\n\n" &
-             "import parserrt\nexport parserrt\n\n"
+             "import " & runtime & "\nexport " & runtime & "\n\n"
   if e.setOrder.len > 0:
     head.add "const\n"
     for lit in e.setOrder:
@@ -1133,10 +1174,12 @@ proc emitParser(g: Grammar; order: seq[string]): string =
 
 proc main =
   var emitTo = ""
+  var runtime = "parserrt"
   var args: seq[string] = @[]
   for i in 1 .. paramCount():
     let a = paramStr(i)
     if a.startsWith("--emit:"): emitTo = a.substr(7)
+    elif a.startsWith("--rt:"): runtime = a.substr(5)
     else: args.add a
   let path = if args.len >= 1: args[0] else: "src/nifler2/nimgrammar.nim"
   let entries = extract(path)
@@ -1475,7 +1518,7 @@ proc main =
   if emitTo.len > 0:
     var order: seq[string] = @[]
     for name in g.rules.keys: order.add name
-    writeFile emitTo, emitParser(g, order)
+    writeFile emitTo, emitParser(g, order, runtime)
     echo "\nemitted ", emitTo
 
   if args.len >= 2:

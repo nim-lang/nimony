@@ -4,8 +4,10 @@
 ## generator left-factor freely and still build the tree the unfactored
 ## grammar describes.
 ##
-## This is the miniature version used by `tmini`. The real one sits on
-## `nifcore.TokenBuf`, where `wrap` is `insert` plus an appended `ParRi`.
+## This is the miniature version used by `tmini`: a `seq` of open/close/leaf
+## records instead of a NIF buffer, and its own three-screen lexer, so the
+## generated parser can be tested without the Nim grammar's dependencies. The
+## real one is `src/nifler2/parserrt.nim`.
 
 import std / [strutils, syncio]
 
@@ -20,6 +22,9 @@ type
 
   IndClass* = enum
     icNoInd, icLt, icEq, icGt
+
+  Mark* = object        # `src/nifler2/parserrt.nim` also carries the line info
+    pos*: int
 
   Token* = object
     kind*: TokKind
@@ -145,7 +150,7 @@ proc expect*(p: var Parser; k: TokKind) =
   if p.tok.kind == k: getTok p
   else: error p, "expected '" & $k & "'"
 
-proc mark*(p: Parser): int = p.buf.len
+proc mark*(p: Parser): Mark = Mark(pos: p.buf.len)
 
 # ---- what the generated code needs for `binary(...)` and `&predicates`
 
@@ -169,8 +174,8 @@ proc getPrecedence*(p: Parser): int =
 proc isRightAssoc*(p: Parser): bool =
   p.tok.kind == tkOpr and p.tok.s[0] == '^'
 
-proc insertLeafAt*(p: var Parser; m: int; text: string) =
-  p.buf.insert(BufTok(kind: bLeaf, text: text), m)
+proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
+  p.buf.insert(BufTok(kind: bLeaf, text: text), m.pos)
 
 proc emitLeaf*(p: var Parser) =
   p.buf.add BufTok(kind: bLeaf, text: p.tok.s)
@@ -182,13 +187,13 @@ proc openTag*(p: var Parser; tag: string) =
 proc closeTag*(p: var Parser) =
   p.buf.add BufTok(kind: bClose, text: "")
 
-proc wrap*(p: var Parser; m: int; tag: string) =
+proc wrap*(p: var Parser; m: Mark; tag: string) =
   ## Insert the opening token at the mark and close at the end. The whole
   ## point of the design: the tag is decided after the fact.
-  p.buf.insert(BufTok(kind: bOpen, text: tag), m)
+  p.buf.insert(BufTok(kind: bOpen, text: tag), m.pos)
   p.buf.add BufTok(kind: bClose, text: "")
 
-template discardUnused*(x: untyped) = discard
+proc discardUnused*(m: Mark) = discard
 
 proc render*(p: Parser): string =
   result = ""

@@ -2,8 +2,8 @@
 ## One proc per rule; the dispatch is an if-chain over
 ## (token kind, indentation class).
 
-import parserrt
-export parserrt
+import minirt
+export minirt
 
 const
   Tk1 = {tkIf, tkIntLit, tkParLe, tkSymbol, tkWhile}
@@ -20,7 +20,7 @@ proc pBody*(p: var Parser)
 proc pExprStmt*(p: var Parser)
 proc pExpr*(p: var Parser; limit: int)
 proc pPrimary*(p: var Parser)
-proc pSuffix*(p: var Parser; anchor: int)
+proc pSuffix*(p: var Parser; anchor: Mark)
 proc pAtom*(p: var Parser)
 
 proc pModule*(p: var Parser) =
@@ -37,7 +37,7 @@ proc pModule*(p: var Parser) =
       discardUnused m2
       pStmt p
     if ((p.tok.kind in Tk2)) and indClass(p) == icGt:
-      error p, "invalid indentation"
+      error p, "invalid indentation in module"
     discardUnused m1
   wrap p, m0, "stmts"
   discardUnused m0
@@ -82,7 +82,7 @@ proc pBody*(p: var Parser) =
       discardUnused m5
       pStmt p
     if ((p.tok.kind in Tk2)) and indClass(p) == icGt:
-      error p, "invalid indentation"
+      error p, "invalid indentation in body"
     discardUnused m4
     popInd p
   elif (p.tok.kind in Tk1 and indClass(p) in {icNoInd, icLt, icEq}):
@@ -135,7 +135,7 @@ proc pPrimary*(p: var Parser) =
     discardUnused m7
   discardUnused m0
 
-proc pSuffix*(p: var Parser; anchor: int) =
+proc pSuffix*(p: var Parser; anchor: Mark) =
   let m0 = mark(p)
   if ((p.tok.kind in {tkBracketLe, tkParLe})) and noSpaceBefore(p):
     if (p.tok.kind in {tkParLe}):

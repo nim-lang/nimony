@@ -53,7 +53,7 @@ check "left assoc of command", "f a b c",
 
 # --- errors the indentation machinery must catch
 check "bad dedent", "if c:\n  y = 2\n r = 3",
-  "ERR: (3,1) invalid indentation, got 'r' | (3,1) unexpected trailing input, got 'r'"
+  "ERR: (3,1) invalid indentation in module, got 'r' | (3,1) unexpected trailing input, got 'r'"
 
 # --- precedence climbing (`binary`)
 check "precedence", "x = 1 + 2 * 3",

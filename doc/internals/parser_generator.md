@@ -533,8 +533,49 @@ grammar does not describe the parser. Each is marked `# GRAMMAR.TXT:` in
 * `identWithPragmaDot` is declared and never used — the one thing
   `grammar_nanny` would also have caught.
 
-### Known gaps in the checker
+Running the generated parser (stage 3 below) found seven more, and five of
+them are the same mistake: **`doc/grammar.txt` records the token sequence and
+not the indentation**, so a repetition that reads correctly swallows the next
+statement.
 
+* `'return' optInd expr?` — and the same for `raise`, `yield`, `discard`,
+  `break`, `continue` — asserts the indentation even when the expression is
+  absent, and a `return` at the end of a block is followed by a *dedent*.
+  `parseReturnOrRaise` never calls `optInd`; the shape is `(optInd expr)?`.
+* `enumDecl`'s field repetition has no guard. `parseEnum` ends its loop on
+  `indent >= 0 and indent <= currInd`, which is `validInd` on the next field —
+  without it an `enum` eats the next type definition of the section.
+* `exprStmt`'s command form has no guard. `parseExprStmt` enters it only
+  `if p.tok.indent < 0`, so `echo 1` / `echo 2` on two lines was one command.
+* The command syntax is documented on `primary` and implemented inside
+  `primarySuffix`'s loop, which is the only place it is under the indentation
+  guard. Transcribed in both places, the copy on `primary` had no guard to be
+  under. It also reads like a repetition (`commandStart expr …`) and is not:
+  `commandExpr` takes exactly one parameter, so `echo a b c` is
+  `(cmd echo (cmd a (cmd b c)))`.
+* `commandStart` is written as a token set. The real guard is
+  `p.inPragma == 0 and (isUnary(p.tok) or p.tok.tokType notin {tkOpr,
+  tkDotDot})` — an *infix* operator must fall through to `binary`, so
+  `import std / os` is `(infix / std os)` and not a command.
+* `setOrTableConstr` writes `(exprColonEqExpr comma)*`, making the comma
+  mandatory after every element, so `{a, b}` did not parse.
+* `identVisDot` writes the `'.'` as required and allows an `OPR` after it.
+  `identVis(allowDot)` is an if/elif on one of the two, with a bare symbol as
+  the fallthrough — so `type T = object` never reached the `=`. `typeDef`
+  likewise writes `pragma` and the `'='` as required; both are optional.
+* Missing from `complexOrSimpleStmt`: `caseStmt`, and the standalone
+  `except`/`finally` blocks. `case` as a *statement* was therefore
+  unreachable — only `expr` offered one, and `exprStmt` goes through
+  `simpleExpr`, which does not.
+
+### Known gaps
+
+* **`fanOut` is a stub.** `declColonEquals` parses `a, b: T = v` and NIF wants
+  one `(var a T v)` per name. The runtime cannot do it: it needs the *number
+  of names*, and the buffer alone cannot tell a trailing name from a type from
+  a value. The notation needs a way to say "this item repeats, count it";
+  until then the declaration stays as parsed and `p.section` — which nothing
+  assigns yet either — is unused.
 * **`identOrLiteral` still decides `'('` without `mode`.** `parser.nim` picks
   `exprColonEqExprList(nkPar)` over `parsePar` when `mode in {pmTypeDesc,
   pmTypeDef}`, which is `par` vs `tupleConstr` here. The grammar lists both
@@ -665,7 +706,90 @@ rules need one in the Nim grammar: `primary`, `primarySuffix`, `commandParam`.
 * `la2(...)` is the only construct still emitted as a comment.
 * A redundant re-test of a trailing `x?` inside its own branch — harmless,
   worth folding away.
-* The output is Nim; the real generator emits Nimony from the plugin.
+* `&X` where `X` is a *rule* is reclassified into a FIRST-set lookahead and
+  then dropped: nothing folds it into the dispatch condition. Five productions
+  are affected and in all five the ahead-set is a superset of the alternative's
+  FIRST set, so the generated parser is right by accident.
+* The generator is still `gramcheck.nim`, a standalone text scanner; the real
+  one is the `deps/parsegen` plugin behind `template grammar*(...)`.
+
+## Stage 3: the runtime
+
+`src/nifler2/parserrt.nim` is what the generated code is written against, and
+`src/nifler2/nifler2.nim` is the tool: Nim in, NIF out, no Nim-compiler
+dependency anywhere in it.
+
+```
+bin/nimony c -o:bin/nifler2 src/nifler2/nifler2.nim
+bin/nifler2 t file.nim      # print the tree
+bin/nifler2 p file.nim      # write file.nif
+```
+
+Two halves, and the generator names but does not know either: the token stream
+(`nimlexer`, plus every predicate the grammar asks about a token) and the
+output buffer (a `nifcore.TokenBuf`).
+
+**`wrap` is the whole trick.** `mark` records a position *and* the line info of
+the token that was current there, and `wrap` retroactively splices the opening
+tag in. Since marks nest rather than interleave, a wrapped node always ends at
+the current end of the buffer — which is exactly the situation nifcore's own
+`reopenLastTree` + `closeTag` is written for, so the jump arithmetic (including
+the `ExtendedSuffix` a body over 2^19 tokens needs) is not reimplemented. The
+splice itself appends through `add` before shifting, because `growRawUninit`
+grows capacity to *exactly* the requested length and a one-token splice per
+node would otherwise realloc the buffer on every node.
+
+`mark` returning a `Mark` rather than an `int` is what makes line info work at
+all: the tag's position is the position of a token that was read before the
+rule knew which tag it would use.
+
+Six predicates were needed beyond what `nimlexer` already answers, and four of
+them are conditions `parser.nim` writes out by hand at the call site:
+`suffixStart`, `commandStart`, `commandAllowed`, `inTypeDesc`, `dotLikeOps`
+and `noSpaceBefore`.
+
+### What running it found
+
+The pipeline exposed eleven defects that neither the conflict checker nor
+`nim check` could see, because all of them are about *what the parser does*
+rather than whether it is well-formed. Four are in the generator:
+
+* **A nullable alternative got an `else: error` branch.** `indAndComment` is
+  `(IND{>} COMMENT)? | COMMENT?`; matching nothing is legal and was reported
+  as "expected alternative".
+* **`condOf` ignored a body's leading predicates.** `(&suffixStart X)*` looped
+  on FIRST(X) alone, and a predicated `X` was entered on FIRST(X) instead of
+  `canX`.
+* **`leadMask` gave up at the first item that *could* consume a token.**
+  `optInd` is `COMMENT? validInd`, so its indentation constraint was lost
+  entirely — every `optInd` in the grammar was inert.
+* **`firstOf` restricted an `indented(...)` body to `IND{>}` instead of
+  re-measuring it.** The body's FIRST set is measured against the *inner*
+  indentation, and `pushInd` makes the block's first token define it: a token
+  that is `IND{=}` inside is `IND{>}` outside. Restricting instead of mapping
+  made every left-recursive indented alternative unreachable — `objectPart`'s
+  own guard is `notInd`, which excludes `IND{>}`, so the intersection was empty
+  and the branch compiled to `if false:`.
+
+The other seven are transcription errors, listed under "What the transcription
+found in `doc/grammar.txt`" above and marked `# GRAMMAR.TXT:` in the grammar
+itself.
+
+### How much parses
+
+`src/nifler2/tools/parsesweep.sh` runs the tool over whole directories and
+groups the failures by message, because the message names the production that
+is still wrong:
+
+    src/nifler2/tools/parsesweep.sh lib src tests
+
+63 of 188 files under `src/nifler2`, `src/lib` and `lib/std` parse. The
+remaining failures cluster: one-line `if` expressions, `{.pragma.}` in
+expression position, `(a, b)` argument lists, and `enum`/`tuple`/`object` in a
+type description. That is the next chunk of work, and it is measurable now.
+
+The tree is **not** yet the tree `src/nifler` produces — see the `fanOut` gap
+above. This measures acceptance only.
 
 ## Staging
 
