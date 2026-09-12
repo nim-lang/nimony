@@ -430,9 +430,16 @@ because Nim's identifier cache cannot report the spelling it saw: `Foo` and
 `foO` share one `PIdent`. Kinds, literal text, `indent` and `spacing` are
 compared exactly.
 
-`src/nifler2/tests/tnimlexer.nim` is the small half — 24 constructs, each
+`src/nifler2/tests/tnimlexer.nim` is the small half — 26 constructs, each
 expectation produced by `refdump` rather than guessed, so a failure names the
 construct instead of the file.
+
+The sweep is what found the parts no amount of reading `lexer.nim` would have:
+a UTF-8 BOM, `tkIntLit`'s promotion to `tkInt64Lit` (which makes the token
+*kind* depend on the integer's value) and the fact that an out-of-range literal
+keeps `tkIntLit` because Nim abandons the conversion, that `getNumber`
+lower-cases the base prefix so `0X10` and `0x10` are one token, and that `0x`
+with no digits is one bad number rather than `0` followed by `x`.
 
 ## Result of the first full run
 

@@ -374,6 +374,15 @@ proc numberSuffix(L: var Lexer; tok: var Token; start: int; isFloat: bool) =
     tok.s = L.buf.substr(start, numEnd-1)
     L.pos = pos
 
+proc normalizeBasePrefix(tok: var Token) =
+  ## `getNumber` writes the base prefix into the literal in lower case
+  ## whatever the source said, so `0X10` and `0x10` are one token and not two
+  ## spellings of it.
+  if tok.base == 10: return
+  let i = if tok.s.len > 0 and tok.s[0] == '-': 2 else: 1
+  if i < tok.s.len and tok.s[i] >= 'A' and tok.s[i] <= 'Z':
+    tok.s[i] = chr(ord(tok.s[i]) - ord('A') + ord('a'))
+
 proc hexVal(c: char): int {.inline.} =
   if c >= '0' and c <= '9': ord(c) - ord('0')
   elif c >= 'a' and c <= 'f': ord(c) - ord('a') + 10
@@ -464,9 +473,12 @@ proc scanNumber(L: var Lexer; tok: var Token) =
   var base = 10'i32
   var isFloat = false
   lex L.buf, pos:
-  of r"-? 0 [xX] [0-9a-fA-F](_?[0-9a-fA-F])*": base = 16'i32
-  of r"-? 0 [ocC] [0-7](_?[0-7])*": base = 8'i32   # `0c` is deprecated, `0O` invalid
-  of r"-? 0 [bB] [01](_?[01])*": base = 2'i32
+  # The digits are optional so that `0x` with nothing behind it is one bad
+  # number rather than `0` followed by the identifier `x`, which is what Nim
+  # reports and therefore what the differential test expects.
+  of r"-? 0 [xX] ([0-9a-fA-F](_?[0-9a-fA-F])*)?": base = 16'i32
+  of r"-? 0 [ocC] ([0-7](_?[0-7])*)?": base = 8'i32  # `0c` deprecated, `0O` invalid
+  of r"-? 0 [bB] ([01](_?[01])*)?": base = 2'i32
   of r"-? [0-9](_?[0-9])* (\. [0-9](_?[0-9])*)? [eE][+-]? [0-9](_?[0-9])*",
      r"-? [0-9](_?[0-9])* \. [0-9](_?[0-9])*":
     isFloat = true
@@ -480,7 +492,10 @@ proc scanNumber(L: var Lexer; tok: var Token) =
     return
   L.pos = pos
   tok.base = base
+  if base != 10 and pos - start <= (if L.buf[start] == '-': 3 else: 2):
+    error L, start, "invalid number: '" & L.buf.substr(start, pos-1) & "'"
   numberSuffix L, tok, start, isFloat
+  normalizeBasePrefix tok
   numberValue L, tok
   if L.ch(L.pos) in SymChars + {'_'} and unicodeOprLen(L.buf, L.pos)[0] == 0:
     error L, L.pos, "invalid token: no whitespace between number and identifier"

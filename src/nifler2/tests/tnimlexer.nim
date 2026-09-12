@@ -76,6 +76,10 @@ proc main =
     "tkFloatLit(1.5) tkFloatLit(1e5)/L tkFloatLit(2.5e-3)/L tkFloat32Lit(1)/L tkFloat64Lit(3.0)/L"
   check "intSuffix", "1'i8 12u8 5i64\n",
     "tkInt8Lit(1) tkUInt8Lit(12)/L tkInt64Lit(5)/L"
+  check "basePrefixCase", "0X10 0B10 0O7 0C7\n",
+    "tkIntLit(0x10) tkIntLit(0b10)/L tkIntLit(0)/L tkSymbol(O7) tkIntLit(0c7)/L"
+  check "emptyBase", "0x 0b\n",
+    "tkIntLit(0x) tkIntLit(0b)/L"
   check "customLit", "12'big\n",
     "tkCustomLit(12'big)"
   check "dotdot", "1..2\n",
