@@ -138,6 +138,15 @@ proc pushInd*(p: var Parser) =
   p.indStack.add p.currInd
   p.currInd = p.tok.indent
 
+proc pushIndAny*(p: var Parser) =
+  ## `withInd` without the `realInd` assertion: the indentation becomes the
+  ## current token's whatever that is, including -1 for a token that is not
+  ## first on its line. `semiStmtList` is the one place `parser.nim` does
+  ## this, and it is why `(\n  when a: x\n  elif b: y)` has its `elif` at the
+  ## same indentation as its `when` rather than at the enclosing block's.
+  p.indStack.add p.currInd
+  p.currInd = p.tok.indent
+
 proc popInd*(p: var Parser) =
   if p.indStack.len > 0:
     p.currInd = p.indStack[p.indStack.len-1]
@@ -166,6 +175,49 @@ proc inTypeDesc*(p: Parser; mode: PrimaryMode): bool {.inline.} =
   ## `parser.nim`'s `if mode == pmTypeDesc` in `commandParam`.
   mode == pmTypeDesc
 
+proc parIsTuple*(p: Parser; mode: PrimaryMode): bool {.inline.} =
+  ## `parser.nim`'s `identOrLiteral` takes `'('` to the comma-separated
+  ## `exprColonEqExprList` in a type, and to `parsePar` -- which also accepts a
+  ## statement list, an assignment and a `do` block -- everywhere else. Both
+  ## productions exist in the grammar; this is the discriminator that says
+  ## which one `'('` opens.
+  mode in {pmTypeDesc, pmTypeDef}
+
+proc inOrOut*(p: Parser): bool {.inline.} =
+  ## `parseGenericParam`'s `of tkIn, tkOut:` -- the variance markers of
+  ## `MyPtr[out T]`. The grammar spells the operand as `KEYW` so that the
+  ## keyword is *emitted* as the prefix operator's name, which a terminal
+  ## would not be; this narrows `KEYW` back to the two that are meant.
+  p.tok.kind in {tkIn, tkOut}
+
+proc pragmaOnPrimary*(p: Parser; mode: PrimaryMode): bool {.inline.} =
+  ## `simpleExprAux`'s `if p.tok.tokType == tkCurlyDotLe and (p.tok.indent < 0
+  ## or realInd(p)) and mode == pmNormal`. The indentation half is spelled in
+  ## the grammar; this is the mode half. `pmTrySimple` counts because
+  ## `simpleExprAux` rewrites it to `pmNormal` right after `primary` returns,
+  ## before it looks for the pragma.
+  mode in {pmNormal, pmTrySimple}
+
+proc isTypedefOperand*(p: Parser; mode: PrimaryMode): bool {.inline.} =
+  ## `parseTypeDescKAux`'s `isTypedef`: after `ref`/`ptr`/`distinct` in a type
+  ## *definition*, an `object` or `tuple` operand brings a whole declaration
+  ## with it -- `type T = ref object` and its indented field list -- while
+  ## anything else is just a `primary`. It is a two-token decision in
+  ## `parser.nim` and a one-token one here, because by the time the operand is
+  ## dispatched the keyword is already consumed.
+  mode == pmTypeDef and p.tok.kind in {tkObject, tkTuple}
+
+proc typeOperandFollows*(p: Parser): bool {.inline.} =
+  ## `parseTypeDescKAux`'s `not isOperator(p.tok) and isExprStart(p)`: what
+  ## makes `ptr` in `SomeInteger | ptr | pointer` a *bare* `ptr` rather than
+  ## the prefix of `(prefix | pointer)`. The `isExprStart` half is the
+  ## alternative's FIRST set and is already in the generated condition; the
+  ## operator half is not expressible there, because an operator can also
+  ## start a prefix expression.
+  p.tok.kind notin {tkOpr, tkDiv, tkMod, tkShl, tkShr, tkIn, tkNotin, tkIs,
+                    tkIsnot, tkNot, tkOf, tkAs, tkFrom, tkDotDot, tkAnd,
+                    tkOr, tkXor}
+
 proc commandStart*(p: Parser): bool {.inline.} =
   ## `parser.nim`'s guard on `primarySuffix`'s command branch. The token set is
   ## the alternative's FIRST set; what it adds is that an *infix* operator is
@@ -190,7 +242,14 @@ proc suffixStart*(p: Parser): bool {.inline.} =
   ## that already spans lines.
   p.tok.indent < 0 or (p.tok.kind == tkDot and p.tok.indent >= p.currInd)
 
-proc getPrecedence*(p: Parser): int {.inline.} = getPrecedence(p.tok)
+proc getPrecedence*(p: Parser): int {.inline.} =
+  ## `parseOperators` loops while `opPrec >= limit and p.tok.indent < 0 and
+  ## not isUnary(p.tok)`. The unary test lives here rather than in the
+  ## generator's `binary(...)`, because "a unary operator has no infix
+  ## precedence" is a fact about Nim's operators and not about precedence
+  ## climbing. Without it `echo $kind, "a"` parsed as `(infix $ echo kind)`
+  ## and then stalled on the comma.
+  if isUnary(p.tok): -10 else: getPrecedence(p.tok)
 proc isRightAssoc*(p: Parser): bool {.inline.} = isRightAssoc(p.tok)
 
 # --------------------------------------------------------------- the buffer

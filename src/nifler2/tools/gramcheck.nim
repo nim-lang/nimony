@@ -65,7 +65,8 @@ const AnyInd: IndSet = {icNoInd, icLt, icEq, icGt}
 type
   NodeKind = enum
     nSeq, nAlt, nOpt, nRep0, nRep1, nSepRep, nTerminal, nClass, nRule,
-    nTag, nGuard, nPred, nAhead, nIndented, nBinary, nLa2, nDefault, nRaw
+    nTag, nGuard, nPred, nAhead, nIndented, nWithInd, nBinary, nBinTail, nLa2,
+    nDefault, nRaw
   Node = ref object
     kind: NodeKind
     text: string          # terminal spelling / class / rule / tag / pred name
@@ -231,8 +232,14 @@ proc parsePrim(sc: var Scanner): Node =
     of "indented":
       result = newNode(nIndented)
       result.kids = args
+    of "withInd":
+      result = newNode(nWithInd)
+      result.kids = args
     of "binary":
       result = newNode(nBinary, name)
+      result.kids = args
+    of "binaryTail":
+      result = newNode(nBinTail, name)
       result.kids = args
     of "la2":
       result = newNode(nLa2)
@@ -420,9 +427,10 @@ proc isNullable(g: Grammar; n: Node): bool =
   of nRep1, nSepRep: isNullable(g, n.kids[0])
   of nTerminal, nClass: false
   of nRule: g.nullable.getOrDefault(n.text, false)
-  of nTag, nIndented: isNullable(g, n.kids[0])
+  of nTag, nIndented, nWithInd: isNullable(g, n.kids[0])
   of nGuard, nPred, nAhead, nDefault, nRaw: true   # zero-width
   of nBinary: n.kids.len > 0 and isNullable(g, n.kids[0])
+  of nBinTail: true             # the operator loop may run zero times
   of nLa2: n.kids.len > 0 and isNullable(g, n.kids[0])
 
 proc firstOf(g: Grammar; n: Node): Table[string, IndSet]
@@ -453,6 +461,8 @@ proc leadMask(g: Grammar; n: Node): IndSet =
   of nRule: result = g.mask.getOrDefault(n.text, AnyInd)
   of nTag: result = leadMask(g, n.kids[0])
   of nIndented: result = {icGt}
+  of nWithInd: result = AnyInd
+  of nBinTail: result = AnyInd
   else: result = AnyInd
 
 proc firstOf(g: Grammar; n: Node): Table[string, IndSet] =
@@ -496,6 +506,20 @@ proc firstOf(g: Grammar; n: Node): Table[string, IndSet] =
     result = initTable[string, IndSet]()
     for k, v in firstOf(g, n.kids[0]):
       if icEq in v: result[k] = {icGt}
+  of nWithInd:
+    # `withInd(...)` sets the inner indentation to whatever the first token's
+    # is, *without* requiring it to be deeper -- `parser.nim`'s `withInd`
+    # template, of which `semiStmtList` is the one use that is not already
+    # guarded by `realInd`. So the first token is `IND{=}` inside whatever it
+    # was outside (or NO_IND inside if it was NO_IND outside, since `currInd`
+    # then becomes -1), and the outward map is the inverse: unconstrained.
+    result = initTable[string, IndSet]()
+    for k, v in firstOf(g, n.kids[0]):
+      var o: IndSet = {}
+      if icEq in v: o = AnyInd
+      elif icNoInd in v: o = {icNoInd}
+      if o != {}: result[k] = o
+  of nBinTail: discard    # the head was parsed by whatever precedes it
   of nBinary:
     if n.kids.len > 0: result = firstOf(g, n.kids[0])   # rest are Nim procs
   of nLa2:
@@ -551,6 +575,11 @@ proc render(n: Node): string =
   of nPred: "&" & n.text
   of nAhead: "&(" & render(n.kids[0]) & ")"
   of nIndented: "indented(" & render(n.kids[0]) & ")"
+  of nWithInd: "withInd(" & render(n.kids[0]) & ")"
+  of nBinTail:
+    var ps: seq[string] = @[]
+    for k in n.kids: ps.add render(k)
+    "binaryTail(" & ps.join(", ") & ")"
   of nBinary: "binary(...)"
   of nLa2: "la2(" & render(n.kids[0]) & ")"
 
@@ -597,11 +626,13 @@ proc propagate(g: var Grammar; n: Node; after: Table[string, IndSet];
     propagate(g, n.kids[1], firstOf(g, n.kids[0]), changed)
   of nTag:
     propagate(g, n.kids[0], after, changed)
-  of nIndented:
+  of nIndented, nWithInd:
     propagate(g, n.kids[0], remapIn(after), changed)
   of nRule:
     give(g, n.text, after, changed)
     for k in n.kids: propagate(g, k, initTable[string, IndSet](), changed)
+  of nBinTail:
+    if n.kids.len > 0: give(g, n.kids[0].text, after, changed)
   of nAhead, nBinary, nLa2:
     for k in n.kids: propagate(g, k, after, changed)
   else: discard
@@ -617,6 +648,23 @@ proc overlapOf(a, b: Table[string, IndSet]): seq[string] =
     for kb, vb in b:
       if compatible(ka, kb) and (va * vb) != {}:
         result.add (if ka == kb: ka else: ka & "~" & kb) & " " & $(va * vb)
+
+proc intersectFirst(a, b: Table[string, IndSet]): Table[string, IndSet] =
+  ## What an `&rule` lookahead leaves of an alternative's FIRST set. A
+  ## lookahead only ever *narrows*: `&parKeyw` in front of
+  ## `complexOrSimpleStmt` means the alternative starts at one of fifteen
+  ## keywords, not at everything a statement can start with.
+  result = initTable[string, IndSet]()
+  for ka, va in a:
+    for kb, vb in b:
+      if compatible(ka, kb):
+        let ind = va * vb
+        if ind != {}:
+          # the longer spelling is the more specific one (`tkOpr+isDotLike`
+          # refines `tkOpr`), so it is the one that survives
+          let key = if ka.len >= kb.len: ka else: kb
+          if result.hasKey(key): result[key] = result[key] + ind
+          else: result[key] = ind
 
 proc leadingItems(n: Node): seq[Node] =
   ## The sequence elements of an alternative, for left-factoring. A leading
@@ -808,6 +856,11 @@ proc hasFreeAnchor(n: Node): bool =
     if hasFreeAnchor(k): return true
   false
 
+proc raw(n: Node): string =
+  ## A `{...}` argument is a Nim expression, not grammar: it reaches the
+  ## generated call verbatim, without the braces.
+  if n.kind == nRaw: n.text else: render(n)
+
 proc condOf(e: Emitter; n: Node): string =
   # the item that actually decides, which is the first one that can consume a
   # token: `(&suffixStart primarySuffix(mode))*` is entered on
@@ -823,7 +876,9 @@ proc condOf(e: Emitter; n: Node): string =
     if head != nil and head.kind == nRule and e.predicated.contains(head.text):
       canCall(head)
     else:
-      condFor(firstOf(e.g, n))
+      let ah = leadAhead(n)
+      if ah != nil: condFor(intersectFirst(firstOf(e.g, n), firstOf(e.g, ah.kids[0])))
+      else: condFor(firstOf(e.g, n))
   # An optional or repeated body that LEADS with a semantic predicate is only
   # entered when the predicate holds, and a FIRST set cannot express one -- so
   # it has to be ANDed in here, exactly as `emitAlts` does for alternatives.
@@ -862,6 +917,16 @@ proc altFirst(g: Grammar; a: Alt): Table[string, IndSet] =
   var n = newNode(nSeq)
   n.kids = a.items
   firstOf(g, n)
+
+proc altCond(g: Grammar; a: Alt): Table[string, IndSet] =
+  ## `altFirst` narrowed by a leading `&rule`. Only the *dispatch* uses this;
+  ## grouping and nullability still go by the unrestricted set, because the
+  ## lookahead says nothing about what the alternative may then consume.
+  var n = newNode(nSeq)
+  n.kids = a.items
+  result = firstOf(g, n)
+  let ah = leadAhead(n)
+  if ah != nil: result = intersectFirst(result, firstOf(g, ah.kids[0]))
 
 proc altNullable(g: Grammar; a: Alt): bool =
   var n = newNode(nSeq)
@@ -928,7 +993,7 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
   for key in order:
     let grp = groups[key]
     var f = initTable[string, IndSet]()
-    for a in grp: union(f, altFirst(e.g, a))
+    for a in grp: union(f, altCond(e.g, a))
     var cond = condFor(f)
     let gd = (if grp.len == 1: guardsOf(grp[0].items)
               elif grp[0].items[0].kind == nPred: predCall(grp[0].items[0])
@@ -1063,6 +1128,10 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     else:
       emitNode(e, n.kids[0], mark, anchor)
       e.line "wrap p, " & mark & ", \"" & n.text & "\""
+  of nWithInd:
+    e.line "pushIndAny p"
+    emitNode(e, n.kids[0], mark, anchor)
+    e.line "popInd p"
   of nIndented:
     e.line "pushInd p"
     emitNode(e, n.kids[0], mark, anchor)
@@ -1094,6 +1163,33 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       e.line procName(e.curRule) & "(" & args.join(", ") & ")"
       e.line "wrap p, " & mark & ", \"" & tg & "\""
       e.line "prec = " & precP & "(p)"
+  of nBinTail:
+    # `parseOperators` applied to a node that is already on the buffer:
+    # `parser.nim` does this in three places, of which `type(x) is type(y)`
+    # is the one that matters. `binary(...)` cannot express it, because its
+    # first item *is* the left operand and its recursion goes back into the
+    # rule it appears in. Here the left operand is whatever the enclosing
+    # sequence just parsed, and the recursion names its own rule.
+    inc e.tmp
+    let pv = "prec" & $e.tmp
+    let av = "assoc" & $e.tmp
+    let tprec = render(n.kids[1])
+    let tassoc = render(n.kids[2])
+    let ttag = render(n.kids[3])
+    let tlimit = if n.kids.len > 4: raw(n.kids[4]) else: "-1"
+    var rest: seq[string] = @[]
+    for i in 5 ..< n.kids.len: rest.add raw(n.kids[i])
+    e.line "var " & pv & " = " & tprec & "(p)"
+    e.line "while " & pv & " >= " & tlimit & " and indClass(p) == icNoInd:"
+    body e:
+      e.line "let " & av & " = (if " & tassoc & "(p): 0 else: 1)"
+      e.line "insertLeafAt p, " & mark & ", p.tok.s"
+      e.line "getTok p"
+      var args: seq[string] = @["p", pv & " + " & av]
+      for r in rest: args.add r
+      e.line procName(n.kids[0].text) & "(" & args.join(", ") & ")"
+      e.line "wrap p, " & mark & ", \"" & ttag & "\""
+      e.line pv & " = " & tprec & "(p)"
   of nLa2:
     e.line "# la2: " & render(n)
 
@@ -1290,6 +1386,9 @@ proc main =
     if n.kind == nBinary:
       if n.kids.len > 0: collect n.kids[0]     # the rest are Nim procs
       return
+    if n.kind == nBinTail:
+      if n.kids.len > 0: used.incl n.kids[0].text   # a bare rule name
+      return
     if n.kind == nRule and n.text notin Classes and n.text notin localParams:
       used.incl n.text
     for k in n.kids: collect k
@@ -1331,6 +1430,7 @@ proc main =
     if n.kind == nBinary:
       if n.kids.len > 0: checkArity(rule, line, n.kids[0], locals)
       return                                   # the rest are Nim procs
+    if n.kind == nBinTail: return  # kids[0] names the rule, it does not call it
     for k in n.kids: checkArity(rule, line, k, locals)
   for name, es in g.rules:
     for e in es:

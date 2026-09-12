@@ -149,6 +149,65 @@ proc pPrimarySuffix*(p: var Parser; anchor: int) = ...
 Which rules need it is decided statically: a rule needs an anchor parameter
 when it contains a `^tag` that is not inside a repetition of its own.
 
+A consequence worth stating, because the grammar leans on it: a tag written
+**mid-sequence** wraps from the alternative's mark, i.e. over everything the
+alternative has already parsed. That is what `parsePar`'s retagging needs —
+
+```nim
+  par "tup[ '(' optInd simpleExpr (kv[ ':' expr ])+ (comma exprColonEqExpr?)* … ]"
+  par "par[ '(' optInd simpleExpr asgn[ '=' expr ] optPar ')' ]"
+```
+
+— where `kv` and `asgn` have to take the `simpleExpr` in front of them, and
+writing them as an outer `par[ asgn[ … ] ]` instead would hide `simpleExpr`
+behind `asgn` and defeat the left-factoring that makes the six `'('`
+alternatives one dispatch. The same trick gives
+`complexOrSimpleStmt`'s `'type' typeof[ '(' primary ')' ]` a shared `'type'`
+prefix with `'type' section(typeDef)`.
+
+It is also a trap: inside a `( … )?` the mark is *not* fresh (a repetition's
+is), so `(else[ 'else' colcom stmt ])?` trailing an `elif` chain wraps the
+chain too. See "Tag placement" under Known gaps.
+
+### `withInd(...)`
+
+`indented( X )` is `parser.nim`'s `withInd` *plus* the `realInd` assertion that
+usually guards it. `semiStmtList` is the one place with no such guard: the
+indentation simply becomes the current token's, whatever it is, including -1
+for a token that is not first on its line. `withInd( X )` is that, and it is
+why
+
+```nim
+const NR_gettid = (
+  when defined(amd64): clong(186)
+  elif defined(i386): clong(224)
+  else: clong(178))
+```
+
+measures its `elif` against the `when` rather than against the enclosing
+block, while `(if a: 1 else: 2)` on one line still works. For FIRST the
+outward map is the inverse of `indented`'s: a token that is `IND{=}` inside
+could have been anything outside.
+
+### `binaryTail(...)`
+
+`binary(operand, …)`'s first argument *is* the left operand, and its recursion
+goes back into the rule it appears in. `parser.nim` also calls
+`parseOperators` on a node that is already built, by a different rule:
+
+```nim
+  complexOrSimpleStmt """'type' typeof[ '(' primary({pmTypeDesc}) ')' ]
+                      binaryTail( simpleExpr, getPrecedence, isRightAssoc,
+                                  infix, {-1}, {pmNormal} )
+                      postExprBlocks?"""
+```
+
+`binaryTail` is the loop without the head: it wraps from the enclosing mark and
+names the rule its right operand comes from, passing `prec + assoc` as that
+rule's first (limit) argument. It matches nothing on its own, so its FIRST set
+is empty and it is nullable. `type(z(type(x))) is type(x)` — a statement in a
+concept body — is what needs it.
+
 ## Indentation is part of the LL(1) key
 
 Nim's indentation cannot be a token-stream property: `INDENT`/`DEDENT` tokens
@@ -348,6 +407,26 @@ because the predicate depends only on the current token; the checker is told
 that `DOTLIKEOP ⊂ OPR` so it can flag an unordered choice between them.
 
 ## Comments
+
+`COMMENT?` as written in `doc/grammar.txt` is never "a comment may appear
+here". It is `skipComment`, which is `if p.tok.indent < 0: rawSkipComment` —
+*a trailing comment on the line just parsed*. A comment that starts its own
+line is a statement, or a field's doc comment, or nothing. The grammar spells
+the two forms `parser.nim` has:
+
+```nim
+  trailComment "NO_IND COMMENT"       # parser.nim's `skipComment`
+  flexComment  "validInd COMMENT"     # parser.nim's `flexComment`
+```
+
+Getting this wrong is not a tag mismatch but a parse failure, and it goes both
+ways: a `##` block that is the entire body of a proc was consumed as the
+*routine's* comment, leaving `stmt` with a dedent; and once `COMMENT?` was
+tightened, an `object`'s or `enum`'s own doc comment on the line after the
+keyword stopped being absorbed by accident and had to be written where
+`parser.nim` actually reads it — inside the field list, at the field
+indentation, because `parseObjectPart` calls `rawSkipComment` *inside* its
+`withInd`.
 
 `COMMENT` stays in the productions — the grammar should describe where a
 comment may legally appear even when the tool does not act on it — and the
@@ -568,6 +647,108 @@ statement.
   unreachable — only `expr` offered one, and `exprStmt` goes through
   `simpleExpr`, which does not.
 
+Getting from 65 of 188 files to every Nim file we have found twenty-five more.
+They fall into four groups.
+
+**The indentation is missing (again).** The same mistake as the five above,
+and still the commonest one.
+
+* `condStmt` writes `IND{=}` on its `elif` and `else`; `parseIfOrWhen` tests
+  `sameOrNoInd`, which is what makes the one-liner `if c: a else: b` a
+  *statement* rather than only an `ifExpr`. One-liners are everywhere.
+* `condExpr` writes an `optInd` between branches and a mandatory `else`.
+  `parseIfOrWhenExpr` asserts *nothing* between branches — that is what lets
+  `let x = if c:` put its `else` back at the `let`'s own indentation — and its
+  `else` is optional, so `(if it.native: flag = true)` parses.
+* `tryExpr` writes `optInd` on each `except`. `parseTry`'s loop is
+  `while sameOrNoInd(p) or isExpr`, so for an expression `try` the indentation
+  is not consulted at all.
+* `objectDecl` writes `objectPart` unconditionally; `parseObject` enters it
+  only on a real indent. Reading a dedent as a branch made the next type
+  definition a *field*: `Foo[T] = object` followed by `Bar[T] = object` gave a
+  field named `Bar`. `objectPart`'s five flat branches are `sameOrNoInd`, not
+  "not indented" — a dedent ends the object.
+* `objectDecl`'s `('of' typeDesc)?`, `paramListColon`'s and
+  `paramListArrow`'s `paramList?` and return type, `pragmaStmt`'s `':'`,
+  `primaryPragma`'s `pragma?`, and `routine`'s `pattern?`,
+  `genericParamList?`, `pragma?` and `'='` all carry a guard in `parser.nim`
+  and none in grammar.txt. `primaryPragma`'s cost the most: without it a
+  `{.noSideEffect.}:` block on the line after `var a = 1` became the
+  *value's* pragma and then ate the `:` block that belonged to it.
+* `semiStmtList` runs under `withInd`, and its `';'` is *optional* — the loop
+  is "if `;` then skip it; if `)` then stop; parse a statement". grammar.txt
+  writes `^+ ';'` everywhere, which can express neither the missing separator
+  nor a trailing one.
+* `stmt` writes `complexOrSimpleStmt ^+ (IND{=} / ';')`. `parseStmt` re-tests
+  the indentation *after* eating the `;`, so a trailing `;` at the end of a
+  block is legal.
+
+**A separator that is not a separator.** `parser.nim`'s list loops all read
+"parse an item; break unless a comma follows", i.e. they decide on the token
+*after* the separator. grammar.txt writes them as `^+ comma` or
+`(item comma)*`, which decides on the separator itself. Both spellings are
+wrong in LL(1), in opposite directions: the first refuses a trailing comma,
+the second demands one. `exprColonEqExprList`, `arrayConstr`, `paramList`,
+`varTupleLhs`, `genericParamList` and `genericParam` all needed the
+`item (comma item?)*` shape; the price is accepting `[a, , b]`.
+
+**A production that was never written down.** Nine of them.
+
+* `castExpr` has a second form, `'cast' '(' exprColonEqExpr ')'` — it is in a
+  *commented-out* `#|` line in `parser.nim`, so it never reached grammar.txt,
+  and it is the `{.cast(noSideEffect).}` pragma.
+* `identOrLiteral` takes `'('` to a tuple in a type and to `parsePar`
+  everywhere else. Both productions were listed and the generator factored
+  them together, so the comma never got its meaning and `(int, var T)` was
+  not a return type. It needs `mode`; see below for what else it wanted.
+* `tupleType`'s bracket is optional — a bare `tuple` is a type, which is what
+  `[T: tuple|object]` needs.
+* `('ref'|'ptr'|'distinct')` in `typeDefValue` is not
+  `(tupleDecl | objectDecl)`: `parseTypeDescKAux` returns early on a dedent,
+  skips an operator, and otherwise parses a `primary` — and then feeds the
+  result back into the operator loop, which is how
+  `SomePointer = ref | ptr | pointer | proc` parses. All three are gone from
+  `typeDefValue` now and reached through `primary`, which supplies the loop
+  for free.
+* `typeDefValue`'s extra command parameters come *after* the commas
+  (`while p.tok.tokType == tkComma`), not before them. Written the other way
+  the optional group is entered on FIRST(exprEqExpr) — every token an
+  expression can start with — so `FileHandle* = cint` swallowed the next line
+  of the type section and `= bool` swallowed the next `type` keyword.
+* `typeDescExpr` is `parseTypeDesc(fullExpr = true)`, whose whole body is
+  `simpleExpr(pmTypeDesc)`. Listing `routineType` as a separate alternative
+  took `proc` out of the operator loop, so `p: proc | iterator {.closure.}`
+  stopped at the `|`.
+* `complexOrSimpleStmt` has a `'type' '(' primary ')'` form, with
+  `parseOperators` and `postExprBlocks` over it.
+* `genericParam` has an `of tkIn, tkOut:` branch — the covariance markers of
+  `MyPtr[out T]`.
+* `primary`'s sigil branch falls back to `primary(pmNormal)` when what follows
+  the operator is not an operand kind; that is what parses
+  `@! === result = "abc"`.
+* `routine`'s name is optional: `parseRoutine` delegates to `parseProcExpr`
+  when the token after the keyword is not a name, so
+  `proc (): int {.closure.} = x` is a statement. And the name it does accept
+  is `{tkSymbol, tkAccent, KEYW}` — `func addr*[T](x: T): ptr T` is in the
+  stdlib — while every *declaration* dispatch (`parseIdentColonEquals`,
+  `parseParamList`, `parseObjectPart`, `parseSection`, `parseVarTuple`,
+  `parseTuple`) tests `{tkSymbol, tkAccent}` only. Two different sets, one
+  `symbol` production in grammar.txt; the grammar now has `plainSymbol` for
+  the narrow one.
+
+**A rule reached through the wrong door.** `variable` says `identColonEquals`
+and `colonBody?`; `parseVariable` passes `{withPragma, withDot}` and applies
+`postExprBlocks` to the *value*, so `let navigator {.importc.}: JsObject` and
+`var res = f(x) do (a: int) -> string:` both need it, and grammar.txt's
+`colonBody` has no caller at all. `constant` says `varTuple`, which ends in
+`'=' optInd expr`, so `const (a, b) = (1, 2)` wanted two `=`; `parseConstant`
+calls `parseVarTuple`, which is `varTupleLhs`. `forStmt` says `varTuple` for
+the same reason and has the same problem: `for (k, v) in attrs:` has no `=`.
+`ofBranches` and `objectBranches` make the first `of` mandatory, but
+`parseCase` is a `case` over `of`/`elif`/`else` with no ordering requirement,
+so a `case` whose only branch is `else` is legal — and `parseObjectCase` has
+no `elif` branch at all, which grammar.txt lists.
+
 ### Known gaps
 
 * **`fanOut` is a stub.** `declColonEquals` parses `a, b: T = v` and NIF wants
@@ -576,13 +757,32 @@ statement.
   a value. The notation needs a way to say "this item repeats, count it";
   until then the declaration stays as parsed and `p.section` — which nothing
   assigns yet either — is unused.
-* **`identOrLiteral` still decides `'('` without `mode`.** `parser.nim` picks
-  `exprColonEqExprList(nkPar)` over `parsePar` when `mode in {pmTypeDesc,
-  pmTypeDef}`, which is `par` vs `tupleConstr` here. The grammar lists both
-  and lets the generator left-factor them, so the discriminator is missing
-  rather than wrong — the productions are right, the choice between them is
-  not made. It needs `identOrLiteral(mode)` and an `&inTypeDesc(mode)`, the
-  same shape `commandParam` now has.
+* **Tag placement inside `( … )?`.** A tag mid-sequence wraps from the
+  alternative's mark, which is deliberate and load bearing (see "Two
+  anchors"), but a repetition gives its body a fresh mark and an *option*
+  does not. So `(else[ 'else' colcom stmt ])?` at the end of `condStmt` wraps
+  the `elif` chain in front of it: `if c: 1 else: 2` comes out as
+  `(if (else (elif c 1) 2))` instead of `(if (elif c 1) (else 2))`. The same
+  shape appears in `condExpr`, `ofBranches`, `objectBranches` and
+  `objectWhen`. The fix is to give `nOpt` a fresh mark and let `^tag` inside
+  an option resolve to the enclosing one, exactly as `nRep0` already does —
+  but it touches every `(tag[ … ])?` in the grammar, so it belongs with the
+  tree-diff harness rather than before it.
+* **Source filters are not implemented.** `#? stdtmpl(…)` is a
+  *preprocessor*: `nifler` links Nim's `filters.nim` and hands the parser
+  rewritten text. Three files in the corpus use it
+  (`tests/nimony/sysbasics/tscf_stdtmpl.nim` and two `niminaction` views),
+  and they are the only files that fail for a reason other than being
+  deliberately invalid.
+* **Two operator tails are still flat or absent.** `binaryTail` covers
+  `complexOrSimpleStmt`'s `type(…)`. `parseTypeDescKAux`'s trailing
+  `parseOperators` is covered by routing `ref`/`ptr`/`distinct` through
+  `primary`. What is *not* covered is `parseOperators`' `modeB = if mode ==
+  pmTypeDef: pmTypeDesc else: mode` and `simpleExprAux`'s
+  `if mode == pmTrySimple: mode = pmNormal` — the generated `binary` threads
+  the mode through unchanged, so the right operand of an operator is parsed
+  in a slightly wider mode than `parser.nim` would use. No corpus file
+  notices.
 * **FOLLOW is wide.** It converges (10 rounds, 114 of 118 rules) and no pair
   needed it, but it inherits the whole-language FOLLOW through `expr`, so it
   will not be a sharp tool for error recovery without pruning.
@@ -706,10 +906,17 @@ rules need one in the Nim grammar: `primary`, `primarySuffix`, `commandParam`.
 * `la2(...)` is the only construct still emitted as a comment.
 * A redundant re-test of a trailing `x?` inside its own branch — harmless,
   worth folding away.
-* `&X` where `X` is a *rule* is reclassified into a FIRST-set lookahead and
-  then dropped: nothing folds it into the dispatch condition. Five productions
-  are affected and in all five the ahead-set is a superset of the alternative's
-  FIRST set, so the generated parser is right by accident.
+* A leading `&X` where `X` is a *rule* is now intersected into the dispatch
+  condition (`intersectFirst`). It was dropped before, and it was *not*
+  harmless: `par`'s `&parKeyw` alternative was entered on the whole of
+  FIRST(complexOrSimpleStmt), so every `( … )` went to the statement-list
+  branch and `(1, 2)` never reached the tuple form. A `&X` that is not
+  leading — `tryStmt`'s `&(optSameInd ('except' | 'finally'))` — is still
+  dropped, and there it only weakens an assertion.
+* A nullable item in front of a leading `&X` hides it from `leadAhead` and so
+  from the refinement. `parsePar`'s real prelude is `optInd; flexComment`, and
+  spelling the `flexComment?` cost the refinement; it is left out, since
+  `( ## doc` in front of the deciding keyword is not LL(1) anyway.
 * The generator is still `gramcheck.nim`, a standalone text scanner; the real
   one is the `deps/parsegen` plugin behind `template grammar*(...)`.
 
@@ -783,13 +990,30 @@ is still wrong:
 
     src/nifler2/tools/parsesweep.sh lib src tests
 
-63 of 188 files under `src/nifler2`, `src/lib` and `lib/std` parse. The
-remaining failures cluster: one-line `if` expressions, `{.pragma.}` in
-expression position, `(a, b)` argument lists, and `enum`/`tuple`/`object` in a
-type description. That is the next chunk of work, and it is measurable now.
+Everything parses, except source filters:
 
-The tree is **not** yet the tree `src/nifler` produces — see the `fanOut` gap
-above. This measures acceptance only.
+| corpus | parses | fails |
+| --- | --- | --- |
+| `src lib tests examples` (nimony) | 1405 | 1 |
+| Nim's `lib` + `compiler` + `tools` | 535 | 0 |
+| Nim's `tests` | 3211 | 34 |
+
+The one nimony failure and two of the 34 are `#? stdtmpl` source filters. Of
+the remaining 32, 29 are tests that *expect* to be rejected (`errormsg:`,
+`action: "reject"`, `tt.Error`, or `disabled: true`) and three are
+deliberately-broken helper modules or legacy code that `nifler` rejects at the
+same line and column — checked one by one, not assumed.
+
+Getting there took the twenty-five further grammar findings listed above, two
+new pieces of notation (`withInd`, `binaryTail`), and three generator fixes
+(`&rule` folded into the dispatch, `{…}` arguments rendered raw, an outward
+FIRST map for `withInd`). The sweep script is what made it a grind rather than
+a guess: it groups failures by message, and the message names the production.
+
+The tree is **not** yet the tree `src/nifler` produces — see `fanOut` and
+"Tag placement" above. This measures acceptance only. The next chunk is a
+tree-diff harness against `bin/nifler`, and it wants to exist before the tag
+work starts, not after.
 
 ## Staging
 
