@@ -1134,6 +1134,37 @@ wraps every statement body in `(stmts …)`, including single statements.
 The rest is object constructors (`oconstr`), `'i64` suffixes on promoted
 literals, `callstrlit`, statement-list expressions and the section leak above.
 
+### `(stmts …)`
+
+`parseStmt` builds an `nkStmtList` in both of its branches, so every statement
+body is a `stmts` in nifler, a single statement included: `if c: x` is
+`(if (elif c (stmts x)))`. Both `stmt` alternatives carry the tag now.
+
+The exception is inside parentheses. `semiStmtList` increments
+`p.inSemiStmtList`, and while it is non-zero `parseStmt`'s one-line branch
+returns the bare statement — `(if a: b else: c)` is `(elif a b)`. The counter
+is not reset by anything nested, so the runtime keeps the same counter and
+`stmt` has a third, predicated alternative. The list itself is an
+`nkStmtListExpr`, written `(expr (stmts <all but the last>) <last>)`, which
+`stmtListExprLayout` builds.
+
+Making `stmt` a predicated rule exposed one more generator bug: an optional
+`(IND{>} stmt)?` was entered through `canStmt(p)`, which knows `stmt`'s own
+predicates but not the guard written in front of it at the call site, so a
+concept without a body took the next line as one. `condOf` now ANDs the
+leading guards' mask into a `canX` test.
+
+| corpus | same | different | differences | unreadable |
+| --- | --- | --- | --- | --- |
+| nimony `src lib tests examples` | 907 | 497 | 3894 | 2 |
+| Nim `lib` + `compiler` | 191 | 301 | 2130 | 3 |
+
+The largest remaining class is `postExprBlocks`: a trailing `:` block turns
+its expression into a call that owns the block — `c.into:` is
+`(call (dot c into) (stmts …))` — where nifler2 writes the block as a
+sibling. After that come object constructors (`oconstr`), `'u64`/`'i64`
+suffixes on promoted literals, `callstrlit`, and pragma blocks (`pragmax`).
+
 ## Staging
 
 1. `src/nifler2/deps/parsegen.nim` — the mini-language front end, FIRST/FOLLOW

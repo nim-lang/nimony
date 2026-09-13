@@ -61,6 +61,7 @@ type
     indStack: seq[int32]
     errors*: seq[string]
     inPragma*: int         ## `{.` ... `.}` nesting; a pragma has no indentation
+    inSemiStmtList*: int   ## `( stmt; stmt )` nesting, as in parser.nim
     sections: seq[string]  ## the tag a declaration fans out into: var/let/param/...
     lastSection: string    ## the section opened most recently, popped or not
     tail: TokenBuf         ## scratch for the layout rewrites
@@ -419,6 +420,25 @@ proc joinIdents*(p: var Parser; m: Mark) =
   var text = ""
   for k in kids: text.add strVal(k)
   addIdent(p.dest, text, m.info)
+
+proc inSemiStmtList*(p: Parser): bool {.inline.} =
+  ## `parseStmt`'s `if p.inSemiStmtList > 0: result = simpleStmt(p)`: inside
+  ## a parenthesised statement list a one-line body is the bare statement,
+  ## not a `stmts` -- `(if a: b else: c)` is `(elif a b)`. The counter is not
+  ## reset by what nests inside, so neither is this.
+  p.inSemiStmtList > 0
+
+proc stmtListExprLayout*(p: var Parser; m: Mark) =
+  ## `nkStmtListExpr`: nifler writes all statements but the last in a `stmts`
+  ## and the last one after it, `(expr (stmts a b) c)`.
+  let kids = takeTail(p, m)
+  addParLe(p.dest, registerTag("expr"), m.info)
+  addParLe(p.dest, registerTag("stmts"), m.info)
+  for i in 0 ..< kids.len - 1: p.dest.addSubtree kids[i]
+  addParRi p.dest
+  if kids.len > 0: p.dest.addSubtree kids[^1]
+  else: emitEmpty p
+  addParRi p.dest
 
 proc routineBodyAllowed*(p: Parser; mode: PrimaryMode): bool {.inline.} =
   ## `parseProcExpr(p, mode != pmTypeDesc, ...)`: in a type `proc (): int = x`

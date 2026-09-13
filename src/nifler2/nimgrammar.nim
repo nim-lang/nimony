@@ -152,7 +152,9 @@ grammar:
          | 'when' | 'var' | 'mixin'"""
 
   semiStmtItem "ifExpr | whenExpr | complexOrSimpleStmt"
-  semiStmtList "semiStmtItem (';' semiStmtItem? | semiStmtItem)*"
+  semiStmtList "semiStmtItem (';' semiStmtItem? | semiStmtItem)*":
+    enter: inc p.inSemiStmtList
+    leave: dec p.inSemiStmtList
   # GRAMMAR.TXT: writes every one of these as `(ifExpr / complexOrSimpleStmt)
   # ^+ ';'`, and omits `whenExpr`. `semiStmtList` takes `when` to
   # `parseIfOrWhenExpr` exactly as it takes `if`, and its `;` is *optional*:
@@ -160,17 +162,23 @@ grammar:
   # complexOrSimpleStmt`, so `( a\n b )` needs no separator at all and
   # `( a; )` may end with one. A separator repetition can say neither.
 
-  par """stmts[ '(' optInd &parKeyw withInd( semiStmtList ) optPar ')' ]"""
-  par """stmts[ '(' optInd ';' withInd( semiStmtList )? optPar ')' ]"""
+  par """'(' optInd &parKeyw withInd( semiStmtList ) optPar ')'""":
+    stmtListExprLayout p, m
+  par """'(' optInd ';' withInd( semiStmtList )? optPar ')'""":
+    stmtListExprLayout p, m
   par "par[ '(' optInd pragmaStmt optPar ')' ]"
   par "tup[ '(' optPar ')' ]"
   par """par[ '(' optInd simpleExpr({-1}, {pmNormal})
                  (doBlock extraPostExprBlock*) optPar ')' ]"""
   par """par[ '(' optInd simpleExpr({-1}, {pmNormal}) asgn[ '=' expr ] optPar ')' ]"""
-  par """stmts[ '(' optInd simpleExpr({-1}, {pmNormal}) asgn[ '=' expr ]
-                   ';' withInd( semiStmtList )? optPar ')' ]"""
-  par """stmts[ '(' optInd simpleExpr({-1}, {pmNormal})
-                   ';' withInd( semiStmtList )? optPar ')' ]"""
+  par """'(' optInd simpleExpr({-1}, {pmNormal}) asgn[ '=' expr ]
+                   ';' withInd( semiStmtList )? optPar ')'""":
+    stmtListExprLayout p, m
+  par """'(' optInd simpleExpr({-1}, {pmNormal})
+                   ';' withInd( semiStmtList )? optPar ')'""":
+    stmtListExprLayout p, m
+  # Every statement-list form is an `nkStmtListExpr`, which nifler writes as
+  # `(expr (stmts <all but the last>) <last>)`.
   par """tup[ '(' optInd simpleExpr({-1}, {pmNormal}) (^kv[ ':' expr ])+
                  (comma exprColonEqExpr?)* optPar ')' ]"""
   par """tup[ '(' optInd simpleExpr({-1}, {pmNormal})
@@ -596,7 +604,7 @@ grammar:
     enter: pushSection p, "typevar"
     leave: popSection p
 
-  pattern "stmts[ '{' stmt '}' ]"
+  pattern "'{' stmt '}'"
   indAndComment "flexComment? | trailComment?"
   # `indAndComment` is `if indent > currInd: (a COMMENT, or "invalid
   # indentation") else: skipComment` -- i.e. `(validInd COMMENT)?`, with the
@@ -844,8 +852,8 @@ grammar:
   # PRED: 'static' is both `staticStmt` and a `symbol`; parser.nim decides on
   # the token after it. See the conflict report.
 
-  stmt """indented( complexOrSimpleStmt
-                   (IND{=} complexOrSimpleStmt | ';' (optSameInd complexOrSimpleStmt)?)* )"""
+  stmt """stmts[ indented( complexOrSimpleStmt
+                   (IND{=} complexOrSimpleStmt | ';' (optSameInd complexOrSimpleStmt)?)* ) ]"""
   # GRAMMAR.TXT: `complexOrSimpleStmt ^+ (IND{=} / ';')`, i.e. a real
   # separator. `parseStmt` re-tests the indentation *after* eating the `;` and
   # breaks on a dedent, so a trailing `;` at the end of a block is legal. A
@@ -856,4 +864,8 @@ grammar:
   # took the *next* proc into its body,
   # which also gives up the over-indentation diagnostic here. `module` keeps
   # it, and that is the one that matters for a bad dedent.
-  stmt "notInd simpleStmt ^+ ';'"
+  stmt "&inSemiStmtList notInd simpleStmt"
+  stmt "stmts[ notInd simpleStmt ^+ ';' ]"
+  # Both forms are a `stmts`, a single statement included: `parseStmt`
+  # builds an `nkStmtList` in either branch, and nifler writes it as it is --
+  # `if c: x` is `(if (elif c (stmts x)))`.

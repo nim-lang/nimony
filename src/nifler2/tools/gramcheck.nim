@@ -878,6 +878,8 @@ proc raw(n: Node): string =
   ## generated call verbatim, without the braces.
   if n.kind == nRaw: n.text else: render(n)
 
+proc indSetLit(ind: IndSet): string
+
 proc condOf(e: Emitter; n: Node): string =
   # the item that actually decides, which is the first one that can consume a
   # token: `(&suffixStart primarySuffix(mode))*` is entered on
@@ -891,7 +893,16 @@ proc condOf(e: Emitter; n: Node): string =
         break
   var base =
     if head != nil and head.kind == nRule and e.predicated.contains(head.text):
-      canCall(head)
+      # `canX` knows X's own predicates but not the guards written in front
+      # of X at this call site: `(IND{>} stmt)?` must still require IND{>}.
+      var guards = newNode(nSeq)
+      if n.kind == nSeq:
+        for k in n.kids:
+          if k == head: break
+          guards.kids.add k
+      let mask = leadMask(e.g, guards)
+      if mask != AnyInd: "(" & canCall(head) & " and indClass(p) in " & indSetLit(mask) & ")"
+      else: canCall(head)
     else:
       let ah = leadAhead(n)
       if ah != nil: condFor(intersectFirst(firstOf(e.g, n), firstOf(e.g, ah.kids[0])))
