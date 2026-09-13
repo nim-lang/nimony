@@ -1080,6 +1080,60 @@ What the top of the list says, in order of size:
   which is not NIF. nifler writes `(suf (inf) "f64")`; the line info is
   attached by `nifpools.addFloatLit`, which would do the same for any caller.
 
+### Placeholders, export markers and one node per name
+
+The dialect nifler writes is not the shape of the source, and three notation
+pieces plus a handful of runtime layouts close most of the gap:
+
+* **`X?.`** is an option that writes `.` when absent, and a bare **`.`** is a
+  slot that is always empty. The generator has to know that both *write*
+  something although they consume nothing — otherwise a `.` looks like a
+  pure indentation guard, and an empty match looks like it needs no branch.
+* **`exportMarker`** is `OPR` with an action that replaces the operator by
+  the identifier `x`, which is what nifler writes in the export slot.
+* **Layouts.** The grammar parses in source order and writes every slot;
+  runtime procs then rearrange what a rule wrote, by copying the trees since
+  the rule's mark to a scratch buffer and writing them back:
+  - `fanOut`: `name x pragmas` per name, then `type value`, becomes one
+    `(section name x pragmas type value)` per name. The count is exact
+    because every slot is written — the reason `fanOut` was a stub before
+    is gone. The section tag comes from a stack pushed by the rule that opens
+    the section (`let`/`var`/`const`, `paramList`, `genericParamList`,
+    `objectDecl`).
+  - `routineLayout` / `procLayout`: nine children with the effects slot, and
+    the lambda-versus-type decision for an anonymous routine (a type keeps a
+    missing signature as a single `.`, a bare `proc` is `(proctype)`).
+  - `moveLastToMark`: `for` and `let (a, b) = v` put the iterated or unpacked
+    value first.
+
+The placeholders flushed out bugs that acceptance could not see, because a
+missing child only becomes a crash once something counts the children:
+`'addr'`, `'type'` and `'static'` as names were plain terminals and wrote
+nothing (`template t(): type` lost its return type), backquoted operator runs
+lost their punctuation (`` `[]=` ``), `return false;` ending a proc took the
+next proc into its body, and an object's nested `when` took the outer `elif`.
+
+Two places deliberately do *not* follow nifler. Its section is a single
+variable that nothing restores, so a nested construct changes the tag of the
+names after it: `var a, b: proc (x: int)` makes `b` a `param`. nifler2 keeps
+the section of the declaration. The one place the leak is reproduced is
+`using`, which nifler never sets and which therefore inherits whatever was
+opened last; nothing downstream reads that tag.
+
+After this pass:
+
+| corpus | same | different | differences | unreadable |
+| --- | --- | --- | --- | --- |
+| nimony `src lib tests examples` | 225 | 1179 | 10775 | 2 |
+| Nim `lib` + `compiler` | 17 | 475 | 10178 | 3 |
+
+The difference count went *up* because declarations now line up at the top
+of a module, so the walk no longer abandons the rest of the file at the first
+`let`. Of what remains, all but about 160 per corpus is one thing: nifler
+wraps every statement body in `(stmts …)`, including single statements.
+The rest is object constructors (`oconstr`), `'i64` suffixes on promoted
+literals, `callstrlit`, statement-list expressions and the section leak above.
+
 ## Staging
 
 1. `src/nifler2/deps/parsegen.nim` — the mini-language front end, FIRST/FOLLOW

@@ -61,7 +61,10 @@ type
     indStack: seq[int32]
     errors*: seq[string]
     inPragma*: int         ## `{.` ... `.}` nesting; a pragma has no indentation
-    section*: string       ## the tag a declaration fans out into: var/let/param/...
+    sections: seq[string]  ## the tag a declaration fans out into: var/let/param/...
+    lastSection: string    ## the section opened most recently, popped or not
+    tail: TokenBuf         ## scratch for the layout rewrites
+    wrapFields: seq[bool]  ## whether a multi-name field is wrapped in `stmts`
 
 proc openParser*(src, filename: string): Parser =
   result = Parser(lex: openLexer(src, filename),
@@ -70,9 +73,10 @@ proc openParser*(src, filename: string): Parser =
                              iNumber: 0),
                   dest: createTokenBuf(src.len div 3 + 16),
                   head: createTokenBuf(4),
+                  tail: createTokenBuf(64),
                   file: pool.filenames.getOrIncl(filename),
                   currInd: 0, indStack: @[], errors: @[],
-                  inPragma: 0, section: "var")
+                  inPragma: 0, sections: @[], lastSection: "var", wrapFields: @[])
   next result.lex, result.tok
 
 proc info*(p: Parser): NifLineInfo {.inline.} =
@@ -323,14 +327,169 @@ proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
   addIdent(p.head, text, p.info)
   splice p, m.pos
 
-proc fanOut*(m: Mark; section: string) =
-  ## GAP. `declColonEquals` parses `a, b: T = v` and NIF has no such node: it
-  ## wants one `(var a T v) (var b T v)` per name. Doing that here needs the
-  ## *number of names*, and the generated code does not pass it -- the buffer
-  ## alone cannot tell a trailing name from a type from a value. Giving the
-  ## notation a way to say "this item repeats, count it" is the missing piece;
-  ## until then the declaration stays as parsed and `p.section` is unused.
-  discard
+# --------------------------------------------------------------- layouts
+#
+# nifler's `nim-parsed` dialect is not the shape of the source: every absent
+# child is a `.`, a declaration with several names is one node per name, and
+# `for`/tuple unpacking put the iterated value in front of the variables. The
+# grammar parses in source order and writes a `.` wherever a child is absent
+# (`X?.`); these procs then rearrange what the rule just wrote. They all work
+# the same way: the trees written since the mark are complete (marks nest), so
+# they are copied to a scratch buffer, cut from `dest`, and written back in
+# nifler's order.
+
+proc emitEmpty*(p: var Parser) =
+  ## `.` in the grammar: an absent child.
+  addDotToken(p.dest, NoLineInfo)
+
+proc setExportMarker*(p: var Parser; m: Mark) =
+  ## `exportMarker`: nifler writes `x` in the export slot, whatever the
+  ## operator was.
+  p.dest.shrink m.pos
+  addIdent(p.dest, "x", m.info)
+
+proc pushSection*(p: var Parser; tag: string) =
+  p.sections.add tag
+  p.lastSection = tag
+
+proc pushLastSection*(p: var Parser) =
+  ## `using`: nifler's section is one variable that nothing restores, and
+  ## `nkUsingStmt` does not set it -- a `using` gets the tag of whatever
+  ## section was opened last in the module. Nothing downstream reads that tag,
+  ## but a byte-identical tree has to have it.
+  p.sections.add p.lastSection
+proc popSection*(p: var Parser) = p.sections.setLen p.sections.len - 1
+proc section(p: Parser): string =
+  if p.sections.len > 0: p.sections[^1] else: "var"
+
+proc pushFieldWrap*(p: var Parser; wrap: bool) = p.wrapFields.add wrap
+proc popFieldWrap*(p: var Parser) = p.wrapFields.setLen p.wrapFields.len - 1
+
+proc takeTail(p: var Parser; m: Mark): seq[Cursor] =
+  ## The trees written since `m`, as cursors into `p.tail`; `dest` is cut back
+  ## to the mark.
+  p.tail.shrink 0
+  addParLe(p.tail, registerTag("tail"))
+  for i in m.pos ..< p.dest.len: p.tail.add p.dest[i]
+  addParRi p.tail
+  p.dest.shrink m.pos
+  result = @[]
+  var c = beginRead(p.tail)
+  var k = childCursor(c)
+  while k.hasMore:
+    result.add k
+    skip k
+
+proc isEmpty(c: Cursor): bool {.inline.} = c.kind == DotToken
+
+proc fanOut*(p: var Parser; m: Mark) =
+  ## `name x pragmas` repeated, then `type value`: one `(section name x
+  ## pragmas type value)` per name. The count is exact because every slot is
+  ## written, `.` or not -- which is what the placeholders buy.
+  let kids = takeTail(p, m)
+  let names = (kids.len - 2) div 3
+  let tag = registerTag(p.section)
+  let wrap = p.section == "fld" and names > 1 and
+             p.wrapFields.len > 0 and p.wrapFields[^1]
+  if wrap: addParLe(p.dest, registerTag("stmts"), m.info)
+  for i in 0 ..< names:
+    addParLe(p.dest, tag, kids[3*i].info)
+    for j in 0 .. 2: p.dest.addSubtree kids[3*i + j]
+    p.dest.addSubtree kids[^2]
+    p.dest.addSubtree kids[^1]
+    addParRi p.dest
+  if wrap: addParRi p.dest
+
+proc fanOutKv*(p: var Parser; m: Mark) =
+  ## A tuple field list: names, then `type value`. nifler keeps `(kv name
+  ## type)` and drops the default.
+  let kids = takeTail(p, m)
+  let tag = registerTag("kv")
+  for i in 0 ..< kids.len - 2:
+    addParLe(p.dest, tag, kids[i].info)
+    p.dest.addSubtree kids[i]
+    p.dest.addSubtree kids[^2]
+    addParRi p.dest
+
+proc joinIdents*(p: var Parser; m: Mark) =
+  ## Inside backquotes `parseSymbol` glues a run of operator and bracket
+  ## tokens into one identifier: `` `[]=` `` is `(quoted []=)`, not three
+  ## children, while `` `=copy` `` is `(quoted = copy)`.
+  let kids = takeTail(p, m)
+  var text = ""
+  for k in kids: text.add strVal(k)
+  addIdent(p.dest, text, m.info)
+
+proc routineBodyAllowed*(p: Parser; mode: PrimaryMode): bool {.inline.} =
+  ## `parseProcExpr(p, mode != pmTypeDesc, ...)`: in a type `proc (): int = x`
+  ## has no body -- the `= x` is the declaration's default value.
+  mode != pmTypeDesc
+
+proc wrapSection*(p: var Parser; m: Mark) =
+  ## A declaration that is already in slot form, tagged with the section.
+  wrap p, m, p.section
+
+proc moveLastToMark*(p: var Parser; m: Mark) =
+  ## `for x in it` and `let (a, b) = v`: nifler writes the iterated or
+  ## unpacked value first.
+  let kids = takeTail(p, m)
+  p.dest.addSubtree kids[^1]
+  for i in 0 ..< kids.len - 1: p.dest.addSubtree kids[i]
+
+proc addParams(p: var Parser; c: Cursor) =
+  if c.isEmpty:
+    addParLe(p.dest, registerTag("params"), NoLineInfo)
+    addParRi p.dest
+  else:
+    p.dest.addSubtree c
+
+proc procLayout*(p: var Parser; m: Mark; keyword: string) =
+  ## An anonymous routine, parsed as `params ret pragmas body` with `.` for
+  ## each one that is absent. With a body it is a lambda,
+  ## `(proc . . . . params ret pragmas . body)`, and `(params)` is always there.
+  ## Without one it is a type, and a type keeps what the source had: nothing
+  ## at all is `(proctype)`, no signature is a single `.` in place of params
+  ## and result.
+  let kids = takeTail(p, m)
+  let (params, ret, pragmas, body) = (kids[0], kids[1], kids[2], kids[3])
+  if not body.isEmpty:
+    addParLe(p.dest, registerTag(keyword), m.info)
+    for i in 0 .. 3: emitEmpty p
+    addParams p, params
+    p.dest.addSubtree ret
+    p.dest.addSubtree pragmas
+    emitEmpty p
+    p.dest.addSubtree body
+    addParRi p.dest
+  else:
+    addParLe(p.dest, registerTag(if keyword == "iterator": "itertype"
+                                 else: "proctype"), m.info)
+    let hasSig = not params.isEmpty or not ret.isEmpty
+    if hasSig or not pragmas.isEmpty:
+      for i in 0 .. 3: emitEmpty p
+      if hasSig:
+        addParams p, params
+        p.dest.addSubtree ret
+      else:
+        emitEmpty p
+      p.dest.addSubtree pragmas
+      emitEmpty p
+      emitEmpty p
+    addParRi p.dest
+
+proc routineLayout*(p: var Parser; m: Mark; keyword: string) =
+  ## A named routine, parsed as `name x pattern typevars params ret pragmas
+  ## body`: `(keyword name x pattern typevars params ret pragmas . body)`,
+  ## with the effects slot nifler reserves and `(params)` always present.
+  let kids = takeTail(p, m)
+  addParLe(p.dest, registerTag(keyword), m.info)
+  for i in 0 .. 3: p.dest.addSubtree kids[i]
+  addParams p, kids[4]
+  p.dest.addSubtree kids[5]
+  p.dest.addSubtree kids[6]
+  emitEmpty p
+  p.dest.addSubtree kids[7]
+  addParRi p.dest
 
 proc hexVal(c: char): uint64 {.inline.} =
   if c <= '9': uint64(ord(c) - ord('0'))
@@ -397,7 +556,10 @@ proc emitLeaf*(p: var Parser) =
       addStrLit(p.dest, p.tok.s.substr(0, int(p.tok.suffixPos) - 1), info)
       addStrLit(p.dest, p.tok.s.substr(int(p.tok.suffixPos) + 1), info)
   of tkComment:
-    addStrLit(p.dest, p.tok.s, info)
+    # nifler attaches a comment to its node and writes none of it (unless
+    # `--docs`); a `commentStmt` is just `(comment)`. Emitting the text as a
+    # string would take a slot that belongs to something else.
+    discard
   else:
     # Identifiers, operators and every keyword used as a name. `tkSymbol` is
     # the common case; the rest reach here through `symbolOrKeyword`, `OPR`

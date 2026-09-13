@@ -66,7 +66,8 @@ type
   NodeKind = enum
     nSeq, nAlt, nOpt, nRep0, nRep1, nSepRep, nTerminal, nClass, nRule,
     nTag, nGuard, nPred, nAhead, nIndented, nWithInd, nBinary, nBinTail, nLa2,
-    nDefault, nRaw
+    nDefault, nRaw,
+    nEmpty                # `.`: writes an absent child and consumes nothing
   Node = ref object
     kind: NodeKind
     text: string          # terminal spelling / class / rule / tag / pred name
@@ -134,6 +135,9 @@ proc parsePrim(sc: var Scanner): Node =
     return newNode(nSeq)
 
   let c = sc.s[sc.pos]
+  if c == '.':
+    inc sc.pos
+    return newNode(nEmpty)
   if c == '{':
     inc sc.pos
     let start = sc.pos
@@ -277,6 +281,10 @@ proc parsePostfix(sc: var Scanner): Node =
       result = r
     elif take(sc, "?"):
       let r = newNode(nOpt); r.kids.add result; result = r
+      if atNow(sc, '.'):
+        # `X?.`: absent means an explicit `.` in the output, not nothing
+        inc sc.pos
+        r.anchored = true
     elif take(sc, "*"):
       let r = newNode(nRep0); r.kids.add result; result = r
     elif take(sc, "+"):
@@ -431,7 +439,7 @@ proc isNullable(g: Grammar; n: Node): bool =
     for k in n.kids:
       if isNullable(g, k): return true
     false
-  of nOpt, nRep0: true
+  of nOpt, nRep0, nEmpty: true
   of nRep1, nSepRep: isNullable(g, n.kids[0])
   of nTerminal, nClass: false
   of nRule: g.nullable.getOrDefault(n.text, false)
@@ -532,7 +540,7 @@ proc firstOf(g: Grammar; n: Node): Table[string, IndSet] =
     if n.kids.len > 0: result = firstOf(g, n.kids[0])   # rest are Nim procs
   of nLa2:
     if n.kids.len > 0: result = firstOf(g, n.kids[0])
-  of nGuard, nPred, nAhead, nDefault, nRaw: discard
+  of nGuard, nPred, nAhead, nDefault, nRaw, nEmpty: discard
 
 proc remapIn(t: Table[string, IndSet]): Table[string, IndSet] =
   ## Re-measure a FOLLOW set across an `indented(...)` boundary. The inner
@@ -564,7 +572,8 @@ proc render(n: Node): string =
     var parts: seq[string] = @[]
     for k in n.kids: parts.add render(k)
     "(" & parts.join(" | ") & ")"
-  of nOpt: atom(n.kids[0]) & "?"
+  of nOpt: atom(n.kids[0]) & (if n.anchored: "?." else: "?")
+  of nEmpty: "."
   of nRep0: atom(n.kids[0]) & "*"
   of nRep1: atom(n.kids[0]) & "+"
   of nSepRep: atom(n.kids[0]) & " " & n.text & " " & atom(n.kids[1])
@@ -896,9 +905,18 @@ proc condOf(e: Emitter; n: Node): string =
 
 proc emitNode(e: var Emitter; n: Node; mark, anchor: string)
 
+proc writesWhenEmpty(n: Node): bool =
+  ## A `.` or an `X?.` produces output even when it matches nothing, so the
+  ## item is not "just a guard" and an empty match still needs its branch.
+  if n.kind == nEmpty or (n.kind == nOpt and n.anchored): return true
+  if n.kind in {nRule, nRep0, nRep1, nSepRep}: return false
+  for k in n.kids:
+    if writesWhenEmpty(k): return true
+  false
+
 proc isPureGuard(g: Grammar; n: Node): bool =
   ## Matches no token, only constrains the next one.
-  firstOf(g, n).len == 0 and isNullable(g, n)
+  firstOf(g, n).len == 0 and isNullable(g, n) and not writesWhenEmpty(n)
 
 proc indSetLit(ind: IndSet): string =
   var ps: seq[string] = @[]
@@ -962,8 +980,11 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
   # dispatch: `notInd = NO_IND | IND{=} | IND{<}`
   var allGuards = true
   for a in alts:
+    var n = newNode(nSeq)
+    n.kids = a.items
     if a.tag.len > 0 or altFirst(e.g, a).len > 0 or not altNullable(e.g, a) or
-       a.enterCode.len + a.leaveCode.len + a.afterCode.len > 0:
+       a.enterCode.len + a.leaveCode.len + a.afterCode.len > 0 or
+       writesWhenEmpty(n):
       allGuards = false
   if allGuards:
     var m: IndSet = {}
@@ -1042,7 +1063,8 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
       body e:
         e.line "error p, \"expected " & rule & "\""
     elif alts[empty].tag.len > 0 or alts[empty].enterCode.len +
-         alts[empty].leaveCode.len + alts[empty].afterCode.len > 0:
+         alts[empty].leaveCode.len + alts[empty].afterCode.len > 0 or
+         writesWhenEmpty((var n = newNode(nSeq); n.kids = alts[empty].items; n)):
       e.line "else:"
       body e:
         finish(e, alts[empty])
@@ -1096,6 +1118,12 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       e.line "let " & m2 & " = mark(p)"
       emitNode(e, n.kids[0], m2, mark)
       e.line "discardUnused " & m2
+    if n.anchored:
+      e.line "else:"
+      body e:
+        e.line "emitEmpty p"
+  of nEmpty:
+    e.line "emitEmpty p"
   of nRep0:
     inc e.tmp
     let m2 = "m" & $e.tmp
