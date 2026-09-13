@@ -59,8 +59,9 @@ type
     file: FileId
     currInd*: int32
     indStack: seq[int32]
-    errors*: seq[string]
     inPragma*: int         ## `{.` ... `.}` nesting; a pragma has no indentation
+    prevKind*: TokKind     ## the token before `tok`; `tkInvalid` at the start
+    prevEndLine, prevEndCol: int ## where that token ended
     inSemiStmtList*: int   ## `( stmt; stmt )` nesting, as in parser.nim
     sections: seq[string]  ## the tag a declaration fans out into: var/let/param/...
     lastSection: string    ## the section opened most recently, popped or not
@@ -77,7 +78,7 @@ proc openParser*(src, filename: string): Parser =
                   head: createTokenBuf(4),
                   tail: createTokenBuf(64),
                   file: pool.filenames.getOrIncl(filename),
-                  currInd: 0, indStack: @[], errors: @[],
+                  currInd: 0, indStack: @[],
                   inPragma: 0, sections: @[], lastSection: "var", wrapFields: @[])
   next result.lex, result.tok
 
@@ -85,31 +86,191 @@ proc info*(p: Parser): NifLineInfo {.inline.} =
   NifLineInfo(file: p.file, line: p.tok.line, col: p.tok.col)
 
 # --------------------------------------------------------------- diagnostics
+#
+# The messages, and where they point, are `compiler/parser.nim`'s: nifler's
+# users see them, and `tools/errsweep.sh` compares the two. Nim positions a
+# message either at the current token (`parMessage`) or at the lexer's
+# position, which is the end of that token (`lexMessage`, used by `eat`).
 
-proc error*(p: var Parser; msg: string) =
+const
+  errInvalidIndentation* = "invalid indentation"
+  NestableStmts = {tkIf, tkWhile, tkCase, tkTry, tkFor, tkBlock, tkAsm, tkProc,
+                   tkFunc, tkIterator, tkMacro, tkType, tkConst, tkWhen, tkVar}
+
+proc prettyTok*(t: Token): string =
+  ## `prettyTok` in `compiler/lexer.nim`.
+  case t.kind
+  of KeywordLow..KeywordHigh: "keyword " & $t.kind
+  of tkIntLit..tkInt64Lit: $t.iNumber
+  of tkUIntLit..tkUInt64Lit:
+    # Nim's `iNumber` is a `BiggestInt` for these too
+    $t.iNumber
+  of tkParLe..tkColon, tkEof, tkAccent: $t.kind
+  of tkBracketLeColon: ""
+  of tkColonColon, tkEquals, tkDot, tkDotDot:
+    if t.s.len > 0: t.s else: $t.kind
+  else: t.s
+
+proc errorAt*(p: var Parser; line, col: int; msg: string) =
   ## The first syntax error ends the parse. Recovery would mean bailing out of
   ## an arbitrarily deep recursion, and the generated code cannot: there are no
   ## exceptions in this runtime and no notation for a recovery production. It
   ## also has to end the parse rather than merely record it, because `expect`
   ## does not consume the token it did not match -- so a repetition whose body
-  ## fails makes no progress and would spin.
-  p.errors.add p.lex.filename & "(" & $p.tok.line & ", " & $p.tok.col & ") " &
-               msg & ", got '" &
-               (if p.tok.s.len > 0: p.tok.s else: $p.tok.kind) & "'"
-  quit p.errors[0]
+  ## fails makes no progress and would spin. The lexer's messages so far come
+  ## first, which is where Nim, one token ahead as well, prints them.
+  for e in p.lex.errors: echo e
+  echo p.lex.filename, "(", line, ", ", col + 1, ") Error: ", msg
+  quit 1
+
+proc error*(p: var Parser; msg: string) =
+  ## `parMessage`: at the current token.
+  errorAt p, p.tok.line, p.tok.col, msg
+
+proc lexError*(p: var Parser; msg: string) =
+  ## `lexMessage`: at the lexer's position, the end of the current token.
+  errorAt p, p.lex.lineNumber, p.lex.pos - p.lex.lineStart, msg
+
+proc expectedTok(p: var Parser; spelling: string) =
+  lexError p, "expected: '" & spelling & "', but got: '" & prettyTok(p.tok) & "'"
+
+proc identExpected*(p: var Parser) =
+  error p, "identifier expected, but got '" & prettyTok(p.tok) & "'"
+
+proc exprExpected*(p: var Parser) =
+  error p, "expression expected, but found '" & prettyTok(p.tok) & "'"
+
+proc ruleError*(p: var Parser; rule: string; misplaced: bool) =
+  ## Nothing in `rule` starts with the current token. parser.nim has no such
+  ## single place: the message is whichever check of the hand-written
+  ## procedure the token trips first. For a token that could start the rule
+  ## at another indentation (`misplaced`) that is usually an indentation
+  ## check, and otherwise `identOrLiteral`'s `errExprExpected`.
+  case rule
+  of "section_variable", "section_constant", "section_typeDef", "symbol",
+     "plainSymbol", "identVis", "identVisDot", "identWithPragma",
+     "identWithPragmaDot", "qualifiedIdent", "forHead",
+     "symbolOrKeyword":
+    identExpected p
+  of "complexOrSimpleStmt":
+    # `'type' section(typeDef)` and `'type' typeof[...]` factor into one
+    # dispatch after `type`; parser.nim's `parseSection` owns that token
+    if p.prevKind == tkType: identExpected p
+    else: exprExpected p
+  of "declColonEquals", "identColonEquals", "declColonEqualsDot":
+    error p, "':' or '=' expected, but got '" & prettyTok(p.tok) & "'"
+  of "castExpr":
+    expectedTok p, "("
+  of "genericParamName":
+    # a keyword other than `in`/`out` ends `parseGenericParamList`'s loop
+    expectedTok p, "]"
+  of "par":
+    # `parsePar` ends in `optPar(p); eat(p, tkParRi)`
+    if misplaced or indClass(p) == icLt: indentError p
+    elif p.prevKind == tkParLe: exprExpected p
+    else: expectedTok p, ")"
+  of "pragma":
+    error p, "expected '.}'"
+  of "stmt":
+    if indClass(p) == icGt:
+      # `parseStmt`'s block loop parses anything but these as a statement
+      if p.tok.kind in {tkCurlyRi, tkParRi, tkCurlyDotRi, tkBracketRi, tkElse, tkElif}:
+        indentError p
+      else:
+        exprExpected p
+    elif p.tok.kind in NestableStmts:
+      error p, "nestable statement requires indentation"
+    elif p.tok.indent >= 0 and p.inSemiStmtList == 0:
+      error p, errInvalidIndentation
+    else:
+      exprExpected p
+  else:
+    if misplaced: indentError p
+    else: exprExpected p
+
+proc strictListEnd*(p: var Parser) =
+  ## See `strictListEnd` in the grammar.
+  if indClass(p) == icEq and p.tok.kind != tkEof: identExpected p
+
+proc strictListStart*(p: var Parser) =
+  ## An indented token that cannot start the list at all.
+  if indClass(p) == icGt and p.tok.kind != tkEof: identExpected p
+
+proc enumListEnd*(p: var Parser) =
+  ## `parseEnum` loops on `validInd` and calls `parseSymbol` on whatever is
+  ## there.
+  if indClass(p) in {icNoInd, icGt} and p.tok.kind != tkEof: identExpected p
+
+proc paramStart*(p: var Parser) =
+  ## `parseParamList`'s messages for a token that starts no parameter.
+  if p.tok.kind in {tkSymbol, tkAccent, tkParRi}: discard
+  elif p.tok.kind == tkVar:
+    error p, "the syntax is 'parameter: var T', not 'var parameter: T'"
+  elif p.tok.kind in KeywordLow..KeywordHigh:
+    error p, "'" & $p.tok.kind & "' is a keyword and cannot be used as a parameter name"
+  else:
+    error p, "expected closing ')'"
+
+proc accentEnd*(p: var Parser) =
+  if p.tok.kind != tkAccent: identExpected p
+
+proc listEnd*(p: var Parser; close: TokKind) =
+  ## See `listEnd` in the grammar. A pragma ends in `.}` or `}`.
+  if p.tok.kind != close and p.tok.kind != tkEof and
+      not (close == tkCurlyDotRi and p.tok.kind == tkCurlyRi):
+    exprExpected p
+
+proc missingEquals*(p: var Parser) =
+  ## A routine without a body followed by an indented line.
+  if indClass(p) == icGt and p.tok.kind notin {tkComment, tkEof}:
+    error p, "invalid indentation, maybe you forgot a '=' at " & p.lex.filename &
+             "(" & $p.prevEndLine & ", " & $(p.prevEndCol + 1) & ") ?"
+
+proc requireFields*(p: var Parser; m: Mark) =
+  if p.dest.len == m.pos: identExpected p
+
+proc funcType*(p: var Parser) =
+  if p.prevKind != tkFunc:
+    error p, "func keyword is not allowed in type descriptions, use proc with {.noSideEffect.} pragma instead"
+
+proc stmtListEnd*(p: var Parser) =
+  ## `parseStmt`'s block loop ends on these; any other token at the block's
+  ## indentation is handed to `complexOrSimpleStmt`, which finds nothing.
+  if indClass(p) == icEq and p.tok.kind notin {tkCurlyRi, tkParRi, tkCurlyDotRi,
+      tkBracketRi, tkElse, tkElif, tkEof}:
+    exprExpected p
+
+proc requireExcept*(p: var Parser; m: Mark) =
+  if p.dest.len == m.pos: error p, "expected 'except'"
+
+proc noIndHere*(p: var Parser) =
+  if p.tok.indent >= 0: error p, errInvalidIndentation
+
+proc blockNameEnd*(p: var Parser) =
+  if p.tok.kind != tkColon: identExpected p
+
+proc tupleEnd*(p: var Parser) =
+  if p.prevKind == tkComma and p.tok.kind notin {tkParRi, tkEof}: exprExpected p
+
+proc indentError*(p: var Parser) =
+  error p, errInvalidIndentation
 
 proc getTok*(p: var Parser) =
-  if p.tok.kind != tkEof: next p.lex, p.tok
+  if p.tok.kind != tkEof:
+    p.prevKind = p.tok.kind
+    p.prevEndLine = p.lex.lineNumber
+    p.prevEndCol = p.lex.pos - p.lex.lineStart
+    next p.lex, p.tok
 
 proc expect*(p: var Parser; k: TokKind) =
   if p.tok.kind == k: getTok p
-  else: error p, "expected '" & $k & "'"
+  else: expectedTok p, $k
 
 proc expect*(p: var Parser; k: TokKind; s: string) =
   ## The spelling matters for the operators the grammar names literally
   ## (`'->'` in `paramListArrow`).
   if p.tok.kind == k and p.tok.s == s: getTok p
-  else: error p, "expected '" & s & "'"
+  else: expectedTok p, s
 
 # --------------------------------------------------------------- indentation
 
@@ -118,11 +279,11 @@ proc emitLeaf*(p: var Parser)
 proc expectLeaf*(p: var Parser; k: TokKind) =
   ## `@'not'` in the grammar: the terminal is content, not punctuation.
   if p.tok.kind == k: emitLeaf p
-  else: error p, "expected '" & $k & "'"
+  else: expectedTok p, $k
 
 proc expectLeaf*(p: var Parser; k: TokKind; s: string) =
   if p.tok.kind == k and p.tok.s == s: emitLeaf p
-  else: error p, "expected '" & s & "'"
+  else: expectedTok p, s
 
 proc indClass*(p: Parser): IndClass =
   if p.tok.indent < 0 or p.inPragma > 0: icNoInd
@@ -130,25 +291,15 @@ proc indClass*(p: Parser): IndClass =
   elif p.tok.indent == p.currInd: icEq
   else: icGt
 
-proc indSetStr(s: set[IndClass]): string =
-  result = "{"
-  if icNoInd in s: result.add "NO_IND "
-  if icLt in s: result.add "IND{<} "
-  if icEq in s: result.add "IND{=} "
-  if icGt in s: result.add "IND{>} "
-  result.add "}"
-
-proc indName(c: IndClass): string =
-  case c
-  of icNoInd: "NO_IND"
-  of icLt: "IND{<}"
-  of icEq: "IND{=}"
-  of icGt: "IND{>}"
-
 proc checkInd*(p: var Parser; allowed: set[IndClass]) =
   if indClass(p) notin allowed:
-    error p, "invalid indentation: " & indName(indClass(p)) & " not in " &
-             indSetStr(allowed)
+    error p, errInvalidIndentation
+
+proc afterOperator*(p: var Parser) =
+  ## `simpleExprAux` after it consumed a binary operator: `flexComment` and
+  ## `optPar`.
+  if p.tok.kind == tkComment and indClass(p) in {icNoInd, icGt}: getTok p
+  if indClass(p) == icLt: indentError p
 
 proc pushInd*(p: var Parser) =
   checkInd p, {icGt}
@@ -330,7 +481,7 @@ proc insertTokAt*(p: var Parser; m: Mark; k: TokKind) =
     insertLeafAt p, m, (if p.tok.s.len > 0: p.tok.s else: $p.tok.kind)
     getTok p
   else:
-    error p, "expected '" & $k & "'"
+    expectedTok p, $k
 
 proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
   ## `binary(...)`'s operator: `a + b` is `(infix + a b)`, so the operator has

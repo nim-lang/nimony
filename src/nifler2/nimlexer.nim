@@ -158,9 +158,33 @@ proc charAt(buf: string; i: int): char {.inline.} =
 
 proc ch*(L: Lexer; i: int): char {.inline.} = charAt(L.buf, i)
 
+proc errorAt(L: var Lexer; line, col: int; msg: string) =
+  L.errors.add L.filename & "(" & $line & ", " & $(col + 1) & ") Error: " & msg
+
 proc error(L: var Lexer; pos: int; msg: string) =
-  L.errors.add L.filename & "(" & $L.lineNumber & ", " &
-               $(pos - L.lineStart + 1) & ") Error: " & msg
+  errorAt L, L.lineNumber, pos - L.lineStart, msg
+
+proc litNumText(L: Lexer; start: int): string =
+  ## The number as `lexMessageLitNum` quotes it: everything literal-ish from
+  ## `start`, which is behind a leading `-`.
+  const LiteralishChars = {'A'..'Z', 'a'..'z', '0'..'9', '_', '.', '\''}
+  result = ""
+  var pos = start
+  while L.ch(pos) in LiteralishChars:
+    result.add L.ch(pos)
+    inc pos
+  if L.ch(pos) in {'+', '-'} and L.ch(pos-1) in {'e', 'E'}:
+    result.add L.ch(pos)
+    inc pos
+    while L.ch(pos) in LiteralishChars:
+      result.add L.ch(pos)
+      inc pos
+  if L.ch(pos) in LiteralishChars:
+    result.add L.ch(pos)
+    inc pos
+    while L.ch(pos) in {'0'..'9'}:
+      result.add L.ch(pos)
+      inc pos
 
 proc handleCRLF(L: var Lexer; pos: int): int =
   result = pos
@@ -396,7 +420,7 @@ proc signExtend(x: uint64; bits: int): int64 =
   let masked = x and ((m shl 1) - 1'u64)
   result = cast[int64](masked xor m) - cast[int64](m)
 
-proc numberValue(L: var Lexer; tok: var Token) =
+proc numberValue(L: var Lexer; tok: var Token; start: int) =
   ## The value matters here and not only in the parser: `0xffffffff` is a
   ## `tkInt64Lit` and `0xffff` is a `tkIntLit`, so the token *kind* depends on
   ## it. Floats are left as text.
@@ -442,7 +466,8 @@ proc numberValue(L: var Lexer; tok: var Token) =
       elif negative: 0x8000000000000000'u64
       else: 0x7fffffffffffffff'u64
     if overflow or xi > limit:
-      error L, L.pos, "number out of range: '" & tok.s & "'"
+      # Nim's third stage has rewound to the start of the digits
+      error L, start, "number out of range: '" & litNumText(L, start) & "'"
       return
     tok.iNumber = cast[int64](xi)
     if negative: tok.iNumber = -tok.iNumber
@@ -456,7 +481,7 @@ proc numberValue(L: var Lexer; tok: var Token) =
       of tkUInt16Lit: tok.iNumber > 65535'i64 or tok.iNumber < 0'i64
       of tkUInt32Lit: tok.iNumber > 4294967295'i64 or tok.iNumber < 0'i64
       else: false
-    if tooWide: error L, L.pos, "number out of range: '" & tok.s & "'"
+    if tooWide: error L, start, "number out of range: '" & litNumText(L, start) & "'"
   if tok.base != 10 and negative: tok.iNumber = -tok.iNumber
   # "Promote int literal to int64? Not always necessary, but more consistent"
   if tok.kind == tkIntLit and
@@ -472,6 +497,11 @@ proc scanNumber(L: var Lexer; tok: var Token) =
   var pos = L.pos
   var base = 10'i32
   var isFloat = false
+  block:
+    let d = if L.ch(start) == '-': start + 1 else: start
+    if L.ch(d) == '0' and L.ch(d+1) == 'O':
+      error L, d + 1, litNumText(L, d) &
+        " is an invalid int literal; For octal literals use the '0o' prefix."
   lex L.buf, pos:
   # The digits are optional so that `0x` with nothing behind it is one bad
   # number rather than `0` followed by the identifier `x`, which is what Nim
@@ -492,11 +522,12 @@ proc scanNumber(L: var Lexer; tok: var Token) =
     return
   L.pos = pos
   tok.base = base
-  if base != 10 and pos - start <= (if L.buf[start] == '-': 3 else: 2):
-    error L, start, "invalid number: '" & L.buf.substr(start, pos-1) & "'"
+  let digits = if L.buf[start] == '-': start + 1 else: start
+  if base != 10 and pos - digits <= 2:
+    error L, pos, "invalid number: '" & litNumText(L, digits) & "'"
   numberSuffix L, tok, start, isFloat
   normalizeBasePrefix tok
-  numberValue L, tok
+  numberValue L, tok, digits
   if L.ch(L.pos) in SymChars + {'_'} and unicodeOprLen(L.buf, L.pos)[0] == 0:
     error L, L.pos, "invalid token: no whitespace between number and identifier"
 
@@ -529,7 +560,7 @@ proc scanSymbol(L: var Lexer; tok: var Token) =
     L.pos = pos
     return
   if L.ch(pos) == '_':
-    error L, pos, "invalid token: trailing underscore"
+    error L, start, "invalid token: trailing underscore"
   L.pos = pos
   tok.s = L.buf.substr(start, pos-1)
   tok.kind = keywordKind(nimIdentNormalize(tok.s))
@@ -728,6 +759,7 @@ type
 
 proc getString(L: var Lexer; tok: var Token; mode: StringMode) =
   var pos = L.pos
+  let line = L.lineNumber
   inc pos                     # skip the opening quote
   if L.ch(pos) == '\"' and L.ch(pos+1) == '\"':
     tok.kind = tkTripleStrLit
@@ -751,7 +783,7 @@ proc getString(L: var Lexer; tok: var Token; mode: StringMode) =
         pos = handleCRLF(L, pos)
         tok.s.add '\n'
       elif c == '\0':
-        error L, pos, "closing \"\"\" expected, but end of file reached"
+        errorAt L, line, 0, "closing \"\"\" expected, but end of file reached"
         break
       else:
         tok.s.add c
@@ -769,7 +801,8 @@ proc getString(L: var Lexer; tok: var Token; mode: StringMode) =
           inc pos
           break
       elif c == '\r' or c == '\n' or c == '\0':
-        error L, pos, "closing \" expected"
+        # at `L.pos`: the opening quote, or behind the last escape sequence
+        error L, L.pos, "closing \" expected"
         break
       elif c == '\\' and mode == smNormal:
         L.pos = pos

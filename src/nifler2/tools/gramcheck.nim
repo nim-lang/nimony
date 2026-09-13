@@ -1072,10 +1072,12 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
     groups[key].add a
 
   var first = true
+  var allF = initTable[string, IndSet]()
   for key in order:
     let grp = groups[key]
     var f = initTable[string, IndSet]()
     for a in grp: union(f, altCond(e.g, a))
+    union(allF, f)
     var cond = condFor(f)
     let gd = (if grp.len == 1: guardsOf(grp[0].items)
               elif grp[0].items[0].kind == nPred: predCall(grp[0].items[0])
@@ -1122,9 +1124,30 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
     for i in 0 ..< alts.len:
       if empty < 0 and altNullable(e.g, alts[i]): empty = i
     if empty < 0:
+      # A token some alternative starts with, at an indentation none of them
+      # allows, is parser.nim's "invalid indentation" rather than a message
+      # about what the rule expected.
+      var misplaced = initTable[string, IndSet]()
+      for k, v in allF:
+        if v != AnyInd and not k.contains("+") and not k.contains("\""):
+          misplaced[k] = AnyInd - v
+      # And when every alternative opens with an indentation guard (`optInd
+      # expr`), a token at any other indentation trips that guard first.
+      var lead: IndSet = {}
+      for a in alts:
+        var m = AnyInd
+        for it in a.items:
+          if it.kind in {nPred, nAhead, nDefault}: continue
+          if not isNullable(e.g, it): break
+          m = m * leadMask(e.g, it)
+        lead = lead + m
+      var conds: seq[string] = @[]
+      if misplaced.len > 0: conds.add condFor(misplaced)
+      if lead != AnyInd: conds.add "indClass(p) notin " & indSetLit(lead)
       e.line "else:"
       body e:
-        e.line "error p, \"expected " & rule & "\""
+        e.line "ruleError p, \"" & (if rule == "alternative": e.curRule else: rule) &
+               "\", " & (if conds.len > 0: conds.join(" or ") else: "false")
     elif alts[empty].tag.len > 0 or alts[empty].enterCode.len +
          alts[empty].leaveCode.len + alts[empty].afterCode.len > 0 or
          writesWhenEmpty((var n = newNode(nSeq); n.kids = alts[empty].items; n)):
@@ -1233,7 +1256,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       # which is why this cannot simply be `could have continued but did not`.
       e.line "if (" & loose & ") and indClass(p) == icGt:"
       body e:
-        e.line "error p, \"invalid indentation in " & e.curRule & "\""
+        e.line "indentError p"
     e.line "discardUnused " & m2
     if n.text == "^*": dec e.indent
   of nTag:
@@ -1292,6 +1315,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       e.line "let opInfo = p.info"     # `parseOperators` creates the node here
       e.line "insertLeafAt p, " & mark & ", p.tok.s"
       e.line "getTok p"
+      e.line "afterOperator p"
       var args: seq[string] = @["p"]
       if e.needsAnchor.contains(e.curRule): args.add anchor
       if e.g.params.hasKey(e.curRule):
@@ -1333,6 +1357,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       e.line "let op" & av & " = p.info"
       e.line "insertLeafAt p, " & mark & ", p.tok.s"
       e.line "getTok p"
+      e.line "afterOperator p"
       var args: seq[string] = @["p", pv & " + " & av]
       for r in rest: args.add r
       e.line procName(n.kids[0].text) & "(" & args.join(", ") & ")"

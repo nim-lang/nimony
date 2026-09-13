@@ -129,12 +129,21 @@ proc error*(p: var Parser; msg: string) =
 proc getTok*(p: var Parser) =
   if p.pos < p.toks.high: inc p.pos
 
+proc ruleError*(p: var Parser; rule: string; misplaced: bool) =
+  error p, (if misplaced: "invalid indentation in " else: "expected ") & rule
+
+proc indentError*(p: var Parser) =
+  error p, "invalid indentation"
+
 proc indClass*(p: Parser): IndClass =
   let ind = p.tok.indent
   if ind < 0: icNoInd
   elif ind < p.currInd: icLt
   elif ind == p.currInd: icEq
   else: icGt
+
+proc afterOperator*(p: var Parser) =
+  if indClass(p) == icLt: indentError p
 
 proc checkInd*(p: var Parser; allowed: set[IndClass]) =
   if indClass(p) notin allowed:

@@ -33,15 +33,24 @@ Options:
 proc parse(p: var Parser; inp: string) {.raises.} =
   ## `Parser` owns a `TokenBuf`, which is not copyable, so it is filled in
   ## place rather than returned.
-  p = openParser(readFile(inp), inp)
+  ## A syntax error ends the process; the lexer's errors are only collected.
+  p = openParser(readFile(inp), absolutePath(inp))
+  if p.tok.indent > 0:
+    indentError p     # `parseTopLevelStmt`: the first statement starts a line
   pModule p
   if p.tok.kind != tkEof:
-    error p, "unexpected token"
+    # `module` stops at a token that does not start a statement, or not its
+    # own line: parser.nim's `parseTopLevelStmt`
+    if p.tok.indent == 0 or (p.tok.indent < 0 and p.prevKind in {tkInvalid, tkSemiColon}):
+      exprExpected p
+    elif p.tok.kind == tkOpr and p.tok.s == "*":
+      error p, "invalid indentation; an export marker '*' follows the declared identifier"
+    else:
+      indentError p
 
 proc report(p: Parser): bool =
   for e in p.lex.errors: echo e
-  for e in p.errors: echo e
-  p.lex.errors.len == 0 and p.errors.len == 0
+  p.lex.errors.len == 0
 
 proc main {.raises.} =
   var action = ""

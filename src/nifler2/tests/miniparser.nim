@@ -37,7 +37,7 @@ proc pModule*(p: var Parser) =
       discardUnused m2
       pStmt p
     if ((p.tok.kind in Tk2)) and indClass(p) == icGt:
-      error p, "invalid indentation in module"
+      indentError p
     discardUnused m1
   wrap p, m0, "stmts"
   discardUnused m0
@@ -82,14 +82,14 @@ proc pBody*(p: var Parser) =
       discardUnused m5
       pStmt p
     if ((p.tok.kind in Tk2)) and indClass(p) == icGt:
-      error p, "invalid indentation in body"
+      indentError p
     discardUnused m4
     popInd p
   elif (p.tok.kind in Tk1 and indClass(p) in {icNoInd, icLt, icEq}):
     pNotInd p
     pStmt p
   else:
-    error p, "expected body"
+    ruleError p, "body", false
   discardUnused m0
 
 proc pExprStmt*(p: var Parser) =
@@ -112,7 +112,7 @@ proc pExprStmt*(p: var Parser) =
     else:
       discard
   else:
-    error p, "expected exprStmt"
+    ruleError p, "exprStmt", false
   discardUnused m0
 
 proc pExpr*(p: var Parser; limit: int) =
@@ -124,6 +124,7 @@ proc pExpr*(p: var Parser; limit: int) =
     let opInfo = p.info
     insertLeafAt p, m0, p.tok.s
     getTok p
+    afterOperator p
     pExpr(p, prec + assoc)
     wrapAt p, m0, "infix", opInfo
     prec = getPrecedence(p)
@@ -160,14 +161,14 @@ proc pSuffix*(p: var Parser; anchor: Mark) =
       expect p, tkBracketRi
       wrapAt p, anchor, "at", at10
     else:
-      error p, "expected suffix"
+      ruleError p, "suffix", false
   elif (p.tok.kind in {tkDot}):
     var at11 = p.info
     expect p, tkDot
     emitLeaf p            # IDENT
     wrapAt p, anchor, "dot", at11
   else:
-    error p, "expected suffix"
+    ruleError p, "suffix", false
   discardUnused m0
 
 proc pAtom*(p: var Parser) =
@@ -181,6 +182,6 @@ proc pAtom*(p: var Parser) =
     pExpr(p, -1)
     expect p, tkParRi
   else:
-    error p, "expected atom"
+    ruleError p, "atom", false
   discardUnused m0
 

@@ -1310,6 +1310,96 @@ The command line takes what nimony passes -- `--portablePaths`, `--deps`,
 does. End to end, a toolchain with nifler2 installed as `nifler` builds and
 runs 79 tests from 15 directories with the same output as the normal one.
 
+## Stage 7: error messages
+
+A file nifler rejects, nifler2 rejects with the same first line:
+`/abs/file.nim(line, col) Error: message`, on stdout, exit code 1, no output
+written. nifler recovers and reports on; nifler2 stops at the first error, so
+the first line is what is compared. `tools/errsweep.sh dir...` runs both over
+every file nifler rejects and groups the differences by message pair;
+`tools/errmutate.nim` supplies the files -- mutants of valid code, one
+deleted, duplicated or inserted token, shifted indentation or joined line
+each.
+
+| corpus | same first error |
+|---|---|
+| Nim's `tests/` (every syntax error nifler reports) | 36 / 36 |
+| mutants of `lib/std` + `tests/nimony` (the development set) | 930 / 938 |
+| mutants of Nim's `lib/pure` + `compiler` | 145 / 145 |
+| mutants of `src` + Nim's `lib/std` + `lib/system` | 217 / 219 |
+| `errmutate` seed 5 over every other file of `lib/std` + `tests/nimony` | 961 / 975 |
+
+The first three sets came from a throwaway prototype of `errmutate` and are
+not reproducible from the seed; the last one is.
+
+Counted over files nifler rejects *without crashing* -- bridge.nim asserts on
+some broken trees, which the sweep lists separately.
+
+parser.nim positions a message at the current token (`parMessage`) or at the
+lexer, the end of that token (`lexMessage`, which `eat` uses). The runtime has
+both (`error`, `lexError`) and Nim's helpers on top: `expect` is `eat`'s
+"expected: ')', but got: 'keyword proc'" with `prettyTok`'s spelling.
+
+Nim has no single place a production fails. A message is whatever check of
+the hand-written procedure the token trips first, so the generated dispatch
+reports `ruleError(p, rule, misplaced)` and the runtime picks the message:
+
+* `misplaced` is computed by the generator: the token starts some alternative,
+  or every alternative opens with an indentation guard (`optInd expr`), but
+  the indentation is wrong. That is nearly always "invalid indentation".
+* otherwise `identOrLiteral`'s "expression expected", except for the rules
+  whose Nim procedure says something else -- `parseSymbol`'s "identifier
+  expected", `parseStmt`'s "nestable statement requires indentation",
+  `parseIdentColonEquals`'s "':' or '=' expected", `parsePragma`'s "expected
+  '.}'".
+
+What is left are places where parser.nim loops *until* a token and so
+complains about the one in front of it rather than about the missing closer.
+Those are `%else` rules with an action and no production: `listEnd(close)`
+after an opening bracket or a comma (`exprColonEqExprListAux` loops `while
+p.tok.tokType != endTok`), `strictListEnd` after a section or field list
+(`while sameInd(p)` and "identifier expected" for anything else),
+`enumListEnd`, `paramStart`, `stmtListEnd`, `accentEnd`, `missingEquals`
+(`indAndComment`'s "maybe you forgot a '='", which points at the end of the
+previous token), and the empty-branch checks `requireFields` and
+`requireExcept`.
+
+Matching the messages also meant matching what is *accepted*, and every such
+change moves nifler2 towards Nim:
+
+* `simpleStmt` takes an expression only on `isExprStart`: `of x` and `.foo`
+  are not statements, though `primary` could parse them;
+* a one-line statement body cannot be `var`, `if`, `proc` and the other
+  statements `parseStmt` refuses before it tries `simpleStmt`, and it has to
+  be on the same line;
+* `var a` needs a type or a value; only a parameter may have neither;
+* a routine name is a symbol, `addr`, `type` or `static` -- any other keyword
+  is "identifier expected" instead of an anonymous routine;
+* a command takes one parameter and ends the suffix loop:
+  `x = 3 proc p() = discard` made `p()` a second parameter of `3`;
+* `&inOrOut` sat inside a tag, where a predicate is dropped, so `[var T]` was
+  a generic parameter;
+* a binary operator checks `optPar` behind it and skips a comment;
+* `case x` with no branches is legal, an object-case branch with no fields is
+  not, a `try` needs an `except` or `finally`, and a `func` type is an error;
+* `f(a, , b)`, an indented first line and a comma-continued command parameter
+  on a dedented line are rejected.
+
+Over the tree corpora the only status changes are files nifler agrees with:
+Nim's `t10735` (an empty `case`) now parses to the same tree, and
+`temptycaseobj`, `ttypecommandindent1` and `tfunc_type` fail with nifler's
+message.
+
+The lexer's messages moved to Nim's positions too: a number's errors are
+reported where `lexMessageLitNum` reports them and quote the literal the way
+it does, a trailing underscore at the start of the identifier, a missing
+closing quote behind the last escape sequence, and `0O5` gets its own
+message.
+
+What still differs is recovery-shaped: a `{.` that swallows the rest of a
+block, an unclosed bracket spanning lines, the concept-body messages, and
+`5else` lexing as a bad float in Nim and as `5` followed by `else` here.
+
 ## Staging
 
 1. `src/nifler2/deps/parsegen.nim` — the mini-language front end, FIRST/FOLLOW
