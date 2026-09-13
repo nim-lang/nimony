@@ -121,10 +121,11 @@ proc pExpr*(p: var Parser; limit: int) =
   var prec = getPrecedence(p)
   while prec >= limit and indClass(p) == icNoInd:
     let assoc = (if isRightAssoc(p): 0 else: 1)
+    let opInfo = p.info
     insertLeafAt p, m0, p.tok.s
     getTok p
     pExpr(p, prec + assoc)
-    wrap p, m0, "infix"
+    wrapAt p, m0, "infix", opInfo
     prec = getPrecedence(p)
   discardUnused m0
 
@@ -141,27 +142,30 @@ proc pSuffix*(p: var Parser; anchor: Mark) =
   let m0 = mark(p)
   if ((p.tok.kind in {tkBracketLe, tkParLe})) and noSpaceBefore(p):
     if (p.tok.kind in {tkParLe}):
+      var at8 = p.info
       expect p, tkParLe
       if (p.tok.kind in {tkIntLit, tkParLe, tkSymbol}):
-        let m8 = mark(p)
+        let m9 = mark(p)
         pExpr(p, -1)
         while (p.tok.kind in {tkComma}):
           expect p, tkComma
           pExpr(p, -1)
-        discardUnused m8
+        discardUnused m9
       expect p, tkParRi
-      wrap p, anchor, "call"
+      wrapAt p, anchor, "call", at8
     elif (p.tok.kind in {tkBracketLe}):
+      var at10 = p.info
       expect p, tkBracketLe
       pExpr(p, -1)
       expect p, tkBracketRi
-      wrap p, anchor, "at"
+      wrapAt p, anchor, "at", at10
     else:
       error p, "expected suffix"
   elif (p.tok.kind in {tkDot}):
+    var at11 = p.info
     expect p, tkDot
     emitLeaf p            # IDENT
-    wrap p, anchor, "dot"
+    wrapAt p, anchor, "dot", at11
   else:
     error p, "expected suffix"
   discardUnused m0

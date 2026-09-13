@@ -14,8 +14,8 @@
 ##   bin/nimony c src/nifler2/nifler2.nim
 ##   nifler2 p file.nim [out.nif]
 
-import std / [syncio, cmdline, assertions]
-import nimparser
+import std / [syncio, cmdline, assertions, os]
+import nimparser, niflerout
 
 const Usage = """nifler2 - Nim to NIF
 Usage:
@@ -51,7 +51,9 @@ proc main {.raises.} =
     parse p, inp
     let ok = report(p)
     let outp = if paramCount() >= 3: paramStr(3) else: withoutExt(inp) & ".nif"
-    writeFile(p.dest, outp)
+    # nimony runs nifler with `--portablePaths`: the file is written relative
+    # to the current directory
+    writeNifler(p.dest, outp, relativePath(absolutePath(inp), getCurrentDir(), '/'))
     if not ok: quit 1
   of "t", "tree":
     var p = openParser("", inp)

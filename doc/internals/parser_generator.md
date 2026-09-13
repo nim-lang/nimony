@@ -1217,6 +1217,71 @@ rejects are two source filters and `errmsgs/t10735`, an error test. Two Nim
 tests are unreadable because of the non-finite float writer bug in
 `nifcoreparse`, fixed on its own branch.
 
+## Stage 5: line info and headers
+
+nifler2's output is now byte-identical to `nifler --portablePaths p`, header
+and positions included, which is what `treediff --bytes` checks:
+
+| corpus | byte-identical |
+| --- | --- |
+| nimony `src lib tests examples` | 1405 of 1406 |
+| Nim `lib` + `compiler` + `tools` | 523 of 535 |
+| Nim `tests` | 3193 of 3200 |
+
+The exceptions are the section leak (see above), the `#? replace` source
+filter, and two files with a line longer than 1024 characters
+(`src/models/nimony_tags.nim`, Nim's `tests/sets/tsets.nim`): after such a
+line Nim's lexer reports columns off by 1024, and that is not reproduced.
+
+**The writer, `niflerout.nim`**, cannot be `nifcoreparse`'s: that one gives a
+token without a position the position of the token before it and writes an
+index. nifler's rules are:
+
+* header `(.nif27)`, `(.vendor "Nifler")`, `(.dialect "nim-parsed")`, no index;
+* the root carries the file, relative to the current directory;
+* every other position is the difference to a *reference* and is omitted when
+  that is zero; a `.` and the export marker `x` (`addRaw " x"`, a literal
+  space even after a `)`) never carry one;
+* `addEmpty(n)` writes `n` dots without separators, and bridge.nim uses
+  `n > 1` in three places the writer reproduces: the first four and last two
+  slots of `proctype`/`itertype`, the four slots of a `for` loop's tuple
+  variable, and the type/value slots of every other unpacking `let`/`var`/
+  `const`.
+
+The reference is the node's parent *in Nim's AST*. Where that is not the
+enclosing NIF tag the writer knows it: a routine's result type is relative to
+its `(params)`, a lambda writes its position on the name placeholder
+(`(proc .@5,1 ...`) with its children relative to it, a tuple field `(kv` is
+relative to the tuple's parent, and `(expr (stmts ...) last)` puts the
+position on the `stmts` with `last` relative to the expression. Those quirks
+live only in the writer; the buffer holds true positions.
+
+**The positions** are `parser.nim`'s: `newNodeP` takes the token current when
+the node is *created*, which is the first token for most nodes and something
+else for many:
+
+* **`%at`** in the notation marks the token a node is positioned at: `asgn`,
+  `kv` and `vv` at their operator, a type definition at its `=`, a `for` loop
+  after the keyword, an `elif` of `if`/`when` at its condition (but `case`'s
+  and a post-expression block's `elif` at the keyword), an enum field at its
+  value or after its pragma, a bare `tuple` after the keyword, a `not nil`
+  after its operand. A `%at` shared by left-factored alternatives is captured
+  by the group before the shared token is consumed.
+* An anchored tag (`^call[ '(' ...]`) is positioned where its own items start,
+  an infix node from `binary` at its operator.
+* A declaration is positioned at parser.nim's *name node*: the `{.` if there
+  is a pragma, the export operator if exported, else the name.
+* `cmd` takes its first child's position, a pragma block its pragma's, a
+  routine its keyword's (through a small position stack, since the keyword is
+  consumed before the rule that builds the node).
+* `posMarker` passes a position to a layout that needs one it cannot see:
+  `x.y[:z]()` builds its call after the `]`, and a `do` with pragmas but no
+  parameter list gets its made-up `(params)` after the body.
+* Tags nifler invents (`ranges`, `unpackflat`, `unpacktup`, the unpacking
+  `let`s, the `stmts` around a multi-name field) carry no position, and the
+  empty discriminator of a bare object `case` has an empty node's, written
+  as `~1,,???`.
+
 ## Staging
 
 1. `src/nifler2/deps/parsegen.nim` — the mini-language front end, FIRST/FOLLOW

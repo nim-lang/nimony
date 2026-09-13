@@ -25,6 +25,8 @@ type
 
   Mark* = object        # `src/nifler2/parserrt.nim` also carries the line info
     pos*: int
+    info*: int           # this runtime has no positions; the field keeps
+                         # the generated `mark.info` references compiling
 
   Token* = object
     kind*: TokKind
@@ -192,6 +194,12 @@ proc wrap*(p: var Parser; m: Mark; tag: string) =
   ## point of the design: the tag is decided after the fact.
   p.buf.insert(BufTok(kind: bOpen, text: tag), m.pos)
   p.buf.add BufTok(kind: bClose, text: "")
+
+proc wrapAt*(p: var Parser; m: Mark; tag: string; info: int) =
+  ## Positions are not modelled here, so this is `wrap`.
+  wrap p, m, tag
+
+proc info*(p: Parser): int {.inline.} = 0
 
 proc discardUnused*(m: Mark) = discard
 

@@ -116,13 +116,13 @@ grammar:
 
   # --------------------------------------------------------------- exprs
 
-  exprColonEqExpr "kv[ expr ':' expr ]"
-  exprColonEqExpr "vv[ expr '=' expr ]"
-  exprColonEqExpr "expr (NO_IND doBlock extraPostExprBlock*)?":
+  exprColonEqExpr "kv[ expr %at ':' expr ]"
+  exprColonEqExpr "vv[ expr %at '=' expr ]"
+  exprColonEqExpr "expr (NO_IND doBlock({true}) extraPostExprBlock*)?":
     attachBlocks p, m
 
-  exprEqExpr "vv[ expr '=' expr ]"
-  exprEqExpr "expr (NO_IND doBlock extraPostExprBlock*)?":
+  exprEqExpr "vv[ expr %at '=' expr ]"
+  exprEqExpr "expr (NO_IND doBlock({true}) extraPostExprBlock*)?":
     attachBlocks p, m
 
   exprList            "expr ^+ comma"
@@ -133,7 +133,7 @@ grammar:
   # comma", i.e. it decides on the token *after* the comma -- which is what
   # the form above spells, at the price of also accepting `[a, , b]`.
 
-  qualifiedIdent "dot[ symbol '.' optInd symbolOrKeyword ]"
+  qualifiedIdent "dot[ symbol %at '.' optInd symbolOrKeyword ]"
   qualifiedIdent "symbol"
 
   setOrTableConstr "curly[ '{' optInd exprColonEqExprList? optPar '}' ]":
@@ -173,10 +173,10 @@ grammar:
   par "par[ '(' optInd pragmaStmt optPar ')' ]"
   par "tup[ '(' optPar ')' ]"
   par """'(' optInd simpleExpr({-1}, {pmNormal})
-                 NO_IND doBlock extraPostExprBlock* optPar ')'""":
+                 NO_IND doBlock({true}) extraPostExprBlock* optPar ')'""":
     attachBlocks p, m
-  par """par[ '(' optInd simpleExpr({-1}, {pmNormal}) asgn[ '=' expr ] optPar ')' ]"""
-  par """'(' optInd simpleExpr({-1}, {pmNormal}) asgn[ '=' expr ]
+  par """par[ '(' optInd simpleExpr({-1}, {pmNormal}) asgn[ %at '=' expr ] optPar ')' ]"""
+  par """'(' optInd simpleExpr({-1}, {pmNormal}) asgn[ %at '=' expr ]
                    ';' withInd( semiStmtList )? optPar ')'""":
     stmtListExprLayout p, m
   par """'(' optInd simpleExpr({-1}, {pmNormal})
@@ -244,7 +244,7 @@ grammar:
                         ^call[ '(' flexComment? optPar exprColonEqExprList? optPar ')' ]""":
     callOrObjConstr p, m
   primarySuffix(mode: PrimaryMode) """^dot[ '.' optInd symbolOrKeyword
-                             (&noSpaceBefore at[ '[:' exprList ']' ]
+                             (&noSpaceBefore at[ '[:' exprList ']' ] posMarker
                               (&noSpaceBefore '(' flexComment? optPar exprColonEqExprList? optPar ')')?)? ]""":
     dotLayout p, m
   # GRAMMAR.TXT: `('[:' exprList ']' ( '(' exprColonEqExpr ')' )?)?`.
@@ -293,7 +293,7 @@ grammar:
   # whatever the operator was, and every absent one is a `.`.
   identVis "plainSymbol exportMarker?."
   identVisDot "plainSymbol exportMarker"
-  identVisDot "plainSymbol dot[ '.' optInd symbolOrKeyword ] ."
+  identVisDot "plainSymbol dot[ %at '.' optInd symbolOrKeyword ] ."
   identVisDot "plainSymbol ."
   # GRAMMAR.TXT: `symbol '.' optInd symbolOrKeyword OPR?` -- the dot is not
   # optional there and an OPR may follow it. parser.nim's `identVis(allowDot)`
@@ -321,7 +321,10 @@ grammar:
   # --------------------------------------------------------------- types
 
   tupleTypeBracket "'[' optInd (identColonEquals (comma | semicolon)?)* optPar ']'"
-  tupleType "tuple[ 'tuple' tupleTypeBracket? ]"
+  tupleType "tuple[ 'tuple' tupleTypeBracket ]"
+  tupleType "tuple[ 'tuple' %at ]"
+  # A bare `tuple` is an `nkTupleClassTy` that `parseTuple` creates only after
+  # it has seen there is no bracket -- at the token after the keyword.
   # GRAMMAR.TXT: the bracket is mandatory. `parseTuple(indentAllowed=false)`
   # leaves a bare `tuple` alone, which is how `[T: tuple|object]` and
   # `x: typedesc[T]` with `T: tuple` parse.
@@ -347,18 +350,18 @@ grammar:
   # < 0`, and the return type likewise. A `(` that opens a line is the next
   # statement, not this routine's parameters.
 
-  doBlock "'do' (NO_IND paramList)?. (NO_IND '->' optInd typeDesc)?. pragma?. colcom stmt":
-    doLayout p, m
+  doBlock(atBody: bool) "'do' posMarker (NO_IND paramList)?. (NO_IND '->' optInd typeDesc)?. pragma?. colcom stmt posMarker":
+    doLayout p, m, atBody
   routineSig "(NO_IND paramList)?. (NO_IND ':' optInd typeDesc)?. (validInd pragma)?."
-  routineExpr(mode: PrimaryMode) "'proc' routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
+  routineExpr(mode: PrimaryMode) "'proc' %at routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
     procLayout p, m, "proc"
-  routineExpr(mode: PrimaryMode) "'func' routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
+  routineExpr(mode: PrimaryMode) "'func' %at routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
     procLayout p, m, "func"
-  routineExpr(mode: PrimaryMode) "'iterator' routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
+  routineExpr(mode: PrimaryMode) "'iterator' %at routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
     procLayout p, m, "iterator"
-  routineType "'proc' routineSig .":
+  routineType "'proc' %at routineSig .":
     procLayout p, m, "proc"
-  routineType "'iterator' routineSig .":
+  routineType "'iterator' %at routineSig .":
     procLayout p, m, "iterator"
   # `parseProcExpr` builds a lambda when there is a body and a type when there
   # is not, and nifler lays the two out differently: a lambda always has
@@ -366,13 +369,13 @@ grammar:
   # `proc` as `(proctype)`. The grammar writes `params ret pragmas body` with
   # `.` for what is absent, and `procLayout` decides.
 
-  rawTypeDesc "routineType (NO_IND ^infix[ @'not' primary({pmTypeDesc}) ])?"
+  rawTypeDesc "routineType (NO_IND ^infix[ @'not' primary({pmTypeDesc}) %at ])?"
   rawTypeDesc "typeDescKeyw({pmTypeDesc})"
   typeDescKeyw(mode: PrimaryMode) """(tupleType | @'enum' | object[ 'object' ]
                | mut[ 'var' typeKAuxOperand(mode)? ] | out[ 'out' typeKAuxOperand(mode)? ]
                | ref[ 'ref' typeKAuxOperand(mode)? ] | ptr[ 'ptr' typeKAuxOperand(mode)? ]
                | distinct[ 'distinct' typeKAuxOperand(mode)? ])
-               (NO_IND ^infix[ @'not' primary({pmTypeDesc}) ])?"""
+               (NO_IND ^infix[ @'not' primary({pmTypeDesc}) %at ])?"""
   typeKAuxOperand(mode: PrimaryMode) "&isTypedefOperand(mode) validInd typeDefValue"
   typeKAuxOperand(mode: PrimaryMode) "&typeOperandFollows validInd primary(mode)"
   # GRAMMAR.TXT: `('var'|'out'|'ref'|'ptr'|'distinct') typeDesc?`.
@@ -386,7 +389,7 @@ grammar:
   # `tkIterator` to `parseProcExpr`, so `proc` in expression position is a
   # routine *expression*, never a routine type.
   typeDescExpr """simpleExpr({-1}, {pmTypeDesc})
-               (NO_IND ^infix[ @'not' primary({pmTypeDesc}) ])?"""
+               (NO_IND ^infix[ @'not' primary({pmTypeDesc}) %at ])?"""
   # GRAMMAR.TXT: `(routineType / simpleExpr) ('not' primary)?`.
   # `typeDescExpr` is `parseTypeDesc(fullExpr = true)`, whose whole body is
   # `simpleExpr(p, pmTypeDesc)` -- `routineType` as a *separate* alternative
@@ -400,14 +403,16 @@ grammar:
 
   # --------------------------------------------------------------- primary
 
-  forVar "let[ identWithPragma . . ]"
-  forTupleVar "let[ plainSymbol . . . . ]"
+  forVar "identWithPragma . .":
+    wrapNoInfo p, m, "let"
+  forTupleVar "plainSymbol . . . .":
+    wrapNoInfo p, m, "let"
   forTuple "unpacktup[ '(' optInd forTupleVar (comma forTupleVar?)* optPar ')' ]"
   forHead "forTuple 'in' expr":
     moveLastToMark p, m
   forHead "unpackflat[ forVar (comma (forVar | forTuple))* ] 'in' expr":
     moveLastToMark p, m
-  forStmt "for[ 'for' forHead colcom stmt ]"
+  forStmt "for[ 'for' %at forHead colcom stmt ]"
   # nifler: `(for iter (unpackflat (let name x pragmas . .)...) body)`, or
   # `(unpacktup (let name . . . .)...)` when the variables are one tuple --
   # the iterated expression first.
@@ -434,7 +439,7 @@ grammar:
 
   # Not in doc/grammar.txt at all, though parser.nim has it.
   commandParam(mode: PrimaryMode) "&inTypeDesc(mode) simpleExpr({-1}, mode)"
-  commandParam(mode: PrimaryMode) "%else expr (NO_IND doBlock extraPostExprBlock*)?":
+  commandParam(mode: PrimaryMode) "%else expr (NO_IND doBlock({true}) extraPostExprBlock*)?":
     attachBlocks p, m
   # parser.nim's `commandParam` has a third branch, `elif not isFirstParam:
   # exprEqExpr`, and it is unreachable from `commandExpr`, which always passes
@@ -498,14 +503,14 @@ grammar:
 
   # --------------------------------------------------------- post-expr blocks
 
-  extraPostExprBlock "IND{=} doBlock"
+  extraPostExprBlock "IND{=} doBlock({false})"
   extraPostExprBlock "of[ IND{=} 'of' ranges[ exprList ] ':' stmt ]"
   extraPostExprBlock "elif[ IND{=} 'elif' expr ':' stmt ]"
   extraPostExprBlock "except[ IND{=} 'except' (expr ^+ comma)?. ':' stmt ]"
   extraPostExprBlock "fin[ IND{=} 'finally' ':' stmt ]"
   extraPostExprBlock "else[ IND{=} 'else' ':' stmt ]"
 
-  postExprBlocks "NO_IND doBlock extraPostExprBlock*"
+  postExprBlocks "NO_IND doBlock({true}) extraPostExprBlock*"
   postExprBlocks "NO_IND ':' trailComment? (extraPostExprBlock | stmt) extraPostExprBlock*"
   # GRAMMAR.TXT: omits the guard; `postExprBlocks` opens with
   # `if p.tok.indent >= 0: return`. It belongs in the rule rather than at the
@@ -520,10 +525,11 @@ grammar:
 
   # --------------------------------------------------------------- stmts
 
-  exprStmt """asgn[ simpleExpr({-1}, {pmTrySimple}) '='
+  exprStmt """asgn[ simpleExpr({-1}, {pmTrySimple}) %at '='
                   optInd exprBlocks ]"""
-  exprStmt """cmd[ simpleExpr({-1}, {pmTrySimple})
-                 NO_IND (exprEqExpr ^+ (optPar comma)) postExprBlocks? ]"""
+  exprStmt """simpleExpr({-1}, {pmTrySimple})
+                 NO_IND (exprEqExpr ^+ (optPar comma)) postExprBlocks?""":
+    wrapLikeFirst p, m, "cmd"      # `newTree(nkCommand, a.info, a)`
   # The separator is `optPar comma`: `parseExprStmt` stops at a comma that
   # is dedented below the block (`p.tok.indent < baseIndent`), which is how a
   # `,` on its own line after a lambda body belongs to the enclosing list.
@@ -571,7 +577,7 @@ grammar:
   # grammar.txt as well: `return quote: toJs(x)` needs it.
 
   condStmt """elif[ expr colcom stmt ] trailComment?
-            (elif[ optSameInd 'elif' expr colcom stmt ])*
+            (elif[ optSameInd 'elif' %at expr colcom stmt ])*
             (else[ optSameInd 'else' colcom stmt ])?"""
   # GRAMMAR.TXT: `IND{=}` on both. `parseIfOrWhen` tests `sameOrNoInd`, which
   # is what makes the one-liner `if c: a else: b` a *statement* and not just
@@ -580,7 +586,7 @@ grammar:
   whenStmt "when[ 'when' condStmt ]"
 
   condExpr """elif[ optInd expr colcom stmt ] trailComment?
-            (elif[ 'elif' optInd expr colcom stmt ] trailComment?)*
+            (elif[ 'elif' %at optInd expr colcom stmt ] trailComment?)*
             (else[ 'else' colcom stmt ])?"""
   # GRAMMAR.TXT: `expr colcom stmt optInd ('elif' ...)* 'else' colcom stmt`.
   # Two things are wrong. The `optInd` is the one at the *start* of each
@@ -653,10 +659,10 @@ grammar:
 
   routineName "symbolOrKeyword exportMarker?."
   routine(kw: string) """optInd routineName pattern?. genericParamList?.
-           (NO_IND paramList)?. (NO_IND ':' optInd typeDesc)?. (validInd pragma)?.
+           (NO_IND paramList | params[ %at ]) (NO_IND ':' optInd typeDesc)?. (validInd pragma)?.
            (validInd '=' trailComment? stmt)?. indAndComment""":
     routineLayout p, m, kw
-  routine(kw: string) """optInd routineSig ('=' trailComment? stmt)?.""":
+  routine(kw: string) """optInd %at routineSig ('=' trailComment? stmt)?.""":
     procLayout p, m, kw
   # nifler: `(kw name x pattern typevars params result pragmas effects body)`,
   # nine children, the effects slot always `.` and `(params)` always there.
@@ -683,7 +689,7 @@ grammar:
   # (`p.tok.indent < 0`), not "any non-indent".
 
   enumDecl """enum[ 'enum' optInd flexComment? .
-                  (efld[ validInd symbol . pragma?. . ('=' optInd expr)?. ]
+                  (efld[ validInd symbol . (pragma %at)?. . ('=' optInd %at expr)?. ]
                    comma? flexComment?)+ ]"""
   # nifler: `(enum . (efld name . pragmas . value)...)` -- the base type, the
   # export marker and the type are always empty.
@@ -696,8 +702,8 @@ grammar:
   # calls `rawSkipComment` on every exit path, so `A  ## what A means` does
   # not end the field list.
 
-  objectWhen """when[ 'when' elif[ expr colcom objectPart ] flexComment?
-              (elif[ IND{=} 'elif' expr colcom objectPart ] flexComment?)*
+  objectWhen """when[ 'when' elif[ %at expr colcom objectPart ] flexComment?
+              (elif[ IND{=} 'elif' %at expr colcom objectPart ] flexComment?)*
               (IND{=} objectElse flexComment?)? ]""":
     enter: pushFieldWrap p, false
     leave: popFieldWrap p
@@ -721,7 +727,7 @@ grammar:
   # GRAMMAR.TXT: lists `(IND{=} 'elif' expr colcom objectPart)*` between the
   # two. `parseObjectCase`'s loop has no `of tkElif` at all -- an object
   # variant has no `elif` branches.
-  objectCase """case[ 'case' (declColonEquals | fld[ . . pragma . . ] | fld[ . . . . . ])
+  objectCase """case[ 'case' (declColonEquals | fld[ . . pragma . . ] | emptyDiscriminator)
               ':'? flexComment?
               (indented( objectBranches ) | IND{=} objectBranches) ]"""
 
@@ -762,11 +768,17 @@ grammar:
   # line), and reading the *next type definition* at IND{=} as a field is how
   # `Bar[T] = object` after it became a field named `Bar`.
 
+  emptyDiscriminator "%else":
+    emptyDiscriminator p
+  posMarker "%else":
+    posMarker p
+  ofInherit "'of' typeDesc (',' typeDesc)*":
+    inheritLayout p, m
   conceptParam """mut[ 'var' symbol ] | out[ 'out' symbol ] | ptr[ 'ptr' symbol ]
                | ref[ 'ref' symbol ] | static[ 'static' symbol ] | typeof[ 'type' symbol ]
                | symbol"""
   conceptDecl """concept[ 'concept' trailComment? (NO_IND stmts[ conceptParam ^+ ',' ])?.
-               (NO_IND pragma)?. (NO_IND 'of' typeDesc (^par[ (',' typeDesc)+ ])?)?.
+               (NO_IND pragma)?. (NO_IND ofInherit)?.
                trailComment?
                (IND{>} stmt)?. ]"""
   # GRAMMAR.TXT: no COMMENT and no indentation guards. `parseTypeClass` skips
@@ -779,13 +791,13 @@ grammar:
   # own line is the old style.
 
   typeDef """type[ identVisDot genericParamList?. pragma?.
-                 ('=' optInd typeDefValue)?. indAndComment? ]"""
+                 (%at '=' optInd typeDefValue)?. indAndComment? ]"""
   # nifler: `(type name x typevars pragmas value)`.
   # GRAMMAR.TXT: writes `pragma` and the `'='` as required. Both are optional
   # in `parseTypeDef` (`optPragmas`, and `if p.tok.tokType == tkEquals`).
 
   typeDefValue """(tupleDecl | enumDecl | objectDecl | conceptDecl)
-               (NO_IND ^infix[ @'not' primary({pmTypeDesc}) ])?"""
+               (NO_IND ^infix[ @'not' primary({pmTypeDesc}) %at ])?"""
   # GRAMMAR.TXT: also lists `('ref'|'ptr'|'distinct') (tupleDecl |
   # objectDecl)` here, which made the operand mandatory and refused
   # everything else -- `distinct int32` did not parse. The three are gone
@@ -796,7 +808,7 @@ grammar:
   # *body*, and the result is fed back into the operator loop, so
   # `SomePointer = ref | ptr | pointer | proc` parses. Reaching it through
   # `primary` is what supplies that loop for free.
-  typeDefValue """%else typeDefExpr (NO_IND ^infix[ @'not' primary({pmTypeDesc}) ])?"""
+  typeDefValue """%else typeDefExpr (NO_IND ^infix[ @'not' primary({pmTypeDesc}) %at ])?"""
   typeDefExpr "simpleExpr({-1}, {pmTypeDef}) (comma exprEqExpr)* postExprBlocks?":
     attachBlocks p, m     # the extra parameters go into the command, too
   # GRAMMAR.TXT: `simpleExpr (exprEqExpr ^+ comma postExprBlocks?)?`, which
@@ -840,7 +852,8 @@ grammar:
 
   bindStmt  "bind[ 'bind' optInd qualifiedIdent ^+ comma ]"
   mixinStmt "mixin[ 'mixin' optInd qualifiedIdent ^+ comma ]"
-  pragmaStmt "pragma (^pragmax[ NO_IND ':' trailComment? stmt ])?"
+  pragmaStmt "pragma (NO_IND ':' trailComment? stmt)?":
+    pragmaBlock p, m
   # `parseStmtPragma` makes a pragma with a block an `nkPragmaBlock`, which
   # nifler writes as `(pragmax pragmas body)`.
 
@@ -859,15 +872,29 @@ grammar:
   # branch is right there in the code. Without `caseStmt` a `case` *statement*
   # was unreachable: only `expr` offered one, and `exprStmt` goes through
   # `simpleExpr`, which does not.
-  complexOrSimpleStmt """'proc' routine({"proc"})"""
-  complexOrSimpleStmt """'method' routine({"method"})"""
-  complexOrSimpleStmt """'func' routine({"func"})"""
-  complexOrSimpleStmt """'iterator' routine({"iterator"})"""
-  complexOrSimpleStmt """'macro' routine({"macro"})"""
-  complexOrSimpleStmt """'template' routine({"template"})"""
-  complexOrSimpleStmt """'converter' routine({"converter"})"""
+  complexOrSimpleStmt """'proc' routine({"proc"})""":
+    enter: pushInfo p
+    leave: popInfo p
+  complexOrSimpleStmt """'method' routine({"method"})""":
+    enter: pushInfo p
+    leave: popInfo p
+  complexOrSimpleStmt """'func' routine({"func"})""":
+    enter: pushInfo p
+    leave: popInfo p
+  complexOrSimpleStmt """'iterator' routine({"iterator"})""":
+    enter: pushInfo p
+    leave: popInfo p
+  complexOrSimpleStmt """'macro' routine({"macro"})""":
+    enter: pushInfo p
+    leave: popInfo p
+  complexOrSimpleStmt """'template' routine({"template"})""":
+    enter: pushInfo p
+    leave: popInfo p
+  complexOrSimpleStmt """'converter' routine({"converter"})""":
+    enter: pushInfo p
+    leave: popInfo p
   complexOrSimpleStmt "'type' section(typeDef)"
-  complexOrSimpleStmt """'type' typeof[ '(' primary({pmTypeDesc}) ')' ]
+  complexOrSimpleStmt """'type' typeof[ '(' %at primary({pmTypeDesc}) ')' ]
                       binaryTail( simpleExpr, getPrecedence, isRightAssoc, infix,
                                   {-1}, {pmNormal} )"""
   # GRAMMAR.TXT: only `'type' section(typeDef)`. `complexOrSimpleStmt`'s

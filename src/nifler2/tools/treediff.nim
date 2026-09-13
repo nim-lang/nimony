@@ -33,6 +33,8 @@ type
   Tok = object
     kind: NifKind
     text: string          ## tag name for `ParLe`, decoded value otherwise
+    line, col: int32      ## decoded absolute position; a token without a
+                          ## suffix has its enclosing tag's
 
   Diff* = object
     path: string          ## tags from the root to the enclosing node
@@ -47,25 +49,33 @@ proc readTree(filename: string): seq[Tok] =
   var r = nifreader.open(filename)
   var t = default(ExpandedToken)
   var depth = 0
+  var parents: seq[(int32, int32)] = @[(0'i32, 0'i32)]
   while true:
     r.next(t)
+    # the same resolution `nifcoreparse` does: a filename makes it absolute,
+    # otherwise it is relative to the enclosing tag
+    let (pl, pc) = parents[^1]
+    let line = (if t.filename.len > 0: t.pos.line else: pl + t.pos.line)
+    let col = (if t.filename.len > 0: t.pos.col else: pc + t.pos.col)
     case t.tk
     of EofToken, UnknownToken: break
     of ParLe:
       inc depth
-      result.add Tok(kind: ParLe, text: $t.data)
+      result.add Tok(kind: ParLe, text: $t.data, line: line, col: col)
+      parents.add (line, col)
     of ParRi:
       result.add Tok(kind: ParRi)
+      discard parents.pop()
       dec depth
       if depth == 0: break
-    of DotToken: result.add Tok(kind: DotToken)
+    of DotToken: result.add Tok(kind: DotToken, line: line, col: col)
     of Ident, Symbol, SymbolDef, StringLit:
-      result.add Tok(kind: t.tk, text: decodeStr(r, t))
-    of CharLit: result.add Tok(kind: CharLit, text: $decodeChar(t))
-    of IntLit: result.add Tok(kind: IntLit, text: $decodeInt(t))
-    of UIntLit: result.add Tok(kind: UIntLit, text: $decodeUInt(t))
-    of FloatLit: result.add Tok(kind: FloatLit, text: $decodeFloat(t))
-    else: result.add Tok(kind: t.tk, text: $t.data)
+      result.add Tok(kind: t.tk, text: decodeStr(r, t), line: line, col: col)
+    of CharLit: result.add Tok(kind: CharLit, text: $decodeChar(t), line: line, col: col)
+    of IntLit: result.add Tok(kind: IntLit, text: $decodeInt(t), line: line, col: col)
+    of UIntLit: result.add Tok(kind: UIntLit, text: $decodeUInt(t), line: line, col: col)
+    of FloatLit: result.add Tok(kind: FloatLit, text: $decodeFloat(t), line: line, col: col)
+    else: result.add Tok(kind: t.tk, text: $t.data, line: line, col: col)
   r.close()
   if depth != 0:
     # an unbalanced tree is an output bug in its own right; say so instead of
@@ -126,6 +136,25 @@ proc shape(s: seq[Tok]; i: int): string =
 
 proc sameAtom(a, b: Tok): bool = a.kind == b.kind and a.text == b.text
 
+var checkLineInfo = false
+var checkBytes = false
+
+proc positionDiff(a: seq[Tok]; ai: int; b: seq[Tok]; bi: int; path: string;
+                  diffs: var seq[Diff]) =
+  ## Same node, different position. Grouped by the node's shape and the
+  ## direction of the error, which is what tells one rule from another.
+  if not checkLineInfo: return
+  if a[ai].line == b[bi].line and a[ai].col == b[bi].col: return
+  let parent = if path.len == 0: "<root>" else: path.rsplit('/', 1)[^1]
+  let dl = b[bi].line - a[ai].line
+  let dc = b[bi].col - a[ai].col
+  let dir = (if dl != 0: "line" & (if dl > 0: "+" else: "-") else: "") &
+            (if dc != 0: "col" & (if dc > 0: "+" else: "-") else: "")
+  diffs.add Diff(path: path,
+                 want: shape(a, ai) & " at " & $(a[ai].line) & ":" & $a[ai].col,
+                 got: shape(b, bi) & " at " & $(b[bi].line) & ":" & $b[bi].col,
+                 sig: "position of " & shape(a, ai) & " in (" & parent & "): " & dir)
+
 proc compare(a: seq[Tok]; ai: var int; b: seq[Tok]; bi: var int;
              path: string; diffs: var seq[Diff]): bool =
   ## Compares the node at `a[ai]` with the node at `b[bi]` and advances both
@@ -141,6 +170,7 @@ proc compare(a: seq[Tok]; ai: var int; b: seq[Tok]; bi: var int;
 
   if a[ai].kind == ParLe and b[bi].kind == ParLe and a[ai].text == b[bi].text:
     let here = (if path.len == 0: a[ai].text else: path & "/" & a[ai].text)
+    positionDiff(a, ai, b, bi, path, diffs)
     inc ai
     inc bi
     result = true
@@ -156,6 +186,7 @@ proc compare(a: seq[Tok]; ai: var int; b: seq[Tok]; bi: var int;
     inc ai
     inc bi
   elif a[ai].kind != ParLe and b[bi].kind != ParLe and sameAtom(a[ai], b[bi]):
+    positionDiff(a, ai, b, bi, path, diffs)
     inc ai
     inc bi
     result = true
@@ -183,7 +214,9 @@ type
     Unreadable            ## one side wrote NIF the reader cannot walk
 
 proc run(tool, input, output: string): bool =
-  let (_, code) = execCmdEx(quoteShell(tool) & " p " & quoteShell(input) & " " &
+  # nimony runs nifler with `--portablePaths`; nifler2 always writes that way
+  let flags = if tool.endsWith("nifler"): " --portablePaths" else: ""
+  let (_, code) = execCmdEx(quoteShell(tool) & flags & " p " & quoteShell(input) & " " &
                             quoteShell(output))
   code == 0 and fileExists(output)
 
@@ -203,6 +236,18 @@ proc check(input, tmp: string; diffs: var seq[Diff]): Outcome =
     diffs = @[Diff(path: "", want: "", got: e.msg, sig: "unreadable output")]
     return Unreadable
   result = if diffs.len == 0: Same else: Different
+  if result == Same and checkBytes:
+    let x = readFile(o1)
+    let y = readFile(o2)
+    if x != y:
+      var i = 0
+      while i < min(x.len, y.len) and x[i] == y[i]: inc i
+      let lo = max(0, i - 30)
+      diffs = @[Diff(path: "byte " & $i,
+                     want: escape(x.substr(lo, i + 30)),
+                     got: escape(y.substr(lo, i + 30)),
+                     sig: "bytes differ: " & escape(x.substr(max(0, i - 6), i + 6)))]
+      result = Different
 
 proc single(input: string) =
   let tmp = getTempDir() / "treediff"
@@ -287,10 +332,14 @@ proc main =
   for i in 1 .. paramCount():
     let a = paramStr(i)
     if a == "--sweep": sweepMode = true
+    elif a == "--lineinfo": checkLineInfo = true
+    elif a == "--bytes":
+      checkLineInfo = true
+      checkBytes = true
     elif a.startsWith("--top:"): top = parseInt(a.substr(6))
     else: dirs.add a
   if dirs.len == 0:
-    quit "usage: treediff file.nim | treediff --sweep [--top:N] dir..."
+    quit "usage: treediff [--lineinfo] file.nim | treediff --sweep [--lineinfo] [--top:N] dir..."
   if sweepMode: sweep(dirs, top)
   else:
     for f in dirs: single(f)

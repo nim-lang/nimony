@@ -67,7 +67,8 @@ type
     nSeq, nAlt, nOpt, nRep0, nRep1, nSepRep, nTerminal, nClass, nRule,
     nTag, nGuard, nPred, nAhead, nIndented, nWithInd, nBinary, nBinTail, nLa2,
     nDefault, nRaw,
-    nEmpty                # `.`: writes an absent child and consumes nothing
+    nEmpty,               # `.`: writes an absent child and consumes nothing
+    nAtPos                # `%at`: the node's position is the next token's
   Node = ref object
     kind: NodeKind
     text: string          # terminal spelling / class / rule / tag / pred name
@@ -154,6 +155,7 @@ proc parsePrim(sc: var Scanner): Node =
   if c == '%':
     inc sc.pos
     let w = parseIdent(sc)
+    if w == "at": return newNode(nAtPos, "%at")
     if w != "else": err sc, "unknown marker %" & w
     return newNode(nDefault, "%else")
   if c == '@' and sc.pos+1 < sc.s.len and sc.s[sc.pos+1] == '\'':
@@ -439,7 +441,7 @@ proc isNullable(g: Grammar; n: Node): bool =
     for k in n.kids:
       if isNullable(g, k): return true
     false
-  of nOpt, nRep0, nEmpty: true
+  of nOpt, nRep0, nEmpty, nAtPos: true
   of nRep1, nSepRep: isNullable(g, n.kids[0])
   of nTerminal, nClass: false
   of nRule: g.nullable.getOrDefault(n.text, false)
@@ -540,7 +542,7 @@ proc firstOf(g: Grammar; n: Node): Table[string, IndSet] =
     if n.kids.len > 0: result = firstOf(g, n.kids[0])   # rest are Nim procs
   of nLa2:
     if n.kids.len > 0: result = firstOf(g, n.kids[0])
-  of nGuard, nPred, nAhead, nDefault, nRaw, nEmpty: discard
+  of nGuard, nPred, nAhead, nDefault, nRaw, nEmpty, nAtPos: discard
 
 proc remapIn(t: Table[string, IndSet]): Table[string, IndSet] =
   ## Re-measure a FOLLOW set across an `indented(...)` boundary. The inner
@@ -574,6 +576,7 @@ proc render(n: Node): string =
     "(" & parts.join(" | ") & ")"
   of nOpt: atom(n.kids[0]) & (if n.anchored: "?." else: "?")
   of nEmpty: "."
+  of nAtPos: "%at"
   of nRep0: atom(n.kids[0]) & "*"
   of nRep1: atom(n.kids[0]) & "+"
   of nSepRep: atom(n.kids[0]) & " " & n.text & " " & atom(n.kids[1])
@@ -738,6 +741,7 @@ type Emitter = object
   curRule: string
   needsAnchor: HashSet[string]
   predicated: HashSet[string]   # rules whose alternatives carry predicates
+  atVar: string                 # the variable a `%at` in this node assigns
 
 var em: ptr Emitter = nil             # the emitter condFor is building into
 
@@ -853,6 +857,7 @@ type Alt = object
   anchored: bool
   items: seq[Node]
   enterCode, leaveCode, afterCode: seq[string]
+  presetPos: string   ## a `%at` the group already captured, see `emitAlts`
 
 proc toAlt(n: Node): Alt =
   var inner = n
@@ -916,6 +921,18 @@ proc condOf(e: Emitter; n: Node): string =
 
 proc emitNode(e: var Emitter; n: Node; mark, anchor: string)
 
+proc hasAtPos(items: seq[Node]): bool =
+  ## A `%at` that belongs to this node: directly in its sequence, or in an
+  ## option or alternative of it -- not inside a nested tag or rule, which
+  ## are nodes of their own.
+  for it in items:
+    case it.kind
+    of nAtPos: return true
+    of nOpt, nSeq, nAlt:
+      if hasAtPos(it.kids): return true
+    else: discard
+  false
+
 proc writesWhenEmpty(n: Node): bool =
   ## A `.` or an `X?.` produces output even when it matches nothing, so the
   ## item is not "just a guard" and an empty match still needs its branch.
@@ -974,10 +991,26 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
   ## Left-factor what shares a prefix, then dispatch on one token.
   proc finish(e: var Emitter; a: Alt) =
     for ln in a.enterCode: e.line ln
+    # The node's position. parser.nim's `newNodeP` takes the token that is
+    # current when the node is *created*: the first token for most nodes, the
+    # operator for an anchored one (`^call[ '(' ...]` is created at the `(`),
+    # and whatever `%at` says otherwise.
+    let saved = e.atVar
+    var posVar = a.presetPos
+    if posVar.len == 0 and (a.anchored or hasAtPos(a.items)):
+      inc e.tmp
+      posVar = "at" & $e.tmp
+      e.line "var " & posVar & " = " & (if a.anchored: "p.info" else: mark & ".info")
+    if posVar.len > 0: e.atVar = posVar
     emitSeq(e, a.items, mark, anchor)
+    e.atVar = saved
     for ln in a.leaveCode: e.line ln
+    let base = if a.anchored: anchor else: mark
     if a.tag.len > 0:
-      e.line "wrap p, " & (if a.anchored: anchor else: mark) & ", \"" & a.tag & "\""
+      if posVar.len > 0:
+        e.line "wrapAt p, " & base & ", \"" & a.tag & "\", " & posVar
+      else:
+        e.line "wrap p, " & base & ", \"" & a.tag & "\""
     if a.afterCode.len > 0:
       # the bare body inspects what was just parsed, so it needs the mark --
       # the anchor when the alternative's tag is anchored, even when a
@@ -985,7 +1018,11 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
       var anchoredTag = a.anchored
       for it in a.items:
         if it.kind == nTag and it.anchored: anchoredTag = true
-      e.line "let m = " & (if anchoredTag: anchor else: mark)
+      let mk = if anchoredTag: anchor else: mark
+      if posVar.len > 0 and not anchoredTag:
+        e.line "let m = Mark(pos: " & mk & ".pos, info: " & posVar & ")"
+      else:
+        e.line "let m = " & mk
       for ln in a.afterCode: e.line ln
 
   if alts.len == 1:
@@ -1050,12 +1087,22 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
       if grp.len == 1:
         finish(e, grp[0])
       else:
-        emitNode(e, grp[0].items[0], mark, anchor)   # the shared prefix, once
+        # A shared `%at` is captured here, before the shared token is
+        # consumed, and handed to every tail: `kv[ expr %at ':' expr ]` and
+        # `vv[ expr %at '=' expr ]` factor into one `%at` and two tails.
+        var preset = grp[0].presetPos
+        if grp[0].items[0].kind == nAtPos:
+          inc e.tmp
+          preset = "at" & $e.tmp
+          e.line "var " & preset & " = p.info"
+        else:
+          emitNode(e, grp[0].items[0], mark, anchor)   # the shared prefix, once
         var tails: seq[Alt] = @[]
         for a in grp:
           tails.add Alt(tag: a.tag, anchored: a.anchored,
                         items: a.items[1 .. ^1], enterCode: a.enterCode,
-                        leaveCode: a.leaveCode, afterCode: a.afterCode)
+                        leaveCode: a.leaveCode, afterCode: a.afterCode,
+                        presetPos: preset)
         emitAlts(e, tails, rule, mark, anchor)
 
   if defaults.len > 0:
@@ -1140,6 +1187,8 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
         e.line "emitEmpty p"
   of nEmpty:
     e.line "emitEmpty p"
+  of nAtPos:
+    if e.atVar.len > 0: e.line e.atVar & " = p.info"
   of nRep0:
     inc e.tmp
     let m2 = "m" & $e.tmp
@@ -1188,6 +1237,15 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     e.line "discardUnused " & m2
     if n.text == "^*": dec e.indent
   of nTag:
+    let tagItems = (if n.kids[0].kind == nSeq: n.kids[0].kids else: @[n.kids[0]])
+    let savedAt = e.atVar
+    var posVar = ""
+    if n.anchored or hasAtPos(tagItems):
+      inc e.tmp
+      posVar = "at" & $e.tmp
+      e.line "var " & posVar & " = " & (if n.anchored: "p.info" else: mark & ".info")
+      e.atVar = posVar
+    defer: e.atVar = savedAt
     if n.anchored:
       var body = n.kids[0]
       let items = (if body.kind == nSeq: body.kids else: @[body])
@@ -1201,10 +1259,13 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
         rest.kids = items[1 .. ^1]
         body = rest
       emitNode(e, body, mark, anchor)
-      e.line "wrap p, " & anchor & ", \"" & n.text & "\""
+      e.line "wrapAt p, " & anchor & ", \"" & n.text & "\", " & posVar
     else:
       emitNode(e, n.kids[0], mark, anchor)
-      e.line "wrap p, " & mark & ", \"" & n.text & "\""
+      if posVar.len > 0:
+        e.line "wrapAt p, " & mark & ", \"" & n.text & "\", " & posVar
+      else:
+        e.line "wrap p, " & mark & ", \"" & n.text & "\""
   of nWithInd:
     e.line "pushIndAny p"
     emitNode(e, n.kids[0], mark, anchor)
@@ -1228,6 +1289,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     e.line "while prec >= " & limitExpr & " and indClass(p) == icNoInd:"
     body e:
       e.line "let assoc = (if " & assocP & "(p): 0 else: 1)"
+      e.line "let opInfo = p.info"     # `parseOperators` creates the node here
       e.line "insertLeafAt p, " & mark & ", p.tok.s"
       e.line "getTok p"
       var args: seq[string] = @["p"]
@@ -1246,7 +1308,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       else:
         args.add "prec + assoc"
       e.line procName(e.curRule) & "(" & args.join(", ") & ")"
-      e.line "wrap p, " & mark & ", \"" & tg & "\""
+      e.line "wrapAt p, " & mark & ", \"" & tg & "\", opInfo"
       e.line "prec = " & precP & "(p)"
   of nBinTail:
     # `parseOperators` applied to a node that is already on the buffer:
@@ -1268,12 +1330,13 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     e.line "while " & pv & " >= " & tlimit & " and indClass(p) == icNoInd:"
     body e:
       e.line "let " & av & " = (if " & tassoc & "(p): 0 else: 1)"
+      e.line "let op" & av & " = p.info"
       e.line "insertLeafAt p, " & mark & ", p.tok.s"
       e.line "getTok p"
       var args: seq[string] = @["p", pv & " + " & av]
       for r in rest: args.add r
       e.line procName(n.kids[0].text) & "(" & args.join(", ") & ")"
-      e.line "wrap p, " & mark & ", \"" & ttag & "\""
+      e.line "wrapAt p, " & mark & ", \"" & ttag & "\", op" & av
       e.line pv & " = " & tprec & "(p)"
   of nLa2:
     e.line "# la2: " & render(n)
