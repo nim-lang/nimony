@@ -212,28 +212,36 @@ proc pComma*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkComma
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m3 = mark(p)
     pTrailComment p
+    discardUnused m3
   discardUnused m0
 
 proc pSemicolon*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkSemiColon
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m4 = mark(p)
     pTrailComment p
+    discardUnused m4
   discardUnused m0
 
 proc pColon*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkColon
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m5 = mark(p)
     pTrailComment p
+    discardUnused m5
   discardUnused m0
 
 proc pColcom*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkColon
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m6 = mark(p)
     pTrailComment p
+    discardUnused m6
   discardUnused m0
 
 proc pTrailComment*(p: var Parser) =
@@ -250,79 +258,81 @@ proc pFlexComment*(p: var Parser) =
 
 proc pValidInd*(p: var Parser) =
   let m0 = mark(p)
-  let m3 = mark(p)
+  let m7 = mark(p)
   checkInd p, {icNoInd, icGt}
-  discardUnused m3
+  discardUnused m7
   discardUnused m0
 
 proc pOptSameInd*(p: var Parser) =
   let m0 = mark(p)
-  let m4 = mark(p)
+  let m8 = mark(p)
   checkInd p, {icNoInd, icEq}
-  discardUnused m4
+  discardUnused m8
   discardUnused m0
 
 proc pNotInd*(p: var Parser) =
   let m0 = mark(p)
-  let m5 = mark(p)
+  let m9 = mark(p)
   checkInd p, {icNoInd, icLt, icEq}
-  discardUnused m5
+  discardUnused m9
   discardUnused m0
 
 proc pOptInd*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m10 = mark(p)
     pTrailComment p
+    discardUnused m10
   pValidInd p
   discardUnused m0
 
 proc pOptPar*(p: var Parser) =
   let m0 = mark(p)
-  let m6 = mark(p)
+  let m11 = mark(p)
   checkInd p, {icNoInd, icEq, icGt}
-  discardUnused m6
+  discardUnused m11
   discardUnused m0
 
 proc pOperator*(p: var Parser) =
   let m0 = mark(p)
-  let m7 = mark(p)
+  let m12 = mark(p)
   if (p.tok.kind in {tkOpr}):
     emitLeaf p            # OPR
   elif (p.tok.kind in {tkOr}):
-    expect p, tkOr
+    expectLeaf p, tkOr
   elif (p.tok.kind in {tkXor}):
-    expect p, tkXor
+    expectLeaf p, tkXor
   elif (p.tok.kind in {tkAnd}):
-    expect p, tkAnd
+    expectLeaf p, tkAnd
   elif (p.tok.kind in {tkIs}):
-    expect p, tkIs
+    expectLeaf p, tkIs
   elif (p.tok.kind in {tkIsnot}):
-    expect p, tkIsnot
+    expectLeaf p, tkIsnot
   elif (p.tok.kind in {tkIn}):
-    expect p, tkIn
+    expectLeaf p, tkIn
   elif (p.tok.kind in {tkNotin}):
-    expect p, tkNotin
+    expectLeaf p, tkNotin
   elif (p.tok.kind in {tkOf}):
-    expect p, tkOf
+    expectLeaf p, tkOf
   elif (p.tok.kind in {tkAs}):
-    expect p, tkAs
+    expectLeaf p, tkAs
   elif (p.tok.kind in {tkFrom}):
-    expect p, tkFrom
+    expectLeaf p, tkFrom
   elif (p.tok.kind in {tkDiv}):
-    expect p, tkDiv
+    expectLeaf p, tkDiv
   elif (p.tok.kind in {tkMod}):
-    expect p, tkMod
+    expectLeaf p, tkMod
   elif (p.tok.kind in {tkShl}):
-    expect p, tkShl
+    expectLeaf p, tkShl
   elif (p.tok.kind in {tkShr}):
-    expect p, tkShr
+    expectLeaf p, tkShr
   elif (p.tok.kind in {tkNot}):
-    expect p, tkNot
+    expectLeaf p, tkNot
   elif (p.tok.kind in {tkDotDot}):
-    expect p, tkDotDot
+    expectLeaf p, tkDotDot
   else:
     error p, "expected alternative"
-  discardUnused m7
+  discardUnused m12
   discardUnused m0
 
 proc pPrefixOperator*(p: var Parser) =
@@ -339,7 +349,8 @@ proc pPlainSymbol*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkAccent}):
     expect p, tkAccent
-    let m9 = mark(p)
+    let m13 = mark(p)
+    let m14 = mark(p)
     if (p.tok.kind in {tkAddr..tkYield}):
       emitLeaf p            # KEYW
     elif (p.tok.kind in {tkSymbol}):
@@ -347,7 +358,8 @@ proc pPlainSymbol*(p: var Parser) =
     elif (p.tok.kind in Tk10):
       pLiteral p
     elif (p.tok.kind in Tk11):
-      let m11 = mark(p)
+      let m15 = mark(p)
+      let m16 = mark(p)
       if (p.tok.kind in {tkOpr}):
         emitLeaf p            # OPR
       elif (p.tok.kind in {tkDot}):
@@ -382,10 +394,11 @@ proc pPlainSymbol*(p: var Parser) =
         expect p, tkParDotRi
       else:
         error p, "expected alternative"
-      discardUnused m11
+      discardUnused m16
+      discardUnused m15
       while (p.tok.kind in Tk11):
-        let m10 = mark(p)
-        let m12 = mark(p)
+        let m15 = mark(p)
+        let m17 = mark(p)
         if (p.tok.kind in {tkOpr}):
           emitLeaf p            # OPR
         elif (p.tok.kind in {tkDot}):
@@ -420,14 +433,15 @@ proc pPlainSymbol*(p: var Parser) =
           expect p, tkParDotRi
         else:
           error p, "expected alternative"
-        discardUnused m12
-        discardUnused m10
+        discardUnused m17
+        discardUnused m15
     else:
       error p, "expected alternative"
-    discardUnused m9
+    discardUnused m14
+    discardUnused m13
     while (p.tok.kind in Tk12):
-      let m8 = mark(p)
       let m13 = mark(p)
+      let m18 = mark(p)
       if (p.tok.kind in {tkAddr..tkYield}):
         emitLeaf p            # KEYW
       elif (p.tok.kind in {tkSymbol}):
@@ -435,7 +449,8 @@ proc pPlainSymbol*(p: var Parser) =
       elif (p.tok.kind in Tk10):
         pLiteral p
       elif (p.tok.kind in Tk11):
-        let m15 = mark(p)
+        let m19 = mark(p)
+        let m20 = mark(p)
         if (p.tok.kind in {tkOpr}):
           emitLeaf p            # OPR
         elif (p.tok.kind in {tkDot}):
@@ -470,10 +485,11 @@ proc pPlainSymbol*(p: var Parser) =
           expect p, tkParDotRi
         else:
           error p, "expected alternative"
-        discardUnused m15
+        discardUnused m20
+        discardUnused m19
         while (p.tok.kind in Tk11):
-          let m14 = mark(p)
-          let m16 = mark(p)
+          let m19 = mark(p)
+          let m21 = mark(p)
           if (p.tok.kind in {tkOpr}):
             emitLeaf p            # OPR
           elif (p.tok.kind in {tkDot}):
@@ -508,12 +524,12 @@ proc pPlainSymbol*(p: var Parser) =
             expect p, tkParDotRi
           else:
             error p, "expected alternative"
-          discardUnused m16
-          discardUnused m14
+          discardUnused m21
+          discardUnused m19
       else:
         error p, "expected alternative"
+      discardUnused m18
       discardUnused m13
-      discardUnused m8
     expect p, tkAccent
     wrap p, m0, "quoted"
   elif (p.tok.kind in {tkSymbol}):
@@ -548,7 +564,7 @@ proc pSymbolOrKeyword*(p: var Parser) =
 
 proc pLiteral*(p: var Parser) =
   let m0 = mark(p)
-  let m17 = mark(p)
+  let m22 = mark(p)
   if (p.tok.kind in {tkIntLit}):
     emitLeaf p            # INT_LIT
   elif (p.tok.kind in {tkInt8Lit}):
@@ -589,21 +605,22 @@ proc pLiteral*(p: var Parser) =
     emitLeaf p            # CUSTOM_NUMERIC_LIT
   elif (p.tok.kind in {tkNil}):
     expect p, tkNil
+    wrap p, m22, "nil"
   else:
     error p, "expected alternative"
-  discardUnused m17
+  discardUnused m22
   discardUnused m0
 
 proc pGeneralizedLit*(p: var Parser) =
   let m0 = mark(p)
-  let m18 = mark(p)
+  let m23 = mark(p)
   if (p.tok.kind in {tkGStrLit}):
     emitLeaf p            # GENERALIZED_STR_LIT
   elif (p.tok.kind in {tkGTripleStrLit}):
     emitLeaf p            # GENERALIZED_TRIPLESTR_LIT
   else:
     error p, "expected alternative"
-  discardUnused m18
+  discardUnused m23
   discardUnused m0
 
 proc pExprColonEqExpr*(p: var Parser) =
@@ -620,11 +637,13 @@ proc pExprColonEqExpr*(p: var Parser) =
       wrap p, m0, "vv"
     elif (p.tok.kind in {tkDo}):
       if (p.tok.kind in {tkDo}):
+        let m24 = mark(p)
         pDoBlock p
         while (p.tok.kind in Tk14 and indClass(p) in {icEq}):
-          let m19 = mark(p)
+          let m25 = mark(p)
           pExtraPostExprBlock p
-          discardUnused m19
+          discardUnused m25
+        discardUnused m24
   else:
     error p, "expected exprColonEqExpr"
   discardUnused m0
@@ -639,45 +658,49 @@ proc pExprEqExpr*(p: var Parser) =
       wrap p, m0, "vv"
     elif (p.tok.kind in {tkDo}):
       if (p.tok.kind in {tkDo}):
+        let m26 = mark(p)
         pDoBlock p
         while (p.tok.kind in Tk14 and indClass(p) in {icEq}):
-          let m20 = mark(p)
+          let m27 = mark(p)
           pExtraPostExprBlock p
-          discardUnused m20
+          discardUnused m27
+        discardUnused m26
   else:
     error p, "expected exprEqExpr"
   discardUnused m0
 
 proc pExprList*(p: var Parser) =
   let m0 = mark(p)
-  let m21 = mark(p)
+  let m28 = mark(p)
   pExpr p
   while (p.tok.kind in {tkComma}):
     pComma p
     pExpr p
-  discardUnused m21
+  discardUnused m28
   discardUnused m0
 
 proc pOptionalExprList*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in Tk2):
-    let m22 = mark(p)
+    let m29 = mark(p)
     pExpr p
     while (p.tok.kind in {tkComma}):
       pComma p
       pExpr p
-    discardUnused m22
+    discardUnused m29
   discardUnused m0
 
 proc pExprColonEqExprList*(p: var Parser) =
   let m0 = mark(p)
   pExprColonEqExpr p
   while (p.tok.kind in {tkComma}):
-    let m23 = mark(p)
+    let m30 = mark(p)
     pComma p
     if (p.tok.kind in Tk2):
+      let m31 = mark(p)
       pExprColonEqExpr p
-    discardUnused m23
+      discardUnused m31
+    discardUnused m30
   discardUnused m0
 
 proc pQualifiedIdent*(p: var Parser) =
@@ -702,7 +725,9 @@ proc pSetOrTableConstr*(p: var Parser) =
     if (p.tok.kind in Tk15 and indClass(p) in {icNoInd, icGt}) or (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
       pOptInd p
       if (p.tok.kind in Tk2):
+        let m32 = mark(p)
         pExprColonEqExprList p
+        discardUnused m32
       pOptPar p
       expect p, tkCurlyRi
       wrap p, m0, "curly"
@@ -748,7 +773,7 @@ proc pCastExpr*(p: var Parser) =
 
 proc pParKeyw*(p: var Parser) =
   let m0 = mark(p)
-  let m24 = mark(p)
+  let m33 = mark(p)
   if (p.tok.kind in {tkDiscard}):
     expect p, tkDiscard
   elif (p.tok.kind in {tkInclude}):
@@ -781,12 +806,12 @@ proc pParKeyw*(p: var Parser) =
     expect p, tkMixin
   else:
     error p, "expected alternative"
-  discardUnused m24
+  discardUnused m33
   discardUnused m0
 
 proc pSemiStmtItem*(p: var Parser) =
   let m0 = mark(p)
-  let m25 = mark(p)
+  let m34 = mark(p)
   if (p.tok.kind in {tkIf}):
     pIfExpr p
   elif (p.tok.kind in {tkWhen}):
@@ -795,25 +820,27 @@ proc pSemiStmtItem*(p: var Parser) =
     pComplexOrSimpleStmt p
   else:
     error p, "expected alternative"
-  discardUnused m25
+  discardUnused m34
   discardUnused m0
 
 proc pSemiStmtList*(p: var Parser) =
   let m0 = mark(p)
   pSemiStmtItem p
   while (p.tok.kind in Tk9):
-    let m26 = mark(p)
-    let m27 = mark(p)
+    let m35 = mark(p)
+    let m36 = mark(p)
     if (p.tok.kind in {tkSemiColon}):
       expect p, tkSemiColon
       if (p.tok.kind in Tk8):
+        let m37 = mark(p)
         pSemiStmtItem p
+        discardUnused m37
     elif (p.tok.kind in Tk8):
       pSemiStmtItem p
     else:
       error p, "expected alternative"
-    discardUnused m27
-    discardUnused m26
+    discardUnused m36
+    discardUnused m35
   discardUnused m0
 
 proc pPar*(p: var Parser) =
@@ -832,9 +859,11 @@ proc pPar*(p: var Parser) =
       elif (p.tok.kind in {tkSemiColon}):
         expect p, tkSemiColon
         if (p.tok.kind in Tk8):
+          let m38 = mark(p)
           pushIndAny p
           pSemiStmtList p
           popInd p
+          discardUnused m38
         pOptPar p
         expect p, tkParRi
         wrap p, m0, "stmts"
@@ -848,9 +877,9 @@ proc pPar*(p: var Parser) =
         if (p.tok.kind in {tkDo}):
           pDoBlock p
           while (p.tok.kind in Tk14 and indClass(p) in {icEq}):
-            let m28 = mark(p)
+            let m39 = mark(p)
             pExtraPostExprBlock p
-            discardUnused m28
+            discardUnused m39
           pOptPar p
           expect p, tkParRi
           wrap p, m0, "par"
@@ -865,9 +894,11 @@ proc pPar*(p: var Parser) =
           elif (p.tok.kind in {tkSemiColon}):
             expect p, tkSemiColon
             if (p.tok.kind in Tk8):
+              let m40 = mark(p)
               pushIndAny p
               pSemiStmtList p
               popInd p
+              discardUnused m40
             pOptPar p
             expect p, tkParRi
             wrap p, m0, "stmts"
@@ -876,39 +907,47 @@ proc pPar*(p: var Parser) =
         elif (p.tok.kind in {tkSemiColon}):
           expect p, tkSemiColon
           if (p.tok.kind in Tk8):
+            let m41 = mark(p)
             pushIndAny p
             pSemiStmtList p
             popInd p
+            discardUnused m41
           pOptPar p
           expect p, tkParRi
           wrap p, m0, "stmts"
         elif (p.tok.kind in {tkColon}):
+          let m42 = mark(p)
           expect p, tkColon
           pExpr p
           wrap p, m0, "kv"
+          discardUnused m42
           while (p.tok.kind in {tkColon}):
-            let m29 = mark(p)
+            let m42 = mark(p)
             expect p, tkColon
             pExpr p
-            wrap p, m29, "kv"
-            discardUnused m29
+            wrap p, m0, "kv"
+            discardUnused m42
           while (p.tok.kind in {tkComma}):
-            let m30 = mark(p)
+            let m43 = mark(p)
             pComma p
             if (p.tok.kind in Tk2):
+              let m44 = mark(p)
               pExprColonEqExpr p
-            discardUnused m30
+              discardUnused m44
+            discardUnused m43
           pOptPar p
           expect p, tkParRi
           wrap p, m0, "tup"
         elif (p.tok.kind in {tkComma}):
           pComma p
           while (p.tok.kind in Tk2):
-            let m31 = mark(p)
+            let m45 = mark(p)
             pExprColonEqExpr p
             if (p.tok.kind in {tkComma}):
+              let m46 = mark(p)
               pComma p
-            discardUnused m31
+              discardUnused m46
+            discardUnused m45
           pOptPar p
           expect p, tkParRi
           wrap p, m0, "tup"
@@ -936,7 +975,9 @@ proc pTupleConstr*(p: var Parser) =
     expect p, tkParLe
     if (p.tok.kind in Tk17 and indClass(p) in {icNoInd, icEq, icGt}) or (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+        let m47 = mark(p)
         pFlexComment p
+        discardUnused m47
       if (p.tok.kind in Tk17 and indClass(p) in {icNoInd, icEq, icGt}):
         pOptPar p
         if (p.tok.kind in {tkParRi}):
@@ -951,11 +992,13 @@ proc pTupleConstr*(p: var Parser) =
           elif (p.tok.kind in {tkComma}):
             pComma p
             while (p.tok.kind in Tk2):
-              let m32 = mark(p)
+              let m48 = mark(p)
               pExprColonEqExpr p
               if (p.tok.kind in {tkComma}):
+                let m49 = mark(p)
                 pComma p
-              discardUnused m32
+                discardUnused m49
+              discardUnused m48
             pOptPar p
             expect p, tkParRi
             wrap p, m0, "tup"
@@ -975,10 +1018,14 @@ proc pArrayConstr*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkBracketLe
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+    let m50 = mark(p)
     pFlexComment p
+    discardUnused m50
   pOptPar p
   if (p.tok.kind in Tk2):
+    let m51 = mark(p)
     pExprColonEqExprList p
+    discardUnused m51
   pOptPar p
   expect p, tkBracketRi
   wrap p, m0, "bracket"
@@ -987,7 +1034,7 @@ proc pArrayConstr*(p: var Parser) =
 proc pIdentOrLiteral*(p: var Parser; mode: PrimaryMode) =
   let m0 = mark(p)
   if (p.tok.kind in Tk1):
-    let m33 = mark(p)
+    let m52 = mark(p)
     if (p.tok.kind in {tkGStrLit, tkGTripleStrLit}):
       pGeneralizedLit p
     elif (p.tok.kind in Tk13):
@@ -1002,7 +1049,7 @@ proc pIdentOrLiteral*(p: var Parser; mode: PrimaryMode) =
       pCastExpr p
     else:
       error p, "expected alternative"
-    discardUnused m33
+    discardUnused m52
   elif ((p.tok.kind in {tkParLe})) and parIsTuple(p, mode):
     pTupleConstr p
   elif (p.tok.kind in {tkParLe}):
@@ -1017,30 +1064,42 @@ proc pPrimarySuffix*(p: var Parser; anchor: Mark; mode: PrimaryMode) =
     if (p.tok.kind in {tkParLe}):
       expect p, tkParLe
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+        let m53 = mark(p)
         pFlexComment p
+        discardUnused m53
       pOptPar p
       if (p.tok.kind in Tk2):
+        let m54 = mark(p)
         pExprColonEqExprList p
+        discardUnused m54
       pOptPar p
       expect p, tkParRi
       wrap p, anchor, "call"
     elif (p.tok.kind in {tkBracketLe}):
       expect p, tkBracketLe
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+        let m55 = mark(p)
         pFlexComment p
+        discardUnused m55
       pOptPar p
       if (p.tok.kind in Tk2):
+        let m56 = mark(p)
         pExprColonEqExprList p
+        discardUnused m56
       pOptPar p
       expect p, tkBracketRi
       wrap p, anchor, "at"
     elif (p.tok.kind in {tkCurlyLe}):
       expect p, tkCurlyLe
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+        let m57 = mark(p)
         pFlexComment p
+        discardUnused m57
       pOptPar p
       if (p.tok.kind in Tk2):
+        let m58 = mark(p)
         pExprColonEqExprList p
+        discardUnused m58
       pOptPar p
       expect p, tkCurlyRi
       wrap p, anchor, "curlyat"
@@ -1051,23 +1110,31 @@ proc pPrimarySuffix*(p: var Parser; anchor: Mark; mode: PrimaryMode) =
     pOptInd p
     pSymbolOrKeyword p
     if (p.tok.kind in {tkBracketLeColon}):
+      let m59 = mark(p)
       expect p, tkBracketLeColon
       pExprList p
       expect p, tkBracketRi
       if (p.tok.kind in {tkParLe}):
+        let m60 = mark(p)
         expect p, tkParLe
         pExprColonEqExpr p
         expect p, tkParRi
+        discardUnused m60
+      discardUnused m59
     wrap p, anchor, "dot"
     if (p.tok.kind in {tkGStrLit, tkGTripleStrLit}):
+      let m61 = mark(p)
       pGeneralizedLit p
+      discardUnused m61
   elif (((p.tok.kind == tkOpr and isDotLike(p.tok)))) and dotLikeOps(p):
     emitLeaf p            # DOTLIKEOP
     pOptInd p
     pSymbolOrKeyword p
     wrap p, anchor, "dot"
     if (p.tok.kind in {tkGStrLit, tkGTripleStrLit}):
+      let m62 = mark(p)
       pGeneralizedLit p
+      discardUnused m62
   elif ((p.tok.kind in Tk2)) and commandStart(p) and commandAllowed(p, mode):
     pCommandParam(p, mode)
     wrap p, anchor, "cmd"
@@ -1081,20 +1148,22 @@ proc pPragma*(p: var Parser) =
   expect p, tkCurlyDotLe
   pOptInd p
   while (p.tok.kind in Tk2):
-    let m34 = mark(p)
+    let m63 = mark(p)
     pExprColonEqExpr p
     if (p.tok.kind in {tkComma}):
+      let m64 = mark(p)
       pComma p
-    discardUnused m34
+      discardUnused m64
+    discardUnused m63
   pOptPar p
-  let m35 = mark(p)
+  let m65 = mark(p)
   if (p.tok.kind in {tkCurlyDotRi}):
     expect p, tkCurlyDotRi
   elif (p.tok.kind in {tkCurlyRi}):
     expect p, tkCurlyRi
   else:
     error p, "expected alternative"
-  discardUnused m35
+  discardUnused m65
   dec p.inPragma
   wrap p, m0, "pragmas"
   discardUnused m0
@@ -1160,20 +1229,26 @@ proc pDeclColonEquals*(p: var Parser) =
   let m0 = mark(p)
   pIdentWithPragma p
   while (p.tok.kind in {tkComma}):
-    let m36 = mark(p)
+    let m66 = mark(p)
     pComma p
     pIdentWithPragma p
-    discardUnused m36
+    discardUnused m66
   if (p.tok.kind in {tkComma}):
+    let m67 = mark(p)
     pComma p
+    discardUnused m67
   if (p.tok.kind in {tkColon}):
+    let m68 = mark(p)
     expect p, tkColon
     pOptInd p
     pTypeDescExpr p
+    discardUnused m68
   if (p.tok.kind in {tkEquals}):
+    let m69 = mark(p)
     expect p, tkEquals
     pOptInd p
     pExpr p
+    discardUnused m69
   let m = m0
   fanOut m, p.section          # one (var|let|param|fld ...) per name
   discardUnused m0
@@ -1182,20 +1257,26 @@ proc pIdentColonEquals*(p: var Parser) =
   let m0 = mark(p)
   pPlainSymbol p
   while (p.tok.kind in {tkComma}):
-    let m37 = mark(p)
+    let m70 = mark(p)
     pComma p
     pPlainSymbol p
-    discardUnused m37
+    discardUnused m70
   if (p.tok.kind in {tkComma}):
+    let m71 = mark(p)
     pComma p
+    discardUnused m71
   if (p.tok.kind in {tkColon}):
+    let m72 = mark(p)
     expect p, tkColon
     pOptInd p
     pTypeDescExpr p
+    discardUnused m72
   if (p.tok.kind in {tkEquals}):
+    let m73 = mark(p)
     expect p, tkEquals
     pOptInd p
     pExpr p
+    discardUnused m73
   let m = m0
   fanOut m, p.section
   discardUnused m0
@@ -1204,20 +1285,26 @@ proc pDeclColonEqualsDot*(p: var Parser) =
   let m0 = mark(p)
   pIdentWithPragmaDot p
   while (p.tok.kind in {tkComma}):
-    let m38 = mark(p)
+    let m74 = mark(p)
     pComma p
     pIdentWithPragmaDot p
-    discardUnused m38
+    discardUnused m74
   if (p.tok.kind in {tkComma}):
+    let m75 = mark(p)
     pComma p
+    discardUnused m75
   if (p.tok.kind in {tkColon}):
+    let m76 = mark(p)
     expect p, tkColon
     pOptInd p
     pTypeDescExpr p
+    discardUnused m76
   if (p.tok.kind in {tkEquals}):
+    let m77 = mark(p)
     expect p, tkEquals
     pOptInd p
     pExpr p
+    discardUnused m77
   let m = m0
   fanOut m, p.section
   discardUnused m0
@@ -1227,18 +1314,20 @@ proc pTupleTypeBracket*(p: var Parser) =
   expect p, tkBracketLe
   pOptInd p
   while (p.tok.kind in {tkAccent, tkSymbol}):
-    let m39 = mark(p)
+    let m78 = mark(p)
     pIdentColonEquals p
     if (p.tok.kind in {tkComma, tkSemiColon}):
-      let m40 = mark(p)
+      let m79 = mark(p)
+      let m80 = mark(p)
       if (p.tok.kind in {tkComma}):
         pComma p
       elif (p.tok.kind in {tkSemiColon}):
         pSemicolon p
       else:
         error p, "expected alternative"
-      discardUnused m40
-    discardUnused m39
+      discardUnused m80
+      discardUnused m79
+    discardUnused m78
   pOptPar p
   expect p, tkBracketRi
   discardUnused m0
@@ -1247,7 +1336,9 @@ proc pTupleType*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkTuple
   if (p.tok.kind in {tkBracketLe}):
+    let m81 = mark(p)
     pTupleTypeBracket p
+    discardUnused m81
   wrap p, m0, "tuple"
   discardUnused m0
 
@@ -1260,51 +1351,71 @@ proc pTupleDecl*(p: var Parser) =
       wrap p, m0, "tuple"
     elif (p.tok.kind in {tkAccent, tkSymbol} and indClass(p) in {icGt}) or (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+        let m82 = mark(p)
         pTrailComment p
+        discardUnused m82
       if (p.tok.kind in {tkAccent, tkComment, tkSymbol} and indClass(p) in {icGt}):
+        let m83 = mark(p)
         pushInd p
         if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq}):
+          let m84 = mark(p)
           pOptSameInd p
           emitLeaf p            # COMMENT
-        let m41 = mark(p)
+          discardUnused m84
+        let m85 = mark(p)
         pIdentColonEquals p
         if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq, icGt}):
+          let m86 = mark(p)
           pOptPar p
           emitLeaf p            # COMMENT
+          discardUnused m86
         while (p.tok.kind in {tkAccent, tkSymbol} and indClass(p) in {icEq}):
           checkInd p, {icEq}
           pIdentColonEquals p
           if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq, icGt}):
+            let m87 = mark(p)
             pOptPar p
             emitLeaf p            # COMMENT
+            discardUnused m87
         if ((p.tok.kind in {tkAccent, tkSymbol})) and indClass(p) == icGt:
           error p, "invalid indentation in tupleDecl"
-        discardUnused m41
+        discardUnused m85
         popInd p
+        discardUnused m83
       wrap p, m0, "tuple"
     else:
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+        let m88 = mark(p)
         pTrailComment p
+        discardUnused m88
       if (p.tok.kind in {tkAccent, tkComment, tkSymbol} and indClass(p) in {icGt}):
+        let m89 = mark(p)
         pushInd p
         if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq}):
+          let m90 = mark(p)
           pOptSameInd p
           emitLeaf p            # COMMENT
-        let m42 = mark(p)
+          discardUnused m90
+        let m91 = mark(p)
         pIdentColonEquals p
         if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq, icGt}):
+          let m92 = mark(p)
           pOptPar p
           emitLeaf p            # COMMENT
+          discardUnused m92
         while (p.tok.kind in {tkAccent, tkSymbol} and indClass(p) in {icEq}):
           checkInd p, {icEq}
           pIdentColonEquals p
           if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq, icGt}):
+            let m93 = mark(p)
             pOptPar p
             emitLeaf p            # COMMENT
+            discardUnused m93
         if ((p.tok.kind in {tkAccent, tkSymbol})) and indClass(p) == icGt:
           error p, "invalid indentation in tupleDecl"
-        discardUnused m42
+        discardUnused m91
         popInd p
+        discardUnused m89
       wrap p, m0, "tuple"
   else:
     error p, "expected tupleDecl"
@@ -1315,20 +1426,24 @@ proc pParamList*(p: var Parser) =
   expect p, tkParLe
   pOptInd p
   if (p.tok.kind in {tkAccent, tkSymbol}):
+    let m94 = mark(p)
     pDeclColonEquals p
     while (p.tok.kind in {tkComma, tkSemiColon}):
-      let m43 = mark(p)
-      let m44 = mark(p)
+      let m95 = mark(p)
+      let m96 = mark(p)
       if (p.tok.kind in {tkComma}):
         pComma p
       elif (p.tok.kind in {tkSemiColon}):
         pSemicolon p
       else:
         error p, "expected alternative"
-      discardUnused m44
+      discardUnused m96
       if (p.tok.kind in {tkAccent, tkSymbol}):
+        let m97 = mark(p)
         pDeclColonEquals p
-      discardUnused m43
+        discardUnused m97
+      discardUnused m95
+    discardUnused m94
   pOptPar p
   expect p, tkParRi
   wrap p, m0, "params"
@@ -1337,25 +1452,33 @@ proc pParamList*(p: var Parser) =
 proc pParamListArrow*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkParLe} and indClass(p) in {icNoInd}):
+    let m98 = mark(p)
     checkInd p, {icNoInd}
     pParamList p
+    discardUnused m98
   if ((p.tok.kind == tkOpr and p.tok.s == "->") and indClass(p) in {icNoInd}):
+    let m99 = mark(p)
     checkInd p, {icNoInd}
     expect p, tkOpr, "->"
     pOptInd p
     pTypeDesc p
+    discardUnused m99
   discardUnused m0
 
 proc pParamListColon*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkParLe} and indClass(p) in {icNoInd}):
+    let m100 = mark(p)
     checkInd p, {icNoInd}
     pParamList p
+    discardUnused m100
   if (p.tok.kind in {tkColon} and indClass(p) in {icNoInd}):
+    let m101 = mark(p)
     checkInd p, {icNoInd}
     expect p, tkColon
     pOptInd p
     pTypeDesc p
+    discardUnused m101
   discardUnused m0
 
 proc pDoBlock*(p: var Parser) =
@@ -1363,7 +1486,9 @@ proc pDoBlock*(p: var Parser) =
   expect p, tkDo
   pParamListArrow p
   if (p.tok.kind in {tkCurlyDotLe}):
+    let m102 = mark(p)
     pPragma p
+    discardUnused m102
   pColcom p
   pStmt p
   wrap p, m0, "proc"
@@ -1375,34 +1500,52 @@ proc pRoutineExpr*(p: var Parser) =
     expect p, tkProc
     pParamListColon p
     if (p.tok.kind in {tkCurlyDotLe}):
+      let m103 = mark(p)
       pPragma p
+      discardUnused m103
     if (p.tok.kind in {tkEquals}):
+      let m104 = mark(p)
       expect p, tkEquals
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+        let m105 = mark(p)
         pTrailComment p
+        discardUnused m105
       pStmt p
+      discardUnused m104
     wrap p, m0, "proc"
   elif (p.tok.kind in {tkFunc}):
     expect p, tkFunc
     pParamListColon p
     if (p.tok.kind in {tkCurlyDotLe}):
+      let m106 = mark(p)
       pPragma p
+      discardUnused m106
     if (p.tok.kind in {tkEquals}):
+      let m107 = mark(p)
       expect p, tkEquals
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+        let m108 = mark(p)
         pTrailComment p
+        discardUnused m108
       pStmt p
+      discardUnused m107
     wrap p, m0, "func"
   elif (p.tok.kind in {tkIterator}):
     expect p, tkIterator
     pParamListColon p
     if (p.tok.kind in {tkCurlyDotLe}):
+      let m109 = mark(p)
       pPragma p
+      discardUnused m109
     if (p.tok.kind in {tkEquals}):
+      let m110 = mark(p)
       expect p, tkEquals
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+        let m111 = mark(p)
         pTrailComment p
+        discardUnused m111
       pStmt p
+      discardUnused m110
     wrap p, m0, "iterator"
   else:
     error p, "expected routineExpr"
@@ -1414,13 +1557,17 @@ proc pRoutineType*(p: var Parser) =
     expect p, tkProc
     pParamListColon p
     if (p.tok.kind in {tkCurlyDotLe}):
+      let m112 = mark(p)
       pPragma p
+      discardUnused m112
     wrap p, m0, "proc"
   elif (p.tok.kind in {tkIterator}):
     expect p, tkIterator
     pParamListColon p
     if (p.tok.kind in {tkCurlyDotLe}):
+      let m113 = mark(p)
       pPragma p
+      discardUnused m113
     wrap p, m0, "itertype"
   else:
     error p, "expected routineType"
@@ -1431,9 +1578,11 @@ proc pRawTypeDesc*(p: var Parser) =
   if (p.tok.kind in {tkIterator, tkProc}):
     pRoutineType p
     if (p.tok.kind in {tkNot}):
-      expect p, tkNot
+      let m114 = mark(p)
+      insertTokAt p, m0, tkNot
       pPrimary(p, pmTypeDesc)
       wrap p, m0, "infix"
+      discardUnused m114
   elif (p.tok.kind in Tk7):
     pTypeDescKeyw(p, pmTypeDesc)
   else:
@@ -1442,47 +1591,59 @@ proc pRawTypeDesc*(p: var Parser) =
 
 proc pTypeDescKeyw*(p: var Parser; mode: PrimaryMode) =
   let m0 = mark(p)
-  let m45 = mark(p)
+  let m115 = mark(p)
   if (p.tok.kind in {tkTuple}):
     pTupleType p
   elif (p.tok.kind in {tkEnum}):
     expect p, tkEnum
-    wrap p, m45, "enum"
+    wrap p, m115, "enum"
   elif (p.tok.kind in {tkObject}):
     expect p, tkObject
-    wrap p, m45, "object"
+    wrap p, m115, "object"
   elif (p.tok.kind in {tkVar}):
     expect p, tkVar
     if canTypeKAuxOperand(p, mode):
+      let m116 = mark(p)
       pTypeKAuxOperand(p, mode)
-    wrap p, m45, "mut"
+      discardUnused m116
+    wrap p, m115, "mut"
   elif (p.tok.kind in {tkOut}):
     expect p, tkOut
     if canTypeKAuxOperand(p, mode):
+      let m117 = mark(p)
       pTypeKAuxOperand(p, mode)
-    wrap p, m45, "out"
+      discardUnused m117
+    wrap p, m115, "out"
   elif (p.tok.kind in {tkRef}):
     expect p, tkRef
     if canTypeKAuxOperand(p, mode):
+      let m118 = mark(p)
       pTypeKAuxOperand(p, mode)
-    wrap p, m45, "ref"
+      discardUnused m118
+    wrap p, m115, "ref"
   elif (p.tok.kind in {tkPtr}):
     expect p, tkPtr
     if canTypeKAuxOperand(p, mode):
+      let m119 = mark(p)
       pTypeKAuxOperand(p, mode)
-    wrap p, m45, "ptr"
+      discardUnused m119
+    wrap p, m115, "ptr"
   elif (p.tok.kind in {tkDistinct}):
     expect p, tkDistinct
     if canTypeKAuxOperand(p, mode):
+      let m120 = mark(p)
       pTypeKAuxOperand(p, mode)
-    wrap p, m45, "distinct"
+      discardUnused m120
+    wrap p, m115, "distinct"
   else:
     error p, "expected alternative"
-  discardUnused m45
+  discardUnused m115
   if (p.tok.kind in {tkNot}):
-    expect p, tkNot
+    let m121 = mark(p)
+    insertTokAt p, m0, tkNot
     pPrimary(p, pmTypeDesc)
     wrap p, m0, "infix"
+    discardUnused m121
   discardUnused m0
 
 proc pTypeKAuxOperand*(p: var Parser; mode: PrimaryMode) =
@@ -1501,9 +1662,11 @@ proc pTypeDescExpr*(p: var Parser) =
   let m0 = mark(p)
   pSimpleExpr(p, -1, pmTypeDesc)
   if (p.tok.kind in {tkNot}):
-    expect p, tkNot
+    let m122 = mark(p)
+    insertTokAt p, m0, tkNot
     pPrimary(p, pmTypeDesc)
     wrap p, m0, "infix"
+    discardUnused m122
   discardUnused m0
 
 proc pTypeDesc*(p: var Parser) =
@@ -1517,26 +1680,26 @@ proc pTypeDesc*(p: var Parser) =
 proc pForStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkFor
-  let m46 = mark(p)
-  let m47 = mark(p)
+  let m123 = mark(p)
+  let m124 = mark(p)
   if (p.tok.kind in {tkParLe}):
     pVarTupleLhs p
   elif (p.tok.kind in {tkAccent, tkSymbol}):
     pIdentWithPragma p
   else:
     error p, "expected alternative"
-  discardUnused m47
+  discardUnused m124
   while (p.tok.kind in {tkComma}):
     pComma p
-    let m48 = mark(p)
+    let m125 = mark(p)
     if (p.tok.kind in {tkParLe}):
       pVarTupleLhs p
     elif (p.tok.kind in {tkAccent, tkSymbol}):
       pIdentWithPragma p
     else:
       error p, "expected alternative"
-    discardUnused m48
-  discardUnused m46
+    discardUnused m125
+  discardUnused m123
   expect p, tkIn
   pExpr p
   pColcom p
@@ -1552,7 +1715,7 @@ proc pForExpr*(p: var Parser) =
 proc pExpr*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in Tk19):
-    let m49 = mark(p)
+    let m126 = mark(p)
     if (p.tok.kind in {tkBlock}):
       pBlockExpr p
     elif (p.tok.kind in {tkIf}):
@@ -1567,7 +1730,7 @@ proc pExpr*(p: var Parser) =
       pTryExpr p
     else:
       error p, "expected alternative"
-    discardUnused m49
+    discardUnused m126
   elif (p.tok.kind in Tk4):
     pSimpleExpr(p, -1, pmNormal)
   else:
@@ -1578,9 +1741,9 @@ proc pSimplePrimary*(p: var Parser; mode: PrimaryMode) =
   let m0 = mark(p)
   pIdentOrLiteral(p, mode)
   while (canPrimarySuffix(p, mode)) and suffixStart(p):
-    let m50 = mark(p)
+    let m127 = mark(p)
     pPrimarySuffix(p, m0, mode)
-    discardUnused m50
+    discardUnused m127
   discardUnused m0
 
 proc pCommandParam*(p: var Parser; mode: PrimaryMode) =
@@ -1590,11 +1753,13 @@ proc pCommandParam*(p: var Parser; mode: PrimaryMode) =
   else:
     pExpr p
     if (p.tok.kind in {tkDo}):
+      let m128 = mark(p)
       pDoBlock p
       while (p.tok.kind in Tk14 and indClass(p) in {icEq}):
-        let m51 = mark(p)
+        let m129 = mark(p)
         pExtraPostExprBlock p
-        discardUnused m51
+        discardUnused m129
+      discardUnused m128
   discardUnused m0
 
 proc pPrimary*(p: var Parser; mode: PrimaryMode) =
@@ -1603,12 +1768,12 @@ proc pPrimary*(p: var Parser; mode: PrimaryMode) =
     pSimplePrimary(p, mode)
   elif ((p.tok.kind in Tk6)) and isSigilLike(p):
     pPrefixOperator p
-    let m52 = mark(p)
+    let m130 = mark(p)
     if (p.tok.kind in Tk5):
       pSimplePrimary(p, mode)
     else:
       pPrimary(p, pmNormal)
-    discardUnused m52
+    discardUnused m130
     wrap p, m0, "prefix"
   elif ((p.tok.kind in Tk6)) and isUnary(p):
     pOperatorB p
@@ -1648,9 +1813,11 @@ proc pPrimaryPragma*(p: var Parser; mode: PrimaryMode) =
   let m0 = mark(p)
   pPrimary(p, mode)
   if ((p.tok.kind in {tkCurlyDotLe} and indClass(p) in {icNoInd, icGt})) and pragmaOnPrimary(p, mode):
+    let m131 = mark(p)
     pValidInd p
     pPragma p
     wrap p, m0, "pragmax"
+    discardUnused m131
   discardUnused m0
 
 proc pExtraPostExprBlock*(p: var Parser) =
@@ -1700,25 +1867,27 @@ proc pPostExprBlocks*(p: var Parser) =
     if (p.tok.kind in {tkDo}):
       pDoBlock p
       while (p.tok.kind in Tk14 and indClass(p) in {icEq}):
-        let m53 = mark(p)
+        let m132 = mark(p)
         pExtraPostExprBlock p
-        discardUnused m53
+        discardUnused m132
     elif (p.tok.kind in {tkColon}):
       expect p, tkColon
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+        let m133 = mark(p)
         pTrailComment p
-      let m54 = mark(p)
+        discardUnused m133
+      let m134 = mark(p)
       if (p.tok.kind in Tk14 and indClass(p) in {icEq}):
         pExtraPostExprBlock p
       elif (p.tok.kind in Tk20 and indClass(p) in {icGt}) or (p.tok.kind in Tk21):
         pStmt p
       else:
         error p, "expected alternative"
-      discardUnused m54
+      discardUnused m134
       while (p.tok.kind in Tk14 and indClass(p) in {icEq}):
-        let m55 = mark(p)
+        let m135 = mark(p)
         pExtraPostExprBlock p
-        discardUnused m55
+        discardUnused m135
     else:
       error p, "expected postExprBlocks"
   else:
@@ -1734,22 +1903,28 @@ proc pExprStmt*(p: var Parser) =
       pOptInd p
       pExpr p
       if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+        let m136 = mark(p)
         pPostExprBlocks p
+        discardUnused m136
       wrap p, m0, "asgn"
     elif (p.tok.kind in Tk2 and indClass(p) in {icNoInd}):
       checkInd p, {icNoInd}
-      let m56 = mark(p)
+      let m137 = mark(p)
       pExprEqExpr p
       while (p.tok.kind in {tkComma}):
         pComma p
         pExprEqExpr p
-      discardUnused m56
+      discardUnused m137
       if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+        let m138 = mark(p)
         pPostExprBlocks p
+        discardUnused m138
       wrap p, m0, "cmd"
     elif (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
       if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+        let m139 = mark(p)
         pPostExprBlocks p
+        discardUnused m139
   else:
     error p, "expected exprStmt"
   discardUnused m0
@@ -1764,27 +1939,27 @@ proc pImportStmt*(p: var Parser) =
         pExpr p
         if (p.tok.kind in {tkComma}):
           while (p.tok.kind in {tkComma}):
-            let m57 = mark(p)
+            let m140 = mark(p)
             pComma p
             pExpr p
-            discardUnused m57
+            discardUnused m140
           wrap p, m0, "import"
         elif (p.tok.kind in {tkExcept}):
           expect p, tkExcept
           pOptInd p
-          let m58 = mark(p)
+          let m141 = mark(p)
           pExpr p
           while (p.tok.kind in {tkComma}):
             pComma p
             pExpr p
-          discardUnused m58
+          discardUnused m141
           wrap p, m0, "importexcept"
         else:
           while (p.tok.kind in {tkComma}):
-            let m59 = mark(p)
+            let m142 = mark(p)
             pComma p
             pExpr p
-            discardUnused m59
+            discardUnused m142
           wrap p, m0, "import"
       else:
         error p, "expected importStmt"
@@ -1804,27 +1979,27 @@ proc pExportStmt*(p: var Parser) =
         pExpr p
         if (p.tok.kind in {tkComma}):
           while (p.tok.kind in {tkComma}):
-            let m60 = mark(p)
+            let m143 = mark(p)
             pComma p
             pExpr p
-            discardUnused m60
+            discardUnused m143
           wrap p, m0, "export"
         elif (p.tok.kind in {tkExcept}):
           expect p, tkExcept
           pOptInd p
-          let m61 = mark(p)
+          let m144 = mark(p)
           pExpr p
           while (p.tok.kind in {tkComma}):
             pComma p
             pExpr p
-          discardUnused m61
+          discardUnused m144
           wrap p, m0, "exportexcept"
         else:
           while (p.tok.kind in {tkComma}):
-            let m62 = mark(p)
+            let m145 = mark(p)
             pComma p
             pExpr p
-            discardUnused m62
+            discardUnused m145
           wrap p, m0, "export"
       else:
         error p, "expected exportStmt"
@@ -1838,12 +2013,12 @@ proc pIncludeStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkInclude
   pOptInd p
-  let m63 = mark(p)
+  let m146 = mark(p)
   pExpr p
   while (p.tok.kind in {tkComma}):
     pComma p
     pExpr p
-  discardUnused m63
+  discardUnused m146
   wrap p, m0, "include"
   discardUnused m0
 
@@ -1855,10 +2030,10 @@ proc pFromStmt*(p: var Parser) =
   pOptInd p
   pExpr p
   while (p.tok.kind in {tkComma}):
-    let m64 = mark(p)
+    let m147 = mark(p)
     pComma p
     pExpr p
-    discardUnused m64
+    discardUnused m147
   wrap p, m0, "fromimport"
   discardUnused m0
 
@@ -1870,7 +2045,9 @@ proc pOptExprBody*(p: var Parser) =
     pValidInd p
     pExpr p
     if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+      let m148 = mark(p)
       pPostExprBlocks p
+      discardUnused m148
   else:
     error p, "expected optExprBody"
   discardUnused m0
@@ -1879,7 +2056,9 @@ proc pReturnStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkReturn
   if (p.tok.kind in {tkComment}) or (p.tok.kind in Tk2 and indClass(p) in {icNoInd, icGt}):
+    let m149 = mark(p)
     pOptExprBody p
+    discardUnused m149
   wrap p, m0, "ret"
   discardUnused m0
 
@@ -1887,7 +2066,9 @@ proc pRaiseStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkRaise
   if (p.tok.kind in {tkComment}) or (p.tok.kind in Tk2 and indClass(p) in {icNoInd, icGt}):
+    let m150 = mark(p)
     pOptExprBody p
+    discardUnused m150
   wrap p, m0, "raise"
   discardUnused m0
 
@@ -1895,7 +2076,9 @@ proc pYieldStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkYield
   if (p.tok.kind in {tkComment}) or (p.tok.kind in Tk2 and indClass(p) in {icNoInd, icGt}):
+    let m151 = mark(p)
     pOptExprBody p
+    discardUnused m151
   wrap p, m0, "yld"
   discardUnused m0
 
@@ -1903,7 +2086,9 @@ proc pDiscardStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkDiscard
   if (p.tok.kind in {tkComment}) or (p.tok.kind in Tk2 and indClass(p) in {icNoInd, icGt}):
+    let m152 = mark(p)
     pOptExprBody p
+    discardUnused m152
   wrap p, m0, "discard"
   discardUnused m0
 
@@ -1911,7 +2096,9 @@ proc pBreakStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkBreak
   if (p.tok.kind in {tkComment}) or (p.tok.kind in Tk2 and indClass(p) in {icNoInd, icGt}):
+    let m153 = mark(p)
     pOptExprBody p
+    discardUnused m153
   wrap p, m0, "break"
   discardUnused m0
 
@@ -1919,7 +2106,9 @@ proc pContinueStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkContinue
   if (p.tok.kind in {tkComment}) or (p.tok.kind in Tk2 and indClass(p) in {icNoInd, icGt}):
+    let m154 = mark(p)
     pOptExprBody p
+    discardUnused m154
   wrap p, m0, "continue"
   discardUnused m0
 
@@ -1930,22 +2119,26 @@ proc pCondStmt*(p: var Parser) =
   pStmt p
   wrap p, m0, "elif"
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m155 = mark(p)
     pTrailComment p
+    discardUnused m155
   while (p.tok.kind in {tkElif} and indClass(p) in {icNoInd, icEq}):
-    let m65 = mark(p)
+    let m156 = mark(p)
     pOptSameInd p
     expect p, tkElif
     pExpr p
     pColcom p
     pStmt p
-    wrap p, m65, "elif"
-    discardUnused m65
+    wrap p, m156, "elif"
+    discardUnused m156
   if (p.tok.kind in {tkElse} and indClass(p) in {icNoInd, icEq}):
+    let m157 = mark(p)
     pOptSameInd p
     expect p, tkElse
     pColcom p
     pStmt p
-    wrap p, m0, "else"
+    wrap p, m157, "else"
+    discardUnused m157
   discardUnused m0
 
 proc pIfStmt*(p: var Parser) =
@@ -1970,23 +2163,29 @@ proc pCondExpr*(p: var Parser) =
   pStmt p
   wrap p, m0, "elif"
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m158 = mark(p)
     pTrailComment p
+    discardUnused m158
   while (p.tok.kind in {tkElif}):
-    let m66 = mark(p)
+    let m159 = mark(p)
     expect p, tkElif
     pOptInd p
     pExpr p
     pColcom p
     pStmt p
-    wrap p, m66, "elif"
+    wrap p, m159, "elif"
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+      let m160 = mark(p)
       pTrailComment p
-    discardUnused m66
+      discardUnused m160
+    discardUnused m159
   if (p.tok.kind in {tkElse}):
+    let m161 = mark(p)
     expect p, tkElse
     pColcom p
     pStmt p
-    wrap p, m0, "else"
+    wrap p, m161, "else"
+    discardUnused m161
   discardUnused m0
 
 proc pIfExpr*(p: var Parser) =
@@ -2026,45 +2225,51 @@ proc pOfBranches*(p: var Parser) =
   if (p.tok.kind in {tkOf}):
     pOfBranch p
     while (p.tok.kind in {tkOf} and indClass(p) in {icEq}):
-      let m67 = mark(p)
+      let m162 = mark(p)
       checkInd p, {icEq}
       pOfBranch p
-      discardUnused m67
+      discardUnused m162
     while (p.tok.kind in {tkElif} and indClass(p) in {icEq}):
-      let m68 = mark(p)
+      let m163 = mark(p)
       checkInd p, {icEq}
       expect p, tkElif
       pExpr p
       pColcom p
       pStmt p
-      wrap p, m68, "elif"
-      discardUnused m68
+      wrap p, m163, "elif"
+      discardUnused m163
     if (p.tok.kind in {tkElse} and indClass(p) in {icEq}):
+      let m164 = mark(p)
       checkInd p, {icEq}
       expect p, tkElse
       pColcom p
       pStmt p
-      wrap p, m0, "else"
+      wrap p, m164, "else"
+      discardUnused m164
   elif (p.tok.kind in {tkElif}):
+    let m165 = mark(p)
     expect p, tkElif
     pExpr p
     pColcom p
     pStmt p
-    wrap p, m0, "elif"
+    wrap p, m165, "elif"
+    discardUnused m165
     while (p.tok.kind in {tkElif}):
-      let m69 = mark(p)
+      let m165 = mark(p)
       expect p, tkElif
       pExpr p
       pColcom p
       pStmt p
-      wrap p, m69, "elif"
-      discardUnused m69
+      wrap p, m165, "elif"
+      discardUnused m165
     if (p.tok.kind in {tkElse} and indClass(p) in {icEq}):
+      let m166 = mark(p)
       checkInd p, {icEq}
       expect p, tkElse
       pColcom p
       pStmt p
-      wrap p, m0, "else"
+      wrap p, m166, "else"
+      discardUnused m166
   elif (p.tok.kind in {tkElse}):
     expect p, tkElse
     pColcom p
@@ -2079,10 +2284,14 @@ proc pCaseStmt*(p: var Parser) =
   expect p, tkCase
   pExpr p
   if (p.tok.kind in {tkColon}):
+    let m167 = mark(p)
     expect p, tkColon
+    discardUnused m167
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m168 = mark(p)
     pTrailComment p
-  let m70 = mark(p)
+    discardUnused m168
+  let m169 = mark(p)
   if (p.tok.kind in {tkElif, tkElse, tkOf} and indClass(p) in {icGt}):
     pushInd p
     pOfBranches p
@@ -2092,7 +2301,7 @@ proc pCaseStmt*(p: var Parser) =
     pOfBranches p
   else:
     error p, "expected alternative"
-  discardUnused m70
+  discardUnused m169
   wrap p, m0, "case"
   discardUnused m0
 
@@ -2102,20 +2311,22 @@ proc pTryStmt*(p: var Parser) =
   pColcom p
   pStmt p
   while (p.tok.kind in {tkExcept} and indClass(p) in {icNoInd, icEq}):
-    let m71 = mark(p)
+    let m170 = mark(p)
     pOptSameInd p
     expect p, tkExcept
     pOptionalExprList p
     pColcom p
     pStmt p
-    wrap p, m71, "except"
-    discardUnused m71
+    wrap p, m170, "except"
+    discardUnused m170
   if (p.tok.kind in {tkFinally} and indClass(p) in {icNoInd, icEq}):
+    let m171 = mark(p)
     pOptSameInd p
     expect p, tkFinally
     pColcom p
     pStmt p
-    wrap p, m0, "fin"
+    wrap p, m171, "fin"
+    discardUnused m171
   wrap p, m0, "try"
   discardUnused m0
 
@@ -2125,18 +2336,20 @@ proc pTryExpr*(p: var Parser) =
   pColcom p
   pStmt p
   while (p.tok.kind in {tkExcept}):
-    let m72 = mark(p)
+    let m172 = mark(p)
     expect p, tkExcept
     pOptionalExprList p
     pColcom p
     pStmt p
-    wrap p, m72, "except"
-    discardUnused m72
+    wrap p, m172, "except"
+    discardUnused m172
   if (p.tok.kind in {tkFinally}):
+    let m173 = mark(p)
     expect p, tkFinally
     pColcom p
     pStmt p
-    wrap p, m0, "fin"
+    wrap p, m173, "fin"
+    discardUnused m173
   wrap p, m0, "try"
   discardUnused m0
 
@@ -2144,7 +2357,9 @@ proc pBlockStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkBlock
   if (p.tok.kind in Tk13):
+    let m174 = mark(p)
     pSymbol p
+    discardUnused m174
   pColcom p
   pStmt p
   wrap p, m0, "block"
@@ -2154,7 +2369,9 @@ proc pBlockExpr*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkBlock
   if (p.tok.kind in Tk13):
+    let m175 = mark(p)
     pSymbol p
+    discardUnused m175
   pColcom p
   pStmt p
   wrap p, m0, "block"
@@ -2180,8 +2397,10 @@ proc pAsmStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkAsm
   if (p.tok.kind in {tkCurlyDotLe}):
+    let m176 = mark(p)
     pPragma p
-  let m73 = mark(p)
+    discardUnused m176
+  let m177 = mark(p)
   if (p.tok.kind in {tkStrLit}):
     emitLeaf p            # STR_LIT
   elif (p.tok.kind in {tkRStrLit}):
@@ -2190,7 +2409,7 @@ proc pAsmStmt*(p: var Parser) =
     emitLeaf p            # TRIPLESTR_LIT
   else:
     error p, "expected alternative"
-  discardUnused m73
+  discardUnused m177
   wrap p, m0, "asm"
   discardUnused m0
 
@@ -2210,18 +2429,24 @@ proc pGenericParam*(p: var Parser) =
   let m0 = mark(p)
   pGenericParamName p
   while (p.tok.kind in {tkComma}):
-    let m74 = mark(p)
+    let m178 = mark(p)
     pComma p
     if canGenericParamName(p):
+      let m179 = mark(p)
       pGenericParamName p
-    discardUnused m74
+      discardUnused m179
+    discardUnused m178
   if (p.tok.kind in {tkColon}):
+    let m180 = mark(p)
     pColon p
     pExpr p
+    discardUnused m180
   if (p.tok.kind in {tkEquals}):
+    let m181 = mark(p)
     expect p, tkEquals
     pOptInd p
     pExpr p
+    discardUnused m181
   wrap p, m0, "typevar"
   discardUnused m0
 
@@ -2230,20 +2455,24 @@ proc pGenericParamList*(p: var Parser) =
   expect p, tkBracketLe
   pOptInd p
   if (p.tok.kind in {tkAccent, tkAddr..tkYield, tkSymbol}):
+    let m182 = mark(p)
     pGenericParam p
     while (p.tok.kind in {tkComma, tkSemiColon}):
-      let m75 = mark(p)
-      let m76 = mark(p)
+      let m183 = mark(p)
+      let m184 = mark(p)
       if (p.tok.kind in {tkComma}):
         pComma p
       elif (p.tok.kind in {tkSemiColon}):
         pSemicolon p
       else:
         error p, "expected alternative"
-      discardUnused m76
+      discardUnused m184
       if (p.tok.kind in {tkAccent, tkAddr..tkYield, tkSymbol}):
+        let m185 = mark(p)
         pGenericParam p
-      discardUnused m75
+        discardUnused m185
+      discardUnused m183
+    discardUnused m182
   pOptPar p
   expect p, tkBracketRi
   wrap p, m0, "typevars"
@@ -2258,14 +2487,18 @@ proc pPattern*(p: var Parser) =
 
 proc pIndAndComment*(p: var Parser) =
   let m0 = mark(p)
-  let m77 = mark(p)
+  let m186 = mark(p)
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+      let m187 = mark(p)
       pFlexComment p
+      discardUnused m187
   elif (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+      let m188 = mark(p)
       pTrailComment p
-  discardUnused m77
+      discardUnused m188
+  discardUnused m186
   discardUnused m0
 
 proc pRoutineName*(p: var Parser) =
@@ -2285,21 +2518,33 @@ proc pRoutine*(p: var Parser) =
   let m0 = mark(p)
   pOptInd p
   if (p.tok.kind in Tk22):
+    let m189 = mark(p)
     pRoutineName p
     if (p.tok.kind in {tkCurlyLe}):
+      let m190 = mark(p)
       pPattern p
+      discardUnused m190
     if (p.tok.kind in {tkBracketLe}):
+      let m191 = mark(p)
       pGenericParamList p
+      discardUnused m191
+    discardUnused m189
   pParamListColon p
   if (p.tok.kind in {tkCurlyDotLe} and indClass(p) in {icNoInd, icGt}):
+    let m192 = mark(p)
     pValidInd p
     pPragma p
+    discardUnused m192
   if (p.tok.kind in {tkEquals} and indClass(p) in {icNoInd, icGt}):
+    let m193 = mark(p)
     pValidInd p
     expect p, tkEquals
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+      let m194 = mark(p)
       pTrailComment p
+      discardUnused m194
     pStmt p
+    discardUnused m193
   pIndAndComment p
   discardUnused m0
 
@@ -2314,34 +2559,54 @@ proc pEnumDecl*(p: var Parser) =
   expect p, tkEnum
   pOptInd p
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+    let m195 = mark(p)
     pFlexComment p
+    discardUnused m195
+  let m196 = mark(p)
   pValidInd p
   pSymbol p
   if (p.tok.kind in {tkCurlyDotLe}):
+    let m197 = mark(p)
     pPragma p
+    discardUnused m197
   if (p.tok.kind in {tkEquals}):
+    let m198 = mark(p)
     expect p, tkEquals
     pOptInd p
     pExpr p
+    discardUnused m198
   if (p.tok.kind in {tkComma}):
+    let m199 = mark(p)
     pComma p
+    discardUnused m199
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+    let m200 = mark(p)
     pFlexComment p
+    discardUnused m200
+  discardUnused m196
   while (p.tok.kind in Tk13 and indClass(p) in {icNoInd, icGt}):
-    let m78 = mark(p)
+    let m196 = mark(p)
     pValidInd p
     pSymbol p
     if (p.tok.kind in {tkCurlyDotLe}):
+      let m201 = mark(p)
       pPragma p
+      discardUnused m201
     if (p.tok.kind in {tkEquals}):
+      let m202 = mark(p)
       expect p, tkEquals
       pOptInd p
       pExpr p
+      discardUnused m202
     if (p.tok.kind in {tkComma}):
+      let m203 = mark(p)
       pComma p
+      discardUnused m203
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+      let m204 = mark(p)
       pFlexComment p
-    discardUnused m78
+      discardUnused m204
+    discardUnused m196
   wrap p, m0, "enum"
   discardUnused m0
 
@@ -2353,24 +2618,32 @@ proc pObjectWhen*(p: var Parser) =
   pObjectPart p
   wrap p, m0, "elif"
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+    let m205 = mark(p)
     pFlexComment p
+    discardUnused m205
   while (p.tok.kind in {tkElif}):
-    let m79 = mark(p)
+    let m206 = mark(p)
     expect p, tkElif
     pExpr p
     pColcom p
     pObjectPart p
-    wrap p, m79, "elif"
+    wrap p, m206, "elif"
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+      let m207 = mark(p)
       pFlexComment p
-    discardUnused m79
+      discardUnused m207
+    discardUnused m206
   if (p.tok.kind in {tkElse}):
+    let m208 = mark(p)
     expect p, tkElse
     pColcom p
     pObjectPart p
-    wrap p, m0, "else"
+    wrap p, m208, "else"
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+      let m209 = mark(p)
       pFlexComment p
+      discardUnused m209
+    discardUnused m208
   wrap p, m0, "when"
   discardUnused m0
 
@@ -2388,16 +2661,18 @@ proc pObjectBranches*(p: var Parser) =
   if (p.tok.kind in {tkOf}):
     pObjectBranch p
     while (p.tok.kind in {tkOf} and indClass(p) in {icEq}):
-      let m80 = mark(p)
+      let m210 = mark(p)
       checkInd p, {icEq}
       pObjectBranch p
-      discardUnused m80
+      discardUnused m210
     if (p.tok.kind in {tkElse} and indClass(p) in {icEq}):
+      let m211 = mark(p)
       checkInd p, {icEq}
       expect p, tkElse
       pColcom p
       pObjectPart p
-      wrap p, m0, "else"
+      wrap p, m211, "else"
+      discardUnused m211
   elif (p.tok.kind in {tkElse}):
     expect p, tkElse
     pColcom p
@@ -2411,19 +2686,25 @@ proc pObjectCase*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkCase
   if (p.tok.kind in {tkAccent, tkCurlyDotLe, tkSymbol}):
-    let m81 = mark(p)
+    let m212 = mark(p)
+    let m213 = mark(p)
     if (p.tok.kind in {tkAccent, tkSymbol}):
       pDeclColonEquals p
     elif (p.tok.kind in {tkCurlyDotLe}):
       pPragma p
     else:
       error p, "expected alternative"
-    discardUnused m81
+    discardUnused m213
+    discardUnused m212
   if (p.tok.kind in {tkColon}):
+    let m214 = mark(p)
     expect p, tkColon
+    discardUnused m214
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+    let m215 = mark(p)
     pFlexComment p
-  let m82 = mark(p)
+    discardUnused m215
+  let m216 = mark(p)
   if (p.tok.kind in {tkElse, tkOf} and indClass(p) in {icGt}):
     pushInd p
     pObjectBranches p
@@ -2433,7 +2714,7 @@ proc pObjectCase*(p: var Parser) =
     pObjectBranches p
   else:
     error p, "expected alternative"
-  discardUnused m82
+  discardUnused m216
   wrap p, m0, "case"
   discardUnused m0
 
@@ -2442,16 +2723,18 @@ proc pObjectPart*(p: var Parser) =
   if (p.tok.kind in Tk23 and indClass(p) in {icGt}):
     pushInd p
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq}):
+      let m217 = mark(p)
       pOptSameInd p
       emitLeaf p            # COMMENT
-    let m83 = mark(p)
+      discardUnused m217
+    let m218 = mark(p)
     pObjectPart p
     while (p.tok.kind in Tk24 and indClass(p) in {icEq}):
       checkInd p, {icEq}
       pObjectPart p
     if ((p.tok.kind in Tk24)) and indClass(p) == icGt:
       error p, "invalid indentation in objectPart"
-    discardUnused m83
+    discardUnused m218
     popInd p
     wrap p, m0, "stmts"
   elif (p.tok.kind in Tk24 and indClass(p) in {icNoInd, icEq}):
@@ -2462,13 +2745,17 @@ proc pObjectPart*(p: var Parser) =
       pObjectCase p
     elif (p.tok.kind in {tkNil}):
       expect p, tkNil
+      wrap p, m0, "nil"
     elif (p.tok.kind in {tkDiscard}):
       expect p, tkDiscard
+      wrap p, m0, "nil"
     elif (p.tok.kind in {tkAccent, tkSymbol}):
       pDeclColonEquals p
       if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icEq, icGt}):
+        let m219 = mark(p)
         pOptPar p
         emitLeaf p            # COMMENT
+        discardUnused m219
     else:
       error p, "expected objectPart"
   else:
@@ -2479,21 +2766,28 @@ proc pObjectDecl*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkObject
   if (p.tok.kind in {tkOf} and indClass(p) in {icNoInd}):
+    let m220 = mark(p)
     checkInd p, {icNoInd}
     expect p, tkOf
     pTypeDesc p
+    discardUnused m220
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m221 = mark(p)
     pTrailComment p
+    discardUnused m221
   if (p.tok.kind in Tk23 and indClass(p) in {icGt}):
+    let m222 = mark(p)
     checkInd p, {icGt}
     pObjectPart p
+    discardUnused m222
   wrap p, m0, "object"
   discardUnused m0
 
 proc pConceptParam*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in Tk25):
-    let m84 = mark(p)
+    let m223 = mark(p)
+    let m224 = mark(p)
     if (p.tok.kind in {tkVar}):
       expect p, tkVar
     elif (p.tok.kind in {tkOut}):
@@ -2508,7 +2802,8 @@ proc pConceptParam*(p: var Parser) =
       expect p, tkType
     else:
       error p, "expected alternative"
-    discardUnused m84
+    discardUnused m224
+    discardUnused m223
   pSymbol p
   discardUnused m0
 
@@ -2516,34 +2811,46 @@ proc pConceptDecl*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkConcept
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m225 = mark(p)
     pTrailComment p
+    discardUnused m225
   if (p.tok.kind in Tk26 and indClass(p) in {icNoInd}):
+    let m226 = mark(p)
     checkInd p, {icNoInd}
     if (p.tok.kind in Tk26):
-      let m85 = mark(p)
+      let m227 = mark(p)
       pConceptParam p
       while (p.tok.kind in {tkComma}):
         expect p, tkComma
         pConceptParam p
-      discardUnused m85
+      discardUnused m227
+    discardUnused m226
   if (p.tok.kind in {tkCurlyDotLe} and indClass(p) in {icNoInd}):
+    let m228 = mark(p)
     checkInd p, {icNoInd}
     pPragma p
+    discardUnused m228
   if (p.tok.kind in {tkOf} and indClass(p) in {icNoInd}):
+    let m229 = mark(p)
     checkInd p, {icNoInd}
     expect p, tkOf
     if (p.tok.kind in Tk4):
-      let m86 = mark(p)
+      let m230 = mark(p)
       pTypeDesc p
       while (p.tok.kind in {tkComma}):
         expect p, tkComma
         pTypeDesc p
-      discardUnused m86
+      discardUnused m230
+    discardUnused m229
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m231 = mark(p)
     pTrailComment p
+    discardUnused m231
   if (p.tok.kind in Tk8 and indClass(p) in {icGt}):
+    let m232 = mark(p)
     checkInd p, {icGt}
     pStmt p
+    discardUnused m232
   wrap p, m0, "concept"
   discardUnused m0
 
@@ -2551,22 +2858,30 @@ proc pTypeDef*(p: var Parser) =
   let m0 = mark(p)
   pIdentVisDot p
   if (p.tok.kind in {tkBracketLe}):
+    let m233 = mark(p)
     pGenericParamList p
+    discardUnused m233
   if (p.tok.kind in {tkCurlyDotLe}):
+    let m234 = mark(p)
     pPragma p
+    discardUnused m234
   if (p.tok.kind in {tkEquals}):
+    let m235 = mark(p)
     expect p, tkEquals
     pOptInd p
     pTypeDefValue p
+    discardUnused m235
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd, icGt}):
+    let m236 = mark(p)
     pIndAndComment p
+    discardUnused m236
   wrap p, m0, "type"
   discardUnused m0
 
 proc pTypeDefValue*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkConcept, tkEnum, tkObject, tkTuple}):
-    let m87 = mark(p)
+    let m237 = mark(p)
     if (p.tok.kind in {tkTuple}):
       pTupleDecl p
     elif (p.tok.kind in {tkEnum}):
@@ -2577,57 +2892,67 @@ proc pTypeDefValue*(p: var Parser) =
       pConceptDecl p
     else:
       error p, "expected alternative"
-    discardUnused m87
+    discardUnused m237
     if (p.tok.kind in {tkNot}):
-      expect p, tkNot
+      let m238 = mark(p)
+      insertTokAt p, m0, tkNot
       pPrimary(p, pmTypeDesc)
       wrap p, m0, "infix"
+      discardUnused m238
   else:
     pSimpleExpr(p, -1, pmTypeDef)
     while (p.tok.kind in {tkComma}):
-      let m88 = mark(p)
+      let m239 = mark(p)
       pComma p
       pExprEqExpr p
-      discardUnused m88
+      discardUnused m239
     if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+      let m240 = mark(p)
       pPostExprBlocks p
+      discardUnused m240
     if (p.tok.kind in {tkNot}):
-      expect p, tkNot
+      let m241 = mark(p)
+      insertTokAt p, m0, tkNot
       pPrimary(p, pmTypeDesc)
       wrap p, m0, "infix"
+      discardUnused m241
   discardUnused m0
 
 proc pVarTupleLhs*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkParLe
   pOptInd p
-  let m89 = mark(p)
+  let m242 = mark(p)
   if (p.tok.kind in {tkAccent, tkSymbol}):
     pIdentWithPragmaDot p
   elif (p.tok.kind in {tkParLe}):
     pVarTupleLhs p
   else:
     error p, "expected alternative"
-  discardUnused m89
+  discardUnused m242
   while (p.tok.kind in {tkComma}):
-    let m90 = mark(p)
+    let m243 = mark(p)
     pComma p
     if (p.tok.kind in {tkAccent, tkParLe, tkSymbol}):
-      let m91 = mark(p)
+      let m244 = mark(p)
+      let m245 = mark(p)
       if (p.tok.kind in {tkAccent, tkSymbol}):
         pIdentWithPragmaDot p
       elif (p.tok.kind in {tkParLe}):
         pVarTupleLhs p
       else:
         error p, "expected alternative"
-      discardUnused m91
-    discardUnused m90
+      discardUnused m245
+      discardUnused m244
+    discardUnused m243
   pOptPar p
   expect p, tkParRi
   if (p.tok.kind in {tkColon}):
+    let m246 = mark(p)
     expect p, tkColon
     pOptInd p
     pTypeDescExpr p
+    discardUnused m246
   wrap p, m0, "unpacktup"
   discardUnused m0
 
@@ -2642,37 +2967,43 @@ proc pVarTuple*(p: var Parser) =
 
 proc pVariable*(p: var Parser) =
   let m0 = mark(p)
-  let m92 = mark(p)
+  let m247 = mark(p)
   if (p.tok.kind in {tkParLe}):
     pVarTuple p
   elif (p.tok.kind in {tkAccent, tkSymbol}):
     pDeclColonEqualsDot p
   else:
     error p, "expected alternative"
-  discardUnused m92
+  discardUnused m247
   if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+    let m248 = mark(p)
     pPostExprBlocks p
+    discardUnused m248
   pIndAndComment p
   discardUnused m0
 
 proc pConstant*(p: var Parser) =
   let m0 = mark(p)
-  let m93 = mark(p)
+  let m249 = mark(p)
   if (p.tok.kind in {tkParLe}):
     pVarTupleLhs p
   elif (p.tok.kind in {tkAccent, tkSymbol}):
     pIdentWithPragma p
     if (p.tok.kind in {tkColon}):
+      let m250 = mark(p)
       pColon p
       pTypeDesc p
+      discardUnused m250
   else:
     error p, "expected alternative"
-  discardUnused m93
+  discardUnused m249
   expect p, tkEquals
   pOptInd p
   pExpr p
   if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+    let m251 = mark(p)
     pPostExprBlocks p
+    discardUnused m251
   pIndAndComment p
   discardUnused m0
 
@@ -2680,12 +3011,12 @@ proc pBindStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkBind
   pOptInd p
-  let m94 = mark(p)
+  let m252 = mark(p)
   pQualifiedIdent p
   while (p.tok.kind in {tkComma}):
     pComma p
     pQualifiedIdent p
-  discardUnused m94
+  discardUnused m252
   wrap p, m0, "bind"
   discardUnused m0
 
@@ -2693,12 +3024,12 @@ proc pMixinStmt*(p: var Parser) =
   let m0 = mark(p)
   expect p, tkMixin
   pOptInd p
-  let m95 = mark(p)
+  let m253 = mark(p)
   pQualifiedIdent p
   while (p.tok.kind in {tkComma}):
     pComma p
     pQualifiedIdent p
-  discardUnused m95
+  discardUnused m253
   wrap p, m0, "mixin"
   discardUnused m0
 
@@ -2706,17 +3037,21 @@ proc pPragmaStmt*(p: var Parser) =
   let m0 = mark(p)
   pPragma p
   if (p.tok.kind in {tkColon} and indClass(p) in {icNoInd}):
+    let m254 = mark(p)
     checkInd p, {icNoInd}
     expect p, tkColon
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+      let m255 = mark(p)
       pTrailComment p
+      discardUnused m255
     pStmt p
+    discardUnused m254
   discardUnused m0
 
 proc pSimpleStmt*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in Tk27):
-    let m96 = mark(p)
+    let m256 = mark(p)
     if (p.tok.kind in {tkReturn}):
       pReturnStmt p
     elif (p.tok.kind in {tkRaise}):
@@ -2743,19 +3078,23 @@ proc pSimpleStmt*(p: var Parser) =
       pCommentStmt p
     else:
       error p, "expected alternative"
-    discardUnused m96
+    discardUnused m256
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+      let m257 = mark(p)
       pTrailComment p
+      discardUnused m257
   else:
     pExprStmt p
     if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+      let m258 = mark(p)
       pTrailComment p
+      discardUnused m258
   discardUnused m0
 
 proc pComplexOrSimpleStmt*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in Tk28):
-    let m97 = mark(p)
+    let m259 = mark(p)
     if (p.tok.kind in {tkIf}):
       pIfStmt p
     elif (p.tok.kind in {tkWhen}):
@@ -2782,7 +3121,7 @@ proc pComplexOrSimpleStmt*(p: var Parser) =
       pCaseStmt p
     else:
       error p, "expected alternative"
-    discardUnused m97
+    discardUnused m259
   elif (p.tok.kind in {tkExcept}):
     expect p, tkExcept
     pColcom p
@@ -2830,16 +3169,18 @@ proc pComplexOrSimpleStmt*(p: var Parser) =
       pPrimary(p, pmTypeDesc)
       expect p, tkParRi
       wrap p, m0, "typeof"
-      var prec98 = getPrecedence(p)
-      while prec98 >= -1 and indClass(p) == icNoInd:
-        let assoc98 = (if isRightAssoc(p): 0 else: 1)
+      var prec260 = getPrecedence(p)
+      while prec260 >= -1 and indClass(p) == icNoInd:
+        let assoc260 = (if isRightAssoc(p): 0 else: 1)
         insertLeafAt p, m0, p.tok.s
         getTok p
-        pSimpleExpr(p, prec98 + assoc98, pmNormal)
+        pSimpleExpr(p, prec260 + assoc260, pmNormal)
         wrap p, m0, "infix"
-        prec98 = getPrecedence(p)
+        prec260 = getPrecedence(p)
       if (p.tok.kind in {tkColon, tkDo} and indClass(p) in {icNoInd}):
+        let m261 = mark(p)
         pPostExprBlocks p
+        discardUnused m261
     else:
       error p, "expected complexOrSimpleStmt"
   elif (p.tok.kind in {tkConst}):
@@ -2864,25 +3205,27 @@ proc pStmt*(p: var Parser) =
     pushInd p
     pComplexOrSimpleStmt p
     while (p.tok.kind in Tk8 and indClass(p) in {icEq}) or (p.tok.kind in {tkSemiColon}):
-      let m99 = mark(p)
-      let m100 = mark(p)
+      let m262 = mark(p)
+      let m263 = mark(p)
       if (p.tok.kind in {tkSemiColon}):
         expect p, tkSemiColon
       else:
         checkInd p, {icEq}
-      discardUnused m100
+      discardUnused m263
       if (p.tok.kind in Tk8):
+        let m264 = mark(p)
         pComplexOrSimpleStmt p
-      discardUnused m99
+        discardUnused m264
+      discardUnused m262
     popInd p
   elif (p.tok.kind in Tk21 and indClass(p) in {icNoInd, icLt, icEq}):
     pNotInd p
-    let m101 = mark(p)
+    let m265 = mark(p)
     pSimpleStmt p
     while (p.tok.kind in {tkSemiColon}):
       expect p, tkSemiColon
       pSimpleStmt p
-    discardUnused m101
+    discardUnused m265
   else:
     error p, "expected stmt"
   discardUnused m0
@@ -2890,114 +3233,120 @@ proc pStmt*(p: var Parser) =
 proc pSection_typeDef*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m266 = mark(p)
     pTrailComment p
-  let m102 = mark(p)
+    discardUnused m266
+  let m267 = mark(p)
   if (p.tok.kind in {tkAccent, tkComment, tkSymbol} and indClass(p) in {icGt}):
     pushInd p
-    let m103 = mark(p)
-    let m104 = mark(p)
+    let m268 = mark(p)
+    let m269 = mark(p)
     if (p.tok.kind in {tkAccent, tkSymbol}):
       pTypeDef p
     elif (p.tok.kind in {tkComment}):
       emitLeaf p            # COMMENT
     else:
       error p, "expected alternative"
-    discardUnused m104
+    discardUnused m269
     while (p.tok.kind in {tkAccent, tkComment, tkSymbol} and indClass(p) in {icEq}):
       checkInd p, {icEq}
-      let m105 = mark(p)
+      let m270 = mark(p)
       if (p.tok.kind in {tkAccent, tkSymbol}):
         pTypeDef p
       elif (p.tok.kind in {tkComment}):
         emitLeaf p            # COMMENT
       else:
         error p, "expected alternative"
-      discardUnused m105
+      discardUnused m270
     if ((p.tok.kind in {tkAccent, tkComment, tkSymbol})) and indClass(p) == icGt:
       error p, "invalid indentation in section_typeDef"
-    discardUnused m103
+    discardUnused m268
     popInd p
   elif (p.tok.kind in {tkAccent, tkSymbol} and indClass(p) in {icNoInd}):
     checkInd p, {icNoInd}
     pTypeDef p
   else:
     error p, "expected alternative"
-  discardUnused m102
+  discardUnused m267
   discardUnused m0
 
 proc pSection_constant*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m271 = mark(p)
     pTrailComment p
-  let m106 = mark(p)
+    discardUnused m271
+  let m272 = mark(p)
   if (p.tok.kind in {tkAccent, tkComment, tkParLe, tkSymbol} and indClass(p) in {icGt}):
     pushInd p
-    let m107 = mark(p)
-    let m108 = mark(p)
+    let m273 = mark(p)
+    let m274 = mark(p)
     if (p.tok.kind in {tkAccent, tkParLe, tkSymbol}):
       pConstant p
     elif (p.tok.kind in {tkComment}):
       emitLeaf p            # COMMENT
     else:
       error p, "expected alternative"
-    discardUnused m108
+    discardUnused m274
     while (p.tok.kind in {tkAccent, tkComment, tkParLe, tkSymbol} and indClass(p) in {icEq}):
       checkInd p, {icEq}
-      let m109 = mark(p)
+      let m275 = mark(p)
       if (p.tok.kind in {tkAccent, tkParLe, tkSymbol}):
         pConstant p
       elif (p.tok.kind in {tkComment}):
         emitLeaf p            # COMMENT
       else:
         error p, "expected alternative"
-      discardUnused m109
+      discardUnused m275
     if ((p.tok.kind in {tkAccent, tkComment, tkParLe, tkSymbol})) and indClass(p) == icGt:
       error p, "invalid indentation in section_constant"
-    discardUnused m107
+    discardUnused m273
     popInd p
   elif (p.tok.kind in {tkAccent, tkParLe, tkSymbol} and indClass(p) in {icNoInd}):
     checkInd p, {icNoInd}
     pConstant p
   else:
     error p, "expected alternative"
-  discardUnused m106
+  discardUnused m272
   discardUnused m0
 
 proc pSection_variable*(p: var Parser) =
   let m0 = mark(p)
   if (p.tok.kind in {tkComment} and indClass(p) in {icNoInd}):
+    let m276 = mark(p)
     pTrailComment p
-  let m110 = mark(p)
+    discardUnused m276
+  let m277 = mark(p)
   if (p.tok.kind in {tkAccent, tkComment, tkParLe, tkSymbol} and indClass(p) in {icGt}):
     pushInd p
-    let m111 = mark(p)
-    let m112 = mark(p)
+    let m278 = mark(p)
+    let m279 = mark(p)
     if (p.tok.kind in {tkAccent, tkParLe, tkSymbol}):
       pVariable p
     elif (p.tok.kind in {tkComment}):
       emitLeaf p            # COMMENT
     else:
       error p, "expected alternative"
-    discardUnused m112
+    discardUnused m279
     while (p.tok.kind in {tkAccent, tkComment, tkParLe, tkSymbol} and indClass(p) in {icEq}):
       checkInd p, {icEq}
-      let m113 = mark(p)
+      let m280 = mark(p)
       if (p.tok.kind in {tkAccent, tkParLe, tkSymbol}):
         pVariable p
       elif (p.tok.kind in {tkComment}):
         emitLeaf p            # COMMENT
       else:
         error p, "expected alternative"
-      discardUnused m113
+      discardUnused m280
     if ((p.tok.kind in {tkAccent, tkComment, tkParLe, tkSymbol})) and indClass(p) == icGt:
       error p, "invalid indentation in section_variable"
-    discardUnused m111
+    discardUnused m278
     popInd p
   elif (p.tok.kind in {tkAccent, tkParLe, tkSymbol} and indClass(p) in {icNoInd}):
     checkInd p, {icNoInd}
     pVariable p
   else:
     error p, "expected alternative"
-  discardUnused m110
+  discardUnused m277
   discardUnused m0
 

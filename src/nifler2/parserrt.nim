@@ -107,6 +107,17 @@ proc expect*(p: var Parser; k: TokKind; s: string) =
 
 # --------------------------------------------------------------- indentation
 
+proc emitLeaf*(p: var Parser)
+
+proc expectLeaf*(p: var Parser; k: TokKind) =
+  ## `@'not'` in the grammar: the terminal is content, not punctuation.
+  if p.tok.kind == k: emitLeaf p
+  else: error p, "expected '" & $k & "'"
+
+proc expectLeaf*(p: var Parser; k: TokKind; s: string) =
+  if p.tok.kind == k and p.tok.s == s: emitLeaf p
+  else: error p, "expected '" & s & "'"
+
 proc indClass*(p: Parser): IndClass =
   if p.tok.indent < 0 or p.inPragma > 0: icNoInd
   elif p.tok.indent < p.currInd: icLt
@@ -220,11 +231,18 @@ proc typeOperandFollows*(p: Parser): bool {.inline.} =
 
 proc commandStart*(p: Parser): bool {.inline.} =
   ## `parser.nim`'s guard on `primarySuffix`'s command branch. The token set is
-  ## the alternative's FIRST set; what it adds is that an *infix* operator is
-  ## not the start of a command -- `import std / os` is `(infix / std os)` --
-  ## and that inside a pragma nothing is, because `{.push hints:off.}` must not
+  ## the one its `case` lists, which is narrower than FIRST(commandParam):
+  ## `not`, `if`, `addr` and friends can start an expression but not a
+  ## command, so `ref int not nil` is `(infix not (ref int) nil)` rather than
+  ## a command whose argument is `not nil`. An *infix* operator is not the
+  ## start of a command either -- `import std / os` is `(infix / std os)` --
+  ## and inside a pragma nothing is, because `{.push hints:off.}` must not
   ## become `{.push(hints:off).}`.
-  p.inPragma == 0 and (isUnary(p.tok) or p.tok.kind notin {tkOpr, tkDotDot})
+  p.inPragma == 0 and
+    p.tok.kind in {tkSymbol, tkAccent, tkIntLit..tkCustomLit, tkNil, tkCast,
+                   tkOpr, tkDotDot, tkVar, tkOut, tkStatic, tkType, tkEnum,
+                   tkTuple, tkObject, tkProc, tkParLe, tkBracketLe, tkCurlyLe} and
+    (isUnary(p.tok) or p.tok.kind notin {tkOpr, tkDotDot})
 
 proc commandAllowed*(p: Parser; mode: PrimaryMode): bool {.inline.} =
   ## `parser.nim`'s `commandExpr` returns its operand untouched when the mode
@@ -286,6 +304,17 @@ proc wrap*(p: var Parser; m: Mark; tag: string) =
   # `reopenLastTree` exists for, so nifcore computes the jump, overflow and all.
   reopenLastTree(p.dest, m.pos)
   addParRi p.dest
+
+proc insertLeafAt*(p: var Parser; m: Mark; text: string)
+
+proc insertTokAt*(p: var Parser; m: Mark; k: TokKind) =
+  ## `^tag[ @'not' ... ]`: consume the operator and insert it at the anchor,
+  ## in front of the operand that is already on the buffer.
+  if p.tok.kind == k:
+    insertLeafAt p, m, (if p.tok.s.len > 0: p.tok.s else: $p.tok.kind)
+    getTok p
+  else:
+    error p, "expected '" & $k & "'"
 
 proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
   ## `binary(...)`'s operator: `a + b` is `(infix + a b)`, so the operator has

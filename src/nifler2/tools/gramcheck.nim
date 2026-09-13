@@ -152,6 +152,14 @@ proc parsePrim(sc: var Scanner): Node =
     let w = parseIdent(sc)
     if w != "else": err sc, "unknown marker %" & w
     return newNode(nDefault, "%else")
+  if c == '@' and sc.pos+1 < sc.s.len and sc.s[sc.pos+1] == '\'':
+    # `@'not'`: a terminal that is also *emitted*, as a leaf. A plain terminal
+    # is punctuation and leaves nothing behind; a keyword operator or the
+    # `..` of a prefix expression is content.
+    inc sc.pos
+    result = parsePrim(sc)
+    result.anchored = true
+    return
   if c == '\'':
     inc sc.pos
     let start = sc.pos
@@ -560,7 +568,7 @@ proc render(n: Node): string =
   of nRep0: atom(n.kids[0]) & "*"
   of nRep1: atom(n.kids[0]) & "+"
   of nSepRep: atom(n.kids[0]) & " " & n.text & " " & atom(n.kids[1])
-  of nTerminal: "'" & n.text & "'"
+  of nTerminal: (if n.anchored: "@'" else: "'") & n.text & "'"
   of nClass: n.text
   of nRule:
     if n.kids.len == 0: n.text
@@ -851,7 +859,7 @@ proc hasFreeAnchor(n: Node): bool =
   ## of its own rule -- such a tag anchors on the *caller's* accumulated value,
   ## so the mark has to cross the rule boundary as a parameter.
   if n.kind == nTag and n.anchored: return true
-  if n.kind in {nRep0, nRep1, nSepRep}: return false
+  if n.kind in {nOpt, nRep0, nRep1, nSepRep}: return false
   for k in n.kids:
     if hasFreeAnchor(k): return true
   false
@@ -1052,7 +1060,8 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     emitAlts(e, as2, "alternative", mk, anchor)
     e.line "discardUnused " & mk
   of nTerminal:
-    e.line "expect p, " & tokenKind(n.text).split('"')[0] &
+    e.line (if n.anchored: "expectLeaf p, " else: "expect p, ") &
+           tokenKind(n.text).split('"')[0] &
            (if tokenKind(n.text).contains("\""): ", " & "\"" & n.text & "\"" else: "")
   of nClass:
     e.line "emitLeaf p            # " & n.text
@@ -1075,9 +1084,18 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
   of nPred, nAhead, nDefault:
     discard                       # part of the dispatch condition
   of nOpt:
+    # An option's body gets a mark of its own, exactly like a repetition's:
+    # `(else[ 'else' colcom stmt ])?` wraps the `else` branch and nothing else.
+    # A tag that is meant to wrap what came *before* it --
+    # `(^infix[ 'not' primary ])?` -- says so with `^`, which resolves to the
+    # enclosing mark.
+    inc e.tmp
+    let m2 = "m" & $e.tmp
     e.line "if " & condOf(e, n.kids[0]) & ":"
     body e:
-      emitNode(e, n.kids[0], mark, anchor)
+      e.line "let " & m2 & " = mark(p)"
+      emitNode(e, n.kids[0], m2, mark)
+      e.line "discardUnused " & m2
   of nRep0:
     inc e.tmp
     let m2 = "m" & $e.tmp
@@ -1089,7 +1107,11 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
   of nRep1:
     inc e.tmp
     let m2 = "m" & $e.tmp
-    emitNode(e, n.kids[0], mark, anchor)
+    # the first iteration is no different from the others: its own mark, and
+    # `^tag` reaching back to the enclosing one
+    e.line "let " & m2 & " = mark(p)"
+    emitNode(e, n.kids[0], m2, mark)
+    e.line "discardUnused " & m2
     e.line "while " & condOf(e, n.kids[0]) & ":"
     body e:
       e.line "let " & m2 & " = mark(p)"
@@ -1123,7 +1145,18 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
     if n.text == "^*": dec e.indent
   of nTag:
     if n.anchored:
-      emitNode(e, n.kids[0], mark, anchor)
+      var body = n.kids[0]
+      let items = (if body.kind == nSeq: body.kids else: @[body])
+      if items.len > 0 and items[0].kind == nTerminal and items[0].anchored:
+        # `^infix[ @'not' primary ]`: NIF writes the operator first,
+        # `(infix not a b)`, but `a` is already on the buffer. The operator
+        # goes in at the anchor, exactly as `binary(...)` does it.
+        e.line "insertTokAt p, " & anchor & ", " &
+               tokenKind(items[0].text).split('"')[0]
+        var rest = newNode(nSeq)
+        rest.kids = items[1 .. ^1]
+        body = rest
+      emitNode(e, body, mark, anchor)
       e.line "wrap p, " & anchor & ", \"" & n.text & "\""
     else:
       emitNode(e, n.kids[0], mark, anchor)

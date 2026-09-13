@@ -165,9 +165,25 @@ alternatives one dispatch. The same trick gives
 `complexOrSimpleStmt`'s `'type' typeof[ '(' primary ')' ]` a shared `'type'`
 prefix with `'type' section(typeDef)`.
 
-It is also a trap: inside a `( … )?` the mark is *not* fresh (a repetition's
-is), so `(else[ 'else' colcom stmt ])?` trailing an `elif` chain wraps the
-chain too. See "Tag placement" under Known gaps.
+The body of an option or a repetition gets a mark of its own, so a tag inside
+one wraps only what the body parses: `(else[ 'else' colcom stmt ])?` is the
+`else` branch and nothing else. A tag in such a body that is meant to reach
+back over what the enclosing sequence already built says so with `^`, which
+there resolves to the enclosing mark — `(^infix[ @'not' primary ])?`,
+`(^kv[ ':' expr ])+`, `(^pragmax[ pragma ])?`. (Until this was fixed an option
+reused the enclosing mark, and `if c: 1 else: 2` came out as
+`(if (else (elif c 1) 2))`; `try`'s `finally` swallowed its `except`s the same
+way.)
+
+### `@'…'`: a terminal that is content
+
+A quoted terminal is punctuation: it is consumed and leaves nothing behind.
+`@'not'` is consumed *and* emitted as a leaf, which is what a keyword
+operator needs — `not x` is `(prefix not x)`, and `operator`'s `'not'` used to
+yield `(prefix x)`. As the first item of an anchored tag the leaf goes in at
+the anchor rather than at the end, the way `binary(...)` places an infix
+operator, so `^infix[ @'not' primary ]` builds `(infix not a b)` although `a`
+was parsed first.
 
 ### `withInd(...)`
 
@@ -757,17 +773,6 @@ no `elif` branch at all, which grammar.txt lists.
   a value. The notation needs a way to say "this item repeats, count it";
   until then the declaration stays as parsed and `p.section` — which nothing
   assigns yet either — is unused.
-* **Tag placement inside `( … )?`.** A tag mid-sequence wraps from the
-  alternative's mark, which is deliberate and load bearing (see "Two
-  anchors"), but a repetition gives its body a fresh mark and an *option*
-  does not. So `(else[ 'else' colcom stmt ])?` at the end of `condStmt` wraps
-  the `elif` chain in front of it: `if c: 1 else: 2` comes out as
-  `(if (else (elif c 1) 2))` instead of `(if (elif c 1) (else 2))`. The same
-  shape appears in `condExpr`, `ofBranches`, `objectBranches` and
-  `objectWhen`. The fix is to give `nOpt` a fresh mark and let `^tag` inside
-  an option resolve to the enclosing one, exactly as `nRep0` already does —
-  but it touches every `(tag[ … ])?` in the grammar, so it belongs with the
-  tree-diff harness rather than before it.
 * **Source filters are not implemented.** `#? stdtmpl(…)` is a
   *preprocessor*: `nifler` links Nim's `filters.nim` and hands the parser
   rewritten text. Three files in the corpus use it
@@ -996,10 +1001,10 @@ Everything parses, except source filters:
 | --- | --- | --- |
 | `src lib tests examples` (nimony) | 1405 | 1 |
 | Nim's `lib` + `compiler` + `tools` | 535 | 0 |
-| Nim's `tests` | 3211 | 34 |
+| Nim's `tests` | 3210 | 35 |
 
-The one nimony failure and two of the 34 are `#? stdtmpl` source filters. Of
-the remaining 32, 29 are tests that *expect* to be rejected (`errormsg:`,
+The one nimony failure and two of the 35 are `#? stdtmpl` source filters. Of
+the remaining 33, 30 are tests that *expect* to be rejected (`errormsg:`,
 `action: "reject"`, `tt.Error`, or `disabled: true`) and three are
 deliberately-broken helper modules or legacy code that `nifler` rejects at the
 same line and column — checked one by one, not assumed.
@@ -1010,8 +1015,12 @@ new pieces of notation (`withInd`, `binaryTail`), and three generator fixes
 FIRST map for `withInd`). The sweep script is what made it a grind rather than
 a guess: it groups failures by message, and the message names the production.
 
-The tree is **not** yet the tree `src/nifler` produces — see `fanOut` and
-"Tag placement" above. This measures acceptance only. The next chunk is a
+(The count went *down* by one when `commandStart` learned `parser.nim`'s
+token set: `Bar not nil not nil` in `parser/tdoublenotnil.nim` expects an
+error at the second `not`, `nifler` gives it there, and nifler2 used to accept
+the file by reading `not nil` as a command argument.)
+
+The tree is **not** yet the tree `src/nifler` produces — see `fanOut` above. This measures acceptance only. The next chunk is a
 tree-diff harness against `bin/nifler`, and it wants to exist before the tag
 work starts, not after.
 

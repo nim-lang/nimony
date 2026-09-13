@@ -61,8 +61,11 @@ grammar:
 
   # `operator` and `prefixOperator` are documentation only: operator dispatch
   # happens inside `binary(...)` and in `primary`'s prefix alternative.
-  operator """OPR | 'or' | 'xor' | 'and' | 'is' | 'isnot' | 'in' | 'notin'
-          | 'of' | 'as' | 'from' | 'div' | 'mod' | 'shl' | 'shr' | 'not' | '..'"""
+  operator """OPR | @'or' | @'xor' | @'and' | @'is' | @'isnot' | @'in' | @'notin'
+          | @'of' | @'as' | @'from' | @'div' | @'mod' | @'shl' | @'shr' | @'not'
+          | @'..'"""
+  # `@'…'` emits the keyword as the operator's name: `not x` is
+  # `(prefix not x)`, and a plain terminal would have left `(prefix x)`.
   prefixOperator "operator"
   operatorB "operator"
   # GRAMMAR.TXT: lists `operator` and `operatorB` separately with the same
@@ -98,7 +101,7 @@ grammar:
          | FLOAT_LIT | FLOAT32_LIT | FLOAT64_LIT | FLOAT128_LIT
          | STR_LIT | RSTR_LIT | TRIPLESTR_LIT
          | CHAR_LIT | CUSTOM_NUMERIC_LIT
-         | 'nil'"""
+         | nil[ 'nil' ]"""
   # GRAMMAR.TXT: writes `NIL` as a token class; it is the keyword.
   # GRAMMAR.TXT: omits FLOAT128_LIT, which the lexer produces.
 
@@ -163,7 +166,7 @@ grammar:
                    ';' withInd( semiStmtList )? optPar ')' ]"""
   par """stmts[ '(' optInd simpleExpr({-1}, {pmNormal})
                    ';' withInd( semiStmtList )? optPar ')' ]"""
-  par """tup[ '(' optInd simpleExpr({-1}, {pmNormal}) (kv[ ':' expr ])+
+  par """tup[ '(' optInd simpleExpr({-1}, {pmNormal}) (^kv[ ':' expr ])+
                  (comma exprColonEqExpr?)* optPar ')' ]"""
   par """tup[ '(' optInd simpleExpr({-1}, {pmNormal})
                  comma (exprColonEqExpr comma?)* optPar ')' ]"""
@@ -178,12 +181,13 @@ grammar:
   # `,`, and to `nkStmtListExpr` whenever `semiStmtList` runs. The tags above
   # are those outcomes, which is what retroactive wrapping buys: a tag is a
   # property of the alternative, not of the token that opened it.
-  # The `asgn[...]` and `kv[...]` tags sit *inside* the alternative and are
-  # not anchored, so they wrap from the alternative's own mark -- i.e. over
-  # the `simpleExpr` that was parsed before them. Writing them as an outer
+  # The `asgn[...]` tag sits *inside* the alternative, so it wraps from the
+  # alternative's own mark -- i.e. over the `simpleExpr` that was parsed
+  # before it. `kv` does the same from inside a repetition, whose body has a
+  # mark of its own, and therefore needs the `^` to reach back. Writing them as an outer
   # `par[ asgn[ ... ] ]` instead would hide `simpleExpr` behind `asgn` and
   # defeat the left-factoring.
-  # `(kv[ ':' expr ])+` can only run once on valid input: `expr` does not stop
+  # `(^kv[ ':' expr ])+` can only run once on valid input: `expr` does not stop
   # at a `:`, so nothing after the first one can be a `:` again.
   # GRAMMAR.TXT: no indentation handling at all. `semiStmtList` runs under
   # `withInd`, which is `indented(...)` minus the assertion that the block is
@@ -311,13 +315,13 @@ grammar:
   routineType "proc[ 'proc' paramListColon pragma? ]"
   routineType "itertype[ 'iterator' paramListColon pragma? ]"
 
-  rawTypeDesc "routineType (infix[ 'not' primary({pmTypeDesc}) ])?"
+  rawTypeDesc "routineType (^infix[ @'not' primary({pmTypeDesc}) ])?"
   rawTypeDesc "typeDescKeyw({pmTypeDesc})"
   typeDescKeyw(mode: PrimaryMode) """(tupleType | enum[ 'enum' ] | object[ 'object' ]
                | mut[ 'var' typeKAuxOperand(mode)? ] | out[ 'out' typeKAuxOperand(mode)? ]
                | ref[ 'ref' typeKAuxOperand(mode)? ] | ptr[ 'ptr' typeKAuxOperand(mode)? ]
                | distinct[ 'distinct' typeKAuxOperand(mode)? ])
-               (infix[ 'not' primary({pmTypeDesc}) ])?"""
+               (^infix[ @'not' primary({pmTypeDesc}) ])?"""
   typeKAuxOperand(mode: PrimaryMode) "&isTypedefOperand(mode) validInd typeDefValue"
   typeKAuxOperand(mode: PrimaryMode) "&typeOperandFollows validInd primary(mode)"
   # GRAMMAR.TXT: `('var'|'out'|'ref'|'ptr'|'distinct') typeDesc?`.
@@ -331,7 +335,7 @@ grammar:
   # `tkIterator` to `parseProcExpr`, so `proc` in expression position is a
   # routine *expression*, never a routine type.
   typeDescExpr """simpleExpr({-1}, {pmTypeDesc})
-               (infix[ 'not' primary({pmTypeDesc}) ])?"""
+               (^infix[ @'not' primary({pmTypeDesc}) ])?"""
   # GRAMMAR.TXT: `(routineType / simpleExpr) ('not' primary)?`.
   # `typeDescExpr` is `parseTypeDesc(fullExpr = true)`, whose whole body is
   # `simpleExpr(p, pmTypeDesc)` -- `routineType` as a *separate* alternative
@@ -421,7 +425,7 @@ grammar:
 
   simpleExpr(limit: int, mode: PrimaryMode) "binary( primaryPragma(mode), getPrecedence, isRightAssoc, infix, limit )"
   primaryPragma(mode: PrimaryMode) """primary(mode)
-                (&pragmaOnPrimary(mode) validInd pragmax[ pragma ])?"""
+                (&pragmaOnPrimary(mode) validInd ^pragmax[ pragma ])?"""
   # GRAMMAR.TXT: `simpleExpr = ... pragma?`, unguarded. `simpleExprAux` takes
   # the pragma only when it is `NO_IND` or a real indent AND the mode is
   # `pmNormal`. Without the guard a `{.noSideEffect.}:` block on the line
@@ -619,8 +623,8 @@ grammar:
   # `objectDecl`, whose `COMMENT?` is `skipComment` and therefore NO_IND.
   objectPart "optSameInd objectWhen"
   objectPart "optSameInd objectCase"
-  objectPart "optSameInd 'nil'"
-  objectPart "optSameInd 'discard'"
+  objectPart "optSameInd nil[ 'nil' ]"
+  objectPart "optSameInd nil[ 'discard' ]"   # `parseObjectPart` makes both an `nkNilLit`
   objectPart "optSameInd declColonEquals (optPar COMMENT)?"
   objectPart "%else"
   # GRAMMAR.TXT: `IND{>} objectPart^+IND{=} DED / objectWhen / objectCase /
@@ -658,7 +662,7 @@ grammar:
   # in `parseTypeDef` (`optPragmas`, and `if p.tok.tokType == tkEquals`).
 
   typeDefValue """(tupleDecl | enumDecl | objectDecl | conceptDecl)
-               (infix[ 'not' primary({pmTypeDesc}) ])?"""
+               (^infix[ @'not' primary({pmTypeDesc}) ])?"""
   # GRAMMAR.TXT: also lists `('ref'|'ptr'|'distinct') (tupleDecl |
   # objectDecl)` here, which made the operand mandatory and refused
   # everything else -- `distinct int32` did not parse. The three are gone
@@ -671,7 +675,7 @@ grammar:
   # `primary` is what supplies that loop for free.
   typeDefValue """%else simpleExpr({-1}, {pmTypeDef})
                (comma exprEqExpr)* postExprBlocks?
-               (infix[ 'not' primary({pmTypeDesc}) ])?"""
+               (^infix[ @'not' primary({pmTypeDesc}) ])?"""
   # GRAMMAR.TXT: `simpleExpr (exprEqExpr ^+ comma postExprBlocks?)?`, which
   # reads as though the extra parameters came *before* the commas. They come
   # after: `parseTypeDefValue` runs `while p.tok.tokType == tkComma`. Written

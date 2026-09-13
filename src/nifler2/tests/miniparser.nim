@@ -101,7 +101,9 @@ proc pExprStmt*(p: var Parser) =
       pExpr(p, -1)
       wrap p, m0, "asgn"
     elif (p.tok.kind in {tkIntLit, tkParLe, tkSymbol}):
+      let m6 = mark(p)
       pExpr(p, -1)
+      discardUnused m6
       while (p.tok.kind in {tkIntLit, tkParLe, tkSymbol}):
         let m6 = mark(p)
         pExpr(p, -1)
