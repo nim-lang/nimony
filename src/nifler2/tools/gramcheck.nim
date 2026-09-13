@@ -979,8 +979,13 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
     if a.tag.len > 0:
       e.line "wrap p, " & (if a.anchored: anchor else: mark) & ", \"" & a.tag & "\""
     if a.afterCode.len > 0:
-      # the bare body inspects what was just parsed, so it needs the mark
-      e.line "let m = " & (if a.anchored: anchor else: mark)
+      # the bare body inspects what was just parsed, so it needs the mark --
+      # the anchor when the alternative's tag is anchored, even when a
+      # predicate in front of it kept `toAlt` from peeling the tag off
+      var anchoredTag = a.anchored
+      for it in a.items:
+        if it.kind == nTag and it.anchored: anchoredTag = true
+      e.line "let m = " & (if anchoredTag: anchor else: mark)
       for ln in a.afterCode: e.line ln
 
   if alts.len == 1:
@@ -1228,8 +1233,16 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       var args: seq[string] = @["p"]
       if e.needsAnchor.contains(e.curRule): args.add anchor
       if e.g.params.hasKey(e.curRule):
+        # arguments after the fifth are what the *right* operand gets for the
+        # other parameters, in order -- `parseOperators` does not pass its
+        # mode through unchanged
+        var extra = 5
         for pn in e.g.params[e.curRule]:
-          args.add (if pn == limitExpr: "prec + assoc" else: pn)
+          if pn == limitExpr: args.add "prec + assoc"
+          elif extra < n.kids.len:
+            args.add raw(n.kids[extra])
+            inc extra
+          else: args.add pn
       else:
         args.add "prec + assoc"
       e.line procName(e.curRule) & "(" & args.join(", ") & ")"

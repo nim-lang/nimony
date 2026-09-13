@@ -1165,6 +1165,58 @@ its expression into a call that owns the block — `c.into:` is
 sibling. After that come object constructors (`oconstr`), `'u64`/`'i64`
 suffixes on promoted literals, `callstrlit`, and pragma blocks (`pragmax`).
 
+### The rest of the dialect
+
+The remaining classes were each a construct `parser.nim` rewrites after it
+has parsed it, and each became a runtime layout or retag:
+
+* **`postExprBlocks`** makes its operand a call that owns the blocks —
+  `c.into:` is `(call (dot c into) (stmts …))`, and `foo x:` stays a `cmd`
+  that gains the block. Every call site is now a rule that parses the operand
+  and the blocks together and ends in `attachBlocks`, whose mark is where the
+  operand starts; `exprBlocks` is that rule for the sites that apply it to
+  one `expr`. A `do` block is `(do params ret body)` or, with no signature,
+  just its body.
+* **`nkObjConstr`** and **`nkTableConstr`**: a call or a `{…}` whose element
+  is `name: value` is retagged (`callOrObjConstr`, `curlyOrTable`).
+* **Literals**: the sized kinds including `'i64`/`'u64`/`'f64` are
+  `(suf value "i64")`; a generalized string is `(callstrlit f (suf "…" "R"))`,
+  as a suffix of its own because the lexer only produces one right after an
+  identifier; a custom numeric literal is `(dot (suf "-1" "R") 'big)`; a
+  literal inside backquotes is an identifier.
+* **Rewrites**: `x.y[:z](a)` is `(call (at y z) x a)` (`dotLayout`); a pragma
+  with a block is `(pragmax pragmas body)`; a sigil-like prefix takes the
+  following suffixes onto the whole prefix node; an operator's right operand
+  is parsed in `rhsMode(mode)` — `pmTrySimple` becomes `pmNormal`,
+  `pmTypeDef` becomes `pmTypeDesc` — which `binary(...)` now accepts as extra
+  arguments after the limit.
+* **Configuration**: nifler does not define `nimPreviewDotLikeOps`, so a
+  dot-like operator is an ordinary infix operator.
+
+And, as every pass so far has, it found places where nifler2 accepted the
+wrong program: `try`'s `except`/`finally` is one loop in any order (so a
+second `finally` is not a syntax error) guarded by `optPar` in the expression
+form; a proc type's pragma needs `validInd`; `binaryNot` needs the `not` on
+the same line; a command's comma-separated arguments stop at a comma that is
+dedented below the block; `discard` takes a comment only on the same line.
+One generator fix: an action on an alternative whose anchored tag sits behind
+a predicate got the rule's mark instead of the anchor.
+
+| corpus | same | different | differences |
+| --- | --- | --- | --- |
+| nimony `src lib tests examples` | 1405 | 1 | 1 |
+| Nim `lib` + `compiler` + `tools` | 523 | 12 | 13 |
+| Nim `tests` | 3192 | 6 | 10 |
+
+The one nimony file is a `#? replace` source filter. Every difference in Nim's
+`lib`, `compiler`, `tools` and `tests` is nifler's section leak, which is
+deliberately not reproduced (see above). Of the files only one tool rejects,
+the eight nifler rejects are either tests that expect the rejection or
+assertion failures inside `bridge.nim` on valid input; the three nifler2
+rejects are two source filters and `errmsgs/t10735`, an error test. Two Nim
+tests are unreadable because of the non-finite float writer bug in
+`nifcoreparse`, fixed on its own branch.
+
 ## Staging
 
 1. `src/nifler2/deps/parsegen.nim` — the mini-language front end, FIRST/FOLLOW

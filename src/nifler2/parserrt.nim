@@ -183,9 +183,11 @@ proc isUnary*(p: Parser): bool {.inline.} = isUnary(p.tok)
 proc isSigilLike*(p: Parser): bool {.inline.} = isSigilLike(p.tok)
 
 proc dotLikeOps*(p: Parser): bool {.inline.} =
-  ## `nimPreviewDotLikeOps`: `a.?b` parses as a field access rather than as an
-  ## infix operator. The switch is gone in Nim 2, so the answer is constant.
-  isDotLike(p.tok)
+  ## `nimPreviewDotLikeOps`: `a.?b` would parse as a field access rather than
+  ## as an infix operator. nifler does not define it, so a dot-like operator
+  ## is an ordinary infix operator -- `a.?b.c` is `(infix .? a (dot b c))` --
+  ## and the answer is `false`.
+  false
 
 proc inTypeDesc*(p: Parser; mode: PrimaryMode): bool {.inline.} =
   ## `parser.nim`'s `if mode == pmTypeDesc` in `commandParam`.
@@ -440,6 +442,140 @@ proc stmtListExprLayout*(p: var Parser; m: Mark) =
   else: emitEmpty p
   addParRi p.dest
 
+proc addParams(p: var Parser; c: Cursor)
+
+proc rhsMode*(mode: PrimaryMode): PrimaryMode {.inline.} =
+  ## The mode of an operator's right operand. `simpleExprAux` turns
+  ## `pmTrySimple` into `pmNormal` after the first primary, and
+  ## `parseOperators` turns `pmTypeDef` into `pmTypeDesc` -- so
+  ## `x == Handle 0` is `(infix == x (cmd Handle 0))`.
+  case mode
+  of pmTrySimple: pmNormal
+  of pmTypeDef: pmTypeDesc
+  else: mode
+
+proc literalAsIdent*(p: var Parser; m: Mark) =
+  ## Inside backquotes `parseSymbol` makes a literal token an identifier of
+  ## its text: `` `'big` `` is `(quoted ' big)`.
+  let kids = takeTail(p, m)
+  let k = kids[0]
+  case k.kind
+  of CharLit:
+    var t = ""
+    t.add charLit(k)
+    addIdent(p.dest, t, m.info)
+  of IntLit: addIdent(p.dest, $intVal(k), m.info)
+  of UIntLit: addIdent(p.dest, $uintVal(k), m.info)
+  of FloatLit: addIdent(p.dest, $floatVal(k), m.info)
+  of StrLit: addIdent(p.dest, strVal(k), m.info)
+  else: p.dest.addSubtree k
+
+proc dotLayout*(p: var Parser; m: Mark) =
+  ## `dotExpr`'s rewrite of `x.y[:z](args)` into `y[z](x, args)`: the dot
+  ## node's children are `x y (at z...) args...` when the `[:` was there.
+  let kids = takeTail(p, m)
+  let node = kids[0]
+  var parts: seq[Cursor] = @[]
+  var c = childCursor(node)
+  while c.hasMore:
+    parts.add c
+    skip c
+  if parts.len <= 2:
+    p.dest.addSubtree node
+    return
+  addParLe(p.dest, registerTag("call"), node.info)
+  addParLe(p.dest, registerTag("at"), parts[2].info)
+  p.dest.addSubtree parts[1]
+  var z = childCursor(parts[2])
+  while z.hasMore:
+    p.dest.addSubtree z
+    skip z
+  addParRi p.dest
+  p.dest.addSubtree parts[0]
+  for i in 3 ..< parts.len: p.dest.addSubtree parts[i]
+  addParRi p.dest
+
+proc curlyOrTable*(p: var Parser; m: Mark) =
+  ## `setOrTableConstr` retags `nkCurly` as `nkTableConstr` as soon as one
+  ## element is `key: value`.
+  let kids = takeTail(p, m)
+  let node = kids[0]
+  var isTable = false
+  var c = childCursor(node)
+  while c.hasMore:
+    if c.kind == TagLit and c.resolvedTagId == registerTag("kv"): isTable = true
+    skip c
+  if isTable:
+    addParLe(p.dest, registerTag("tabconstr"), node.info)
+    var k = childCursor(node)
+    while k.hasMore:
+      p.dest.addSubtree k
+      skip k
+    addParRi p.dest
+  else:
+    p.dest.addSubtree node
+
+proc callOrObjConstr*(p: var Parser; m: Mark) =
+  ## `primarySuffix`'s `(`: a call whose first argument is `name: value` is
+  ## an object constructor, `Foo(a: 1)` is `(oconstr Foo (kv a 1))`.
+  let kids = takeTail(p, m)
+  let node = kids[0]
+  var c = childCursor(node)
+  skip c                                 # the callee
+  if c.hasMore and c.kind == TagLit and c.resolvedTagId == registerTag("kv"):
+    addParLe(p.dest, registerTag("oconstr"), node.info)
+    var k = childCursor(node)
+    while k.hasMore:
+      p.dest.addSubtree k
+      skip k
+    addParRi p.dest
+  else:
+    p.dest.addSubtree node
+
+proc attachBlocks*(p: var Parser; m: Mark) =
+  ## `postExprBlocks`: a trailing `:` or `do` block belongs *to* the
+  ## expression in front of it. `makeCall` keeps a node that is already a call
+  ## -- `foo x:` stays a `cmd` -- and wraps anything else, and every block is
+  ## appended as a child: `c.into:` is `(call (dot c into) (stmts ...))`.
+  ## The rule that calls this has parsed the operand first, so the operand is
+  ## the first tree since `m` and the blocks are the rest.
+  let kids = takeTail(p, m)
+  if kids.len == 1:
+    p.dest.addSubtree kids[0]
+    return
+  let op = kids[0]
+  var isCall = false
+  if op.kind == TagLit:
+    let t = op.resolvedTagId
+    for name in ["call", "cmd", "infix", "prefix", "postfix", "callstrlit"]:
+      if t == registerTag(name): isCall = true
+  if isCall:
+    addParLe(p.dest, op.resolvedTagId, op.info)
+    var c = childCursor(op)
+    while c.hasMore:
+      p.dest.addSubtree c
+      skip c
+  else:
+    addParLe(p.dest, registerTag("call"), op.info)
+    p.dest.addSubtree op
+  for i in 1 ..< kids.len: p.dest.addSubtree kids[i]
+  addParRi p.dest
+
+proc doLayout*(p: var Parser; m: Mark) =
+  ## A `do` block, parsed as `params ret pragmas body`. Without a signature or
+  ## pragmas it is just its body; otherwise `(do params ret body)` -- nifler
+  ## writes the formal parameters as `(params ...)` plus the return type, and
+  ## drops the pragmas.
+  let kids = takeTail(p, m)
+  if kids[0].isEmpty and kids[1].isEmpty and kids[2].isEmpty:
+    p.dest.addSubtree kids[3]
+  else:
+    addParLe(p.dest, registerTag("do"), m.info)
+    addParams p, kids[0]
+    p.dest.addSubtree kids[1]
+    p.dest.addSubtree kids[3]
+    addParRi p.dest
+
 proc routineBodyAllowed*(p: Parser; mode: PrimaryMode): bool {.inline.} =
   ## `parseProcExpr(p, mode != pmTypeDesc, ...)`: in a type `proc (): int = x`
   ## has no body -- the `= x` is the declaration's default value.
@@ -543,38 +679,57 @@ proc emitLeaf*(p: var Parser) =
   ## terminal's name as a comment only).
   let info = p.info
   case p.tok.kind
-  of tkIntLit, tkInt64Lit:
+  # Only the unsuffixed kinds are bare atoms in nifler; every sized kind,
+  # the 64-bit ones included, is `(suf value "i64")`. `tkInt64Lit` is also
+  # what a plain literal becomes once it leaves int32's range, exactly as in
+  # compiler/lexer.nim, so a large plain literal is written with a suffix too.
+  of tkIntLit:
     addIntLit(p.dest, p.tok.iNumber, info)
-  of tkInt8Lit, tkInt16Lit, tkInt32Lit:
+  of tkInt8Lit, tkInt16Lit, tkInt32Lit, tkInt64Lit:
     p.dest.buildTree registerTag("suf"), info:
       addIntLit(p.dest, p.tok.iNumber, info)
-      addStrLit(p.dest, (if p.tok.kind == tkInt8Lit: "i8"
-                         elif p.tok.kind == tkInt16Lit: "i16" else: "i32"), info)
-  of tkUIntLit, tkUInt64Lit:
+      addStrLit(p.dest, (case p.tok.kind
+                         of tkInt8Lit: "i8"
+                         of tkInt16Lit: "i16"
+                         of tkInt32Lit: "i32"
+                         else: "i64"), info)
+  of tkUIntLit:
     addUIntLit(p.dest, cast[uint64](p.tok.iNumber), info)
-  of tkUInt8Lit, tkUInt16Lit, tkUInt32Lit:
+  of tkUInt8Lit, tkUInt16Lit, tkUInt32Lit, tkUInt64Lit:
     p.dest.buildTree registerTag("suf"), info:
       addUIntLit(p.dest, cast[uint64](p.tok.iNumber), info)
-      addStrLit(p.dest, (if p.tok.kind == tkUInt8Lit: "u8"
-                         elif p.tok.kind == tkUInt16Lit: "u16" else: "u32"), info)
-  of tkFloatLit, tkFloat64Lit:
+      addStrLit(p.dest, (case p.tok.kind
+                         of tkUInt8Lit: "u8"
+                         of tkUInt16Lit: "u16"
+                         of tkUInt32Lit: "u32"
+                         else: "u64"), info)
+  of tkFloatLit:
     addFloatLit(p.dest, floatValue(p.tok), info)
-  of tkFloat32Lit, tkFloat128Lit:
+  of tkFloat32Lit, tkFloat64Lit, tkFloat128Lit:
     p.dest.buildTree registerTag("suf"), info:
       addFloatLit(p.dest, floatValue(p.tok), info)
-      addStrLit(p.dest, (if p.tok.kind == tkFloat32Lit: "f32" else: "f128"), info)
+      addStrLit(p.dest, (case p.tok.kind
+                         of tkFloat32Lit: "f32"
+                         of tkFloat64Lit: "f64"
+                         else: "f128"), info)
   of tkStrLit:
     addStrLit(p.dest, p.tok.s, info)
-  of tkRStrLit, tkTripleStrLit:
+  of tkRStrLit, tkTripleStrLit, tkGStrLit, tkGTripleStrLit:
+    # a generalized string literal is raw: `parseGStrLit` makes the argument
+    # an `nkRStrLit` (or `nkTripleStrLit`)
     p.dest.buildTree registerTag("suf"), info:
       addStrLit(p.dest, p.tok.s, info)
-      addStrLit(p.dest, (if p.tok.kind == tkRStrLit: "R" else: "T"), info)
+      addStrLit(p.dest, (if p.tok.kind in {tkRStrLit, tkGStrLit}: "R" else: "T"), info)
   of tkCharLit:
     addCharLit(p.dest, (if p.tok.s.len > 0: p.tok.s[0] else: '\0'), info)
   of tkCustomLit:
-    p.dest.buildTree registerTag("suf"), info:
-      addStrLit(p.dest, p.tok.s.substr(0, int(p.tok.suffixPos) - 1), info)
-      addStrLit(p.dest, p.tok.s.substr(int(p.tok.suffixPos) + 1), info)
+    # `identOrLiteral` turns `-1'big` into a call of the suffix operator:
+    # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.
+    p.dest.buildTree registerTag("dot"), info:
+      p.dest.buildTree registerTag("suf"), info:
+        addStrLit(p.dest, p.tok.s.substr(0, int(p.tok.suffixPos) - 1), info)
+        addStrLit(p.dest, "R", info)
+      addIdent(p.dest, p.tok.s.substr(int(p.tok.suffixPos)), info)
   of tkComment:
     # nifler attaches a comment to its node and writes none of it (unless
     # `--docs`); a `commentStmt` is just `(comment)`. Emitting the text as a
