@@ -1020,9 +1020,65 @@ token set: `Bar not nil not nil` in `parser/tdoublenotnil.nim` expects an
 error at the second `not`, `nifler` gives it there, and nifler2 used to accept
 the file by reading `not nil` as a command argument.)
 
-The tree is **not** yet the tree `src/nifler` produces — see `fanOut` above. This measures acceptance only. The next chunk is a
-tree-diff harness against `bin/nifler`, and it wants to exist before the tag
-work starts, not after.
+The tree is **not** yet the tree `src/nifler` produces — see `fanOut` above
+and "Stage 4" below. This measures acceptance only.
+
+## Stage 4: the tree diff
+
+`src/nifler2/tools/treediff.nim` compares what the two tools *build*:
+
+    nim c -o:bin/treediff src/nifler2/tools/treediff.nim
+    bin/treediff file.nim                    # one file, every difference
+    bin/treediff --sweep [--top:N] lib src tests
+
+It runs `bin/nifler p` and `bin/nifler2 p` on each file, reads both outputs
+through `nifreader` and walks the two trees in step. Line information and the
+header directives are ignored; atoms are compared by decoded value, so an
+escape or a number spelled differently is not a difference.
+
+The walk is what makes the output usable. When two children are not even the
+same kind of node — a different tag, or an atom where a subtree should be —
+the difference is recorded and the rest of the *enclosing* node is skipped on
+both sides, because nothing after it lines up any more. A difference deeper
+inside a child that otherwise matches does not do that, so the child's
+siblings are still compared and a file with three unrelated bugs reports
+three. (One consequence: a head mismatch directly under `stmts` hides the rest
+of the module, so the `(stmts` row undercounts until declarations line up.)
+
+The sweep prints two tables. **By enclosing node** is the work list — which
+node kinds disagree, and in how many files. **By signature** groups each
+difference by the enclosing tag and the *shape* of both sides (a tag name or
+an atom kind: `x` and `y` are the same difference), with one example each.
+A file whose output the reader cannot walk is reported as *unreadable*
+rather than compared, since that is an output bug in its own right.
+
+First run, before any fidelity work:
+
+| corpus | same | different | differences | unreadable |
+| --- | --- | --- | --- | --- |
+| nimony `src lib tests examples` | 91 | 1313 | 8123 | 2 |
+| Nim `lib` + `compiler` | 1 | 491 | 5085 | 3 |
+
+What the top of the list says, in order of size:
+
+* **Empty children.** nifler writes every absent child as `.`:
+  `(proc name exported pattern typevars params result pragmas effects body)`
+  with dots where nothing was written. nifler2 omits them, so the first
+  present child lands in a slot that expects a dot — 2574 times in `proc`
+  alone.
+* **Export markers.** nifler puts an `x` in the second slot; nifler2 writes
+  `(postfix name *)` as `parser.nim`'s AST does.
+* **Declarations.** `let`/`var`/`const` produce one node per name in nifler
+  and the bare parsed pieces in nifler2 — the `fanOut` gap.
+* **`(stmts …)`.** nifler wraps every branch body (`elif`, `else`, `try`,
+  `block`) in `stmts`, including single-statement ones.
+* **Comments.** nifler writes `(comment)` without the text unless `--docs` is
+  given.
+* Two point bugs: `` `=copy` `` loses its `=` (`plainSymbol`'s quoted form
+  drops a quoted terminal, the same bug `@'…'` fixed for operators), and a
+  non-finite float literal is written as `(inf)@D,25` — line info after a `)`,
+  which is not NIF. nifler writes `(suf (inf) "f64")`; the line info is
+  attached by `nifpools.addFloatLit`, which would do the same for any caller.
 
 ## Staging
 
