@@ -30,14 +30,7 @@
 
 {.feature: "lenientnils".}
 
-const
-  MaxLabel* = 255
-    ## Highest DFA/NFA state number. States are `1..MaxLabel` (`0` is the NFA's
-    ## start state and doubles as "no transition"), so a pattern whose NFA
-    ## needs more than this is rejected with `TooComplex` rather than silently
-    ## mis-compiled. The bound is what lets a state *set* be a `set[Label]` —
-    ## 32 bytes, no allocation — which the subset construction leans on
-    ## heavily.
+import std / [intsets, tables, algorithm]
 
 type
   RegexKind* = enum ## the regex AST's node kind
@@ -483,6 +476,11 @@ proc containsInvalidCapture*(r: RegexNode): bool =
 # ---------------------------------------------------------------------------
 # NFA / DFA
 # ---------------------------------------------------------------------------
+#
+# Nothing below bounds the number of states. A state is an index into `seq`s
+# grown as states are made, and a *set* of states is an `IntSet`, which is only
+# ever iterated or probed for the members at hand -- no loop walks every state
+# number asking whether it is in some set.
 
 type
   Alphabet* = object
@@ -492,8 +490,8 @@ type
     kind*: RegexKind
     val*: char
 
-  Label* = range[0..MaxLabel]
-  LabelSet* = set[Label]
+  Label* = int32 ## a state number
+  LabelSet* = IntSet
 
   DfaEdge* = object
     cond*: Alphabet
@@ -501,152 +499,121 @@ type
 
   NfaEdge* = object
     cond*: Alphabet
-    dest*: LabelSet
+    dest*: seq[Label]
 
   Dfa* = object
     startState*: int ## not always 1 before minimization
     stateCount*: int ## states are `1 .. stateCount`
     captures*, backrefs*: int
     ruleCount*: int  ## highest rule number; rule 0 means "no match"
-    trans*: array[Label, seq[DfaEdge]]
-    toRules*: array[Label, int]
+    trans*: seq[seq[DfaEdge]] ## indexed by state; no edge means "no match"
+    toRules*: seq[int]
 
   Nfa* = object
-    captures*, backrefs*, stateCount*: int
-    trans*: array[Label, seq[NfaEdge]]
-    toRules*: array[Label, int]
-
-  BuildStatus* = enum ## why the pipeline gave up, if it did
-    Ok
-    TooComplex ## the automaton needs more than `MaxLabel` states
+    captures*, backrefs*, stateCount*: int ## `0` is the start state
+    trans*: seq[seq[NfaEdge]]
+    toRules*: seq[int]
 
 const
   alEpsilon* = Alphabet(kind: reEps, val: '\0')
 
-func lab(i: int): Label {.inline.} =
-  ## The one place where a state *number* becomes a state *index*. Every
-  ## producer of state numbers below stops at `MaxLabel` and reports
-  ## `TooComplex`, so the guard here never fires in a successful build; it is
-  ## what lets the range checker see the invariant the algorithms maintain.
-  if i >= 0 and i <= MaxLabel: result = Label(i)
-  else: result = Label(0)
-
 func `==`(a, b: Alphabet): bool {.inline.} =
   a.kind == b.kind and a.val == b.val
 
-proc addTrans(src: var seq[NfaEdge]; c: Alphabet; d: Label) =
+func cmpInt(a, b: int): int = a - b
+
+proc addTrans(src: var seq[NfaEdge]; c: Alphabet; d: int) =
   for i in 0 ..< src.len:
     if src[i].cond == c:
-      src[i].dest.incl d
+      if Label(d) notin src[i].dest: src[i].dest.add Label(d)
       return
-  src.add NfaEdge(cond: c, dest: {d})
+  src.add NfaEdge(cond: c, dest: @[Label(d)])
   if c.kind == reEps and src.len != 1:
     # `closure` only ever looks at edge 0 for epsilon, so keep epsilon first.
     swap(src[0], src[src.len - 1])
 
-proc addTrans(src: var seq[DfaEdge]; c: Alphabet; d: Label) =
-  for i in 0 ..< src.len:
-    if src[i].cond == c:
-      src[i].dest = d
-      return
-  src.add DfaEdge(cond: c, dest: d)
+proc trans(a: var Nfa; s: int; c: Alphabet; d: int) =
+  if a.trans.len <= s: a.trans.setLen s + 1
+  addTrans(a.trans[s], c, d)
 
-type
-  NfaBuilder = object
-    a: Nfa
-    overflow: bool ## a state number ran past `MaxLabel`
-
-proc newState(b: var NfaBuilder; s: int): int =
-  ## Guards every state-number increment. Once `overflow` is set the walk keeps
-  ## running — so it still terminates — but stops writing anything.
-  if s >= MaxLabel:
-    b.overflow = true
-    result = MaxLabel
-  else:
-    result = s + 1
-
-proc trans(b: var NfaBuilder; s: int; c: Alphabet; d: int) {.inline.} =
-  if not b.overflow:
-    addTrans(b.a.trans[lab(s)], c, lab(d))
-
-proc auxRegExprToNfa(r: RegexNode; b: var NfaBuilder; currState: int): int =
+proc auxRegExprToNfa(r: RegexNode; a: var Nfa; currState: int): int =
   ## Thompson's construction; returns the state the sub-expression ends in.
   result = currState
-  if r == nil or b.overflow: return
+  if r == nil: return
   case r.kind
   of reEps:
-    trans b, result, alEpsilon, newState(b, result)
-    result = newState(b, result)
+    trans a, result, alEpsilon, result + 1
+    inc result
   of reChar:
-    trans b, result, Alphabet(kind: reChar, val: r.c), newState(b, result)
-    result = newState(b, result)
+    trans a, result, Alphabet(kind: reChar, val: r.c), result + 1
+    inc result
   of reWordBoundary, reWordBoundaryNot, reBegin, reEnd:
-    trans b, result, Alphabet(kind: r.kind, val: '\0'), newState(b, result)
-    result = newState(b, result)
+    trans a, result, Alphabet(kind: r.kind, val: '\0'), result + 1
+    inc result
   of reStr:
     for i in 0 ..< r.s.len:
-      trans b, result, Alphabet(kind: reChar, val: r.s[i]), newState(b, result)
-      result = newState(b, result)
-      if b.overflow: return
+      trans a, result, Alphabet(kind: reChar, val: r.s[i]), result + 1
+      inc result
   of reCat:
-    result = auxRegExprToNfa(r.a, b, result)
-    result = auxRegExprToNfa(r.b, b, result)
+    result = auxRegExprToNfa(r.a, a, result)
+    result = auxRegExprToNfa(r.b, a, result)
   of reCClass:
-    trans b, result, alEpsilon, newState(b, result)
-    result = newState(b, result)
+    trans a, result, alEpsilon, result + 1
+    inc result
     # `0 .. 255` in `int` rather than `for c in '\0'..'\xFF'`: `inc` on a
     # `char` wraps round at `high(char)`, so the char spelling never ends.
     for i in 0 .. 255:
       let c = char(i)
       if c in r.cc:
-        trans b, result, Alphabet(kind: reChar, val: c), newState(b, result)
-    result = newState(b, result)
+        trans a, result, Alphabet(kind: reChar, val: c), result + 1
+    inc result
   of reStar:
     # one transition too many is drawn here, which is harmless
-    let aa = auxRegExprToNfa(r.a, b, result)
-    trans b, result, alEpsilon, newState(b, aa)
-    trans b, aa, alEpsilon, newState(b, aa)
-    trans b, newState(b, aa), alEpsilon, result
-    result = newState(b, aa)
+    let aa = auxRegExprToNfa(r.a, a, result)
+    trans a, result, alEpsilon, aa + 1
+    trans a, aa, alEpsilon, aa + 1
+    trans a, aa + 1, alEpsilon, result
+    result = aa + 1
   of rePlus:
-    result = auxRegExprToNfa(catExpr(r.a, starExpr(r.a)), b, result)
+    result = auxRegExprToNfa(catExpr(r.a, starExpr(r.a)), a, result)
   of reOpt:
-    result = auxRegExprToNfa(altExpr(r.a, epsExpr()), b, result)
+    result = auxRegExprToNfa(altExpr(r.a, epsExpr()), a, result)
   of reAlt:
-    trans b, result, alEpsilon, newState(b, result)
-    result = newState(b, result)
+    trans a, result, alEpsilon, result + 1
+    inc result
     let oldState = result
-    let aa = auxRegExprToNfa(r.a, b, result)
-    let bb = auxRegExprToNfa(r.b, b, newState(b, aa))
-    trans b, oldState, alEpsilon, newState(b, aa)
-    trans b, aa, alEpsilon, newState(b, bb)
-    trans b, bb, alEpsilon, newState(b, bb)
-    result = newState(b, bb)
+    let aa = auxRegExprToNfa(r.a, a, result)
+    let bb = auxRegExprToNfa(r.b, a, aa + 1)
+    trans a, oldState, alEpsilon, aa + 1
+    trans a, aa, alEpsilon, bb + 1
+    trans a, bb, alEpsilon, bb + 1
+    result = bb + 1
   of reCapture, reCaptureEnd:
-    b.a.captures = max(b.a.captures, int(r.c))
-    trans b, result, Alphabet(kind: reCapture, val: r.c), newState(b, result)
-    result = newState(b, result)
-    result = auxRegExprToNfa(r.a, b, result)
-    trans b, result, Alphabet(kind: reCaptureEnd, val: r.c), newState(b, result)
-    result = newState(b, result)
+    a.captures = max(a.captures, int(r.c))
+    trans a, result, Alphabet(kind: reCapture, val: r.c), result + 1
+    inc result
+    result = auxRegExprToNfa(r.a, a, result)
+    trans a, result, Alphabet(kind: reCaptureEnd, val: r.c), result + 1
+    inc result
   of reBackref:
-    b.a.backrefs = max(b.a.backrefs, int(r.c))
-    trans b, result, Alphabet(kind: reBackref, val: r.c), newState(b, result)
-    result = newState(b, result)
-  if r.rule != 0 and not b.overflow:
-    b.a.toRules[lab(result)] = r.rule
+    a.backrefs = max(a.backrefs, int(r.c))
+    trans a, result, Alphabet(kind: reBackref, val: r.c), result + 1
+    inc result
+  if r.rule != 0:
+    if a.toRules.len <= result: a.toRules.setLen result + 1
+    a.toRules[result] = r.rule
 
-proc regExprToNfa(r: RegexNode; a: var Nfa): bool =
-  ## `false` when the expression needs more than `MaxLabel` states.
-  var b = NfaBuilder(a: a, overflow: false)
-  let last = auxRegExprToNfa(r, b, 0)
-  b.a.stateCount = last
-  a = b.a
-  result = not b.overflow
+proc regExprToNfa(r: RegexNode): Nfa =
+  result = default(Nfa)
+  result.stateCount = auxRegExprToNfa(r, result, 0)
+  # states that only ever receive edges, or carry no rule, still get a slot
+  result.trans.setLen result.stateCount + 1
+  result.toRules.setLen result.stateCount + 1
 
 proc fullAlphabet(captures, backrefs: int): seq[Alphabet] =
   ## Every letter the subset construction has to consider. Characters first,
-  ## then the markers, so the common case stays contiguous.
+  ## at the index of their own code, then the markers — `letterOf` relies on
+  ## that layout.
   result = @[]
   for i in 0 .. 255:  # in `int`, see `auxRegExprToNfa`
     result.add Alphabet(kind: reChar, val: char(i))
@@ -660,226 +627,282 @@ proc fullAlphabet(captures, backrefs: int): seq[Alphabet] =
   result.add Alphabet(kind: reWordBoundary, val: '\0')
   result.add Alphabet(kind: reWordBoundaryNot, val: '\0')
 
-proc closure(a: Nfa; s: LabelSet): LabelSet =
-  ## Epsilon closure of `s`. `addTrans` guarantees an epsilon edge is edge 0.
-  result = s
-  var prev: LabelSet = {}
-  while true:
-    prev = result
-    for l in 0 .. a.stateCount:
-      if lab(l) in prev:
-        if a.trans[lab(l)].len > 0 and a.trans[lab(l)][0].cond.kind == reEps:
-          result = result + a.trans[lab(l)][0].dest
-    if prev == result: break
-
-proc getDest(a: seq[NfaEdge]; c: Alphabet): LabelSet =
-  result = {}
-  for t in a:
-    if t.cond == c: return t.dest
-
-proc getDest(a: seq[DfaEdge]; c: Alphabet): Label =
-  result = Label(0)
-  for t in a:
-    if t.cond == c: return t.dest
-
-proc getDfaEdge(a: Nfa; d: LabelSet; c: Alphabet): LabelSet =
-  var tmp: LabelSet = {}
-  for l in 0 .. a.stateCount:
-    if lab(l) in d:
-      tmp = tmp + getDest(a.trans[lab(l)], c)
-  result = closure(a, tmp)
-
-proc searchInStates(states: openArray[LabelSet]; p: int; e: LabelSet): int =
-  ## Index of `e` among `states[0..p]`, or `-1`.
+func letterOf(alphabet: openArray[Alphabet]; c: Alphabet): int =
+  ## `c`'s index in `alphabet`, or `-1` for epsilon.
+  if c.kind == reChar: return int(c.val)
   result = -1
-  for i in 0 .. p:
-    if states[i] == e: return i
+  for i in 256 ..< alphabet.len:
+    if alphabet[i] == c: return i
 
-proc nfaToDfa(a: Nfa; b: var Dfa; alphabet: openArray[Alphabet]): bool =
-  ## Subset construction (see "Modern Compiler Implementation"). `false` when
-  ## the DFA would need more than `MaxLabel` states.
-  var states: seq[LabelSet] = @[]
-  states.add {}
-  states.add closure(a, {Label(0)}) # 0 is the NFA's start state
-  var p = 1
-  var j = 0
-  while j <= p:
-    for c in alphabet:
-      let e = getDfaEdge(a, states[j], c)
-      let i = searchInStates(states, p, e)
-      if i >= 0:
-        addTrans(b.trans[lab(j)], c, lab(i))
-      else:
-        inc p
-        if p > MaxLabel: return false
-        states.add e
-        addTrans(b.trans[lab(j)], c, lab(p))
+proc closure(a: Nfa; s: var LabelSet; stack: var seq[Label]) =
+  ## Grows `s` to its epsilon closure. `addTrans` guarantees an epsilon edge is
+  ## edge 0.
+  stack.setLen 0
+  for l in s: stack.add Label(l)
+  while stack.len > 0:
+    let l = stack.pop()
+    if a.trans[l].len > 0 and a.trans[l][0].cond.kind == reEps:
+      for d in a.trans[l][0].dest:
+        if not containsOrIncl(s, int(d)): stack.add d
+
+type
+  SubsetBuilder = object
+    ## The subset construction's scratch space. `targets[c]` collects where
+    ## letter `c` leads out of the DFA state being expanded; `letters` lists
+    ## the `c` that got anything, so resetting costs what was used.
+    states: seq[LabelSet]        ## DFA state `j` is the NFA state set `states[j]`
+    known: Table[LabelSet, int]  ## and `known` finds `j` again from the set
+    targets: seq[LabelSet]
+    hasLetter: seq[bool]
+    letters: seq[int]
+    stack: seq[Label]
+
+proc collectTargets(sb: var SubsetBuilder; a: Nfa; alphabet: openArray[Alphabet];
+                    j: int) =
+  ## Fills `sb.targets` with every non-epsilon edge out of DFA state `j`, and
+  ## `sb.letters` with their letters in alphabet order.
+  for l in sb.states[j]:
+    for t in a.trans[l]:
+      let c = letterOf(alphabet, t.cond)
+      if c >= 0:
+        if not sb.hasLetter[c]:
+          sb.hasLetter[c] = true
+          sb.letters.add c
+        for d in t.dest: sb.targets[c].incl int(d)
+  sort sb.letters, cmpInt
+
+proc nfaToDfa(a: Nfa; alphabet: openArray[Alphabet]): Dfa =
+  ## Subset construction (see "Modern Compiler Implementation"). State `0` is
+  ## the empty set, "no match"; an edge into it is not recorded at all.
+  result = default(Dfa)
+  var sb = SubsetBuilder(states: @[initIntSet()],
+                         known: initTable[LabelSet, int](),
+                         targets: newSeq[LabelSet](alphabet.len),
+                         hasLetter: newSeq[bool](alphabet.len),
+                         letters: @[], stack: @[])
+  var start = initIntSet()
+  start.incl 0 # the NFA's start state
+  closure(a, start, sb.stack)
+  sb.known[start] = 1
+  sb.states.add start
+  result.trans = newSeq[seq[DfaEdge]](2)
+  var j = 1
+  while j < sb.states.len:
+    collectTargets(sb, a, alphabet, j)
+    for c in sb.letters:
+      var e = move sb.targets[c]
+      sb.targets[c] = initIntSet()
+      sb.hasLetter[c] = false
+      closure(a, e, sb.stack)
+      var i = sb.known.getOrDefault(e, 0)
+      if i == 0:
+        i = sb.states.len
+        sb.known[e] = i
+        sb.states.add e
+        result.trans.add @[]
+      result.trans[j].add DfaEdge(cond: alphabet[c], dest: Label(i))
+    sb.letters.setLen 0
     inc j
-  for d in 0 .. j - 1:
+  result.toRules = newSeq[int](sb.states.len)
+  for d in 1 ..< sb.states.len:
     var minRule = high(int)
-    for i in 0 .. MaxLabel:
-      if lab(i) in states[d]:
-        if minRule > a.toRules[lab(i)] and a.toRules[lab(i)] != 0:
-          minRule = a.toRules[lab(i)]
-    if minRule == high(int):
-      b.toRules[lab(d)] = 0
-    else:
-      b.toRules[lab(d)] = minRule
-      if minRule > b.ruleCount: b.ruleCount = minRule
-  b.stateCount = j - 1
-  b.startState = 1 # the subset construction always ends up with 1 here
-  b.captures = a.captures
-  b.backrefs = a.backrefs
-  result = true
+    for l in sb.states[d]:
+      let r = a.toRules[l]
+      if r != 0 and r < minRule: minRule = r
+    if minRule != high(int):
+      result.toRules[d] = minRule
+      if minRule > result.ruleCount: result.ruleCount = minRule
+  result.stateCount = sb.states.len - 1
+  result.startState = 1
+  result.captures = a.captures
+  result.backrefs = a.backrefs
 
-proc getPreds(a: Dfa; s: LabelSet; c: Alphabet): LabelSet =
-  ## The states that reach `s` over `c`.
-  result = {}
-  for i in 1 .. a.stateCount:
-    for t in a.trans[lab(i)]:
-      if t.cond == c and t.dest in s:
-        incl result, lab(i)
+type
+  PredEdge = object
+    letter: int
+    src: Label
 
-proc card(s: LabelSet; maxState: int): int =
-  result = 0
-  for i in 1 .. maxState:
-    if lab(i) in s: inc result
+  Refiner = object
+    ## Hopcroft's partition refinement over a DFA's states `1 .. stateCount`.
+    ## A block is a list of its states in ascending order (every split keeps
+    ## that order), so its smallest state — the one whose transitions stand
+    ## for the block — is always `blocks[b][0]`.
+    blocks: seq[seq[Label]]
+    blockOf: seq[int]
+    work: seq[int]         ## blocks still to split by, popped from the end
+    inWork: seq[bool]
+    preds: seq[seq[PredEdge]] ## the edges into each state
+    inv: seq[LabelSet]     ## per letter: the states that reach the splitter
+    hasLetter: seq[bool]
+    letters: seq[int]
+    hits: seq[int]         ## per block: how many of its states are in `inv`
+    hitBlocks: seq[int]
 
-proc choose(s: LabelSet; maxState: int): int =
-  ## An arbitrary member of `s`; `0` (an invalid state) when it is empty.
-  result = 0
-  for i in 1 .. maxState:
-    if lab(i) in s: return i
+proc splitBy(rf: var Refiner; inv: LabelSet) =
+  ## Splits every block that `inv` cuts into the part inside and the part
+  ## outside. Blocks are split highest first and each outside part is appended,
+  ## which is the order the block numbers of the result follow.
+  for m in inv:
+    let b = rf.blockOf[m]
+    if rf.hits[b] == 0: rf.hitBlocks.add b
+    inc rf.hits[b]
+  sort rf.hitBlocks, cmpInt, SortOrder.Descending
+  for b in rf.hitBlocks:
+    if rf.hits[b] < rf.blocks[b].len:
+      var x: seq[Label] = @[]
+      var y: seq[Label] = @[]
+      for m in rf.blocks[b]:
+        if int(m) in inv: x.add m
+        else: y.add m
+      let k = rf.blocks.len
+      for m in y: rf.blockOf[m] = k
+      let smaller = if x.len <= y.len: b else: k
+      rf.blocks[b] = x
+      rf.blocks.add y
+      rf.hits.add 0
+      rf.inWork.add false
+      if rf.inWork[b]:
+        # `b` is still to be split by; both halves now have to be
+        rf.work.add k
+        rf.inWork[k] = true
+      else:
+        rf.work.add smaller
+        rf.inWork[smaller] = true
+    rf.hits[b] = 0
+  rf.hitBlocks.setLen 0
 
-proc optimizeDfa(a: Dfa; b: var Dfa; alphabet: openArray[Alphabet]): bool =
+proc optimizeDfa(a: Dfa; alphabet: openArray[Alphabet]): Dfa =
   ## Hopcroft's algorithm. Every state carries the rule it accepts, so the
   ## initial partition is by rule rather than the usual final/non-final split.
-  b.captures = a.captures
-  b.backrefs = a.backrefs
-  var w = newSeq[LabelSet](a.ruleCount + 1)
-  var p = newSeq[LabelSet](a.ruleCount + 1)
+  var rf = Refiner(blocks: newSeq[seq[Label]](a.ruleCount + 1),
+                   blockOf: newSeq[int](a.stateCount + 1),
+                   work: @[], inWork: @[],
+                   preds: newSeq[seq[PredEdge]](a.stateCount + 1),
+                   inv: newSeq[LabelSet](alphabet.len),
+                   hasLetter: newSeq[bool](alphabet.len),
+                   letters: @[], hits: newSeq[int](a.ruleCount + 1),
+                   hitBlocks: @[])
   for d in 1 .. a.stateCount:
-    incl w[a.toRules[lab(d)]], lab(d)
-    incl p[a.toRules[lab(d)]], lab(d)
-  while w.len > 0:
-    let s = w.pop()
-    for c in alphabet:
-      let inv = getPreds(a, s, c)
-      if inv == {}: continue # much the common case; skip the partition walk
-      var j = p.len - 1
-      while j >= 0:
-        let r = p[j]
-        if (r * inv != {}) and not (r <= inv):
-          let x = r * inv
-          let y = r - x
-          p[j] = x
-          p.add y
-          let findRes = searchInStates(w, w.len - 1, r)
-          if findRes >= 0:
-            w[findRes] = x
-            w.add y
-          else:
-            if card(x, a.stateCount) <= card(y, a.stateCount):
-              w.add x
-            else:
-              w.add y
-        dec j
-  if p.len > MaxLabel: return false
-  b.stateCount = p.len
-  b.ruleCount = a.ruleCount
-  for j in 0 ..< p.len:
-    if p[j] != {}:
-      let rep = choose(p[j], a.stateCount)
-      if lab(a.startState) in p[j]: b.startState = j + 1
-      b.toRules[lab(j + 1)] = a.toRules[lab(rep)]
-      for c in alphabet:
-        let dest = getDest(a.trans[lab(rep)], c)
-        if dest != Label(0):
-          for k in 0 ..< p.len:
-            if dest in p[k]:
-              addTrans b.trans[lab(j + 1)], c, lab(k + 1)
-              break
-  result = true
+    let r = a.toRules[d]
+    rf.blocks[r].add Label(d)
+    rf.blockOf[d] = r
+    for e in a.trans[d]:
+      rf.preds[e.dest].add PredEdge(letter: letterOf(alphabet, e.cond),
+                                    src: Label(d))
+  for b in 0 .. a.ruleCount:
+    rf.work.add b
+    rf.inWork.add true
+  while rf.work.len > 0:
+    let s = rf.work.pop()
+    rf.inWork[s] = false
+    for t in rf.blocks[s]:
+      for e in rf.preds[t]:
+        if not rf.hasLetter[e.letter]:
+          rf.hasLetter[e.letter] = true
+          rf.letters.add e.letter
+        rf.inv[e.letter].incl int(e.src)
+    sort rf.letters, cmpInt
+    for i in 0 ..< rf.letters.len:
+      let c = rf.letters[i]
+      let inv = move rf.inv[c]
+      rf.inv[c] = initIntSet()
+      rf.hasLetter[c] = false
+      splitBy rf, inv
+    rf.letters.setLen 0
 
-func allTransitions*(a: Dfa; source, dest: Label): (seq[Alphabet], set[char]) =
+  result = default(Dfa)
+  result.captures = a.captures
+  result.backrefs = a.backrefs
+  result.stateCount = rf.blocks.len
+  result.ruleCount = a.ruleCount
+  result.trans = newSeq[seq[DfaEdge]](rf.blocks.len + 1)
+  result.toRules = newSeq[int](rf.blocks.len + 1)
+  result.startState = rf.blockOf[a.startState] + 1
+  for b in 0 ..< rf.blocks.len:
+    if rf.blocks[b].len > 0:
+      let rep = rf.blocks[b][0]
+      result.toRules[b + 1] = a.toRules[rep]
+      for e in a.trans[rep]:
+        result.trans[b + 1].add DfaEdge(cond: e.cond,
+                                        dest: Label(rf.blockOf[e.dest] + 1))
+
+func allTransitions*(a: Dfa; source, dest: int): (seq[Alphabet], set[char]) =
   ## Splits the `source -> dest` edges into the assertions and markers (which
   ## have to be tested one by one) and the plain characters (which collapse
   ## into one set test). A single character is handed back as an `Alphabet`
   ## too, because `x == 'a'` beats `x in {'a'}` in the generated code.
   var others: seq[Alphabet] = @[]
   var cs: set[char] = {}
-  if a.trans[source].len > 0:
-    var card = 0
-    var lastChar = -1
-    for x in a.trans[source]:
-      if x.dest == dest:
-        if x.cond.kind == reChar:
-          inc card
-          if lastChar < 0: lastChar = int(x.cond.val)
-          incl cs, x.cond.val
-        else:
-          others.add x.cond
-    if card == 1:
-      cs = {}
-      others.add Alphabet(kind: reChar, val: char(lastChar))
+  var card = 0
+  var lastChar = -1
+  for x in a.trans[source]:
+    if x.dest == dest:
+      if x.cond.kind == reChar:
+        inc card
+        if lastChar < 0: lastChar = int(x.cond.val)
+        incl cs, x.cond.val
+      else:
+        others.add x.cond
+  if card == 1:
+    cs = {}
+    others.add Alphabet(kind: reChar, val: char(lastChar))
   result = (others, cs)
 
-iterator allDests*(a: Dfa; source: Label): Label =
+iterator allDests*(a: Dfa; source: int): int =
   ## Every state reachable from `source`, each yielded once and in state order.
-  if a.trans[source].len > 0:
-    var dests: LabelSet = {}
-    for x in a.trans[source]: dests.incl x.dest
-    for d in dests: yield d
+  var dests: seq[int] = @[]
+  for x in a.trans[source]:
+    # insertion into a sorted list: a state's edges fan out to a handful of
+    # distinct states, and `algorithm.sort` would cost this iterator its
+    # `func`-callability
+    let d = int(x.dest)
+    var i = dests.len
+    while i > 0 and dests[i - 1] > d: dec i
+    if i == 0 or dests[i - 1] != d:
+      dests.add d
+      var k = dests.len - 1
+      while k > i:
+        let prev = dests[k - 1]
+        dests[k] = prev
+        dec k
+      dests[i] = d
+  for d in dests: yield d
 
-func getRule*(a: Dfa; s: Label): int {.inline.} = a.toRules[s]
-
-func state*(a: Dfa; i: int): Label {.inline.} =
-  ## `i` as a state index of `a`. Callers loop `1 .. a.stateCount`, which the
-  ## build pipeline has already capped at `MaxLabel`.
-  lab(i)
+func getRule*(a: Dfa; s: int): int {.inline.} = a.toRules[s]
 
 # ---------------------------------------------------------------------------
 # Driver
 # ---------------------------------------------------------------------------
 
-proc buildDfa(big: RegexNode; dfa: var Dfa): BuildStatus =
-  var n = default(Nfa)
-  if not regExprToNfa(big, n):
-    return TooComplex
+proc buildDfa(big: RegexNode): Dfa =
+  let n = regExprToNfa(big)
   let alphabet = fullAlphabet(n.captures, n.backrefs)
-  var d = default(Dfa)
-  if not nfaToDfa(n, d, alphabet):
-    return TooComplex
-  dfa = default(Dfa)
-  if not optimizeDfa(d, dfa, alphabet):
-    return TooComplex
-  result = Ok
+  result = optimizeDfa(nfaToDfa(n, alphabet), alphabet)
 
 proc rulesToDfa*(patterns: openArray[string]; flags: set[RegexFlag];
-                 dfa: var Dfa; err: var string): BuildStatus =
+                 dfa: var Dfa; err: var string) =
   ## The whole pipeline: parse every pattern, tag it with its rule number,
   ## alternate them into one expression and run that through NFA → DFA →
   ## minimization. Rule numbers are 1-based and follow `patterns`' order, which
   ## is what makes "the earlier pattern wins a tie" the rule everywhere.
   err = ""
-  result = Ok
   var big: RegexNode = nil
   for i in 0 ..< patterns.len:
     var e = ""
     let rex = parseRegExpr(patterns[i], flags, e)
     if e.len > 0:
       err = e
-      return Ok
+      return
     rex.rule = i + 1
     if big == nil: big = rex
     else: big = altExpr(big, rex)
   if big == nil:
     err = "at least one pattern is required"
-    return Ok
-  result = buildDfa(big, dfa)
+    return
+  dfa = buildDfa(big)
 
 proc regexToDfa*(pattern: string; flags: set[RegexFlag]; dfa: var Dfa;
-                 err: var string): BuildStatus =
+                 err: var string) =
   ## `rulesToDfa` for the single-pattern case, plus the capture check that only
   ## makes sense there.
   err = ""
@@ -887,12 +910,12 @@ proc regexToDfa*(pattern: string; flags: set[RegexFlag]; dfa: var Dfa;
   let rex = parseRegExpr(pattern, flags, e)
   if e.len > 0:
     err = e
-    return Ok
+    return
   if containsInvalidCapture(rex):
     err = "captures inside an alternation are not supported"
-    return Ok
+    return
   rex.rule = 1
-  result = buildDfa(rex, dfa)
+  dfa = buildDfa(rex)
 
 # ---------------------------------------------------------------------------
 # Bytecode
@@ -1007,19 +1030,19 @@ func genBytecode*(a: Dfa; res: var Regex) =
   var stateToLabel = newSeq[int](a.stateCount + 1)
   for src in 1 .. a.stateCount:
     stateToLabel[src] = res.code.len
-    let rule = getRule(a, state(a, src))
-    for dest in allDests(a, state(a, src)):
+    let rule = getRule(a, src)
+    for dest in allDests(a, src):
       # The "match longest, but only sometimes" rule regexes are known for:
       # once a state accepts, only transitions that stay within the *same* rule
       # may extend the match, or a later and longer rule would swallow an
       # earlier one's answer.
       if rule == 0 or rule == getRule(a, dest):
-        let (others, cs) = allTransitions(a, state(a, src), dest)
-        for x in others: genCapture(res, x, int(dest))
+        let (others, cs) = allTransitions(a, src, dest)
+        for x in others: genCapture(res, x, dest)
         if cs != {}:
           gen res, opcTestSet, genData(res, cs)
-          gen res, opcTJmp, int(dest)
-        for x in others: genTest(res, x, int(dest))
+          gen res, opcTJmp, dest
+        for x in others: genTest(res, x, dest)
     if stateToLabel[src] != res.code.len or rule != 0:
       # A state with neither transitions nor a rule is only ever fallen into
       # from the `ret` above it, so it needs no `ret` of its own.
@@ -1043,17 +1066,9 @@ proc countUses(r: RegexNode; caps, backs: var int) =
 proc buildInto(pattern: string; flags: set[RegexFlag]; dest: var Regex;
                err: var string): bool =
   var dfa = default(Dfa)
-  case regexToDfa(pattern, flags, dfa, err)
-  of TooComplex:
-    err = "regular expression is too complex: it needs more than " &
-          $MaxLabel & " automaton states"
-    result = false
-  of Ok:
-    if err.len > 0:
-      result = false
-    else:
-      genBytecode(dfa, dest)
-      result = true
+  regexToDfa(pattern, flags, dfa, err)
+  result = err.len == 0
+  if result: genBytecode(dfa, dest)
 
 proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
                    err: var string): bool =

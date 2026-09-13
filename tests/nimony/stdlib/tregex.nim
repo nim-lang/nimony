@@ -121,6 +121,15 @@ proc runtimePatterns =
   assert fullMatch("a b", r)
   assert tryRe("a b", r, err)
   assert fullMatch("ab", r)
+
+  # "the 9th character from the end is an `a`" has no automaton smaller than
+  # 512 states
+  assert tryRe("(?:a|b)* a (?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)(?:a|b)",
+               r, err)
+  assert fullMatch("abbbbbbbb", r)
+  assert fullMatch("babababbbb", r)
+  assert not fullMatch("bbbbbbbbb", r)
+  assert not fullMatch("abbbbbbbbb", r)
   echo "runtime patterns ok"
 
 basics()

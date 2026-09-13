@@ -27,6 +27,21 @@ proc main =
 
   assert not containsOrIncl(s, 7)
   assert containsOrIncl(s, 7)
+
+  # equality and hashing see members, not how the blocks were filled
+  var a = initIntSet()
+  var b = initIntSet()
+  a.incl 3
+  a.incl 70000
+  b.incl 70000
+  b.incl 3
+  b.incl 900
+  b.excl 900
+  assert a == b
+  assert hash(a) == hash(b)
+  assert a.len == 2
+  b.incl 4
+  assert not (a == b)
   echo "success"
 
 main()
