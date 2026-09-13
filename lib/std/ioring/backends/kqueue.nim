@@ -64,9 +64,9 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
       of opOpen:
         # An open has no readiness to wait for — it is one syscall — so the
         # backend performs it here and completes with the fd (or -errno).
-        completeOpen(idx, cast[cstring](buf[i].buf),
-                     cint(buf[i].openFlags),
-                     Mode(buf[i].openMode))
+        completeOpen(idx, cast[cstring](buf[i].open.buf),
+                     cint(buf[i].open.openFlags),
+                     Mode(buf[i].open.openMode))
       of opSocket:
         # socket(2) answers at once, like open — there is no readiness to wait
         # on, and nothing to arm afterwards: the flag's O_NONBLOCK arrives as
@@ -76,7 +76,7 @@ proc kqueuePoll(timeoutMs: int): bool {.nimcall.} =
         completeSetSockOpt(idx, buf[i].fd, buf[i].optLevel, buf[i].optName,
                            buf[i].optVal, buf[i].optLen)
       of opBind:
-        completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+        completeBind(idx, buf[i].fd, addr buf[i].bindTo.sockAddr, buf[i].bindTo.sockAddrLen)
       of opSetNonBlocking:
         completeSetNonBlocking(idx, buf[i].fd)
       else:

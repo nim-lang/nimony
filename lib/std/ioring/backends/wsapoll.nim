@@ -95,8 +95,8 @@ when defined(windows):
           # rule as POSIX opOpen's open(2). openFlags/openMode carry the
           # desiredAccess/disposition asyncio computed from its FileMode
           # (backends/files.nim).
-          completeFileOpen(idx, cast[cstring](buf[i].buf),
-                           buf[i].openFlags, buf[i].openMode)
+          completeFileOpen(idx, cast[cstring](buf[i].open.buf),
+                           buf[i].open.openFlags, buf[i].open.openMode)
         of opSocket:
           # One instant Winsock call each — the same "issue at once, nothing
           # to arm" shape as `opOpen`, served by the shared poll helpers.
@@ -105,7 +105,7 @@ when defined(windows):
           completeSetSockOpt(idx, buf[i].fd, buf[i].optLevel, buf[i].optName,
                              buf[i].optVal, buf[i].optLen)
         of opBind:
-          completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+          completeBind(idx, buf[i].fd, addr buf[i].bindTo.sockAddr, buf[i].bindTo.sockAddrLen)
         of opSetNonBlocking:
           completeSetNonBlocking(idx, buf[i].fd)
         else:

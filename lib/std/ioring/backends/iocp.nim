@@ -372,7 +372,7 @@ when defined(windows):
         complete(slotIdx, 0)
       return
     of opBind:
-      let r = wsBind(socketOf(op.fd), addr op.sockAddr, cint(op.sockAddrLen))
+      let r = wsBind(socketOf(op.fd), addr op.bindTo.sockAddr, cint(op.bindTo.sockAddrLen))
       if r == SocketError:
         complete(slotIdx, -int(wsaGetLastError()))
       else:
@@ -407,7 +407,7 @@ when defined(windows):
     let s = socketOf(op.fd)
     case op.kind
     of opRead:
-      a.wsabuf = WsaBuf(len: clampLen(op.len), buf: op.buf)
+      a.wsabuf = WsaBuf(len: clampLen(op.read.len), buf: op.read.buf)
       var n = 0'u32
       var flags = 0'u32
       let r = wsaRecv(s, addr a.wsabuf, 1'u32, addr n, addr flags, addr a.wov.ov, nil)
@@ -418,11 +418,11 @@ when defined(windows):
       # after this stack frame is gone, so it goes into the Aux block (stable,
       # free-list-owned) rather than into the arena's op — a blown deadline can
       # free the slot while the kernel still holds this WSARecvFrom, and
-      # writing through a reused slot's sockAddr would corrupt somebody else's
-      # op. The drain copies the address back into `op.sockAddr` only when the
-      # completion still names this generation.
+      # writing through a reused slot's address storage would corrupt somebody
+      # else's op. The drain copies the address back into `op.recvfrom` only
+      # when the completion still names this generation.
       a.fromLen = int32(sizeof(a.fromAddr))
-      a.wsabuf = WsaBuf(len: clampLen(op.len), buf: op.buf)
+      a.wsabuf = WsaBuf(len: clampLen(op.recvfrom.len), buf: op.recvfrom.buf)
       var n = 0'u32
       var flags = 0'u32
       let r = wsaRecvFrom(s, addr a.wsabuf, 1'u32, addr n, addr flags,
@@ -430,7 +430,7 @@ when defined(windows):
       if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
         abortIssue(lane, slotIdx, ai, -1)
     of opWrite:
-      a.wsabuf = WsaBuf(len: clampLen(op.len), buf: op.buf)
+      a.wsabuf = WsaBuf(len: clampLen(op.write.len), buf: op.write.buf)
       var n = 0'u32
       let r = wsaSend(s, addr a.wsabuf, 1'u32, addr n, 0'u32, addr a.wov.ov, nil)
       if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
@@ -439,10 +439,10 @@ when defined(windows):
       # SENDMSG has no IOCP form, WSASendTo does; the target address is read
       # at submission time, so pointing it at the arena's op is safe (unlike
       # recvfrom's write-back above).
-      a.wsabuf = WsaBuf(len: clampLen(op.len), buf: op.buf)
+      a.wsabuf = WsaBuf(len: clampLen(op.sendto.len), buf: op.sendto.buf)
       var n = 0'u32
       let r = wsaSendTo(s, addr a.wsabuf, 1'u32, addr n, 0'u32,
-                        addr op.sockAddr, int32(op.sockAddrLen),
+                        addr op.sendto.sockAddr, int32(op.sendto.sockAddrLen),
                         addr a.wov.ov, nil)
       if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
         abortIssue(lane, slotIdx, ai, -1)
@@ -475,7 +475,7 @@ when defined(windows):
         any[0] = 2'u8               # sin_family = AF_INET, the rest zero
         discard wsBind(s, addr any[0], cint(any.len))
         var sent = 0'u32
-        let ok = gConnectEx(s, addr op.sockAddr, cint(op.sockAddrLen), nil, 0'u32,
+        let ok = gConnectEx(s, addr op.connect.sockAddr, cint(op.connect.sockAddrLen), nil, 0'u32,
                             addr sent, addr a.wov.ov)
         let err = if ok == 0: wsaGetLastError() else: 0.cint
         if ok == 0 and err != WSA_IO_PENDING:
@@ -509,11 +509,18 @@ when defined(windows):
     var pfds = newSeq[WsaPollFd](live.len)
     i = 0
     while i < live.len:
+      # Every entry here was recorded as an opPollAdd (`issue` is the only
+      # producer), so the poll mask lives in that branch of the op.
       let op = addr gSlots[lane].slots[live[i].slot.int].op
-      var ev = 0
-      if evRead in op.pollMask: ev = ev or POLLRDNORM
-      if evWrite in op.pollMask: ev = ev or POLLWRNORM
-      pfds[i] = WsaPollFd(fd: socketOf(op.fd), events: cshort(ev), revents: cshort(0))
+      case op.kind
+      of opPollAdd:
+        var ev = 0
+        if evRead in op.pollMask: ev = ev or POLLRDNORM
+        if evWrite in op.pollMask: ev = ev or POLLWRNORM
+        pfds[i] = WsaPollFd(fd: socketOf(op.fd), events: cshort(ev),
+                            revents: cshort(0))
+      else:
+        discard
       i = i + 1
     if wsaPoll(addr pfds[0], culong(pfds.len), 0.cint) <= 0: return
     var keep: seq[PendingPoll] = @[]
@@ -525,12 +532,16 @@ when defined(windows):
       if (re and POLLRDNORM) != 0: fired.incl evRead
       if (re and POLLWRNORM) != 0: fired.incl evWrite
       if (re and PollFailMask) != 0: fired = {evRead, evWrite}
-      let hit = fired * gSlots[lane].slots[slotIdx].op.pollMask
-      if hit != {}:
-        complete(slotIdx, toEventMask(hit))
-        result = true
+      case gSlots[lane].slots[slotIdx].op.kind
+      of opPollAdd:
+        let hit = fired * gSlots[lane].slots[slotIdx].op.pollMask
+        if hit != {}:
+          complete(slotIdx, toEventMask(hit))
+          result = true
+        else:
+          keep.add live[i]
       else:
-        keep.add live[i]
+        discard
       i = i + 1
     gPollAdds[lane] = keep
 
@@ -570,12 +581,12 @@ when defined(windows):
         if isFile:
           case buf[i].kind
           of opOpen:
-            completeFileOpen(slotIdx, cast[cstring](buf[i].buf),
-                             buf[i].openFlags, buf[i].openMode)
+            completeFileOpen(slotIdx, cast[cstring](buf[i].open.buf),
+                             buf[i].open.openFlags, buf[i].open.openMode)
           of opRead:
-            completeFileRead(slotIdx, buf[i].fd, cast[pointer](buf[i].buf), buf[i].len)
+            completeFileRead(slotIdx, buf[i].fd, cast[pointer](buf[i].read.buf), buf[i].read.len)
           of opWrite:
-            completeFileWrite(slotIdx, buf[i].fd, cast[pointer](buf[i].buf), buf[i].len)
+            completeFileWrite(slotIdx, buf[i].fd, cast[pointer](buf[i].write.buf), buf[i].write.len)
           else:
             discard
         elif fdless or ensureAssociated(buf[i].fd, lane):
@@ -624,18 +635,18 @@ when defined(windows):
           var listenSock = socketOf(op.fd)
           discard wsSetsockopt(a.acceptSock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
                                addr listenSock, cint(sizeof(listenSock)))
-          if op.peer != nil:
+          if op.accept.peer != nil:
             # `AcceptEx` wrote both addresses into `acceptBuf`, but reading
             # them back needs `GetAcceptExSockaddrs` from the same late-bound
             # extension table as `AcceptEx` itself. `getpeername` answers the
             # same question with a call that is always there — and it is legal
             # only now, because until `SO_UPDATE_ACCEPT_CONTEXT` above the
             # socket does not yet know it is connected.
-            var namelen = cint(sizeof(op.sockAddr))
-            if wsGetpeername(a.acceptSock, addr op.sockAddr, addr namelen) == 0:
-              op.sockAddrLen = SockLen(namelen)
+            var namelen = cint(sizeof(op.accept.sockAddr))
+            if wsGetpeername(a.acceptSock, addr op.accept.sockAddr, addr namelen) == 0:
+              op.accept.sockAddrLen = SockLen(namelen)
             else:
-              op.sockAddr = Sockaddr_storage()
+              op.accept.sockAddr = Sockaddr_storage()
           if a.acceptSock <= SocketHandle(high(cint)):
             res = int(fdOf(a.acceptSock))
           else:
@@ -648,13 +659,16 @@ when defined(windows):
                                nil, 0.cint)
           res = 0
         else:
-          if op.kind == opRecvFrom:
+          res = int(e.bytes)
+          case op.kind
+          of opRecvFrom:
             # The address WSARecvFrom wrote went into the Aux scratch (see the
             # issue arm); this completion still names this op's generation, so
             # hand it to the slot for `complete` to copy to the caller's peer.
-            let n = min(int(a.fromLen), int(sizeof(op.sockAddr)))
-            if n > 0: copyMem(addr op.sockAddr, addr a.fromAddr[0], n)
-          res = int(e.bytes)
+            let n = min(int(a.fromLen), int(sizeof(op.recvfrom.sockAddr)))
+            if n > 0: copyMem(addr op.recvfrom.sockAddr, addr a.fromAddr[0], n)
+          else:
+            discard
       else:
         if op.kind == opAccept and a.acceptSock != InvalidSocket:
           discard wsClosesocket(a.acceptSock)

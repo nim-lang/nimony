@@ -38,9 +38,10 @@ proc allocSlot*(a: var SlotArena, op: OpContext): int =
     idx = a.freelist.pop()
   else:
     # NOTE: growing `slots` reallocates it, invalidating every pointer into the
-    # arena. The io_uring backend hands `addr slots[idx].op.sockAddr` to the
-    # kernel, so this must stay a cold path: `MaxOps` is sized to cover the
-    # in-flight ceiling and the freelist normally satisfies every request.
+    # arena. The io_uring backend hands `addr slots[idx].op.<branch>.sockAddr`
+    # (the accept/connect/datagram address payloads) to the kernel, so this
+    # must stay a cold path: `MaxOps` is sized to cover the in-flight ceiling
+    # and the freelist normally satisfies every request.
     idx = a.slots.len
     a.slots.add(Slot())
   let gen = a.slots[idx].gen

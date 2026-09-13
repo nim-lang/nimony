@@ -207,9 +207,9 @@ when defined(posix):
       let s = addr gSlots[lane].slots[j]
       case s.op.kind
       of opRead:
-        complete(j, int pcall(posixRead(fd, s.op.buf, s.op.len)))
+        complete(j, int pcall(posixRead(fd, s.op.read.buf, s.op.read.len)))
       of opWrite:
-        complete(j, int pcall(posixWrite(fd, s.op.buf, s.op.len)))
+        complete(j, int pcall(posixWrite(fd, s.op.write.buf, s.op.write.len)))
       of opPollAdd:
         # Always ready: a regular file stays readable (down to EOF) and
         # writable — there is no condition for the poller to wait on.
@@ -232,12 +232,17 @@ when defined(posix):
     ## event, so leaving it here would park the caller until its deadline no
     ## matter how the connect actually went.
     let s = addr gSlots[ioLane()].slots[idx]
-    let r = int pcall(posixConnect(fd, addr s.op.sockAddr, s.op.sockAddrLen))
-    if r == 0:
-      complete(idx, 0)               # connected outright: loopback often does
-      return false
-    if r == -int(EINPROGRESS): return true
-    complete(idx, r)                 # refused, unreachable, bad address …
+    case s.op.kind
+    of opConnect:
+      let r = int pcall(posixConnect(fd, addr s.op.connect.sockAddr, s.op.connect.sockAddrLen))
+      if r == 0:
+        complete(idx, 0)               # connected outright: loopback often does
+        return false
+      if r == -int(EINPROGRESS): return true
+      complete(idx, r)                 # refused, unreachable, bad address …
+    else:
+      discard   # `startConnect` is only ever called for the connect op the
+                # caller just allocated
     result = false
 
   proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
@@ -256,33 +261,33 @@ when defined(posix):
       case s.op.kind
       of opRead:
         if evRead in firedEvents:
-          complete(j, int pcall(posixRead(fd, s.op.buf, s.op.len)))
+          complete(j, int pcall(posixRead(fd, s.op.read.buf, s.op.read.len)))
       of opWrite:
         if evWrite in firedEvents:
-          complete(j, int pcall(posixWrite(fd, s.op.buf, s.op.len)))
+          complete(j, int pcall(posixWrite(fd, s.op.write.buf, s.op.write.len)))
       of opAccept:
         if evRead in firedEvents:
-          var addrLen = s.op.sockAddrLen
-          let client = int pcall(posixAccept(fd, addr s.op.sockAddr, addr addrLen))
+          var addrLen = s.op.accept.sockAddrLen
+          let client = int pcall(posixAccept(fd, addr s.op.accept.sockAddr, addr addrLen))
           # Write the length back. The kernel narrows it to what it actually
           # wrote, and `complete` hands the storage to the caller — a stale
           # `sizeof(sockaddr_storage)` here would describe a v4 address as
           # 128 bytes of one.
-          s.op.sockAddrLen = addrLen
+          s.op.accept.sockAddrLen = addrLen
           complete(j, client)
       of opRecvFrom:
         if evRead in firedEvents:
-          var addrLen = s.op.sockAddrLen
-          let n = int pcall(posixRecvfrom(fd, s.op.buf, s.op.len, 0,
-                                          addr s.op.sockAddr, addr addrLen))
+          var addrLen = s.op.recvfrom.sockAddrLen
+          let n = int pcall(posixRecvfrom(fd, s.op.recvfrom.buf, s.op.recvfrom.len, 0,
+                                          addr s.op.recvfrom.sockAddr, addr addrLen))
           # Same narrowing as accept: `complete` hands the storage to `peer`,
           # so the length that describes it has to be what the kernel wrote.
-          if n >= 0: s.op.sockAddrLen = addrLen
+          if n >= 0: s.op.recvfrom.sockAddrLen = addrLen
           complete(j, n)
       of opSendTo:
         if evWrite in firedEvents:
-          complete(j, int pcall(posixSendto(fd, s.op.buf, s.op.len, 0,
-                                            addr s.op.sockAddr, s.op.sockAddrLen)))
+          complete(j, int pcall(posixSendto(fd, s.op.sendto.buf, s.op.sendto.len, 0,
+                                            addr s.op.sendto.sockAddr, s.op.sendto.sockAddrLen)))
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide
@@ -339,9 +344,9 @@ else:
     SOL_SOCKET = 0xFFFF.cint
     SO_ERROR = 0x1007.cint
 
-  # `buf` is `nil pointer` to match `OpContext.buf` (the POSIX arm declares its
-  # read/write the same way): the op layout is nilable and the transfer takes
-  # it as-is.
+  # `buf` is `nil pointer` to match the transfer payloads' `buf` (the POSIX
+  # arm declares its read/write the same way): the op storage is nilable and
+  # the transfer takes it as-is.
   proc wsRecv(s: SocketHandle; buf: nil pointer; len, flags: cint): cint {.
     stdcall, importc: "recv", dynlib: "ws2_32.dll".}
   proc wsSend(s: SocketHandle; buf: nil pointer; len, flags: cint): cint {.
@@ -440,17 +445,22 @@ else:
     ## layer. A caller that must tell "refused" from "unreachable" apart on
     ## both platforms has to ask per-platform.
     let sl = addr gSlots[ioLane()].slots[idx]
-    let r = wsConnect(socketOf(fd), addr sl.op.sockAddr, cint(sl.op.sockAddrLen))
-    if r != SocketError:
-      complete(idx, 0)               # connected outright: loopback often does
-      return false
-    let e = wsaGetLastError()
-    if e == WSAEWOULDBLOCK or e == WSAEINPROGRESS or e == WSAEALREADY:
-      return true
-    if e == WSAEISCONN:
-      complete(idx, 0)
-      return false
-    complete(idx, -int(e))           # refused, unreachable, bad address ...
+    case sl.op.kind
+    of opConnect:
+      let r = wsConnect(socketOf(fd), addr sl.op.connect.sockAddr, cint(sl.op.connect.sockAddrLen))
+      if r != SocketError:
+        complete(idx, 0)               # connected outright: loopback often does
+        return false
+      let e = wsaGetLastError()
+      if e == WSAEWOULDBLOCK or e == WSAEINPROGRESS or e == WSAEALREADY:
+        return true
+      if e == WSAEISCONN:
+        complete(idx, 0)
+        return false
+      complete(idx, -int(e))           # refused, unreachable, bad address ...
+    else:
+      discard   # `startConnect` is only ever called for the connect op the
+                # caller just allocated
     result = false
 
   proc processFd*(fd: cint; firedEvents: IoEvents) {.nimcall.} =
@@ -463,45 +473,45 @@ else:
       case sl.op.kind
       of opRead:
         if evRead in firedEvents:
-          let r = wsRecv(s, sl.op.buf, clampLen(sl.op.len), 0.cint)
+          let r = wsRecv(s, sl.op.read.buf, clampLen(sl.op.read.len), 0.cint)
           if r == SocketError:
             if not wouldBlock(): complete(j, -1)
           else:
             complete(j, int(r))
       of opWrite:
         if evWrite in firedEvents:
-          let r = wsSend(s, sl.op.buf, clampLen(sl.op.len), 0.cint)
+          let r = wsSend(s, sl.op.write.buf, clampLen(sl.op.write.len), 0.cint)
           if r == SocketError:
             if not wouldBlock(): complete(j, -1)
           else:
             complete(j, int(r))
       of opAccept:
         if evRead in firedEvents:
-          var addrLen = cint(sl.op.sockAddrLen)
-          let client = wsAccept(s, addr sl.op.sockAddr, addr addrLen)
+          var addrLen = cint(sl.op.accept.sockAddrLen)
+          let client = wsAccept(s, addr sl.op.accept.sockAddr, addr addrLen)
           if client == InvalidSocket:
             if not wouldBlock(): complete(j, -1)
           else:
-            sl.op.sockAddrLen = SockLen(addrLen)
+            sl.op.accept.sockAddrLen = SockLen(addrLen)
             # The accepted SOCKET must survive the cint narrowing the ring's
             # API imposes; kernel handle values are small in practice (see
             # ioring.nim's Windows `listenTcp`).
             complete(j, int(cast[uint32](client)))
       of opRecvFrom:
         if evRead in firedEvents:
-          var addrLen = cint(sl.op.sockAddrLen)
-          let r = wsRecvFrom(s, sl.op.buf, clampLen(sl.op.len), 0.cint,
-                             addr sl.op.sockAddr, addr addrLen)
+          var addrLen = cint(sl.op.recvfrom.sockAddrLen)
+          let r = wsRecvFrom(s, sl.op.recvfrom.buf, clampLen(sl.op.recvfrom.len), 0.cint,
+                             addr sl.op.recvfrom.sockAddr, addr addrLen)
           if r == SocketError:
             if not wouldBlock():
               complete(j, -1)
           else:
-            sl.op.sockAddrLen = SockLen(addrLen)
+            sl.op.recvfrom.sockAddrLen = SockLen(addrLen)
             complete(j, int(r))
       of opSendTo:
         if evWrite in firedEvents:
-          let r = wsSendTo(s, sl.op.buf, clampLen(sl.op.len), 0.cint,
-                           addr sl.op.sockAddr, cint(sl.op.sockAddrLen))
+          let r = wsSendTo(s, sl.op.sendto.buf, clampLen(sl.op.sendto.len), 0.cint,
+                           addr sl.op.sendto.sockAddr, cint(sl.op.sendto.sockAddrLen))
           if r == SocketError:
             if not wouldBlock(): complete(j, -1)
           else:

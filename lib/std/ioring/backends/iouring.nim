@@ -169,17 +169,17 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
   let op = addr slot.op
   case op.kind
   of opRead:
-    if op.buf != nil:
+    if op.read.buf != nil:
       # `off = -1` means stream semantics: read at the fd's current position
       # and advance it. The default (0) would make this a pread at offset 0
       # forever — invisible on a socket (the kernel ignores `off` there), but
       # a regular-file read that always returns the file's first bytes.
-      discard sqe.read(op.fd, cast[pointer](op.buf), op.len, -1)
+      discard sqe.read(op.fd, cast[pointer](op.read.buf), op.read.len, -1)
   of opWrite:
-    if op.buf != nil:
-      discard sqe.write(op.fd, cast[pointer](op.buf), op.len, -1)
+    if op.write.buf != nil:
+      discard sqe.write(op.fd, cast[pointer](op.write.buf), op.write.len, -1)
   of opAccept:
-    discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.sockAddr), addr op.sockAddrLen, 0)
+    discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.accept.sockAddr), addr op.accept.sockAddrLen, 0)
   of opPollAdd:
     # Single-shot readiness probe on the direction(s) the caller asked for;
     # completes with the fired poll mask, then the slot is freed so the caller
@@ -195,40 +195,40 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     discard sqe.poll_add(op.fd, pollEvents)
   of opConnect:
     discard sqe.connect(SocketHandle(op.fd),
-                        cast[ptr SockAddr](addr op.sockAddr), op.sockAddrLen)
+                        cast[ptr SockAddr](addr op.connect.sockAddr), op.connect.sockAddrLen)
   of opOpen:
     # `IORING_OP_OPENAT` is the ring's own open: nothing waits on it and this
     # backend never makes the syscall itself — the only syscalls an io_uring
     # backend may make are the io_uring ones. The path is the caller-owned
     # buffer carried in the op context; it stays alive until the op completes,
     # the same contract `submitRead`'s buffer has.
-    discard sqe.openat(AtFdCwd, cast[pointer](op.buf), cint(op.openFlags), op.openMode)
+    discard sqe.openat(AtFdCwd, cast[pointer](op.open.buf), cint(op.open.openFlags), op.open.openMode)
   of opRecvFrom:
     # IORING_OP_RECVMSG has no recvfrom form: the source address travels in the
     # msghdr (`msg_name`), which the kernel reads on submission and writes back
     # into at completion, so the msghdr lives in the lane's `MsgArena` — never
-    # on this stack. `msg_name` points at the op's own `sockAddr`, already
-    # arena-stable, so `complete` hands the storage to `peer` the way accept's
-    # does, and `msg_iov` points at the caller's buffer, which is alive until
-    # the op completes (the same contract as `submitRead`).
+    # on this stack. `msg_name` points at the op's own `recvfrom` address,
+    # already arena-stable, so `complete` hands the storage to `peer` the way
+    # accept's does, and `msg_iov` points at the caller's buffer, which is
+    # alive until the op completes (the same contract as `submitRead`).
     let m = gMsgs[lane].registerMsg(idx, slot.gen)
     zeroMem(addr m.hdr, sizeof(m.hdr))
-    m.hdr.msg_name = addr op.sockAddr
-    m.hdr.msg_namelen = op.sockAddrLen
+    m.hdr.msg_name = addr op.recvfrom.sockAddr
+    m.hdr.msg_namelen = op.recvfrom.sockAddrLen
     m.hdr.msg_iov = addr m.iov
     m.hdr.msg_iovlen = csize_t(1)
-    m.iov.iov_base = cast[pointer](op.buf)
-    m.iov.iov_len = csize_t(op.len)
+    m.iov.iov_base = cast[pointer](op.recvfrom.buf)
+    m.iov.iov_len = csize_t(op.recvfrom.len)
     discard sqe.recvmsg(SocketHandle(op.fd), addr m.hdr)
   of opSendTo:
     let m = gMsgs[lane].registerMsg(idx, slot.gen)
     zeroMem(addr m.hdr, sizeof(m.hdr))
-    m.hdr.msg_name = addr op.sockAddr
-    m.hdr.msg_namelen = op.sockAddrLen
+    m.hdr.msg_name = addr op.sendto.sockAddr
+    m.hdr.msg_namelen = op.sendto.sockAddrLen
     m.hdr.msg_iov = addr m.iov
     m.hdr.msg_iovlen = csize_t(1)
-    m.iov.iov_base = cast[pointer](op.buf)
-    m.iov.iov_len = csize_t(op.len)
+    m.iov.iov_base = cast[pointer](op.sendto.buf)
+    m.iov.iov_len = csize_t(op.sendto.len)
     discard sqe.sendmsg(SocketHandle(op.fd), addr m.hdr)
   of opNop, opTimeout:
     # A timer needs no SQE. The lane's deadline heap already knows when it is
@@ -295,7 +295,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         armDeadline(lane, idx)
         case buf[i].kind
         of opBind:
-          completeBind(idx, buf[i].fd, addr buf[i].sockAddr, buf[i].sockAddrLen)
+          completeBind(idx, buf[i].fd, addr buf[i].bindTo.sockAddr, buf[i].bindTo.sockAddrLen)
         of opSetNonBlocking:
           complete(idx, 0)
         else:
@@ -319,8 +319,9 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       let slot = addr gSlots[lane].slots[idx]
       sqe.userData = cast[pointer](tagFor(idx, slot.gen))
       # Fill from the ARENA copy, never from `buf`: an accept SQE stores
-      # `addr op.sockAddr`/`addr op.sockAddrLen` and the kernel writes through
-      # those at completion time, long after this stack frame is gone.
+      # `addr op.accept.sockAddr`/`addr op.accept.sockAddrLen` (the connect and
+      # datagram address branches point the same way) and the kernel writes
+      # through those at completion time, long after this stack frame is gone.
       fillSqe(sqe, lane, idx)
   # Sleep in the kernel until something is due — an I/O completion, or the
   # earliest deadline this lane is waiting on, whichever comes first. That is
@@ -391,17 +392,22 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         let op = addr slot.op
         # Only RECVMSG/SENDMSG ops ever registered a block, so return it only
         # for those; a live read, accept or poll CQE never touches the arena.
-        if op.kind == opRecvFrom or op.kind == opSendTo:
-          if op.kind == opRecvFrom and int(cqes[i].res) > 0:
+        case op.kind
+        of opRecvFrom:
+          if int(cqes[i].res) > 0:
             # RECVMSG wrote the actual source-address length back into our
             # msghdr; narrow `sockAddrLen` to it before the block goes,
             # exactly as the readiness backends do with their recvfrom's in-out
             # length, so the storage `complete` hands to `peer` is described by
             # the real length.
-            op.sockAddrLen = gMsgs[lane].blockMsg(idx, gen).hdr.msg_namelen
+            op.recvfrom.sockAddrLen = gMsgs[lane].blockMsg(idx, gen).hdr.msg_namelen
           # The kernel is done with the op's storage, so the block goes back
           # to the pool it was borrowed from.
           gMsgs[lane].releaseMsg(idx, gen)
+        of opSendTo:
+          gMsgs[lane].releaseMsg(idx, gen)
+        else:
+          discard
         # For OP_POLL_ADD the kernel reports the fired mask in poll(2) form;
         # translate it to the same internal `IoEvents` the epoll/kqueue
         # backends report, so the completion's `readyEvents` are consistent no

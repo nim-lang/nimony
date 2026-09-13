@@ -155,7 +155,8 @@ proc submitRead*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  var op = OpContext(kind: opRead, fd: fd, seqnum: result, buf: buf, len: len,
+  var op = OpContext(kind: opRead, fd: fd, seqnum: result,
+    read: OpBuf(buf: buf, len: len),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
@@ -163,7 +164,8 @@ proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   result = nextSeqNum()
-  var op = OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
+  var op = OpContext(kind: opWrite, fd: fd, seqnum: result,
+    write: OpBuf(buf: buf, len: len),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
@@ -185,8 +187,8 @@ proc submitOpen*(path: cstring; pathLen: int; openFlags, openMode: int32;
   ## as `submitRead`'s buffer).
   result = nextSeqNum()
   var op = OpContext(kind: opOpen, fd: -1, seqnum: result,
-    buf: cast[pointer](path), len: pathLen,
-    openFlags: openFlags, openMode: openMode,
+    open: OpenArgs(buf: cast[pointer](path), len: pathLen,
+                   openFlags: openFlags, openMode: openMode),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
@@ -232,9 +234,8 @@ proc submitBind*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
   ## nothing to wait on — making a fully passive socket creation possible.
   result = nextSeqNum()
   var op = OpContext(kind: opBind, fd: fd, seqnum: result,
+    bindTo: IoAddr(sockAddr: sa, sockAddrLen: saLen),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
-  op.sockAddr = sa
-  op.sockAddrLen = saLen
   enqueueOp(op)
 
 proc submitSetNonBlocking*(fd: cint; deadline: Deadline;
@@ -270,10 +271,10 @@ proc submitAccept*(listenFd: cint; deadline: Deadline;
   ## reconstruct afterwards.
   result = nextSeqNum()
   var op = OpContext(kind: opAccept, fd: listenFd, seqnum: result,
+    accept: AcceptArgs(sockAddr: Sockaddr_storage(),
+                       sockAddrLen: SockLen(sizeof(Sockaddr_storage)),
+                       peer: peer),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
-  op.sockAddr = Sockaddr_storage()
-  op.sockAddrLen = SockLen(sizeof(op.sockAddr))
-  op.peer = peer
   enqueueOp(op)
 
 proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
@@ -294,9 +295,8 @@ proc submitConnect*(fd: cint; sa: Sockaddr_storage; saLen: SockLen;
   ## default for it.
   result = nextSeqNum()
   var op = OpContext(kind: opConnect, fd: fd, seqnum: result,
+    connect: IoAddr(sockAddr: sa, sockAddrLen: saLen),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
-  op.sockAddr = sa
-  op.sockAddrLen = saLen
   enqueueOp(op)
 
 proc submitRecvFrom*(fd: cint; buf: pointer; len: int; deadline: Deadline;
@@ -311,11 +311,12 @@ proc submitRecvFrom*(fd: cint; buf: pointer; len: int; deadline: Deadline;
   ## receives the datagram. It is written only when the receive succeeds and
   ## it must outlive the op, like `submitAccept`'s `peer`.
   result = nextSeqNum()
-  var op = OpContext(kind: opRecvFrom, fd: fd, seqnum: result, buf: buf, len: len,
+  var op = OpContext(kind: opRecvFrom, fd: fd, seqnum: result,
+    recvfrom: RecvFromArgs(buf: buf, len: len,
+                           sockAddr: Sockaddr_storage(),
+                           sockAddrLen: SockLen(sizeof(Sockaddr_storage)),
+                           peer: peer),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
-  op.sockAddr = Sockaddr_storage()
-  op.sockAddrLen = SockLen(sizeof(op.sockAddr))
-  op.peer = peer
   enqueueOp(op)
 
 proc submitSendTo*(fd: cint; buf: pointer; len: int; sa: Sockaddr_storage;
@@ -326,10 +327,9 @@ proc submitSendTo*(fd: cint; buf: pointer; len: int; sa: Sockaddr_storage;
   ## sent, or a negative result. The address is copied into the op, so it does
   ## not need to outlive the call the way `submitConnect`'s does.
   result = nextSeqNum()
-  var op = OpContext(kind: opSendTo, fd: fd, seqnum: result, buf: buf, len: len,
+  var op = OpContext(kind: opSendTo, fd: fd, seqnum: result,
+    sendto: SendToArgs(buf: buf, len: len, sockAddr: sa, sockAddrLen: saLen),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
-  op.sockAddr = sa
-  op.sockAddrLen = saLen
   enqueueOp(op)
 
 proc submitPollAdd*(fd: cint; deadline: Deadline;

@@ -153,66 +153,43 @@ type
       ## `opPollAdd` the fired directions encoded as a bit mask, which
       ## `readyEvents` decodes into `IoEvents`.
 
-  OpContext* = object
-    kind*: IoOp
-    fd*: FileHandle
-    seqnum*: SeqNum
+  OpBuf* = object
+    ## A caller-owned buffer and its byte count: the entire payload of the
+    ## single-buffer transfers `opRead` and `opWrite`. Spelled once, as its own
+    ## type — each branch names its own field of it — so neither op ever pays
+    ## for, or can see, the other's fields or any other op's.
+    ##
+    ## The buffer is borrowed, never copied: the backend reads or writes it at
+    ## issue and completion time, long after the submit returned, so it must
+    ## outlive the op — the caller's frame is parked for the duration (the same
+    ## contract as `submitRead`'s docstring). An owning `seq` inside `OpContext`
+    ## would be shared across lanes for no reason.
     buf*: nil pointer
+      ## The transfer buffer.
     len*: int
-    openFlags*: int32
-      ## opOpen only: what the backend's open needs as arguments. The caller
-      ## translates `FileMode` into the platform's bits before submitting: on
-      ## POSIX the O_* flags, on Windows the Win32 `desiredAccess` (a
-      ## truncating table, so the value is an int32 bit-pattern the backend
-      ## widens back via `cast[uint32]`).
-    openMode*: int32
-      ## opOpen only: the mode argument. POSIX reads it only when the flags
-      ## create the file, but the value is carried anyway so the backend has
-      ## nothing to decide. On Windows it carries the Win32
-      ## `creationDisposition` the same way.
-    sockDomain*: int32
-      ## opSocket only: the `domain` argument passed to socket(2). The caller
-      ## picks the platform's AF_* constant before submitting.
-    sockType*: int32
-      ## opSocket only: the `type` argument (platform SOCK_* constant).
-    sockProtocol*: int32
-      ## opSocket only: the `protocol` argument (platform IPPROTO_* constant).
-    optLevel*: int32
-      ## opSetSockOpt only: the `level` argument (platform SOL_* constant).
-    optName*: int32
-      ## opSetSockOpt only: the `optname` argument. What the option is, and
-      ## whether it is a flag or a value, is entirely the caller's business —
-      ## the backend just forwards `optVal`/`optLen` to setsockopt(2).
-    optVal*: nil pointer
-      ## opSetSockOpt only: the option value's bytes. The value does not have
-      ## to outlive the submit: these ops are completed synchronously by the
-      ## polling thread before the flag is set, so the submitter's stack is
-      ## still live when the platform call happens.
-    optLen*: SockLen
-      ## opSetSockOpt only: how many bytes `optVal` has.
-    cont*: Continuation
-    res*: int
-    deadline*: Deadline
-      ## When this op stops being worth waiting for. `never` is legal and has
-      ## to be spelled. Every op carries one, which is what makes "nothing
-      ## parks forever" a property of the ring rather than a habit of its
-      ## callers.
-    pollMask*: IoEvents
-      ## opPollAdd only: the direction(s) the caller actually waits for.
-      ## Without it a readiness probe has to arm both directions, and a caller
-      ## waiting to READ is woken every time the fd is merely WRITABLE — which,
-      ## for a socket, is almost always. Since the op is oneshot, that caller's
-      ## re-arm turns into a hot spin.
+      ## Its byte count.
+
+  IoAddr* = object
+    ## A socket address and its length: the entire payload of the
+    ## caller-supplied addressing ops `opConnect` and `opBind`, which carry
+    ## exactly these two fields and nothing else. The address is copied into
+    ## the op by `submitConnect`/`submitBind`, so — unlike a transfer buffer —
+    ## it need not outlive the call: the backend reads it at issue time and the
+    ## kernel never keeps it.
     sockAddr*: Sockaddr_storage
-      ## `opAccept` has the kernel fill this in (the connecting peer);
-      ## `opRecvFrom` has it filled in as the datagram's source; `opConnect`,
-      ## `opSendTo` and `opBind` supply it as the target. None of them coexist
-      ## on one op, so they share the storage rather than paying for four.
+    sockAddrLen*: SockLen
+
+  AcceptArgs* = object
+    ## `opAccept` only. The kernel fills `sockAddr` in as the connecting peer
+    ## while the accept runs; `peer`, when given, is where the completed
+    ## address is copied. Accepting without a peer is legal — the address is
+    ## simply dropped for a caller that does not care who connected.
+    sockAddr*: Sockaddr_storage
     sockAddrLen*: SockLen
     peer*: nil ptr Sockaddr_storage
-      ## `opAccept` and `opRecvFrom`: where to copy `sockAddr` when the op
-      ## completes, or `nil` for a caller that does not care who connected /
-      ## where the datagram came from.
+      ## `nil` for a caller that does not care who connected. Written only when
+      ## the accept succeeds, and must outlive the op: the completion writes
+      ## through it from whichever lane ran the accept.
       ##
       ## An out-parameter rather than a field on `IoCompletion`, for the same
       ## reason `res` is one: a completion is 24 bytes and there are `CqSize`
@@ -223,6 +200,139 @@ type
       ## No matching length out-parameter: `ss_family` says how to read the
       ## bytes, and a length that only ever restates the family is a second
       ## name for one fact and hence one of them that can be wrong.
+
+  RecvFromArgs* = object
+    ## `opRecvFrom` only: a datagram's buffer, the source address the kernel
+    ## fills in as part of the receive, and where to copy it — the one op that
+    ## both transfers bytes and answers "where did this come from".
+    buf*: nil pointer
+      ## The datagram's buffer (the `OpBuf` contract).
+    len*: int
+    sockAddr*: Sockaddr_storage
+      ## Filled in by the kernel as the datagram's source.
+    sockAddrLen*: SockLen
+    peer*: nil ptr Sockaddr_storage
+      ## Where to copy `sockAddr` when the receive completes, or `nil` for a
+      ## caller that does not care where the datagram came from. Same
+      ## out-parameter rationale as `AcceptArgs.peer`.
+
+  SendToArgs* = object
+    ## `opSendTo` only: a datagram's buffer and the caller-supplied target
+    ## address, which is copied into the op so it does not need to outlive the
+    ## submit.
+    buf*: nil pointer
+    len*: int
+    sockAddr*: Sockaddr_storage
+    sockAddrLen*: SockLen
+
+  OpenArgs* = object
+    ## `opOpen` only: the path to open and the arguments the backend's open
+    ## needs. The path is read by the backend at issue time and is never given
+    ## a copy, so it must outlive the op — the caller's frame is parked for
+    ## the duration (the same contract as every other borrowed buffer).
+    buf*: nil pointer
+      ## The path to open.
+    len*: int
+      ## The path's byte count.
+    openFlags*: int32
+      ## What the backend's open needs as arguments. The caller translates
+      ## `FileMode` into the platform's bits before submitting: on POSIX the
+      ## O_* flags, on Windows the Win32 `desiredAccess` (a truncating table,
+      ## so the value is an int32 bit-pattern the backend widens back via
+      ## `cast[uint32]`).
+    openMode*: int32
+      ## The mode argument. POSIX reads it only when the flags create the file,
+      ## but the value is carried anyway so the backend has nothing to decide.
+      ## On Windows it carries the Win32 `creationDisposition` the same way.
+
+  OpContext* = object
+    ## One in-flight operation, as the backends hand it to the kernel.
+    ##
+    ## A sum type, and a strict one: the fields above the `case` are common to
+    ## *every* op — the fd/identity, the resume, and the bound on how long any
+    ## of them may wait — and everything else lives in the branch of the op
+    ## that actually uses it. Each kind carries exactly its own payload and no
+    ## other kind's: a read holds a buffer, a connect holds an address, and
+    ## each is invisible to the other because in this layout the other's fields
+    ## do not exist. Where two kinds genuinely need the same bytes they share a
+    ## payload *type* (`opRead`/`opWrite` each hold an `OpBuf`;
+    ## `opConnect`/`opBind` each hold an `IoAddr`) — a matter of definition,
+    ## not a union hiding fields some branch never uses.
+    fd*: FileHandle
+      ## The fd the op works on, or `-1` for the fd-less kinds (nop, timeout,
+      ## open, socket). Also the slot arena's key: every op is linked into the
+      ## per-fd list keyed by this, the fd-less ones sharing the `-1` bucket.
+    seqnum*: SeqNum
+    cont*: Continuation
+    res*: int
+    deadline*: Deadline
+      ## When this op stops being worth waiting for. `never` is legal and has
+      ## to be spelled. Every op carries one, which is what makes "nothing
+      ## parks forever" a property of the ring rather than a habit of its
+      ## callers.
+    case kind*: IoOp
+    of opNop, opTimeout, opSetNonBlocking:
+      ## The payload-less ops: a nop completes `0` on arrival, a timer is
+      ## nothing but its deadline (the heap IS the wait), and a non-blocking
+      ## fcntl answers on the polling thread.
+      discard
+    of opRead:
+      read*: OpBuf
+        ## The buffer to fill. An opRead never carries an address, a path or
+        ## any other op's fields.
+    of opWrite:
+      write*: OpBuf
+        ## The buffer to drain.
+    of opOpen:
+      open*: OpenArgs
+        ## The path (as the "buffer") and the open arguments; see `OpenArgs`.
+    of opAccept:
+      accept*: AcceptArgs
+        ## Kernel-filled connecting peer and the caller's copy target; see
+        ## `AcceptArgs`.
+    of opRecvFrom:
+      recvfrom*: RecvFromArgs
+        ## The datagram buffer and the kernel-filled source; see
+        ## `RecvFromArgs`.
+    of opSendTo:
+      sendto*: SendToArgs
+        ## The datagram buffer and the target address; see `SendToArgs`.
+    of opConnect:
+      connect*: IoAddr
+        ## The target address; see `IoAddr`.
+    of opBind:
+      bindTo*: IoAddr
+        ## The address to bind to; see `IoAddr`. Named `bindTo` — `bind` is a
+        ## Nim keyword, so it cannot be the field's identifier.
+    of opSocket:
+      sockDomain*: int32
+        ## opSocket only: the `domain` argument passed to socket(2). The caller
+        ## picks the platform's AF_* constant before submitting.
+      sockType*: int32
+        ## opSocket only: the `type` argument (platform SOCK_* constant).
+      sockProtocol*: int32
+        ## opSocket only: the `protocol` argument (platform IPPROTO_* constant).
+    of opSetSockOpt:
+      optLevel*: int32
+        ## opSetSockOpt only: the `level` argument (platform SOL_* constant).
+      optName*: int32
+        ## opSetSockOpt only: the `optname` argument. What the option is, and
+        ## whether it is a flag or a value, is entirely the caller's business —
+        ## the backend just forwards `optVal`/`optLen` to setsockopt(2).
+      optVal*: nil pointer
+        ## opSetSockOpt only: the option value's bytes. The value does not have
+        ## to outlive the submit: these ops are completed synchronously by the
+        ## polling thread before the flag is set, so the submitter's stack is
+        ## still live when the platform call happens.
+      optLen*: SockLen
+        ## opSetSockOpt only: how many bytes `optVal` has.
+    of opPollAdd:
+      pollMask*: IoEvents
+        ## opPollAdd only: the direction(s) the caller actually waits for.
+        ## Without it a readiness probe has to arm both directions, and a caller
+        ## waiting to READ is woken every time the fd is merely WRITABLE — which,
+        ## for a socket, is almost always. Since the op is oneshot, that caller's
+        ## re-arm turns into a hot spin.
 
 proc toEventMask*(events: IoEvents): int {.inline.} =
   ## Encode `events` for the plain `int` channels a completion travels through

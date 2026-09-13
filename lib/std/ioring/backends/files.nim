@@ -109,8 +109,8 @@ when defined(windows):
       let s = addr gSlots[lane].slots[j]
       case s.op.kind
       of opRead:
-        completeFileRead(j, fd, cast[pointer](s.op.buf), s.op.len)
+        completeFileRead(j, fd, cast[pointer](s.op.read.buf), s.op.read.len)
       of opWrite:
-        completeFileWrite(j, fd, cast[pointer](s.op.buf), s.op.len)
+        completeFileWrite(j, fd, cast[pointer](s.op.write.buf), s.op.write.len)
       else:
         discard
