@@ -178,8 +178,13 @@ func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
   ## Copies an array into a new sequence (`@[1,2]` builds `seq` literals via array constructors).
   result = newSeqUninit[T](a.len)
   if result.data != nil:
+    # The bound is the ARRAY's length, not the seq's: `a.len` is a compile-time
+    # constant and bounds `a[i]`, where `result.len` says nothing about the
+    # array's index range. The two are equal on this path — `data != nil` means
+    # the allocation of `a.len` elements succeeded — so this is the same loop,
+    # stated so that the index is provable.
     var i = 0
-    while i < result.len:
+    while i < a.len:
       (result.data[i]) = `=dup`(a[i])
       inc i
 

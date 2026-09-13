@@ -961,25 +961,23 @@ proc impliesHere(c: var FirContext; fact: LeXplusC): bool =
     return c.declaredRange.getOrQuit(fact.a).hi <= fact.c
   result = false
 
-proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
-  ## Emit and discharge the `lo <= value <= hi` obligation for a value bound to a
-  ## `range[lo..hi]`-typed target. Value conversions are handled at the
-  ## conversion site (see the `ConvX`/`HconvX` case in `traverseExpr`), so we
-  ## skip them here to avoid double-reporting.
-  if value.exprKind in {ConvX, HconvX, CastX, BaseobjX}: return
-  var lo = zero()
-  var hi = zero()
-  if not staticRangeBounds(targetType, lo, hi): return
-  # A bound that coincides with the base type's own is nothing to prove.
-  var baseLo = zero()
-  var baseHi = zero()
-  var needLo = true
-  var needHi = true
-  if baseTypeBounds(targetType, c.bits, baseLo, baseHi):
-    needLo = lo > baseLo
-    needHi = hi < baseHi
-  if not needLo and not needHi: return
+proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string) =
+  ## The "cannot prove" half of a range obligation, which not every caller
+  ## wants to hear. An array index outside `staticContracts` states nothing the
+  ## programmer must discharge — the bound check simply stays — so it asks for
+  ## silence here. A *disproof* (a literal outside the range) is not routed
+  ## through this and is always reported.
+  if report: buildErr c, info, msg
 
+proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
+                  needLo, needHi: bool; reportUnprovable = true) =
+  ## Discharge `lo <= value <= hi` from what is known here. The obligation's
+  ## bounds are parameters rather than a type, because the two things that carry
+  ## one are not both types: an assignment takes them from the target's
+  ## `range[lo..hi]` (`checkRangeAssign`), an array index from the index range
+  ## the `(arrat …)` node carries (`analyseArrAt`). Everything below — the
+  ## structural answers for `a + k`, `a - b`, `a shr k`, `a and k`, a call's
+  ## `.ensures`, a literal — is the same question either way.
   # 1. The value's own *declared type* may already be a `range` that fits: a
   #    subset `range[aLo..aHi]` with `lo <= aLo` and `aHi <= hi` is provably in
   #    range. This is the type acting as its own proof (proper subtyping such as
@@ -1024,7 +1022,7 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
         if (not needLo or impliesHere(c, lower0)) and
            (not needHi or impliesHere(c, upper0)):
           return
-        buildErr c, value.info, "cannot prove '" & asNimCode(baseSym) &
+        cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(baseSym) &
           "' stays in range " & $lo & ".." & $hi
         return
 
@@ -1072,7 +1070,7 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
         else: maskOrShift <= hi
       if (not needLo or leftNonNeg) and upperOk:
         return
-      buildErr c, value.info, "cannot prove '" & asNimCode(value) &
+      cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(value) &
         "' is in range " & $lo & ".." & $hi
       return
     discard leftOp
@@ -1099,7 +1097,7 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
          (impliesHere(c, zeroLeft) and impliesHere(c, loRight)) or
          (impliesHere(c, zeroRight) and impliesHere(c, loLeft)):
         return
-      buildErr c, value.info, "cannot prove '" & asNimCode(value) &
+      cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(value) &
         "' is in range " & $lo & ".." & $hi
       return
 
@@ -1121,7 +1119,7 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
       if (not needLo or impliesHere(c, lower)) and
          (not needHi or impliesHere(c, upper)):
         return
-      buildErr c, value.info, "cannot prove '" & asNimCode(value) &
+      cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(value) &
         "' is in range " & $lo & ".." & $hi
       return
 
@@ -1143,7 +1141,7 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
       v = getVarId(c, sym)
     else:
       # A value we cannot model cannot be proven in range, so we reject it.
-      buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
+      cannotProve c, value.info, reportUnprovable, "cannot prove value is in range " & $lo & ".." & $hi
       return
 
   # lo <= v + off   <=>   0 <= v + (off - lo)
@@ -1155,10 +1153,30 @@ proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
     if isLit:
       buildErr c, value.info, "value out of range: " & $off & " notin " & $lo & ".." & $hi
     elif sym != NoSymId:
-      buildErr c, value.info, "cannot prove '" & asNimCode(sym) &
+      cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(sym) &
         "' is in range " & $lo & ".." & $hi
     else:
-      buildErr c, value.info, "cannot prove value is in range " & $lo & ".." & $hi
+      cannotProve c, value.info, reportUnprovable, "cannot prove value is in range " & $lo & ".." & $hi
+
+proc checkRangeAssign(c: var FirContext; targetType, value: Cursor) =
+  ## Emit and discharge the `lo <= value <= hi` obligation for a value bound to a
+  ## `range[lo..hi]`-typed target. Value conversions are handled at the
+  ## conversion site (see the `ConvX`/`HconvX` case in `traverseExpr`), so we
+  ## skip them here to avoid double-reporting.
+  if value.exprKind in {ConvX, HconvX, CastX, BaseobjX}: return
+  var lo = zero()
+  var hi = zero()
+  if not staticRangeBounds(targetType, lo, hi): return
+  # A bound that coincides with the base type's own is nothing to prove.
+  var baseLo = zero()
+  var baseHi = zero()
+  var needLo = true
+  var needHi = true
+  if baseTypeBounds(targetType, c.bits, baseLo, baseHi):
+    needLo = lo > baseLo
+    needHi = hi < baseHi
+  if not needLo and not needHi: return
+  checkInRange c, value, lo, hi, needLo, needHi
 
 proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
   ## Record that a `range[lo..hi]`-typed parameter holds a value within its
@@ -1179,8 +1197,37 @@ proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
 
 # --- Fact extraction from conditions ---
 
+proc foldableArith(n: Cursor; depth: int): bool =
+  ## Is `n` a closed arithmetic expression over integer literals — no symbol, no
+  ## call, nothing to look up? Only then is the const evaluator asked.
+  ##
+  ## Not an optimisation: `expreval.eval` is written for expressions sem has
+  ## already accepted as constant, and it *asserts* rather than declines on a
+  ## shape it does not model (`(dconv …)` over a distinct type is one, and
+  ## `tests/nimony/sysbasics/tdistincts.nim` walked straight into it). Handing
+  ## it only literal-leaf arithmetic is what keeps the fold total.
+  if depth > 6: return false
+  case n.kind
+  of IntLit, UIntLit, CharLit: return true
+  of TagLit: discard
+  else: return false
+  case n.exprKind
+  of AddX, SubX, MulX:
+    var r = sub(n)
+    skip r # the type operand
+    result = foldableArith(r, depth+1)
+    if result:
+      skip r
+      result = foldableArith(r, depth+1)
+  of ConvX, HconvX:
+    var r = sub(n)
+    skip r # the target type
+    result = foldableArith(r, depth+1)
+  else:
+    result = false
+
 proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
-  ## True when `n` is a `Symbol` standing for a compile-time ordinal.
+  ## True when `n` is a compile-time ordinal.
   ##
   ## A `const` survives into the Final IR as a plain `Symbol`, so a guard
   ## written against a named bound — `if i <= MaxLabel:` — used to record a
@@ -1188,8 +1235,16 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
   ## guard spelled `if i <= 255:` proved instantly. Folding it here is what
   ## makes the named form work. `tryEvalOrdinal` answers NaN for anything that
   ## is not constant, so an ordinary variable still takes the symbol path.
+  ##
+  ## Not only a symbol: an arithmetic expression over constants is one too, and
+  ## that is what an array's `len` is. Sem folds `a.len` to `(hi - lo) + 1` over
+  ## the index range's own literals rather than to a single number, so the bound
+  ## of `while i < a.len` arrives here as a three-node tree — and until it folds,
+  ## the most ordinary array loop there is proves nothing about its index. The
+  ## evaluator is asked only for the shapes a constant can have, so an ordinary
+  ## `i + 1` costs a tag test rather than an evaluator run.
   result = false
-  if n.kind != Symbol: return
+  if n.kind != Symbol and not foldableArith(n, 0): return
   val = tryEvalOrdinal(c.bits, n)
   result = not val.isNaN
 
@@ -1200,7 +1255,7 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool 
     fact.b = VarId(0)
     fact.c = fact.c + cval
     result = true
-    inc pc
+    skip pc
   elif pc.exprKind in {AddX, SubX}:
     # The sign matters: `i <= s.len - 2` recorded as `i <= s.len + 2` is a
     # different fact, and once `s.len` became a location the engine can name
@@ -1347,7 +1402,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
   elif (var lval = createXint(0'i32); constOrdinal(c, r, lval)):
     result.a = VarId(0)
     result.c = -lval
-    inc r
+    skip r
   elif (let la = plainLocationVarId(c, r); la != InvalidVarId):
     result.a = la
     analyseIfDerived(c, r)
@@ -1934,6 +1989,64 @@ proc analyseTupConstr(c: var FirContext; n: var Cursor) =
       skip n
       skip expected # type of the next field
 
+proc arrayBound(c: var FirContext; n: Cursor; res: var xint): bool =
+  ## A bound operand of `(arrat …)`: an integer literal, or anything the const
+  ## evaluator folds — a generic array's `N` arrives here as a `const`, and an
+  ## ordinal index range (`array['a'..'z', int]`) as a char.
+  case n.kind
+  of IntLit:
+    res = createXint(n.intVal)
+    result = true
+  of UIntLit:
+    res = createXint(n.uintVal)
+    result = true
+  else:
+    res = tryEvalOrdinal(c.bits, n)
+    result = not res.isNaN
+
+proc checkIndexInBounds(c: var FirContext; idx, bounds: Cursor) =
+  ## `bounds` points at the `hi [lo]` operands of an `(arrat …)`.
+  ##
+  ## Split out of `analyseArrAt` because the two are different jobs — the walk
+  ## reads the node, this judges what it read — and originally for a second
+  ## reason that no longer applies: `checkInRange` takes two `xint`s and a
+  ## `Cursor` by value, and marshalling three aggregates at a call that also had
+  ## the walk's own cursors live was more than arkham's x64 allocator could place
+  ## ("out of registers for a clobber-exposed aggregate call argument", nativenif
+  ## `takeParked`). Keeping them in separate frames is still the clearer shape.
+  var hi = zero()
+  if not arrayBound(c, bounds, hi): return
+  var lo = zero()
+  var r = bounds
+  skip r
+  if r.hasMore and not arrayBound(c, r, lo): return
+  checkInRange c, idx, lo, hi, needLo = true, needHi = true,
+               reportUnprovable = StaticContractsFeature in c.features
+
+proc analyseArrAt(c: var FirContext; pc: var Cursor) =
+  ## `(arrat arr idx [hi [lo]])`. The bounds sem attached ARE the obligation:
+  ## they are exactly what `hexer/desugar.trArrAt` turns into the
+  ## `nimIcheckAB(i, lo, hi)` call, so discharging one here is discharging that
+  ## call. A node carrying none indexes something unchecked (an
+  ## `UncheckedArray`, a pointer) and states nothing to prove.
+  ##
+  ## An index that cannot be proven is not an error by itself — the bound check
+  ## stays and catches it at run time — so only `{.feature: "staticContracts".}`
+  ## demands the proof. An index that is *disproven* (a literal outside the
+  ## range) is an error either way. That is the same three-way answer
+  ## `checkRequires` gives a `.requires`, and `runtimeContracts` (which `v2`
+  ## implies) opts out of the judgement here for the same reason it does there.
+  pc.into:
+    traverseExpr c, pc            # the array operand
+    let idx = pc
+    traverseExpr c, pc            # the index
+    # On a path control cannot reach the facts are not merely weak but
+    # contradictory, and an obligation judged against them could report a
+    # correct index as a violation. `checkRequires` bails for the same reason.
+    if pc.hasMore and c.tr.live and RuntimeContractsFeature notin c.features:
+      checkIndexInBounds c, idx, pc
+    while pc.hasMore: skip pc
+
 proc traverseExpr(c: var FirContext; pc: var Cursor) =
   case pc.kind
   of Symbol:
@@ -1973,6 +2086,8 @@ proc traverseExpr(c: var FirContext; pc: var Cursor) =
       pc.into:
         wantNotNilDeref c, pc
         traverseExpr c, pc
+    of ArratX:
+      analyseArrAt c, pc
     of OconstrX, NewobjX:
       analyseOconstr c, pc
     of AconstrX:
