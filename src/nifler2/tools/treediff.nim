@@ -138,6 +138,7 @@ proc sameAtom(a, b: Tok): bool = a.kind == b.kind and a.text == b.text
 
 var checkLineInfo = false
 var checkBytes = false
+var checkDeps = false
 
 proc positionDiff(a: seq[Tok]; ai: int; b: seq[Tok]; bi: int; path: string;
                   diffs: var seq[Diff]) =
@@ -215,7 +216,8 @@ type
 
 proc run(tool, input, output: string): bool =
   # nimony runs nifler with `--portablePaths`; nifler2 always writes that way
-  let flags = if tool.endsWith("nifler"): " --portablePaths" else: ""
+  var flags = if tool.endsWith("nifler"): " --portablePaths" else: ""
+  if checkDeps: flags.add " --deps"
   let (_, code) = execCmdEx(quoteShell(tool) & flags & " p " & quoteShell(input) & " " &
                             quoteShell(output))
   code == 0 and fileExists(output)
@@ -225,6 +227,8 @@ proc check(input, tmp: string; diffs: var seq[Diff]): Outcome =
   let o2 = tmp / "nifler2.nif"
   removeFile o1
   removeFile o2
+  removeFile tmp / "nifler.deps.nif"
+  removeFile tmp / "nifler2.deps.nif"
   let ok1 = run("bin/nifler", input, o1)
   let ok2 = run("bin/nifler2", input, o2)
   if not ok1 and not ok2: return BothReject
@@ -236,6 +240,18 @@ proc check(input, tmp: string; diffs: var seq[Diff]): Outcome =
     diffs = @[Diff(path: "", want: "", got: e.msg, sig: "unreadable output")]
     return Unreadable
   result = if diffs.len == 0: Same else: Different
+  if result == Same and checkDeps:
+    let x = (try: readFile(tmp / "nifler.deps.nif") except IOError: "<missing>")
+    let y = (try: readFile(tmp / "nifler2.deps.nif") except IOError: "<missing>")
+    if x != y:
+      var i = 0
+      while i < min(x.len, y.len) and x[i] == y[i]: inc i
+      let lo = max(0, i - 30)
+      diffs = @[Diff(path: "deps byte " & $i,
+                     want: escape(x.substr(lo, i + 30)),
+                     got: escape(y.substr(lo, i + 30)),
+                     sig: "deps differ: " & escape(x.substr(max(0, i - 6), i + 6)))]
+      return Different
   if result == Same and checkBytes:
     let x = readFile(o1)
     let y = readFile(o2)
@@ -333,6 +349,7 @@ proc main =
     let a = paramStr(i)
     if a == "--sweep": sweepMode = true
     elif a == "--lineinfo": checkLineInfo = true
+    elif a == "--deps": checkDeps = true
     elif a == "--bytes":
       checkLineInfo = true
       checkBytes = true

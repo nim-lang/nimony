@@ -1282,6 +1282,34 @@ else for many:
   empty discriminator of a bare object `case` has an empty node's, written
   as `~1,,???`.
 
+## Stage 6: the deps file
+
+`nifler2 --deps p file.nim out.nif` also writes `out.deps.nif`, and
+`nifler2 deps` writes only that; both are byte-identical to `nifler`'s on
+every corpus file whose main output is (`treediff --sweep --bytes --deps`).
+
+bridge.nim produces the deps file *while* it translates, into a second
+builder with positions off. Everything it looks at is in the finished tree, so
+here it is a walk over the buffer (`writeDeps` in `niflerout.nim`):
+
+* `import`, `importexcept`, `fromimport`, `include`, `export` and
+  `exportexcept` are copied wherever they occur, a proc body included;
+* inside `when` branches each carries a `(when COND...)` marker after its tag,
+  an `else` contributing `(prefix not COND)` for every earlier condition --
+  an object's `when` does not count, bridge.nim only tracks `nkWhenStmt`;
+* `{.plugin: "name".}` becomes `(plugin (when...)? "name")`, the name written
+  as a plain string even when the source has a raw one;
+* nothing under a `runnableExamples` call counts.
+
+Both outputs are written only if they changed, like nifler's `OnlyIfChanged`:
+nimony's incremental build relies on an untouched `.p.nif` keeping its
+modification time, so a `touch` does not re-run `nimsem`.
+
+The command line takes what nimony passes -- `--portablePaths`, `--deps`,
+`-f`, options before or after the command -- and names the outputs as nifler
+does. End to end, a toolchain with nifler2 installed as `nifler` builds and
+runs 79 tests from 15 directories with the same output as the normal one.
+
 ## Staging
 
 1. `src/nifler2/deps/parsegen.nim` — the mini-language front end, FIRST/FOLLOW

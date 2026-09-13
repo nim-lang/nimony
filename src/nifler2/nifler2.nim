@@ -14,13 +14,20 @@
 ##   bin/nimony c src/nifler2/nifler2.nim
 ##   nifler2 p file.nim [out.nif]
 
-import std / [syncio, cmdline, assertions, os]
+import std / [syncio, assertions, os, parseopt]
 import nimparser, niflerout
 
 const Usage = """nifler2 - Nim to NIF
 Usage:
-  nifler2 p|parse file.nim [out.nif]   parse one file, write NIF
-  nifler2 t|tree file.nim              parse one file, print the tree
+  nifler2 [options] p|parse file.nim [out.nif]   parse one file, write NIF
+  nifler2 [options] deps file.nim [out.nif]      write only the deps file
+  nifler2 t|tree file.nim                        parse one file, print the tree
+
+Options:
+  --portablePaths   accepted; paths are always written relative to the
+                    current directory, as `nifler --portablePaths` does
+  --deps            also write <out>.deps.nif, the module's dependencies
+  --force, -f       accepted; the output is always rewritten
 """
 
 proc parse(p: var Parser; inp: string) {.raises.} =
@@ -36,25 +43,39 @@ proc report(p: Parser): bool =
   for e in p.errors: echo e
   p.lex.errors.len == 0 and p.errors.len == 0
 
-proc withoutExt(s: string): string =
-  var i = s.len - 1
-  while i > 0 and s[i] != '.' and s[i] != '/': dec i
-  if i > 0 and s[i] == '.': s.substr(0, i-1) else: s
-
 proc main {.raises.} =
-  if paramCount() < 2: quit Usage
-  let cmd = paramStr(1)
-  let inp = paramStr(2)
-  case cmd
-  of "p", "parse":
+  var action = ""
+  var args: seq[string] = @[]
+  var deps = false
+  for kind, key, val in getopt():
+    case kind
+    of cmdArgument:
+      if action.len == 0: action = key
+      else: args.add key
+    of cmdLongOption, cmdShortOption:
+      case key
+      of "portablePaths", "portablepaths", "force", "f": discard
+      of "deps": deps = true
+      of "help", "h": quit Usage
+      else: quit "nifler2: unsupported option: " & key
+    of cmdEnd: discard
+  if args.len == 0: quit Usage
+  let inp = args[0]
+  case action
+  of "p", "parse", "deps":
     var p = openParser("", inp)
     parse p, inp
     let ok = report(p)
-    let outp = if paramCount() >= 3: paramStr(3) else: withoutExt(inp) & ".nif"
-    # nimony runs nifler with `--portablePaths`: the file is written relative
-    # to the current directory
-    writeNifler(p.dest, outp, relativePath(absolutePath(inp), getCurrentDir(), '/'))
     if not ok: quit 1
+    # nifler's naming: `out.nif` as given (an extension added if missing), else
+    # the input with `.nif`; the deps file replaces that extension
+    let outp = if args.len >= 2: addFileExt(args[1], "nif") else: changeFileExt(inp, ".nif")
+    if action != "deps":
+      # nimony runs nifler with `--portablePaths`: the file is written relative
+      # to the current directory
+      writeNifler(p.dest, outp, relativePath(absolutePath(inp), getCurrentDir(), '/'))
+    if deps or action == "deps":
+      writeDeps(p.dest, changeFileExt(outp, ".deps.nif"))
   of "t", "tree":
     var p = openParser("", inp)
     parse p, inp

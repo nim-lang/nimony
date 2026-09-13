@@ -35,16 +35,29 @@ import std / [syncio, assertions]
 import ".." / lib / [nifbuilder, nifpools]
 import parserrt
 
+proc writeIfChanged(path, content: string) {.raises.} =
+  ## nifler's `OnlyIfChanged`: an output that would come out the same is left
+  ## alone, so its modification time does not change and nimony does not
+  ## re-run `nimsem` after a `touch` or a comment-only edit.
+  var old = ""
+  try:
+    old = readFile(path)
+  except:
+    old = ""                 # no previous output
+  if old != content or old.len == 0:
+    writeFile(path, content)
+
 type
   Writer = object
     b: Builder
     file: string          ## the root's file, as it is written
     rootFile: FileId
+    noLineInfo: bool      ## the deps file carries no positions
 
 proc lineInfo(w: var Writer; info, reference: NifLineInfo) =
   ## bridge.nim's `relLineInfo`: absolute with the file at the root, else the
   ## difference to the reference, and nothing when that is zero.
-  if not info.file.isValid: return
+  if w.noLineInfo or not info.file.isValid: return
   if not reference.file.isValid or info.file != reference.file:
     # absolute, with the file: the root, and an empty node's `???`
     let name = if info.file == w.rootFile: w.file else: pool.filenames[info.file]
@@ -186,4 +199,132 @@ proc writeNifler*(buf: var TokenBuf; outfile, file: string) {.raises.} =
   while c.hasMore:
     emit(w, c, NoLineInfo, "", false)
   endRead c
-  writeFile(outfile, w.b.extract())
+  writeIfChanged(outfile, w.b.extract())
+
+# --------------------------------------------------------------- deps file
+#
+# `nifler --deps` writes a second file next to the parsed module: the module's
+# dependencies, which is what nimony's build graph is made of. bridge.nim
+# emits it while it translates, into a second builder with positions off;
+# everything it needs is in the finished tree, so here it is a walk over that.
+#
+# * `import`, `importexcept`, `fromimport`, `include`, `export` and
+#   `exportexcept` are copied wherever they occur, a proc body included.
+# * Inside the branches of a `when` each of them carries a `(when COND...)`
+#   marker right after its tag: the conditions of every enclosing branch, an
+#   `else` branch contributing `(prefix not COND)` for each earlier condition
+#   -- so the dependency scanner can skip what is statically dead.
+# * `{.plugin: "name".}` is `(plugin (when...)? "name")`: a program the build
+#   has to produce before the module can be checked.
+# * Nothing inside `runnableExamples` counts.
+
+const DepTags = ["import", "importexcept", "fromimport", "include", "export",
+                 "exportexcept"]
+
+type
+  WhenCond = object
+    cond: Cursor
+    negated: bool
+
+  DepsWalker = object
+    w: Writer
+    conds: seq[WhenCond]
+
+proc whenMarker(d: var DepsWalker) =
+  if d.conds.len == 0: return
+  d.w.b.addTree "when"
+  for entry in d.conds:
+    var c = entry.cond
+    if entry.negated:
+      d.w.b.addTree "prefix"
+      d.w.b.addIdent "not"
+      emit(d.w, c, NoLineInfo, "", false)
+      d.w.b.endTree()
+    else:
+      emit(d.w, c, NoLineInfo, "", false)
+  d.w.b.endTree()
+
+proc firstChild(c: Cursor): Cursor {.inline.} = childCursor(c)
+
+proc isPlugin(kv: Cursor; name: var string): bool =
+  ## `plugin: "name"`; a raw or triple-quoted string is written plain.
+  if kv.kind != TagLit or tagName(kv) != "kv": return false
+  var k = childCursor(kv)
+  if k.kind != Ident or strVal(k) != "plugin": return false
+  skip k
+  if not k.hasMore: return false
+  if k.kind == StrLit:
+    name = strVal(k)
+    return true
+  if k.kind == TagLit and tagName(k) == "suf":
+    let s = childCursor(k)
+    if s.kind == StrLit:
+      name = strVal(s)
+      return true
+  false
+
+proc walkDeps(d: var DepsWalker; c: Cursor; inObject: bool) =
+  if c.kind != TagLit: return
+  let tag = tagName(c)
+  if tag in DepTags:
+    d.w.b.addTree tag
+    d.whenMarker()
+    var k = childCursor(c)
+    while k.hasMore:
+      emit(d.w, k, NoLineInfo, tag, false)
+    d.w.b.endTree()
+    return
+  if tag in ["call", "cmd"]:
+    let f = firstChild(c)
+    if f.hasMore and f.kind == Ident and strVal(f) == "runnableExamples": return
+  if tag == "pragmas":
+    var k = childCursor(c)
+    while k.hasMore:
+      var name = ""
+      if isPlugin(k, name):
+        d.w.b.addTree "plugin"
+        d.whenMarker()
+        d.w.b.addStrLit name
+        d.w.b.endTree()
+      skip k
+    return
+  if tag == "when" and not inObject:
+    # `nkWhenStmt`: each branch's condition covers its body, and an `else`
+    # is covered by the negation of all of them
+    var prior: seq[Cursor] = @[]
+    var br = childCursor(c)
+    while br.hasMore:
+      if br.kind == TagLit and tagName(br) == "elif":
+        var k = childCursor(br)
+        let cond = k
+        walkDeps(d, k, inObject)
+        skip k
+        d.conds.add WhenCond(cond: cond, negated: false)
+        while k.hasMore:
+          walkDeps(d, k, inObject)
+          skip k
+        d.conds.setLen d.conds.len - 1
+        prior.add cond
+      else:
+        for cond in prior: d.conds.add WhenCond(cond: cond, negated: true)
+        walkDeps(d, br, inObject)
+        d.conds.setLen d.conds.len - prior.len
+      skip br
+    return
+  let nowInObject = inObject or tag == "object"
+  var k = childCursor(c)
+  while k.hasMore:
+    walkDeps(d, k, nowInObject)
+    skip k
+
+proc writeDeps*(buf: var TokenBuf; outfile: string) {.raises.} =
+  var d = DepsWalker(w: Writer(b: nifbuilder.open(1024), noLineInfo: true))
+  d.w.b.addHeader "Nifler", "nim-deps"
+  d.w.b.addTree "stmts"
+  var c = beginRead(buf)
+  while c.hasMore:
+    walkDeps(d, c, false)
+    skip c
+  endRead c
+  d.w.b.endTree()
+  writeIfChanged(outfile, d.w.b.extract())
