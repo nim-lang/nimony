@@ -205,7 +205,7 @@ proc addStateBranch(dest: var NifBuilder; dfa: Dfa; src: int;
                     st, ch, lastRule, lastPos: SymId; pos: NifCursor;
                     info: LineInfo; err: var string) =
   ## One `of <src>:` of the state machine.
-  let rule = getRule(dfa, state(dfa, src))
+  let rule = getRule(dfa, src)
   dest.withTree OfU, info:
     dest.withTree RangesU, info:
       dest.addIntLit src
@@ -224,18 +224,18 @@ proc addStateBranch(dest: var NifBuilder; dfa: Dfa; src: int;
       var sets: seq[set[char]] = @[]
       var singles: seq[char] = @[]
       var singleDests: seq[int] = @[]
-      for d in allDests(dfa, state(dfa, src)):
-        let (others, cs) = allTransitions(dfa, state(dfa, src), d)
+      for d in allDests(dfa, src):
+        let (others, cs) = allTransitions(dfa, src, d)
         for o in others:
           if o.kind == reChar:
             singles.add o.val
-            singleDests.add int(d)
+            singleDests.add d
           else:
             err = "a generated matcher cannot use anchors, word " &
                   "boundaries, captures or back references"
         if cs != {}:
           sets.add cs
-          dests.add int(d)
+          dests.add d
 
       if sets.len == 0 and singles.len == 0:
         dest.addBreak info
@@ -472,11 +472,7 @@ proc transform(n: NifCursor; name: string): NifBuilder =
   # `reNoCaptures` / `reNoBackrefs`: a generated matcher walks the DFA and has
   # nowhere to record a capture, so `(x)` here means grouping. `reExtended`
   # matches what `re` does at runtime, so a pattern reads the same either way.
-  let status = rulesToDfa(patterns, {reExtended, reNoCaptures, reNoBackrefs},
-                          dfa, err)
-  if status == TooComplex:
-    return errorTree("these `" & name & "` patterns need more than " &
-                     $MaxLabel & " automaton states; split them up", n)
+  rulesToDfa(patterns, {reExtended, reNoCaptures, reNoBackrefs}, dfa, err)
   if err.len > 0:
     return errorTree("invalid regular expression: " & err, n)
   if dfa.stateCount < 1 or dfa.startState < 1 or dfa.startState > dfa.stateCount:

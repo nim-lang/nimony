@@ -100,8 +100,7 @@ proc agreesWithRuntime =
 
 proc lexNimish(input: string): string =
   ## A lexer of realistic size: 18 keywords plus numbers, identifiers,
-  ## comments, operators and whitespace, all in ONE automaton. It is here to
-  ## keep an eye on the 255-state ceiling as much as on the tokens.
+  ## comments, operators and whitespace, all in ONE automaton.
   result = ""
   var pos = 0
   while pos < input.len:
@@ -131,6 +130,60 @@ proc realisticLexer =
   assert lexNimish("3.5 3 . 5") == "FN.N"
   echo "realistic lexer ok"
 
+proc nimKeyword(input: string): string =
+  ## Every Nim keyword next to the identifier pattern they are all prefixes of.
+  ## The automaton this minimizes to has 233 states, and the NFA it is built
+  ## from several times as many -- far past the 255 states `lex` used to be
+  ## capped at.
+  result = ""
+  var pos = 0
+  while pos < input.len:
+    lex input, pos:
+    of "addr", "and", "as", "asm", "bind", "block", "break", "case", "cast",
+       "concept", "const", "continue", "converter", "defer", "discard",
+       "distinct", "div", "do", "elif", "else", "end", "enum", "except",
+       "export", "finally", "for", "from", "func", "if", "import", "in",
+       "include", "interface", "is", "isnot", "iterator", "let", "macro",
+       "method", "mixin", "mod", "nil", "not", "notin", "object", "of", "or",
+       "out", "proc", "ptr", "raise", "ref", "return", "shl", "shr", "static",
+       "template", "try", "tuple", "type", "using", "var", "when", "while",
+       "xor", "yield":
+      result.add "K"
+    of r"[a-zA-Z_]\w*": result.add "I"
+    of r"\s+": discard
+    of r".": result.add "."
+    else:
+      result.add "!"
+      break
+
+proc numberLiteral(input: string): string =
+  ## Nim's number literals with their type suffixes. That minimizes to only 43
+  ## states, but the automata it is minimized from used to be past the 255
+  ## states `lex` was capped at.
+  result = ""
+  var pos = 0
+  while pos < input.len:
+    lex input, pos:
+    of r"0 [xX] [0-9a-fA-F](_?[0-9a-fA-F])* ('? ([iIuU](8|16|32|64)? | [fF](32|64)?) | ' [a-zA-Z_]\w*)?":
+      result.add "H"
+    of r"0 [bB] [01](_?[01])* ('? ([iIuU](8|16|32|64)? | [fF](32|64)?) | ' [a-zA-Z_]\w*)?":
+      result.add "B"
+    of r"[0-9](_?[0-9])* \. [0-9](_?[0-9])* ([eE][+-]?[0-9]+)? ('? [fF](32|64)? | ' [a-zA-Z_]\w*)?":
+      result.add "F"
+    of r"[0-9](_?[0-9])* ('? ([iIuU](8|16|32|64)? | [fF](32|64)?) | ' [a-zA-Z_]\w*)?":
+      result.add "N"
+    of r"\s+": discard
+    else:
+      result.add "!"
+      break
+
+proc largeAutomata =
+  assert nimKeyword("proc iterator iterators isnot is_not yield") == "KKIKIK"
+  assert nimKeyword("x.addr xor") == "I.KK"
+  assert numberLiteral("0xFF'u8 0b1010 1_000i64 3.5e-3'f32 12'big 7") ==
+         "HBNFNN"
+  echo "large automata ok"
+
 proc hygiene =
   ## The generated machine calls `inc` and `len`. They are bound in the
   ## plugin's own scope, so shadowing them at the call site must not reach into
@@ -152,6 +205,7 @@ scanning()
 rewinding()
 hygiene()
 realisticLexer()
+largeAutomata()
 noMatch()
 whole()
 agreesWithRuntime()
