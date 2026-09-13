@@ -17,7 +17,7 @@
 ## Note: NIF `#comment#` decorations are not carried into the token buffer —
 ## the codegen path has no use for them.
 
-import std / assertions
+import std / [assertions, math]
 import nifcore
 import nifreader as rd
 import nifbuilder
@@ -288,6 +288,23 @@ proc emitRelLineInfo(bld: var Builder; abs, parent: NifLineInfo; pool: Pool;
   if emitComment and uint32(abs.comment) != 0'u32:
     bld.attachComment(pool.strings[abs.comment])
 
+proc emitFloatLit(bld: var Builder; v: float64; abs, parent: NifLineInfo;
+                  pool: Pool) =
+  ## `nifbuilder` spells a non-finite float as a compound -- `(inf)`, `(nan)`,
+  ## `(neginf)` -- and a line-info suffix may only follow an atom or a tag
+  ## *name*. Attached after the closing `)` it is not NIF: the reader stops
+  ## there and the rest of the module is lost. So the compound is written
+  ## here, with the suffix on its tag.
+  let fc = classify(v)
+  case fc
+  of fcInf, fcNan, fcNegInf:
+    bld.addTree(if fc == fcInf: "inf" elif fc == fcNan: "nan" else: "neginf")
+    emitRelLineInfo(bld, abs, parent, pool)
+    bld.endTree()
+  else:
+    bld.addFloatLit(v)
+    emitRelLineInfo(bld, abs, parent, pool)
+
 proc emitValueWithLineInfo(bld: var Builder; c: var Cursor;
                            cur: var NifLineInfo;
                            parents: var seq[NifLineInfo];
@@ -343,8 +360,7 @@ proc emitValueWithLineInfo(bld: var Builder; c: var Cursor;
     emitRelLineInfo(bld, abs, parents[^1], pool)
     c.inc
   of FloatLit:
-    bld.addFloatLit(floatVal(c))
-    emitRelLineInfo(bld, abs, parents[^1], pool)
+    emitFloatLit(bld, floatVal(c), abs, parents[^1], pool)
     c.inc
   of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     assert false, "suffix token is not a value head"
@@ -484,7 +500,7 @@ proc emitValueIndexed(bld: var Builder; c: var Cursor; cur: var NifLineInfo;
   of UIntLit:
     bld.addUIntLit(uintVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
   of FloatLit:
-    bld.addFloatLit(floatVal(c)); emitRelLineInfo(bld, abs, parents[^1], pool); c.inc
+    emitFloatLit(bld, floatVal(c), abs, parents[^1], pool); c.inc
   of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     assert false, "suffix token is not a value head"
 
