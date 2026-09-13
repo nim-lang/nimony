@@ -778,7 +778,7 @@ no `elif` branch at all, which grammar.txt lists.
   rewritten text. Three files in the corpus use it
   (`tests/nimony/sysbasics/tscf_stdtmpl.nim` and two `niminaction` views),
   and they are the only files that fail for a reason other than being
-  deliberately invalid.
+  deliberately invalid. (Ported in stage 8.)
 * **Two operator tails are still flat or absent.** `binaryTail` covers
   `complexOrSimpleStmt`'s `type(…)`. `parseTypeDescKAux`'s trailing
   `parseOperators` is covered by routing `ref`/`ptr`/`distinct` through
@@ -1399,6 +1399,35 @@ message.
 What still differs is recovery-shaped: a `{.` that swallows the rest of a
 block, an unclosed bracket spanning lines, the concept-body messages, and
 `5else` lexing as a bad float in Nim and as `5` followed by `else` here.
+
+## Stage 8: source filters
+
+A first line `#? stdtmpl(subsChar = '$') | standard` -- after an optional BOM
+and shebang line -- runs the file through a filter before it is parsed.
+`src/nifler2/filters.nim` is a port of Nim's `syntaxes.nim` (the pipe),
+`filters.nim` (`strip`, `replace`) and `filter_tmpl.nim` (`stdtmpl`), text in
+and text out: the parser, the writer and the deps file see the filtered
+source under the original file name, which is also what nifler does.
+
+The pipe is Nim code and nifler2's parser parses it; the filters read their
+arguments off that tree (`vv` for `name = value`, a `suf` around a raw or
+triple-quoted string). Two details of Nim's stream layer are kept because
+they change bytes: the file is read with `readLine` and a filter's output
+with `llStreamReadLine`, which disagree on a trailing empty line, and the
+second of two chained filters reads the first one's output that way.
+
+The filters' errors (`'x' not allowed here`, `invalid expression`, `expected
+closing '}'`, `'end' does not close a control flow construct`, `invalid
+filter`) are reported like nifler's, at the same positions, and the parse
+goes on; the exit code is 1 afterwards. One place differs on purpose: a
+`$` at the very end of a template line is an index error that crashes
+nifler, and nifler2 reports "invalid expression" instead.
+
+All four filter files in the corpora (`tscf_replace`, `tscf_stdtmpl` and two
+`niminaction` views) are byte-identical to nifler, deps file included, and so
+are fifteen synthetic ones covering the filter arguments, chaining, CRLF
+input, a BOM, a shebang line and each of the error messages. With them no
+file in any corpus is rejected by nifler2 alone.
 
 ## Staging
 

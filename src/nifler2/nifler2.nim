@@ -15,7 +15,7 @@
 ##   nifler2 p file.nim [out.nif]
 
 import std / [syncio, assertions, os, parseopt]
-import nimparser, niflerout
+import nimparser, niflerout, filters
 
 const Usage = """nifler2 - Nim to NIF
 Usage:
@@ -33,8 +33,13 @@ Options:
 proc parse(p: var Parser; inp: string) {.raises.} =
   ## `Parser` owns a `TokenBuf`, which is not copyable, so it is filled in
   ## place rather than returned.
-  ## A syntax error ends the process; the lexer's errors are only collected.
-  p = openParser(readFile(inp), absolutePath(inp))
+  ## A syntax error ends the process; the lexer's and the filters' errors are
+  ## only collected.
+  let filename = absolutePath(inp)
+  var filterFailed = false
+  let src = applyFilters(readFile(inp), filename, filterFailed)
+  p = openParser(src, filename)
+  p.filterFailed = filterFailed
   if p.tok.indent > 0:
     indentError p     # `parseTopLevelStmt`: the first statement starts a line
   pModule p
@@ -50,7 +55,7 @@ proc parse(p: var Parser; inp: string) {.raises.} =
 
 proc report(p: Parser): bool =
   for e in p.lex.errors: echo e
-  p.lex.errors.len == 0
+  p.lex.errors.len == 0 and not p.filterFailed
 
 proc main {.raises.} =
   var action = ""

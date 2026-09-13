@@ -61,6 +61,7 @@ type
     indStack: seq[int32]
     inPragma*: int         ## `{.` ... `.}` nesting; a pragma has no indentation
     prevKind*: TokKind     ## the token before `tok`; `tkInvalid` at the start
+    filterFailed*: bool    ## a source filter reported an error
     prevEndLine, prevEndCol: int ## where that token ended
     inSemiStmtList*: int   ## `( stmt; stmt )` nesting, as in parser.nim
     sections: seq[string]  ## the tag a declaration fans out into: var/let/param/...
