@@ -1434,6 +1434,34 @@ are fifteen synthetic ones covering the filter arguments, chaining, CRLF
 input, a BOM, a shebang line and each of the error messages. With them no
 file in any corpus is rejected by nifler2 alone.
 
+## Performance
+
+Both optimized (`nim c -d:release` for nifler as hastur builds it,
+`nimony c -d:release` for nifler2), timed on only the files both accept. 2026-09-13, AMD Ryzen AI Max+ 395, best of 3, the
+shell loop's own cost subtracted:
+
+| workload | nifler | nifler2 | nifler2/nifler |
+| --- | --- | --- | --- |
+| startup: empty file, 200 processes | 0.091s | 0.028s | 0.31 |
+| one 4.8 MB file (4 compiler modules x10), 5 runs | 0.749s | 0.849s | 1.13 |
+| nimony `src lib tests examples`, 1411 files, one process each | 0.744s | 0.539s | 0.72 |
+| Nim `lib compiler tools`, 535 files, one process each | 0.506s | 0.440s | 0.87 |
+
+The way nimony uses it — one process per module — nifler2 is faster, because
+nifler is a 12 MB binary that initializes Nim's compiler state and nifler2 is
+0.7 MB. On raw throughput it is 13–25% slower, and it runs twice the
+instructions (callgrind: 294M vs 152M on the four modules once) at half the
+peak memory (48 MB vs 104 MB on the big file). `src/nifler2/tools/phasebench.nim`
+splits the big file's 169 ms: read 1 ms, lex 23 ms, parse 74 ms, write 56 ms.
+The hot spots callgrind names are the writer's `emit` (11%, plus 5% comparing
+tag names as strings), `splice` under `wrapAt` (8%: every retroactive wrap
+shifts the tokens after its mark) and `takeTail` under `fanOut` and
+`routineLayout` (5%).
+
+Past line 65535 nifler's line info goes wrong (Nim's `TLineInfo.line` is
+16 bits); nifler2's does not, so the big file's outputs differ there and
+nowhere else.
+
 ## Staging
 
 1. `src/nifler2/deps/parsegen.nim` — the mini-language front end, FIRST/FOLLOW
