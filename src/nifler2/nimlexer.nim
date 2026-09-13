@@ -15,30 +15,21 @@
 ## `src/nifler2/tools/gramcheck.nim` already assumes these names -- the
 ## grammar's `'if'` is `tkIf` and its `'{.'` is `tkCurlyDotLe`.
 ##
-## What the generated automaton does and what is hand-written:
+## What the generated automata do and what is hand-written:
 ##
-## * **`lex`**: identifiers, and every numeric literal form -- decimal, hex,
-##   octal, binary, and floats with an exponent. Numbers are where a DFA earns
-##   its keep: `getNumber` in Nim's lexer is a hundred lines of hand-rolled
-##   state, most of it spelling out where `_` may appear.
+## * **`lex`**: keywords and identifiers, every numeric literal form --
+##   decimal, hex, octal, binary, and floats with an exponent -- and the type
+##   suffix behind a number. Numbers are where a DFA earns its keep:
+##   `getNumber` in Nim's lexer is a hundred lines of hand-rolled state, most
+##   of it spelling out where `_` may appear.
 ## * **hand-written**: the indentation and spacing bookkeeping, comments
 ##   (including nested `#[ ]#`), string and character literals, and the
 ##   punctuation whose meaning depends on the character *after* it (`(.` is
 ##   one token, `(..` is two).
 ##
-## Two things the automaton was meant to cover and does not; both are in
-## `doc/internals/lexer_state_limit.md`.
-##
-## * **Keywords.** Nim's keywords are style-insensitive -- `p_roc` and `pRoC`
-##   are the keyword `proc`, `Proc` is an identifier -- so a keyword is a
-##   family of spellings rather than a literal string. It is expressible
-##   (`p(_?[rR])(_?[oO])(_?[cC])`) and costs 401 DFA states for the set;
-##   `keywordKind` normalizes and binary-searches instead, which is what Nim's
-##   identifier cache does.
-## * **The numeric suffix.** `'i8` / `u32` / `'myLit` had to move out of the
-##   patterns into `numberSuffix`: six number patterns each carrying it
-##   overflow the plugin's 255-state ceiling, even though the minimized DFA is
-##   30 states.
+## Keywords are case-sensitive, like every other identifier in Nimony: `proc`
+## is the keyword, `pRoC` and `p_roc` are identifiers. This is where the lexer
+## deliberately parts ways with Nim's, whose keywords are style-insensitive.
 
 import std / regex
 
@@ -117,17 +108,6 @@ const
   KeywordLow* = tkAddr
   KeywordHigh* = tkYield
 
-  Keywords: array[66, string] = [
-    "addr", "and", "as", "asm", "bind", "block", "break", "case", "cast",
-    "concept", "const", "continue", "converter", "defer", "discard",
-    "distinct", "div", "do", "elif", "else", "end", "enum", "except",
-    "export", "finally", "for", "from", "func", "if", "import", "in",
-    "include", "interface", "is", "isnot", "iterator", "let", "macro",
-    "method", "mixin", "mod", "nil", "not", "notin", "object", "of", "or",
-    "out", "proc", "ptr", "raise", "ref", "return", "shl", "shr", "static",
-    "template", "try", "tuple", "type", "using", "var", "when", "while",
-    "xor", "yield"]
-
   OpChars* = {'+', '-', '*', '/', '\\', '<', '>', '!', '?', '^', '.',
               '|', '=', '%', '&', '$', '@', '~', ':'}
   SymChars* = {'a'..'z', 'A'..'Z', '0'..'9', '\x80'..'\xFF'}
@@ -202,9 +182,9 @@ proc handleCRLF(L: var Lexer; pos: int): int =
 
 proc nimIdentNormalize*(s: string): string =
   ## Nim's identifier equality made explicit: the first character counts as
-  ## written, the rest is lowercased and underscores drop out. This is why
-  ## `pRoC` is the keyword `proc` but `Proc` is an ordinary identifier -- and
-  ## why a keyword cannot be a literal string in a DFA.
+  ## written, the rest is lowercased and underscores drop out. The lexer does
+  ## not use it; the differential tools compare identifiers with it, because
+  ## Nim's identifier cache cannot report the spelling it saw.
   result = ""
   if s.len > 0: result.add s[0]
   var i = 1
@@ -214,18 +194,6 @@ proc nimIdentNormalize*(s: string): string =
     elif c >= 'A' and c <= 'Z': result.add chr(ord(c) - ord('A') + ord('a'))
     else: result.add c
     inc i
-
-proc keywordKind*(normalized: string): TokKind =
-  ## `tkSymbol` when it is not a keyword. Binary search over `Keywords`, which
-  ## is sorted because the enum it indexes into is.
-  result = tkSymbol
-  var a = 0
-  var b = Keywords.len - 1
-  while a <= b:
-    let mid = (a + b) div 2
-    if Keywords[mid] < normalized: a = mid + 1
-    elif normalized < Keywords[mid]: b = mid - 1
-    else: return TokKind(ord(tkAddr) + mid)
 
 # ---------------------------------------------------------------------------
 # Unicode operators
@@ -331,72 +299,45 @@ proc isSigilLike*(tok: Token): bool {.inline.} =
 # The generated automata
 # ---------------------------------------------------------------------------
 
-proc numberSuffixKind(suffix: string; isFloat: bool;
-                      kind: var TokKind): bool =
-  ## `false` for a suffix that is not one of the built-in ones -- which is a
-  ## custom literal when it was introduced by `'`, and an error otherwise.
-  var low = ""
-  var i = 0
-  while i < suffix.len:
-    let c = suffix[i]
-    if c >= 'A' and c <= 'Z': low.add chr(ord(c) - ord('A') + ord('a'))
-    else: low.add c
-    inc i
-  result = true
-  if low == "f" or low == "f32": kind = tkFloat32Lit
-  elif low == "d" or low == "f64": kind = tkFloat64Lit
-  elif low == "f128": kind = tkFloat128Lit
-  elif low == "i8": kind = tkInt8Lit
-  elif low == "i16": kind = tkInt16Lit
-  elif low == "i32": kind = tkInt32Lit
-  elif low == "i64": kind = tkInt64Lit
-  elif low == "u": kind = tkUIntLit
-  elif low == "u8": kind = tkUInt8Lit
-  elif low == "u16": kind = tkUInt16Lit
-  elif low == "u32": kind = tkUInt32Lit
-  elif low == "u64": kind = tkUInt64Lit
-  else:
-    kind = if isFloat: tkFloatLit else: tkIntLit
-    result = false
-
 proc numberSuffix(L: var Lexer; tok: var Token; start: int; isFloat: bool) =
-  ## Second stage, as in `getNumber`: the automaton matched the number, this
-  ## reads the `'i8` / `u32` / `'myLit` behind it.
-  ##
-  ## The suffix is deliberately *not* in the automaton: six numeric patterns
-  ## each carrying a copy of it push the NFA past its 255-state ceiling, even
-  ## though the DFA they minimize to has 30 states. See
-  ## `doc/internals/lexer_state_limit.md`.
+  ## Second stage, as in `getNumber`: the first automaton matched the number,
+  ## this one reads the `'i8` / `u32` / `'myLit` behind it. They are two
+  ## automata and not one because the number must be the *longest* number:
+  ## `0x1f32` is a hex literal, not `0x1` with the suffix `f32`, and a single
+  ## automaton's maximal munch cannot tell those apart.
   tok.kind = if isFloat: tkFloatLit else: tkIntLit
   let numEnd = L.pos
-  let c = L.ch(L.pos)
-  if c != '\'' and c notin {'f', 'F', 'd', 'D', 'i', 'I', 'u', 'U'}:
-    tok.s = L.buf.substr(start, numEnd-1)
-    return
-  let quoted = c == '\''
-  var pos = L.pos
-  if quoted: inc pos
-  if L.ch(pos) notin SymChars:
-    error L, pos, "invalid number suffix"
-    tok.s = L.buf.substr(start, numEnd-1)
-    return
-  let sufStart = pos
-  while L.ch(pos) in SymChars + {'_'}: inc pos
-  let suffix = L.buf.substr(sufStart, pos-1)
+  tok.s = L.buf.substr(start, numEnd-1)
+  var pos = numEnd
   var kind = tok.kind
-  if numberSuffixKind(suffix, isFloat, kind):
-    tok.kind = kind
-    tok.s = L.buf.substr(start, numEnd-1)
-    L.pos = pos
-  elif quoted:
-    tok.kind = tkCustomLit
+  # The built-in suffixes come first so that they win against the custom
+  # literal and the bad suffix on a tie; a longer spelling (`'i8x`) does not
+  # tie and is not built in.
+  lex L.buf, pos:
+  of r"'? [fF] (32)?": kind = tkFloat32Lit
+  of r"'? ([dD] | [fF] 64)": kind = tkFloat64Lit
+  of r"'? [fF] 128": kind = tkFloat128Lit
+  of r"'? [iI] 8": kind = tkInt8Lit
+  of r"'? [iI] 16": kind = tkInt16Lit
+  of r"'? [iI] 32": kind = tkInt32Lit
+  of r"'? [iI] 64": kind = tkInt64Lit
+  of r"'? [uU]": kind = tkUIntLit
+  of r"'? [uU] 8": kind = tkUInt8Lit
+  of r"'? [uU] 16": kind = tkUInt16Lit
+  of r"'? [uU] 32": kind = tkUInt32Lit
+  of r"'? [uU] 64": kind = tkUInt64Lit
+  of r"' [a-zA-Z0-9\0128-\0255] [a-zA-Z0-9_\0128-\0255]*":
+    kind = tkCustomLit
+  of r"[fFdDiIuU] [a-zA-Z0-9_\0128-\0255]*":
+    error L, numEnd, "invalid number suffix: '" & L.buf.substr(numEnd, pos-1) & "'"
+  else:
+    if L.ch(pos) == '\'':
+      error L, pos + 1, "invalid number suffix"
+  L.pos = pos
+  if kind == tkCustomLit:
     tok.suffixPos = int32(numEnd - start)
     tok.s = L.buf.substr(start, pos-1)
-    L.pos = pos
-  else:
-    error L, sufStart, "invalid number suffix: '" & suffix & "'"
-    tok.s = L.buf.substr(start, numEnd-1)
-    L.pos = pos
+  tok.kind = kind
 
 proc normalizeBasePrefix(tok: var Token) =
   ## `getNumber` writes the base prefix into the literal in lower case
@@ -531,26 +472,103 @@ proc scanNumber(L: var Lexer; tok: var Token) =
   if L.ch(L.pos) in SymChars + {'_'} and unicodeOprLen(L.buf, L.pos)[0] == 0:
     error L, L.pos, "invalid token: no whitespace between number and identifier"
 
+proc symbolKind(s: string; pos: var int): TokKind =
+  ## The keyword or identifier starting at `pos`, which is moved behind it;
+  ## `tkInvalid`, with `pos` unmoved, when there is none. A keyword ties with
+  ## the identifier pattern and wins because it comes first; `iffy` is longer
+  ## than `if` and so is an identifier.
+  result = tkInvalid
+  lex s, pos:
+  of "addr": result = tkAddr
+  of "and": result = tkAnd
+  of "as": result = tkAs
+  of "asm": result = tkAsm
+  of "bind": result = tkBind
+  of "block": result = tkBlock
+  of "break": result = tkBreak
+  of "case": result = tkCase
+  of "cast": result = tkCast
+  of "concept": result = tkConcept
+  of "const": result = tkConst
+  of "continue": result = tkContinue
+  of "converter": result = tkConverter
+  of "defer": result = tkDefer
+  of "discard": result = tkDiscard
+  of "distinct": result = tkDistinct
+  of "div": result = tkDiv
+  of "do": result = tkDo
+  of "elif": result = tkElif
+  of "else": result = tkElse
+  of "end": result = tkEnd
+  of "enum": result = tkEnum
+  of "except": result = tkExcept
+  of "export": result = tkExport
+  of "finally": result = tkFinally
+  of "for": result = tkFor
+  of "from": result = tkFrom
+  of "func": result = tkFunc
+  of "if": result = tkIf
+  of "import": result = tkImport
+  of "in": result = tkIn
+  of "include": result = tkInclude
+  of "interface": result = tkInterface
+  of "is": result = tkIs
+  of "isnot": result = tkIsnot
+  of "iterator": result = tkIterator
+  of "let": result = tkLet
+  of "macro": result = tkMacro
+  of "method": result = tkMethod
+  of "mixin": result = tkMixin
+  of "mod": result = tkMod
+  of "nil": result = tkNil
+  of "not": result = tkNot
+  of "notin": result = tkNotin
+  of "object": result = tkObject
+  of "of": result = tkOf
+  of "or": result = tkOr
+  of "out": result = tkOut
+  of "proc": result = tkProc
+  of "ptr": result = tkPtr
+  of "raise": result = tkRaise
+  of "ref": result = tkRef
+  of "return": result = tkReturn
+  of "shl": result = tkShl
+  of "shr": result = tkShr
+  of "static": result = tkStatic
+  of "template": result = tkTemplate
+  of "try": result = tkTry
+  of "tuple": result = tkTuple
+  of "type": result = tkType
+  of "using": result = tkUsing
+  of "var": result = tkVar
+  of "when": result = tkWhen
+  of "while": result = tkWhile
+  of "xor": result = tkXor
+  of "yield": result = tkYield
+  of r"[a-zA-Z\0128-\0255](_?[a-zA-Z0-9\0128-\0255])*": result = tkSymbol
+
 proc scanSymbol(L: var Lexer; tok: var Token) =
-  ## Identifiers, and the keyword lookup behind them.
   let start = L.pos
   var pos = L.pos
-  lex L.buf, pos:
-  of r"[a-zA-Z\0128-\0255](_?[a-zA-Z0-9\0128-\0255])*":
-    discard
-  else:
+  var kind = symbolKind(L.buf, pos)
+  if kind == tkInvalid:
     tok.kind = tkInvalid
     tok.s = str(L.ch(pos))
     inc pos
     L.pos = pos
     return
   # A byte in `UnicodeOperatorStartChars` that begins a unicode operator ends
-  # the identifier; the automaton has no way to know that, so cut here.
+  # the identifier; the automaton has no way to know that, so cut here -- and
+  # ask again what the shorter text is, since `and∙` starts with a keyword.
   var i = start
   while i < pos:
     if L.buf[i] in UnicodeOperatorStartChars and
        unicodeOprLen(L.buf, i)[0] != 0:
       pos = i
+      let cut = L.buf.substr(start, pos-1)
+      var p = 0
+      kind = symbolKind(cut, p)
+      if p != cut.len: kind = tkSymbol
       break
     inc i
   if pos == start:
@@ -563,7 +581,7 @@ proc scanSymbol(L: var Lexer; tok: var Token) =
     error L, start, "invalid token: trailing underscore"
   L.pos = pos
   tok.s = L.buf.substr(start, pos-1)
-  tok.kind = keywordKind(nimIdentNormalize(tok.s))
+  tok.kind = kind
 
 # ---------------------------------------------------------------------------
 # Comments

@@ -1,7 +1,8 @@
 ## Token-level tests for `nimlexer`.
 ##
 ## Every expectation in here was produced by `bin/refdump`, which runs Nim 2's
-## own `compiler/lexer.nim` -- these are not guesses about what Nim does. The
+## own `compiler/lexer.nim` -- these are not guesses about what Nim does --
+## except `caseSensitiveKeywords`, where Nimony parts ways with Nim. The
 ## sweep over whole files lives in `src/nifler2/tools/lexdiff.sh`; this file is
 ## the small, fast half that says *which* construct broke.
 
@@ -66,8 +67,13 @@ proc check(name, src, expected: string) =
 proc main =
   check "keywords", "if x: y\n",
     "if tkSymbol(x)/L :(:)/T tkSymbol(y)/L"
-  check "styleInsensitive", "p_roc pRoC Proc\n",
-    "proc proc/L tkSymbol(Proc)/L"
+  # Nimony's keywords are case-sensitive; Nim would make the first two `proc`
+  check "caseSensitiveKeywords", "p_roc pRoC Proc proc\n",
+    "tkSymbol(proc) tkSymbol(proc)/L tkSymbol(Proc)/L proc/L"
+  check "keywordBeforeUnicodeOpr", "and∙b\n",
+    "and tkOpr(∙) tkSymbol(b)"
+  check "suffixes", "1'I8 2'big 0x1f32 3'f32x 4U16 0xFF'f\n",
+    "tkInt8Lit(1) tkCustomLit(2'big)/L tkIntLit(0x1f32)/L tkCustomLit(3'f32x)/L tkUInt16Lit(4)/L tkFloat32Lit(0xFF)/L"
   check "ints", "0 12 1_000 0xFF 0b1010 0o17\n",
     "tkIntLit(0) tkIntLit(12)/L tkIntLit(1_000)/L tkIntLit(0xFF)/L tkIntLit(0b1010)/L tkIntLit(0o17)/L"
   check "bigInt", "0xffffffff 2147483648 2147483647\n",
