@@ -931,6 +931,17 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trTry c, dest, n
   of CallKindsS:
     trStmtCall c, dest, n
+  of AssumeS:
+    # `{.assume: a and b.}` states TWO facts, not one opaque condition, and has
+    # to be split exactly as a `for` loop's `.ensures` is. It cannot take the
+    # plain-expression path: an `and` there is a hard error, because the only
+    # thing `xelim` could do with a short-circuit condition is materialise it
+    # into a bool temp — which is precisely what destroys the proposition.
+    let info = n.info
+    var cond = n
+    cond = sub(cond)
+    emitAssumes(dest, cond, initTable[SymId, TokenBuf](), info)
+    skip n
   else:
     if n.finalIrKind in {MflagV, VflagV}:
       # NJVL control-flow flags. `xelim` used to materialise short-circuit
