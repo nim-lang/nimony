@@ -12,7 +12,7 @@
 ## The token type, the token kinds and their spellings are the ones
 ## `compiler/lexer.nim` uses, because the two are meant to be differentially
 ## tested against each other: same input, same token sequence, or a bug.
-## `src/nifler2/tools/gramcheck.nim` already assumes these names -- the
+## `src/nifler2/deps/parsegen.nim` already assumes these names -- the
 ## grammar's `'if'` is `tkIf` and its `'{.'` is `tkCurlyDotLe`.
 ##
 ## What the generated automata do and what is hand-written:

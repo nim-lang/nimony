@@ -10,6 +10,9 @@
 ## * precedence climbing (`binary`) and a parameterized rule
 ## * separated repetition, both with a terminal and with a bare guard
 
+import minirt
+export minirt
+
 grammar:
   module "stmts[ stmt ^* (';' | IND{=}) ]"
 

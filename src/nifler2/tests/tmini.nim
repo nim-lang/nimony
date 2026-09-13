@@ -1,7 +1,7 @@
 ## End-to-end test of the generated parser: source text in, tree out.
 
 import std / [syncio, strutils]
-import miniparser
+import mini
 
 proc parse(src: string): string =
   var p = openParser(src)

@@ -14,6 +14,8 @@ import ".." / ".." / models / nifler_tags
 
 export nifler_tags
 
+template grammar*(rules: varargs[untyped]) {.plugin: "../deps/parsegen".}
+
 type
   TokKind* = enum
     tkEof = "[EOF]", tkSymbol = "tkSymbol", tkIntLit = "tkIntLit",
@@ -150,7 +152,12 @@ proc afterOperator*(p: var Parser) =
 
 proc checkInd*(p: var Parser; allowed: set[IndClass]) =
   if indClass(p) notin allowed:
-    error p, "invalid indentation (" & $indClass(p) & " not in " & $allowed & ")"
+    var shown = ""
+    for c in low(IndClass) .. high(IndClass):
+      if c in allowed:
+        if shown.len > 0: shown.add ", "
+        shown.add $c
+    error p, "invalid indentation (" & $indClass(p) & " not in {" & shown & "})"
 
 proc pushInd*(p: var Parser) =
   checkInd p, {icGt}
@@ -188,8 +195,15 @@ proc getPrecedence*(p: Parser): int =
 proc isRightAssoc*(p: Parser): bool =
   p.tok.kind == tkOpr and p.tok.s[0] == '^'
 
+proc insertAt(buf: var seq[BufTok]; t: BufTok; pos: int) =
+  buf.add t
+  var i = buf.len - 1
+  while i > pos:
+    swap buf[i], buf[i-1]
+    dec i
+
 proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
-  p.buf.insert(BufTok(kind: bLeaf, text: text), m.pos)
+  p.buf.insertAt(BufTok(kind: bLeaf, text: text), m.pos)
 
 proc emitLeaf*(p: var Parser) =
   p.buf.add BufTok(kind: bLeaf, text: p.tok.s)
@@ -204,7 +218,7 @@ proc closeTag*(p: var Parser) =
 proc wrap*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## Insert the opening token at the mark and close at the end. The whole
   ## point of the design: the tag is decided after the fact.
-  p.buf.insert(BufTok(kind: bOpen, text: $tag), m.pos)
+  p.buf.insertAt(BufTok(kind: bOpen, text: $tag), m.pos)
   p.buf.add BufTok(kind: bClose, text: "")
 
 proc wrapAt*(p: var Parser; m: Mark; tag: NiflerKind; info: int) =

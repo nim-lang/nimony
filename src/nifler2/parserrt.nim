@@ -40,6 +40,10 @@ import nimlexer
 export nimlexer
 export nifpools
 
+template grammar*(rules: varargs[untyped]) {.plugin: "deps/parsegen".}
+  ## The grammar notation of `doc/internals/parser_generator.md`, turned into
+  ## one `pRule` proc per rule at compile time.
+
 type
   IndClass* = enum ## the indentation half of the LL(1) decision domain
     icNoInd,  ## not the first token on its line

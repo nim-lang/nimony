@@ -24,7 +24,8 @@
 ##   owns precedence, exactly as `parser.nim` does.
 ## * `DED` is implicit in `indented(...)`.
 
-import nimlexer, nifbuilder   # terminals and the output buffer; see parsegen
+import parserrt
+export parserrt
 
 grammar:
 

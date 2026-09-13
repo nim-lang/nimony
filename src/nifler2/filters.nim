@@ -17,7 +17,7 @@
 ## filters read their arguments from that tree.
 
 import std / [strutils, syncio]
-import nimparser
+import nimgrammar
 
 type
   LineReader = object

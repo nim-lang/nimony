@@ -562,15 +562,8 @@ with no digits is one bad number rather than `0` followed by `x`.
 ## Result of the first full run
 
 `src/nifler2/nimgrammar.nim` is `doc/grammar.txt` transcribed into the notation:
-186 productions, 118 rules. `src/nifler2/tools/gramcheck.nim` is the analysis
-half of the future plugin behind a throwaway text front end, so it can be run
-today:
-
-```
-nim c -r src/nifler2/tools/gramcheck.nim src/nifler2/nimgrammar.nim
-```
-
-It reports:
+186 productions, 118 rules. The analysis first ran behind a text front end,
+`gramcheck.nim`, before it became the plugin (Stage 9). It reported:
 
 ```
   productions:            187
@@ -802,7 +795,8 @@ no `elif` branch at all, which grammar.txt lists.
 
 ## Stage 2: code emission
 
-`gramcheck --emit:<file>` generates the parser. The design's claim that the
+The generator (then `gramcheck --emit:<file>`, now the plugin) writes the
+parser. The design's claim that the
 output should be ordinary steppable code rather than a table-driven engine
 holds up: `pStmt` for the real Nim grammar is twenty-five readable lines.
 
@@ -850,8 +844,9 @@ as an `openTag`/`closeTag` pair. That is what makes factoring transparent: the
 tag is chosen after the shared prefix has already been parsed, and the grammar
 can keep saying `asgn[ simpleExpr '=' … ]` as though backtracking were free.
 
-Token sets are hoisted into named constants (`Tk1`, `Tk2`, …); a
-ninety-element inline set is not readable, and `pStmt`'s FIRST set has eighty.
+The text generator hoisted token sets into named constants (`Tk1`, `Tk2`, …)
+because the file was meant to be read; the plugin writes them inline, since
+nobody reads an expansion.
 
 ### End-to-end proof
 
@@ -860,7 +855,7 @@ smallest grammar that uses every mechanism the design rests on — its runtime,
 and a test suite over the *generated* parser:
 
 ```
-nim c -r src/nifler2/tests/tmini.nim
+bin/nimony c -r src/nifler2/tests/tmini.nim
 ```
 
 Twenty-four tests, all passing. They cover an indented block, a nested block,
@@ -927,8 +922,8 @@ rules need one in the Nim grammar: `primary`, `primarySuffix`, `commandParam`.
   from the refinement. `parsePar`'s real prelude is `optInd; flexComment`, and
   spelling the `flexComment?` cost the refinement; it is left out, since
   `( ## doc` in front of the deciding keyword is not LL(1) anyway.
-* The generator is still `gramcheck.nim`, a standalone text scanner; the real
-  one is the `deps/parsegen` plugin behind `template grammar*(...)`.
+* The generator was still `gramcheck.nim`, a standalone text scanner, at this
+  point; Stage 9 made it the `deps/parsegen` plugin.
 
 ## Stage 3: the runtime
 
@@ -1433,6 +1428,65 @@ All four filter files in the corpora (`tscf_replace`, `tscf_stdtmpl` and two
 are fifteen synthetic ones covering the filter arguments, chaining, CRLF
 input, a BOM, a shebang line and each of the error messages. With them no
 file in any corpus is rejected by nifler2 alone.
+
+## Stage 9: the generator is a plugin
+
+There is no generated file any more. `src/nifler2/parserrt.nim` declares
+
+```nim
+template grammar*(rules: varargs[untyped]) {.plugin: "deps/parsegen".}
+```
+
+and `src/nifler2/nimgrammar.nim` *is* the parser module: `import parserrt`,
+then `grammar:`. The plugin, `src/nifler2/deps/parsegen.nim`, receives the
+block as nifler writes it -- `(cmd name "production" (stmts actions...))`, a
+parameterized rule as `(cmd (oconstr name (kv mode PrimaryMode)) ...)`, a
+triple-quoted production as `(suf "..." "T")` -- runs the analysis, and returns
+the procs as untyped NIF that is sem'd at the call site like source. Action
+blocks and parameter types are copied through as the trees they already are;
+the only Nim the plugin reads out of a string is a `{...}` argument inside a
+production, which is never more than a number, a name or a call of names.
+`gramcheck.nim`, the 4200-line `nimparser.nim` and
+`src/nifler2/tests/miniparser.nim` are gone: `tmini` is compiled by Nimony, through the plugin, and
+still passes 24 of 24.
+
+A grammar the analysis rejects is a compile error at `grammar:`: an LL(1)
+conflict (both alternatives and the overlapping `(kind, indentClass)` pairs),
+an undeclared rule, a call with the wrong number of arguments. The rest of
+`gramcheck`'s report -- which choices a predicate or a lookahead separated,
+the FIRST and FOLLOW of one rule on request -- has no place to go and was
+dropped. So was its "nullable repetition body" listing, which named
+`objectPart ^+ IND{=}` and was never an error: the loop is entered on a FIRST
+set, so the nullable body cannot spin.
+
+The plugin is one file on purpose. The build graph gives a plugin executable a
+single input, its main source; a module the plugin imports can change without
+the executable being rebuilt, and a stale generator is exactly the kind of bug
+that looks like a grammar bug.
+
+**What it took in the compiler.** A toplevel call is sem'd in the body phase
+only, so the procs a template expansion declares never went through the
+phases before it: a routine could not call one declared after it, and a
+forward declaration was never matched with its implementation (every call
+came out "ambiguous"). `semTemplateCall` now gives a toplevel plugin
+expansion that is a statement those phases too, the way a toplevel `when`
+branch already gets them (`semExprMissingPhases`), so the plugin emits no
+forward declarations at all -- Nimony does not need them.
+`tests/nimony/plugins/tforwardplugin.nim` covers both shapes. The first
+version did this for every toplevel expansion and broke two tests: an
+expression template such as `echo foldr(xs, a - b)` has gensyms that must not
+go through the declaration phases. A *plain* template that expands to a
+forward declaration still crashes nimsem, which is a separate bug.
+
+**Verified the usual way:** a build from the plugin against the last build from
+the generated file, over `src lib tests examples` and Nim's `lib compiler tools
+tests` -- 5193 files, parse output and deps files byte-identical -- and the
+first error of all 3984 mutants unchanged.
+
+**Bootstrapping.** nifler2 is now a program that needs a Nimony compiler, and
+that compiler needs a parser to read `nimgrammar.nim`. The toolchain is built
+with the old nifler first and moves to nifler2 afterwards; that sequencing is
+`hastur`'s to own.
 
 ## Performance
 

@@ -15,7 +15,7 @@
 ##   nifler2 p file.nim [out.nif]
 
 import std / [syncio, assertions, os, parseopt]
-import nimparser, niflerout, filters
+import nimgrammar, niflerout, filters
 
 const Usage = """nifler2 - Nim to NIF
 Usage:

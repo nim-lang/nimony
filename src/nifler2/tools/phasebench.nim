@@ -3,7 +3,7 @@
 ##   phasebench file.nim [runs]
 
 import std / [syncio, cmdline, monotimes, os, strutils]
-import ".." / [nimlexer, parserrt, nimparser, niflerout]
+import ".." / [nimlexer, parserrt, nimgrammar, niflerout]
 
 proc ns(a, b: MonoTime): int64 = b.ticks - a.ticks
 
