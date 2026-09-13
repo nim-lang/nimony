@@ -70,7 +70,11 @@ proc lineInfo(w: var Writer; info, reference: NifLineInfo) =
 
 proc tagName(c: Cursor): string {.inline.} = c.tags.tags[resolvedTagId(c)]
 
-proc emptyRuns(tag, parentTag: string; kids: int): seq[int] =
+proc tagKind(c: Cursor): NiflerKind {.inline.} =
+  ## Every tag in the buffer came from a `NiflerKind` (`parserrt.tagId`).
+  cast[NiflerKind](resolvedTagId(c))
+
+proc emptyRuns(tag, parentTag: NiflerKind; inForTuple: bool; kids: int): seq[int] =
   ## For each child index, how many dots `addEmpty` wrote in one call starting
   ## there (0: part of an earlier run).
   result = newSeq[int](kids)
@@ -80,34 +84,37 @@ proc emptyRuns(tag, parentTag: string; kids: int): seq[int] =
       r[start] = n
       for i in start+1 ..< start+n: r[i] = 0
   case tag
-  of "proctype", "itertype":
+  of ProctypeL, ItertypeL:
     if kids > 0:
       run(result, 0, 4)
       run(result, kids - 2, 2)
-  of "let", "var", "const":        # the section of a tuple unpacking
-    case parentTag
-    of "unpacktup", "unpackflat":
-      if kids == 5: run(result, 3, 2)
-    of "fortuple":
+  of LetL, VarL, ConstL:           # the section of a tuple unpacking
+    if parentTag == UnpacktupL and inForTuple:
       if kids == 5: run(result, 1, 4)
-    else: discard
+    elif parentTag == UnpacktupL or parentTag == UnpackflatL:
+      if kids == 5: run(result, 3, 2)
   else: discard
 
-const DeclTags = ["type", "var", "let", "const", "fld", "param", "typevar",
-                  "proc", "func", "iterator", "method", "macro", "template",
-                  "converter"]
+proc isDecl(k: NiflerKind): bool =
+  case k
+  of TypeL, VarL, LetL, ConstL, FldL, ParamL, TypevarL, ProcL, FuncL,
+     IteratorL, MethodL, MacroL, TemplateL, ConverterL: true
+  else: false
 
-const RoutineTags = ["proc", "func", "iterator", "method", "macro", "template",
-                     "converter", "proctype", "itertype", "do"]
+proc isRoutine(k: NiflerKind): bool =
+  case k
+  of ProcL, FuncL, IteratorL, MethodL, MacroL, TemplateL, ConverterL,
+     ProctypeL, ItertypeL, DoL: true
+  else: false
 
-proc emit(w: var Writer; c: var Cursor; reference: NifLineInfo; parentTag: string;
-          forLoop: bool) =
+proc emit(w: var Writer; c: var Cursor; reference: NifLineInfo;
+          parentTag: NiflerKind; inForTuple, forLoop: bool) =
   ## `reference` is what bridge.nim computes this node's position against: its
   ## parent in Nim's AST, which is usually but not always the enclosing tag.
   let info = rawLineInfo(c)
   case c.kind
   of TagLit:
-    let tag = tagName(c)
+    let tag = tagKind(c)
     var kids: seq[NifKind] = @[]
     var k = childCursor(c)
     while k.hasMore:
@@ -115,29 +122,31 @@ proc emit(w: var Writer; c: var Cursor; reference: NifLineInfo; parentTag: strin
       skip k
     # `nkLambda` writes its position after the name placeholder:
     # `(proc .@5,1 . . . (params) ...)`
-    let lambda = tag == "proc" and kids.len > 0 and kids[0] == DotToken
+    let lambda = tag == ProcL and kids.len > 0 and kids[0] == DotToken
     # `nkStmtListExpr` writes none on `expr` and its own on the `stmts`
-    let stmtListExpr = tag == "expr"
-    w.b.addTree tag
+    let stmtListExpr = tag == ExprL
+    w.b.addTree tagName(c)
     if not lambda and not stmtListExpr:
       w.lineInfo(info, reference)
     let own = if info.isValid: info else: reference
-    let childParent = if tag == "unpacktup" and forLoop: "fortuple" else: tag
-    let runs = emptyRuns(tag, parentTag, kids.len)
+    let childInForTuple = tag == UnpacktupL and forLoop
+    let childForLoop = tag == ForL or tag == UnpackflatL
+    let routine = isRoutine(tag)
+    let runs = emptyRuns(tag, parentTag, inForTuple, kids.len)
     var i = 0
     var prevParams = NoLineInfo
     c.into:
       while c.hasMore:
         # the child's reference in bridge.nim
         var childRef = own
-        if tag in RoutineTags and prevParams.isValid:
+        if routine and prevParams.isValid:
           childRef = prevParams          # the result type is `n[0]` of the params
-        elif tag == "tuple":
+        elif tag == TupleL:
           childRef = reference           # `(kv` uses the tuple's own parent
         elif stmtListExpr and i == 0:
           childRef = reference
         prevParams = NoLineInfo
-        if c.kind == Ident and i == 1 and tag in DeclTags and strVal(c) == "x":
+        if c.kind == Ident and i == 1 and isDecl(tag) and strVal(c) == "x":
           w.b.addRaw " x"                # bridge.nim's export marker, verbatim:
                                          # a space even after a `)`
           c.inc
@@ -147,12 +156,12 @@ proc emit(w: var Writer; c: var Cursor; reference: NifLineInfo; parentTag: strin
             if lambda and i == 0: w.lineInfo(info, reference)
           c.inc
         else:
-          if c.kind == TagLit and tagName(c) == "params" and tag in RoutineTags:
+          if routine and c.kind == TagLit and tagKind(c) == ParamsL:
             let pinfo = rawLineInfo(c)
-            emit(w, c, childRef, childParent, tag in ["for", "unpackflat"])
+            emit(w, c, childRef, tag, childInForTuple, childForLoop)
             prevParams = pinfo
           else:
-            emit(w, c, childRef, childParent, tag in ["for", "unpackflat"])
+            emit(w, c, childRef, tag, childInForTuple, childForLoop)
         inc i
     w.b.endTree()
   of DotToken:
@@ -197,7 +206,7 @@ proc writeNifler*(buf: var TokenBuf; outfile, file: string) {.raises.} =
   var c = beginRead(buf)
   w.rootFile = rawLineInfo(c).file
   while c.hasMore:
-    emit(w, c, NoLineInfo, "", false)
+    emit(w, c, NoLineInfo, NiflerKind.None, false, false)
   endRead c
   writeIfChanged(outfile, w.b.extract())
 
@@ -218,8 +227,10 @@ proc writeNifler*(buf: var TokenBuf; outfile, file: string) {.raises.} =
 #   has to produce before the module can be checked.
 # * Nothing inside `runnableExamples` counts.
 
-const DepTags = ["import", "importexcept", "fromimport", "include", "export",
-                 "exportexcept"]
+proc isDep(k: NiflerKind): bool =
+  case k
+  of ImportL, ImportexceptL, FromimportL, IncludeL, ExportL, ExportexceptL: true
+  else: false
 
 type
   WhenCond = object
@@ -238,17 +249,17 @@ proc whenMarker(d: var DepsWalker) =
     if entry.negated:
       d.w.b.addTree "prefix"
       d.w.b.addIdent "not"
-      emit(d.w, c, NoLineInfo, "", false)
+      emit(d.w, c, NoLineInfo, NiflerKind.None, false, false)
       d.w.b.endTree()
     else:
-      emit(d.w, c, NoLineInfo, "", false)
+      emit(d.w, c, NoLineInfo, NiflerKind.None, false, false)
   d.w.b.endTree()
 
 proc firstChild(c: Cursor): Cursor {.inline.} = childCursor(c)
 
 proc isPlugin(kv: Cursor; name: var string): bool =
   ## `plugin: "name"`; a raw or triple-quoted string is written plain.
-  if kv.kind != TagLit or tagName(kv) != "kv": return false
+  if kv.kind != TagLit or tagKind(kv) != KvL: return false
   var k = childCursor(kv)
   if k.kind != Ident or strVal(k) != "plugin": return false
   skip k
@@ -256,7 +267,7 @@ proc isPlugin(kv: Cursor; name: var string): bool =
   if k.kind == StrLit:
     name = strVal(k)
     return true
-  if k.kind == TagLit and tagName(k) == "suf":
+  if k.kind == TagLit and tagKind(k) == SufL:
     let s = childCursor(k)
     if s.kind == StrLit:
       name = strVal(s)
@@ -265,19 +276,19 @@ proc isPlugin(kv: Cursor; name: var string): bool =
 
 proc walkDeps(d: var DepsWalker; c: Cursor; inObject: bool) =
   if c.kind != TagLit: return
-  let tag = tagName(c)
-  if tag in DepTags:
-    d.w.b.addTree tag
+  let tag = tagKind(c)
+  if isDep(tag):
+    d.w.b.addTree tagName(c)
     d.whenMarker()
     var k = childCursor(c)
     while k.hasMore:
-      emit(d.w, k, NoLineInfo, tag, false)
+      emit(d.w, k, NoLineInfo, tag, false, false)
     d.w.b.endTree()
     return
-  if tag in ["call", "cmd"]:
+  if tag == CallL or tag == CmdL:
     let f = firstChild(c)
     if f.hasMore and f.kind == Ident and strVal(f) == "runnableExamples": return
-  if tag == "pragmas":
+  if tag == PragmasL:
     var k = childCursor(c)
     while k.hasMore:
       var name = ""
@@ -288,13 +299,13 @@ proc walkDeps(d: var DepsWalker; c: Cursor; inObject: bool) =
         d.w.b.endTree()
       skip k
     return
-  if tag == "when" and not inObject:
+  if tag == WhenL and not inObject:
     # `nkWhenStmt`: each branch's condition covers its body, and an `else`
     # is covered by the negation of all of them
     var prior: seq[Cursor] = @[]
     var br = childCursor(c)
     while br.hasMore:
-      if br.kind == TagLit and tagName(br) == "elif":
+      if br.kind == TagLit and tagKind(br) == ElifL:
         var k = childCursor(br)
         let cond = k
         walkDeps(d, k, inObject)
@@ -311,7 +322,7 @@ proc walkDeps(d: var DepsWalker; c: Cursor; inObject: bool) =
         d.conds.setLen d.conds.len - prior.len
       skip br
     return
-  let nowInObject = inObject or tag == "object"
+  let nowInObject = inObject or tag == ObjectL
   var k = childCursor(c)
   while k.hasMore:
     walkDeps(d, k, nowInObject)

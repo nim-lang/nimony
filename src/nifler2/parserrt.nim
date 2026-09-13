@@ -33,6 +33,9 @@
 
 import std / [parseutils, syncio]
 import ".." / lib / nifpools
+import ".." / models / nifler_tags
+
+export nifler_tags
 import nimlexer
 export nimlexer
 export nifpools
@@ -64,8 +67,8 @@ type
     filterFailed*: bool    ## a source filter reported an error
     prevEndLine, prevEndCol: int ## where that token ended
     inSemiStmtList*: int   ## `( stmt; stmt )` nesting, as in parser.nim
-    sections: seq[string]  ## the tag a declaration fans out into: var/let/param/...
-    lastSection: string    ## the section opened most recently, popped or not
+    sections: seq[NiflerKind] ## the tag a declaration fans out into: var/let/param/...
+    lastSection: NiflerKind ## the section opened most recently, popped or not
     infos: seq[NifLineInfo] ## see `pushInfo`
     tail: TokenBuf         ## scratch for the layout rewrites
     wrapFields: seq[bool]  ## whether a multi-name field is wrapped in `stmts`
@@ -80,7 +83,7 @@ proc openParser*(src, filename: string): Parser =
                   tail: createTokenBuf(64),
                   file: pool.filenames.getOrIncl(filename),
                   currInd: 0, indStack: @[],
-                  inPragma: 0, sections: @[], lastSection: "var", wrapFields: @[])
+                  inPragma: 0, sections: @[], lastSection: VarL, wrapFields: @[])
   next result.lex, result.tok
 
 proc info*(p: Parser): NifLineInfo {.inline.} =
@@ -455,21 +458,27 @@ proc splice(p: var Parser; pos: int) =
   for i in 0 ..< n:
     p.dest[pos + i] = p.head[i]
 
-proc wrapAt*(p: var Parser; m: Mark; tag: string; info: NifLineInfo) =
+proc tagId*(k: NiflerKind): TagId {.inline.} =
+  ## The master tag pool is seeded in `TagEnum` order, so a tag's id is its
+  ## ordinal and no string is ever hashed to find it.
+  TagId(ord(k))
+
+proc wrapAt*(p: var Parser; m: Mark; tag: NiflerKind; info: NifLineInfo) =
   ## Retroactively make everything from `m` a `(tag ...)` node positioned at
   ## `info`.
   p.head.shrink 0
   # Tags nifler invents for the dialect are not nodes of Nim's AST and carry
   # no position: bridge.nim writes them with `addTree` and nothing else.
-  let pos = if tag in ["ranges", "unpackflat", "unpacktup"]: NoLineInfo else: info
-  addParLe(p.head, registerTag(tag), pos)
+  let pos = if tag == RangesL or tag == UnpackflatL or tag == UnpacktupL: NoLineInfo
+            else: info
+  addParLe(p.head, tagId(tag), pos)
   splice p, m.pos
   # The node ends at the end of the buffer -- which is precisely the situation
   # `reopenLastTree` exists for, so nifcore computes the jump, overflow and all.
   reopenLastTree(p.dest, m.pos)
   addParRi p.dest
 
-proc wrap*(p: var Parser; m: Mark; tag: string) =
+proc wrap*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## Retroactively make everything from `m` a `(tag ...)` node.
   wrapAt p, m, tag, m.info
 
@@ -515,7 +524,7 @@ proc setExportMarker*(p: var Parser; m: Mark) =
   # does not write it -- bridge.nim emits the marker with `addRaw " x"`.
   addIdent(p.dest, "x", m.info)
 
-proc pushSection*(p: var Parser; tag: string) =
+proc pushSection*(p: var Parser; tag: NiflerKind) =
   p.sections.add tag
   p.lastSection = tag
 
@@ -526,8 +535,8 @@ proc pushLastSection*(p: var Parser) =
   ## but a byte-identical tree has to have it.
   p.sections.add p.lastSection
 proc popSection*(p: var Parser) = p.sections.setLen p.sections.len - 1
-proc section(p: Parser): string =
-  if p.sections.len > 0: p.sections[^1] else: "var"
+proc section(p: Parser): NiflerKind =
+  if p.sections.len > 0: p.sections[^1] else: VarL
 
 proc pushFieldWrap*(p: var Parser; wrap: bool) = p.wrapFields.add wrap
 proc popFieldWrap*(p: var Parser) = p.wrapFields.setLen p.wrapFields.len - 1
@@ -536,7 +545,7 @@ proc takeTail(p: var Parser; m: Mark): seq[Cursor] =
   ## The trees written since `m`, as cursors into `p.tail`; `dest` is cut back
   ## to the mark.
   p.tail.shrink 0
-  addParLe(p.tail, registerTag("tail"))
+  addParLe(p.tail, tagId(StmtsL))   # a scratch container, never written
   for i in m.pos ..< p.dest.len: p.tail.add p.dest[i]
   addParRi p.tail
   p.dest.shrink m.pos
@@ -562,7 +571,7 @@ proc infoAt(p: var Parser; pos: int): NifLineInfo =
   result = rawLineInfo(c)
   endRead c
 
-proc wrapLikeFirst*(p: var Parser; m: Mark; tag: string) =
+proc wrapLikeFirst*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## A node positioned at its first child: `newTree(nkCommand, a.info, a)`.
   wrapAt p, m, tag, infoAt(p, m.pos)
 
@@ -572,10 +581,10 @@ proc fanOut*(p: var Parser; m: Mark) =
   ## written, `.` or not -- which is what the placeholders buy.
   let kids = takeTail(p, m)
   let names = (kids.len - 2) div 3
-  let tag = registerTag(p.section)
-  let wrap = p.section == "fld" and names > 1 and
+  let tag = tagId(p.section)
+  let wrap = p.section == FldL and names > 1 and
              p.wrapFields.len > 0 and p.wrapFields[^1]
-  if wrap: addParLe(p.dest, registerTag("stmts"), NoLineInfo)  # not a node of Nim's AST
+  if wrap: addParLe(p.dest, tagId(StmtsL), NoLineInfo)  # not a node of Nim's AST
   for i in 0 ..< names:
     addParLe(p.dest, tag, nameNodeInfo(kids[3*i], kids[3*i+1], kids[3*i+2]))
     for j in 0 .. 2: p.dest.addSubtree kids[3*i + j]
@@ -588,7 +597,7 @@ proc fanOutKv*(p: var Parser; m: Mark) =
   ## A tuple field list: names, then `type value`. nifler keeps `(kv name
   ## type)` and drops the default.
   let kids = takeTail(p, m)
-  let tag = registerTag("kv")
+  let tag = tagId(KvL)
   for i in 0 ..< kids.len - 2:
     addParLe(p.dest, tag, kids[i].info)
     p.dest.addSubtree kids[i]
@@ -615,8 +624,8 @@ proc stmtListExprLayout*(p: var Parser; m: Mark) =
   ## `nkStmtListExpr`: nifler writes all statements but the last in a `stmts`
   ## and the last one after it, `(expr (stmts a b) c)`.
   let kids = takeTail(p, m)
-  addParLe(p.dest, registerTag("expr"), m.info)
-  addParLe(p.dest, registerTag("stmts"), m.info)
+  addParLe(p.dest, tagId(ExprL), m.info)
+  addParLe(p.dest, tagId(StmtsL), m.info)
   for i in 0 ..< kids.len - 1: p.dest.addSubtree kids[i]
   addParRi p.dest
   if kids.len > 0: p.dest.addSubtree kids[^1]
@@ -671,8 +680,8 @@ proc dotLayout*(p: var Parser; m: Mark) =
     return
   # `dotExpr` builds the call with `p.parLineInfo` right after the `]` --
   # the position `posMarker` recorded, as `parts[3]`
-  addParLe(p.dest, registerTag("call"), rawLineInfo(parts[3]))
-  addParLe(p.dest, registerTag("at"), parts[2].info)
+  addParLe(p.dest, tagId(CallL), rawLineInfo(parts[3]))
+  addParLe(p.dest, tagId(AtL), parts[2].info)
   p.dest.addSubtree parts[1]
   var z = childCursor(parts[2])
   while z.hasMore:
@@ -691,10 +700,10 @@ proc curlyOrTable*(p: var Parser; m: Mark) =
   var isTable = false
   var c = childCursor(node)
   while c.hasMore:
-    if c.kind == TagLit and c.resolvedTagId == registerTag("kv"): isTable = true
+    if c.kind == TagLit and c.resolvedTagId == tagId(KvL): isTable = true
     skip c
   if isTable:
-    addParLe(p.dest, registerTag("tabconstr"), node.info)
+    addParLe(p.dest, tagId(TabconstrL), node.info)
     var k = childCursor(node)
     while k.hasMore:
       p.dest.addSubtree k
@@ -710,8 +719,8 @@ proc callOrObjConstr*(p: var Parser; m: Mark) =
   let node = kids[0]
   var c = childCursor(node)
   skip c                                 # the callee
-  if c.hasMore and c.kind == TagLit and c.resolvedTagId == registerTag("kv"):
-    addParLe(p.dest, registerTag("oconstr"), node.info)
+  if c.hasMore and c.kind == TagLit and c.resolvedTagId == tagId(KvL):
+    addParLe(p.dest, tagId(OconstrL), node.info)
     var k = childCursor(node)
     while k.hasMore:
       p.dest.addSubtree k
@@ -735,8 +744,8 @@ proc attachBlocks*(p: var Parser; m: Mark) =
   var isCall = false
   if op.kind == TagLit:
     let t = op.resolvedTagId
-    for name in ["call", "cmd", "infix", "prefix", "postfix", "callstrlit"]:
-      if t == registerTag(name): isCall = true
+    isCall = t == tagId(CallL) or t == tagId(CmdL) or t == tagId(InfixL) or
+             t == tagId(PrefixL) or t == tagId(CallstrlitL)
   if isCall:
     addParLe(p.dest, op.resolvedTagId, op.info)
     var c = childCursor(op)
@@ -744,7 +753,7 @@ proc attachBlocks*(p: var Parser; m: Mark) =
       p.dest.addSubtree c
       skip c
   else:
-    addParLe(p.dest, registerTag("call"), op.info)
+    addParLe(p.dest, tagId(CallL), op.info)
     p.dest.addSubtree op
   for i in 1 ..< kids.len: p.dest.addSubtree kids[i]
   addParRi p.dest
@@ -765,7 +774,7 @@ proc doLayout*(p: var Parser; m: Mark; atBody: bool) =
     # parameters are created where their list starts -- unless there is no
     # list at all, only pragmas, in which case an empty one is made up after
     # the body has been parsed.
-    addParLe(p.dest, registerTag("do"), if atBody: kids[4].info else: m.info)
+    addParLe(p.dest, tagId(DoL), if atBody: kids[4].info else: m.info)
     let paramsInfo = if kids[1].isEmpty and kids[2].isEmpty: rawLineInfo(kids[5])
                      else: rawLineInfo(kids[0])
     addParams p, kids[1], paramsInfo
@@ -783,11 +792,11 @@ proc emptyDiscriminator*(p: var Parser) =
   ## nodes. Its name is the empty node, whose position has no file, so
   ## bridge.nim writes it absolute -- as `~1,,???`.
   let unknown = NifLineInfo(file: pool.filenames.getOrIncl("???"), line: 0, col: -1)
-  addParLe(p.dest, registerTag("fld"), unknown)
+  addParLe(p.dest, tagId(FldL), unknown)
   for i in 0 .. 4: emitEmpty p
   addParRi p.dest
 
-proc wrapNoInfo*(p: var Parser; m: Mark; tag: string) =
+proc wrapNoInfo*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## A node bridge.nim writes with `addTree` alone.
   wrapAt p, m, tag, NoLineInfo
 
@@ -798,7 +807,7 @@ proc pragmaBlock*(p: var Parser; m: Mark) =
   if kids.len == 1:
     p.dest.addSubtree kids[0]
   else:
-    addParLe(p.dest, registerTag("pragmax"), kids[0].info)
+    addParLe(p.dest, tagId(PragmaxL), kids[0].info)
     for k in kids: p.dest.addSubtree k
     addParRi p.dest
 
@@ -809,7 +818,7 @@ proc inheritLayout*(p: var Parser; m: Mark) =
   if kids.len == 1:
     p.dest.addSubtree kids[0]
   else:
-    addParLe(p.dest, registerTag("par"), m.info)
+    addParLe(p.dest, tagId(ParL), m.info)
     for k in kids: p.dest.addSubtree k
     addParRi p.dest
 
@@ -835,12 +844,12 @@ proc addParams(p: var Parser; c: Cursor; info: NifLineInfo) =
   ## `parseParamList` always builds an `nkFormalParams`, created at the token
   ## where the list would start.
   if c.isEmpty:
-    addParLe(p.dest, registerTag("params"), info)
+    addParLe(p.dest, tagId(ParamsL), info)
     addParRi p.dest
   else:
     p.dest.addSubtree c
 
-proc procLayout*(p: var Parser; m: Mark; keyword: string) =
+proc procLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## An anonymous routine, parsed as `params ret pragmas body` with `.` for
   ## each one that is absent. With a body it is a lambda,
   ## `(proc . . . . params ret pragmas . body)`, and `(params)` is always there.
@@ -850,7 +859,7 @@ proc procLayout*(p: var Parser; m: Mark; keyword: string) =
   let kids = takeTail(p, m)
   let (params, ret, pragmas, body) = (kids[0], kids[1], kids[2], kids[3])
   if not body.isEmpty:
-    addParLe(p.dest, registerTag(keyword), m.info)
+    addParLe(p.dest, tagId(keyword), m.info)
     for i in 0 .. 3: emitEmpty p
     addParams p, params, m.info
     p.dest.addSubtree ret
@@ -859,8 +868,7 @@ proc procLayout*(p: var Parser; m: Mark; keyword: string) =
     p.dest.addSubtree body
     addParRi p.dest
   else:
-    addParLe(p.dest, registerTag(if keyword == "iterator": "itertype"
-                                 else: "proctype"), m.info)
+    addParLe(p.dest, tagId(if keyword == IteratorL: ItertypeL else: ProctypeL), m.info)
     let hasSig = not params.isEmpty or not ret.isEmpty
     if hasSig or not pragmas.isEmpty:
       for i in 0 .. 3: emitEmpty p
@@ -874,12 +882,12 @@ proc procLayout*(p: var Parser; m: Mark; keyword: string) =
       emitEmpty p
     addParRi p.dest
 
-proc routineLayout*(p: var Parser; m: Mark; keyword: string) =
+proc routineLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## A named routine, parsed as `name x pattern typevars params ret pragmas
   ## body`: `(keyword name x pattern typevars params ret pragmas . body)`,
   ## with the effects slot nifler reserves and `(params)` always present.
   let kids = takeTail(p, m)
-  addParLe(p.dest, registerTag(keyword), p.infos[^1])
+  addParLe(p.dest, tagId(keyword), p.infos[^1])
   for i in 0 .. 3: p.dest.addSubtree kids[i]
   addParams p, kids[4], NoLineInfo
   p.dest.addSubtree kids[5]
@@ -927,7 +935,7 @@ proc emitLeaf*(p: var Parser) =
   of tkIntLit:
     addIntLit(p.dest, p.tok.iNumber, info)
   of tkInt8Lit, tkInt16Lit, tkInt32Lit, tkInt64Lit:
-    p.dest.buildTree registerTag("suf"), info:
+    p.dest.buildTree tagId(SufL), info:
       addIntLit(p.dest, p.tok.iNumber, info)
       addStrLit(p.dest, (case p.tok.kind
                          of tkInt8Lit: "i8"
@@ -937,7 +945,7 @@ proc emitLeaf*(p: var Parser) =
   of tkUIntLit:
     addUIntLit(p.dest, cast[uint64](p.tok.iNumber), info)
   of tkUInt8Lit, tkUInt16Lit, tkUInt32Lit, tkUInt64Lit:
-    p.dest.buildTree registerTag("suf"), info:
+    p.dest.buildTree tagId(SufL), info:
       addUIntLit(p.dest, cast[uint64](p.tok.iNumber), info)
       addStrLit(p.dest, (case p.tok.kind
                          of tkUInt8Lit: "u8"
@@ -947,7 +955,7 @@ proc emitLeaf*(p: var Parser) =
   of tkFloatLit:
     addFloatLit(p.dest, floatValue(p.tok), info)
   of tkFloat32Lit, tkFloat64Lit, tkFloat128Lit:
-    p.dest.buildTree registerTag("suf"), info:
+    p.dest.buildTree tagId(SufL), info:
       addFloatLit(p.dest, floatValue(p.tok), info)
       addStrLit(p.dest, (case p.tok.kind
                          of tkFloat32Lit: "f32"
@@ -958,7 +966,7 @@ proc emitLeaf*(p: var Parser) =
   of tkRStrLit, tkTripleStrLit, tkGStrLit, tkGTripleStrLit:
     # a generalized string literal is raw: `parseGStrLit` makes the argument
     # an `nkRStrLit` (or `nkTripleStrLit`)
-    p.dest.buildTree registerTag("suf"), info:
+    p.dest.buildTree tagId(SufL), info:
       addStrLit(p.dest, p.tok.s, info)
       addStrLit(p.dest, (if p.tok.kind in {tkRStrLit, tkGStrLit}: "R" else: "T"), info)
   of tkCharLit:
@@ -966,8 +974,8 @@ proc emitLeaf*(p: var Parser) =
   of tkCustomLit:
     # `identOrLiteral` turns `-1'big` into a call of the suffix operator:
     # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.
-    p.dest.buildTree registerTag("dot"), info:
-      p.dest.buildTree registerTag("suf"), info:
+    p.dest.buildTree tagId(DotL), info:
+      p.dest.buildTree tagId(SufL), info:
         addStrLit(p.dest, p.tok.s.substr(0, int(p.tok.suffixPos) - 1), info)
         addStrLit(p.dest, "R", info)
       addIdent(p.dest, p.tok.s.substr(int(p.tok.suffixPos)), info)

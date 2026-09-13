@@ -837,12 +837,12 @@ afterwards:
     if (p.tok.kind in {tkEquals}):
       expect p, tkEquals; pOptInd p; pExpr p
       if (p.tok.kind in {tkColon, tkDo}): pPostExprBlocks p
-      wrap p, m0, "asgn"
+      wrap p, m0, AsgnL
     elif (p.tok.kind in Tk8):
       pExprEqExpr p
       while (p.tok.kind in {tkComma}): pComma p; pExprEqExpr p
       ...
-      wrap p, m0, "cmd"
+      wrap p, m0, CmdL
 ```
 
 **Every tag is emitted as a retroactive `wrap` at the alternative's mark**, not
@@ -1442,21 +1442,26 @@ shell loop's own cost subtracted:
 
 | workload | nifler | nifler2 | nifler2/nifler |
 | --- | --- | --- | --- |
-| startup: empty file, 200 processes | 0.091s | 0.028s | 0.31 |
-| one 4.8 MB file (4 compiler modules x10), 5 runs | 0.749s | 0.849s | 1.13 |
-| nimony `src lib tests examples`, 1411 files, one process each | 0.744s | 0.539s | 0.72 |
-| Nim `lib compiler tools`, 535 files, one process each | 0.506s | 0.440s | 0.87 |
+| startup: empty file, 200 processes | 0.100s | 0.041s | 0.41 |
+| one 4.8 MB file (4 compiler modules x10), 5 runs | 0.684s | 0.760s | 1.11 |
+| nimony `src lib tests examples`, 1411 files, one process each | 0.550s | 0.341s | 0.62 |
+| Nim `lib compiler tools`, 535 files, one process each | 0.482s | 0.412s | 0.85 |
 
 The way nimony uses it — one process per module — nifler2 is faster, because
 nifler is a 12 MB binary that initializes Nim's compiler state and nifler2 is
-0.7 MB. On raw throughput it is 13–25% slower, and it runs twice the
-instructions (callgrind: 294M vs 152M on the four modules once) at half the
+0.7 MB. On raw throughput it is 10–20% slower, and it runs 1.6 times the
+instructions (callgrind: 248M vs 152M on the four modules once) at half the
 peak memory (48 MB vs 104 MB on the big file). `src/nifler2/tools/phasebench.nim`
-splits the big file's 169 ms: read 1 ms, lex 23 ms, parse 74 ms, write 56 ms.
-The hot spots callgrind names are the writer's `emit` (11%, plus 5% comparing
-tag names as strings), `splice` under `wrapAt` (8%: every retroactive wrap
-shifts the tokens after its mark) and `takeTail` under `fanOut` and
-`routineLayout` (5%).
+splits the big file's time: read 1 ms, lex 23 ms, parse 69 ms, write 42 ms.
+
+Tags are `NiflerKind` values (`src/models/nifler_tags.nim`) from the grammar
+to the writer: the generator emits `wrap p, m, StmtsL`, the runtime's
+`tagId` is the enum's ordinal because the master tag pool is seeded in
+`TagEnum` order, and the writer decides on `tagKind(c)`. With tag names as
+strings -- hashed on every wrap, compared in the writer -- the same run took
+294M instructions. What remains on top is `splice` under `wrapAt` (10%: every
+retroactive wrap shifts the tokens after its mark), the writer's `emit` (8%)
+and `takeTail` under `fanOut` and `routineLayout` (6%).
 
 Past line 65535 nifler's line info goes wrong (Nim's `TLineInfo.line` is
 16 bits); nifler2's does not, so the big file's outputs differ there and

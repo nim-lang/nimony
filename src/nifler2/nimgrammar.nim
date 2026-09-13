@@ -358,7 +358,7 @@ grammar:
   paramList      """params[ '(' optInd paramStart
                     (paramColonEquals ((comma | semicolon) paramStart paramColonEquals?)*)?
                     optPar ')' ]""":
-    enter: pushSection p, "param"
+    enter: pushSection p, ParamL
     leave: popSection p
   # GRAMMAR.TXT: `'(' declColonEquals ^* (comma/semicolon) ')'`, which makes
   # the separator a real separator. `parseParamList` breaks its loop on a
@@ -372,17 +372,17 @@ grammar:
     doLayout p, m, atBody
   routineSig "(NO_IND paramList)?. (NO_IND ':' optInd typeDesc)?. (validInd pragma)?."
   routineExpr(mode: PrimaryMode) "'proc' %at routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
-    procLayout p, m, "proc"
+    procLayout p, m, ProcL
   routineExpr(mode: PrimaryMode) "'func' %at routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt | . funcType)":
-    procLayout p, m, "func"
+    procLayout p, m, FuncL
   routineExpr(mode: PrimaryMode) "'iterator' %at routineSig (&routineBodyAllowed(mode) '=' trailComment? stmt)?.":
-    procLayout p, m, "iterator"
+    procLayout p, m, IteratorL
   funcType "%else":
     funcType p     # `parseProcExpr` refuses a `func` type
   routineType "'proc' %at routineSig .":
-    procLayout p, m, "proc"
+    procLayout p, m, ProcL
   routineType "'iterator' %at routineSig .":
-    procLayout p, m, "iterator"
+    procLayout p, m, IteratorL
   # `parseProcExpr` builds a lambda when there is a body and a type when there
   # is not, and nifler lays the two out differently: a lambda always has
   # `(params)`, a type keeps a missing signature as a single `.` and a bare
@@ -424,9 +424,9 @@ grammar:
   # --------------------------------------------------------------- primary
 
   forVar "identWithPragma . .":
-    wrapNoInfo p, m, "let"
+    wrapNoInfo p, m, LetL
   forTupleVar "plainSymbol . . . .":
-    wrapNoInfo p, m, "let"
+    wrapNoInfo p, m, LetL
   forTuple "unpacktup[ '(' optInd forTupleVar (comma forTupleVar?)* optPar ')' ]"
   forHead "forTuple 'in' expr":
     moveLastToMark p, m
@@ -550,7 +550,7 @@ grammar:
                   optInd exprBlocks ]"""
   exprStmt """simpleExpr({-1}, {pmTrySimple})
                  NO_IND (exprEqExpr ^+ (optPar comma optInd)) postExprBlocks?""":
-    wrapLikeFirst p, m, "cmd"      # `newTree(nkCommand, a.info, a)`
+    wrapLikeFirst p, m, CmdL      # `newTree(nkCommand, a.info, a)`
   # The separator is `optPar comma optInd`: `parseExprStmt` stops at a comma
   # that is dedented below the block (`p.tok.indent < baseIndent`), which is
   # how a `,` on its own line after a lambda body belongs to the enclosing
@@ -681,7 +681,7 @@ grammar:
   genericParamList """typevars[ '[' optInd
                      (genericParam ((comma | semicolon) genericParam?)*)?
                      optPar ']' ]""":
-    enter: pushSection p, "typevar"
+    enter: pushSection p, TypevarL
     leave: popSection p
 
   pattern "'{' stmt '}'"
@@ -694,13 +694,13 @@ grammar:
   routineName "symbol exportMarker?."
   routineName "KEYW":
     enter: identExpected p
-  routine(kw: string) """optInd routineName pattern?. genericParamList?.
+  routine(kw: NiflerKind) """optInd routineName pattern?. genericParamList?.
            (NO_IND paramList | params[ %at ]) (NO_IND ':' optInd typeDesc)?. (validInd pragma)?.
            (validInd '=' trailComment? stmt | . missingEquals) indAndComment""":
     routineLayout p, m, kw
   missingEquals "%else":
     missingEquals p     # `indAndComment(p, result, maybeMissEquals)`
-  routine(kw: string) """optInd %at routineSig ('=' trailComment? stmt)?.""":
+  routine(kw: NiflerKind) """optInd %at routineSig ('=' trailComment? stmt)?.""":
     procLayout p, m, kw
   # nifler: `(kw name x pattern typevars params result pragmas effects body)`,
   # nine children, the effects slot always `.` and `(params)` always there.
@@ -797,7 +797,7 @@ grammar:
 
   objectDecl """object[ 'object' (NO_IND 'of' typeDesc)?. trailComment?
               (IND{>} objectBody | strictListStart) ]""":
-    enter: pushSection p, "fld"
+    enter: pushSection p, FldL
     leave: popSection p
   objectBody "indented( (optSameInd COMMENT)? objectPart ^+ IND{=} strictListEnd )":
     enter: pushFieldWrap p, false
@@ -932,25 +932,25 @@ grammar:
   # branch is right there in the code. Without `caseStmt` a `case` *statement*
   # was unreachable: only `expr` offered one, and `exprStmt` goes through
   # `simpleExpr`, which does not.
-  complexOrSimpleStmt """'proc' routine({"proc"})""":
+  complexOrSimpleStmt """'proc' routine({ProcL})""":
     enter: pushInfo p
     leave: popInfo p
-  complexOrSimpleStmt """'method' routine({"method"})""":
+  complexOrSimpleStmt """'method' routine({MethodL})""":
     enter: pushInfo p
     leave: popInfo p
-  complexOrSimpleStmt """'func' routine({"func"})""":
+  complexOrSimpleStmt """'func' routine({FuncL})""":
     enter: pushInfo p
     leave: popInfo p
-  complexOrSimpleStmt """'iterator' routine({"iterator"})""":
+  complexOrSimpleStmt """'iterator' routine({IteratorL})""":
     enter: pushInfo p
     leave: popInfo p
-  complexOrSimpleStmt """'macro' routine({"macro"})""":
+  complexOrSimpleStmt """'macro' routine({MacroL})""":
     enter: pushInfo p
     leave: popInfo p
-  complexOrSimpleStmt """'template' routine({"template"})""":
+  complexOrSimpleStmt """'template' routine({TemplateL})""":
     enter: pushInfo p
     leave: popInfo p
-  complexOrSimpleStmt """'converter' routine({"converter"})""":
+  complexOrSimpleStmt """'converter' routine({ConverterL})""":
     enter: pushInfo p
     leave: popInfo p
   complexOrSimpleStmt "'type' section(typeDef)"
@@ -968,13 +968,13 @@ grammar:
   # on the buffer: `binary(...)` cannot express that, because its first
   # argument *is* the left operand.
   complexOrSimpleStmt "'const' section(constant)":
-    enter: pushSection p, "const"
+    enter: pushSection p, ConstL
     leave: popSection p
   complexOrSimpleStmt "'let' section(variable)":
-    enter: pushSection p, "let"
+    enter: pushSection p, LetL
     leave: popSection p
   complexOrSimpleStmt "'var' section(variable)":
-    enter: pushSection p, "var"
+    enter: pushSection p, VarL
     leave: popSection p
   complexOrSimpleStmt "using[ 'using' section(variable) ]":
     enter: pushLastSection p

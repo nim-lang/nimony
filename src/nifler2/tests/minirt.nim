@@ -10,6 +10,9 @@
 ## real one is `src/nifler2/parserrt.nim`.
 
 import std / [strutils, syncio]
+import ".." / ".." / models / nifler_tags
+
+export nifler_tags
 
 type
   TokKind* = enum
@@ -198,13 +201,13 @@ proc openTag*(p: var Parser; tag: string) =
 proc closeTag*(p: var Parser) =
   p.buf.add BufTok(kind: bClose, text: "")
 
-proc wrap*(p: var Parser; m: Mark; tag: string) =
+proc wrap*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## Insert the opening token at the mark and close at the end. The whole
   ## point of the design: the tag is decided after the fact.
-  p.buf.insert(BufTok(kind: bOpen, text: tag), m.pos)
+  p.buf.insert(BufTok(kind: bOpen, text: $tag), m.pos)
   p.buf.add BufTok(kind: bClose, text: "")
 
-proc wrapAt*(p: var Parser; m: Mark; tag: string; info: int) =
+proc wrapAt*(p: var Parser; m: Mark; tag: NiflerKind; info: int) =
   ## Positions are not modelled here, so this is `wrap`.
   wrap p, m, tag
 

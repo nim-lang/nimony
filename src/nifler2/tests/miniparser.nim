@@ -39,7 +39,7 @@ proc pModule*(p: var Parser) =
     if ((p.tok.kind in Tk2)) and indClass(p) == icGt:
       indentError p
     discardUnused m1
-  wrap p, m0, "stmts"
+  wrap p, m0, StmtsL
   discardUnused m0
 
 proc pNotInd*(p: var Parser) =
@@ -56,13 +56,13 @@ proc pStmt*(p: var Parser) =
     pExpr(p, -1)
     expect p, tkColon
     pBody p
-    wrap p, m0, "if"
+    wrap p, m0, IfL
   elif (p.tok.kind in {tkWhile}):
     expect p, tkWhile
     pExpr(p, -1)
     expect p, tkColon
     pBody p
-    wrap p, m0, "while"
+    wrap p, m0, WhileL
   else:
     pExprStmt p
   discardUnused m0
@@ -99,7 +99,7 @@ proc pExprStmt*(p: var Parser) =
     if (p.tok.kind in {tkEquals}):
       expect p, tkEquals
       pExpr(p, -1)
-      wrap p, m0, "asgn"
+      wrap p, m0, AsgnL
     elif (p.tok.kind in {tkIntLit, tkParLe, tkSymbol}):
       let m6 = mark(p)
       pExpr(p, -1)
@@ -108,7 +108,7 @@ proc pExprStmt*(p: var Parser) =
         let m6 = mark(p)
         pExpr(p, -1)
         discardUnused m6
-      wrap p, m0, "cmd"
+      wrap p, m0, CmdL
     else:
       discard
   else:
@@ -126,7 +126,7 @@ proc pExpr*(p: var Parser; limit: int) =
     getTok p
     afterOperator p
     pExpr(p, prec + assoc)
-    wrapAt p, m0, "infix", opInfo
+    wrapAt p, m0, InfixL, opInfo
     prec = getPrecedence(p)
   discardUnused m0
 
@@ -153,20 +153,20 @@ proc pSuffix*(p: var Parser; anchor: Mark) =
           pExpr(p, -1)
         discardUnused m9
       expect p, tkParRi
-      wrapAt p, anchor, "call", at8
+      wrapAt p, anchor, CallL, at8
     elif (p.tok.kind in {tkBracketLe}):
       var at10 = p.info
       expect p, tkBracketLe
       pExpr(p, -1)
       expect p, tkBracketRi
-      wrapAt p, anchor, "at", at10
+      wrapAt p, anchor, AtL, at10
     else:
       ruleError p, "suffix", false
   elif (p.tok.kind in {tkDot}):
     var at11 = p.info
     expect p, tkDot
     emitLeaf p            # IDENT
-    wrapAt p, anchor, "dot", at11
+    wrapAt p, anchor, DotL, at11
   else:
     ruleError p, "suffix", false
   discardUnused m0

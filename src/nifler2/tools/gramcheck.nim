@@ -761,6 +761,12 @@ proc line(e: var Emitter; s: string) =
 
 proc procName(rule: string): string = "p" & capitalizeAscii(rule)
 
+proc tagSym(tag: string): string =
+  ## A `^tag[...]` as the generated code names it: the `NiflerKind` value from
+  ## `src/models/nifler_tags.nim`, `stmts` -> `StmtsL`. An unknown tag is then a
+  ## compile error in the generated parser, not a string nobody checks.
+  capitalizeAscii(tag) & "L"
+
 proc kindTest(key: string): string =
   ## One `(kind, refinement)` key as a Nim condition on `p.tok`.
   if key.contains("+"):
@@ -1008,9 +1014,9 @@ proc emitAlts(e: var Emitter; alts: seq[Alt]; rule, mark, anchor: string) =
     let base = if a.anchored: anchor else: mark
     if a.tag.len > 0:
       if posVar.len > 0:
-        e.line "wrapAt p, " & base & ", \"" & a.tag & "\", " & posVar
+        e.line "wrapAt p, " & base & ", " & tagSym(a.tag) & ", " & posVar
       else:
-        e.line "wrap p, " & base & ", \"" & a.tag & "\""
+        e.line "wrap p, " & base & ", " & tagSym(a.tag)
     if a.afterCode.len > 0:
       # the bare body inspects what was just parsed, so it needs the mark --
       # the anchor when the alternative's tag is anchored, even when a
@@ -1282,13 +1288,13 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
         rest.kids = items[1 .. ^1]
         body = rest
       emitNode(e, body, mark, anchor)
-      e.line "wrapAt p, " & anchor & ", \"" & n.text & "\", " & posVar
+      e.line "wrapAt p, " & anchor & ", " & tagSym(n.text) & ", " & posVar
     else:
       emitNode(e, n.kids[0], mark, anchor)
       if posVar.len > 0:
-        e.line "wrapAt p, " & mark & ", \"" & n.text & "\", " & posVar
+        e.line "wrapAt p, " & mark & ", " & tagSym(n.text) & ", " & posVar
       else:
-        e.line "wrap p, " & mark & ", \"" & n.text & "\""
+        e.line "wrap p, " & mark & ", " & tagSym(n.text)
   of nWithInd:
     e.line "pushIndAny p"
     emitNode(e, n.kids[0], mark, anchor)
@@ -1332,7 +1338,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       else:
         args.add "prec + assoc"
       e.line procName(e.curRule) & "(" & args.join(", ") & ")"
-      e.line "wrapAt p, " & mark & ", \"" & tg & "\", opInfo"
+      e.line "wrapAt p, " & mark & ", " & tagSym(tg) & ", opInfo"
       e.line "prec = " & precP & "(p)"
   of nBinTail:
     # `parseOperators` applied to a node that is already on the buffer:
@@ -1361,7 +1367,7 @@ proc emitNode(e: var Emitter; n: Node; mark, anchor: string) =
       var args: seq[string] = @["p", pv & " + " & av]
       for r in rest: args.add r
       e.line procName(n.kids[0].text) & "(" & args.join(", ") & ")"
-      e.line "wrapAt p, " & mark & ", \"" & ttag & "\", op" & av
+      e.line "wrapAt p, " & mark & ", " & tagSym(ttag) & ", op" & av
       e.line pv & " = " & tprec & "(p)"
   of nLa2:
     e.line "# la2: " & render(n)
