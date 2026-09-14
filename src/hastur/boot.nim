@@ -34,6 +34,9 @@ const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "s
 proc bootCarryTools*(): seq[string] =
   result = @BootCarryTools
   if bootNative: result.add BootNativeTools
+  # nimony parses with nifler2 whenever it sits next to it, so a stage parses
+  # with the same tool `bin/` does -- and with nifler where `bin/` has none
+  if fileExists(binDir() / "nifler2".addFileExt(ExeExt)): result.add "nifler2"
 
 const NativeBootReady = true
   ## Requires a nativenif checkout whose arkham holds each emit step's demand

@@ -226,7 +226,11 @@ proc semOneConceptParent(c: var SemContext; dest: var TokenBuf; n: var Cursor;
     # An ambiguous name (e.g. a concept redeclared next to `system`'s) sems to a
     # symbol choice, not a symbol: report the redeclaration instead of the
     # misleading "can only inherit from other concepts" (nim-lang/nimony#2260).
-    let ambiguous = parentType.exprKind in {CchoiceX, OchoiceX}
+    # (The name lookup reports the ambiguity as an error around the choice.)
+    var ambiguous = parentType.exprKind in {CchoiceX, OchoiceX}
+    if parentType.exprKind == ErrX:
+      let choice = parentType.childCursor
+      ambiguous = choice.exprKind in {CchoiceX, OchoiceX}
     dest.shrink before
     hadError = true
     if ambiguous:

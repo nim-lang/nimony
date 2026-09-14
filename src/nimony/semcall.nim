@@ -262,7 +262,20 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # and stay judged against the caller's module — see `visibilityModule`.
     c.visOwner.add VisOwner(module: pool.symModule(fnId),
                             file: res.decl.info.file.uint32)
-    semExpr c, dest, a, flags
+    if outcome == PluginExpanded and c.phase == SemcheckBodies and
+        c.currentScope.kind == ToplevelScope and
+        (returnType.isDotToken or returnType.typeKind == VoidT):
+      # A toplevel statement is only sem'd in the body phase, so declarations
+      # a plugin expands to would skip the phases before it: no signature pass
+      # means a forward declaration is never matched with its implementation,
+      # and a routine cannot call one declared after it. Give the expansion
+      # every phase, as a toplevel `when` branch gets. Only a statement-shaped
+      # expansion can declare anything; an expression one (`echo foldr(...)`
+      # at the toplevel) must not have its gensyms run through phases meant
+      # for declarations.
+      semExprMissingPhases c, dest, a, SemcheckBodies
+    else:
+      semExpr c, dest, a, flags
     case returnType.typeKind
     of UntypedT:
       # untyped return type ignored, maybe could be handled in commonType

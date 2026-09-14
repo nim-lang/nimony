@@ -10,6 +10,8 @@
 {.feature: "lenientnils".}
 import std/[syncio, assertions, strutils, math, formatfloat, cmdline]
 import ../../src/lib/[nifbuilder, nifreader]
+from ../../src/lib/nifpools import pool, globalTags, toString
+from ../../src/nifler2/nimgrammar import parseSnippet
 
 type
   NimNodeKind* = enum
@@ -409,6 +411,28 @@ func ident*(s: string): NimNode = newIdentNode(s)
 # ============================================================================
 
 include private/macros_nif
+
+proc parseNim(code: string; asExpr: bool): NimNode =
+  ## nifler2's parser, and then the same NIF-to-`NimNode` conversion a macro's
+  ## arguments go through, so parsed code and passed code look alike.
+  var err = ""
+  var tree = parseSnippet(code, asExpr, pool, globalTags, err)
+  if err.len > 0:
+    # an `(err . "msg")` in the output is reported at the macro call
+    result = newTree(nnkError, [newEmptyNode(), newStrLitNode(err)])
+  else:
+    var r = openFromBuffer(toString(tree, false), "")
+    result = fromNif(r)
+    close r
+
+proc parseStmt*(code: string): NimNode =
+  ## `code` as a statement list. A syntax error is an `nnkError` node, which
+  ## becomes a compile error once it is part of the macro's result.
+  parseNim(code, false)
+
+proc parseExpr*(code: string): NimNode =
+  ## `code` as exactly one expression; errors as for `parseStmt`.
+  parseNim(code, true)
 
 # ============================================================================
 # Additional utilities
