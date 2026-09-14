@@ -987,7 +987,7 @@ type
     kind: string          ## "obj" | "artifact"
     flags: seq[string]
 
-proc writeLinkManifest(path, exe, apptype: string;
+proc writeLinkManifest(path, exe, apptype, linker: string;
                        files: seq[ManifestFile]; flags: seq[string]): string =
   ## Write the manifest NIF a linker (the default `niflink`, or a `{.bundle.}`
   ## tool) consumes: every project artifact (objects + routed backend outputs)
@@ -1004,6 +1004,9 @@ proc writeLinkManifest(path, exe, apptype: string;
   b.withTree "link":
     b.withTree "apptype":
       b.addStrLit apptype
+    if linker.len > 0:
+      b.withTree "linker":
+        b.addStrLit linker
     b.withTree "output":
       b.addStrLit exe
     for f in files:
@@ -1458,7 +1461,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             if f.len > 0: flags.add f
         for f in c.passL: flags.add f
         let manifest = backendDir / (c.rootNode.files[0].modname & ".linkmanifest.nif")
-        discard writeLinkManifest(manifest, exe, $c.config.appType, mfiles, flags)
+        discard writeLinkManifest(manifest, exe, $c.config.appType, c.config.linker, mfiles, flags)
         b.withTree "do":
           b.addIdent linkNode
           if customLinkerName.len > 0 and customLinkerArgs.len > 0:
