@@ -24,7 +24,9 @@
 ##   owns precedence, exactly as `parser.nim` does.
 ## * `DED` is implicit in `indented(...)`.
 
+import std / strutils
 import parserrt
+from ".." / lib / nifcore import createTokenBuf
 export parserrt
 
 grammar:
@@ -1012,3 +1014,57 @@ grammar:
   # Both forms are a `stmts`, a single statement included: `parseStmt`
   # builds an `nkStmtList` in either branch, and nifler writes it as it is --
   # `if c: x` is `(if (elif c (stmts x)))`.
+
+# --------------------------------------------------------------- entry points
+
+proc parseModule*(p: var Parser) =
+  ## A whole module, with `parser.nim`'s `parseTopLevelStmt` checks around
+  ## `module`. An error is recorded in `p`, not reported.
+  if p.tok.indent > 0:
+    indentError p     # `parseTopLevelStmt`: the first statement starts a line
+  pModule p
+  if not p.failed and p.tok.kind != tkEof:
+    # `module` stops at a token that does not start a statement, or not its
+    # own line: parser.nim's `parseTopLevelStmt`
+    if p.tok.indent == 0 or (p.tok.indent < 0 and p.prevKind in {tkInvalid, tkSemiColon}):
+      exprExpected p
+    elif p.tok.kind == tkOpr and p.tok.s == "*":
+      error p, "invalid indentation; an export marker '*' follows the declared identifier"
+    else:
+      indentError p
+
+proc parseSnippet*(code: string; asExpr: bool; pool: Pool; tags: TagPool;
+                   err: var string): TokenBuf =
+  ## Nim's `parseStmt` (`asExpr = false`) and `parseExpr`: `(stmts ...)`, or
+  ## the one expression, into `pool` and `tags`. `err` is the first error --
+  ## the lexer's messages come first, as nifler prints them -- and the result
+  ## is empty when there is one. `parseExpr` is `parseStmt` that insists on
+  ## exactly one statement, as it is in Nim's VM.
+  var p = openParser(code, "", pool, tags)
+  parseModule p
+  err = ""
+  if p.lex.errors.len > 0:
+    # the lexer's message is formatted, `(line, col) Error: msg` for a parser
+    # without a file name
+    let e = p.lex.errors[0]
+    let sep = e.find(") Error: ")
+    err = e.substr(sep + len(") Error: ")) & " (at " & e.substr(1, sep - 1) &
+          " of the parsed code)"
+  elif p.failed:
+    err = p.errMsg & " (at " & $p.errLine & ", " & $(p.errCol + 1) &
+          " of the parsed code)"
+  result = nifcore.createTokenBuf(16, pool, tags)
+  if err.len == 0:
+    var c = beginRead(p.dest)
+    if not asExpr:
+      result.addSubtree c
+    else:
+      var kids = childCursor(c)
+      var n = 0
+      var first = kids
+      while kids.hasMore:
+        inc n
+        skip kids
+      if n == 1: result.addSubtree first
+      else: err = "expected expression, but got multiple statements"
+    endRead c

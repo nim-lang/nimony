@@ -38,20 +38,10 @@ proc parse(p: var Parser; inp: string) {.raises.} =
   let filename = absolutePath(inp)
   var filterFailed = false
   let src = applyFilters(readFile(inp), filename, filterFailed)
-  p = openParser(src, filename)
+  p = openParser(src, filename, pool, globalTags)
   p.filterFailed = filterFailed
-  if p.tok.indent > 0:
-    indentError p     # `parseTopLevelStmt`: the first statement starts a line
-  pModule p
-  if p.tok.kind != tkEof:
-    # `module` stops at a token that does not start a statement, or not its
-    # own line: parser.nim's `parseTopLevelStmt`
-    if p.tok.indent == 0 or (p.tok.indent < 0 and p.prevKind in {tkInvalid, tkSemiColon}):
-      exprExpected p
-    elif p.tok.kind == tkOpr and p.tok.s == "*":
-      error p, "invalid indentation; an export marker '*' follows the declared identifier"
-    else:
-      indentError p
+  parseModule p
+  if p.failed: reportFailure p
 
 proc report(p: Parser): bool =
   for e in p.lex.errors: echo e
@@ -77,7 +67,7 @@ proc main {.raises.} =
   let inp = args[0]
   case action
   of "p", "parse", "deps":
-    var p = openParser("", inp)
+    var p = openParser("", inp, pool, globalTags)
     parse p, inp
     let ok = report(p)
     if not ok: quit 1
@@ -91,7 +81,7 @@ proc main {.raises.} =
     if deps or action == "deps":
       writeDeps(p.dest, changeFileExt(outp, ".deps.nif"))
   of "t", "tree":
-    var p = openParser("", inp)
+    var p = openParser("", inp, pool, globalTags)
     parse p, inp
     echo toString(p.dest)
     if not report(p): quit 1

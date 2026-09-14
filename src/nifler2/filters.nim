@@ -483,8 +483,9 @@ proc applyFilters*(src, filename: string; failed: var bool): string =
     return src
   inc i, 2
   while i < line.len and line[i] in Whitespace: inc i
-  var pipe = openParser(substr(line, i), filename)
+  var pipe = openParser(substr(line, i), filename, pool, globalTags)
   pModule pipe
+  if pipe.failed: reportFailure pipe
   var ctx = FilterContext(filename: filename)
   var input = LineReader(s: src, rd: 0, fromFile: true)
   var c = beginRead(pipe.dest)

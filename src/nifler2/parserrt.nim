@@ -33,6 +33,7 @@
 
 import std / [parseutils, syncio]
 import ".." / lib / nifpools
+from ".." / lib / nifcore import createTokenBuf
 import ".." / models / nifler_tags
 
 export nifler_tags
@@ -76,18 +77,25 @@ type
     infos: seq[NifLineInfo] ## see `pushInfo`
     tail: TokenBuf         ## scratch for the layout rewrites
     wrapFields: seq[bool]  ## whether a multi-name field is wrapped in `stmts`
+    pool: Pool             ## the literals pool of all three buffers
+    failed*: bool          ## a syntax error ended the parse; see `errorAt`
+    errLine*, errCol*: int ## where, `errCol` 0-based
+    errMsg*: string        ## what
 
-proc openParser*(src, filename: string): Parser =
+proc openParser*(src, filename: string; pool: Pool; tags: TagPool): Parser =
+  ## `pool` and `tags` are the output's: nifler2 writes through `nifpools`'
+  ## globals, a plugin parses into its own.
   result = Parser(lex: openLexer(src, filename),
                   tok: Token(kind: tkInvalid, s: "", indent: -1, spacing: {},
                              line: 0, col: 0, base: 10, suffixPos: -1,
                              iNumber: 0),
-                  dest: createTokenBuf(src.len div 3 + 16),
-                  head: createTokenBuf(4),
-                  tail: createTokenBuf(64),
+                  dest: nifcore.createTokenBuf(src.len div 3 + 16, pool, tags),
+                  head: nifcore.createTokenBuf(4, pool, tags),
+                  tail: nifcore.createTokenBuf(64, pool, tags),
                   file: pool.filenames.getOrIncl(filename),
                   currInd: 0, indStack: @[],
-                  inPragma: 0, sections: @[], lastSection: VarL, wrapFields: @[])
+                  inPragma: 0, sections: @[], lastSection: VarL, wrapFields: @[],
+                  pool: pool, failed: false, errLine: 0, errCol: 0, errMsg: "")
   next result.lex, result.tok
 
 proc info*(p: Parser): NifLineInfo {.inline.} =
@@ -122,13 +130,31 @@ proc prettyTok*(t: Token): string =
 proc errorAt*(p: var Parser; line, col: int; msg: string) =
   ## The first syntax error ends the parse. Recovery would mean bailing out of
   ## an arbitrarily deep recursion, and the generated code cannot: there are no
-  ## exceptions in this runtime and no notation for a recovery production. It
-  ## also has to end the parse rather than merely record it, because `expect`
-  ## does not consume the token it did not match -- so a repetition whose body
-  ## fails makes no progress and would spin. The lexer's messages so far come
-  ## first, which is where Nim, one token ahead as well, prints them.
+  ## exceptions in this runtime and no notation for a recovery production. So
+  ## the error is recorded and the token stream ends *here*: from now on the
+  ## current token is an end of file that `getTok` never moves past. That is
+  ## what unwinds the recursion -- every repetition's continuation test fails
+  ## on it, and a mandatory item that does not match reports into an error
+  ## that is already recorded. It has to end the stream rather than merely
+  ## record the error, because `expect` does not consume the token it did not
+  ## match, so a repetition whose body fails would make no progress and spin.
+  ## A rule cut short leaves fewer trees than its layout expects, which is why
+  ## the layouts check `failed`.
+  if not p.failed:
+    p.failed = true
+    p.errLine = line
+    p.errCol = col
+    p.errMsg = msg
+    p.tok.kind = tkEof
+    p.tok.indent = 0
+    p.tok.s = ""
+
+proc reportFailure*(p: Parser) =
+  ## nifler's output for a syntax error, and its exit code. The lexer's
+  ## messages come first, which is where Nim, one token ahead as well, prints
+  ## them; the stream ended at the error, so they are the ones up to it.
   for e in p.lex.errors: echo e
-  echo p.lex.filename, "(", line, ", ", col + 1, ") Error: ", msg
+  echo p.lex.filename, "(", p.errLine, ", ", p.errCol + 1, ") Error: ", p.errMsg
   quit 1
 
 proc error*(p: var Parser; msg: string) =
@@ -577,13 +603,14 @@ proc infoAt(p: var Parser; pos: int): NifLineInfo =
 
 proc wrapLikeFirst*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## A node positioned at its first child: `newTree(nkCommand, a.info, a)`.
-  wrapAt p, m, tag, infoAt(p, m.pos)
+  wrapAt p, m, tag, (if m.pos == p.dest.len: m.info else: infoAt(p, m.pos))
 
 proc fanOut*(p: var Parser; m: Mark) =
   ## `name x pragmas` repeated, then `type value`: one `(section name x
   ## pragmas type value)` per name. The count is exact because every slot is
   ## written, `.` or not -- which is what the placeholders buy.
   let kids = takeTail(p, m)
+  if p.failed: return
   let names = (kids.len - 2) div 3
   let tag = tagId(p.section)
   let wrap = p.section == FldL and names > 1 and
@@ -601,6 +628,7 @@ proc fanOutKv*(p: var Parser; m: Mark) =
   ## A tuple field list: names, then `type value`. nifler keeps `(kv name
   ## type)` and drops the default.
   let kids = takeTail(p, m)
+  if p.failed: return
   let tag = tagId(KvL)
   for i in 0 ..< kids.len - 2:
     addParLe(p.dest, tag, kids[i].info)
@@ -613,6 +641,7 @@ proc joinIdents*(p: var Parser; m: Mark) =
   ## tokens into one identifier: `` `[]=` `` is `(quoted []=)`, not three
   ## children, while `` `=copy` `` is `(quoted = copy)`.
   let kids = takeTail(p, m)
+  if p.failed: return
   var text = ""
   for k in kids: text.add strVal(k)
   addIdent(p.dest, text, m.info)
@@ -628,6 +657,7 @@ proc stmtListExprLayout*(p: var Parser; m: Mark) =
   ## `nkStmtListExpr`: nifler writes all statements but the last in a `stmts`
   ## and the last one after it, `(expr (stmts a b) c)`.
   let kids = takeTail(p, m)
+  if p.failed: return
   addParLe(p.dest, tagId(ExprL), m.info)
   addParLe(p.dest, tagId(StmtsL), m.info)
   for i in 0 ..< kids.len - 1: p.dest.addSubtree kids[i]
@@ -652,6 +682,7 @@ proc literalAsIdent*(p: var Parser; m: Mark) =
   ## Inside backquotes `parseSymbol` makes a literal token an identifier of
   ## its text: `` `'big` `` is `(quoted ' big)`.
   let kids = takeTail(p, m)
+  if p.failed: return
   let k = kids[0]
   case k.kind
   of CharLit:
@@ -673,6 +704,7 @@ proc dotLayout*(p: var Parser; m: Mark) =
   ## `dotExpr`'s rewrite of `x.y[:z](args)` into `y[z](x, args)`: the dot
   ## node's children are `x y (at z...) args...` when the `[:` was there.
   let kids = takeTail(p, m)
+  if p.failed: return
   let node = kids[0]
   var parts: seq[Cursor] = @[]
   var c = childCursor(node)
@@ -700,6 +732,7 @@ proc curlyOrTable*(p: var Parser; m: Mark) =
   ## `setOrTableConstr` retags `nkCurly` as `nkTableConstr` as soon as one
   ## element is `key: value`.
   let kids = takeTail(p, m)
+  if p.failed: return
   let node = kids[0]
   var isTable = false
   var c = childCursor(node)
@@ -720,6 +753,7 @@ proc callOrObjConstr*(p: var Parser; m: Mark) =
   ## `primarySuffix`'s `(`: a call whose first argument is `name: value` is
   ## an object constructor, `Foo(a: 1)` is `(oconstr Foo (kv a 1))`.
   let kids = takeTail(p, m)
+  if p.failed: return
   let node = kids[0]
   var c = childCursor(node)
   skip c                                 # the callee
@@ -741,6 +775,7 @@ proc attachBlocks*(p: var Parser; m: Mark) =
   ## The rule that calls this has parsed the operand first, so the operand is
   ## the first tree since `m` and the blocks are the rest.
   let kids = takeTail(p, m)
+  if p.failed: return
   if kids.len == 1:
     p.dest.addSubtree kids[0]
     return
@@ -770,6 +805,7 @@ proc doLayout*(p: var Parser; m: Mark; atBody: bool) =
   # kids: position after `do`, params, ret, pragmas, body, position after
   # the body (both from `posMarker`)
   let kids = takeTail(p, m)
+  if p.failed: return
   if kids[1].isEmpty and kids[2].isEmpty and kids[3].isEmpty:
     p.dest.addSubtree kids[4]
   else:
@@ -795,7 +831,7 @@ proc emptyDiscriminator*(p: var Parser) =
   ## `parseObjectCase` without a discriminator: an `nkIdentDefs` of empty
   ## nodes. Its name is the empty node, whose position has no file, so
   ## bridge.nim writes it absolute -- as `~1,,???`.
-  let unknown = NifLineInfo(file: pool.filenames.getOrIncl("???"), line: 0, col: -1)
+  let unknown = NifLineInfo(file: p.pool.filenames.getOrIncl("???"), line: 0, col: -1)
   addParLe(p.dest, tagId(FldL), unknown)
   for i in 0 .. 4: emitEmpty p
   addParRi p.dest
@@ -808,6 +844,7 @@ proc pragmaBlock*(p: var Parser; m: Mark) =
   ## `parseStmtPragma`: a pragma followed by a block is an `nkPragmaBlock`,
   ## `(pragmax pragmas body)`, positioned at the pragma.
   let kids = takeTail(p, m)
+  if p.failed: return
   if kids.len == 1:
     p.dest.addSubtree kids[0]
   else:
@@ -819,6 +856,7 @@ proc inheritLayout*(p: var Parser; m: Mark) =
   ## `nkOfInherit`, created at `of`: one type is written as itself, several
   ## as `(par A B)`.
   let kids = takeTail(p, m)
+  if p.failed: return
   if kids.len == 1:
     p.dest.addSubtree kids[0]
   else:
@@ -841,6 +879,7 @@ proc moveLastToMark*(p: var Parser; m: Mark) =
   ## `for x in it` and `let (a, b) = v`: nifler writes the iterated or
   ## unpacked value first.
   let kids = takeTail(p, m)
+  if p.failed: return
   p.dest.addSubtree kids[^1]
   for i in 0 ..< kids.len - 1: p.dest.addSubtree kids[i]
 
@@ -861,6 +900,7 @@ proc procLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## at all is `(proctype)`, no signature is a single `.` in place of params
   ## and result.
   let kids = takeTail(p, m)
+  if p.failed: return
   let (params, ret, pragmas, body) = (kids[0], kids[1], kids[2], kids[3])
   if not body.isEmpty:
     addParLe(p.dest, tagId(keyword), m.info)
@@ -891,6 +931,7 @@ proc routineLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## body`: `(keyword name x pattern typevars params ret pragmas . body)`,
   ## with the effects slot nifler reserves and `(params)` always present.
   let kids = takeTail(p, m)
+  if p.failed: return
   addParLe(p.dest, tagId(keyword), p.infos[^1])
   for i in 0 .. 3: p.dest.addSubtree kids[i]
   addParams p, kids[4], NoLineInfo

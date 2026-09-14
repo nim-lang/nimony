@@ -1,0 +1,1 @@
+tests/nimony/macros/tparsestmt_bad.nim(7, 7) Error: expected: ':', but got: 'keyword discard' (at 2, 10 of the parsed code)
