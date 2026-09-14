@@ -1891,7 +1891,15 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         semExprSym c, dest, it, fetchSym(c, sym), start, flags
         return
       else:
-        c.buildErr dest, readonlyCursorAt(dest, start).info, "ambiguous identifier"
+        # the choice goes INTO the error, as the undeclared identifier above
+        # does: an error next to it would be one child too many for whatever
+        # slot the name was in -- a parameter's default value, say, which
+        # phase 3 then walked past its end
+        var orig = createTokenBuf(4)
+        orig.addSubtree readonlyCursorAt(dest, start)
+        dest.shrink start
+        let choice = cursorAt(orig, 0)
+        c.buildErr dest, choice.info, "ambiguous identifier", choice
     it.typ = c.types.autoType
   elif s.kind == BlockY:
     it.typ = c.types.autoType

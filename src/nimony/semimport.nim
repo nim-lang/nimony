@@ -317,7 +317,8 @@ proc semExportSymbol(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
     var it = Item(n: n, typ: c.types.autoType)
     let oldPhase = c.phase
     c.phase = SemcheckBodies
-    semExpr c, dest, it
+    # every overload of `module.name` is exported, so the choice is the answer
+    semExpr c, dest, it, {KeepChoices}
     c.phase = oldPhase
     n = it.n
   else:
