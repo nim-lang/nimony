@@ -51,8 +51,7 @@ proc typedUnOp(c: var GeneratedCode; n: var Cursor; opr: string) =
     c.add opr
     # a negative literal operand -- `abs(-3.0)` once the inliner substitutes
     # the constant into `-y` -- must not glue onto `-` as C's `--`
-    if opr == "-" and ((n.kind == FloatLit and ($floatVal(n))[0] == '-') or
-        (n.kind == IntLit and intVal(n) < 0)):
+    if opr == "-":
       c.add " "
     genx c, n
     c.add ParRi
