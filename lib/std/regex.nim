@@ -14,8 +14,10 @@
 ## backtracking. That is what makes the worst case linear — there is no input
 ## that makes `(a+)+b` take exponential time here — and it is also what bounds
 ## what the module can express: a capture must lie on every accepting path
-## (`(abc)|(xyz)` is rejected, `(abc|xyz)` is fine), and a pattern whose
-## automaton would need more than 255 states is rejected rather than compiled.
+## (`(abc)|(xyz)` is rejected, `(abc|xyz)` is fine). The automaton's size is
+## not capped, and it can be exponential in the pattern's: `(a|b)*a(a|b){20}`
+## needs two million states. Matching stays linear, but compiling a pattern
+## from an untrusted source with `tryRe` can take unbounded time and memory.
 ##
 ## Two ways to use it:
 ##

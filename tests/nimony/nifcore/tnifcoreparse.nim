@@ -72,6 +72,24 @@ proc main =
     assert child.rawLineInfo.isValid
     child.skip()
 
+  # A non-finite float is written as a compound, `(inf)`, and its line info
+  # has to go on the tag name. Attached after the `)` the text was not NIF, and
+  # the reader stopped there, silently dropping everything after the literal.
+  var specials = createTokenBuf()
+  let specialsFile = specials.pool.filenames.getOrIncl("floats.nim")
+  specials.openTag(specials.tags.registerTag("consts"))
+  specials.appendLineInfo(specialsFile, 1, 0)
+  for v in [Inf, NaN, -Inf, 1.5]:
+    specials.addFloatLit(v)
+    specials.appendLineInfo(specialsFile, 2, 12)
+  specials.addIdent("after")
+  specials.appendLineInfo(specialsFile, 3, 4)
+  specials.closeTag()
+  let specialsText = toString(specials)
+  var reread = parseFromBuffer(specialsText, "floats")
+  assert toString(reread, includeLineInfo = false) ==
+    "(consts\n (inf)\n (nan)\n (neginf)1.5 after)"
+
   var unusedName = ""
   var hinted = parseFromBuffer(
     "(.unusedname tmp.14)\n(stmts)", "hinted", unusedName)

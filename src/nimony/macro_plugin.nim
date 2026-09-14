@@ -368,6 +368,8 @@ proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
     return false
 
   var r = nifreader.open(outputPath)
-  parse(r, dest)
+  # A `NimNode` has no position, so the output has none of its own: every
+  # node is the macro call's, which is where Nim reports an error in it too.
+  parse(r, dest, parentSeed = info, denseLineInfo = true)
   r.close()
   return true

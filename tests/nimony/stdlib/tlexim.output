@@ -2,6 +2,7 @@ scanning ok
 rewinding ok
 hygiene ok
 realistic lexer ok
+large automata ok
 no match ok
 whole-string ok
 agreement ok

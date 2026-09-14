@@ -322,7 +322,7 @@ proc lastModTimeOrStale(path: string): int64 =
     result = -1'i64
 
 proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string): TokenBuf =
-  let nifler = findTool("nifler")
+  let nifler = parserTool()
   let name = moduleSuffix(nimFile, paths)
   let src = nifcachePath / name & ".p.nif"
   let depsFile = nifcachePath / name & ".p.deps.nif"

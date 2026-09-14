@@ -311,7 +311,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
           else:
             semLocalValue c, dest, it, crucial # 4
           n = it.n
-          if kind != PatternvarY:
+          # an erroneous declared type stays: patching it with the value's
+          # type would drop the error and leave only its follow-up mismatch
+          if kind != PatternvarY and typ.typeKind != ErrT:
             patchType c, dest, it.typ, beforeType
       if kind == ParamY:
         compatAnnotateVarargsParam c, dest, beforeType
