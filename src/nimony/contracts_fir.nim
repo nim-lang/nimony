@@ -80,13 +80,6 @@ type
     stepSym: SymId   ## the step is this second parameter …
     stepLit: xint    ## … or, when `stepSym` is `NoSymId`, this literal
 
-  BoolMeaning = object
-    ## The facts a materialized boolean stands for, on each side. A short-circuit
-    ## operator only ever carries knowledge on one of them: `and` on its true
-    ## side, `or` on its false side.
-    onTrue: seq[LeXplusC]
-    onFalse: seq[LeXplusC]
-
   RangeBounds = object
     lo, hi: xint
 
@@ -151,11 +144,6 @@ type
       ## `inc i` lowers to a call plus an `(unknown i)`; the call has already
       ## said exactly how far `i` moved, so that `(unknown …)` must not then
       ## erase it. Holds the location for the one statement that follows.
-    boolFacts: Table[SymId, BoolMeaning]
-      ## What a materialized boolean tells us, per side. `if a and b:` does not
-      ## reach here as two nested branches: `xelim` builds the value of
-      ## `a and b` in a diamond and the `if` then tests the resulting temp, so
-      ## both guards would be lost. See `recordDiamond`.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump final IR on init/contract
@@ -1460,25 +1448,6 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
     pc = start
     skip pc
     return result
-  # A materialized `a and b` / `a or b` arrives here as a bare temp, possibly
-  # negated (`assert a and b` tests `not t`). What it stands for on each side was
-  # recorded when its diamond closed.
-  block:
-    var probe = pc
-    var negations = 0
-    while probe.exprKind == NotX:
-      inc negations
-      probe = sub(probe)
-    let boolSym = extractSymId(probe)
-    if boolSym != NoSymId and c.boolFacts.hasKey(boolSym):
-      let m = c.boolFacts.getOrQuit(boolSym)
-      let takesTrueSide = (negations and 1) == 0
-      let here = if takesTrueSide: m.onTrue else: m.onFalse
-      let there = if takesTrueSide: m.onFalse else: m.onTrue
-      for f in here: c.facts.add f
-      for f in there: elseFacts.add f
-      skip pc
-      return here.len
   var kind = ckPlain
   let fact = translateCond(c, pc, kind)
   if not fact.isValid:
@@ -2239,8 +2208,6 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     # A precondition is judged on the state at *entry*, so this must run before
     # the mutation below invalidates it.
     checkRequires c, req, paramMap, callCursor.info
-  if mutatedRoots.len > 0 or mutatesUnknown:
-    c.boolFacts.clear()
   # `inc i` *shifts* what is known about `i`; it does not erase it. Without
   # this every `inc` in a loop threw away the bounds the guard had just
   # established, which is most of what makes hand-written index code
@@ -2417,10 +2384,6 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
         addAsgnFact c, fact
     traverseExpr c, n
 
-  # A recorded materialized-boolean meaning is only good until something moves
-  # underneath it. The temp is consumed by the `if` immediately after its
-  # diamond closes, so dropping the table on any write costs nothing.
-  c.boolFacts.clear()
   n = storeStart; skip n
 
 # --- Exit-summary plumbing (drives the journaled FlowTracker over c.flow) ---
@@ -2435,97 +2398,6 @@ proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.tr, c.flow, lab
 proc leaveToReturn(c: var FirContext) = gotoReturn(c.tr, c.flow)
 proc leaveToRaise(c: var FirContext) = gotoRaise(c.tr, c.flow)
 proc leaveToContinue(c: var FirContext) = gotoContinue(c.tr, c.flow)
-
-proc constStoreTo(arm: Cursor; want: NimonyExpr; target: var SymId): bool =
-  ## Is `arm` exactly `(stmts (store (<want>) t))`? That one-statement arm is
-  ## what tells an `and` diamond from an `or` one.
-  result = false
-  if arm.stmtKind notin {StmtsS, ScopeS}: return false
-  var e = arm
-  e = sub(e)
-  if not e.hasMore or e.finalIrKind != StoreV: return false
-  var ev = e
-  ev = sub(ev)
-  if ev.exprKind != want: return false
-  skip ev
-  target = extractSymId(ev)
-  if target == NoSymId: return false
-  skip e
-  result = not e.hasMore
-
-proc lastStoreTo(arm: Cursor; target: SymId; value: var Cursor): bool =
-  ## The value the arm leaves in `target`. `(kill …)` statements around the
-  ## store are ignored — the then-arm of `a and b.len > 0` ends in one.
-  result = false
-  if arm.stmtKind notin {StmtsS, ScopeS}: return false
-  var t = arm
-  t = sub(t)
-  while t.hasMore:
-    if t.finalIrKind == StoreV:
-      var tv = t
-      tv = sub(tv)
-      let v = tv
-      skip tv
-      if extractSymId(tv) == target:
-        value = v
-        result = true
-    skip t
-
-proc diamondTarget(thenArm, elseArm: Cursor; value: var Cursor;
-                   isAnd: var bool): SymId =
-  ## Recognize the two shapes `xelim` gives a short-circuit operator used as a
-  ## value:
-  ##
-  ##   a and b  ⇒  (ite <a> (stmts … (store <b> t)) (stmts (store (false) t)))
-  ##   a or b   ⇒  (ite <a> (stmts (store (true) t)) (stmts … (store <b> t)))
-  ##
-  ## `value` comes back as the `<b>` the *interesting* arm stores — the true
-  ## side of an `and`, the false side of an `or`.
-  result = NoSymId
-  var target = NoSymId
-  if constStoreTo(elseArm, FalseX, target):
-    if lastStoreTo(thenArm, target, value):
-      isAnd = true
-      return target
-  target = NoSymId
-  if constStoreTo(thenArm, TrueX, target):
-    if lastStoreTo(elseArm, target, value):
-      isAnd = false
-      return target
-  result = NoSymId
-
-proc recordDiamond(c: var FirContext; target: SymId; value: Cursor; isAnd: bool;
-                   trueCondFacts, falseCondFacts: seq[LeXplusC]) =
-  ## What the materialized boolean *means*, on whichever side is decisive:
-  ##
-  ## * `a and b` is true exactly when both are, so its true side carries the
-  ##   facts of both and its false side carries nothing ("not both").
-  ## * `a or b` is false exactly when neither is, so its *false* side carries
-  ##   the negation of both.
-  ##
-  ## Between them these cover `if i >= 0 and i < s.len:`, `assert a and b` (the
-  ## assert tests the *negation*, so the knowledge is on the false side of the
-  ## `not`), and the guard-clause `if i < 0 or i >= s.len: return`.
-  var wasEquality = false
-  let noSubst = initTable[SymId, Cursor]()
-  let fact = pureCompare(c, value, noSubst, wasEquality)
-  var m = BoolMeaning(onTrue: @[], onFalse: @[])
-  if isAnd:
-    m.onTrue = trueCondFacts
-    if fact.isValid:
-      m.onTrue.add fact
-      if wasEquality:
-        m.onTrue.add fact.geXplusC
-  else:
-    m.onFalse = falseCondFacts
-    # `t` false means `b` false too; only a plain comparison has a negation this
-    # engine can state (the negation of `a == b` is a disequality).
-    if fact.isValid and not wasEquality:
-      var negated = fact
-      negateFact(negated)
-      m.onFalse.add negated
-  if m.onTrue.len > 0 or m.onFalse.len > 0:
-    c.boolFacts[target] = m
 
 proc traverseIte(c: var FirContext; n: var Cursor) =
   ## `(ite cond then else)`. Each arm is analyzed under the condition's polarity;
@@ -2558,24 +2430,7 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   # false path knows; only it can tell the two apart (`a != b` is the case where
   # all the knowledge sits on the false path).
   var condFactsList: seq[LeXplusC] = @[]
-  let factsBefore = c.facts.len
   discard analyseCondition(c, n, condFactsList)
-  # What the true path gained, kept for `recordDiamond` below.
-  var thenCondFacts: seq[LeXplusC] = @[]
-  for i in factsBefore ..< c.facts.len:
-    thenCondFacts.add c.facts[i]
-
-  # Is this the diamond `xelim` builds for `a and b`? Peek before the arms are
-  # consumed; `n` is at the then-arm and the else-arm follows it.
-  var diamondValue = default(Cursor)
-  var diamondTemp = NoSymId
-  var diamondIsAnd = true
-  block:
-    var thenArm = n
-    var elseArm = n
-    skip elseArm
-    if elseArm.hasMore and not elseArm.isDotToken:
-      diamondTemp = diamondTarget(thenArm, elseArm, diamondValue, diamondIsAnd)
 
   # then-branch (under assume(c)):
   let liveBeforeThen = c.tr.live
@@ -2600,9 +2455,6 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   # merging both the init-set and the facts; a leaving arm drops out.
   mergeBranches(c.tr, c.flow, b)
   c.activeBorrows.setLen(savedBorrowsLen)
-  if diamondTemp != NoSymId:
-    recordDiamond(c, diamondTemp, diamondValue, diamondIsAnd,
-                  thenCondFacts, condFactsList)
 
   n = iteStart; skip n
 
@@ -2838,7 +2690,6 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
     # the checkpoint captured, so an invalidation made after it would be undone
     # and the stale fact would be back in force *after* the loop — which is
     # where `var colon = -1; while …: colon = i; …; if colon >= 0:` went wrong.
-    c.boolFacts.clear()
     block:
       var w = LoopWrites(kinds: initTable[VarId, IvKind](),
                          nonNeg: initHashSet[VarId](), opaque: false,
@@ -3131,7 +2982,6 @@ proc traverseLocal(c: var FirContext; n: var Cursor) =
       if a != v:
         addAsgnFact c, query(a, v, k)
   n = localStart; skip n
-  c.boolFacts.clear()
   # The local now holds a value proven to be within its range (if any), so
   # record that for downstream obligations that reference this symbol.
   if initAccepted:
@@ -3344,7 +3194,6 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
       # (nil) state, so a later `a.x` must be re-proven, not silently accepted.
       # Facts are keyed per root variable (see `analysableRoot`), so we invalidate
       # by the path's root symbol.
-      c.boolFacts.clear()
       if unknownPath.path.len > 0:
         let root = getVarId(c, unknownPath.path[0])
         if root != stepped:
