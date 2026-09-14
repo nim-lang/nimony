@@ -48,9 +48,14 @@ proc asUnsigned*(x: xint; err: var bool): uint64 =
       result = x.val
 
 proc `-`*(a: xint): xint =
-  xint(nan: a.nan, neg: not a.neg, val: a.val)
+  # Zero has no sign. This is sign-magnitude, so negating it would otherwise
+  # mint a `-0` that `==` and `<` both read as *less* than `0` — and `-lo` with
+  # `lo == 0` is exactly what `seedRangeFacts` builds for every `Natural`.
+  if a.val == 0'u64: xint(nan: a.nan, neg: false, val: 0'u64)
+  else: xint(nan: a.nan, neg: not a.neg, val: a.val)
 
-proc negate*(a: var xint) {.inline.} = a.neg = not a.neg
+proc negate*(a: var xint) {.inline.} =
+  if a.val != 0'u64: a.neg = not a.neg
 
 proc `+`*(a, b: xint): xint =
   if a.nan or b.nan:
@@ -258,12 +263,15 @@ proc `==`*(a, b: xint): bool =
   elif b.nan:
     return false
 
-  # Compare sign and value
+  # Compare sign and value; zero is zero whichever sign it carries.
+  if a.val == 0'u64 and b.val == 0'u64: return true
   a.neg == b.neg and a.val == b.val
 
 proc `<`*(a, b: xint): bool =
   if a.nan or b.nan:
     return false
+
+  if a.val == 0'u64 and b.val == 0'u64: return false   # `-0 < 0` is false
 
   # Different signs
   if a.neg and not b.neg:

@@ -70,7 +70,12 @@ proc escapeViaBlock =
 
 escapeViaBlock()
 
-# 9. Same, out of a loop body.
+# 9. Same, out of a loop body. The second error is the init analysis, not the
+# borrow checker: a `for` body may run zero times, so `outer` is not definitely
+# assigned after the loop. (Everything after a `for` used to look unreachable,
+# because the iterator is not inlined until hexer and nothing jumps out of the
+# `(loop …)`; `trFor` emits the exit label unconditionally now, so the code
+# after a loop is analysed again.)
 proc escapeViaLoop =
   var outer: openArray[int]
   for i in 0 ..< 2:

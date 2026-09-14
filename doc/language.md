@@ -2850,6 +2850,70 @@ func withSideEffect(x: int): int {.sideEffect.} =
 
 
 
+## Contracts
+
+A routine may state a precondition with the `requires` pragma. The expression
+may name the routine's parameters, `result` (for `ensures`), and constants:
+
+```nim
+func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0).} =
+  s.data[i]
+```
+
+A contract is discharged at the **call site**, not inside the routine: the
+compiler substitutes the arguments for the parameters and asks whether what it
+knows on this path implies the result. Three answers are possible, and only the
+middle one is silent:
+
+* **proven** — nothing more happens; the contract cost nothing.
+* **undecided** — the compiler cannot tell. The call keeps the run-time guard
+  the callee carries (`if not cond: panic`), which `--boundchecks:off` and
+  `-d:danger` remove like any other check.
+* **violated** — what is known on this path implies the *negation* of the
+  contract. This is a compile-time error.
+
+```nim
+proc needsPositive(x: int) {.requires: x > 0.}
+
+needsPositive(0)          # Error: contract violated: 0 < x
+needsPositive(readInt())  # undecided: checked at run time
+```
+
+Undecided is the default answer rather than an error because
+`seq`/`string`/`openArray` indexing *is* a contract, and the prover cannot yet
+track a container's length through its construction — `var s = newSeq[int](4)`
+followed by `s[0]` is undecided — so demanding a proof everywhere would still
+reject a good deal of ordinary code. What it does prove reliably: literals and
+locals with a known value; a value under a matching guard, including `a and b`
+and the guard clause `if i < 0 or i >= s.len: return`, both of which the
+lowering turns into a single boolean; `s.len` in every spelling; the range of a
+`for` loop variable, taken from the iterator's own `ensures`; and the counting
+loop, whose induction variable only ever moves one way:
+
+```nim
+var i = 0
+while i < s.len:
+  use s[i]                # proven: `i < s.len` is the guard, `0 <= i` is an
+  inc i                   # invariant, because the body only ever raises `i`
+```
+
+
+```nim
+iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (a <= result and result < b).} = ...
+
+for i in 0 ..< s.len:
+  use s[i]                # proven; no run-time bounds check is needed here
+```
+
+Two module pragmas move the default:
+
+* `{.feature: "staticContracts".}` — every contract a call site in this module
+  carries must be *proven*. This is where the language is headed; adopt it per
+  module as the prover grows.
+* `{.feature: "runtimeContracts".}` — no call site in this module is judged at
+  all, and the run-time guard is the only check. It wins if both are given.
+
 ## Lifetime-tracking hooks
 
 A type bound operator is a `proc` or `func` whose name starts with `=` but isn't an operator

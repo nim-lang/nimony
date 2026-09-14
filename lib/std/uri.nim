@@ -143,16 +143,16 @@ proc decodeUrl*(src: string; decodePlus = false): string {.raises.} =
 
 # ------------------------------------------------------------- parsing ----
 
-func find(s: openArray[char]; c: char; start = 0): int =
+func find(s: openArray[char]; c: char; start: Natural = 0): int =
   result = -1
-  var i = start
+  var i: Natural = start
   while i < s.len:
     if s[i] == c: return i
     inc i
 
 func parseAuthority(u: var Uri; a: openArray[char]) =
   ## `[userinfo@]host[:port]`, where host may be `[v6]`.
-  var hostStart = 0
+  var hostStart: Natural = 0
   let at = a.find('@')
   if at >= 0:
     let colon = toOpenArray(a, 0, at - 1).find(':')
@@ -295,9 +295,9 @@ iterator decodeQuery*(q: openArray[char]; decodePlus = true): (string, string) =
   ## `key` with no `=` yields an empty value; `&&` yields nothing. Separators
   ## are `&` and `;`, because a query written by an HTML form of a certain
   ## vintage uses the latter.
-  var i = 0
+  var i: Natural = 0
   while i <= q.len:
-    var e = i
+    var e: Natural = i
     while e < q.len and q[e] != '&' and q[e] != ';': inc e
     if e > i:
       var eq = e

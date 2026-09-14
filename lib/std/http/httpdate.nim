@@ -137,17 +137,17 @@ proc nowHttpDate*(dest: var openArray[char]): int =
 proc digit(c: char): int {.inline.} =
   if c >= '0' and c <= '9': ord(c) - ord('0') else: -1
 
-proc num(buf: openArray[char]; i, n: int): int =
+proc num(buf: openArray[char]; i: Natural; n: int): int =
   ## Exactly `n` digits at `i`, or `-1`. Exactly, not at least: a two-digit
   ## field that accepts three silently reinterprets every field after it.
-  if i < 0 or i + n > buf.len: return -1
+  if i + n > buf.len: return -1   # `i >= 0` comes from its type
   result = 0
   for k in 0..<n:
     let d = digit(buf[i + k])
     if d < 0: return -1
     result = result * 10 + d
 
-proc monthFrom(buf: openArray[char]; i: int): int =
+proc monthFrom(buf: openArray[char]; i: Natural): int =
   ## The 1-based month for a three-letter abbreviation at `i`, or `-1`.
   ## Case-sensitive on purpose: the abbreviations are spelled one way in the
   ## grammar, and accepting `nOv` here means accepting it nowhere else.
@@ -158,10 +158,10 @@ proc monthFrom(buf: openArray[char]; i: int): int =
       return m + 1
   result = -1
 
-proc isGmt(buf: openArray[char]; i: int): bool {.inline.} =
+proc isGmt(buf: openArray[char]; i: Natural): bool {.inline.} =
   i + 3 <= buf.len and buf[i] == 'G' and buf[i + 1] == 'M' and buf[i + 2] == 'T'
 
-proc timeOfDay(buf: openArray[char]; i: int; h, mi, s: var int): bool =
+proc timeOfDay(buf: openArray[char]; i: Natural; h, mi, s: var int): bool =
   ## `HH:MM:SS` at `i`.
   if i + 8 > buf.len: return false
   h = num(buf, i, 2)

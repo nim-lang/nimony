@@ -2685,6 +2685,7 @@ proc anArgIsStillUntyped(args: openArray[CallArg]): bool =
   ## A typevar the arguments left unbound is then unbound because the ARGUMENT
   ## is unfinished, not because the candidate is uninstantiable — so the
   ## rejection below has nothing to say about it.
+  result = false
   for a in args:
     if not cursorIsNil(a.typ) and a.typ.typeKind == AutoT: return true
 
@@ -2895,6 +2896,9 @@ proc buildParamsInfo(params: Cursor): ParamsInfo =
     inc result.len
 
 proc orderArgs*(m: var Match; paramsCursor: Cursor; args: openArray[CallArg]): seq[CallArg] =
+  # The error paths below `return` before the real result is built, so bind it
+  # up front: a `return` is a normal exit and owes an initialized `result`.
+  result = @[]
   var params = buildParamsInfo(paramsCursor)
   var positions = newSeq[int](params.len)
   for i in 0 ..< positions.len: positions[i] = -1

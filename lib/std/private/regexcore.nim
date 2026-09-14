@@ -154,7 +154,9 @@ proc mnExpr(r: RegexNode; m, n: int): RegexNode =
 type
   ReCtx = object
     buf: string
-    pos: int
+    pos: Natural   ## `Natural`, so `0 <= pos` is a property of the *type*: the
+                   ## scanner indexes `buf[pos]` all over, and that half of the
+                   ## bounds obligation then needs no guard anywhere.
     flags: set[RegexFlag]
     captures: int ## running count, so each `(` gets its own index
     err: string   ## first error; `""` while everything is fine
@@ -972,7 +974,8 @@ type
     capStartAt*: int
 
   Capture* = object ## The bounds of one capture group, both ends inclusive.
-    first*, last*: int
+    first*: Natural  ## a position in the subject, so never negative
+    last*: int       ## …but this one carries `CaptureOpen` while matching
 
 const
   CaptureOpen* = -2 ## `last` while the group is still being matched
@@ -1116,7 +1119,7 @@ proc compileRegex*(pattern: string; flags: set[RegexFlag]; dest: var Regex;
 # Execution
 # ---------------------------------------------------------------------------
 
-func backrefMatches(s: string; sp: int; c: Capture): bool =
+func backrefMatches(s: string; sp: Natural; c: Capture): bool =
   ## Does the text at `sp` repeat what `c` captured?
   var i = c.first
   var k = sp
@@ -1127,7 +1130,7 @@ func backrefMatches(s: string; sp: int; c: Capture): bool =
     inc i
 
 func run(code: seq[RegexInstr]; data: seq[set[char]]; startAt: int;
-         s: string; caps: var seq[Capture]; start: int; endPos: var int): int =
+         s: string; caps: var seq[Capture]; start: Natural; endPos: var int): int =
   ## One automaton over `s` from `start`. Returns the rule that matched (`0`
   ## for none) and reports the position just past the match in `endPos`.
   result = 0

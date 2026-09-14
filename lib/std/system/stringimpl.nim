@@ -332,7 +332,7 @@ when defined(nimNativeIo):
 else:
   func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
-func len*(a: cstring): int {.inline.} =
+func len*(a: cstring): int {.inline, ensures: (0 <= result).} =
   if a == nil: 0
   else: a.strlen.int
 

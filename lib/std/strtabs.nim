@@ -386,7 +386,9 @@ proc `%`*(f: string, t: StringTableRef, flags: set[FormatFlag] = {}): string {.r
   const
     PatternChars = {'a'..'z', 'A'..'Z', '0'..'9', '_', '\x80'..'\xFF'}
   result = ""
-  var i = 0
+  # `Natural`: these are cursors into `f`, so the lower half of every index
+  # obligation comes from the type rather than from a guard.
+  var i: Natural = 0
   while i < len(f):
     if f[i] == '$':
       case f[i+1]
@@ -394,12 +396,12 @@ proc `%`*(f: string, t: StringTableRef, flags: set[FormatFlag] = {}): string {.r
         add(result, '$')
         inc(i, 2)
       of '{':
-        var j = i + 1
+        var j: Natural = i + 1
         while j < f.len and f[j] != '}': inc(j)
         add(result, getValue(t, flags, substr(f, i+2, j-1)))
         i = j + 1
       of 'a'..'z', 'A'..'Z', '\x80'..'\xFF', '_':
-        var j = i + 1
+        var j: Natural = i + 1
         while j < f.len and f[j] in PatternChars: inc(j)
         add(result, getValue(t, flags, substr(f, i+1, j-1)))
         i = j

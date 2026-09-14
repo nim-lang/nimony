@@ -42,7 +42,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import ".." / hexer / [xelim, mover, passes]
-import finalir_model
+import finalir_model, condextractor
 
 type
   Exit = object
@@ -67,6 +67,9 @@ type
     thisModuleSuffix: string
     current: CurrentProc
     callFirstArgs: Table[SymId, TokenBuf] ## first argument of a local's init call (for for-loop borrow tracking)
+    callExprs: Table[SymId, TokenBuf] ## whole init call of a local, so a `for`
+                                      ## whose iterator xelim hoisted into a
+                                      ## temp can still be read (see `trFor`)
 
 proc openScope(c: var Context) =
   c.typeCache.openScope()
@@ -236,6 +239,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   # Record first argument of call inits for borrow tracking (used by trFor):
   if n.isTagLit and n.exprKind in CallKinds:
+    var whole = createTokenBuf(16)
+    whole.addSubtree n
+    c.callExprs[symId] = whole
     var tmp = n
     inc tmp # skip call tag
     skip tmp # skip callee
@@ -527,7 +533,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     emitLab dest, exitL, info
 
 proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
-                    forBorrow: TokenBuf) =
+                    forBorrow: TokenBuf; forceExitLabel = false) =
   ## `n` points at the loop *body* (a `(stmts ...)`). Emit the infinite
   ## `(loop (stmts <body> (continue .)))` and, if any `break` targeted it, the
   ## trailing `(lab loopExit)`.
@@ -550,7 +556,7 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
   dest.addParRi() # close `loop`
   let used = c.current.exits[^1].used
   c.current.exits.shrink(c.current.exits.len - 1)
-  if used:
+  if used or forceExitLabel:
     emitLab dest, exitL, info
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -641,10 +647,19 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let forStmt = asForStmt(n) # peek at structure before advancing
   let forStart = n
   n = sub(n)
-  let borrowBuf = extractForBorrow(c, forStmt, info)
+  var borrowBuf = extractForBorrow(c, forStmt, info)
+  forRangeAssumes(borrowBuf, forStmt, c.callExprs, info)
   skip n # for loop iterator call
   skip n # for loop variables
-  trLoopFromBody c, dest, n, borrowBuf
+  # The exit label is emitted even when nothing jumps to it. An *inline*
+  # iterator is not inlined until hexer's `elimForLoops`, so at this point no
+  # `break` has been generated for the iterator's own termination test and the
+  # `(loop …)` reads as one nothing ever leaves — which would make everything
+  # after the loop unreachable. That is not a harmless imprecision: a join on a
+  # dead path keeps *both* arms of the next `if`, so `le >= 0` and `le < 0` come
+  # to hold at once and a correct index gets "disproved". A `for` terminates;
+  # the label says so.
+  trLoopFromBody c, dest, n, borrowBuf, forceExitLabel = true
   n = forStart; skip n # close `for`
 
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -746,6 +761,17 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trTry c, dest, n
   of CallKindsS:
     trStmtCall c, dest, n
+  of AssumeS:
+    # `{.assume: a and b.}` states TWO facts, not one opaque condition, and has
+    # to be split exactly as a `for` loop's `.ensures` is. It cannot take the
+    # plain-expression path: an `and` there is a hard error, because the only
+    # thing `xelim` could do with a short-circuit condition is materialise it
+    # into a bool temp — which is precisely what destroys the proposition.
+    let info = n.info
+    var cond = n
+    cond = sub(cond)
+    emitAssumes(dest, cond, initTable[SymId, TokenBuf](), info)
+    skip n
   else:
     if n.finalIrKind in {MflagV, VflagV}:
       # NJVL control-flow flags. `xelim` used to materialise short-circuit
