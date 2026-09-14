@@ -28,7 +28,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
+  build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
                        `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
@@ -399,8 +399,11 @@ proc handleCmdLine =
       buildDagon(showProgress)
       buildPnak(showProgress)
       buildNativeTools(showProgress)
+      buildNifler2(showProgress)
     of "nifler":
       buildNifler(showProgress)
+    of "nifler2":
+      buildNifler2(showProgress)
     of "nimony":
       buildNimsem(showProgress)
       buildNimony(showProgress)

@@ -110,7 +110,7 @@ proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                          commandLineArgs: string; forceRebuild: bool) =
-  let nifler = findTool("nifler")
+  let nifler = parserTool()
   let name = moduleSuffix(nimFile, config.paths)
   let src = config.nifcachePath / name & ".p.nif"
   let dest = config.nifcachePath / name & ".s.nif"
