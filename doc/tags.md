@@ -270,6 +270,7 @@
 | `(fieldpairs T X X?)` | NimonyExpr | fieldPairs iterator |
 | `(enumtostr X)` | NimonyExpr | |
 | `(ismainmodule)` | NimonyExpr | |
+| `(instantiationinfo)` | NimonyExpr | the call site as a `(filename, line, column)` tuple; inside a template body, the site of the template call |
 | `(defaultobj T)` | NimonyExpr | |
 | `(defaulttup T)` | NimonyExpr | |
 | `(defaultdistinct T)` | NimonyExpr | |

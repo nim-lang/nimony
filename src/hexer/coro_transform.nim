@@ -2546,7 +2546,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           AshrX, BaseobjX, DconvX, CompilesX,
           DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
           HighX, LowX, UnpackX, FieldsX, FieldpairsX,
-          EnumtostrX, IsmainmoduleX, DefaultobjX,
+          EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
           DefaulttupX, DefaultdistinctX, ExprX, DoX,
           ArratX, TupatX, PlussetX, MinussetX, MulsetX,
           XorsetX, EqsetX, LesetX, LtsetX, InsetX,

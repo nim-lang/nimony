@@ -69,7 +69,7 @@ proc addFn(c: var SemContext; dest: var TokenBuf; fn: FnCandidate; fnOrig: Curso
           if n.exprKind in {DefinedX, DeclaredX, AstToStrX, CompilesX, TypeofX,
               LowX, HighX, AddrX, EnumtostrX, DefaultobjX, DefaulttupX, DefaultdistinctX,
               ArratX, DerefX, TupatX, SizeofX, InternalTypeNameX, IsX, ProccallX, DelayX,
-              BindSymX, BindSymNameX}:
+              BindSymX, BindSymNameX, InstantiationinfoX}:
             # magic needs semchecking after overloading
             result = MagicCallNeedsSemcheck
           else:
@@ -262,6 +262,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # and stay judged against the caller's module — see `visibilityModule`.
     c.visOwner.add VisOwner(module: pool.symModule(fnId),
                             file: res.decl.info.file.uint32)
+    c.templCallInfos.add callInfo
     if outcome == PluginExpanded and c.phase == SemcheckBodies and
         c.currentScope.kind == ToplevelScope and
         (returnType.isDotToken or returnType.typeKind == VoidT):
@@ -276,6 +277,7 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
       semExprMissingPhases c, dest, a, SemcheckBodies
     else:
       semExpr c, dest, a, flags
+    discard c.templCallInfos.pop()
     case returnType.typeKind
     of UntypedT:
       # untyped return type ignored, maybe could be handled in commonType

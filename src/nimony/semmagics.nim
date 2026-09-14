@@ -428,6 +428,49 @@ proc semIsMainModule*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.typ = c.types.boolType
   commonType c, dest, it, beforeExpr, expected
 
+proc semInstantiationInfo*(c: var SemContext; dest: var TokenBuf; it: var Item) =
+  ## `(instantiationinfo)` folds to a named tuple literal. Inside a template
+  ## expansion it is the innermost template's call site (`semTemplateCall`
+  ## keeps the stack); elsewhere it is the node's own position.
+  let info = if c.templCallInfos.len > 0: c.templCallInfos[^1] else: it.n.info
+  skip it.n
+  var fname = ""
+  if info.file.isValid:
+    fname = realFile(pool.filenames[info.file])
+    var i = fname.len - 1
+    while i >= 0 and fname[i] != '/' and fname[i] != '\\':
+      dec i
+    if i >= 0: fname = fname.substr(i + 1)
+  var buf = createTokenBuf(24)
+  buf.addParLe(TupX, info)
+  buf.addParLe(KvU, info)
+  buf.addIdent("filename", info)
+  buf.addStrLit(fname, info)
+  buf.addParRi()
+  buf.addParLe(KvU, info)
+  buf.addIdent("line", info)
+  buf.addIntLit(int64(info.line), info)
+  buf.addParRi()
+  buf.addParLe(KvU, info)
+  buf.addIdent("column", info)
+  buf.addIntLit(int64(info.col), info)
+  buf.addParRi()
+  buf.addParRi()
+  if c.routine.kind == TemplateY:
+    # Semchecking a template's own body: the call site is not known yet, so
+    # keep the magic in the body (typed as the tuple it will become) and
+    # fold it when the expansion is semchecked.
+    var scratch = createTokenBuf(24)
+    var x = Item(n: cursorAt(buf, 0), typ: it.typ)
+    semExpr c, scratch, x
+    dest.addParLe(InstantiationinfoX, info)
+    dest.addParRi()
+    it.typ = x.typ
+  else:
+    var x = Item(n: cursorAt(buf, 0), typ: it.typ)
+    semExpr c, dest, x
+    it.typ = x.typ
+
 proc semEnumToStr*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   let beforeExpr = dest.len
   let info = it.n.info
