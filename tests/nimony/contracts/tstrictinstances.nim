@@ -5,7 +5,7 @@
 
 {.feature: "staticContracts".}
 
-import std/[assertions, tables, stripes, intsets]
+import std/[assertions, tables, stripes, intsets, base64]
 
 proc tablesRoundTrip(): int {.raises.} =
   var t = initTable[string, int]()
@@ -41,3 +41,5 @@ except:
   assert false
 assert stripesRoundTrip() == 3 + 5 + 7
 assert intsetsRoundTrip() == 3
+assert encode("foob") == "Zm9vYg=="
+assert encode([byte 0xFB, 0xFF], safe = true) == "-_8="
