@@ -545,30 +545,6 @@ proc integerTypeBounds(bits: int; typ: Cursor; lo, hi: var xint): bool =
         hi = if width == 64: createXint(high(uint64)) else: (createXint(1'i64) shl width) - createXint(1'i64)
       result = not lo.isNaN and not hi.isNaN
 
-proc constShaped(n: Cursor; depth = 0): bool =
-  ## Could `n` fold to an ordinal? Literals, symbols (a `const` is one) and
-  ## arithmetic over them. `tryEvalOrdinal` is only ever handed such a tree:
-  ## the evaluator is written for `const` initializers and is not total on an
-  ## arbitrary runtime expression.
-  case n.kind
-  of IntLit, UIntLit, CharLit, Symbol: result = true
-  of TagLit:
-    if n.exprKind in {SizeofX, AlignofX, HighX, LowX}:
-      # over a type only: nothing to evaluate at run time
-      return depth < 8
-    result = depth < 8 and n.exprKind in {ConvX, HconvX, AddX, SubX, MulX, DivX, ModX,
-      ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX, SufX, ParX}
-    if result:
-      var r = n
-      r = sub(r)
-      if n.exprKind in {ConvX, HconvX, AddX, SubX, MulX, DivX, ModX, ShlX, ShrX,
-                        AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX}:
-        skip r # the type operand
-      while result and r.hasMore:
-        result = constShaped(r, depth+1)
-        skip r
-  else: result = false
-
 proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): bool =
   ## The interval `n` lies in by its *shape* alone — no flow facts: a constant,
   ## `a and k` (`0..k` for a constant `k >= 0`, whatever `a` is), `a shr k` of a
@@ -578,7 +554,7 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
   ## and none of it is expressible as `a <= b + c`.
   result = false
   if depth <= 8:
-    let folded = if constShaped(n): tryEvalOrdinal(c.bits, n) else: createNaN()
+    let folded = tryEvalOrdinal(c.bits, n)
     if not folded.isNaN:
       lo = folded
       hi = folded
@@ -608,7 +584,7 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
         if valueBounds(c, d, aLo, aHi, depth+1) and zero() <= aLo:
           skip d
           var err = false
-          let k = asSigned((if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()), err)
+          let k = asSigned((tryEvalOrdinal(c.bits, d)), err)
           if not err and k >= 0 and k < 64:
             lo = aLo shr int(k)
             hi = aHi shr int(k)
@@ -1617,7 +1593,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
       case a.kind
       of IntLit: k = createXint(a.intVal)
       of UIntLit: k = createXint(a.uintVal)
-      else: k = if constShaped(a): tryEvalOrdinal(c.bits, a) else: createNaN()
+      else: k = tryEvalOrdinal(c.bits, a)
       if not k.isNaN:
         v = baseLoc
         off = if isSub: -k else: k
@@ -1676,7 +1652,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
       skip d # the type operand
       let first = d
       skip d
-      let k = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+      let k = tryEvalOrdinal(c.bits, d)
       if not k.isNaN:
         offset = k
         lin = first
@@ -1684,11 +1660,11 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
       var d = lin
       d = sub(d)
       skip d # the type operand
-      var factor = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+      var factor = tryEvalOrdinal(c.bits, d)
       skip d
       var operand = d
       if factor.isNaN:
-        factor = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+        factor = tryEvalOrdinal(c.bits, d)
         operand = lin
         operand = sub(operand)
         skip operand # the type operand
@@ -1743,7 +1719,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     skip d # the type operand
     let leftLoc = plainLocationVarId(c, d)
     skip d
-    let k = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+    let k = tryEvalOrdinal(c.bits, d)
     if leftLoc != InvalidVarId and not k.isNaN and zero() < k and
        impliesHere(c, query(VarId(0), leftLoc, zero())):
       let one = createXint(1'i64)
@@ -1929,35 +1905,6 @@ proc seedRangeFacts(c: var FirContext; sym: SymId; typ: Cursor) =
 
 # --- Fact extraction from conditions ---
 
-proc foldableArith(n: Cursor; depth: int): bool =
-  ## Is `n` a closed arithmetic expression over integer literals — no symbol, no
-  ## call, nothing to look up? Only then is the const evaluator asked.
-  ##
-  ## Not an optimisation: `expreval.eval` is written for expressions sem has
-  ## already accepted as constant, and it *asserts* rather than declines on a
-  ## shape it does not model (`(dconv …)` over a distinct type is one, and
-  ## `tests/nimony/sysbasics/tdistincts.nim` walked straight into it). Handing
-  ## it only literal-leaf arithmetic is what keeps the fold total.
-  if depth > 6: return false
-  case n.kind
-  of IntLit, UIntLit, CharLit: return true
-  of TagLit: discard
-  else: return false
-  case n.exprKind
-  of AddX, SubX, MulX:
-    var r = sub(n)
-    skip r # the type operand
-    result = foldableArith(r, depth+1)
-    if result:
-      skip r
-      result = foldableArith(r, depth+1)
-  of ConvX, HconvX:
-    var r = sub(n)
-    skip r # the target type
-    result = foldableArith(r, depth+1)
-  else:
-    result = false
-
 proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
   ## True when `n` is a compile-time ordinal.
   ##
@@ -1972,9 +1919,7 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
   ## that is what an array's `len` is. Sem folds `a.len` to `(hi - lo) + 1` over
   ## the index range's own literals rather than to a single number, so the bound
   ## of `while i < a.len` arrives here as a three-node tree — and until it folds,
-  ## the most ordinary array loop there is proves nothing about its index. The
-  ## evaluator is asked only for the shapes a constant can have, so an ordinary
-  ## `i + 1` costs a tag test rather than an evaluator run.
+  ## the most ordinary array loop there is proves nothing about its index.
   result = false
   if n.isTagLit and n.exprKind in {ConvX, HconvX} and c.constDepth < 8:
     # `ord(high(E))` is `(conv (i 64) lastField)`
@@ -2024,7 +1969,6 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
     result = constOrdinal(c, c.moduleConsts.getOrQuit(n.symId), val)
     dec c.constDepth
     if result: return
-  if n.kind != Symbol and not foldableArith(n, 0): return
   val = tryEvalOrdinal(c.bits, n)
   result = not val.isNaN
 
