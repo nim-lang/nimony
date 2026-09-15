@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 #
 #
 #            Nim's Runtime Library
@@ -223,12 +225,15 @@ func daysFromCivil(y, m, d: int): int64 =
   let doe = yoe * 365'i64 + yoe div 4'i64 - yoe div 100'i64 + doy
   result = int64(era) * 146097'i64 + doe - 719468'i64
 
-func dayOfYear(y, m, d: int): int32 =
+func dayOfYear(y: int; m: Month; d: int): int32 =
   const cumulative: array[12, int32] = [
     0'i32, 31'i32, 59'i32, 90'i32, 120'i32, 151'i32,
     181'i32, 212'i32, 243'i32, 273'i32, 304'i32, 334'i32]
-  var r = cumulative[m - 1] + int32(d - 1)
-  if m > 2 and isLeapYear(y):
+  # an enum conversion is not range checked, so `Month(13)` is a value too
+  let mi = ord(m) - 1
+  if mi < 0 or mi >= cumulative.len: return int32(d - 1)
+  var r = cumulative[mi] + int32(d - 1)
+  if mi > 1 and isLeapYear(y):
     r = r + 1'i32
   result = r
 
@@ -260,7 +265,7 @@ func utc*(t: Time): DateTime =
     second: int32(second),
     nanosecond: t.nanosecond,
     weekday: weekdayFromDays(d),
-    yearday: dayOfYear(civil.y, civil.m, civil.d))
+    yearday: dayOfYear(civil.y, Month(civil.m), civil.d))
 
 func initDateTime*(year: int; month: Month; monthday: int32;
                    hour: int32 = 0'i32; minute: int32 = 0'i32;
@@ -277,7 +282,7 @@ func initDateTime*(year: int; month: Month; monthday: int32;
     second: second,
     nanosecond: nanosecond,
     weekday: weekdayFromDays(d),
-    yearday: dayOfYear(year, int(month), int(monthday)))
+    yearday: dayOfYear(year, month, int(monthday)))
 
 func toTime*(dt: DateTime): Time =
   ## Converts a `DateTime` to a `Time`. The `DateTime` is assumed to be in UTC.

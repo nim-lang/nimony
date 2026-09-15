@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 ## SHA-1 (Secure Hash Algorithm 1), 160-bit message digest.
 ## Minimal port from Nim's `checksums/sha1` — only the bits used by
 ## `nifchecksums` / `nifindexes` are provided. Byte-swap helpers are
@@ -97,30 +99,15 @@ proc transform(ctx: var Sha1State) =
   ctx.state[4] += e
 
 proc update*(ctx: var Sha1State; data: openArray[char]) =
-  var i = ctx.count mod 64
-  var j = 0
-  var len = data.len
-  if len > 64 - i:
-    for k in 0 ..< (64 - i):
-      ctx.buf[i + k] = byte(data[j + k])
-    len -= 64 - i
-    j += 64 - i
-    transform(ctx)
-    i = 0
-  while len >= 64:
-    for k in 0 ..< 64:
-      ctx.buf[k] = byte(data[j + k])
-    len -= 64
-    j += 64
-    transform(ctx)
-  while len > 0:
-    dec len
+  # `count` never goes negative, so `and 63` is its offset into the block
+  var i = ctx.count and 63
+  for j in 0 ..< data.len:
     ctx.buf[i] = byte(data[j])
-    inc i
-    inc j
-    if i == 64:
+    if i == 63:
       transform(ctx)
       i = 0
+    else:
+      inc i
   ctx.count += data.len
 
 proc finalize*(ctx: var Sha1State): Sha1Digest =
@@ -140,8 +127,8 @@ proc finalize*(ctx: var Sha1State): Sha1Digest =
 const HexChars = "0123456789ABCDEF"
 
 proc `$`*(self: SecureHash): string =
-  result = newString(Sha1DigestSize * 2)
+  result = newStringOfCap(Sha1DigestSize * 2)
   var digest = Sha1Digest(self)
   for i in 0 ..< Sha1DigestSize:
-    result[i * 2]     = HexChars[int(digest[i] shr 4)]
-    result[i * 2 + 1] = HexChars[int(digest[i] and 0x0F)]
+    result.add HexChars[int(digest[i] shr 4)]
+    result.add HexChars[int(digest[i] and 0x0F)]

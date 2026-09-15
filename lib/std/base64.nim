@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 #
 #
 #            Nim's Runtime Library
@@ -17,12 +19,15 @@ const
   cb64 = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
   cb64safe = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
 
+func letter(safe: bool; k: int): char {.inline.} =
+  # both alphabets are 64 long, which `k and 63` indexes whatever `k` is
+  if safe: cb64safe[k and 63] else: cb64[k and 63]
+
 func encode*[T: byte|char](s: openArray[T]; safe = false): string =
   ## Encodes `s` (a sequence of `char`s or `byte`s) to a base64 string.
   runnableExamples:
     assert encode("foo") == "Zm9v"
     assert encode("foob") == "Zm9vYg=="
-  let alphabet = if safe: cb64safe else: cb64
   result = ""
   let n = s.len
   var i = 0
@@ -30,24 +35,25 @@ func encode*[T: byte|char](s: openArray[T]; safe = false): string =
     let a = ord(s[i])
     let b = ord(s[i + 1])
     let c = ord(s[i + 2])
-    result.add alphabet[(a shr 2) and 63]
-    result.add alphabet[((a shl 4) or (b shr 4)) and 63]
-    result.add alphabet[((b shl 2) or (c shr 6)) and 63]
-    result.add alphabet[c and 63]
+    result.add letter(safe, (a shr 2) and 63)
+    result.add letter(safe, ((a shl 4) or (b shr 4)) and 63)
+    result.add letter(safe, ((b shl 2) or (c shr 6)) and 63)
+    result.add letter(safe, c and 63)
     i += 3
-  let rem = n - i
-  if rem == 1:
+  # `i + 1 == n` rather than `n - i == 1`: a difference against `n` is what
+  # bounds `s[i]`
+  if i + 1 == n:
     let a = ord(s[i])
-    result.add alphabet[(a shr 2) and 63]
-    result.add alphabet[(a shl 4) and 63]
+    result.add letter(safe, (a shr 2) and 63)
+    result.add letter(safe, (a shl 4) and 63)
     result.add '='
     result.add '='
-  elif rem == 2:
+  elif i + 2 == n:
     let a = ord(s[i])
     let b = ord(s[i + 1])
-    result.add alphabet[(a shr 2) and 63]
-    result.add alphabet[((a shl 4) or (b shr 4)) and 63]
-    result.add alphabet[(b shl 2) and 63]
+    result.add letter(safe, (a shr 2) and 63)
+    result.add letter(safe, ((a shl 4) or (b shr 4)) and 63)
+    result.add letter(safe, (b shl 2) and 63)
     result.add '='
 
 func encodeMime*(s: string; lineLen = 75; newLine = "\r\n"; safe = false): string =

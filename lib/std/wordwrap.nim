@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 #
 #
 #            Nim's Runtime Library
@@ -37,7 +39,8 @@ func wrapWords*(s: string, maxLineWidth = 80,
   var i = 0
   while true:
     var j = i
-    let isSep = j < s.len and s[j] in seps
+    var isSep = false
+    if j < s.len: isSep = s[j] in seps
     while j < s.len and (s[j] in seps) == isSep: inc(j)
     if j <= i: break
     #yield (substr(s, i, j-1), isSep)
@@ -61,7 +64,11 @@ func wrapWords*(s: string, maxLineWidth = 80,
               result.add newLine
             dec spaceLeft
             let L = graphemeLen(s, k+i)
-            for m in 0 ..< L: result.add s[i+k+m]
+            var p = i + k
+            for m in 0 ..< L:
+              if p >= s.len: break
+              result.add s[p]
+              inc p
             inc k, L
         else:
           spaceLeft = maxLineWidth - wlen

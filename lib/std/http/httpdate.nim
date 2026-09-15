@@ -1,3 +1,4 @@
+{.feature: "staticContracts".}
 # (c) 2026 Andreas Rumpf
 #
 # HTTP dates: the one timestamp format the protocol names, in both directions.
@@ -49,20 +50,24 @@ const
 
 # ------------------------------------------------------------- writing ----
 
-proc put2(dest: var openArray[char]; i: int; v: int) {.inline.} =
+proc put2(dest: var openArray[char]; i: int; v: int) {.inline,
+    requires: 0 <= i and i + 1 < dest.len, ensures: dest.len == old(dest.len).} =
   dest[i] = char(ord('0') + (v div 10) mod 10)
   dest[i + 1] = char(ord('0') + v mod 10)
 
-proc put4(dest: var openArray[char]; i: int; v: int) {.inline.} =
+proc put4(dest: var openArray[char]; i: int; v: int) {.inline,
+    requires: 0 <= i and i + 3 < dest.len, ensures: dest.len == old(dest.len).} =
   dest[i] = char(ord('0') + (v div 1000) mod 10)
   dest[i + 1] = char(ord('0') + (v div 100) mod 10)
   dest[i + 2] = char(ord('0') + (v div 10) mod 10)
   dest[i + 3] = char(ord('0') + v mod 10)
 
-proc put3(dest: var openArray[char]; i: int; s: string) {.inline.} =
-  dest[i] = s[0]
-  dest[i + 1] = s[1]
-  dest[i + 2] = s[2]
+proc put3(dest: var openArray[char]; i: int; s: string) {.inline,
+    requires: 0 <= i and i + 2 < dest.len, ensures: dest.len == old(dest.len).} =
+  if s.len >= 3:
+    dest[i] = s[0]
+    dest[i + 1] = s[1]
+    dest[i + 2] = s[2]
 
 proc writeHttpDate*(dest: var openArray[char]; t: Time): int =
   ## Write `t` as an IMF-fixdate into the front of `dest`. Returns
@@ -74,12 +79,17 @@ proc writeHttpDate*(dest: var openArray[char]; t: Time): int =
   ## that is wrong about the year 10000.
   if dest.len < HttpDateLen: return 0
   let dt = utc(t)
-  put3 dest, 0, DayNames[ord(dt.weekday)]
+  # an enum conversion is not range checked: `Month(13)` is a value too
+  var weekday = ord(dt.weekday)
+  if weekday < 0 or weekday > 6: weekday = 0
+  put3 dest, 0, DayNames[weekday]
   dest[3] = ','
   dest[4] = ' '
   put2 dest, 5, int(dt.monthday)
   dest[7] = ' '
-  put3 dest, 8, MonthNames[ord(dt.month) - 1]
+  var month = ord(dt.month) - 1
+  if month < 0 or month > 11: month = 0
+  put3 dest, 8, MonthNames[month]
   dest[11] = ' '
   put4 dest, 12, (if dt.year < 0 or dt.year > 9999: 9999 else: dt.year)
   dest[16] = ' '
@@ -99,8 +109,8 @@ proc formatHttpDate*(t: Time): string =
   ## string anyway; `writeHttpDate` is the one a response takes per request.
   var buf = default(array[HttpDateLen, char])
   discard writeHttpDate(buf, t)
-  result = newString(HttpDateLen)
-  for i in 0..<HttpDateLen: result[i] = buf[i]
+  result = newStringOfCap(HttpDateLen)
+  for i in 0..<HttpDateLen: result.add buf[i]
 
 # --------------------------------------------------------- the cached now --
 
@@ -140,10 +150,11 @@ proc digit(c: char): int {.inline.} =
 proc num(buf: openArray[char]; i: Natural; n: int): int =
   ## Exactly `n` digits at `i`, or `-1`. Exactly, not at least: a two-digit
   ## field that accepts three silently reinterprets every field after it.
-  if i + n > buf.len: return -1   # `i >= 0` comes from its type
+  let stop = i + n
+  if stop > buf.len: return -1   # `i >= 0` comes from its type
   result = 0
-  for k in 0..<n:
-    let d = digit(buf[i + k])
+  for p in i..<stop:
+    let d = digit(buf[p])
     if d < 0: return -1
     result = result * 10 + d
 
@@ -154,12 +165,14 @@ proc monthFrom(buf: openArray[char]; i: Natural): int =
   if i + 3 > buf.len: return -1
   for m in 0..11:
     let s = MonthNames[m]
-    if buf[i] == s[0] and buf[i + 1] == s[1] and buf[i + 2] == s[2]:
+    if s.len >= 3 and buf[i] == s[0] and buf[i + 1] == s[1] and buf[i + 2] == s[2]:
       return m + 1
   result = -1
 
 proc isGmt(buf: openArray[char]; i: Natural): bool {.inline.} =
-  i + 3 <= buf.len and buf[i] == 'G' and buf[i + 1] == 'M' and buf[i + 2] == 'T'
+  result = false
+  if i + 3 <= buf.len:
+    result = buf[i] == 'G' and buf[i + 1] == 'M' and buf[i + 2] == 'T'
 
 proc timeOfDay(buf: openArray[char]; i: Natural; h, mi, s: var int): bool =
   ## `HH:MM:SS` at `i`.
@@ -212,10 +225,11 @@ proc parseRfc850(buf: openArray[char]; t: var Time): bool =
   if c < 0: return false
   var ok = false
   for w in 0..6:
-    if LongDayNames[w].len == c:
+    let name = LongDayNames[w]
+    if name.len == c:
       var same = true
       for k in 0..<c:
-        if buf[k] != LongDayNames[w][k]: same = false
+        if buf[k] != name[k]: same = false
       if same: ok = true
   if not ok: return false
   let p = c + 2                     # past ", ", where the day-of-month starts

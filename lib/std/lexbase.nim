@@ -1,3 +1,4 @@
+{.feature: "staticContracts".}
 #
 #
 #            Nim's Runtime Library
@@ -34,6 +35,14 @@ const
 #  "Example Text\n ha!"   bufLen = 17
 #   ^pos = 0     ^ sentinel = 12
 #
+
+func charAt*(buf: openArray[char]; pos: int): char {.inline.} =
+  ## `buf[pos]`, or `EndOfFile` for a position outside `buf`. The lexers built
+  ## on this module scan up to a sentinel; reading through `charAt` is what
+  ## keeps a missing sentinel — a buffer that could not be allocated — from
+  ## becoming a read past the end.
+  result = EndOfFile
+  if pos >= 0 and pos < buf.len: result = buf[pos]
 
 type
   BaseLexer* = object of RootObj ## the base lexer. Inherit your lexer from
@@ -84,13 +93,16 @@ proc fillBuffer(L: var BaseLexer) =
   charsRead = readChunk(L, toCopy, toCopy + L.sentinel)
   s = toCopy + charsRead
   if charsRead < L.sentinel + 1:
-    L.buf[s] = EndOfFile # set end marker
+    # the end marker needs a slot; a buffer that could not be allocated has
+    # none, and then the input ends at the last slot there is
+    if s >= L.buf.len: s = L.buf.len - 1
+    if s >= 0: L.buf[s] = EndOfFile # set end marker
     L.sentinel = s
   else:
     # compute sentinel:
     dec(s) # BUGFIX (valgrind)
     while true:
-      assert(s < L.buf.len)
+      if s >= L.buf.len: s = L.buf.len - 1
       while s >= 0 and L.buf[s] notin L.refillChars: dec(s)
       if s >= 0:
         # we found an appropriate character for a sentinel:
@@ -103,8 +115,11 @@ proc fillBuffer(L: var BaseLexer) =
         L.buf.setLen(L.buf.len * 2)
         charsRead = readChunk(L, oldBufLen, L.buf.len - 1)
         if charsRead < oldBufLen:
-          L.buf[oldBufLen + charsRead] = EndOfFile
-          L.sentinel = oldBufLen + charsRead
+          var eof = oldBufLen + charsRead
+          # `setLen` fails soft: the buffer may not have grown at all
+          if eof >= L.buf.len: eof = L.buf.len - 1
+          if eof >= 0: L.buf[eof] = EndOfFile
+          L.sentinel = eof
           break
         s = L.buf.len - 1
 
@@ -122,10 +137,10 @@ proc handleCR*(L: var BaseLexer, pos: int): int =
   ## Call this if you scanned over `'\c'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\c'`.
-  assert(L.buf[pos] == '\c')
+  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\c')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos)
-  if L.buf[result] == '\L':
+  if result >= 0 and result < L.buf.len and L.buf[result] == '\L':
     result = fillBaseLexer(L, result)
   L.lineStart = result
 
@@ -133,7 +148,7 @@ proc handleLF*(L: var BaseLexer, pos: int): int =
   ## Call this if you scanned over `'\L'` in the buffer; it returns the
   ## position to continue the scanning from. `pos` must be the position
   ## of the `'\L'`.
-  assert(L.buf[pos] == '\L')
+  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] == '\L')
   inc(L.lineNumber)
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
   L.lineStart = result
@@ -141,11 +156,11 @@ proc handleLF*(L: var BaseLexer, pos: int): int =
 proc handleRefillChar*(L: var BaseLexer, pos: int): int =
   ## Call this if a terminator character other than a new line is scanned
   ## at `pos`; it returns the position to continue the scanning from.
-  assert(L.buf[pos] in L.refillChars)
+  assert(pos >= 0 and pos < L.buf.len and L.buf[pos] in L.refillChars)
   result = fillBaseLexer(L, pos) #L.lastNL := result-1; // BUGFIX: was: result;
 
 proc skipUtf8Bom(L: var BaseLexer) =
-  if (L.buf[0] == '\xEF') and (L.buf[1] == '\xBB') and (L.buf[2] == '\xBF'):
+  if L.buf.len >= 3 and L.buf[0] == '\xEF' and L.buf[1] == '\xBB' and L.buf[2] == '\xBF':
     inc(L.bufpos, 3)
     inc(L.lineStart, 3)
 
@@ -173,8 +188,8 @@ proc getCurrentLine*(L: BaseLexer, marker: bool = true): string =
   ## retrieves the current line.
   var i: int
   result = ""
-  i = L.lineStart
-  while not (L.buf[i] in {'\c', '\L', EndOfFile}):
+  i = max(L.lineStart, 0)
+  while i < L.buf.len and not (L.buf[i] in {'\c', '\L', EndOfFile}):
     add(result, L.buf[i])
     inc(i)
   add(result, "\n")

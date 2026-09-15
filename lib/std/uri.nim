@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 # (c) 2026 Andreas Rumpf
 #
 # URIs: parsing, percent-coding, query strings and — the one that is not a
@@ -143,7 +145,7 @@ proc decodeUrl*(src: string; decodePlus = false): string {.raises.} =
 
 # ------------------------------------------------------------- parsing ----
 
-func find(s: openArray[char]; c: char; start: Natural = 0): int =
+func find(s: openArray[char]; c: char; start: Natural = 0): int {.ensures: result < s.len.} =
   result = -1
   var i: Natural = start
   while i < s.len:
@@ -155,8 +157,9 @@ func parseAuthority(u: var Uri; a: openArray[char]) =
   var hostStart: Natural = 0
   let at = a.find('@')
   if at >= 0:
-    let colon = toOpenArray(a, 0, at - 1).find(':')
-    if colon >= 0:
+    # the first colon overall is the userinfo's one if it comes before `@`
+    let colon = a.find(':')
+    if colon >= 0 and colon < at:
       for i in 0..<colon: u.username.add a[i]
       for i in colon + 1..<at: u.password.add a[i]
     else:
@@ -204,9 +207,9 @@ func parseUri*(s: openArray[char]): Uri =
     for k in hash + 1..<n: result.anchor.add s[k]
     stop = hash
 
-  let q = toOpenArray(s, 0, stop - 1).find('?')
+  let q = s.find('?')
   var pathEnd = stop
-  if q >= 0:
+  if q >= 0 and q < stop:
     for k in q + 1..<stop: result.query.add s[k]
     pathEnd = q
 
@@ -346,38 +349,39 @@ func normalizedPath*(path: openArray[char]; dest: var string): bool =
   let absolute = path.len > 0 and path[0] == '/'
   # Segment starts, as offsets into `path`. Only the boundaries are recorded,
   # so nothing is copied until the answer is known.
-  var starts = newSeq[int](0)
-  var ends = newSeq[int](0)
+  var segments = newSeq[(int, int)](0)
   var i = 0
   while i < path.len:
     while i < path.len and path[i] == '/': inc i
     if i >= path.len: break
     let s = i
     while i < path.len and path[i] != '/': inc i
-    let isDot = (i - s == 1 and path[s] == '.')
-    let isDotDot = (i - s == 2 and path[s] == '.' and path[s + 1] == '.')
+    var isDot = false
+    var isDotDot = false
+    if path[s] == '.':
+      if i == s + 1: isDot = true
+      elif i == s + 2 and path[s + 1] == '.': isDotDot = true
     if isDot:
       discard
     elif isDotDot:
-      if starts.len > 0:
-        discard starts.pop()
-        discard ends.pop()
+      if segments.len > 0:
+        discard segments.pop()
       else:
         # Above the root. For a relative path this is a legal `../`; for an
         # absolute one there is nothing above `/` and the request is bad.
         if absolute: return false
-        starts.add s
-        ends.add i
+        segments.add (s, i)
     else:
-      starts.add s
-      ends.add i
+      segments.add (s, i)
   if absolute: dest.add '/'
-  for k in 0..<starts.len:
+  for k in 0..<segments.len:
     if k > 0: dest.add '/'
-    for j in starts[k]..<ends[k]: dest.add path[j]
+    let (first, last) = segments[k]
+    if first >= 0 and last <= path.len:
+      for j in first..<last: dest.add path[j]
   # A path that ended in `/`, `/.` or `/..` names a directory, and the
   # trailing slash is the part of it that says so.
-  if path.len > 0 and starts.len > 0 and
+  if path.len > 0 and segments.len > 0 and
      (path[path.len - 1] == '/' or
       (path.len >= 2 and path[path.len - 1] == '.' and path[path.len - 2] == '/') or
       (path.len >= 3 and path[path.len - 1] == '.' and path[path.len - 2] == '.' and

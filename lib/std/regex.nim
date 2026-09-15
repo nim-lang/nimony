@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 #
 #
 #            Nimony's Standard Library

@@ -70,7 +70,8 @@ func hash*[T: object](x: T): Hash {.inline.} =
   result = !$result
 ]#
 
-func nextTry*(h: Hash; maxHash: int): Hash {.inline.} =
+func nextTry*(h: Hash; maxHash: int): Hash {.inline, requires: 0 <= maxHash,
+    ensures: result <= maxHash.uint.} =
   ## Advances a hash probe index inside `0 .. maxHash` (linear probing helper).
   result = (h + 1'u) and maxHash.uint
 

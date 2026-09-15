@@ -1,3 +1,4 @@
+{.feature: "staticContracts".}
 #
 #
 #            Nim's Runtime Library
@@ -177,8 +178,11 @@ proc errorMsgFor*(my: JsonParser, err: JsonError): string =
   ## caller passes the error explicitly because `my.err` is sticky (it keeps the
   ## first error), whereas an in-tree placeholder wants the message for the error
   ## at *its own* position.
+  # an enum conversion is not range checked, so `err` may be outside the table
+  var msg = ""
+  if ord(err) >= 0 and ord(err) <= ord(high(JsonError)): msg = errorMessages[err]
   result = my.filename & "(" & $getLine(my) & ", " & $getColumn(my) &
-           ") Error: " & errorMessages[err]
+           ") Error: " & msg
 
 proc errorMsg*(my: JsonParser): string =
   ## returns a helpful error message for the current error state
@@ -195,7 +199,7 @@ proc parseEscapedUTF16*(buf: openArray[char], pos: var int): int =
   #UTF-16 escape is always 4 bytes.
   for _ in 0..3:
     # if char in '0' .. '9', 'a' .. 'f', 'A' .. 'F'
-    if handleHexChar(buf[pos], result):
+    if handleHexChar(charAt(buf, pos), result):
       inc(pos)
     else:
       return -1
@@ -206,7 +210,7 @@ proc parseString(my: var JsonParser): TokKind =
   if my.rawStringLiterals:
     add(my.a, '"')
   while true:
-    case my.buf[pos]
+    case charAt(my.buf, pos)
     of '\0':
       my.err = errQuoteExpected
       result = tkError
@@ -219,9 +223,9 @@ proc parseString(my: var JsonParser): TokKind =
     of '\\':
       if my.rawStringLiterals:
         add(my.a, '\\')
-      case my.buf[pos+1]
+      case charAt(my.buf, pos+1)
       of '\\', '"', '\'', '/':
-        add(my.a, my.buf[pos+1])
+        add(my.a, charAt(my.buf, pos+1))
         inc(pos, 2)
       of 'b':
         add(my.a, '\b')
@@ -252,7 +256,7 @@ proc parseString(my: var JsonParser): TokKind =
           break
         # Deal with surrogates
         if (r and 0xfc00) == 0xd800:
-          if my.buf[pos] != '\\' or my.buf[pos+1] != 'u':
+          if charAt(my.buf, pos) != '\\' or charAt(my.buf, pos+1) != 'u':
             my.err = errInvalidToken
             break
           inc(pos, 2)
@@ -265,8 +269,8 @@ proc parseString(my: var JsonParser): TokKind =
         if my.rawStringLiterals:
           let length = pos - pos2
           for i in 1 .. length:
-            if my.buf[pos2] in {'0'..'9', 'A'..'F', 'a'..'f'}:
-              add(my.a, my.buf[pos2])
+            if charAt(my.buf, pos2) in {'0'..'9', 'A'..'F', 'a'..'f'}:
+              add(my.a, charAt(my.buf, pos2))
               inc pos2
             else:
               break
@@ -274,7 +278,7 @@ proc parseString(my: var JsonParser): TokKind =
           add(my.a, toUTF8(Rune(int32(r))))
       else:
         # don't bother with the error
-        add(my.a, my.buf[pos])
+        add(my.a, charAt(my.buf, pos))
         inc(pos)
     of '\c':
       pos = lexbase.handleCR(my, pos)
@@ -283,20 +287,20 @@ proc parseString(my: var JsonParser): TokKind =
       pos = lexbase.handleLF(my, pos)
       add(my.a, '\L')
     else:
-      add(my.a, my.buf[pos])
+      add(my.a, charAt(my.buf, pos))
       inc(pos)
   my.bufpos = pos # store back
 
 proc skip(my: var JsonParser) =
   var pos = my.bufpos
   while true:
-    case my.buf[pos]
+    case charAt(my.buf, pos)
     of '/':
-      if my.buf[pos+1] == '/':
+      if charAt(my.buf, pos+1) == '/':
         # skip line comment:
         inc(pos, 2)
         while true:
-          case my.buf[pos]
+          case charAt(my.buf, pos)
           of '\0':
             break
           of '\c':
@@ -307,11 +311,11 @@ proc skip(my: var JsonParser) =
             break
           else:
             inc(pos)
-      elif my.buf[pos+1] == '*':
+      elif charAt(my.buf, pos+1) == '*':
         # skip long comment:
         inc(pos, 2)
         while true:
-          case my.buf[pos]
+          case charAt(my.buf, pos)
           of '\0':
             my.err = errEOC_Expected
             break
@@ -321,7 +325,7 @@ proc skip(my: var JsonParser) =
             pos = lexbase.handleLF(my, pos)
           of '*':
             inc(pos)
-            if my.buf[pos] == '/':
+            if charAt(my.buf, pos) == '/':
               inc(pos)
               break
           else:
@@ -340,46 +344,46 @@ proc skip(my: var JsonParser) =
 
 proc parseNumber(my: var JsonParser) =
   var pos = my.bufpos
-  if my.buf[pos] == '-':
+  if charAt(my.buf, pos) == '-':
     add(my.a, '-')
     inc(pos)
-  if my.buf[pos] == '.':
+  if charAt(my.buf, pos) == '.':
     add(my.a, "0.")
     inc(pos)
   else:
-    while my.buf[pos] in Digits:
-      add(my.a, my.buf[pos])
+    while charAt(my.buf, pos) in Digits:
+      add(my.a, charAt(my.buf, pos))
       inc(pos)
-    if my.buf[pos] == '.':
+    if charAt(my.buf, pos) == '.':
       add(my.a, '.')
       inc(pos)
   # digits after the dot:
-  while my.buf[pos] in Digits:
-    add(my.a, my.buf[pos])
+  while charAt(my.buf, pos) in Digits:
+    add(my.a, charAt(my.buf, pos))
     inc(pos)
-  if my.buf[pos] in {'E', 'e'}:
-    add(my.a, my.buf[pos])
+  if charAt(my.buf, pos) in {'E', 'e'}:
+    add(my.a, charAt(my.buf, pos))
     inc(pos)
-    if my.buf[pos] in {'+', '-'}:
-      add(my.a, my.buf[pos])
+    if charAt(my.buf, pos) in {'+', '-'}:
+      add(my.a, charAt(my.buf, pos))
       inc(pos)
-    while my.buf[pos] in Digits:
-      add(my.a, my.buf[pos])
+    while charAt(my.buf, pos) in Digits:
+      add(my.a, charAt(my.buf, pos))
       inc(pos)
   my.bufpos = pos
 
 proc parseName(my: var JsonParser) =
   var pos = my.bufpos
-  if my.buf[pos] in IdentStartChars:
-    while my.buf[pos] in IdentChars:
-      add(my.a, my.buf[pos])
+  if charAt(my.buf, pos) in IdentStartChars:
+    while charAt(my.buf, pos) in IdentChars:
+      add(my.a, charAt(my.buf, pos))
       inc(pos)
   my.bufpos = pos
 
 proc getTok*(my: var JsonParser): TokKind =
   setLen(my.a, 0)
   skip(my) # skip whitespace, comments
-  case my.buf[my.bufpos]
+  case charAt(my.buf, my.bufpos)
   of '-', '.', '0'..'9':
     parseNumber(my)
     if contains(my.a, {'.', 'e', 'E'}):
@@ -425,6 +429,11 @@ proc next*(my: var JsonParser) =
   ## retrieves the first/next event. This controls the parser.
   var tk = getTok(my)
   var i = my.state.len-1
+  if i < 0:
+    # every state was popped: nothing but the end can follow
+    my.kind = jsonError
+    my.err = errEofExpected
+    return
   # the following code is a state machine. If we had proper coroutines,
   # the code could be much simpler.
   case my.state[i]
@@ -497,7 +506,7 @@ proc next*(my: var JsonParser) =
     of tkBracketRi:
       my.kind = jsonArrayEnd
       discard my.state.pop() # pop stateExpectArrayComma
-      discard my.state.pop() # pop stateArray
+      if my.state.len > 0: discard my.state.pop() # pop stateArray
     else:
       my.kind = jsonError
       my.err = errBracketRiExpected
@@ -509,7 +518,7 @@ proc next*(my: var JsonParser) =
     of tkCurlyRi:
       my.kind = jsonObjectEnd
       discard my.state.pop() # pop stateExpectObjectComma
-      discard my.state.pop() # pop stateObject
+      if my.state.len > 0: discard my.state.pop() # pop stateObject
     else:
       my.kind = jsonError
       my.err = errCurlyRiExpected

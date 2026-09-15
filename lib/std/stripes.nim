@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 import std/[atomics, ticketlocks, syncio]
 
 # --- power-of-2 helpers ---
@@ -31,8 +33,11 @@ proc init*[T: HasDefault](s: var FifoStripe[T]; capacity: int) =
 proc tryEnqueue*[T: HasDefault](s: var FifoStripe[T]; item: T): bool =
   s.lock.acquire()
   result = s.count < s.data.len
-  if result:
-    s.data[s.tail] = item
+  if result and s.data.len > 0:
+    # `tail` stays masked to the capacity, a power of two; masking the index
+    # again is what says so here
+    let at = s.tail and (s.data.len - 1)
+    s.data[at] = item
     s.tail = (s.tail + 1) and (s.data.len - 1)
     inc s.count
   s.lock.release()
@@ -41,19 +46,26 @@ proc tryBulkEnqueue*[T: HasDefault](s: var FifoStripe[T]; items: openArray[T]): 
   ## Enqueue as many leading items of `items` (in order) as fit under one lock
   ## acquisition; returns how many were taken.
   s.lock.acquire()
-  result = min(items.len, s.data.len - s.count)
-  for i in 0 ..< result:
-    s.data[s.tail] = items[i]
-    s.tail = (s.tail + 1) and (s.data.len - 1)
+  result = 0
+  if s.data.len > 0:
+    result = min(items.len, s.data.len - s.count)
+    for i in 0 ..< result:
+      let at = s.tail and (s.data.len - 1)
+      s.data[at] = items[i]
+      s.tail = (s.tail + 1) and (s.data.len - 1)
   inc s.count, result
   s.lock.release()
 
 proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: var openArray[T]): int =
   s.lock.acquire()
-  result = min(s.count, min(bulkSize, buf.len))
-  for i in 0 ..< result:
-    buf[i] = s.data[s.head]
-    s.head = (s.head + 1) and (s.data.len - 1)
+  result = 0
+  if s.data.len > 0:
+    let room = min(bulkSize, buf.len)
+    result = min(s.count, room)
+    for i in 0 ..< result:
+      let at = s.head and (s.data.len - 1)
+      buf[i] = s.data[at]
+      s.head = (s.head + 1) and (s.data.len - 1)
   dec s.count, result
   s.lock.release()
 

@@ -9,8 +9,10 @@ type
 
 func `[]`*[T](x: openArray[T]; idx: int): var T {.inline, requires: idx >= 0 and idx < x.len.} = x.a[idx]
 
-func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len.} =
+func `[]=`*[T](x: var openArray[T]; i: int; elem: sink T) {.inline, requires: i >= 0 and i < x.len,
+    ensures: x.len == old(x.len).} =
   (x[i]) = elem
+  {.assume: x.len == old(x.len).}
 
 # special cased in compiler as "toOpenArray.0.<system suffix>" for empty array type inference:
 converter toOpenArray*[I, T](x {.byref.}: array[I, T]): openArray[T] {.inline, establishesBorrow.} =
