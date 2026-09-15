@@ -181,6 +181,19 @@ proc toneName(t: Tone): string =
   result = ""
   if ord(t) >= 0 and ord(t) <= ord(high(Tone)): result = toneNames[t]
 
+proc putPair(dest: var openArray[char]; i: int) {.requires: 0 <= i and i + 1 < dest.len.} =
+  dest[i] = '<'
+  dest[i + 1] = '>'
+
+proc putPairs(dest: var openArray[char]) =
+  # a `var openArray` is never replaced, so no call through it changes its
+  # length: no `.ensures` needed to say so
+  if dest.len >= 6:
+    putPair(dest, 0)
+    putPair(dest, 2)
+    for k in 0 ..< 2:
+      putPair(dest, 4)
+
 assert mask(-1) == 0
 assert maskedLocal(1000) == 0
 assert byteWidth(0x1200'u32) == 0x12
@@ -210,3 +223,6 @@ var stack = Stack(len: 2)
 if stack.len > 0:
   assert popTop(stack) == 1
 assert toneName(toneMid) == "mid"
+var pairs = default(array[6, char])
+putPairs(pairs)
+assert pairs[5] == '>'

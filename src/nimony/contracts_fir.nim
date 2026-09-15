@@ -182,6 +182,10 @@ type
     ownOldSlots: Table[string, VarId]
       ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
     ensuredRoots: seq[SymId]
+    viewRoots: seq[SymId]
+      ## `var openArray` arguments of the call just analysed: the `(unknown …)`
+      ## that follows may drop what is known about their elements, never
+      ## their length (`isVarOpenArray`).
       ## Roots whose facts a callee's `.ensures` just re-established. Like
       ## `steppedLoc`, the `(unknown …)` that follows the call must not erase
       ## them again; lives for the one statement that follows.
@@ -1469,6 +1473,49 @@ proc stepCall(c: var FirContext; n: Cursor; loc: var VarId; delta: var xint): bo
   callee = sub(callee)
   var stepArg = default(Cursor)
   result = stepCallAt(c, callee, loc, delta, stepArg)
+
+proc isVarOpenArray(c: var FirContext; t: Cursor): bool =
+  ## `var openArray[T]`: a view whose elements may be written but which itself
+  ## is never replaced — nothing done through it changes its length. `openArray`
+  ## is the `{.view.}` type.
+  result = false
+  if t.typeKind == MutT:
+    var e = t
+    e = sub(e)
+    if e.isSymbol:
+      var decl = default(Cursor)
+      if c.moduleTypes.hasKey(e.symId):
+        decl = c.moduleTypes.getOrQuit(e.symId)
+      else:
+        let sym = tryLoadSym(e.symId)
+        if sym.status == LacksNothing and sym.decl.symKind == TypeY: decl = sym.decl
+      if not cursorIsNil(decl):
+        result = hasPragma(asTypeDecl(decl).pragmas, ViewP)
+
+proc isViewLen(c: FirContext; i: int; root: SymId): bool =
+  ## Is derived location `i` the length field of the view `root` itself?
+  result = false
+  if c.derivedRoots[i] == root:
+    let key = c.derivedKeys[i]
+    let prefix = "v" & $uint32(root) & "."
+    if key.startsWith(prefix):
+      let rest = key.substr(prefix.len)
+      if rest.len > 0 and rest.len <= 10:
+        var id = 0'u64
+        var allDigits = true
+        for ch in rest:
+          if ch in {'0'..'9'}: id = id * 10'u64 + uint64(ord(ch) - ord('0'))
+          else: allDigits = false
+        if allDigits and id <= uint64(high(uint32)):
+          result = pool.symBasename(SymId(uint32(id))) == "len"
+
+proc invalidateViewElements(c: var FirContext; root: SymId) =
+  ## A `var openArray` handed to a call: its elements are anyone's guess
+  ## afterwards, its length is not.
+  invalidateFactsAbout(c.facts, getVarId(c, root))
+  for i in 0 ..< c.derivedRoots.len:
+    if c.derivedRoots[i] == root and not isViewLen(c, i, root):
+      invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
 proc returnsPointee(c: var FirContext; fnSym: SymId): bool =
   ## Is the `var T` this routine returns the address of a pointer's target —
@@ -3321,6 +3368,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
   var needsBorrowCheck = false
   var mutatedRoots: seq[SymId] = @[]
   var heapMutatedRoots: seq[SymId] = @[]
+  var viewRoots: seq[SymId] = @[]
   var mutatesUnknown = false
   while n.hasMore:
     if not fnType.hasMore:
@@ -3360,7 +3408,19 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     # judge by it rather than by the shape of the argument.
     if pk in {MutT, OutT}:
       let root = derivedRootOf(c, n)
-      if root != NoSymId and mayWriteHeap(n):
+      let argSym = extractSymId(n)
+      if argSym != NoSymId:
+        let argInfo = getLocalInfo(c.typeCache, argSym)
+        if argInfo.kind == ParamY and isVarOpenArray(c, argInfo.typ) and
+            not isVarOpenArray(c, param.typ):
+          buildErr c, n.info, "`" & pool.symString(argSym).split('.')[0] &
+            "` is a `var openArray` parameter: only its elements may change, " &
+            "and a `var` of another type could replace it"
+      if root != NoSymId and isVarOpenArray(c, param.typ) and
+          plainLocationVarId(c, n) == getVarId(c, root):
+        # a view passed as a view: its length stays
+        viewRoots.add root
+      elif root != NoSymId and mayWriteHeap(n):
         # a location behind a pointer: the pointer itself is not changed
         heapMutatedRoots.add root
       elif root != NoSymId:
@@ -3422,6 +3482,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     invalidateAllDerived(c)
   for root in heapMutatedRoots:
     invalidateDerivedFrom(c, root)
+  for root in viewRoots:
+    invalidateViewElements(c, root)
+  c.viewRoots = viewRoots
   # `callCursor` is already at the callee: `analyseCall` entered the call node.
   if not callKeepsHeap(c, callCursor, paramsStart):
     invalidateHeapDerived(c)
@@ -3599,6 +3662,8 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
     if x.kind in {LetY, GletY, TletY}:
       if isInitialized(c, symId):
         c.buildErr n.info, "invalid reassignment to `let` variable"
+    elif x.kind == ParamY and isVarOpenArray(c, x.typ):
+      c.buildErr n.info, "a `var openArray` parameter cannot be replaced; only its elements can change"
 
     var fact = query(getVarId(c, symId), InvalidVarId, createXint(0'i32))
     markInit(c, symId)
@@ -4014,11 +4079,20 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
       formal = sub(formal)
     while r.hasMore:
       var writes = true
+      var viewFormal = false
       if not cursorIsNil(formal):
         if formal.hasMore:
           let param = takeLocal(formal, SkipFinalParRi)
           writes = param.typ.typeKind in {MutT, OutT}
+          viewFormal = isVarOpenArray(c, param.typ)
       let sym = if r.isSymbol: r.symId else: NoSymId
+      if viewFormal:
+        # a view passed as a view keeps its length, through the `(unknown …)`
+        # that follows the call too
+        let viewRoot = extractSymId(r)
+        if viewRoot != NoSymId:
+          for i in 0 ..< c.derivedRoots.len:
+            if isViewLen(c, i, viewRoot): w.preserved.add VarId(FirstDerivedVarId - i)
       if writes and sym != NoSymId:
         let info = getLocalInfo(c.typeCache, sym)
         if not cursorIsNil(info.typ) and info.typ.typeKind in {MutT, OutT}:
@@ -4780,6 +4854,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
   let stepped = c.steppedLoc
   c.steppedLoc = InvalidVarId
   let ensured = move c.ensuredRoots
+  let views = move c.viewRoots
   case n.finalIrKind
   of IteV, ItecV:
     traverseIte c, n
@@ -4841,6 +4916,8 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
       # by the path's root symbol.
       if writesThroughPointee(c, n):
         discard "an element behind a pointer: only the heap changed"
+      elif unknownPath.path.len > 0 and unknownPath.path[0] in views:
+        invalidateViewElements(c, unknownPath.path[0])
       elif unknownPath.path.len > 0 and unknownPath.path[0] in ensured:
         # The call before this already dropped everything its mutation could
         # reach and restated what its `.ensures` promises.

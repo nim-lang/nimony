@@ -7,3 +7,4 @@ tests/nimony/errmsgs/tprovershapes.nim(40, 7) Error: cannot prove assertion: 0 <
 tests/nimony/errmsgs/tprovershapes.nim(48, 7) Error: assertion violated: 70 < i [pass --verbose for the Final IR]
 tests/nimony/errmsgs/tprovershapes.nim(60, 7) Error: cannot prove assertion: c.n == 3 [pass --verbose for the Final IR]
 tests/nimony/errmsgs/tprovershapes.nim(66, 1) Error: postcondition violated: s.len == old(s.len) - 1 [pass --verbose for the Final IR]
+tests/nimony/errmsgs/tprovershapes.nim(75, 8) Error: a `var openArray` parameter cannot be replaced; only its elements can change [pass --verbose for the Final IR]

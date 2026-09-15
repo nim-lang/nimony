@@ -70,6 +70,10 @@ func popTwo(s: var Stack): int {.requires: s.len > 1,
   result = top
   s.len = top
 
+proc replaceView(dest: var openArray[char]; other: var openArray[char]) =
+  # only the elements of a `var openArray` may change, never the view
+  dest = other
+
 maskIsLen(@[1], 0)
 bareDisequality(1)
 var parser = Parser(pos: 0, current: "abcd")
@@ -83,3 +87,6 @@ writeThroughInlineAccessor(counter)
 var stack = Stack(len: 3)
 if stack.len > 1:
   discard popTwo(stack)
+var viewA = ['a', 'b']
+var viewB = ['c']
+replaceView(viewA, viewB)

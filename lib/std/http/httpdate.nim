@@ -51,19 +51,19 @@ const
 # ------------------------------------------------------------- writing ----
 
 proc put2(dest: var openArray[char]; i: int; v: int) {.inline,
-    requires: 0 <= i and i + 1 < dest.len, ensures: dest.len == old(dest.len).} =
+    requires: 0 <= i and i + 1 < dest.len.} =
   dest[i] = char(ord('0') + (v div 10) mod 10)
   dest[i + 1] = char(ord('0') + v mod 10)
 
 proc put4(dest: var openArray[char]; i: int; v: int) {.inline,
-    requires: 0 <= i and i + 3 < dest.len, ensures: dest.len == old(dest.len).} =
+    requires: 0 <= i and i + 3 < dest.len.} =
   dest[i] = char(ord('0') + (v div 1000) mod 10)
   dest[i + 1] = char(ord('0') + (v div 100) mod 10)
   dest[i + 2] = char(ord('0') + (v div 10) mod 10)
   dest[i + 3] = char(ord('0') + v mod 10)
 
 proc put3(dest: var openArray[char]; i: int; s: string) {.inline,
-    requires: 0 <= i and i + 2 < dest.len, ensures: dest.len == old(dest.len).} =
+    requires: 0 <= i and i + 2 < dest.len.} =
   if s.len >= 3:
     dest[i] = s[0]
     dest[i + 1] = s[1]
