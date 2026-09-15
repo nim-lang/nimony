@@ -177,6 +177,9 @@ type
       ## semchecked one phase later, by which time `T.Obj` is an ordinary
       ## sibling declaration with nothing pointing back at `T`.
     includeStack*: seq[string]
+    templCallInfos*: seq[NifLineInfo]
+      ## call sites of the template expansions being semchecked, innermost
+      ## last; `instantiationInfo` reads the top
     importedModules*: OrderedTable[SymId, ImportedModule]
     selfModuleSym*: SymId
     instantiatedFrom*: seq[NifLineInfo]

@@ -624,3 +624,8 @@ proc newException*[T](exceptn: typedesc[T]; message: string): ref T {.inline, un
   ## `raise newException(ValueError, "wrong value")`.
   new(result)
   result.msg = message
+
+proc instantiationInfo*(): tuple[filename: string, line: int, column: int] {.magic: "InstantiationInfo".}
+  ## The source position of the call. Inside a template body it is the
+  ## position of the template's call site, so a template can report where it
+  ## was invoked. `filename` is the file name without directories.

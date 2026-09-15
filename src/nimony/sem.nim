@@ -1830,7 +1830,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
-     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
@@ -2136,7 +2136,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
-     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
@@ -5652,6 +5652,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semBindSymName c, dest, it
     of IsmainmoduleX:
       semIsMainModule c, dest, it
+    of InstantiationinfoX:
+      semInstantiationInfo c, dest, it
     of AtX:
       semSubscript c, dest, it
     of PluginCallX:

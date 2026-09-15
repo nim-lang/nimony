@@ -1020,6 +1020,10 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
       evalCmpOp(c, n, `<=`)
     of LtX:
       evalCmpOp(c, n, `<`)
+    of InstantiationinfoX:
+      # folded by sem (semInstantiationInfo) before any constant evaluation
+      cannotEval n
+      skip n
     of IsmainmoduleX:
       skip n
       if c.c == nil:
