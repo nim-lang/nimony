@@ -96,6 +96,18 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: NifLineInfo
 
+  Reading = object
+    ## How a proposition is read where it is judged or assumed. At a call site
+    ## the callee's parameters stand for the arguments (`args`), its `result`
+    ## for the location the call is bound to (`results`), and `old(e)` for the
+    ## slot that snapshot `e` before the call (`olds`). All three are empty for
+    ## a proposition that already names what it is about, except that `old(e)`
+    ## in a routine's own `.ensures`, `{.assert}` or `{.assume}` means the
+    ## snapshot taken on entry.
+    args: Table[SymId, Cursor]
+    results: Table[SymId, VarId]
+    olds: Table[string, VarId]
+
   CallContext = object
     ## What the calls of one statement established about the locations they
     ## wrote. The lowering puts an `(unknown x)` after that statement for every
@@ -109,6 +121,9 @@ type
     views: seq[SymId]
       ## `var openArray` arguments: their elements are unknown now, never their
       ## length (`isVarOpenArray`).
+    olds: Table[string, VarId]
+      ## The `old(e)` snapshots of the last call, which a store or a local that
+      ## binds its result reads the callee's `.ensures` with.
 
   FirContext = object
     flow: FlowState                    # the journaled analysis state: the
@@ -155,24 +170,15 @@ type
       ## True while `scanLoopWrites` walks a loop body ahead of its traversal.
       ## The body's own locals are not registered with the type cache yet, so
       ## nothing may ask for a type during it.
-    substVar: Table[SymId, VarId]
-      ## While an `.ensures` is being read, the `result` it names stands for a
-      ## `VarId` rather than for an expression: either the location the call was
-      ## bound to, or the anonymous slot `checkRangeAssign` judges a call's
-      ## value in.
     declaredRange: Table[VarId, RangeBounds]
       ## The bounds a location's `range` TYPE states. Unlike a flow fact this
       ## can never go stale — every write to the location owes the range in
       ## turn — so it answers questions the flow facts have been widened away
       ## from, which is what a `Natural` field advanced inside a loop needs.
-    oldSlots: Table[string, VarId]
-      ## `old(e)` in the `.ensures` of the call being analysed: the snapshot of
-      ## location `e` taken before the call's mutations, keyed by `e`'s
-      ## location key. Rebuilt at every call.
     ownEnsures: Cursor
       ## The `.ensures` of the routine being analysed, proven at every exit
       ## (`verifyEnsures`); nil when it has none.
-    ownOldSlots: Table[string, VarId]
+    ownOlds: Table[string, VarId]
       ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
@@ -232,7 +238,19 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext)
 proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext)
 proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext)
 
-proc freshCall(): CallContext {.inline.} = CallContext(stepped: InvalidVarId)
+proc freshCall(): CallContext {.inline.} =
+  CallContext(stepped: InvalidVarId, olds: initTable[string, VarId]())
+
+proc plainReading(): Reading {.inline.} =
+  ## A proposition that names what it is about.
+  Reading(args: initTable[SymId, Cursor](), results: initTable[SymId, VarId](),
+          olds: initTable[string, VarId]())
+
+proc ownReading(c: FirContext): Reading {.inline.} =
+  ## A proposition of the routine being analysed: `old(e)` is the snapshot
+  ## taken on entry.
+  Reading(args: initTable[SymId, Cursor](), results: initTable[SymId, VarId](),
+          olds: c.ownOlds)
 
 proc extractSymId(n: Cursor): SymId {.inline.} =
   var n = n
@@ -465,7 +483,8 @@ proc endBorrow(c: var FirContext; sym: SymId) =
 
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 
-proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId)
+proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
+                   olds: Table[string, VarId])
 proc operandRange(c: var FirContext; n: Cursor; lo, hi: var xint)
 
 proc analyseIfDerived(c: var FirContext; n: Cursor; call: var CallContext) =
@@ -1614,7 +1633,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   if sym == NoSymId and value.isTagLit and value.exprKind in CallKinds:
     let slot = derivedIdOf(c, "#boundvalue", NoSymId)
     invalidateFactsAbout(c.facts, slot)
-    assumeEnsures(c, value, slot)
+    assumeEnsures(c, value, slot, initTable[string, VarId]())
     let lowerE = query(VarId(0), slot, -lo)
     let upperE = query(slot, VarId(0), hi)
     let ok = (not needLo or implies(c.facts, lowerE)) and
@@ -2496,7 +2515,7 @@ proc oldArg(n: Cursor; arg: var Cursor): bool =
           result = sym.status == LacksNothing and isRoutine(sym.decl.symKind) and
             hasPragmaOfValue(asRoutine(sym.decl).pragmas, SemanticsP, "old")
 
-proc constStringLen(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
+proc constStringLen(c: var FirContext; n: Cursor; rd: Reading;
                     length: var xint): bool =
   ## `len(s)` of a `const` string: a number, not a location. `HexChars[i]` with
   ## `const HexChars = "0123456789ABCDEF"` owes `i < len(HexChars)`, and only
@@ -2509,7 +2528,7 @@ proc constStringLen(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]
     if fnSym != NoSymId and pool.symBasename(fnSym) == "len":
       skip r # the callee
       if r.hasMore:
-        let strSym = extractSymId(argOf(r, paramMap))
+        let strSym = extractSymId(argOf(r, rd.args))
         skip r
         if strSym != NoSymId and not r.hasMore:
           var value = default(Cursor)
@@ -2524,7 +2543,7 @@ proc constStringLen(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]
             length = createXint(int64(pool.strings[value.strId].len))
             result = true
 
-proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
+proc pureOperand(c: var FirContext; n: Cursor; rd: Reading;
                  v: var VarId; cnst: var xint): bool =
   ## One side of a comparison as `v + cnst`: an integer literal, a compile-time
   ## constant, `nil`, a symbol, or `sym +/- k`. `v` is `VarId(0)` for a pure
@@ -2532,12 +2551,12 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
   ## zero, which is also what makes `nil` and `0` the same operand.
   v = VarId(0)
   cnst = createXint(0'i32)
-  if c.substVar.len > 0:
+  if rd.results.len > 0:
     let rs = extractSymId(peelExpr(n))
-    if rs != NoSymId and c.substVar.hasKey(rs):
-      v = c.substVar.getOrQuit(rs)
+    if rs != NoSymId and rd.results.hasKey(rs):
+      v = rd.results.getOrQuit(rs)
       return true
-  let m = argOf(n, paramMap)
+  let m = argOf(n, rd.args)
   case m.kind
   of IntLit:
     cnst = createXint(m.intVal)
@@ -2563,9 +2582,9 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
     # literal a parameter stands for at this call site (`i + 2` with `i = 0`)
     var base = VarId(0)
     var baseConst = zero()
-    if not pureOperand(c, r, paramMap, base, baseConst): return false
+    if not pureOperand(c, r, rd, base, baseConst): return false
     skip r
-    let k = argOf(r, paramMap)
+    let k = argOf(r, rd.args)
     var off = createXint(0'i32)
     case k.kind
     of IntLit: off = createXint(k.intVal)
@@ -2582,21 +2601,21 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
     var root = NoSymId
     var key = ""
     var steps = 0
-    if locationKey(c, oldOf, paramMap, root, key, steps, 0) and c.oldSlots.hasKey(key):
-      v = c.oldSlots.getOrQuit(key)
+    if locationKey(c, oldOf, rd.args, root, key, steps, 0) and rd.olds.hasKey(key):
+      v = rd.olds.getOrQuit(key)
       return true
     return false
-  if constStringLen(c, m, paramMap, cnst):
+  if constStringLen(c, m, rd, cnst):
     return true
-  if offsetAccessor(c, n, paramMap, v, cnst):
+  if offsetAccessor(c, n, rd.args, v, cnst):
     return true
-  let loc = locationVarId(c, n, paramMap)
+  let loc = locationVarId(c, n, rd.args)
   if loc != InvalidVarId:
     v = loc
     return true
   result = false
 
-proc pureCompare(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
+proc pureCompare(c: var FirContext; n: Cursor; rd: Reading;
                  wasEquality: var bool): LeXplusC =
   ## Translate one comparison of the contract into `a <= b + c`. An invalid
   ## result means "not modelled", never "false".
@@ -2606,7 +2625,7 @@ proc pureCompare(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
     # A bare truthy operand: `requires: p` on a `ref`/`ptr` means `p != nil`.
     var v = VarId(0)
     var k = createXint(0'i32)
-    if pureOperand(c, n, paramMap, v, k) and v != VarId(0) and k == createXint(0'i32):
+    if pureOperand(c, n, rd, v, k) and v != VarId(0) and k == createXint(0'i32):
       result = isNotNil(v)
     return result
   wasEquality = xk == EqX
@@ -2615,11 +2634,11 @@ proc pureCompare(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
   skip r # the type operand
   var va = VarId(0)
   var ka = createXint(0'i32)
-  if not pureOperand(c, r, paramMap, va, ka): return result
+  if not pureOperand(c, r, rd, va, ka): return result
   skip r
   var vb = VarId(0)
   var kb = createXint(0'i32)
-  if not pureOperand(c, r, paramMap, vb, kb): return result
+  if not pureOperand(c, r, rd, vb, kb): return result
   # `va + ka <= vb + kb`  <->  `va <= vb + (kb - ka)`
   result = LeXplusC(a: va, b: vb, c: kb - ka)
   if xk == LtX:
@@ -2637,20 +2656,20 @@ proc proveFact(c: var FirContext; fact: LeXplusC): ProofRes =
   if impliesHere(c, neg): return Disproven
   result = Unprovable
 
-proc operandInterval(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
+proc operandInterval(c: var FirContext; n: Cursor; rd: Reading;
                      lo, hi: var xint): bool =
   ## The interval a comparison operand lies in without any flow fact: a constant
   ## (`pureOperand` with no variable part) or a bounded shape (`valueBounds`).
   var v = VarId(0)
   var k = zero()
-  if pureOperand(c, n, paramMap, v, k) and v == VarId(0):
+  if pureOperand(c, n, rd, v, k) and v == VarId(0):
     lo = k
     hi = k
     result = true
   else:
-    result = valueBounds(c, argOf(n, paramMap), lo, hi)
+    result = valueBounds(c, argOf(n, rd.args), lo, hi)
 
-proc proveByIntervals(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): ProofRes =
+proc proveByIntervals(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   ## A comparison `pureCompare` cannot state as `a <= b + c`, decided by the
   ## intervals of its operands: `(n and 0xF0) shr 4 < len(HexChars)` is
   ## `0..15 < 16`.
@@ -2664,9 +2683,9 @@ proc proveByIntervals(c: var FirContext; n: Cursor; paramMap: Table[SymId, Curso
     var aHi = zero()
     var bLo = zero()
     var bHi = zero()
-    if operandInterval(c, r, paramMap, aLo, aHi):
+    if operandInterval(c, r, rd, aLo, aHi):
       skip r
-      if operandInterval(c, r, paramMap, bLo, bHi):
+      if operandInterval(c, r, rd, bLo, bHi):
         case k
         of LeX:
           if aHi <= bLo: result = Proven
@@ -2678,7 +2697,7 @@ proc proveByIntervals(c: var FirContext; n: Cursor; paramMap: Table[SymId, Curso
           if aLo == aHi and bLo == bHi and aLo == bLo: result = Proven
           elif aHi < bLo or bHi < aLo: result = Disproven
 
-proc proveMasked(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): ProofRes =
+proc proveMasked(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   ## `x and m <= b` / `x and m < b` / `k <= x and m` for a mask `m` known not
   ## to be negative: `x and m` lies in `0 .. m`, so the upper question is asked
   ## about `m` and the lower one about `0`. A ring buffer indexes by
@@ -2689,21 +2708,21 @@ proc proveMasked(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): 
   var r = n
   r = sub(r)
   skip r # the type operand
-  let left = argOf(r, paramMap)
+  let left = argOf(r, rd.args)
   skip r
-  let right = argOf(r, paramMap)
+  let right = argOf(r, rd.args)
   let strict = if k == LtX: createXint(1'i64) else: zero()
   if left.exprKind == BitandX:
     var rv = VarId(0)
     var rk = zero()
-    if not pureOperand(c, right, paramMap, rv, rk): return
+    if not pureOperand(c, right, rd, rv, rk): return
     var d = left
     d = sub(d)
     skip d # the type operand
     for _ in 0 ..< 2:
       var mv = VarId(0)
       var mk = zero()
-      if pureOperand(c, d, paramMap, mv, mk) and
+      if pureOperand(c, d, rd, mv, mk) and
           impliesHere(c, query(VarId(0), mv, mk)):
         # `m <= b - strict` is `mv + mk <= rv + rk - strict`
         if impliesHere(c, query(mv, rv, rk - mk - strict)): return Proven
@@ -2711,7 +2730,7 @@ proc proveMasked(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): 
   elif right.exprKind == BitandX:
     var lv = VarId(0)
     var lk = zero()
-    if not pureOperand(c, left, paramMap, lv, lk) or lv != VarId(0): return
+    if not pureOperand(c, left, rd, lv, lk) or lv != VarId(0): return
     # `k <= x and m` holds for `k <= 0` once `m` is not negative
     if lk + strict <= zero():
       var d = right
@@ -2720,26 +2739,26 @@ proc proveMasked(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): 
       for _ in 0 ..< 2:
         var mv = VarId(0)
         var mk = zero()
-        if pureOperand(c, d, paramMap, mv, mk) and
+        if pureOperand(c, d, rd, mv, mk) and
             impliesHere(c, query(VarId(0), mv, mk)):
           return Proven
         skip d
 
-proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): ProofRes =
+proc proveCond(c: var FirContext; n: Cursor; rd: Reading): ProofRes =
   case n.exprKind
   of AndX:
     var r = sub(n)
-    let a = proveCond(c, r, paramMap)
+    let a = proveCond(c, r, rd)
     skip r
-    result = a and proveCond(c, r, paramMap)
+    result = a and proveCond(c, r, rd)
   of OrX:
     var r = sub(n)
-    let a = proveCond(c, r, paramMap)
+    let a = proveCond(c, r, rd)
     skip r
-    result = a or proveCond(c, r, paramMap)
+    result = a or proveCond(c, r, rd)
   of NotX:
     var r = sub(n)
-    result = not proveCond(c, r, paramMap)
+    result = not proveCond(c, r, rd)
   of TrueX:
     result = Proven
   of FalseX:
@@ -2749,18 +2768,18 @@ proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): Pr
     while r.exprKind == ExprX:
       r = sub(r) # throwaway copy; bounds the walk under vpr
       while r.hasMore and not isLastSon(r): skip r
-    result = proveCond(c, r, paramMap)
+    result = proveCond(c, r, rd)
   else:
     var wasEquality = false
-    let fact = pureCompare(c, n, paramMap, wasEquality)
+    let fact = pureCompare(c, n, rd, wasEquality)
     if fact.isValid:
       result = proveFact(c, fact)
       if wasEquality and result == Proven:
         result = proveFact(c, fact.geXplusC)
     else:
-      result = proveMasked(c, n, paramMap)
+      result = proveMasked(c, n, rd)
       if result == Unprovable:
-        result = proveByIntervals(c, n, paramMap)
+        result = proveByIntervals(c, n, rd)
     when defined(contractLeaves):
       # `-d:contractLeaves` adds the per-conjunct verdict to `-d:contractStats`,
       # which is what tells "the index has no proven lower bound" apart from
@@ -2768,24 +2787,22 @@ proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): Pr
       # wants a non-negative index *type* or a guard.
       stderr.writeLine "   LEAF " & $result & " " & asNimCode(n)
 
-proc assumeCond(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]) =
+proc assumeCond(c: var FirContext; n: Cursor; rd: Reading) =
   ## Record a proposition as fact. Two callers: a routine's own `.requires` on
   ## entry to its body — every call site had to discharge it, so the body may
   ## assume it, which is what lets a precondition be passed on to an inner call
   ## that demands the same thing — and a callee's `.ensures` at the call site.
-  ## `subst` maps the proposition's parameters (and `result`) to what they stand
-  ## for here; it is empty for the `.requires` case, where the symbols already
-  ## are the ones to reason about. Whatever is not modelled contributes no fact.
+  ## `rd` says what its parameters, `result` and `old(e)` stand for here. Whatever is not modelled contributes no fact.
   case n.exprKind
   of AndX:
     var r = sub(n)
-    assumeCond(c, r, subst)
+    assumeCond(c, r, rd)
     skip r
-    assumeCond(c, r, subst)
+    assumeCond(c, r, rd)
   of NotX:
     var r = sub(n)
     var wasEquality = false
-    var fact = pureCompare(c, r, subst, wasEquality)
+    var fact = pureCompare(c, r, rd, wasEquality)
     if fact.isValid and not wasEquality:
       negateFact(fact)
       c.facts.add fact
@@ -2794,10 +2811,10 @@ proc assumeCond(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]) =
     while r.exprKind == ExprX:
       r = sub(r)
       while r.hasMore and not isLastSon(r): skip r
-    assumeCond(c, r, subst)
+    assumeCond(c, r, rd)
   else:
     var wasEquality = false
-    let fact = pureCompare(c, n, subst, wasEquality)
+    let fact = pureCompare(c, n, rd, wasEquality)
     if fact.isValid:
       c.facts.add fact
       if wasEquality:
@@ -2817,12 +2834,12 @@ proc assumeCond(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]) =
       var k = zero()
       var lo = zero()
       var hi = zero()
-      if pureOperand(c, lhs, subst, v, k) and v != VarId(0) and
-         operandInterval(c, rhs, subst, lo, hi):
+      if pureOperand(c, lhs, rd, v, k) and v != VarId(0) and
+         operandInterval(c, rhs, rd, lo, hi):
         # `v + k <= rhs <= hi`
         c.facts.add query(v, VarId(0), hi - k - strict)
-      elif pureOperand(c, rhs, subst, v, k) and v != VarId(0) and
-           operandInterval(c, lhs, subst, lo, hi):
+      elif pureOperand(c, rhs, rd, v, k) and v != VarId(0) and
+           operandInterval(c, lhs, rd, lo, hi):
         # `lo <= lhs <= v + k`
         c.facts.add query(VarId(0), v, k - lo - strict)
 
@@ -2832,21 +2849,17 @@ proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo) =
   ## the routine's promise to every caller, who takes it without looking; left
   ## unproven it would be a `{.assume.}` in disguise.
   if not cursorIsNil(c.ownEnsures) and c.tr.live:
+    var rd = ownReading(c)
     var cond = c.ownEnsures
     while cond.exprKind == ExprX:
       var inner = cond
       inner = sub(inner)
       if not inner.hasMore: break
       if inner.symKind == ResultY and resultVar != InvalidVarId:
-        c.substVar[asLocal(inner).name.symId] = resultVar
+        rd.results[asLocal(inner).name.symId] = resultVar
       while inner.hasMore and not isLastSon(inner): skip inner
       cond = inner
-    let callSlots = move c.oldSlots
-    c.oldSlots = c.ownOldSlots
-    let noSubst = initTable[SymId, Cursor]()
-    let res = proveCond(c, cond, noSubst)
-    c.oldSlots = callSlots
-    c.substVar.clear()
+    let res = proveCond(c, cond, rd)
     case res
     of Proven: discard
     of Disproven:
@@ -2856,10 +2869,10 @@ proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo) =
         buildErr c, info, "cannot prove postcondition: " & asNimCode(cond)
 
 proc assumeOwnContract(c: var FirContext; n: Cursor) =
-  let noArgs = initTable[SymId, Cursor]()
-  assumeCond(c, n, noArgs)
+  assumeCond(c, n, plainReading())
 
-proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId) =
+proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId;
+                   olds: Table[string, VarId]) =
   ## A callee's `.ensures`, read at the call site with its parameters standing
   ## for the arguments and `result` for the location the call was bound to.
   ##
@@ -2909,12 +2922,12 @@ proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId) =
     cond = inner
   if resultSyms.len == 0: return
 
+  var rd = Reading(args: subst, results: initTable[SymId, VarId](), olds: olds)
   for rs in resultSyms:
-    c.substVar[rs] = resultVar
-  assumeCond(c, cond, subst)
-  c.substVar.clear()
+    rd.results[rs] = resultVar
+  assumeCond(c, cond, rd)
 
-proc snapshotOlds(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]) =
+proc snapshotOlds(c: var FirContext; n: Cursor; rd: var Reading) =
   ## Every `old(e)` the callee's `.ensures` mentions gets a slot holding the
   ## facts `e` has *now*, before the call's mutations drop them: a copy of each
   ## fact about `e`, restated about the slot.
@@ -2923,14 +2936,14 @@ proc snapshotOlds(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]) 
     var root = NoSymId
     var key = ""
     var steps = 0
-    if locationKey(c, arg, paramMap, root, key, steps, 0) and not c.oldSlots.hasKey(key):
-      let loc = locationVarId(c, arg, paramMap)
+    if locationKey(c, arg, rd.args, root, key, steps, 0) and not rd.olds.hasKey(key):
+      let loc = locationVarId(c, arg, rd.args)
       let slot = derivedIdOf(c, "#old:" & key, NoSymId)
       # The slot is reused by every call: what the previous one left there may
       # be the only link between `e` and its bounds (`e == slot`, `i < slot`),
       # so it is projected out rather than dropped.
       projectOut(c.facts, slot)
-      c.oldSlots[key] = slot
+      rd.olds[key] = slot
       if loc != InvalidVarId:
         let known = c.facts.len
         for i in 0 ..< known:
@@ -2946,7 +2959,7 @@ proc snapshotOlds(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]) 
     var r = n
     r = sub(r)
     while r.hasMore:
-      snapshotOlds(c, r, paramMap)
+      snapshotOlds(c, r, rd)
       skip r
 
 proc ensuresProposition(ens: Cursor): Cursor =
@@ -2963,7 +2976,7 @@ proc ensuresProposition(ens: Cursor): Cursor =
     else:
       peeling = false
 
-proc checkRequires(c: var FirContext; req: Cursor; paramMap: Table[SymId, Cursor];
+proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
                    info: NifLineInfo) =
   ## Discharge the callee's `.requires` at this call site.
   ##
@@ -2986,7 +2999,7 @@ proc checkRequires(c: var FirContext; req: Cursor; paramMap: Table[SymId, Cursor
   # that a loop no longer makes its own continuation look dead; what is left
   # here is genuinely unreachable code.)
   if not c.tr.live: return
-  let res = proveCond(c, req, paramMap)
+  let res = proveCond(c, req, rd)
   when defined(contractStats):
     stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
   case res
@@ -3299,15 +3312,16 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip fnType # skip return type
   # now we have the pragmas:
   let req = extractPragma(fnType, RequiresP)
+  var rd = Reading(args: paramMap, results: initTable[SymId, VarId](),
+                   olds: initTable[string, VarId]())
   if not cursorIsNil(req):
     # A precondition is judged on the state at *entry*, so this must run before
     # the mutation below invalidates it.
-    checkRequires c, req, paramMap, callCursor.info
+    checkRequires c, req, rd, callCursor.info
   # So is every `old(e)` of the postcondition.
   let ens = extractPragma(fnType, EnsuresP)
-  c.oldSlots.clear()
   if not cursorIsNil(ens):
-    snapshotOlds c, ens, paramMap
+    snapshotOlds c, ens, rd
   # `inc i` *shifts* what is known about `i`; it does not erase it. Without
   # this every `inc` in a loop threw away the bounds the guard had just
   # established, which is most of what makes hand-written index code
@@ -3351,12 +3365,13 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   # `assumeEnsures` to read it at: it is taken here, after the mutations it
   # describes. `[]=` promising `s.len == old(s.len)` is what keeps a write loop
   # provable.
-  if not cursorIsNil(ens) and c.oldSlots.len > 0:
+  if not cursorIsNil(ens) and rd.olds.len > 0:
     var retType = paramsStart
     skip retType
     if retType.isDotToken or retType.typeKind == VoidT:
-      assumeCond c, ensuresProposition(ens), paramMap
+      assumeCond c, ensuresProposition(ens), rd
       for root in mutatedRoots: call.ensured.add root
+  call.olds = rd.olds
 
 proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext) =
   # A `{.noreturn.}` callee (e.g. `quit`, an out-of-range raiser) does not fall
@@ -3402,14 +3417,14 @@ proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
   if (let v = peelExpr(value); v.exprKind == BitandX):
     # `x and m` lies in `0..m` for a mask `m` known not to be negative: the
     # `hash and high(data)` every hash table starts its probe with.
-    let noSubst = initTable[SymId, Cursor]()
+    let rd = plainReading()
     var r = v
     r = sub(r)
     skip r # the type operand
     for _ in 0 ..< 2:
       var mv = VarId(0)
       var mk = zero()
-      if pureOperand(c, r, noSubst, mv, mk) and mv != VarId(0) and
+      if pureOperand(c, r, rd, mv, mk) and mv != VarId(0) and
           impliesHere(c, query(VarId(0), mv, mk)):
         # every such operand bounds it: `a.len and high(b)` is below both
         c.facts.add query(VarId(0), dest, zero())
@@ -3559,7 +3574,7 @@ proc traverseStore(c: var FirContext; n: var Cursor; call: var CallContext) =
     # bookkeeping above may have invalidated its range facts, so restore them.
     seedRangeFacts c, symId, expected
     # ... and whatever the callee promised about what it just returned.
-    assumeEnsures c, valueStart, getVarId(c, symId)
+    assumeEnsures c, valueStart, getVarId(c, symId), call.olds
 
     skip n
   else:
@@ -4079,8 +4094,7 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
         invalidateFactsAbout(c.facts, retLoc)
         var v = VarId(0)
         var k = zero()
-        let noSubst = initTable[SymId, Cursor]()
-        if pureOperand(c, n, noSubst, v, k):
+        if pureOperand(c, n, plainReading(), v, k):
           addAsgnFact c, query(retLoc, v, k)
         elif not sumWithBoundedTerm(c, n, retLoc):
           addBoundFacts c, retLoc, n
@@ -4316,8 +4330,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   if initAccepted and not initStart.isDotToken:
     var v = VarId(0)
     var k = createXint(0'i32)
-    let noSubst = initTable[SymId, Cursor]()
-    if pureOperand(c, initStart, noSubst, v, k):
+    if pureOperand(c, initStart, plainReading(), v, k):
       let a = getVarId(c, name)
       if a != v:
         addAsgnFact c, query(a, v, k)
@@ -4328,7 +4341,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   # record that for downstream obligations that reference this symbol.
   if initAccepted:
     seedRangeFacts c, name, localType
-    assumeEnsures c, initStart, getVarId(c, name)
+    assumeEnsures c, initStart, getVarId(c, name), call.olds
 
 proc traverseAssume(c: var FirContext; n: var Cursor) =
   ## `{.assume: cond.}`: the programmer's word, taken. The one statement that
@@ -4339,14 +4352,11 @@ proc traverseAssume(c: var FirContext; n: var Cursor) =
   ## iterator's `.ensures`. A conjunct the engine cannot model contributes no
   ## fact: there is nothing to report when we fail to understand a statement of
   ## what is true.
-  let noSubst = initTable[SymId, Cursor]()
   # `old(e)` in a statement of the body means what `e` held on entry.
-  let callSlots = move c.oldSlots
-  c.oldSlots = c.ownOldSlots
+  let rd = ownReading(c)
   n.into:
-    assumeCond(c, n, noSubst)
+    assumeCond(c, n, rd)
     skip n
-  c.oldSlots = callSlots
 
 proc traverseAssert(c: var FirContext; n: var Cursor) =
   ## `{.assert: cond.}`: a claim discharged at compile time and only there.
@@ -4360,7 +4370,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
   ## tests: the first prints the verdict, the second expects the assertion to
   ## be unprovable.
   let info = n.info
-  let noSubst = initTable[SymId, Cursor]()
+  let rd = ownReading(c)
   n.into:
     var report = false
     var expectUnprovable = false
@@ -4374,9 +4384,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
     skip n
     # On a path control cannot reach every claim is vacuous (see `checkRequires`).
     if c.tr.live:
-      let callSlots = move c.oldSlots
-      c.oldSlots = c.ownOldSlots
-      let res = proveCond(c, cond, noSubst)
+      let res = proveCond(c, cond, rd)
       if expectUnprovable:
         if res == Proven:
           buildErr c, info, "assertion unexpectedly proven: " & asNimCode(cond)
@@ -4390,8 +4398,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
           buildErr c, info, "assertion violated: " & asNimCode(cond)
         of Unprovable:
           buildErr c, info, "cannot prove assertion: " & asNimCode(cond)
-        assumeCond(c, cond, noSubst)
-      c.oldSlots = callSlots
+        assumeCond(c, cond, rd)
 
 proc traverseProc(c: var FirContext; n: var Cursor) =
   var call = freshCall()
@@ -4426,7 +4433,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   var ownContract = default(Cursor)
   var ownEnsures = default(Cursor)
   let oldOwnEnsures = c.ownEnsures
-  let oldOwnOldSlots = move c.ownOldSlots
+  let oldOwnOlds = move c.ownOlds
   var outParams: seq[SymId] = @[]
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
@@ -4461,11 +4468,11 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   # ... and has to deliver its own `.ensures`, measured against the state it
   # was entered with.
   c.ownEnsures = ownEnsures
-  c.ownOldSlots = initTable[string, VarId]()
+  c.ownOlds = initTable[string, VarId]()
   if not cursorIsNil(ownEnsures):
-    c.oldSlots.clear()
-    snapshotOlds c, ownEnsures, initTable[SymId, Cursor]()
-    c.ownOldSlots = move c.oldSlots
+    var entry = plainReading()
+    snapshotOlds c, ownEnsures, entry
+    c.ownOlds = entry.olds
 
   # Analyze body. Generic procs are only checked once instantiated. Extern
   # (importc/importcpp) procs satisfy their contract at the C level and have no
@@ -4503,7 +4510,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
   c.ownEnsures = oldOwnEnsures
-  c.ownOldSlots = oldOwnOldSlots
+  c.ownOlds = oldOwnOlds
   c.inHook = oldInHook
 
 proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
@@ -4701,9 +4708,7 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
     moduleSuffix: moduleSuffix,
     tr: initFlowTracker(),
     flow: initFlowState(),
-    substVar: initTable[SymId, VarId](),
-    oldSlots: initTable[string, VarId](),
-    ownOldSlots: initTable[string, VarId](),
+    ownOlds: initTable[string, VarId](),
     loopExitLabels: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),
     verbose: verbose,
