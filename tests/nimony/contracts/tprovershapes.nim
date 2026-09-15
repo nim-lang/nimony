@@ -148,19 +148,6 @@ func fetch(b: Bag; x: int): int =
   if i >= 0: result = b.items[i]
 
 type
-  Slot = tuple[key, val: string, used: bool]
-
-proc clearSlot(data: var seq[Slot]; i: int): string =
-  # writes into an element live behind the seq's data pointer: `len(data)`
-  # is not among what they can change
-  result = ""
-  if i >= 0 and i < data.len:
-    data[i].used = false
-    result = move data[i].key
-    data[i].val = ""
-    result.add data[i].val
-
-type
   Stack = object
     len: int
 
@@ -237,8 +224,6 @@ assert peekChar(parser) == 'b'
 assert chained(" ab") == ord('a') + ord('b')
 assert windowStart(12, 2) == 0
 assert fetch(Bag(items: @[4, 5]), 5) == 5
-var slots: seq[Slot] = @[(key: "k", val: "v", used: true)]
-assert clearSlot(slots, 0) == "k"
 var stack = Stack(len: 2)
 if stack.len > 0:
   assert popTop(stack) == 1

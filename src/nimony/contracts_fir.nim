@@ -160,8 +160,6 @@ type
                                        # load before the module is written
     moduleTypes: Table[SymId, Cursor]  # `type`s declared in this module, which
                                        # `tryLoadSym` cannot load yet either
-    moduleRoutines: Table[SymId, Cursor] # ... and the routines
-    pointeeFns: Table[SymId, bool]     # memo for `returnsPointee`
     moduleFuncs: HashSet[SymId]        # `func`s declared in this module, generic
                                        # instances included (see `collectAccessors`)
     steps: Table[SymId, StepInfo]      # routines that are just `x = x ± k`
@@ -1372,66 +1370,6 @@ proc invalidateViewElements(c: var FirContext; root: SymId) =
     if c.derivedRoots[i] == root and not isViewLen(c, i, root):
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
-proc returnsPointee(c: var FirContext; fnSym: SymId): bool =
-  ## Is the `var T` this routine returns the address of a pointer's target —
-  ## `s.data[i]` for a `seq`, `x.a[idx]` for an `openArray`? A write through
-  ## such a result lands in storage behind a pointer, which no location keyed
-  ## inline in the argument (`len(s)`) can be; only the heap is disturbed.
-  if c.pointeeFns.hasKey(fnSym): return c.pointeeFns.getOrQuit(fnSym)
-  result = false
-  var decl = default(Cursor)
-  if c.moduleRoutines.hasKey(fnSym):
-    decl = c.moduleRoutines.getOrQuit(fnSym)
-  else:
-    let sym = tryLoadSym(fnSym)
-    if sym.status == LacksNothing: decl = sym.decl
-  if not cursorIsNil(decl) and isRoutine(decl.symKind):
-    let r = asRoutine(decl, SkipInclBody)
-    if not cursorIsNil(r.body) and r.body.stmtKind == StmtsS and
-        r.retType.typeKind == MutT:
-      var b = r.body
-      b = sub(b)
-      var shapes = 0
-      var others = 0
-      while b.hasMore:
-        if b.stmtKind == AsgnS or b.finalIrKind == StoreV:
-          var a = b
-          a = sub(a)
-          var value = a
-          if b.stmtKind == AsgnS:
-            skip value
-          var v = value
-          while v.exprKind in {HaddrX, AddrX}:
-            v = sub(v)
-          if v.exprKind in {PatX, DerefX, DdotX}: inc shapes
-          else: inc others
-        elif b.symKind != ResultY and b.stmtKind notin {RetS, AssumeS} and
-            b.finalIrKind notin {AssumeV}:
-          inc others
-        skip b
-      result = shapes == 1 and others == 0
-  c.pointeeFns[fnSym] = result
-
-proc writesThroughPointee(c: var FirContext; dest: Cursor): bool =
-  ## `data[i].key = v`: a path over `(hderef (call f …))` with `f` returning a
-  ## pointer's target (`returnsPointee`).
-  var d = dest
-  while d.exprKind in {HaddrX, AddrX}:
-    d = sub(d)
-  while d.exprKind in {DotX, TupatX, ArratX}:
-    d = sub(d)
-  result = false
-  if d.exprKind == HderefX:
-    d = sub(d)
-    if d.isSymbol and c.inlineVars.hasKey(d.symId):
-      # `var x = data[i]` bound as an `(inline)` temp
-      d = c.inlineVars.getOrQuit(d.symId)
-    if d.exprKind in CallKinds:
-      var fn = d
-      fn = sub(fn)
-      let fnSym = extractSymId(fn)
-      result = fnSym != NoSymId and returnsPointee(c, fnSym)
-
 proc derivedRootOf(c: var FirContext; n: Cursor): SymId =
   ## The variable a location hangs off, for invalidation.
   var root = NoSymId
@@ -1442,6 +1380,29 @@ proc derivedRootOf(c: var FirContext; n: Cursor): SymId =
     result = root
   else:
     result = NoSymId
+
+proc varResultRoot(c: var FirContext; dest: Cursor): SymId =
+  ## `data[i].key = v`: a path over the `var T` a call returns. By the language
+  ## rule such a result is derived from the call's first parameter (or points
+  ## to the heap, where no location lies), so the write reaches into the first
+  ## argument: its root, or `NoSymId` for no such path.
+  var d = dest
+  while d.exprKind in {HaddrX, AddrX}:
+    d = sub(d)
+  while d.exprKind in {DotX, TupatX, ArratX}:
+    d = sub(d)
+  result = NoSymId
+  if d.exprKind == HderefX:
+    d = sub(d)
+    if d.isSymbol and c.inlineVars.hasKey(d.symId):
+      # `var x = data[i]` bound as an `(inline)` temp
+      d = c.inlineVars.getOrQuit(d.symId)
+    if d.exprKind in CallKinds:
+      var arg = d
+      arg = sub(arg)
+      skip arg # the callee
+      if arg.hasMore:
+        result = derivedRootOf(c, arg)
 
 proc collectAccessors(c: var FirContext; n: var Cursor) =
   ## Pre-pass: index every transparent accessor declared in this module, at any
@@ -1461,10 +1422,6 @@ proc collectAccessors(c: var FirContext; n: var Cursor) =
     if local.name.kind == SymbolDef and not cursorIsNil(local.val):
       c.moduleConsts[local.name.symId] = local.val
   if n.symKind in RoutineKinds:
-    block:
-      var rname = n
-      rname = sub(rname)
-      if rname.kind == SymbolDef: c.moduleRoutines[rname.symId] = n
     if n.symKind == FuncY:
       var fname = n
       fname = sub(fname)
@@ -3298,7 +3255,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
         viewRoots.add root
       elif root != NoSymId:
         mutatedRoots.add root
-      elif not writesThroughPointee(c, n):
+      elif (let viaResult = varResultRoot(c, n); viaResult != NoSymId):
+        mutatedRoots.add viaResult
+      else:
         mutatesUnknown = true
     checkNilMatch c, n, param.typ
     traverseExpr c, n, call
@@ -3583,8 +3542,10 @@ proc traverseStore(c: var FirContext; n: var Cursor; call: var CallContext) =
     # case; when we cannot, every derived location is suspect.
     let destLoc = plainLocationVarId(c, n)
     let destRoot = derivedRootOf(c, n)
-    if writesThroughPointee(c, n):
-      discard "an element behind a pointer, where no location lies"
+    let viaResult = varResultRoot(c, n)
+    if viaResult != NoSymId:
+      invalidateFactsAbout(c.facts, getVarId(c, viaResult))
+      invalidateDerivedFrom(c, viaResult)
     elif destRoot != NoSymId:
       invalidateFactsAbout(c.facts, getVarId(c, destRoot))
       invalidateWrittenPath(c, n, destRoot)
@@ -4575,9 +4536,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       # (nil) state, so a later `a.x` must be re-proven, not silently accepted.
       # Facts are keyed per root variable (see `analysableRoot`), so we invalidate
       # by the path's root symbol.
-      if writesThroughPointee(c, n):
-        discard "an element behind a pointer: only the heap changed"
-      elif unknownPath.path.len > 0 and unknownPath.path[0] in call.views:
+      if unknownPath.path.len > 0 and unknownPath.path[0] in call.views:
         invalidateViewElements(c, unknownPath.path[0])
       elif unknownPath.path.len > 0 and unknownPath.path[0] in call.ensured:
         # The call before this already dropped everything its mutation could
