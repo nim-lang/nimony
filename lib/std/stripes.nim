@@ -34,10 +34,7 @@ proc tryEnqueue*[T: HasDefault](s: var FifoStripe[T]; item: T): bool =
   s.lock.acquire()
   result = s.count < s.data.len
   if result and s.data.len > 0:
-    # `tail` stays masked to the capacity, a power of two; masking the index
-    # again is what says so here
-    let at = s.tail and (s.data.len - 1)
-    s.data[at] = item
+    s.data[s.tail and (s.data.len - 1)] = item
     s.tail = (s.tail + 1) and (s.data.len - 1)
     inc s.count
   s.lock.release()
@@ -46,25 +43,20 @@ proc tryBulkEnqueue*[T: HasDefault](s: var FifoStripe[T]; items: openArray[T]): 
   ## Enqueue as many leading items of `items` (in order) as fit under one lock
   ## acquisition; returns how many were taken.
   s.lock.acquire()
-  result = 0
+  result = min(items.len, s.data.len - s.count)
   if s.data.len > 0:
-    result = min(items.len, s.data.len - s.count)
     for i in 0 ..< result:
-      let at = s.tail and (s.data.len - 1)
-      s.data[at] = items[i]
+      s.data[s.tail and (s.data.len - 1)] = items[i]
       s.tail = (s.tail + 1) and (s.data.len - 1)
   inc s.count, result
   s.lock.release()
 
 proc tryBulkDequeue*[T: HasDefault](s: var FifoStripe[T]; bulkSize: int; buf: var openArray[T]): int =
   s.lock.acquire()
-  result = 0
+  result = min(s.count, min(bulkSize, buf.len))
   if s.data.len > 0:
-    let room = min(bulkSize, buf.len)
-    result = min(s.count, room)
     for i in 0 ..< result:
-      let at = s.head and (s.data.len - 1)
-      buf[i] = s.data[at]
+      buf[i] = s.data[s.head and (s.data.len - 1)]
       s.head = (s.head + 1) and (s.data.len - 1)
   dec s.count, result
   s.lock.release()

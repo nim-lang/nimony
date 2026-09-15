@@ -2868,6 +2868,53 @@ proc proveByIntervals(c: var FirContext; n: Cursor; paramMap: Table[SymId, Curso
           if aLo == aHi and bLo == bHi and aLo == bLo: result = Proven
           elif aHi < bLo or bHi < aLo: result = Disproven
 
+proc proveMasked(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): ProofRes =
+  ## `x and m <= b` / `x and m < b` / `k <= x and m` for a mask `m` known not
+  ## to be negative: `x and m` lies in `0 .. m`, so the upper question is asked
+  ## about `m` and the lower one about `0`. A ring buffer indexes by
+  ## `s.data[s.tail and (s.data.len - 1)]`.
+  result = Unprovable
+  let k = n.exprKind
+  if k notin {LeX, LtX}: return
+  var r = n
+  r = sub(r)
+  skip r # the type operand
+  let left = argOf(r, paramMap)
+  skip r
+  let right = argOf(r, paramMap)
+  let strict = if k == LtX: createXint(1'i64) else: zero()
+  if left.exprKind == BitandX:
+    var rv = VarId(0)
+    var rk = zero()
+    if not pureOperand(c, right, paramMap, rv, rk): return
+    var d = left
+    d = sub(d)
+    skip d # the type operand
+    for _ in 0 ..< 2:
+      var mv = VarId(0)
+      var mk = zero()
+      if pureOperand(c, d, paramMap, mv, mk) and
+          impliesHere(c, query(VarId(0), mv, mk)):
+        # `m <= b - strict` is `mv + mk <= rv + rk - strict`
+        if impliesHere(c, query(mv, rv, rk - mk - strict)): return Proven
+      skip d
+  elif right.exprKind == BitandX:
+    var lv = VarId(0)
+    var lk = zero()
+    if not pureOperand(c, left, paramMap, lv, lk) or lv != VarId(0): return
+    # `k <= x and m` holds for `k <= 0` once `m` is not negative
+    if lk + strict <= zero():
+      var d = right
+      d = sub(d)
+      skip d # the type operand
+      for _ in 0 ..< 2:
+        var mv = VarId(0)
+        var mk = zero()
+        if pureOperand(c, d, paramMap, mv, mk) and
+            impliesHere(c, query(VarId(0), mv, mk)):
+          return Proven
+        skip d
+
 proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): ProofRes =
   case n.exprKind
   of AndX:
@@ -2901,7 +2948,9 @@ proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): Pr
       if wasEquality and result == Proven:
         result = proveFact(c, fact.geXplusC)
     else:
-      result = proveByIntervals(c, n, paramMap)
+      result = proveMasked(c, n, paramMap)
+      if result == Unprovable:
+        result = proveByIntervals(c, n, paramMap)
     when defined(contractLeaves):
       # `-d:contractLeaves` adds the per-conjunct verdict to `-d:contractStats`,
       # which is what tells "the index has no proven lower bound" apart from

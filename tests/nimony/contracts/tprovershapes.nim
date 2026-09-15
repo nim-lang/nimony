@@ -207,6 +207,13 @@ proc blockSum(data: openArray[int]): int =
     j = start + 16
     result = result + blk[15]
 
+proc ringAt(data: seq[int]; at: int): int =
+  # `at and (data.len - 1)` lies in `0 .. data.len - 1` once that mask is not
+  # negative: a ring buffer's index, masked where it is used
+  result = 0
+  if data.len > 0:
+    result = data[at and (data.len - 1)]
+
 assert mask(-1) == 0
 assert maskedLocal(1000) == 0
 assert byteWidth(0x1200'u32) == 0x12
@@ -242,3 +249,4 @@ assert pairs[5] == '>'
 var blocks = default(array[40, int])
 for q in 0 ..< 40: blocks[q] = q
 assert blockSum(blocks) == 15 + 31
+assert ringAt(@[5, 6, 7, 8], 6) == 7
