@@ -210,6 +210,13 @@ proc parseImf(buf: openArray[char]; t: var Time): bool =
   if d < 0 or m < 0 or y < 0: return false
   result = assemble(y, m, d, h, mi, s, t)
 
+proc isWord(buf: openArray[char]; n: int; word: string): bool =
+  ## Are the first `n` bytes of `buf` exactly `word`?
+  if word.len != n or n > buf.len: return false
+  for k in 0..<n:
+    if buf[k] != word[k]: return false
+  result = true
+
 proc parseRfc850(buf: openArray[char]; t: var Time): bool =
   ## `Sunday, 06-Nov-94 08:49:37 GMT`. The day name is variable-width, so this
   ## one has to find the comma; everything after it is fixed again.
@@ -225,12 +232,7 @@ proc parseRfc850(buf: openArray[char]; t: var Time): bool =
   if c < 0: return false
   var ok = false
   for w in 0..6:
-    let name = LongDayNames[w]
-    if name.len == c:
-      var same = true
-      for k in 0..<c:
-        if buf[k] != name[k]: same = false
-      if same: ok = true
+    if isWord(buf, c, LongDayNames[w]): ok = true
   if not ok: return false
   let p = c + 2                     # past ", ", where the day-of-month starts
   # From `p`: DD-Mmm-YY HH:MM:SS GMT — 22 bytes, every field fixed.
