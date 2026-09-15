@@ -259,13 +259,13 @@ when defined(nimNativeIo):
 
   proc readByte(f: File): int =
     ## Returns the next byte as 0..255, or -1 at EOF/error.
-    if f.rpos >= f.rbuf.len:
-      if not fillBuf(f): return -1
-    if f.rpos < f.rbuf.len:
-      result = int(f.rbuf[f.rpos])
-      inc f.rpos
-    else:
-      result = -1
+    result = -1
+    while true:
+      if f.rpos < f.rbuf.len:
+        result = int(f.rbuf[f.rpos])
+        inc f.rpos
+        break
+      if not fillBuf(f): break
 
   proc flushStdStreams() {.nimcall.} =
     ## Registered with `system/exits` so every process exit flushes the buffered
@@ -404,17 +404,12 @@ proc readBuffer*(f: File; buffer: pointer; size: int): int =
     while off < size:
       if f.rpos >= f.rbuf.len:
         if not fillBuf(f): break
-      if f.rpos >= f.rbuf.len: break
-      let avail: Natural = f.rbuf.len - f.rpos
-      let want: Natural = size - off
-      if avail <= want:
-        copyMem(addr dest[off], addr f.rbuf[f.rpos], avail)
-        f.rpos = f.rbuf.len
-        off = off + avail
-      else:
-        copyMem(addr dest[off], addr f.rbuf[f.rpos], want)
-        f.rpos = f.rpos + want
-        off = size
+        continue
+      var take: Natural = f.rbuf.len - f.rpos
+      if take > size - off: take = size - off
+      copyMem(addr dest[off], addr f.rbuf[f.rpos], take)
+      f.rpos = f.rpos + take
+      off += take
     result = off
   else:
     result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))
