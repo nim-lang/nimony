@@ -22,16 +22,9 @@ template assert*(cond: bool; msg = "") =
     if not cond:
       raiseAssert(msg)
   else:
-    # Not `discard`: switching the CHECK off must not withdraw the STATEMENT.
-    # An `assert` is how the programmer discharges an obligation the prover
-    # cannot — an index bound, a precondition — so compiling it out as nothing
-    # would take a module that compiles and make it stop compiling under
-    # `staticContracts`. `assume` keeps the proposition and drops only the test,
-    # which is what "assertions off" should mean and is exactly as (un)safe as
-    # `-d:danger` has always been: the programmer's word, taken. The trailing
-    # `discard` is what keeps the branch a statement — a lone pragma is typed
-    # `auto`, which is its own small sem wart.
-    {.assume: cond.}
+    # Compiled out entirely. `assert` is a run-time debugging aid and nothing
+    # more: a claim the contract prover may rely on is `{.assert: cond.}`, which
+    # is judged at compile time and cannot be switched off.
     discard
 
 template assertRc*[T](r: ref T; expected: int; tag: string = "") =

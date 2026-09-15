@@ -158,7 +158,9 @@ func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
 
 func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result).} =
   ## Number of elements in `s`.
-  s.len
+  result = s.len
+  # every write to the `len` field stores a non-negative count
+  {.assume: 0 <= result.}
 
 func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
   ## Unchecked pointer to `s`'s element storage (valid for `0 ..< s.len`).
@@ -166,13 +168,19 @@ func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
 
 func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
 
-func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline, linear.} =
+func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0),
+    ensures: s.len == old(s.len), inline, linear.} =
   (s.data[i]) = elem
+  # the element storage never overlaps the seq's own `len`, which a write
+  # through the `data` pointer may reach as far as the prover can tell
+  {.assume: s.len == old(s.len).}
 
 func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]
 
-func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint), inline, linear.} =
+func `[]=`*[T](s: var seq[T]; i: uint; elem: sink T) {.requires: (i < s.len.uint),
+    ensures: s.len == old(s.len), inline, linear.} =
   (s.data[int i]) = elem
+  {.assume: s.len == old(s.len).}
 
 func `@`*[I, T](a: array[I, T]): seq[T] {.nodestroy.} =
   ## Copies an array into a new sequence (`@[1,2]` builds `seq` literals via array constructors).
@@ -258,7 +266,8 @@ func low*[T](s: seq[T]): int {.inline.} =
   ## Lowest valid index (`0` for sequences).
   0
 
-func pop*[T](s: var seq[T]): T {.requires: (s.len > 0), inline, nodestroy.} =
+func pop*[T](s: var seq[T]): T {.requires: (s.len > 0), ensures: s.len == old(s.len) - 1,
+    inline, nodestroy.} =
   ## Removes and returns the last element.
   let L = s.len-1
   result = s[L]

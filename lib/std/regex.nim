@@ -90,6 +90,8 @@
 ## tabs are ignored and a pattern may be laid out for reading. Match a literal
 ## space with `\ `, `[ ]` or `" "`.
 
+{.feature: "staticContracts".}
+
 import std / private / regexcore
 
 export RegexFlag, reExtended, reNoBackrefs, reNoCaptures
@@ -247,7 +249,7 @@ func replace*(s: string; r: Regex; by: string): string =
   ## Every non-overlapping match of `r` replaced by `by`, which is inserted
   ## literally — there is no `$1` substitution.
   result = ""
-  var i = 0
+  var i: Natural = 0
   while i < s.len:
     let L = matchLen(s, r, i)
     if L > 0:
@@ -263,7 +265,7 @@ func split*(s: string; r: Regex): seq[string] =
   ## reconstruct `s`.
   result = @[]
   var piece = ""
-  var i = 0
+  var i: Natural = 0
   while i < s.len:
     let L = matchLen(s, r, i)
     if L > 0:

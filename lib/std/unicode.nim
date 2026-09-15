@@ -139,7 +139,11 @@ template fastRuneAt*(s: openArray[char], i: int, result: untyped, doInc = true):
   ## If ``doInc == true`` (default), ``i`` is incremented by the number
   ## of bytes that have been processed.
   # bind ones
-  if uint(s[i]) <= 127:
+  if i < 0 or i >= s.len:
+    # no rune starts outside `s`
+    result = replRune
+    when doInc: inc(i)
+  elif uint(s[i]) <= 127:
     result = Rune(uint(s[i]))
     when doInc: inc(i)
   elif uint(s[i]) shr 5 == 0b110:

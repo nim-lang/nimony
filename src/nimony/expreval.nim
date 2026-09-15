@@ -596,15 +596,23 @@ proc evalBitSetImpl(n, typ: Cursor; bits: int): seq[uint8]
 proc evalOrdinal(c: ptr SemContext, n: Cursor; bits = 0): xint
 
 proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
+  let orig = n
   var a = default(Cursor)
   var b = createNaN()
   n.into:
     assert n.typeKind == SetT
     skip n # skip type
-    a = eval(c, n)
+    # Each operand is read through a copy and skipped structurally: an operand
+    # that does not fold leaves its cursor wherever it gave up, and `into`
+    # insists on the whole node being consumed.
+    var operand = n
+    a = eval(c, operand)
+    skip n
     b = evalOrdinal(nil, n, c.bits)
     skip n # skips b
-  assert a.exprKind == SetconstrX, "got " & toString(a)
+  if a.exprKind != SetconstrX or b.isNaN:
+    cannotEval orig
+    return
 
   var isInSet = false
   a.peekInto:
@@ -651,13 +659,16 @@ proc bitSetCard(x: seq[uint8]): BiggestInt =
 
 proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
   let info = n.info
+  let orig = n
   var a = default(Cursor)
   n.into:
     assert n.typeKind == SetT
     skip n # skip type
     a = eval(c, n)
-
-  assert a.exprKind == SetconstrX, "got " & toString(a)
+  if a.exprKind != SetconstrX:
+    # a set only known at run time
+    cannotEval orig
+    return
   var typeA = a
   inc typeA
 
@@ -666,6 +677,7 @@ proc evalCardSet(c: var EvalContext; n: var Cursor): Cursor =
 
 proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
   let info = n.info
+  let orig = n
   var elementTyp = default(Cursor)
   var a = default(Cursor)
   var b = default(Cursor)
@@ -676,8 +688,10 @@ proc evalSetOp(c: var EvalContext; n: var Cursor; op: ExprKind): Cursor =
     skip n # skip type
     a = eval(c, n)
     b = eval(c, n)
-  assert a.exprKind == SetconstrX, "got " & toString(a)
-  assert b.exprKind == SetconstrX, "got " & toString(b)
+  if a.exprKind != SetconstrX or b.exprKind != SetconstrX:
+    # a set only known at run time
+    cannotEval orig
+    return
   var typeA = a
   inc typeA
   var typeB = b
@@ -776,7 +790,17 @@ proc evalCast(c: var EvalContext; typ, val, nOrig: Cursor): Cursor =
   else:
     cannotEval nOrig
 
+proc evalImpl(c: var EvalContext; n: var Cursor): Cursor
+
 proc eval*(c: var EvalContext; n: var Cursor): Cursor =
+  ## Folds `n` and moves past it, whether it folded or not: an operand that
+  ## does not fold leaves the cursor wherever the evaluation gave up, and every
+  ## caller walking a node's children needs the next one, not that place.
+  var operand = n
+  result = evalImpl(c, operand)
+  skip n
+
+proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
   result = default(Cursor)
   template propagateError(r: Cursor): Cursor =
     let val = r

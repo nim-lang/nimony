@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 
 import tables, hashes
 
@@ -19,21 +21,26 @@ type
 
 func initIntSet*(): IntSet = IntSet(t: initTable[uint, Trunk]())
 
-func split(x: uint): (uint, uint, int) {.inline.} =
-  (x div BitsPerTrunk, (x mod BitsPerTrunk) div UIntSize, int(x mod UIntSize))
+template split(x: int; a, b, c: untyped) =
+  # Declares the three parts in the caller, where the bounds of `b` and `c`
+  # are visible; a tuple returned from a routine would carry none of them.
+  let u = cast[uint](x)
+  let a {.inject.} = u div BitsPerTrunk
+  let b {.inject.} = (u mod BitsPerTrunk) div UIntSize
+  let c {.inject.} = int(u mod UIntSize)
 
 func incl*(s: var IntSet; x: int) =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   tr.a[b] = tr.a[b] or (1'u shl c)
 
 func excl*(s: var IntSet; x: int) =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   tr.a[b] = tr.a[b] and not (1'u shl c)
 
 func contains*(s: IntSet; x: int): bool =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   if s.t.hasKey(a):
     #let tr = s.t.getOrDefault(a)
     let tr = addr getOrQuit(s.t, a)
@@ -42,7 +49,7 @@ func contains*(s: IntSet; x: int): bool =
     result = false
 
 func containsOrIncl*(s: var IntSet; x: int): bool =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   result = (tr.a[b] and (1'u shl c)) != 0'u
   if not result:

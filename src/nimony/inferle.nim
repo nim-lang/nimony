@@ -192,6 +192,28 @@ proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
     elif f.x[i].b == x:
       var v = f.x[i]; v.c = v.c - diff; f.jSet i, v
 
+proc variableMovedWithin*(f: var Facts; x: VarId; lo, hi: xint) =
+  ## After `x += d` with `lo <= d <= hi` (either end may be unknown, NaN):
+  ## an upper bound on `x` loosens by `hi`, a lower bound by `lo`, and a bound
+  ## whose end is unknown is gone.
+  var i = 0
+  while i < f.x.len:
+    let v = f.x[i]
+    if v.a == x and v.b == x:
+      inc i
+    elif v.a == x:
+      if hi.isNaN: f.jSwapRemove i
+      else:
+        var w = v; w.c = w.c + hi; f.jSet i, w
+        inc i
+    elif v.b == x:
+      if lo.isNaN: f.jSwapRemove i
+      else:
+        var w = v; w.c = w.c - lo; f.jSet i, w
+        inc i
+    else:
+      inc i
+
 proc invalidateFactsAbout*(f: var Facts; x: VarId) =
   var i = 0
   while i < f.x.len:
@@ -213,24 +235,58 @@ proc simpleImplies(facts: Facts; v: LeXplusC): bool =
   Use Bellman-Ford for shortest path (handles negative weights).
 ]#
 
-proc complexImplies(facts: Facts; v: LeXplusC): bool =
-  var dist = initTable[VarId, xint]()
-  dist[v.a] = createXint(0'i64)
+proc boundsFrom*(facts: Facts; v: VarId; reverse = false): Table[VarId, xint] =
+  ## For every `x` a chain of facts connects `v` to, the tightest `c` found
+  ## with `v <= x + c` (with `reverse`: `x <= v + c`). Each entry is the weight
+  ## of an actual chain, so it is implied even where the search stops before it
+  ## converges — contradictory facts form a negative cycle.
+  result = initTable[VarId, xint]()
+  result[v] = createXint(0'i64)
   let maxIter = max(facts.x.len, 1) * 2  # enough for longest path
   for _ in 0 ..< maxIter:
     var changed = false
     for f in facts.x:
-      if f.a in dist:
-        let newDist = dist.getOrDefault(f.a) + f.c
-        if f.b notin dist or newDist < dist.getOrDefault(f.b):
-          dist[f.b] = newDist
+      let src = if reverse: f.b else: f.a
+      let dst = if reverse: f.a else: f.b
+      if src in result:
+        let newDist = result.getOrDefault(src) + f.c
+        if dst notin result or newDist < result.getOrDefault(dst):
+          result[dst] = newDist
           changed = true
     if not changed: break
+
+proc complexImplies(facts: Facts; v: LeXplusC): bool =
+  let dist = boundsFrom(facts, v.a)
   result = v.b in dist and dist.getOrDefault(v.b) <= v.c
 
 proc implies*(facts: Facts; v: LeXplusC): bool =
   assert v.isValid
   result = simpleImplies(facts, v) or complexImplies(facts, v)
+
+proc chainsThrough*(f: Facts; x: VarId): seq[LeXplusC] =
+  ## The one-step chains `a <= x + c1`, `x <= b + c2` give past `x`:
+  ## `a <= b + (c1 + c2)`, for `a` and `b` other than `x`.
+  result = @[]
+  var ins: seq[LeXplusC] = @[]
+  var outs: seq[LeXplusC] = @[]
+  for v in f.x:
+    if v.a == x and v.b != x: outs.add v
+    elif v.b == x and v.a != x: ins.add v
+  if ins.len * outs.len <= 64:
+    for i in ins:
+      for o in outs:
+        let sum = i.c + o.c
+        if i.a != o.b and not sum.isNaN:   # a sum past `xint`'s range bounds nothing
+          result.add LeXplusC(a: i.a, b: o.b, c: sum)
+
+proc projectOut*(f: var Facts; x: VarId) =
+  ## Forget `x` but keep what it connected: `a <= x + c1` and `x <= b + c2`
+  ## leave `a <= b + (c1 + c2)` behind. This is what an assignment to `x` must
+  ## do — `0 <= i`, `i <= j`, then `i = j`, still knows `0 <= j`.
+  let chained = chainsThrough(f, x)
+  invalidateFactsAbout(f, x)
+  for ch in chained:
+    if not simpleImplies(f, ch): f.jAppend ch
 
 proc consider(best: var Table[(VarId, VarId), xint]; a, b: VarId; c: xint) =
   let key = (a, b)
@@ -269,6 +325,31 @@ proc merge*(x: Facts; xstart: int; y: Facts; negate: bool): Facts =
   result = Facts()
   for key, c in best:
     result.x.add LeXplusC(a: key[0], b: key[1], c: c)
+
+proc tightest(f: Facts): Table[(VarId, VarId), xint] =
+  result = initTable[(VarId, VarId), xint]()
+  for x in f.x:
+    let key = (x.a, x.b)
+    if key notin result or x.c < result.getOrDefault(key):
+      result[key] = x.c
+
+proc join*(x, y: Facts): Facts =
+  ## The facts that hold after a confluence of `x` and `y`: every bound one side
+  ## states that the other implies, at the weaker of the two constants. Each
+  ## side contributes its *tightest* bound per pair — a redundant weaker fact
+  ## next to a tighter one must not weaken the result — and a bound only one
+  ## side states outright survives when the other derives it through a chain.
+  result = Facts()
+  let bx = tightest(x)
+  let by = tightest(y)
+  for key, c in bx:
+    if key in by:
+      result.x.add LeXplusC(a: key[0], b: key[1], c: max(c, by.getOrDefault(key)))
+    elif implies(y, LeXplusC(a: key[0], b: key[1], c: c)):
+      result.x.add LeXplusC(a: key[0], b: key[1], c: c)
+  for key, c in by:
+    if key notin bx and implies(x, LeXplusC(a: key[0], b: key[1], c: c)):
+      result.x.add LeXplusC(a: key[0], b: key[1], c: c)
 
 when isMainModule:
   import std/syncio

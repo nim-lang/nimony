@@ -1,3 +1,4 @@
+{.feature: "staticContracts".}
 
 import assertions
 
@@ -18,15 +19,22 @@ func mustRehash(length, counter: int): bool {.inline.} =
 
 func isFilled(a: HashEntry): bool {.inline.} = a.position > 0
 
+func emptySlot(s: seq[HashEntry]; h: Hash): int {.requires: s.len > 0,
+    ensures: 0 <= result and result < s.len, inline.} =
+  ## The first unfilled slot on `h`'s linear probe sequence.
+  var i = h
+  while isFilled(s[i and high(s).uint]): inc i
+  result = int(i and high(s).uint)
+
 func resize(t: var seq[HashEntry]) =
   # does not have to be generic.
   let newLen = if t.len == 0: 4 else: t.len * 2
   var s = newSeq[HashEntry](newLen)
+  # the allocation failed: keep probing the old index, full as it is
+  if s.len == 0: return
   for i in 0 ..< t.len:
     if isFilled(t[i]):
-      var h = t[i].fullhash and high(s).uint
-      while isFilled(s[h]): h = nextTry(h, high(s))
-      s[h] = t[i]
+      s[emptySlot(s, t[i].fullhash)] = t[i]
   t = ensureMove s
 
 const
@@ -34,23 +42,26 @@ const
 
 func fillHashPart[K: Keyable, V](t: var Table[K, V]) =
   t.hashes = newSeq[HashEntry](HashThreshold*2)
+  if t.hashes.len == 0: return
   for i in 0 ..< t.data.len:
     let fullhash = hash(t.data[i][0])
-    var hi = fullhash and t.hashes.high.uint
-    while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
-    t.hashes[hi] = HashEntry(fullhash: fullhash, position: i+1)
+    t.hashes[emptySlot(t.hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
 
-func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int =
+func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int {.
+    ensures: result < t.data.len.} =
   if t.data.len <= HashThreshold:
     for i in 0 ..< t.data.len:
       if t.data[i][0] == k: return i
-  else:
-    var h = kh and t.hashes.high.uint
-    while isFilled(t.hashes[h]):
-      let d = t.hashes[h]
-      if d.fullhash == kh and t.data[d.position-1][0] == k:
+  elif t.hashes.len > 0:
+    var h = kh
+    while isFilled(t.hashes[h and high(t.hashes).uint]):
+      let d = t.hashes[h and high(t.hashes).uint]
+      # `position` points into `data` for every filled entry; an entry that
+      # does not is no match rather than a read past its end
+      if d.fullhash == kh and d.position >= 1 and d.position <= t.data.len and
+          t.data[d.position-1][0] == k:
         return d.position-1
-      h = nextTry(h, high(t.hashes))
+      inc h
   result = -1
 
 func contains*[K: Keyable, V](t: Table[K, V]; k: K): bool {.inline.} =
@@ -79,8 +90,9 @@ func getOrDefault*[K: Keyable, V](t: Table[K, V]; k: K; fallback: V): V =
 func getOrQuit*[K: Keyable, V](t: Table[K, V]; k: K): var V =
   ## Like `[]`, but terminates the program if `k` is missing (after `assert`).
   let idx = rawGet(t, k, hash(k))
-  {.cast(noSideEffect).}:
-    assert idx >= 0
+  if idx < 0:
+    {.cast(noSideEffect).}:
+      raiseAssert "key not found"
   t.data[idx][1]
 
 when defined(nimony):
@@ -110,9 +122,9 @@ func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
   elif mustRehash(t.hashes.len, t.data.len):
     resize t.hashes
   t.data.add (k, v)
-  var hi = h and t.hashes.high.uint
-  while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
-  t.hashes[hi] = HashEntry(fullhash: h, position: t.data.len)
+  # an index that could not be allocated has no slot for the new entry
+  if t.hashes.len > 0:
+    t.hashes[emptySlot(t.hashes, h)] = HashEntry(fullhash: h, position: t.data.len)
 
 func `[]=`*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V) =
   ## Inserts or updates `k` with `v`.
@@ -130,6 +142,9 @@ func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
   if idx < 0:
     rawPut(t, k, v, h)
     idx = t.data.len-1
+    if idx < 0:
+      {.cast(noSideEffect).}:
+        raiseAssert "out of memory"
   result = t.data[idx][1]
 
 func len*[K, V](t: Table[K, V]): int {.inline.} =
@@ -182,11 +197,10 @@ func del*[K: Keyable, V](t: var Table[K, V]; k: K) =
     while size < t.data.len * 2:
       size = size * 2
     t.hashes = newSeq[HashEntry](size)
+    if t.hashes.len == 0: return
     for i in 0 ..< t.data.len:
       let fullhash = hash(t.data[i][0])
-      var hi = fullhash and t.hashes.high.uint
-      while isFilled(t.hashes[hi]): hi = nextTry(hi, high(t.hashes))
-      t.hashes[hi] = HashEntry(fullhash: fullhash, position: i+1)
+      t.hashes[emptySlot(t.hashes, fullhash)] = HashEntry(fullhash: fullhash, position: i+1)
   else:
     # data fits the linear-scan threshold; drop the hash table entirely.
     t.hashes.shrink(0)

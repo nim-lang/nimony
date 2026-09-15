@@ -1,6 +1,7 @@
 ## System module for Nimony
 
 {.feature: "lenientnils".}
+{.feature: "staticContracts".}
 
 include "system/basic_types"
 
@@ -46,6 +47,12 @@ include "system/arithmetics"
 
 include "system/comparisons"
 
+func old*(x: int): int {.semantics: "old".} = x
+  ## The value `x` had when the routine was *entered*. Meaningful only inside an
+  ## `.ensures`, which is never evaluated at run time — it is how a routine that
+  ## mutates a `var` parameter states what the mutation leaves alone:
+  ## `ensures: s.len == old(s.len)`.
+
 func defined*(x: untyped): bool {.magic: Defined.}
   ## Checks whether the symbol named by `x` is defined (typically via `-d:name` or `define`).
 func declared*(x: untyped): bool {.magic: Declared.}
@@ -81,14 +88,17 @@ func `$`*(x: uint64): string =
       result.add char((y mod 10'u) + uint('0'))
       y = y div 10'u
       if y == 0'u: break
-    let last = result.len-1
-    var i = 0
-    let b = result.len div 2
-    while i < b:
-      let ch = result[i]
-      result[i] = result[last-i]
-      result[last-i] = ch
-      inc i
+    # Reverse in place. Two converging indices rather than `i` and `last-i`:
+    # `lo < hi <= len-1` is what proves both accesses, and `len div 2` is not a
+    # bound the contract prover can follow.
+    var lo = 0
+    var hi = result.len-1
+    while lo < hi:
+      let ch = result[lo]
+      result[lo] = result[hi]
+      result[hi] = ch
+      inc lo
+      dec hi
 
 func `$`*(x: int64): string =
   if x < 0:

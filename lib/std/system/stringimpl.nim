@@ -74,6 +74,9 @@ func len*(s: string): int {.alwaysInline, semantics: "string.len", ensures: (0 <
   result = ssLen(s)
   if result > PayloadSize:
     result = s.more.fullLen
+  # A length is never negative: `ssLen` is one byte of the header, and `fullLen`
+  # is only ever set from a non-negative length.
+  {.assume: 0 <= result.}
 
 func high*(s: string): int {.alwaysInline.} = len(s) - 1
 func low*(s: string): int {.inline.} = 0
@@ -333,8 +336,11 @@ else:
   func strlen(a: cstring): csize_t {.importc: "strlen", header: "<string.h>".}
 
 func len*(a: cstring): int {.inline, ensures: (0 <= result).} =
-  if a == nil: 0
-  else: a.strlen.int
+  if a == nil: result = 0
+  else:
+    result = a.strlen.int
+    # `strlen` counts bytes; no C string is longer than `high(int)`.
+    {.assume: 0 <= result.}
 
 # ---- internal growth helpers ----
 
@@ -597,13 +603,18 @@ func `[]`*(s: string; i: int): char {.requires: (i < len(s) and i >= 0), alwaysI
   if ssLen(s) > PayloadSize: s.more.data[i]
   else: inlinePtr(s)[i]
 
-func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0), inline.} =
+func `[]=`*(s: var string; i: int; c: char) {.requires: (i < len(s) and i >= 0),
+    ensures: len(s) == old(len(s)), inline.} =
   prepareMutation(s)
   if ssLen(s) > PayloadSize:
     s.more.data[i] = c
     if i < AlwaysAvail: inlinePtrV(s)[i] = c
   else:
     inlinePtrV(s)[i] = c
+  # A character is written into the payload; the length lives in the header
+  # byte and in `fullLen`, which neither write reaches, and `prepareMutation`
+  # copies a shared payload without changing its length.
+  {.assume: len(s) == old(len(s)).}
 
 # ---- substr / slicing ----
 
@@ -850,7 +861,7 @@ func `==`*(a, b: string): bool {.alwaysInline, semantics: "string.==".} =
     return abytes == bbytes            # SWAR: one word covers slen + all chars
   equalStringsLong(a, b)
 
-func nimStrAtLe(s: string; idx: int; ch: char): bool {.inline.} =
+func nimStrAtLe(s: string; idx: Natural; ch: char): bool {.inline.} =
   result = idx < s.len and s[idx] <= ch
 
 func cmp*(a, b: string): int =

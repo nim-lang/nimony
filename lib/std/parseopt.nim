@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 
 when defined(nimony):
   import strutils
@@ -37,7 +39,7 @@ type
     cmdShortOption    ## A short option such as -c
 
   OptParser* = object
-    pos: int
+    pos: Natural
     inShortState: bool
     idx: int
     kind*: CmdLineKind

@@ -70,7 +70,8 @@ func hash*[T: object](x: T): Hash {.inline.} =
   result = !$result
 ]#
 
-func nextTry*(h: Hash; maxHash: int): Hash {.inline.} =
+func nextTry*(h: Hash; maxHash: int): Hash {.inline, requires: 0 <= maxHash,
+    ensures: result <= maxHash.uint.} =
   ## Advances a hash probe index inside `0 .. maxHash` (linear probing helper).
   result = (h + 1'u) and maxHash.uint
 
@@ -99,7 +100,8 @@ func hashIgnoreStyle*(x: string): Hash =
       inc(i)
   result = !$h
 
-func hashIgnoreStyle*(sBuf: string, sPos, ePos: int): Hash =
+func hashIgnoreStyle*(sBuf: string, sPos, ePos: int): Hash {.
+    requires: 0 <= sPos and ePos < sBuf.len.} =
   ## Efficient hashing of a string buffer, from starting
   ## position `sPos` to ending position `ePos` (included); style is ignored.
   ##
@@ -143,7 +145,8 @@ func hashIgnoreCase*(x: string): Hash =
     h = h !& uint(ord(c))
   result = !$h
 
-func hashIgnoreCase*(sBuf: string, sPos, ePos: int): Hash =
+func hashIgnoreCase*(sBuf: string, sPos, ePos: int): Hash {.
+    requires: 0 <= sPos and ePos < sBuf.len.} =
   ## Efficient hashing of a string buffer, from starting
   ## position `sPos` to ending position `ePos` (included); case is ignored.
   ##

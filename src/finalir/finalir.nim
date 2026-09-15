@@ -761,17 +761,13 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trTry c, dest, n
   of CallKindsS:
     trStmtCall c, dest, n
-  of AssumeS:
-    # `{.assume: a and b.}` states TWO facts, not one opaque condition, and has
-    # to be split exactly as a `for` loop's `.ensures` is. It cannot take the
-    # plain-expression path: an `and` there is a hard error, because the only
-    # thing `xelim` could do with a short-circuit condition is materialise it
-    # into a bool temp — which is precisely what destroys the proposition.
-    let info = n.info
-    var cond = n
-    cond = sub(cond)
-    emitAssumes(dest, cond, initTable[SymId, TokenBuf](), info)
-    skip n
+  of AssumeS, AssertS:
+    # A proposition, not code: `{.assume.}` and `{.assert.}` are never evaluated
+    # at run time, so there is nothing to lower. A call in one (`s.len`) names a
+    # location the prover resolves itself, and an `and` is logic rather than
+    # control flow — binding either to a temp is exactly what would destroy the
+    # statement. Handed on verbatim.
+    takeTree dest, n
   else:
     if n.finalIrKind in {MflagV, VflagV}:
       # NJVL control-flow flags. `xelim` used to materialise short-circuit
