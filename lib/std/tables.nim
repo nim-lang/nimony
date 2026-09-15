@@ -21,7 +21,7 @@ func mustRehash(length, counter: int): bool {.inline.} =
 func isFilled(a: HashEntry): bool {.inline.} = a.position > 0
 
 func emptySlot(s: seq[HashEntry]; h: Hash): int {.requires: s.len > 0,
-    ensures: 0 <= result and result < s.len.} =
+    ensures: 0 <= result and result < s.len, inline.} =
   ## The first unfilled slot on `h`'s linear probe sequence.
   var i = h
   while isFilled(s[i and high(s).uint]): inc i
