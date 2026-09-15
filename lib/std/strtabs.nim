@@ -94,21 +94,20 @@ proc mode*(t: StringTableRef): StringTableMode {.inline.} = t.mode
 
 iterator pairs*(t: StringTableRef): tuple[key, value: string] =
   ## Iterates over every `(key, value)` pair in the table `t`.
-  for h in 0..high(t.data):
-    # the loop body may change `t`: its length is read again every round
-    if h < t.data.len and t.data[h].hasValue:
+  for h in 0 ..< t.data.len:
+    if t.data[h].hasValue:
       yield (t.data[h].key, t.data[h].val)
 
 iterator keys*(t: StringTableRef): string =
   ## Iterates over every key in the table `t`.
-  for h in 0..high(t.data):
-    if h < t.data.len and t.data[h].hasValue:
+  for h in 0 ..< t.data.len:
+    if t.data[h].hasValue:
       yield t.data[h].key
 
 iterator values*(t: StringTableRef): string =
   ## Iterates over every value in the table `t`.
-  for h in 0..high(t.data):
-    if h < t.data.len and t.data[h].hasValue:
+  for h in 0 ..< t.data.len:
+    if t.data[h].hasValue:
       yield t.data[h].val
 
 
