@@ -127,16 +127,10 @@ type
     derivedIds: Table[string, VarId]   # canonical location key -> derived VarId
                                        # (see "Derived locations" below)
     derivedKeys: seq[string]           # parallel to `derivedRoots`: the location key
-    derivedHeap: seq[bool]
-      ## Parallel to `derivedRoots`: is the derived location reached through a
-      ## pointer or a `ref` (`f.wbuf.len` with `f: File`)? Such a location can
-      ## be written through an alias, so its facts are dropped whenever anything
-      ## may write the heap (`invalidateHeapDerived`).
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
     notAccessors: HashSet[SymId]       # negative cache for the lookup above
-    plainTypes: Table[SymId, bool]     # memo for `plainType`
     constDepth: int
     moduleConsts: Table[SymId, Cursor] # `const`s declared in this module: their
                                        # values, which `tryEvalOrdinal` cannot
@@ -795,7 +789,6 @@ proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
   else:
     c.derivedRoots.add root
     c.derivedKeys.add key
-    c.derivedHeap.add "->" in key
     result = VarId(FirstDerivedVarId - (c.derivedRoots.len - 1))
     c.derivedIds[key] = result
 
@@ -806,126 +799,11 @@ proc invalidateDerivedFrom(c: var FirContext; root: SymId) =
     if c.derivedRoots[i] == root:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
-proc invalidateHeapDerived(c: var FirContext) =
-  ## A write that may have reached the heap: every location read through a
-  ## pointer or a `ref` may have been its target, under any alias.
-  for i in 0 ..< c.derivedHeap.len:
-    if c.derivedHeap[i]:
-      invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
-
-proc mayWriteHeap(n: Cursor): bool =
-  ## Does writing location `n` go through a pointer, a `ref` or a `var`
-  ## parameter — anything an alias could also reach?
-  var m = n
-  var guard = 0
-  result = false
-  while not result and m.isTagLit and guard < 16:
-    inc guard
-    case m.exprKind
-    of DdotX, DerefX, HderefX:
-      result = true
-    of DotX, AtX, ArratX, TupatX, PatX, HaddrX, AddrX:
-      m = sub(m)
-    else:
-      break
-
-proc plainType(c: var FirContext; t: Cursor; depth = 0): bool =
-  ## Can a value of type `t` reach no heap object: no `ref`, `ptr`, `pointer`,
-  ## closure or `var` anywhere inside it? A `seq`'s or `openArray`'s own
-  ## payload pointer does not count — through it a routine reaches the
-  ## elements, never a field of some `ref` object — so `seq[int]` and `string`
-  ## are plain and `seq[Node]` with `Node = ref object` is not.
-  result = false
-  if depth > 12: return false
-  if t.isSymbol:
-    let sym = t.symId
-    if isStringType(t): return true
-    if c.plainTypes.hasKey(sym): return c.plainTypes.getOrQuit(sym)
-    c.plainTypes[sym] = false # a type that reaches itself is not plain
-    let decl = tryLoadSym(sym)
-    if decl.status == LacksNothing and decl.decl.symKind == TypeY:
-      let body = asTypeDecl(decl.decl).body
-      let base = pool.symBasename(sym)
-      if (base == "seq" or base == "openArray") and body.typeKind == ObjectT:
-        # `len` and `ptr UncheckedArray[T]`: plain exactly when `T` is
-        result = true
-        var f = body
-        f = sub(f)
-        skip f # the inheritance slot
-        while result and f.hasMore:
-          if f.substructureKind == FldU:
-            var ft = asLocal(f).typ
-            if ft.typeKind == PtrT:
-              ft = sub(ft)
-              if ft.typeKind == UarrayT: ft = sub(ft)
-            result = plainType(c, ft, depth+1)
-          skip f
-      else:
-        result = plainType(c, body, depth+1)
-    c.plainTypes[sym] = result
-    return result
-  case t.typeKind
-  of IT, UT, FT, CT, BoolT, EnumT, OnumT, SetT, RangetypeT, CstringT, VoidT:
-    result = true
-  of DistinctT, LentT, SinkT, ArrayT:
-    var e = t
-    e = sub(e)
-    if t.typeKind == ArrayT:
-      result = plainType(c, e, depth+1)
-    else:
-      result = plainType(c, e, depth+1)
-  of TupleT, ObjectT:
-    var f = t
-    f = sub(f)
-    result = true
-    if t.typeKind == ObjectT:
-      if not f.isDotToken:
-        result = plainType(c, f, depth+1) # the base object
-      skip f
-    while result and f.hasMore:
-      case f.substructureKind
-      of FldU:
-        result = plainType(c, asLocal(f).typ, depth+1)
-      of KvU:
-        var kv = f
-        kv = sub(kv)
-        skip kv # the field name
-        result = plainType(c, kv, depth+1)
-      else:
-        result = plainType(c, f, depth+1)
-      skip f
-  else:
-    result = false
-
-proc callKeepsHeap(c: var FirContext; fn: Cursor; params: Cursor): bool =
-  ## Does a call leave every heap location as it was? Only a `func` — which
-  ## touches no global — whose parameters are all `plainType`: with no pointer,
-  ## `ref` or `var` among its arguments it has no way to reach the heap.
-  let fnSym = extractSymId(fn)
-  result = false
-  if fnSym != NoSymId:
-    if fnSym in c.moduleFuncs:
-      result = true
-    else:
-      let sym = tryLoadSym(fnSym)
-      result = sym.status == LacksNothing and sym.decl.symKind == FuncY
-  if result and params.isParamsTag:
-    var p = params
-    p = sub(p)
-    while result and p.hasMore:
-      let param = takeLocal(p, SkipFinalParRi)
-      result = plainType(c, param.typ)
-
 proc isElementWrite(n: Cursor): bool {.inline.} =
   ## A write to one element of an array or of a pointer's target: it changes
   ## that element and nothing else. No derived location is keyed through an
-  ## element, so none can be its target — a write through a pointer still counts
-  ## for the heap (`mayWriteHeap`).
+  ## element, so none can be its target.
   n.exprKind in {ArratX, PatX, AtX}
-
-proc isHeapDerived(c: FirContext; v: VarId): bool =
-  let i = FirstDerivedVarId - int(v)
-  result = i >= 0 and i < c.derivedHeap.len and c.derivedHeap[i]
 
 proc keyUnder(derived, written: string): bool =
   ## Is the location keyed `derived` reached through the one keyed `written`?
@@ -1103,23 +981,16 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     key = "v" & $uint32(s)
     return true
   case m.exprKind
-  of DotX, DdotX:
-    # `a.f`, and `p.f` through a pointer or `ref` — the latter keyed with `->`,
-    # which is what marks the location as one the heap holds.
+  of DotX:
+    # `a.f`. A field reached through a pointer or a `ref` is no location: any
+    # alias may write it, and nothing here tracks aliases.
     var r = m
     r = sub(r)
     if not locationKey(c, r, subst, root, key, steps, depth+1): return false
     skip r # the object
     if not r.isSymbol: return false
-    key.add (if m.exprKind == DdotX: "->" else: ".")
+    key.add "."
     key.add $uint32(r.symId)
-    inc steps
-    result = true
-  of DerefX:
-    var r = m
-    r = sub(r)
-    if not locationKey(c, r, subst, root, key, steps, depth+1): return false
-    key.add "->"
     inc steps
     result = true
   of TupatX:
@@ -3424,7 +3295,6 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
   let args = n
   var needsBorrowCheck = false
   var mutatedRoots: seq[SymId] = @[]
-  var heapMutatedRoots: seq[SymId] = @[]
   var viewRoots: seq[SymId] = @[]
   var mutatesUnknown = false
   while n.hasMore:
@@ -3477,9 +3347,6 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
           plainLocationVarId(c, n) == getVarId(c, root):
         # a view passed as a view: its length stays
         viewRoots.add root
-      elif root != NoSymId and mayWriteHeap(n):
-        # a location behind a pointer: the pointer itself is not changed
-        heapMutatedRoots.add root
       elif root != NoSymId:
         mutatedRoots.add root
       elif not writesThroughPointee(c, n):
@@ -3537,14 +3404,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
       invalidateDerivedFrom(c, root)
   if mutatesUnknown:
     invalidateAllDerived(c)
-  for root in heapMutatedRoots:
-    invalidateDerivedFrom(c, root)
   for root in viewRoots:
     invalidateViewElements(c, root)
   c.viewRoots = viewRoots
-  # `callCursor` is already at the callee: `analyseCall` entered the call node.
-  if not callKeepsHeap(c, callCursor, paramsStart):
-    invalidateHeapDerived(c)
   # A routine without a result states its postcondition about its `var`
   # parameters alone, and nothing binds the call to a location for
   # `assumeEnsures` to read it at: it is taken here, after the mutations it
@@ -3693,8 +3555,6 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
   let destMutPath = extractPath(c, n)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
-  if mayWriteHeap(n):
-    invalidateHeapDerived(c)
   if destMutPath.path.len > 0:
     checkEscapingBorrow(c, valueStart, destMutPath.path[0])
 
@@ -3771,12 +3631,9 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
     let destLoc = plainLocationVarId(c, n)
     let destRoot = derivedRootOf(c, n)
     if writesThroughPointee(c, n):
-      discard "an element behind a pointer: the heap facts are gone already"
+      discard "an element behind a pointer, where no location lies"
     elif destRoot != NoSymId:
-      # Through a pointer the write changes the target, never the pointer: what
-      # is known about the root itself — that it is not nil — stays.
-      if not mayWriteHeap(n):
-        invalidateFactsAbout(c.facts, getVarId(c, destRoot))
+      invalidateFactsAbout(c.facts, getVarId(c, destRoot))
       invalidateWrittenPath(c, n, destRoot)
     elif not isElementWrite(n):
       invalidateAllDerived(c)
@@ -3898,8 +3755,6 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
-    heap: bool            ## a write that may reach the heap (`mayWriteHeap`, or a
-                          ## call that is not `callKeepsHeap`)
     preserved: seq[VarId] ## derived locations the call just scanned promises
                           ## to leave alone (`s.len == old(s.len)`); holds
                           ## for the `(unknown …)` that follows it too
@@ -4046,7 +3901,7 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
   # The pre-scan runs before the body's locals are registered: the type of a
   # path rooted at one of them cannot be asked for yet, so such a write stays
   # coarse.
-  if loc != InvalidVarId and dest.exprKind in {DotX, DdotX} and
+  if loc != InvalidVarId and dest.exprKind == DotX and
      getLocalInfo(c.typeCache, root).kind != NoSym:
     var obj = dest
     obj = sub(obj)
@@ -4061,14 +3916,11 @@ proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Curs
         noteWrite(w, v, ivUnknown)
   else:
     noteDerivedOf(c, w, root, loc)
-  # Through a pointer the write reaches the target and never the pointer, so
-  # what is keyed on the root — that it is not nil — survives the loop.
-  let throughPointer = mayWriteHeap(dest)
   if loc == InvalidVarId:
-    if not throughPointer: noteWrite(w, getVarId(c, root), ivUnknown)
+    noteWrite(w, getVarId(c, root), ivUnknown)
     return
   noteWrite(w, loc, stepOfValue(c, w, loc, value))
-  if loc != getVarId(c, root) and not throughPointer:
+  if loc != getVarId(c, root):
     # Writing `d.count` says nothing about `d` itself, but nil-ness and the
     # like are keyed on the root, so stay conservative there.
     noteWrite(w, getVarId(c, root), ivUnknown)
@@ -4084,7 +3936,6 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     let value = r
     skip r
     w.preserved.setLen 0
-    if mayWriteHeap(r): w.heap = true
     noteWriteTo(c, w, r, value)
     w.pendingStep = InvalidVarId
     skip n
@@ -4092,7 +3943,6 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if fk == UnknownV:
     var r = n
     r = sub(r)
-    if mayWriteHeap(r): w.heap = true
     if w.pendingStep != InvalidVarId and plainLocationVarId(c, r) == w.pendingStep:
       discard "the step call right before it already said which way this moves"
     else:
@@ -4121,8 +3971,6 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
       let routine = tryLoadSym(fnSym)
       if routine.status == LacksNothing and isRoutine(routine.decl.symKind):
         params = asRoutine(routine.decl).params
-    if cursorIsNil(params) or not callKeepsHeap(c, fnOf, params):
-      w.heap = true
     # A `var`/`out` argument that is already a location takes no `(haddr …)`
     # and so gets no `(unknown …)` — see `analyseCallArgs`. Judged by the
     # formal parameter where the callee is known: a `var openArray` passed on
@@ -4177,9 +4025,6 @@ proc isLoopInvariant(c: FirContext; w: LoopWrites; f: LeXplusC): bool =
   ## `a` may only move down and `b` may only move up.
   if w.opaque and (int(f.a) <= FirstDerivedVarId or int(f.b) <= FirstDerivedVarId):
     # An unattributable write may have hit any derived location.
-    return false
-  if w.heap and (isHeapDerived(c, f.a) or isHeapDerived(c, f.b)):
-    # ... and a write that may reach the heap, any location read through one.
     return false
   let aMoves = w.kinds.hasKey(f.a)
   let bMoves = w.kinds.hasKey(f.b)
@@ -4332,7 +4177,6 @@ proc loopCandidates(c: var FirContext; w: LoopWrites; body: Cursor): seq[LeXplus
   for v, kind in w.kinds:
     if v notin nodes: continue
     if w.opaque and int(v) <= FirstDerivedVarId: continue
-    if w.heap and isHeapDerived(c, v): continue
     for reverse in [false, true]:
       for x, d in boundsFrom(known, v, reverse):
         if x != v and x in nodes:
@@ -4960,8 +4804,6 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
     # Unknown instruction - variable's contents become unknown after a call.
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
     n.into:
-      if mayWriteHeap(n):
-        invalidateHeapDerived(c)
       let unknownPath = extractPath(c, n)
       if unknownPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
         checkBorrowConflict(c, unknownPath, n.info)

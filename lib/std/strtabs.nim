@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 #
 #
 #            Nim's Runtime Library
@@ -94,31 +92,34 @@ proc mode*(t: StringTableRef): StringTableMode {.inline.} = t.mode
 
 iterator pairs*(t: StringTableRef): tuple[key, value: string] =
   ## Iterates over every `(key, value)` pair in the table `t`.
-  for h in 0 ..< t.data.len:
+  for h in 0..high(t.data):
     if t.data[h].hasValue:
       yield (t.data[h].key, t.data[h].val)
 
 iterator keys*(t: StringTableRef): string =
   ## Iterates over every key in the table `t`.
-  for h in 0 ..< t.data.len:
+  for h in 0..high(t.data):
     if t.data[h].hasValue:
       yield t.data[h].key
 
 iterator values*(t: StringTableRef): string =
   ## Iterates over every value in the table `t`.
-  for h in 0 ..< t.data.len:
+  for h in 0..high(t.data):
     if t.data[h].hasValue:
       yield t.data[h].val
 
 
-func myhash(mode: StringTableMode, key: string): Hash =
+proc myhash(mode: StringTableMode, key: string): Hash =
   case mode
   of modeCaseSensitive: result = hash(key)
   of modeCaseInsensitive: result = hashIgnoreCase(key)
   of modeStyleInsensitive: result = hashIgnoreStyle(key)
 
-func myCmp(mode: StringTableMode, a, b: string): bool =
-  case mode
+proc myhash(t: StringTableRef, key: string): Hash =
+  result = myhash(t.mode, key)
+
+proc myCmp(t: StringTableRef, a, b: string): bool =
+  case t.mode
   of modeCaseSensitive: result = cmp(a, b) == 0
   of modeCaseInsensitive: result = cmpIgnoreCase(a, b) == 0
   of modeStyleInsensitive: result = cmpIgnoreStyle(a, b) == 0
@@ -127,20 +128,20 @@ proc mustRehash(length, counter: int): bool =
   assert(length > counter)
   result = (length * 2 < counter * 3) or (length - counter < 4)
 
-proc rawGet(t: StringTableRef, key: string): int {.ensures: result < t.data.len.} =
-  ## The slot of `key` in `t.data`, or -1.
-  result = -1
-  if t.data.len == 0: return
-  let mode = t.mode
-  var h: Hash = myhash(mode, key) and Hash(high(t.data)) # start with real hash value
+proc nextTry(h, maxHash: Hash): Hash {.inline.} =
+  result = (h + 1) and maxHash
+
+proc rawGet(t: StringTableRef, key: string): (bool, Hash) =
+  var h: Hash = myhash(t, key) and Hash(high(t.data)) # start with real hash value
   while t.data[h].hasValue:
-    if myCmp(mode, t.data[h].key, key):
-      return int(h)
+    if myCmp(t, t.data[h].key, key):
+      return (true, h)
     h = nextTry(h, high(t.data))
+  result = (false, Hash(0))
 
 template get(t: StringTableRef, key: string) {.untyped.} =
-  let index = rawGet(t, key)
-  if index >= 0: result = t.data[index].val
+  var (hasHash, index) = rawGet(t, key)
+  if hasHash: result = t.data[index].val
   else:
     raise KeyError #newException(KeyError, "key not found: " & key)
 
@@ -189,8 +190,8 @@ proc getOrDefault*(t: StringTableRef; key: string,
     doAssert t.getOrDefault("occupation", "teacher") == "teacher"
     doAssert t.getOrDefault("name", "Paul") == "John"
 
-  let index = rawGet(t, key)
-  if index >= 0: result = t.data[index].val
+  var (hasHash, index) = rawGet(t, key)
+  if hasHash: result = t.data[index].val
   else: result = default
 
 proc hasKey*(t: StringTableRef, key: string): bool =
@@ -203,7 +204,7 @@ proc hasKey*(t: StringTableRef, key: string): bool =
     var t = {"name": "John", "city": "Monaco"}.newStringTable
     doAssert t.hasKey("name")
     doAssert not t.hasKey("occupation")
-  result = rawGet(t, key) >= 0
+  result = rawGet(t, key)[0]
 
 proc contains*(t: StringTableRef, key: string): bool =
   ## Alias of `hasKey proc <#hasKey,StringTableRef,string>`_ for use with
@@ -215,8 +216,6 @@ proc contains*(t: StringTableRef, key: string): bool =
   return hasKey(t, key)
 
 proc rawInsert(mode: StringTableMode, data: var KeyValuePairSeq, key, val: string) =
-  # a table that could not be allocated has no slot to insert into
-  if data.len == 0: return
   var h: Hash = myhash(mode, key) and Hash(high(data))
   while data[h].hasValue:
     h = nextTry(h, high(data))
@@ -225,15 +224,10 @@ proc rawInsert(mode: StringTableMode, data: var KeyValuePairSeq, key, val: strin
   data[h].hasValue = true
 
 proc enlarge(t: StringTableRef) =
-  var old = move t.data
-  var n: KeyValuePairSeq = newSeq[KeyValuePair](len(old) * growthFactor)
-  if n.len == 0:
-    # no room to grow into: keep the full table
-    t.data = move old
-    return
-  for i in 0..high(old):
-    if old[i].hasValue: rawInsert(t.mode, n, move old[i].key, move old[i].val)
-  t.data = move n
+  var n: KeyValuePairSeq = newSeq[KeyValuePair](len(t.data) * growthFactor)
+  for i in 0..high(t.data):
+    if t.data[i].hasValue: rawInsert(t.mode, n, move t.data[i].key, move t.data[i].val)
+  swap(t.data, n)
 
 proc `[]=`*(t: StringTableRef, key, val: string) =
   ## Inserts a `(key, value)` pair into `t`.
@@ -246,8 +240,8 @@ proc `[]=`*(t: StringTableRef, key, val: string) =
     t["occupation"] = "teacher"
     doAssert t.hasKey("occupation")
 
-  let index = rawGet(t, key)
-  if index >= 0:
+  var (hasHash, index) = rawGet(t, key)
+  if hasHash:
     t.data[index].val = val
   else:
     if mustRehash(len(t.data), t.counter): enlarge(t)
@@ -344,30 +338,30 @@ proc del*(t: StringTableRef, key: string) =
     doAssert "city" in t
 
   # Impl adapted from `tableimpl.delImplIdx`
-  var i = rawGet(t, key)
-  if i >= 0:
-    # Work on the slots as a local seq: a write to an element reached through
-    # the `ref` could, as far as the prover can tell, change the length too.
-    var data = move t.data
-    let msk = high(data)
+  var (hasHash, i) = rawGet(t, key)
+  let msk = Hash high(t.data)
+  if hasHash:
     dec(t.counter)
     block outer:
-      if i >= data.len: break outer
       while true: # KnuthV3 Algo6.4R adapted for i=i+1 instead of i=i-1
         var j = i # The correctness of this depends on (h+1) in nextTry,
         var r = j # though may be adaptable to other simple sequences.
-        data[i].hasValue = false # mark current EMPTY
-        data[i].key = ""
-        data[i].val = ""
+        t.data[i].hasValue = false # mark current EMPTY
+        t.data[i].key = ""
+        t.data[i].val = ""
         while true:
           i = (i + 1) and msk # increment mod table size
-          if not data[i].hasValue: # end of collision cluster; So all done
+          if not t.data[i].hasValue: # end of collision cluster; So all done
             break outer
-          r = int(myhash(t.mode, data[i].key)) and msk # "home" location of key@i
+          r = t.myhash(t.data[i].key) and msk # "home" location of key@i
           if not ((i >= r and r > j) or (r > j and j > i) or (j > i and i >= r)):
             break
-        data[j] = move data[i]
-    t.data = move data
+        when defined(js):
+          t.data[j] = t.data[i]
+        else:
+          t.data[j] = move t.data[i]
+        # else:
+        #   shallowCopy(t.data[j], t.data[i]) # data[j] will be marked EMPTY next loop
 
 proc `$`*(t: StringTableRef): string =
   ## The `$` operator for string tables. Used internally when calling

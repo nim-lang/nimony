@@ -219,53 +219,77 @@ when defined(nimNativeIo):
       off += k
     result = true
 
-  proc flushImpl(f: File) =
-    if f.wbuf.len > 0:
-      if not rawWriteAll(f.fd, addr f.wbuf[0], f.wbuf.len):
-        f.flags.incl ffError
-      f.wbuf.setLen 0
+  # The buffer work is done on the object behind the `ref`: a field reached
+  # through a `ref` can be written by any alias, so only a `var FileObj`
+  # parameter makes `wbuf`/`rbuf` locations whose length a check can bound.
 
-  proc writeBytes(f: File; p: pointer; n: int) =
+  proc flushImpl(fo: var FileObj) =
+    if fo.wbuf.len > 0:
+      if not rawWriteAll(fo.fd, addr fo.wbuf[0], fo.wbuf.len):
+        fo.flags.incl ffError
+      fo.wbuf.setLen 0
+
+  proc flushImpl(f: File) {.inline.} = flushImpl(f[])
+
+  proc writeBytes(fo: var FileObj; p: pointer; n: int) =
     if n <= 0: return
-    let oldLen = f.wbuf.len
-    f.wbuf.setLen(oldLen + n)
-    if oldLen >= f.wbuf.len:
+    let oldLen = fo.wbuf.len
+    fo.wbuf.setLen(oldLen + n)
+    if oldLen >= fo.wbuf.len:
       # Out of memory: `setLen` could not grow the buffer and emptied it. (It
       # either grew past `oldLen`, `n` being positive, or left nothing.)
-      f.flags.incl ffError
+      fo.flags.incl ffError
       return
-    copyMem(addr f.wbuf[oldLen], p, n)
-    if ffUnbuf in f.flags or f.wbuf.len >= NativeBufSize:
-      flushImpl f
+    copyMem(addr fo.wbuf[oldLen], p, n)
+    if ffUnbuf in fo.flags or fo.wbuf.len >= NativeBufSize:
+      flushImpl fo
 
-  proc fillBuf(f: File): bool =
+  proc writeBytes(f: File; p: pointer; n: int) {.inline.} = writeBytes(f[], p, n)
+
+  proc fillBuf(fo: var FileObj): bool =
     ## Refills `rbuf` from the fd. Returns false on EOF/error (and records which).
-    f.rbuf.setLen NativeBufSize
-    if f.rbuf.len < NativeBufSize:
+    fo.rbuf.setLen NativeBufSize
+    fo.rpos = 0
+    if fo.rbuf.len < NativeBufSize:
       # out of memory: `setLen` could not grow the buffer and emptied it
-      f.rpos = 0
-      f.flags.incl ffError
+      fo.flags.incl ffError
       return false
-    let k = sysRead(f.fd, addr f.rbuf[0], uint(NativeBufSize))
-    f.rpos = 0
+    let k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))
     if k > 0:
-      f.rbuf.setLen k
+      fo.rbuf.setLen k
       result = true
     else:
-      f.rbuf.setLen 0
-      if k < 0: f.flags.incl ffError
-      else: f.flags.incl ffEof
+      fo.rbuf.setLen 0
+      if k < 0: fo.flags.incl ffError
+      else: fo.flags.incl ffEof
       result = false
 
-  proc readByte(f: File): int =
+  proc fillBuf(f: File): bool {.inline.} = fillBuf(f[])
+
+  proc readByte(fo: var FileObj): int =
     ## Returns the next byte as 0..255, or -1 at EOF/error.
     result = -1
     while true:
-      if f.rpos < f.rbuf.len:
-        result = int(f.rbuf[f.rpos])
-        inc f.rpos
+      if fo.rpos < fo.rbuf.len:
+        result = int(fo.rbuf[fo.rpos])
+        inc fo.rpos
         break
-      if not fillBuf(f): break
+      if not fillBuf(fo): break
+
+  proc readByte(f: File): int {.inline.} = readByte(f[])
+
+  proc readInto(fo: var FileObj; dest: ptr UncheckedArray[char]; size: int): int =
+    var off = 0
+    while off < size:
+      if fo.rpos >= fo.rbuf.len:
+        if not fillBuf(fo): break
+        continue
+      var take: Natural = fo.rbuf.len - fo.rpos
+      if take > size - off: take = size - off
+      copyMem(addr dest[off], addr fo.rbuf[fo.rpos], take)
+      fo.rpos = fo.rpos + take
+      off += take
+    result = off
 
   proc flushStdStreams() {.nimcall.} =
     ## Registered with `system/exits` so every process exit flushes the buffered
@@ -399,18 +423,7 @@ proc writeBuffer*(f: File; buffer: pointer; size: int): int =
 proc readBuffer*(f: File; buffer: pointer; size: int): int =
   ## Reads raw bytes from a file.
   when defined(nimNativeIo):
-    var off = 0
-    let dest = cast[ptr UncheckedArray[char]](buffer)
-    while off < size:
-      if f.rpos >= f.rbuf.len:
-        if not fillBuf(f): break
-        continue
-      var take: Natural = f.rbuf.len - f.rpos
-      if take > size - off: take = size - off
-      copyMem(addr dest[off], addr f.rbuf[f.rpos], take)
-      f.rpos = f.rpos + take
-      off += take
-    result = off
+    result = readInto(f[], cast[ptr UncheckedArray[char]](buffer), size)
   else:
     result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))
 
