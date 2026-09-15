@@ -167,21 +167,23 @@ elif defined(windows) or defined(dos):
       decorated[m] = name[m - 1]
       inc(m)
     decorated[m] = '@'
+    let at = m
     for i in 0..50:
+      # `@` then the decimal digits of `i * 4` (at most three) and a NUL
       var k = i * 4
+      var last = at + 3
       if k div 100 == 0:
         if k div 10 == 0:
-          m = m + 1
+          last = at + 1
         else:
-          m = m + 2
-      else:
-        m = m + 3
-      decorated[m + 1] = '\x00'
+          last = at + 2
+      decorated[last + 1] = '\x00'
+      var d = last
       while true:
-        decorated[m] = chr(ord('0') + (k mod 10))   # k is always >= 0 here
-        dec(m)
+        decorated[d] = chr(ord('0') + (k mod 10))   # k is always >= 0 here
         k = k div 10
-        if k == 0: break
+        if k == 0 or d <= at + 1: break
+        dec(d)
       result = getProcAddress(cast[THINSTANCE](lib), cast[cstring](addr decorated))
       if result != nil: return
     procAddrError(name)
