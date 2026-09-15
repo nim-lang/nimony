@@ -77,6 +77,8 @@ Options:
                             arkham and nifasm build the image against. See
                             nativenif's doc/layout.md
   --nimcache:PATH           set the path used for generated files
+                            (default `nimcache`; in --compat mode a `nimcache`
+                            entry from the `nim.cfg` hierarchy is honored)
   -o, --out:PATH            write the executable to PATH (overrides the
                             default `<nimcache>/<modhash>/<basename>.exe`).
                             Splits into directory + filename like Nim;
