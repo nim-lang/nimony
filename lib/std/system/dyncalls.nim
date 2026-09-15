@@ -161,7 +161,7 @@ elif defined(windows) or defined(dos):
     const decoratedLength = 250
     var decorated: array[decoratedLength, char] = default(array[decoratedLength, char])
     decorated[0] = '_'
-    var m = 1
+    var m: range[1 .. decoratedLength - 5] = 1
     while m < (decoratedLength - 5):
       if name[m - 1] == '\x00': break
       decorated[m] = name[m - 1]
@@ -178,12 +178,12 @@ elif defined(windows) or defined(dos):
         else:
           last = at + 2
       decorated[last + 1] = '\x00'
-      var d = last
+      var d: range[2 .. decoratedLength - 2] = last
       while true:
         decorated[d] = chr(ord('0') + (k mod 10))   # k is always >= 0 here
         k = k div 10
         if k == 0 or d <= at + 1: break
-        dec(d)
+        d = d - 1
       result = getProcAddress(cast[THINSTANCE](lib), cast[cstring](addr decorated))
       if result != nil: return
     procAddrError(name)

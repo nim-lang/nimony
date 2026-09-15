@@ -96,12 +96,6 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: NifLineInfo
 
-  LoopFrame = object
-    ## The candidate invariants of the loop whose body is being walked (see
-    ## `traverseLoop`); `broken[i]` once a back-edge did not imply `candidates[i]`.
-    candidates: seq[LeXplusC]
-    broken: seq[bool]
-
   FirContext = object
     flow: FlowState                    # the journaled analysis state: the
                                        # definite-assignment init-set and the
@@ -147,11 +141,6 @@ type
       ## True while `scanLoopWrites` walks a loop body ahead of its traversal.
       ## The body's own locals are not registered with the type cache yet, so
       ## nothing may ask for a type during it.
-    speculating: int
-      ## > 0 while a loop body is walked only to find out which candidate
-      ## invariants it keeps: that walk is rolled back and reports nothing.
-    loopFrames: seq[LoopFrame]
-      ## One per loop being walked, innermost last; its back-edges check the top.
     substVar: Table[SymId, VarId]
       ## While an `.ensures` is being read, the `result` it names stands for a
       ## `VarId` rather than for an expression: either the location the call was
@@ -215,7 +204,6 @@ proc dumpCurrentProc(c: var FirContext; info: NifLineInfo; msg: string) =
   stderr.writeLine "--- end Final IR dump ---"
 
 proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
-  if c.speculating > 0: return
   # This pass runs on the FINAL IR, where the node an error is pinned to is
   # often one the compiler synthesized -- the epilogue's `(ret result)` is what
   # an uninitialized `result` is reported at -- and those carry no line info.
@@ -2993,7 +2981,7 @@ proc checkRequires(c: var FirContext; req: Cursor; paramMap: Table[SymId, Cursor
   if not c.tr.live: return
   let res = proveCond(c, req, paramMap)
   when defined(contractStats):
-    if c.speculating == 0: stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
+    stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
   case res
   of Proven:
     discard "obligation discharged"
@@ -3402,7 +3390,9 @@ proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
   if valueBounds(c, value, lo, hi):
     c.facts.add query(VarId(0), dest, -lo)
     c.facts.add query(dest, VarId(0), hi)
-  elif (let v = peelExpr(value); v.exprKind == BitandX):
+  # a mask can bound it more tightly than the interval of a conversion around
+  # it does: `int(h and mask)`
+  if (let v = peelExpr(value); v.exprKind == BitandX):
     # `x and m` lies in `0..m` for a mask `m` known not to be negative: the
     # `hash and high(data)` every hash table starts its probe with.
     let noSubst = initTable[SymId, Cursor]()
@@ -3603,14 +3593,7 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
 proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.tr, c.flow, label)
 proc leaveToReturn(c: var FirContext) = gotoReturn(c.tr, c.flow)
 proc leaveToRaise(c: var FirContext) = gotoRaise(c.tr, c.flow)
-proc leaveToContinue(c: var FirContext) =
-  if c.tr.live and c.loopFrames.len > 0:
-    let top = c.loopFrames.len - 1
-    for i in 0 ..< c.loopFrames[top].candidates.len:
-      if not c.loopFrames[top].broken[i] and
-          not impliesHere(c, c.loopFrames[top].candidates[i]):
-        c.loopFrames[top].broken[i] = true
-  gotoContinue(c.tr, c.flow)
+proc leaveToContinue(c: var FirContext) = gotoContinue(c.tr, c.flow)
 
 proc traverseIte(c: var FirContext; n: var Cursor) =
   ## `(ite cond then else)`. Each arm is analyzed under the condition's polarity;
@@ -4010,171 +3993,6 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for ch in bypasses:
     c.facts.add ch
 
-proc collectSyms(n: var Cursor; syms, locals: var HashSet[SymId];
-                 calls, conds, inlines: var seq[Cursor]) =
-  ## The symbols a loop body mentions, the locals it declares (the `(inline)`
-  ## ones among them also in `inlines`), its calls and the conditions it
-  ## branches on.
-  if n.isTagLit:
-    if n.exprKind in CallKinds: calls.add n
-    if n.finalIrKind in {IteV, ItecV}:
-      var cond = n
-      cond = sub(cond)
-      conds.add cond
-    if isLocal(n.symKind):
-      var name = n
-      name = sub(name)
-      if name.kind == SymbolDef:
-        locals.incl name.symId
-        if hasPragma(asLocal(n).pragmas, InlineP): inlines.add n
-    n.into:
-      while n.hasMore: collectSyms(n, syms, locals, calls, conds, inlines)
-  else:
-    if n.isSymbol or n.kind == SymbolDef: syms.incl n.symId
-    skip n
-
-proc mentionsAny(n: var Cursor; syms: HashSet[SymId]): bool =
-  result = false
-  if n.isTagLit:
-    n.into:
-      while n.hasMore:
-        if mentionsAny(n, syms): result = true
-  else:
-    result = n.isSymbol and n.symId in syms
-    skip n
-
-proc guardFacts(c: var FirContext; cond: Cursor; into: var seq[LeXplusC]) =
-  ## The comparisons in a branch condition, as facts, whatever their polarity.
-  ## Read silently and rolled back: a condition is not a statement of fact.
-  case cond.exprKind
-  of AndX, OrX:
-    var r = cond
-    r = sub(r)
-    guardFacts(c, r, into)
-    skip r
-    guardFacts(c, r, into)
-  of NotX:
-    var r = cond
-    r = sub(r)
-    guardFacts(c, r, into)
-  of LeX, LtX, EqX:
-    let cp = c.flow.checkpoint()
-    inc c.speculating
-    var kind = ckPlain
-    var r = cond
-    let f = translateCond(c, r, kind)
-    dec c.speculating
-    c.flow.rollbackTo cp
-    if f.a != InvalidVarId and f.b != InvalidVarId and f.isValid:
-      into.add f
-  else: discard
-
-proc loopCandidates(c: var FirContext; w: LoopWrites; body: Cursor): seq[LeXplusC] =
-  ## The bounds on what the loop writes that hold on entry but that
-  ## `isLoopInvariant` cannot vouch for from the write directions alone:
-  ## `j <= s.len` for a `j` that only moves under `j < s.len`. Chained bounds
-  ## are included (`j <= i0`, `i0 <= s.len` offers `j <= s.len`), restricted to
-  ## the constant and the locations the body mentions.
-  result = @[]
-  var syms = initHashSet[SymId]()
-  var locals = initHashSet[SymId]()
-  var calls: seq[Cursor] = @[]
-  var conds: seq[Cursor] = @[]
-  var inlines: seq[Cursor] = @[]
-  var b = body
-  collectSyms(b, syms, locals, calls, conds, inlines)
-  # An `(inline)` temp stands for its initializer — the `len(q)` a guard on an
-  # `openArray` reads through one — so a condition naming it is still about
-  # the locations outside the body, as long as the initializer is.
-  var resolved = true
-  while resolved:
-    resolved = false
-    for decl in inlines:
-      let local = asLocal(decl)
-      let name = local.name.symId
-      if name in locals and not cursorIsNil(local.val):
-        var r = local.val
-        if not mentionsAny(r, locals):
-          c.inlineVars[name] = local.val
-          # the walk registers it again when it gets there
-          c.typeCache.registerLocal(name, decl.symKind, local.typ)
-          locals.excl name
-          resolved = true
-  # A location the body reads through a call — `s.len` in the guard — may not
-  # have met the analysis before the loop; resolving it now brings its declared
-  # and ensured range along. Not for a call on the body's own locals, which the
-  # type cache does not know yet.
-  for call in calls:
-    var r = call
-    if not mentionsAny(r, locals):
-      discard plainLocationVarId(c, call)
-  var nodes = initHashSet[VarId]()
-  nodes.incl VarId(0)
-  for s in syms: nodes.incl getVarId(c, s)
-  for i in 0 ..< c.derivedRoots.len:
-    if c.derivedRoots[i] in syms: nodes.incl VarId(FirstDerivedVarId - i)
-  var known = snapshotFacts(c.facts)
-  for v, r in c.declaredRange:
-    if v in nodes:
-      known.add query(VarId(0), v, -r.lo)
-      known.add query(v, VarId(0), r.hi)
-  for v, kind in w.kinds:
-    if v notin nodes: continue
-    if w.opaque and int(v) <= FirstDerivedVarId: continue
-    for reverse in [false, true]:
-      for x, d in boundsFrom(known, v, reverse):
-        if x != v and x in nodes:
-          let f = if reverse: query(x, v, d) else: query(v, x, d)
-          if f.isValid and not isLoopInvariant(c, w, f): result.add f
-  # The body's own comparisons, and their negations, each also loosened by one:
-  # `while i < 255: … inc i` keeps `i <= 255`, which no entry fact names
-  # while `i` starts at a tighter `i <= 0`.
-  var guards: seq[LeXplusC] = @[]
-  for cond in conds:
-    var r = cond
-    if not mentionsAny(r, locals):
-      guardFacts(c, cond, guards)
-  for g in guards:
-    if not (w.kinds.hasKey(g.a) or w.kinds.hasKey(g.b)): continue
-    var neg = g
-    negateFact(neg)
-    for f in [g, neg]:
-      for slack in [zero(), createXint(1'i64)]:
-        var h = f
-        h.c = h.c + slack
-        if h.isValid and not isLoopInvariant(c, w, h) and implies(known, h):
-          result.add h
-
-proc refuteCandidates(c: var FirContext; body: Cursor; cands: var seq[LeXplusC]): bool =
-  ## Walk the body once under `cands`, silently, and drop every candidate some
-  ## back-edge does not imply. Nothing the walk did survives it. Returns whether
-  ## a candidate was dropped: the survivors are an inductive invariant only once
-  ## a walk under exactly them drops none.
-  let cp = c.flow.checkpoint()
-  let ecp = c.tr.exitsCheckpoint()
-  let live = c.tr.live
-  let borrows = c.activeBorrows.len
-  for f in cands: c.facts.add f
-  c.loopFrames.add LoopFrame(candidates: cands, broken: newSeq[bool](cands.len))
-  inc c.speculating
-  var b = body
-  traverseStmt c, b
-  dec c.speculating
-  let frame = c.loopFrames.pop()
-  c.flow.rollbackTo cp
-  c.tr.rollbackExits ecp
-  c.tr.live = live
-  c.activeBorrows.setLen(borrows)
-  result = false
-  cands.setLen 0
-  for i in 0 ..< frame.candidates.len:
-    if frame.broken[i]: result = true
-    else: cands.add frame.candidates[i]
-
-const
-  MaxInvariantRounds = 4
-  MaxSpeculationDepth = 2 ## loops nested deeper get no candidates while speculating
-
 proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
   ## forward via `(jmp loopExit)`. The while-condition is the leading guard
@@ -4183,14 +4001,6 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## break sites (captured) and to the back-edge (discarded); the loop never
   ## falls through. The `(lab loopExit)` that follows installs the merged
   ## break state via `bindLoopExit`.
-  ##
-  ## The body is analyzed under the facts no iteration can break. Those the
-  ## write directions vouch for are kept outright; the others are candidates
-  ## that speculative walks of the body refute until the rest holds at every
-  ## back-edge (Houdini). Beyond `MaxSpeculationDepth` a walk that is itself
-  ## speculative keeps only the former, which is weaker and therefore still
-  ## sound, and bounds the work, which otherwise grows with the rounds raised to
-  ## the nesting depth.
   n.into: # loop tag
     # Before the checkpoint, not after: the rollback below restores the state
     # the checkpoint captured, so an invalidation made after it would be undone
@@ -4204,19 +4014,10 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
       c.prescanning = true
       scanLoopWrites(c, scan, w)
       c.prescanning = false
-      var cands = if c.speculating < MaxSpeculationDepth and c.tr.live: loopCandidates(c, w, n)
-                  else: @[]
       restrictFactsToLoopInvariants(c, w)
-      var rounds = 0
-      while cands.len > 0 and refuteCandidates(c, n, cands):
-        inc rounds
-        if rounds == MaxInvariantRounds: cands.setLen 0
-      for f in cands: c.facts.add f
     let cp = c.flow.checkpoint()
     let savedBorrows = c.activeBorrows.len
-    c.loopFrames.add LoopFrame()
     traverseStmt c, n        # the body `(stmts ...)`; ends by leaving
-    discard c.loopFrames.pop()
     dropContinue(c.tr)       # the loop header consumes the back-edge
     # The loop never falls through; reset the working state to the pre-loop base.
     # A following `(lab loopExit)` installs the join of the states its exits
@@ -4553,7 +4354,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
     var report = false
     var expectUnprovable = false
     if n.pragmaKind == ReportP:
-      report = c.speculating == 0
+      report = true
       skip n
     if n.pragmaKind == ErrorP:
       expectUnprovable = true

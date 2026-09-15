@@ -77,15 +77,15 @@ proc nextTry(h, maxHash: int): int {.requires: 0 <= maxHash,
   result = (h + 1) and maxHash
 
 proc probe(s: seq[int]; key: int): int =
-  # ... and `high(s)` is `s.len - 1`
+  # ... and `high(s)` is `s.len - 1`: the probe is masked where it is used
   result = -1
   if s.len == 0: return
-  var h = key and high(s)
+  var h = key
   var n = 0
-  while s[h] != 0 and n < s.len:
+  while s[h and high(s)] != 0 and n < s.len:
     h = nextTry(h, high(s))
     inc n
-  result = h
+  result = h and high(s)
 
 proc startsWithSlash(p: string): bool =
   # `p.len != 0` next to `0 <= p.len` is `1 <= p.len`
@@ -204,7 +204,7 @@ proc blockSum(data: openArray[int]): int =
     let start = j
     for p in start ..< start + 16:
       blk[p - start] = data[p]
-    j = start + 16
+    j += 16
     result = result + blk[15]
 
 proc ringAt(data: seq[int]; at: int): int =

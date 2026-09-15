@@ -1,6 +1,5 @@
-# A candidate loop invariant some back-edge does not restore is dropped: none of
-# these bounds may be claimed after its loop. The proven side lives in
-# `tests/nimony/contracts/tloopinvariants.nim`.
+# A bound a loop can break must not be claimed after it: none of these holds
+# once its loop is done.
 
 proc overshoot(s: string; start: int) =
   if start < 0 or start > s.len: return

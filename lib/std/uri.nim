@@ -152,6 +152,14 @@ func find(s: openArray[char]; c: char; start: Natural = 0): int {.ensures: resul
     if s[i] == c: return i
     inc i
 
+func rfind(s: openArray[char]; c: char; start: Natural): int {.ensures: result < s.len.} =
+  ## The last `c` at or after `start`, or -1.
+  result = -1
+  var i = s.len - 1
+  while i >= start:
+    if s[i] == c: return i
+    dec i
+
 func parseAuthority(u: var Uri; a: openArray[char]) =
   ## `[userinfo@]host[:port]`, where host may be `[v6]`.
   var hostStart: Natural = 0
@@ -175,13 +183,7 @@ func parseAuthority(u: var Uri; a: openArray[char]) =
       if close + 1 < a.len and a[close + 1] == ':':
         for i in close + 2..<a.len: u.port.add a[i]
       return
-  var colon = -1
-  var i = a.len - 1
-  while i >= hostStart:
-    if a[i] == ':':
-      colon = i
-      break
-    dec i
+  let colon = a.rfind(':', hostStart)
   if colon >= 0:
     for k in hostStart..<colon: u.hostname.add a[k]
     for k in colon + 1..<a.len: u.port.add a[k]
@@ -227,7 +229,7 @@ func parseUri*(s: openArray[char]): Uri =
              (k > 0 and ((c >= '0' and c <= '9') or c == '+' or c == '-' or c == '.'))
     if not ok: break
     inc k
-  if colon > 0:
+  if colon > 0 and colon < n:
     for j in 0..<colon: result.scheme.add s[j]
     i = colon + 1
 
@@ -305,7 +307,7 @@ iterator decodeQuery*(q: openArray[char]; decodePlus = true): (string, string) =
     if e > i:
       var eq = e
       var j = i
-      while j < e:
+      while j < e and j < q.len:
         if q[j] == '=':
           eq = j
           break
@@ -360,7 +362,7 @@ func normalizedPath*(path: openArray[char]; dest: var string): bool =
     var isDotDot = false
     if path[s] == '.':
       if i == s + 1: isDot = true
-      elif i == s + 2 and path[s + 1] == '.': isDotDot = true
+      elif i == s + 2 and s + 1 < path.len and path[s + 1] == '.': isDotDot = true
     if isDot:
       discard
     elif isDotDot:
