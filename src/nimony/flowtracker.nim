@@ -199,7 +199,7 @@ proc joinSnap*(a, b: FlowSnap): FlowSnap =
   else:
     for x in b.inits:
       if x in a.inits: inits.incl x
-  FlowSnap(inits: inits, facts: merge(a.facts, 0, b.facts, false))
+  FlowSnap(inits: inits, facts: join(a.facts, b.facts))
 
 proc setTo*(fs: var FlowState; cp: FlowCp; snap: FlowSnap) =
   ## Journaled `fs := snap`, rolled back to `cp` first so the diff stays small.
@@ -333,6 +333,16 @@ proc takeRaise*(tr: var FlowTracker): bool =
 
 # ---- branching
 
+proc exitsCheckpoint*(tr: FlowTracker): int {.inline.} = tr.journal.len
+
+proc rollbackExits*(tr: var FlowTracker; cp: int) =
+  ## Undo every exit-table mutation since `exitsCheckpoint` returned `cp`.
+  while tr.journal.len > cp:
+    let e = tr.journal[tr.journal.len - 1]
+    tr.journal.setLen(tr.journal.len - 1)
+    if e.had: tr.exits[e.key] = e.old
+    else: tr.exits.del e.key
+
 proc splitBranch*(tr: var FlowTracker; fs: FlowState): Branch =
   Branch(baseLive: tr.live, cp: fs.checkpoint, ejcp: tr.journal.len)
 
@@ -356,12 +366,7 @@ proc commitThen*(tr: var FlowTracker; fs: var FlowState; b: var Branch) =
       else:
         b.thenDelta.add ExitJEntry(key: k, had: false)
     dec i
-  # undo the then-branch's exit-table mutations
-  while tr.journal.len > b.ejcp:
-    let e = tr.journal[tr.journal.len - 1]
-    tr.journal.setLen(tr.journal.len - 1)
-    if e.had: tr.exits[e.key] = e.old
-    else: tr.exits.del e.key
+  rollbackExits(tr, b.ejcp)
   # roll the state back to the baseline the then-branch started from
   fs.rollbackTo b.cp
   tr.live = b.baseLive
@@ -380,7 +385,7 @@ proc mergeBranches*(tr: var FlowTracker; fs: var FlowState; b: Branch) =
   if b.thenLive and elseLive:
     # merged init-set = baseline + (thenDelta ∩ elseDelta); merged facts = ⊔.
     let elseDelta = fs.inits.addedSince(b.cp.initsCp)
-    let mergedFacts = merge(b.thenFacts, 0, fs.facts, false)
+    let mergedFacts = join(b.thenFacts, fs.facts)
     fs.inits.rollbackTo b.cp.initsCp
     for k in elseDelta:
       if k in b.thenInits: fs.inits.incl k

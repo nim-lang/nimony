@@ -71,6 +71,116 @@ proc reverseInPlace(s: var string) =
     inc lo
     dec hi
 
+proc nextTry(h, maxHash: int): int {.requires: 0 <= maxHash,
+    ensures: 0 <= result and result <= maxHash.} =
+  # `x and m` lies in `0..m` for a mask known not to be negative
+  result = (h + 1) and maxHash
+
+proc probe(s: seq[int]; key: int): int =
+  # ... and `high(s)` is `s.len - 1`
+  result = -1
+  if s.len == 0: return
+  var h = key and high(s)
+  var n = 0
+  while s[h] != 0 and n < s.len:
+    h = nextTry(h, high(s))
+    inc n
+  result = h
+
+proc startsWithSlash(p: string): bool =
+  # `p.len != 0` next to `0 <= p.len` is `1 <= p.len`
+  result = not (p.len == 0 or p[0] != '/')
+
+proc lastChar(p: string): char =
+  result = ' '
+  if p.len > 0: result = p[high(p)]
+
+proc sumAll(s: seq[int]): int =
+  result = 0
+  for i in 0 .. high(s):
+    result = result + s[i]
+
+type
+  Parser = object
+    pos: int
+    done: bool
+    current: string
+
+proc peekChar(p: var Parser): char =
+  # writing `p.done` leaves `len(p.current)` alone
+  result = ' '
+  if p.pos >= 0 and p.pos < p.current.len:
+    p.done = true
+    result = p.current[p.pos]
+
+proc chained(s: string): int =
+  # overwriting `i` keeps what it connected: `0 <= j` after `i = j`
+  var i = 0
+  var j = 0
+  while j < s.len and s[j] == ' ': inc j
+  i = j
+  let p = i + j
+  result = 0
+  if p < s.len:
+    result = ord(s[i]) + ord(s[p])
+
+proc windowStart(i, k: int): int =
+  # `i - k` with `k` in `0..3` lies within 3 of `i`
+  var digits = default(array[20, int])
+  result = 0
+  if i >= 10 and i < 20 and k >= 0 and k <= 3:
+    let p = i - k
+    result = digits[p]
+
+type
+  Bag = object
+    items: seq[int]
+
+func slotOf(b: Bag; x: int): int {.ensures: result < b.items.len.} =
+  # `.ensures` over a path through a parameter, proven for `return i - 1`
+  result = -1
+  for i in 1 .. b.items.len:
+    if b.items[i - 1] == x: return i - 1
+
+func fetch(b: Bag; x: int): int =
+  let i = slotOf(b, x)
+  result = 0
+  if i >= 0: result = b.items[i]
+
+type
+  Slot = tuple[key, val: string, used: bool]
+
+proc clearSlot(data: var seq[Slot]; i: int): string =
+  # writes into an element live behind the seq's data pointer: `len(data)`
+  # is not among what they can change
+  result = ""
+  if i >= 0 and i < data.len:
+    data[i].used = false
+    result = move data[i].key
+    data[i].val = ""
+    result.add data[i].val
+
+type
+  Stack = object
+    len: int
+
+func popTop(s: var Stack): int {.requires: s.len > 0,
+    ensures: s.len == old(s.len) - 1.} =
+  # `old(e) - 1`, established by a store of a value computed from `e` itself
+  let top = s.len - 1
+  result = top
+  s.len = top
+
+type
+  Tone = enum toneLow, toneMid, toneHigh
+
+const toneNames: array[Tone, string] = ["low", "mid", "high"]
+
+proc toneName(t: Tone): string =
+  # an enum conversion is not range checked; the guard names the last field
+  result = ""
+  if ord(t) >= 0 and ord(t) <= ord(high(Tone)): result = toneNames[t]
+
 assert mask(-1) == 0
 assert maskedLocal(1000) == 0
 assert byteWidth(0x1200'u32) == 0x12
@@ -85,3 +195,18 @@ assert throughPointer(addr node) == 7
 var word = "abcd"
 reverseInPlace(word)
 assert word == "dcba"
+assert probe(@[0, 1], 3) == 0
+assert startsWithSlash("/x")
+assert lastChar("ab") == 'b'
+assert sumAll(@[1, 2]) == 3
+var parser = Parser(pos: 1, done: false, current: "ab")
+assert peekChar(parser) == 'b'
+assert chained(" ab") == ord('a') + ord('b')
+assert windowStart(12, 2) == 0
+assert fetch(Bag(items: @[4, 5]), 5) == 5
+var slots: seq[Slot] = @[(key: "k", val: "v", used: true)]
+assert clearSlot(slots, 0) == "k"
+var stack = Stack(len: 2)
+if stack.len > 0:
+  assert popTop(stack) == 1
+assert toneName(toneMid) == "mid"

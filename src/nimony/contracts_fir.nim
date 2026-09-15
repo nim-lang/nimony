@@ -96,6 +96,12 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: NifLineInfo
 
+  LoopFrame = object
+    ## The candidate invariants of the loop whose body is being walked (see
+    ## `traverseLoop`); `broken[i]` once a back-edge did not imply `candidates[i]`.
+    candidates: seq[LeXplusC]
+    broken: seq[bool]
+
   FirContext = object
     flow: FlowState                    # the journaled analysis state: the
                                        # definite-assignment init-set and the
@@ -135,6 +141,10 @@ type
     moduleConsts: Table[SymId, Cursor] # `const`s declared in this module: their
                                        # values, which `tryEvalOrdinal` cannot
                                        # load before the module is written
+    moduleTypes: Table[SymId, Cursor]  # `type`s declared in this module, which
+                                       # `tryLoadSym` cannot load yet either
+    moduleRoutines: Table[SymId, Cursor] # ... and the routines
+    pointeeFns: Table[SymId, bool]     # memo for `returnsPointee`
     moduleFuncs: HashSet[SymId]        # `func`s declared in this module, generic
                                        # instances included (see `collectAccessors`)
     steps: Table[SymId, StepInfo]      # routines that are just `x = x ± k`
@@ -143,6 +153,11 @@ type
       ## True while `scanLoopWrites` walks a loop body ahead of its traversal.
       ## The body's own locals are not registered with the type cache yet, so
       ## nothing may ask for a type during it.
+    speculating: int
+      ## > 0 while a loop body is walked only to find out which candidate
+      ## invariants it keeps: that walk is rolled back and reports nothing.
+    loopFrames: seq[LoopFrame]
+      ## One per loop being walked, innermost last; its back-edges check the top.
     substVar: Table[SymId, VarId]
       ## While an `.ensures` is being read, the `result` it names stands for a
       ## `VarId` rather than for an expression: either the location the call was
@@ -202,6 +217,7 @@ proc dumpCurrentProc(c: var FirContext; info: NifLineInfo; msg: string) =
   stderr.writeLine "--- end Final IR dump ---"
 
 proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
+  if c.speculating > 0: return
   # This pass runs on the FINAL IR, where the node an error is pinned to is
   # often one the compiler synthesized -- the epilogue's `(ret result)` is what
   # an uninitialized `result` is reported at -- and those carry no line info.
@@ -460,6 +476,7 @@ proc endBorrow(c: var FirContext; sym: SymId) =
 template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId)
+proc operandRange(c: var FirContext; n: Cursor; lo, hi: var xint)
 
 proc analyseIfDerived(c: var FirContext; n: Cursor) =
   ## A guard operand that turns out to be a *derived* location (`s.len`, and so
@@ -629,8 +646,85 @@ proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): boo
             lo = if isSub: aLo - bHi else: aLo + bLo
             hi = if isSub: aHi - bLo else: aHi + bHi
             result = not lo.isNaN and not hi.isNaN
+      of SufX:
+        # `15'u8` is `(suf 15u "u8")`
+        var d = n
+        d = sub(d)
+        result = valueBounds(c, d, lo, hi, depth+1)
+      of MulX:
+        var d = n
+        d = sub(d)
+        skip d # the type operand
+        var aLo = zero()
+        var aHi = zero()
+        if valueBounds(c, d, aLo, aHi, depth+1):
+          skip d
+          var bLo = zero()
+          var bHi = zero()
+          if valueBounds(c, d, bLo, bHi, depth+1):
+            # the extremes of a product of intervals are among its corners
+            let p1 = aLo * bLo
+            let p2 = aLo * bHi
+            let p3 = aHi * bLo
+            let p4 = aHi * bHi
+            lo = min(min(p1, p2), min(p3, p4))
+            hi = max(max(p1, p2), max(p3, p4))
+            result = not (p1.isNaN or p2.isNaN or p3.isNaN or p4.isNaN)
+      of ModX, DivX, ShlX:
+        # by a positive constant only; `mod` keeps the sign of the dividend
+        let k = n.exprKind
+        var d = n
+        d = sub(d)
+        skip d # the type operand
+        var aLo = zero()
+        var aHi = zero()
+        if valueBounds(c, d, aLo, aHi, depth+1):
+          skip d
+          var bLo = zero()
+          var bHi = zero()
+          if valueBounds(c, d, bLo, bHi, depth+1) and bLo == bHi and zero() < bLo:
+            case k
+            of ModX:
+              let top = bLo - createXint(1'i64)
+              if zero() <= aLo:
+                lo = zero()
+                hi = min(aHi, top)
+              else:
+                lo = -top
+                hi = if aHi < zero(): zero() else: top
+              result = true
+            of DivX:
+              if zero() <= aLo:
+                lo = aLo div bLo
+                hi = aHi div bLo
+                result = not lo.isNaN and not hi.isNaN
+            else:
+              if zero() <= aLo and bLo < createXint(63'i64):
+                var err = false
+                let shift = asSigned(bLo, err)
+                if not err:
+                  lo = aLo shl int(shift)
+                  hi = aHi shl int(shift)
+                  result = not lo.isNaN and not hi.isNaN
       else:
         discard
+      if not result and (n.isSymbol or
+          n.exprKind in {DotX, DdotX, TupatX, HderefX, DerefX, ArratX, AtX, PatX}):
+        # a location lies in whatever the flow facts bound it to
+        var fLo = createNaN()
+        var fHi = createNaN()
+        operandRange(c, n, fLo, fHi)
+        if not fLo.isNaN and not fHi.isNaN:
+          lo = fLo
+          hi = fHi
+          result = true
+        elif not c.prescanning:
+          # ... and in whatever its type holds: a `uint8` is `0..255`, and so
+          # is a `lent uint8` a loop variable is bound as
+          var t = getType(c.typeCache, n)
+          while t.typeKind in {LentT, SinkT, MutT, OutT}:
+            t = sub(t)
+          result = integerTypeBounds(c.bits, t, lo, hi)
       if not result and n.exprKind in {DotX, DdotX}:
         # A field of a `range` type is in that range whatever path it is read
         # by — through a pointer, too, where no flow fact may be kept because of
@@ -836,8 +930,18 @@ proc keyUnder(derived, written: string): bool =
   ## of the whole value, which any write may change.
   if derived.startsWith(written):
     result = derived.len == written.len or derived[written.len] in {'.', '-'}
+  elif derived.len > 0 and derived[0] == 'c':
+    # `c<fn>(<arg>)` is a function of the location `arg` alone: stale when the
+    # write reaches into `arg` or lands on something `arg` lies within, not
+    # when it hits a sibling — `p.kind = k` leaves `len(p.current)` alone.
+    let open = derived.find('(')
+    if open < 0 or derived[derived.len-1] != ')':
+      result = true
+    else:
+      let arg = derived.substr(open+1, derived.len-2)
+      result = keyUnder(arg, written) or keyUnder(written, arg)
   else:
-    result = 'c' in derived
+    result = false
 
 proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
   ## A variant object or a union: writing one field may change another.
@@ -845,9 +949,14 @@ proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
   var guard = 0
   result = false
   while t.isSymbol and guard < 8:
-    let decl = tryLoadSym(t.symId)
-    if decl.status != LacksNothing or decl.decl.symKind != TypeY: return true
-    let td = asTypeDecl(decl.decl)
+    var declCursor = default(Cursor)
+    if c.moduleTypes.hasKey(t.symId):
+      declCursor = c.moduleTypes.getOrQuit(t.symId)
+    else:
+      let decl = tryLoadSym(t.symId)
+      if decl.status != LacksNothing or decl.decl.symKind != TypeY: return true
+      declCursor = decl.decl
+    let td = asTypeDecl(declCursor)
     if hasPragma(td.pragmas, UnionP): return true
     t = td.body
     inc guard
@@ -1009,6 +1118,16 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     key.add "->"
     inc steps
     result = true
+  of TupatX:
+    # `t[0]` of a tuple: a field like any other, named by its position
+    var r = m
+    r = sub(r)
+    if not locationKey(c, r, subst, root, key, steps, depth+1): return false
+    skip r # the tuple
+    if not r.isIntLit: return false
+    key.add ".#" & $r.intVal
+    inc steps
+    result = true
   of CallKinds:
     var r = m
     r = sub(r)
@@ -1030,9 +1149,31 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       # accessor's own path then needs its parameter and nothing else — keeping
       # the outer map there would substitute twice, and a recursive call with
       # swapped arguments maps `a` to `b` and `b` back to `a`.
-      var inner = initTable[SymId, Cursor]()
-      inner[accessorParam] = argOf(arg, subst)
-      return locationKey(c, accessorValue, inner, root, key, steps, depth+1)
+      let resolved = argOf(arg, subst)
+      if resolved.isSymbol or not resolved.isTagLit or subst.len == 0:
+        var inner = initTable[SymId, Cursor]()
+        inner[accessorParam] = resolved
+        return locationKey(c, accessorValue, inner, root, key, steps, depth+1)
+      # A path argument (`len(b.data)`) still names the callee's parameters
+      # inside: key it under the substitution in flight, then graft the path
+      # the accessor returns onto it.
+      var argRoot = NoSymId
+      var argKey = ""
+      var argSteps = 0
+      if not locationKey(c, arg, subst, argRoot, argKey, argSteps, depth+1): return false
+      var own = NoSymId
+      var ownKey = ""
+      var ownSteps = 0
+      let noSubst = initTable[SymId, Cursor]()
+      if not locationKey(c, accessorValue, noSubst, own, ownKey, ownSteps, depth+1): return false
+      let paramKey = "v" & $uint32(accessorParam)
+      if own != accessorParam or not ownKey.startsWith(paramKey) or
+          (ownKey.len > paramKey.len and ownKey[paramKey.len] notin {'.', '-'}):
+        return false
+      root = argRoot
+      key = argKey & ownKey.substr(paramKey.len)
+      steps = argSteps + ownSteps
+      return true
     if not isKeyableCall(fnSym): return false
     if not locationKey(c, arg, subst, root, key, steps, depth+1): return false
     key = "c" & $uint32(fnSym) & "(" & key & ")"
@@ -1058,7 +1199,9 @@ proc invalidateWrittenPath(c: var FirContext; dest: Cursor; root: SymId) =
   if precise:
     for i in 0 ..< c.derivedRoots.len:
       if c.derivedRoots[i] == root and keyUnder(c.derivedKeys[i], key):
-        invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+        # projected, not dropped: `let L = s.len - 1; s.len = L` must still
+        # relate `L` to what `s.len` was
+        projectOut(c.facts, VarId(FirstDerivedVarId - i))
   else:
     invalidateDerivedFrom(c, root)
 
@@ -1069,6 +1212,60 @@ proc noteDeclaredRange(c: var FirContext; v: VarId; typ: Cursor) =
   if staticRangeBounds(typ, lo, hi):
     c.declaredRange[v] = RangeBounds(lo: lo, hi: hi)
 
+proc resultBound(r: Cursor; resultSyms: seq[SymId]; lo, hi: var xint) =
+  ## Narrow `lo..hi` by one conjunct of an `.ensures` that compares `result`
+  ## with an integer literal; any other conjunct says nothing here.
+  case r.exprKind
+  of AndX:
+    var x = r
+    x = sub(x)
+    resultBound(x, resultSyms, lo, hi)
+    skip x
+    resultBound(x, resultSyms, lo, hi)
+  of LeX, LtX:
+    let strict = if r.exprKind == LtX: createXint(1'i64) else: zero()
+    var x = r
+    x = sub(x)
+    skip x # the type operand
+    let a = peelExpr(x)
+    skip x
+    let b = peelExpr(x)
+    if a.kind == IntLit and b.isSymbol and b.symId in resultSyms:
+      lo = max(lo, createXint(a.intVal) + strict)
+    elif b.kind == IntLit and a.isSymbol and a.symId in resultSyms:
+      hi = min(hi, createXint(b.intVal) - strict)
+  else: discard
+
+proc ensuredResultRange(c: var FirContext; call: Cursor; lo, hi: var xint): bool =
+  ## The bounds a callee's `.ensures` puts on `result` alone — `0 <= result`
+  ## for `len`. They hold whatever the arguments are, so they describe every
+  ## value the call can have: a declared range in all but name, and one that no
+  ## write to the arguments makes stale.
+  result = false
+  var fn = call
+  fn = sub(fn)
+  var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
+  if not fnType.isParamsTag: return
+  skip fnType # params
+  skip fnType # return type
+  let ens = extractPragma(fnType, EnsuresP)
+  if cursorIsNil(ens) or ens.exprKind != ExprX: return
+  var resultSyms: seq[SymId] = @[]
+  var cond = ens
+  while cond.exprKind == ExprX:
+    var inner = cond
+    inner = sub(inner)
+    if not inner.hasMore: break
+    if inner.symKind == ResultY:
+      resultSyms.add asLocal(inner).name.symId
+    while inner.hasMore and not isLastSon(inner): skip inner
+    cond = inner
+  if resultSyms.len == 0: return
+  lo = createXint(low(int64))
+  hi = createXint(high(int64))
+  resultBound(cond, resultSyms, lo, hi)
+  result = lo > createXint(low(int64)) or hi < createXint(high(int64))
+
 proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): VarId =
   ## The `VarId` standing for the location `n` denotes, or `InvalidVarId`.
   var root = NoSymId
@@ -1077,7 +1274,13 @@ proc locationVarId(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]): V
   if locationKey(c, n, subst, root, key, steps, 0) and root != NoSymId:
     result = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
     if steps > 0 and not c.prescanning and not c.declaredRange.hasKey(result):
-      noteDeclaredRange(c, result, getType(c.typeCache, argOf(n, subst)))
+      let m = argOf(n, subst)
+      var lo = zero()
+      var hi = zero()
+      if m.exprKind in CallKinds and ensuredResultRange(c, m, lo, hi):
+        c.declaredRange[result] = RangeBounds(lo: lo, hi: hi)
+      else:
+        noteDeclaredRange(c, result, getType(c.typeCache, m))
   else:
     result = InvalidVarId
 
@@ -1086,6 +1289,50 @@ proc plainLocationVarId(c: var FirContext; n: Cursor): VarId =
   ## no parameter substitution is in flight.
   let noSubst = initTable[SymId, Cursor]()
   result = locationVarId(c, n, noSubst)
+
+proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
+                    v: var VarId; k: var xint): bool =
+  ## `high(s)`: a transparent accessor whose body is a location plus a
+  ## constant (`s.len - 1`), read as that location and that constant.
+  result = false
+  let m = argOf(n, subst)
+  if m.exprKind notin CallKinds: return
+  var r = m
+  r = sub(r)
+  let fnSym = extractSymId(r)
+  if fnSym == NoSymId: return
+  skip r # the callee
+  if not r.hasMore: return
+  let arg = r
+  skip r
+  if r.hasMore: return
+  var param = NoSymId
+  var value = default(Cursor)
+  if not accessorOf(c, fnSym, param, value): return
+  let body = peelExpr(value)
+  if body.exprKind notin {AddX, SubX}: return
+  var b = body
+  b = sub(b)
+  skip b # the type operand
+  var inner = initTable[SymId, Cursor]()
+  inner[param] = argOf(arg, subst)
+  # Not `locationVarId`: that asks the type cache about the path, which names
+  # the accessor's own parameter.
+  var root = NoSymId
+  var key = ""
+  var steps = 0
+  if not locationKey(c, b, inner, root, key, steps, 0) or root == NoSymId: return
+  let loc = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
+  skip b
+  var off = createNaN()
+  case b.kind
+  of IntLit: off = createXint(b.intVal)
+  of UIntLit: off = createXint(b.uintVal)
+  else: off = tryEvalOrdinal(c.bits, b)
+  if off.isNaN: return
+  v = loc
+  k = if body.exprKind == SubX: -off else: off
+  result = true
 
 proc matchStep(decl: Cursor; info: var StepInfo): bool =
   ## Recognize a *step routine*: one whose whole body moves its first, `var`,
@@ -1146,9 +1393,11 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
   if sid != NoSymId and sid == second:
     info.stepSym = second
     return true
-  case e.kind
-  of IntLit: info.stepLit = createXint(e.intVal)
-  of UIntLit: info.stepLit = createXint(e.uintVal)
+  # `inc` on a `Natural` steps by `(conv (rangetype …) 1)`
+  let lit = peelExpr(e)
+  case lit.kind
+  of IntLit: info.stepLit = createXint(lit.intVal)
+  of UIntLit: info.stepLit = createXint(lit.uintVal)
   else:
     info.stepLit = tryEvalOrdinal(0, e)   # `bits` is irrelevant for a literal
     if info.stepLit.isNaN: return false
@@ -1179,7 +1428,7 @@ proc directionOfDelta(delta: xint): IvKind =
   else: ivIncreasing
 
 proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
-                delta: var xint): bool =
+                delta: var xint; stepArg: var Cursor): bool =
   ## Is this a call to a step routine? Answers with the location it moves and by
   ## how much, signed. `inc(i, k)` with a `k` whose value is not known here is a
   ## write like any other — `inc` on an ordinal accepts a negative step.
@@ -1206,6 +1455,7 @@ proc stepCallAt(c: var FirContext; callee: Cursor; loc: var VarId;
     of IntLit: step = createXint(arg.intVal)
     of UIntLit: step = createXint(arg.uintVal)
     else: step = tryEvalOrdinal(c.bits, arg)
+    if step.isNaN: stepArg = arg
     skip r
   if r.hasMore: return false
   if step.isNaN: return false
@@ -1217,7 +1467,68 @@ proc stepCall(c: var FirContext; n: Cursor; loc: var VarId; delta: var xint): bo
   if not n.isTagLit: return false
   var callee = n
   callee = sub(callee)
-  result = stepCallAt(c, callee, loc, delta)
+  var stepArg = default(Cursor)
+  result = stepCallAt(c, callee, loc, delta, stepArg)
+
+proc returnsPointee(c: var FirContext; fnSym: SymId): bool =
+  ## Is the `var T` this routine returns the address of a pointer's target —
+  ## `s.data[i]` for a `seq`, `x.a[idx]` for an `openArray`? A write through
+  ## such a result lands in storage behind a pointer, which no location keyed
+  ## inline in the argument (`len(s)`) can be; only the heap is disturbed.
+  if c.pointeeFns.hasKey(fnSym): return c.pointeeFns.getOrQuit(fnSym)
+  result = false
+  var decl = default(Cursor)
+  if c.moduleRoutines.hasKey(fnSym):
+    decl = c.moduleRoutines.getOrQuit(fnSym)
+  else:
+    let sym = tryLoadSym(fnSym)
+    if sym.status == LacksNothing: decl = sym.decl
+  if not cursorIsNil(decl) and isRoutine(decl.symKind):
+    let r = asRoutine(decl, SkipInclBody)
+    if not cursorIsNil(r.body) and r.body.stmtKind == StmtsS and
+        r.retType.typeKind == MutT:
+      var b = r.body
+      b = sub(b)
+      var shapes = 0
+      var others = 0
+      while b.hasMore:
+        if b.stmtKind == AsgnS or b.finalIrKind == StoreV:
+          var a = b
+          a = sub(a)
+          var value = a
+          if b.stmtKind == AsgnS:
+            skip value
+          var v = value
+          while v.exprKind in {HaddrX, AddrX}:
+            v = sub(v)
+          if v.exprKind in {PatX, DerefX, DdotX}: inc shapes
+          else: inc others
+        elif b.symKind != ResultY and b.stmtKind notin {RetS, AssumeS} and
+            b.finalIrKind notin {AssumeV}:
+          inc others
+        skip b
+      result = shapes == 1 and others == 0
+  c.pointeeFns[fnSym] = result
+
+proc writesThroughPointee(c: var FirContext; dest: Cursor): bool =
+  ## `data[i].key = v`: a path over `(hderef (call f …))` with `f` returning a
+  ## pointer's target (`returnsPointee`).
+  var d = dest
+  while d.exprKind in {HaddrX, AddrX}:
+    d = sub(d)
+  while d.exprKind in {DotX, TupatX, ArratX}:
+    d = sub(d)
+  result = false
+  if d.exprKind == HderefX:
+    d = sub(d)
+    if d.isSymbol and c.inlineVars.hasKey(d.symId):
+      # `var x = data[i]` bound as an `(inline)` temp
+      d = c.inlineVars.getOrQuit(d.symId)
+    if d.exprKind in CallKinds:
+      var fn = d
+      fn = sub(fn)
+      let fnSym = extractSymId(fn)
+      result = fnSym != NoSymId and returnsPointee(c, fnSym)
 
 proc derivedRootOf(c: var FirContext; n: Cursor): SymId =
   ## The variable a location hangs off, for invalidation.
@@ -1239,11 +1550,19 @@ proc collectAccessors(c: var FirContext; n: var Cursor) =
   if not n.isTagLit:
     skip n
     return
+  if n.symKind == TypeY:
+    var name = n
+    name = sub(name)
+    if name.kind == SymbolDef: c.moduleTypes[name.symId] = n
   if n.symKind == ConstY:
     let local = asLocal(n)
     if local.name.kind == SymbolDef and not cursorIsNil(local.val):
       c.moduleConsts[local.name.symId] = local.val
   if n.symKind in RoutineKinds:
+    block:
+      var rname = n
+      rname = sub(rname)
+      if rname.kind == SymbolDef: c.moduleRoutines[rname.symId] = n
     if n.symKind == FuncY:
       var fname = n
       fname = sub(fname)
@@ -1731,6 +2050,22 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
   ## evaluator is asked only for the shapes a constant can have, so an ordinary
   ## `i + 1` costs a tag test rather than an evaluator run.
   result = false
+  if n.isTagLit and n.exprKind in {ConvX, HconvX} and c.constDepth < 8:
+    # `ord(high(E))` is `(conv (i 64) lastField)`
+    inc c.constDepth
+    var r = n
+    r = sub(r)
+    let target = r
+    skip r # the target type
+    result = constOrdinal(c, r, val)
+    if result:
+      # only a value the target holds unchanged: `uint8(300)` is not 300
+      var tLo = zero()
+      var tHi = zero()
+      if integerTypeBounds(c.bits, target, tLo, tHi):
+        result = tLo <= val and val <= tHi
+    dec c.constDepth
+    if result: return
   if n.isTagLit and n.exprKind in {NegX, AddX, SubX, MulX, SufX} and c.constDepth < 8:
     # arithmetic over constants, named ones included: `-Log2Pow10Len`
     inc c.constDepth
@@ -1766,6 +2101,28 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
   if n.kind != Symbol and not foldableArith(n, 0): return
   val = tryEvalOrdinal(c.bits, n)
   result = not val.isNaN
+
+proc operandRange(c: var FirContext; n: Cursor; lo, hi: var xint) =
+  ## The tightest bounds the facts give an integer operand — a literal, a
+  ## constant or a location — NaN for an end nothing bounds.
+  lo = createNaN()
+  hi = createNaN()
+  var k = zero()
+  if constOrdinal(c, n, k):
+    lo = k
+    hi = k
+    return
+  let v = plainLocationVarId(c, n)
+  if v == InvalidVarId or v == VarId(0): return
+  var known = snapshotFacts(c.facts)
+  if c.declaredRange.hasKey(v):
+    let r = c.declaredRange.getOrQuit(v)
+    known.add query(VarId(0), v, -r.lo)
+    known.add query(v, VarId(0), r.hi)
+  let up = boundsFrom(known, v)                 # v <= 0 + d
+  if up.hasKey(VarId(0)): hi = up.getOrQuit(VarId(0))
+  let down = boundsFrom(known, v, reverse = true) # 0 <= v + d
+  if down.hasKey(VarId(0)): lo = -down.getOrQuit(VarId(0))
 
 proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool =
   result = false
@@ -1819,6 +2176,11 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool 
     analyseIfDerived(c, pc)
     skip pc
     result = true
+  elif (var ov = VarId(0); var ok = zero(); offsetAccessor(c, pc, initTable[SymId, Cursor](), ov, ok)):
+    fact.b = ov
+    fact.c = fact.c + ok
+    skip pc
+    result = true
   elif pc.isIntLit:
     fact.b = VarId(0)
     fact.c = fact.c + createXint(pc.intVal)
@@ -1866,6 +2228,12 @@ type
                   ## as the negation of one direction is not merely imprecise,
                   ## it is wrong — `if x != 3` used to yield `x >= 4`, which
                   ## "proved" `x > 3` on a path where `x` may well be 1.
+    ckImplied     ## a consequence of the comparison, not the comparison: an
+                  ## operand was replaced by its interval (`d - 1 > (s and 1)`
+                  ## gives `d - 1 > 0`), so the false path learns nothing
+    ckImpliedOnFalse ## `ckImplied` under an odd number of `not`s: the fact is
+                     ## a consequence of the *false* path, and negating it would
+                     ## not be one of the true path
 
 proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXplusC =
   var r = pc
@@ -1938,6 +2306,11 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
     result.a = la
     analyseIfDerived(c, r)
     skip r
+  elif (var ov = VarId(0); var ok = zero(); offsetAccessor(c, r, initTable[SymId, Cursor](), ov, ok)):
+    # `high(s) <= b + c` is `s.len <= b + c + 1`
+    result.a = ov
+    result.c = result.c - ok
+    skip r
   elif r.exprKind in {AddX, SubX} and leftHandStep(c, r, result):
     # `i + 3 <= n` is `i <= n - 3`. Only the *right* side of a comparison used
     # to be read arithmetically, so the loop `while i + 3 <= n:` — which is how
@@ -1947,21 +2320,37 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
   elif r.exprKind == NilX:
     result.a = VarId(0)
     skip r
+  elif xk in {LeX, LtX} and r.exprKind in {BitandX, ShrX, AshrX} and
+      (var leftLo = zero(); var leftHi = zero(); valueBounds(c, r, leftLo, leftHi)):
+    # `e <= b + c` with `lo <= e` implies `lo <= b + c`
+    result.a = VarId(0)
+    result.c = -leftLo
+    kind = ckImplied
+    skip r
   else:
     traverseExpr c, pc
     return result
-  if r.exprKind == NilX:
+  if r.exprKind == NilX and kind != ckImplied:
     kind = ckPlain
-  if not rightHandSide(c, r, result):
+  if xk in {LeX, LtX} and kind != ckImplied and r.exprKind in {BitandX, ShrX, AshrX} and
+      (var rightLo = zero(); var rightHi = zero(); valueBounds(c, r, rightLo, rightHi)):
+    # `a <= e` with `e <= hi` implies `a <= hi`
+    result.b = VarId(0)
+    result.c = result.c + rightHi
+    kind = ckImplied
+    skip r
+  elif not rightHandSide(c, r, result):
     result.a = InvalidVarId
   # a < b  --> a <= b - 1:
   if xk == LtX:
     result.c = result.c - createXint(1'i32)
   if xk in {LeX, LtX, EqX}: r = cmpStart; skip r
 
-  if kind == ckDisequality:
+  if kind in {ckDisequality, ckImplied}:
     # Hand back the *equality* un-negated; `analyseCondition` knows to assume it
-    # on the false path and to assume nothing on the true one.
+    # on the false path and to assume nothing on the true one. An implied fact
+    # stays un-negated too, and moves to the false path under an odd count.
+    if kind == ckImplied and (negations and 1) == 1: kind = ckImpliedOnFalse
     while negations > 0:
       dec negations
       let h = notScopes.pop(); r = h; skip r
@@ -1969,6 +2358,18 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
     unwindNegations()
 
   pc = r
+
+proc strictDisequality(c: var FirContext; eq: LeXplusC): LeXplusC =
+  ## `a != b + c` where `a >= b + c` is known is `a >= b + c + 1`, and where
+  ## `a <= b + c` is known, `a <= b + c - 1`: `s.len != 0` beside `0 <= s.len`.
+  ## Invalid when neither direction is known.
+  result = LeXplusC(a: InvalidVarId, b: InvalidVarId, c: zero())
+  if impliesHere(c, eq.geXplusC):
+    result = eq
+    negateFact(result)
+  elif impliesHere(c, eq):
+    result = eq.geXplusC
+    negateFact(result)
 
 proc analyseCondition(c: var FirContext; pc: var Cursor;
                       elseFacts: var seq[LeXplusC]): int =
@@ -2002,17 +2403,33 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
     negateFact(negated)
     elseFacts.add negated
     result = 1
+  of ckImplied:
+    c.facts.add fact
+    result = 1
+  of ckImpliedOnFalse:
+    elseFacts.add fact
+    result = 0
   of ckEquality:
+    # `not (a == b)` is a disequality, which states nothing by itself — but
+    # next to a bound already known in one direction it is strict in that one.
+    # Judged before the equality becomes a fact: afterwards both directions are
+    # "known" and the false path would be handed a contradiction.
+    let strict = strictDisequality(c, fact)
+    if strict.isValid: elseFacts.add strict
     c.facts.add fact
     c.facts.add fact.geXplusC
-    # `not (a == b)` is a disequality; nothing to assume on the false path.
     result = 2
   of ckDisequality:
-    # Nothing holds on the true path that this engine can state; on the false
-    # path the equality holds in both directions.
+    # On the false path the equality holds in both directions; the true path
+    # learns only what `strictDisequality` can make of it.
     elseFacts.add fact
     elseFacts.add fact.geXplusC
-    result = 0
+    let strict = strictDisequality(c, fact)
+    if strict.isValid:
+      c.facts.add strict
+      result = 1
+    else:
+      result = 0
 
 # --- Not-nil checking ---
 
@@ -2230,12 +2647,17 @@ proc constStringLen(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]
         let strSym = extractSymId(argOf(r, paramMap))
         skip r
         if strSym != NoSymId and not r.hasMore:
-          let sym = tryLoadSym(strSym)
-          if sym.status == LacksNothing and sym.decl.symKind == ConstY:
-            let value = asLocal(sym.decl).val
-            if value.kind == StrLit:
-              length = createXint(int64(pool.strings[value.strId].len))
-              result = true
+          var value = default(Cursor)
+          if c.moduleConsts.hasKey(strSym):
+            # declared in this module, which `tryLoadSym` cannot load yet
+            value = c.moduleConsts.getOrQuit(strSym)
+          else:
+            let sym = tryLoadSym(strSym)
+            if sym.status == LacksNothing and sym.decl.symKind == ConstY:
+              value = asLocal(sym.decl).val
+          if not cursorIsNil(value) and value.kind == StrLit:
+            length = createXint(int64(pool.strings[value.strId].len))
+            result = true
 
 proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
                  v: var VarId; cnst: var xint): bool =
@@ -2272,8 +2694,11 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
     var r = m
     r = sub(r)
     skip r # the type operand
-    let base = locationVarId(c, r, paramMap)
-    if base == InvalidVarId: return false
+    # the base is an operand of its own: a location, `old(e)`, `high(s)`, or a
+    # literal a parameter stands for at this call site (`i + 2` with `i = 0`)
+    var base = VarId(0)
+    var baseConst = zero()
+    if not pureOperand(c, r, paramMap, base, baseConst): return false
     skip r
     let k = argOf(r, paramMap)
     var off = createXint(0'i32)
@@ -2284,7 +2709,7 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
       off = tryEvalOrdinal(c.bits, k)
       if off.isNaN: return false
     v = base
-    cnst = if isSub: -off else: off
+    cnst = baseConst + (if isSub: -off else: off)
     return true
   var oldOf = default(Cursor)
   if oldArg(m, oldOf):
@@ -2297,6 +2722,8 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
       return true
     return false
   if constStringLen(c, m, paramMap, cnst):
+    return true
+  if offsetAccessor(c, n, paramMap, v, cnst):
     return true
   let loc = locationVarId(c, n, paramMap)
   if loc != InvalidVarId:
@@ -2585,7 +3012,10 @@ proc snapshotOlds(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]) 
     if locationKey(c, arg, paramMap, root, key, steps, 0) and not c.oldSlots.hasKey(key):
       let loc = locationVarId(c, arg, paramMap)
       let slot = derivedIdOf(c, "#old:" & key, NoSymId)
-      invalidateFactsAbout(c.facts, slot)
+      # The slot is reused by every call: what the previous one left there may
+      # be the only link between `e` and its bounds (`e == slot`, `i < slot`),
+      # so it is projected out rather than dropped.
+      projectOut(c.facts, slot)
       c.oldSlots[key] = slot
       if loc != InvalidVarId:
         let known = c.facts.len
@@ -2594,6 +3024,10 @@ proc snapshotOlds(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]) 
           if f.a == loc or f.b == loc:
             c.facts.add LeXplusC(a: (if f.a == loc: slot else: f.a),
                                  b: (if f.b == loc: slot else: f.b), c: f.c)
+        # ... and that the slot *is* `e` for now, which a later join can keep
+        # when the copies have taken different shapes on its two sides
+        c.facts.add query(slot, loc)
+        c.facts.add query(loc, slot)
   elif n.kind == TagLit:
     var r = n
     r = sub(r)
@@ -2640,7 +3074,7 @@ proc checkRequires(c: var FirContext; req: Cursor; paramMap: Table[SymId, Cursor
   if not c.tr.live: return
   let res = proveCond(c, req, paramMap)
   when defined(contractStats):
-    stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
+    if c.speculating == 0: stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
   case res
   of Proven:
     discard "obligation discharged"
@@ -2931,7 +3365,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
         heapMutatedRoots.add root
       elif root != NoSymId:
         mutatedRoots.add root
-      else:
+      elif not writesThroughPointee(c, n):
         mutatesUnknown = true
     checkNilMatch c, n, param.typ
     traverseExpr c, n
@@ -2957,10 +3391,26 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
   # unprovable.
   var stepLoc = InvalidVarId
   var delta = createNaN()
-  let isStep = stepCallAt(c, callCursor, stepLoc, delta) and not delta.isNaN
+  var stepArg = default(Cursor)
+  var isStep = stepCallAt(c, callCursor, stepLoc, delta, stepArg) and not delta.isNaN
   if isStep:
     variableChangedByDiff(c.facts, stepLoc, delta)
     c.steppedLoc = stepLoc
+  elif stepLoc != InvalidVarId and not cursorIsNil(stepArg):
+    # `inc(i, L)` with an `L` the facts bound: `i` moves within that range
+    var lo = createNaN()
+    var hi = createNaN()
+    operandRange(c, stepArg, lo, hi)
+    if not lo.isNaN or not hi.isNaN:
+      var info = default(StepInfo)
+      discard stepOf(c, extractSymId(callCursor), info)
+      if info.isSub:
+        swap lo, hi
+        lo = -lo
+        hi = -hi
+      variableMovedWithin(c.facts, stepLoc, lo, hi)
+      c.steppedLoc = stepLoc
+      isStep = true
   for root in mutatedRoots:
     if isStep and getVarId(c, root) == stepLoc:
       # the step above described this write exactly
@@ -3011,6 +3461,12 @@ proc addAsgnFact(c: var FirContext; fact: LeXplusC) =
   if fact.isValid:
     c.facts.add fact
     c.facts.add fact.geXplusC
+    if c.declaredRange.hasKey(fact.b):
+      # `var n = c.bufLen` of a `range[0..63]` field: `n` starts out in that
+      # range, as a flow fact of its own that a join can keep
+      let r = c.declaredRange.getOrQuit(fact.b)
+      c.facts.add query(VarId(0), fact.a, -(r.lo + fact.c))
+      c.facts.add query(fact.a, VarId(0), r.hi + fact.c)
 
 proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
   ## A value `rightHandSide` cannot state as `b + c` may still have a known
@@ -3020,6 +3476,22 @@ proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
   if valueBounds(c, value, lo, hi):
     c.facts.add query(VarId(0), dest, -lo)
     c.facts.add query(dest, VarId(0), hi)
+  elif (let v = peelExpr(value); v.exprKind == BitandX):
+    # `x and m` lies in `0..m` for a mask `m` known not to be negative: the
+    # `hash and high(data)` every hash table starts its probe with.
+    let noSubst = initTable[SymId, Cursor]()
+    var r = v
+    r = sub(r)
+    skip r # the type operand
+    for _ in 0 ..< 2:
+      var mv = VarId(0)
+      var mk = zero()
+      if pureOperand(c, r, noSubst, mv, mk) and mv != VarId(0) and
+          impliesHere(c, query(VarId(0), mv, mk)):
+        # every such operand bounds it: `a.len and high(b)` is below both
+        c.facts.add query(VarId(0), dest, zero())
+        c.facts.add query(dest, mv, mk)
+      skip r
 
 proc cannotBeNil(c: var FirContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
@@ -3052,6 +3524,41 @@ proc checkStoreNilMatch(c: var FirContext; value: Cursor; expected: Cursor) {.in
     checkNilMatch c, value, expected
 
 # --- Final-IR-specific traversal ---
+
+proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
+  ## `x = y + d` or `x = y - d` for a location `y` and a `d` the facts bound
+  ## (either end may be open). With `y` being `x` itself that moves what is
+  ## known about `x` rather than erasing it (`variableMovedWithin`); otherwise
+  ## `x` lies within `d` of `y`. `x = d + y` is the same sum.
+  result = false
+  let v = peelExpr(value)
+  if v.exprKind notin {AddX, SubX}: return
+  var r = v
+  r = sub(r)
+  skip r # the type operand
+  var first = r
+  skip r
+  var second = r
+  var y = plainLocationVarId(c, first)
+  if y == InvalidVarId and v.exprKind == AddX:
+    y = plainLocationVarId(c, second)
+    second = first
+  if y == InvalidVarId or y == VarId(0): return
+  var lo = createNaN()
+  var hi = createNaN()
+  operandRange(c, second, lo, hi)
+  if lo.isNaN and hi.isNaN: return
+  if v.exprKind == SubX:
+    swap lo, hi
+    lo = -lo
+    hi = -hi
+  if y == dest:
+    variableMovedWithin(c.facts, dest, lo, hi)
+  else:
+    projectOut(c.facts, dest)
+    if not lo.isNaN: c.facts.add query(y, dest, -lo)   # y + lo <= x
+    if not hi.isNaN: c.facts.add query(dest, y, hi)    # x <= y + hi
+  result = true
 
 proc traverseStore(c: var FirContext; n: var Cursor) =
   ## Handle (store value dest) - note reversed order from asgn
@@ -3110,10 +3617,10 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
-        invalidateFactsAbout(c.facts, fact.a)
+        projectOut(c.facts, fact.a)
         addAsgnFact c, fact
-    else:
-      invalidateFactsAbout(c.facts, fact.a)
+    elif not sumWithBoundedTerm(c, valueStart, fact.a):
+      projectOut(c.facts, fact.a)
       addBoundFacts c, fact.a, valueStart
 
     # Check if the rhs is known to be not nil
@@ -3141,7 +3648,9 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
     # case; when we cannot, every derived location is suspect.
     let destLoc = plainLocationVarId(c, n)
     let destRoot = derivedRootOf(c, n)
-    if destRoot != NoSymId:
+    if writesThroughPointee(c, n):
+      discard "an element behind a pointer: the heap facts are gone already"
+    elif destRoot != NoSymId:
       # Through a pointer the write changes the target, never the pointer: what
       # is known about the root itself — that it is not nil — stays.
       if not mayWriteHeap(n):
@@ -3171,7 +3680,14 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
 proc leaveToLabel(c: var FirContext; label: SymId) = gotoLabel(c.tr, c.flow, label)
 proc leaveToReturn(c: var FirContext) = gotoReturn(c.tr, c.flow)
 proc leaveToRaise(c: var FirContext) = gotoRaise(c.tr, c.flow)
-proc leaveToContinue(c: var FirContext) = gotoContinue(c.tr, c.flow)
+proc leaveToContinue(c: var FirContext) =
+  if c.tr.live and c.loopFrames.len > 0:
+    let top = c.loopFrames.len - 1
+    for i in 0 ..< c.loopFrames[top].candidates.len:
+      if not c.loopFrames[top].broken[i] and
+          not impliesHere(c, c.loopFrames[top].candidates[i]):
+        c.loopFrames[top].broken[i] = true
+  gotoContinue(c.tr, c.flow)
 
 proc traverseIte(c: var FirContext; n: var Cursor) =
   ## `(ite cond then else)`. Each arm is analyzed under the condition's polarity;
@@ -3556,6 +4072,13 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for v, kind in w.kinds:
     if kind == ivNonNegative and implies(c.facts, query(VarId(0), v, zero())):
       keepNonNeg.add v
+  # A bound between two locations the body leaves alone may exist only as a
+  # chain through one it writes — `let s = i` under `i < n`, then a loop that
+  # moves `i`, still has `s < n`. Keep the chain before the link goes.
+  var bypasses: seq[LeXplusC] = @[]
+  for v, kind in w.kinds:
+    for ch in chainsThrough(c.facts, v):
+      if isLoopInvariant(c, w, ch): bypasses.add ch
   var i = 0
   while i < c.facts.len:
     if isLoopInvariant(c, w, c.facts[i]):
@@ -3564,6 +4087,174 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
       removeFactAt(c.facts, i)   # journaled; the swapped-in slot is rechecked
   for v in keepNonNeg:
     c.facts.add query(VarId(0), v, zero())
+  for ch in bypasses:
+    c.facts.add ch
+
+proc collectSyms(n: var Cursor; syms, locals: var HashSet[SymId];
+                 calls, conds, inlines: var seq[Cursor]) =
+  ## The symbols a loop body mentions, the locals it declares (the `(inline)`
+  ## ones among them also in `inlines`), its calls and the conditions it
+  ## branches on.
+  if n.isTagLit:
+    if n.exprKind in CallKinds: calls.add n
+    if n.finalIrKind in {IteV, ItecV}:
+      var cond = n
+      cond = sub(cond)
+      conds.add cond
+    if isLocal(n.symKind):
+      var name = n
+      name = sub(name)
+      if name.kind == SymbolDef:
+        locals.incl name.symId
+        if hasPragma(asLocal(n).pragmas, InlineP): inlines.add n
+    n.into:
+      while n.hasMore: collectSyms(n, syms, locals, calls, conds, inlines)
+  else:
+    if n.isSymbol or n.kind == SymbolDef: syms.incl n.symId
+    skip n
+
+proc mentionsAny(n: var Cursor; syms: HashSet[SymId]): bool =
+  result = false
+  if n.isTagLit:
+    n.into:
+      while n.hasMore:
+        if mentionsAny(n, syms): result = true
+  else:
+    result = n.isSymbol and n.symId in syms
+    skip n
+
+proc guardFacts(c: var FirContext; cond: Cursor; into: var seq[LeXplusC]) =
+  ## The comparisons in a branch condition, as facts, whatever their polarity.
+  ## Read silently and rolled back: a condition is not a statement of fact.
+  case cond.exprKind
+  of AndX, OrX:
+    var r = cond
+    r = sub(r)
+    guardFacts(c, r, into)
+    skip r
+    guardFacts(c, r, into)
+  of NotX:
+    var r = cond
+    r = sub(r)
+    guardFacts(c, r, into)
+  of LeX, LtX, EqX:
+    let cp = c.flow.checkpoint()
+    inc c.speculating
+    var kind = ckPlain
+    var r = cond
+    let f = translateCond(c, r, kind)
+    dec c.speculating
+    c.flow.rollbackTo cp
+    if f.a != InvalidVarId and f.b != InvalidVarId and f.isValid:
+      into.add f
+  else: discard
+
+proc loopCandidates(c: var FirContext; w: LoopWrites; body: Cursor): seq[LeXplusC] =
+  ## The bounds on what the loop writes that hold on entry but that
+  ## `isLoopInvariant` cannot vouch for from the write directions alone:
+  ## `j <= s.len` for a `j` that only moves under `j < s.len`. Chained bounds
+  ## are included (`j <= i0`, `i0 <= s.len` offers `j <= s.len`), restricted to
+  ## the constant and the locations the body mentions.
+  result = @[]
+  var syms = initHashSet[SymId]()
+  var locals = initHashSet[SymId]()
+  var calls: seq[Cursor] = @[]
+  var conds: seq[Cursor] = @[]
+  var inlines: seq[Cursor] = @[]
+  var b = body
+  collectSyms(b, syms, locals, calls, conds, inlines)
+  # An `(inline)` temp stands for its initializer — the `len(q)` a guard on an
+  # `openArray` reads through one — so a condition naming it is still about
+  # the locations outside the body, as long as the initializer is.
+  var resolved = true
+  while resolved:
+    resolved = false
+    for decl in inlines:
+      let local = asLocal(decl)
+      let name = local.name.symId
+      if name in locals and not cursorIsNil(local.val):
+        var r = local.val
+        if not mentionsAny(r, locals):
+          c.inlineVars[name] = local.val
+          # the walk registers it again when it gets there
+          c.typeCache.registerLocal(name, decl.symKind, local.typ)
+          locals.excl name
+          resolved = true
+  # A location the body reads through a call — `s.len` in the guard — may not
+  # have met the analysis before the loop; resolving it now brings its declared
+  # and ensured range along. Not for a call on the body's own locals, which the
+  # type cache does not know yet.
+  for call in calls:
+    var r = call
+    if not mentionsAny(r, locals):
+      discard plainLocationVarId(c, call)
+  var nodes = initHashSet[VarId]()
+  nodes.incl VarId(0)
+  for s in syms: nodes.incl getVarId(c, s)
+  for i in 0 ..< c.derivedRoots.len:
+    if c.derivedRoots[i] in syms: nodes.incl VarId(FirstDerivedVarId - i)
+  var known = snapshotFacts(c.facts)
+  for v, r in c.declaredRange:
+    if v in nodes:
+      known.add query(VarId(0), v, -r.lo)
+      known.add query(v, VarId(0), r.hi)
+  for v, kind in w.kinds:
+    if v notin nodes: continue
+    if w.opaque and int(v) <= FirstDerivedVarId: continue
+    if w.heap and isHeapDerived(c, v): continue
+    for reverse in [false, true]:
+      for x, d in boundsFrom(known, v, reverse):
+        if x != v and x in nodes:
+          let f = if reverse: query(x, v, d) else: query(v, x, d)
+          if f.isValid and not isLoopInvariant(c, w, f): result.add f
+  # The body's own comparisons, and their negations, each also loosened by one:
+  # `while i < 255: … inc i` keeps `i <= 255`, which no entry fact names
+  # while `i` starts at a tighter `i <= 0`.
+  var guards: seq[LeXplusC] = @[]
+  for cond in conds:
+    var r = cond
+    if not mentionsAny(r, locals):
+      guardFacts(c, cond, guards)
+  for g in guards:
+    if not (w.kinds.hasKey(g.a) or w.kinds.hasKey(g.b)): continue
+    var neg = g
+    negateFact(neg)
+    for f in [g, neg]:
+      for slack in [zero(), createXint(1'i64)]:
+        var h = f
+        h.c = h.c + slack
+        if h.isValid and not isLoopInvariant(c, w, h) and implies(known, h):
+          result.add h
+
+proc refuteCandidates(c: var FirContext; body: Cursor; cands: var seq[LeXplusC]): bool =
+  ## Walk the body once under `cands`, silently, and drop every candidate some
+  ## back-edge does not imply. Nothing the walk did survives it. Returns whether
+  ## a candidate was dropped: the survivors are an inductive invariant only once
+  ## a walk under exactly them drops none.
+  let cp = c.flow.checkpoint()
+  let ecp = c.tr.exitsCheckpoint()
+  let live = c.tr.live
+  let borrows = c.activeBorrows.len
+  for f in cands: c.facts.add f
+  c.loopFrames.add LoopFrame(candidates: cands, broken: newSeq[bool](cands.len))
+  inc c.speculating
+  var b = body
+  traverseStmt c, b
+  dec c.speculating
+  let frame = c.loopFrames.pop()
+  c.flow.rollbackTo cp
+  c.tr.rollbackExits ecp
+  c.tr.live = live
+  c.activeBorrows.setLen(borrows)
+  result = false
+  cands.setLen 0
+  for i in 0 ..< frame.candidates.len:
+    if frame.broken[i]: result = true
+    else: cands.add frame.candidates[i]
+
+const
+  MaxInvariantRounds = 4
+  MaxSpeculationDepth = 2 ## loops nested deeper get no candidates while speculating
 
 proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
@@ -3573,6 +4264,14 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## break sites (captured) and to the back-edge (discarded); the loop never
   ## falls through. The `(lab loopExit)` that follows installs the merged
   ## break state via `bindLoopExit`.
+  ##
+  ## The body is analyzed under the facts no iteration can break. Those the
+  ## write directions vouch for are kept outright; the others are candidates
+  ## that speculative walks of the body refute until the rest holds at every
+  ## back-edge (Houdini). Beyond `MaxSpeculationDepth` a walk that is itself
+  ## speculative keeps only the former, which is weaker and therefore still
+  ## sound, and bounds the work, which otherwise grows with the rounds raised to
+  ## the nesting depth.
   n.into: # loop tag
     # Before the checkpoint, not after: the rollback below restores the state
     # the checkpoint captured, so an invalidation made after it would be undone
@@ -3586,10 +4285,19 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
       c.prescanning = true
       scanLoopWrites(c, scan, w)
       c.prescanning = false
+      var cands = if c.speculating < MaxSpeculationDepth and c.tr.live: loopCandidates(c, w, n)
+                  else: @[]
       restrictFactsToLoopInvariants(c, w)
+      var rounds = 0
+      while cands.len > 0 and refuteCandidates(c, n, cands):
+        inc rounds
+        if rounds == MaxInvariantRounds: cands.setLen 0
+      for f in cands: c.facts.add f
     let cp = c.flow.checkpoint()
     let savedBorrows = c.activeBorrows.len
+    c.loopFrames.add LoopFrame()
     traverseStmt c, n        # the body `(stmts ...)`; ends by leaving
+    discard c.loopFrames.pop()
     dropContinue(c.tr)       # the loop header consumes the back-edge
     # The loop never falls through; reset the working state to the pre-loop base.
     # A following `(lab loopExit)` installs the join of the states its exits
@@ -3635,7 +4343,19 @@ proc traverseRet(c: var FirContext; n: var Cursor) =
       verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), info
       inc n
     else:
-      verifyEnsures c, plainLocationVarId(c, n), info
+      var retLoc = plainLocationVarId(c, n)
+      if retLoc == InvalidVarId and not cursorIsNil(c.ownEnsures):
+        # `return i - 1`: the value gets a slot of its own to be judged in
+        retLoc = derivedIdOf(c, "#ret", NoSymId)
+        invalidateFactsAbout(c.facts, retLoc)
+        var v = VarId(0)
+        var k = zero()
+        let noSubst = initTable[SymId, Cursor]()
+        if pureOperand(c, n, noSubst, v, k):
+          addAsgnFact c, query(retLoc, v, k)
+        elif not sumWithBoundedTerm(c, n, retLoc):
+          addBoundFacts c, retLoc, n
+      verifyEnsures c, retLoc, info
       let providesResult = c.resultSym != NoSymId and
         not (n.isSymbol and n.symId == c.resultSym)
       if providesResult:
@@ -3870,7 +4590,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor) =
       let a = getVarId(c, name)
       if a != v:
         addAsgnFact c, query(a, v, k)
-    else:
+    elif not sumWithBoundedTerm(c, initStart, getVarId(c, name)):
       addBoundFacts c, getVarId(c, name), initStart
   n = localStart; skip n
   # The local now holds a value proven to be within its range (if any), so
@@ -3914,7 +4634,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
     var report = false
     var expectUnprovable = false
     if n.pragmaKind == ReportP:
-      report = true
+      report = c.speculating == 0
       skip n
     if n.pragmaKind == ErrorP:
       expectUnprovable = true
@@ -4119,7 +4839,9 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
       # (nil) state, so a later `a.x` must be re-proven, not silently accepted.
       # Facts are keyed per root variable (see `analysableRoot`), so we invalidate
       # by the path's root symbol.
-      if unknownPath.path.len > 0 and unknownPath.path[0] in ensured:
+      if writesThroughPointee(c, n):
+        discard "an element behind a pointer: only the heap changed"
+      elif unknownPath.path.len > 0 and unknownPath.path[0] in ensured:
         # The call before this already dropped everything its mutation could
         # reach and restated what its `.ensures` promises.
         discard
