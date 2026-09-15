@@ -4648,7 +4648,8 @@ proc traverseToplevel(c: var FirContext; n: var Cursor) =
 proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
   ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
-  var buf = createTokenBuf(input.len)
+  # this storage is reused for the Final IR, which is up to 1.5x its input
+  var buf = createTokenBuf(input.len + input.len div 2)
   buf.addSubtree n
   var pass = initPass(move buf, moduleSuffix, "xelim_finalir", bits)
   toFinalIr(pass)

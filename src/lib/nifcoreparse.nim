@@ -516,12 +516,14 @@ proc toModuleString*(b: var TokenBuf; dottedSuffix = ""; sizeHint = 0;
   ## `compact` drops the layout whitespace (`nifbuilder`'s compact mode). The
   ## result parses identically — indentation is decoration — and is what a text
   ## NIF costs when it is treated as a cache rather than as something to read.
-  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 20, compact)
+  # A module file takes 8-10 bytes per token, its index included (the index is
+  # appended to the same string, so this reservation holds both).
+  var bld = nifbuilder.open(if sizeHint > 0: sizeHint else: b.len * 10, compact)
   let patchPos = bld.addHeader27()
   var c = b.beginRead()
   var cur = NoNifLineInfo
   var parents = @[NoNifLineInfo]
-  var index = nifbuilder.open(b.len * 2)
+  var index = nifbuilder.open(b.len div 2)
   index.addTree ".index"
   let rootInfo = rawLineInfo(c)
   if rootInfo.isValid:
