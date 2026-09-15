@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tblockindex.nim(12, 13) Error: cannot prove 'p - start' is in range 0..15 [pass --verbose for the Final IR]

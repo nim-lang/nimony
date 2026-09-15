@@ -1758,6 +1758,14 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
         cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(baseStart) &
           "' stays in range " & $lo & ".." & $hi
         return
+      let other = if isSub and k.isNaN: plainLocationVarId(c, a) else: InvalidVarId
+      if other != InvalidVarId and other != VarId(0):
+        # `a - b` of two locations is a difference the facts state directly:
+        # `lo <= a - b` is `b <= a - lo`, `a - b <= hi` is `a <= b + hi` —
+        # what a block copy `buf[p - start]` owes
+        if (not needLo or impliesHere(c, query(other, baseLoc, -lo))) and
+           (not needHi or impliesHere(c, query(baseLoc, other, hi))):
+          return
 
   # A call binding straight to its destination — the Final IR's normal form —
   # can only be judged by what the callee promises. Its `.ensures` is read into

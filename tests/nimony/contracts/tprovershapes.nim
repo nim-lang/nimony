@@ -194,6 +194,19 @@ proc putPairs(dest: var openArray[char]) =
     for k in 0 ..< 2:
       putPair(dest, 4)
 
+proc blockSum(data: openArray[int]): int =
+  # a block copy indexes its buffer by `p - start`: a difference of two
+  # locations, which the facts state directly
+  var blk = default(array[16, int])
+  result = 0
+  var j = 0
+  while j + 16 <= data.len:
+    let start = j
+    for p in start ..< start + 16:
+      blk[p - start] = data[p]
+    j = start + 16
+    result = result + blk[15]
+
 assert mask(-1) == 0
 assert maskedLocal(1000) == 0
 assert byteWidth(0x1200'u32) == 0x12
@@ -226,3 +239,6 @@ assert toneName(toneMid) == "mid"
 var pairs = default(array[6, char])
 putPairs(pairs)
 assert pairs[5] == '>'
+var blocks = default(array[40, int])
+for q in 0 ..< 40: blocks[q] = q
+assert blockSum(blocks) == 15 + 31
