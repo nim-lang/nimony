@@ -96,6 +96,20 @@ type
     path: seq[SymId]  ## root :: field1 :: field2 :: ...
     info: NifLineInfo
 
+  CallContext = object
+    ## What the calls of one statement established about the locations they
+    ## wrote. The lowering puts an `(unknown x)` after that statement for every
+    ## argument passed by address, and those statements read this rather than
+    ## forgetting everything about `x`.
+    stepped: VarId
+      ## `inc i` moved `i` by an amount the call stated exactly: its facts were
+      ## shifted, not lost.
+    ensured: seq[SymId]
+      ## Roots whose facts a callee's `.ensures` re-established after the call.
+    views: seq[SymId]
+      ## `var openArray` arguments: their elements are unknown now, never their
+      ## length (`isVarOpenArray`).
+
   FirContext = object
     flow: FlowState                    # the journaled analysis state: the
                                        # definite-assignment init-set and the
@@ -151,10 +165,6 @@ type
       ## can never go stale — every write to the location owes the range in
       ## turn — so it answers questions the flow facts have been widened away
       ## from, which is what a `Natural` field advanced inside a loop needs.
-    steppedLoc: VarId
-      ## `inc i` lowers to a call plus an `(unknown i)`; the call has already
-      ## said exactly how far `i` moved, so that `(unknown …)` must not then
-      ## erase it. Holds the location for the one statement that follows.
     oldSlots: Table[string, VarId]
       ## `old(e)` in the `.ensures` of the call being analysed: the snapshot of
       ## location `e` taken before the call's mutations, keyed by `e`'s
@@ -164,14 +174,6 @@ type
       ## (`verifyEnsures`); nil when it has none.
     ownOldSlots: Table[string, VarId]
       ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
-    ensuredRoots: seq[SymId]
-    viewRoots: seq[SymId]
-      ## `var openArray` arguments of the call just analysed: the `(unknown …)`
-      ## that follows may drop what is known about their elements, never
-      ## their length (`isVarOpenArray`).
-      ## Roots whose facts a callee's `.ensures` just re-established. Like
-      ## `steppedLoc`, the `(unknown …)` that follows the call must not erase
-      ## them again; lives for the one statement that follows.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump final IR on init/contract
@@ -226,9 +228,11 @@ proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
     c.errors.addStrLit(hintedMsg, info)
 
 # Forward declarations
-proc traverseStmt(c: var FirContext; n: var Cursor)
-proc traverseExpr(c: var FirContext; pc: var Cursor)
-proc analyseCall(c: var FirContext; n: var Cursor)
+proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext)
+proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext)
+proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext)
+
+proc freshCall(): CallContext {.inline.} = CallContext(stepped: InvalidVarId)
 
 proc extractSymId(n: Cursor): SymId {.inline.} =
   var n = n
@@ -464,7 +468,7 @@ template getVarId(c: var FirContext; symId: SymId): VarId = VarId(symId)
 proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId)
 proc operandRange(c: var FirContext; n: Cursor; lo, hi: var xint)
 
-proc analyseIfDerived(c: var FirContext; n: Cursor) =
+proc analyseIfDerived(c: var FirContext; n: Cursor; call: var CallContext) =
   ## A guard operand that turns out to be a *derived* location (`s.len`, and so
   ## a call) is consumed by the fact machinery rather than by `traverseExpr`, so
   ## it would otherwise escape analysis entirely — including its own contract.
@@ -473,7 +477,7 @@ proc analyseIfDerived(c: var FirContext; n: Cursor) =
   ## nothing to do with.
   if extractSymId(n) == NoSymId:
     var probe = n
-    traverseExpr c, probe
+    traverseExpr c, probe, call
 
 proc staticRangeBounds(typ: Cursor; lo, hi: var xint): bool =
   ## Extract the statically-known integer bounds of a `range[lo..hi]` type,
@@ -1982,7 +1986,8 @@ proc operandRange(c: var FirContext; n: Cursor; lo, hi: var xint) =
   let down = boundsFrom(known, v, reverse = true) # 0 <= v + d
   if down.hasKey(VarId(0)): lo = -down.getOrQuit(VarId(0))
 
-proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool =
+proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC;
+                   call: var CallContext): bool =
   result = false
   var cval = createXint(0'i32)
   if constOrdinal(c, pc, cval):
@@ -2000,7 +2005,7 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool 
       skip pc # type
       let loc2 = plainLocationVarId(c, pc)
       if loc2 != InvalidVarId:
-        analyseIfDerived(c, pc)
+        analyseIfDerived(c, pc, call)
         skip pc
         fact.b = loc2
         var k = createNaN()
@@ -2010,7 +2015,7 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool 
           result = true
           skip pc
         else:
-          traverseExpr c, pc
+          traverseExpr c, pc, call
       else:
         # `k + loc`, the constant first: `absExponent <= 22 + slop`
         var k = createNaN()
@@ -2019,19 +2024,19 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool 
           skip pc
           let loc3 = plainLocationVarId(c, pc)
           if loc3 != InvalidVarId:
-            analyseIfDerived(c, pc)
+            analyseIfDerived(c, pc, call)
             fact.b = loc3
             fact.c = fact.c + k
             result = true
             skip pc
           else:
-            traverseExpr c, pc
+            traverseExpr c, pc, call
         else:
-          traverseExpr c, pc
-          traverseExpr c, pc
+          traverseExpr c, pc, call
+          traverseExpr c, pc, call
   elif (let loc = plainLocationVarId(c, pc); loc != InvalidVarId):
     fact.b = loc
-    analyseIfDerived(c, pc)
+    analyseIfDerived(c, pc, call)
     skip pc
     result = true
   elif (var ov = VarId(0); var ok = zero(); offsetAccessor(c, pc, initTable[SymId, Cursor](), ov, ok)):
@@ -2055,9 +2060,10 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool 
     result = true
     skip pc
   else:
-    traverseExpr c, pc
+    traverseExpr c, pc, call
 
-proc leftHandStep(c: var FirContext; n: Cursor; fact: var LeXplusC): bool =
+proc leftHandStep(c: var FirContext; n: Cursor; fact: var LeXplusC;
+                  call: var CallContext): bool =
   ## `v ± k` as the left operand of a comparison: `v + k <= b + c` is
   ## `v <= b + (c - k)`, so the constant moves across with its sign flipped.
   let isSub = n.exprKind == SubX
@@ -2066,7 +2072,7 @@ proc leftHandStep(c: var FirContext; n: Cursor; fact: var LeXplusC): bool =
   skip r # the type operand
   let v = plainLocationVarId(c, r)
   if v == InvalidVarId: return false
-  analyseIfDerived(c, r)
+  analyseIfDerived(c, r, call)
   skip r
   var k = createNaN()
   case r.kind
@@ -2093,7 +2099,8 @@ type
                      ## a consequence of the *false* path, and negating it would
                      ## not be one of the true path
 
-proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXplusC =
+proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind;
+                   call: var CallContext): LeXplusC =
   var r = pc
   result = LeXplusC(a: InvalidVarId, b: VarId(0), c: createXint(0'i32))
 
@@ -2130,7 +2137,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
     if sa != NoSymId:
       result = isNotNil(getVarId(c, sa))
     else:
-      traverseExpr c, pc
+      traverseExpr c, pc, call
       return result
     skip r
     unwindNegations()
@@ -2145,7 +2152,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
       unwindNegations()
       pc = r
     else:
-      traverseExpr c, pc
+      traverseExpr c, pc, call
     return result
 
   if r.isIntLit:
@@ -2162,14 +2169,14 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
     skip r
   elif (let la = plainLocationVarId(c, r); la != InvalidVarId):
     result.a = la
-    analyseIfDerived(c, r)
+    analyseIfDerived(c, r, call)
     skip r
   elif (var ov = VarId(0); var ok = zero(); offsetAccessor(c, r, initTable[SymId, Cursor](), ov, ok)):
     # `high(s) <= b + c` is `s.len <= b + c + 1`
     result.a = ov
     result.c = result.c - ok
     skip r
-  elif r.exprKind in {AddX, SubX} and leftHandStep(c, r, result):
+  elif r.exprKind in {AddX, SubX} and leftHandStep(c, r, result, call):
     # `i + 3 <= n` is `i <= n - 3`. Only the *right* side of a comparison used
     # to be read arithmetically, so the loop `while i + 3 <= n:` — which is how
     # a chunked walk states its bound, `base64.encode` among them — proved
@@ -2186,7 +2193,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
     kind = ckImplied
     skip r
   else:
-    traverseExpr c, pc
+    traverseExpr c, pc, call
     return result
   if r.exprKind == NilX and kind != ckImplied:
     kind = ckPlain
@@ -2197,7 +2204,7 @@ proc translateCond(c: var FirContext; pc: var Cursor; kind: var CondKind): LeXpl
     result.c = result.c + rightHi
     kind = ckImplied
     skip r
-  elif not rightHandSide(c, r, result):
+  elif not rightHandSide(c, r, result, call):
     result.a = InvalidVarId
   # a < b  --> a <= b - 1:
   if xk == LtX:
@@ -2230,7 +2237,7 @@ proc strictDisequality(c: var FirContext; eq: LeXplusC): LeXplusC =
     negateFact(result)
 
 proc analyseCondition(c: var FirContext; pc: var Cursor;
-                      elseFacts: var seq[LeXplusC]): int =
+                      elseFacts: var seq[LeXplusC]; call: var CallContext): int =
   ## Returns number of facts added
   if pc.exprKind == AndX:
     # `a and b`: on the true path BOTH conjuncts hold, so both are facts.
@@ -2242,8 +2249,8 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
     # negation is not the conjunction of the negations.
     let start = pc
     var r = sub(pc)
-    result = analyseCondition(c, r, elseFacts)
-    result = result + analyseCondition(c, r, elseFacts)
+    result = analyseCondition(c, r, elseFacts, call)
+    result = result + analyseCondition(c, r, elseFacts, call)
     # The negation of a conjunction is not the conjunction of the negations, so
     # the false path of an `and` learns nothing.
     elseFacts.setLen 0
@@ -2251,7 +2258,7 @@ proc analyseCondition(c: var FirContext; pc: var Cursor;
     skip pc
     return result
   var kind = ckPlain
-  let fact = translateCond(c, pc, kind)
+  let fact = translateCond(c, pc, kind, call)
   if not fact.isValid:
     return 0
   case kind
@@ -3067,7 +3074,7 @@ proc checkIndexInBounds(c: var FirContext; idx, bounds: Cursor) =
   checkInRange c, idx, lo, hi, needLo = true, needHi = true,
                reportUnprovable = StaticContractsFeature in c.features
 
-proc analyseArrAt(c: var FirContext; pc: var Cursor) =
+proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
   ## `(arrat arr idx [hi [lo]])`. The bounds sem attached ARE the obligation:
   ## they are exactly what `hexer/desugar.trArrAt` turns into the
   ## `nimIcheckAB(i, lo, hi)` call, so discharging one here is discharging that
@@ -3081,9 +3088,9 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor) =
   ## `checkRequires` gives a `.requires`, and `runtimeContracts` (which `v2`
   ## implies) opts out of the judgement here for the same reason it does there.
   pc.into:
-    traverseExpr c, pc            # the array operand
+    traverseExpr c, pc, call            # the array operand
     let idx = pc
-    traverseExpr c, pc            # the index
+    traverseExpr c, pc, call            # the index
     # On a path control cannot reach the facts are not merely weak but
     # contradictory, and an obligation judged against them could report a
     # correct index as a violation. `checkRequires` bails for the same reason.
@@ -3091,7 +3098,7 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor) =
       checkIndexInBounds c, idx, pc
     while pc.hasMore: skip pc
 
-proc traverseExpr(c: var FirContext; pc: var Cursor) =
+proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
   case pc.kind
   of Symbol:
     let symId = pc.symId
@@ -3112,26 +3119,26 @@ proc traverseExpr(c: var FirContext; pc: var Cursor) =
   of TagLit:
     case pc.exprKind
     of CallKinds:
-      analyseCall c, pc
+      analyseCall c, pc, call
     of DotX:
       pc.into:
-        traverseExpr c, pc # object
+        traverseExpr c, pc, call # object
         skip pc # field name
         if pc.hasMore: skip pc # inheritance depth
         if pc.hasMore: skip pc # optional access-token string lit
     of DdotX:
       pc.into:
         wantNotNilDeref c, pc
-        traverseExpr c, pc # object
+        traverseExpr c, pc, call # object
         skip pc # field name
         if pc.hasMore: skip pc # inheritance depth
         if pc.hasMore: skip pc # optional access-token string lit
     of DerefX:
       pc.into:
         wantNotNilDeref c, pc
-        traverseExpr c, pc
+        traverseExpr c, pc, call
     of ArratX:
-      analyseArrAt c, pc
+      analyseArrAt c, pc, call
     of OconstrX, NewobjX:
       analyseOconstr c, pc
     of AconstrX:
@@ -3147,7 +3154,7 @@ proc traverseExpr(c: var FirContext; pc: var Cursor) =
         # as an assignment. `cast` is an unchecked escape hatch and is exempt.
         if not isCast:
           checkRangeAssign c, convType, pc
-        traverseExpr c, pc
+        traverseExpr c, pc, call
     of NilX:
       # `(nil)` / `(nil <Type>)` / `(nil <Type> <arg>)` — nil literal,
       # possibly carrying its formal type subtree (which for itertype /
@@ -3157,7 +3164,7 @@ proc traverseExpr(c: var FirContext; pc: var Cursor) =
       skip pc
     else:
       pc.loopInto:
-        traverseExpr c, pc
+        traverseExpr c, pc, call
   else:
     inc pc  # ParRi/close (classic) or stray suffix (nifcore)
 
@@ -3202,7 +3209,7 @@ proc borrowCheckForCall(c: var FirContext; args: Cursor) =
         buildErr c, mutPaths[i].info, "mutable argument aliases with mutable parameter"
         break
 
-proc analyseCallArgs(c: var FirContext; n: var Cursor) =
+proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   let callCursor = n
   let tt = getType(c.typeCache, n)
   var fnType = skipProcTypeToParams(tt)
@@ -3212,14 +3219,14 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     # "type" has no params/pragmas slots to walk. The error is already
     # reported; walk the subtree and leave the rest to it. Same guard
     # `analyseCall` above already applies before reading `noreturn`.
-    traverseExpr c, n # the `fn` itself
-    while n.hasMore: traverseExpr c, n
+    traverseExpr c, n, call # the `fn` itself
+    while n.hasMore: traverseExpr c, n, call
     return
   var fnPragmas = fnType
   skip fnPragmas # params
   skip fnPragmas # return type
   let effect = calleeEffect(tt, fnPragmas)
-  traverseExpr c, n # the `fn` itself
+  traverseExpr c, n, call # the `fn` itself
   let paramsStart = fnType
   fnType = sub(fnType)
   var paramMap = initTable[SymId, Cursor]()
@@ -3235,7 +3242,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
       # consumed without a matching VarargsT param, or similar edge cases).
       # Traverse remaining args for their side effects.
       while n.hasMore:
-        traverseExpr c, n
+        traverseExpr c, n, call
       break
     let previousFormalParam = fnType
     let param = takeLocal(fnType, SkipFinalParRi)
@@ -3284,7 +3291,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
       elif not writesThroughPointee(c, n):
         mutatesUnknown = true
     checkNilMatch c, n, param.typ
-    traverseExpr c, n
+    traverseExpr c, n, call
   if needsBorrowCheck and not c.features.contains(LenientAliasingFeature):
     borrowCheckForCall c, args
   while fnType.hasMore: skip fnType
@@ -3311,7 +3318,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
   var isStep = stepCallAt(c, callCursor, stepLoc, delta, stepArg) and not delta.isNaN
   if isStep:
     variableChangedByDiff(c.facts, stepLoc, delta)
-    c.steppedLoc = stepLoc
+    call.stepped = stepLoc
   elif stepLoc != InvalidVarId and not cursorIsNil(stepArg):
     # `inc(i, L)` with an `L` the facts bound: `i` moves within that range
     var lo = createNaN()
@@ -3325,7 +3332,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
         lo = -lo
         hi = -hi
       variableMovedWithin(c.facts, stepLoc, lo, hi)
-      c.steppedLoc = stepLoc
+      call.stepped = stepLoc
       isStep = true
   for root in mutatedRoots:
     if isStep and getVarId(c, root) == stepLoc:
@@ -3338,7 +3345,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     invalidateAllDerived(c)
   for root in viewRoots:
     invalidateViewElements(c, root)
-  c.viewRoots = viewRoots
+  for root in viewRoots: call.views.add root
   # A routine without a result states its postcondition about its `var`
   # parameters alone, and nothing binds the call to a location for
   # `assumeEnsures` to read it at: it is taken here, after the mutations it
@@ -3349,9 +3356,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     skip retType
     if retType.isDotToken or retType.typeKind == VoidT:
       assumeCond c, ensuresProposition(ens), paramMap
-      c.ensuredRoots = mutatedRoots
+      for root in mutatedRoots: call.ensured.add root
 
-proc analyseCall(c: var FirContext; n: var Cursor) =
+proc analyseCall(c: var FirContext; n: var Cursor; call: var CallContext) =
   # A `{.noreturn.}` callee (e.g. `quit`, an out-of-range raiser) does not fall
   # through. Mark the path dead after it, so a sibling branch that assigns
   # `result` is correctly seen as the only way out (matches nj.nim, which emits
@@ -3365,7 +3372,7 @@ proc analyseCall(c: var FirContext; n: var Cursor) =
         skip pragmas # params
         skip pragmas # return type
         isNoReturn = hasPragma(pragmas, NoreturnP)
-    analyseCallArgs(c, n)
+    analyseCallArgs(c, n, call)
   if isNoReturn:
     c.tr.live = false
 
@@ -3476,14 +3483,14 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
     if not hi.isNaN: c.facts.add query(dest, y, hi)    # x <= y + hi
   result = true
 
-proc traverseStore(c: var FirContext; n: var Cursor) =
+proc traverseStore(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## Handle (store value dest) - note reversed order from asgn
   let storeStart = n # skip store tag
   n = sub(n)
 
   # First analyze the value (source)
   let valueStart = n
-  traverseExpr c, n
+  traverseExpr c, n, call
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
@@ -3529,7 +3536,7 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
 
     # Try to extract facts from the value
     var valueForFact = valueStart
-    if rightHandSide(c, valueForFact, fact):
+    if rightHandSide(c, valueForFact, fact, call):
       if fact.a == fact.b:
         variableChangedByDiff(c.facts, fact.a, fact.c)
       else:
@@ -3576,9 +3583,9 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
       # `d.count = n` proves `d.count == n` for the guard that follows.
       var fact = query(destLoc, InvalidVarId, createXint(0'i32))
       var valueForFact = valueStart
-      if rightHandSide(c, valueForFact, fact) and fact.a != fact.b:
+      if rightHandSide(c, valueForFact, fact, call) and fact.a != fact.b:
         addAsgnFact c, fact
-    traverseExpr c, n
+    traverseExpr c, n, call
 
   n = storeStart; skip n
 
@@ -3600,6 +3607,7 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   ## the tracker merges the fall-through state (inits + facts) by liveness — a
   ## branch that always leaves drops out, unifying guard-clause and if-else
   ## style. The state is journaled, so a branch costs O(writes), not a copy.
+  var call = freshCall()
   let iteStart = n # skip ite/itec tag
   n = sub(n)
 
@@ -3626,12 +3634,12 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   # false path knows; only it can tell the two apart (`a != b` is the case where
   # all the knowledge sits on the false path).
   var condFactsList: seq[LeXplusC] = @[]
-  discard analyseCondition(c, n, condFactsList)
+  discard analyseCondition(c, n, condFactsList, call)
 
   # then-branch (under assume(c)):
   let liveBeforeThen = c.tr.live
   if constCond == 0: c.tr.live = false
-  traverseStmt c, n
+  traverseStmt c, n, call
   # `commitThen` captures the then-branch (its init delta, facts, and exits) and
   # rolls `c.flow` back to the split baseline — which drops the condition facts,
   # since the split was taken before them.
@@ -3646,7 +3654,7 @@ proc traverseIte(c: var FirContext; n: var Cursor) =
   if n.isDotToken:
     inc n
   else:
-    traverseStmt c, n
+    traverseStmt c, n, call
   # `mergeBranches` joins the then-branch (in `b`) with the current else-branch,
   # merging both the init-set and the facts; a leaving arm drops out.
   mergeBranches(c.tr, c.flow, b)
@@ -4001,6 +4009,7 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
   ## break sites (captured) and to the back-edge (discarded); the loop never
   ## falls through. The `(lab loopExit)` that follows installs the merged
   ## break state via `bindLoopExit`.
+  var call = freshCall()
   n.into: # loop tag
     # Before the checkpoint, not after: the rollback below restores the state
     # the checkpoint captured, so an invalidation made after it would be undone
@@ -4017,7 +4026,7 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
       restrictFactsToLoopInvariants(c, w)
     let cp = c.flow.checkpoint()
     let savedBorrows = c.activeBorrows.len
-    traverseStmt c, n        # the body `(stmts ...)`; ends by leaving
+    traverseStmt c, n, call        # the body `(stmts ...)`; ends by leaving
     dropContinue(c.tr)       # the loop header consumes the back-edge
     # The loop never falls through; reset the working state to the pre-loop base.
     # A following `(lab loopExit)` installs the join of the states its exits
@@ -4053,7 +4062,7 @@ proc traverseJmp(c: var FirContext; n: var Cursor) =
     inc n # symuse
   leaveToLabel(c, label)
 
-proc traverseRet(c: var FirContext; n: var Cursor) =
+proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `(ret .X)` — primitive return, bound by the proc root. A `return value`
   ## with a non-`result` operand *provides* the result directly (the NJVL path
   ## rewrote this to `result = value`), so it initializes `result` on this exit.
@@ -4082,18 +4091,18 @@ proc traverseRet(c: var FirContext; n: var Cursor) =
         # `return toOpenArray(a)` returns the value directly rather than storing
         # it into `result` first, so `traverseStore`'s escape check never sees it.
         checkBorrowOutlivesProc(c, n)
-      traverseExpr c, n
+      traverseExpr c, n, call
       if providesResult:
         markInit(c, c.resultSym)
   leaveToReturn(c)
 
-proc traverseRaise(c: var FirContext; n: var Cursor) =
+proc traverseRaise(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## `(raise .X)` — primitive raise, bound by the nearest enclosing `except`.
   n.into:
     if n.isDotToken:
       inc n # bare re-raise
     else:
-      traverseExpr c, n
+      traverseExpr c, n, call
   leaveToRaise(c)
 
 proc addCaseFacts(c: var FirContext; selSym: SymId; ranges: Cursor) =
@@ -4129,11 +4138,12 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
   ## every branch starts from the pre-case state, plus the bound facts implied
   ## by its `ranges`; the post-case fall-through is the intersection of the
   ## init-sets (and a fact-join) over the arms that fall through.
+  var call = freshCall()
   let caseStart = n # skip 'case'
   n = sub(n)
   let selCursor = n
   let selSym = extractSymId(selCursor)
-  traverseExpr c, n # selector (init-checked)
+  traverseExpr c, n, call # selector (init-checked)
 
   # Collect (ranges, body) per branch, walking past the whole case.
   var branches: seq[tuple[ranges, body: Cursor]] = @[]
@@ -4164,7 +4174,7 @@ proc traverseCase(c: var FirContext; n: var Cursor) =
     if not cursorIsNil(br.ranges):
       addCaseFacts(c, selSym, br.ranges)
     var bc = br.body
-    traverseStmt c, bc
+    traverseStmt c, bc, call
     if c.tr.live:
       merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
       haveMerged = true
@@ -4184,13 +4194,14 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
   ## may run after *any* point of the body, so it can only assume the pre-try
   ## state; a `fin` is analyzed on the merged fall-through (its inits are not
   ## propagated onto exit paths — sound, since that only withholds knowledge).
+  var call = freshCall()
   let tryStart = n # skip 'try'
   n = sub(n)
   let cp = c.flow.checkpoint()
   let savedBorrows = c.activeBorrows.len
   let baseLive = c.tr.live
 
-  traverseStmt c, n # try body
+  traverseStmt c, n, call # try body
 
   var merged = default(FlowSnap)   # join of the fall-through of body + handlers
   var haveMerged = false
@@ -4219,7 +4230,7 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
       if boundExc != NoSymId:
         markInit(c, boundExc)
       if n.stmtKind in {StmtsS, ScopeS}:
-        traverseStmt c, n
+        traverseStmt c, n, call
       if c.tr.live:
         merged = if haveMerged: joinSnap(merged, snapshot(c.flow)) else: snapshot(c.flow)
         haveMerged = true
@@ -4234,10 +4245,10 @@ proc traverseTry(c: var FirContext; n: var Cursor) =
 
   if n.substructureKind == FinU:
     n.into:
-      traverseStmt c, n # finally body, on the merged fall-through
+      traverseStmt c, n, call # finally body, on the merged fall-through
   n = tryStart; skip n # close 'try'
 
-proc traverseLocal(c: var FirContext; n: var Cursor) =
+proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   let kind = n.symKind
   let localStart = n
   let errMark = c.errors.len
@@ -4291,7 +4302,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor) =
     checkNilMatch c, n, localType
   if not n.isDotToken:
     checkRangeAssign c, localType, n
-  traverseExpr c, n
+  traverseExpr c, n, call
   # `let last = x - 1` is a *fact*, and the Final IR states the bound of every
   # `for i in 0 ..< s.len` in exactly that shape. Only shapes the pure operand
   # reader understands contribute one; unlike `traverseStore` this deliberately
@@ -4383,6 +4394,7 @@ proc traverseAssert(c: var FirContext; n: var Cursor) =
       c.oldSlots = callSlots
 
 proc traverseProc(c: var FirContext; n: var Cursor) =
+  var call = freshCall()
   let decl = n
   # Fresh, journaling flow state (init-set + facts) for this proc; the enclosing
   # proc's state (with its live checkpoints) is restored on the way out.
@@ -4462,7 +4474,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   # the never-initialized `result`, so we must skip the *traversal*, not merely
   # the final init check.
   if not isGeneric and not isExternProc:
-    traverseStmt c, n
+    traverseStmt c, n, call
     # Falling off the end is an exit too.
     verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info
     # Join every `return` into the natural fall-through: the result init-set at
@@ -4494,20 +4506,19 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   c.ownOldSlots = oldOwnOldSlots
   c.inHook = oldInHook
 
-proc traverseStmt(c: var FirContext; n: var Cursor) =
-  # A step call marks the location it moved for exactly one statement: the
-  # `(unknown …)` the lowering puts right after it.
-  let stepped = c.steppedLoc
-  c.steppedLoc = InvalidVarId
-  let ensured = move c.ensuredRoots
-  let views = move c.viewRoots
+proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
+  ## `call` holds what the calls of the preceding statement established; an
+  ## `(unknown …)` reads it and leaves it for the next one, every other
+  ## statement starts it afresh.
+  if n.finalIrKind != UnknownV:
+    call = freshCall()
   case n.finalIrKind
   of IteV, ItecV:
     traverseIte c, n
   of LoopV:
     traverseLoop c, n
   of StoreV:
-    traverseStore c, n
+    traverseStore c, n, call
   of AssumeV:
     traverseAssume c, n
   of AssertV:
@@ -4560,15 +4571,15 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
       # by the path's root symbol.
       if writesThroughPointee(c, n):
         discard "an element behind a pointer: only the heap changed"
-      elif unknownPath.path.len > 0 and unknownPath.path[0] in views:
+      elif unknownPath.path.len > 0 and unknownPath.path[0] in call.views:
         invalidateViewElements(c, unknownPath.path[0])
-      elif unknownPath.path.len > 0 and unknownPath.path[0] in ensured:
+      elif unknownPath.path.len > 0 and unknownPath.path[0] in call.ensured:
         # The call before this already dropped everything its mutation could
         # reach and restated what its `.ensures` promises.
         discard
       elif unknownPath.path.len > 0:
         let root = getVarId(c, unknownPath.path[0])
-        if root != stepped:
+        if root != call.stepped:
           invalidateFactsAbout(c.facts, root)
         invalidateDerivedFrom(c, unknownPath.path[0])
       else:
@@ -4584,23 +4595,23 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
     # Versioned variable reference - should not appear as statement
     skip n
   of EtupatV:
-    traverseExpr c, n
+    traverseExpr c, n, call
   of NoVTag:
     case n.stmtKind
     of StmtsS, ScopeS, BlockS:
       n.into:
         while n.hasMore:
-          traverseStmt c, n
+          traverseStmt c, n, call
     of CaseS:
       traverseCase c, n
     of TryS:
       traverseTry c, n
     of RetS:
-      traverseRet c, n
+      traverseRet c, n, call
     of RaiseS:
-      traverseRaise c, n
+      traverseRaise c, n, call
     of LocalDecls:
-      traverseLocal c, n
+      traverseLocal c, n, call
     of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS:
       # Nested routine - analyze and advance past it
       c.typeCache.openScope()
@@ -4611,37 +4622,38 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
     of TemplateS, TypeS, CommentS, PragmasS:
       skip n
     of CallKindsS:
-      analyseCall c, n
+      analyseCall c, n, call
     of DiscardS, YldS:
       n.into:
-        traverseExpr c, n
+        traverseExpr c, n, call
     of EmitS, InclS, ExclS:
       skip n
     of PragmaxS:
       n.into:
         skip n # pragmas
         while n.hasMore:
-          traverseStmt c, n
+          traverseStmt c, n, call
     of NoStmt:
       if n.exprKind in CallKinds:
-        analyseCall c, n
+        analyseCall c, n, call
       elif n.exprKind == PragmaxX:
         n.into:
           skip n # pragmas
           while n.hasMore:
-            traverseStmt c, n
+            traverseStmt c, n, call
       elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
         n.into:
-          traverseExpr c, n
+          traverseExpr c, n, call
           while n.hasMore:
-            traverseExpr c, n
+            traverseExpr c, n, call
       else:
-        traverseExpr c, n
+        traverseExpr c, n, call
     else:
       # Unknown statement - skip it wholesale
       skip n
 
 proc traverseToplevel(c: var FirContext; n: var Cursor) =
+  var call = freshCall()
   case n.stmtKind
   of StmtsS:
     n.into:
@@ -4666,7 +4678,7 @@ proc traverseToplevel(c: var FirContext; n: var Cursor) =
     skip n
   else:
     # Toplevel statements - analyze them
-    traverseStmt c, n
+    traverseStmt c, n, call
 
 proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
   ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
@@ -4690,7 +4702,6 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
     tr: initFlowTracker(),
     flow: initFlowState(),
     substVar: initTable[SymId, VarId](),
-    steppedLoc: InvalidVarId,
     oldSlots: initTable[string, VarId](),
     ownOldSlots: initTable[string, VarId](),
     loopExitLabels: initHashSet[SymId](),
