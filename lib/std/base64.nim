@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 #
 #
 #            Nim's Runtime Library
@@ -14,6 +12,8 @@
 ## `encode` produces standard base64 by default, or the URL- and
 ## filename-safe alphabet (`-`/`_` instead of `+`/`/`) when `safe = true`.
 ## `decode` accepts either alphabet and ignores `=` padding and whitespace.
+
+{.feature: "staticContracts".}
 
 const
   cb64: array[64, char] = [

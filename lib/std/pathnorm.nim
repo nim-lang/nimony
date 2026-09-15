@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 #
 #
 #            Nim's Runtime Library
@@ -13,6 +11,8 @@
 ## generally useful for dealing with paths.
 ##
 ## Unstable API.
+
+{.feature: "staticContracts".}
 
 # Yes, this uses import here, not include so that
 # we don't end up exporting these symbols from pathnorm and os:

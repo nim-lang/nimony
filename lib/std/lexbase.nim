@@ -1,4 +1,3 @@
-{.feature: "staticContracts".}
 #
 #
 #            Nim's Runtime Library
@@ -23,6 +22,7 @@
 ## branches are dropped (Nimony has a single native target).
 
 {.feature: "lenientnils".}
+{.feature: "staticContracts".}
 
 import std/[strutils, streams, assertions]
 

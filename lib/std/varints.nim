@@ -1,4 +1,3 @@
-{.feature: "staticContracts".}
 #
 #
 #            Nim's Runtime Library
@@ -12,6 +11,8 @@
 ## encoding implementation inspired by SQLite.
 ##
 ## Unstable API.
+
+{.feature: "staticContracts".}
 
 const
   maxVarIntLen* = 9 ## the maximal number of bytes a varint can take

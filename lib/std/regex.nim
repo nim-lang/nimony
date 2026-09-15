@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 #
 #
 #            Nimony's Standard Library
@@ -91,6 +89,8 @@
 ## By default patterns are parsed with `reExtended`, so unescaped spaces and
 ## tabs are ignored and a pattern may be laid out for reading. Match a literal
 ## space with `\ `, `[ ]` or `" "`.
+
+{.feature: "staticContracts".}
 
 import std / private / regexcore
 

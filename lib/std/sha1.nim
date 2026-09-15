@@ -1,9 +1,9 @@
-{.feature: "staticContracts".}
-
 ## SHA-1 (Secure Hash Algorithm 1), 160-bit message digest.
 ## Minimal port from Nim's `checksums/sha1` — only the bits used by
 ## `nifchecksums` / `nifindexes` are provided. Byte-swap helpers are
 ## inlined since Nimony doesn't have `std/endians`.
+
+{.feature: "staticContracts".}
 
 import std/syncio
 

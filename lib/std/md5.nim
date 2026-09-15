@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 #
 #
 #            Nim's Runtime Library
@@ -18,6 +16,8 @@
 ## It offers both the one-shot API (`toMD5`, `getMD5`, and `$` on a digest) and
 ## the incremental `MD5Context` (`md5Init` / `md5Update` / `md5Final`) for hashing
 ## data that arrives in pieces.
+
+{.feature: "staticContracts".}
 
 runnableExamples:
   # one-shot

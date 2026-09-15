@@ -1,4 +1,3 @@
-{.feature: "staticContracts".}
 #
 #
 #            Nim's Runtime Library
@@ -20,6 +19,8 @@
 ## `JsonKindError`/`JsonParsingError` exception types are gone: `raiseParseErr`
 ## raises a plain `ValueError`. The helpful message is still available through
 ## `errorMsg`/`errorMsgExpected`.
+
+{.feature: "staticContracts".}
 
 import std/[strutils, lexbase, streams, unicode, parseutils, assertions]
 

@@ -1,4 +1,3 @@
-{.feature: "staticContracts".}
 # (c) 2026 Andreas Rumpf
 #
 # HTTP dates: the one timestamp format the protocol names, in both directions.
@@ -25,6 +24,8 @@
 # Nothing here does IO and nothing here allocates on the path a server takes
 # per response; `std/times` does the calendar arithmetic and this module does
 # the six bytes of spelling on either side of it.
+
+{.feature: "staticContracts".}
 
 import ../times
 

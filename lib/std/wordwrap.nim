@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 #
 #
 #            Nim's Runtime Library
@@ -10,6 +8,8 @@
 #
 
 ## This module contains an algorithm to wordwrap a Unicode string.
+
+{.feature: "staticContracts".}
 
 import std/[strutils, unicode, assertions]
 

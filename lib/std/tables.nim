@@ -1,4 +1,3 @@
-
 {.feature: "staticContracts".}
 
 import assertions

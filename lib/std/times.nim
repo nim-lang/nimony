@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 #
 #
 #            Nim's Runtime Library
@@ -15,6 +13,8 @@
 ## points in time with nanosecond resolution, simple durations, and a
 ## calendar breakdown for UTC. For monotonic timestamps suitable for
 ## measuring durations, use `std/monotimes <monotimes.html>`_.
+
+{.feature: "staticContracts".}
 
 import strutils
 

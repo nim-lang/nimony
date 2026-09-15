@@ -1,5 +1,3 @@
-{.feature: "staticContracts".}
-
 # (c) 2026 Andreas Rumpf
 #
 # URIs: parsing, percent-coding, query strings and — the one that is not a
@@ -28,6 +26,8 @@
 # both, in the order that works, and answers `""` rather than a path that
 # climbed out of the root: there is no correct way to serve that request, so
 # there is no value to hand back for one.
+
+{.feature: "staticContracts".}
 
 import std / assertions
 
