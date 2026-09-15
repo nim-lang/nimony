@@ -3737,6 +3737,33 @@ proc noteDerivedOf(c: var FirContext; w: var LoopWrites; root: SymId; keep: VarI
       let v = VarId(FirstDerivedVarId - i)
       if v != keep and v notin w.preserved: noteWrite(w, v, ivUnknown)
 
+proc preservedLocations(c: var FirContext; cond: Cursor; subst: Table[SymId, Cursor];
+                        res: var seq[VarId]) =
+  ## The locations the conjuncts of `cond` shaped `e == old(e)` state unchanged.
+  case cond.exprKind
+  of AndX:
+    var r = cond
+    r = sub(r)
+    preservedLocations(c, r, subst, res)
+    skip r
+    preservedLocations(c, r, subst, res)
+  of EqX:
+    var r = cond
+    r = sub(r)
+    skip r # the type operand
+    let lhs = r
+    skip r
+    var oldOf = default(Cursor)
+    var plain = lhs
+    if oldArg(argOf(lhs, subst), oldOf): plain = r
+    elif not oldArg(argOf(r, subst), oldOf): plain = default(Cursor)
+    if not cursorIsNil(plain):
+      let a = locationVarId(c, plain, subst)
+      if a != InvalidVarId and a == locationVarId(c, oldOf, subst):
+        res.add a
+  else:
+    discard
+
 proc preservedByEnsures(c: var FirContext; call: Cursor): seq[VarId] =
   ## The locations a call's `.ensures` states unchanged: every conjunct shaped
   ## `e == old(e)`, with the parameters standing for the arguments.
@@ -3766,32 +3793,7 @@ proc preservedByEnsures(c: var FirContext; call: Cursor): seq[VarId] =
     skip fnType # return type
     let ens = extractPragma(fnType, EnsuresP)
     if not cursorIsNil(ens):
-      var todo = @[ensuresProposition(ens)]
-      while todo.len > 0:
-        let cond = todo.pop()
-        case cond.exprKind
-        of AndX:
-          var r = cond
-          r = sub(r)
-          todo.add r
-          skip r
-          todo.add r
-        of EqX:
-          var r = cond
-          r = sub(r)
-          skip r # the type operand
-          let lhs = r
-          skip r
-          var oldOf = default(Cursor)
-          var plain = lhs
-          if oldArg(argOf(lhs, subst), oldOf): plain = r
-          elif not oldArg(argOf(r, subst), oldOf): plain = default(Cursor)
-          if not cursorIsNil(plain):
-            let a = locationVarId(c, plain, subst)
-            if a != InvalidVarId and a == locationVarId(c, oldOf, subst):
-              result.add a
-        else:
-          discard
+      preservedLocations(c, ensuresProposition(ens), subst, result)
 
 proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
                  value: Cursor): IvKind =
