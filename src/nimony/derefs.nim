@@ -1554,8 +1554,10 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
 proc injectDerefs*(n: Cursor; hooks: sink Table[SymId, HooksPerType];
                    classes: sink Classes;
                    thisModuleSuffix: string; bits: int): TokenBuf =
+  let inputWidth = subtreeWidth(n)
   var c = Context(typeCache: createTypeCache(bits),
-    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId), dest: initTokenBuf(),
+    r: CurrentRoutine(returnExpects: WantT, firstParam: NoSymId),
+    dest: createTokenBuf(inputWidth + inputWidth div 4), # about 1.12x the input
     hooks: ensureMove(hooks),
     classes: ensureMove(classes),
     lifter: nil) # set below after hooks is moved
