@@ -29,6 +29,8 @@
 # remember to test.
 
 import std / [ioring, assertions]
+when defined(posix):
+  from std/posix/posix import Sockaddr_storage, SockLen
 
 export ioring.Deadline, ioring.never, ioring.afterMs, ioring.after,
        ioring.earlier, ioring.monoNow
@@ -71,6 +73,18 @@ proc family*(p: PeerAddr): int =
 
 proc isV4*(p: PeerAddr): bool {.inline.} = p.family == AfInet
 proc isV6*(p: PeerAddr): bool {.inline.} = p.family == AfInet6
+
+proc peerLen*(p: PeerAddr): SockLen {.inline.} =
+  ## The length of the sockaddr `p.raw` actually holds — the size of its
+  ## family, not the capacity of its storage. The kernel reports the same
+  ## values for accept/recvfrom, and a `sendTo`/`connect` copies the address
+  ## with this length so the callee reads what the kernel wrote: passing
+  ## `sizeof(Sockaddr_storage)` makes sendto fail with EINVAL where the BSDs
+  ## compare it against `sin_len`.
+  case p.family
+  of AfInet: result = SockLen(16)
+  of AfInet6: result = SockLen(28)
+  else: result = SockLen(0)
 
 proc port*(p: PeerAddr): int =
   ## The peer's port, or `0` if there is no address. Network byte order read
@@ -183,6 +197,159 @@ proc acceptAsync*(listenFd: cint; peer: var PeerAddr; dl: Deadline): int {.passi
   discard submitAccept(listenFd, dl, c, addr result, addr peer.raw)
   suspend()
 
+proc recvFromAsync*(fd: cint; buf: pointer; len: int; dl: Deadline;
+                    peer: var PeerAddr): int {.passive.} =
+  ## One `recvfrom`, parked on the ring. The bytes of one datagram, or a
+  ## negative result — `IoTimedOut` when the deadline arrived first. `peer` is
+  ## filled with the sender, at no extra syscall: the kernel wrote the address
+  ## as part of the recvfrom and this is only the hand-off. It is left
+  ## untouched when the receive fails.
+  result = 0
+  peer = PeerAddr(raw: Sockaddr_storage())
+  let c = delay()
+  discard submitRecvFrom(fd, buf, len, dl, c, addr result, addr peer.raw)
+  suspend()
+
+proc sendToAsync*(fd: cint; buf: pointer; len: int;
+                  sa: Sockaddr_storage; saLen: SockLen; dl: Deadline): int {.passive.} =
+  ## One `sendto`, parked on the ring. The bytes of the datagram sent, or a
+  ## negative result — `IoTimedOut` when the deadline arrived first.
+  result = 0
+  let c = delay()
+  discard submitSendTo(fd, buf, len, sa, saLen, dl, c, addr result)
+  suspend()
+# ------------------------------------------------------------ the listener ---
+#
+# `listen`/`accept` are the listening half of the ring's socket surface. The
+# ring has no `submitBind`/`submitListen`: binding and listening are
+# synchronous syscalls with nothing for the ring to park on, so they live in
+# `listenTcp` and this module only adds the async `accept`. A `Listener` owns
+# its descriptor exactly like a `Socket` owns its socket, so the close is the
+# destructor's job and never a caller's afterthought.
+
+type
+  Listener* = object
+    fd*: cint
+    deadline*: Deadline
+      ## Accept's budget, used the same way a `Socket`'s deadline is: taken
+      ## from here and only ever tightened by an argument.
+
+proc `=destroy`*(l: Listener) =
+  if l.fd >= 0: closeFd(l.fd)
+
+proc `=wasMoved`*(l: var Listener) {.nodestroy, inline.} =
+  l.fd = -1
+
+proc `=copy`*(dest: var Listener; src: Listener) {.error.}
+  ## Two listeners over one descriptor, whichever dies first closes it. Like
+  ## `Socket`, this is move-only.
+
+proc listen*(port: uint16; backlog = 128; deadline = never): Listener =
+  ## A bound, listening socket on `port`; `0` asks the kernel to pick one, and
+  ## `boundPort` reports what it chose. Binding and listening are synchronous —
+  ## nothing for the ring to wait on — so only `accept` parks.
+  Listener(fd: listenTcp(port, backlog), deadline: deadline)
+
+proc boundPort*(l: Listener): uint16 {.inline.} = boundPort(l.fd)
+
+proc close*(l: var Listener) =
+  ## Close now rather than at the end of the scope, idempotently, like
+  ## `Socket.close`.
+  if l.fd >= 0:
+    closeFd(l.fd)
+    l.fd = -1
+
+proc accept*(l: Listener; dl = never): Socket {.passive, raises.} =
+  ## Take the next pending connection, parked on the ring until a peer appears
+  ## or the deadline arrives. The returned `Socket` is already non-blocking, is
+  ## owned by its descriptor, and knows who connected: `peer` records the
+  ## address the kernel's accept already wrote, at no extra syscall — the ask
+  ## an access log, a rate limiter and every `X-Forwarded-For` trust decision
+  ## cannot reconstruct afterwards. `0` is not a valid result here — a peer is
+  ## a descriptor, not an end of stream — so its negative results raise,
+  ## exactly as `read`/`write` report their errors.
+  result = initSocket(-1, earlier(l.deadline, dl))
+  var peer = PeerAddr(raw: Sockaddr_storage())
+  var res = 0
+  let c = delay()
+  discard submitAccept(l.fd, earlier(l.deadline, dl), c, addr res, addr peer.raw)
+  suspend()
+  if res < 0: raise toErr(res)
+  result.fd = cint(res)
+  result.peer = peer
+
+proc addrFromHost(p: var PeerAddr; saLen: var SockLen;
+                  host: string; port: uint16): bool {.inline.} =
+  ## Build the sockaddr_in for `host:port` into `p.raw`, ready for
+  ## `submitConnect`, at no extra syscall over what `socket.peek` already has.
+  ## Only a dotted-quad IPv4 literal is parsed — the loopback test's and a
+  ## container's common case; `false` when `host` is anything else. (No
+  ## getaddrinfo yet: DNS is a whole other surface and this module's reach is
+  ## the local ring.) A `PeerAddr` is `family == 0` — that is, "no address
+  ## yet" — only until `connect`/`udpConnect` run this over it.
+  ##
+  ## The layout is written directly into `p.raw` as raw bytes — AF_INET = 2,
+  ## port = 2 bytes network order, addr = 4 bytes network order, zero padding
+  ## to 16 bytes — so this compiles without importing platform-specific socket
+  ## struct types. The first two bytes differ between ABI families, and both
+  ## `PeerAddr.family` and the kernel read them back on the far side of the
+  ## ring, so the two layouts are written as their respective systems expect:
+  ## Linux puts a 2-byte `sa_family` at offset 0, the BSDs put a 1-byte
+  ## `sa_len` (16, the size of `sockaddr_in`) ahead of a 1-byte `sa_family`.
+  p = default(PeerAddr)
+  let raw = cast[ptr UncheckedArray[uint8]](addr p.raw)
+  when defined(linux):
+    raw[0] = 2'u8   # AF_INET low byte
+    raw[1] = 0       # AF_INET high byte
+  else:
+    raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
+    raw[1] = 2'u8    # AF_INET
+  raw[2] = byte(port shr 8)
+  raw[3] = byte(port and 0xFF)
+  var octet = 0
+  var val: uint32 = 0
+  for i in 0 ..< host.len:
+    let ch = host[i]
+    if ch in {'0'..'9'}:
+      val = val * 10 + uint32(ord(ch) - ord('0'))
+      if val > 255: return false
+    elif ch == '.':
+      raw[4 + octet] = byte(val)
+      val = 0
+      inc octet
+      if octet > 3: return false
+    else:
+      return false
+  if octet != 3: return false
+  raw[4 + octet] = byte(val)
+  saLen = SockLen(16)
+  result = true
+
+proc connect*(host: string; port: uint16; dl = never): Socket {.passive, raises.} =
+  ## A non-blocking `Socket` connected to `host:port`, parked on the ring until
+  ## the handshake completes or the deadline arrives. Raises `TimeoutError` if
+  ## the deadline arrived first, `IOError` if the address is not a dotted-quad
+  ## literal or the peer refused.
+  ##
+  ## `dl` bounds the connection attempt *only*: a socket that is left with a
+  ## deadline from its connect would expire every later read or write once that
+  ## moment passed — the connect budget is not a lifetime. The returned Socket
+  ## has no standing deadline; a protocol sets one per request via `renew`.
+  ## Its `peer` is who we connected to, taken from the same address that went
+  ## to the ring.
+  result = initSocket(-1, never)
+  var saLen = SockLen(0)
+  if not addrFromHost(result.peer, saLen, host, port):
+    raise IOError
+  let fd = socketNonBlocking()
+  if fd < 0: raise IOError
+  result.fd = fd
+  var res = 0
+  let c = delay()
+  discard submitConnect(fd, result.peer.raw, saLen, budget(result, dl), c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
+
 # ------------------------------------------------------------ the socket ---
 
 type
@@ -192,6 +359,10 @@ type
       ## This socket's budget. Set at construction and re-armed at whatever
       ## the protocol above calls a request boundary; every operation below
       ## takes it from here, and an argument can only tighten it.
+    peer*: PeerAddr
+      ## Who is at the other end: set by `connect`, `accept` and `udpConnect`
+      ## from the same address those passed to the ring, so no extra syscall is
+      ## ever spent on it. `family == 0` until a connection is made.
     rbuf: seq[char]
     rlen: int          ## bytes held
     rpos: int          ## bytes already consumed from the front
@@ -216,6 +387,21 @@ proc `=wasMoved`*(s: var Socket) {.nodestroy, inline.} =
   `=wasMoved`(s.rbuf)
   `=wasMoved`(s.wbuf)
 
+proc `=dup`*(x: Socket): Socket =
+  # Field-wise: `result = x` would come back through this hook — the way the
+  # compiler lowers a hook-ful `=` — and that is the recursion that broke the
+  # same pattern in `asyncio`'s `File`. The source is moved-from afterwards, so
+  # the shared seqs below belong to the result only.
+  result = default(Socket)
+  result.fd = x.fd
+  result.deadline = x.deadline
+  result.peer = x.peer
+  result.rbuf = x.rbuf
+  result.rlen = x.rlen
+  result.rpos = x.rpos
+  result.wbuf = x.wbuf
+  `=wasMoved`(cast[ptr Socket](unsafeAddr x)[])
+
 proc `=copy`*(dest: var Socket; src: Socket) {.error.}
   ## Move-only: two sockets over one fd means two owners of one descriptor,
   ## and whichever is destroyed first closes it under the other.
@@ -224,6 +410,7 @@ proc initSocket*(fd: cint; deadline: Deadline): Socket =
   ## `fd` must already be non-blocking. The deadline has no default: a socket
   ## with no budget is one a quiet peer can hold forever.
   Socket(fd: fd, deadline: deadline,
+         peer: PeerAddr(raw: Sockaddr_storage()),
          rbuf: newSeq[char](ReadChunk), rlen: 0, rpos: 0,
          wbuf: newSeq[char](ReadChunk))
 
@@ -326,6 +513,31 @@ proc read*(s: var Socket; dest: var openArray[char]; dl = never): int {.passive,
     got += s.take(toOpenArray(dest, got, limit - 1), limit - got)
   result = got
 
+proc readLine*(s: var Socket; dl = never): string {.passive, raises.} =
+  ## One line, up to and including its `\n`, minus the delimiter and any
+  ## trailing `\r`. An empty result is end of stream — which, like `read`
+  ## returning `0`, is an end and not a failure. A line can arrive split
+  ## across `fill`s, so this loops on the buffer rather than assuming one read
+  ## held the whole line.
+  result = ""
+  let dl2 = budget(s, dl)
+  while true:
+    let view = s.peek
+    var nl = -1
+    for i in 0 ..< view.len:
+      if view[i] == '\n':
+        nl = i
+        break
+    if nl >= 0:
+      var last = nl
+      if last > 0 and view[last - 1] == '\r':
+        dec last
+      for i in 0 ..< last:
+        result.add view[i]
+      s.consume(nl + 1)
+      return
+    if s.fill(dl2) <= 0: return
+
 # -------------------------------------------------------- the write side ---
 
 proc toErr*(n: int): ErrorCode {.inline.} =
@@ -358,6 +570,17 @@ proc write*(s: var Socket; data: openArray[char];
   if data.len == 0: return
   writeAll(s, addr data[0], data.len, dl)
 
+proc writeLine*(s: var Socket; line: string;
+                dl = never) {.passive, raises.} =
+  ## `write(line)` followed by a `\n`. Two sends rather than one: there is no
+  ## persistent frame here the way there is for `scratch`/`flush`, and a line
+  ## echoed back is not a protocol that needs its bytes coalesced — but both
+  ## the payload and its terminator are guaranteed to go out, each whole.
+  if line.len > 0:
+    write(s, toOpenArray(line, 0, line.len - 1), dl)
+  const nl = "\n"
+  write(s, toOpenArray(nl, 0, 0), dl)
+
 proc scratch*(s: var Socket; n: int): var openArray[char] =
   ## A writable staging area of at least `n` bytes, kept between calls so
   ## serializing a message does not allocate per message. Valid until the next
@@ -372,3 +595,224 @@ proc flush*(s: var Socket; n: int; dl = never) {.passive, raises.} =
   ## left half-way through.
   if n <= 0: return
   writeAll(s, addr s.wbuf[0], n, dl)
+
+# ------------------------------------------------------ the datagram socket ---
+#
+# UDP is a different kind of peer than TCP — a datagram endpoint has no stream
+# and no accept, and a server answers whoever happens to send to it — so it is a
+# different type rather than a mode of `Socket`. `UdpSocket` owns its ring
+# descriptor like `Socket` owns its socket; it is move-only and closes itself.
+#
+# A datagram socket can be `udpConnect`ed to one peer, which is what makes the
+# ring's stream-shaped read/write paths usable unmodified: after connect, a
+# datagram socket's `read` is "the next datagram from the peer" and its `write`
+# is "send this datagram to the peer". A server that must answer anonymous
+# clients never connects: it `recvFrom`s, which reports the sender, and
+# `sendTo`s the reply back to the address the datagram came from.
+#
+# Datagrams are whole messages: `sendDatagram`/`sendTo` send exactly one,
+# `recvDatagram`/`recvFrom` receive exactly one. There is no end of stream on a
+# datagram socket — a `recv` that places nothing is a datagram of length zero,
+# which is a legal (if unusual) UDP message — so none of these reports `0` as
+# closure the way the stream side does.
+
+type
+  UdpSocket* = object
+    fd*: cint
+    deadline*: Deadline
+      ## This socket's budget, used the way `Socket`'s is: taken from here and
+      ## only ever tightened by an argument.
+    peer*: PeerAddr
+      ## Who a connected datagram socket talks to, set by `udpConnect` from the
+      ## same address that went to the ring (no extra syscall). `family == 0`
+      ## until then — and always for a server socket, whose correspondents are
+      ## per-datagram and owned by `recvFrom`, not by the socket.
+
+proc `=destroy`*(s: UdpSocket) =
+  if s.fd >= 0: closeFd(s.fd)
+
+proc `=wasMoved`*(s: var UdpSocket) {.nodestroy, inline.} =
+  ## `-1` rather than the default zeroing: `0` is a perfectly good descriptor —
+  ## stdin — and a moved-from socket that closes it is a bug that surfaces
+  ## somewhere else entirely.
+  s.fd = -1
+
+proc `=dup`*(s: UdpSocket): UdpSocket =
+  ## Move, not copy: a return through the ring's continuation ABI hands the
+  ## socket to its new owner and empties the old slot (`=wasMoved`), so no
+  ## second owner closes the descriptor. `=copy` stays an error; this is what
+  ## CPS-composed code uses in its place (see `Socket`'s `=dup`).
+  result = UdpSocket(fd: s.fd, deadline: s.deadline, peer: s.peer)
+  `=wasMoved`(cast[ptr UdpSocket](unsafeAddr s)[])
+
+proc `=copy`*(dest: var UdpSocket; src: UdpSocket) {.error.}
+  ## Move-only: two sockets over one descriptor means two owners, and whichever
+  ## is destroyed first closes it under the other.
+
+proc initUdpSocket(fd: cint; deadline: Deadline): UdpSocket =
+  UdpSocket(fd: fd, deadline: deadline, peer: PeerAddr(raw: Sockaddr_storage()))
+
+proc budget*(s: UdpSocket; dl: Deadline): Deadline {.inline.} =
+  earlier(s.deadline, dl)
+
+proc wildcardAddr(sa: var Sockaddr_storage; saLen: var SockLen; port: uint16) =
+  ## Fill `sa` with an IPv4 wildcard (INADDR_ANY) `port`, ready for
+  ## `submitBind`. Written as raw bytes — the same layout `addrFromHost`
+  ## produces, with the address all zeros — so no platform socket type has to
+  ## be imported: two bytes of family (with the BSDs' leading `sa_len`), two
+  ## bytes of network-order port, four zero bytes of address, zero padding.
+  sa = default(Sockaddr_storage)
+  let raw = cast[ptr UncheckedArray[uint8]](addr sa)
+  when defined(linux):
+    raw[0] = 2'u8   # AF_INET low byte
+    raw[1] = 0       # AF_INET high byte
+  else:
+    raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
+    raw[1] = 2'u8    # AF_INET
+  raw[2] = byte(port shr 8)
+  raw[3] = byte(port and 0xFF)
+  saLen = SockLen(16)
+
+proc createSocket*(domain, typ, proto: cint; dl = never): cint {.passive, raises.} =
+  ## A raw non-blocking socket of `domain`/`typ`/`proto`, created entirely
+  ## through the ring: socket(2) and the non-blocking flag are ops the polling
+  ## thread performs, so this proc blocks on nothing and makes no syscall of
+  ## its own. In that it is the passive sibling of `ioring.listenTcp` — which
+  ## still binds synchronously, because a pre-assembled listener has nothing
+  ## between the syscalls to expose. Delivers the fd, or raises `toErr`'s
+  ## `ErrorCode` when the socket or the flag cannot be made.
+  var res = 0
+  var c = delay()
+  discard submitSocket(domain, typ, proto, dl, c, addr res)
+  suspend()
+  if res < 0: raise toErr(res)
+  result = cint(res)
+  res = 0
+  c = delay()
+  discard submitSetNonBlocking(result, dl, c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
+
+proc createUdp*(port: uint16; dl = never): cint {.passive, raises.} =
+  ## A non-blocking UDP socket bound to the wildcard address on `port`; `0`
+  ## asks the kernel to pick one (`boundPort` reports it), the passive sibling
+  ## of `ioring.listenTcp` — and, like `createSocket`, built only from ring
+  ## ops: nothing here blocks and nothing is this proc's own syscall.
+  result = createSocket(AF_INET, SOCK_DGRAM, IPPROTO_UDP, dl)
+  when not defined(windows):
+    # SO_REUSEADDR stays a POSIX-only step: on Winsock the option lets a second
+    # bind hijack a live socket, so the POSIX "restart without TIME_WAIT"
+    # semantics are not what it means there (see `listenTcp`).
+    var yes: cint = 1
+    var reuseRes = 0
+    var reuseC = delay()
+    discard submitSetSockOpt(result, SOL_SOCKET, SO_REUSEADDR, addr yes,
+                             SockLen(sizeof(yes)), dl, reuseC, addr reuseRes)
+    suspend()
+    if reuseRes != 0: raise toErr(reuseRes)
+  var sa = default(Sockaddr_storage)
+  var saLen = SockLen(0)
+  wildcardAddr(sa, saLen, port)
+  var res = 0
+  var c = delay()
+  discard submitBind(result, sa, saLen, dl, c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
+
+proc openUdp*(port: uint16; deadline = never): UdpSocket {.passive, raises.} =
+  ## A bound, non-blocking UDP socket on `port`; `0` asks the kernel to pick
+  ## one, reported by `boundPort`. The whole creation is ring ops — the
+  ## socket, its flag, its bind — so call this from a `.passive` proc (a task
+  ## under `submit`), never from a plain thread's top level: the suspends that
+  ## await the polling thread's instant completions need a continuation to
+  ## resume into. Only the datagram exchange parks beyond that.
+  var fd: cint = createUdp(port, deadline)
+  result = UdpSocket(fd: fd, deadline: deadline,
+                     peer: PeerAddr(raw: Sockaddr_storage()))
+
+proc boundPort*(s: UdpSocket): uint16 {.inline.} = boundPort(s.fd)
+
+proc close*(s: var UdpSocket) =
+  ## Close now rather than at the end of the scope, idempotently, like
+  ## `Socket.close`.
+  if s.fd >= 0:
+    closeFd(s.fd)
+    s.fd = -1
+
+proc udpConnect*(s: var UdpSocket; host: string; port: uint16;
+                 dl = never) {.passive, raises.} =
+  ## Connect an existing, bound UDP socket to `host:port`. Connecting a
+  ## datagram socket does no traffic: it just records the peer, which is the
+  ## destination every later `sendDatagram` goes to and the only source a later
+  ## `recvDatagram` accepts — the UDP analogue of `accept`, which is why the
+  ## ring's stream-shaped read/write submit paths work here unmodified. The
+  ## peer the kernel recorded is also the one `s.peer` reports.
+  var saLen = SockLen(0)
+  if not addrFromHost(s.peer, saLen, host, port):
+    raise IOError
+  var res = 0
+  let c = delay()
+  discard submitConnect(s.fd, s.peer.raw, saLen, budget(s, dl), c, addr res)
+  suspend()
+  if res != 0: raise toErr(res)
+
+proc recvFrom*(s: var UdpSocket; dest: var openArray[char]; peer: var PeerAddr;
+               dl = never): int {.passive, raises.} =
+  ## Receive one datagram into `dest` and report who sent it in `peer`. The
+  ## bytes it held, which is not a stream count: a datagram is a whole message,
+  ## so this is a full message (never a `0`-means-closed condition). A datagram
+  ## larger than `dest` is truncated to it — that is UDP's contract, not
+  ## something this proc can repair. This is the server form — it works on an
+  ## unconnected socket and answers "where do I send the reply" for free.
+  ## Raises `TimeoutError` if the deadline arrived first.
+  if dest.len == 0:
+    peer = PeerAddr(raw: Sockaddr_storage())
+    return 0
+  result = recvFromAsync(s.fd, addr dest[0], dest.len, budget(s, dl), peer)
+  if result < 0: raise toErr(result)
+
+proc recvDatagram*(s: var UdpSocket; dest: var openArray[char];
+                   dl = never): int {.passive, raises.} =
+  ## Receive one datagram into `dest` from the peer `udpConnect` recorded. The
+  ## bytes it held, with the same whole-message semantics as `recvFrom`. This
+  ## is the connected form — the datagram equivalent of `read`, and about the
+  ## only case where a datagram count can be mistaken for a stream count, which
+  ## is why a caller that has connected uses this and a client rarely does.
+  ## Raises `TimeoutError` if the deadline arrived first.
+  if dest.len == 0:
+    return 0
+  result = readAsync(s.fd, addr dest[0], dest.len, budget(s, dl))
+  if result < 0: raise toErr(result)
+
+proc sendDatagram*(s: var UdpSocket; data: openArray[char];
+                   dl = never) {.passive, raises.} =
+  ## Send `data` as one datagram to the peer `udpConnect` recorded. A datagram
+  ## is atomic: the whole buffer is one message, unlike the stream side where a
+  ## short write is the peer's window. Raises `TimeoutError` if the deadline
+  ## arrived first.
+  if data.len == 0: return
+  let n = writeAsync(s.fd, addr data[0], data.len, budget(s, dl))
+  if n <= 0: raise toErr(n)
+
+proc sendTo*(s: var UdpSocket; data: openArray[char]; to: PeerAddr;
+             dl = never) {.passive, raises.} =
+  ## Send `data` as one datagram to `to`, an address this socket did
+  ## necessarily not connect to — the reply half of `recvFrom`, which is how a
+  ## server answers a client it never met. The address is copied into the ring
+  ## op, so `to` does not need to outlive the call.
+  if data.len == 0: return
+  let n = sendToAsync(s.fd, addr data[0], data.len, to.raw,
+                      to.peerLen, budget(s, dl))
+  if n <= 0: raise toErr(n)
+
+proc sendTo*(s: var UdpSocket; data: openArray[char]; host: string; port: uint16;
+             dl = never) {.passive, raises.} =
+  ## `sendTo(data, to)` for a dotted-quad `host:port` literal: builds the peer
+  ## address the way `udpConnect` does and sends to it. Returns early when
+  ## `host` is not a dotted-quad literal — raise `IOError` like `connect` does.
+  if data.len == 0: return
+  var saLen = SockLen(0)
+  var to = PeerAddr(raw: Sockaddr_storage())
+  if not addrFromHost(to, saLen, host, port):
+    raise IOError
+  sendTo(s, data, to, dl)
