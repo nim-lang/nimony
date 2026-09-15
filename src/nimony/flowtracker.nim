@@ -298,11 +298,12 @@ proc bindRaise*(tr: var FlowTracker; fs: var FlowState) {.inline.} =
   bindKey(tr, fs, ExitKey[SymId](kind: ekRaise))
 
 proc bindLoopExit*(tr: var FlowTracker; fs: var FlowState; label: SymId) =
-  ## The `(lab loopExit)` after a `(loop)`. A loop is analyzed in one forward
-  ## pass (no fixpoint), so break-site *facts* may be iteration-specific and are
-  ## dropped — `fs.facts` keeps the conservative pre-loop set the driver rolled
-  ## back to. Definite-assignment is monotone, so break-site *inits* ARE joined
-  ## (a var initialized before every break is initialized after the loop).
+  ## The `(lab loopExit)` after a `(loop)`. The body is analyzed once, and only
+  ## under the facts no iteration can break (`restrictFactsToLoopInvariants`),
+  ## so what holds where a `break` or the guard jumps out holds on *every*
+  ## iteration's exit: the exit is joined exactly like any other label — the
+  ## guard's negation included, which is what `while k > Max: …` leaves behind
+  ## for the code after it.
   let key = labelKey(label)
   if key notin tr.exits:
     # A `(lab)` with no `jmp` to it: `trFor` emits the exit of every `for` loop
@@ -312,21 +313,7 @@ proc bindLoopExit*(tr: var FlowTracker; fs: var FlowState; label: SymId) =
     # back to, so the only thing missing is liveness.
     tr.live = true
   else:
-    let landed = getOrDefault(tr.exits, key)
-    jDel(tr, key)
-    if tr.live:
-      var keep: seq[SymId] = @[]
-      for k in fs.inits.snapshot:
-        if k notin landed.inits: keep.add k
-      for k in keep: fs.inits.excl k
-    else:
-      # only break paths reach here: install their joined init-set
-      var cur: seq[SymId] = @[]
-      for k in fs.inits.snapshot: cur.add k
-      for k in cur:
-        if k notin landed.inits: fs.inits.excl k
-      for k in landed.inits: fs.inits.incl k
-      tr.live = true
+    bindKey(tr, fs, key)
 
 proc dropContinue*(tr: var FlowTracker) {.inline.} =
   ## The loop header consumes the back-edge; a one-pass forward analysis drops it.

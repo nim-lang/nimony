@@ -1,4 +1,5 @@
 {.feature: "lenientnils".}
+{.feature: "staticContracts".}
 
 import std/formatfloat
 
@@ -70,7 +71,7 @@ when defined(nimNativeIo):
       flags: set[FileFlag]
       wbuf: seq[char]      ## write buffer (grows on demand; empty for read-only streams)
       rbuf: seq[char]      ## read buffer
-      rpos: int            ## consume cursor into `rbuf`
+      rpos: Natural        ## consume cursor into `rbuf`
     File* = ref FileObj    ## The type representing a file handle.
 else:
   type
@@ -228,6 +229,11 @@ when defined(nimNativeIo):
     if n <= 0: return
     let oldLen = f.wbuf.len
     f.wbuf.setLen(oldLen + n)
+    if oldLen >= f.wbuf.len:
+      # Out of memory: `setLen` could not grow the buffer and emptied it. (It
+      # either grew past `oldLen`, `n` being positive, or left nothing.)
+      f.flags.incl ffError
+      return
     copyMem(addr f.wbuf[oldLen], p, n)
     if ffUnbuf in f.flags or f.wbuf.len >= NativeBufSize:
       flushImpl f
@@ -235,6 +241,11 @@ when defined(nimNativeIo):
   proc fillBuf(f: File): bool =
     ## Refills `rbuf` from the fd. Returns false on EOF/error (and records which).
     f.rbuf.setLen NativeBufSize
+    if f.rbuf.len < NativeBufSize:
+      # out of memory: `setLen` could not grow the buffer and emptied it
+      f.rpos = 0
+      f.flags.incl ffError
+      return false
     let k = sysRead(f.fd, addr f.rbuf[0], uint(NativeBufSize))
     f.rpos = 0
     if k > 0:
@@ -250,8 +261,11 @@ when defined(nimNativeIo):
     ## Returns the next byte as 0..255, or -1 at EOF/error.
     if f.rpos >= f.rbuf.len:
       if not fillBuf(f): return -1
-    result = int(f.rbuf[f.rpos])
-    inc f.rpos
+    if f.rpos < f.rbuf.len:
+      result = int(f.rbuf[f.rpos])
+      inc f.rpos
+    else:
+      result = -1
 
   proc flushStdStreams() {.nimcall.} =
     ## Registered with `system/exits` so every process exit flushes the buffered
@@ -390,10 +404,17 @@ proc readBuffer*(f: File; buffer: pointer; size: int): int =
     while off < size:
       if f.rpos >= f.rbuf.len:
         if not fillBuf(f): break
-      let take = min(f.rbuf.len - f.rpos, size - off)
-      copyMem(addr dest[off], addr f.rbuf[f.rpos], take)
-      f.rpos += take
-      off += take
+      if f.rpos >= f.rbuf.len: break
+      let avail: Natural = f.rbuf.len - f.rpos
+      let want: Natural = size - off
+      if avail <= want:
+        copyMem(addr dest[off], addr f.rbuf[f.rpos], avail)
+        f.rpos = f.rbuf.len
+        off = off + avail
+      else:
+        copyMem(addr dest[off], addr f.rbuf[f.rpos], want)
+        f.rpos = f.rpos + want
+        off = size
     result = off
   else:
     result = cast[int](c_fread(buffer, 1'u, cast[uint](size), f))

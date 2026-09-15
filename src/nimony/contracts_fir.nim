@@ -120,10 +120,23 @@ type
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
     derivedIds: Table[string, VarId]   # canonical location key -> derived VarId
                                        # (see "Derived locations" below)
+    derivedKeys: seq[string]           # parallel to `derivedRoots`: the location key
+    derivedHeap: seq[bool]
+      ## Parallel to `derivedRoots`: is the derived location reached through a
+      ## pointer or a `ref` (`f.wbuf.len` with `f: File`)? Such a location can
+      ## be written through an alias, so its facts are dropped whenever anything
+      ## may write the heap (`invalidateHeapDerived`).
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
     notAccessors: HashSet[SymId]       # negative cache for the lookup above
+    plainTypes: Table[SymId, bool]     # memo for `plainType`
+    constDepth: int
+    moduleConsts: Table[SymId, Cursor] # `const`s declared in this module: their
+                                       # values, which `tryEvalOrdinal` cannot
+                                       # load before the module is written
+    moduleFuncs: HashSet[SymId]        # `func`s declared in this module, generic
+                                       # instances included (see `collectAccessors`)
     steps: Table[SymId, StepInfo]      # routines that are just `x = x ± k`
     notSteps: HashSet[SymId]           # negative cache for the lookup above
     prescanning: bool
@@ -144,6 +157,19 @@ type
       ## `inc i` lowers to a call plus an `(unknown i)`; the call has already
       ## said exactly how far `i` moved, so that `(unknown …)` must not then
       ## erase it. Holds the location for the one statement that follows.
+    oldSlots: Table[string, VarId]
+      ## `old(e)` in the `.ensures` of the call being analysed: the snapshot of
+      ## location `e` taken before the call's mutations, keyed by `e`'s
+      ## location key. Rebuilt at every call.
+    ownEnsures: Cursor
+      ## The `.ensures` of the routine being analysed, proven at every exit
+      ## (`verifyEnsures`); nil when it has none.
+    ownOldSlots: Table[string, VarId]
+      ## `old(e)` of `ownEnsures`: the snapshots taken on entry.
+    ensuredRoots: seq[SymId]
+      ## Roots whose facts a callee's `.ensures` just re-established. Like
+      ## `steppedLoc`, the `(unknown …)` that follows the call must not erase
+      ## them again; lives for the one statement that follows.
     resultSym: SymId                   # symId of the `result` local for the current proc, or NoSymId
     activeBorrows: seq[BorrowInfo]
     verbose: bool                      # --verbose: dump final IR on init/contract
@@ -196,14 +222,6 @@ proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
   c.errors.buildTree ErrT, info:
     c.errors.addDotToken()
     c.errors.addStrLit(hintedMsg, info)
-
-proc contractViolation(c: var FirContext; orig: Cursor; fact: LeXplusC; report: bool) =
-  if report:
-    echo "known facts in this context: "
-    for i in 0 ..< c.facts.len:
-      echo $c.facts[i]
-    echo "canonical fact: ", $fact
-  error "contract violation: ", orig
 
 # Forward declarations
 proc traverseStmt(c: var FirContext; n: var Cursor)
@@ -480,6 +498,145 @@ proc staticRangeBounds(typ: Cursor; lo, hi: var xint): bool =
   else: return false
   result = lo <= hi
 
+proc integerTypeBounds(bits: int; typ: Cursor; lo, hi: var xint): bool =
+  ## The bounds a builtin integer type's *width* states: `(u 8)` holds `0..255`,
+  ## `(i 16)` holds `-32768..32767`, `char` is 8 bits. A value of such a type
+  ## cannot be anything else, so `byte(x shr a)` indexes a 256-element table
+  ## without a single fact about `x`.
+  result = false
+  var t = typ
+  var guard = 0
+  var resolved = true
+  while t.isSymbol and guard < 8 and resolved:
+    let s = tryLoadSym(t.symId)
+    if s.status == LacksNothing and s.decl.symKind == TypeY:
+      t = asTypeDecl(s.decl).body
+    else:
+      resolved = false
+    inc guard
+  let k = t.typeKind
+  if resolved and k in {IntT, UIntT, CharT}:
+    var width = 8
+    if k != CharT:
+      var w = t
+      inc w
+      width = if w.kind == IntLit and w.intVal > 0: int(w.intVal) else: bits
+    if width >= 1 and width <= 64:
+      if k == IntT:
+        hi = (createXint(1'i64) shl (width - 1)) - createXint(1'i64)
+        lo = -hi - createXint(1'i64)
+      else:
+        lo = zero()
+        hi = if width == 64: createXint(high(uint64)) else: (createXint(1'i64) shl width) - createXint(1'i64)
+      result = not lo.isNaN and not hi.isNaN
+
+proc constShaped(n: Cursor; depth = 0): bool =
+  ## Could `n` fold to an ordinal? Literals, symbols (a `const` is one) and
+  ## arithmetic over them. `tryEvalOrdinal` is only ever handed such a tree:
+  ## the evaluator is written for `const` initializers and is not total on an
+  ## arbitrary runtime expression.
+  case n.kind
+  of IntLit, UIntLit, CharLit, Symbol: result = true
+  of TagLit:
+    if n.exprKind in {SizeofX, AlignofX, HighX, LowX}:
+      # over a type only: nothing to evaluate at run time
+      return depth < 8
+    result = depth < 8 and n.exprKind in {ConvX, HconvX, AddX, SubX, MulX, DivX, ModX,
+      ShlX, ShrX, AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX, SufX, ParX}
+    if result:
+      var r = n
+      r = sub(r)
+      if n.exprKind in {ConvX, HconvX, AddX, SubX, MulX, DivX, ModX, ShlX, ShrX,
+                        AshrX, BitandX, BitorX, BitxorX, BitnotX, NegX}:
+        skip r # the type operand
+      while result and r.hasMore:
+        result = constShaped(r, depth+1)
+        skip r
+  else: result = false
+
+proc valueBounds(c: var FirContext; n: Cursor; lo, hi: var xint; depth = 0): bool =
+  ## The interval `n` lies in by its *shape* alone — no flow facts: a constant,
+  ## `a and k` (`0..k` for a constant `k >= 0`, whatever `a` is), `a shr k` of a
+  ## non-negative bounded `a`, and a conversion whose target type holds the
+  ## operand's interval. What bit-twiddling code computes an index from —
+  ## `HexChars[(n and 0xF0) shr 4]`, `bits[u shr IntShift]` — is exactly this,
+  ## and none of it is expressible as `a <= b + c`.
+  result = false
+  if depth <= 8:
+    let folded = if constShaped(n): tryEvalOrdinal(c.bits, n) else: createNaN()
+    if not folded.isNaN:
+      lo = folded
+      hi = folded
+      result = true
+    else:
+      case n.exprKind
+      of BitandX:
+        var d = n
+        d = sub(d)
+        skip d # the type operand
+        var aLo = zero()
+        var aHi = zero()
+        let leftBounded = valueBounds(c, d, aLo, aHi, depth+1)
+        skip d
+        var bLo = zero()
+        var bHi = zero()
+        if valueBounds(c, d, bLo, bHi, depth+1) and bLo == bHi and zero() <= bLo:
+          lo = zero()
+          hi = if leftBounded and zero() <= aLo: min(aHi, bHi) else: bHi
+          result = true
+      of ShrX, AshrX:
+        var d = n
+        d = sub(d)
+        skip d # the type operand
+        var aLo = zero()
+        var aHi = zero()
+        if valueBounds(c, d, aLo, aHi, depth+1) and zero() <= aLo:
+          skip d
+          var err = false
+          let k = asSigned((if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()), err)
+          if not err and k >= 0 and k < 64:
+            lo = aLo shr int(k)
+            hi = aHi shr int(k)
+            result = not lo.isNaN and not hi.isNaN
+      of HconvX, ConvX:
+        var d = n
+        d = sub(d)
+        let target = d
+        skip d
+        var tLo = zero()
+        var tHi = zero()
+        if integerTypeBounds(c.bits, target, tLo, tHi):
+          if valueBounds(c, d, lo, hi, depth+1) and tLo <= lo and hi <= tHi:
+            result = true
+          else:
+            # Whatever the operand, the converted value is one of the target
+            # type's: `byte(x shr a)` is `0..255`.
+            lo = tLo
+            hi = tHi
+            result = true
+      of AddX, SubX:
+        let isSub = n.exprKind == SubX
+        var d = n
+        d = sub(d)
+        skip d # the type operand
+        var aLo = zero()
+        var aHi = zero()
+        if valueBounds(c, d, aLo, aHi, depth+1):
+          skip d
+          var bLo = zero()
+          var bHi = zero()
+          if valueBounds(c, d, bLo, bHi, depth+1):
+            lo = if isSub: aLo - bHi else: aLo + bLo
+            hi = if isSub: aHi - bLo else: aHi + bHi
+            result = not lo.isNaN and not hi.isNaN
+      else:
+        discard
+      if not result and n.exprKind in {DotX, DdotX}:
+        # A field of a `range` type is in that range whatever path it is read
+        # by — through a pointer, too, where no flow fact may be kept because of
+        # aliasing: every write to such a field owes the range.
+        result = staticRangeBounds(getType(c.typeCache, n), lo, hi)
+
 # --- Derived locations: `s.len`, `x.f.g`, `len(s)` ---
 #
 # `inferle` reasons about `VarId`s, and until now a `VarId` was always a plain
@@ -539,6 +696,8 @@ proc derivedIdOf(c: var FirContext; key: string; root: SymId): VarId =
     result = c.derivedIds.getOrQuit(key)
   else:
     c.derivedRoots.add root
+    c.derivedKeys.add key
+    c.derivedHeap.add "->" in key
     result = VarId(FirstDerivedVarId - (c.derivedRoots.len - 1))
     c.derivedIds[key] = result
 
@@ -549,11 +708,168 @@ proc invalidateDerivedFrom(c: var FirContext; root: SymId) =
     if c.derivedRoots[i] == root:
       invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
+proc invalidateHeapDerived(c: var FirContext) =
+  ## A write that may have reached the heap: every location read through a
+  ## pointer or a `ref` may have been its target, under any alias.
+  for i in 0 ..< c.derivedHeap.len:
+    if c.derivedHeap[i]:
+      invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+
+proc mayWriteHeap(n: Cursor): bool =
+  ## Does writing location `n` go through a pointer, a `ref` or a `var`
+  ## parameter — anything an alias could also reach?
+  var m = n
+  var guard = 0
+  result = false
+  while not result and m.isTagLit and guard < 16:
+    inc guard
+    case m.exprKind
+    of DdotX, DerefX, HderefX:
+      result = true
+    of DotX, AtX, ArratX, TupatX, PatX, HaddrX, AddrX:
+      m = sub(m)
+    else:
+      break
+
+proc plainType(c: var FirContext; t: Cursor; depth = 0): bool =
+  ## Can a value of type `t` reach no heap object: no `ref`, `ptr`, `pointer`,
+  ## closure or `var` anywhere inside it? A `seq`'s or `openArray`'s own
+  ## payload pointer does not count — through it a routine reaches the
+  ## elements, never a field of some `ref` object — so `seq[int]` and `string`
+  ## are plain and `seq[Node]` with `Node = ref object` is not.
+  result = false
+  if depth > 12: return false
+  if t.isSymbol:
+    let sym = t.symId
+    if isStringType(t): return true
+    if c.plainTypes.hasKey(sym): return c.plainTypes.getOrQuit(sym)
+    c.plainTypes[sym] = false # a type that reaches itself is not plain
+    let decl = tryLoadSym(sym)
+    if decl.status == LacksNothing and decl.decl.symKind == TypeY:
+      let body = asTypeDecl(decl.decl).body
+      let base = pool.symBasename(sym)
+      if (base == "seq" or base == "openArray") and body.typeKind == ObjectT:
+        # `len` and `ptr UncheckedArray[T]`: plain exactly when `T` is
+        result = true
+        var f = body
+        f = sub(f)
+        skip f # the inheritance slot
+        while result and f.hasMore:
+          if f.substructureKind == FldU:
+            var ft = asLocal(f).typ
+            if ft.typeKind == PtrT:
+              ft = sub(ft)
+              if ft.typeKind == UarrayT: ft = sub(ft)
+            result = plainType(c, ft, depth+1)
+          skip f
+      else:
+        result = plainType(c, body, depth+1)
+    c.plainTypes[sym] = result
+    return result
+  case t.typeKind
+  of IT, UT, FT, CT, BoolT, EnumT, OnumT, SetT, RangetypeT, CstringT, VoidT:
+    result = true
+  of DistinctT, LentT, SinkT, ArrayT:
+    var e = t
+    e = sub(e)
+    if t.typeKind == ArrayT:
+      result = plainType(c, e, depth+1)
+    else:
+      result = plainType(c, e, depth+1)
+  of TupleT, ObjectT:
+    var f = t
+    f = sub(f)
+    result = true
+    if t.typeKind == ObjectT:
+      if not f.isDotToken:
+        result = plainType(c, f, depth+1) # the base object
+      skip f
+    while result and f.hasMore:
+      case f.substructureKind
+      of FldU:
+        result = plainType(c, asLocal(f).typ, depth+1)
+      of KvU:
+        var kv = f
+        kv = sub(kv)
+        skip kv # the field name
+        result = plainType(c, kv, depth+1)
+      else:
+        result = plainType(c, f, depth+1)
+      skip f
+  else:
+    result = false
+
+proc callKeepsHeap(c: var FirContext; fn: Cursor; params: Cursor): bool =
+  ## Does a call leave every heap location as it was? Only a `func` — which
+  ## touches no global — whose parameters are all `plainType`: with no pointer,
+  ## `ref` or `var` among its arguments it has no way to reach the heap.
+  let fnSym = extractSymId(fn)
+  result = false
+  if fnSym != NoSymId:
+    if fnSym in c.moduleFuncs:
+      result = true
+    else:
+      let sym = tryLoadSym(fnSym)
+      result = sym.status == LacksNothing and sym.decl.symKind == FuncY
+  if result and params.isParamsTag:
+    var p = params
+    p = sub(p)
+    while result and p.hasMore:
+      let param = takeLocal(p, SkipFinalParRi)
+      result = plainType(c, param.typ)
+
+proc isElementWrite(n: Cursor): bool {.inline.} =
+  ## A write to one element of an array or of a pointer's target: it changes
+  ## that element and nothing else. No derived location is keyed through an
+  ## element, so none can be its target — a write through a pointer still counts
+  ## for the heap (`mayWriteHeap`).
+  n.exprKind in {ArratX, PatX, AtX}
+
+proc isHeapDerived(c: FirContext; v: VarId): bool =
+  let i = FirstDerivedVarId - int(v)
+  result = i >= 0 and i < c.derivedHeap.len and c.derivedHeap[i]
+
+proc keyUnder(derived, written: string): bool =
+  ## Is the location keyed `derived` reached through the one keyed `written`?
+  ## Either it lies below it (`written` is a prefix, ending at a component
+  ## boundary), or it is a call over some part of the root — an opaque function
+  ## of the whole value, which any write may change.
+  if derived.startsWith(written):
+    result = derived.len == written.len or derived[written.len] in {'.', '-'}
+  else:
+    result = 'c' in derived
+
+proc hasOverlappingFields(c: var FirContext; objType: Cursor): bool =
+  ## A variant object or a union: writing one field may change another.
+  var t = objType
+  var guard = 0
+  result = false
+  while t.isSymbol and guard < 8:
+    let decl = tryLoadSym(t.symId)
+    if decl.status != LacksNothing or decl.decl.symKind != TypeY: return true
+    let td = asTypeDecl(decl.decl)
+    if hasPragma(td.pragmas, UnionP): return true
+    t = td.body
+    inc guard
+  if t.typeKind in {PtrT, RefT, MutT}:
+    t = sub(t)
+    return hasOverlappingFields(c, t)
+  if t.typeKind != ObjectT: return true
+  var f = t
+  f = sub(f)
+  skip f # the inheritance slot
+  while f.hasMore:
+    if f.substructureKind == CaseU: return true
+    skip f
+
 proc invalidateAllDerived(c: var FirContext) =
   ## A write we cannot attribute to a root (through a pointer, say) may have hit
-  ## any derived location.
+  ## any derived location. A slot without a root is the analysis's own
+  ## (`#boundvalue`, an `old(…)` snapshot) and names no location a write
+  ## reaches.
   for i in 0 ..< c.derivedRoots.len:
-    invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+    if c.derivedRoots[i] != NoSymId:
+      invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
 
 proc isKeyableCall(fnSym: SymId): bool =
   ## May a call to `fnSym` stand for a location of its own?
@@ -618,7 +934,9 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor): bool =
         skip a
         val = a
       skip b
-    elif b.stmtKind == RetS:
+    elif b.stmtKind in {RetS, AssumeS, AssertS} or b.finalIrKind in {AssumeV, AssertV}:
+      # a proposition changes nothing at run time: `len` states its own
+      # non-negativity next to the path it returns
       skip b
     else:
       return false
@@ -672,14 +990,23 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     key = "v" & $uint32(s)
     return true
   case m.exprKind
-  of DotX:
+  of DotX, DdotX:
+    # `a.f`, and `p.f` through a pointer or `ref` — the latter keyed with `->`,
+    # which is what marks the location as one the heap holds.
     var r = m
     r = sub(r)
     if not locationKey(c, r, subst, root, key, steps, depth+1): return false
     skip r # the object
     if not r.isSymbol: return false
-    key.add "."
+    key.add (if m.exprKind == DdotX: "->" else: ".")
     key.add $uint32(r.symId)
+    inc steps
+    result = true
+  of DerefX:
+    var r = m
+    r = sub(r)
+    if not locationKey(c, r, subst, root, key, steps, depth+1): return false
+    key.add "->"
     inc steps
     result = true
   of CallKinds:
@@ -697,8 +1024,14 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     if accessorOf(c, fnSym, accessorParam, accessorValue):
       # Key the *path the accessor returns*, so that `len(s)` and the `s.len`
       # written inside the defining module are one and the same location.
-      var inner = subst
-      inner[accessorParam] = arg
+      # The argument is resolved against the substitution in flight *first*: in
+      # a callee's `.requires`, `len(a)` applies the accessor to the callee's
+      # parameter `a`, which stands for the argument at the call site. The
+      # accessor's own path then needs its parameter and nothing else — keeping
+      # the outer map there would substitute twice, and a recursive call with
+      # swapped arguments maps `a` to `b` and `b` back to `a`.
+      var inner = initTable[SymId, Cursor]()
+      inner[accessorParam] = argOf(arg, subst)
       return locationKey(c, accessorValue, inner, root, key, steps, depth+1)
     if not isKeyableCall(fnSym): return false
     if not locationKey(c, arg, subst, root, key, steps, depth+1): return false
@@ -707,6 +1040,27 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     result = true
   else:
     result = false
+
+proc invalidateWrittenPath(c: var FirContext; dest: Cursor; root: SymId) =
+  ## A write to the location `dest`, rooted at `root`: what lies under it goes
+  ## stale, its siblings do not — `a.trunc = true` says nothing about `a.nd`.
+  ## Coarse for a variant object or a union, whose fields overlap.
+  var r = NoSymId
+  var key = ""
+  var steps = 0
+  let noSubst = initTable[SymId, Cursor]()
+  var precise = dest.exprKind in {DotX, DdotX} and
+    locationKey(c, dest, noSubst, r, key, steps, 0) and r == root and steps > 0
+  if precise:
+    var obj = dest
+    obj = sub(obj)
+    precise = not hasOverlappingFields(c, getType(c.typeCache, obj))
+  if precise:
+    for i in 0 ..< c.derivedRoots.len:
+      if c.derivedRoots[i] == root and keyUnder(c.derivedKeys[i], key):
+        invalidateFactsAbout(c.facts, VarId(FirstDerivedVarId - i))
+  else:
+    invalidateDerivedFrom(c, root)
 
 proc noteDeclaredRange(c: var FirContext; v: VarId; typ: Cursor) =
   if v == InvalidVarId or v == VarId(0) or c.declaredRange.hasKey(v): return
@@ -885,7 +1239,15 @@ proc collectAccessors(c: var FirContext; n: var Cursor) =
   if not n.isTagLit:
     skip n
     return
+  if n.symKind == ConstY:
+    let local = asLocal(n)
+    if local.name.kind == SymbolDef and not cursorIsNil(local.val):
+      c.moduleConsts[local.name.symId] = local.val
   if n.symKind in RoutineKinds:
+    if n.symKind == FuncY:
+      var fname = n
+      fname = sub(fname)
+      if fname.kind == SymbolDef: c.moduleFuncs.incl fname.symId
     var param = NoSymId
     var value = default(Cursor)
     if matchAccessor(n, param, value):
@@ -946,8 +1308,16 @@ proc impliesHere(c: var FirContext; fact: LeXplusC): bool =
     return c.declaredRange.getOrQuit(fact.b).lo >= -fact.c
   if fact.b == VarId(0) and c.declaredRange.hasKey(fact.a):
     # `a <= 0 + k` holds when the declared `hi` is at most `k`.
-    return c.declaredRange.getOrQuit(fact.a).hi <= fact.c
+    if c.declaredRange.getOrQuit(fact.a).hi <= fact.c: return true
+  # Through a chain: `i <= d.count - 1` with `count: range[0..30]` bounds `i`,
+  # but only once the declared range takes part in the closure as facts.
   result = false
+  if c.declaredRange.len > 0:
+    var extended = c.facts
+    for v, r in c.declaredRange:
+      extended.add query(VarId(0), v, -r.lo)
+      extended.add query(v, VarId(0), r.hi)
+    result = implies(extended, fact)
 
 proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string) =
   ## The "cannot prove" half of a range obligation, which not every caller
@@ -973,8 +1343,10 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   #    joins where flow-derived facts would be intersected away.
   var aLo = zero()
   var aHi = zero()
-  if staticRangeBounds(getType(c.typeCache, value), aLo, aHi):
-    if lo <= aLo and aHi <= hi: return
+  let valueType = getType(c.typeCache, value)
+  if staticRangeBounds(valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
+  if integerTypeBounds(c.bits, valueType, aLo, aHi) and lo <= aLo and aHi <= hi: return
+  if valueBounds(c, value, aLo, aHi) and lo <= aLo and aHi <= hi: return
 
   # 2. Otherwise, discharge `lo <= value <= hi` from the facts known on this
   #    path (e.g. a preceding `if a >= 0 ... a <= 10` guard, or a `range`-typed
@@ -995,22 +1367,29 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     var a = value
     a = sub(a)
     skip a # the type operand
-    let baseSym = skipSymbol(a)
-    if baseSym != NoSymId:
+    let baseStart = a
+    var baseSym = skipSymbol(a)
+    var baseLoc = if baseSym != NoSymId: getVarId(c, baseSym) else: InvalidVarId
+    if baseSym == NoSymId:
+      # a derived location as the base: `a.d[a.nd - 1]`
+      baseLoc = plainLocationVarId(c, baseStart)
+      if baseLoc != InvalidVarId:
+        skip a
+    if baseLoc != InvalidVarId:
       var k = createNaN()
       case a.kind
       of IntLit: k = createXint(a.intVal)
       of UIntLit: k = createXint(a.uintVal)
-      else: k = tryEvalOrdinal(c.bits, a)
+      else: k = if constShaped(a): tryEvalOrdinal(c.bits, a) else: createNaN()
       if not k.isNaN:
-        v = getVarId(c, baseSym)
+        v = baseLoc
         off = if isSub: -k else: k
         let lower0 = query(VarId(0), v, off - lo)
         let upper0 = query(v, VarId(0), hi - off)
         if (not needLo or impliesHere(c, lower0)) and
            (not needHi or impliesHere(c, upper0)):
           return
-        cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(baseSym) &
+        cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(baseStart) &
           "' stays in range " & $lo & ".." & $hi
         return
 
@@ -1030,38 +1409,140 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
     invalidateFactsAbout(c.facts, slot)
     if ok: return
 
-  # `a shr k` (arithmetic or logical) and `a and k`: non-negativity survives
-  # both, which is what binds the halving step `y = y shr 1` and a masked index
-  # `x and 63` to a `Natural`.
-  # Neither is expressible as `a <= b + c`, so they are answered structurally.
+  # `m * a + o` for constants `m > 0` and `o`: `lo <= m*a + o <= hi` holds
+  # exactly when `ceil((lo - o) / m) <= a <= floor((hi - o) / m)`. What a digit
+  # table indexed by `2 * digits + 1` owes.
+  if sym == NoSymId:
+    var lin = value
+    var linLo = zero()
+    var linHi = zero()
+    while lin.exprKind in {HconvX, ConvX}:
+      var d = lin
+      d = sub(d)
+      if integerTypeBounds(c.bits, d, linLo, linHi) and linLo <= lo and hi <= linHi:
+        skip d
+        lin = d
+      else:
+        break
+    var offset = zero()
+    if lin.exprKind == AddX:
+      var d = lin
+      d = sub(d)
+      skip d # the type operand
+      let first = d
+      skip d
+      let k = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+      if not k.isNaN:
+        offset = k
+        lin = first
+    if lin.exprKind == MulX:
+      var d = lin
+      d = sub(d)
+      skip d # the type operand
+      var factor = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+      skip d
+      var operand = d
+      if factor.isNaN:
+        factor = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+        operand = lin
+        operand = sub(operand)
+        skip operand # the type operand
+      let loc = plainLocationVarId(c, operand)
+      if loc != InvalidVarId and not factor.isNaN and zero() < factor:
+        let one = createXint(1'i64)
+        # floor division for the upper bound, ceiling division for the lower one
+        let upper = hi - offset
+        let maxA = if upper < zero(): -((-upper + factor - one) div factor) else: upper div factor
+        let lower = lo - offset
+        let minA = if lower <= zero(): -((-lower) div factor) else: (lower + factor - one) div factor
+        var aLo = zero()
+        var aHi = zero()
+        # the type-given lower bound only counts once the upper one rules out a wrap
+        let typeLow = needHi and
+          integerTypeBounds(c.bits, getType(c.typeCache, operand), aLo, aHi) and minA <= aLo
+        if (not needLo or typeLow or impliesHere(c, query(VarId(0), loc, -minA))) and
+           (not needHi or impliesHere(c, query(loc, VarId(0), maxA))):
+          return
+
+  # `-a`: `lo <= -a <= hi` is `-hi <= a <= -lo`, which is what binds
+  # `NegTen[int(-x)]` under `if x < 0: if x > -10:`.
+  var negValue = value
+  block:
+    var tLo = zero()
+    var tHi = zero()
+    if negValue.exprKind in {HconvX, ConvX}:
+      var d = negValue
+      d = sub(d)
+      if integerTypeBounds(c.bits, d, tLo, tHi) and tLo <= lo and hi <= tHi:
+        skip d
+        negValue = d
+  if sym == NoSymId and negValue.exprKind == NegX:
+    var d = negValue
+    d = sub(d)
+    skip d # the type operand
+    let operand = plainLocationVarId(c, d)
+    if operand != InvalidVarId and
+       (not needLo or impliesHere(c, query(operand, VarId(0), -lo))) and
+       (not needHi or impliesHere(c, query(VarId(0), operand, hi))):
+      return
+
+  # `a shr k` (arithmetic or logical) and `a and k`, answered structurally:
+  # neither is expressible as `a <= b + c`. This is what binds the halving step
+  # `y = y shr 1` and a masked index `x and 63` to a `Natural`.
+  # `a div k` and `a mod k` for a constant `k > 0` and a non-negative `a`: the
+  # quotient stays non-negative and below `(hi + 1) * k`, the remainder lies in
+  # `0 .. k-1`. What a digit loop `x = x div 10` owes a `Natural`.
+  if sym == NoSymId and value.exprKind in {DivX, ModX}:
+    var d = value
+    d = sub(d)
+    skip d # the type operand
+    let leftLoc = plainLocationVarId(c, d)
+    skip d
+    let k = if constShaped(d): tryEvalOrdinal(c.bits, d) else: createNaN()
+    if leftLoc != InvalidVarId and not k.isNaN and zero() < k and
+       impliesHere(c, query(VarId(0), leftLoc, zero())):
+      let one = createXint(1'i64)
+      let ok =
+        if value.exprKind == ModX:
+          (not needLo or lo <= zero()) and (not needHi or k - one <= hi)
+        else:
+          (not needLo or lo <= zero()) and
+            (not needHi or (zero() <= hi and
+              impliesHere(c, query(leftLoc, VarId(0), (hi + one) * k - one))))
+      if ok: return
+
   if sym == NoSymId and value.exprKind in {ShrX, AshrX, BitandX}:
     let isShift = value.exprKind in {ShrX, AshrX}
     var d = value
     d = sub(d)
     skip d # the type operand
-    let leftOp = d
     let leftLoc = plainLocationVarId(c, d)
     skip d
-    let rightOp = d
-    var maskOrShift = createNaN()
-    case rightOp.kind
-    of IntLit: maskOrShift = createXint(rightOp.intVal)
-    of UIntLit: maskOrShift = createXint(rightOp.uintVal)
-    else: maskOrShift = tryEvalOrdinal(c.bits, rightOp)
-    if leftLoc != InvalidVarId and not maskOrShift.isNaN and maskOrShift >= zero():
-      # `0 <= a` gives `0 <= a shr k` and `0 <= a and k`.
-      let leftNonNeg = impliesHere(c, query(VarId(0), leftLoc, zero()))
-      # `a shr k <= a`; `a and k <= k`.
-      let upperOk =
-        if not needHi: true
-        elif isShift: impliesHere(c, query(leftLoc, VarId(0), hi))
-        else: maskOrShift <= hi
-      if (not needLo or leftNonNeg) and upperOk:
-        return
+    var k = createNaN()
+    case d.kind
+    of IntLit: k = createXint(d.intVal)
+    of UIntLit: k = createXint(d.uintVal)
+    else: k = tryEvalOrdinal(c.bits, d)
+    if not k.isNaN and zero() <= k:
+      var ok = false
+      if not isShift:
+        # `a and k` keeps only bits of `k`: for `k >= 0` it lies in `0..k`,
+        # whatever `a` is.
+        ok = (not needLo or lo <= zero()) and (not needHi or k <= hi)
+      elif leftLoc != InvalidVarId and impliesHere(c, query(VarId(0), leftLoc, zero())):
+        # A non-negative `a` shifts to a non-negative value, and `a shr k <= hi`
+        # holds exactly when `a <= ((hi + 1) shl k) - 1`.
+        var err = false
+        let shift = asSigned(k, err)
+        let bound = if err or shift > 62 or hi < zero(): createNaN()
+                    else: ((hi + createXint(1'i64)) shl int(shift)) - createXint(1'i64)
+        ok = (not needLo or lo <= zero()) and
+             (not needHi or (not bound.isNaN and
+                             impliesHere(c, query(leftLoc, VarId(0), bound))))
+      if ok: return
       cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(value) &
         "' is in range " & $lo & ".." & $hi
       return
-    discard leftOp
 
   # `a + b` between two locations. The sum itself is outside what `a <= b + c`
   # can say, but a *lower* bound on it follows from lower bounds on the parts:
@@ -1127,6 +1608,9 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
       isLit = true
     elif sym != NoSymId:
       v = getVarId(c, sym)
+    elif (let loc = plainLocationVarId(c, value); loc != InvalidVarId):
+      # a derived location — `a.dp`, `s.len` — is judged exactly like a variable
+      v = loc
     else:
       # A value we cannot model cannot be proven in range, so we reject it.
       cannotProve c, value.info, reportUnprovable, "cannot prove value is in range " & $lo & ".." & $hi
@@ -1136,8 +1620,23 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
   let lower = query(VarId(0), v, off - lo)
   # v + off <= hi   <=>   v <= 0 + (hi - off)
   let upper = query(v, VarId(0), hi - off)
-  if not ((not needLo or impliesHere(c, lower)) and
-          (not needHi or impliesHere(c, upper))):
+  let upperOk = not needHi or impliesHere(c, upper)
+  # A symbol of an unsigned type is non-negative by its type, which no flow fact
+  # states: `if x < 10: NegTen[int x]` with `x: uint64`. Through a conversion
+  # that only holds once the upper bound is proven too — `int(x)` of a huge
+  # `x` wraps — which is what the `needHi` requirement buys.
+  var typeLowerOk = false
+  if needLo and sym != NoSymId and not isLit:
+    var sc = value
+    while sc.exprKind in {HconvX, ConvX, BaseobjX}:
+      inc sc
+      skip sc
+    let converted = value.exprKind in {HconvX, ConvX, BaseobjX}
+    var symLo = zero()
+    var symHi = zero()
+    typeLowerOk = integerTypeBounds(c.bits, getType(c.typeCache, sc), symLo, symHi) and
+      lo <= symLo + off and (not converted or (needHi and upperOk))
+  if not ((not needLo or typeLowerOk or impliesHere(c, lower)) and upperOk):
     if isLit:
       buildErr c, value.info, "value out of range: " & $off & " notin " & $lo & ".." & $hi
     elif sym != NoSymId:
@@ -1232,6 +1731,38 @@ proc constOrdinal(c: var FirContext; n: Cursor; val: var xint): bool =
   ## evaluator is asked only for the shapes a constant can have, so an ordinary
   ## `i + 1` costs a tag test rather than an evaluator run.
   result = false
+  if n.isTagLit and n.exprKind in {NegX, AddX, SubX, MulX, SufX} and c.constDepth < 8:
+    # arithmetic over constants, named ones included: `-Log2Pow10Len`
+    inc c.constDepth
+    var r = n
+    r = sub(r)
+    if n.exprKind == SufX:
+      result = constOrdinal(c, r, val)
+    else:
+      skip r # the type operand
+      var a = zero()
+      if constOrdinal(c, r, a):
+        if n.exprKind == NegX:
+          val = -a
+          result = not val.isNaN
+        else:
+          skip r
+          var b = zero()
+          if constOrdinal(c, r, b):
+            val = case n.exprKind
+                  of AddX: a + b
+                  of SubX: a - b
+                  else: a * b
+            result = not val.isNaN
+    dec c.constDepth
+    if result: return
+  if n.kind == Symbol and c.moduleConsts.hasKey(n.symId) and c.constDepth < 8:
+    # declared in this module: fold its own value (bounded — a `const` defined
+    # through another one nests); the evaluator below still gets its turn
+    inc c.constDepth
+    result = constOrdinal(c, c.moduleConsts.getOrQuit(n.symId), val)
+    dec c.constDepth
+    if result: return
   if n.kind != Symbol and not foldableArith(n, 0): return
   val = tryEvalOrdinal(c.bits, n)
   result = not val.isNaN
@@ -1258,19 +1789,31 @@ proc rightHandSide(c: var FirContext; pc: var Cursor; fact: var LeXplusC): bool 
         skip pc
         fact.b = loc2
         var k = createNaN()
-        if pc.isIntLit:
-          k = createXint(pc.intVal)
-        elif pc.kind == UIntLit:
-          k = createXint(pc.uintVal)
+        if not constOrdinal(c, pc, k): k = createNaN()
         if not k.isNaN:
           fact.c = fact.c + (if isSub: -k else: k)
           result = true
-          inc pc
+          skip pc
         else:
           traverseExpr c, pc
       else:
-        traverseExpr c, pc
-        traverseExpr c, pc
+        # `k + loc`, the constant first: `absExponent <= 22 + slop`
+        var k = createNaN()
+        let constFirst = not isSub and constOrdinal(c, pc, k)
+        if constFirst:
+          skip pc
+          let loc3 = plainLocationVarId(c, pc)
+          if loc3 != InvalidVarId:
+            analyseIfDerived(c, pc)
+            fact.b = loc3
+            fact.c = fact.c + k
+            result = true
+            skip pc
+          else:
+            traverseExpr c, pc
+        else:
+          traverseExpr c, pc
+          traverseExpr c, pc
   elif (let loc = plainLocationVarId(c, pc); loc != InvalidVarId):
     fact.b = loc
     analyseIfDerived(c, pc)
@@ -1653,6 +2196,47 @@ proc `not`(a: ProofRes): ProofRes =
 # caller's own traversal, and doing it twice would double-report their errors.
 # An operand that is not understood therefore yields "no fact", never an error.
 
+proc oldArg(n: Cursor; arg: var Cursor): bool =
+  ## Is `n` a call of `system.old`, the pre-call value of a location inside an
+  ## `.ensures`? Recognized by its `semantics` pragma, not by its name.
+  result = false
+  if n.exprKind in CallKinds:
+    var r = n
+    r = sub(r)
+    let fnSym = extractSymId(r)
+    if fnSym != NoSymId and pool.symBasename(fnSym) == "old":
+      skip r # the callee
+      if r.hasMore:
+        arg = r
+        skip r
+        if not r.hasMore:
+          let sym = tryLoadSym(fnSym)
+          result = sym.status == LacksNothing and isRoutine(sym.decl.symKind) and
+            hasPragmaOfValue(asRoutine(sym.decl).pragmas, SemanticsP, "old")
+
+proc constStringLen(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
+                    length: var xint): bool =
+  ## `len(s)` of a `const` string: a number, not a location. `HexChars[i]` with
+  ## `const HexChars = "0123456789ABCDEF"` owes `i < len(HexChars)`, and only
+  ## the literal's length discharges that.
+  result = false
+  if n.exprKind in CallKinds:
+    var r = n
+    r = sub(r)
+    let fnSym = extractSymId(r)
+    if fnSym != NoSymId and pool.symBasename(fnSym) == "len":
+      skip r # the callee
+      if r.hasMore:
+        let strSym = extractSymId(argOf(r, paramMap))
+        skip r
+        if strSym != NoSymId and not r.hasMore:
+          let sym = tryLoadSym(strSym)
+          if sym.status == LacksNothing and sym.decl.symKind == ConstY:
+            let value = asLocal(sym.decl).val
+            if value.kind == StrLit:
+              length = createXint(int64(pool.strings[value.strId].len))
+              result = true
+
 proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
                  v: var VarId; cnst: var xint): bool =
   ## One side of a comparison as `v + cnst`: an integer literal, a compile-time
@@ -1702,6 +2286,18 @@ proc pureOperand(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
     v = base
     cnst = if isSub: -off else: off
     return true
+  var oldOf = default(Cursor)
+  if oldArg(m, oldOf):
+    # The snapshot `snapshotOlds` took before the call's mutations.
+    var root = NoSymId
+    var key = ""
+    var steps = 0
+    if locationKey(c, oldOf, paramMap, root, key, steps, 0) and c.oldSlots.hasKey(key):
+      v = c.oldSlots.getOrQuit(key)
+      return true
+    return false
+  if constStringLen(c, m, paramMap, cnst):
+    return true
   let loc = locationVarId(c, n, paramMap)
   if loc != InvalidVarId:
     v = loc
@@ -1749,6 +2345,47 @@ proc proveFact(c: var FirContext; fact: LeXplusC): ProofRes =
   if impliesHere(c, neg): return Disproven
   result = Unprovable
 
+proc operandInterval(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor];
+                     lo, hi: var xint): bool =
+  ## The interval a comparison operand lies in without any flow fact: a constant
+  ## (`pureOperand` with no variable part) or a bounded shape (`valueBounds`).
+  var v = VarId(0)
+  var k = zero()
+  if pureOperand(c, n, paramMap, v, k) and v == VarId(0):
+    lo = k
+    hi = k
+    result = true
+  else:
+    result = valueBounds(c, argOf(n, paramMap), lo, hi)
+
+proc proveByIntervals(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): ProofRes =
+  ## A comparison `pureCompare` cannot state as `a <= b + c`, decided by the
+  ## intervals of its operands: `(n and 0xF0) shr 4 < len(HexChars)` is
+  ## `0..15 < 16`.
+  result = Unprovable
+  let k = n.exprKind
+  if k in {LeX, LtX, EqX}:
+    var r = n
+    r = sub(r)
+    skip r # the type operand
+    var aLo = zero()
+    var aHi = zero()
+    var bLo = zero()
+    var bHi = zero()
+    if operandInterval(c, r, paramMap, aLo, aHi):
+      skip r
+      if operandInterval(c, r, paramMap, bLo, bHi):
+        case k
+        of LeX:
+          if aHi <= bLo: result = Proven
+          elif bHi < aLo: result = Disproven
+        of LtX:
+          if aHi < bLo: result = Proven
+          elif bHi <= aLo: result = Disproven
+        else:
+          if aLo == aHi and bLo == bHi and aLo == bLo: result = Proven
+          elif aHi < bLo or bHi < aLo: result = Disproven
+
 proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): ProofRes =
   case n.exprKind
   of AndX:
@@ -1777,9 +2414,12 @@ proc proveCond(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]): Pr
   else:
     var wasEquality = false
     let fact = pureCompare(c, n, paramMap, wasEquality)
-    result = proveFact(c, fact)
-    if wasEquality and result == Proven:
-      result = proveFact(c, fact.geXplusC)
+    if fact.isValid:
+      result = proveFact(c, fact)
+      if wasEquality and result == Proven:
+        result = proveFact(c, fact.geXplusC)
+    else:
+      result = proveByIntervals(c, n, paramMap)
     when defined(contractLeaves):
       # `-d:contractLeaves` adds the per-conjunct verdict to `-d:contractStats`,
       # which is what tells "the index has no proven lower bound" apart from
@@ -1821,6 +2461,58 @@ proc assumeCond(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor]) =
       c.facts.add fact
       if wasEquality:
         c.facts.add fact.geXplusC
+    elif n.exprKind in {LeX, LtX}:
+      # One side is not a location but has a known interval: the comparison
+      # still bounds the other side. `i <= d.count - 1` with a `range`-typed
+      # `count` behind a pointer says `i <= high(count) - 1`.
+      let strict = if n.exprKind == LtX: createXint(1'i64) else: zero()
+      var r = n
+      r = sub(r)
+      skip r # the type operand
+      let lhs = r
+      skip r
+      let rhs = r
+      var v = VarId(0)
+      var k = zero()
+      var lo = zero()
+      var hi = zero()
+      if pureOperand(c, lhs, subst, v, k) and v != VarId(0) and
+         operandInterval(c, rhs, subst, lo, hi):
+        # `v + k <= rhs <= hi`
+        c.facts.add query(v, VarId(0), hi - k - strict)
+      elif pureOperand(c, rhs, subst, v, k) and v != VarId(0) and
+           operandInterval(c, lhs, subst, lo, hi):
+        # `lo <= lhs <= v + k`
+        c.facts.add query(VarId(0), v, k - lo - strict)
+
+proc verifyEnsures(c: var FirContext; resultVar: VarId; info: NifLineInfo) =
+  ## Prove the routine's own `.ensures` where control leaves it: `result` stands
+  ## for `resultVar`, `old(e)` for what `e` held on entry. A postcondition is
+  ## the routine's promise to every caller, who takes it without looking; left
+  ## unproven it would be a `{.assume.}` in disguise.
+  if not cursorIsNil(c.ownEnsures) and c.tr.live:
+    var cond = c.ownEnsures
+    while cond.exprKind == ExprX:
+      var inner = cond
+      inner = sub(inner)
+      if not inner.hasMore: break
+      if inner.symKind == ResultY and resultVar != InvalidVarId:
+        c.substVar[asLocal(inner).name.symId] = resultVar
+      while inner.hasMore and not isLastSon(inner): skip inner
+      cond = inner
+    let callSlots = move c.oldSlots
+    c.oldSlots = c.ownOldSlots
+    let noSubst = initTable[SymId, Cursor]()
+    let res = proveCond(c, cond, noSubst)
+    c.oldSlots = callSlots
+    c.substVar.clear()
+    case res
+    of Proven: discard
+    of Disproven:
+      buildErr c, info, "postcondition violated: " & asNimCode(cond)
+    of Unprovable:
+      if StaticContractsFeature in c.features:
+        buildErr c, info, "cannot prove postcondition: " & asNimCode(cond)
 
 proc assumeOwnContract(c: var FirContext; n: Cursor) =
   let noArgs = initTable[SymId, Cursor]()
@@ -1880,6 +2572,48 @@ proc assumeEnsures(c: var FirContext; call: Cursor; resultVar: VarId) =
     c.substVar[rs] = resultVar
   assumeCond(c, cond, subst)
   c.substVar.clear()
+
+proc snapshotOlds(c: var FirContext; n: Cursor; paramMap: Table[SymId, Cursor]) =
+  ## Every `old(e)` the callee's `.ensures` mentions gets a slot holding the
+  ## facts `e` has *now*, before the call's mutations drop them: a copy of each
+  ## fact about `e`, restated about the slot.
+  var arg = default(Cursor)
+  if oldArg(n, arg):
+    var root = NoSymId
+    var key = ""
+    var steps = 0
+    if locationKey(c, arg, paramMap, root, key, steps, 0) and not c.oldSlots.hasKey(key):
+      let loc = locationVarId(c, arg, paramMap)
+      let slot = derivedIdOf(c, "#old:" & key, NoSymId)
+      invalidateFactsAbout(c.facts, slot)
+      c.oldSlots[key] = slot
+      if loc != InvalidVarId:
+        let known = c.facts.len
+        for i in 0 ..< known:
+          let f = c.facts[i]
+          if f.a == loc or f.b == loc:
+            c.facts.add LeXplusC(a: (if f.a == loc: slot else: f.a),
+                                 b: (if f.b == loc: slot else: f.b), c: f.c)
+  elif n.kind == TagLit:
+    var r = n
+    r = sub(r)
+    while r.hasMore:
+      snapshotOlds(c, r, paramMap)
+      skip r
+
+proc ensuresProposition(ens: Cursor): Cursor =
+  ## `(expr (result :r . . T .) <cond>)`, nested once per sem-check of the
+  ## declaration: the condition inside all the wrappers.
+  result = ens
+  var peeling = true
+  while peeling and result.exprKind == ExprX:
+    var inner = result
+    inner = sub(inner)
+    if inner.hasMore:
+      while inner.hasMore and not isLastSon(inner): skip inner
+      result = inner
+    else:
+      peeling = false
 
 proc checkRequires(c: var FirContext; req: Cursor; paramMap: Table[SymId, Cursor];
                    info: NifLineInfo) =
@@ -2152,6 +2886,7 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
   let args = n
   var needsBorrowCheck = false
   var mutatedRoots: seq[SymId] = @[]
+  var heapMutatedRoots: seq[SymId] = @[]
   var mutatesUnknown = false
   while n.hasMore:
     if not fnType.hasMore:
@@ -2191,7 +2926,10 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     # judge by it rather than by the shape of the argument.
     if pk in {MutT, OutT}:
       let root = derivedRootOf(c, n)
-      if root != NoSymId:
+      if root != NoSymId and mayWriteHeap(n):
+        # a location behind a pointer: the pointer itself is not changed
+        heapMutatedRoots.add root
+      elif root != NoSymId:
         mutatedRoots.add root
       else:
         mutatesUnknown = true
@@ -2208,6 +2946,11 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
     # A precondition is judged on the state at *entry*, so this must run before
     # the mutation below invalidates it.
     checkRequires c, req, paramMap, callCursor.info
+  # So is every `old(e)` of the postcondition.
+  let ens = extractPragma(fnType, EnsuresP)
+  c.oldSlots.clear()
+  if not cursorIsNil(ens):
+    snapshotOlds c, ens, paramMap
   # `inc i` *shifts* what is known about `i`; it does not erase it. Without
   # this every `inc` in a loop threw away the bounds the guard had just
   # established, which is most of what makes hand-written index code
@@ -2227,6 +2970,22 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor) =
       invalidateDerivedFrom(c, root)
   if mutatesUnknown:
     invalidateAllDerived(c)
+  for root in heapMutatedRoots:
+    invalidateDerivedFrom(c, root)
+  # `callCursor` is already at the callee: `analyseCall` entered the call node.
+  if not callKeepsHeap(c, callCursor, paramsStart):
+    invalidateHeapDerived(c)
+  # A routine without a result states its postcondition about its `var`
+  # parameters alone, and nothing binds the call to a location for
+  # `assumeEnsures` to read it at: it is taken here, after the mutations it
+  # describes. `[]=` promising `s.len == old(s.len)` is what keeps a write loop
+  # provable.
+  if not cursorIsNil(ens) and c.oldSlots.len > 0:
+    var retType = paramsStart
+    skip retType
+    if retType.isDotToken or retType.typeKind == VoidT:
+      assumeCond c, ensuresProposition(ens), paramMap
+      c.ensuredRoots = mutatedRoots
 
 proc analyseCall(c: var FirContext; n: var Cursor) =
   # A `{.noreturn.}` callee (e.g. `quit`, an out-of-range raiser) does not fall
@@ -2252,6 +3011,15 @@ proc addAsgnFact(c: var FirContext; fact: LeXplusC) =
   if fact.isValid:
     c.facts.add fact
     c.facts.add fact.geXplusC
+
+proc addBoundFacts(c: var FirContext; dest: VarId; value: Cursor) =
+  ## A value `rightHandSide` cannot state as `b + c` may still have a known
+  ## interval (`valueBounds`); the location it is stored in then lies in it.
+  var lo = zero()
+  var hi = zero()
+  if valueBounds(c, value, lo, hi):
+    c.facts.add query(VarId(0), dest, -lo)
+    c.facts.add query(dest, VarId(0), hi)
 
 proc cannotBeNil(c: var FirContext; n: Cursor): bool {.inline.} =
   let t = getType(c.typeCache, n)
@@ -2298,6 +3066,8 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
   let destMutPath = extractPath(c, n)
   if destMutPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
     checkBorrowConflict(c, destMutPath, n.info)
+  if mayWriteHeap(n):
+    invalidateHeapDerived(c)
   if destMutPath.path.len > 0:
     checkEscapingBorrow(c, valueStart, destMutPath.path[0])
 
@@ -2344,6 +3114,7 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
         addAsgnFact c, fact
     else:
       invalidateFactsAbout(c.facts, fact.a)
+      addBoundFacts c, fact.a, valueStart
 
     # Check if the rhs is known to be not nil
     if (valueStart.exprKind == NewobjX and c.procCanRaise) or cannotBeNil(c, valueStart):
@@ -2371,9 +3142,12 @@ proc traverseStore(c: var FirContext; n: var Cursor) =
     let destLoc = plainLocationVarId(c, n)
     let destRoot = derivedRootOf(c, n)
     if destRoot != NoSymId:
-      invalidateFactsAbout(c.facts, getVarId(c, destRoot))
-      invalidateDerivedFrom(c, destRoot)
-    else:
+      # Through a pointer the write changes the target, never the pointer: what
+      # is known about the root itself — that it is not nil — stays.
+      if not mayWriteHeap(n):
+        invalidateFactsAbout(c.facts, getVarId(c, destRoot))
+      invalidateWrittenPath(c, n, destRoot)
+    elif not isElementWrite(n):
       invalidateAllDerived(c)
     if destLoc != InvalidVarId:
       # ... and then record what the write established, so that
@@ -2486,6 +3260,11 @@ type
       ## `Positive`-returning call is exactly that — declared inside the body,
       ## so no fact about it exists yet when this scan runs.
     opaque: bool          ## a write we could not attribute to any location
+    heap: bool            ## a write that may reach the heap (`mayWriteHeap`, or a
+                          ## call that is not `callKeepsHeap`)
+    preserved: seq[VarId] ## derived locations the call just scanned promises
+                          ## to leave alone (`s.len == old(s.len)`); holds
+                          ## for the `(unknown …)` that follows it too
     pendingStep: VarId    ## the `(unknown v)` a step call emits right after
                           ## itself is that call's own doing, not a second,
                           ## unclassified write
@@ -2508,11 +3287,68 @@ proc noteWrite(w: var LoopWrites; v: VarId; kind: IvKind) =
 
 proc noteDerivedOf(c: var FirContext; w: var LoopWrites; root: SymId; keep: VarId) =
   ## Writing a location disturbs everything derived from the same root: after
-  ## `s = other`, `s.len` is anyone's guess.
+  ## `s = other`, `s.len` is anyone's guess — unless the write is a call whose
+  ## `.ensures` says otherwise (`w.preserved`).
   for i in 0 ..< c.derivedRoots.len:
     if c.derivedRoots[i] == root:
       let v = VarId(FirstDerivedVarId - i)
-      if v != keep: noteWrite(w, v, ivUnknown)
+      if v != keep and v notin w.preserved: noteWrite(w, v, ivUnknown)
+
+proc preservedByEnsures(c: var FirContext; call: Cursor): seq[VarId] =
+  ## The locations a call's `.ensures` states unchanged: every conjunct shaped
+  ## `e == old(e)`, with the parameters standing for the arguments.
+  result = @[]
+  var fn = call
+  fn = sub(fn)
+  # A declared routine, read from its declaration: this runs as the loop is
+  # pre-scanned, before the locals of the body are known to the type cache, and
+  # only a declared routine carries an `.ensures` anyway.
+  var fnType = default(Cursor)
+  let fnSym = extractSymId(fn)
+  if fnSym != NoSymId:
+    let routine = tryLoadSym(fnSym)
+    if routine.status == LacksNothing and isRoutine(routine.decl.symKind):
+      fnType = asRoutine(routine.decl).params
+  if not cursorIsNil(fnType) and fnType.isParamsTag:
+    var subst = initTable[SymId, Cursor]()
+    var p = fnType
+    p = sub(p)
+    var arg = fn
+    skip arg # past the callee
+    while p.hasMore and arg.hasMore:
+      let param = takeLocal(p, SkipFinalParRi)
+      subst[param.name.symId] = arg
+      skip arg
+    skip fnType # params
+    skip fnType # return type
+    let ens = extractPragma(fnType, EnsuresP)
+    if not cursorIsNil(ens):
+      var todo = @[ensuresProposition(ens)]
+      while todo.len > 0:
+        let cond = todo.pop()
+        case cond.exprKind
+        of AndX:
+          var r = cond
+          r = sub(r)
+          todo.add r
+          skip r
+          todo.add r
+        of EqX:
+          var r = cond
+          r = sub(r)
+          skip r # the type operand
+          let lhs = r
+          skip r
+          var oldOf = default(Cursor)
+          var plain = lhs
+          if oldArg(argOf(lhs, subst), oldOf): plain = r
+          elif not oldArg(argOf(r, subst), oldOf): plain = default(Cursor)
+          if not cursorIsNil(plain):
+            let a = locationVarId(c, plain, subst)
+            if a != InvalidVarId and a == locationVarId(c, oldOf, subst):
+              result.add a
+        else:
+          discard
 
 proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
                  value: Cursor): IvKind =
@@ -2565,15 +3401,36 @@ proc stepOfValue(c: var FirContext; w: LoopWrites; destLoc: VarId;
 proc noteWriteTo(c: var FirContext; w: var LoopWrites; dest: Cursor; value: Cursor) {.nimcall.} =
   let root = derivedRootOf(c, dest)
   if root == NoSymId:
-    w.opaque = true
+    if not isElementWrite(dest): w.opaque = true
     return
   let loc = plainLocationVarId(c, dest)
-  noteDerivedOf(c, w, root, loc)
+  var precise = false
+  # The pre-scan runs before the body's locals are registered: the type of a
+  # path rooted at one of them cannot be asked for yet, so such a write stays
+  # coarse.
+  if loc != InvalidVarId and dest.exprKind in {DotX, DdotX} and
+     getLocalInfo(c.typeCache, root).kind != NoSym:
+    var obj = dest
+    obj = sub(obj)
+    precise = not hasOverlappingFields(c, getType(c.typeCache, obj))
+  if precise:
+    # the `invalidateWrittenPath` rule: what lies under the field, not its siblings
+    let destKey = c.derivedKeys[FirstDerivedVarId - int(loc)]
+    for i in 0 ..< c.derivedRoots.len:
+      let v = VarId(FirstDerivedVarId - i)
+      if c.derivedRoots[i] == root and v != loc and v notin w.preserved and
+         keyUnder(c.derivedKeys[i], destKey):
+        noteWrite(w, v, ivUnknown)
+  else:
+    noteDerivedOf(c, w, root, loc)
+  # Through a pointer the write reaches the target and never the pointer, so
+  # what is keyed on the root — that it is not nil — survives the loop.
+  let throughPointer = mayWriteHeap(dest)
   if loc == InvalidVarId:
-    noteWrite(w, getVarId(c, root), ivUnknown)
+    if not throughPointer: noteWrite(w, getVarId(c, root), ivUnknown)
     return
   noteWrite(w, loc, stepOfValue(c, w, loc, value))
-  if loc != getVarId(c, root):
+  if loc != getVarId(c, root) and not throughPointer:
     # Writing `d.count` says nothing about `d` itself, but nil-ness and the
     # like are keyed on the root, so stay conservative there.
     noteWrite(w, getVarId(c, root), ivUnknown)
@@ -2588,6 +3445,8 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     r = sub(r)
     let value = r
     skip r
+    w.preserved.setLen 0
+    if mayWriteHeap(r): w.heap = true
     noteWriteTo(c, w, r, value)
     w.pendingStep = InvalidVarId
     skip n
@@ -2595,14 +3454,17 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if fk == UnknownV:
     var r = n
     r = sub(r)
+    if mayWriteHeap(r): w.heap = true
     if w.pendingStep != InvalidVarId and plainLocationVarId(c, r) == w.pendingStep:
       discard "the step call right before it already said which way this moves"
     else:
       noteWriteTo(c, w, r, default(Cursor))
     w.pendingStep = InvalidVarId
+    w.preserved.setLen 0
     skip n
     return
   if n.exprKind in CallKinds:
+    w.preserved.setLen 0
     var stepLoc = InvalidVarId
     var delta = createNaN()
     if stepCall(c, n, stepLoc, delta):
@@ -2612,14 +3474,36 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
       w.pendingStep = stepLoc
       skip n
       return
+    w.preserved = preservedByEnsures(c, n)
+    var fnOf = n
+    fnOf = sub(fnOf)
+    var params = default(Cursor)
+    let fnSym = extractSymId(fnOf)
+    if fnSym != NoSymId:
+      let routine = tryLoadSym(fnSym)
+      if routine.status == LacksNothing and isRoutine(routine.decl.symKind):
+        params = asRoutine(routine.decl).params
+    if cursorIsNil(params) or not callKeepsHeap(c, fnOf, params):
+      w.heap = true
     # A `var`/`out` argument that is already a location takes no `(haddr …)`
-    # and so gets no `(unknown …)` — see `analyseCallArgs`.
+    # and so gets no `(unknown …)` — see `analyseCallArgs`. Judged by the
+    # formal parameter where the callee is known: a `var openArray` passed on
+    # to a plain `openArray` is a bare symbol too, and writes nothing.
     var r = n
     r = sub(r)
     skip r # the callee
+    var formal = default(Cursor)
+    if not cursorIsNil(params) and params.isParamsTag:
+      formal = params
+      formal = sub(formal)
     while r.hasMore:
-      let sym = extractSymId(r)
-      if sym != NoSymId:
+      var writes = true
+      if not cursorIsNil(formal):
+        if formal.hasMore:
+          let param = takeLocal(formal, SkipFinalParRi)
+          writes = param.typ.typeKind in {MutT, OutT}
+      let sym = if r.isSymbol: r.symId else: NoSymId
+      if writes and sym != NoSymId:
         let info = getLocalInfo(c.typeCache, sym)
         if not cursorIsNil(info.typ) and info.typ.typeKind in {MutT, OutT}:
           noteWrite(w, getVarId(c, sym), ivUnknown)
@@ -2627,6 +3511,7 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
       skip r
   elif isLocal(n.symKind):
     # A local declared inside the body is rebound every iteration.
+    w.preserved.setLen 0
     let local = asLocal(n)
     if local.name.kind == SymbolDef:
       var lo = zero()
@@ -2640,11 +3525,14 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
     while n.hasMore:
       scanLoopWrites(c, n, w)
 
-proc isLoopInvariant(w: LoopWrites; f: LeXplusC): bool =
+proc isLoopInvariant(c: FirContext; w: LoopWrites; f: LeXplusC): bool =
   ## `a <= b + c` survives the loop when nothing the body does can break it:
   ## `a` may only move down and `b` may only move up.
   if w.opaque and (int(f.a) <= FirstDerivedVarId or int(f.b) <= FirstDerivedVarId):
     # An unattributable write may have hit any derived location.
+    return false
+  if w.heap and (isHeapDerived(c, f.a) or isHeapDerived(c, f.b)):
+    # ... and a write that may reach the heap, any location read through one.
     return false
   let aMoves = w.kinds.hasKey(f.a)
   let bMoves = w.kinds.hasKey(f.b)
@@ -2670,7 +3558,7 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
       keepNonNeg.add v
   var i = 0
   while i < c.facts.len:
-    if isLoopInvariant(w, c.facts[i]):
+    if isLoopInvariant(c, w, c.facts[i]):
       inc i
     else:
       removeFactAt(c.facts, i)   # journaled; the swapped-in slot is rechecked
@@ -2704,10 +3592,8 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
     traverseStmt c, n        # the body `(stmts ...)`; ends by leaving
     dropContinue(c.tr)       # the loop header consumes the back-edge
     # The loop never falls through; reset the working state to the pre-loop base.
-    # A following `(lab loopExit)` keeps these pre-loop facts (break-site facts are
-    # iteration-specific and dropped; break-site inits are joined — see
-    # `bindLoopExit`), which is sound: a loop proves nothing new about the facts of
-    # its mutated vars afterwards.
+    # A following `(lab loopExit)` installs the join of the states its exits
+    # jumped with (`bindLoopExit`).
     c.flow.rollbackTo cp
     # Borrows taken *inside* the body are loop-local (a `var p = addr coll[i]`
     # cannot outlive the iteration), so drop them — otherwise a later mutation of
@@ -2743,10 +3629,13 @@ proc traverseRet(c: var FirContext; n: var Cursor) =
   ## `(ret .X)` — primitive return, bound by the proc root. A `return value`
   ## with a non-`result` operand *provides* the result directly (the NJVL path
   ## rewrote this to `result = value`), so it initializes `result` on this exit.
+  let info = n.info
   n.into:
     if n.isDotToken:
+      verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), info
       inc n
     else:
+      verifyEnsures c, plainLocationVarId(c, n), info
       let providesResult = c.resultSym != NoSymId and
         not (n.isSymbol and n.symId == c.resultSym)
       if providesResult:
@@ -2981,6 +3870,8 @@ proc traverseLocal(c: var FirContext; n: var Cursor) =
       let a = getVarId(c, name)
       if a != v:
         addAsgnFact c, query(a, v, k)
+    else:
+      addBoundFacts c, getVarId(c, name), initStart
   n = localStart; skip n
   # The local now holds a value proven to be within its range (if any), so
   # record that for downstream obligations that reference this symbol.
@@ -2989,54 +3880,67 @@ proc traverseLocal(c: var FirContext; n: var Cursor) =
     assumeEnsures c, initStart, getVarId(c, name)
 
 proc traverseAssume(c: var FirContext; n: var Cursor) =
-  ## An assumption the lowering vouches for. `finalir.nim` states the range of a
-  ## `for` loop variable this way (`forRangeAssumes`), taken from the iterator's
-  ## `.ensures`. A condition the engine cannot model contributes no fact — it is
-  ## a statement of what is true, not an obligation, so there is nothing to
-  ## report when we fail to understand it.
+  ## `{.assume: cond.}`: the programmer's word, taken. The one statement that
+  ## makes something a fact without proof, and the override for what the prover
+  ## cannot discharge — a false assumption is undefined behaviour, and the line
+  ## that says so is where to look. `finalir.nim` also states the range of a
+  ## `for` loop variable this way (`forRangeAssumes`), taken from the
+  ## iterator's `.ensures`. A conjunct the engine cannot model contributes no
+  ## fact: there is nothing to report when we fail to understand a statement of
+  ## what is true.
+  let noSubst = initTable[SymId, Cursor]()
+  # `old(e)` in a statement of the body means what `e` held on entry.
+  let callSlots = move c.oldSlots
+  c.oldSlots = c.ownOldSlots
   n.into:
-    var kind = ckPlain
-    let fact = translateCond(c, n, kind)
-    if fact.isValid and kind != ckDisequality:
-      c.facts.add fact
-      if kind == ckEquality:
-        c.facts.add fact.geXplusC
+    assumeCond(c, n, noSubst)
+    skip n
+  c.oldSlots = callSlots
 
 proc traverseAssert(c: var FirContext; n: var Cursor) =
-  let orig = n
+  ## `{.assert: cond.}`: a claim discharged at compile time and only there.
+  ## Nothing is emitted for it at run time, so an assertion the prover does not
+  ## prove is an error — undecided as much as violated, and whatever the module's
+  ## contract features say. Afterwards `cond` is a fact: it has just been proven,
+  ## or an error was reported and assuming it keeps one mistake from cascading.
+  ## What cannot be proven has to be stated with `{.assume.}` instead.
+  ##
+  ## The `(report)` and `(error)` prefixes are the hooks of the contract IR
+  ## tests: the first prints the verdict, the second expects the assertion to
+  ## be unprovable.
+  let info = n.info
+  let noSubst = initTable[SymId, Cursor]()
   n.into:
     var report = false
-    var shouldError = false
+    var expectUnprovable = false
     if n.pragmaKind == ReportP:
       report = true
       skip n
     if n.pragmaKind == ErrorP:
-      shouldError = true
+      expectUnprovable = true
       skip n
-
-    var kind = ckPlain
-    let fact = translateCond(c, n, kind)
-    let wasEquality = kind == ckEquality
-    if not fact.isValid:
-      error "invalid assert: ", orig
-    elif implies(c.facts, fact):
-      if shouldError:
-        contractViolation(c, orig, fact, report)
-      elif wasEquality:
-        if implies(c.facts, fact.geXplusC):
-          if report: echo "OK ", $fact
-        else:
-          if shouldError:
-            if report: echo "OK (could indeed not prove) ", $fact
-          else:
-            contractViolation(c, orig, fact, report)
+    let cond = n
+    skip n
+    # On a path control cannot reach every claim is vacuous (see `checkRequires`).
+    if c.tr.live:
+      let callSlots = move c.oldSlots
+      c.oldSlots = c.ownOldSlots
+      let res = proveCond(c, cond, noSubst)
+      if expectUnprovable:
+        if res == Proven:
+          buildErr c, info, "assertion unexpectedly proven: " & asNimCode(cond)
+        elif report:
+          echo "OK (could indeed not prove) ", asNimCode(cond)
       else:
-        if report: echo "OK ", $fact
-    else:
-      if shouldError:
-        if report: echo "OK (could indeed not prove) ", $fact
-      else:
-        contractViolation(c, orig, fact, report)
+        case res
+        of Proven:
+          if report: echo "OK ", asNimCode(cond)
+        of Disproven:
+          buildErr c, info, "assertion violated: " & asNimCode(cond)
+        of Unprovable:
+          buildErr c, info, "cannot prove assertion: " & asNimCode(cond)
+        assumeCond(c, cond, noSubst)
+      c.oldSlots = callSlots
 
 proc traverseProc(c: var FirContext; n: var Cursor) =
   let decl = n
@@ -3068,12 +3972,18 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   var isGeneric = false
   var isExternProc = false
   var ownContract = default(Cursor)
+  var ownEnsures = default(Cursor)
+  let oldOwnEnsures = c.ownEnsures
+  let oldOwnOldSlots = move c.ownOldSlots
   var outParams: seq[SymId] = @[]
   for i in 0 ..< BodyPos:
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
       isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP)
       ownContract = extractPragma(n, RequiresP)
+      # An iterator's `.ensures` is about what it yields, not about an exit.
+      if decl.symKind != IteratorY:
+        ownEnsures = extractPragma(n, EnsuresP)
     elif i == TypevarsPos:
       isGeneric = n.substructureKind == TypevarsU
     elif i == ParamsPos:
@@ -3096,6 +4006,14 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   # could not be passed on to an inner call with the same precondition.
   if not cursorIsNil(ownContract):
     assumeOwnContract c, ownContract
+  # ... and has to deliver its own `.ensures`, measured against the state it
+  # was entered with.
+  c.ownEnsures = ownEnsures
+  c.ownOldSlots = initTable[string, VarId]()
+  if not cursorIsNil(ownEnsures):
+    c.oldSlots.clear()
+    snapshotOlds c, ownEnsures, initTable[SymId, Cursor]()
+    c.ownOldSlots = move c.oldSlots
 
   # Analyze body. Generic procs are only checked once instantiated. Extern
   # (importc/importcpp) procs satisfy their contract at the C level and have no
@@ -3105,6 +4023,8 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   # the final init check.
   if not isGeneric and not isExternProc:
     traverseStmt c, n
+    # Falling off the end is an exit too.
+    verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info
     # Join every `return` into the natural fall-through: the result init-set at
     # proc exit is the intersection over all exit paths. The init-check below
     # then reads `c.flow.inits` — `result`/out-params must be init on every path
@@ -3130,6 +4050,8 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
+  c.ownEnsures = oldOwnEnsures
+  c.ownOldSlots = oldOwnOldSlots
   c.inHook = oldInHook
 
 proc traverseStmt(c: var FirContext; n: var Cursor) =
@@ -3137,6 +4059,7 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
   # `(unknown …)` the lowering puts right after it.
   let stepped = c.steppedLoc
   c.steppedLoc = InvalidVarId
+  let ensured = move c.ensuredRoots
   case n.finalIrKind
   of IteV, ItecV:
     traverseIte c, n
@@ -3185,6 +4108,8 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
     # Unknown instruction - variable's contents become unknown after a call.
     # Check borrow conflicts: passing a borrowed path to a var param is a mutation.
     n.into:
+      if mayWriteHeap(n):
+        invalidateHeapDerived(c)
       let unknownPath = extractPath(c, n)
       if unknownPath.mode in {IsBorrowable, IsBorrowableFromGlobal}:
         checkBorrowConflict(c, unknownPath, n.info)
@@ -3194,7 +4119,11 @@ proc traverseStmt(c: var FirContext; n: var Cursor) =
       # (nil) state, so a later `a.x` must be re-proven, not silently accepted.
       # Facts are keyed per root variable (see `analysableRoot`), so we invalidate
       # by the path's root symbol.
-      if unknownPath.path.len > 0:
+      if unknownPath.path.len > 0 and unknownPath.path[0] in ensured:
+        # The call before this already dropped everything its mutation could
+        # reach and restated what its `.ensures` promises.
+        discard
+      elif unknownPath.path.len > 0:
         let root = getVarId(c, unknownPath.path[0])
         if root != stepped:
           invalidateFactsAbout(c.facts, root)
@@ -3319,6 +4248,8 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
     flow: initFlowState(),
     substVar: initTable[SymId, VarId](),
     steppedLoc: InvalidVarId,
+    oldSlots: initTable[string, VarId](),
+    ownOldSlots: initTable[string, VarId](),
     loopExitLabels: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),
     verbose: verbose,

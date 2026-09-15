@@ -120,15 +120,23 @@ template `>`*(x, y: untyped): untyped =
 type Orderable* = concept
   proc `<=`(x, y: Self): bool
 
-proc min*(x, y: int8): int8 {.noSideEffect, inline.} =
-  if x <= y: x else: y
-proc min*(x, y: int16): int16 {.noSideEffect, inline.} =
-  if x <= y: x else: y
-proc min*(x, y: int32): int32 {.noSideEffect, inline.} =
-  if x <= y: x else: y
-proc min*(x, y: int64): int64 {.noSideEffect, inline.} =
+proc min*(x, y: int8): int8 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
+  if x <= y: return x
+  result = y
+proc min*(x, y: int16): int16 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
+  if x <= y: return x
+  result = y
+proc min*(x, y: int32): int32 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
+  if x <= y: return x
+  result = y
+proc min*(x, y: int64): int64 {.noSideEffect, inline,
+    ensures: result <= x and result <= y.} =
   ## The minimum value of two integers.
-  if x <= y: x else: y
+  if x <= y: return x
+  result = y
 proc min*(x, y: float32): float32 {.noSideEffect, inline.} =
   if x <= y or y != y: x else: y
 proc min*(x, y: float): float {.noSideEffect, inline.} =
@@ -138,15 +146,23 @@ proc min*[T: Orderable](x, y: T): T {.inline.} =
   ## Generic minimum operator of 2 values based on `<=`.
   if x <= y: x else: y
 
-proc max*(x, y: int8): int8 {.noSideEffect, inline.} =
-  if y <= x: x else: y
-proc max*(x, y: int16): int16 {.noSideEffect, inline.} =
-  if y <= x: x else: y
-proc max*(x, y: int32): int32 {.noSideEffect, inline.} =
-  if y <= x: x else: y
-proc max*(x, y: int64): int64 {.noSideEffect, inline.} =
+proc max*(x, y: int8): int8 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
+  if y <= x: return x
+  result = y
+proc max*(x, y: int16): int16 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
+  if y <= x: return x
+  result = y
+proc max*(x, y: int32): int32 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
+  if y <= x: return x
+  result = y
+proc max*(x, y: int64): int64 {.noSideEffect, inline,
+    ensures: x <= result and y <= result.} =
   ## The maximum value of two integers.
-  if y <= x: x else: y
+  if y <= x: return x
+  result = y
 proc max*(x, y: float32): float32 {.noSideEffect, inline.} =
   if y <= x or y != y: x else: y
 proc max*(x, y: float): float {.noSideEffect, inline.} =

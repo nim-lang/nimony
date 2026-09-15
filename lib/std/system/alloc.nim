@@ -64,6 +64,14 @@ const
   # size of chunks in last matrix bin
   MaxBigChunkSize = int(1'i32 shl MaxFli - 1'i32 shl (MaxFli-MaxLog2Sli-1))
   HugeChunkSize = MaxBigChunkSize + 1
+  HeapLinksCap = 30
+
+type
+  FlIndex = range[0..RealFli-1]   ## a first-level TLSF class
+  SlIndex = range[0..MaxSli-1]    ## a second-level TLSF class
+  SizeClass = range[0..SmallChunkSize div MemAlign - 1]
+    ## a small size, `size shr MemAlignShift`: the per-size lists are indexed
+    ## by it
 
 type
   PTrunk = ptr Trunk
@@ -141,11 +149,11 @@ type
     data {.align: MemAlign.}: UncheckedArray[byte]      # start of usable memory
 
   HeapLinks = object
-    count: int  # NOT `len`: a `len`-named field would share the system module's
+    count: range[0..HeapLinksCap]  # NOT `len`: a `len`-named field would share the system module's
                 # `len.N` symbol counter (makeFieldSym/makeGlobalSym both use
                 # c.globals) and shift the string `len` overload the compiler
                 # hardcodes as `len.5` in hexer/desugar.nim.
-    chunks: array[30, (PBigChunk, int)]
+    chunks: array[HeapLinksCap, (PBigChunk, int)]
     next: ptr HeapLinks
 
   MemRegion = object
@@ -250,7 +258,7 @@ proc setBit(nr: int; dest: var uint32) {.inline.} =
 proc clearBit(nr: int; dest: var uint32) {.inline.} =
   dest = dest and not (1u32 shl (nr and 0x1f))
 
-proc mappingSearch(r, fl, sl: var int) {.inline.} =
+proc mappingSearch(r: var int; fl: var FlIndex; sl: var SlIndex) {.inline.} =
   #let t = (1 shl (msbit(uint32 r) - MaxLog2Sli)) - 1
   # This diverges from the standard TLSF algorithm because we need to ensure
   # PageSize alignment:
@@ -258,33 +266,49 @@ proc mappingSearch(r, fl, sl: var int) {.inline.} =
   r = r + t
   r = r and not t
   r = min(r, MaxBigChunkSize).int
-  fl = msbit(uint32 r)
-  sl = (r shr (fl - MaxLog2Sli)) - MaxSli
-  dec fl, FliOffset
+  let f = msbit(uint32 r)
+  let s = (r shr (f - MaxLog2Sli)) - MaxSli
+  # `r` is a page-aligned big-chunk size no larger than `MaxBigChunkSize`, so
+  # its top bit picks a first-level class and the `MaxLog2Sli` bits below it a
+  # second-level one. Nothing the prover can follow: `msbit` is a table lookup.
+  {.assume: 0 <= f - FliOffset and f - FliOffset < RealFli and 0 <= s and s < MaxSli.}
+  fl = f - FliOffset
+  sl = s
   sysAssert((r and PageMask) == 0, "mappingSearch: still not aligned")
 
 # See http://www.gii.upv.es/tlsf/files/papers/tlsf_desc.pdf for details of
 # this algorithm.
 
-proc mappingInsert(r: int): tuple[fl, sl: int] {.inline.} =
+proc mappingInsert(r: int): tuple[fl: FlIndex, sl: SlIndex] {.inline.} =
   sysAssert((r and PageMask) == 0, "mappingInsert: still not aligned")
-  var fl = msbit(uint32 r)
-  let sl = (r shr (fl - MaxLog2Sli)) - MaxSli
-  fl = fl - FliOffset
-  result = (fl, sl)
+  let f = msbit(uint32 r)
+  let s = (r shr (f - MaxLog2Sli)) - MaxSli
+  # `r` is the size of a big chunk in the matrix: see `mappingSearch`.
+  {.assume: 0 <= f - FliOffset and f - FliOffset < RealFli and 0 <= s and s < MaxSli.}
+  result = (FlIndex(f - FliOffset), SlIndex(s))
 
 template mat(): untyped {.untyped.} = a.matrix[fl][sl]
 
-proc findSuitableBlock(a: MemRegion; fl, sl: var int): PBigChunk {.inline.} =
-  let tmp = a.slBitmap[fl] and (not 0u32 shl sl)
+proc findSuitableBlock(a: MemRegion; fl: var FlIndex; sl: var SlIndex): PBigChunk {.inline.} =
+  let tmp = a.slBitmap[fl] and (not 0u32 shl int(sl))
   result = nil
   if tmp != 0:
-    sl = lsbit(tmp)
+    let s = lsbit(tmp)
+    # `tmp != 0`: a set bit of a second-level bitmap, which has `MaxSli` bits.
+    {.assume: 0 <= s and s < MaxSli.}
+    sl = s
     result = mat()
   else:
-    fl = lsbit(a.flBitmap and (not 0u32 shl (fl + 1)))
-    if fl > 0:
-      sl = lsbit(a.slBitmap[fl])
+    let f = lsbit(a.flBitmap and (not 0u32 shl (int(fl) + 1)))
+    if f > 0:
+      # `flBitmap` has a bit set only for a first-level class that exists, and
+      # that class's second-level bitmap is non-empty (`addChunkToMatrix`,
+      # `clearBits`).
+      {.assume: f < RealFli.}
+      fl = f
+      let s = lsbit(a.slBitmap[fl])
+      {.assume: 0 <= s and s < MaxSli.}
+      sl = s
       result = mat()
 
 template clearBits(sl, fl) {.untyped.} =
@@ -304,7 +328,7 @@ proc removeChunkFromMatrix(a: var MemRegion; b: PBigChunk) =
   b.prev = nil
   b.next = nil
 
-proc removeChunkFromMatrix2(a: var MemRegion; b: PBigChunk; fl, sl: int) =
+proc removeChunkFromMatrix2(a: var MemRegion; b: PBigChunk; fl: FlIndex; sl: SlIndex) =
   mat() = b.next
   if mat() != nil:
     mat().prev = nil
@@ -414,6 +438,8 @@ proc addHeapLink(a: var MemRegion; p: PBigChunk, size: int): ptr HeapLinks =
     result = n
   else:
     let L = it.count
+    # The search above stops at the first node that is not full.
+    {.assume: L < HeapLinksCap.}
     it.chunks[L] = (p, size)
     inc it.count
     result = it
@@ -678,8 +704,8 @@ proc freeBigChunk(a: var MemRegion, c: PBigChunk) =
 proc getBigChunk(a: var MemRegion, size: int): PBigChunk =
   sysAssert(size > 0, "getBigChunk 2")
   var size = size # roundup(size, PageSize)
-  var fl = 0
-  var sl = 0
+  var fl: FlIndex = 0
+  var sl: SlIndex = 0
   mappingSearch(size, fl, sl)
   sysAssert((size and PageMask) == 0, "getBigChunk: unaligned chunk")
   result = findSuitableBlock(a, fl, sl)
@@ -831,7 +857,7 @@ when UseDestructors:
         a.sharedFreeListBigChunks = result.next
         result.next = nil
 
-  proc addToSharedFreeList(c: PSmallChunk; f: ptr FreeCell; size: int) {.inline.} =
+  proc addToSharedFreeList(c: PSmallChunk; f: ptr FreeCell; size: SizeClass) {.inline.} =
     # `f` is a cell of a foreign thread's chunk, already declared free by the
     # `vgFreeLike` at the top of `rawDealloc`; `atomicPrepend` writes its `next`.
     # The window goes here and not inside `atomicPrepend`, which is shared with
@@ -910,6 +936,8 @@ proc rawAlloc(a: var MemRegion, requestedSize: int, alignment: int = 0): pointer
   #c_fprintf(stdout, "alloc; size: %ld; %ld\n", requestedSize, size)
 
   if size + alignOff <= SmallChunkSize-smallChunkOverhead():
+    # A rounded-up positive request, and the branch bounds it by the chunk.
+    {.assume: 0 <= size and size < SmallChunkSize.}
     template fetchSharedCells(tc: PSmallChunk) {.untyped.} =
       # Consumes cells from (potentially) foreign threads from `a.sharedFreeLists[s]`
       when UseDestructors:
@@ -925,7 +953,7 @@ proc rawAlloc(a: var MemRegion, requestedSize: int, alignment: int = 0): pointer
           compensateCounters(a, tc, size)
 
     # allocate a small block: for small chunks, we use only its next pointer
-    let s = size shr MemAlignShift
+    let s: SizeClass = size shr MemAlignShift
     var c = a.freeSmallChunks[s]
     if c != nil and c.chunkAlignOff != alignOff.int32:
       c = nil
@@ -1077,6 +1105,8 @@ proc rawDealloc(a: var MemRegion, p: pointer) =
     var c = cast[PSmallChunk](c)
     let s = c.size
     #       ^ We might access thread foreign storage here.
+    # A small chunk's cells are smaller than the chunk itself (`rawAlloc`).
+    {.assume: 0 <= s and s < SmallChunkSize.}
     # The other thread cannot possibly free this block as it's still alive.
     var f = cast[ptr FreeCell](p)
     if c.owner == addr(a):

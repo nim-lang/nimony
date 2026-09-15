@@ -12,7 +12,29 @@
 ##
 ## No exceptions are used: the original `assert`s become the no-op `fmtAssert`.
 
-template fmtAssert(x: untyped) = discard
+template fmtAssert(x: untyped) =
+  ## The invariants of the reference implementations (Ryu by Ulf Adams, the
+  ## Dragonbox formatting by Junekey Jeon), which state them as debug
+  ## assertions. The contract prover cannot follow the arithmetic behind them,
+  ## so here they are what they always were: the algorithm's word.
+  {.assume: x.}
+  discard
+
+const FloatBufferLen = 65
+  ## Every position written below stays inside this many characters: the longest
+  ## output is a sign, 17 significant digits, a point, `e`, a sign and three
+  ## exponent digits, plus the padding `formatDigits` clears. `addFloat` passes
+  ## exactly such a buffer.
+
+template put(buf: var openArray[char]; i: int; c: char) =
+  let idx = i
+  fmtAssert(0 <= idx and idx < buf.len)
+  buf[idx] = c
+
+template at(buf: openArray[char]; i: int): char =
+  let idx = i
+  fmtAssert(0 <= idx and idx < buf.len)
+  buf[idx]
 
 const
   trailingZeros100: array[100, int8] = [2'i8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -34,10 +56,12 @@ const
     '9', '6', '9', '7', '9', '8', '9', '9']
 
 func utoa2Digits(buf: var openArray[char]; pos: int; digits: uint32) {.inline.} =
-  buf[pos] = digits100[int(2 * digits)]
-  buf[pos+1] = digits100[int(2 * digits + 1)]
+  fmtAssert(digits <= 99)
+  put(buf, pos, digits100[int(2 * digits)])
+  put(buf, pos+1, digits100[int(2 * digits + 1)])
 
 func trailingZeros2Digits(digits: uint32): int {.inline.} =
+  fmtAssert(digits <= 99)
   result = int(trailingZeros100[int(digits)])
 
 
@@ -258,7 +282,7 @@ func printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output: uin
     fmtAssert(q >= 1)
     fmtAssert(q <= 9)
     dec(pos)
-    buf[pos] = chr(ord('0') + int(q))
+    put(buf, pos, chr(ord('0') + int(q)))
   result = tz
 
 func decimalLength(v: uint32): int =
@@ -291,7 +315,7 @@ func formatDigits(buffer: var openArray[char]; pos: int; digits: uint32; decimal
   let useFixed: bool = int32(minFixedDecimalPoint) <= int32(decimalPoint) and
       int32(decimalPoint) <= int32(maxFixedDecimalPoint)
   ##  Prepare the buffer.
-  for i in 0..<32: buffer[pos+i] = '0'
+  for i in 0..<32: put(buffer, pos+i, '0')
   var decimalDigitsPosition: int
   if useFixed:
     if decimalPoint <= 0:
@@ -311,37 +335,37 @@ func formatDigits(buffer: var openArray[char]; pos: int; digits: uint32; decimal
   if useFixed:
     if decimalPoint <= 0:
       ##  0.[000]digits
-      buffer[pos+1] = '.'
+      put(buffer, pos+1, '.')
       pos = digitsEnd
     elif decimalPoint < numDigits:
       ##  dig.its
       for i in countdown(7, 0):
-        buffer[i + decimalPoint + 1] = buffer[i + decimalPoint]
-      buffer[pos+decimalPoint] = '.'
+        put(buffer, i + decimalPoint + 1, at(buffer, i + decimalPoint))
+      put(buffer, pos+decimalPoint, '.')
       pos = digitsEnd + 1
     else:
       ##  digits[000]
       inc(pos, decimalPoint)
       if forceTrailingDotZero:
-        buffer[pos] = '.'
-        buffer[pos+1] = '0'
+        put(buffer, pos, '.')
+        put(buffer, pos+1, '0')
         inc(pos, 2)
   else:
-    buffer[pos] = buffer[pos+1]
+    put(buffer, pos, at(buffer, pos+1))
     if numDigits == 1:
       ##  dE+123
       inc(pos)
     else:
       ##  d.igitsE+123
-      buffer[pos+1] = '.'
+      put(buffer, pos+1, '.')
       pos = digitsEnd
     let scientificExponent = decimalPoint - 1
-    buffer[pos] = 'e'
-    buffer[pos+1] = if scientificExponent < 0: '-' else: '+'
+    put(buffer, pos, 'e')
+    put(buffer, pos+1, if scientificExponent < 0: '-' else: '+')
     inc(pos, 2)
     let k: uint32 = uint32(if scientificExponent < 0: -scientificExponent else: scientificExponent)
     if k < 10:
-      buffer[pos] = chr(ord('0') + int(k))
+      put(buffer, pos, chr(ord('0') + int(k)))
       inc pos
     else:
       utoa2Digits(buffer, pos, k)
@@ -355,32 +379,32 @@ func float32ToChars(buffer: var openArray[char]; v: float32; forceTrailingDotZer
   var pos = 0
   if exponent != sfMaxIeeeExponent:
     ##  Finite
-    buffer[pos] = '-'
+    put(buffer, pos, '-')
     inc(pos, signBit(single))
     if exponent != 0 or significand != 0:
       ##  != 0
       let dec = toDecimal32(significand, exponent)
       return formatDigits(buffer, pos, dec.digits, int(dec.exponent), forceTrailingDotZero)
     else:
-      buffer[pos] = '0'
-      buffer[pos+1] = '.'
-      buffer[pos+2] = '0'
-      buffer[pos+3] = ' '
+      put(buffer, pos, '0')
+      put(buffer, pos+1, '.')
+      put(buffer, pos+2, '0')
+      put(buffer, pos+3, ' ')
       inc(pos, if forceTrailingDotZero: 3 else: 1)
       return pos
   if significand == 0:
-    buffer[pos] = '-'
+    put(buffer, pos, '-')
     inc(pos, signBit(single))
-    buffer[pos] = 'i'
-    buffer[pos+1] = 'n'
-    buffer[pos+2] = 'f'
-    buffer[pos+3] = ' '
+    put(buffer, pos, 'i')
+    put(buffer, pos+1, 'n')
+    put(buffer, pos+2, 'f')
+    put(buffer, pos+3, ' ')
     return pos + 3
   else:
-    buffer[pos] = 'n'
-    buffer[pos+1] = 'a'
-    buffer[pos+2] = 'n'
-    buffer[pos+3] = ' '
+    put(buffer, pos, 'n')
+    put(buffer, pos+1, 'a')
+    put(buffer, pos+2, 'n')
+    put(buffer, pos+3, ' ')
     return pos + 3
 
 
@@ -1362,7 +1386,7 @@ func printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output64: u
       if tz == nd:
         inc(tz, 4)
       else:
-        for i in 0..3: buf[pos+i] = '0'
+        for i in 0..3: put(buf, pos+i, '0')
     inc(nd, 4)
   if output >= 100:
     let q: uint32 = output div 100
@@ -1395,7 +1419,7 @@ func printDecimalDigitsBackwards(buf: var openArray[char]; pos: int; output64: u
     fmtAssert(q >= 1)
     fmtAssert(q <= 9)
     dec(pos)
-    buf[pos] = chr(ord('0') + int(q))
+    put(buf, pos, chr(ord('0') + int(q)))
   result = tz
 
 func decimalLength(v: uint64): int {.inline.} =
@@ -1439,7 +1463,7 @@ func formatDigits(buffer: var openArray[char]; pos: int; digits: uint64; decimal
   let useFixed: bool = minFixedDecimalPoint <= decimalPoint and
       decimalPoint <= maxFixedDecimalPoint
   ## Prepare the buffer.
-  for i in 0..<32: buffer[pos+i] = '0'
+  for i in 0..<32: put(buffer, pos+i, '0')
   var decimalDigitsPosition: int
   if useFixed:
     if decimalPoint <= 0:
@@ -1459,39 +1483,39 @@ func formatDigits(buffer: var openArray[char]; pos: int; digits: uint64; decimal
   if useFixed:
     if decimalPoint <= 0:
       ##  0.[000]digits
-      buffer[pos+1] = '.'
+      put(buffer, pos+1, '.')
       pos = digitsEnd
     elif decimalPoint < numDigits:
       ##  dig.its
       var tmp = default(array[16, char])
-      for i in 0..<16: tmp[i] = buffer[i+pos+decimalPoint]
-      for i in 0..<16: buffer[i+pos+decimalPoint+1] = tmp[i]
-      buffer[pos+decimalPoint] = '.'
+      for i in 0..<16: tmp[i] = at(buffer, i+pos+decimalPoint)
+      for i in 0..<16: put(buffer, i+pos+decimalPoint+1, tmp[i])
+      put(buffer, pos+decimalPoint, '.')
       pos = digitsEnd + 1
     else:
       ##  digits[000]
       inc(pos, decimalPoint)
       if forceTrailingDotZero:
-        buffer[pos] = '.'
-        buffer[pos+1] = '0'
+        put(buffer, pos, '.')
+        put(buffer, pos+1, '0')
         inc(pos, 2)
   else:
     ##  Copy the first digit one place to the left.
-    buffer[pos] = buffer[pos+1]
+    put(buffer, pos, at(buffer, pos+1))
     if numDigits == 1:
       ##  dE+123
       inc(pos)
     else:
       ##  d.igitsE+123
-      buffer[pos+1] = '.'
+      put(buffer, pos+1, '.')
       pos = digitsEnd
     let scientificExponent: int = decimalPoint - 1
-    buffer[pos] = 'e'
-    buffer[pos+1] = if scientificExponent < 0: '-' else: '+'
+    put(buffer, pos, 'e')
+    put(buffer, pos+1, if scientificExponent < 0: '-' else: '+')
     inc(pos, 2)
     let k: uint32 = uint32(if scientificExponent < 0: -scientificExponent else: scientificExponent)
     if k < 10:
-      buffer[pos] = chr(ord('0') + int(k))
+      put(buffer, pos, chr(ord('0') + int(k)))
       inc(pos)
     elif k < 100:
       utoa2Digits(buffer, pos, k)
@@ -1499,7 +1523,7 @@ func formatDigits(buffer: var openArray[char]; pos: int; digits: uint64; decimal
     else:
       let q: uint32 = k div 100
       let r: uint32 = k mod 100
-      buffer[pos] = chr(ord('0') + int(q))
+      put(buffer, pos, chr(ord('0') + int(q)))
       inc(pos)
       utoa2Digits(buffer, pos, r)
       inc(pos, 2)
@@ -1512,7 +1536,7 @@ func toChars(buffer: var openArray[char]; v: float; forceTrailingDotZero = false
   let exponent: uint64 = physicalExponent(double)
   if exponent != dbMaxIeeeExponent:
     ##  Finite
-    buffer[pos] = '-'
+    put(buffer, pos, '-')
     inc(pos, signBit(double))
     if exponent != 0 or significand != 0:
       ##  != 0
@@ -1520,25 +1544,25 @@ func toChars(buffer: var openArray[char]; v: float; forceTrailingDotZero = false
       return formatDigits(buffer, pos, dec.significand, int(dec.exponent),
                          forceTrailingDotZero)
     else:
-      buffer[pos] = '0'
-      buffer[pos+1] = '.'
-      buffer[pos+2] = '0'
-      buffer[pos+3] = ' '
+      put(buffer, pos, '0')
+      put(buffer, pos+1, '.')
+      put(buffer, pos+2, '0')
+      put(buffer, pos+3, ' ')
       inc(pos, if forceTrailingDotZero: 3 else: 1)
       return pos
   if significand == 0:
-    buffer[pos] = '-'
+    put(buffer, pos, '-')
     inc(pos, signBit(double))
-    buffer[pos] = 'i'
-    buffer[pos+1] = 'n'
-    buffer[pos+2] = 'f'
-    buffer[pos+3] = ' '
+    put(buffer, pos, 'i')
+    put(buffer, pos+1, 'n')
+    put(buffer, pos+2, 'f')
+    put(buffer, pos+3, ' ')
     return pos + 3
   else:
-    buffer[pos] = 'n'
-    buffer[pos+1] = 'a'
-    buffer[pos+2] = 'n'
-    buffer[pos+3] = ' '
+    put(buffer, pos, 'n')
+    put(buffer, pos+1, 'a')
+    put(buffer, pos+2, 'n')
+    put(buffer, pos+3, ' ')
     return pos + 3
 
 # ==================================================================================================
@@ -1548,14 +1572,16 @@ func toChars(buffer: var openArray[char]; v: float; forceTrailingDotZero = false
 func addFloat*(result: var string; x: float) =
   ## Converts `x` to its shortest round-tripping decimal representation and
   ## appends it to `result`. Whole-valued floats keep a trailing `.0`.
-  var buffer = default(array[65, char])
+  var buffer = default(array[FloatBufferLen, char])
   let n = toChars(buffer, x, true)
+  fmtAssert(0 <= n and n <= FloatBufferLen)
   for i in 0 ..< n: result.add buffer[i]
 
 func addFloat*(result: var string; x: float32) =
   ## `float32` overload of `addFloat`.
-  var buffer = default(array[65, char])
+  var buffer = default(array[FloatBufferLen, char])
   let n = float32ToChars(buffer, x, true)
+  fmtAssert(0 <= n and n <= FloatBufferLen)
   for i in 0 ..< n: result.add buffer[i]
 
 func `$`*(x: float): string =

@@ -9,12 +9,12 @@
 
 ## Contract propositions extracted as `(assume …)` facts for the Final IR.
 ##
-## Two places state a fact the contract analysis may take for granted rather
-## than prove: a `{.assume: ….}` statement, and the `.ensures` of the iterator a
-## `for` loop runs, read about the loop variable. Both come down to the same
-## job — take the proposition apart into its conjuncts and re-emit every
-## comparison the fact engine can model, with parameters replaced by what
-## stands for them — and that job lives here, apart from the lowering itself.
+## The `.ensures` of the iterator a `for` loop runs is a fact about the loop
+## variable, but the Final IR's `(loop …)` does not say where that variable came
+## from. This reads the proposition, takes it apart into its conjuncts and
+## re-emits every comparison the fact engine can model as an `(assume …)`, with
+## `result` and the parameters replaced by what stands for them — apart from the
+## lowering itself.
 
 import std / [tables, assertions]
 when defined(nimony):
@@ -84,8 +84,8 @@ proc emitContractOperand(dest: var TokenBuf; n: Cursor; subst: Table[SymId, Toke
     else:
       discard
 
-proc emitAssumes*(dest: var TokenBuf; cond: Cursor; subst: Table[SymId, TokenBuf];
-                  info: NifLineInfo) =
+proc emitAssumes(dest: var TokenBuf; cond: Cursor; subst: Table[SymId, TokenBuf];
+                 info: NifLineInfo) =
   ## One `(assume …)` per conjunct: the fact engine models a single comparison,
   ## and `a and b` as one opaque condition would contribute nothing. A conjunct
   ## that does not fit the grammar is simply dropped — an assumption is a

@@ -596,15 +596,23 @@ proc evalBitSetImpl(n, typ: Cursor; bits: int): seq[uint8]
 proc evalOrdinal(c: ptr SemContext, n: Cursor; bits = 0): xint
 
 proc evalInSet(c: var EvalContext; n: var Cursor): Cursor =
+  let orig = n
   var a = default(Cursor)
   var b = createNaN()
   n.into:
     assert n.typeKind == SetT
     skip n # skip type
-    a = eval(c, n)
+    # Each operand is read through a copy and skipped structurally: an operand
+    # that does not fold leaves its cursor wherever it gave up, and `into`
+    # insists on the whole node being consumed.
+    var operand = n
+    a = eval(c, operand)
+    skip n
     b = evalOrdinal(nil, n, c.bits)
     skip n # skips b
-  assert a.exprKind == SetconstrX, "got " & toString(a)
+  if a.exprKind != SetconstrX or b.isNaN:
+    cannotEval orig
+    return
 
   var isInSet = false
   a.peekInto:

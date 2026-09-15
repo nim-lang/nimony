@@ -2885,8 +2885,8 @@ track a container's length through its construction — `var s = newSeq[int](4)`
 followed by `s[0]` is undecided — so demanding a proof everywhere would still
 reject a good deal of ordinary code. What it does prove reliably: literals and
 locals with a known value; a value under a matching guard, including `a and b`
-and the guard clause `if i < 0 or i >= s.len: return`, both of which the
-lowering turns into a single boolean; `s.len` in every spelling; the range of a
+and the guard clause `if i < 0 or i >= s.len: return`; `s.len` in every
+spelling; the range of a
 `for` loop variable, taken from the iterator's own `ensures`; and the counting
 loop, whose induction variable only ever moves one way:
 
@@ -2913,6 +2913,39 @@ Two module pragmas move the default:
   module as the prover grows.
 * `{.feature: "runtimeContracts".}` — no call site in this module is judged at
   all, and the run-time guard is the only check. It wins if both are given.
+
+### Assertions and assumptions
+
+Inside a body, two statements take part in the same reasoning:
+
+* `{.assert: cond.}` is a claim the compiler must **prove**. It is judged at
+  compile time and only there: nothing is emitted for it at run time, so an
+  assertion that is not proven is an error — an undecided one exactly like a
+  violated one, whatever the module's contract features. No switch turns it
+  off. Afterwards `cond` is known, so an assertion can carry an obligation
+  further.
+* `{.assume: cond.}` makes `cond` known **without proof**. It is the override
+  for what the prover cannot establish, and the programmer's word: a false
+  assumption is undefined behaviour, and the line that states it is where to
+  look.
+
+```nim
+proc get(s: seq[int]; i: int): int =
+  if i >= 0 and i < s.len:
+    {.assert: i + 1 <= s.len.}   # proven from the guard
+    result = s[i]
+
+proc first(s: seq[int]): int =
+  {.assume: s.len > 0.}          # the caller's word; nothing checks it
+  result = s[0]
+```
+
+The `assert` template of `std/assertions` is a different thing: an ordinary
+run-time check for debugging, compiled out by `-d:noAssertions` and
+`-d:danger`. While it is compiled in, its `if not cond:` is a guard like any
+other, but an obligation that only it discharges stops being provable once it
+is switched off — the build then fails rather than losing a check. State such a
+claim with `{.assert.}`.
 
 ## Lifetime-tracking hooks
 

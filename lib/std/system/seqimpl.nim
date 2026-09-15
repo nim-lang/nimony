@@ -158,7 +158,9 @@ func add*[T](s: var seq[T]; elem: sink T) {.inline, nodestroy.} =
 
 func len*[T](s: seq[T]): int {.inline, ensures: (0 <= result).} =
   ## Number of elements in `s`.
-  s.len
+  result = s.len
+  # every write to the `len` field stores a non-negative count
+  {.assume: 0 <= result.}
 
 func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
   ## Unchecked pointer to `s`'s element storage (valid for `0 ..< s.len`).
@@ -166,7 +168,8 @@ func rawData*[T](s: seq[T]): ptr UncheckedArray[T] {.inline.} =
 
 func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0), inline.} = s.data[i]
 
-func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0), inline, linear.} =
+func `[]=`*[T](s: var seq[T]; i: int; elem: sink T) {.requires: (i < s.len and i >= 0),
+    ensures: s.len == old(s.len), inline, linear.} =
   (s.data[i]) = elem
 
 func `[]`*[T](s: seq[T]; i: uint): var T {.requires: (i < s.len.uint), inline.} = s.data[int i]

@@ -99,7 +99,8 @@ func hashIgnoreStyle*(x: string): Hash =
       inc(i)
   result = !$h
 
-func hashIgnoreStyle*(sBuf: string, sPos, ePos: int): Hash =
+func hashIgnoreStyle*(sBuf: string, sPos, ePos: int): Hash {.
+    requires: 0 <= sPos and ePos < sBuf.len.} =
   ## Efficient hashing of a string buffer, from starting
   ## position `sPos` to ending position `ePos` (included); style is ignored.
   ##
@@ -143,7 +144,8 @@ func hashIgnoreCase*(x: string): Hash =
     h = h !& uint(ord(c))
   result = !$h
 
-func hashIgnoreCase*(sBuf: string, sPos, ePos: int): Hash =
+func hashIgnoreCase*(sBuf: string, sPos, ePos: int): Hash {.
+    requires: 0 <= sPos and ePos < sBuf.len.} =
   ## Efficient hashing of a string buffer, from starting
   ## position `sPos` to ending position `ePos` (included); case is ignored.
   ##
