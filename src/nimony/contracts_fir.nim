@@ -1158,43 +1158,40 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
   ## constant (`s.len - 1`), read as that location and that constant.
   result = false
   let m = argOf(n, subst)
-  if m.exprKind notin CallKinds: return
-  var r = m
-  r = sub(r)
-  let fnSym = extractSymId(r)
-  if fnSym == NoSymId: return
-  skip r # the callee
-  if not r.hasMore: return
-  let arg = r
-  skip r
-  if r.hasMore: return
-  var param = NoSymId
-  var value = default(Cursor)
-  if not accessorOf(c, fnSym, param, value): return
-  let body = peelExpr(value)
-  if body.exprKind notin {AddX, SubX}: return
-  var b = body
-  b = sub(b)
-  skip b # the type operand
-  var inner = initTable[SymId, Cursor]()
-  inner[param] = argOf(arg, subst)
-  # Not `locationVarId`: that asks the type cache about the path, which names
-  # the accessor's own parameter.
-  var root = NoSymId
-  var key = ""
-  var steps = 0
-  if not locationKey(c, b, inner, root, key, steps, 0) or root == NoSymId: return
-  let loc = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
-  skip b
-  var off = createNaN()
-  case b.kind
-  of IntLit: off = createXint(b.intVal)
-  of UIntLit: off = createXint(b.uintVal)
-  else: off = tryEvalOrdinal(c.bits, b)
-  if off.isNaN: return
-  v = loc
-  k = if body.exprKind == SubX: -off else: off
-  result = true
+  if m.exprKind in CallKinds:
+    var r = m
+    r = sub(r)
+    let fnSym = extractSymId(r)
+    skip r # the callee
+    var param = NoSymId
+    var value = default(Cursor)
+    if fnSym != NoSymId and r.hasMore and accessorOf(c, fnSym, param, value):
+      # a call of a transparent accessor, `param` standing for `arg`
+      let arg = r
+      skip r
+      let body = peelExpr(value)
+      if not r.hasMore and body.exprKind in {AddX, SubX}:
+        # ... with exactly that one argument, and a body `path ± k`
+        var b = body
+        b = sub(b)
+        skip b # the type operand
+        var inner = initTable[SymId, Cursor]()
+        inner[param] = argOf(arg, subst)
+        # Not `locationVarId`: that asks the type cache about the path, which
+        # names the accessor's own parameter.
+        var root = NoSymId
+        var key = ""
+        var steps = 0
+        if locationKey(c, b, inner, root, key, steps, 0) and root != NoSymId:
+          # `path` is a location of the argument
+          let loc = if steps == 0: getVarId(c, root) else: derivedIdOf(c, key, root)
+          skip b
+          let off = tryEvalOrdinal(c.bits, b)
+          if not off.isNaN:
+            # ... and `k` a constant
+            v = loc
+            k = if body.exprKind == SubX: -off else: off
+            result = true
 
 proc matchStep(decl: Cursor; info: var StepInfo): bool =
   ## Recognize a *step routine*: one whose whole body moves its first, `var`,
