@@ -35,6 +35,8 @@ type
     decls*: Table[string, Cursor]       ## parsed-decl cache
     declBufs*: seq[TokenBuf]            ## per-decl buffers, kept alive
     hasEmbeddedIndex*: bool             ## false → the file carried no `.indexat`
+    rootOffset: int                     ## text only: byte offset of the toplevel
+                                        ## `(stmts)` head, for `withLineInfo`
     isBif*: bool                        ## binary module: decls come from `bifBuf`
     bifBuf*: TokenBuf                   ## bif only: the whole module, resident
                                         ## (zero-copy mmap; its own fresh pools)
@@ -89,6 +91,8 @@ proc openForeignModule*(path: string): ForeignModule =
     result = ForeignModule(r: nifreader.open(path),
                            index: initTable[string, int](),
                            decls: initTable[string, Cursor]())
+    # `open` has consumed the directives: the reader now sits on the root.
+    result.rootOffset = offset(result.r)
     if indexStartsAt(result.r) > 0:
       result.hasEmbeddedIndex = true
       result.index = readEmbeddedIndex(result.r)
@@ -96,10 +100,18 @@ proc openForeignModule*(path: string): ForeignModule =
 proc hasDecl*(m: ForeignModule; name: string): bool =
   m.decls.hasKey(name) or m.index.hasKey(name)
 
-proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil): Cursor =
+proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil;
+              withLineInfo = false): Cursor =
   ## The declaration cursor for `name` (precondition: `hasDecl`). `jumpTo`s the
   ## symbol's byte offset and parses just that one tree into its own buffer
   ## (kept alive in `declBufs`). Cached.
+  ##
+  ## `withLineInfo`: for consumers that COPY the decl's line info into their own
+  ## output (the inter-module inliner splices foreign bodies). A decl's first
+  ## token holds only a position delta against its parent, the module's
+  ## toplevel `(stmts)`, so the parse is seeded with that root's absolute info
+  ## (`peekRootInfo`) — the same seeding `programs.tryLoadSym` does — and the
+  ## info is stored densely, as a whole-file `parseFromFile` would have it.
   ##
   ## `pool`: pass `nil` (the default) to intern the decl's symbols in a fresh
   ## per-decl pool — fine for **string-keyed** consumers (arkham/nifasm compare
@@ -117,8 +129,14 @@ proc getDecl*(m: ForeignModule; name: string; tags: TagPool; pool: Pool = nil): 
     # own fresh pools), so the copy lands in the caller's `tags`/`pool` world.
     buf.addSubtree cursorAt(m.bifBuf, pos)
   else:
-    m.r.jumpTo(pos)
-    parse(m.r, buf)                           # exactly one balanced decl tree
+    if withLineInfo:
+      m.r.jumpTo(m.rootOffset)
+      let seed = peekRootInfo(m.r, buf.pool)
+      m.r.jumpTo(pos)
+      parse(m.r, buf, parentSeed = seed, denseLineInfo = true)
+    else:
+      m.r.jumpTo(pos)
+      parse(m.r, buf)                         # exactly one balanced decl tree
   # Take the cursor on the LOCAL buffer *before* moving it into `declBufs`
   # (the leng/nimony pattern, see nifmodules.getDeclOrNil): `beginRead` installs
   # the buffer's ref-counted cursor owner, which then travels with the buffer

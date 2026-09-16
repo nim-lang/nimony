@@ -314,13 +314,18 @@ proc densify(dest: var TokenBuf; n: var Cursor; cur: var NifLineInfo;
   of ExtendedSuffix, LineInfoLit, UnknownToken, EofToken, ParLe, ParRi:
     inc n  # absorbed into the head token's own value/info; never freestanding
 
-proc load*(filename: string): MainModule =
+proc load*(filename: string; pool: Pool = nil; tags: TagPool = nil): MainModule =
   ## Load the main module, sniffing the file header for the actual format:
   ## filenames stay `.nif` throughout the pipeline, the content decides.
   ## Text is parsed with a canonical Leng tag pool so interned TagIds equal the
   ## master ordinals that `stmtKind`/`typeKind`/`symKind` decode against; a
   ## `.bif` is loaded zero-copy with its own fresh pools (the bif INVARIANT)
   ## and translated to the canonical pools during the densify copy below.
+  ##
+  ## `pool`/`tags`: intern into these instead of fresh ones, so the module's
+  ## SymIds line up with buffers the caller already holds (shoggoth optimizes a
+  ## buffer the inter-module inliner produced in nifpools' global pools). `tags`
+  ## must be seeded by master ordinal, as `createLengTagPool` does.
   let fromBif = isBifFile(filename)
   var raw = default(TokenBuf)
   if fromBif:
@@ -333,7 +338,8 @@ proc load*(filename: string): MainModule =
     of rd.WrongHeader: quit "nif files must start with Version directive"
     of rd.WrongMeta: quit "the format of meta information is wrong!"
     let nodeCount = rd.fileSize(r) div 7
-    raw = createTokenBuf(nodeCount, nil, createLengTagPool())
+    raw = createTokenBuf(nodeCount, pool,
+                         if tags != nil: tags else: createLengTagPool())
     nifcoreparse.parse(r, raw)
     rd.close(r)
   # Densify line info so `info(n)` is valid at every node (see `densify`). The
@@ -345,7 +351,8 @@ proc load*(filename: string): MainModule =
                       prog: NifProgram(scheme: splitModulePath(filename)))
   var remap = default(DensifyRemap)
   if fromBif:
-    result.src = createTokenBuf(raw.len, nil, createLengTagPool())
+    result.src = createTokenBuf(raw.len, pool,
+                                if tags != nil: tags else: createLengTagPool())
     remap = buildDensifyRemap(result.src, raw)
   else:
     result.src = createTokenBuf(raw.len, raw.pool, raw.tags)
