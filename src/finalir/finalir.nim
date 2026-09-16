@@ -737,6 +737,24 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # control flow — binding either to a temp is exactly what would destroy the
     # statement. Handed on verbatim.
     takeTree dest, n
+  of LabS, JmpS:
+    # Already Final IR on arrival: `xelim` lowers short-circuit `and`/`or`
+    # chains to the flat `(if c (jmp L))` / `(lab L)` form, so these are the
+    # pass's own vocabulary coming back at it. They are also the two most
+    # frequent tags to reach here at all (163 `jmp` and 122 `lab` across the
+    # `tjson` closure), which is why they get a branch rather than the
+    # operand-lowering fallback below.
+    takeTree dest, n
+  of ImportS, ImportasS, FromimportS, ImportexceptS, IncludeS, ExportS,
+     ExportexceptS, CommentS, PragmasS:
+    # Module bookkeeping, not code. Nothing to lower, and the backend and the
+    # index both want them where they are.
+    takeTree dest, n
+  of YldS, DiscardS, InclS, ExclS, EmitS:
+    # A statement whose children are plain expressions: keep the statement,
+    # lower the operands. `trExpr` routes a call operand through `trCall`, so an
+    # lvalue call (`s[i]`) in one of these is handled.
+    trExpr c, dest, n
   else:
     if n.finalIrKind in {MflagV, VflagV}:
       # NJVL control-flow flags. `xelim` used to materialise short-circuit
@@ -750,7 +768,28 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n # body
     elif n.exprKind == ProccallX:
       trStmtCall c, dest, n
+    elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
+      # A hook call in statement position. Its children are locations, so
+      # lowering them as expressions is exactly right — `contracts_fir` treats
+      # the same set the same way.
+      trExpr c, dest, n
     else:
+      # Operand-lowering fallback: the statement's shape is kept and its
+      # children are lowered as expressions. That is right for the hook calls
+      # (`(destroy x)` and friends) and for anything else whose children are
+      # plain expressions — but it does NOT lower nested *statements*, so a
+      # construct with a body reaching here would keep an un-lowered body.
+      # Nothing produces such a construct in this pass's input today:
+      # `corofor` is the one that would, and its only producer is hexer's
+      # `iterinliner`, which runs downstream of every caller of this pass. That
+      # stops being true when the lowering moves into hexer's own pipeline, so
+      # measure before relying on it.
+      #
+      # `-d:firFallbackProbe` prints one line per statement that lands here,
+      # which is how the list above was established (the spelling matches
+      # `-d:contractStats` in `contracts_fir.nim`).
+      when defined(firFallbackProbe):
+        stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
       trExpr c, dest, n
 
 proc toFinalIr*(pass: var Pass) =

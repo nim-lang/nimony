@@ -384,13 +384,21 @@ Two are fixed:
   native backend compiles it.
 
 Open, most severe first:
-- **`trStmt`'s fallback routes unhandled statements through `trExpr`.**
-  `CoroforS` is the alarming one: a loop whose body is never lowered at all.
-  `EmitS`, `WhenS`, `DiscardS`, `YldS`, `LabS`/`JmpS`, `UnpackdeclS` go the same
-  way — nothing is textually dropped, but nested statements stay un-lowered,
-  locals are not registered with the type cache, and a call in any operand
-  position hits `bug` at `trExpr`. Related: `CallKinds` includes `DelayX` while
-  `CallKindsS` does not, so a statement-level `(delay …)` takes this path.
+- **`trStmt`'s fallback** is now explicit rather than accidental. Measured with
+  `-d:firFallbackProbe` (one line per statement that lands there, spelled like
+  `-d:contractStats`) over the `tjson` closure, what actually reached it was
+  `jmp` (163), `lab` (122), `import` (14), `yld` (11), `destroy` (11),
+  `comment` (8), `pragmas` (6) and `incl` (5) — each of which the fallback
+  handled correctly, but by accident. They have their own branches now, saying
+  why: `lab`/`jmp` are already this pass's own vocabulary coming back at it,
+  the module bookkeeping is not code, and the rest are statements whose
+  children are plain expressions. Nothing reaches the fallback any more.
+
+  `CoroforS` — a loop whose body the fallback would leave un-lowered — is the
+  case that matters, and it is **not reachable today**: its only producer is
+  hexer's `iterinliner`, downstream of every caller of this pass. It becomes
+  reachable at step 3, when the lowering moves into hexer's pipeline. Re-run
+  the probe then; that is what it is for.
 - **`trIf`/`genIfViaCx` silently drop branches past the first elif+else.**
   Latent — xelim nests multi-elif chains today — but the failure mode is "a
   branch vanishes from the generated code" with no assertion. The cheapest
