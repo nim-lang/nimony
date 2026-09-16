@@ -160,7 +160,21 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
-  of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
+  of RoutineTypes:
+    # A closure is a {fn, env} pair at runtime — two pointers, not one. Sizing
+    # it as one pointer made a module that lowers the closure (the defining
+    # one) and a module that imports the still-unlowered type disagree on
+    # whether an object holding it is "big" (> 24 bytes), so constparams
+    # lowered the object's `=destroy` to a pointer parameter on one side while
+    # the importer's call site passed the value: "incompatible type for
+    # argument 1" from the C compiler. Repro: a foreign object with a
+    # `.closure.` field (a string + the closure = 32 bytes lowered, 24 seen
+    # unlowered), destroyed as seq elements in the importing module.
+    if procHasPragma(n, ClosureP):
+      update c, 2 * ptrSize, ptrSize
+    else:
+      update c, ptrSize, ptrSize
+  of RefT, PtrT, MutT, OutT, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.childCursor, ptrSize
