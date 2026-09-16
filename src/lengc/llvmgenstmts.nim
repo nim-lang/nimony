@@ -396,17 +396,6 @@ proc genJtrueLLVM(c: var LLVMCode; n: var Cursor) =
     else:
       error c.m, "expected Symbol but got: ", n
 
-proc genStoreLLVM(c: var LLVMCode; n: var Cursor) =
-  let storeInfo = n.info
-  n.into:
-    var rhs = n
-    skip n
-    var target = LLValue(); genLvalueLLVM(c, n, target)
-    var val = LLValue(); genExprLLVM(c, rhs, val)
-    c.setLoc(storeInfo)
-    c.emitStore(val, target)
-    while n.hasMore: skip n
-
 proc genKeepOverflowLLVM(c: var LLVMCode; n: var Cursor) =
   let ovfInfo = n.info
   var typ: LLType = nil
@@ -558,8 +547,6 @@ proc genStmtBodyLLVM(c: var LLVMCode; n: var Cursor) =
       c.setLoc(asgnInfo)
       c.emitStore(rval, lval)
       while n.hasMore: skip n
-  of StoreS:
-    genStoreLLVM c, n
   of IfS:
     genIfLLVM c, n
   of IteS, ItecS:

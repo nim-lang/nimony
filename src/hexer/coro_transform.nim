@@ -1463,15 +1463,6 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       emitJump dest, c.currentProc.loopHeads[^1], info
       skip n
-  of StoreV:
-    var addLabel = false
-    takeInto dest, n:
-      addLabel = c.hooks.isPassiveCall(c, n)
-      trGotoValue c, dest, n
-      trGotoValue c, dest, n
-    if addLabel:
-      emitLabel dest, c.currentProc.labelCounter, info
-      inc c.currentProc.labelCounter
   of LoopV:
     if containsSuspensionPoint(c, n):
       # A Final IR `(loop (stmts BODY (continue .)))` is unconditional: there
@@ -1579,9 +1570,20 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if addLabel:
             emitLabel dest, c.currentProc.labelCounter, info
             inc c.currentProc.labelCounter
+        of AsgnS:
+          # The value is the second operand: a passive call there ends the
+          # state, so the label goes after the whole assignment.
+          var addLabel = false
+          takeInto dest, n:
+            trGotoValue c, dest, n                 # destination
+            addLabel = c.hooks.isPassiveCall(c, n)
+            trGotoValue c, dest, n                 # value
+          if addLabel:
+            emitLabel dest, c.currentProc.labelCounter, info
+            inc c.currentProc.labelCounter
         of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
             ConverterS, MethodS, MacroS, TemplateS, TypeS,
-            BlockS, EmitS, AsgnS, IfS, WhenS,
+            BlockS, EmitS, IfS, WhenS,
             BreakS, ContinueS, ForS, WhileS, CoroforS,
             RetS, YldS, PragmasS, PragmaxS, InclS, ExclS,
             IncludeS, ImportS, ImportasS, FromimportS,
@@ -2613,22 +2615,6 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # NJVL control-flow flags; nothing produces them since `xelim`'s
           # cfvar lowering went out with `nj.nim`. See `finalir.trStmt`.
           bug "cfvar in Final IR input"
-        of StoreV:
-          # (store value dest) -> (asgn dest value)
-          let info = n.info
-          n.into: # skip 'store' tag
-            var value = n
-            if c.hooks.isPassiveCall(c, value):
-              skip n
-              var lhsTransformed = createTokenBuf(6)
-              coroTr c, lhsTransformed, n
-              c.hooks.trPassiveCall(c, dest, value, beginRead lhsTransformed)
-            else:
-              var valueBuf = createTokenBuf(16)
-              coroTr c, valueBuf, n # value (first operand)
-              dest.copyIntoKind AsgnS, info:
-                coroTr c, dest, n   # dest (second operand)
-                dest.add valueBuf
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output
         else:

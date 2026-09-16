@@ -663,7 +663,7 @@ proc expressionMentionsAny(cur: Cursor; targets: HashSet[SymId]): bool =
 proc preScanWrites(start: Cursor; writes, addrs: var HashSet[SymId]) =
   if not start.hasMore: return
   if start.kind != TagLit: return
-  if start.stmtKind in {AsgnS, StoreS}:
+  if start.stmtKind == AsgnS:
     let lhs = child0(start)
     if lhs.kind == Symbol:
       writes.incl symId(lhs)
@@ -1203,9 +1203,8 @@ proc preScanLoop(c: Context; start: Cursor; frame: var LoopFrame) =
   if start.kind != TagLit: return
   let sk = start.stmtKind
   let ek = start.exprKind
-  if sk in {AsgnS, StoreS}:
-    var lhs = child0(start)
-    if sk == StoreS: skip lhs
+  if sk == AsgnS:
+    let lhs = child0(start)
     if lhs.kind == Symbol:
       frame.writes.incl symId(lhs)
     else:
@@ -2055,13 +2054,13 @@ proc isHoistAnchor(sk: LengStmt): bool {.inline.} =
   # a temp hoisted at the first occurrence's statement must not be reused by an
   # occurrence OUTSIDE that block, so the block must appear on the anchor stack.
   # `(scope)`/`(if)`/`(case)`/`(while)`/`(loop)`/`(try)`/`(onerr)` qualify.
-  # `(stmts)` is transparent, and LEAF statements (asgn/store/call/var/ret/…) form
+  # `(stmts)` is transparent, and LEAF statements (asgn/call/var/ret/…) form
   # no block of their own — anchoring them would give two sibling statements
   # DIFFERENT anchor stacks and defeat all cross-statement CSE (which is the whole
   # point of hoisting a shared load/address to a dominating decl). Unknown/other
   # statements stay anchored (the safe, CSE-suppressing default).
   sk notin {NoStmt, StmtsS,
-            AsgnS, StoreS, CallS, VarS, GvarS, TvarS, ConstS, DiscardS,
+            AsgnS, CallS, VarS, GvarS, TvarS, ConstS, DiscardS,
             RetS, BreakS, RaiseS, JmpS, LabS, EmitS, KeepovfS, MflagS, VflagS}
 
 proc tr(c: var Context; n: var Cursor) =
@@ -2075,7 +2074,7 @@ proc tr(c: var Context; n: var Cursor) =
     case sk
     of VarS, ConstS:               trVar(c, n, isBodyLocal = true)
     of GvarS, TvarS:               trVar(c, n, isBodyLocal = false)
-    of AsgnS, StoreS:              trAsgn(c, n)
+    of AsgnS:                      trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
     of IfS:
       var gcond = default(Cursor)
@@ -2153,13 +2152,6 @@ proc collectWriteTargets(c: var Context; n: var Cursor) =
       c.writeTargets.incl hashExpr(lhs)
     n.loopInto:
       collectWriteTargets(c, n)    # recurse (find `(addr L)` in the RHS / indices)
-  of StoreS:                       # (store src dest) — dest is the 2nd child
-    var lhs = child0(n)
-    skip lhs
-    if lhs.kind == TagLit and lhs.exprKind in {DotC, AtC, DerefC, PatC}:
-      c.writeTargets.incl hashExpr(lhs)
-    n.loopInto:
-      collectWriteTargets(c, n)
   else:
     n.loopInto:
       collectWriteTargets(c, n)
