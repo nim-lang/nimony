@@ -6,8 +6,11 @@ pass that already decides whether a check is needed.
 Today the two halves are separated by an IR boundary that discards the answer.
 `contracts_fir.nim` lowers the module to the Final IR, proves or disproves every
 `.requires` and every array index, and returns **only an error buffer**
-(`analyzeContractsFinalIr`, `semmain.nim:542` and `:621`). The Final IR is
-thrown away. Hexer, which never saw any of it, then emits a check at every site
+(`analyzeContractsFinalIr`, `semmain.nim:542` and `:621`). That Final IR is
+thrown away. (The lowering itself is not unused: `hexer/coro_transform.nim`
+runs `toFinalIr` on a coroutine wrapper and walks the result, so it is a real
+consumer of this pass's output today — and the first one any change to the
+lowering has to answer to.) Hexer, which never saw any of it, then emits a check at every site
 that could possibly need one, gated on a whole-build flag.
 
 The fix is to stop throwing the IR away: the contract pass's output *is* the IR
@@ -434,15 +437,30 @@ Also fixed, in the order they were worked:
   bare `addParRi()` calls close nodes this pass *synthesizes* — `kill`, `lab`,
   `ite`, `loop`, the `for` body's `stmts` — which have no input close to keep.
 
-Closed as intentional, not deferred:
+- **`(scope …)` is kept, not normalised to `(stmts …)`.** This was first
+  closed as intentional — scope-ness being re-expressed as the emitted
+  `(kill …)` set — and that was wrong. Much of hexer keys off `scope`, not off
+  `kill`: `destroyer` treats `(scope …)` as a real destructor scope and
+  `(stmts …)` as transparent, and its own comment says the flat `lab`/`jmp`
+  branch layout *depends* on that, because a branch body is a sibling in the
+  enclosing statement list rather than a child of an `(elif …)`. Emitting
+  `stmts` would have let a local declared in a branch live to the end of the
+  enclosing region. The lowering emitted **zero** `scope` tags before this;
+  it now emits one wherever it opens a scope (`trScopedBody`, and the loop and
+  `for` bodies, whose locals die each iteration).
 
-- **`(scope …)` normalised to `(stmts …)`** and **`block` and its source name
-  dropped**. Both are by design — a `block` has no Final IR construct of its
-  own (`body` plus `(lab blockExit)` is the lowering), and scope-ness is
-  re-expressed as the emitted `(kill …)` set. Neither is textually
-  reconstructible, so if `was` is to render a `block` back for diagnostics it
-  will have to carry the source name; that is a `was` requirement, recorded
-  there rather than a lossiness bug here.
+  The `kill`s stay for the prover, which is what reads them, and are dropped on
+  the way out rather than published: hexer re-derives destruction from the
+  scope rules, so carrying both says the same thing twice. Measured, that is
+  11,986 instructions and 2.0% of the lowered IR — modest, but it buys nothing
+  downstream. `coro_transform` already drops them (`of KillV, UnknownV:`), so
+  no `kill` reaches generated code today; the general strip belongs in
+  `derefs.nim` at step 4, when the lowered buffer is what gets published.
+
+- **`block` and its source name dropped** stays closed as intentional: a
+  `block` has no Final IR construct of its own, `body` plus `(lab blockExit)`
+  is the lowering. It is not textually reconstructible, so rendering one back
+  for diagnostics is a `was` requirement, recorded there.
 
 ## Measurement
 

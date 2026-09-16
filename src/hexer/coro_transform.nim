@@ -1477,7 +1477,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitLabel dest, head, info
       c.currentProc.loopHeads.add head
       n.into:                                       # (loop ...)
-        assert n.stmtKind == StmtsS, $n.kind
+        assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
         n.into:                                     # the body
           while n.hasMore:
             trGoto c, dest, n                       # `(continue .)` -> jmp head
@@ -1709,7 +1709,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc toGoto*(c: var Context; n: Cursor): TokenBuf =
   result = createTokenBuf(300)
-  assert n.stmtKind == StmtsS, $n.kind
+  assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
   var n = n
   # `trGoto` flattens `(stmts ...)`, so the body's own wrapper is emitted here.
   result.addParLe(n.cursorTagId, n.info)
@@ -1901,7 +1901,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   escapingLocals(c, n)
   completeFrameConstr(c, init)
 
-  assert n.stmtKind == StmtsS
+  assert n.stmtKind in {StmtsS, ScopeS}
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
     dest.add init
@@ -2573,7 +2573,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           var lastJmp = -1
           var jumps = 0
           n.into:                                 # (loop ...)
-            assert n.stmtKind == StmtsS, $n.kind
+            assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
             n.into:                               # the body
               while n.hasMore:
                 if n.finalIrKind == ContinueV:

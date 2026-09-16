@@ -136,10 +136,19 @@ proc trStmtsInline(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trScopedBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Translate a body that opens its own lexical scope and emit it as a fresh
-  ## `(stmts ...)`. Scope-exit `kill`s are appended before the closing paren.
+  ## `(scope ...)`. Scope-exit `kill`s are appended before the closing paren.
+  ##
+  ## It is a `scope` and not a `stmts` because the scope is the part hexer
+  ## needs: `destroyer` treats `(scope …)` as a real destructor scope and
+  ## `(stmts …)` as transparent, and the flat `lab`/`jmp` branch layout this
+  ## pass emits *depends* on that — a branch body is a sibling in the enclosing
+  ## statement list, not a child of an `(elif …)`, so `stmts` would let a local
+  ## declared in a branch live to the end of the enclosing region. The `kill`s
+  ## say the same thing a second time, for the prover; hexer re-derives them
+  ## from the scope rules and they can be dropped on the way out.
   let info = n.info
   openScope c
-  dest.addParLe StmtsS, info
+  dest.addParLe ScopeS, info
   if n.stmtKind in {StmtsS, ScopeS}:
     n.into:
       while n.hasMore:
@@ -560,7 +569,7 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current.exits.add Exit(name: exitL, isLoop: true)
   openScope c
   dest.addParLe LoopV, info
-  dest.addParLe StmtsS, info
+  dest.addParLe ScopeS, info # a loop body is a scope: its locals die each iteration
   assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
   n.into: # the body statement list
     while n.hasMore:
@@ -640,7 +649,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeTree dest, n # the iterator call, verbatim: xelim already normalized it
   registerForVars c, n
   takeTree dest, n # the loop variables
-  dest.addParLe StmtsS, info
+  dest.addParLe ScopeS, info # as in `trLoopFromBody`: the body is a scope
   if assumeBuf.len > 0:
     dest.add assumeBuf
   assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
