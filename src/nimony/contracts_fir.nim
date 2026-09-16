@@ -4462,6 +4462,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   c.inHook = isHookProc(symId)
   var isGeneric = false
   var isExternProc = false
+  var isAsm = false
   var ownContract = default(Cursor)
   var ownEnsures = default(Cursor)
   let oldOwnEnsures = c.ownEnsures
@@ -4471,6 +4472,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
     if i == ProcPragmasPos:
       c.procCanRaise = hasPragma(n, RaisesP)
       isExternProc = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP)
+      isAsm = hasPragma(n, AssemblerP)
       ownContract = extractPragma(n, RequiresP)
       # An iterator's `.ensures` is about what it yields, not about an exit.
       if decl.symKind != IteratorY:
@@ -4511,8 +4513,10 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   # meaningful Nim body — and the lowered body of an extern func with a doc /
   # `runnableExamples` body still ends in an implicit `(ret result)` that reads
   # the never-initialized `result`, so we must skip the *traversal*, not merely
-  # the final init check.
-  if not isGeneric and not isExternProc:
+  # the final init check. An `{.assembler.}` body is hand-written machine code:
+  # the Final IR carries it verbatim (`finalir.trProcDecl`) because the backend
+  # needs it, and it is outside this analysis's vocabulary entirely.
+  if not isGeneric and not isExternProc and not isAsm:
     traverseStmt c, n, call
     # Falling off the end is an exit too.
     verifyEnsures c, (if c.resultSym != NoSymId: getVarId(c, c.resultSym) else: InvalidVarId), decl.info

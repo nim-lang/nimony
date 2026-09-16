@@ -664,16 +664,17 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   # An `{.assembler.}` body is machine code written by hand: it has no contracts
   # to check, and its constructs are outside the Final IR's vocabulary anyway (a
-  # machine flag as an `if` condition is not an expression). `xelim` leaves such a
-  # body verbatim — source order is the contract — so it never arrives in the
-  # normalized form this pass assumes. Lower it to a bodyless declaration: there
-  # is nothing to analyse, and nothing to trip over.
+  # machine flag as an `if` condition is not an expression). `xelim` leaves such
+  # a body verbatim — source order is the contract — so it never arrives in the
+  # normalized form this pass assumes, and it is passed through verbatim here
+  # for the same reason. It used to be replaced by a bodyless declaration, which
+  # was only ever safe while this pass's output was thrown away: *not analysed*
+  # is not the same as *not emitted*. The prover skips it (`traverseProc`).
   let isAsm = hasPragma(r.pragmas, AssemblerP)
   copyInto(dest, n):
     let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
     if isAsm:
-      skip n
-      dest.addDotToken()
+      takeTree dest, n
     elif isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):

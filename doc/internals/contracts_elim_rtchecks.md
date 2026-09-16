@@ -370,11 +370,20 @@ Two are fixed:
   had **no** test — `tborrow_errors.nim` only *simulates* it with a `var`
   parameter — so `tborrow_lifetime_errors.nim` now pins it.
 
-Open, most severe first:
+- **`{.assembler.}` bodies** (`trProcDecl`) used to be replaced by a bodyless
+  declaration: `skip n; dest.addDotToken()` threw away hand-written machine
+  code. The lowering passes the body through verbatim now — deliberately
+  *un*-normalized, since source order is the contract for such a body — and
+  `traverseProc` skips it, alongside the generic and extern cases it already
+  skipped. Note this one is unobservable by any test until step 4: the
+  lowering's output is still discarded, so nothing downstream can see the
+  difference. It was verified by lowering a module with an `{.assembler.}` proc
+  through `finalir.nim`'s standalone driver and reading the result. The path has
+  no positive test either way — every test in `tests/nimony/assembler/` is a
+  negative one, because the C backend refuses such a proc by name and only the
+  native backend compiles it.
 
-- **`{.assembler.}` bodies** (`trProcDecl`): `skip n; dest.addDotToken()`
-  replaces hand-written machine code with a bodyless declaration. Fix has the
-  same shape as `trFor` — the lowering emits it verbatim, the prover skips it.
+Open, most severe first:
 - **`trStmt`'s fallback routes unhandled statements through `trExpr`.**
   `CoroforS` is the alarming one: a loop whose body is never lowered at all.
   `EmitS`, `WhenS`, `DiscardS`, `YldS`, `LabS`/`JmpS`, `UnpackdeclS` go the same
