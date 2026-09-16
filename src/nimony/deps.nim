@@ -1025,28 +1025,40 @@ proc writeLinkManifest(path, exe, apptype, linker: string;
   b.close()
   result = path
 
-proc addInlineSourceInputs(b: var Builder; c: DepContext; v: Node; backend: string) =
-  ## Declare the `.c.nif` of every module `v` imports as an input of `v`'s
-  ## codegen node.
+proc addInlineSourceInputs(b: var Builder; optimized: bool) =
+  ## Declare the Leng file of EVERY module in the program as an input of a
+  ## codegen node, written as the one phase reference `(inputsof <cmd>)`
+  ## rather than N filenames per node.
   ##
-  ## All three consumers of a `.c.nif` -- `lengc`, `arkham` and Shoggoth's
-  ## `optimize` -- resolve foreign symbols by loading the *callee* module's
-  ## `.c.nif` on demand, and splice imported `.inline` bodies out of it. That
-  ## makes those files real inputs: nifmake decides whether to rerun a node
-  ## from its declared inputs, so without these edges an edit that only
-  ## changes a callee leaves every importer's already-generated code in place,
-  ## with a stale copy of the body spliced into it. The result is a link error
-  ## when the edit renames a symbol the splice references, and a silently
-  ## wrong binary when it does not (nim-lang/nimony#1897).
+  ## All three consumers -- `lengc`, `arkham` and Shoggoth's `optimize` --
+  ## resolve a foreign symbol by loading the module that *defines* it, on
+  ## demand, and splice imported `.inline` bodies out of it. The defining
+  ## module is NOT restricted to this module's imports. A long string literal
+  ## is deduplicated across the whole program by content hash and emitted once,
+  ## in whichever module got there first, so any module can carry a reference
+  ## like `strlit.0.I16690852185662743073.lifwoge6a` to a literal owned by a
+  ## module it does not import at any depth -- measured: `system` referencing a
+  ## literal owned by `hexer/lifter`. The owner is decided by emission order,
+  ## not by the import graph, so it cannot be predicted from a module's `deps`.
+  ##
+  ## Hence the whole module list. Naming only the direct imports under-states
+  ## the input set in both directions that matter: ORDERING, since nifmake
+  ## starts a node as soon as its own declared inputs are done -- `lengc` on
+  ## `system` then races the `optimize` node that writes `lifter`'s Leng file --
+  ## and FRESHNESS, since without the edge a changed callee body leaves this
+  ## node's output untouched and the splice inside it stale
+  ## (nim-lang/nimony#1897).
+  ##
+  ## `optimized` picks WHICH phase produces that Leng file. Under the optimizer
+  ## the whole module set switches to `.oc.nif` together -- exactly as
+  ## `wasmInput` does for ithaqua -- so `lengc` and `arkham` wait on `optimize`.
+  ## Shoggoth's own node is the exception: it reads the pre-optimization
+  ## `.c.nif` that `dceEmit` writes, which is the default here.
   ##
   ## Only input[0] reaches the tool's command line, so the extra inputs cost
   ## nothing but the ordering and the freshness check.
-  var seen = initHashSet[string]()
-  for depIdx in v.deps:
-    let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
-    if not seen.containsOrIncl(depNif):
-      b.withTree "input":
-        b.addStrLit depNif
+  b.withTree "inputsof":
+    b.addIdent (if optimized: "optimize" else: "dceEmit")
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
@@ -1582,13 +1594,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
             # Shoggoth's inter-module inliner also reads the imported modules'
-            # `.c.nif`. Ordering alone would be free (nifmake runs the DAG in
-            # depth batches, and every `dceEmit` shares the `.live.nif` input,
-            # so those files are all written in the batch before this node's),
-            # but they have to be inputs for FRESHNESS too: without the edge a
-            # changed callee body leaves this node's output untouched and the
-            # splice inside it stale (nim-lang/nimony#1897).
-            addInlineSourceInputs(b, c, v, backend)
+            # pre-optimization `.c.nif`, so those are this node's inputs: for
+            # ORDERING, since nifmake starts a node as soon as its own inputs
+            # are done, and for FRESHNESS, since without the edge a changed
+            # callee body leaves this node's output untouched and the splice
+            # inside it stale (nim-lang/nimony#1897).
+            addInlineSourceInputs(b, optimized = false)
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized
@@ -1608,7 +1619,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "arkham"
             b.withTree "input":
               b.addStrLit lengcInput
-            addInlineSourceInputs(b, c, v, backend)
+            addInlineSourceInputs(b, useOptimizer)
             b.withTree "output":
               b.addStrLit c.config.asmFile(v.files[0], backend)
         else:
@@ -1627,7 +1638,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit "--isMain"
             b.withTree "input":
               b.addStrLit lengcInput
-            addInlineSourceInputs(b, c, v, backend)
+            addInlineSourceInputs(b, useOptimizer)
             b.withTree "output":
               b.addStrLit c.config.genFile(v.files[0], backend)
 
