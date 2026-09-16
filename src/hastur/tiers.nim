@@ -76,8 +76,8 @@ const BootstrapModules = [
   # plus `lib/foreignmodules` and `lib/nifcdecl` via its import set.
   "src/lengc/lengc.nim",
 
-  # The optimizer's driver, another separate tip. Host-Nim-built for the boot
-  # (a carry tool), so nothing else would notice it stop compiling with nimony.
+  # The optimizer's driver, another separate tip (nothing imports it). `boot`
+  # rebuilds it at every stage; this entry attributes a regression faster.
   "src/lengc/shoggoth/shoggoth.nim",
 ]
 

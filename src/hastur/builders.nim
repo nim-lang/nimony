@@ -191,6 +191,9 @@ proc buildNimonyToolchain*(showProgress = false) =
   ## are all re-linked, so `hastur selfcheck` (and any caller that wants a
   ## fully-consistent toolchain) goes through this rather than `buildNimony`
   ## alone — which is what masked a hexer bug during the doc-generator work.
+  ## lengc and shoggoth are here because `boot` self-hosts them as well.
   buildNimsem(showProgress)
   buildNimony(showProgress)
   buildHexer(showProgress)
+  buildLengc(showProgress)
+  buildShoggoth(showProgress)
