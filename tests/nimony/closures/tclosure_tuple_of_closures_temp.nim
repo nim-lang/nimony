@@ -4,8 +4,7 @@
 # signature, `(tuple (proctype … closure) …)`, never lowered here. The temp,
 # and the tuple's =destroy hook, must use the lowered layout the returned
 # value has — a struct of (fn, env) pairs — not a struct of bare function
-# pointers, or the C compiler rejects the program (hikaru's
-# buildVolume3DCallbacks).
+# pointers, or the C compiler rejects the program.
 import std/syncio
 
 type

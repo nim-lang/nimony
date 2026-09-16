@@ -22,6 +22,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
+import closuretypes
 
 proc isMutFirstParam*(destroyProc: SymId): bool =
   result = false
@@ -63,25 +64,23 @@ type
     closureValuesLowered: bool
       ## true in hexer, after lambdalifting: a `.closure` proctype that still
       ## reads as one is a FOREIGN decl's type and stands for the (fn, env)
-      ## tuple (`typenav.isClosureProcType`). False in the frontend
+      ## tuple (`closuretypes.isClosureProcType`). False in the frontend
       ## (`derefs`), where nothing is lowered yet and closure proctypes are
       ## opaque.
     closureTuples: seq[TokenBuf]
-      ## the `(closureTuple …)` shapes synthesized by `closureTupleOf`;
-      ## `requestLifting` keeps cursors into them, so they live as long as
-      ## the context does
+      ## the lowered shapes handed to `requestLifting`, which keeps cursors
+      ## into them: they must live as long as the context does
 
 proc isClosureValue(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
-  ## `typenav.isClosureProcType`, once lambdalifting has run.
+  ## `closuretypes.isClosureProcType`, once lambdalifting has run.
   c.closureValuesLowered and isClosureProcType(typ)
 
 proc holdsClosureValues(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
-  ## `typenav.containsClosureProcType`, once lambdalifting has run.
+  ## `closuretypes.containsClosureProcType`, once lambdalifting has run.
   c.closureValuesLowered and containsClosureProcType(typ)
 
 proc loweredOf(c: var LiftingCtx; typ: TypeCursor): TypeCursor =
-  ## `typenav.loweredClosureType`, kept alive in `c.closureTuples` because
-  ## `requestLifting` stores the cursor.
+  ## `closuretypes.loweredClosureType`, kept alive in `c.closureTuples`.
   c.closureTuples.add loweredClosureType(typ)
   result = cursorAt(c.closureTuples[c.closureTuples.len-1], 0)
 

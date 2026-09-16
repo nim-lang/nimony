@@ -35,7 +35,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
-import lifter, mover, hexer_context, passes
+import lifter, mover, hexer_context, passes, closuretypes
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 include ".." / nimony / nif_annotations
 
@@ -352,16 +352,25 @@ proc hoistTail(c: var Context; pos: int) =
   endRead tail
   c.dest.shrink pos
 
+proc tempType(c: var Context; typ: Cursor): Cursor =
+  ## The type a temp this pass invents is declared with: the type of the value,
+  ## except where that is a FOREIGN decl's `.closure` proctype -- or a
+  ## structural type holding one, a `tuple` of callbacks say. Such a type was
+  ## never rewritten by lambdalifting (see `closuretypes`), so declaring the
+  ## temp with it has lengcgen lay the temp out as a bare function pointer
+  ## while the value it receives is the (fn, env) pair: the env is dropped and
+  ## the hooks disagree about what they are copying.
+  c.typeCache.closureValueType(typ)
+
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
   if le.kind == Symbol or (le.exprKind in {DerefX, HderefX} and le.childCursor.kind == Symbol):
     # simple enough:
     takeTree result, le
   else:
-    # `closureValueType`: an assignment into a FOREIGN object's `.closure`
-    # field sees the field's semchecked proctype; the temp that holds its
-    # address must be `ptr` to the (fn, env) tuple the field really is.
-    let typ = c.typeCache.closureValueType(getType(c.typeCache, le))
+    # the temp holds the ADDRESS of the target; `tempType` makes that a `ptr`
+    # to the (fn, env) tuple when the target is a foreign `.closure` field
+    let typ = c.tempType(getType(c.typeCache, le))
     let info = le.info
     let tmp = pool.symId("`lhs." & $c.tmpCounter)
     inc c.tmpCounter
@@ -414,9 +423,9 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: NifLineIn
   else:
     copyIntoKind c.dest, CallS, info: emitArgs(c.dest)
 
-proc tempOfTrArg(c: var Context; n: Cursor; typ0: Cursor): SymId =
+proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   var n = n
-  let typ = c.typeCache.closureValueType(typ0) # see evalLeftHandSide
+  let typ = c.tempType(typ)
   let info = n.info
   result = pool.symId("`lhs." & $c.tmpCounter)
   inc c.tmpCounter
@@ -921,7 +930,7 @@ proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): Ow
   c.dest.addParLe kind, info
   addSymDef c.dest, s, info
   c.dest.addEmpty2 info # export marker, pragmas
-  copyTree c.dest, c.typeCache.closureValueType(typ) # see evalLeftHandSide
+  copyTree c.dest, c.tempType(typ)
   # value is filled in by the caller!
 
 proc finishOwningTemp(c: var Context; ow: OwningTemp) =
@@ -1335,7 +1344,7 @@ proc bindPendingMoves(c: var Context; start: int; typ: Cursor; info: NifLineInfo
   ## moves run once the expression has read everything it needs. The temp is a
   ## `cursor` for the same reason `genLastRead`'s is: whatever consumes this
   ## expression is the rightful owner of the value.
-  let typ = c.typeCache.closureValueType(typ) # see evalLeftHandSide
+  let typ = c.tempType(typ)
   let tmp = pool.symId("`tmp." & $c.tmpCounter)
   inc c.tmpCounter
   var wrapped = createTokenBuf(64)

@@ -51,6 +51,14 @@ type
 proc createTypeCache*(bits: int): TypeCache =
   TypeCache(builtins: createBuiltinTypes(bits))
 
+proc keepAlive*(c: var TypeCache; buf: sink TokenBuf): Cursor =
+  ## Hand out a cursor into a type that had to be synthesized, transferring the
+  ## buffer to the cache so the cursor stays valid for as long as the cache
+  ## does. Every invented type goes through here -- including hexer's
+  ## `closuretypes.closureValueType`, which is why this is exported.
+  c.mem.add ensureMove(buf)
+  result = cursorAt(c.mem[c.mem.len-1], 0)
+
 proc registerLocal*(c: var TypeCache; s: SymId; kind: SymKind; typ: Cursor;
                     val: Cursor = default(Cursor)) =
   c.current.locals[s] = LocalInfo(kind: kind, typ: typ, val: val)
@@ -299,110 +307,6 @@ proc lookupFieldDecl*(c: var TypeCache; typ: Cursor; fld: SymId): Local =
 
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor
 
-const
-  BareRootObjName* = "RootObj.0." & SystemModuleSuffix
-    ## The system's real `RootObj`: the type of a lowered closure's env slot.
-  ClosureEnvParamName* = "`ep.0"
-    ## The env param appended to a lowered closure signature.
-
-proc isClosureProcType*(typ: Cursor): bool {.inline.} =
-  ## A `.closure` proctype that hexer's lambdalifting did NOT rewrite.
-  ## Lambdalifting lowers every closure proctype it walks in the module it
-  ## is compiling to `(closureTuple fn (ref RootObj))`, but the type of a
-  ## FOREIGN decl — the field of an imported object, an imported global —
-  ## is answered from its semchecked declaration and still reads
-  ## `(proctype … (pragmas closure))`. Its runtime representation is that
-  ## tuple all the same (`sizeof` sizes it as two pointers), so every later
-  ## stage has to treat it as the tuple: hook it like one (lifter) and lay
-  ## it out like one (lengcgen).
-  typ.typeKind == ProctypeT and procHasPragma(typ, ClosureP)
-
-proc lowerClosureProcTypes(dest: var TokenBuf; n: var Cursor)
-
-proc addClosureTuple(dest: var TokenBuf; n: var Cursor) =
-  ## Consume the `.closure` proctype at `n`; emit the `(closureTuple
-  ## (proctype . (params <params> <env>) <ret> <pragmas>) (ref RootObj))`
-  ## lambdalifting's `treProcType` would have made of it. Params and return
-  ## type are lowered recursively, as `treParamsWithEnv` does through `tre`:
-  ## a closure whose own parameter is a closure takes that parameter as a
-  ## tuple too.
-  let info = n.info
-  dest.copyIntoKind ClosureTupleT, info:
-    dest.copyIntoKind ProctypeT, info:
-      dest.addDotToken() # nilability tag
-      n.into:
-        skip n # nilability tag
-        dest.copyIntoKind ParamsU, info:
-          if n.kind == DotToken:
-            inc n
-          else:
-            n.into:
-              while n.hasMore:
-                lowerClosureProcTypes(dest, n)
-          # the trailing env param (see coro_transform.addClosureEnvParam):
-          dest.copyIntoKind ParamU, info:
-            dest.addSymDef pool.symId(ClosureEnvParamName), info
-            dest.addDotToken() # no export marker
-            dest.addDotToken() # no pragmas
-            dest.copyIntoKind RefT, info:
-              dest.addSymUse pool.symId(BareRootObjName), info
-            dest.addDotToken() # no default value
-        lowerClosureProcTypes(dest, n) # return type
-        dest.takeTree n # pragmas
-    dest.copyIntoKind RefT, info:
-      dest.addSymUse pool.symId(BareRootObjName), info
-
-proc lowerClosureProcTypes(dest: var TokenBuf; n: var Cursor) =
-  ## Copy the tree at `n`, replacing every un-rewritten `.closure` proctype
-  ## in it by its tuple. An already lowered `(closureTuple …)` is copied as
-  ## is: its fn slot keeps the `closure` pragma and must stay a bare proctype.
-  if n.isTagLit:
-    if isClosureProcType(n):
-      addClosureTuple(dest, n)
-    elif n.typeKind == ClosureTupleT:
-      dest.takeTree n
-    else:
-      takeInto dest, n:
-        while n.hasMore:
-          lowerClosureProcTypes(dest, n)
-  else:
-    dest.takeTree n # an atom, with its line info
-
-proc containsClosureProcType*(typ: Cursor): bool =
-  ## Is there an un-rewritten `.closure` proctype anywhere in `typ`'s
-  ## STRUCTURE — the type itself, a tuple/array element, a param? Symbols
-  ## are not followed: a nominal type's layout is its own decl's business.
-  ## An already lowered `(closureTuple …)` counts as done.
-  var n = typ
-  if n.isTagLit:
-    if isClosureProcType(n): return true
-    if n.typeKind == ClosureTupleT: return false
-    n = sub(n) # throwaway copy; bounds the walk under vpr
-    while n.hasMore:
-      if containsClosureProcType(n): return true
-      skip n
-  result = false
-
-proc loweredClosureType*(typ: Cursor): TokenBuf =
-  ## A copy of `typ` with every un-rewritten `.closure` proctype in it
-  ## replaced by the (fn, env) tuple it stands for — the same shape
-  ## lambdalifting gives the values of the type it does lower, so the
-  ## structural keys (hook names, C type names) agree with them.
-  result = createTokenBuf(32)
-  var n = typ
-  lowerClosureProcTypes(result, n)
-
-proc closureValueType*(c: var TypeCache; typ: Cursor): Cursor =
-  ## `typ`, unless it holds an un-rewritten `.closure` proctype somewhere:
-  ## then the lowered copy, so that a local declared with the result gets
-  ## the tuple's layout in C rather than a bare function pointer — also
-  ## inside a tuple of closures, or an array of them.
-  if containsClosureProcType(typ):
-    c.mem.add loweredClosureType(typ)
-    result = cursorAt(c.mem[c.mem.len-1], 0)
-  else:
-    result = typ
-
 proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
   var n = n
@@ -431,10 +335,9 @@ proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
       elif n.intVal == 1:
         var buf = createTokenBuf(4)
         buf.addParLe(RefT, n.info)
-        buf.addSymUse pool.symId("RootObj.0." & SystemModuleSuffix), n.info
+        buf.addSymUse pool.symId(BareRootObjName), n.info
         buf.addParRi()
-        c.mem.add buf
-        result = cursorAt(c.mem[c.mem.len-1], 0)
+        result = c.keepAlive(buf)
   elif BeStrict in flags:
     assert false, "wanted tuple type but got: " & toString(tupType, false)
 
@@ -676,8 +579,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addParLe(PtrT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of CurlyX:
     # should not be encountered but keep this code for now
     let elemType = getTypeImpl(c, n.childCursor, flags)
@@ -685,8 +587,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
     buf.addParLe(SetT, n.info)
     buf.addSubtree elemType
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of TupX:
     # should not be encountered but keep this code for now
     var buf = createTokenBuf(4)
@@ -701,8 +602,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         buf.addSubtree getTypeImpl(c, val, flags)
         skip n
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of TupatX:
     result = tupatType(c, n, flags)
   of BracketX:
@@ -720,8 +620,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
         inc arrayLen
     buf.addIntLit(arrayLen, info)
     buf.addParRi()
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
   of DestroyX, CopyX, WasmovedX, SinkhX, TraceX:
     result = c.builtins.voidType
   of DupX:
@@ -783,8 +682,7 @@ proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
           loopInto t:
             buf.takeTree t
         buf.addParPair(ClosureP)
-    c.mem.add buf
-    result = cursorAt(c.mem[c.mem.len-1], 0)
+    result = c.keepAlive(buf)
 
   assert result.hasMore, "ParRi for expression: " & toString(n, false)
 
@@ -829,5 +727,4 @@ proc registerLocalPtrOf*(c: var TypeCache; name: SymId; kind: SymKind; elemType:
   buf.addParLe(PtrT, elemType.info)
   buf.addSubtree elemType
   buf.addParRi()
-  c.mem.add buf
-  c.registerLocal(name, kind, cursorAt(c.mem[c.mem.len-1], 0))
+  c.registerLocal(name, kind, c.keepAlive(buf))

@@ -161,15 +161,11 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
   of CharT, BoolT:
     update c, 1, 1
   of RoutineTypes:
-    # A closure is a {fn, env} pair at runtime — two pointers, not one. Sizing
-    # it as one pointer made a module that lowers the closure (the defining
-    # one) and a module that imports the still-unlowered type disagree on
-    # whether an object holding it is "big" (> 24 bytes), so constparams
-    # lowered the object's `=destroy` to a pointer parameter on one side while
-    # the importer's call site passed the value: "incompatible type for
-    # argument 1" from the C compiler. Repro: a foreign object with a
-    # `.closure.` field (a string + the closure = 32 bytes lowered, 24 seen
-    # unlowered), destroyed as seq elements in the importing module.
+    # A closure is a {fn, env} pair: two pointers. Sizing it as one made the
+    # module that lowers it and the module that imports the still-unlowered
+    # type disagree about whether an object holding it is "big", so constparams
+    # gave the object's `=destroy` a pointer parameter on one side while the
+    # other side passed the value. See `tclosure_xmod_destroy`.
     if procHasPragma(n, ClosureP):
       update c, 2 * ptrSize, ptrSize
     else:
