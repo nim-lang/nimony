@@ -47,9 +47,9 @@ Commands:
                        `--forward:` is appended to every compile (e.g.
                        `--forward:-d:release`).
   boot [options]       Self-host the *full* nimony toolchain (nimony,
-                       nimsem, hexer). `bin0/` is a fresh copy of the
-                       host-Nim-built toolchain; `binN/` is `binN-1/`'s
-                       nimony recompiling all three from source. Runs a
+                       nimsem, hexer, lengc, shoggoth). `bin0/` is a fresh
+                       copy of the host-Nim-built toolchain; `binN/` is
+                       `binN-1/`'s nimony recompiling all of them. Runs a
                        fixed number of self-compile passes and leaves the
                        results in place — nothing is installed back to
                        `bin/`. Extra args are forwarded to every
@@ -463,7 +463,6 @@ proc handleCmdLine =
     if not skipBuild:
       buildNimonyToolchain()
       buildNifmake()
-      buildShoggoth()
       buildArkham()
       buildNifasm()
     nativetests(overwrite)
@@ -476,7 +475,6 @@ proc handleCmdLine =
     if not skipBuild:
       buildNimonyToolchain()
       buildNifmake()
-      buildShoggoth()
       buildArkham()
       buildNifasm()
     nativeValgrindTests()

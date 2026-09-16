@@ -171,6 +171,11 @@ const
     "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
+    # A constructor that selects a case branch and sets none of its fields. Sem
+    # used to leave that branch out of the `oconstr`, which the C back end's
+    # compound literal zeroed and arkham, storing only what is listed, did not:
+    # the Nimony-built native lengc crashed destroying a garbage `seq`.
+    "tests/nimony/object/tcaseobj_branchdefaults",
     # Portable intrinsics: `(instr …)` lowers to the target's own instruction —
     # x86-64 `bsf`, AArch64 `rbit`+`clz` — so this is the one test whose POINT is
     # that the C and native backends agree on results they reach by different

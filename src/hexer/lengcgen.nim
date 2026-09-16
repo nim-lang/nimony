@@ -1240,6 +1240,15 @@ proc trTypeDecl(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Traver
   else:
     dest.add dst
 
+proc strLitHash(s: string): uint64 =
+  ## FNV-1a. Not `hashes.hash`: host Nim and Nimony hash strings differently,
+  ## so a hexer built by either named the same literal differently — two caches
+  ## could not be mixed, and `boot` through the C back end reached its fixed
+  ## point one stage late.
+  result = 14695981039346656037'u64
+  for ch in s:
+    result = (result xor uint64(ch)) * 1099511628211'u64
+
 proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineInfo) =
   when sso:
     ## Generate an SSO string literal as an oconstr expression.
@@ -1317,7 +1326,7 @@ proc genStringLit(c: var EContext; dest: var TokenBuf; s: string; info: NifLineI
       # `strLits` keeps emission to one const per distinct string per module.
       var litName = c.strLits.getOrDefault(s)
       if litName == SymId(0):
-        litName = pool.symId("strlit.0.I" & $uint64(hash(s)) & "." & c.main)
+        litName = pool.symId("strlit.0.I" & $strLitHash(s) & "." & c.main)
         c.strLits[s] = litName
 
         c.strLitBuf.addParLe("const", info)
