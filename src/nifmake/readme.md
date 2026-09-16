@@ -14,6 +14,30 @@ There are **two distinct roles of Inputs and Outputs**:
 `(input "file.nim")` in a `(do ...)` block → Adds "file.nim" to the node's dependency list
 `(input)` in a `(cmd ...)` template → Placeholder that will be replaced with actual filenames during execution
 
+### `(inputsof cmd)`
+
+`(inputsof othercmd)` in a `(do ...)` block adds **every output of every node
+that runs `othercmd`** to this node's input list. It is shorthand, resolved
+after the whole file is parsed, and the resulting inputs are ordinary ones:
+they order the node behind that whole phase and they count for staleness.
+
+Use it when a tool reads a phase's output *as a whole* rather than a
+predictable subset of it — Nimony's `lengc` resolves a foreign symbol by
+loading whichever module happens to define it, which the import graph cannot
+predict, so `lengc` nodes carry `(inputsof optimize)`. Naming the files one by
+one would be N² strings for N modules; this is one token per node.
+
+## Scheduling
+
+A parallel run is scheduled by dataflow: a node starts as soon as *its own*
+inputs have been produced, with at most `--parallel:N` processes live. Nodes
+are not batched by DAG depth, so one slow node delays only the nodes that
+actually depend on it.
+
+That makes the declared inputs load-bearing for ordering, not just for
+staleness: a tool that reads a file nobody declared used to get away with it
+whenever the depth batching happened to serialize the two nodes.
+
 
 ## Usage
 
