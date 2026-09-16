@@ -308,7 +308,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           writeSites: initTable[SymId, seq[int]](),
           names: initTable[SymId, string](),
           delCandidates: initTable[SymId, int](),
-          scopeDecls: @[@[]],
+          scopeDecls: @[newSeq[SymId]()],
           patchset: initPatchset(orig),
           synth: @[],
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))

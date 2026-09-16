@@ -17,7 +17,7 @@
 ## per-body passes (`induction_variables`, …) are still being ported and plug
 ## into `optimizeBody`, which is currently an identity stage.
 
-import std / [os, assertions, strutils, syncio, sets]
+import std / [os, assertions, strutils, syncio, sets, envvars]
 import ".." / ".." / "lib" / nifcoreparse   # parse/serialize; re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # createLengTagPool, stmtKind, takeProcDecl
 import induction_variables                     # runInductionVariables (live pass)
@@ -33,7 +33,9 @@ import tailcalls                              # runTailCalls (the tail-call enco
 import ".." / nifmodules                      # MainModule + load (type context for aliasing)
 import ".." / typenav                         # registerParams / scopes
 
-const ArithRules = staticRead("rules/arith.rewrite.nif")
+include ".." / ".." / "lib" / compat2          # onRaiseQuit
+
+const ArithRules = slurp("rules/arith.rewrite.nif")
 
 let disabledPasses = block:
   ## `SHOGGOTH_DISABLE=rewrite,cse,…` turns individual optimization passes off.
@@ -267,7 +269,7 @@ proc processFile*(input, output: string; verify = false;
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
   var optimized = optimizeModule(src, suffix, st, addr typeCtx, eng, vecMode)
   checkWellFormed(optimized)
-  writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
+  onRaiseQuit writeFile(output, toModuleString(optimized, "." & extractModuleSuffix(output)))
   if verify:
     var back = parseFromFile(output, 4000, sharedTags = createLengTagPool())
     checkWellFormed(back)

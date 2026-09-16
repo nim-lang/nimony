@@ -72,6 +72,8 @@ import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
 
+include ".." / ".." / "lib" / compat2   # getOrQuit (host Nim)
+
 type
   VecIndex = object
     sym: SymId              ## the index local
@@ -494,7 +496,7 @@ proc matchVarStmt(m: var Matcher; n: Cursor): bool =
           inc b
           if b.kind == IntLit: bits = int(intVal(b))
         skip d                                # past the type
-        if bits in {32, 64} and (not d.hasMore or d.kind == DotToken):
+        if (bits == 32 or bits == 64) and (not d.hasMore or d.kind == DotToken):
           m.locals[nm] = LocalInfo(kind: lkPtrPending, bits: bits)
           inc m.pendingPtrs
           result = true
@@ -526,11 +528,11 @@ proc matchPtrBind(m: var Matcher; a0: Cursor; p: SymId): bool =
     var acc = VecAccess(ptrSym: p)
     if h.hasMore and matchPatLval(m, h, acc):
       skip h
-      let bits = m.locals[p].bits
+      let bits = m.locals.getOrQuit(p).bits
       if not h.hasMore and (m.plan.elemBits == 0 or bits == m.plan.elemBits):
         m.plan.elemBits = bits
         m.plan.accesses.add acc
-        m.locals[p].kind = lkPtrBound
+        m.locals.getOrQuit(p).kind = lkPtrBound
         dec m.pendingPtrs
         result = true
 
@@ -565,7 +567,7 @@ proc matchReduction(m: var Matcher; a0: Cursor; s: SymId): bool =
         var b = c
         inc b
         let bits = if b.kind == IntLit: int(intVal(b)) else: 0
-        if m.plan.elemBits == 0 and bits in {32, 64}:
+        if m.plan.elemBits == 0 and (bits == 32 or bits == 64):
           m.plan.elemBits = bits
         bitsOk = bits == m.plan.elemBits
       else:
@@ -706,7 +708,8 @@ proc matchLoop(c: var Context; loop: Cursor; plan: var LoopPlan): bool =
       m.plan.hasStore = m.sawStore
       result = ok and not litConflict and
                (m.sawStore or m.plan.reductions.len > 0) and m.sawInc and
-               m.plan.elemBits in {32, 64} and m.pendingPtrs == 0
+               (m.plan.elemBits == 32 or m.plan.elemBits == 64) and
+               m.pendingPtrs == 0
       # every accumulator must still be an OUTER scalar (no later `(var :S …)`
       # in the body claimed it a role) and provably register-private
       var ri = 0
@@ -894,7 +897,7 @@ proc countDerefs(e: var Emitter; n: Cursor) =
   ## fusion rule.
   if n.kind == Symbol:
     if symId(n) in e.ptrOfAccess:
-      inc e.ptrs[e.ptrOfAccess[symId(n)]].derefCount
+      inc e.ptrs[e.ptrOfAccess.getOrQuit(symId(n))].derefCount
   elif n.kind == TagLit:
     var x = sub(n)
     while x.hasMore:
@@ -1006,22 +1009,22 @@ proc vecEval(e: var Emitter; n: Cursor; fresh: var bool): string =
     fresh = false                              # a named value may be multi-use
     let s = symId(n)
     if s in e.valueVec:
-      result = e.valueVec[s]
+      result = e.valueVec.getOrQuit(s)
     else:
-      result = e.bcSyms[s]
+      result = e.bcSyms.getOrQuit(s)
   of FloatLit:
     fresh = false
-    result = e.bcLits[cast[int64](floatVal(n))]
+    result = e.bcLits.getOrQuit(cast[int64](floatVal(n)))
   of TagLit:
     let (isSuf, _, sinner) = sufFloatLit(n)
     if isSuf:
       fresh = false
-      result = e.bcLits[cast[int64](floatVal(sinner))]
+      result = e.bcLits.getOrQuit(cast[int64](floatVal(sinner)))
     else:
       case n.exprKind
       of DerefC:
         var cc = sub(n)
-        let k = e.ptrOfAccess[symId(cc)]
+        let k = e.ptrOfAccess.getOrQuit(symId(cc))
         fresh = e.ptrs[k].derefCount == 1
         result = e.ptrs[k].loadName
       of AddC, SubC, MulC:
@@ -1117,11 +1120,15 @@ proc emitSlot(e: var Emitter; byteOff: int) =
       var fA, fB = false
       let aN = vecEval(e, ma, fA)
       let bN = vecEval(e, mb, fB)
-      e.accUpdate(e.accNames[ri][slot], e.iVfmla, [aN, bN])
+      let acc = e.accNames[ri][slot]
+      let op = e.iVfmla
+      e.accUpdate(acc, op, [aN, bN])
     else:
       var fT = false
       let tN = vecEval(e, t, fT)
-      e.accUpdate(e.accNames[ri][slot], e.iVfadd, [tN])
+      let acc = e.accNames[ri][slot]
+      let op = e.iVfadd
+      e.accUpdate(acc, op, [tN])
   if e.plan.hasStore:
     var srcFresh = false
     let srcName = vecEval(e, e.plan.storeSrc, srcFresh)
@@ -1181,8 +1188,11 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
         if plan.hasStore: countSymUses(plan.storeSrc, vs, uses)
         for r in plan.reductions: countSymUses(r.treeCur, vs, uses)
         if uses == 1:
-          plan.reductions[ri].treeCur = plan.values[vi].rhsCur
-          for j in vi ..< plan.values.len - 1: plan.values[j] = plan.values[j+1]
+          let rhs = plan.values[vi].rhsCur   # read before the write: same `plan`
+          plan.reductions[ri].treeCur = rhs
+          for j in vi ..< plan.values.len - 1:
+            let next = plan.values[j+1]
+            plan.values[j] = next
           plan.values.setLen plan.values.len - 1
 
   var e = Emitter(plan: plan, vf: 128 div plan.elemBits, bits: plan.elemBits,
@@ -1359,8 +1369,12 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   e.unrolled = 2 * perSlot + e.bcSyms.len + e.bcLits.len +
                2 * plan.reductions.len <= 6
   for ri in 0 ..< plan.reductions.len:
-    e.addAccDecl(e.accNames[ri][0])
-    if e.unrolled: e.addAccDecl(e.accNames[ri][1])
+    # Copy the names out of `e` first: passing `e.accNames[…]` alongside a
+    # mutable `e` aliases the two.
+    let acc0 = e.accNames[ri][0]
+    let acc1 = e.accNames[ri][1]
+    e.addAccDecl(acc0)
+    if e.unrolled: e.addAccDecl(acc1)
   if e.unrolled:
     emitVecLoop(e, 2)
   # the single-width loop: the main loop when not unrolled, the ≤1-iteration
@@ -1371,7 +1385,10 @@ proc emitReplacement(c: var Context; plan0: LoopPlan; loopCur: Cursor): TokenBuf
   # `(asgn S (add (f W) S (instr vaddv acc bits)))`
   for ri in 0 ..< plan.reductions.len:
     if e.unrolled:
-      e.accUpdate(e.accNames[ri][0], e.iVfadd, [e.accNames[ri][1]])
+      let acc0 = e.accNames[ri][0]
+      let acc1 = e.accNames[ri][1]
+      let op = e.iVfadd
+      e.accUpdate(acc0, op, [acc1])
     e.b.openTag tid(AsgnTagId)
     e.b.addSymUse plan.reductions[ri].sym
     e.b.openTag tid(AddTagId)

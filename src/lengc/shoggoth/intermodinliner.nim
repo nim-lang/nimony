@@ -33,7 +33,6 @@
 
 import std / [tables, assertions]
 include "../../lib" / nifprelude
-import nifpools
 import ".." / leng_model
 import ".." / ".." / hexer / intramodinliner
 import ".." / ".." / lib / symparser

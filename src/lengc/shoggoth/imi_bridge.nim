@@ -17,7 +17,6 @@
 
 import std / assertions
 include "../../lib" / nifprelude
-import nifpools
 import intermodinliner   # runInterModuleInliner (nifpools)
 
 proc parseModule*(input: string): TokenBuf =

@@ -5052,8 +5052,17 @@ proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
   if lhs.n.isTagLit and lhs.n.cursorTagId == nifpools.ErrT:
+    # The operand is the expression that is wrong, so its diagnostic is the one
+    # to report; a subscript on top of it means nothing. The whole `(at …)`
+    # becomes that one error node, which keeps the enclosing node's arity.
+    # This used to copy the unchecked `(at …)` through instead (#2191): the
+    # operand's error vanished, and outside a generic body nothing re-checked
+    # the tree — `outp = f(1)[0]` reached `derefs` untyped and crashed there
+    # ("callee type not params") without a word about `f(1)`.
+    dest.addSubtree lhs.n
     it.n = atStart
-    dest.takeTree it.n
+    skip it.n
+    it.typ = c.types.autoType
   else:
     semBuiltinSubscript(c, dest, it, lhs, atStart)
 

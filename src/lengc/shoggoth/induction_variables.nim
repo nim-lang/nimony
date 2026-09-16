@@ -19,6 +19,8 @@ import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
+
+include ".." / ".." / "lib" / compat2   # getOrQuit (host Nim)
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import intrinsiceffects                       # is this `(instr …)` a pure value?
 import ".." / typenav                         # getNominalType — the temp's declared type
@@ -326,7 +328,7 @@ proc transformLoop(c: var Context; n: var Cursor) =
       if not baseIsStable(c, base, facts): continue
       var p: string
       if acc.arrSym in arrToP:
-        p = arrToP[acc.arrSym]
+        p = arrToP.getOrQuit(acc.arrSym)
       else:
         p = freshTempName(c)
         arrToP[acc.arrSym] = p

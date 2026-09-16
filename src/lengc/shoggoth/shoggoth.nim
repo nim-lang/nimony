@@ -26,12 +26,13 @@
 ## first argument that is neither `c` nor `pat` is treated as the start of the
 ## `c` argument list (backward compatibility).
 
-import std / [os, strutils]
+import std / [os, strutils, syncio, dirs, paths]
 import optdriver    # processFile / Stats — keeps its nifcore world isolated
 import patextract   # patMain — likewise nifcore-isolated
 when defined(cseSummaryStats):
   import cse
-  import std / syncio
+
+include ".." / ".." / "lib" / compat2   # onRaiseQuit, path()
 
 proc runOne(input, output: string; verify, stats: bool; vecMode: VecMode) =
   let st = processFile(input, output, verify, vecMode)
@@ -61,7 +62,7 @@ proc optimizeMain(args: seq[string]) =
     quit "usage: shoggoth c [--outdir:DIR] [--verify] [--stats] <input.nif> [<output.nif>]"
 
   if outdir.len > 0:
-    createDir outdir
+    onRaiseQuit createDir(path(outdir))
     for inp in positional:
       runOne(inp, outdir / extractFilename(inp), verify, stats, vecMode)
   elif positional.len == 2:

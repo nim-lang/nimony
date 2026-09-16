@@ -75,6 +75,10 @@ const BootstrapModules = [
   # front end imports it), covering both the C and the LLVM code generators
   # plus `lib/foreignmodules` and `lib/nifcdecl` via its import set.
   "src/lengc/lengc.nim",
+
+  # The optimizer's driver, another separate tip. Host-Nim-built for the boot
+  # (a carry tool), so nothing else would notice it stop compiling with nimony.
+  "src/lengc/shoggoth/shoggoth.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.
