@@ -220,12 +220,40 @@ the status of record is what `tjsgen` prints, and *Next* is the honest to-do lis
     library mode the surface exports `__internExt: ewrap` so a host interns real JS objects (a
     `GPUDevice`, a canvas context) as handles. Proven under node with a mock `navigator.gpu`: a host
     interns a device, the module drives `createBuffer`/`createCommandEncoder`/`queue.submit` over it.
-    Remaining for M7: `jsstring` (UTF-8 bridge for string params/results — needed once shaders call
-    `createShaderModule({code})`) and callback wrappers (a Nim proc → JS closure, for `rAF`).
+  - **M7 jsstring — DONE.** A Nim `string`/`cstring` now crosses an `importjs` splice both ways. The
+    type is classified by `jsBridgeKind` in precedence order (string → cstring → handle → scalar):
+    a Nim `string` is the `string.0.<system>` symbol (Leng has no builtin kind for it), a `cstring` is
+    `(aptr char)` — which `isPtrType` would otherwise misclassify as a handle, hence the order. The
+    bridge mirrors `lib/std/system/stringimpl.nim`'s SSO layout for the 4-byte target (byte0=slen;
+    slen ≤ `PayloadSize`=6 keeps chars inline at `value+1`, else `more`@`value+4` → `LongString`
+    {fullLen@0, rc@4, capImpl@8, data@12}): `nimStrToJs`/`cstrToJs` decode an operand (read-only, the
+    same logic as `len`/`rawData`); `jsToNimStr` builds a **static** string (byte0=254, capImpl=0 —
+    the GC's `=destroy` frees only a HeapSlen string, so a result is never freed/refcounted, leaking
+    rather than risking a bad refcount, matching the never-released handle table) and syncs the 3-char
+    inline cache so `==`/`hash` agree with a compiler literal; `jsToCstr` NUL-terminates. Verified for
+    short/long/static strings, `==` against literals, byte lengths, and multi-byte UTF-8 + emoji
+    surrogate pairs in both directions, in node and browser modes.
+  - **Callback bridge (Nim proc → JS callable) — DONE.** A `proc(...)`/`closure` operand of an
+    `importjs` splice is classified `jbCallback` (proctype checked before the handle case, since a
+    proc value is also a pointer). When the signature is all-scalar with a void/scalar result the
+    Nim proc is already JS-callable — jorogumo emits procs as ordinary JS functions with no env
+    arg — so the splice receives the function-table entry `FTAB[i]` directly; otherwise jorogumo
+    emits a generated wrapper `function __cbN(...a){ … }` that bridges each parameter by kind
+    (`jsToNimStr`/`jsToCstr`/`ewrap`) and the result back (`nimStrToJs`/`cstrToJs`/`eunwrap`). The
+    rest-args form lets the host pass more than declared (rAF's timestamp). A bridged wrapper must
+    name a Nim proc directly — a stored fn-ptr or capturing closure is refused (jorogumo carries
+    no closure env), as are aggregate parameters and a splice that would RETURN a callback.
+    Verified: `requestAnimationFrame(frame)` fast path under a browser-less vm with a mock rAF
+    (frame counter advances with the timestamp ignored), and a `proc(msg: string; h: pointer)`
+    wrapper with UTF-8+emoji text (`echo` via an exported `flushFile(stdout)` — library mode never
+    flushes by itself) and full JS-object identity through `ewrap`/`eunwrap`.
   - **Browser target (`--browser` / `--target:browser`) — DONE.** A second host face for the JS
     backend. `jorogumo --target:browser` (and `nimony j --browser`) drops the Node `fs`/`process`
-    contract from the preamble: `nim_write` buffers UTF-8 into `__outBuf` (drained by the exported
-    `__takeOutput()`), `nim_exit` throws instead of killing the tab, and the export surface lands on
+    contract from the preamble: `nim_write` sends complete lines of fd 1/fd 2 to `console.log`/
+    `console.error` as they form (per-fd streaming `TextDecoder`, so a UTF-8 sequence split across
+    flushes survives; the unterminated tail waits in a per-fd pending buffer), `__takeOutput()`
+    drains that tail plus any write to an fd the console cannot serve, `nim_exit` throws instead
+    of killing the tab, and the export surface lands on
     `globalThis.NIF` (not `module.exports`), so a classic `<script>` and a module host both find it.
     node/CommonJS stays the default — the node branch of the preamble is byte-identical to before
     (jsdiff 24/24, tjsgen 229/231 unchanged). The flag is threaded `nimony j` → `NifConfig.jsBrowser`
