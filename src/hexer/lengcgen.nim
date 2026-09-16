@@ -2815,7 +2815,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     isWindows: isWindows,
     localDeclCounters: 1000,
     activeChecks: flags,
-    liftingCtx: createLiftingCtx(mp.name, bits)
+    liftingCtx: createLiftingCtx(mp.name, bits, closureValuesLowered = true)
   )
   c.typeCache.openScope()
 
