@@ -2153,6 +2153,40 @@ proc addBuffer*(dest: var TokenBuf; src: var TokenBuf) {.nifEmits: "Any".} =
       dest.addSubtree(c)
       c.skip()
 
+proc addWithSparseLineInfo(dest: var TokenBuf; c: var Cursor;
+                           last: var NifLineInfo) =
+  let info = rawLineInfo(c)
+  if c.kind == TagLit:
+    dest.openTag c.cursorTagId
+    if info.isValid and info != last:
+      dest.appendLineInfo info
+      last = info
+    c.into:
+      while c.hasMore: addWithSparseLineInfo(dest, c, last)
+    dest.closeTag()
+  else:
+    for i in 0 ..< valueWidth(c): dest.add peekAhead(c, i)
+    if info.isValid and info != last:
+      dest.appendLineInfo info
+      last = info
+    inc c
+
+proc withSparseLineInfo*(src: var TokenBuf): TokenBuf =
+  ## A copy of `src`, in the same pools, that keeps a `LineInfoLit` only where
+  ## the location changes in stream order — exactly what a `parse` without
+  ## `denseLineInfo` stores. The inverse of a densifying load.
+  ##
+  ## Passes that measure code in raw tokens (shoggoth's unswitch bound) see
+  ## line-info suffixes too, so the same program is "bigger" when its info is
+  ## dense; this lets a consumer that was calibrated on sparse input keep
+  ## seeing sparse input without a render-and-reparse round trip.
+  result = createTokenBuf(src.len, src.pool, src.tags)
+  var c = beginRead(src)
+  var last = NoNifLineInfo
+  while c.hasMore:
+    addWithSparseLineInfo(result, c, last)
+  endRead c
+
 # ── Self-test ────────────────────────────────────────────────────────────
 
 when isMainModule:

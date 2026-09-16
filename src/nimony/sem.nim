@@ -1110,7 +1110,21 @@ proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ide
     else:
       buildSymChoiceForForeignModule(c, dest, module, ident, info)
   if count == 1:
-    let sym = childCursor(readonlyCursorAt(dest, insertPos)).symId
+    # Read the single candidate back out, then roll the choice away and write
+    # a plain sym use in its place. The two cursors have to be RELEASED before
+    # the `shrink`: each holds an rc ref on `dest`'s CursorOwner, and
+    # `prepareMutation` then takes its copying branch and duplicates the whole
+    # buffer instead of the no-copy detach — the same trap `commonType` above
+    # spells out. This is by far the hottest instance of it: every identifier
+    # that resolves to exactly one symbol goes through here, and on `sem.nim`
+    # that was 41,385 whole-buffer copies, 3.96 GB of `memcpy`, 28 % of
+    # nimsem's instructions.
+    var choice = readonlyCursorAt(dest, insertPos)
+    var only = childCursor(choice)
+    let sym = only.symId
+    endRead only
+    endRead choice
+    expectUnique dest
     dest.shrink insertPos
     dest.addSymUse(sym, info)
     result = fetchSym(c, sym)
@@ -1415,7 +1429,21 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     discard resolveDeferredLocal(c, ident)
     count = buildSymChoice(c, dest, ident, info, mode, nearestIsUnique)
   if count == 1:
-    let sym = childCursor(readonlyCursorAt(dest, insertPos)).symId
+    # Read the single candidate back out, then roll the choice away and write
+    # a plain sym use in its place. The two cursors have to be RELEASED before
+    # the `shrink`: each holds an rc ref on `dest`'s CursorOwner, and
+    # `prepareMutation` then takes its copying branch and duplicates the whole
+    # buffer instead of the no-copy detach — the same trap `commonType` above
+    # spells out. This is by far the hottest instance of it: every identifier
+    # that resolves to exactly one symbol goes through here, and on `sem.nim`
+    # that was 41,385 whole-buffer copies, 3.96 GB of `memcpy`, 28 % of
+    # nimsem's instructions.
+    var choice = readonlyCursorAt(dest, insertPos)
+    var only = childCursor(choice)
+    let sym = only.symId
+    endRead only
+    endRead choice
+    expectUnique dest
     dest.shrink insertPos
     dest.addSymUse(sym, info)
     result = fetchSym(c, sym)
@@ -1470,9 +1498,16 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
         # The trailing symbol occupies its token PLUS any line-info suffix:
         # find the atom's head so the whole atom is replaced.
         var atomStart = dest.len-1
-        while readonlyCursorAt(dest, atomStart).kind in {ExtendedSuffix, LineInfoLit}:
+        # Raw token reads for the scan: `readonlyCursorAt` mints a CursorOwner
+        # header for the buffer, and a cursor still holding a ref at the
+        # `shrink` below turns it into a full copy of `dest`. The line info is
+        # the one thing a bare `NifToken` cannot answer, so that read keeps a
+        # cursor — and releases it before the mutation.
+        while dest[atomStart].kind in {ExtendedSuffix, LineInfoLit}:
           dec atomStart
-        let info = readonlyCursorAt(dest, atomStart).info
+        var atom = readonlyCursorAt(dest, atomStart)
+        let info = atom.info
+        endRead atom
         var tag = n.cursorTagId
         if cast[TagEnum](tag) == IsmainmoduleTagId:
           if IsMain in c.moduleFlags:
@@ -1482,6 +1517,7 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
         # Replace the trailing symbol with a properly registered open tag —
         # an in-place `dest.retagAt(i, ...)` would bypass the open-tags
         # bookkeeping and misseal every enclosing scope.
+        expectUnique dest
         dest.shrink atomStart
         dest.addParLe(tag, info)
         n.into:

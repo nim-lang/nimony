@@ -7,26 +7,26 @@
 #    distribution, for details about the copyright.
 #
 
-## Lets the nifcore `optdriver` reuse the existing inter-module inliner
-## (`intermodinliner` → hexer's 910-line `intramodinliner`) without forking it
-## to nifcore. This module lives entirely in the **nifcursors** world (built
-## `-d:virtualParRi`, like `shoggoth.nim`); it exposes a single **string→string**
-## entry point so the two NIF APIs never share a `Cursor`/`TokenBuf` type across
-## the boundary — only serialized NIF text crosses.
-##
-## The cost is one parse→inline→serialize round-trip; `optdriver` then reparses
-## the result into nifcore for the per-body passes.
+## Lets the nifcore `optdriver` run the inter-module inliner
+## (`intermodinliner` → hexer's `intramodinliner`). The inliner is written
+## against the `nifprelude`/`nifpools` surface — nifcore plus the process-global
+## `pool`/`globalTags` — which `optdriver` does not import, so this module is
+## the one place the two surfaces meet. Both are nifcore underneath: the
+## `TokenBuf` itself crosses, interned in nifpools' global pools, and
+## `optdriver` builds its type context on those same pools.
 
 import std / assertions
 include "../../lib" / nifprelude
 import nifpools
 import intermodinliner   # runInterModuleInliner (nifpools)
 
-proc runImi*(input, suffix, xnifDir: string; changed: var bool): string =
-  ## Parse the `.c.nif` at `input`, run inter-module inlining, and return the
-  ## resulting module as a **header-less** canonical NIF string (line info kept,
-  ## symbols fully expanded) for nifcore to reparse. `changed` reports whether
-  ## the inliner altered anything.
-  var buf = parseFromFile(input, 4000)
-  changed = runInterModuleInliner(buf, suffix, xnifDir)
-  result = toString(buf)
+proc parseModule*(input: string): TokenBuf =
+  ## Parse the `.c.nif` at `input` into nifpools' global pools, with dense line
+  ## info (what the inliner reads; `optdriver` hands its passes a sparse copy).
+  result = parseFromFile(input, 4000)
+
+proc runImi*(input, suffix, xnifDir: string; changed: var bool): TokenBuf =
+  ## Parse the `.c.nif` at `input` and run inter-module inlining on it.
+  ## `changed` reports whether the inliner altered anything.
+  result = parseModule(input)
+  changed = runInterModuleInliner(result, suffix, xnifDir)

@@ -25,7 +25,7 @@ import cse                                     # runCSE + collectFunctionSummari
 import scalarizer                              # runScalarize (object → field scalars / SROA)
 import copyprop                                # runCopyProp (copy prop + dead-store elim)
 import unswitch                                # runUnswitch (loop unswitching)
-import imi_bridge                             # runImi (inter-module inliner, via nifcursors)
+import imi_bridge                             # runImi/parseModule (inter-module inliner)
 import vectorizer                             # runVectorizer (map loops -> (instr ...))
 export VecMode                                # the driver flag's type, for shoggoth.nim
 import vmrewriter                              # the DFA rewrite engine (arith.rewrite.nif)
@@ -243,19 +243,25 @@ proc processFile*(input, output: string; verify = false;
   ## master NIFC tag ordinals (`stmtKind`/`takeProcDecl` rely on it).
   let suffix = extractModuleSuffix(input)
   var st = Stats()
-  # 1. Whole-module inter-module inlining runs first, in the nifcursors world
-  #    (via the bridge); the result comes back as a NIF string.
+  # 1. Whole-module inter-module inlining runs first (via the bridge, which
+  #    owns the nifpools surface the inliner is written against).
   var imiChanged = false
-  let imiNif =
-    if passOn("imi"): runImi(input, suffix, splitFile(input).dir, imiChanged)
-    else: readFile(input)
+  var src = block:
+    var inlined =
+      if passOn("imi"): runImi(input, suffix, splitFile(input).dir, imiChanged)
+      else: parseModule(input)
+    # The inliner works on dense line info; the per-body passes were calibrated
+    # on the sparse form a plain parse stores (unswitch bounds loops in raw
+    # tokens, suffixes included), and CSE's temp order follows token positions.
+    # An in-memory copy keeps them seeing exactly the tokens they always saw.
+    withSparseLineInfo(inlined)
   if imiChanged: inc st.intermodChanged
-  # 2. Load the module as a typenav context (for type-precise aliasing), and
-  #    reparse the (post-inlining) body into nifcore SHARING that context's pool
-  #    so symbol ids line up between the type context and the optimization buffer.
-  var typeCtx = load(input)
-  var src = parseFromBuffer(imiNif, suffix, 4000,
-                            sharedPool = typeCtx.pool, sharedTags = typeCtx.tags)
+  # 2. Load the module as a typenav context (for type-precise aliasing), in the
+  #    SAME pools as `src`, so symbol ids line up between the type context and
+  #    the optimization buffer. This used to serialize the inliner's result to
+  #    NIF text and re-parse it into the context's pools: on `sem.nim` that
+  #    round trip was 9.7 % of the whole run.
+  var typeCtx = load(input, src.pool, src.tags)
   # The rewrite engine shares the module's pool/tags so its compiled patterns'
   # tag ids coincide with the buffers it rewrites.
   var eng = newEngine(ArithRules, typeCtx.pool, typeCtx.tags)
