@@ -368,21 +368,37 @@ proc lowerClosureProcTypes(dest: var TokenBuf; n: var Cursor) =
   else:
     dest.takeTree n # an atom, with its line info
 
-proc closureTupleType*(typ: Cursor): TokenBuf =
-  ## The tuple an un-rewritten `.closure` proctype stands for — the same
-  ## shape lambdalifting gives the values of the type it does lower, so the
-  ## structural keys (hook names, C type names) agree.
-  assert isClosureProcType(typ)
+proc containsClosureProcType*(typ: Cursor): bool =
+  ## Is there an un-rewritten `.closure` proctype anywhere in `typ`'s
+  ## STRUCTURE — the type itself, a tuple/array element, a param? Symbols
+  ## are not followed: a nominal type's layout is its own decl's business.
+  ## An already lowered `(closureTuple …)` counts as done.
+  var n = typ
+  if n.isTagLit:
+    if isClosureProcType(n): return true
+    if n.typeKind == ClosureTupleT: return false
+    n = sub(n) # throwaway copy; bounds the walk under vpr
+    while n.hasMore:
+      if containsClosureProcType(n): return true
+      skip n
+  result = false
+
+proc loweredClosureType*(typ: Cursor): TokenBuf =
+  ## A copy of `typ` with every un-rewritten `.closure` proctype in it
+  ## replaced by the (fn, env) tuple it stands for — the same shape
+  ## lambdalifting gives the values of the type it does lower, so the
+  ## structural keys (hook names, C type names) agree with them.
   result = createTokenBuf(32)
   var n = typ
-  addClosureTuple(result, n)
+  lowerClosureProcTypes(result, n)
 
 proc closureValueType*(c: var TypeCache; typ: Cursor): Cursor =
-  ## `typ`, unless it is an un-rewritten `.closure` proctype: then the
-  ## `(closureTuple …)` it stands for, so that a local declared with the
-  ## result gets the tuple's layout in C rather than a bare function pointer.
-  if isClosureProcType(typ):
-    c.mem.add closureTupleType(typ)
+  ## `typ`, unless it holds an un-rewritten `.closure` proctype somewhere:
+  ## then the lowered copy, so that a local declared with the result gets
+  ## the tuple's layout in C rather than a bare function pointer — also
+  ## inside a tuple of closures, or an array of them.
+  if containsClosureProcType(typ):
+    c.mem.add loweredClosureType(typ)
     result = cursorAt(c.mem[c.mem.len-1], 0)
   else:
     result = typ

@@ -75,10 +75,14 @@ proc isClosureValue(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
   ## `typenav.isClosureProcType`, once lambdalifting has run.
   c.closureValuesLowered and isClosureProcType(typ)
 
-proc closureTupleOf(c: var LiftingCtx; typ: TypeCursor): TypeCursor =
-  ## `typenav.closureTupleType`, kept alive in `c.closureTuples` because
+proc holdsClosureValues(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
+  ## `typenav.containsClosureProcType`, once lambdalifting has run.
+  c.closureValuesLowered and containsClosureProcType(typ)
+
+proc loweredOf(c: var LiftingCtx; typ: TypeCursor): TypeCursor =
+  ## `typenav.loweredClosureType`, kept alive in `c.closureTuples` because
   ## `requestLifting` stores the cursor.
-  c.closureTuples.add closureTupleType(typ)
+  c.closureTuples.add loweredClosureType(typ)
   result = cursorAt(c.closureTuples[c.closureTuples.len-1], 0)
 
 # Phase 1: Determine if the =hook is trivial:
@@ -410,11 +414,17 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   of PtrT:
     bug "ptr T should have been a 'trivial' type"
   of ObjectT, DistinctT, TupleT, ClosureTupleT, ArrayT, RefT:
-    result = requestLifting(c, c.op, orig)
+    if not (orig.isSymbol or orig.isSymbolDef) and holdsClosureValues(c, typ):
+      # a structural type spelled with un-rewritten `.closure` proctypes
+      # (a tuple of closures answered by typenav for a call's result): the
+      # hook must take the lowered layout the value actually has
+      result = requestLifting(c, c.op, loweredOf(c, typ))
+    else:
+      result = requestLifting(c, c.op, orig)
   of ProctypeT:
     # a foreign `.closure` proctype: hook the tuple it is at runtime
     if isClosureValue(c, typ):
-      result = requestLifting(c, c.op, closureTupleOf(c, typ))
+      result = requestLifting(c, c.op, loweredOf(c, typ))
     else:
       result = NoSymId
   else:
@@ -888,7 +898,7 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     unravelArray c, typ, paramA, paramB
   of ProctypeT:
     if isClosureValue(c, typ):
-      unravelTuple c, closureTupleOf(c, typ), paramA, paramB
+      unravelTuple c, loweredOf(c, typ), paramA, paramB
   else:
     discard "nothing to do"
     #let fn = lift(c, typ)
