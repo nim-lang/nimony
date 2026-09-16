@@ -19,7 +19,7 @@ already leave" with materialized control-flow flags (`mflag`/`jtrue`) and an
   forward exit is a `(jmp loopExit)`
 - `(lab L)` / `(jmp L)` — the structured multi-exit
 - `(try body (except ...)* (fin ...)?)`, `(ret ...)`, `(raise ...)`
-- `(store value dest)` for assignments
+- `(asgn dest value)` for assignments
 
 "Did we already leave" is now positional: the `Tracker` (`finalir/tracker.nim`)
 carries fall-through reachability and the per-target exit summaries, and a
@@ -871,10 +871,9 @@ proc isKeyableCall(fnSym: SymId): bool =
 proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor): bool =
   ## Recognize a *transparent accessor*: a one-parameter routine whose body is
   ## nothing but `result = <expr>`, which is exactly what sem produces for
-  ## `func len[T](s: seq[T]): int = s.len`. Both spellings of the assignment are
-  ## accepted, because the same declaration is read from the Final IR
-  ## (`(store value dest)`) and, for an imported routine, from the module's
-  ## interface (`(asgn dest value)`).
+  ## `func len[T](s: seq[T]): int = s.len`. The same `(asgn dest value)` shape
+  ## is read from the Final IR and, for an imported routine, from the module's
+  ## interface.
   result = false
   if not isRoutine(decl.symKind): return false
   let r = asRoutine(decl, SkipInclBody)
@@ -896,19 +895,13 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor): bool =
       l = sub(l)
       resultSym = l.symId
       skip b
-    elif b.stmtKind == AsgnS or b.finalIrKind == StoreV:
+    elif b.stmtKind == AsgnS:
       if not cursorIsNil(val) or resultSym == NoSymId: return false
-      let isStore = b.finalIrKind == StoreV
       var a = b
       a = sub(a)
-      if isStore:
-        val = a
-        skip a
-        if extractSymId(a) != resultSym: return false
-      else:
-        if extractSymId(a) != resultSym: return false
-        skip a
-        val = a
+      if extractSymId(a) != resultSym: return false
+      skip a
+      val = a
       skip b
     elif b.stmtKind in {RetS, AssumeS, AssertS} or b.finalIrKind in {AssumeV, AssertV}:
       # a proposition changes nothing at run time: `len` states its own
@@ -1219,20 +1212,12 @@ proc matchStep(decl: Cursor; info: var StepInfo): bool =
   var b = r.body
   b = sub(b)
   if not b.hasMore: return false
-  let isStore = b.finalIrKind == StoreV
-  if b.stmtKind != AsgnS and not isStore: return false
+  if b.stmtKind != AsgnS: return false
   var a = b
   a = sub(a)
-  var dest = default(Cursor)
-  var value = default(Cursor)
-  if isStore:
-    value = a
-    skip a
-    dest = a
-  else:
-    dest = a
-    skip a
-    value = a
+  let dest = a
+  skip a
+  let value = a
   if extractSymId(dest) != first.name.symId: return false
   skip b
   if b.hasMore: return false          # a second statement: not a plain step
@@ -3454,14 +3439,17 @@ proc sumWithBoundedTerm(c: var FirContext; value: Cursor; dest: VarId): bool =
     if not hi.isNaN: c.facts.add query(dest, y, hi)    # x <= y + hi
   result = true
 
-proc traverseStore(c: var FirContext; n: var Cursor; call: var CallContext) =
-  ## Handle (store value dest) - note reversed order from asgn
-  let storeStart = n # skip store tag
+proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
+  ## Handle `(asgn dest value)`. The value is the second operand but the first
+  ## thing that runs, so it is analysed first; `n` stays on the destination.
+  let asgnStart = n
   n = sub(n)
 
   # First analyze the value (source)
-  let valueStart = n
-  traverseExpr c, n, call
+  var value = n
+  skip value
+  let valueStart = value
+  traverseExpr c, value, call
 
   # Check borrow conflicts for the destination
   let destMutPath = extractPath(c, n)
@@ -3560,7 +3548,7 @@ proc traverseStore(c: var FirContext; n: var Cursor; call: var CallContext) =
         addAsgnFact c, fact
     traverseExpr c, n, call
 
-  n = storeStart; skip n
+  n = asgnStart; skip n
 
 # --- Exit-summary plumbing (drives the journaled FlowTracker over c.flow) ---
 #
@@ -3839,18 +3827,17 @@ proc scanLoopWrites(c: var FirContext; n: var Cursor; w: var LoopWrites) =
   if not n.isTagLit:
     skip n
     return
-  let fk = n.finalIrKind
-  if fk == StoreV:
+  if n.stmtKind == AsgnS:
     var r = n
     r = sub(r)
-    let value = r
+    let dest = r
     skip r
     w.preserved.setLen 0
-    noteWriteTo(c, w, r, value)
+    noteWriteTo(c, w, dest, r)
     w.pendingStep = InvalidVarId
     skip n
     return
-  if fk == UnknownV:
+  if n.finalIrKind == UnknownV:
     var r = n
     r = sub(r)
     if w.pendingStep != InvalidVarId and plainLocationVarId(c, r) == w.pendingStep:
@@ -4063,7 +4050,7 @@ proc traverseRet(c: var FirContext; n: var Cursor; call: var CallContext) =
         not (n.isSymbol and n.symId == c.resultSym)
       if providesResult:
         # `return toOpenArray(a)` returns the value directly rather than storing
-        # it into `result` first, so `traverseStore`'s escape check never sees it.
+        # it into `result` first, so `traverseAsgn`'s escape check never sees it.
         checkBorrowOutlivesProc(c, n)
       traverseExpr c, n, call
       if providesResult:
@@ -4279,7 +4266,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   traverseExpr c, n, call
   # `let last = x - 1` is a *fact*, and the Final IR states the bound of every
   # `for i in 0 ..< s.len` in exactly that shape. Only shapes the pure operand
-  # reader understands contribute one; unlike `traverseStore` this deliberately
+  # reader understands contribute one; unlike `traverseAsgn` this deliberately
   # does not go through `rightHandSide`, whose fallback would analyse the
   # initializer a second time and report its contracts twice.
   # A *rejected* initializer must seed nothing. `var a: range[0..10] = 20`
@@ -4484,8 +4471,6 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
     traverseIte c, n
   of LoopV:
     traverseLoop c, n
-  of StoreV:
-    traverseStore c, n, call
   of AssumeV:
     traverseAssume c, n
   of AssertV:
@@ -4567,6 +4552,8 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
       n.into:
         while n.hasMore:
           traverseStmt c, n, call
+    of AsgnS:
+      traverseAsgn c, n, call
     of CaseS:
       traverseCase c, n
     of TryS:

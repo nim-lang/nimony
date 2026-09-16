@@ -173,13 +173,12 @@ proc sameTree(a, b: Cursor): bool =
       result = true
 
 proc collectAssigned(n: Cursor; assigned: var HashSet[SymId]) =
-  ## Every symbol the subtree writes: `asgn`/`store` targets and every `var`
+  ## Every symbol the subtree writes: `asgn` targets and every `var`
   ## declaration. Anything in this set is NOT loop-invariant.
   if n.hasMore and n.kind == TagLit:
-    if n.stmtKind in {AsgnS, StoreS}:
+    if n.stmtKind == AsgnS:
       var lhs = n
       inc lhs
-      if n.stmtKind == StoreS: skip lhs
       if lhs.kind == Symbol: assigned.incl symId(lhs)
     elif n.stmtKind in {VarS, GvarS, TvarS, ConstS}:
       var d = n

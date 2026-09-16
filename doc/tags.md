@@ -83,7 +83,6 @@
 | `(ochoice X X*)`| NimonyExpr | open choice |
 | `(emit X*)` | LengStmt, NimonyStmt, NimonyPragma | emit statement |
 | `(asgn X X)` | LengStmt, NimonyStmt, NiflerKind | assignment statement |
-| `(store X X)` | FinalIrKind, LengStmt | `asgn` with reversed operands that reflects evaluation order |
 | `(keepovf X X)` | LengStmt | keep overflow flag statement |
 | `(scope S*)` | LengStmt, NimonyStmt | explicit scope annotation, like `stmts` |
 | `(if (elif X X)+ (else X)?)` | LengStmt, NimonyStmt, NiflerKind | if statement header |

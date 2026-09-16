@@ -155,7 +155,6 @@ LabelStmt ::= (lab SymbolDef)
 JumpStmt ::= (jmp Symbol)
 ScopeStmt ::= (scope StmtList)
 DiscardStmt ::= (discard Expr)
-StoreStmt ::= (store Expr Lvalue) # like AsgnStmt but with reversed operands
 IteStmt ::= (ite Expr StmtList [Empty | StmtList]) # if-then-else
 ItecStmt ::= (itec Expr StmtList [Empty | StmtList]) # same as ite
 MflagDecl ::= (mflag SymbolDef) # materialized control flow flag (bool)
@@ -170,7 +169,6 @@ Stmt ::= Call |
          TryStmt |
          RaiseStmt |
          AsgnStmt |
-         StoreStmt |
          KeepOverflowStmt |
          IfStmt |
          IteStmt |
@@ -408,12 +406,6 @@ NJ instructions
 
 Leng has grown support for NJ ("No Jumps") instructions. These are lower-level control flow
 primitives that can be more efficient than structured `if`/`while` statements.
-
-### store
-
-`(store Expr Lvalue)` is like `(asgn Lvalue Expr)` but with reversed operand order.
-The RHS is listed first so that the evaluation order matches the textual order, which
-is important when the RHS has side effects.
 
 ### ite and itec
 

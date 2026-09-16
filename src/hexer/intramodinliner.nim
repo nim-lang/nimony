@@ -803,10 +803,8 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
   ## address it takes, which is what lets an ADDRESS-TAKEN read-only param
   ## still be substituted by a caller lvalue (see `bindingsFor`).
   if not c.isTagLit: return
-  if c.stmtKind in {AsgnS, StoreS}:
-    var dst = c.childCursor
-    if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
-    let s = slotRootOf(dst)
+  if c.stmtKind == AsgnS:
+    let s = slotRootOf(c.childCursor)
     if s in params: assigned.incl s
     elif s == SymId(0): opaqueEffects = true # through-pointer / unmodelled store
   elif c.exprKind in AddrKinds:
@@ -1227,10 +1225,8 @@ proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
   if not body.isTagLit: return false
   result = true
   var n = body
-  if n.stmtKind in {AsgnS, StoreS}:
-    var dst = n.childCursor
-    if n.stmtKind == StoreS: skip dst        # `(store value dest)`
-    if not writeTargetIsLocalSlot(dst): return false
+  if n.stmtKind == AsgnS:
+    if not writeTargetIsLocalSlot(n.childCursor): return false
   elif n.stmtKind == CallS or n.exprKind == CallC:
     var callee = n.childCursor
     if callee.kind != Symbol: return false

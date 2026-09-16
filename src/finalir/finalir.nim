@@ -256,35 +256,27 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   callIsOver(c, dest, callInfo)
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # `(asgn X Y)` becomes `(store Y X)`: storing the value first reflects the
-  # actual evaluation order and is easier to analyze.
+  # `(asgn X Y)` stays an `(asgn X Y)`: the operands keep source order.
   let info = n.info
-  dest.addParLe StoreV, info
+  dest.addParLe AsgnS, info
   let asgnStart = n
   n = sub(n)
   if n.isSymbol:
     let symId = n.symId
     inc n # skip the destination symbol
-    if n.exprKind in CallKinds:
-      # `dest = f(args)`: the call binds directly to its destination, no temp.
-      let callInfo = trBoundExpr(c, dest, n)
-      dest.addSymUse symId, info
-      n = asgnStart; skip n
-      dest.addParRi()
-      callIsOver(c, dest, callInfo)
-      return
-    else:
-      trExpr c, dest, n
-    # add the destination later due to the reversed `(store value dest)` order:
     dest.addSymUse symId, info
+    # `dest = f(args)`: the call binds directly to its destination, no temp.
+    let callInfo = trBoundExpr(c, dest, n)
+    n = asgnStart; skip n
+    dest.addParRi()
+    callIsOver(c, dest, callInfo)
   else:
     var rhs = n
     skip rhs
-    trExpr c, dest, rhs # value first
-    trExpr c, dest, n   # then the destination location
-    n = rhs
-  n = asgnStart; skip n
-  dest.addParRi()
+    trExpr c, dest, n   # the destination location
+    trExpr c, dest, rhs # then the value
+    n = asgnStart; skip n
+    dest.addParRi()
 
 proc condIsComplex(n: Cursor): bool =
   ## A condition needs the two-target compiler (`Cx`) iff it contains a

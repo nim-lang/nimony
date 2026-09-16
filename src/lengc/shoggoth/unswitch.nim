@@ -203,10 +203,8 @@ proc scanEffects(c: Cursor; assigned: var HashSet[SymId];
   ## assignments, not as opaque.
   if c.kind != TagLit: return
   case c.stmtKind
-  of AsgnS, StoreS:
-    var dst = child0(c)
-    if c.stmtKind == StoreS: skip dst          # (store value dest)
-    let s = slotRoot(dst)
+  of AsgnS:
+    let s = slotRoot(child0(c))
     if s == SymId(0): opaque = true
     else: assigned.incl s
   of VarS, ConstS, GvarS, TvarS, MflagS, VflagS:
@@ -287,12 +285,10 @@ proc scanLoopDefs(orig: ptr TokenBuf; n: Cursor; straight: bool;
         discard
       elif straight and not defs.hasKey(s): defs[s] = pos
       else: multi.incl s
-  of AsgnS, StoreS:
-    var first = child0(n)
-    var second = first
-    skip second
-    let dst = if n.stmtKind == StoreS: second else: first
-    let val = if n.stmtKind == StoreS: first else: second
+  of AsgnS:
+    let dst = child0(n)
+    var val = dst
+    skip val
     if dst.kind == Symbol:
       let s = symId(dst)
       if straight and not defs.hasKey(s): defs[s] = cursorToPosition(orig[], val)

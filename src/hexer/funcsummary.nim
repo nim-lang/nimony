@@ -405,14 +405,12 @@ proc handleLocalDecl(a: var ProcAnalysis; n: var Cursor) =
   walkStmt(a, ic)            # capture nested calls / addr in the initializer
   skip n
 
-proc handleAssign(a: var ProcAnalysis; n: var Cursor; reversed: bool) =
+proc handleAssign(a: var ProcAnalysis; n: var Cursor) =
   var c = n
   inc c
-  let firstStart = c
+  let destStart = c
   skip c
-  let secondStart = c
-  let destStart = if reversed: secondStart else: firstStart
-  let valStart = if reversed: firstStart else: secondStart
+  let valStart = c
 
   let valRoots = exprRoots(a, valStart)
   let destBareSym = destStart.kind == Symbol
@@ -508,9 +506,7 @@ proc walkStmt(a: var ProcAnalysis; n: var Cursor) =
   of VarS:
     handleLocalDecl(a, n)
   of AsgnS:
-    handleAssign(a, n, reversed = false)
-  of StoreS:
-    handleAssign(a, n, reversed = true)        # `(store value dest)`
+    handleAssign(a, n)
   of RetS:
     handleRet(a, n)
   of CallS:
