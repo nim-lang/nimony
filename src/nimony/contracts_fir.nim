@@ -142,6 +142,7 @@ type
     moduleSuffix: string
     nestedProcs: int
     loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
+    forBinders: HashSet[SymId]         # `for` loop variables: see `declareForVars`.
                                        # Their post-join state keeps the pre-loop
                                        # facts (break-site facts are dropped; only
                                        # break-site inits are joined). See
@@ -3476,7 +3477,13 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
   if destSymId != NoSymId:
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
-    if x.kind in {LetY, GletY, TletY}:
+    if x.kind in {LetY, GletY, TletY} and symId notin c.forBinders:
+      # A `for` binder is assigned by the *binding* protocol — tuple unpacking,
+      # a closure iterator's resume — not by user code reassigning a `let`. It
+      # is marked initialized at the `for` (the iterator is what initializes it,
+      # and a body that runs has been yielded to), which would otherwise make
+      # every such binding read as a reassignment. Source-level `x = …` on a
+      # `let` binder was already rejected by sem.
       if isInitialized(c, symId):
         c.buildErr n.info, "invalid reassignment to `let` variable"
     elif x.kind == ParamY and isVarOpenArray(c, x.typ):
@@ -4017,21 +4024,53 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
 
   recordLoopExitLabel c, n
 
-proc declareForVars(c: var FirContext; vars: Cursor) =
+proc forIterFirstArg(c: var FirContext; iter: Cursor): Cursor =
+  ## The container a borrowing `for` borrows from: the first argument of the
+  ## iterator call. `xelim` may have hoisted that call into an inline temp, in
+  ## which case the call is the temp's initializer.
+  result = default(Cursor)
+  var it = iter
+  if it.isTagLit and it.exprKind in {HderefX, HaddrX}:
+    inc it
+  if it.isSymbol:
+    if not c.inlineVars.hasKey(it.symId): return
+    it = c.inlineVars.getOrQuit(it.symId)
+  if it.isTagLit and it.exprKind in CallKinds:
+    var r = it
+    r = sub(r)
+    skip r # the callee
+    if r.hasMore: result = r
+
+proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor) =
   ## A `for`'s loop variables are bound by an iterator that is not inlined until
   ## hexer's `elimForLoops`, so nothing in the Final IR ever assigns to them.
   ## They are declared *and* initialized here: yielding is what initializes
   ## them, and a body that runs at all has been yielded to.
+  ##
+  ## A binder of type `var T`/`lent T` comes from a *borrowing* iterator, and it
+  ## borrows from the container the iterator was handed. The lowering used to
+  ## say so by fabricating a second declaration of the binder with a fake
+  ## `(haddr firstArg)` initializer — which only worked while its output was
+  ## thrown away. The fact is derived here instead, where it belongs: nothing an
+  ## analysis alone needs has any business being written into an IR that is
+  ## about to be compiled.
   var vars = vars
   if vars.substructureKind in {UnpackflatU, UnpacktupU}:
     vars = sub(vars) # peek only, never left
     while vars.hasMore:
-      declareForVars c, vars
+      declareForVars c, vars, firstArg
       skip vars
   elif isLocal(vars.symKind):
     let local = asLocal(vars)
-    c.typeCache.registerLocal(local.name.symId, vars.symKind, local.typ)
-    markInit c, local.name.symId
+    let name = local.name.symId
+    c.typeCache.registerLocal(name, vars.symKind, local.typ)
+    markInit c, name
+    c.forBinders.incl name
+    if local.typ.typeKind in {MutT, LentT} and not cursorIsNil(firstArg):
+      var path = extractPath(c, firstArg)
+      if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
+        path.borrower = name
+        c.activeBorrows.add path
 
 proc traverseFor(c: var FirContext; n: var Cursor) =
   ## `(for iterCall vars body)`. The body says nothing about how the loop
@@ -4043,8 +4082,9 @@ proc traverseFor(c: var FirContext; n: var Cursor) =
   ## evaluated here, so a contract they have to satisfy is discharged here.
   var call = freshCall()
   n.into: # for tag
+    let firstArg = forIterFirstArg(c, n)
     traverseExpr c, n, call
-    declareForVars c, n
+    declareForVars c, n, firstArg
     skip n # the loop variables
     analyseLoopBody c, n
 
@@ -4703,6 +4743,7 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
     flow: initFlowState(),
     ownOlds: initTable[string, VarId](),
     loopExitLabels: initHashSet[SymId](),
+    forBinders: initHashSet[SymId](),
     declaredRange: initTable[VarId, RangeBounds](),
     verbose: verbose,
     features: features,

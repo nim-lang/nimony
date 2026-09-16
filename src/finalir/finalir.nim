@@ -66,7 +66,6 @@ type
     counter: int
     thisModuleSuffix: string
     current: CurrentProc
-    callFirstArgs: Table[SymId, TokenBuf] ## first argument of a local's init call (for for-loop borrow tracking)
     callExprs: Table[SymId, TokenBuf] ## whole init call of a local, so a `for`
                                       ## whose iterator xelim hoisted into a
                                       ## temp can still be read (see `trFor`)
@@ -237,18 +236,12 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.registerLocal(symId, kind, n)
   takeTree dest, n # type
 
-  # Record first argument of call inits for borrow tracking (used by trFor):
+  # Record call inits so a `for` whose iterator xelim hoisted into a temp can
+  # still be read (see `forRangeAssumes`).
   if n.isTagLit and n.exprKind in CallKinds:
     var whole = createTokenBuf(16)
     whole.addSubtree n
     c.callExprs[symId] = whole
-    var tmp = n
-    inc tmp # skip call tag
-    skip tmp # skip callee
-    if tmp.hasMore: # has at least one argument
-      var argBuf = createTokenBuf(8)
-      argBuf.addSubtree tmp
-      c.callFirstArgs[symId] = argBuf
 
   let callInfo = trBoundExpr(c, dest, n)
   n = localStart; skip n
@@ -573,60 +566,6 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var ww = beginRead(w)
     trLoopFromBody c, dest, ww
 
-proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
-  var vars = vars
-  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
-    vars = sub(vars) # peek only, never left
-    while vars.hasMore:
-      addForBorrowDecls dest, vars, firstArgBuf
-      skip vars
-  elif isLocal(vars.symKind):
-    let local = asLocal(vars)
-    if local.typ.typeKind in {MutT, LentT}:
-      var localDecl = vars
-      dest.addParLe(if local.typ.typeKind == MutT: VarS else: LetS, vars.info)
-      inc localDecl # skip original local-decl tag
-      takeTree dest, localDecl # name
-      takeTree dest, localDecl # export marker
-      takeTree dest, localDecl # pragmas
-      takeTree dest, localDecl # type
-      dest.addParLe HaddrX, vars.info
-      dest.add firstArgBuf
-      dest.addParRi()
-      dest.addParRi()
-
-proc extractForBorrow(c: var Context; forStmt: ForStmt; info: NifLineInfo): TokenBuf =
-  ## If the for-loop iterates with a borrowing iterator (yields `var T`/`lent T`),
-  ## initialize the corresponding loop variables with a fake `(haddr firstArg)`
-  ## so contract analysis treats the loop binders as borrowers.
-  result = createTokenBuf(0)
-
-  var firstArgBuf = createTokenBuf(0)
-  var iterCall = forStmt.iter
-  if iterCall.isTagLit and iterCall.exprKind in CallKinds:
-    iterCall = sub(iterCall) # peek only, never left
-    skip iterCall
-    if iterCall.hasMore:
-      firstArgBuf = createTokenBuf(8)
-      firstArgBuf.addSubtree iterCall
-  elif iterCall.isTagLit and iterCall.exprKind in {HderefX, HaddrX}:
-    inc iterCall
-    if iterCall.isSymbol:
-      let tempSym = iterCall.symId
-      if tempSym in c.callFirstArgs:
-        firstArgBuf = createTokenBuf(8)
-        firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
-  elif iterCall.isSymbol:
-    let tempSym = iterCall.symId
-    if tempSym in c.callFirstArgs:
-      firstArgBuf = createTokenBuf(8)
-      firstArgBuf.addSubtree beginRead(c.callFirstArgs.getOrQuit(tempSym))
-
-  if firstArgBuf.len == 0:
-    return
-
-  addForBorrowDecls result, forStmt.vars, firstArgBuf
-
 proc registerForVars(c: var Context; vars: Cursor) =
   ## The loop variables of a `for`. They are bound by an iterator this pass
   ## cannot see, so nothing declares them for the type cache unless we do.
@@ -657,8 +596,8 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let forStart = n
   let forTag = n.cursorTagId
   n = sub(n)
-  var borrowBuf = extractForBorrow(c, forStmt, info)
-  forRangeAssumes(borrowBuf, forStmt, c.callExprs, info)
+  var assumeBuf = createTokenBuf(0)
+  forRangeAssumes(assumeBuf, forStmt, c.callExprs, info)
 
   let exitL = freshLabel(c, "´lx.")
   c.current.exits.add Exit(name: exitL, isLoop: true)
@@ -668,8 +607,8 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   registerForVars c, n
   takeTree dest, n # the loop variables
   dest.addParLe StmtsS, info
-  if borrowBuf.len > 0:
-    dest.add borrowBuf
+  if assumeBuf.len > 0:
+    dest.add assumeBuf
   assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
   n.into: # the body statement list
     while n.hasMore:

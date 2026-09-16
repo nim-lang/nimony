@@ -70,14 +70,18 @@ With that rule, "nimsem understands Final IR" is smaller than it sounds.
 Declarations, signatures and pragmas are untouched by the lowering. The real
 consumers are:
 
-- `exprexec.nim` — it `tryLoadSym`s imported bodies and executes them at
-  compile time, so it has to run Final IR. This is the largest single piece.
-  Executing Final IR is easier than executing Nimony IR: no control flow hides
-  inside an expression, so there is no evaluation order to reconstruct.
 - `renderer.asNimCode` — error messages already render Final IR fragments
   today (every `checkRequires` diagnostic does), so this is completion, not
   invention.
 - `idetools.nim` and `indexgen.nim`.
+
+Neither compile-time evaluator is on that list, contrary to an earlier draft of
+this document. `exprexec.nim` does not interpret anything — it builds a program
+and `selfExec`s the compiler on it, so it is a client of the normal compile
+path and inherits whatever that path accepts. `expreval.nim` is "an expression
+evaluator for simple constant expressions, not meant to be complete" and has no
+statement dispatch at all; a `const` is folded during sem, before this lowering
+runs, and an imported one arrives as a literal.
 
 ## `for` stays in the Final IR
 
@@ -306,24 +310,94 @@ In rough dependency order:
    so an infinite loop's back-edge has no spelling on the Leng side.
 1. **Done.** `trFor` keeps the iterator call and the loop variables; the
    prover analyses `(for …)` directly.
-2. Publish the Final IR as the module nif, with the "unlowered iff re-sem'd
-   elsewhere" rule and a verifier check for it. Teach `exprexec`, `renderer`
-   and `indexgen` to read it. Hexer gets a Final-IR → Nimony-IR normalizer at
-   its entry so the backend is untouched for now — a bridge with a scheduled
-   death, removed in step 5.
-3. Move emission into the contract pass: `arrat` first (small, self-contained,
+2. Fix the lowering's remaining lossiness — see *The lossiness punch list*
+   below. The principle: *not analysed* must stop meaning *not emitted*, and
+   its converse, *analysis-only facts do not belong in the IR*.
+3. **Teach hexer the Final IR, before publishing it.** The lowering moves into
+   `pipeline.transform` as its first step; hexer lowers its own input and its
+   passes are converted one at a time, with the published format still Nimony
+   IR and the suite green throughout. This is `doc/internals/final_ir.md`'s
+   remaining work item 3. The surface is about nine passes —
+   `coro_transform` (43 sites matching `if`/`while`/`block`/`break`/`asgn`),
+   `xelim` (39), `iterinliner` (25), `desugar` (23),
+   `lengcgen`/`intramodinliner`/`lifter` (16 each), `lambdalifting` (13),
+   `duplifier` (12). `lab`/`jmp` are already Nimony statement tags that every
+   pass sees in its ordinary `case n.stmtKind`, and `destroyer` already treats
+   `(scope …)` as a real destructor scope, so the remainder is `ite`/`itec` vs
+   `if`, `loop` vs `while`, and `continue`/`kill`.
+4. Publish the Final IR as the module nif — the lowering moves from hexer's
+   entry back to nimsem — with the "unlowered iff re-sem'd elsewhere" rule and
+   a verifier check for it, and `renderer`/`idetools`/`indexgen` taught to read
+   it.
+5. Move emission into the contract pass: `arrat` first (small, self-contained,
    measurable), then the `.requires` split. Delete everything under *What
    dies*.
-4. `was`, driven by one consumer at a time. Error messages are the cheapest and
+6. `was`, driven by one consumer at a time. Error messages are the cheapest and
    the most immediately visible.
-5. Teach the hexer passes the Final IR directly, one at a time, and delete the
-   normalizer. The surface is about nine passes — `coro_transform` (43 sites
-   matching `if`/`while`/`block`/`break`/`asgn`), `xelim` (39), `iterinliner`
-   (25), `desugar` (23), `lengcgen`/`intramodinliner`/`lifter` (16 each),
-   `lambdalifting` (13), `duplifier` (12). `lab`/`jmp` are already Nimony
-   statement tags that every pass sees in its ordinary `case n.stmtKind`, and
-   `destroyer` already treats `(scope …)` as a real destructor scope, so the
-   remainder is `ite`/`itec` vs `if`, `loop` vs `while`, and `continue`/`kill`.
+
+**No normalizer.** An earlier draft had hexer converting Final IR back to
+Nimony IR at its entry, so the backend could stay untouched across step 4.
+That does not work: `iterinliner` splices in iterator bodies loaded from *other
+modules'* published nifs (`tryLoadSym`, `iterinliner.nim:612,699`), which an
+entry-side normalizer never sees. Converting on load instead would put the
+bridge inside `programs`, which is worse. Doing step 3 before step 4 removes
+the need for one — hexer already speaks Final IR by the time the published
+format changes, and a cross-module body arrives in exactly the form it wants.
+The transitional cost is that the lowering runs twice, once in nimsem for the
+prover and once in hexer; that is compile time, not correctness.
+
+## The lossiness punch list
+
+From an audit of `finalir.nim` done once `trFor` showed what the failure mode
+looks like. The structural cause behind several entries: the file's idiom is
+`n = sub(n); <consume some children>; n = xStart; skip n`, and unlike `into`,
+that resync never asserts the children were consumed — so anything the body did
+not handle disappears silently.
+
+Two are fixed:
+
+- **`trFor`** dropped the iterator call and the loop variables.
+- **The fabricated borrow declarations.** `extractForBorrow` /
+  `addForBorrowDecls` emitted a *second* declaration of each `mut`/`lent` loop
+  binder, with a deliberately fake `(haddr firstArg)` initializer, so the prover
+  would treat the binder as a borrower. It worked only because it replaced the
+  real declaration that `trFor` was throwing away; once `trFor` kept that, the
+  binder was defined twice. The fact is derived in `contracts_fir.declareForVars`
+  now, from the iterator call the `for` node carries. Two consequences worth
+  knowing: a `for` binder has to be exempted from the `let`-reassignment check,
+  because the binding protocol (tuple unpacking, a closure iterator's resume)
+  assigns to it and the binder is marked initialized at the `for`; and the path
+  had **no** test — `tborrow_errors.nim` only *simulates* it with a `var`
+  parameter — so `tborrow_lifetime_errors.nim` now pins it.
+
+Open, most severe first:
+
+- **`{.assembler.}` bodies** (`trProcDecl`): `skip n; dest.addDotToken()`
+  replaces hand-written machine code with a bodyless declaration. Fix has the
+  same shape as `trFor` — the lowering emits it verbatim, the prover skips it.
+- **`trStmt`'s fallback routes unhandled statements through `trExpr`.**
+  `CoroforS` is the alarming one: a loop whose body is never lowered at all.
+  `EmitS`, `WhenS`, `DiscardS`, `YldS`, `LabS`/`JmpS`, `UnpackdeclS` go the same
+  way — nothing is textually dropped, but nested statements stay un-lowered,
+  locals are not registered with the type cache, and a call in any operand
+  position hits `bug` at `trExpr`. Related: `CallKinds` includes `DelayX` while
+  `CallKindsS` does not, so a statement-level `(delay …)` takes this path.
+- **`trIf`/`genIfViaCx` silently drop branches past the first elif+else.**
+  Latent — xelim nests multi-elif chains today — but the failure mode is "a
+  branch vanishes from the generated code" with no assertion. The cheapest
+  place in the file to turn a silent drop into a loud one.
+- **`trAsgn` rejects a call RHS when the destination is not a plain symbol.**
+  `a[i] = f(x)` hits `bug "call must have been bound to a location"` where the
+  symbol path handles it; that branch also skips `callIsOver`, so the call
+  loses its `mutates` markers.
+- **Analysis-only nodes in the statement stream.** `(unknown …)` after every
+  call with a `haddr` argument and `(kill …)` at every scope exit are emitted
+  unconditionally; hexer will have to consume or tolerate them. `(assume …)`
+  stays — it is a declared Final IR construct with a documented job.
+- Lower value: `(scope …)` normalised to `(stmts …)`; `block` and its source
+  name dropped; `trCase`/`trTry` silently dropping unexpected trailing
+  children; several bare `dest.addParRi()` calls losing close-paren line info
+  where `takeInto`'s contract says to preserve it.
 
 ## Measurement
 
