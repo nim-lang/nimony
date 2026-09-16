@@ -237,9 +237,21 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     result = false
   of ObjectT:
     result = isTrivialObjectBody(c, r.body)
-    if result and c.op == attachedWasMoved and hasRtti(r.pragmas):
-      # We set the RTTI field in `=wasMoved` so objects with a vtable are not trivial.
-      result = false
+    if result and hasRtti(r.pragmas):
+      if c.op == attachedWasMoved:
+        # We set the RTTI field in `=wasMoved` so objects with a vtable are not trivial.
+        result = false
+      elif c.op == attachedDestroy:
+        # A value of an inheritable type may really be a DERIVED object that
+        # owns resources, and its `=destroy` is a method: the destroy has to
+        # be dispatched through the vtable even when this class itself has
+        # nothing to release. `RootObj` is the case that matters: a closure's
+        # environment is `(ref RootObj)` to everyone but its maker, and
+        # treating `RootObj` as trivial freed the env block without ever
+        # running the env's own destructor — every captured string, ref or
+        # resource leaked. The synthesized `=destroy_RootObj` is an empty
+        # method; the vtable slot is the point.
+        result = false
   of DistinctT:
     # A `distinct T` with no hooks of its own inherits the triviality of its
     # base type: `distinct string` is non-trivial (it owns the same heap
