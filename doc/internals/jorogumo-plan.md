@@ -211,9 +211,13 @@ the status of record is what `tjsgen` prints, and *Next* is the honest to-do lis
     call and the handle/`jsstring` bridge.
   - **M7 splice + handle bridge — DONE.** A bodyless `importjs` call lowers to a JS splice: jorogumo
     emits a `Raw` node `(raw NAME "tpl" ARG…)` and jsenc's `spliceTemplate` substitutes the operands
-    (`#`/`$1`/`$#`/`@`/`$$`, pinned to Nim 2.2.4). **Open:** `$1`/`$#` substitute the *internal*
-    mangled symbol, not a JS-legal proc name, so the `#.$1(#)` method idiom `dom.nim` leans on
-    generates a SyntaxError; `#`-only templates work. That is M8's gate, not a working-bridge claim.
+    (`#`/`$1`/`$#`/`@`/`$$`, pinned to Nim 2.2.4). `$1`/`$#` splice the **Nim source name** of the
+    proc, not the Leng symbol: `extsym` carries `insertAdjacentText.0.dom`, and the template needs
+    `insertAdjacentText`, because Nim resolves `%name` at declaration time, before mangling. The
+    base is the text up to the first `.` and a base that is not an identifier is a refusal rather
+    than pasted JS — Nim would not have produced a parseable template either. So `#.$1(#)` and
+    `#.$#()`, the method idioms `dom.nim` is built on, generate; a name whose Nim spelling is not a
+    JS identifier is refused instead of emitted as a SyntaxError waiting to happen.
     A pointer/`ref object` **operand** of the splice is
     unwrapped (`eunwrap`), a pointer/`ref` **result** is wrapped (`ewrap`) — a JS handle is an int32
     into the host table `JSP`, confined to splices; ordinary Nim pointers stay real addresses. In
@@ -501,31 +505,30 @@ worst kind of codegen bug because it is silent until runtime. So `lowerProc` emi
 **Running it.** Build the tool with `nim c --outdir:bin src/jorogumo/jorogumo.nim` in `nativenif`;
 `nim c a.nim b.nim` in one call is an error, so it is one file per invocation. The driver uses
 **`nimony/bin/jorogumo`**, a build product: `hastur build jorogumo` refreshes it, and a stale copy
-runs the previous generator silently. `src/jorogumo/tjsgen.nim` is the coverage harness — it runs
-every arkham fixture as a *process* (an arkham assertion is fatal, and exit status is the answer,
+runs the previous generator silently. `tjsgen` has the same trap in its own directory — it runs
+`getAppDir()/jorogumo`, i.e. `src/jorogumo/bin/jorogumo`, which `--outdir:bin` from the repo root
+does not touch, so a root-level build leaves the harness measuring the old generator.
+`src/jorogumo/tjsgen.nim` is the coverage harness — it runs every arkham fixture as a *process*
+(an arkham assertion is fatal, and exit status is the answer,
 exactly as `tests/tester.nim` treats ithaqua) and reports generation, agreement and refusals by
 cause. `--only:STEM` narrows it to one fixture.
 
 ## Next
 
-Status of record, measured on current nativenif: `tjsgen` reports **231 / 258 fixtures
-generate, 229 / 231 agree** with the native back end under node, **26 refused**. In order of
-payoff:
+Status of record, measured on nativenif's `js-backend` branch (rebased onto its `master`; this is
+not what `src/nativenif.commit` pins, which predates the tool): `tjsgen` reports **250 / 281
+fixtures generate, 250 / 250 agree** with the native back end under node, **30 refused**, and
+nothing that the native back end rejects compiles on the JS side any more. The one divergence is
+`scope_slot_reuse`, twin-consistent and quarantined with its reason. In order of payoff:
 
-1. **`$1`/`$#` in the splice template** substitute the internal mangled symbol instead of a
-   JS-legal proc name, so `#.$1(#)`, the method idiom `lib/js/dom.nim` is built on, emits a
-   SyntaxError. `#`-only templates already work. This is M8's real gate.
-2. **The two disagreements.** `err_ptr_arith` and `err_aptr_arith` are programs the native back
-   end rejects that jorogumo compiles *and runs* — `(add (ptr T) p 8)` on a bare pointer. Either
-   JS refuses them too, or the divergence gets a written reason. Being more permissive than the
-   oracle in an `err_` fixture is exactly the failure mode a golden suite never shows.
-   (`scope_slot_reuse` is the one known divergence: twin-consistent, quarantined with its reason.)
-3. **The remaining refusals.** `instr` for Fldrq/AtomicThreadFence/CpuRelax/Bswap/Bsf/TraceTable/
+1. **The remaining refusals.** `instr` for Fldrq/AtomicThreadFence/CpuRelax/Bswap/Bsf/TraceTable/
    VolatileStore, the two `{.assembler.}` fixtures, and the `futex`/`mmap`/`ulock` syscalls. A few
-   of the `instr` (popcount, ctz, bswap) map onto plain JS/BigInt; the rest should stay refusals
-   and be *listed* as such rather than discovered by whoever hits them.
-4. **M9 — verification + docs.** `jorogumoTests` in `nativenif/tests/tester.nim` with the refusal
-   list explicit; `hastur jsdiff` over `tests/jorogumo/` with the native back end as the oracle,
+   of the `instr` map onto plain JS/BigInt; the rest should stay refusals and be *listed* as such
+   rather than discovered by whoever hits them. (The four `mod_*` lines in the report are not
+   refusals of a construct: they are foreign-module fixtures with no `exportc "main"` to enter.)
+2. **M9 — verification + docs.** `jorogumoTests` in `nativenif/tests/tester.nim` with the refusal
+   list explicit, so `tjsgen`'s number stops being the only thing standing between a regression
+   and a release; `hastur jsdiff` over `tests/jorogumo/` with the native back end as the oracle,
    the way `hastur wasmdiff` does for wasm; promote this plan to `nativenif/doc/jorogumo.md`; and
    bump `src/nativenif.commit`, which is also what lets a JS suite into nimony's CI at all.
 
