@@ -66,6 +66,8 @@ import patchsets
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import ".." / typenav                         # lookupField — the scalar's declared type
 
+include ".." / ".." / "lib" / compat2         # getOrQuit (host Nim)
+
 # ---- nifcore helpers ------------------------------------------------------
 
 proc child0(c: Cursor): Cursor {.inline.} =
@@ -199,7 +201,7 @@ proc recordOconstr(c: var Context; oSym: SymId; declPos: int; oconstr: Cursor) =
   ## nothing) on a base/inheritance part or a malformed `kv`; a name seen twice is
   ## disqualified outright (we can't tell the two objects apart by SymId).
   if oSym in c.candidates:
-    c.candidates[oSym].disqualified = true
+    c.candidates.getOrQuit(oSym).disqualified = true
     return
   var cand = Candidate(declPos: declPos,
                        typePos: -1,
@@ -260,7 +262,7 @@ proc recordLoad(c: var Context; oSym: SymId; declPos, typePos, loadPos: int) =
   ## scalar is initialised from `L.f`, re-read at the SAME program point where the
   ## whole-object copy happened, so it observes exactly the same memory.
   if oSym in c.candidates:
-    c.candidates[oSym].disqualified = true
+    c.candidates.getOrQuit(oSym).disqualified = true
     return
   c.candidates[oSym] = Candidate(declPos: declPos, typePos: typePos, loadPos: loadPos,
                                  valuePos: initTable[SymId, int](),
@@ -337,7 +339,7 @@ proc classify(c: var Context; n: Cursor) =
   of Symbol:
     let s = symId(n)
     if s in c.candidates:
-      c.candidates[s].disqualified = true        # a bare whole-object use
+      c.candidates.getOrQuit(s).disqualified = true        # a bare whole-object use
   of TagLit:
     case n.exprKind
     of DotC:
@@ -348,10 +350,10 @@ proc classify(c: var Context; n: Cursor) =
         skip f
         if f.kind == Symbol:
           let fSym = symId(f)
-          c.candidates[oSym].accessed.incl fSym
+          c.candidates.getOrQuit(oSym).accessed.incl fSym
           c.accesses.add (oSym, fSym, cursorToPosition(c.orig[], n))
         else:
-          c.candidates[oSym].disqualified = true  # `o.(weird)` → give up
+          c.candidates.getOrQuit(oSym).disqualified = true  # `o.(weird)` → give up
       else:
         var m = n                                 # nested base (`o.a.b`, deref, …)
         m.loopInto:
@@ -360,7 +362,7 @@ proc classify(c: var Context; n: Cursor) =
     of AddrC, HaddrC:
       let r = addrEscapeRoot(child0(n))           # `addr o` / `addr o.f` escapes o
       if r != SymId(0) and r in c.candidates:
-        c.candidates[r].disqualified = true
+        c.candidates.getOrQuit(r).disqualified = true
       var m = n
       m.loopInto:
         classify(c, m)
@@ -383,12 +385,12 @@ proc emitRewritten(c: var Context; dest: var TokenBuf; n: Cursor) =
     if n.exprKind == DotC:
       let base = child0(n)
       if base.kind == Symbol and symId(base) in c.candidates and
-         c.candidates[symId(base)].names.len > 0:
+         c.candidates.getOrQuit(symId(base)).names.len > 0:
         let oSym = symId(base)
         var f = base
         skip f
-        if f.kind == Symbol and symId(f) in c.candidates[oSym].names:
-          dest.addSymUse c.candidates[oSym].names[symId(f)]
+        if f.kind == Symbol and symId(f) in c.candidates.getOrQuit(oSym).names:
+          dest.addSymUse c.candidates.getOrQuit(oSym).names.getOrQuit(symId(f))
           return
     let tag = n.cursorTagId
     let li = rawLineInfo(n)
@@ -493,10 +495,10 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
   # A LOAD candidate has no constructor field list: its fields are exactly the ones
   # accessed, ordered by first access so the emitted decls are deterministic.
   for (oSym, fSym, dotAt) in c.accesses:
-    if c.candidates[oSym].loadPos >= 0 and fSym notin c.candidates[oSym].valuePos:
-      c.candidates[oSym].valuePos[fSym] = c.candidates[oSym].loadPos
-      c.candidates[oSym].dotPos[fSym] = dotAt
-      c.candidates[oSym].fieldOrder.add fSym
+    if c.candidates.getOrQuit(oSym).loadPos >= 0 and fSym notin c.candidates.getOrQuit(oSym).valuePos:
+      c.candidates.getOrQuit(oSym).valuePos[fSym] = c.candidates.getOrQuit(oSym).loadPos
+      c.candidates.getOrQuit(oSym).dotPos[fSym] = dotAt
+      c.candidates.getOrQuit(oSym).fieldOrder.add fSym
 
   # Survivors: not escaped, and every accessed field was constructor-initialised.
   var survPairs: seq[(int, SymId)] = @[]
@@ -513,37 +515,43 @@ proc runScalarize*(buf: var TokenBuf; m: ptr MainModule = nil) =
   # Assign scalar names in source order (deterministic output / codegen).
   for it in survPairs:
     let oSym = it[1]
-    let fields = c.candidates[oSym].fieldOrder
+    let fields = c.candidates.getOrQuit(oSym).fieldOrder
     for f in fields:
       let nm = freshScalarName(c)
-      c.candidates[oSym].names[f] = nm
+      c.candidates.getOrQuit(oSym).names[f] = nm
 
   # Replace each object decl with its field-scalar decls (constructor order).
   for it in survPairs:
     let oSym = it[1]
-    let declPos = c.candidates[oSym].declPos
-    let fields = c.candidates[oSym].fieldOrder
+    let declPos = c.candidates.getOrQuit(oSym).declPos
+    let fields = c.candidates.getOrQuit(oSym).fieldOrder
     var first = true
-    let isLoad = c.candidates[oSym].loadPos >= 0
+    let isLoad = c.candidates.getOrQuit(oSym).loadPos >= 0
     for f in fields:
-      let name = c.candidates[oSym].names[f]
-      let value = cursorAt(c.orig[], c.candidates[oSym].valuePos[f])
-      let idx =
-        if isLoad:
-          buildLoadFieldDecl(c, name, cursorAt(c.orig[], c.candidates[oSym].dotPos[f]),
-                             value, c.candidates[oSym].typePos, f)
-        else:
-          buildFieldDecl(c, name, value, c.candidates[oSym].typePos, f)
+      # Everything read out of `c` is copied into locals BEFORE `c` is passed
+      # as the mutable argument; a borrowed read alongside it aliases.
+      let name = c.candidates.getOrQuit(oSym).names.getOrQuit(f) & ""
+      let value = cursorAt(c.orig[], c.candidates.getOrQuit(oSym).valuePos.getOrQuit(f))
+      let typePos = c.candidates.getOrQuit(oSym).typePos
+      var idx = 0
+      if isLoad:
+        let dot = cursorAt(c.orig[], c.candidates.getOrQuit(oSym).dotPos.getOrQuit(f))
+        idx = buildLoadFieldDecl(c, name, dot, value, typePos, f)
+      else:
+        idx = buildFieldDecl(c, name, value, typePos, f)
       if first:
         c.patchset.addSubst(declPos, synthCursor(c, idx)); first = false
       else:
         c.patchset.addInsert(declPos, synthCursor(c, idx))
 
   # Rewrite every field access to its scalar (survivors only have names).
-  for acc in c.accesses:
-    let (oSym, fSym, pos) = acc
-    if oSym in c.candidates and fSym in c.candidates[oSym].names:
-      let idx = buildSymUse(c, c.candidates[oSym].names[fSym])
+  # By index: iterating `c.accesses` directly would borrow `c` for the whole
+  # loop, and the body mutates it.
+  for ai in 0 ..< c.accesses.len:
+    let (oSym, fSym, pos) = c.accesses[ai]
+    if oSym in c.candidates and fSym in c.candidates.getOrQuit(oSym).names:
+      let name = c.candidates.getOrQuit(oSym).names.getOrQuit(fSym) & ""
+      let idx = buildSymUse(c, name)
       c.patchset.addSubst(pos, synthCursor(c, idx))
 
   if not c.patchset.isEmpty:

@@ -1,0 +1,5 @@
+tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 21) Error: argument for a `static` generic parameter must be a constant expression
+tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 25) Error: argument for a `static` generic parameter must be a constant expression
+tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 40) Error: undeclared identifier: T
+tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 47) Error: undeclared identifier: T
+tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(7, 12) Error: undeclared identifier: H

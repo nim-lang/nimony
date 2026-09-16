@@ -64,10 +64,14 @@
 ## `provenKey`, which resolves a symbol to the expression it was defined from
 ## (see the comment there).
 
-import std / [tables, sets, hashes, assertions, strutils, formatfloat]
+import std / [tables, sets, hashes, assertions, strutils, formatfloat, algorithm]
 import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind/pragmaKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
+
+include ".." / ".." / "lib" / compat2         # getOrQuit (host Nim)
+
+proc cmpInts(a, b: int): int = cmp(a, b)
 import trackers, patchsets
 import aliasing                               # intra-proc Steensgaard alias classes
 import accesspaths                            # root :: selector paths (doc/cse.md)
@@ -311,8 +315,9 @@ type
                                 ## this to hoist invariant loads to a pre-header
 
 proc createContext(orig: ptr TokenBuf;
-                   summaries: ptr FunctionSummaryTable): Context =
-  result = Context(orig: orig,
+                   summaries: ptr FunctionSummaryTable;
+                   m: ptr MainModule): Context =
+  result = Context(orig: orig, m: m,
           cache: initTracker[string, CachedEntry](),
           materialized: initTable[int, string](),
           pending: initTable[int, PendingDecl](),
@@ -324,7 +329,7 @@ proc createContext(orig: ptr TokenBuf;
           stmtStack: @[],
           curStmt: -1,
           tempCounter: 0,
-          resolver: initSummaryResolver(summaries, nil),
+          resolver: initSummaryResolver(summaries, m),
           localDefPos: initTable[SymId, int](),
           proven: initTracker[string, int](),
           provenRoots: @[],
@@ -572,7 +577,7 @@ proc provenKey(c: var Context; cur: Cursor; result: var string; depth = 0) =
   of Symbol:
     let s = symId(cur)
     if depth < MaxResolveDepth and c.isDiamond(s):
-      let (pa, pb, isAnd) = c.shortCircuit[s]
+      let (pa, pb, isAnd) = c.shortCircuit.getOrQuit(s)
       result.add (if isAnd: "(&" else: "(|")
       var a = cursorAt(c.orig[], pa)
       provenKey(c, a, result, depth + 1)
@@ -581,7 +586,7 @@ proc provenKey(c: var Context; cur: Cursor; result: var string; depth = 0) =
       provenKey(c, b, result, depth + 1)
       result.add ')'
     elif depth < MaxResolveDepth and c.resolvable(s):
-      var d = cursorAt(c.orig[], c.defExpr[s])
+      var d = cursorAt(c.orig[], c.defExpr.getOrQuit(s))
       provenKey(c, d, result, depth + 1)
     else:
       result.add 'S'; result.add symName(cur)
@@ -611,13 +616,13 @@ proc collectResolvedRoots(c: var Context; cur: Cursor; acc: var seq[SymId];
     let s = symId(cur)
     if s notin acc: acc.add s
     if depth < MaxResolveDepth and c.isDiamond(s):
-      let (pa, pb, _) = c.shortCircuit[s]
+      let (pa, pb, _) = c.shortCircuit.getOrQuit(s)
       var a = cursorAt(c.orig[], pa)
       collectResolvedRoots(c, a, acc, depth + 1)
       var b = cursorAt(c.orig[], pb)
       collectResolvedRoots(c, b, acc, depth + 1)
     elif depth < MaxResolveDepth and c.resolvable(s):
-      var d = cursorAt(c.orig[], c.defExpr[s])
+      var d = cursorAt(c.orig[], c.defExpr.getOrQuit(s))
       collectResolvedRoots(c, d, acc, depth + 1)
   of TagLit:
     var n = cur
@@ -1631,7 +1636,7 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
       c.materialized[fp] = tempName
       c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
                                   hoistPos: invHoist,
-                                  usePositions: @[(usePos, derefThis)])
+                                  usePositions: @[(pos: usePos, deref: derefThis)])
       return true
     return false
   # Second-or-later occurrence. The cache is flow-sensitive and intersects at
@@ -1661,8 +1666,8 @@ proc handleCandidate(c: var Context; n: Cursor; isAddrOf = false): bool =
     c.materialized[fp] = tempName
     c.pending[fp] = PendingDecl(tempName: tempName, exprPos: fp, addrMode: addrMode,
                                 hoistPos: entry.firstStmtPos,
-                                usePositions: @[(entry.firstUsePos, derefFirst),
-                                                (usePos, derefThis)])
+                                usePositions: @[(pos: entry.firstUsePos, deref: derefFirst),
+                                                (pos: usePos, deref: derefThis)])
   result = true
 
 proc isPureRegArith(n: Cursor): bool =
@@ -1726,7 +1731,16 @@ proc flushPending(c: var Context) =
   ## Because the rewrites are applied here (not eagerly), dropping leaves the
   ## original expressions untouched and correct.
   var symReadsReady = false
-  for fp, pd in c.pending:
+  # In SOURCE order, never the table's. Two temps can hoist to the same spot,
+  # and their decls come out in the order this loop visits them; hash order
+  # made that depend on how `Table` happens to be implemented — a shoggoth
+  # built by Nimony and one built by Nim disagreed on 24 of nimsem's modules —
+  # and on the token layout of the input (`pending` is keyed by position).
+  var order = newSeqOfCap[int](c.pending.len)
+  for fp in c.pending.keys: order.add fp
+  sort(order, cmpInts)
+  for fp in order:
+    let pd = c.pending.getOrQuit(fp)
     if pd.hoistPos < 0: continue
     let firstCur = cursorAt(c.orig[], pd.exprPos)
     if pd.hoistPos <= latestLocalDef(c, firstCur):
@@ -2187,9 +2201,9 @@ proc runCSE*(buf: var TokenBuf;
   ## once on the whole module; nil ⇒ every call conservatively clears. `m` is the
   ## module type context (proc params already registered in the current scope) —
   ## nil falls back to the coarse, type-agnostic alias partition.
-  var ctx = createContext(addr buf, summaries)
-  ctx.m = m                          # type context: skip value-CSE of aggregates
-  ctx.resolver.m = m                 # foreign-summary fallback resolves through it
+  # `m`: type context (skips value-CSE of aggregates); the resolver's
+  # foreign-summary fallback resolves through it too.
+  var ctx = createContext(addr buf, summaries, m)
   ctx.aa = computeAliasing(buf, m)   # alias pre-pass: drives precise invalidation
   registerParams(ctx, params)
   block:
