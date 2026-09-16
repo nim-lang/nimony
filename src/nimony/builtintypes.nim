@@ -49,6 +49,11 @@ const
   ExceptionName* = "Exception.0." & SystemModuleSuffix
   ExcThreadVarName* = "exc.0." & SystemModuleSuffix
   ContinuationName* = "Continuation.0." & SystemModuleSuffix
+  BareRootObjName* = "RootObj.0." & SystemModuleSuffix
+    ## The system's real `RootObj`: the env slot of a lowered closure tuple and
+    ## of an iter value, and what `typenav` answers for that slot. "Bare"
+    ## disambiguates it from `coro_transform.RootObjName`, which despite its
+    ## name is `CoroutineBase`.
   OpenArrayHeadName* = "openArray.0." & SystemModuleSuffix
 
 proc addSuccessTupleType*(dest: var TokenBuf; retType: Cursor; info: NifLineInfo) =

@@ -160,7 +160,17 @@ proc getSize(c: var SizeofValue; cache: var Table[SymId, SizeofValue]; n: Cursor
     update c, s, s
   of CharT, BoolT:
     update c, 1, 1
-  of RefT, PtrT, MutT, OutT, RoutineTypes, NiltT, CstringT, PointerT, LentT:
+  of RoutineTypes:
+    # A closure is a {fn, env} pair: two pointers. Sizing it as one made the
+    # module that lowers it and the module that imports the still-unlowered
+    # type disagree about whether an object holding it is "big", so constparams
+    # gave the object's `=destroy` a pointer parameter on one side while the
+    # other side passed the value. See `tclosure_xmod_destroy`.
+    if procHasPragma(n, ClosureP):
+      update c, 2 * ptrSize, ptrSize
+    else:
+      update c, ptrSize, ptrSize
+  of RefT, PtrT, MutT, OutT, NiltT, CstringT, PointerT, LentT:
     update c, ptrSize, ptrSize
   of SinkT, DistinctT:
     getSize c, cache, n.childCursor, ptrSize

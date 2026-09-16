@@ -22,6 +22,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
 import ".." / nimony / [nimony_model, decls, programs, typenav, expreval, xints, builtintypes, typekeys, typeprops]
+import closuretypes
 
 proc isMutFirstParam*(destroyProc: SymId): bool =
   result = false
@@ -60,6 +61,28 @@ type
     thisModuleSuffix: string
     bits*: int
     frontendHooks*: ptr Table[SymId, HooksPerType] # hooks from frontend, not yet in type pragmas
+    closureValuesLowered: bool
+      ## true in hexer, after lambdalifting: a `.closure` proctype that still
+      ## reads as one is a FOREIGN decl's type and stands for the (fn, env)
+      ## tuple (`closuretypes.isClosureProcType`). False in the frontend
+      ## (`derefs`), where nothing is lowered yet and closure proctypes are
+      ## opaque.
+    closureTuples: seq[TokenBuf]
+      ## the lowered shapes handed to `requestLifting`, which keeps cursors
+      ## into them: they must live as long as the context does
+
+proc isClosureValue(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
+  ## `closuretypes.isClosureProcType`, once lambdalifting has run.
+  c.closureValuesLowered and isClosureProcType(typ)
+
+proc holdsClosureValues(c: LiftingCtx; typ: TypeCursor): bool {.inline.} =
+  ## `closuretypes.containsClosureProcType`, once lambdalifting has run.
+  c.closureValuesLowered and containsClosureProcType(typ)
+
+proc loweredOf(c: var LiftingCtx; typ: TypeCursor): TypeCursor =
+  ## `closuretypes.loweredClosureType`, kept alive in `c.closureTuples`.
+  c.closureTuples.add loweredClosureType(typ)
+  result = cursorAt(c.closureTuples[c.closureTuples.len-1], 0)
 
 # Phase 1: Determine if the =hook is trivial:
 
@@ -223,6 +246,9 @@ proc isTrivialTypeDecl(c: var LiftingCtx; n: Cursor): bool =
     # `else` branch below treated every named distinct as trivial, so the
     # duplifier moved instead of copied — a use-after-free for resource types.
     result = isTrivial(c, r.body.childCursor)
+  of ProctypeT:
+    # `type Cb = proc() {.closure.}`: the alias of a closure value owns an env
+    result = not isClosureValue(c, r.body)
   else:
     result = true
 
@@ -246,7 +272,8 @@ proc isTrivial*(c: var LiftingCtx; typ: TypeCursor): bool =
     # pointer (see nifcgen.trType), so trivial. When we promote
     # `Iterator[T]` to a managed ref envelope, ItertypeT needs to split out
     # of this branch and flip to `result = false` so destructor hooks run.
-    result = true
+    # An un-rewritten `.closure` proctype is the (fn, env) pair: not trivial.
+    result = not isClosureValue(c, typ)
   of RefT:
     result = false
   of LentT:
@@ -386,7 +413,19 @@ proc lift(c: var LiftingCtx; typ: TypeCursor): SymId =
   of PtrT:
     bug "ptr T should have been a 'trivial' type"
   of ObjectT, DistinctT, TupleT, ClosureTupleT, ArrayT, RefT:
-    result = requestLifting(c, c.op, orig)
+    if not (orig.isSymbol or orig.isSymbolDef) and holdsClosureValues(c, typ):
+      # a structural type spelled with un-rewritten `.closure` proctypes
+      # (a tuple of closures answered by typenav for a call's result): the
+      # hook must take the lowered layout the value actually has
+      result = requestLifting(c, c.op, loweredOf(c, typ))
+    else:
+      result = requestLifting(c, c.op, orig)
+  of ProctypeT:
+    # a foreign `.closure` proctype: hook the tuple it is at runtime
+    if isClosureValue(c, typ):
+      result = requestLifting(c, c.op, loweredOf(c, typ))
+    else:
+      result = NoSymId
   else:
     result = NoSymId
 
@@ -619,12 +658,25 @@ proc unravelObj(c: var LiftingCtx; n: Cursor; paramA, paramB: TokenBuf; depth: i
 proc unravelTuple(c: var LiftingCtx;
                   n: Cursor; paramA, paramB: TokenBuf) =
   assert n.typeKind in TupleTypes
+  let isClosureTup = n.typeKind == ClosureTupleT
   var n = n
   n = sub(n)  # throwaway copy; bounds the walk under vpr
   var idx = 0
   while n.hasMore:
     let fieldType = getTupleFieldType(n)
     skip n
+
+    if isClosureTup and idx == 0:
+      # The fn slot is a bare pointer. Its proctype still carries the
+      # `closure` pragma, which `isTrivial` reads as "an (fn, env) pair" —
+      # true of the tuple, not of this slot — so don't recurse into it.
+      case c.op
+      of attachedCopy, attachedSink, attachedDup:
+        genTrivialOp c, accessTupField(c, paramA, idx, 0), accessTupField(c, paramB, idx, 1)
+      of attachedDestroy, attachedTrace, attachedWasMoved:
+        discard
+      inc idx
+      continue
 
     case c.op
     of attachedDestroy, attachedTrace, attachedWasMoved:
@@ -843,6 +895,9 @@ proc unravelDispatch(c: var LiftingCtx; orig: TypeCursor; paramA, paramB: TokenB
     unravelTuple c, typ, paramA, paramB
   of ArrayT:
     unravelArray c, typ, paramA, paramB
+  of ProctypeT:
+    if isClosureValue(c, typ):
+      unravelTuple c, loweredOf(c, typ), paramA, paramB
   else:
     discard "nothing to do"
     #let fn = lift(c, typ)
@@ -1036,10 +1091,11 @@ proc genMissingHooks*(c: var LiftingCtx; dest: var TokenBuf) =
   if c.dest.len > 0:
     dest.add c.dest
 
-proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil): ref LiftingCtx =
+proc createLiftingCtx*(thisModuleSuffix: string, bits: int; frontendHooks: ptr Table[SymId, HooksPerType] = nil;
+                       closureValuesLowered = false): ref LiftingCtx =
   (ref LiftingCtx)(dest: initTokenBuf(), op: attachedDestroy, info: NoLineInfo,
                    thisModuleSuffix: thisModuleSuffix, bits: bits, routineKind: ProcY,
-                   frontendHooks: frontendHooks)
+                   frontendHooks: frontendHooks, closureValuesLowered: closureValuesLowered)
 
 proc getHook*(c: var LiftingCtx; op: AttachedOp; typ: TypeCursor; info: NifLineInfo): SymId =
   c.op = op
