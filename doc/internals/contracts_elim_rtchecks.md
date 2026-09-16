@@ -399,14 +399,23 @@ Open, most severe first:
   hexer's `iterinliner`, downstream of every caller of this pass. It becomes
   reachable at step 3, when the lowering moves into hexer's pipeline. Re-run
   the probe then; that is what it is for.
-- **`trIf`/`genIfViaCx` silently drop branches past the first elif+else.**
-  Latent — xelim nests multi-elif chains today — but the failure mode is "a
-  branch vanishes from the generated code" with no assertion. The cheapest
-  place in the file to turn a silent drop into a loud one.
-- **`trAsgn` rejects a call RHS when the destination is not a plain symbol.**
-  `a[i] = f(x)` hits `bug "call must have been bound to a location"` where the
-  symbol path handles it; that branch also skips `callIsOver`, so the call
-  loses its `mutates` markers.
+- **`trIf`/`genIfViaCx` silently dropped branches past the first elif+else.**
+  The `n = ifStart; skip n` resync consumed whatever the proc did not read, so
+  a third branch vanished from the generated code with nothing said — and the
+  `assert` that stood for the invariant compiles out of a `-d:danger` build,
+  after which a second `elif` was lowered *as* an `else`, its condition treated
+  as a statement body. Both procs `bug` on it now, which is this file's idiom
+  for an invariant it relies on (`bug "cfvar in Final IR input"` and friends).
+  The whole suite passes with the invariant enforced, so `xelim` does nest
+  every elif chain as the precondition claimed.
+- **`trAsgn`'s two paths are one path.** A non-symbol destination sent the value
+  through `trExpr`, which rejects a call outright, where a symbol destination
+  used `trBoundExpr` and bound the call directly to its destination. That held
+  only because `xelim` hoists such a call into a temp first — and
+  `final_ir.md`'s remaining work item 2 is precisely about changing when it
+  does that. The asymmetry also cost the path its `callIsOver` markers. Both
+  use `trBoundExpr` now; the lowered output of 340 modules is byte-identical,
+  so this is a simplification today and a removed trap later.
 - **Analysis-only nodes in the statement stream.** `(unknown …)` after every
   call with a `haddr` argument and `(kill …)` at every scope exit are emitted
   unconditionally; hexer will have to consume or tolerate them. `(assume …)`

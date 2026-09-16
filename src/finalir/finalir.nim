@@ -264,12 +264,21 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     callIsOver(c, dest, callInfo)
   else:
+    # Same as the symbol case, only the destination is a path rather than a
+    # name: `a[i] = f(x)` binds the call to its destination exactly as
+    # `x = f(x)` does. The two used to differ — the value went through
+    # `trExpr`, which rejects a call outright — and that held only because
+    # `xelim` hoists such a call into a temp before this pass sees it. It is
+    # `final_ir.md`'s remaining work item 2 to change when it does that, and
+    # the asymmetry also cost this path its `callIsOver` markers.
     var rhs = n
     skip rhs
     trExpr c, dest, n   # the destination location
-    trExpr c, dest, rhs # then the value
+    var value = rhs
+    let callInfo = trBoundExpr(c, dest, value) # then the value
     n = asgnStart; skip n
     dest.addParRi()
+    callIsOver(c, dest, callInfo)
 
 proc condIsComplex(n: Cursor): bool =
   ## A condition needs the two-target compiler (`Cx`) iff it contains a
@@ -361,6 +370,8 @@ proc genIfViaCx(c: var Context; dest: var TokenBuf; n: var Cursor;
   ## is consumed here.
   var afterElif = n
   skip afterElif
+  if afterElif.hasMore and afterElif.substructureKind != ElseU:
+    bug "multi-branch `if` reached the Final IR: `xelim` nests elif chains into elif+else"
   let hasElse = afterElif.substructureKind == ElseU
   let thenL = freshLabel(c, "´ct.")
   let endL = freshLabel(c, "´ce.")
@@ -378,15 +389,26 @@ proc genIfViaCx(c: var Context; dest: var TokenBuf; n: var Cursor;
     n = sub(n)
     trScopedBody c, dest, n    # else-branch
     n = elseStart; skip n      # end of `else`
+  if n.hasMore:
+    bug "`if` with a branch after its `else` reached the Final IR"
   emitLab dest, endL, info
   n = ifStart; skip n          # end of `if`
 
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # Precondition: xelim already produced a single elif-else construct here.
+  ## Precondition: `xelim` already nested any elif chain into a single
+  ## elif+else, so exactly one `elif` and at most one `else` arrive here.
+  ##
+  ## That precondition is enforced rather than assumed. The `n = ifStart; skip n`
+  ## resync at the end consumes whatever this proc did not read, so a third
+  ## branch would not fail — it would vanish from the generated code, silently,
+  ## with the `assert` that used to stand for the invariant compiled out of a
+  ## `-d:danger` build and a second `elif` then lowered *as* an `else` (its
+  ## condition treated as a statement body).
   let info = n.info
   let ifStart = n
   n = sub(n)
-  assert n.substructureKind == ElifU
+  if n.substructureKind != ElifU:
+    bug "`if` whose first branch is not an `elif` reached the Final IR"
   var condPeek = n
   inc condPeek               # at the condition
   if condIsComplex(condPeek):
@@ -402,11 +424,14 @@ proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = elifStart; skip n      # end of `elif`
 
   if n.hasMore:
-    assert n.substructureKind == ElseU
+    if n.substructureKind != ElseU:
+      bug "multi-branch `if` reached the Final IR: `xelim` nests elif chains into elif+else"
     let elseStart = n
     n = sub(n)
     trScopedBody c, dest, n  # else-branch
     n = elseStart; skip n    # end of `else`
+    if n.hasMore:
+      bug "`if` with a branch after its `else` reached the Final IR"
   else:
     dest.addDotToken()       # no else section
 
