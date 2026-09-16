@@ -226,10 +226,14 @@ proc semTemplateCall(c: var SemContext; dest: var TokenBuf; it: var Item; fnId: 
     # overload is what actually dec-refs. `callHead` counts too: both it and
     # the throwaway `readonlyCursorAt` that used to supply `.info` bumped the
     # rc and were never released, so `shrink` always took the copying path.
-    # `pastFn` is a plain `childCursor` copy sharing `callHead`'s ref, so it
-    # must not be released separately.
+    # `pastFn` counts too: `childCursor` builds its result with `result = c`,
+    # which runs Cursor's `=copy` and takes a ref of its OWN — it does not
+    # share `callHead`'s. Leaving it out kept the rc at 2 here and made every
+    # template expansion copy the module buffer anyway; `expectUnique` did not
+    # catch it because it only asserts under `-d:debug`.
     endRead args
     endRead firstVarargMatch
+    endRead pastFn
     endRead callHead
     if outcome == PluginDeferred:
       deferPluginCall c, dest, it, beforeCall, callInfo
