@@ -299,6 +299,94 @@ proc lookupFieldDecl*(c: var TypeCache; typ: Cursor; fld: SymId): Local =
 
 proc getTypeImpl(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor
 
+const
+  BareRootObjName* = "RootObj.0." & SystemModuleSuffix
+    ## The system's real `RootObj`: the type of a lowered closure's env slot.
+  ClosureEnvParamName* = "`ep.0"
+    ## The env param appended to a lowered closure signature.
+
+proc isClosureProcType*(typ: Cursor): bool {.inline.} =
+  ## A `.closure` proctype that hexer's lambdalifting did NOT rewrite.
+  ## Lambdalifting lowers every closure proctype it walks in the module it
+  ## is compiling to `(closureTuple fn (ref RootObj))`, but the type of a
+  ## FOREIGN decl — the field of an imported object, an imported global —
+  ## is answered from its semchecked declaration and still reads
+  ## `(proctype … (pragmas closure))`. Its runtime representation is that
+  ## tuple all the same (`sizeof` sizes it as two pointers), so every later
+  ## stage has to treat it as the tuple: hook it like one (lifter) and lay
+  ## it out like one (lengcgen).
+  typ.typeKind == ProctypeT and procHasPragma(typ, ClosureP)
+
+proc lowerClosureProcTypes(dest: var TokenBuf; n: var Cursor)
+
+proc addClosureTuple(dest: var TokenBuf; n: var Cursor) =
+  ## Consume the `.closure` proctype at `n`; emit the `(closureTuple
+  ## (proctype . (params <params> <env>) <ret> <pragmas>) (ref RootObj))`
+  ## lambdalifting's `treProcType` would have made of it. Params and return
+  ## type are lowered recursively, as `treParamsWithEnv` does through `tre`:
+  ## a closure whose own parameter is a closure takes that parameter as a
+  ## tuple too.
+  let info = n.info
+  dest.copyIntoKind ClosureTupleT, info:
+    dest.copyIntoKind ProctypeT, info:
+      dest.addDotToken() # nilability tag
+      n.into:
+        skip n # nilability tag
+        dest.copyIntoKind ParamsU, info:
+          if n.kind == DotToken:
+            inc n
+          else:
+            n.into:
+              while n.hasMore:
+                lowerClosureProcTypes(dest, n)
+          # the trailing env param (see coro_transform.addClosureEnvParam):
+          dest.copyIntoKind ParamU, info:
+            dest.addSymDef pool.symId(ClosureEnvParamName), info
+            dest.addDotToken() # no export marker
+            dest.addDotToken() # no pragmas
+            dest.copyIntoKind RefT, info:
+              dest.addSymUse pool.symId(BareRootObjName), info
+            dest.addDotToken() # no default value
+        lowerClosureProcTypes(dest, n) # return type
+        dest.takeTree n # pragmas
+    dest.copyIntoKind RefT, info:
+      dest.addSymUse pool.symId(BareRootObjName), info
+
+proc lowerClosureProcTypes(dest: var TokenBuf; n: var Cursor) =
+  ## Copy the tree at `n`, replacing every un-rewritten `.closure` proctype
+  ## in it by its tuple. An already lowered `(closureTuple …)` is copied as
+  ## is: its fn slot keeps the `closure` pragma and must stay a bare proctype.
+  if n.isTagLit:
+    if isClosureProcType(n):
+      addClosureTuple(dest, n)
+    elif n.typeKind == ClosureTupleT:
+      dest.takeTree n
+    else:
+      takeInto dest, n:
+        while n.hasMore:
+          lowerClosureProcTypes(dest, n)
+  else:
+    dest.takeTree n # an atom, with its line info
+
+proc closureTupleType*(typ: Cursor): TokenBuf =
+  ## The tuple an un-rewritten `.closure` proctype stands for — the same
+  ## shape lambdalifting gives the values of the type it does lower, so the
+  ## structural keys (hook names, C type names) agree.
+  assert isClosureProcType(typ)
+  result = createTokenBuf(32)
+  var n = typ
+  addClosureTuple(result, n)
+
+proc closureValueType*(c: var TypeCache; typ: Cursor): Cursor =
+  ## `typ`, unless it is an un-rewritten `.closure` proctype: then the
+  ## `(closureTuple …)` it stands for, so that a local declared with the
+  ## result gets the tuple's layout in C rather than a bare function pointer.
+  if isClosureProcType(typ):
+    c.mem.add closureTupleType(typ)
+    result = cursorAt(c.mem[c.mem.len-1], 0)
+  else:
+    result = typ
+
 proc tupatType(c: var TypeCache; n: Cursor; flags: set[GetTypeFlag]): Cursor =
   result = c.builtins.autoType # to indicate error
   var n = n

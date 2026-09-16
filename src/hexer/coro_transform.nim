@@ -54,14 +54,12 @@ const
     ## `(ptr CoroutineBase)` throughout the coroutine internals. Kept
     ## for source compatibility — the iter-value env slot uses
     ## `BareRootObjName` (real RootObj) instead.
-  BareRootObjName* = "RootObj.0." & SystemModuleSuffix
-    ## The system's real `RootObj`. Used as the type of the iter-value
-    ## tuple's env slot so iter values have the same `(ref RootObj)`
-    ## shape as closure procs.
+  # `BareRootObjName` (the real `RootObj`, the iter-value tuple's env slot)
+  # and `ClosureEnvParamName` (the env param appended to a lowered closure
+  # signature, distinct from the coroutine's `this.0` env below) live in
+  # `typenav` now, shared with the lifter and lengcgen.
   EnvParamName* = "`this.0"
-  ClosureEnvParamName* = "`ep.0"
-    ## The env param appended to a lowered closure signature (distinct from the
-    ## coroutine's `this.0` env above). Lives here — like `RootObjName` and the
+    ## The coroutine's env param. Lives here — like `RootObjName` and the
     ## wrapper-signature shape — so lambdalifting's pass-2 lowering and any other
     ## pass that must emit the identical env slot (e.g. a cross-module foreign-decl
     ## canonicalizer) stay in lock-step off one definition.

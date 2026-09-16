@@ -358,7 +358,10 @@ proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
     # simple enough:
     takeTree result, le
   else:
-    let typ = getType(c.typeCache, le)
+    # `closureValueType`: an assignment into a FOREIGN object's `.closure`
+    # field sees the field's semchecked proctype; the temp that holds its
+    # address must be `ptr` to the (fn, env) tuple the field really is.
+    let typ = c.typeCache.closureValueType(getType(c.typeCache, le))
     let info = le.info
     let tmp = pool.symId("`lhs." & $c.tmpCounter)
     inc c.tmpCounter
@@ -411,8 +414,9 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: NifLineIn
   else:
     copyIntoKind c.dest, CallS, info: emitArgs(c.dest)
 
-proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
+proc tempOfTrArg(c: var Context; n: Cursor; typ0: Cursor): SymId =
   var n = n
+  let typ = c.typeCache.closureValueType(typ0) # see evalLeftHandSide
   let info = n.info
   result = pool.symId("`lhs." & $c.tmpCounter)
   inc c.tmpCounter
@@ -917,7 +921,7 @@ proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): Ow
   c.dest.addParLe kind, info
   addSymDef c.dest, s, info
   c.dest.addEmpty2 info # export marker, pragmas
-  copyTree c.dest, typ
+  copyTree c.dest, c.typeCache.closureValueType(typ) # see evalLeftHandSide
   # value is filled in by the caller!
 
 proc finishOwningTemp(c: var Context; ow: OwningTemp) =
@@ -1331,6 +1335,7 @@ proc bindPendingMoves(c: var Context; start: int; typ: Cursor; info: NifLineInfo
   ## moves run once the expression has read everything it needs. The temp is a
   ## `cursor` for the same reason `genLastRead`'s is: whatever consumes this
   ## expression is the rightful owner of the value.
+  let typ = c.typeCache.closureValueType(typ) # see evalLeftHandSide
   let tmp = pool.symId("`tmp." & $c.tmpCounter)
   inc c.tmpCounter
   var wrapped = createTokenBuf(64)
