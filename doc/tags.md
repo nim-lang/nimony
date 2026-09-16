@@ -164,7 +164,7 @@
 | `(static T)`; `(static)` | LengPragma, NimonyType, NiflerKind | `static` type or annotation |
 | `(ite X S S S STR_LIT?)` | ControlFlowKind, FinalIrKind, LengStmt | if-then-else followed by `join` information followed by an optional label |
 | `(itec X S S)` | FinalIrKind, LengStmt | if-then-else (that was a `case`) |
-| `(loop S X S S)` | FinalIrKind, LengStmt | `loop` components are (before-cond, cond, loop-body, after) |
+| `(loop S)` | FinalIrKind, LengStmt | infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)` |
 | `(v X INT_LIT)` | FinalIrKind | `versioned` locations |
 | `(etupat X INT_LIT)` | FinalIrKind | tupat expression for error handling |
 | `(unknown X)` | FinalIrKind | location's contents is unknown at this point |

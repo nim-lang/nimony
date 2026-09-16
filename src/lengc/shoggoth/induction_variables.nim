@@ -78,8 +78,8 @@ proc isIvIncPattern(c: Cursor; outIvSym: var SymId): bool =
   return true
 
 proc loopBodyCursor(loopCursor: Cursor): Cursor =
-  ## Cursor at the loop body. Handles `(while cond body)` and
-  ## `(loop pre cond body after)`.
+  ## Cursor at the loop body. Handles `(while cond body)` and the infinite
+  ## `(loop body)`, which has no condition slot at all.
   result = loopCursor
   case loopCursor.stmtKind
   of WhileS:
@@ -87,8 +87,6 @@ proc loopBodyCursor(loopCursor: Cursor): Cursor =
     skip result                              # past cond
   of LoopS:
     inc result                               # past `(loop`
-    skip result                              # past before-cond
-    skip result                              # past cond
   else: discard
 
 proc writeTargetOf(start: Cursor): Cursor =

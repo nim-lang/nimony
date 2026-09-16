@@ -524,8 +524,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if used:
     emitLab dest, exitL, info
 
-proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
-                    forBorrow: TokenBuf; forceExitLabel = false) =
+proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `n` points at the loop *body* (a `(stmts ...)`). Emit the infinite
   ## `(loop (stmts <body> (continue .)))` and, if any `break` targeted it, the
   ## trailing `(lab loopExit)`.
@@ -535,8 +534,6 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
   openScope c
   dest.addParLe LoopV, info
   dest.addParLe StmtsS, info
-  if forBorrow.len > 0:
-    dest.add forBorrow
   assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
   n.into: # the body statement list
     while n.hasMore:
@@ -548,17 +545,16 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor;
   dest.addParRi() # close `loop`
   let used = c.current.exits[^1].used
   c.current.exits.shrink(c.current.exits.len - 1)
-  if used or forceExitLabel:
+  if used:
     emitLab dest, exitL, info
 
 proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let whileStart = n # `while`
   n = sub(n)
-  let empty = createTokenBuf(0)
   if n.exprKind == TrueX:
     # `while true` is already the canonical infinite loop.
     skip n # the `(true)` condition
-    trLoopFromBody c, dest, n, empty
+    trLoopFromBody c, dest, n
     n = whileStart; skip n # close `while`
   else:
     # Rewrite `while cond: body` to `while true: (if cond: body else: break)`;
@@ -575,7 +571,7 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
             w.addParPair BreakS, info
     n = whileStart; skip n # close `while`
     var ww = beginRead(w)
-    trLoopFromBody c, dest, ww, empty
+    trLoopFromBody c, dest, ww
 
 proc addForBorrowDecls(dest: var TokenBuf; vars: Cursor; firstArgBuf: TokenBuf) =
   var vars = vars
@@ -631,27 +627,68 @@ proc extractForBorrow(c: var Context; forStmt: ForStmt; info: NifLineInfo): Toke
 
   addForBorrowDecls result, forStmt.vars, firstArgBuf
 
+proc registerForVars(c: var Context; vars: Cursor) =
+  ## The loop variables of a `for`. They are bound by an iterator this pass
+  ## cannot see, so nothing declares them for the type cache unless we do.
+  var vars = vars
+  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
+    vars = sub(vars) # peek only, never left
+    while vars.hasMore:
+      registerForVars c, vars
+      skip vars
+  elif isLocal(vars.symKind):
+    let local = asLocal(vars)
+    c.typeCache.registerLocal(local.name.symId, vars.symKind, local.typ)
+
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # After xelim the iterator advance/done-check already sits as a leading
-  # `if done: break` inside the body, so a `for` is just a `loop` whose body
-  # binds the loop variable(s).
+  ## A `for` survives lowering as a `for`, with only its body lowered.
+  ##
+  ## It used to become a bare `(loop body)` with the iterator call and the loop
+  ## variables dropped on the floor, which is fine for an analysis that throws
+  ## its input away and fatal for one whose output is compiled: hexer's
+  ## `elimForLoops` runs long after this pass, and the call is the only record
+  ## of what the loop iterates.
+  ##
+  ## The body is lowered exactly as a `loop`'s is — it ends in `(continue .)`,
+  ## a `break` inside it is a forward `(jmp …)` to the trailing exit label — so
+  ## a `for` is a loop construct that also says what it iterates.
   let info = n.info
   let forStmt = asForStmt(n) # peek at structure before advancing
   let forStart = n
+  let forTag = n.cursorTagId
   n = sub(n)
   var borrowBuf = extractForBorrow(c, forStmt, info)
   forRangeAssumes(borrowBuf, forStmt, c.callExprs, info)
-  skip n # for loop iterator call
-  skip n # for loop variables
+
+  let exitL = freshLabel(c, "´lx.")
+  c.current.exits.add Exit(name: exitL, isLoop: true)
+  openScope c
+  dest.addParLe(forTag, info)
+  takeTree dest, n # the iterator call, verbatim: xelim already normalized it
+  registerForVars c, n
+  takeTree dest, n # the loop variables
+  dest.addParLe StmtsS, info
+  if borrowBuf.len > 0:
+    dest.add borrowBuf
+  assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
+  n.into: # the body statement list
+    while n.hasMore:
+      trStmt c, dest, n
+  closeScope c, dest, info # kills run on the back-edge path
+  dest.copyIntoKind ContinueV, info: # the sole back-edge
+    dest.addDotToken()
+  dest.addParRi() # close `stmts`
+  dest.addParRi() # close `for`
+  c.current.exits.shrink(c.current.exits.len - 1)
   # The exit label is emitted even when nothing jumps to it. An *inline*
   # iterator is not inlined until hexer's `elimForLoops`, so at this point no
   # `break` has been generated for the iterator's own termination test and the
-  # `(loop …)` reads as one nothing ever leaves — which would make everything
-  # after the loop unreachable. That is not a harmless imprecision: a join on a
-  # dead path keeps *both* arms of the next `if`, so `le >= 0` and `le < 0` come
-  # to hold at once and a correct index gets "disproved". A `for` terminates;
-  # the label says so.
-  trLoopFromBody c, dest, n, borrowBuf, forceExitLabel = true
+  # loop reads as one nothing ever leaves — which would make everything after
+  # it unreachable. That is not a harmless imprecision: a join on a dead path
+  # keeps *both* arms of the next `if`, so `le >= 0` and `le < 0` come to hold
+  # at once and a correct index gets "disproved". A `for` terminates; the label
+  # says so.
+  emitLab dest, exitL, info
   n = forStart; skip n # close `for`
 
 proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =

@@ -1970,10 +1970,7 @@ proc trLoopBody(c: var Context; n: var Cursor) =
       while n.hasMore: skip n
   of LoopS:
     n.into:
-      if n.hasMore: tr(c, n)
-      if n.hasMore: trExpr(c, n)
-      if n.hasMore: tr(c, n)
-      if n.hasMore: tr(c, n)
+      if n.hasMore: tr(c, n)             # body; the infinite loop has no cond
       while n.hasMore: skip n
   else:
     skip n

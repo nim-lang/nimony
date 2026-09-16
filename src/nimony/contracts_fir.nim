@@ -3963,16 +3963,12 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
   for ch in bypasses:
     c.facts.add ch
 
-proc traverseLoop(c: var FirContext; n: var Cursor) =
-  ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
-  ## forward via `(jmp loopExit)`. The while-condition is the leading guard
-  ## `(ite (not cond) (jmp loopExit) .)` *inside* the body, so it needs no
-  ## special handling here. Iteration-gained facts/inits flow only to the
-  ## break sites (captured) and to the back-edge (discarded); the loop never
-  ## falls through. The `(lab loopExit)` that follows installs the merged
-  ## break state via `bindLoopExit`.
+proc analyseLoopBody(c: var FirContext; n: var Cursor) =
+  ## `n` points at a loop construct's body. Shared by `(loop …)` and `(for …)`:
+  ## both bodies end in `(continue .)`, exit forward via `(jmp loopExit)`, and
+  ## never fall through.
   var call = freshCall()
-  n.into: # loop tag
+  block:
     # Before the checkpoint, not after: the rollback below restores the state
     # the checkpoint captured, so an invalidation made after it would be undone
     # and the stale fact would be back in force *after* the loop — which is
@@ -3998,12 +3994,61 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
     # cannot outlive the iteration), so drop them — otherwise a later mutation of
     # the borrowed container after the loop is wrongly seen as still-borrowed.
     c.activeBorrows.setLen(savedBorrows)
-  # The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it) is
-  # *this* loop's exit. Record it so `traverseLabel` uses `bindLoopExit`.
+
+proc recordLoopExitLabel(c: var FirContext; n: Cursor) =
+  ## The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it, and
+  ## unconditionally for a `for`) is *this* loop's exit. Record it so
+  ## `traverseLabel` uses `bindLoopExit`.
   if n.isTagLit and n.finalIrKind == LabV:
     var peek = n
     inc peek
     c.loopExitLabels.incl peek.symId
+
+proc traverseLoop(c: var FirContext; n: var Cursor) =
+  ## `(loop body)` — infinite; the body ends in `(continue .)` and exits
+  ## forward via `(jmp loopExit)`. The while-condition is the leading guard
+  ## `(ite (not cond) (jmp loopExit) .)` *inside* the body, so it needs no
+  ## special handling here. Iteration-gained facts/inits flow only to the
+  ## break sites (captured) and to the back-edge (discarded); the loop never
+  ## falls through. The `(lab loopExit)` that follows installs the merged
+  ## break state via `bindLoopExit`.
+  n.into: # loop tag
+    analyseLoopBody c, n
+
+  recordLoopExitLabel c, n
+
+proc declareForVars(c: var FirContext; vars: Cursor) =
+  ## A `for`'s loop variables are bound by an iterator that is not inlined until
+  ## hexer's `elimForLoops`, so nothing in the Final IR ever assigns to them.
+  ## They are declared *and* initialized here: yielding is what initializes
+  ## them, and a body that runs at all has been yielded to.
+  var vars = vars
+  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
+    vars = sub(vars) # peek only, never left
+    while vars.hasMore:
+      declareForVars c, vars
+      skip vars
+  elif isLocal(vars.symKind):
+    let local = asLocal(vars)
+    c.typeCache.registerLocal(local.name.symId, vars.symKind, local.typ)
+    markInit c, local.name.symId
+
+proc traverseFor(c: var FirContext; n: var Cursor) =
+  ## `(for iterCall vars body)`. The body says nothing about how the loop
+  ## variables get their values — the iterator is not inlined yet — so what its
+  ## `.ensures` promises about them arrives as `(assume …)` at the head of the
+  ## body instead (`finalir.forRangeAssumes`).
+  ##
+  ## The iterator call is analysed like any other call: its arguments are
+  ## evaluated here, so a contract they have to satisfy is discharged here.
+  var call = freshCall()
+  n.into: # for tag
+    traverseExpr c, n, call
+    declareForVars c, n
+    skip n # the loop variables
+    analyseLoopBody c, n
+
+  recordLoopExitLabel c, n
 
 proc traverseLabel(c: var FirContext; n: var Cursor) =
   ## `(lab L)` — the multi-join. Every forward `jmp L` has already been seen.
@@ -4554,6 +4599,8 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
           traverseStmt c, n, call
     of AsgnS:
       traverseAsgn c, n, call
+    of ForS:
+      traverseFor c, n
     of CaseS:
       traverseCase c, n
     of TryS:

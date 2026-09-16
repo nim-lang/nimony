@@ -82,7 +82,7 @@ type
     OnerrS = (ord(OnerrTagId), "onerr")  ## error handling statement
     IteS = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
     ItecS = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
-    LoopS = (ord(LoopTagId), "loop")  ## `loop` components are (before-cond, cond, loop-body, after)
+    LoopS = (ord(LoopTagId), "loop")  ## infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)`
     JtrueS = (ord(JtrueTagId), "jtrue")  ## set variables v1, v2, ... to `(true)`; hint this should become a jump
     MflagS = (ord(MflagTagId), "mflag")  ## declare a new **materialized** control flow flag `D` of type `bool` initialized to `false`
     VflagS = (ord(VflagTagId), "vflag")  ## declare a new **virtual** control flow flag `D` of type `bool` initialized to `false`

@@ -10,7 +10,7 @@ type
     JmpV = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
     IteV = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
     ItecV = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
-    LoopV = (ord(LoopTagId), "loop")  ## `loop` components are (before-cond, cond, loop-body, after)
+    LoopV = (ord(LoopTagId), "loop")  ## infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)`
     VV = (ord(VTagId), "v")  ## `versioned` locations
     EtupatV = (ord(EtupatTagId), "etupat")  ## tupat expression for error handling
     UnknownV = (ord(UnknownTagId), "unknown")  ## location's contents is unknown at this point
