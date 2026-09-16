@@ -310,9 +310,9 @@ In rough dependency order:
    so an infinite loop's back-edge has no spelling on the Leng side.
 1. **Done.** `trFor` keeps the iterator call and the loop variables; the
    prover analyses `(for …)` directly.
-2. Fix the lowering's remaining lossiness — see *The lossiness punch list*
-   below. The principle: *not analysed* must stop meaning *not emitted*, and
-   its converse, *analysis-only facts do not belong in the IR*.
+2. **Done.** The lowering's lossiness — see *The lossiness punch list* below.
+   The principle it applied: *not analysed* must stop meaning *not emitted*,
+   and its converse, *analysis-only facts do not belong in the IR*.
 3. **Teach hexer the Final IR, before publishing it.** The lowering moves into
    `pipeline.transform` as its first step; hexer lowers its own input and its
    passes are converted one at a time, with the published format still Nimony
@@ -383,7 +383,7 @@ Two are fixed:
   negative one, because the C backend refuses such a proc by name and only the
   native backend compiles it.
 
-Open, most severe first:
+Also fixed, in the order they were worked:
 - **`trStmt`'s fallback** is now explicit rather than accidental. Measured with
   `-d:firFallbackProbe` (one line per statement that lands there, spelled like
   `-d:contractStats`) over the `tjson` closure, what actually reached it was
@@ -420,10 +420,29 @@ Open, most severe first:
   call with a `haddr` argument and `(kill …)` at every scope exit are emitted
   unconditionally; hexer will have to consume or tolerate them. `(assume …)`
   stays — it is a declared Final IR construct with a documented job.
-- Lower value: `(scope …)` normalised to `(stmts …)`; `block` and its source
-  name dropped; `trCase`/`trTry` silently dropping unexpected trailing
-  children; several bare `dest.addParRi()` calls losing close-paren line info
-  where `takeInto`'s contract says to preserve it.
+- **`trCase` and `trTry` silently dropped unexpected trailing children** — the
+  same resync class as `trIf`, and worse in one respect: the `addParRi` has
+  already closed the node, so there is nowhere to put such a child even if it
+  were noticed. Both `bug` on it now.
+- **Close-paren line info** is preserved at the six sites that close a node
+  taken from the input — `trLocal`, both `trAsgn` paths, `trRet`, `trRaise`
+  and `trFor` — where a bare `dest.addParRi()` used to drop it, against
+  `takeInto`'s stated contract. Each captures `n.endInfo` at a point where the
+  cursor provably sits at the node's `)`; that was checked with temporary
+  assertions over 436 modules (zero failures) and the assertions then removed,
+  since an unreachable state does not need a permanent guard. The remaining
+  bare `addParRi()` calls close nodes this pass *synthesizes* — `kill`, `lab`,
+  `ite`, `loop`, the `for` body's `stmts` — which have no input close to keep.
+
+Closed as intentional, not deferred:
+
+- **`(scope …)` normalised to `(stmts …)`** and **`block` and its source name
+  dropped**. Both are by design — a `block` has no Final IR construct of its
+  own (`body` plus `(lab blockExit)` is the lowering), and scope-ness is
+  re-expressed as the emitted `(kill …)` set. Neither is textually
+  reconstructible, so if `was` is to render a `block` back for diagnostics it
+  will have to carry the source name; that is a `was` requirement, recorded
+  there rather than a lossiness bug here.
 
 ## Measurement
 

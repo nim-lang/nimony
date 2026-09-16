@@ -244,8 +244,9 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.callExprs[symId] = whole
 
   let callInfo = trBoundExpr(c, dest, n)
+  let closeInfo = n.endInfo
   n = localStart; skip n
-  dest.addParRi()
+  dest.addParRi(closeInfo)
   callIsOver(c, dest, callInfo)
 
 proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -260,8 +261,9 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse symId, info
     # `dest = f(args)`: the call binds directly to its destination, no temp.
     let callInfo = trBoundExpr(c, dest, n)
+    let closeInfo = n.endInfo
     n = asgnStart; skip n
-    dest.addParRi()
+    dest.addParRi(closeInfo)
     callIsOver(c, dest, callInfo)
   else:
     # Same as the symbol case, only the destination is a path rather than a
@@ -271,13 +273,14 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # `xelim` hoists such a call into a temp before this pass sees it. It is
     # `final_ir.md`'s remaining work item 2 to change when it does that, and
     # the asymmetry also cost this path its `callIsOver` markers.
-    var rhs = n
-    skip rhs
+    var value = n
+    skip value          # `value` is the RHS; `n` still at the destination
     trExpr c, dest, n   # the destination location
-    var value = rhs
     let callInfo = trBoundExpr(c, dest, value) # then the value
+    skip n              # past the RHS, so `n` sits at the `)`
+    let closeInfo = n.endInfo
     n = asgnStart; skip n
-    dest.addParRi()
+    dest.addParRi(closeInfo)
     callIsOver(c, dest, callInfo)
 
 proc condIsComplex(n: Cursor): bool =
@@ -456,6 +459,12 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == ElseU:
     takeInto dest, n:        # `else`
       trScopedBody c, dest, n
+  if n.hasMore:
+    # `n = caseStart; skip n` below consumes anything left, so a child that is
+    # neither `of` nor `else` would be dropped without a word — and the
+    # `addParRi` has already closed the node, so there would be nowhere to put
+    # it even if it were noticed.
+    bug "`case` with a branch that is neither `of` nor `else` reached the Final IR"
   dest.addParRi(n.endInfo)   # close `case`
   n = caseStart; skip n
 
@@ -505,7 +514,7 @@ proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc n
   else:
     trExpr c, dest, n
-  dest.addParRi()
+  dest.addParRi(n.endInfo)
   n = retStart; skip n
 
 proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -522,7 +531,7 @@ proc trRaise(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc n
   else:
     trExpr c, dest, n
-  dest.addParRi()
+  dest.addParRi(n.endInfo)
   n = raiseStart; skip n
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -642,7 +651,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.copyIntoKind ContinueV, info: # the sole back-edge
     dest.addDotToken()
   dest.addParRi() # close `stmts`
-  dest.addParRi() # close `for`
+  dest.addParRi(n.endInfo) # close `for`
   c.current.exits.shrink(c.current.exits.len - 1)
   # The exit label is emitted even when nothing jumps to it. An *inline*
   # iterator is not inlined until hexer's `elimForLoops`, so at this point no
@@ -678,6 +687,9 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if n.substructureKind == FinU:
     takeInto dest, n: # `fin`
       trScopedBody c, dest, n
+  if n.hasMore:
+    # As in `trCase`: the resync below would swallow it silently.
+    bug "`try` with a clause that is neither `except` nor `fin` reached the Final IR"
   dest.addParRi(n.endInfo) # close `try`
   n = tryStart; skip n
 
