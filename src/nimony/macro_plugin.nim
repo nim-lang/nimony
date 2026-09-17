@@ -355,20 +355,20 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # closure the plugin needs (incl. the NimNode/NIF-reader machinery). The
   # native link of this seed may fail (harmless — we only need the `.s.nif`/
   # `.c.nif`), and `nimony c` is incremental so repeat calls are cheap.
-  let seedFile = pluginCache / "macro_seed.nim"
+  let setupFile = pluginCache / "macro_setup.nim"
   try:
-    writeFile(seedFile, "import std/[syncio, macros]\n")
+    writeFile(setupFile, "import std/[syncio, macros]\n")
   except:
-    echo "Macro plugin: failed to write ", seedFile
+    echo "Macro plugin: failed to write ", setupFile
     return ""
-  let seedCmd = quoteShell(nimonyExe) & hostifyPluginArgs(commandLineArgs) &
+  let setupCmd = quoteShell(nimonyExe) & hostifyPluginArgs(commandLineArgs) &
                 " --path:" & quoteShell(srcLibPath) &
                 " --nimcache:" & quoteShell(pluginCache) &
-                " c " & quoteShell(seedFile)
+                " c " & quoteShell(setupFile)
   try:
-    discard execCmdEx(seedCmd)   # ignore exit: a failed native link still leaves the .s.nif/.c.nif
+    discard execCmdEx(setupCmd)   # ignore exit: a failed native link still leaves the .s.nif/.c.nif
   except:
-    echo "Macro plugin: failed to seed host stdlib: ", seedCmd
+    echo "Macro plugin: failed to setup host stdlib: ", setupCmd
     return ""
 
   # Forward `--nimcache:` so the sub-compile reads the `.p.deps.nif` from the
