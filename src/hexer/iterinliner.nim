@@ -7,14 +7,6 @@ import ".." / finalir / [finalir, finalir_model]
 import duplifier
 
 
-proc hasContinueStmt(c: Cursor): bool =
-  var c = c
-  result = false
-  linearScan c:
-    if c.stmtKind == ContinueS:
-      result = true
-      break
-
 proc createDecl(e: var EContext; dest: var TokenBuf; destSym: SymId;
         typ: var Cursor; value: var Cursor;
         info: NifLineInfo; kind: StmtKind; needsAddr: bool) =
@@ -175,231 +167,8 @@ proc createYieldMapping(e: var EContext; dest: var TokenBuf; c: var Cursor, vars
         if isKvU:
           typ = kvStart; skip typ
 
-proc transformBreakStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  takeInto dest, c:
-    if c.isDotToken and e.breaks.len > 0 and e.breaks[^1] != SymId(0):
-      let lab = e.breaks[^1]
-      dest.addSymUse(lab, c.info)
-    else:
-      assert c.isDotToken or c.isSymbol
-      dest.addSubtree c
-    inc c
-
-proc transformContinueStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  if e.continues.len > 0 and e.continues[^1] != SymId(0):
-    dest.addParLe("break", c.info)
-    c.into:
-      let lab = e.continues[^1]
-      dest.addSymUse(lab, c.info)
-      inc c # dotToken
-      dest.addParRi(c.endInfo)
-  else:
-    takeInto dest, c:
-      dest.addDotToken()
-      inc c # dotToken
-
-proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
 proc transformForFir(e: var EContext; dest: var TokenBuf; c: var Cursor)
-
-proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymId]) =
-  ## Copy one subtree from `c` into `dest`, applying `mapping` to every
-  ## Symbol reference. Symbol DEFINITIONS (SymbolDef) and structure are
-  ## preserved verbatim — no fresh names, no recursive transformation.
-  ## Used by `inlineLoopBody` to buffer a for-stmt before handing it to
-  ## `transformForStmt`, so that nested for-stmts inside are inlined fresh
-  ## (with distinct labels) on every yield expansion of the outer iterator.
-  ##
-  ## Field-identity positions — `(dot obj FIELD …)` selectors and `(kv
-  ## FIELD value)` keys — are copied verbatim, NOT substituted: sem's
-  ## `name.N` numbering is per module, so a foreign type's field sym can
-  ## be the same interned string as a local this mapping renames (e.g.
-  ## field `writes.0` of another module's object vs. the first local
-  ## `writes` in this one).
-  case c.kind
-  of TagLit:
-    if c.exprKind in {DotX, DdotX}:
-      dest.addParLe(c.cursorTagId, c.info)
-      c.into:
-        copyWithMapping(dest, c, mapping) # object expression
-        while c.hasMore:
-          dest.takeTree c # field selector + optional depth/access token
-        dest.addParRi(c.endInfo)
-    elif c.substructureKind == KvU:
-      dest.addParLe(c.cursorTagId, c.info)
-      c.into:
-        dest.takeTree c # field name
-        while c.hasMore:
-          copyWithMapping(dest, c, mapping)
-        dest.addParRi(c.endInfo)
-    else:
-      dest.addParLe(c.cursorTagId, c.info)
-      c.into:
-        while c.hasMore:
-          copyWithMapping(dest, c, mapping)
-        dest.addParRi(c.endInfo)
-  of Symbol:
-    let s = c.symId
-    if mapping.hasKey(s):
-      dest.addSymUse(mapping.getOrQuit(s), c.info)
-    else:
-      dest.addSubtree c
-    inc c
-  else:
-    dest.addSubtree c
-    inc c
-
-proc inlineLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor; mapping: var Table[SymId, SymId]; fromForloop = false) =
-  case c.kind
-  of Symbol:
-    let s = c.symId
-    if mapping.hasKey(s):
-      dest.addSymUse(mapping.getOrQuit(s), c.info)
-    else:
-      dest.addSubtree c
-    inc c
-  of TagLit:
-    case c.stmtKind
-    of BreakS:
-      transformBreakStmt(e, dest, c)
-    of ContinueS:
-      transformContinueStmt(e, dest, c)
-    of ForS:
-      # Buffer the for-stmt with the outer iterator's symbol substitutions
-      # applied, but DO NOT pre-inline nested for-stmts and DO NOT generate
-      # fresh local names: those decisions happen per-yield-expansion when
-      # `transformForStmt` below drives `inlineIterator`. Pre-inlining here
-      # would bake nested labels and locals into the buffer, and a multi-
-      # yield outer iterator would then emit the same labels/locals from
-      # each yield expansion (duplicate `forStmtLabel.N` in C output).
-      var forStmtBuf = createTokenBuf()
-      swap dest, forStmtBuf
-      copyWithMapping(dest, c, mapping)
-      swap dest, forStmtBuf
-      var forCursor = beginRead(forStmtBuf)
-      transformForStmt(e, dest, forCursor)
-    of WhileS:
-      takeInto dest, c:
-        inlineLoopBody(e, dest, c, mapping)
-        e.breaks.add SymId(0)
-        e.continues.add SymId(0)
-        inlineLoopBody(e, dest, c, mapping)
-      discard e.breaks.pop()
-      discard e.continues.pop()
-    of BlockS:
-      takeInto dest, c:
-        if c.isSymbolDef:
-          e.breaks.add c.symId
-        else:
-          e.breaks.add SymId(0)
-        dest.takeTree(c)
-        inlineLoopBody(e, dest, c, mapping)
-      discard e.breaks.pop
-    of StmtsS:
-      if fromForloop:
-        c.into:
-          while c.hasMore:
-            inlineLoopBody(e, dest, c, mapping)
-      else:
-        dest.addParLe(c.cursorTagId, c.info)
-        c.into:
-          while c.hasMore:
-            inlineLoopBody(e, dest, c, mapping)
-        dest.addParRi()
-    of VarS, LetS, CursorS, PatternvarS, ResultS:
-      takeInto dest, c:
-        let oldName = c.symId
-        let freshLocal = pool.symId("`ii." & $e.getTmpId)
-        mapping[oldName] = freshLocal
-        dest.addSymDef(freshLocal, c.info) # name
-
-        inc c
-        # export marker:
-        dest.takeTree c
-        # pragmas:
-        dest.takeTree c
-        # type:
-        dest.takeTree c
-        # value:
-        inlineLoopBody(e, dest, c, mapping)
-    of CallS, CmdS, GvarS, TvarS, ConstS, GletS, TletS, ProcS,
-        FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS,
-        TypeS, EmitS, AsgnS, ScopeS, IfS, WhenS, CaseS, RetS,
-        YldS, PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS,
-        ImportasS, FromimportS, ImportexceptS, ExportS,
-        ExportexceptS, CommentS, DiscardS, TryS, RaiseS,
-        UnpackdeclS, AssumeS, AssertS, CallstrlitS, InfixS,
-        PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, CoroforS, LabS, JmpS, NoStmt:
-      if c.substructureKind == KvU:
-        # In KvU: first element is field name, don't substitute it
-        takeInto dest, c:
-          dest.takeTree c
-          while c.hasMore:
-            inlineLoopBody(e, dest, c, mapping)
-      elif c.exprKind in {DotX, DdotX}:
-        takeInto dest, c:
-          inlineLoopBody(e, dest, c, mapping)
-          while c.hasMore:
-            dest.takeTree c
-      else:
-        takeInto dest, c:
-          while c.hasMore:
-            inlineLoopBody(e, dest, c, mapping)
-  else:
-    takeTree(dest, c)
-
-proc inlineIteratorBody(e: var EContext; dest: var TokenBuf;
-      c: var Cursor; forStmt: ForStmt; yieldType: Cursor) =
-  case c.kind
-  of TagLit:
-    case c.stmtKind
-    of StmtsS:
-      dest.addParLe(c.cursorTagId, c.info)
-      c.into:
-        while c.hasMore:
-          inlineIteratorBody(e, dest, c, forStmt, yieldType)
-      dest.addParRi()
-    of YldS:
-      dest.addParLe($BlockS, c.info)
-      dest.addDotToken()
-      dest.addParLe("stmts", c.info)
-
-      let loopBodyHasContinueStmt = hasContinueStmt(forStmt.body)
-      if loopBodyHasContinueStmt:
-        let lab = pool.symId("continueLabel." & $getTmpId(e))
-        dest.addParLe($BlockS, c.info)
-        dest.addSymDef(lab, c.info)
-        dest.addParLe("stmts", c.info)
-        e.continues.add lab
-
-      c.into: # skips yield
-        var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
-        var body = forStmt.body
-        inlineLoopBody(e, dest, body, mapping, true)
-
-        if loopBodyHasContinueStmt:
-          discard e.continues.pop()
-          dest.addParRi() # stmts
-          dest.addParRi()
-
-        dest.addParRi()
-        dest.addParRi()
-    of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS,
-        TletS, LetS, CursorS, PatternvarS, ProcS, FuncS, IteratorS,
-        ConverterS, MethodS, MacroS, TemplateS, TypeS, BlockS,
-        EmitS, AsgnS, ScopeS, IfS, WhenS, BreakS, ContinueS, ForS,
-        WhileS, CoroforS, CaseS, RetS, PragmasS, PragmaxS, InclS,
-        ExclS, IncludeS, ImportS, ImportasS, FromimportS,
-        ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,
-        TryS, RaiseS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
-        InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-        AsmS, DeferS, LabS, JmpS, NoStmt:
-      takeInto dest, c:
-        while c.hasMore:
-          inlineIteratorBody(e, dest, c, forStmt, yieldType)
-  else:
-    takeTree(dest, c)
 
 proc replaceSymbol(e: var EContext; dest: var TokenBuf; c: var Cursor; relations: var Table[SymId, SymId]) =
   case c.kind
@@ -553,146 +322,14 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
   dest.addParRi(c.endInfo) # close iter decl
   c = iterStart; skip c
 
-proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
-  ## Lower `for x in closureIter(args): body` into a `(corofor ...)` tag.
-  ## cps.nim later expands the corofor into the real trampoline; this proc
-  ## emits a pure-structural shape with no CPS-runtime symbols.
-  ##
-  ## Output (placed inside transformForStmt's existing outer block):
-  ##   (var :forLoopVar T .)                                     <-- sibling
-  ##   (corofor
-  ##     <iter-call verbatim>
-  ##     (block :coroInner.N (stmts <user-body>)))
-  ##
-  ## The for-loop var lives at the outer block's scope, NOT inside corofor's
-  ## body. This is essential for correct hook semantics: with the iter's
-  ## yield-write injecting `=destroy old; =copy new` on caller's slot,
-  ## per-iteration destroyer-injected `=destroy(forLoopVar)` would
-  ## double-destroy. By hoisting the decl, destroyer only injects `=destroy`
-  ## once at end-of-outer-block, after the trampoline.
-  ##
-  ## The inner block exists so `continue` can rewrite to `break coroInner`,
-  ## which cps.nim's expansion preserves so the trampoline can run
-  ## `it = advance(it)` after the body block ends.
-  var iterCur = forStmt.iter
-  if iterCur.exprKind == HderefX:
-    # Iter returns var/lent — peel the deref; the call expression itself is
-    # what we lower. cps.nim's frame layout already wraps the synthesized
-    # `result` field in `ptr`, so the slot type for a `var T`-returning iter
-    # is `ptr (mut T)` and yield-writes lower to address-stores via existing
-    # sem/desugar machinery.
-    inc iterCur
-  if iterCur.exprKind notin CallKinds:
-    error e, "closure iterator must be invoked directly in a for-loop, got: ",
-      forStmt.iter
-  let info = iterCur.info
-  let forVars = getForVars(e, forStmt.vars)
-
-  let innerLab = pool.symId("`coroInner." & $getTmpId(e))
-  e.continues.add innerLab
-
-  # `forLoopVarSym` is the symbol whose `addr` is passed to the iter. For the
-  # single-var case it's the user's for-var itself. For multi-var (tuple
-  # unpacking) it's a synthesised hidden tuple-typed local; per-iteration the
-  # body opens with `(let userVar Ti (tupat hidden i))` bindings so the
-  # user-body sees its symbols pointing at fresh copies of the components.
-  let forLoopVarSym: SymId
-  if forVars.len == 1:
-    # Hoist the for-loop var declaration to the outer block scope (sibling
-    # of corofor) — see proc docstring.
-    dest.copyTree forVars[0]
-    forLoopVarSym = asLocal(forVars[0]).name.symId
-  else:
-    # Multi-var: allocate a hidden tuple var whose type is the iter's
-    # yield-type. cps.nim's frame wraps it in `ptr`, so this is what the
-    # iter writes through.
-    var symProbe = iterCur
-    inc symProbe # past Call tag
-    if not symProbe.isSymbol:
-      error e, "closure iterator call must target a symbol, got: ", iterCur
-    let iterSym = symProbe.symId
-    let res = tryLoadSym(iterSym)
-    if res.status != LacksNothing:
-      error e, "could not load closure-iter sym: " & pool.symString(iterSym)
-    let routine = asRoutine(res.decl, SkipInclBody)
-    var retType = routine.retType
-    if retType.typeKind in {MutT, LentT}:
-      inc retType
-    forLoopVarSym = pool.symId("`coroTup." & $getTmpId(e))
-    dest.addParLe LetS, info
-    dest.addSymDef forLoopVarSym, info
-    dest.addDotToken() # exported
-    dest.addDotToken() # pragmas
-    dest.copyTree retType
-    dest.addDotToken() # no initializer — iter writes through slot
-    dest.addParRi() # close let
-
-  dest.addParLe("corofor", info)
-  # Emit the iter call verbatim, but append `(haddr forLoopVarSym)` as a
-  # trailing arg so cps.nim can recover the result-slot pointer without
-  # having to peel the var-decl. Intermediate passes (xelim/destroyer/
-  # duplifier) treat the call as opaque, so the extra "arg" rides along
-  # without disturbing them.
-  var callCur = forStmt.iter
-  if callCur.exprKind == HderefX:
-    inc callCur # peel hderef for var/lent-returning iters
-  dest.addParLe(callCur.cursorTagId, callCur.info) # (call tag
-  callCur = sub(callCur) # drained below; the close is synthesized
-  dest.takeTree callCur # iter sym
-  while callCur.hasMore:
-    dest.takeTree callCur
-  dest.copyIntoKind HaddrX, info:
-    dest.addSymUse forLoopVarSym, info
-  dest.addParRi() # close iter call
-
-  # body: (block :coroInner.N (stmts [unpack-binds] <user-body>))
-  dest.addParLe($BlockS, info)
-  dest.addSymDef(innerLab, info)
-  dest.addParLe("stmts", info)
-
-  if forVars.len > 1:
-    # For each user for-var: (let :userSym T (tupat hidden i)). Using a fresh
-    # let-binding per iteration mirrors what sem emitted (the user-vars are
-    # lets) and gives the user-body the components by-value-from-the-tuple.
-    for i, fv in forVars.pairs:
-      let local = asLocal(fv)
-      let userSym = local.name.symId
-      var typ = local.typ
-      dest.addParLe fv.stmtKind, fv.info
-      dest.addSymDef userSym, fv.info
-      dest.addDotToken() # exported
-      dest.addDotToken() # pragmas
-      dest.copyTree typ
-      dest.copyIntoKind TupatX, info:
-        dest.addSymUse forLoopVarSym, info
-        dest.addIntLit i, info
-      dest.addParRi() # close decl
-
-  var bodyCur = forStmt.body
-  if bodyCur.stmtKind == StmtsS:
-    bodyCur = sub(bodyCur) # peek only, never left
-    while bodyCur.hasMore:
-      transformStmt(e, dest, bodyCur)
-  else:
-    transformStmt(e, dest, bodyCur)
-
-  dest.addParRi() # close inner block body stmts
-  dest.addParRi() # close inner block
-
-  dest.addParRi() # close corofor
-
-  discard e.continues.pop()
-
 # ----------------------------------------------------------------------------
-# Final IR input (`hexerSpeaksFir`)
-#
-# The pipeline lowered the module before this pass, so a `for` arrives as
+# The pipeline lowers the module before this pass, so a `for` arrives as
 #
 #   (for <iter call> <vars> (scope <body> (continue .)))  (lab :exit)
 #
-# with every `break` already a `(jmp exit)`. What is left to do per `yield` is
-# a copy of the body in which the trailing back-edge is dropped and any other
-# `continue` of this loop jumps to the end of the copy. The iterator's own body
+# with every `break` already a `(jmp exit)` and every source-level `continue` a
+# `jmp` to a label in front of the back-edge. What is left to do per `yield` is
+# a copy of the body without the back-edge. The iterator's own body
 # comes from `tryLoadSym`, i.e. from a module nif that is not lowered yet, so
 # it is lowered here. Every copy declares its own locals and labels: a
 # lowering run and a body copy both reuse names, and one routine must not.
@@ -755,68 +392,46 @@ proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymI
     inc c
 
 proc inlineForBody(e: var EContext; dest: var TokenBuf; c: var Cursor;
-                   mapping: Table[SymId, SymId]; depth: int;
-                   contLab: SymId; contUsed: var bool) =
-  ## One statement of a `for` body. `depth` counts the loops opened inside the
-  ## body: a `continue` at depth 0 is this `for`'s own.
-  case c.kind
-  of TagLit:
-    if c.stmtKind == ForS:
-      # inlined afresh for every copy of the enclosing body
-      var forBuf = createTokenBuf()
-      copyFreshened(forBuf, c, mapping)
-      var f = beginRead(forBuf)
-      transformForFir(e, dest, f)
-    elif c.stmtKind == ContinueS and depth == 0:
-      copyIntoKind dest, JmpS, c.info:
-        dest.addSymUse contLab, c.info
-      contUsed = true
-      skip c, ContinueS
-    elif c.exprKind in {DotX, DdotX} or c.substructureKind == KvU or
-        c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
-                       TemplateS, TypeS, PragmasS}:
-      copyFreshened(dest, c, mapping)
-    else:
-      let d = if c.finalIrKind == LoopV: depth + 1 else: depth
-      dest.addParLe(c.cursorTagId, c.info)
-      c.into:
-        while c.hasMore:
-          inlineForBody(e, dest, c, mapping, d, contLab, contUsed)
-        dest.addParRi(c.endInfo)
-  else:
+                   mapping: Table[SymId, SymId]) =
+  ## One statement of a `for` body: `copyFreshened`, with every nested `for`
+  ## inlined afresh for each copy of the enclosing body.
+  if c.stmtKind == ForS:
+    var forBuf = createTokenBuf()
+    copyFreshened(forBuf, c, mapping)
+    var f = beginRead(forBuf)
+    transformForFir(e, dest, f)
+  elif c.kind != TagLit or c.exprKind in {DotX, DdotX} or
+      c.substructureKind == KvU or
+      c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+                     TemplateS, TypeS, PragmasS}:
     copyFreshened(dest, c, mapping)
+  else:
+    dest.addParLe(c.cursorTagId, c.info)
+    c.into:
+      while c.hasMore:
+        inlineForBody(e, dest, c, mapping)
+      dest.addParRi(c.endInfo)
 
 proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
                  mapping: Table[SymId, SymId]; prefix: TokenBuf) =
-  ## `(scope <prefix> <body without its back-edge>)`. A `continue` of this
-  ## loop jumps to a label after a scope of the body's own, as in
-  ## `finalir.emitLoopBody`: never past a declaration in the same scope.
+  ## `(scope <prefix> <body without its back-edge>)`. The back-edge is the
+  ## body's last statement and its only `continue`: the lowering spells a
+  ## source-level one as a `jmp` to a label in front of it.
   var b = body
   let info = b.info
-  let contLab = pool.symId("`ii." & $e.getTmpId)
-  var contUsed = false
-  var stmts = createTokenBuf(64)
+  dest.addParLe ScopeS, info
+  dest.add prefix
   if b.stmtKind in {StmtsS, ScopeS}:
     b = sub(b)   # peek only, never left
     while b.hasMore:
       var probe = b
       skip probe
       if b.stmtKind == ContinueS and not probe.hasMore:
-        skip b, ContinueS # the trailing back-edge: falling off the copy does it
+        skip b, ContinueS # falling off the copy does it
       else:
-        inlineForBody(e, stmts, b, mapping, 0, contLab, contUsed)
+        inlineForBody(e, dest, b, mapping)
   else:
-    inlineForBody(e, stmts, b, mapping, 0, contLab, contUsed)
-  dest.addParLe ScopeS, info
-  dest.add prefix
-  if contUsed:
-    dest.addParLe ScopeS, info
-    dest.add stmts
-    dest.addParRi()
-    copyIntoKind dest, LabS, info:
-      dest.addSymDef contLab, info
-  else:
-    dest.add stmts
+    inlineForBody(e, dest, b, mapping)
   dest.addParRi()
 
 proc inlineIteratorBodyFir(e: var EContext; dest: var TokenBuf;
@@ -990,182 +605,6 @@ proc transformForFir(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   dest.addParRi()
   skip c
 
-proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
-  var iter = forStmt.iter
-  if iter.exprKind == HderefX:
-    # iterators return var/lent
-    inc iter
-  assert iter.exprKind in CallKinds
-  inc iter
-  # The callee is an iterator DECL only when it is a symbol that loads as an
-  # `(iterator ...)`. A first-class iter value is a symbol too — and a
-  # module-level one loads just fine, as its `(let ...)`/`(var ...)` decl — so
-  # the symbol lookup alone does not tell the two apart; reading that decl as a
-  # routine walks off its end. Anything else (an iter value, a call returning
-  # one, a field access) goes through the coroutine trampoline below.
-  var iterDecl = default(Cursor)
-  if iter.kind == Symbol:
-    let res = tryLoadSym(iter.symId)
-    if res.status == LacksNothing and res.decl.stmtKind == IteratorS:
-      iterDecl = res.decl
-  if not cursorIsNil(iterDecl):
-    let routine = asRoutine(iterDecl, SkipInclBody)
-    if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
-      # `.closure` iters are the factory model (fresh frame per call); `.passive`
-      # iters share state via the iter-value's env slot (cps.trCoroFor stashes
-      # it.env into g.env at init so the same g sees the same frame across
-      # iterations of one for-loop). Both go through the coroutine trampoline;
-      # iter-inlining doesn't apply to either.
-      emitCoroFor(e, dest, forStmt)
-      return
-    var params = routine.params
-    params = sub(params) # (params; peek only, never left
-    inc iter # name
-    var relationsMap = initTable[SymId, SymId]()
-    while params.hasMore:
-      let param = asLocal(params)
-      var typ = param.typ
-      let name = param.name
-      let symId = name.symId
-
-      let newName = pool.symId("`lf." & $e.instId)
-      inc e.instId
-      createDecl(e, dest, newName, typ, iter, name.info, if constructsValue(iter): VarS else: CursorS, needsAddr=false)
-      relationsMap[symId] = newName
-
-      skip params
-
-    var preBodyBuf = createTokenBuf()
-    var bodyBuf = createTokenBuf()
-    var preBody = routine.body
-    swap(dest, preBodyBuf)
-    replaceSymbol(e, dest, preBody, relationsMap)
-    swap(dest, preBodyBuf)
-
-    swap(dest, bodyBuf)
-    var body = cursorAt(preBodyBuf, 0)
-    transformStmt(e, dest, body)
-    swap(dest, bodyBuf)
-
-    var transformedBody = beginRead(bodyBuf)
-    inlineIteratorBody(e, dest, transformedBody, forStmt, routine.retType)
-  else:
-    # Not an iterator decl — sem accepted the call because the target is a
-    # first-class `itertype` value (`let g: iterator(...)`), local or global.
-    # Route through emitCoroFor; cps's `trCoroFor` then expands the trampoline
-    # using it as the already-typed function pointer (its typeCache, primed by
-    # earlier passes, distinguishes iter-decl vs iter-value targets).
-    emitCoroFor(e, dest, forStmt)
-
-proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  #[ Transforming a `for` statement is quite involved. We have:
-
-  - The iterator call.
-  - The iterator body.
-  - The for loop variables.
-  - The for loop body.
-
-  We traverse the iterator's body. For every `yield` we copy/inline the for loop body.
-  The body can contain `break`/`continue`, these must refer to an outer `block` that we
-  generate. This is required because the iterator might not even contain a loop or a nested
-  loop structure and yet a `break` means to leave the iterator's body, not what is inside.
-
-  The for loop variable `i` gets replaced by the `i-th` yield subexpression. Local variables
-  of the iterator body need to be duplicated. Params of iter are bound to the args of `itercall`.
-
-  Both iter params and for loop variables can be accessed multiple times and thus need
-  protection against multi-evaluation.
-
-  Local vars of iter can be bound directly to for loop variables and that is preferable
-  for debugging::
-
-    yield x  --> establish connection to loop variable `i`
-
-  An example::
-
-    iterator countup(a, b: int): int =
-      var i = 0
-      while i <= b:
-        yield i     # establish as the for loop variable
-        inc i
-
-    for x in countup(1, sideEffect()):
-      loopBodyStart()
-      use x
-      if condA:
-        break
-      elif condB:
-        continue
-      use x
-
-
-  Is translated into::
-
-    block forStmtLabel:
-      let a = 1
-      let b = sideEffect()
-      var x = 0
-      while x <= b:
-        block inner:
-          loopBodyStart()
-          use x
-          if condA:
-            break forStmtLabel
-          elif condB:
-            break inner
-          use x
-          inc x
-  ]#
-  let forStmt = asForStmt(c)
-
-  let lab = pool.symId("forStmtLabel." & $getTmpId(e))
-  dest.addParLe($BlockS, c.info)
-  dest.addSymDef(lab, c.info)
-  dest.addParLe("stmts", c.info)
-
-  e.breaks.add lab
-
-  inlineIterator(e, dest, forStmt)
-
-  discard e.breaks.pop()
-
-  dest.addParRi() # stmts
-  dest.addParRi() # block
-
-  skip c
-
-proc transformLoopBody(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  let loopBodyHasContinueStmt = hasContinueStmt(c)
-  if loopBodyHasContinueStmt:
-    let lab = pool.symId("continueLabel." & $getTmpId(e))
-    dest.addParLe($BlockS, c.info)
-    dest.addSymDef(lab, c.info)
-    dest.addParLe("stmts", c.info)
-    e.continues.add lab
-
-  transformStmt(e, dest, c)
-
-  if loopBodyHasContinueStmt:
-    discard e.continues.pop()
-    dest.addParRi() # stmts
-    dest.addParRi() # block
-
-proc transformWhileStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
-  let lab = pool.symId("whileStmtLabel." & $getTmpId(e))
-  dest.addParLe($BlockS, c.info)
-  dest.addSymDef(lab, c.info)
-  dest.addParLe("stmts", c.info)
-
-  e.breaks.add lab
-  takeInto dest, c:
-    transformStmt(e, dest, c) # condition
-    transformLoopBody(e, dest, c)
-
-  discard e.breaks.pop()
-
-  dest.addParRi() # stmts
-  dest.addParRi() # block
-
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
   case c.kind
   of DotToken:
@@ -1178,10 +617,7 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         while c.hasMore:
           transformStmt(e, dest, c)
     of ForS:
-      if hexerSpeaksFir():
-        transformForFir(e, dest, c)
-      else:
-        transformForStmt(e, dest, c)
+      transformForFir(e, dest, c)
     of IteratorS:
       let routine = asRoutine(c, SkipExclBody)
       let iterSym = routine.name.symId
@@ -1244,25 +680,6 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         for i in 0..<LocalValuePos:
           takeTree(dest, c)
         transformStmt(e, dest, c)
-    of WhileS:
-      transformWhileStmt(e, dest, c)
-    of BreakS:
-      transformBreakStmt(e, dest, c)
-    of ContinueS:
-      transformContinueStmt(e, dest, c)
-    of BlockS:
-      takeInto dest, c:
-        if c.isSymbolDef:
-          e.breaks.add c.symId
-          dest.takeTree(c)
-        else:
-          let info = c.info
-          skip c
-          let s = pool.symId("`lab." & $getTmpId(e))
-          dest.addSymDef(s, info)
-          e.breaks.add s
-        transformStmt(e, dest, c)
-        discard e.breaks.pop
     of TypeS:
       # Type bodies contain field decls and field-level pragmas (e.g. the
       # `.cursor` annotation on a field). Their tags overlap with
@@ -1270,7 +687,8 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
       # descending into them with `transformStmt` mis-parses them.
       # Type bodies don't need iterator transformations.
       dest.takeTree c
-    of CallS, CmdS, MacroS, EmitS, AsgnS, ScopeS, IfS,
+    of CallS, CmdS, MacroS, EmitS, AsgnS, ScopeS, IfS, WhileS, BreakS,
+        ContinueS, BlockS,
         WhenS, CaseS, RetS, YldS, PragmasS, PragmaxS, InclS,
         ExclS, IncludeS, ImportS, ImportasS, FromimportS,
         ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS,

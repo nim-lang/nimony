@@ -25,14 +25,12 @@ type
       ## module-level `const`s minted for set literals; emitted before the
       ## module body so the C backend sees them declared before their uses
     bits: int  ## target `int` width, handed to the const evaluator
-    fir: bool
-      ## The input is the Final IR (`hexerSpeaksFir`) and nothing lowers this
-      ## pass's output again: control flow is spelled `loop`/`ite`/`jmp`, and
-      ## what an expansion needs to run first goes to `pre` instead of into an
-      ## `(expr …)`.
     pre: TokenBuf
-      ## `fir`: statements for in front of the statement being translated;
-      ## `trStmt` splices them in.
+      ## Statements for in front of the statement being translated; `trStmt`
+      ## splices them in. The input is the Final IR and nothing lowers this
+      ## pass's output again, so what an expansion needs to run first goes
+      ## here instead of into an `(expr …)`, and control flow is spelled
+      ## `loop`/`ite`/`jmp`.
 
 proc freshLabel(c: var Context): SymId =
   result = pool.symId("`desugarL." & $c.counter)
@@ -40,76 +38,48 @@ proc freshLabel(c: var Context): SymId =
 
 proc openLoop(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
   ## `while <cond>: <body>`, part one; the caller emits `<cond>` next, then
-  ## `openLoopBody`, the body, and `closeLoop`. Returns the exit label (`fir`
-  ## only), for `emitBreak`.
-  if c.fir:
-    result = freshLabel(c)
-    dest.addParLe LoopV, info
-    dest.addParLe ScopeS, info
-    dest.addParLe IteV, info
-  else:
-    result = SymId(0)
-    dest.addParLe WhileS, info
+  ## `openLoopBody`, the body, and `closeLoop`. Returns the exit label, for
+  ## `emitBreak`.
+  result = freshLabel(c)
+  dest.addParLe LoopV, info
+  dest.addParLe ScopeS, info
+  dest.addParLe IteV, info
 
 proc openLoopBody(dest: var TokenBuf; info: NifLineInfo) =
   dest.addParLe StmtsS, info
 
-proc emitBreak(c: var Context; dest: var TokenBuf; exitLab: SymId; info: NifLineInfo) =
-  if c.fir:
-    copyIntoKind dest, JmpS, info:
-      dest.addSymUse exitLab, info
-  else:
-    copyIntoKind dest, BreakS, info:
-      dest.addDotToken()
+proc emitBreak(dest: var TokenBuf; exitLab: SymId; info: NifLineInfo) =
+  copyIntoKind dest, JmpS, info:
+    dest.addSymUse exitLab, info
 
-proc closeLoop(c: var Context; dest: var TokenBuf; exitLab: SymId; info: NifLineInfo) =
+proc closeLoop(dest: var TokenBuf; exitLab: SymId; info: NifLineInfo) =
   dest.addParRi() # body
-  if c.fir:
-    copyIntoKind dest, StmtsS, info:
-      emitBreak c, dest, exitLab, info
-    dest.addParRi() # ite
-    copyIntoKind dest, ContinueV, info:
-      dest.addDotToken()
-    dest.addParRi() # scope
-    dest.addParRi() # loop
-    copyIntoKind dest, LabS, info:
-      dest.addSymDef exitLab, info
-  else:
-    dest.addParRi() # while
+  copyIntoKind dest, StmtsS, info:
+    emitBreak dest, exitLab, info
+  dest.addParRi() # ite
+  copyIntoKind dest, ContinueV, info:
+    dest.addDotToken()
+  dest.addParRi() # scope
+  dest.addParRi() # loop
+  copyIntoKind dest, LabS, info:
+    dest.addSymDef exitLab, info
 
-proc openIf(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+proc openIf(dest: var TokenBuf; info: NifLineInfo) =
   ## `if <cond>: <body>`: `openIf`, `<cond>`, `openIfBody`, `<body>`, `closeIf`.
-  if c.fir:
-    dest.addParLe IteV, info
-  else:
-    dest.addParLe IfS, info
-    dest.addParLe ElifU, info
+  dest.addParLe IteV, info
 
 proc openIfBody(dest: var TokenBuf; info: NifLineInfo) =
   dest.addParLe StmtsS, info
 
-proc closeIf(c: var Context; dest: var TokenBuf) =
+proc closeIf(dest: var TokenBuf) =
   dest.addParRi() # body
-  if c.fir:
-    dest.addDotToken() # no else
-    dest.addParRi() # ite
-  else:
-    dest.addParRi() # elif
-    dest.addParRi() # if
+  dest.addDotToken() # no else
+  dest.addParRi() # ite
 
-proc emitValue(c: var Context; dest: var TokenBuf; pre, val: var TokenBuf;
-               info: NifLineInfo) =
+proc emitValue(c: var Context; dest: var TokenBuf; pre, val: var TokenBuf) =
   ## An expansion's result: the statements it needs first, and its value.
-  if pre.len == 0:
-    dest.add val
-  elif c.fir:
-    c.pre.add pre
-    dest.add val
-  else:
-    dest.addParLe(ExprX, info)
-    dest.add pre
-    dest.add val
-    dest.addParRi()
+  c.pre.add pre
+  dest.add val
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo): SymId =
   let s = "`desugar." & $c.counter
@@ -241,7 +211,7 @@ proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cu
 
 proc emitRequiresGuard(c: var Context; dest: var TokenBuf; cond: Cursor;
                       msg: string; info: NifLineInfo) =
-  openIf c, dest, info
+  openIf dest, info
   dest.copyIntoKind NotX, info:
     var n = cond
     tr(c, dest, n)
@@ -249,7 +219,7 @@ proc emitRequiresGuard(c: var Context; dest: var TokenBuf; cond: Cursor;
   dest.copyIntoKind CallS, info:
     dest.addSymUse pool.symId("panic.0." & SystemModuleSuffix), info
     dest.addStrLit msg, info
-  closeIf c, dest
+  closeIf dest
 
 proc emitRequires(c: var Context; dest: var TokenBuf; cond: Cursor;
                   where: string; info: NifLineInfo) =
@@ -404,7 +374,7 @@ proc closeRange(c: var Context; dest: var TokenBuf; i: Cursor; exitLab: SymId;
     addIntTypedOp dest, AddX, -1, info:
       dest.addSubtree i
       dest.addIntLit(1, info)
-  closeLoop c, dest, exitLab, info
+  closeLoop dest, exitLab, info
 
 proc arrayToPointer(dest: var TokenBuf; arr: Cursor; info: NifLineInfo) =
   copyIntoKind dest, AddrX, info:
@@ -602,15 +572,15 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
                 pre.addSubtree b
                 pre.addSubtree i
           pre.addIntLit(0, info)
-      openIf c, pre, info
+      openIf pre, info
       copyIntoKind pre, NotX, info:
         pre.addSubtree res
       openIfBody pre, info
-      emitBreak c, pre, exitLab, info
-      closeIf c, pre
+      emitBreak pre, exitLab, info
+      closeIf pre
       closeRange c, pre, i, exitLab, info
       if kind == LtsetX:
-        openIf c, pre, info
+        openIf pre, info
         pre.addSubtree res
         openIfBody pre, info
         copyIntoKind pre, AsgnS, info:
@@ -622,7 +592,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
               pre.arrayToPointer(b, info)
               pre.addIntLit(size, info)
             pre.addIntLit(0, info)
-        closeIf c, pre
+        closeIf pre
       val.addSubtree res
     of EqsetX:
       addIntTypedOp val, EqX, -1, info:
@@ -681,7 +651,7 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
         val.addUIntLit(0, info)
     else:
       bug("unreachable")
-  emitValue c, dest, pre, val, info
+  emitValue c, dest, pre, val
   # unconditional: a hoisted set literal parks its symbol use on this stack even
   # when nothing was lifted
   c.tempUseBufStack.shrink(oldBufStackLen)
@@ -818,7 +788,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
         addUIntTypedOp pre, AddX, -1, elemInfo:
           pre.addSubtree i
           pre.addUIntLit(1, elemInfo)
-      closeLoop c, pre, exitLab, elemInfo
+      closeLoop pre, exitLab, elemInfo
     else:
       var argsBuf = createTokenBuf(16)
       let aStart = argsBuf.len
@@ -837,7 +807,7 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = constrStart; skip n
   var val = createTokenBuf(4)
   val.addSubtree res
-  emitValue c, dest, pre, val, info
+  emitValue c, dest, pre, val
 
 proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -1067,7 +1037,7 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   var val = createTokenBuf(2)
   val.addSymUse(tmp, info)
-  emitValue c, dest, pre, val, info
+  emitValue c, dest, pre, val
 
   c.tempUseBufStack.shrink(oldBufStackLen)
 
@@ -1252,26 +1222,22 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc emitCheckedIndex(c: var Context; dest: var TokenBuf; chk: var TokenBuf;
                       isUnsigned: bool; info: NifLineInfo) =
-  ## The check call `chk` as an index. Under the Final IR it is bound to an
-  ## `{.inline.}` temp in front of the statement — the shape `xelim` used to
-  ## give it, and the one the intra-module inliner can splice. (An `and`/`or`
-  ## operand keeps its statements to itself: `trShortCircuit`.)
-  if c.fir:
-    let tmp = pool.symId("`desugar." & $c.counter)
-    inc c.counter
-    copyIntoKind c.pre, LetS, info:
-      c.pre.addSymDef tmp, info
-      c.pre.addDotToken() # no export marker
-      copyIntoKind c.pre, PragmasS, info:
-        copyIntoKind c.pre, InlineP, info: discard
-      if isUnsigned:
-        c.pre.addUIntType(-1, info)
-      else:
-        c.pre.addIntType(-1, info)
-      c.pre.add chk
-    dest.addSymUse tmp, info
-  else:
-    dest.add chk
+  ## The check call `chk` as an index, bound to an `{.inline.}` temp in front
+  ## of the statement — the shape the intra-module inliner can splice. (An
+  ## `and`/`or` operand keeps its statements to itself: `trShortCircuit`.)
+  let tmp = pool.symId("`desugar." & $c.counter)
+  inc c.counter
+  copyIntoKind c.pre, LetS, info:
+    c.pre.addSymDef tmp, info
+    c.pre.addDotToken() # no export marker
+    copyIntoKind c.pre, PragmasS, info:
+      copyIntoKind c.pre, InlineP, info: discard
+    if isUnsigned:
+      c.pre.addUIntType(-1, info)
+    else:
+      c.pre.addIntType(-1, info)
+    c.pre.add chk
+  dest.addSymUse tmp, info
 
 proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Lower the array-index bound check here rather than in `nifcgen`. Sem
@@ -1344,9 +1310,6 @@ proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ##   var t = a
   ##   if t: <b's pre>; t = b          # `or`: if not t
   ##   ... t ...
-  if not c.fir:
-    trSons(c, dest, n)
-    return
   let info = n.info
   let tag = n.cursorTagId
   let isAnd = n.exprKind == AndX
@@ -1368,7 +1331,7 @@ proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let t = declareTemp(c, stmts, c.typeCache.builtins.boolType, info)
     stmts.add a
     stmts.addParRi()
-    openIf c, stmts, info
+    openIf stmts, info
     if isAnd:
       stmts.addSymUse t, info
     else:
@@ -1379,7 +1342,7 @@ proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
     copyIntoKind stmts, AsgnS, info:
       stmts.addSymUse t, info
       stmts.add b
-    closeIf c, stmts
+    closeIf stmts
     c.pre.add stmts
     dest.addSymUse t, info
 
@@ -1547,7 +1510,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
 proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var n = pass.n  # Extract cursor locally
   var c = Context(counter: 0, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), constDecls: createTokenBuf(), bits: pass.bits,
-                  fir: hexerSpeaksFir(), pre: createTokenBuf())
+                  pre: createTokenBuf())
   c.typeCache.openScope()
   # Process the root `(stmts` manually (mirroring trSons' copyInto) but
   # keep it OPEN until `pending` has been appended: an emitted close

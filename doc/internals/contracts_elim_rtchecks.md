@@ -316,11 +316,12 @@ In rough dependency order:
 2. **Done.** The lowering's lossiness — see *The lossiness punch list* below.
    The principle it applied: *not analysed* must stop meaning *not emitted*,
    and its converse, *analysis-only facts do not belong in the IR*.
-3. **Teach hexer the Final IR, before publishing it.** *In progress.* The
-   lowering runs inside `pipeline.transform` behind `NIMONY_HEXER_FIR=1`
-   (`passes.hexerSpeaksFir`) as hexer's first step, ahead of every pass —
-   `elimForLoops` included — and `xelim1` does not run; `tests/nimony` is 828/828
-   with it on and the default build is untouched. It emits no
+3. **Done: hexer speaks the Final IR.** The lowering is the first step of
+   `pipeline.transform`, ahead of every pass — `elimForLoops` included — and
+   the old `xelim1` run is gone. It was brought up behind an environment
+   switch, pass by pass from the back of the pipeline to the front, and made
+   the only path once the whole suite, the native tier and the self-host boot
+   (stages 1 = 2 = 3) passed with it. It emits no
    `kill`/`unknown` (`toFinalIr(analysisFacts = false)`): they name locals
    `lambdalifting` may move into an environment, and nothing in hexer needs
    them. The original estimate of
@@ -342,8 +343,8 @@ In rough dependency order:
    - `duplifier`: an `{.inline.}` call temp *is* its call. `ensureMove x[0]`
      and the self-assignment check (`result = result.kids[0]`, a segfault in
      the `parsegen` plugin) both judge the call, not the temp.
-   - `cps` and `lambdalifting`'s closure-iterator transform do not lower a
-     second time (`coro_transform.Context.inputIsFinalIr`).
+   - `cps` and `lambdalifting`'s closure-iterator transform no longer lower
+     a routine themselves (`coro_transform.treIteratorBody`).
    - `lambdalifting`: `lab`/`jmp` operands are labels, not captures; a
      closure call's callee temp and its env==nil dispatch, and a capturing
      iterator value's frame setup, go in front of the statement (`hoisted`,
@@ -374,8 +375,6 @@ In rough dependency order:
      skip a declaration inside one, whose destructor the scope's end would
      then run uninitialized (`tcontinue_skips_decl`; it crashed the `parsegen`
      plugin).
-   - The lowering lowers a `corofor`'s body — the case the fallback probe was
-     for.
    - `cps`'s escape analysis pins the first argument of an
      `.establishesBorrow` call: `borrowFromLocal` in `tpassive_openarray`
      only ever passed because the scope-end `kill buf` counted as a use in a
@@ -390,11 +389,12 @@ In rough dependency order:
    the lowering turned a statement-position `stmts` into a scope; a replicated
    `finally` duplicated its labels.
 
-   Left: make it the default and drop the switch; teach `lengcgen` the Final IR so `cps` stops converting
-   it back. Measured with the lowering first: on `tjson` the C text is 11%
-   larger (temps and labels) and the executable 0.08%; `tall` compiles in
-   4.4 s against 4.2 s. `json.$` is inlined at six call sites in `tjson`
-   by the default build and not under the switch; its body is one statement
+   Left: teach `lengcgen` the Final IR so `cps` stops converting it back;
+   retire `xelim`'s `ElimExprs` goal, which nothing uses any more. Measured
+   against the old pipeline: on `tjson` the C text is 11% larger (temps and
+   labels) and the executable 0.08%; `tall` compiles in 4.4 s against 4.2 s.
+   `json.$` is inlined at six call sites in `tjson` by the old pipeline and
+   not by the new one; its body is one statement
    larger there (an aggregate's call temp moved through a snapshot), but
    removing that statement did not change the decision — the inliner spends
    its per-caller budget on different callees first. Removing it by

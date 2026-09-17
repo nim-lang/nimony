@@ -329,20 +329,12 @@ proc addPropagationCheck(c: var Context; dest: var TokenBuf; target: SymId;
   ## travelling on.
   var code = createTokenBuf(8)
   addErrorCodeOf c, code, target, isVoidCall, info
-  if hexerSpeaksFir():
-    # The pipeline's input is the Final IR, and nothing re-lowers what this
-    # pass emits: the check is an `ite`, not an `if`.
-    copyIntoKind dest, IteV, info:
-      addErrorCodeOf c, dest, target, isVoidCall, info
-      copyIntoKind dest, StmtsS, info:
-        emitUnwind c, dest, code, info
-      dest.addDotToken()
-  else:
-    copyIntoKind dest, IfS, info:
-      copyIntoKind dest, ElifU, info:
-        addErrorCodeOf c, dest, target, isVoidCall, info
-        copyIntoKind dest, StmtsS, info:
-          emitUnwind c, dest, code, info
+  # Nothing lowers what this pass emits: the check is spelled in the Final IR.
+  copyIntoKind dest, IteV, info:
+    addErrorCodeOf c, dest, target, isVoidCall, info
+    copyIntoKind dest, StmtsS, info:
+      emitUnwind c, dest, code, info
+    dest.addDotToken()
 
 # -------------------- declarations -----------------------------------------
 

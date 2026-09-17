@@ -12,9 +12,10 @@ way they are.
 
 Implementation points:
 
-- `src/njvl/finalir.nim` — the lowering to the structured control-flow form
-  (`loop`/`ite`/`lab`/`jmp`). Currently reached from `src/nimony/contracts_fir.nim`
-  (contract and nil analysis), not yet from the backend pipeline.
+- `src/finalir/finalir.nim` — the lowering to the structured control-flow form
+  (`loop`/`ite`/`lab`/`jmp`). The first step of the backend pipeline
+  (`pipeline.transform`), and the input of the contract and nil analysis
+  (`src/nimony/contracts_fir.nim`).
 - `src/hexer/xelim.nim` — the `Goal` enum; `TowardsFinalIr` is the mode
   `finalir.nim` runs `lowerExprs` in.
 - `src/hexer/pipeline.nim` — the backend pass order.

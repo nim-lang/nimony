@@ -1077,27 +1077,17 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
   ## lowering has already run, so this raise is emitted in its finished form —
   ## `addRaisedCode` pairs the code with the result slot the way the routine's
   ## rewritten signature demands.
-  template cond() =
+  copyIntoKind c.dest, IteV, info:
     copyIntoKind c.dest, EqX, info:
       copyIntoKind c.dest, PointerT, info: discard
       c.dest.addSymUse(ow.s, info)
       copyIntoKind c.dest, NilX, info: discard
-  template action() =
     copyIntoKind c.dest, StmtsS, info:
       copyIntoKind c.dest, RaiseS, info:
         addRaisedCode(c.dest, c.retType,
                       pool.symId("OutOfMemError.0." & SystemModuleSuffix),
                       c.resultSym, info)
-  if hexerSpeaksFir():
-    copyIntoKind c.dest, IteV, info:
-      cond()
-      action()
-      c.dest.addDotToken()
-  else:
-    copyIntoKind c.dest, IfS, info:
-      copyIntoKind c.dest, ElifU, info:
-        cond()
-        action()
+    c.dest.addDotToken() # no else
 
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =

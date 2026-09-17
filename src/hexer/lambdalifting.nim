@@ -123,10 +123,10 @@ type
       ## `coroTypes` and `shouldPublish` accumulate here across all
       ## iters in the module and get flushed in `elimLambdas`.
     hoisted: TokenBuf
-      ## Final IR only (`hexerSpeaksFir`): statements `genCall` needs in
-      ## front of the statement it is translating — the callee temp and the
-      ## env==nil dispatch, which used to be an `(expr …)`/`if` expression
-      ## for `xelim` to flatten. `treStmts` splices them in.
+      ## Statements `genCall` and `emitIterValue` need in front of the
+      ## statement being translated — a callee temp, the env==nil dispatch, an
+      ## iterator frame. Nothing lowers this pass's output, so none of them
+      ## can be an `(expr …)`. `treStmts` splices them in.
     pendingIterSigs: seq[(SymId, TokenBuf)]
       ## Rewritten `.closure` iter signatures, snapshotted by
       ## `transformClosureIter` while `shouldPublish` offsets still
@@ -642,9 +642,8 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
     bug "capturing the locals of an enclosing iterator is not supported: " &
         pool.symString(iterSym) & " at " & infoToStr(info)
   var frameSym = SymId(0)
-  # Under the Final IR the frame setup goes in front of the current statement
-  # (`treStmt`) instead of into an `(expr …)` that nothing would flatten.
-  let hoist = hexerSpeaksFir()
+  # The frame setup goes in front of the current statement (`treStmt`):
+  # nothing lowers this pass's output, so it cannot be an `(expr …)`.
   if captures:
     frameSym = pool.symId("`iterFrame." & $c.counter & "." & c.thisModuleSuffix)
     inc c.counter
@@ -665,13 +664,7 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
           setup.addSymUse frameSym, info
         setup.addSymUse coro_transform.coroEnvFieldForIter(iterSym), info
       setup.untypedEnv info, c.currentProc.env
-    if hoist:
-      c.hoisted.add setup
-    else:
-      dest.addParLe ExprX, info
-      dest.addParLe StmtsS, info
-      dest.add setup
-      dest.addParRi() # stmts
+    c.hoisted.add setup
   dest.copyIntoKind TupconstrX, info:
     emitIterTupleTypeFromSym(dest, iterSym, info)
     dest.addSymUse coro_transform.coroWrapperForExternIter(iterSym), info
@@ -684,8 +677,6 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
         dest.copyIntoKind NewobjX, info:
           dest.copyIntoKind RefT, info:
             dest.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
-  if captures and not hoist:
-    dest.addParRi() # expr
 
 # ---------------------------------------------------------------------
 # Hooks installed on `coroCtx`. Lambdalifting drives the coro-transform
@@ -1075,10 +1066,8 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc c.counter
     c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
 
-    var exitLab = SymId(0)
-    if hexerSpeaksFir():
-      exitLab = pool.symId("`coroExit." & $c.counter & "." & c.thisModuleSuffix)
-      inc c.counter
+    let exitLab = pool.symId("`coroExit." & $c.counter & "." & c.thisModuleSuffix)
+    inc c.counter
     coro_transform.emitWhileBegin(dest, info, itSym, myEnvSym, exitLab)
     while n.hasMore:
       tre(c, dest, n)
@@ -1661,9 +1650,6 @@ proc genCallImpl(c: var Context; dest: var TokenBuf; n: var Cursor): Cursor =
     dest.addParRi() # end of ExprX
 
 proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if not hexerSpeaksFir():
-    discard genCallImpl(c, dest, n)
-    return
   # The Final IR has no expression-level control flow, and nothing lowers
   # this pass's output again: what `genCallImpl` wraps into an `(expr …)` or
   # an `if` expression becomes statements in front of the current one.
@@ -2043,8 +2029,7 @@ proc elimLambdas*(pass: var Pass) =
     continuationProcImpl: coro_transform.generateContinuationProcImpl(),
     hooks: lambdaHooks(),
     nextTemp: pass.nextTemp,        # nested Final-IR runs continue the xelim counter
-    ptrSize: pass.bits div 8,
-    inputIsFinalIr: hexerSpeaksFir()
+    ptrSize: pass.bits div 8
   )
   c.hoisted = createTokenBuf(0)
   c.typeCache.openScope()

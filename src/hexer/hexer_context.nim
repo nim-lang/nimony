@@ -41,8 +41,6 @@ type
                           ## argc/argv/envp, and `dynlib` names an import
                           ## library rather than something to load at runtime.
 
-    breaks*: seq[SymId] # how to translate `break`
-    continues*: seq[SymId] # how to translate `continue`
     instId*: int # per forStmt
     tmpId*: int # per proc
     resultSym*: SymId

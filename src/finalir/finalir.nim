@@ -805,16 +805,6 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhile c, dest, n
   of ForS:
     trFor c, dest, n
-  of CoroforS:
-    # `(corofor <iter call> <body>)`, from `iterinliner` for a closure
-    # iterator. The trampoline around the body is built later (lambdalifting,
-    # cps), so the call stays verbatim and only the body is lowered. It needs
-    # no exit label: `iterinliner` wraps the loop in a block, so a `break` in
-    # the body already targets that block, and its `continue` is a `break` out
-    # of the body's own inner block.
-    copyInto dest, n:
-      takeTree dest, n # the iterator call
-      trScopedBody c, dest, n
   of LocalDecls:
     trLocal c, dest, n
   of ProcS, FuncS, MethodS, ConverterS, IteratorS:
@@ -885,8 +875,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # children are lowered as expressions. That is right for anything whose
       # children are plain expressions — but it does NOT lower nested
       # *statements*, so a construct with a body reaching here would keep an
-      # un-lowered body. `corofor` was the one such construct, and has its own
-      # branch now that the lowering runs inside hexer's pipeline.
+      # un-lowered body. `corofor` is the one such construct, and it is made
+      # by `iterinliner`, which runs after this pass.
       #
       # `-d:firFallbackProbe` prints one line per statement that lands here,
       # which is how the list above was established (the spelling matches

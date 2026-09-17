@@ -10,13 +10,6 @@
 when not defined(nimony):
   import std/[monotimes, times, syncio, os, strutils]
 import ../lib/[nifpools]
-import std/envvars
-
-proc hexerSpeaksFir*(): bool =
-  ## Transitional (`doc/internals/contracts_elim_rtchecks.md`, step 3): does
-  ## the pipeline lower to the Final IR at `xelim1`, so that every later pass
-  ## reads it? Goes away when the answer is always yes.
-  existsEnv("NIMONY_HEXER_FIR")
 
 type
   Pass* = object

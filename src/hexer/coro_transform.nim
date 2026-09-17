@@ -39,7 +39,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
-import ".." / finalir / [finalir, finalir_model]
+import ".." / finalir / finalir_model
 import passes, defaultvalues, constparams, duplifier
 include ".." / nimony / nif_annotations
 
@@ -203,10 +203,6 @@ type
     awaitingSuspendPark*: bool
       ## Set by `(delay0)`; consumed by the following `(suspend)` to
       ## decide between real parking and a synchronous state transition.
-    inputIsFinalIr*: bool
-      ## The routines handed to us are already in the Final IR (`cps` under
-      ## `hexerSpeaksFir`), so `treIteratorBody` must not lower them again.
-      ## `lambdalifting` runs before the pipeline's lowering and leaves it off.
     pendingCapturedEnvField*: SymId
       ## Inbox for the NEXT `transformCoroutineDecl` call: the consumer
       ## (lambdalifting) knows whether the iter it is about to hand us
@@ -740,7 +736,8 @@ proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
   ## The caller follows with body emission, then `emitWhileEnd` with the same
   ## `exitLab`. A non-zero `exitLab` asks for the Final IR spelling — `loop`,
   ## `ite`, and a `jmp exitLab` for the `break` — for a caller whose output no
-  ## pass lowers again (lambdalifting under `hexerSpeaksFir`).
+  ## pass lowers again (lambdalifting); the spelling without it is for `cps`,
+  ## whose output goes to `lengcgen` as it is.
   let envFieldSym = pool.symId(EnvFieldName)
   let advanceSym = pool.symId("advance.0." & SystemModuleSuffix)
   let stoppingSym = pool.symId("stopping.0." & SystemModuleSuffix)
@@ -1905,11 +1902,12 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
   init.addParRi() # assignment
 
 proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; iter: Cursor; sym: SymId) =
-  # Lower the proc body to the FINAL IR (`doc/final_ir.md`) — `loop`/`ite`/
-  # `case`/`lab`/`jmp`, control flow entirely statement-based — and keep it in
-  # `c.currentProc.cf`. The state machine wants a body it can CUT, and the
-  # Final IR's `lab`/`jmp` is already the cut: `toGoto` only has to decide
-  # which of those transfers has to become a state transition.
+  # The body is in the FINAL IR (`doc/final_ir.md`) already — `loop`/`ite`/
+  # `case`/`lab`/`jmp`, control flow entirely statement-based; the pipeline
+  # lowers before any pass runs. It is kept in `c.currentProc.cf`. The state
+  # machine wants a body it can CUT, and the Final IR's `lab`/`jmp` is already
+  # the cut: `toGoto` only has to decide which of those transfers has to
+  # become a state transition.
   #
   # This used to run `nj.nim`, whose whole job is the opposite one: it
   # ELIMINATES jumps, materialising a monotone `mflag` guard per construct and
@@ -1917,34 +1915,13 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   # machine then had `toGoto` put the jumps back. Two inverse rewrites in a
   # row, and the guard machinery's else-exploitation is what produced the
   # unbalanced `ite` of #2362's sibling (see `tests/nimony/cps/treturn_or_guard.nim`).
-  var wrapper = createTokenBuf(10)
-  wrapper.addParLe StmtsS, NoLineInfo
-  wrapper.copyTree iter
-  wrapper.addParRi()
-  # `c.ptrSize` IS the target width; the 0 that stood here was invisible only
-  # while the type cache ignored what it was handed.
-  var wholeResult = createTokenBuf(0)
-  if c.inputIsFinalIr:
-    # The pipeline lowered the whole module already.
-    wholeResult = ensureMove wrapper
-  else:
-    var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "finalir",
-                        c.ptrSize * 8, nextTemp = c.nextTemp)
-    toFinalIr(pass)
-    c.nextTemp = pass.nextTemp
-    wholeResult = ensureMove(pass.dest)
-  block extractBody:
-    var nExt = beginRead(wholeResult)
-    inc nExt  # skip outer StmtsS, now at first child
-    let procKind = iter.stmtKind
-    while nExt.hasMore and nExt.stmtKind != procKind:
-      skip nExt
-    inc nExt  # skip ProcS/IteratorS tag, now at first header subtree
-    for i in 0..<BodyPos:
-      skip nExt
-    var bodyBuf = createTokenBuf(wholeResult.len)
-    bodyBuf.copyTree nExt
-    c.currentProc.cf = ensureMove bodyBuf
+  var nExt = iter
+  inc nExt  # skip ProcS/IteratorS tag, now at first header subtree
+  for i in 0..<BodyPos:
+    skip nExt
+  var bodyBuf = createTokenBuf(64)
+  bodyBuf.copyTree nExt
+  c.currentProc.cf = ensureMove bodyBuf
 
   when defined(logPasses):
     echo "========= FINAL IR ======="

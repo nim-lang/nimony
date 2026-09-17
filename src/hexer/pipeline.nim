@@ -45,40 +45,27 @@ proc publishHooks*(n: var Cursor) =
     inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
-  var n = n
-  var pass: Pass
-  if hexerSpeaksFir():
-    # Every pass reads the Final IR, the iterator inliner included.
-    # `toFinalIr` runs `xelim` itself.
-    var input = createTokenBuf(300)
-    input.addSubtree n
-    pass = initPass(ensureMove input, moduleSuffix, "xelim1", bits)
-    toFinalIr(pass, analysisFacts = false)
-    pass.prepareForNext("iterinliner")
-    var m = pass.n
-    elimForLoops(c, pass.dest, m)
-    pass.prepareForNext("desugar")
-  else:
-    # Prepare initial buffer from elimForLoops
-    var dest = createTokenBuf(300)
-    elimForLoops(c, dest, n)
-    pass = initPass(ensureMove dest, moduleSuffix, "desugar", bits)
+  # Pass 0: the Final IR (`doc/final_ir.md`), which every pass from here on
+  # reads and writes: statement-based, `loop`/`ite`/`lab`/`jmp` control flow,
+  # a `for` whose body ends in its back-edge and whose `break`s are jumps.
+  # `toFinalIr` runs `xelim` itself.
+  var input = createTokenBuf(300)
+  input.addSubtree n
+  var pass = initPass(ensureMove input, moduleSuffix, "finalir", bits)
+  toFinalIr(pass, analysisFacts = false)
 
-  # Pass 1: Desugar
+  # Pass 1: inline the inline iterators
+  pass.prepareForNext("iterinliner")
+  var m = pass.n
+  elimForLoops(c, pass.dest, m)
+
+  # Pass 2: Desugar
+  pass.prepareForNext("desugar")
   desugar(pass, c.activeChecks)
 
-  # Pass 2: Lambda Lifting
+  # Pass 3: Lambda Lifting
   pass.prepareForNext("lambdalift")
   elimLambdas(pass)
-
-  if not hexerSpeaksFir():
-    # Pass 4: Lower Expressions — establishes the statement-based normal form
-    # every later pass now PRESERVES instead of breaking and re-fixing:
-    # expression-`if`/`case`/`try` become statements, `and`/`or` become bool
-    # temps, and an impure `while` condition becomes a leading body guard. See
-    # `doc/final_ir.md`.
-    pass.prepareForNext("xelim1")
-    lowerExprs(pass)
 
   # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
   # a check, and the success tuple lands in the same pass: signatures, the

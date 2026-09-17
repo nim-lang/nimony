@@ -415,7 +415,7 @@ proc transformToCps*(pass: var Pass) =
     typeCache: createTypeCache(pass.bits), coroTypes: createTokenBuf(10),
     continuationProcImpl: generateContinuationProcImpl(),
     hooks: passiveHooks(), nextTemp: pass.nextTemp,
-    ptrSize: pass.bits div 8, inputIsFinalIr: hexerSpeaksFir())
+    ptrSize: pass.bits div 8)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS
   c.coroTypes.addParLe(n.cursorTagId, n.info) # the `(stmts` open tag
