@@ -38,7 +38,7 @@ proc main() =
   let g: MyIter = countup
   if g != nil:
     echo "g != nil"
-  let h: MyIter = nil
+  let h: nil MyIter = nil   # an iterator TYPE is not-nil by default too
   if h == nil:
     echo "h == nil"
   for v in g(1, 5):

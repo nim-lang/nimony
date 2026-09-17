@@ -579,7 +579,15 @@ else:
     syscall(SYS_io_uring_setup, entries, params, 0, 0, 0, 0)
   proc sysEnter(fd, toSubmit, minComplete, flags: cint; arg: nil pointer;
                 sz: cint): cint =
-    syscall(SYS_io_uring_enter, fd, toSubmit, minComplete, flags, arg, sz)
+    # `argsz` is a size_t in the kernel: a 64-bit register. Through the
+    # variadic `syscall()` a `cint` only defines the LOW 32 bits of that
+    # register; the high half is whatever the C compiler left there. gcc
+    # happened to zero it, clang did not, and the kernel compares the full
+    # value against sizeof(io_uring_getevents_arg): every timed wait came
+    # back EINVAL ("submit and wait cannot fail: ValueError", once per lane)
+    # in any clang-built program. The u32 kernel parameters (fd, to_submit,
+    # min_complete, flags) read only the low half and are unaffected.
+    syscall(SYS_io_uring_enter, fd, toSubmit, minComplete, flags, arg, csize_t(sz))
   proc sysRegister(fd, op: cint; arg: nil pointer; nrArgs: cint): cint =
     syscall(SYS_io_uring_register, fd, op, arg, nrArgs, 0, 0)
 

@@ -28,7 +28,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
+  build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|jorogumo|native|nifbench]   build selected tools (default: all).
                        `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
@@ -47,9 +47,9 @@ Commands:
                        `--forward:` is appended to every compile (e.g.
                        `--forward:-d:release`).
   boot [options]       Self-host the *full* nimony toolchain (nimony,
-                       nimsem, hexer). `bin0/` is a fresh copy of the
-                       host-Nim-built toolchain; `binN/` is `binN-1/`'s
-                       nimony recompiling all three from source. Runs a
+                       nimsem, hexer, lengc, shoggoth). `bin0/` is a fresh
+                       copy of the host-Nim-built toolchain; `binN/` is
+                       `binN-1/`'s nimony recompiling all of them. Runs a
                        fixed number of self-compile passes and leaves the
                        results in place — nothing is installed back to
                        `bin/`. Extra args are forwarded to every
@@ -418,6 +418,8 @@ proc handleCmdLine =
       buildArkham(showProgress)
     of "nifasm":
       buildNifasm(showProgress)
+    of "jorogumo":
+      buildJorogumo(showProgress)
     of "native":
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
       # the sibling `../nativenif`) plus shoggoth (the opt-gated Leng optimizer
@@ -463,7 +465,6 @@ proc handleCmdLine =
     if not skipBuild:
       buildNimonyToolchain()
       buildNifmake()
-      buildShoggoth()
       buildArkham()
       buildNifasm()
     nativetests(overwrite)
@@ -476,7 +477,6 @@ proc handleCmdLine =
     if not skipBuild:
       buildNimonyToolchain()
       buildNifmake()
-      buildShoggoth()
       buildArkham()
       buildNifasm()
     nativeValgrindTests()

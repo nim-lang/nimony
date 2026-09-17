@@ -554,20 +554,16 @@ when false:
 
 const
   # Lambdalifting-specific names (not in coro_transform). The lowered closure
-  # env *param* (`ep.0`) and its emitter now live in `coro_transform` as
-  # `ClosureEnvParamName` / `addClosureEnvParam`, shared with any pass that must
-  # emit the identical env slot; only the env *local* stays local here.
+  # env *param* (`ep.0`), its emitter and the `(ref RootObj)` env slot live in
+  # `closuretypes` as `ClosureEnvParamName` / `addClosureEnvParam` /
+  # `addRootRef`, shared with every pass that must emit the identical shape;
+  # only the env *local* stays local here.
   EnvLocalName = "`el.0"
 
 # `RootObjName` / `coroWrapperProcName` / `emitIterTupleType*` /
-# `isClosureIterSym` / `isLiftedClosureTuple` now live in
-# `coro_transform`. The wrapper-signature shape is owned there too, so
-# both passes stay in lock-step automatically.
-
-proc addRootRef(dest: var TokenBuf; info: NifLineInfo)
-  {.ensuresNif: addedType(dest).} =
-  dest.copyIntoKind RefT, info:
-    dest.addSymUse pool.symId(BareRootObjName), info
+# `isClosureIterSym` now live in `coro_transform`, `isLiftedClosureTuple` in
+# `closuretypes`. The wrapper-signature shape is owned there too, so both
+# passes stay in lock-step automatically.
 
 type
   UntypedEnvMode = enum
@@ -1095,11 +1091,8 @@ proc treStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       treStmt(c, dest, n)
 
-proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  copyInto dest, n:
-    while n.hasMore:
-      tre(c, dest, n)
-    addClosureEnvParam dest, NoLineInfo, SymId(0)
+proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor)
+  {.ensuresNif: addedType(dest).}
 
 proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if itertypeNeedsTuple(n):
@@ -1111,37 +1104,17 @@ proc treProcType(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # they differ only at the cps trampoline level.
     emitIterTupleTypeFromParams(dest, n, n.info)
   elif isClosure(n):
-    # type is really a `(closureTuple fn env)`:
+    # The type is really a `(closureTuple fn env)`. `toProcType` below is the
+    # only place that turns a routine — a decl or a proctype — into the lowered
+    # fn slot, so a closure's DECLARED type and the tupconstrs built for its
+    # VALUES cannot drift apart. `closuretypes.addClosureTuple` is the third
+    # producer of this shape, for foreign decls this pass never walks; it has
+    # to match token for token.
     let info = n.info
     copyIntoKind dest, ClosureTupleT, info:
-      copyIntoKind dest, ProctypeT, info:
-        dest.addDotToken() # nilability tag
-        let inputKind = n.typeKind
-        let isProctypeInput = inputKind == ProctypeT
-        # the callers guarantee `inputKind in RoutineTypes` here
-        n.into:
-          if inputKind in {ProctypeT, ItertypeT}:
-            skip n # nilability tag
-          else:
-            skipRoutineDeclPrefix(n, inputKind)
-          if n.substructureKind == ParamsU:
-            treParamsWithEnv(c, dest, n)
-          else:
-            assert n.kind == DotToken
-            inc n
-            dest.addParLe ParamsU, info
-            addClosureEnvParam dest, info, SymId(0)
-            dest.addParRi()
-          tre c, dest, n # return type
-          # pragmas:
-          tre c, dest, n
-          if not isProctypeInput:
-            # effects and body, deliberately made flexible here for future changes
-            # as it's messy to work with.
-            if n.hasMore:
-              skip n
-              if n.hasMore: skip n
+      toProcType c, dest, n
       addRootRef dest, info
+    skip n, SkipType # `toProcType` read a copy; consume the original here
   else:
     # `itertype` (a first-class closure-iterator value) has the SAME compact
     # 4-field shape as `proctype`; treating it as an 8-field routine decl walks
@@ -1714,6 +1687,8 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse res, info
 
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
+  ## The lowered fn slot of a closure: the routine (decl or proctype) at `n`
+  ## with the `ep.0` env param appended. `n` is a copy — nothing is consumed.
   var n = n
   let info = n.info
   copyIntoKind dest, ProctypeT, info:

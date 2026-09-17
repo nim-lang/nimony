@@ -6,6 +6,11 @@
 
 ## Types required by semantic checking.
 
+when defined(nimony):
+  # `SemRoutine.parent` and the other back-links here are nilable chains: the
+  # outermost routine has no parent.
+  {.feature: "lenientnils".}
+
 import std / [tables, sets, hashes, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2

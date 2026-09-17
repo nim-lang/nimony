@@ -231,17 +231,20 @@ proc findDependencies(dag: var Dag; nodeId: int) =
       if depId != nodeId and depId notin node.deps:
         node.deps.add(depId)
 
-proc removeOutdatedArtifacts(node: Node; opt: set[CliOption]) =
-  ## Remove outdated build artifacts for a node. Only used with --force;
-  ## removing before normal incremental builds breaks tools that use OnlyIfChanged.
+proc touchOutputs(node: Node; opt: set[CliOption]) =
+  ## `--force` gives every output a fresh mtime, including those a tool left
+  ## untouched via `OnlyIfChanged`. Done *after* the node ran, never by
+  ## deleting the outputs first: a const-eval or plugin sub-compile shares the
+  ## nimcache and may be reading them right now (writes are atomic renames,
+  ## so replacing a file under a reader is fine; removing it is not).
+  let now = getTime()
   for output in node.outputs:
     if vfsExists(output):
       try:
-        vfsRemove(output)
-        if Verbose in opt:
-          echo "Removed outdated artifact: ", output
+        setLastModificationTime(output, now)
       except:
-        stderr.writeLine "Warning: Could not remove outdated artifact: ", output
+        if Verbose in opt:
+          stderr.writeLine "Warning: Could not touch artifact: ", output
 
 type
   StatEntry = tuple[exists: bool, mtime: int64]
@@ -532,9 +535,6 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
         let nodeId = sched.takeReady()
         let node = addr dag.nodes[nodeId]
         if Force in opt or Rerun in opt or needsRebuild(sc, node[]):
-          if Force in opt:
-            removeOutdatedArtifacts(node[], opt)
-            sc.invalidate node[]
           if Verbose in opt:
             echo "Building: ", node.outputs.join(", ")
           let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs,
@@ -569,6 +569,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
       inc prog.done
       prog.draw job.label
       if exitCode == 0:
+        if Force in opt: touchOutputs(dag.nodes[job.nodeId], opt)
         sc.invalidate dag.nodes[job.nodeId]
         sched.complete job.nodeId
       else:
@@ -588,8 +589,6 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     for nodeId in sortedNodes:
       let node = addr dag.nodes[nodeId]
       if Force in opt or Rerun in opt or needsRebuild(sc, node[]):
-        if Force in opt:
-          removeOutdatedArtifacts(node[], opt)
         if Verbose in opt:
           echo "Building: ", node.outputs.join(", ")
         let expandedCmd = expandCommand(dag.commands[node.cmdIdx], node.inputs, node.outputs, node.args, dag.baseDir)
@@ -606,6 +605,7 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
             stdout.flushFile()
           failed expandedCmd, exitCode
           return false
+        if Force in opt: touchOutputs(node[], opt)
         sc.invalidate node[]
         inc prog.done
         prog.draw(nodeLabel(dag, node[]))
@@ -810,7 +810,7 @@ Commands:
 Options:
   -j, --parallel[:N]    Parallel builds (for 'run'); :N caps at N processes
   --makefile:<name>     Output Makefile name (default: Makefile)
-  --force               Force rebuild of all targets (removes their outputs first)
+  --force               Force rebuild of all targets
   --rerun               Run every command regardless of staleness, but KEEP the
                         existing outputs, so a tool writing OnlyIfChanged can
                         still report "unchanged" and spare everything

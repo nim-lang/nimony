@@ -876,7 +876,7 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
       # we cannot splice now without invalidating positions other callers
       # are still holding (e.g. the impl's own `declStart`).
       c.matchedForwardDecls.incl fwdDecl
-  elif {ImportcP, ImportcppP} * crucial.flags == {}:
+  elif {ImportcP, ImportcppP, ImportjsP} * crucial.flags == {}:
     # This is a forward declaration - register it as a candidate
     addForwardDecl(c, symId)
 

@@ -88,6 +88,7 @@ type
     backendLLVM = "llvm"
     backendNative = "native"  # C-free: Leng -> arkham -> nifasm (static, libc-free)
     backendWasm = "wasm"      # C-free: Leng -> ithaqua (whole-program .wasm, no linker)
+    backendJs = "js"          # C-free: Leng -> jorogumo (whole-program .js, no linker)
 
   OptLevel* = enum
     optDebug   # default: -O1 (debug-friendly but avoids dumb codegen)
@@ -123,6 +124,9 @@ type
     ccKey*: string
     appType*: AppType
     backend*: Backend
+    jsBrowser*: bool  # `--browser`: the JS backend emits for a browser host
+                      # (no Node `fs`/`process`; output buffers, exports on
+                      # globalThis.NIF). Forwarded to jorogumo as --target:browser.
     optLevel*: OptLevel
     noValidate*: bool # skip running the validator on plugin sources
     verbose*: bool    # --verbose: dump Final IR on contract/init failures

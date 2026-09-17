@@ -21,7 +21,8 @@ type H = proc (x: int): int {.passive.}
 proc add10(x: int): int {.passive.} =
   result = x + 10
 
-var arr: array[2, H]
+# `H` is a not-nil proc type, so `array[2, H]` has no default value: state one.
+var arr: array[2, H] = [add10, add10]
 var s: seq[H] = @[]
 
 proc inIf() {.passive.} =
@@ -58,8 +59,6 @@ proc main() {.passive.} =
   forOverSeq()
   notTheTarget()
 
-arr[0] = add10
-arr[1] = add10
 s.add add10
 s.add add10
 main()

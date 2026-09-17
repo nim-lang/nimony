@@ -223,7 +223,7 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
   typematch m, expected, arg
   if m.err:
     # try converter
-    var convMatch = default(Match)
+    var convMatch = createMatch(addr c)
     var convArg = CallArg(n: arg.n, typ: arg.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
       # `arg.n` and `convArg.n` are cursors into `dest` (via `cursorAt`
@@ -3834,7 +3834,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
-    var convMatch = default(Match)
+    var convMatch = createMatch(addr c)
     let convArg = CallArg(n: orig, typ: it.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
       discard "matching converter found (e.g. `toOpenArray`)"
@@ -4276,6 +4276,20 @@ proc caseBranchMatchesExprRaw(c: var SemContext; dest: var TokenBuf; branch, mat
         return true
       skip branch
 
+proc isConstDiscriminator(c: var SemContext; n: Cursor): bool =
+  ## Is the (semchecked) discriminator value spelled as a constant, i.e. the
+  ## way the `of` labels it is compared against are? Deliberately no constant
+  ## EVALUATION: that re-runs sem and can shell out to a sub-compile.
+  case n.kind
+  of IntLit, UIntLit, CharLit:
+    result = true
+  of Symbol:
+    result = fetchSym(c, n.symId).kind == EfldY
+  of TagLit:
+    result = n.exprKind in {TrueX, FalseX}
+  else:
+    result = false
+
 proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor;
                            selectorType: Cursor): bool =
   ## `evalConstIntExpr` semchecks the range bounds *into* `dest`, but here `dest`
@@ -4334,6 +4348,12 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
+          elif state == ThisBranch:
+            # The constructor selects this branch but sets none of its fields:
+            # they still get their defaults. `oconstr` is total (doc/tags.md),
+            # and the native back end stores exactly what is listed.
+            n.into: # stmt
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
           else:
             skip n
       of ElseU:
@@ -4347,6 +4367,13 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
+          elif not isBranchSelected and lastFieldSymId == SymId(0) and
+              setFields.hasKey(selectorSymId) and
+              isConstDiscriminator(c, getValueInKv(setFields.getOrQuit(selectorSymId))):
+            # A constant discriminator no `of` matched selects the `else`
+            # branch; its fields get their defaults (see the `of` arm above).
+            n.into: # stmt
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
           else:
             skip n
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
@@ -4945,7 +4972,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   # XXX investigate this further, seems odd and prevents us from eliminating the swaps:
   let args = cursorAt(argBuf, 0)
   var matches = 0
-  var lastMatch = default(Match)
+  var lastMatch = createMatch(addr c)
   var instLastMatch = false
   var errMsg = ""
   var errInfo = info

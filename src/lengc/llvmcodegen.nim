@@ -633,6 +633,10 @@ proc parseProcPragmasLLVM(c: var LLVMCode; n: var Cursor): PragmaInfo =
       of ConstrefP:
         # A PARAMETER pragma; never legal on a proc.
         error c.m, "invalid proc pragma: ", n
+      of ImportjsP:
+        # As in codegen.parseProcPragmas: the splice template is jorogumo's
+        # question, and there is nothing to lower it to here.
+        errorAt c.m, "importjs is a JS-backend pragma and has no LLVM lowering", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.kind == StrLit:

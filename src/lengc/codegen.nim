@@ -309,6 +309,11 @@ proc parseProcPragmas(c: var GeneratedCode; n: var Cursor): PragmaInfo =
       of ConstrefP:
         # A PARAMETER pragma; never legal on a proc.
         error c.m, "invalid proc pragma: ", n
+      of ImportjsP:
+        # The JS back end's extern: the argument is a JS splice template only
+        # jorogumo can answer. Ignoring it would emit a call to a C symbol that is
+        # never declared, so refuse while the name is still in hand.
+        errorAt c.m, "importjs is a JS-backend pragma and has no C lowering", n
       of ImportcppP, ImportcP, ExportcP:
         n.into:
           if n.hasMore and n.kind == StrLit:

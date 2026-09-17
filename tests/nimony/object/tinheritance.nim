@@ -8,11 +8,9 @@ type
   Student = ref object of Person
     id: int
 
-let
-  student: Student
-
-# object construction:
-student = Student(name: "Anton", age: 5, id: 2)
+# object construction. The `let` carries its value: `Student` is a not-nil ref,
+# so there is nothing for an uninitialized one to hold.
+let student = Student(name: "Anton", age: 5, id: 2)
 assert student.name == "Anton"
 
 

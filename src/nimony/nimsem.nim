@@ -133,7 +133,12 @@ proc handleCmdLine() =
         discard "handled by common CLI parser"
       else:
         case normalize(key)
-        of "forcebuild", "f", "ff": forceRebuild = true
+        of "forcebuild", "f", "ff":
+          forceRebuild = true
+          # Not passed on to the const-eval and plugin sub-compiles: their
+          # nifmake would `--force` the shared nimcache under the running
+          # sibling `nimsem`s.
+          forwardArg = false
         else: writeHelp()
       if forwardArg:
         commandLineArgs.add " --" & key

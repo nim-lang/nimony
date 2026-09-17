@@ -40,18 +40,20 @@ proc worker(p: pointer) =
   let a = cast[ptr Arg](p)
   while not atomicLoad(go, moAcquire):
     cpuRelax()
-  a.refs.setLen(0)          # drop them all, as fast as possible
+  a.refs.shrink(0)          # drop them all, as fast as possible
 
 proc main =
   var expected = 0
   for round in 1..Rounds:
-    var mine = newSeq[Obj](NumObjects)
+    # `newSeq[Obj](n)` would fill the seq with `default(Obj)`, and a not-nil
+    # ref has no default: the elements are appended instead.
+    var mine: seq[Obj] = @[]
     for i in 0 ..< NumObjects:
-      mine[i] = Obj(id: i)
+      mine.add Obj(id: i)
     for t in 0 ..< NumThreads:
-      args[t].refs = newSeq[Obj](NumObjects)
+      args[t].refs = @[]
       for i in 0 ..< NumObjects:
-        args[t].refs[i] = mine[i]   # counted copy
+        args[t].refs.add mine[i]    # counted copy
     atomicStore(go, false, moRelease)
 
     var thr {.noinit.}: array[NumThreads, RawThread]
@@ -62,7 +64,7 @@ proc main =
       echo "error creating thread"
       return
     atomicStore(go, true, moRelease)   # everybody drops at once...
-    mine.setLen(0)                     # ...including this thread
+    mine.shrink(0)                     # ...including this thread
     for t in 0 ..< NumThreads:
       thr[t].join()
 

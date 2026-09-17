@@ -182,15 +182,28 @@ proc negateFacts*(f: var Facts; start: int) =
     f.jSet i, v
 
 proc variableChangedByDiff*(f: var Facts; x: VarId; diff: xint) =
-  # after `inc x` we know that x is now bigger by 1 so all
-  # Facts like `x <= b + c` are then `x <= b + c + 1`:
-  for i in 0 ..< f.x.len:
-    if f.x[i].a == x:
-      if f.x[i].b == x: discard "nothing to do; x <= x + c <-> x+1 <= x+1 + c"
+  ## After `x += diff` (a known constant) every bound on `x` shifts by it:
+  ## `x <= b + c` becomes `x <= b + c + diff`, `a <= x + c` becomes
+  ## `a <= x + c - diff`. A shift that overflows `xint` (NaN) bounds
+  ## nothing any more and the fact is dropped — as `variableMovedWithin`
+  ## does for an unknown end — rather than stored invalid, where the next
+  ## `join`/`implies` would assert on it. Seen with `result = by - ay;
+  ## result = result - 1` after a guard: the subtraction leaves a vacuous
+  ## `0 <= result + high(xint)`, and `high + 1` is NaN (#2535).
+  var i = 0
+  while i < f.x.len:
+    let v = f.x[i]
+    if v.a == x and v.b == x:
+      inc i  # x <= x + c <-> x+1 <= x+1 + c
+    elif v.a == x or v.b == x:
+      var w = v
+      w.c = if v.a == x: v.c + diff else: v.c - diff
+      if w.c.isNaN: f.jSwapRemove i
       else:
-        var v = f.x[i]; v.c = v.c + diff; f.jSet i, v
-    elif f.x[i].b == x:
-      var v = f.x[i]; v.c = v.c - diff; f.jSet i, v
+        f.jSet i, w
+        inc i
+    else:
+      inc i
 
 proc variableMovedWithin*(f: var Facts; x: VarId; lo, hi: xint) =
   ## After `x += d` with `lo <= d <= hi` (either end may be unknown, NaN):
