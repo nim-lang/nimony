@@ -66,6 +66,8 @@ type
     counter: int
     thisModuleSuffix: string
     current: CurrentProc
+    analysisFacts: bool ## emit `kill`/`unknown`: facts for the prover that
+                        ## hexer re-derives, and would only trip over
     callExprs: Table[SymId, TokenBuf] ## whole init call of a local, so a `for`
                                       ## whose iterator xelim hoisted into a
                                       ## temp can still be read (see `trFor`)
@@ -87,6 +89,7 @@ proc closeScope(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
       swap locals[j-1], locals[j]
       dec j
   var i = 0
+  if not c.analysisFacts: locals.setLen 0
   for s in locals:
     if i == 0:
       dest.addParLe("kill", info)
@@ -206,6 +209,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
 proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # `unknown` marks that a `(haddr …)` argument's pointee may have been mutated.
   # This is cleaned up by the later alias/versionizer pass.
+  if not c.analysisFacts: return
   for path in callInfo.mutates:
     dest.addParLe("unknown", callInfo.info)
     dest.add path
@@ -767,6 +771,16 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trWhile c, dest, n
   of ForS:
     trFor c, dest, n
+  of CoroforS:
+    # `(corofor <iter call> <body>)`, from `iterinliner` for a closure
+    # iterator. The trampoline around the body is built later (lambdalifting,
+    # cps), so the call stays verbatim and only the body is lowered. It needs
+    # no exit label: `iterinliner` wraps the loop in a block, so a `break` in
+    # the body already targets that block, and its `continue` is a `break` out
+    # of the body's own inner block.
+    copyInto dest, n:
+      takeTree dest, n # the iterator call
+      trScopedBody c, dest, n
   of LocalDecls:
     trLocal c, dest, n
   of ProcS, FuncS, MethodS, ConverterS, IteratorS:
@@ -834,15 +848,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n
     else:
       # Operand-lowering fallback: the statement's shape is kept and its
-      # children are lowered as expressions. That is right for the hook calls
-      # (`(destroy x)` and friends) and for anything else whose children are
-      # plain expressions — but it does NOT lower nested *statements*, so a
-      # construct with a body reaching here would keep an un-lowered body.
-      # Nothing produces such a construct in this pass's input today:
-      # `corofor` is the one that would, and its only producer is hexer's
-      # `iterinliner`, which runs downstream of every caller of this pass. That
-      # stops being true when the lowering moves into hexer's own pipeline, so
-      # measure before relying on it.
+      # children are lowered as expressions. That is right for anything whose
+      # children are plain expressions — but it does NOT lower nested
+      # *statements*, so a construct with a body reaching here would keep an
+      # un-lowered body. `corofor` was the one such construct, and has its own
+      # branch now that the lowering runs inside hexer's pipeline.
       #
       # `-d:firFallbackProbe` prints one line per statement that lands here,
       # which is how the list above was established (the spelling matches
@@ -851,9 +861,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
       trExpr c, dest, n
 
-proc toFinalIr*(pass: var Pass) =
+proc toFinalIr*(pass: var Pass; analysisFacts = true) =
+  ## `analysisFacts`: see `Context.analysisFacts`. Only the prover wants them.
   var c = Context(counter: 0, typeCache: createTypeCache(pass.bits),
-                  thisModuleSuffix: pass.moduleSuffix)
+                  thisModuleSuffix: pass.moduleSuffix,
+                  analysisFacts: analysisFacts)
   c.openScope()
   lowerExprs(pass, TowardsFinalIr)
   pass.prepareForNext("finalir")

@@ -57,21 +57,23 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # Pass 1: Desugar
   desugar(pass, c.activeChecks)
 
+  if hexerSpeaksFir():
+    # Every pass from here on reads the Final IR. `toFinalIr` runs `xelim`
+    # itself.
+    pass.prepareForNext("xelim1")
+    toFinalIr(pass, analysisFacts = false)
+
   # Pass 2: Lambda Lifting
   pass.prepareForNext("lambdalift")
   elimLambdas(pass)
 
-  # Pass 4: Lower Expressions — establishes the statement-based normal form
-  # every later pass now PRESERVES instead of breaking and re-fixing:
-  # expression-`if`/`case`/`try` become statements, `and`/`or` become bool
-  # temps, and an impure `while` condition becomes a leading body guard. See
-  # `doc/final_ir.md`.
-  pass.prepareForNext("xelim1")
-  if hexerSpeaksFir():
-    # Every pass from here on reads the Final IR. `toFinalIr` runs `xelim`
-    # itself.
-    toFinalIr(pass)
-  else:
+  if not hexerSpeaksFir():
+    # Pass 4: Lower Expressions — establishes the statement-based normal form
+    # every later pass now PRESERVES instead of breaking and re-fixing:
+    # expression-`if`/`case`/`try` become statements, `and`/`or` become bool
+    # temps, and an impure `while` condition becomes a leading body guard. See
+    # `doc/final_ir.md`.
+    pass.prepareForNext("xelim1")
     lowerExprs(pass)
 
   # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus

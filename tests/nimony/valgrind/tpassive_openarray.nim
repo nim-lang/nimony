@@ -56,8 +56,10 @@ for v in gen(): echo "[", v, "]"
 proc borrowFromLocal() {.passive.} =
   # The other half of the rule: an lvalue already has storage, so the pass
   # leaves it alone and the ordinary escape analysis has to be what keeps it
-  # alive. `toOpenArray` is `.inline`, so the `addr buf` it takes is in this
-  # body before the cut and pins `buf` to the frame like any other `addr`.
+  # alive. `toOpenArray` is `.establishesBorrow`, so its first argument counts
+  # as an address taken and pins `buf` to the frame like any other `addr`. (It
+  # used to pass because the scope-end `kill buf` of the Final IR happened to
+  # count as a use in a later state.)
   var buf: array[5, char] = ['b', 'o', 'r', 'r', 'w']
   let oa: openArray[char] = buf
   step()

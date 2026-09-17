@@ -45,6 +45,7 @@ import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval
 import hexer_context, passes
 include ".." / nimony / nif_annotations
 import coro_transform
+import ".." / finalir / finalir_model
 # Bring the iter-value tuple constants/helpers into scope as
 # unqualified names. `ResultParamName` / `CallerParamName` are the
 # canonical names; lambdalifting's old aliases (`IterResultParamName`,
@@ -121,6 +122,11 @@ type
       ## `swap` while `transformCoroutineDecl` runs, then swap back.
       ## `coroTypes` and `shouldPublish` accumulate here across all
       ## iters in the module and get flushed in `elimLambdas`.
+    hoisted: TokenBuf
+      ## Final IR only (`hexerSpeaksFir`): statements `genCall` needs in
+      ## front of the statement it is translating — the callee temp and the
+      ## env==nil dispatch, which used to be an `(expr …)`/`if` expression
+      ## for `xelim` to flatten. `treStmts` splices them in.
     pendingIterSigs: seq[(SymId, TokenBuf)]
       ## Rewritten `.closure` iter signatures, snapshotted by
       ## `transformClosureIter` while `shouldPublish` offsets still
@@ -478,7 +484,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of MacroS, TemplateS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
-      PragmasS:
+      PragmasS, LabS, JmpS:
+      # a `lab`/`jmp` operand is a label, not a value
       takeTree dest, n
     of ScopeS:
       c.typeCache.openScope()
@@ -489,7 +496,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-      LabS, JmpS, NoStmt:
+      NoStmt:
       case n.exprKind
       of CallKinds:
         trCall c, dest, n
@@ -635,28 +642,36 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
     bug "capturing the locals of an enclosing iterator is not supported: " &
         pool.symString(iterSym) & " at " & infoToStr(info)
   var frameSym = SymId(0)
+  # Under the Final IR the frame setup goes in front of the current statement
+  # (`treStmt`) instead of into an `(expr …)` that nothing would flatten.
+  let hoist = hexerSpeaksFir()
   if captures:
     frameSym = pool.symId("`iterFrame." & $c.counter & "." & c.thisModuleSuffix)
     inc c.counter
-    dest.addParLe ExprX, info
-    dest.addParLe StmtsS, info
-    dest.copyIntoKind VarS, info:
-      dest.addSymDef frameSym, info
-      dest.addDotToken() # no export marker
-      dest.addDotToken() # no pragmas
-      dest.copyIntoKind RefT, info:
-        dest.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
-      dest.copyIntoKind NewobjX, info:
-        dest.copyIntoKind RefT, info:
-          dest.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
+    var setup = createTokenBuf(16)
+    setup.copyIntoKind VarS, info:
+      setup.addSymDef frameSym, info
+      setup.addDotToken() # no export marker
+      setup.addDotToken() # no pragmas
+      setup.copyIntoKind RefT, info:
+        setup.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
+      setup.copyIntoKind NewobjX, info:
+        setup.copyIntoKind RefT, info:
+          setup.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
     c.typeCache.registerLocal(frameSym, VarY, default(Cursor))
-    dest.copyIntoKind AsgnS, info:
-      dest.copyIntoKind DotX, info:
-        dest.copyIntoKind DerefX, info:
-          dest.addSymUse frameSym, info
-        dest.addSymUse coro_transform.coroEnvFieldForIter(iterSym), info
-      dest.untypedEnv info, c.currentProc.env
-    dest.addParRi() # stmts
+    setup.copyIntoKind AsgnS, info:
+      setup.copyIntoKind DotX, info:
+        setup.copyIntoKind DerefX, info:
+          setup.addSymUse frameSym, info
+        setup.addSymUse coro_transform.coroEnvFieldForIter(iterSym), info
+      setup.untypedEnv info, c.currentProc.env
+    if hoist:
+      c.hoisted.add setup
+    else:
+      dest.addParLe ExprX, info
+      dest.addParLe StmtsS, info
+      dest.add setup
+      dest.addParRi() # stmts
   dest.copyIntoKind TupconstrX, info:
     emitIterTupleTypeFromSym(dest, iterSym, info)
     dest.addSymUse coro_transform.coroWrapperForExternIter(iterSym), info
@@ -669,7 +684,7 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
         dest.copyIntoKind NewobjX, info:
           dest.copyIntoKind RefT, info:
             dest.addSymUse coro_transform.coroTypeForExternIter(iterSym), info
-  if captures:
+  if captures and not hoist:
     dest.addParRi() # expr
 
 # ---------------------------------------------------------------------
@@ -1060,16 +1075,36 @@ proc trClosureCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc c.counter
     c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
 
-    coro_transform.emitWhileBegin(dest, info, itSym, myEnvSym)
+    var exitLab = SymId(0)
+    if hexerSpeaksFir():
+      exitLab = pool.symId("`coroExit." & $c.counter & "." & c.thisModuleSuffix)
+      inc c.counter
+    coro_transform.emitWhileBegin(dest, info, itSym, myEnvSym, exitLab)
     while n.hasMore:
       tre(c, dest, n)
-    coro_transform.emitWhileEnd(dest, info, itSym)
+    coro_transform.emitWhileEnd(dest, info, itSym, exitLab)
 
 
 proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
     while n.hasMore:
       tre(c, dest, n)
+
+proc treStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## One statement, preceded by whatever `genCall` hoisted out of it. The
+  ## enclosing statement's hoists are parked across the descent.
+  var outer = createTokenBuf(0)
+  swap outer, c.hoisted
+  let start = dest.len
+  tre(c, dest, n)
+  if c.hoisted.len > 0:
+    dest.insert(c.hoisted, start)
+  swap outer, c.hoisted
+
+proc treStmts(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  copyInto dest, n:
+    while n.hasMore:
+      treStmt(c, dest, n)
 
 proc treParamsWithEnv(c: var Context; dest: var TokenBuf; n: var Cursor) =
   copyInto dest, n:
@@ -1287,7 +1322,7 @@ proc treProcBody(c: var Context; dest, init: var TokenBuf; n: var Cursor; sym: S
         c.currentProc.env = CurrentEnv(s: SymId(0), mode: EnvIsParam, typ: SymId(0), needsHeap: needsHeap)
       dest.add init
       while n.hasMore:
-        tre(c, dest, n)
+        treStmt(c, dest, n)
       var needsHeapB = c.currentProc.env.needsHeap
       c.currentProc.env = oldEnv
       c.currentProc.env.needsHeap = c.currentProc.env.needsHeap or needsHeapB
@@ -1435,7 +1470,8 @@ proc calleeHasClosureParam(typ: Cursor): bool =
     skip t
   result = false
 
-proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+proc genCallImpl(c: var Context; dest: var TokenBuf; n: var Cursor): Cursor =
+  ## Returns the callee's type as resolved here, capture rewrites included.
   let info = n.info
   let callNode = n  # the call node itself
   let callStart = n
@@ -1478,6 +1514,7 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # (a static call to a proc that captures nothing is no longer a closure). Our
   # `var typ` re-resolution above (envp / captured-dot callees) feeds the
   # non-static `else` branch of `wantsEnv`, so both survive.
+  result = typ
   let isStatic = n.kind == Symbol and isStaticCall(c, n.symId)
   # A closure iter-value call target type can appear here in two guises:
   #   - raw `(itertype … (pragmas (closure)))` — `isClosure` matches.
@@ -1622,6 +1659,73 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # Not tied to needNilCheck: our gate can skip the nil-dispatch while the
     # expression-callee temp (and its ExprX wrapper) is still open.
     dest.addParRi() # end of ExprX
+
+proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if not hexerSpeaksFir():
+    discard genCallImpl(c, dest, n)
+    return
+  # The Final IR has no expression-level control flow, and nothing lowers
+  # this pass's output again: what `genCallImpl` wraps into an `(expr …)` or
+  # an `if` expression becomes statements in front of the current one.
+  let info = n.info
+  var buf = createTokenBuf(16)
+  let fnType = genCallImpl(c, buf, n)
+  var b = beginRead(buf)
+  var x = b # the call, or its nil dispatch
+  if b.exprKind == ExprX or b.stmtKind == StmtsS:
+    # `(expr|stmts (stmts <callee temp>) X)`
+    x = sub(b)
+    var decls = x
+    decls = sub(decls)
+    while decls.hasMore:
+      c.hoisted.addSubtree decls
+      skip decls
+    skip x
+  if x.stmtKind != IfS:
+    dest.addSubtree x
+    return
+  # `(if (elif cond callA) (else callB))`
+  var rt = fnType
+  var voidCall = true
+  if rt.typeKind in RoutineTypes:
+    skipToParams rt
+    skip rt
+    voidCall = isVoidType(rt)
+  var res = SymId(0)
+  if not voidCall:
+    res = pool.symId("`llRes." & $c.counter)
+    inc c.counter
+    var decl = createTokenBuf(8)
+    decl.copyIntoKind VarS, info:
+      decl.addSymDef res, info
+      decl.addDotToken() # no export marker
+      decl.addDotToken() # no pragmas
+      var t = rt
+      treType c, decl, t
+      decl.addDotToken() # assigned by the dispatch
+    c.hoisted.add decl
+  var disp = createTokenBuf(16)
+  var br = sub(x)       # the `elif`
+  var elifBody = sub(br)
+  disp.copyIntoKind IteV, info:
+    disp.addSubtree elifBody # condition
+    skip elifBody
+    for arm in 0 .. 1:
+      disp.copyIntoKind StmtsS, info:
+        if voidCall:
+          disp.addSubtree elifBody
+        else:
+          disp.copyIntoKind AsgnS, info:
+            disp.addSymUse res, info
+            disp.addSubtree elifBody
+      if arm == 0:
+        skip br          # to the `else`
+        elifBody = sub(br)
+  if voidCall:
+    dest.add disp
+  else:
+    c.hoisted.add disp
+    dest.addSymUse res, info
 
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   var n = n
@@ -1804,12 +1908,15 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
     of MacroS, TemplateS, EmitS, BreakS, ContinueS,
       ForS, IncludeS, ImportS, FromimportS, ImportexceptS,
       ExportS, CommentS,
-      PragmasS:
+      PragmasS, LabS, JmpS:
+      # a `lab`/`jmp` operand is a label, not a value
       takeTree dest, n
     of ScopeS:
       c.typeCache.openScope()
-      treSons(c, dest, n)
+      treStmts(c, dest, n)
       c.typeCache.closeScope()
+    of StmtsS:
+      treStmts(c, dest, n)
     of CoroforS:
       # `.closure` iter corofors are owned by lambdalifting — we expand
       # them into the trampoline here so the body walk goes through
@@ -1820,11 +1927,11 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       else:
         treSons(c, dest, n)
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS,
-      CaseS, RetS, YldS, StmtsS, PragmaxS, InclS, ExclS, ImportasS,
+      CaseS, RetS, YldS, PragmaxS, InclS, ExclS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
       AssumeS, AssertS, CallstrlitS, InfixS, PrefixS, HcallS,
       StaticstmtS, BindS, MixinS, UsingS, AsmS, DeferS,
-      LabS, JmpS, NoStmt:
+      NoStmt:
       case n.exprKind
       of CallKinds:
         genCall(c, dest, n)
@@ -1936,8 +2043,10 @@ proc elimLambdas*(pass: var Pass) =
     continuationProcImpl: coro_transform.generateContinuationProcImpl(),
     hooks: lambdaHooks(),
     nextTemp: pass.nextTemp,        # nested Final-IR runs continue the xelim counter
-    ptrSize: pass.bits div 8
+    ptrSize: pass.bits div 8,
+    inputIsFinalIr: hexerSpeaksFir()
   )
+  c.hoisted = createTokenBuf(0)
   c.typeCache.openScope()
   tr c, pass.dest, n
   c.typeCache.closeScope()
@@ -1964,7 +2073,7 @@ proc elimLambdas*(pass: var Pass) =
       # (alongside the env types).
       var stmtsBuf = createTokenBuf(cap)
       while n2.hasMore:
-        tre(c, stmtsBuf, n2)
+        treStmt(c, stmtsBuf, n2)
       # Publish the rewritten iter signatures NOW — the snapshots were
       # taken by `transformClosureIter` while the offsets were valid
       # (nested iters land in treProcLift's lift buffer, not stmtsBuf,

@@ -318,8 +318,12 @@ In rough dependency order:
    and its converse, *analysis-only facts do not belong in the IR*.
 3. **Teach hexer the Final IR, before publishing it.** *In progress.* The
    lowering runs inside `pipeline.transform` behind `NIMONY_HEXER_FIR=1`
-   (`passes.hexerSpeaksFir`), in place of `xelim1`; `tests/nimony` is 827/827
-   with it on and the default build is untouched. The original estimate of
+   (`passes.hexerSpeaksFir`), right after `desugar` — ahead of
+   `lambdalifting` — and `xelim1` does not run; `tests/nimony` is 828/828
+   with it on and the default build is untouched. It emits no
+   `kill`/`unknown` (`toFinalIr(analysisFacts = false)`): they name locals
+   `lambdalifting` may move into an environment, and nothing in hexer needs
+   them. The original estimate of
    about nine passes was too high: `cps` already converts the Final IR back
    (`ite`→`if`, `loop`→`while true`, `kill`/`unknown` dropped) for *every*
    routine, not just coroutines, so only the passes between the lowering and
@@ -338,17 +342,31 @@ In rough dependency order:
    - `duplifier`: an `{.inline.}` call temp *is* its call. `ensureMove x[0]`
      and the self-assignment check (`result = result.kids[0]`, a segfault in
      the `parsegen` plugin) both judge the call, not the temp.
-   - `cps` does not lower a second time (`inputIsFinalIr`); `lambdalifting`,
-     which reaches the same code before the pipeline's lowering, still does.
+   - `cps` and `lambdalifting`'s closure-iterator transform do not lower a
+     second time (`coro_transform.Context.inputIsFinalIr`).
+   - `lambdalifting`: `lab`/`jmp` operands are labels, not captures; a
+     closure call's callee temp and its env==nil dispatch, and a capturing
+     iterator value's frame setup, go in front of the statement (`hoisted`,
+     `treStmt`) instead of into an `(expr …)`/`if` expression; the `corofor`
+     trampoline is spelled `loop`/`ite`/`jmp` (`emitWhileBegin`'s `exitLab`).
+   - The lowering lowers a `corofor`'s body — the case the fallback probe was
+     for.
+   - `cps`'s escape analysis pins the first argument of an
+     `.establishesBorrow` call: `borrowFromLocal` in `tpassive_openarray`
+     only ever passed because the scope-end `kill buf` counted as a use in a
+     later state.
+   - typenav's `crossedProc` counts the routine boundaries between use and
+     declaration. It counted only those above the first, which is 0 for a
+     local of a `scope` inside the enclosing routine — and every `block` is
+     one now (`tclosure_block_capture`).
 
    Found on the way and fixed for the default build too: `xelim` bound a call
    in an aggregate to a `cursor`, leaking its result (`taggregate_call_temp`);
    the lowering turned a statement-position `stmts` into a scope; a replicated
    `finally` duplicated its labels.
 
-   Left: move the lowering ahead of `lambdalifting`, `desugar` and
-   `iterinliner` (the last needs spliced cross-module bodies lowered too —
-   see *No normalizer*); make it the default and drop the switch; teach
+   Left: move the lowering ahead of `desugar` and `iterinliner` (the last
+   needs spliced cross-module bodies lowered too — see *No normalizer*); make it the default and drop the switch; teach
    `lengcgen` the Final IR so `cps` stops converting it back; and measure
    generated code, since `TowardsFinalIr` binds every nested call to a temp
    where `ElimExprs` did not.

@@ -725,7 +725,7 @@ proc emitItEnv(dest: var TokenBuf; info: NifLineInfo;
     dest.addIntLit 0, info # direct field of Continuation
 
 proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
-                     itSym, myEnvSym: SymId) =
+                     itSym, myEnvSym: SymId; exitLab = SymId(0)) =
   ## Open half of the corofor trampoline (shared by cps's `.passive`
   ## and lambdalifting's `.closure` expansions). Emits:
   ##
@@ -737,10 +737,14 @@ proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
   ##       if it.env == myEnv:
   ##         <body-stmts goes here — emit between begin and end>
   ##
-  ## The caller follows with body emission, then `emitWhileEnd`.
+  ## The caller follows with body emission, then `emitWhileEnd` with the same
+  ## `exitLab`. A non-zero `exitLab` asks for the Final IR spelling — `loop`,
+  ## `ite`, and a `jmp exitLab` for the `break` — for a caller whose output no
+  ## pass lowers again (lambdalifting under `hexerSpeaksFir`).
   let envFieldSym = pool.symId(EnvFieldName)
   let advanceSym = pool.symId("advance.0." & SystemModuleSuffix)
   let stoppingSym = pool.symId("stopping.0." & SystemModuleSuffix)
+  let fir = exitLab != SymId(0)
 
   dest.copyIntoKind LetS, info:
     dest.addSymDef myEnvSym, info
@@ -751,41 +755,69 @@ proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
     emitItEnv(dest, info, itSym, envFieldSym)
 
   dest.addParLe TryS, info
-  dest.addParLe StmtsS, info     # outer try-body stmts
-  dest.addParLe WhileS, info
-  dest.addParPair TrueX, info
-  dest.addParLe StmtsS, info     # while-body stmts
+  if fir:
+    dest.addParLe ScopeS, info   # try body
+    dest.addParLe LoopV, info
+    dest.addParLe ScopeS, info   # loop body
+  else:
+    dest.addParLe StmtsS, info     # outer try-body stmts
+    dest.addParLe WhileS, info
+    dest.addParPair TrueX, info
+    dest.addParLe StmtsS, info     # while-body stmts
   dest.copyIntoKind AsgnS, info:
     dest.addSymUse itSym, info
     dest.copyIntoKind CallS, info:
       dest.addSymUse advanceSym, info
       dest.addSymUse itSym, info
-  dest.copyIntoKind IfS, info:
-    dest.copyIntoKind ElifU, info:
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse stoppingSym, info
-        dest.addSymUse itSym, info
+  template stopping() =
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse stoppingSym, info
+      dest.addSymUse itSym, info
+  if fir:
+    dest.copyIntoKind IteV, info:
+      stopping()
       dest.copyIntoKind StmtsS, info:
-        dest.copyIntoKind BreakS, info:
-          dest.addDotToken()
-  dest.addParLe IfS, info
-  dest.addParLe ElifU, info
+        dest.copyIntoKind JmpS, info:
+          dest.addSymUse exitLab, info
+      dest.addDotToken()
+    dest.addParLe IteV, info
+  else:
+    dest.copyIntoKind IfS, info:
+      dest.copyIntoKind ElifU, info:
+        stopping()
+        dest.copyIntoKind StmtsS, info:
+          dest.copyIntoKind BreakS, info:
+            dest.addDotToken()
+    dest.addParLe IfS, info
+    dest.addParLe ElifU, info
   dest.copyIntoKind EqX, info:
     dest.addParPair PointerT, info
     emitItEnv(dest, info, itSym, envFieldSym)
     dest.addSymUse myEnvSym, info
   dest.addParLe StmtsS, info     # body-stmts open
 
-proc emitWhileEnd*(dest: var TokenBuf; info: NifLineInfo; itSym: SymId) =
+proc emitWhileEnd*(dest: var TokenBuf; info: NifLineInfo; itSym: SymId;
+                   exitLab = SymId(0)) =
   ## Close half of the corofor trampoline. Balances `emitWhileBegin`'s
   ## opens and emits `finally: finalizeCoroutine(addr it)`.
   let finalizeSym = pool.symId("finalizeCoroutine.0." & SystemModuleSuffix)
   dest.addParRi()  # close body StmtsS
-  dest.addParRi()  # close ElifU
-  dest.addParRi()  # close IfS
-  dest.addParRi()  # close while-body StmtsS
-  dest.addParRi()  # close WhileS
-  dest.addParRi()  # close outer try-body StmtsS
+  if exitLab != SymId(0):
+    dest.addDotToken() # no else
+    dest.addParRi()  # close IteV
+    dest.copyIntoKind ContinueV, info:
+      dest.addDotToken()
+    dest.addParRi()  # close loop-body ScopeS
+    dest.addParRi()  # close LoopV
+    dest.copyIntoKind LabS, info:
+      dest.addSymDef exitLab, info
+    dest.addParRi()  # close try-body ScopeS
+  else:
+    dest.addParRi()  # close ElifU
+    dest.addParRi()  # close IfS
+    dest.addParRi()  # close while-body StmtsS
+    dest.addParRi()  # close WhileS
+    dest.addParRi()  # close outer try-body StmtsS
   dest.copyIntoKind FinU, info:
     dest.copyIntoKind StmtsS, info:
       dest.copyIntoKind CallS, info:
@@ -1193,6 +1225,17 @@ proc markAddressTaken(c: var Context; n: Cursor) =
     if known.def != -2:
       c.currentProc.localToEnv.getOrQuit(n.symId).use = AddressTaken
 
+proc establishesBorrow(c: var Context; call: Cursor): bool =
+  ## Is `call` a call to a routine marked `.establishesBorrow.`? Same
+  ## question as `contracts_fir.establishesBorrow`.
+  var fn = call
+  inc fn # the callee
+  var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
+  if not fnType.isParamsTag: return false
+  skip fnType # params
+  skip fnType # return type
+  result = hasPragma(fnType, EstablishesBorrowP)
+
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
   if n.stmtKind == LabS and n.childCursor.kind == IntLit:
@@ -1227,6 +1270,14 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
     of TagLit:
       if n.exprKind in {AddrX, HaddrX}:
         markAddressTaken c, n.childCursor
+      elif n.exprKind in CallKinds and establishesBorrow(c, n):
+        # The result keeps pointing into the first argument (`toOpenArray`),
+        # which is an address taken as surely as an explicit `addr` — only
+        # the callee can see it.
+        var arg = n
+        inc arg
+        skip arg # the callee
+        if arg.hasMore: markAddressTaken c, arg
       n.loopInto:
         escapingLocalsImpl c, n, currentState
     of Symbol:
