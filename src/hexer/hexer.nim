@@ -44,7 +44,7 @@ Hexer accepts Nimony's grammar.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import ".." / nimony / [langmodes, nifconfig]
-import lengcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
+import lengcgen, lifter, duplifier, destroyer, constparams, dce2
 import ".." / lib / [vfs, nimversion]
 
 include ".." / lib / compat2

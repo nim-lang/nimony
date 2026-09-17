@@ -21,7 +21,6 @@ include ".." / nimony / nif_annotations
 
 type
   Goal* = enum
-    ElimExprs    # normal mode: eliminate expressions
     LowerCasts   # lower cast expressions: bind both source and result to variables
     TowardsFinalIr # goal mode: prepare for the Final IR (doc/final_ir.md).
                    # Calls bind to locations. A short-circuit condition is
@@ -66,7 +65,7 @@ proc isComplex(n: Cursor; goal: Goal): bool =
       # never had this problem precisely because they are complex in *every*
       # goal, so they are already statements by the time the duplifier looks.
       result = true
-    elif goal in {LowerCasts, TowardsFinalIr} and n.exprKind in CallKinds:
+    elif n.exprKind in CallKinds:
       result = true
     else:
       result = false
@@ -445,7 +444,7 @@ proc trConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var T
   tar.t.addParRi()
 
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  if tar.m in {IsAppend, IsEmpty} and c.goal in {LowerCasts, TowardsFinalIr}:
+  if tar.m in {IsAppend, IsEmpty}:
     # bind to a temporary variable:
     let info = n.info
     let typ = getType(c, n)
@@ -536,9 +535,9 @@ proc condNodeSafe(n: Cursor): bool =
     result = true
 
 const
-  CondPassthroughGoals = {ElimExprs, TowardsFinalIr, LowerCasts}
-    ## Goals whose consumer compiles a condition with a *two-target* condition
-    ## compiler, i.e. can turn `a and b` straight into branches. finalir has
+  CondPassthroughGoals = {TowardsFinalIr, LowerCasts}
+    ## Every goal: their consumers compile a condition with a *two-target*
+    ## condition compiler, i.e. can turn `a and b` straight into branches. finalir has
     ## `Cx`; NIFC has C's `&&`/`||` (gcc) and arkham's `emitCondE` (native).
     ## For those, materialising a bool here is pure loss: `assert p != nil and
     ## rem > 0` became a temp + an if/else diamond + a re-test — ~90 NIFC tokens
@@ -589,9 +588,7 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
   assert tar.m == IsEmpty
   if n.exprKind in {AndX, OrX, NotX, ExprX} and c.goal in CondPassthroughGoals and
      condPassthroughSafe(n):
-    # Hand the short-circuit tree to the backend untouched. This has to happen
-    # in the FIRST xelim run too (`ElimExprs`): the later `LowerCasts` run never
-    # sees an `and` that xelim1 already lowered.
+    # Hand the short-circuit tree to the backend untouched.
     # Safe for the passes in between (duplifier/destroyer) precisely because
     # `condPassthroughSafe` admits no calls and no statement-expressions, so
     # there is nothing for the mover to sink into the wrong branch — the case
@@ -1286,30 +1283,24 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
 
   of DiscardS:
-    let head = n
+    # A `discard` never survives: its operand is bound to a temp, which is what
+    # keeps the call and drops the value.
     n.into:
-      if c.goal in {LowerCasts, TowardsFinalIr}:
-        if n.isDotToken:
-          dest.takeTree n
-        else:
-          let typ = getType(c, n)
-          var tar = initTarget(IsBound)
-          trExpr c, dest, n, tar
-          # we must bind the result to a temporary variable!
-          let tmp = pool.symId("`x." & $c.counter)
-          inc c.counter
-          let info = n.endInfo # the discard operand is consumed: `n` is at
-                               # the (possibly elided) close
-          dest.addParLe LetS, info
-          dest.addSymDef tmp, info
-          dest.addEmpty2 info # no export marker, no pragmas
-          dest.copyTree typ
-          dest.addTarget tar
-          dest.addParRi()
+      if n.isDotToken:
+        dest.takeTree n
       else:
-        var tar = initTarget(IsEmpty)
+        let typ = getType(c, n)
+        var tar = initTarget(IsBound)
         trExpr c, dest, n, tar
-        dest.addParLe(head.cursorTagId, head.info)
+        # we must bind the result to a temporary variable!
+        let tmp = pool.symId("`x." & $c.counter)
+        inc c.counter
+        let info = n.endInfo # the discard operand is consumed: `n` is at
+                             # the (possibly elided) close
+        dest.addParLe LetS, info
+        dest.addSymDef tmp, info
+        dest.addEmpty2 info # no export marker, no pragmas
+        dest.copyTree typ
         dest.addTarget tar
         dest.addParRi()
 
@@ -1340,14 +1331,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       lhsIsResult = peek.kind == Symbol
     tar.t.copyInto n:
       trExpr c, dest, n, tar
-      if c.goal in {LowerCasts, TowardsFinalIr}:
-        if c.goal == TowardsFinalIr and lhsIsResult:
-          tar.m = IsBound
-        # else: tar.m stays IsAppend so trExprCall can bind
-        trExpr c, dest, n, tar
-      else:
+      if c.goal == TowardsFinalIr and lhsIsResult:
         tar.m = IsBound
-        trExpr c, dest, n, tar
+      # else: tar.m stays IsAppend so trExprCall can bind
+      trExpr c, dest, n, tar
     dest.addTarget tar
 
   of AsmS, DeferS:
@@ -1587,11 +1574,11 @@ proc preRegisterRoutines(c: var Context; n: Cursor) =
           skip h
     skip it
 
-proc lowerExprs*(pass: var Pass; goal = ElimExprs) =
+proc lowerExprs*(pass: var Pass; goal: Goal) =
   var n = pass.n  # Extract cursor locally
   # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
-  # runs three times in `pipeline.transform` (xelim1, xelim2, xelim_final);
-  # restarting from 0 each time produces colliding `\`x.<n>` SymIds whose
+  # runs for `finalir` and again as `xelim_final`; restarting from 0 each
+  # time produces colliding `\`x.<n>` SymIds whose
   # Lengc-emitted C names clash within a single function. `pool.symId`
   # is identity-by-name, so two semantically distinct temps would otherwise
   # share an identifier.
@@ -1613,5 +1600,5 @@ when isMainModule:
   let n = setupProgram("debug.txt", "debug.out", owningBuf)
   # A standalone debug driver: no target, so the host's width is stated.
   var pass = initPass(move owningBuf, "main", "xelim", sizeof(int)*8)
-  lowerExprs(pass)
+  lowerExprs(pass, TowardsFinalIr)
   echo pass.dest.toString(false)
