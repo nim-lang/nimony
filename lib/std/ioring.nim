@@ -263,7 +263,7 @@ proc waitCompletions*(comps: var openArray[IoCompletion]): int =
     result = pollCompletions(comps)
     if result > 0: return
 
-proc cancelPendingOps(fd: cint): int {.discardable.} =
+proc cancelPendingOps(fd: cint): int =
   ## The platform-neutral half of `closeFd`: cancel any ops still in flight on
   ## `fd` so their continuations are resumed (with a cancellation result)
   ## instead of leaking, and deregister the fd from the backend — all BEFORE
