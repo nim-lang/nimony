@@ -742,7 +742,17 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
-  of StmtsS, ScopeS:
+  of StmtsS:
+    # In statement position a `stmts` is transparent: its locals belong to the
+    # enclosing scope. `{.keepOverflowFlag.}: let x = …` arrives as
+    # `(pragmax … (stmts (let x …)))` and `x` is used after it; so does every
+    # declaration `xelim` hoists. Only a *branch* or *loop* body opens a scope
+    # (`trScopedBody`), because there the lowering itself removes the
+    # construct that delimited it.
+    copyInto dest, n:
+      while n.hasMore:
+        trStmt c, dest, n
+  of ScopeS:
     trScopedBody c, dest, n
   of AsgnS:
     trAsgn c, dest, n

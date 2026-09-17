@@ -457,6 +457,18 @@ Also fixed, in the order they were worked:
   no `kill` reaches generated code today; the general strip belongs in
   `derefs.nim` at step 4, when the lowered buffer is what gets published.
 
+- **A statement-position `(stmts …)` became a scope.** The previous entry
+  over-applied: `trStmt` sent *every* nested `stmts` through `trScopedBody`,
+  but in Nimony IR a `stmts` in statement position is transparent — its locals
+  belong to the enclosing scope. `{.keepOverflowFlag.}: let x = …` arrives as
+  `(pragmax … (stmts (let x …)))` and `x` is used after it, as is every
+  declaration `xelim` hoists into such a list. The lowering emitted
+  `(kill x)` *before* those uses. The prover forgave it (a `kill` only
+  forgets); hexer did not, and it was the first thing step 3 hit — the
+  duplifier could not find `newSize` in `syncio`. Only a branch or loop body
+  opens a scope now, because only there does the lowering itself remove the
+  construct that delimited it.
+
 - **`block` and its source name dropped** stays closed as intentional: a
   `block` has no Final IR construct of its own, `body` plus `(lab blockExit)`
   is the lowering. It is not textually reconstructible, so rendering one back
