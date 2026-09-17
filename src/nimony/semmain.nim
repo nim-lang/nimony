@@ -617,16 +617,20 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
-    when true:
-      var moreErrors = analyzeContractsFinalIr(afterSem, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     if c.hasPendingPlugins:
       dest = move afterSem
     else:
       dest = derefsOf(c, move afterSem)
+    # Same order as `semcheckCore`: the prover reads the tree `derefs` made,
+    # where every implicit indirection is spelled out. Analysing the tree
+    # before it made a module in an import cycle prove something else than
+    # the same module compiled on its own.
+    when true: #defined(enableContracts):
+      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
+      if reporters.reportErrors(moreErrors) > 0:
+        quit 1
   else:
     quit 1
 
