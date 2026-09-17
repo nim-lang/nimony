@@ -367,7 +367,7 @@ when defined(posix):
   proc closeFd*(fd: cint) =
     ## Close `fd`: cancel this lane's in-flight ops on it (see
     ## `cancelPendingOps`), deregister it from the backend, then close(2).
-    cancelPendingOps(fd)
+    discard cancelPendingOps(fd)
     discard posixClose(fd)
 
 when defined(posix):
@@ -506,7 +506,7 @@ when defined(windows):
       if backendRelays.forgetFd != nil:
         backendRelays.forgetFd(fd)
     else:
-      cancelPendingOps(fd)
+      discard cancelPendingOps(fd)
     discard wsClosesocket(socketOf(fd))
 
   proc listenTcp*(port: uint16; backlog = 128): cint =
