@@ -21,7 +21,7 @@ type
   EvalContext* = object
     c: ptr SemContext
     trueValue, falseValue: Cursor
-    expectedType: TypeCursor # used as the result type when forwarding
+    expectedType*: TypeCursor # used as the result type when forwarding
                              # complex const initialisers (e.g. `block:`)
                              # to `executeExpr`. Default-constructed when
                              # no type context is available.
@@ -1108,6 +1108,34 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
     of CallKinds:
       result = evalCall(c, n)
       skip n
+    of PluginCallX:
+      # A parked deferred plugin call `(pluginCall <template> <args>…)`. Once its
+      # arguments are concrete, re-drive the plugin by reconstructing the call and
+      # forwarding to the sub-compile, exactly as `semPluginCall` does after
+      # instantiation. Guarded like the other shell-out arms (`AtX` in `evalCall`).
+      if c.c == nil or c.c.executeExpr == nil or c.noExecute:
+        cannotEval n
+        skip n
+      else:
+        var callBuf = createTokenBuf(16)
+        callBuf.addParLe(CallS, n.info)
+        var ch = n
+        inc ch # past the `pluginCall` tag; the template symbol and its args follow
+        while ch.hasMore:
+          callBuf.addSubtree ch
+          skip ch
+        callBuf.addParRi()
+        let retType =
+          if not cursorIsNil(c.expectedType): skipModifier(c.expectedType)
+          else: c.c[].types.autoType
+        var resultBuf = createTokenBuf(12)
+        let errorMsg = c.c.executeExpr(c.c[], cursorAt(callBuf, 0), retType, resultBuf, n.info)
+        if errorMsg.len == 0:
+          result = cursorAt(resultBuf, 0)
+        else:
+          result = c.error("cannot evaluate expression at compile time: " &
+            asNimCode(n) & "\n\n" & errorMsg, n.info)
+        skip n
     of SizeofX:
       # `c.c` is nil for callers that evaluate outside sem (hexer's constant
       # folding); sizes are only computable with a SemContext, so fold fails
