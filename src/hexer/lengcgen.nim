@@ -1536,7 +1536,24 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     let info = n.info
     let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
     trExpr(c, dest, n)
-    if n.hasMore:
+    if n.hasMore and n.isDotToken:
+      # The contract pass discharged the bound obligation; only the `lo`
+      # subtraction is left (NIFC arrays are zero-based).
+      inc n
+      if n.hasMore:
+        var indexDest = createTokenBuf(dest.len - beforeIndex)
+        for i in beforeIndex..<dest.len:
+          indexDest.add dest[i]
+        dest.shrink beforeIndex
+        let indexType = if isUnsigned: c.typeCache.builtins.uintType else: c.typeCache.builtins.intType
+        dest.addParLe SubX, info
+        dest.addSubtree indexType
+        dest.add indexDest
+        dest.addSubtree n
+        dest.addParRi()
+        skip n
+      while n.hasMore: skip n
+    elif n.hasMore:
       var indexDest = createTokenBuf(dest.len - beforeIndex)
       # balanced span: raw copy keeps its seals
       for i in beforeIndex..<dest.len:

@@ -1248,7 +1248,25 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
     var idxBuf = createTokenBuf(8)
     tr(c, idxBuf, n)
-    if n.hasMore:
+    if n.hasMore and n.isDotToken:
+      # `(arrat arr idx . [lo])` — the contract pass discharged the bound
+      # obligation, so nothing is checked here. `lo` stays because NIFC arrays
+      # are zero-based and a `lo..hi` array still indexes at `i - lo`.
+      inc n
+      if n.hasMore:
+        var loBuf = createTokenBuf(8)
+        tr(c, loBuf, n)
+        if isUnsigned:
+          addUIntTypedOp dest, SubX, -1, info:
+            dest.add idxBuf
+            dest.add loBuf
+        else:
+          addIntTypedOp dest, SubX, -1, info:
+            dest.add idxBuf
+            dest.add loBuf
+      else:
+        dest.add idxBuf
+    elif n.hasMore:
       # `(arrat arr idx hi [lo])` — `hi` is the inclusive upper bound, `lo`
       # the optional lower bound. nimIcheckAB(i, a, b) wants (i, lo, hi).
       var hiBuf = createTokenBuf(8)

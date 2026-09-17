@@ -37,8 +37,9 @@ emits into the callee stays), and violated, which is an error. See
 module pragmas that move that line.
 
 Compile `nimsem` with `-d:contractStats` to get one
-`CONTRACT <verdict> <line> <contract>` line per call site on stderr; that is how
-the prover's coverage is measured. Adding `-d:contractLeaves` breaks each site
+`CONTRACT <verdict> <line> <contract>` line per call site on stderr, and one
+`INDEX discharged|checked <line> <index>` line per array index; that is how the
+prover's coverage is measured. Adding `-d:contractLeaves` breaks each call site
 down per conjunct.
 ]##
 
@@ -160,6 +161,12 @@ type
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
+    obligationOpen: bool               # set while a range obligation is being
+                                       # judged; cleared when it is not
+                                       # discharged (`cannotProve`)
+    root: Cursor                       # the lowered module, for token positions
+    dischargedIndexes: HashSet[int]    # positions of `(arrat …)` nodes whose
+                                       # bound obligation this pass discharged
     notAccessors: HashSet[SymId]       # negative cache for the lookup above
     constDepth: int
     moduleConsts: Table[SymId, Cursor] # `const`s declared in this module: their
@@ -1545,6 +1552,7 @@ proc cannotProve(c: var FirContext; info: NifLineInfo; report: bool; msg: string
   ## programmer must discharge — the bound check simply stays — so it asks for
   ## silence here. A *disproof* (a literal outside the range) is not routed
   ## through this and is always reported.
+  c.obligationOpen = false
   if report: buildErr c, info, msg
 
 proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
@@ -1866,6 +1874,7 @@ proc checkInRange(c: var FirContext; value: Cursor; lo, hi: xint;
       lo <= symLo + off and (not converted or (needHi and upperOk))
   if not ((not needLo or typeLowerOk or impliesHere(c, lower)) and upperOk):
     if isLit:
+      c.obligationOpen = false
       buildErr c, value.info, "value out of range: " & $off & " notin " & $lo & ".." & $hi
     elif sym != NoSymId:
       cannotProve c, value.info, reportUnprovable, "cannot prove '" & asNimCode(sym) &
@@ -3209,6 +3218,7 @@ proc checkIndexInBounds(c: var FirContext; idx, bounds: Cursor) =
   var r = bounds
   skip r
   if r.hasMore and not arrayBound(c, r, lo): return
+  c.obligationOpen = true
   checkInRange c, idx, lo, hi, needLo = true, needHi = true,
                reportUnprovable = StaticContractsFeature in c.features
 
@@ -3225,6 +3235,12 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
   ## range) is an error either way. That is the same three-way answer
   ## `checkRequires` gives a `.requires`, and `runtimeContracts` (which `v2`
   ## implies) opts out of the judgement here for the same reason it does there.
+  ## What the pass decides here it also *writes down*: an obligation it
+  ## discharges is struck from the node (`applyIndexVerdicts`), so the backend
+  ## emits a bound check exactly where one is still owed. The decision travels
+  ## with the code — a body proven here stays check-free wherever it is
+  ## inlined, and a body from a laxer module keeps its checks.
+  let nodePos = cursorToPosition(c.root, pc)
   pc.into:
     traverseExpr c, pc, call            # the array operand
     let idx = pc
@@ -3233,7 +3249,13 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
     # contradictory, and an obligation judged against them could report a
     # correct index as a violation. `checkRequires` bails for the same reason.
     if pc.hasMore and c.tr.live and RuntimeContractsFeature notin c.features:
+      c.obligationOpen = false
       checkIndexInBounds c, idx, pc
+      when defined(contractStats):
+        stderr.writeLine "INDEX " & (if c.obligationOpen: "discharged" else: "checked") &
+          " " & infoToStr(idx.info) & " " & asNimCode(idx)
+      if c.obligationOpen:
+        c.dischargedIndexes.incl nodePos
     while pc.hasMore: skip pc
 
 proc traverseExpr(c: var FirContext; pc: var Cursor; call: var CallContext) =
@@ -4941,6 +4963,44 @@ proc traverseToplevel(c: var FirContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n, call
 
+proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; base: Cursor;
+                      discharged: HashSet[int]) =
+  if n.isTagLit:
+    if n.exprKind == ArratX and cursorToPosition(base, n) in discharged:
+      # The obligation is discharged, so the bounds it was stated as go away:
+      # `(arrat arr idx)`, or `(arrat arr idx . lo)` when the array does not
+      # start at zero — NIFC arrays do, so `lo` still has to be subtracted.
+      # What is left in the `hi` slot of any other node is an obligation the
+      # backend owes a check for.
+      let info = n.info
+      dest.addParLe ArratX, info
+      n.into:
+        copyWithVerdicts dest, n, base, discharged   # the array
+        copyWithVerdicts dest, n, base, discharged   # the index
+        if n.hasMore:
+          skip n                                     # hi: nothing to check
+          if n.hasMore:
+            dest.addDotToken()
+            dest.takeTree n                          # lo
+        while n.hasMore: skip n
+      dest.addParRi()
+    else:
+      copyInto dest, n:
+        while n.hasMore:
+          copyWithVerdicts dest, n, base, discharged
+  else:
+    dest.takeTree n
+
+proc applyIndexVerdicts(buf: var TokenBuf; discharged: HashSet[int]) =
+  var res = createTokenBuf(buf.len)
+  block:
+    var n = beginRead(buf)
+    let base = n
+    while n.hasMore:
+      copyWithVerdicts res, n, base, discharged
+    endRead(n)
+  swap buf, res
+
 proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
   ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
@@ -4978,10 +5038,15 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     collectAccessors(c, scan)
     endRead(scan)
 
-  var fin = beginRead(finalBuf)
-  traverseToplevel c, fin
+  block:
+    var fin = beginRead(finalBuf)
+    c.root = fin
+    traverseToplevel c, fin
+    endRead(fin)
 
   c.typeCache.closeScope()
+  if c.dischargedIndexes.len > 0:
+    applyIndexVerdicts(finalBuf, c.dischargedIndexes)
   result = ensureMove c.errors
 
 proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
