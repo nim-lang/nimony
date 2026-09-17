@@ -39,17 +39,6 @@ var p: Pair             # Error: so has `Pair`, through its `n` field
 var q = default(Node)   # Error: `default` has no value to hand back either
 ```
 
-A field that states a default of its own answers for itself, and the type is
-default-initializable again:
-
-```nim
-type Seeded = object
-  n: Node = Node(data: 0)
-  count: int
-
-var s: Seeded           # fine
-```
-
 The rule bites at **module level**, where a variable's storage is simply zeroed:
 a global is readable from another module and another thread, so no flow analysis
 can stand behind it. A **local** owes nothing at its declaration — `var r: Node`
@@ -137,7 +126,7 @@ if optCallback != nil:
   optCallback(42)
 ```
 
-An iterator TYPE — the type of a first-class closure-iterator value — is a
+An iterator type is a
 pointer pair like any other closure, and follows the same rule:
 
 ```nim
@@ -147,20 +136,6 @@ var run: It                 # Error: no default value
 var maybeRun: nil It = nil  # nullable iterator value
 ```
 
-
-## `cast` is the escape hatch
-
-A CONVERSION claims its target type honestly, so it cannot launder a `nil` into
-a not-nil one: `Node(nil)` is an error however the value is spelled. A `cast`
-says "this representation, on my head" and stands — the same standing `addr`
-has. That is how a NULL reaches C:
-
-```nim
-sqe.prepRw(OP_POLL_ADD, fd, cast[pointer](nil), 0, 0)  # liburing's NULL addr
-```
-
-Prefer `nil pointer` on the parameter where you can say it; reach for `cast`
-where the declaration is not yours to change.
 
 
 ## Porting Nim 2 code: the `lenientnils` feature
