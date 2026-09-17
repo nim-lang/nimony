@@ -928,6 +928,27 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
           stderr.writeLine "FIR-FALLBACK " & $n.kind
       trExpr c, dest, n
 
+proc stripAnalysisFactsInto(dest: var TokenBuf; n: var Cursor) =
+  if n.isTagLit:
+    if n.finalIrKind in {KillV, UnknownV}:
+      skip n
+    else:
+      copyInto dest, n:
+        while n.hasMore:
+          stripAnalysisFactsInto dest, n
+  else:
+    dest.takeTree n
+
+proc stripAnalysisFacts*(buf: sink TokenBuf): TokenBuf =
+  ## Remove the prover's facts — `(kill …)` at every scope exit, `(unknown …)`
+  ## after a call that may write through a pointer — from a lowered module.
+  ## They are what the prover reads; the backend re-derives destruction from
+  ## the `scope` tags, so publishing them would say the same thing twice.
+  var n = beginRead(buf)
+  result = createTokenBuf(buf.len)
+  while n.hasMore:
+    stripAnalysisFactsInto result, n
+
 proc toFinalIr*(pass: var Pass; analysisFacts = true) =
   ## `analysisFacts`: see `Context.analysisFacts`. Only the prover wants them.
   var c = Context(counter: 0, typeCache: createTypeCache(pass.bits),

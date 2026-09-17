@@ -27,6 +27,7 @@ import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptca
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
   contracts_fir, exprexec, semimport, module_plugins, sem
+import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
 
@@ -455,6 +456,25 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
 
 func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.len != 0 or c.pendingModulePlugins.len != 0
 
+proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
+  ## The module's last step in nimsem: lower the tree `derefs` made to the
+  ## Final IR (`doc/final_ir.md`), prove it, and keep the lowered tree — it is
+  ## what gets published, so hexer does not lower it again. The prover's own
+  ## facts are stripped on the way out; the backend re-derives destruction
+  ## from the `scope` tags.
+  if c.g.config.keepSemTree:
+    # The structured tree, for a tool that reads branches as written rather
+    # than as lowered (`src/validator/semvalidator.nim`). Never an input of
+    # the compiler itself: the published module is the lowered one.
+    onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif", OnlyIfChanged)
+  var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
+  when true: #defined(enableContracts):
+    var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
+                                    c.g.config.bits, c.g.config.verbose)
+    if reporters.reportErrors(moreErrors) > 0:
+      quit 1
+  dest = stripAnalysisFacts(ensureMove fir)
+
 proc runPhases(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   ## The three sem phases. Each phase's buffer is consumed by the next one and
   ## released when this returns, before generics, derefs and the contract pass
@@ -535,13 +555,12 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     if c.hasPendingPlugins:
+      # Another plugin round follows; the module is not final, so it is
+      # neither deref'd nor lowered yet.
       dest = move afterSem
     else:
       dest = derefsOf(c, move afterSem)
-    when true: #defined(enableContracts):
-      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
+      lowerAndProve(c, dest)
   else:
     quit 1
 
@@ -623,19 +642,13 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
       dest = move afterSem
     else:
       dest = derefsOf(c, move afterSem)
-    # Same order as `semcheckCore`: the prover reads the tree `derefs` made,
-    # where every implicit indirection is spelled out. Analysing the tree
-    # before it made a module in an import cycle prove something else than
-    # the same module compiled on its own.
-    when true: #defined(enableContracts):
-      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
+      lowerAndProve(c, dest)
   else:
     quit 1
 
 proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
-  ## Validate that `dest` conforms to the post-sem subset of `doc/tags.md`.
+  ## Validate that `dest` conforms to the published subset of `doc/tags.md`:
+  ## the post-sem vocabulary plus the Final IR's control flow.
   ## Reports violations on stderr and aborts with a non-zero exit status so
   ## that drift from the spec is a hard error. Active by default in host-Nim
   ## builds; nimony's own bootstrap build skips this until the validator
@@ -643,7 +656,7 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
   ## `-d:skipPostSemValidator` opts out (used by Windows CI — see hastur's
   ## `validatePassesFlag`).
   when not defined(nimony) and not defined(skipPostSemValidator):
-    let phase = postSemPhase()
+    let phase = postFinalIrPhase()
     let violations = validate(dest, phase)
     if violations.len > 0:
       stderr.writeLine "[" & moduleName & "] post-sem validator found " &

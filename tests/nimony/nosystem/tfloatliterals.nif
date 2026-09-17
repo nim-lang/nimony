@@ -1,23 +1,43 @@
 (.nif27)
-(.indexat 581              )
+(.indexat 907              )
 (stmts@,1,tests/nimony/nosystem/tfloatliterals.nim
- (discard 0.0@8)
- (discard@,1 1.0@8)
- (discard@,2 1.0@8)
- (discard@,3 -1.0@8)
- (discard@,4 10.0@8)
- (discard@,5 -10.0@8)
- (discard@,6 100.0@8)
- (discard@,7 -100.0@8)
- (discard@,B 1000000000000000.0@8)
- (discard@,C -1000000000000000.0@8)
- (discard@,D 10000000000000000.0@8)
- (discard@,E -10000000000000000.0@8)
- (discard@,F 1E+17@8)
- (discard@,G -1E+17@8)
- (discard@,H 1E+18@8)
- (discard@,I -1E+18@8)
- (discard@,K 1.23E+19@8)
- (discard@,L -1.23E+19@8)
- (discard@,O 0.0@8)
- (discard@,P -0.0@8))(.index@,1,tests/nimony/nosystem/tfloatliterals.nim)
+ (let :`x.0 . .
+  (f 64)0.0@8)
+ (let@8 :`x.1 . .
+  (f 64)1.0@,1)
+ (let@8,1 :`x.2 . .
+  (f 64)1.0@,1)
+ (let@8,2 :`x.3 . .
+  (f 64)-1.0@,1)
+ (let@8,3 :`x.4 . .
+  (f 64)10.0@,1)
+ (let@8,4 :`x.5 . .
+  (f 64)-10.0@,1)
+ (let@8,5 :`x.6 . .
+  (f 64)100.0@,1)
+ (let@8,6 :`x.7 . .
+  (f 64)-100.0@,1)
+ (let@8,7 :`x.8 . .
+  (f 64)1000000000000000.0@,4)
+ (let@8,B :`x.9 . .
+  (f 64)-1000000000000000.0@,1)
+ (let@8,C :`x.10 . .
+  (f 64)10000000000000000.0@,1)
+ (let@8,D :`x.11 . .
+  (f 64)-10000000000000000.0@,1)
+ (let@8,E :`x.12 . .
+  (f 64)1E+17@,1)
+ (let@8,F :`x.13 . .
+  (f 64)-1E+17@,1)
+ (let@8,G :`x.14 . .
+  (f 64)1E+18@,1)
+ (let@8,H :`x.15 . .
+  (f 64)-1E+18@,1)
+ (let@8,I :`x.16 . .
+  (f 64)1.23E+19@,2)
+ (let@8,K :`x.17 . .
+  (f 64)-1.23E+19@,1)
+ (let@8,L :`x.18 . .
+  (f 64)0.0@,3)
+ (let@8,O :`x.19 . .
+  (f 64)-0.0@,1))(.index@,1,tests/nimony/nosystem/tfloatliterals.nim)

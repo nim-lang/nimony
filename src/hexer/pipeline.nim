@@ -45,17 +45,15 @@ proc publishHooks*(n: var Cursor) =
     inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
-  # Pass 0: the Final IR (`doc/final_ir.md`), which every pass from here on
-  # reads and writes: statement-based, `loop`/`ite`/`lab`/`jmp` control flow,
-  # a `for` whose body ends in its back-edge and whose `break`s are jumps.
-  # `toFinalIr` runs `xelim` itself.
+  # The input is the Final IR (`doc/final_ir.md`) already: nimsem lowers a
+  # module before it publishes it. Every pass here reads and writes it —
+  # statement-based, `loop`/`ite`/`lab`/`jmp` control flow, a `for` whose body
+  # ends in its back-edge and whose `break`s are jumps.
   var input = createTokenBuf(300)
   input.addSubtree n
-  var pass = initPass(ensureMove input, moduleSuffix, "finalir", bits)
-  toFinalIr(pass, analysisFacts = false)
+  var pass = initPass(ensureMove input, moduleSuffix, "iterinliner", bits)
 
   # Pass 1: inline the inline iterators
-  pass.prepareForNext("iterinliner")
   var m = pass.n
   elimForLoops(c, pass.dest, m)
 

@@ -3,7 +3,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import hexer_context, passes
 import ".." / nimony / [nimony_model, programs, decls, typenav]
-import ".." / finalir / [finalir, finalir_model]
+import ".." / finalir / finalir_model
 import duplifier
 
 
@@ -515,12 +515,6 @@ proc emitCoroForFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   emitForBody(e, dest, forStmt.body, initTable[SymId, SymId](), prefix)
   dest.addParRi() # close corofor
 
-proc lowerIteratorBody(e: var EContext; w: sink TokenBuf): TokenBuf =
-  ## The Final IR of `w`, an `(stmts <param decls> <iterator body>)`.
-  var pass = initPass(ensureMove w, e.main, "iterlower", e.bits)
-  toFinalIr(pass, analysisFacts = false)
-  result = ensureMove pass.dest
-
 proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var iter = forStmt.iter
   if iter.exprKind == HderefX:
@@ -563,13 +557,9 @@ proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   replaceSymbol(e, w, body, relationsMap)
   w.addParRi()
 
-  # A local iterator was published from this module's lowered buffer; any
-  # other one comes from a nif that is not lowered yet.
-  var lowered = createTokenBuf(0)
-  if isLocalDecl(iterSym):
-    lowered = ensureMove w
-  else:
-    lowered = lowerIteratorBody(e, ensureMove w)
+  # Every module is published lowered, so an iterator body arrives in the
+  # shape this pass wants, whichever module declared it.
+  var lowered = ensureMove w
   # Fresh names for what the body declares. Not for the parameter
   # declarations: they are named already, and their values are the caller's
   # arguments, whose symbols a lowering run of its own may well reuse.

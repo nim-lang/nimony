@@ -21,7 +21,7 @@
 
 import std / [tables, strutils, assertions, sets, syncio]
 include ".." / lib / nifprelude
-import ".." / models / [tags, nimony_tags, leng_tags, callconv_tags]
+import ".." / models / [tags, nimony_tags, leng_tags, callconv_tags, finalir_tags]
 import ".." / nimony / nimony_model
 import tags_grammar
 import ".." / nimony / reporters  # infoToStr
@@ -45,6 +45,7 @@ let
 type
   PhaseKind* = enum
     phasePostSem        ## after `src/nimony/sem.nim`
+    phasePostFinalIr    ## after the lowering to the Final IR (`doc/final_ir.md`)
     phasePostLengcgen   ## after hexer -> Leng
 
   Phase* = object
@@ -61,6 +62,13 @@ proc postSemAllowed(raw: TagEnum): bool =
     rawTagIsNimonySym(raw) or rawTagIsNimonyPragma(raw) or
     rawTagIsCallConv(raw)
 
+proc postFinalIrAllowed(raw: TagEnum): bool =
+  ## The Final IR is the post-sem vocabulary plus its own control flow. The
+  ## post-sem tags stay allowed: a body that is re-sem'd elsewhere — a generic
+  ## routine, a template, a macro — is published unlowered, so its `if`/`while`
+  ## are legal here too.
+  postSemAllowed(raw) or rawTagIsFinalIrKind(raw)
+
 proc postLengcgenAllowed(raw: TagEnum): bool =
   rawTagIsLengExpr(raw) or rawTagIsLengStmt(raw) or
     rawTagIsLengType(raw) or rawTagIsLengOther(raw) or
@@ -69,6 +77,9 @@ proc postLengcgenAllowed(raw: TagEnum): bool =
 
 proc postSemPhase*(): Phase =
   Phase(name: "post-sem", kind: phasePostSem, allowed: postSemAllowed)
+
+proc postFinalIrPhase*(): Phase =
+  Phase(name: "post-final-ir", kind: phasePostFinalIr, allowed: postFinalIrAllowed)
 
 proc postLengcgenPhase*(): Phase =
   Phase(name: "post-lengcgen", kind: phasePostLengcgen, allowed: postLengcgenAllowed)

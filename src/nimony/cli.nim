@@ -171,6 +171,8 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     config.noValidate = true
   of "verbose":
     config.verbose = true
+  of "keepsemtree":
+    config.keepSemTree = true
   of "opt":
     forwardArg = false
     case normalize(val)

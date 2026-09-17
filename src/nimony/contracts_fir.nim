@@ -89,6 +89,12 @@ type
     ## `param`, and is what a call to the routine is keyed as.
     param: SymId
     value: Cursor
+    temps: seq[(SymId, Cursor)]
+      ## The `{.inline.}` temps the lowering bound the parts of `value` to. A
+      ## routine of this module has them in `inlineVars` already, from the
+      ## traversal of its body; an imported one is never traversed, so its
+      ## temps are carried here and registered when the accessor is first
+      ## asked for.
 
   BorrowInfo = object
     borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
@@ -898,7 +904,8 @@ proc isKeyableCall(fnSym: SymId): bool =
   if hasPragma(r.pragmas, NoSideEffectP): return true
   result = r.kind in {FuncY, ConverterY}
 
-proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor): bool =
+proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
+                   temps: var seq[(SymId, Cursor)]): bool =
   ## Recognize a *transparent accessor*: a one-parameter routine whose body is
   ## nothing but `result = <expr>`, which is exactly what sem produces for
   ## `func len[T](s: seq[T]): int = s.len`. The same `(asgn dest value)` shape
@@ -933,6 +940,15 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor): bool =
       skip a
       val = a
       skip b
+    elif b.symKind in {LetY, CursorY} and hasPragma(asLocal(b).pragmas, InlineP):
+      # `let \`x.N {.inline.} = len(s)`: the lowering binds a call to a temp
+      # that *is* that call, so the body is still `result = <expr>` — the
+      # expression is only spelled across two statements.
+      let l = asLocal(b)
+      if l.name.kind != SymbolDef or cursorIsNil(l.val) or l.val.kind == DotToken:
+        return false
+      temps.add (l.name.symId, l.val)
+      skip b
     elif b.stmtKind in {RetS, AssumeS, AssertS} or b.finalIrKind in {AssumeV, AssertV}:
       # a proposition changes nothing at run time: `len` states its own
       # non-negativity next to the path it returns
@@ -944,6 +960,11 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor): bool =
   value = val
   result = true
 
+proc registerAccessorTemps(c: var FirContext; a: AccessorInfo) =
+  for it in a.temps:
+    if not c.inlineVars.hasKey(it[0]):
+      c.inlineVars[it[0]] = it[1]
+
 proc accessorOf(c: var FirContext; fnSym: SymId; param: var SymId; value: var Cursor): bool =
   ## `c.accessors` is filled by a pre-pass over the module being analysed, which
   ## is what makes a *generic instance* such as `len.3.Ixyz` — created in this
@@ -953,11 +974,15 @@ proc accessorOf(c: var FirContext; fnSym: SymId; param: var SymId; value: var Cu
     let a = c.accessors.getOrQuit(fnSym)
     param = a.param
     value = a.value
+    registerAccessorTemps(c, a)
     return true
   if fnSym in c.notAccessors: return false
   let s = tryLoadSym(fnSym)
-  if s.status == LacksNothing and matchAccessor(s.decl, param, value):
-    c.accessors[fnSym] = AccessorInfo(param: param, value: value)
+  var temps: seq[(SymId, Cursor)] = @[]
+  if s.status == LacksNothing and matchAccessor(s.decl, param, value, temps):
+    let a = AccessorInfo(param: param, value: value, temps: ensureMove temps)
+    registerAccessorTemps(c, a)
+    c.accessors[fnSym] = a
     return true
   c.notAccessors.incl fnSym
   result = false
@@ -1443,11 +1468,13 @@ proc collectAccessors(c: var FirContext; n: var Cursor) =
       if fname.kind == SymbolDef: c.moduleFuncs.incl fname.symId
     var param = NoSymId
     var value = default(Cursor)
-    if matchAccessor(n, param, value):
+    var temps: seq[(SymId, Cursor)] = @[]
+    if matchAccessor(n, param, value, temps):
       var name = n
       name = sub(name)
       if name.kind == SymbolDef:
-        c.accessors[name.symId] = AccessorInfo(param: param, value: value)
+        c.accessors[name.symId] = AccessorInfo(param: param, value: value,
+                                               temps: ensureMove temps)
   n.into:
     while n.hasMore:
       collectAccessors(c, n)
@@ -4914,7 +4941,7 @@ proc traverseToplevel(c: var FirContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n, call
 
-proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
+proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): TokenBuf =
   ## Run the Final-IR lowering (`finalir.nim`, which itself runs xelim first).
   var n = beginRead(input)
   # this storage is reused for the Final IR, which is up to 1.5x its input
@@ -4924,12 +4951,10 @@ proc lowerToFinalIr(input: var TokenBuf; moduleSuffix: string; bits: int): Token
   toFinalIr(pass)
   result = ensureMove pass.dest
 
-proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
-  ## Main entry point: lowers `input` to the Final IR and analyzes contracts.
-  ## When `verbose` is true, every contract/init failure dumps the enclosing
-  ## proc's IR to stderr to aid debugging.
-  var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
-
+proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
+  ## Analyze contracts on a module that is already lowered — the buffer nimsem
+  ## goes on to publish. When `verbose` is true, every contract/init failure
+  ## dumps the enclosing proc's IR to stderr to aid debugging.
   var c = FirContext(
     errors: initTokenBuf(),
     typeCache: createTypeCache(bits),
@@ -4958,6 +4983,12 @@ proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; feature
 
   c.typeCache.closeScope()
   result = ensureMove c.errors
+
+proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
+  ## Lower `input` and analyze it. Only for a caller that has no lowered buffer
+  ## of its own: nimsem lowers once and calls `analyzeFinalIr` on that.
+  var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
+  result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits, verbose)
 
 when isMainModule:
   import std / [syncio, os]

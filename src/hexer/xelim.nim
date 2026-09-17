@@ -105,7 +105,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
 proc tempSymName(c: var Context): string {.inline.} =
-  result = "`x." & $c.counter
+  # Each run owns a name space. The lowering runs in nimsem, whose temps are
+  # published with the module; the `LowerCasts` run happens in hexer, on that
+  # published module. Sharing the prefix made the second run mint a name the
+  # first one had already given to a different local.
+  result = (if c.goal == LowerCasts: "`xc." else: "`x.") & $c.counter
   inc c.counter
 
 proc getType(c: var Context; n: Cursor): Cursor =
@@ -1283,18 +1287,21 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
 
   of DiscardS:
-    # A `discard` never survives: its operand is bound to a temp, which is what
-    # keeps the call and drops the value.
+    # A `discard` with an operand does not survive: the operand is bound to a
+    # temp, which is what keeps the call and drops the value. `discard .` has
+    # no operand and stays the no-op statement it is — emitting its lone `.`
+    # would put a bare token where a statement belongs.
+    let head = n
     n.into:
       if n.isDotToken:
-        dest.takeTree n
+        dest.copyIntoKind DiscardS, head.info:
+          dest.takeTree n
       else:
         let typ = getType(c, n)
         var tar = initTarget(IsBound)
         trExpr c, dest, n, tar
         # we must bind the result to a temporary variable!
-        let tmp = pool.symId("`x." & $c.counter)
-        inc c.counter
+        let tmp = pool.symId(tempSymName(c))
         let info = n.endInfo # the discard operand is consumed: `n` is at
                              # the (possibly elided) close
         dest.addParLe LetS, info
