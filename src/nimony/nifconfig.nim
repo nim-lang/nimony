@@ -51,6 +51,7 @@ when defined(nimony):
       elif defined(netbsd): "netbsd"
       elif defined(openbsd): "openbsd"
       elif defined(dragonfly): "dragonfly"
+      elif defined(illumos): "illumos"
       elif defined(solaris): "solaris"
       elif defined(haiku): "haiku"
       elif defined(android): "android"
@@ -309,7 +310,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "posix", "unix":
       result = config.targetOS in {osLinux, osMorphos, osSkyos, osIrix, osPalmos,
                             osQnx, osAtari, osAix,
-                            osHaiku, osVxWorks, osSolaris, osNetbsd,
+                            osHaiku, osVxWorks, osSolaris, osIllumos, osNetbsd,
                             osFreebsd, osOpenbsd, osDragonfly, osMacosx, osIos,
                             osAndroid, osNintendoSwitch, osFreeRTOS, osCrossos, osZephyr, osNuttX}
     of "linux":
@@ -326,7 +327,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
       result = config.targetOS in {osMacos, osMacosx, osIos}
     of "osx", "macosx":
       result = config.targetOS in {osMacosx, osIos}
-    of "sunos": result = config.targetOS == osSolaris
+    of "sunos": result = config.targetOS in {osSolaris, osIllumos}
     of "freertos", "lwip":
       result = config.targetOS == osFreeRTOS
     of "littleendian": result = CPU[config.targetCPU].endian == littleEndian
@@ -337,7 +338,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "cpu64": result = config.bits == 64
     of "nimrawsetjmp":
       result = config.targetOS in {osSolaris, osNetbsd, osFreebsd, osOpenbsd,
-                            osDragonfly, osMacosx}
+                            osDragonfly, osMacosx, osIllumos}
     of "executable": result = config.appType in {appConsole, appGui}
     of "library": result = config.appType in {appLib, appStaticLib}
     of "dll": result = config.appType == appLib
