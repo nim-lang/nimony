@@ -1100,16 +1100,44 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addTarget tar
       trStmt c, dest, n
 
+proc registerForVars(c: var Context; vars: Cursor) =
+  ## The loop variables of a `for`: bound by an iterator this pass cannot see,
+  ## so nothing else declares them for the type cache.
+  var vars = vars
+  if vars.substructureKind in {UnpackflatU, UnpacktupU}:
+    vars = sub(vars) # peek only, never left
+    while vars.hasMore:
+      registerForVars c, vars
+      skip vars
+  elif isLocal(vars.symKind):
+    let local = asLocal(vars)
+    c.typeCache.registerLocal(local.name.symId, vars.symKind, local.typ)
+
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
   let head = n.load()
   n.into:
     var tar = initTarget(IsEmpty)
-    trExpr c, dest, n, tar # iterator call
+    # The iterator call is not a value and must stay where it is: only its
+    # arguments are lowered. (Bound to a temp, `elimForLoops` could not tell
+    # which iterator the loop runs.)
+    if n.exprKind == HderefX:
+      tar.m = IsAppend
+      tar.t.addParLe(n.cursorTagId, n.info)
+      n.into:
+        trExprLoop c, dest, n, tar
+      tar.t.addParRi()
+    elif n.exprKind in CallKinds:
+      trExprLoop c, dest, n, tar
+    else:
+      trExpr c, dest, n, tar
     dest.addParLe(head.tagId, info)
     dest.addTarget tar
+    c.typeCache.openScope()
+    registerForVars c, n
     takeTree dest, n # for loop variables
     trStmt c, dest, n
+    c.typeCache.closeScope()
     dest.addParRi(n.endInfo)
 
 proc trCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =

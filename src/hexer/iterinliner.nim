@@ -1,8 +1,9 @@
 import std / [assertions, tables, hashes, sets, syncio]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import hexer_context
+import hexer_context, passes
 import ".." / nimony / [nimony_model, programs, decls, typenav]
+import ".." / finalir / [finalir, finalir_model]
 import duplifier
 
 
@@ -199,6 +200,7 @@ proc transformContinueStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
 
 proc transformForStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
 proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor)
+proc transformForFir(e: var EContext; dest: var TokenBuf; c: var Cursor)
 
 proc copyWithMapping(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymId]) =
   ## Copy one subtree from `c` into `dest`, applying `mapping` to every
@@ -681,6 +683,313 @@ proc emitCoroFor(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
 
   discard e.continues.pop()
 
+# ----------------------------------------------------------------------------
+# Final IR input (`hexerSpeaksFir`)
+#
+# The pipeline lowered the module before this pass, so a `for` arrives as
+#
+#   (for <iter call> <vars> (scope <body> (continue .)))  (lab :exit)
+#
+# with every `break` already a `(jmp exit)`. What is left to do per `yield` is
+# a copy of the body in which the trailing back-edge is dropped and any other
+# `continue` of this loop jumps to the end of the copy. The iterator's own body
+# comes from `tryLoadSym`, i.e. from a module nif that is not lowered yet, so
+# it is lowered here. Every copy declares its own locals and labels: a
+# lowering run and a body copy both reuse names, and one routine must not.
+
+proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
+  ## A fresh name for every local and label `n` declares. Labels have to be
+  ## known up front: a `jmp` comes before its `lab`.
+  var n = n
+  if not n.isTagLit: return
+  let sk = n.stmtKind
+  case sk
+  of VarS, LetS, CursorS, PatternvarS, ResultS, LabS:
+    let d = n.childCursor
+    if d.kind == SymbolDef:
+      mapping[d.symId] = pool.symId("`ii." & $e.getTmpId)
+  of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
+     PragmasS:
+    return # nested declarations own their names
+  else: discard
+  n = sub(n)   # peek only, never left
+  while n.hasMore:
+    collectDefs(e, n, mapping)
+    skip n
+
+proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymId]) =
+  ## `copyWithMapping`, renaming the declarations in `mapping` as well.
+  case c.kind
+  of TagLit:
+    if c.exprKind in {DotX, DdotX}:
+      dest.addParLe(c.cursorTagId, c.info)
+      c.into:
+        copyFreshened(dest, c, mapping) # object expression
+        while c.hasMore:
+          dest.takeTree c # field selector + optional depth/access token
+        dest.addParRi(c.endInfo)
+    elif c.substructureKind == KvU:
+      dest.addParLe(c.cursorTagId, c.info)
+      c.into:
+        dest.takeTree c # field name
+        while c.hasMore:
+          copyFreshened(dest, c, mapping)
+        dest.addParRi(c.endInfo)
+    elif c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+                        TemplateS, TypeS, PragmasS}:
+      dest.takeTree c
+    else:
+      dest.addParLe(c.cursorTagId, c.info)
+      c.into:
+        while c.hasMore:
+          copyFreshened(dest, c, mapping)
+        dest.addParRi(c.endInfo)
+  of Symbol:
+    dest.addSymUse(mapping.getOrDefault(c.symId, c.symId), c.info)
+    inc c
+  of SymbolDef:
+    dest.addSymDef(mapping.getOrDefault(c.symId, c.symId), c.info)
+    inc c
+  else:
+    dest.addSubtree c
+    inc c
+
+proc inlineForBody(e: var EContext; dest: var TokenBuf; c: var Cursor;
+                   mapping: Table[SymId, SymId]; depth: int;
+                   contLab: SymId; contUsed: var bool) =
+  ## One statement of a `for` body. `depth` counts the loops opened inside the
+  ## body: a `continue` at depth 0 is this `for`'s own.
+  case c.kind
+  of TagLit:
+    if c.stmtKind == ForS:
+      # inlined afresh for every copy of the enclosing body
+      var forBuf = createTokenBuf()
+      copyFreshened(forBuf, c, mapping)
+      var f = beginRead(forBuf)
+      transformForFir(e, dest, f)
+    elif c.stmtKind == ContinueS and depth == 0:
+      copyIntoKind dest, JmpS, c.info:
+        dest.addSymUse contLab, c.info
+      contUsed = true
+      skip c, ContinueS
+    elif c.exprKind in {DotX, DdotX} or c.substructureKind == KvU or
+        c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+                       TemplateS, TypeS, PragmasS}:
+      copyFreshened(dest, c, mapping)
+    else:
+      let d = if c.finalIrKind == LoopV: depth + 1 else: depth
+      dest.addParLe(c.cursorTagId, c.info)
+      c.into:
+        while c.hasMore:
+          inlineForBody(e, dest, c, mapping, d, contLab, contUsed)
+        dest.addParRi(c.endInfo)
+  else:
+    copyFreshened(dest, c, mapping)
+
+proc emitForBody(e: var EContext; dest: var TokenBuf; body: Cursor;
+                 mapping: Table[SymId, SymId]; prefix: TokenBuf) =
+  ## `(scope <prefix> <body without its back-edge>)`. A `continue` of this
+  ## loop jumps to a label after a scope of the body's own, as in
+  ## `finalir.emitLoopBody`: never past a declaration in the same scope.
+  var b = body
+  let info = b.info
+  let contLab = pool.symId("`ii." & $e.getTmpId)
+  var contUsed = false
+  var stmts = createTokenBuf(64)
+  if b.stmtKind in {StmtsS, ScopeS}:
+    b = sub(b)   # peek only, never left
+    while b.hasMore:
+      var probe = b
+      skip probe
+      if b.stmtKind == ContinueS and not probe.hasMore:
+        skip b, ContinueS # the trailing back-edge: falling off the copy does it
+      else:
+        inlineForBody(e, stmts, b, mapping, 0, contLab, contUsed)
+  else:
+    inlineForBody(e, stmts, b, mapping, 0, contLab, contUsed)
+  dest.addParLe ScopeS, info
+  dest.add prefix
+  if contUsed:
+    dest.addParLe ScopeS, info
+    dest.add stmts
+    dest.addParRi()
+    copyIntoKind dest, LabS, info:
+      dest.addSymDef contLab, info
+  else:
+    dest.add stmts
+  dest.addParRi()
+
+proc inlineIteratorBodyFir(e: var EContext; dest: var TokenBuf;
+                           c: var Cursor; forStmt: ForStmt; yieldType: Cursor) =
+  if c.isTagLit:
+    if c.stmtKind == YldS:
+      c.into: # skips yield
+        var mapping = createYieldMapping(e, dest, c, forStmt.vars, yieldType)
+        collectDefs(e, forStmt.body, mapping)
+        emitForBody(e, dest, forStmt.body, mapping, createTokenBuf(0))
+    elif c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
+                        TemplateS, TypeS}:
+      dest.takeTree c
+    else:
+      takeInto dest, c:
+        while c.hasMore:
+          inlineIteratorBodyFir(e, dest, c, forStmt, yieldType)
+  else:
+    takeTree(dest, c)
+
+proc emitCoroForFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
+  ## `emitCoroFor` for Final IR input: the body is a `scope`, its `continue`s
+  ## jump to its end, and no block is needed for `break`.
+  var iterCur = forStmt.iter
+  if iterCur.exprKind == HderefX:
+    inc iterCur
+  if iterCur.exprKind notin CallKinds:
+    error e, "closure iterator must be invoked directly in a for-loop, got: ",
+      forStmt.iter
+  let info = iterCur.info
+  let forVars = getForVars(e, forStmt.vars)
+  let forLoopVarSym: SymId
+  if forVars.len == 1:
+    dest.copyTree forVars[0]
+    forLoopVarSym = asLocal(forVars[0]).name.symId
+  else:
+    var symProbe = iterCur
+    inc symProbe # past Call tag
+    if not symProbe.isSymbol:
+      error e, "closure iterator call must target a symbol, got: ", iterCur
+    let res = tryLoadSym(symProbe.symId)
+    if res.status != LacksNothing:
+      error e, "could not load closure-iter sym: " & pool.symString(symProbe.symId)
+    let routine = asRoutine(res.decl, SkipInclBody)
+    var retType = routine.retType
+    if retType.typeKind in {MutT, LentT}:
+      inc retType
+    forLoopVarSym = pool.symId("`coroTup." & $getTmpId(e))
+    dest.copyIntoKind LetS, info:
+      dest.addSymDef forLoopVarSym, info
+      dest.addDotToken() # exported
+      dest.addDotToken() # pragmas
+      dest.copyTree retType
+      dest.addDotToken() # no initializer — iter writes through slot
+
+  dest.addParLe CoroforS, info
+  var callCur = forStmt.iter
+  if callCur.exprKind == HderefX:
+    inc callCur
+  dest.addParLe(callCur.cursorTagId, callCur.info)
+  callCur = sub(callCur) # drained below; the close is synthesized
+  while callCur.hasMore:
+    dest.takeTree callCur
+  dest.copyIntoKind HaddrX, info:
+    dest.addSymUse forLoopVarSym, info
+  dest.addParRi() # close iter call
+
+  var prefix = createTokenBuf(16)
+  if forVars.len > 1:
+    for i, fv in forVars.pairs:
+      let local = asLocal(fv)
+      prefix.addParLe fv.stmtKind, fv.info
+      prefix.addSymDef local.name.symId, fv.info
+      prefix.addDotToken() # exported
+      prefix.addDotToken() # pragmas
+      prefix.copyTree local.typ
+      prefix.copyIntoKind TupatX, info:
+        prefix.addSymUse forLoopVarSym, info
+        prefix.addIntLit i, info
+      prefix.addParRi() # close decl
+  emitForBody(e, dest, forStmt.body, initTable[SymId, SymId](), prefix)
+  dest.addParRi() # close corofor
+
+proc lowerIteratorBody(e: var EContext; w: sink TokenBuf): TokenBuf =
+  ## The Final IR of `w`, an `(stmts <param decls> <iterator body>)`.
+  var pass = initPass(ensureMove w, e.main, "iterlower", e.bits)
+  toFinalIr(pass, analysisFacts = false)
+  result = ensureMove pass.dest
+
+proc inlineIteratorFir(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
+  var iter = forStmt.iter
+  if iter.exprKind == HderefX:
+    inc iter
+  assert iter.exprKind in CallKinds
+  inc iter
+  var iterDecl = default(Cursor)
+  var iterSym = SymId(0)
+  if iter.kind == Symbol:
+    iterSym = iter.symId
+    let res = tryLoadSym(iterSym)
+    if res.status == LacksNothing and res.decl.stmtKind == IteratorS:
+      iterDecl = res.decl
+  if cursorIsNil(iterDecl):
+    emitCoroForFir(e, dest, forStmt)
+    return
+  let routine = asRoutine(iterDecl, SkipInclBody)
+  if hasPragma(routine.pragmas, ClosureP) or hasPragma(routine.pragmas, PassiveP):
+    emitCoroForFir(e, dest, forStmt)
+    return
+  var w = createTokenBuf(64)
+  w.addParLe StmtsS, forStmt.iter.info
+  var params = routine.params
+  params = sub(params) # (params; peek only, never left
+  inc iter # name
+  var relationsMap = initTable[SymId, SymId]()
+  var paramCount = 0
+  while params.hasMore:
+    let param = asLocal(params)
+    var typ = param.typ
+    let name = param.name
+    let newName = pool.symId("`lf." & $e.instId)
+    inc e.instId
+    createDecl(e, w, newName, typ, iter, name.info,
+               if constructsValue(iter): VarS else: CursorS, needsAddr=false)
+    relationsMap[name.symId] = newName
+    inc paramCount
+    skip params
+  var body = routine.body
+  replaceSymbol(e, w, body, relationsMap)
+  w.addParRi()
+
+  # A local iterator was published from this module's lowered buffer; any
+  # other one comes from a nif that is not lowered yet.
+  var lowered = createTokenBuf(0)
+  if isLocalDecl(iterSym):
+    lowered = ensureMove w
+  else:
+    lowered = lowerIteratorBody(e, ensureMove w)
+  # Fresh names for what the body declares. Not for the parameter
+  # declarations: they are named already, and their values are the caller's
+  # arguments, whose symbols a lowering run of its own may well reuse.
+  var freshBuf = createTokenBuf(lowered.len)
+  var lc = beginRead(lowered)
+  freshBuf.addParLe(lc.cursorTagId, lc.info)
+  lc.into:
+    for i in 0 ..< paramCount:
+      freshBuf.takeTree lc
+    var fresh = initTable[SymId, SymId]()
+    var probe = lc
+    while probe.hasMore:
+      collectDefs(e, probe, fresh)
+      skip probe
+    while lc.hasMore:
+      copyFreshened(freshBuf, lc, fresh)
+  freshBuf.addParRi()
+  var inner = createTokenBuf(freshBuf.len)
+  var fc = beginRead(freshBuf)
+  transformStmt(e, inner, fc) # the iterator's own `for`s
+  var ic = beginRead(inner)
+  ic.into: # the wrapper's `stmts`: its children go straight into the scope
+    while ic.hasMore:
+      inlineIteratorBodyFir(e, dest, ic, forStmt, routine.retType)
+
+proc transformForFir(e: var EContext; dest: var TokenBuf; c: var Cursor) =
+  ## The whole expansion is one `scope`: the iterator's parameters and locals
+  ## die at its end, and the `(lab exit)` the lowering put after the `for`
+  ## stays where every `break` expects it.
+  let forStmt = asForStmt(c)
+  dest.addParLe ScopeS, c.info
+  inlineIteratorFir(e, dest, forStmt)
+  dest.addParRi()
+  skip c
+
 proc inlineIterator(e: var EContext; dest: var TokenBuf; forStmt: ForStmt) =
   var iter = forStmt.iter
   if iter.exprKind == HderefX:
@@ -869,7 +1178,10 @@ proc transformStmt(e: var EContext; dest: var TokenBuf; c: var Cursor) =
         while c.hasMore:
           transformStmt(e, dest, c)
     of ForS:
-      transformForStmt(e, dest, c)
+      if hexerSpeaksFir():
+        transformForFir(e, dest, c)
+      else:
+        transformForStmt(e, dest, c)
     of IteratorS:
       let routine = asRoutine(c, SkipExclBody)
       let iterSym = routine.name.symId

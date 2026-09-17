@@ -318,8 +318,8 @@ In rough dependency order:
    and its converse, *analysis-only facts do not belong in the IR*.
 3. **Teach hexer the Final IR, before publishing it.** *In progress.* The
    lowering runs inside `pipeline.transform` behind `NIMONY_HEXER_FIR=1`
-   (`passes.hexerSpeaksFir`), right after `elimForLoops` — ahead of
-   `desugar` and `lambdalifting` — and `xelim1` does not run; `tests/nimony` is 828/828
+   (`passes.hexerSpeaksFir`) as hexer's first step, ahead of every pass —
+   `elimForLoops` included — and `xelim1` does not run; `tests/nimony` is 828/828
    with it on and the default build is untouched. It emits no
    `kill`/`unknown` (`toFinalIr(analysisFacts = false)`): they name locals
    `lambdalifting` may move into an environment, and nothing in hexer needs
@@ -357,6 +357,23 @@ In rough dependency order:
      materialized (`trShortCircuit`). `xelim` leaves a `string.&` chain
      nested (`trConcatChain`) so `desugar` can still fold it into one
      allocation — without that, the folding silently stopped.
+   - `iterinliner`: a `for` arrives as `(for call vars (scope body
+     (continue .))) (lab exit)`, every `break` already a `jmp exit`. Each
+     `yield` gets a copy of the body without its back-edge. The iterator body
+     comes from `tryLoadSym`, i.e. from a nif that is not lowered yet, so it is
+     lowered on the spot, together with the parameter declarations so the
+     types resolve (a local iterator was published from the lowered module
+     and is used as is). Every copy, and every lowered body, declares its own
+     names: a lowering run restarts its temp and label counters. `xelim`
+     leaves the `for`'s iterator call in place instead of binding it to a
+     temp, and registers the loop variables.
+   - The lowering spells a source-level `continue` as a `jmp` to a label in
+     front of the back-edge, so `(continue .)` is only ever the last
+     statement of a loop body, as this document says it is. That label sits
+     *after* a scope of the body's own: a `jmp` may leave a scope but never
+     skip a declaration inside one, whose destructor the scope's end would
+     then run uninitialized (`tcontinue_skips_decl`; it crashed the `parsegen`
+     plugin).
    - The lowering lowers a `corofor`'s body — the case the fallback probe was
      for.
    - `cps`'s escape analysis pins the first argument of an
@@ -373,13 +390,13 @@ In rough dependency order:
    the lowering turned a statement-position `stmts` into a scope; a replicated
    `finally` duplicated its labels.
 
-   Left: move the lowering ahead of `iterinliner`, which needs the bodies it
-   splices in from other modules lowered too (see *No normalizer*); find out
-   why the intra-module inliner stops inlining `json.$` (six call sites in
-   `tjson`) on the Final IR's output; make it the default and drop the
-   switch; teach `lengcgen` the Final IR so `cps` stops converting it back;
-   and keep measuring generated code — on `tjson` so far the C text is 12%
-   larger (temps and labels) and the executable 0.08%.
+   Left: find out why the intra-module inliner stops inlining `json.$` (six
+   call sites in `tjson`) on the Final IR's output; make it the default and
+   drop the switch; teach `lengcgen` the Final IR so `cps` stops converting
+   it back. Measured with the lowering first: on `tjson` the C text is 11%
+   larger (temps and labels) and the executable 0.08%; `tall` compiles in
+   4.4 s against 4.2 s. Once step 4 publishes lowered nifs, the iterator
+   inliner's on-the-spot lowering goes away.
 4. Publish the Final IR as the module nif — the lowering moves from hexer's
    entry back to nimsem — with the "unlowered iff re-sem'd elsewhere" rule and
    a verifier check for it, and `renderer`/`idetools`/`indexgen` taught to read

@@ -54,6 +54,8 @@ type
     blockName: SymId   # source block name for `break label`, or NoSymId
     isLoop: bool       # loops are also the target of an unnamed `break`
     used: bool         # did any `jmp`/`break` target this exit?
+    cont: SymId        # loops: the `(lab cont)` in front of the back-edge
+    contUsed: bool     # did a source-level `continue` target it?
 
   CurrentProc = object
     resultSym: SymId
@@ -514,10 +516,17 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = breakStart; skip n
 
 proc trContinue(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # The single backward transfer: the loop's back-edge to its header.
+  ## A source-level `continue` is a forward `(jmp cont)` to the label in front
+  ## of the innermost loop's back-edge, which keeps `(continue .)` what the
+  ## Final IR says it is: the last statement of a loop body and its only
+  ## back-edge. (Nothing downstream has to find one in the middle of a body.)
   let info = n.info
-  dest.copyIntoKind ContinueV, info:
-    dest.addDotToken() # no `join` information yet
+  var target = c.current.exits.len - 1
+  while target >= 0 and not c.current.exits[target].isLoop:
+    dec target
+  assert target >= 0, "continue has no enclosing loop"
+  c.current.exits[target].contUsed = true
+  emitJmp dest, c.current.exits[target].cont, info
   skip n
 
 proc trRet(c: var Context; dest: var TokenBuf; n: var Cursor) =
@@ -573,27 +582,44 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if used:
     emitLab dest, exitL, info
 
+proc emitLoopBody(c: var Context; dest: var TokenBuf; body: var TokenBuf;
+                  info: NifLineInfo) =
+  ## The translated statements of a loop body, then its back-edge. When a
+  ## `continue` jumps to the end, the statements get a `scope` of their own
+  ## with the label after it: a `jmp` may leave a scope but never skip a
+  ## declaration inside one, whose destructor the scope's end would then run
+  ## on a value that was never initialized.
+  if c.current.exits[^1].contUsed:
+    dest.addParLe ScopeS, info
+    dest.add body
+    dest.addParRi()
+    emitLab dest, c.current.exits[^1].cont, info
+  else:
+    dest.add body
+  closeScope c, dest, info # kills run on the back-edge path
+  dest.copyIntoKind ContinueV, info: # the sole back-edge
+    dest.addDotToken()
+
 proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `n` points at the loop *body*. Emit the infinite
   ## `(loop (stmts <body> (continue .)))` and, if any `break` targeted it, the
   ## trailing `(lab loopExit)`.
   let info = n.info
   let exitL = freshLabel(c, "´lx.")
-  c.current.exits.add Exit(name: exitL, isLoop: true)
+  c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."))
   openScope c
   dest.addParLe LoopV, info
   dest.addParLe ScopeS, info # a loop body is a scope: its locals die each iteration
+  var body = createTokenBuf(64)
   if n.stmtKind in {StmtsS, ScopeS}:
     n.into: # the body statement list
       while n.hasMore:
-        trStmt c, dest, n
+        trStmt c, body, n
   else:
     # a lone statement, as a pass ahead of this one may build it
-    trStmt c, dest, n
-  closeScope c, dest, info # kills run on the back-edge path
-  dest.copyIntoKind ContinueV, info: # the sole back-edge
-    dest.addDotToken()
-  dest.addParRi() # close `stmts`
+    trStmt c, body, n
+  emitLoopBody c, dest, body, info
+  dest.addParRi() # close `scope`
   dest.addParRi() # close `loop`
   let used = c.current.exits[^1].used
   c.current.exits.shrink(c.current.exits.len - 1)
@@ -659,7 +685,7 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   forRangeAssumes(assumeBuf, forStmt, c.callExprs, info)
 
   let exitL = freshLabel(c, "´lx.")
-  c.current.exits.add Exit(name: exitL, isLoop: true)
+  c.current.exits.add Exit(name: exitL, isLoop: true, cont: freshLabel(c, "´lc."))
   openScope c
   dest.addParLe(forTag, info)
   takeTree dest, n # the iterator call, verbatim: xelim already normalized it
@@ -669,13 +695,12 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if assumeBuf.len > 0:
     dest.add assumeBuf
   assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
+  var body = createTokenBuf(64)
   n.into: # the body statement list
     while n.hasMore:
-      trStmt c, dest, n
-  closeScope c, dest, info # kills run on the back-edge path
-  dest.copyIntoKind ContinueV, info: # the sole back-edge
-    dest.addDotToken()
-  dest.addParRi() # close `stmts`
+      trStmt c, body, n
+  emitLoopBody c, dest, body, info
+  dest.addParRi() # close `scope`
   dest.addParRi(n.endInfo) # close `for`
   c.current.exits.shrink(c.current.exits.len - 1)
   # The exit label is emitted even when nothing jumps to it. An *inline*

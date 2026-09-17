@@ -45,21 +45,24 @@ proc publishHooks*(n: var Cursor) =
     inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
-  # Prepare initial buffer from elimForLoops
   var n = n
-  var dest = createTokenBuf(300)
-  elimForLoops(c, dest, n)
-  var initialBuf = move dest
-
-  # Initialize the Pass pipeline
-  var pass = initPass(initialBuf, moduleSuffix, "desugar", bits)
-
+  var pass: Pass
   if hexerSpeaksFir():
-    # Every pass from here on reads the Final IR. `toFinalIr` runs `xelim`
-    # itself.
-    pass.passName = "xelim1"
+    # Every pass reads the Final IR, the iterator inliner included.
+    # `toFinalIr` runs `xelim` itself.
+    var input = createTokenBuf(300)
+    input.addSubtree n
+    pass = initPass(ensureMove input, moduleSuffix, "xelim1", bits)
     toFinalIr(pass, analysisFacts = false)
+    pass.prepareForNext("iterinliner")
+    var m = pass.n
+    elimForLoops(c, pass.dest, m)
     pass.prepareForNext("desugar")
+  else:
+    # Prepare initial buffer from elimForLoops
+    var dest = createTokenBuf(300)
+    elimForLoops(c, dest, n)
+    pass = initPass(ensureMove dest, moduleSuffix, "desugar", bits)
 
   # Pass 1: Desugar
   desugar(pass, c.activeChecks)
