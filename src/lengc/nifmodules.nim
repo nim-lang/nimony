@@ -18,6 +18,10 @@
 ## entirely — `nifreader.Reader` already provides `jumpTo`/`offset`, and the
 ## embedded index is read at the raw-token level with no pool involvement.
 
+when defined(nimony):
+  # `TypeScope.parent` is a nilable linked list: the outermost scope has none.
+  {.feature: "lenientnils".}
+
 import std / [assertions, tables, syncio] # syncio: `quit`
 from std / os import fileExists           # NOT a whole `os` import: it exports a
                                           # `FileId` that collides with nifcore's
@@ -346,8 +350,12 @@ proc load*(filename: string; pool: Pool = nil; tags: TagPool = nil): MainModule 
   # densified buffer shares `raw`'s pool/tags in the text case; in the bif case
   # it gets its own canonical pools and `DensifyRemap` translates the raw ids
   # (tags, line-info FileIds) — strings/symbols re-intern by value anyway.
+  # `config` is a not-nil ref, so it has no default value and the constructor
+  # owes it one: `codegen.generateCode` overwrites it with the driver's config
+  # (`m.config = s.config`) before anything reads a field off it.
   result = MainModule(current: TypeScope(locals: initTable[SymId, Cursor]()),
                       filename: filename,
+                      config: ConfigRef(),
                       prog: NifProgram(scheme: splitModulePath(filename)))
   var remap = default(DensifyRemap)
   if fromBif:

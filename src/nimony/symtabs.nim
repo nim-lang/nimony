@@ -4,6 +4,10 @@
 # See the file "license.txt", included in this
 # distribution, for details about the copyright.
 
+when defined(nimony):
+  # `Scope.up` is a nilable chain: the toplevel scope has nothing above it.
+  {.feature: "lenientnils".}
+
 import std / [tables]
 include ".." / lib / nifprelude
 import nimony_model, identstyle

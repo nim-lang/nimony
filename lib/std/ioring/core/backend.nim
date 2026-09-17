@@ -11,7 +11,14 @@ const MaxOps* = 8192
 
 type
   BackendRelays* = object
-    poll*: proc (timeoutMs: int): bool {.nimcall.}
+    ## `unchecked`, not not-nil: `backendRelays` is a global that `setupRing`
+    ## fills through `initPlatformBackend`, and it cannot be filled at its
+    ## declaration -- a backend's relays open kernel objects sized by
+    ## `ioLanes()`, so `initPool` has to have run first. The fields really are
+    ## nil for that window, and the ring's own ordering (`gReactorState`, which
+    ## is published with a release store once the whole ring is up) is what
+    ## keeps anyone from reading them in it.
+    poll*: unchecked proc (timeoutMs: int): bool {.nimcall.}
     waits*: bool
       ## True when `poll(timeoutMs)` really does sleep for up to `timeoutMs`
       ## in the kernel. The pool's idle worker naps for a millisecond after a
@@ -20,8 +27,8 @@ type
       ## doubles the idle latency and spends a second syscall doing it. A
       ## backend that cannot wait (or, for io_uring, is on a kernel without
       ## `FEAT_EXT_ARG`) leaves this `false` and keeps the nap.
-    close*: proc () {.nimcall.}
-    forgetFd*: proc (fd: cint) {.nimcall.}
+    close*: unchecked proc () {.nimcall.}
+    forgetFd*: nil proc (fd: cint) {.nimcall.}
       ## Drop any backend-side per-fd registration/bookkeeping before a fd is
       ## closed (e.g. epoll's ADD/MOD tracking). `nil` for backends where the
       ## OS already tears this down on close (kqueue) — callers
@@ -203,7 +210,7 @@ proc complete*(slotIdx: int; res: int) =
       inc gCqCount
     gCqLock.release()
 
-var gCancelInFlight*: proc (slotIdx: int; gen: uint32) {.nimcall.}
+var gCancelInFlight*: nil proc (slotIdx: int; gen: uint32) {.nimcall.}
   ## Set by a backend where the OS keeps working on an op after this process
   ## has stopped waiting for it. The readiness backends leave it `nil`: an
   ## epoll/kqueue registration owns nothing, so dropping it is the whole of

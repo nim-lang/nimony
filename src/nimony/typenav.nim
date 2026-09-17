@@ -9,6 +9,11 @@
 
 ## A type navigator can recompute the type of an expression.
 
+when defined(nimony):
+  # The scope chain is a nilable linked list: `TypeCache.current` is nil until
+  # the first `openScope`, and `closeScope` pops the outermost one back to nil.
+  {.feature: "lenientnils".}
+
 import std/assertions
 include ".." / lib / nifprelude
 
