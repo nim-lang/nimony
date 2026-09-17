@@ -165,6 +165,8 @@ proc externKind(p: CollectedPragmas): string =
     result = "importc"
   elif ImportcppP in p.flags:
     result = "importcpp"
+  elif ImportjsP in p.flags:
+    result = "importjs"
   elif ExportcP in p.flags:
     result = "exportc"
   else:
@@ -881,7 +883,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
                 error c, "expected string literal or ident, but got: ", n
               result.flags.incl MagicP
               inc n
-          of ImportcP, ImportcppP, ExportcP:
+          of ImportcP, ImportcppP, ImportjsP, ExportcP:
             n.into:
               expectStrLit c, n
               result.extern = n.strId

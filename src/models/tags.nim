@@ -360,6 +360,7 @@ type
     ConstrefTagId
     DependencyTagId
     PluginCallTagId
+    ImportjsTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -719,5 +720,6 @@ const
     ("interrupt", 354),
     ("constref", 355),
     ("dependency", 356),
-    ("pluginCall", 357)
+    ("pluginCall", 357),
+    ("importjs", 358)
   ]

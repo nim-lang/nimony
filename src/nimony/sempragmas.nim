@@ -343,7 +343,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     if hasParRi and n.hasMore:
       semConstStrExprIgnoreTopLevel c, dest, n
     dest.addParRi()
-  of ImportcP, ImportcppP, ExportcP, HeaderP, DynlibP:
+  of ImportcP, ImportcppP, ImportjsP, ExportcP, HeaderP, DynlibP:
     crucial.flags.incl pk
     let info = n.info
     dest.addParLe(pk, info)
@@ -358,7 +358,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
       c.buildErr dest, info, "invalid import/export symbol"
       dest.addParRi()
       return
-    if pk in {ImportcP, ImportcppP, ExportcP} and dest[strPos].kind == StrLit:
+    if pk in {ImportcP, ImportcppP, ImportjsP, ExportcP} and dest[strPos].kind == StrLit:
       crucial.externName = pool.strings[readonlyCursorAt(dest, strPos).strId]
     # Header pragma extra
     if pk == HeaderP:
