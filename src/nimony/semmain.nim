@@ -584,7 +584,7 @@ proc resolveCyclicImports(c: var SemContext) =
         module.iface.mgetOrPut(nameId, @[]).addIfAbsent(symId)
 
 proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[ModuleFlag];
-                    commandLineArgs: string; canSelfExec: bool): SemContext =
+                    commandLineArgs, hostCommandLineArgs: string; canSelfExec: bool): SemContext =
   result = SemContext(
     types: createBuiltinTypes(config.config.bits),
     thisModuleSuffix: suffix,
@@ -593,6 +593,7 @@ proc initSemContext(suffix: string; config: ProgramContext; moduleFlags: set[Mod
     phase: SemcheckTopLevelSyms,
     routine: SemRoutine(kind: NoSym),
     commandLineArgs: commandLineArgs,
+    hostCommandLineArgs: hostCommandLineArgs,
     canSelfExec: canSelfExec,
     pendingSumtypes: initTokenBuf(),
     toBuild: initTokenBuf(),
@@ -667,7 +668,7 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
 
 proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
                         moduleFlags: set[ModuleFlag];
-                        commandLineArgs: string; canSelfExec: bool) =
+                        commandLineArgs, hostCommandLineArgs: string; canSelfExec: bool) =
   ## Semantic check multiple modules that form a cycle group.
   ## All modules are processed through each phase together:
   ## phase1(all) -> resolve cyclic imports -> phase2(all) ->
@@ -683,12 +684,12 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
     if i == 0:
       ms.n0 = setupProgram(infiles[i], outfiles[i], ms.owningBuf)
       ms.c = initSemContext(prog.main.name, sharedConfig, moduleFlags,
-                            commandLineArgs, canSelfExec)
+                            commandLineArgs, hostCommandLineArgs, canSelfExec)
     else:
       let suffix = splitModulePath(infiles[i]).name
       ms.n0 = loadModule(infiles[i], ms.owningBuf, suffix)
       ms.c = initSemContext(suffix, sharedConfig, moduleFlags,
-                            commandLineArgs, canSelfExec)
+                            commandLineArgs, hostCommandLineArgs, canSelfExec)
     ms.dest = createTokenBuf()
     modules.add ensureMove ms
 
@@ -739,7 +740,7 @@ proc semcheckCycleGroup(infiles, outfiles: seq[string]; config: sink NifConfig;
       quit 1
 
 proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-               commandLineArgs: sink string; canSelfExec: bool) =
+               commandLineArgs, hostCommandLineArgs: sink string; canSelfExec: bool) =
   ## Semantic check one or more modules.
   ## For single modules (len=1), this is the normal case.
   ## For multiple modules, they form a cycle group and are processed together.
@@ -748,7 +749,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
 
   if infiles.len > 1:
     semcheckCycleGroup(infiles, outfiles, ensureMove config, moduleFlags,
-                       commandLineArgs, canSelfExec)
+                       commandLineArgs, hostCommandLineArgs, canSelfExec)
     return
 
   let infile = infiles[0]
@@ -759,7 +760,7 @@ proc semcheck*(infiles, outfiles: seq[string]; config: sink NifConfig; moduleFla
   if SkipSystem in moduleFlags:
     programs.publishStringType()
   var c = initSemContext(prog.main.name, ProgramContext(config: config),
-                         moduleFlags, commandLineArgs, canSelfExec)
+                         moduleFlags, commandLineArgs, hostCommandLineArgs, canSelfExec)
 
   var dest = createTokenBuf()
 

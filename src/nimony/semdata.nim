@@ -236,6 +236,8 @@ type
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.
+    hostCommandLineArgs*: string # the same minus the target triple, for the
+                                 # compile-time-eval processes we build and RUN
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.
