@@ -13,7 +13,7 @@ import std / [syncio, monotimes]
 type
   PNode = ref TNode
   TNode = object
-    left, right: PNode
+    left, right: nil PNode   # a leaf's children are nil: that is the tree
     i, j: int
 
 proc newNode(l, r: sink PNode): PNode =
@@ -37,9 +37,15 @@ proc treeSize(i: int): int = (1 shl (i + 1)) - 1
 
 proc numIters(i: int): int = 2 * treeSize(kStretchTreeDepth) div treeSize(i)
 
-proc populate(iDepth: int; thisNode: PNode) =
+proc populate(iDepth: int; thisNode: nil PNode) =
   ## Build the tree top down, assigning to older objects.
-  if iDepth <= 0: return
+  ##
+  ## `thisNode` is a `nil PNode` so that the children can be passed straight
+  ## back in: they are `nil PNode` fields, and one guard at the top is what
+  ## lets every deref below stand. Guarding here rather than hoisting the
+  ## children into locals keeps the allocation traffic the benchmark measures
+  ## exactly as it was -- a local would add a reference count per node.
+  if iDepth <= 0 or thisNode == nil: return
   new(thisNode.left)
   new(thisNode.right)
   populate(iDepth-1, thisNode.left)
