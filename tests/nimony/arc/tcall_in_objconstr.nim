@@ -2,8 +2,9 @@
 ## --valgrind`. `Outer(inner: makeInner(s))` made xelim lift the call into
 ## a `let`-temp; the destroyer then injected `=destroy(tmp)` at scope end,
 ## double-freeing the seq that had already been moved into `result.inner`.
-## Fixed by making xelim's call-in-aggregate temp a `cursor` so the
-## aggregate keeps sole ownership.
+## Fixed at the time by making xelim's call-in-aggregate temp a `cursor`;
+## that temp is a `let` again, and the duplifier's move out of it is what
+## keeps the aggregate the sole owner (see `taggregate_call_temp`).
 
 type
   Inner = object
