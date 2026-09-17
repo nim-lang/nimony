@@ -83,7 +83,6 @@
 | `(ochoice X X*)`| NimonyExpr | open choice |
 | `(emit X*)` | LengStmt, NimonyStmt, NimonyPragma | emit statement |
 | `(asgn X X)` | LengStmt, NimonyStmt, NiflerKind | assignment statement |
-| `(store X X)` | FinalIrKind, LengStmt | `asgn` with reversed operands that reflects evaluation order |
 | `(keepovf X X)` | LengStmt | keep overflow flag statement |
 | `(scope S*)` | LengStmt, NimonyStmt | explicit scope annotation, like `stmts` |
 | `(if (elif X X)+ (else X)?)` | LengStmt, NimonyStmt, NiflerKind | if statement header |
@@ -270,6 +269,7 @@
 | `(fieldpairs T X X?)` | NimonyExpr | fieldPairs iterator |
 | `(enumtostr X)` | NimonyExpr | |
 | `(ismainmodule)` | NimonyExpr | |
+| `(instantiationinfo)` | NimonyExpr | the call site as a `(filename, line, column)` tuple; inside a template body, the site of the template call |
 | `(defaultobj T)` | NimonyExpr | |
 | `(defaulttup T)` | NimonyExpr | |
 | `(defaultdistinct T)` | NimonyExpr | |

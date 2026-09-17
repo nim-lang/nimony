@@ -229,7 +229,7 @@ proc parseNifConfig*(configFile: string; result: var NifConfig) =
   parseConfig(c, result)
 proc getOptionsAsOneString*(config: NifConfig): string =
   ## Returns the concatenation of options that affects generated files.
-  result = "--base:" & config.baseDir
+  result = ""
 
   for i in config.defines:
     result.add(" -d:" & i)

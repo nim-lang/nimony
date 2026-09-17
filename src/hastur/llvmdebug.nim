@@ -54,7 +54,6 @@ proc runLLVMDebugTests*(dir: string; overwrite: bool) =
   ## regenerate the goldens after an intended debug-info change.
   if not skipBuild:
     buildNimonyToolchain()
-    buildLengc()
   let t0 = epochTime()
   var c = TestCounters(total: 0, failures: 0)
   var files: seq[string] = @[]

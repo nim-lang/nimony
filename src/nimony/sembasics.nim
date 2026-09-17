@@ -30,7 +30,7 @@ template buildTree*(dest: var TokenBuf; kind: StmtKind|ExprKind|TypeKind|SymKind
   dest.addParRi()
 
 proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId; info: NifLineInfo;
-                             option = FindAll): int =
+                             marker: var HashSet[SymId]; option = FindAll): int =
   result = 0
   let ignoreStyle = IgnoreStyleFeature in c.features
   for realName in stylesOfImport(c.importTab, name, ignoreStyle):
@@ -47,7 +47,7 @@ proc considerImportedSymbols(c: var SemContext; dest: var TokenBuf; name: StrId;
             let res = tryLoadSym(defId)
             if res.status == LacksNothing:
               callable = isValidFnHead(res.decl.symKind)
-          if callable:
+          if callable and not marker.containsOrIncl(defId):
             inc result
             dest.addSymUse(defId, info)
 
@@ -68,7 +68,8 @@ proc buildSymChoiceForDot(c: var SemContext; dest: var TokenBuf; identifier: Str
             dest.addSymUse sym, info
             inc count
       it = it.up
-    inc count, considerImportedSymbols(c, dest, identifier, info)
+    var marker = initHashSet[SymId]()
+    inc count, considerImportedSymbols(c, dest, identifier, info, marker)
 
   # if the sym choice is empty, create an ident node:
   if count == 0:
@@ -142,8 +143,13 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
   ## `nearestIsUnique` reports whether the nearest level that contributed
   ## anything contributed exactly one candidate; that is what lets a consumer
   ## fall back to scope distance once type information has had its say.
+  ##
+  ## A symbol is a candidate once, however many ways it is visible: a module
+  ## imported directly and re-exported by another is one module, not an
+  ## ambiguity between two.
   result = 0
   var nearest = -1
+  var marker = initHashSet[SymId]()
   let ignoreStyle = IgnoreStyleFeature in c.features
   var it = c.currentScope
   while it != nil:
@@ -153,7 +159,8 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
       for sym in it.tab.getOrDefault(k):
         # when resolving a caller `fn`, keep the module symbol out of the sym
         # choice so `foo[...]` binds a same-named proc (nim-lang/nimony#2130):
-        if option != FindOverloads or isValidFnHead(sym.kind):
+        if (option != FindOverloads or isValidFnHead(sym.kind)) and
+            not marker.containsOrIncl(sym.name):
           dest.addSymUse sym, info
           inc result
           if sym.kind.isNonOverloadable:
@@ -168,7 +175,7 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
       return
     it = it.up
   let beforeImports = result
-  inc result, considerImportedSymbols(c, dest, identifier, info, option)
+  inc result, considerImportedSymbols(c, dest, identifier, info, marker, option)
   if nearest < 0 and result > beforeImports: nearest = result - beforeImports
   nearestIsUnique = nearest == 1
 

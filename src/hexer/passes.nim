@@ -68,7 +68,8 @@ proc initPass*(initialBuf: sink TokenBuf; moduleSuffix: string;
     ensurePassTimingInit()
   result = Pass(buf: initialBuf, moduleSuffix: moduleSuffix, bits: bits, nextTemp: nextTemp, passName: firstPassName)
   result.n = beginRead(result.buf)
-  result.dest = createTokenBuf(300)
+  # a lowering pass writes about as much as it reads, plus its temporaries
+  result.dest = createTokenBuf(result.buf.len + result.buf.len div 4)
   when not defined(nimony):
     if passTimingEnabled:
       result.passStart = getMonoTime()
@@ -83,7 +84,9 @@ proc prepareForNext*(pass: var Pass; nextPassName: string) =
     if passTimingEnabled:
       logPassTiming(pass.moduleSuffix, pass.passName, pass.passStart)
 
-  # End reading from old buffer
+  # End reading from old buffer: while a cursor into it is alive, truncating it
+  # below would first copy all of it.
+  endRead(pass.n)
 
   # Swap: previous output becomes next input
   swap(pass.buf, pass.dest)

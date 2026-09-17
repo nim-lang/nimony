@@ -15,6 +15,8 @@ external/
 htmldocs/
 src/lengc/lengc_grammar.nim
 src/nifgram/nifgram
+src/nifler2/tests/tmini
+src/nifler2/tools/gramcheck
 src/lib/nifindexes
 tests/tester
 tools/tester

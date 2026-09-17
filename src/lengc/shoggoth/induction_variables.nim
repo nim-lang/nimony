@@ -19,6 +19,8 @@ import ".." / ".." / "lib" / nifcoreparse   # re-exports nifcore
 import ".." / ".." / "lib" / nifcdecl        # stmtKind/exprKind, tag enums
 import ".." / ".." / "models" / tags          # *TagId ordinals for synthesis
 import patchsets
+
+include ".." / ".." / "lib" / compat2   # getOrQuit (host Nim)
 import ".." / nifmodules                      # MainModule (type context, threaded through)
 import intrinsiceffects                       # is this `(instr …)` a pure value?
 import ".." / typenav                         # getNominalType — the temp's declared type
@@ -58,7 +60,7 @@ proc freshTempName(c: var Context): string =
 proc isIvIncPattern(c: Cursor; outIvSym: var SymId): bool =
   ## Matches `(asgn lhs (add T lhs 1))`. Sets `outIvSym` to `lhs`'s id.
   if c.kind != TagLit: return false
-  if c.stmtKind notin {AsgnS, StoreS}: return false
+  if c.stmtKind != AsgnS: return false
   var probe = c
   inc probe                                  # past `(asgn`
   if probe.kind != Symbol: return false
@@ -90,12 +92,9 @@ proc loopBodyCursor(loopCursor: Cursor): Cursor =
   else: discard
 
 proc writeTargetOf(start: Cursor): Cursor =
-  ## The lvalue a statement writes: `(asgn dest src)` → `dest`, but
-  ## `(store src dest)` → the SECOND child. Reading the first child for both
-  ## looked at the *source* of a `store` and missed its target.
+  ## The lvalue a statement writes: `(asgn dest src)` → `dest`.
   result = start
   inc result                                 # past the tag
-  if start.stmtKind == StoreS: skip result   # past the source
 
 proc countWritesOf(start: Cursor; sym: SymId; counter: var int) =
   ## Counts Symbol-LHS assignments to `sym` anywhere in the subtree at `start`,
@@ -103,7 +102,7 @@ proc countWritesOf(start: Cursor; sym: SymId; counter: var int) =
   if not start.hasMore: return
   case start.kind
   of TagLit:
-    if start.stmtKind in {AsgnS, StoreS}:
+    if start.stmtKind == AsgnS:
       let lhs = writeTargetOf(start)
       if lhs.kind == Symbol and symId(lhs) == sym:
         inc counter
@@ -153,7 +152,7 @@ type
 
 proc collectLoopFacts(n: Cursor; f: var LoopFacts) =
   if not n.hasMore or n.kind != TagLit: return
-  if n.stmtKind in {AsgnS, StoreS}:
+  if n.stmtKind == AsgnS:
     let lhs = writeTargetOf(n)
     if lhs.kind == Symbol: f.assigned.incl symId(lhs)
   # An `(instr …)` counts unless its row is `efPure`: the loop rewrites below
@@ -329,7 +328,7 @@ proc transformLoop(c: var Context; n: var Cursor) =
       if not baseIsStable(c, base, facts): continue
       var p: string
       if acc.arrSym in arrToP:
-        p = arrToP[acc.arrSym]
+        p = arrToP.getOrQuit(acc.arrSym)
       else:
         p = freshTempName(c)
         arrToP[acc.arrSym] = p

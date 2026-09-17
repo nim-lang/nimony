@@ -43,12 +43,13 @@
 ##   - `intraModuleInline` runs inside hexer, pre-DCE, on the tree that becomes
 ##     this module's `.x.nif`. Its own module only (`xnifDir` unset).
 ##   - `runInterModuleInliner` (shoggoth) runs after DCE, on the `.c.nif`s, and
-##     is the one that crosses module borders: `loadForeign` lazy-loads the
-##     callee's `.c.nif`.
+##     is the one that crosses module borders: `foreignProc` parses just the
+##     callee's decl out of its `.c.nif`, via the file's embedded index.
 ##
 ## Either way the decision is derived from the same file the body comes out
-## of: `indexProcBodies` measures each proc right after the module is parsed,
-## so what is scored is exactly what would be spliced (hexer's flattening of
+## of: `computeInlineInfo` measures the very decl a splice would copy (for the
+## own module in `indexProcBodies`, for a callee in `lookupInlineInfo`), so
+## what is scored is exactly what would be spliced (hexer's flattening of
 ## tiny bodies happens *before* the `.c.nif` is written — a proc that grows
 ## past the bound by having its own callees spliced into it is re-measured,
 ## and demoted, by every importer).
@@ -58,11 +59,12 @@
 ## the inlined body to fresh symbols, and drops the trailing `(ret X)`
 ## (its result is discarded at statement position).
 
-import std / [tables, assertions, os, sets, hashes]
-when defined(inlinerTrace) or defined(inlinerDeny): import std / [syncio, strutils]
+import std / [tables, assertions, os, sets, hashes, syncio]
+when defined(inlinerTrace) or defined(inlinerDeny): import std / [strutils]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
+import ".." / lib / foreignmodules
 import ".." / lengc / [leng_model]
 
 type
@@ -268,11 +270,6 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
     result.inlinable = true
 
 type
-  ForeignModule* = object
-    buf*: TokenBuf
-    bodies*: Table[SymId, int]              # sym → offset of its (proc …) in `buf`
-    inlineInfo*: Table[SymId, InlineInfo]   # sym → its `(inline …)` annotation
-
   InlinerCtx* = object
     moduleSuffix*: string
     counter: int                            # fresh-name suffix
@@ -304,9 +301,14 @@ type
       # interleaved runs; the pre-hint policy is 75 ms), which is not worth 4x
       # the program — and the native boot pays for it twice, in 55.4s against
       # 28.7s.
-    foreign: Table[string, ref ForeignModule]
-      # Cached cross-module bodies. `ref` so growing the table doesn't
-      # invalidate cursors that point into a previously-fetched buffer.
+    foreign: Table[string, ForeignModule]
+      # Opened callee modules, by module suffix. A `ForeignModule` is a `ref`
+      # that owns each decl it parsed, so the cursors `lookupBody` hands out
+      # stay valid as this grows.
+    noForeign: HashSet[string]
+      # Module suffixes with no `.c.nif` to open (asked once, not per call).
+    foreignInfo: Table[SymId, InlineInfo]
+      # Cross-module policy verdicts, computed on first ask per callee.
     inProgress*: HashSet[SymId]
       # Currently-being-spliced procs. Recursive `.inline` (direct or
       # mutual) would otherwise cause the splice + re-tr loop in dce2 to
@@ -333,7 +335,9 @@ proc initInlinerCtx*(moduleSuffix: string; src: ptr TokenBuf;
              maxDepth: maxDepth,
              growthLeft: high(int),
              counterPrefix: counterPrefix,
-             foreign: initTable[string, ref ForeignModule](),
+             foreign: initTable[string, ForeignModule](),
+             noForeign: initHashSet[string](),
+             foreignInfo: initTable[SymId, InlineInfo](),
              inProgress: initHashSet[SymId]())
 
 proc growthBudget*(bodySize: int): int =
@@ -371,14 +375,14 @@ proc applySmallTotalRule(buf: var TokenBuf; infos: var seq[(SymId, InlineInfo)])
       info.inlinable = true
 
 proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
-                     infos: var Table[SymId, InlineInfo]; ownModule: bool) =
-  ## Walks the top-level `(stmts …)` and records `(proc :sym …)` decls
-  ## by sym → byte offset into `buf`, along with each proc's `InlineInfo`,
-  ## computed right here from the body we are indexing (`computeInlineInfo`
-  ## walks it once — a linear pass over a buffer we just parsed anyway). No
-  ## pragma transport is involved, so own-module and foreign bodies go
-  ## through the identical policy, and the size that is scored is the size
-  ## of the exact body a splice would copy.
+                     infos: var Table[SymId, InlineInfo]) =
+  ## Walks the module's own top-level `(stmts …)` and records `(proc :sym …)`
+  ## decls by sym → byte offset into `buf`, along with each proc's
+  ## `InlineInfo`, computed right here from the body we are indexing
+  ## (`computeInlineInfo` walks it once — a linear pass over a buffer we just
+  ## parsed anyway). No pragma transport is involved: a foreign callee goes
+  ## through the same `computeInlineInfo` (`lookupInlineInfo`), so the size
+  ## that is scored is the size of the exact body a splice would copy.
   var n = beginRead(buf)
   var found: seq[(SymId, InlineInfo)] = @[]
   if n.stmtKind == StmtsS:
@@ -394,13 +398,13 @@ proc indexProcBodies(buf: var TokenBuf; bodies: var Table[SymId, int];
   # being rewritten has them all in view: a foreign module's internal count says
   # nothing about how often ITS callers reach for the proc (measured: applied to
   # foreign modules it turned every once-called 400-token helper into an
-  # always-splice for the whole program).
-  if ownModule: applySmallTotalRule(buf, found)
+  # always-splice for the whole program). Hence foreign procs never get it.
+  applySmallTotalRule(buf, found)
   for (sym, info) in found:
     if info.inlinable: infos[sym] = info
 
 proc collectProcBodies*(c: var InlinerCtx) =
-  indexProcBodies(c.src[], c.bodies, c.ownInfo, ownModule = true)
+  indexProcBodies(c.src[], c.bodies, c.ownInfo)
 
 proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   ## Search the caller's dir first, then the parent — system modules
@@ -415,48 +419,62 @@ proc findForeignFile(c: InlinerCtx; modul, ext: string): string =
   if fileExists(parent): return parent
   return ""
 
-proc loadForeign(c: var InlinerCtx; modul: string): bool =
-  ## Lazy-load a foreign module: its proc bodies *and* their inline
-  ## annotations come out of the same parse, so `lookupInlineInfo` and
-  ## `lookupBody` share one file per module.
+proc openedForeign(c: var InlinerCtx; modul: string): bool =
+  ## Opens the callee module `modul` into `c.foreign` on first use; false when
+  ## there is no `.c.nif` for it.
   ##
   ## The `.c.nif`, because only this pass runs that late: it is post-DCE, so
   ## its generic instances already name the module that won the merge and a
   ## body copies into any other module unchanged. The `.x.nif` still names the
   ## callee's own module for instances the merge later moves elsewhere; that
   ## is the intra-module pass's world, not this one's.
-  if modul == c.moduleSuffix: return true
   if modul in c.foreign: return true
+  if modul in c.noForeign: return false
   let xpath = findForeignFile(c, modul, ".c.nif")
-  if xpath.len == 0: return false
-  var fm: ref ForeignModule
-  new fm
-  fm.buf = parseFromFile(xpath)
-  indexProcBodies(fm.buf, fm.bodies, fm.inlineInfo, ownModule = false)
+  if xpath.len == 0:
+    c.noForeign.incl modul
+    return false
+  let fm = openForeignModule(xpath)
+  if not fm.hasEmbeddedIndex:
+    quit "inter-module inliner: " & xpath & " carries no embedded index"
   c.foreign[modul] = fm
   result = true
+
+proc foreignProc(c: var InlinerCtx; calleeSym: SymId; decl: var Cursor): bool =
+  ## Parses the ONE `(proc …)` decl of `calleeSym` out of its module, through
+  ## the module's embedded index. This used to parse the whole callee module
+  ## and score every proc in it — including just to learn that the callee is
+  ## not inlinable. Measured on a native release build of nimsem: 2,620
+  ## whole-module parses, 393 MB, 3.83 s of 10.5 s of optimizer time, for at
+  ## most 11.8 % of the tokens ever being used; `std/syncio` alone was parsed
+  ## 88 times for 51 body fetches.
+  let modul = pool.symModule(calleeSym)
+  if not openedForeign(c, modul): return false
+  let fm = c.foreign.getOrQuit(modul)
+  let key = pool.symString(calleeSym)
+  if not fm.hasDecl(key): return false
+  # Interned into the global pool/tags so the SymIds and tag ids line up with
+  # the module being rewritten; dense, seeded line info because a splice copies
+  # it into the output.
+  decl = fm.getDecl(key, globalTags, pool, withLineInfo = true)
+  result = decl.stmtKind == ProcS
 
 proc lookupBody(c: var InlinerCtx; calleeSym: SymId; outCur: var Cursor): bool =
   ## Resolves a callee sym to a cursor pointing at its `(proc …)` decl.
   ## The cursor's refcount keeps the underlying buffer alive for as
-  ## long as the cursor is held — `c.foreign` stores `ref
-  ## ForeignModule`, so subsequent table growth can't move the
-  ## TokenBuf out from under us. Returns false when we don't have a
-  ## body for `calleeSym` (extern decl, missing `.x.nif`, etc.).
+  ## long as the cursor is held; a foreign decl's buffer is owned by its
+  ## `ForeignModule` besides. Returns false when we don't have a body for
+  ## `calleeSym` (extern decl, missing `.c.nif`, etc.).
   let modul = pool.symModule(calleeSym)
   if modul == c.moduleSuffix:
     if calleeSym in c.bodies:
       outCur = cursorAt(c.src[], c.bodies.getOrQuit(calleeSym))
       return true
     return false
-  if not loadForeign(c, modul): return false
-  let fm = c.foreign.getOrQuit(modul)
-  if calleeSym notin fm.bodies: return false
   # No further vetting here: the only bodies that reach this point already
   # passed `shouldInlineCall`, i.e. the size-driven policy in
   # `computeInlineInfo` (tiny → always, big → scored, `.noinline` → never).
-  outCur = cursorAt(fm.buf, fm.bodies.getOrQuit(calleeSym))
-  result = true
+  result = foreignProc(c, calleeSym, outCur)
 
 proc freshSym(c: var InlinerCtx; orig: SymId): SymId =
   ## Mint a fresh local sym for an inlined body's local. The name must carry
@@ -487,9 +505,15 @@ proc lookupInlineInfo(c: var InlinerCtx; calleeSym: SymId): InlineInfo =
   let modul = pool.symModule(calleeSym)
   if modul == c.moduleSuffix:
     return c.ownInfo.getOrDefault(calleeSym, DefaultInlineInfo)
-  if not loadForeign(c, modul): return DefaultInlineInfo
-  result = c.foreign.getOrQuit(modul).inlineInfo.getOrDefault(calleeSym,
-                                                              DefaultInlineInfo)
+  if calleeSym in c.foreignInfo: return c.foreignInfo.getOrQuit(calleeSym)
+  var decl = default(Cursor)
+  result = DefaultInlineInfo
+  if foreignProc(c, calleeSym, decl):
+    # Scored on its own body only — never the small-total rule, see
+    # `indexProcBodies`.
+    let info = computeInlineInfo(decl)
+    if info.inlinable: result = info
+  c.foreignInfo[calleeSym] = result
 
 proc argContainsConstructor(callNode: Cursor): bool =
   ## `(oconstr/aconstr …)` anywhere in an argument. The C backend renders an
@@ -779,10 +803,8 @@ proc scanParamUsage(c: Cursor; params: HashSet[SymId];
   ## address it takes, which is what lets an ADDRESS-TAKEN read-only param
   ## still be substituted by a caller lvalue (see `bindingsFor`).
   if not c.isTagLit: return
-  if c.stmtKind in {AsgnS, StoreS}:
-    var dst = c.childCursor
-    if c.stmtKind == StoreS: skip dst        # `(store value dest)` — dest is 2nd
-    let s = slotRootOf(dst)
+  if c.stmtKind == AsgnS:
+    let s = slotRootOf(c.childCursor)
     if s in params: assigned.incl s
     elif s == SymId(0): opaqueEffects = true # through-pointer / unmodelled store
   elif c.exprKind in AddrKinds:
@@ -1203,10 +1225,8 @@ proc bodyIsCallerReadOnly(c: var InlinerCtx; body: Cursor): bool =
   if not body.isTagLit: return false
   result = true
   var n = body
-  if n.stmtKind in {AsgnS, StoreS}:
-    var dst = n.childCursor
-    if n.stmtKind == StoreS: skip dst        # `(store value dest)`
-    if not writeTargetIsLocalSlot(dst): return false
+  if n.stmtKind == AsgnS:
+    if not writeTargetIsLocalSlot(n.childCursor): return false
   elif n.stmtKind == CallS or n.exprKind == CallC:
     var callee = n.childCursor
     if callee.kind != Symbol: return false

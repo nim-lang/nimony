@@ -1,0 +1,1 @@
+tests/nimony/notnil/tarray_refentry.nim(7, 8) Error: expected non-nil value [pass --verbose for the Final IR]

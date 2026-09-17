@@ -43,7 +43,8 @@ proc intrinsicEffects*(m: var MainModule; instrNode: Cursor): set[IntrinsicEffec
   ## `{}` for an unresolvable callee, which reads as "claims nothing" and is
   ## therefore the conservative answer to every question below.
   let op = intrinsicOpOf(m, instrNode)
-  if op == NoIntrinsicOp: {} else: IntrinsicRows[op].effects
+  if op == NoIntrinsicOp: result = {}
+  else: result = IntrinsicRows[op].effects
 
 proc instrIsPure*(m: var MainModule; instrNode: Cursor): bool =
   ## Is this `(instr …)` a value that depends on nothing but its operands? Only a

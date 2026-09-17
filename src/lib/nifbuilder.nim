@@ -99,9 +99,12 @@ proc open*(filename: string; compact = false; writeMode: FileWriteMode = AlwaysW
 
 proc open*(sizeHint: int; compact = false): Builder =
   ## Opens a new builder with the intent to keep the produced
-  ## code in memory.
+  ## code in memory. `sizeHint` bytes are reserved exactly, not rounded up to a
+  ## power of two: a good estimate is what keeps a large module's text small.
   result = Builder(buffer: "", mode: UsesMem, compact: compact)
-  reserve(result, max(sizeHint, MinCapacity))
+  let cap = max(sizeHint, MinCapacity)
+  result.raw = grabBuf(result.buffer, cap)
+  result.cap = cap
 
 proc attachedToFile*(b: Builder): bool {.inline.} = b.mode == UsesFile
 

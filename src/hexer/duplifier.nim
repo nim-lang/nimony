@@ -35,7 +35,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
-import lifter, mover, hexer_context, passes
+import lifter, mover, hexer_context, passes, closuretypes
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 include ".." / nimony / nif_annotations
 
@@ -147,7 +147,7 @@ proc constructsValue*(n: Cursor; derefConstructs = true): bool =
         SetconstrX, TabconstrX, AshrX, CallstrlitX, InfixX, PrefixX,
         HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
-        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX, Delay0X,
         SuspendX, DoX, ArratX, TupatX, PlussetX, MinussetX, MulsetX,
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -176,7 +176,7 @@ proc lvalueRoot(n: Cursor; hdrefs: var bool): SymId =
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-        IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
         DelayX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
         MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
         EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
@@ -308,7 +308,7 @@ proc isSimpleExpression(n: var Cursor): bool =
         CallstrlitX, InfixX, PrefixX, HcallX, CompilesX, DeclaredX,
         DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX,
         TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-        IsmainmoduleX, DefaultobjX, DefaulttupX, DefaultdistinctX,
+        IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX, DefaultdistinctX,
         DelayX, Delay0X, SuspendX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX,
         CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX, SinkhX,
@@ -352,13 +352,25 @@ proc hoistTail(c: var Context; pos: int) =
   endRead tail
   c.dest.shrink pos
 
+proc tempType(c: var Context; typ: Cursor): Cursor =
+  ## The type a temp this pass invents is declared with: the type of the value,
+  ## except where that is a FOREIGN decl's `.closure` proctype -- or a
+  ## structural type holding one, a `tuple` of callbacks say. Such a type was
+  ## never rewritten by lambdalifting (see `closuretypes`), so declaring the
+  ## temp with it has lengcgen lay the temp out as a bare function pointer
+  ## while the value it receives is the (fn, env) pair: the env is dropped and
+  ## the hooks disagree about what they are copying.
+  c.typeCache.closureValueType(typ)
+
 proc evalLeftHandSide(c: var Context; le: var Cursor): TokenBuf =
   result = createTokenBuf(10)
   if le.kind == Symbol or (le.exprKind in {DerefX, HderefX} and le.childCursor.kind == Symbol):
     # simple enough:
     takeTree result, le
   else:
-    let typ = getType(c.typeCache, le)
+    # the temp holds the ADDRESS of the target; `tempType` makes that a `ptr`
+    # to the (fn, env) tuple when the target is a foreign `.closure` field
+    let typ = c.tempType(getType(c.typeCache, le))
     let info = le.info
     let tmp = pool.symId("`lhs." & $c.tmpCounter)
     inc c.tmpCounter
@@ -413,6 +425,7 @@ proc callDestroy(c: var Context; destroyProc: SymId; arg: SymId; info: NifLineIn
 
 proc tempOfTrArg(c: var Context; n: Cursor; typ: Cursor): SymId =
   var n = n
+  let typ = c.tempType(typ)
   let info = n.info
   result = pool.symId("`lhs." & $c.tmpCounter)
   inc c.tmpCounter
@@ -828,7 +841,7 @@ proc trOnlyEssentials(c: var Context; n: var Cursor)
         TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX,
         InfixX, PrefixX, HcallX, CompilesX, DeclaredX, DefinedX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX, LowX, TypeofX,
-        UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
         Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
         MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
@@ -917,7 +930,7 @@ proc bindToTemp(c: var Context; typ: Cursor; info: NifLineInfo; kind = VarS): Ow
   c.dest.addParLe kind, info
   addSymDef c.dest, s, info
   c.dest.addEmpty2 info # export marker, pragmas
-  copyTree c.dest, typ
+  copyTree c.dest, c.tempType(typ)
   # value is filled in by the caller!
 
 proc finishOwningTemp(c: var Context; ow: OwningTemp) =
@@ -1331,6 +1344,7 @@ proc bindPendingMoves(c: var Context; start: int; typ: Cursor; info: NifLineInfo
   ## moves run once the expression has read everything it needs. The temp is a
   ## `cursor` for the same reason `genLastRead`'s is: whatever consumes this
   ## expression is the rightful owner of the value.
+  let typ = c.tempType(typ)
   let tmp = pool.symId("`tmp." & $c.tmpCounter)
   inc c.tmpCounter
   var wrapped = createTokenBuf(64)
@@ -1425,7 +1439,7 @@ proc tr(c: var Context; n: var Cursor; e: Expects) =
        AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, AshrX, BitandX, BitorX, BitxorX, BitnotX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX,
        EqX, NeqX, LeX, LtX, InfX, NeginfX, NanX, CompilesX, DeclaredX,
-       DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, QuotedX,
+       DefinedX, AstToStrX, BindSymX, BindSymNameX, HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, QuotedX,
        AddrX, HaddrX, AlignofX, OffsetofX, ErrX, OvfX, InstanceofX, InternalTypeNameX,
        InternalFieldPairsX, IsX, ToClosureX, PluginCallX:
       trSons c, n, WantNonOwner

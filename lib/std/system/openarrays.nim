@@ -28,7 +28,10 @@ converter toOpenArray*(s {.byref.}: string): openArray[char] {.inline, establish
 
 func high*[T](a: openArray[T]): int {.inline.} = a.len - 1
 func low*[T](a: openArray[T]): int {.inline.} = 0
-func len*[T](a: openArray[T]): int {.inline.} = a.len
+func len*[T](a: openArray[T]): int {.inline, ensures: (0 <= result).} =
+  result = a.len
+  # a view is made from a container's non-negative length
+  {.assume: 0 <= result.}
 
 type
   Equatable* = concept

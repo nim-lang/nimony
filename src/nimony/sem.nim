@@ -186,6 +186,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
 
 proc resolveDeferredLocal(c: var SemContext; ident: StrId): bool
 
+proc semExprMissingPhases(c: var SemContext; dest: var TokenBuf; it: var Item; firstPhase: SemPhase)
+
 proc semCall(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[SemFlag]; source: TransformedCallSource = RegularCall)
 
 proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: int; expected: TypeCursor) =
@@ -780,6 +782,14 @@ proc isStringLiteral(n: Cursor): bool =
   # supposing it's a string type
   result = n.isStringLit or n.exprKind == SufX
 
+proc skipRangeBase(t: TypeCursor): TypeCursor =
+  ## `range[lo..hi]` as the ordinal it is carved out of. Its value
+  ## representation *is* the base type's, which is why `isCastableType` below
+  ## looks through it too.
+  result = t
+  if result.typeKind == RangetypeT:
+    inc result # past the tag, to the base type
+
 proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: Item; info: NifLineInfo; beforeExpr: int) =
   const
     IntegralTypes = {FloatT, CharT, IntT, UIntT, BoolT, EnumT, HoleyEnumT, AnumT}
@@ -807,9 +817,15 @@ proc semConvArg(c: var SemContext; dest: var TokenBuf; destType: Cursor; arg: It
       dest.addSubtree arg.n
     else:
       c.buildErr dest, info, "Only string literals can be converted to cstring. Use `toCString` for safe conversion."
-  elif (destBase.typeKind in IntegralTypes and srcBase.typeKind in IntegralTypes) or
+  elif (skipRangeBase(destBase).typeKind in IntegralTypes and
+        skipRangeBase(srcBase).typeKind in IntegralTypes) or
      (destBase.isSomeStringType and srcBase.isSomeStringType) or
      (destBase.containsGenericParams or srcBase.containsGenericParams):
+    # A `range[lo..hi]` on either side is an ordinary integral conversion:
+    # `uint64(x)` with `x: Natural` converts the ordinal it carries. Converting
+    # *into* a range still owes `lo <= value <= hi`, and that obligation is
+    # discharged at the conversion site by the contract analysis
+    # (`contracts_fir.checkRangeAssign`), not here.
     discard "ok"
     # XXX Add hderef here somehow
     dest.addSubtree arg.n
@@ -1094,7 +1110,21 @@ proc semQualifiedIdent(c: var SemContext; dest: var TokenBuf; module: SymId; ide
     else:
       buildSymChoiceForForeignModule(c, dest, module, ident, info)
   if count == 1:
-    let sym = childCursor(readonlyCursorAt(dest, insertPos)).symId
+    # Read the single candidate back out, then roll the choice away and write
+    # a plain sym use in its place. The two cursors have to be RELEASED before
+    # the `shrink`: each holds an rc ref on `dest`'s CursorOwner, and
+    # `prepareMutation` then takes its copying branch and duplicates the whole
+    # buffer instead of the no-copy detach — the same trap `commonType` above
+    # spells out. This is by far the hottest instance of it: every identifier
+    # that resolves to exactly one symbol goes through here, and on `sem.nim`
+    # that was 41,385 whole-buffer copies, 3.96 GB of `memcpy`, 28 % of
+    # nimsem's instructions.
+    var choice = readonlyCursorAt(dest, insertPos)
+    var only = childCursor(choice)
+    let sym = only.symId
+    endRead only
+    endRead choice
+    expectUnique dest
     dest.shrink insertPos
     dest.addSymUse(sym, info)
     result = fetchSym(c, sym)
@@ -1399,7 +1429,21 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     discard resolveDeferredLocal(c, ident)
     count = buildSymChoice(c, dest, ident, info, mode, nearestIsUnique)
   if count == 1:
-    let sym = childCursor(readonlyCursorAt(dest, insertPos)).symId
+    # Read the single candidate back out, then roll the choice away and write
+    # a plain sym use in its place. The two cursors have to be RELEASED before
+    # the `shrink`: each holds an rc ref on `dest`'s CursorOwner, and
+    # `prepareMutation` then takes its copying branch and duplicates the whole
+    # buffer instead of the no-copy detach — the same trap `commonType` above
+    # spells out. This is by far the hottest instance of it: every identifier
+    # that resolves to exactly one symbol goes through here, and on `sem.nim`
+    # that was 41,385 whole-buffer copies, 3.96 GB of `memcpy`, 28 % of
+    # nimsem's instructions.
+    var choice = readonlyCursorAt(dest, insertPos)
+    var only = childCursor(choice)
+    let sym = only.symId
+    endRead only
+    endRead choice
+    expectUnique dest
     dest.shrink insertPos
     dest.addSymUse(sym, info)
     result = fetchSym(c, sym)
@@ -1454,9 +1498,16 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
         # The trailing symbol occupies its token PLUS any line-info suffix:
         # find the atom's head so the whole atom is replaced.
         var atomStart = dest.len-1
-        while readonlyCursorAt(dest, atomStart).kind in {ExtendedSuffix, LineInfoLit}:
+        # Raw token reads for the scan: `readonlyCursorAt` mints a CursorOwner
+        # header for the buffer, and a cursor still holding a ref at the
+        # `shrink` below turns it into a full copy of `dest`. The line info is
+        # the one thing a bare `NifToken` cannot answer, so that read keeps a
+        # cursor — and releases it before the mutation.
+        while dest[atomStart].kind in {ExtendedSuffix, LineInfoLit}:
           dec atomStart
-        let info = readonlyCursorAt(dest, atomStart).info
+        var atom = readonlyCursorAt(dest, atomStart)
+        let info = atom.info
+        endRead atom
         var tag = n.cursorTagId
         if cast[TagEnum](tag) == IsmainmoduleTagId:
           if IsMain in c.moduleFlags:
@@ -1466,6 +1517,7 @@ proc maybeInlineMagic(c: var SemContext; dest: var TokenBuf; res: LoadResult): b
         # Replace the trailing symbol with a properly registered open tag —
         # an in-place `dest.retagAt(i, ...)` would bypass the open-tags
         # bookkeeping and misseal every enclosing scope.
+        expectUnique dest
         dest.shrink atomStart
         dest.addParLe(tag, info)
         n.into:
@@ -1814,7 +1866,7 @@ proc evalConstCaseBranch(c: var SemContext; dest: var TokenBuf; it: var Item; ex
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
-     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
@@ -1889,7 +1941,15 @@ proc semExprSym(c: var SemContext; dest: var TokenBuf; it: var Item; s: Sym; sta
         semExprSym c, dest, it, fetchSym(c, sym), start, flags
         return
       else:
-        c.buildErr dest, readonlyCursorAt(dest, start).info, "ambiguous identifier"
+        # the choice goes INTO the error, as the undeclared identifier above
+        # does: an error next to it would be one child too many for whatever
+        # slot the name was in -- a parameter's default value, say, which
+        # phase 3 then walked past its end
+        var orig = createTokenBuf(4)
+        orig.addSubtree readonlyCursorAt(dest, start)
+        dest.shrink start
+        let choice = cursorAt(orig, 0)
+        c.buildErr dest, choice.info, "ambiguous identifier", choice
     it.typ = c.types.autoType
   elif s.kind == BlockY:
     it.typ = c.types.autoType
@@ -2112,7 +2172,7 @@ proc semAsgn(c: var SemContext; dest: var TokenBuf; it: var Item) =
      CchoiceX, OchoiceX, PragmaxX, QuotedX, HderefX, HaddrX, NewrefX, NewobjX, TupX,
      TupconstrX, SetconstrX, TabconstrX, AshrX, BaseobjX, HconvX, DconvX, CallstrlitX, InfixX,
      PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, ProccallX, HighX,
-     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, DefaultobjX,
+     LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
      DefaulttupX, DefaultdistinctX, DelayX, Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX,
      PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
      DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
@@ -4216,6 +4276,20 @@ proc caseBranchMatchesExprRaw(c: var SemContext; dest: var TokenBuf; branch, mat
         return true
       skip branch
 
+proc isConstDiscriminator(c: var SemContext; n: Cursor): bool =
+  ## Is the (semchecked) discriminator value spelled as a constant, i.e. the
+  ## way the `of` labels it is compared against are? Deliberately no constant
+  ## EVALUATION: that re-runs sem and can shell out to a sub-compile.
+  case n.kind
+  of IntLit, UIntLit, CharLit:
+    result = true
+  of Symbol:
+    result = fetchSym(c, n.symId).kind == EfldY
+  of TagLit:
+    result = n.exprKind in {TrueX, FalseX}
+  else:
+    result = false
+
 proc caseBranchMatchesExpr(c: var SemContext; dest: var TokenBuf; branch, matched: Cursor;
                            selectorType: Cursor): bool =
   ## `evalConstIntExpr` semchecks the range bounds *into* `dest`, but here `dest`
@@ -4274,6 +4348,12 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
+          elif state == ThisBranch:
+            # The constructor selects this branch but sets none of its fields:
+            # they still get their defaults. `oconstr` is total (doc/tags.md),
+            # and the native back end stores exactly what is listed.
+            n.into: # stmt
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
           else:
             skip n
       of ElseU:
@@ -4287,6 +4367,13 @@ proc fieldsPresentInBranch(c: var SemContext; dest: var TokenBuf; n: var Cursor;
             n.into: # stmt
               buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
             lastFieldSymId = presentFieldSymId
+          elif not isBranchSelected and lastFieldSymId == SymId(0) and
+              setFields.hasKey(selectorSymId) and
+              isConstDiscriminator(c, getValueInKv(setFields.getOrQuit(selectorSymId))):
+            # A constant discriminator no `of` matched selects the `else`
+            # branch; its fields get their defaults (see the `of` arm above).
+            n.into: # stmt
+              buildObjConstrFields(c, dest, n, setFields, info, bindings, depth)
           else:
             skip n
       of NoSub, NilU, NotnilU, KvU, VvU, RangeU, RangesU, ParamU, TypevarU, StaticTypevarU, EfldU, FldU,
@@ -4992,8 +5079,17 @@ proc semSubscript(c: var SemContext; dest: var TokenBuf; it: var Item) =
   it.n = lhs.n
   lhs.n = cursorAt(lhsBuf, 0)
   if lhs.n.isTagLit and lhs.n.cursorTagId == nifpools.ErrT:
+    # The operand is the expression that is wrong, so its diagnostic is the one
+    # to report; a subscript on top of it means nothing. The whole `(at …)`
+    # becomes that one error node, which keeps the enclosing node's arity.
+    # This used to copy the unchecked `(at …)` through instead (#2191): the
+    # operand's error vanished, and outside a generic body nothing re-checked
+    # the tree — `outp = f(1)[0]` reached `derefs` untyped and crashed there
+    # ("callee type not params") without a word about `f(1)`.
+    dest.addSubtree lhs.n
     it.n = atStart
-    dest.takeTree it.n
+    skip it.n
+    it.typ = c.types.autoType
   else:
     semBuiltinSubscript(c, dest, it, lhs, atStart)
 
@@ -5628,6 +5724,8 @@ proc semExpr*(c: var SemContext; dest: var TokenBuf; it: var Item; flags: set[Se
       semBindSymName c, dest, it
     of IsmainmoduleX:
       semIsMainModule c, dest, it
+    of InstantiationinfoX:
+      semInstantiationInfo c, dest, it
     of AtX:
       semSubscript c, dest, it
     of PluginCallX:

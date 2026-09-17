@@ -1974,7 +1974,7 @@ proc gsub(g: var SrcGen, n: var Cursor, c: Context, fromStmtList = false, isTopL
         gsub(g, n)
         put(g, tkParRi, ")")
 
-    of IsmainmoduleX,
+    of IsmainmoduleX, InstantiationinfoX,
         DoX, InternalTypeNameX, InternalFieldPairsX, FailedX:
       raiseAssert "todo"
 

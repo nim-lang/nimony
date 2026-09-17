@@ -987,7 +987,7 @@ type
     kind: string          ## "obj" | "artifact"
     flags: seq[string]
 
-proc writeLinkManifest(path, exe, apptype: string;
+proc writeLinkManifest(path, exe, apptype, linker: string;
                        files: seq[ManifestFile]; flags: seq[string]): string =
   ## Write the manifest NIF a linker (the default `niflink`, or a `{.bundle.}`
   ## tool) consumes: every project artifact (objects + routed backend outputs)
@@ -1004,6 +1004,9 @@ proc writeLinkManifest(path, exe, apptype: string;
   b.withTree "link":
     b.withTree "apptype":
       b.addStrLit apptype
+    if linker.len > 0:
+      b.withTree "linker":
+        b.addStrLit linker
     b.withTree "output":
       b.addStrLit exe
     for f in files:
@@ -1022,28 +1025,40 @@ proc writeLinkManifest(path, exe, apptype: string;
   b.close()
   result = path
 
-proc addInlineSourceInputs(b: var Builder; c: DepContext; v: Node; backend: string) =
-  ## Declare the `.c.nif` of every module `v` imports as an input of `v`'s
-  ## codegen node.
+proc addInlineSourceInputs(b: var Builder; optimized: bool) =
+  ## Declare the Leng file of EVERY module in the program as an input of a
+  ## codegen node, written as the one phase reference `(inputsof <cmd>)`
+  ## rather than N filenames per node.
   ##
-  ## All three consumers of a `.c.nif` -- `lengc`, `arkham` and Shoggoth's
-  ## `optimize` -- resolve foreign symbols by loading the *callee* module's
-  ## `.c.nif` on demand, and splice imported `.inline` bodies out of it. That
-  ## makes those files real inputs: nifmake decides whether to rerun a node
-  ## from its declared inputs, so without these edges an edit that only
-  ## changes a callee leaves every importer's already-generated code in place,
-  ## with a stale copy of the body spliced into it. The result is a link error
-  ## when the edit renames a symbol the splice references, and a silently
-  ## wrong binary when it does not (nim-lang/nimony#1897).
+  ## All three consumers -- `lengc`, `arkham` and Shoggoth's `optimize` --
+  ## resolve a foreign symbol by loading the module that *defines* it, on
+  ## demand, and splice imported `.inline` bodies out of it. The defining
+  ## module is NOT restricted to this module's imports. A long string literal
+  ## is deduplicated across the whole program by content hash and emitted once,
+  ## in whichever module got there first, so any module can carry a reference
+  ## like `strlit.0.I16690852185662743073.lifwoge6a` to a literal owned by a
+  ## module it does not import at any depth -- measured: `system` referencing a
+  ## literal owned by `hexer/lifter`. The owner is decided by emission order,
+  ## not by the import graph, so it cannot be predicted from a module's `deps`.
+  ##
+  ## Hence the whole module list. Naming only the direct imports under-states
+  ## the input set in both directions that matter: ORDERING, since nifmake
+  ## starts a node as soon as its own declared inputs are done -- `lengc` on
+  ## `system` then races the `optimize` node that writes `lifter`'s Leng file --
+  ## and FRESHNESS, since without the edge a changed callee body leaves this
+  ## node's output untouched and the splice inside it stale
+  ## (nim-lang/nimony#1897).
+  ##
+  ## `optimized` picks WHICH phase produces that Leng file. Under the optimizer
+  ## the whole module set switches to `.oc.nif` together -- exactly as
+  ## `wasmInput` does for ithaqua -- so `lengc` and `arkham` wait on `optimize`.
+  ## Shoggoth's own node is the exception: it reads the pre-optimization
+  ## `.c.nif` that `dceEmit` writes, which is the default here.
   ##
   ## Only input[0] reaches the tool's command line, so the extra inputs cost
   ## nothing but the ordering and the freshness check.
-  var seen = initHashSet[string]()
-  for depIdx in v.deps:
-    let depNif = c.config.lengcFile(c.nodes[depIdx].files[0], backend)
-    if not seen.containsOrIncl(depNif):
-      b.withTree "input":
-        b.addStrLit depNif
+  b.withTree "inputsof":
+    b.addIdent (if optimized: "optimize" else: "dceEmit")
 
 proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, passL: string): string =
   result = c.config.nifcachePath / c.rootNode.files[0].modname & ".final.build.nif"
@@ -1458,7 +1473,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             if f.len > 0: flags.add f
         for f in c.passL: flags.add f
         let manifest = backendDir / (c.rootNode.files[0].modname & ".linkmanifest.nif")
-        discard writeLinkManifest(manifest, exe, $c.config.appType, mfiles, flags)
+        discard writeLinkManifest(manifest, exe, $c.config.appType, c.config.linker, mfiles, flags)
         b.withTree "do":
           b.addIdent linkNode
           if customLinkerName.len > 0 and customLinkerArgs.len > 0:
@@ -1579,13 +1594,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.withTree "input":
               b.addStrLit c.config.lengcFile(v.files[0], backend)
             # Shoggoth's inter-module inliner also reads the imported modules'
-            # `.c.nif`. Ordering alone would be free (nifmake runs the DAG in
-            # depth batches, and every `dceEmit` shares the `.live.nif` input,
-            # so those files are all written in the batch before this node's),
-            # but they have to be inputs for FRESHNESS too: without the edge a
-            # changed callee body leaves this node's output untouched and the
-            # splice inside it stale (nim-lang/nimony#1897).
-            addInlineSourceInputs(b, c, v, backend)
+            # pre-optimization `.c.nif`, so those are this node's inputs: for
+            # ORDERING, since nifmake starts a node as soon as its own inputs
+            # are done, and for FRESHNESS, since without the edge a changed
+            # callee body leaves this node's output untouched and the splice
+            # inside it stale (nim-lang/nimony#1897).
+            addInlineSourceInputs(b, optimized = false)
             b.withTree "output":
               b.addStrLit optimized
           lengcInput = optimized
@@ -1605,7 +1619,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addIdent "arkham"
             b.withTree "input":
               b.addStrLit lengcInput
-            addInlineSourceInputs(b, c, v, backend)
+            addInlineSourceInputs(b, useOptimizer)
             b.withTree "output":
               b.addStrLit c.config.asmFile(v.files[0], backend)
         else:
@@ -1624,7 +1638,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
                 b.addStrLit "--isMain"
             b.withTree "input":
               b.addStrLit lengcInput
-            addInlineSourceInputs(b, c, v, backend)
+            addInlineSourceInputs(b, useOptimizer)
             b.withTree "output":
               b.addStrLit c.config.genFile(v.files[0], backend)
 
@@ -1894,7 +1908,10 @@ proc generateCachedConfigFile(c: DepContext; passC, passL: string): bool =
     onRaiseQuit writeFile(path, configStr)
   result = needUpdate
 
-proc initDepContext(config: sink NifConfig; project, nifler: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
+proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebuild: bool; moduleFlags: set[ModuleFlag]; cmd: Command): DepContext =
+  # `--docs` is nifler's alone: it attaches `##` comments the way Nim's parser
+  # does, and nifler2 has no such mode
+  let nifler = if cmd == DoDoc: findTool("nifler") else: parserTool()
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
     cmd: cmd, isGeneratingFinal: isFinal)
@@ -1922,7 +1939,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   b.addHeader()
   b.withTree "stmts":
     # Command definitions (reuse existing logic)
-    defineNiflerCmd(b, findTool("nifler"))
+    defineNiflerCmd(b, parserTool())
 
     b.withTree "cmd":
       b.addSymbolDef "nimsem"
@@ -2098,7 +2115,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   # Execute the build using nifmake
   let nifmakeCmd = quoteShell(findTool("nifmake")) &
     (if ForceRebuild in flags: " --force" else: "") &
-    " --base:" & quoteShell(config.baseDir) &
+    (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "") &
     " -j run " & quoteShell(buildFile)
   exec(nifmakeCmd)
   exec(exeFile)
@@ -2113,17 +2130,19 @@ proc buildGraph*(config: sink NifConfig; project: string;
     flags: set[BuildFlag];
     commandLineArgs, commandLineArgsLengc: string; moduleFlags: set[ModuleFlag]; cmd: Command;
     passC, passL: string, executableArgs: string) =
-  let nifler = findTool("nifler")
   let nifmake = findTool("nifmake")
   let forceRebuild = ForceRebuild in flags
 
   if config.compat:
+    # importing Nim's configuration is nifler's `config` command: it runs Nim's
+    # own config and NimScript evaluation, which nifler2 does not link
+    let nifler = findTool("nifler")
     let cfgNif = config.nifcachePath / moduleSuffix(project, []) & ".cfg.nif"
     exec quoteShell(nifler) & " config " & quoteShell(project) & " " &
       quoteShell(cfgNif)
     parseNifConfig cfgNif, config
 
-  var c = initDepContext(config, project, nifler, false, forceRebuild, moduleFlags, cmd)
+  var c = initDepContext(config, project, false, forceRebuild, moduleFlags, cmd)
   let configChanged = generateCachedConfigFile(c, passC, passL)
   let buildFilename = generateFrontendBuildFile(c, commandLineArgs, cmd)
   #echo "run with: nifmake run ", buildFilename
@@ -2134,7 +2153,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if forceRebuild: " --force" else: "") &  # Use generic force flag
     (if Profile in flags: " --profile" else: "") &
     (if Report in flags: " --report" else: "") &
-    " --base:" & quoteShell(config.baseDir)
+    (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "")
   let nifmakeCommand = nifmakeBase & " -j run "
   # A changed configuration invalidates every sem result, and now says so
   # directly instead of through a file the sem nodes pretended to read.
@@ -2153,7 +2172,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
   exec frontendCommand & progArg(flags, 0, if twoPhase: 50 else: 100) & quoteShell(buildFilename)
 
   if cmd == DoDoc:
-    c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
+    c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)
     let docCacheDir = c.config.nifcachePath / "docs"
     let docOut = docOutDir(c.config)
     let projectRoot = toUnixPath(absoluteParentDir(c.rootNode.files[0].nimFile))
@@ -2176,7 +2195,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
     # Parse `.s.deps.nif`.
     # It is generated by nimsem and doesn't contains modules imported under `when false:`.
     # https://github.com/nim-lang/nimony/issues/985
-    c = initDepContext(config, project, nifler, true, forceRebuild, moduleFlags, cmd)
+    c = initDepContext(config, project, true, forceRebuild, moduleFlags, cmd)
     let backend = c.config.nifcachePath / c.config.backendDirName(c.rootNode.files[0])
     onRaiseQuit createDir(path(backend))
     onRaiseQuit createDir(path(sharedObjDir()))

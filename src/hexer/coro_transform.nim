@@ -40,7 +40,8 @@ include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
 import ".." / finalir / [finalir, finalir_model]
-import passes, defaultvalues, constparams, duplifier
+import passes, defaultvalues, constparams, duplifier, closuretypes
+export closuretypes  # the lowered-closure shape, shared with the passes below
 include ".." / nimony / nif_annotations
 
 ## Note: `ContinuationName` lives in `builtintypes` (re-imported via the
@@ -54,17 +55,15 @@ const
     ## `(ptr CoroutineBase)` throughout the coroutine internals. Kept
     ## for source compatibility — the iter-value env slot uses
     ## `BareRootObjName` (real RootObj) instead.
-  BareRootObjName* = "RootObj.0." & SystemModuleSuffix
-    ## The system's real `RootObj`. Used as the type of the iter-value
-    ## tuple's env slot so iter values have the same `(ref RootObj)`
-    ## shape as closure procs.
+  # `BareRootObjName` (the real `RootObj`, the iter-value tuple's env slot),
+  # `ClosureEnvParamName` and `addClosureEnvParam` (the env param appended to a
+  # lowered closure signature, distinct from the coroutine's `this.0` env
+  # below) live in `closuretypes`, which sits below `lifter` so every pass that
+  # must emit the identical env slot can reach it. Re-exported above.
   EnvParamName* = "`this.0"
-  ClosureEnvParamName* = "`ep.0"
-    ## The env param appended to a lowered closure signature (distinct from the
-    ## coroutine's `this.0` env above). Lives here — like `RootObjName` and the
-    ## wrapper-signature shape — so lambdalifting's pass-2 lowering and any other
-    ## pass that must emit the identical env slot (e.g. a cross-module foreign-decl
-    ## canonicalizer) stay in lock-step off one definition.
+    ## The coroutine's env param. Lives here — like `RootObjName` and the
+    ## wrapper-signature shape — so lambdalifting's pass-2 lowering stays in
+    ## lock-step with it off one definition.
   FnFieldName* = "fn.0"
   EnvFieldName* = "env.0"
   CallerFieldName* = "caller.0"
@@ -74,23 +73,6 @@ const
   CallerParamName* = "`caller.0"
   AllocFrameProcName* = "allocFrame.0." & SystemModuleSuffix
   DeallocFrameProcName* = "deallocFrame.0." & SystemModuleSuffix
-
-proc addClosureEnvParam*(dest: var TokenBuf; info: NifLineInfo; envTyp: SymId) =
-  ## Emit the trailing env `(param)` of a lowered closure signature. `envTyp == 0`
-  ## uses the generic `(ref RootObj)` slot shared with iter values; a concrete env
-  ## type uses a `(ptr)` (NIFC needs the pointer type here, with a cast in the body).
-  dest.copyIntoKind ParamU, info:
-    dest.addSymDef pool.symId(ClosureEnvParamName), info
-    dest.addDotToken() # no export marker
-    dest.addDotToken() # no pragmas
-    if envTyp == SymId(0):
-      dest.copyIntoKind RefT, info:
-        dest.addSymUse pool.symId(BareRootObjName), info
-    else:
-      # to keep NIFC's type system happy we need a ptr type here
-      # and then a cast in the body!
-      dest.copyIntoKind PointerT, info: discard
-    dest.addDotToken() # no default value
 
 type
   EnvField* = object
@@ -384,105 +366,42 @@ proc publishWrapperSignature*(routineSym: SymId; moduleSuffix: string) =
 # shape in lock-step with `generateCoroutineHelpers`.
 # ---------------------------------------------------------------------
 
-proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
-  ## Consume an (itertype ...) tree at `n` and emit
+proc emitIterTupleType(dest: var TokenBuf; params, retType: Cursor; info: NifLineInfo) =
+  ## Emit
   ##   `(closureTuple (proctype . (params <orig>... (param result ptr T) (param caller Continuation)) Continuation <pragmas>) (ref RootObj))`
-  ## Cursor is left past the closing ParRi of the input itertype.
+  ## for an iterator with these params and this return type. `params` is the
+  ## `(params ...)` tree or a dot token; both cursors are read-only peeks.
   ##
   ## NOTE: parameter types are copied verbatim (`takeTree`) on the
   ## assumption that iter param types are scalar. If we ever support
   ## nested itertypes in param positions we'll need to recurse via a
   ## proctype-walker here.
-  assert n.typeKind == ItertypeT
-  n.into: # past itertype tag
-    if n.hasMore:
-      skip n               # past nilability tag
-    dest.copyIntoKind ClosureTupleT, info:
-      dest.copyIntoKind ProctypeT, info:
-        dest.addDotToken() # nilability tag
-        dest.copyIntoKind ParamsU, info:
-          if n.substructureKind == ParamsU:
-            n.into:
-              while n.hasMore:
-                assert n.substructureKind == ParamU
-                takeInto dest, n:     # param tag
-                  dest.takeTree n       # name
-                  dest.takeTree n       # exported
-                  dest.takeTree n       # pragmas
-                  dest.takeTree n       # type (assumed scalar)
-                  dest.takeTree n       # default value
-          elif n.kind == DotToken:
-            inc n
-          # result becomes a ptr parameter (skipped when return type is void):
-          let isVoid = isVoidType(n)
-          if not isVoid:
-            dest.copyIntoKind ParamU, info:
-              dest.addSymDef pool.symId(ResultParamName), info
-              dest.addDotToken() # export
-              dest.addDotToken() # pragmas
-              dest.copyIntoKind PtrT, info:
-                dest.takeTree n
-              dest.addDotToken() # default value
-          else:
-            skip n
-          # caller parameter is always last:
-          dest.copyIntoKind ParamU, info:
-            dest.addSymDef pool.symId(CallerParamName), info
-            dest.addDotToken() # export
-            dest.addDotToken() # pragmas
-            dest.addSymUse pool.symId(ContinuationName), info
-            dest.addDotToken() # default value
-        dest.addSymUse pool.symId(ContinuationName), info
-        # Pragmas: ALWAYS emit `(pragmas (closure))` regardless of whether
-        # the source itertype was `.closure` or `.passive`. Two reasons:
-        #  (a) cps's `trProctype` re-walks types and treats ProctypeT with
-        #      `(pragmas (passive))` as an unlifted passive proctype — it
-        #      would wrap our already-lifted proctype in another result-ptr
-        #      + caller-Continuation param pair, corrupting the type sym.
-        #  (b) `(closure)` is the canonical "this is a closure-shaped fn
-        #      pointer" marker used by `isClosure`, cps's `HconvX` path,
-        #      etc. Both `.closure` and `.passive` iter values share the
-        #      SAME tuple ABI, so they share the same lifted-tuple shape.
-        # Skip the source pragmas; emit normalized closure marker.
-        if n.hasMore: skip n
-        dest.copyIntoKind PragmasU, info:
-          dest.copyIntoKind ClosureP, info: discard
-        # drop anything else (effects/body slots)
-        while n.hasMore: skip n
-      dest.copyIntoKind RefT, info:
-        dest.addSymUse pool.symId(BareRootObjName), info
-
-proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLineInfo) =
-  ## Build the iter-value tuple type from an iterator sym's decl. Used
-  ## at iter-sym-as-value and iter-nil sites where we don't have an
-  ## itertype tree on hand.
-  let res = tryLoadSym(iterSym)
-  assert res.status == LacksNothing, "iter sym not loaded: " & pool.symString(iterSym)
-  let fn = asRoutine(res.decl)
   dest.copyIntoKind ClosureTupleT, info:
     dest.copyIntoKind ProctypeT, info:
       dest.addDotToken() # nilability tag
       dest.copyIntoKind ParamsU, info:
-        var p = fn.params
-        if p.kind != DotToken:
+        if params.isTagLit:
+          var p = params
           p = sub(p) # peek walk, never left
           while p.hasMore:
             assert p.substructureKind == ParamU
-            takeInto dest, p:
-              dest.takeTree p # name
-              dest.takeTree p # exported
-              dest.takeTree p # pragmas
-              dest.takeTree p # type
-              dest.takeTree p # default value
-        var ret = fn.retType
-        if not isVoidType(ret):
+            takeInto dest, p:     # param tag
+              dest.takeTree p       # name
+              dest.takeTree p       # exported
+              dest.takeTree p       # pragmas
+              dest.takeTree p       # type (assumed scalar)
+              dest.takeTree p       # default value
+        # result becomes a ptr parameter (skipped when return type is void):
+        if not isVoidType(retType):
           dest.copyIntoKind ParamU, info:
             dest.addSymDef pool.symId(ResultParamName), info
             dest.addDotToken() # export
             dest.addDotToken() # pragmas
             dest.copyIntoKind PtrT, info:
-              dest.takeTree ret
+              var r = retType
+              dest.takeTree r
             dest.addDotToken() # default value
+        # caller parameter is always last:
         dest.copyIntoKind ParamU, info:
           dest.addSymDef pool.symId(CallerParamName), info
           dest.addDotToken() # export
@@ -490,12 +409,47 @@ proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLine
           dest.addSymUse pool.symId(ContinuationName), info
           dest.addDotToken() # default value
       dest.addSymUse pool.symId(ContinuationName), info
-      # See emitIterTupleTypeFromParams for why we always emit
-      # `(pragmas (closure))` regardless of the source pragma.
+      # Pragmas: ALWAYS emit `(pragmas (closure))` regardless of whether
+      # the source itertype was `.closure` or `.passive`. Two reasons:
+      #  (a) cps's `trProctype` re-walks types and treats ProctypeT with
+      #      `(pragmas (passive))` as an unlifted passive proctype — it
+      #      would wrap our already-lifted proctype in another result-ptr
+      #      + caller-Continuation param pair, corrupting the type sym.
+      #  (b) `(closure)` is the canonical "this is a closure-shaped fn
+      #      pointer" marker used by `isClosure`, cps's `HconvX` path,
+      #      etc. Both `.closure` and `.passive` iter values share the
+      #      SAME tuple ABI, so they share the same lifted-tuple shape.
       dest.copyIntoKind PragmasU, info:
         dest.copyIntoKind ClosureP, info: discard
-    dest.copyIntoKind RefT, info:
-      dest.addSymUse pool.symId(BareRootObjName), info
+    addRootRef dest, info
+
+proc emitIterTupleTypeFromParams*(dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
+  ## `emitIterTupleType` for the `(itertype ...)` tree at `n`, which is
+  ## consumed: the cursor is left past its closing ParRi.
+  assert n.typeKind == ItertypeT
+  var params = default(Cursor)
+  var retType = default(Cursor)
+  n.into: # past itertype tag
+    if n.hasMore:
+      skip n               # past nilability tag
+    assert n.hasMore, "itertype without params"
+    params = n
+    skip n
+    assert n.hasMore, "itertype without a return type"
+    retType = n
+    skip n
+    # drop the source pragmas and anything else (effects/body slots)
+    while n.hasMore: skip n
+  emitIterTupleType(dest, params, retType, info)
+
+proc emitIterTupleTypeFromSym*(dest: var TokenBuf; iterSym: SymId; info: NifLineInfo) =
+  ## `emitIterTupleType` for an iterator sym's decl. Used at
+  ## iter-sym-as-value and iter-nil sites where we don't have an itertype
+  ## tree on hand.
+  let res = tryLoadSym(iterSym)
+  assert res.status == LacksNothing, "iter sym not loaded: " & pool.symString(iterSym)
+  let fn = asRoutine(res.decl)
+  emitIterTupleType(dest, fn.params, fn.retType, info)
 
 proc isClosureIterSym*(s: SymId): bool =
   ## True for `.closure` iter decls only — those are the ones that lower
@@ -508,21 +462,6 @@ proc isClosureIterSym*(s: SymId): bool =
     let routine = asRoutine(res.decl)
     return hasPragma(routine.pragmas, ClosureP)
   return false
-
-proc isLiftedClosureTuple*(n: Cursor): bool {.inline.} =
-  ## `(closureTuple <proctype …> (ref RootObj))` is the shape both closure
-  ## procs and closure-iter values get lifted to. If we encounter one
-  ## while walking, it's already lifted — recursing into it would
-  ## re-trigger the proctype rewrite and produce nested tuples.
-  ##
-  ## The tag alone answers this, because every producer — `emitIterTupleType*`
-  ## here, lambdalifting's `treProcType` / `nonClosureToClosure` / closure-sym
-  ## path, and cps's `trProctype` — emits `ClosureTupleT`. This used to probe a
-  ## plain `(tuple …)` for "exactly a proctype then a ref", which answered a
-  ## question about *layout* where the callers all ask about *provenance*: an
-  ## ordinary `(proc (), ref RootObj)` tuple written by the user answered yes,
-  ## and any drift in the lifted element shape would silently answer no.
-  n.typeKind == ClosureTupleT
 
 # ---------------------------------------------------------------------
 # Predicates
@@ -1463,15 +1402,6 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     else:
       emitJump dest, c.currentProc.loopHeads[^1], info
       skip n
-  of StoreV:
-    var addLabel = false
-    takeInto dest, n:
-      addLabel = c.hooks.isPassiveCall(c, n)
-      trGotoValue c, dest, n
-      trGotoValue c, dest, n
-    if addLabel:
-      emitLabel dest, c.currentProc.labelCounter, info
-      inc c.currentProc.labelCounter
   of LoopV:
     if containsSuspensionPoint(c, n):
       # A Final IR `(loop (stmts BODY (continue .)))` is unconditional: there
@@ -1579,9 +1509,20 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           if addLabel:
             emitLabel dest, c.currentProc.labelCounter, info
             inc c.currentProc.labelCounter
+        of AsgnS:
+          # The value is the second operand: a passive call there ends the
+          # state, so the label goes after the whole assignment.
+          var addLabel = false
+          takeInto dest, n:
+            trGotoValue c, dest, n                 # destination
+            addLabel = c.hooks.isPassiveCall(c, n)
+            trGotoValue c, dest, n                 # value
+          if addLabel:
+            emitLabel dest, c.currentProc.labelCounter, info
+            inc c.currentProc.labelCounter
         of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
             ConverterS, MethodS, MacroS, TemplateS, TypeS,
-            BlockS, EmitS, AsgnS, IfS, WhenS,
+            BlockS, EmitS, IfS, WhenS,
             BreakS, ContinueS, ForS, WhileS, CoroforS,
             RetS, YldS, PragmasS, PragmaxS, InclS, ExclS,
             IncludeS, ImportS, ImportasS, FromimportS,
@@ -2546,7 +2487,7 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           AshrX, BaseobjX, DconvX, CompilesX,
           DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
           HighX, LowX, UnpackX, FieldsX, FieldpairsX,
-          EnumtostrX, IsmainmoduleX, DefaultobjX,
+          EnumtostrX, IsmainmoduleX, InstantiationinfoX, DefaultobjX,
           DefaulttupX, DefaultdistinctX, ExprX, DoX,
           ArratX, TupatX, PlussetX, MinussetX, MulsetX,
           XorsetX, EqsetX, LesetX, LtsetX, InsetX,
@@ -2613,22 +2554,6 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           # NJVL control-flow flags; nothing produces them since `xelim`'s
           # cfvar lowering went out with `nj.nim`. See `finalir.trStmt`.
           bug "cfvar in Final IR input"
-        of StoreV:
-          # (store value dest) -> (asgn dest value)
-          let info = n.info
-          n.into: # skip 'store' tag
-            var value = n
-            if c.hooks.isPassiveCall(c, value):
-              skip n
-              var lhsTransformed = createTokenBuf(6)
-              coroTr c, lhsTransformed, n
-              c.hooks.trPassiveCall(c, dest, value, beginRead lhsTransformed)
-            else:
-              var valueBuf = createTokenBuf(16)
-              coroTr c, valueBuf, n # value (first operand)
-              dest.copyIntoKind AsgnS, info:
-                coroTr c, dest, n   # dest (second operand)
-                dest.add valueBuf
         of KillV, UnknownV:
           skip n  # NJ bookkeeping, not needed in CPS output
         else:

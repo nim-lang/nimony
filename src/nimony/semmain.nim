@@ -233,7 +233,7 @@ proc phase2(c: var SemContext; buf: var TokenBuf; moduleLineInfo: NifLineInfo): 
   # phase 3).
   c.deferredLocals.clear()
   c.onDemandResolved.clear()
-  result = createTokenBuf()
+  result = createTokenBuf(buf.len + buf.len div 8)
   result.addParLe(StmtsS, moduleLineInfo)
   semToplevelStmts(c, result, buf)
   result.addParRi()
@@ -243,7 +243,8 @@ proc phase3(c: var SemContext; buf: var TokenBuf; moduleLineInfo: NifLineInfo): 
   ## Phase 3: Check bodies.
   c.phase = SemcheckBodies
   c.deferredLocals.clear()  # phase-2 cursors are stale here (#1974)
-  result = createTokenBuf()
+  # checked bodies come out about 1.25x their input; generic instances follow
+  result = createTokenBuf(buf.len + buf.len div 2)
   result.addParLe(StmtsS, moduleLineInfo)
   semToplevelStmts(c, result, buf)
 
@@ -454,17 +455,10 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
 
 func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.len != 0 or c.pendingModulePlugins.len != 0
 
-proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
-  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
-
-  assert n0.stmtKind == StmtsS
-  let path = getFile(n0.info) # gets current module path, maybe there is a better way
-  addSelfModuleSym(c, path)
-
-  if {SkipSystem, IsSystem} * c.moduleFlags == {}:
-    let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
-    importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
-
+proc runPhases(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
+  ## The three sem phases. Each phase's buffer is consumed by the next one and
+  ## released when this returns, before generics, derefs and the contract pass
+  ## add their own copies of the module.
   #echo "PHASE 1"
   var (buf1, moduleLineInfo) = phase1(c, dest, n0)
   dbgCheckSeals(buf1, "phase1")
@@ -483,6 +477,35 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
       endRead(r)
   #echo "PHASE 3"
   dest = phase3(c, buf2, moduleLineInfo)
+
+proc derefsOf(c: var SemContext; afterSem: sink TokenBuf): TokenBuf =
+  ## `injectDerefs` over the checked module. `afterSem` is released on return:
+  ## nothing after derefs reads it.
+  when defined(dumpPhases):
+    block:
+      var r = beginRead(afterSem)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
+      endRead(r)
+  var finalBuf = beginRead afterSem
+  result = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+  when defined(dumpPhases):
+    block:
+      var r = beginRead(result)
+      syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
+      endRead(r)
+
+proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
+  c.currentScope = Scope(tab: initTable[StrId, seq[Sym]](), kind: ToplevelScope)
+
+  assert n0.stmtKind == StmtsS
+  let path = getFile(n0.info) # gets current module path, maybe there is a better way
+  addSelfModuleSym(c, path)
+
+  if {SkipSystem, IsSystem} * c.moduleFlags == {}:
+    let systemFile = ImportedFilename(path: stdlibFile("std/system"), name: "system", isSystem: true)
+    importSingleFile(c, dest, systemFile, "", ImportFilter(kind: ImportAll), n0.info)
+
+  runPhases(c, dest, n0)
 
   if c.expanded.len > 0:
     dest.addParLe CommentS, readonlyCursorAt(c.expanded, 0).info
@@ -514,18 +537,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.hasPendingPlugins:
       dest = move afterSem
     else:
-      when defined(dumpPhases):
-        block:
-          var r = beginRead(afterSem)
-          syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".beforederefs.nif", toString(r, false))
-          endRead(r)
-      var finalBuf = beginRead afterSem
-      dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
-      when defined(dumpPhases):
-        block:
-          var r = beginRead(dest)
-          syncio.writeFile("nimcache/dump." & c.thisModuleSuffix & ".afterderefs.nif", toString(r, false))
-          endRead(r)
+      dest = derefsOf(c, move afterSem)
     when true: #defined(enableContracts):
       var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
       if reporters.reportErrors(moreErrors) > 0:
@@ -614,8 +626,7 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
     if c.hasPendingPlugins:
       dest = move afterSem
     else:
-      var finalBuf = beginRead afterSem
-      dest = injectDerefs(finalBuf, c.typeHooks, c.classes, c.thisModuleSuffix, c.g.config.bits)
+      dest = derefsOf(c, move afterSem)
   else:
     quit 1
 

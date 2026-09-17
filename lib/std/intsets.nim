@@ -1,3 +1,5 @@
+{.feature: "staticContracts".}
+
 
 import tables, hashes
 
@@ -19,21 +21,26 @@ type
 
 func initIntSet*(): IntSet = IntSet(t: initTable[uint, Trunk]())
 
-func split(x: uint): (uint, uint, int) {.inline.} =
-  (x div BitsPerTrunk, (x mod BitsPerTrunk) div UIntSize, int(x mod UIntSize))
+template split(x: int; a, b, c: untyped) =
+  # Declares the three parts in the caller, where the bounds of `b` and `c`
+  # are visible; a tuple returned from a routine would carry none of them.
+  let u = cast[uint](x)
+  let a {.inject.} = u div BitsPerTrunk
+  let b {.inject.} = (u mod BitsPerTrunk) div UIntSize
+  let c {.inject.} = int(u mod UIntSize)
 
 func incl*(s: var IntSet; x: int) =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   tr.a[b] = tr.a[b] or (1'u shl c)
 
 func excl*(s: var IntSet; x: int) =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   tr.a[b] = tr.a[b] and not (1'u shl c)
 
 func contains*(s: IntSet; x: int): bool =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   if s.t.hasKey(a):
     #let tr = s.t.getOrDefault(a)
     let tr = addr getOrQuit(s.t, a)
@@ -42,11 +49,56 @@ func contains*(s: IntSet; x: int): bool =
     result = false
 
 func containsOrIncl*(s: var IntSet; x: int): bool =
-  let (a, b, c) = split cast[uint](x)
+  split(x, a, b, c)
   let tr = addr(s.t.mgetOrPut(a, default(Trunk)))
   result = (tr.a[b] and (1'u shl c)) != 0'u
   if not result:
     tr.a[b] = tr.a[b] or (1'u shl c)
+
+func isEmpty(tr: Trunk): bool {.inline.} =
+  ## `excl` leaves emptied blocks in the table, so "no block" and "a block of
+  ## zeros" must mean the same set everywhere below.
+  result = true
+  for w in tr.a:
+    if w != 0'u: return false
+
+func countBits(x: uint): int {.inline.} =
+  var v = x
+  result = 0
+  while v != 0'u:
+    v = v and (v - 1'u) # clears the lowest set bit
+    inc result
+
+func len*(s: IntSet): int =
+  ## The number of elements in `s`.
+  result = 0
+  for _, tr in s.t.pairs:
+    for w in tr.a: inc result, countBits(w)
+
+func `==`*(a, b: IntSet): bool =
+  ## Same elements, however the two sets were built.
+  var blocks = 0
+  for k, tr in a.t.pairs:
+    if not isEmpty(tr):
+      if not b.t.hasKey(k): return false
+      let other = addr getOrQuit(b.t, k)
+      for i in 0'u..<TrunkSize:
+        if tr.a[i] != other.a[i]: return false
+      inc blocks
+  for _, tr in b.t.pairs:
+    if not isEmpty(tr): dec blocks
+  result = blocks == 0
+
+func hash*(s: IntSet): Hash =
+  ## Combines the blocks commutatively: the table keeps them in insertion
+  ## order, and two equal sets need not have inserted them alike.
+  var h = 0'u
+  for k, tr in s.t.pairs:
+    if not isEmpty(tr):
+      var th = hash(k)
+      for w in tr.a: th = th !& hash(w)
+      h = h + !$th
+  result = h
 
 iterator items*(s: IntSet): int =
   for a, tr in s.t.pairs:

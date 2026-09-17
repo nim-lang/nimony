@@ -308,7 +308,7 @@ proc createContext(orig: ptr TokenBuf): Context =
           writeSites: initTable[SymId, seq[int]](),
           names: initTable[SymId, string](),
           delCandidates: initTable[SymId, int](),
-          scopeDecls: @[@[]],
+          scopeDecls: @[newSeq[SymId]()],
           patchset: initPatchset(orig),
           synth: @[],
           dotBuf: createTokenBuf(2, orig[].pool, orig[].tags))
@@ -600,21 +600,16 @@ proc trVar(c: var Context; n: var Cursor) =
     while n.hasMore: skip n
 
 proc trAsgn(c: var Context; n: var Cursor) =
-  let isStore = n.stmtKind == StoreS
   let asgnPos = cursorToPosition(c.orig[], n)
-  var first, second = default(Cursor)
-  var haveFirst, haveSecond = false
+  # `asgn` is `(asgn dest src)`.
+  var lhs, rhs = default(Cursor)
+  var haveLhs, haveRhs = false
   n.into:
     if n.hasMore:
-      first = n; haveFirst = true; skip n
+      lhs = n; haveLhs = true; skip n
     if n.hasMore:
-      second = n; haveSecond = true; skip n
+      rhs = n; haveRhs = true; skip n
     while n.hasMore: skip n
-  # `asgn` is `(asgn dest src)`; `store` is `(store src dest)` (reversed).
-  let lhs = if isStore: second else: first
-  let rhs = if isStore: first else: second
-  let haveLhs = if isStore: haveSecond else: haveFirst
-  let haveRhs = if isStore: haveFirst else: haveSecond
   if haveRhs:
     var r = rhs
     trExpr(c, r)                         # propagate inside the value
@@ -684,14 +679,11 @@ proc trCase(c: var Context; n: var Cursor) =
     closeBranches c
 
 proc collectWrites(start: Cursor; writes: var HashSet[SymId]) =
-  ## Storage root of every `asgn`/`store` target in the subtree at `start`.
+  ## Storage root of every `asgn` target in the subtree at `start`.
   ## Through-pointer stores do not count as writes to the pointer.
   if not start.hasMore or start.kind != TagLit: return
-  let sk = start.stmtKind
-  if sk in {AsgnS, StoreS}:
-    var lhs = child0(start)
-    if sk == StoreS: skip lhs            # dest is the 2nd child
-    let root = writtenRoot(lhs)
+  if start.stmtKind == AsgnS:
+    let root = writtenRoot(child0(start))
     if root != SymId(0): writes.incl root
   var n = start
   n.loopInto:
@@ -762,7 +754,7 @@ proc tr(c: var Context; n: var Cursor) =
   of TagLit:
     case n.stmtKind
     of VarS, GvarS, TvarS, ConstS: trVar(c, n)
-    of AsgnS, StoreS:              trAsgn(c, n)
+    of AsgnS:                      trAsgn(c, n)
     of CallS:                      trCallStmt(c, n)
     of IfS:                        trIf(c, n)
     of CaseS:                      trCase(c, n)
@@ -1064,20 +1056,15 @@ proc scanStab(c: var Context; sc: var StabScan; n: var Cursor) =
           else:
             scanStabExpr(c, sc, n)
         while n.hasMore: skip n
-    of AsgnS, StoreS:
-      let isStore = n.stmtKind == StoreS
-      var first, second = default(Cursor)
-      var haveFirst, haveSecond = false
+    of AsgnS:
+      var lhs, rhs = default(Cursor)
+      var haveLhs, haveRhs = false
       n.into:
         if n.hasMore:
-          first = n; haveFirst = true; skip n
+          lhs = n; haveLhs = true; skip n
         if n.hasMore:
-          second = n; haveSecond = true; skip n
+          rhs = n; haveRhs = true; skip n
         while n.hasMore: skip n
-      let lhs = if isStore: second else: first
-      let rhs = if isStore: first else: second
-      let haveLhs = if isStore: haveSecond else: haveFirst
-      let haveRhs = if isStore: haveFirst else: haveSecond
       var destSym = SymId(0)
       if haveLhs:
         if lhs.kind == Symbol:

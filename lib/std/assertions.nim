@@ -22,6 +22,9 @@ template assert*(cond: bool; msg = "") =
     if not cond:
       raiseAssert(msg)
   else:
+    # Compiled out entirely. `assert` is a run-time debugging aid and nothing
+    # more: a claim the contract prover may rely on is `{.assert: cond.}`, which
+    # is judged at compile time and cannot be switched off.
     discard
 
 template assertRc*[T](r: ref T; expected: int; tag: string = "") =

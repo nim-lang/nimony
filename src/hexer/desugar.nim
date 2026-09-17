@@ -10,7 +10,7 @@ from std / strutils import startsWith
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
-import hexer_context, passes
+import hexer_context, passes, closuretypes
 include ".." / nimony / nif_annotations
 
 type
@@ -84,7 +84,7 @@ proc needsTemp(n: Cursor): bool =
         TabconstrX, AshrX, BaseobjX, HconvX, CallstrlitX, InfixX,
         PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
         InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
-        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
         Delay0X, SuspendX, DoX, PlussetX, MinussetX, MulsetX,
         XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
@@ -1044,15 +1044,6 @@ proc tryFoldFloatExpr(dest: var TokenBuf; exprStart: int; targetBits: int) =
     dest.addParLe(if truthy: TrueX else: FalseX, info)
     dest.addParRi()
 
-proc isClosureValueType(typ: Cursor): bool =
-  ## The (fn, env) pair: the lowered `ClosureTupleT`, a `.closure` proctype whose
-  ## decl has not been rewritten yet, or a `.closure` iterator. A `.passive`
-  ## iterator is NOT one — it lowers to a bare wrapper proctype.
-  typ.typeKind == ClosureTupleT or
-    (typ.typeKind == ProctypeT and procHasPragma(typ, ClosureP)) or
-    (typ.typeKind == ItertypeT and not procHasPragma(typ, PassiveP))
-
-
 proc tryClosureCompare(c: var Context; dest: var TokenBuf; n: var Cursor): bool =
   ## `(eq|neq <closure> a b)` -> compare the fn slots AND the env slots.
   ##
@@ -1365,7 +1356,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         AshrX, BaseobjX, DconvX, HconvX, ConvX,
         CompilesX, DeclaredX, DefinedX, ProccallX, DelayX,
         AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX, UnpackX,
-        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
         DefaultobjX, DefaulttupX, DefaultdistinctX,
         Delay0X, SuspendX, DoX, TupatX, EmoveX,
         DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,

@@ -199,7 +199,7 @@ proc joinSnap*(a, b: FlowSnap): FlowSnap =
   else:
     for x in b.inits:
       if x in a.inits: inits.incl x
-  FlowSnap(inits: inits, facts: merge(a.facts, 0, b.facts, false))
+  FlowSnap(inits: inits, facts: join(a.facts, b.facts))
 
 proc setTo*(fs: var FlowState; cp: FlowCp; snap: FlowSnap) =
   ## Journaled `fs := snap`, rolled back to `cp` first so the diff stays small.
@@ -298,28 +298,22 @@ proc bindRaise*(tr: var FlowTracker; fs: var FlowState) {.inline.} =
   bindKey(tr, fs, ExitKey[SymId](kind: ekRaise))
 
 proc bindLoopExit*(tr: var FlowTracker; fs: var FlowState; label: SymId) =
-  ## The `(lab loopExit)` after a `(loop)`. A loop is analyzed in one forward
-  ## pass (no fixpoint), so break-site *facts* may be iteration-specific and are
-  ## dropped — `fs.facts` keeps the conservative pre-loop set the driver rolled
-  ## back to. Definite-assignment is monotone, so break-site *inits* ARE joined
-  ## (a var initialized before every break is initialized after the loop).
+  ## The `(lab loopExit)` after a `(loop)`. The body is analyzed once, and only
+  ## under the facts no iteration can break (`restrictFactsToLoopInvariants`),
+  ## so what holds where a `break` or the guard jumps out holds on *every*
+  ## iteration's exit: the exit is joined exactly like any other label — the
+  ## guard's negation included, which is what `while k > Max: …` leaves behind
+  ## for the code after it.
   let key = labelKey(label)
-  if key in tr.exits:
-    let landed = getOrDefault(tr.exits, key)
-    jDel(tr, key)
-    if tr.live:
-      var keep: seq[SymId] = @[]
-      for k in fs.inits.snapshot:
-        if k notin landed.inits: keep.add k
-      for k in keep: fs.inits.excl k
-    else:
-      # only break paths reach here: install their joined init-set
-      var cur: seq[SymId] = @[]
-      for k in fs.inits.snapshot: cur.add k
-      for k in cur:
-        if k notin landed.inits: fs.inits.excl k
-      for k in landed.inits: fs.inits.incl k
-      tr.live = true
+  if key notin tr.exits:
+    # A `(lab)` with no `jmp` to it: `trFor` emits the exit of every `for` loop
+    # unconditionally, because the iterator's termination test is not generated
+    # until hexer. The label is the lowering's word that this point is reached,
+    # and `fs` already holds the conservative pre-loop state the driver rolled
+    # back to, so the only thing missing is liveness.
+    tr.live = true
+  else:
+    bindKey(tr, fs, key)
 
 proc dropContinue*(tr: var FlowTracker) {.inline.} =
   ## The loop header consumes the back-edge; a one-pass forward analysis drops it.
@@ -338,6 +332,16 @@ proc takeRaise*(tr: var FlowTracker): bool =
   if result: jDel(tr, key)
 
 # ---- branching
+
+proc exitsCheckpoint*(tr: FlowTracker): int {.inline.} = tr.journal.len
+
+proc rollbackExits*(tr: var FlowTracker; cp: int) =
+  ## Undo every exit-table mutation since `exitsCheckpoint` returned `cp`.
+  while tr.journal.len > cp:
+    let e = tr.journal[tr.journal.len - 1]
+    tr.journal.setLen(tr.journal.len - 1)
+    if e.had: tr.exits[e.key] = e.old
+    else: tr.exits.del e.key
 
 proc splitBranch*(tr: var FlowTracker; fs: FlowState): Branch =
   Branch(baseLive: tr.live, cp: fs.checkpoint, ejcp: tr.journal.len)
@@ -362,12 +366,7 @@ proc commitThen*(tr: var FlowTracker; fs: var FlowState; b: var Branch) =
       else:
         b.thenDelta.add ExitJEntry(key: k, had: false)
     dec i
-  # undo the then-branch's exit-table mutations
-  while tr.journal.len > b.ejcp:
-    let e = tr.journal[tr.journal.len - 1]
-    tr.journal.setLen(tr.journal.len - 1)
-    if e.had: tr.exits[e.key] = e.old
-    else: tr.exits.del e.key
+  rollbackExits(tr, b.ejcp)
   # roll the state back to the baseline the then-branch started from
   fs.rollbackTo b.cp
   tr.live = b.baseLive
@@ -386,7 +385,7 @@ proc mergeBranches*(tr: var FlowTracker; fs: var FlowState; b: Branch) =
   if b.thenLive and elseLive:
     # merged init-set = baseline + (thenDelta ∩ elseDelta); merged facts = ⊔.
     let elseDelta = fs.inits.addedSince(b.cp.initsCp)
-    let mergedFacts = merge(b.thenFacts, 0, fs.facts, false)
+    let mergedFacts = join(b.thenFacts, fs.facts)
     fs.inits.rollbackTo b.cp.initsCp
     for k in elseDelta:
       if k in b.thenInits: fs.inits.incl k

@@ -6,7 +6,7 @@ import context, deps, builders, tiers
 
 # ---- deterministic self-host bootstrap ------------------------------------
 # `bin0/` is a fresh copy of the host-Nim-built toolchain in `bin/`; `binN/`
-# (N >= 1) is `binN-1/`'s nimony recompiling all three self-tools from
+# (N >= 1) is `binN-1/`'s nimony recompiling all the self-tools from
 # source. Each pass produces a sibling `binN/` directory next to `lib/` and
 # nothing is fed back into `bin/` — `bin/` remains the host-Nim-built
 # toolchain the rest of hastur drives the test suite with.
@@ -21,12 +21,15 @@ import context, deps, builders, tiers
 ## `semos.nimonyDir` accept any tail starting with `bin`, so stage-N's
 ## nimony resolves stage-N's tools and the project's stdlib without any
 ## CLI override.
-const BootSelfTools = ["nimsem", "hexer", "nimony"]
-  ## Tools rebuilt from source at every stage. The order matters: nimsem and
-  ## hexer are needed by every later `nimony c` call, so they go first;
-  ## nimony itself goes last because it's the one each *next* stage will
-  ## drive with.
-const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "shoggoth"]
+const BootSelfTools = ["nimsem", "hexer", "lengc", "shoggoth", "nimony"]
+  ## Tools rebuilt from source at every stage. The order matters: nimsem,
+  ## hexer, lengc (the C code generator) and shoggoth (the `-d:release`
+  ## optimizer) are all reached by every later `nimony c` call, so they go
+  ## first; nimony itself goes last because it's the one each *next* stage
+  ## will drive with. lengc and shoggoth used to be carried over from `bin/`,
+  ## which left a Nimony-built lengc/shoggoth untested by the boot although
+  ## they compile under Nimony.
+const BootCarryTools = ["nifler", "niflink", "nifmake", "validator"]
   ## Tools copied from `bin/` into each stage dir. They're tier-0 for
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
@@ -34,6 +37,9 @@ const BootCarryTools = ["nifler", "lengc", "niflink", "nifmake", "validator", "s
 proc bootCarryTools*(): seq[string] =
   result = @BootCarryTools
   if bootNative: result.add BootNativeTools
+  # nimony parses with nifler2 whenever it sits next to it, so a stage parses
+  # with the same tool `bin/` does -- and with nifler where `bin/` has none
+  if fileExists(binDir() / "nifler2".addFileExt(ExeExt)): result.add "nifler2"
 
 const NativeBootReady = true
   ## Requires a nativenif checkout whose arkham holds each emit step's demand
@@ -123,6 +129,8 @@ proc bootSourceFor*(tool: string): string =
   case tool
   of "nimony", "nimsem": "src/nimony/" & tool & ".nim"
   of "hexer": "src/hexer/hexer.nim"
+  of "lengc": "src/lengc/lengc.nim"
+  of "shoggoth": "src/lengc/shoggoth/shoggoth.nim"
   else: quit "boot: no source mapping for tool " & tool
 
 proc bootStageDir*(stage: int): string =
@@ -194,7 +202,7 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
   ## Build stage `stage` of the toolchain. Returns the stage's bin
   ## directory. Driver of stage N is the stage-(N-1) nimony.
   ##
-  ## The stage's three tools (nimsem, hexer, nimony) are compiled CONCURRENTLY.
+  ## The stage's tools (`BootSelfTools`) are compiled CONCURRENTLY.
   ## They are independent: each gets its own `--nimcache` and its own `--out`,
   ## and the only shared input — the previous stage's `bin/` — is read-only for
   ## the duration. Serially this was the single longest stretch of the Windows
@@ -444,7 +452,7 @@ proc selfcheckCmd*() =
   ## a maintainer runs after touching anything in `src/nimony/`, `src/hexer/`
   ## or `src/lib/` that the compiler itself depends on:
   ##
-  ##   1. Rebuild nimony + nimsem + hexer from host Nim, so all three reflect
+  ##   1. Rebuild the self-tools (`BootSelfTools`) from host Nim, so all reflect
   ##      current source. `boot` copies `bin/` into `bin0/` at every run, so
   ##      a stale `bin/` would still poison `bin0/`.
   ##   2. `bootstrap`: compile every module on the bootstrap list with the

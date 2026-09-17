@@ -1,6 +1,7 @@
 ## System module for Nimony
 
 {.feature: "lenientnils".}
+{.feature: "staticContracts".}
 
 include "system/basic_types"
 
@@ -46,6 +47,12 @@ include "system/arithmetics"
 
 include "system/comparisons"
 
+func old*(x: int): int {.semantics: "old".} = x
+  ## The value `x` had when the routine was *entered*. Meaningful only inside an
+  ## `.ensures`, which is never evaluated at run time — it is how a routine that
+  ## mutates a `var` parameter states what the mutation leaves alone:
+  ## `ensures: s.len == old(s.len)`.
+
 func defined*(x: untyped): bool {.magic: Defined.}
   ## Checks whether the symbol named by `x` is defined (typically via `-d:name` or `define`).
 func declared*(x: untyped): bool {.magic: Declared.}
@@ -81,14 +88,17 @@ func `$`*(x: uint64): string =
       result.add char((y mod 10'u) + uint('0'))
       y = y div 10'u
       if y == 0'u: break
-    let last = result.len-1
-    var i = 0
-    let b = result.len div 2
-    while i < b:
-      let ch = result[i]
-      result[i] = result[last-i]
-      result[last-i] = ch
-      inc i
+    # Reverse in place. Two converging indices rather than `i` and `last-i`:
+    # `lo < hi <= len-1` is what proves both accesses, and `len div 2` is not a
+    # bound the contract prover can follow.
+    var lo = 0
+    var hi = result.len-1
+    while lo < hi:
+      let ch = result[lo]
+      result[lo] = result[hi]
+      result[hi] = ch
+      inc lo
+      dec hi
 
 func `$`*(x: int64): string =
   if x < 0:
@@ -471,15 +481,21 @@ func addQuoted*[T](s: var string, x: T) =
     s.add($x)
 
 type
-  # TODO: change to `range[0..high(int)]` when range type is implemented
-  Natural* = int
+  Natural* = range[0 .. high(int)]
     ## is an `int` type ranging from zero to the maximum value
-    ## of an `int`. This type is often useful for documentation and debugging.
+    ## of an `int`.
+    ##
+    ## It is a real `range` type, so a `Natural` parameter *states* `0 <= x` and
+    ## the contract analysis reads it straight off the type
+    ## (`contracts_fir.seedRangeFacts`). That is what lets an indexing routine
+    ## discharge the lower half of `0 <= i and i < s.len` without a guard or a
+    ## `.requires` at any call site. Binding a value to a `Natural` owes
+    ## `0 <= value` in return, and that obligation is proven at compile time —
+    ## no range check is ever emitted.
 
-  # TODO: change to `range[1..high(int)]`
-  Positive* = int
+  Positive* = range[1 .. high(int)]
     ## is an `int` type ranging from one to the maximum value
-    ## of an `int`. This type is often useful for documentation and debugging.
+    ## of an `int`. Like `Natural`, it is a real `range` type.
 
   HSlice*[T, U] = object   ## "Heterogeneous" slice type.
     a*: T                  ## The lower bound (inclusive).
@@ -608,3 +624,8 @@ proc newException*[T](exceptn: typedesc[T]; message: string): ref T {.inline, un
   ## `raise newException(ValueError, "wrong value")`.
   new(result)
   result.msg = message
+
+proc instantiationInfo*(): tuple[filename: string, line: int, column: int] {.magic: "InstantiationInfo".}
+  ## The source position of the call. Inside a template body it is the
+  ## position of the template's call site, so a template can report where it
+  ## was invoked. `filename` is the file name without directories.

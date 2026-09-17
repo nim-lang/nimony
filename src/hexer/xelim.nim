@@ -23,9 +23,11 @@ type
     ElimExprs    # normal mode: eliminate expressions
     LowerCasts   # lower cast expressions: bind both source and result to variables
     TowardsFinalIr # goal mode: prepare for the Final IR (doc/final_ir.md).
-                   # Calls bind to locations, and `and`/`or` are lowered to the
-                   # label/jump-friendly if-with-bool-temp form (`trAnd`/`trOr`).
-                   # Final IR never introduces a single cfvar.
+                   # Calls bind to locations. A short-circuit condition is
+                   # lowered exactly as in the other goals: a pure one is handed
+                   # on as an `and`/`or` tree, one with calls in its operands
+                   # becomes `(jmp)`/`(lab)` (`trCondJump`). Final IR never
+                   # introduces a single cfvar.
 
 proc isComplex(n: Cursor; goal: Goal): bool =
   var n = n
@@ -81,8 +83,7 @@ type
     ## Where the value of the expression `trExpr` is translating should go.
     ## `IsLabel` is the control-flow mode: it compiles a short-circuit condition
     ## against a jump target rather than materialising it into a bool slot (the
-    ## two-target condition compiler `Cx`, below). Selected by goal, see
-    ## `CondJumpGoals`.
+    ## two-target condition compiler `Cx`, below), see `wantsCondJumps`.
     m: Mode
     t: TokenBuf
     lab: SymId        ## `IsLabel`: transfer to this label…
@@ -502,9 +503,10 @@ proc condPassthroughSafe(n: Cursor): bool =
   ## and *pure* leaves that finalir can emit inline — no calls and no
   ## statement-expressions with actual statements. Such a tree is handed to
   ## finalir verbatim so its two-target condition compiler (Cx) can lower it to
-  ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf must
-  ## instead keep the bool-temp lowering here, because short-circuit evaluation
-  ## requires the call to be hoisted *into* the branch, which Cx does not do.
+  ## shared `(lab)`/`(jmp)` merges (linear). A subtree with a call in a leaf is
+  ## lowered to those jumps here instead (`trCondJump`), because short-circuit
+  ## evaluation requires the call to be hoisted *into* the branch, which a
+  ## consumer handed the bare tree cannot do.
   if n.kind != TagLit: return false
   result = condNodeSafe(n)
 
@@ -532,12 +534,16 @@ proc takeStrippingTrivialExpr(dest: var TokenBuf; n: var Cursor) =
     dest.takeTree n
 
 proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## An `if`/`while` condition that `wantsCondJumps` left alone: either there is
+  ## no short-circuit on its spine, or the spine is pure enough to hand on as a
+  ## tree. A short-circuit spine with a call in an operand never reaches here —
+  ## it is compiled against jump targets instead (`trIfFlat`, `trWhile`).
   assert tar.m == IsEmpty
   if n.exprKind in {AndX, OrX, NotX, ExprX} and c.goal in CondPassthroughGoals and
      condPassthroughSafe(n):
     # Hand the short-circuit tree to the backend untouched. This has to happen
     # in the FIRST xelim run too (`ElimExprs`): the later `LowerCasts` run never
-    # sees an `and`, because xelim1 has already turned it into a bool temp.
+    # sees an `and` that xelim1 already lowered.
     # Safe for the passes in between (duplifier/destroyer) precisely because
     # `condPassthroughSafe` admits no calls and no statement-expressions, so
     # there is nothing for the mover to sink into the wrong branch — the case
@@ -550,40 +556,6 @@ proc trCond(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
     # tree with no `and` inside copies verbatim, which is what the fall-through
     # did anyway.
     takeStrippingTrivialExpr(tar.t, n)
-    return
-  if c.goal in {LowerCasts, TowardsFinalIr}:
-    case n.exprKind
-    of AndX:
-      if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
-        takeStrippingTrivialExpr(tar.t, n)
-      else:
-        trAnd c, dest, n, tar
-    of OrX:
-      if c.goal in CondPassthroughGoals and condPassthroughSafe(n):
-        takeStrippingTrivialExpr(tar.t, n)
-      else:
-        trOr c, dest, n, tar
-    of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
-       InfX, NeginfX, NanX, FalseX, TrueX, XorX, NotX, NegX,
-       SizeofX, AlignofX, OffsetofX, OconstrX, AconstrX, BracketX,
-       CurlyX, CurlyatX, OvfX, AddX, SubX, MulX, DivX, ModX,
-       ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
-       LeX, LtX, CastX, ConvX, CallX, CmdX, CchoiceX, OchoiceX,
-       PragmaxX, QuotedX, HderefX, DdotX, HaddrX, NewrefX,
-       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX,
-       BaseobjX, HconvX, DconvX, CallstrlitX, InfixX, PrefixX,
-       HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
-       InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
-       FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX,
-       DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
-       Delay0X, SuspendX, ExprX, DoX, ArratX, TupatX, PlussetX,
-       MinussetX, MulsetX, XorsetX, EqsetX, LesetX, LtsetX,
-       InsetX, CardX, EmoveX, DestroyX, DupX, CopyX, WasmovedX,
-       SinkhX, TraceX, InternalTypeNameX, InternalFieldPairsX,
-       FailedX, IsX, EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
-      # `PluginCallX` is frontend-only and never reaches hexer; it is listed
-      # here only to keep the case exhaustive.
-      trExpr c, dest, n, tar
   else:
     trExpr c, dest, n, tar
 
@@ -673,20 +645,19 @@ proc condSpineHasShortCircuit(n: Cursor): bool =
   else:
     result = false
 
-const
-  CondJumpGoals = {ElimExprs, LowerCasts}
-    ## Goals whose consumer is the ordinary hexer→Leng pipeline.
-    ## `TowardsFinalIr` is excluded because `finalir.nim` carries its own
-    ## condition compiler and wants the `and`/`or` tree.
-
 proc wantsCondJumps(c: Context; n: Cursor): bool =
   ## `Cx` is for exactly the conditions that used to materialise a bool: a
-  ## short-circuit spine that the backend cannot take verbatim. A spine of pure
-  ## leaves still goes to the backend as `(and …)`/`(or …)` — C's `&&`/`||` and
-  ## arkham's `emitCondE` compile it to the same branches without growing the
-  ## function past the inliner's token budget (see `CondPassthroughGoals`).
-  c.goal in CondJumpGoals and
-    condSpineHasShortCircuit(n) and
+  ## short-circuit spine that the consumer cannot take verbatim. A spine of pure
+  ## leaves still goes on as `(and …)`/`(or …)` — C's `&&`/`||`, arkham's
+  ## `emitCondE` and finalir's own `genCond` compile it to the same branches
+  ## without growing the function past the inliner's token budget (see
+  ## `CondPassthroughGoals`).
+  ##
+  ## Every goal, `TowardsFinalIr` included. Materialising the bool there was
+  ## worse than a lost optimization: the Final IR then tested a temp whose
+  ## meaning lived in the diamond that built it, and the contract analysis had
+  ## to pattern-match that diamond to get `if i >= 0 and i < s.len` back.
+  condSpineHasShortCircuit(n) and
     not (c.goal in CondPassthroughGoals and condPassthroughSafe(n))
 
 template trExprToLabel(c: var Context; dest: var TokenBuf; n: var Cursor;
@@ -1452,7 +1423,7 @@ proc trExpr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) 
        AshrX, BaseobjX, HconvX, DconvX, CompilesX,
        DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX, HighX, LowX,
        TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
-       IsmainmoduleX, DefaultobjX, DefaulttupX,
+       IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
        DefaultdistinctX, Delay0X, SuspendX, DoX, ArratX, TupatX,
        PlussetX, MinussetX, MulsetX, XorsetX, EqsetX, LesetX,
        LtsetX, InsetX, CardX, EmoveX, DestroyX, DupX, CopyX,

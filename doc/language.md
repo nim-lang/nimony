@@ -2850,6 +2850,103 @@ func withSideEffect(x: int): int {.sideEffect.} =
 
 
 
+## Contracts
+
+A routine may state a precondition with the `requires` pragma. The expression
+may name the routine's parameters, `result` (for `ensures`), and constants:
+
+```nim
+func `[]`*[T](s: seq[T]; i: int): var T {.requires: (i < s.len and i >= 0).} =
+  s.data[i]
+```
+
+A contract is discharged at the **call site**, not inside the routine: the
+compiler substitutes the arguments for the parameters and asks whether what it
+knows on this path implies the result. Three answers are possible, and only the
+middle one is silent:
+
+* **proven** — nothing more happens; the contract cost nothing.
+* **undecided** — the compiler cannot tell. The call keeps the run-time guard
+  the callee carries (`if not cond: panic`), which `--boundchecks:off` and
+  `-d:danger` remove like any other check.
+* **violated** — what is known on this path implies the *negation* of the
+  contract. This is a compile-time error.
+
+```nim
+proc needsPositive(x: int) {.requires: x > 0.}
+
+needsPositive(0)          # Error: contract violated: 0 < x
+needsPositive(readInt())  # undecided: checked at run time
+```
+
+Undecided is the default answer rather than an error because
+`seq`/`string`/`openArray` indexing *is* a contract, and the prover cannot yet
+track a container's length through its construction — `var s = newSeq[int](4)`
+followed by `s[0]` is undecided — so demanding a proof everywhere would still
+reject a good deal of ordinary code. What it does prove reliably: literals and
+locals with a known value; a value under a matching guard, including `a and b`
+and the guard clause `if i < 0 or i >= s.len: return`; `s.len` in every
+spelling; the range of a
+`for` loop variable, taken from the iterator's own `ensures`; and the counting
+loop, whose induction variable only ever moves one way:
+
+```nim
+var i = 0
+while i < s.len:
+  use s[i]                # proven: `i < s.len` is the guard, `0 <= i` is an
+  inc i                   # invariant, because the body only ever raises `i`
+```
+
+
+```nim
+iterator `..<`*[T: Ordinal](a, b: T): T {.inline,
+    ensures: (a <= result and result < b).} = ...
+
+for i in 0 ..< s.len:
+  use s[i]                # proven; no run-time bounds check is needed here
+```
+
+Two module pragmas move the default:
+
+* `{.feature: "staticContracts".}` — every contract a call site in this module
+  carries must be *proven*. This is where the language is headed; adopt it per
+  module as the prover grows.
+* `{.feature: "runtimeContracts".}` — no call site in this module is judged at
+  all, and the run-time guard is the only check. It wins if both are given.
+
+### Assertions and assumptions
+
+Inside a body, two statements take part in the same reasoning:
+
+* `{.assert: cond.}` is a claim the compiler must **prove**. It is judged at
+  compile time and only there: nothing is emitted for it at run time, so an
+  assertion that is not proven is an error — an undecided one exactly like a
+  violated one, whatever the module's contract features. No switch turns it
+  off. Afterwards `cond` is known, so an assertion can carry an obligation
+  further.
+* `{.assume: cond.}` makes `cond` known **without proof**. It is the override
+  for what the prover cannot establish, and the programmer's word: a false
+  assumption is undefined behaviour, and the line that states it is where to
+  look.
+
+```nim
+proc get(s: seq[int]; i: int): int =
+  if i >= 0 and i < s.len:
+    {.assert: i + 1 <= s.len.}   # proven from the guard
+    result = s[i]
+
+proc first(s: seq[int]): int =
+  {.assume: s.len > 0.}          # the caller's word; nothing checks it
+  result = s[0]
+```
+
+The `assert` template of `std/assertions` is a different thing: an ordinary
+run-time check for debugging, compiled out by `-d:noAssertions` and
+`-d:danger`. While it is compiled in, its `if not cond:` is a guard like any
+other, but an obligation that only it discharges stops being provable once it
+is switched off — the build then fails rather than losing a check. State such a
+claim with `{.assert.}`.
+
 ## Lifetime-tracking hooks
 
 A type bound operator is a `proc` or `func` whose name starts with `=` but isn't an operator
