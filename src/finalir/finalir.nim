@@ -561,7 +561,7 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
     emitLab dest, exitL, info
 
 proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## `n` points at the loop *body* (a `(stmts ...)`). Emit the infinite
+  ## `n` points at the loop *body*. Emit the infinite
   ## `(loop (stmts <body> (continue .)))` and, if any `break` targeted it, the
   ## trailing `(lab loopExit)`.
   let info = n.info
@@ -570,10 +570,13 @@ proc trLoopFromBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   openScope c
   dest.addParLe LoopV, info
   dest.addParLe ScopeS, info # a loop body is a scope: its locals die each iteration
-  assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
-  n.into: # the body statement list
-    while n.hasMore:
-      trStmt c, dest, n
+  if n.stmtKind in {StmtsS, ScopeS}:
+    n.into: # the body statement list
+      while n.hasMore:
+        trStmt c, dest, n
+  else:
+    # a lone statement, as a pass ahead of this one may build it
+    trStmt c, dest, n
   closeScope c, dest, info # kills run on the back-edge path
   dest.copyIntoKind ContinueV, info: # the sole back-edge
     dest.addDotToken()

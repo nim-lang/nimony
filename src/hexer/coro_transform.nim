@@ -203,6 +203,10 @@ type
     awaitingSuspendPark*: bool
       ## Set by `(delay0)`; consumed by the following `(suspend)` to
       ## decide between real parking and a synchronous state transition.
+    inputIsFinalIr*: bool
+      ## The routines handed to us are already in the Final IR (`cps` under
+      ## `hexerSpeaksFir`), so `treIteratorBody` must not lower them again.
+      ## `lambdalifting` runs before the pipeline's lowering and leaves it off.
     pendingCapturedEnvField*: SymId
       ## Inbox for the NEXT `transformCoroutineDecl` call: the consumer
       ## (lambdalifting) knows whether the iter it is about to hand us
@@ -1868,12 +1872,17 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   wrapper.addParRi()
   # `c.ptrSize` IS the target width; the 0 that stood here was invisible only
   # while the type cache ignored what it was handed.
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "finalir",
-                      c.ptrSize * 8, nextTemp = c.nextTemp)
-  toFinalIr(pass)
-  c.nextTemp = pass.nextTemp
+  var wholeResult = createTokenBuf(0)
+  if c.inputIsFinalIr:
+    # The pipeline lowered the whole module already.
+    wholeResult = ensureMove wrapper
+  else:
+    var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "finalir",
+                        c.ptrSize * 8, nextTemp = c.nextTemp)
+    toFinalIr(pass)
+    c.nextTemp = pass.nextTemp
+    wholeResult = ensureMove(pass.dest)
   block extractBody:
-    var wholeResult = ensureMove(pass.dest)
     var nExt = beginRead(wholeResult)
     inc nExt  # skip outer StmtsS, now at first child
     let procKind = iter.stmtKind

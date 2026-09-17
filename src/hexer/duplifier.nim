@@ -36,6 +36,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
 import lifter, mover, hexer_context, passes
+import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 include ".." / nimony / nif_annotations
 
@@ -57,6 +58,11 @@ type
       ## Only `genOutOfMemCheck` needs it.
     source: ptr TokenBuf
     moduleSuffix: string
+    callTemps: Table[SymId, Cursor]
+      ## `xelim`'s `{.inline.}` temps — a call bound to a local so it has a
+      ## location — with their initializers. Such a temp *is* its call, the way
+      ## `contracts_fir.inlineVars` reads it: `hderef tmp` reaches whatever the
+      ## call's arguments reach.
     mover: MoverContext
     constr: Cursor
       ## The outermost constructing expression currently being translated, or
@@ -265,6 +271,33 @@ proc trSons(c: var Context; n: var Cursor; e: Expects)
   takeInto c.dest, n:
     while n.hasMore:
       tr(c, n, e)
+
+proc mentionsCallTemp(c: Context; n: Cursor): bool =
+  var n = n
+  if n.kind == Symbol:
+    return n.symId in c.callTemps
+  if n.isTagLit:
+    n = sub(n)   # peek only, never left
+    while n.hasMore:
+      if mentionsCallTemp(c, n): return true
+      skip n
+  result = false
+
+proc expandCallTemps(c: var Context; dest: var TokenBuf; n: Cursor) =
+  ## `n` with every call temp replaced by its call, for the aliasing
+  ## predicates: they judge a place by its root, and a temp's root is its own.
+  var n = n
+  if n.kind == Symbol and n.symId in c.callTemps:
+    expandCallTemps c, dest, c.callTemps.getOrQuit(n.symId)
+  elif n.isTagLit:
+    dest.addParLe(n.cursorTagId, n.info)
+    n = sub(n)   # peek only, never left
+    while n.hasMore:
+      expandCallTemps c, dest, n
+      skip n
+    dest.addParRi()
+  else:
+    dest.addSubtree n
 
 proc isResultUsage(c: Context; n: Cursor): bool {.inline.} =
   result = false
@@ -564,8 +597,19 @@ proc trAsgn(c: var Context; n: var Cursor) =
     const isNotFirstAsgn = true
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
+    # The aliasing predicates judge a place by its root, and a call temp's root
+    # is its own: judge them on the calls instead.
+    var aliasBuf = createTokenBuf(0)
+    var aliasLe = le
+    var aliasRi = ri
+    if mentionsCallTemp(c, le) or mentionsCallTemp(c, ri):
+      expandCallTemps c, aliasBuf, le
+      expandCallTemps c, aliasBuf, ri
+      aliasLe = beginRead(aliasBuf)
+      aliasRi = aliasLe
+      skip aliasRi
     if constructsValue(ri, derefConstructs = false):
-      if not potentialAliasing(le, ri):
+      if not potentialAliasing(aliasLe, aliasRi):
         # `x = f()` is turned into `=destroy(x); x =bitcopy f()`.
         if isNotFirstAsgn:
           callDestroy(c, destructor, lhs, leType)
@@ -585,7 +629,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
           skip n # le
           skip n # ri
     elif isLastRead(c, ri):
-      if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
+      if isNotFirstAsgn and (potentialSelfAsgn(aliasLe, aliasRi) or
+                             potentialAliasing(aliasLe, aliasRi)):
         # `let tmp = y; =wasMoved(y); =destroy(x); x =bitcopy tmp`
         let tmp = tempOfTrArg(c, ri, leType)
         callWasMoved c, ri, leType
@@ -606,7 +651,8 @@ proc trAsgn(c: var Context; n: var Cursor) =
         callWasMoved c, ri, leType
     else:
       # XXX We should really prefer to simply call `=copy(x, y)` here.
-      if isNotFirstAsgn and (potentialSelfAsgn(le, ri) or potentialAliasing(le, ri)):
+      if isNotFirstAsgn and (potentialSelfAsgn(aliasLe, aliasRi) or
+                             potentialAliasing(aliasLe, aliasRi)):
         # `let tmp = x; x =bitcopy =dup(y); =destroy(tmp)`
         let tmp = tempOfTrArg(c, le, leType)
         copyInto c.dest, n:
@@ -1031,17 +1077,27 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
   ## lowering has already run, so this raise is emitted in its finished form —
   ## `addRaisedCode` pairs the code with the result slot the way the routine's
   ## rewritten signature demands.
-  copyIntoKind c.dest, IfS, info:
-    copyIntoKind c.dest, ElifU, info:
-      copyIntoKind c.dest, EqX, info:
-        copyIntoKind c.dest, PointerT, info: discard
-        c.dest.addSymUse(ow.s, info)
-        copyIntoKind c.dest, NilX, info: discard
-      copyIntoKind c.dest, StmtsS, info:
-        copyIntoKind c.dest, RaiseS, info:
-          addRaisedCode(c.dest, c.retType,
-                        pool.symId("OutOfMemError.0." & SystemModuleSuffix),
-                        c.resultSym, info)
+  template cond() =
+    copyIntoKind c.dest, EqX, info:
+      copyIntoKind c.dest, PointerT, info: discard
+      c.dest.addSymUse(ow.s, info)
+      copyIntoKind c.dest, NilX, info: discard
+  template action() =
+    copyIntoKind c.dest, StmtsS, info:
+      copyIntoKind c.dest, RaiseS, info:
+        addRaisedCode(c.dest, c.retType,
+                      pool.symId("OutOfMemError.0." & SystemModuleSuffix),
+                      c.resultSym, info)
+  if hexerSpeaksFir():
+    copyIntoKind c.dest, IteV, info:
+      cond()
+      action()
+      c.dest.addDotToken()
+  else:
+    copyIntoKind c.dest, IfS, info:
+      copyIntoKind c.dest, ElifU, info:
+        cond()
+        action()
 
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
@@ -1188,6 +1244,8 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
   copyTree c.dest, r.pragmas
   copyTree c.dest, r.typ
   c.typeCache.registerLocal(r.name.symId, kind, r.typ)
+  if r.val.exprKind in CallKinds and hasPragma(r.pragmas, InlineP):
+    c.callTemps[r.name.symId] = r.val
 
   if r.val.kind == DotToken:
     copyTree c.dest, r.val
@@ -1228,6 +1286,12 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
   let typ = getType(c.typeCache, n)
   let arg = n.childCursor
   let info = n.info
+  # `hderef tmp` is `hderef call` when `tmp` is a call temp: a place reached
+  # through an accessor, which `constructsValue` accepts below.
+  var throughCallTemp = false
+  if arg.exprKind in {DerefX, HderefX}:
+    let inner = arg.childCursor
+    throughCallTemp = inner.kind == Symbol and inner.symId in c.callTemps
   # `ensureMove(hderef (call subscript x i))` reads an lvalue through a
   # `var V`-returning accessor. With the old `derefConstructs=true` check
   # this fell into the "constructor" branch and was just copied (no
@@ -1241,7 +1305,7 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
       e in {WantOwner, WillBeOwned} and hasDestructor(c, typ):
     n.into:
       genLastRead(c, n, typ)
-  elif constructsValue(arg, derefConstructs = true):
+  elif throughCallTemp or constructsValue(arg, derefConstructs = true):
     # we allow rather silly code like `ensureMove(234)`.
     # Seems very useful for generic programming as this can come up
     # from template expansions:
@@ -1592,7 +1656,8 @@ proc injectDups*(pass: var Pass; lifter: ref LiftingCtx) =
   var n = pass.n  # Extract cursor locally
   var c = Context(lifter: lifter, typeCache: createTypeCache(pass.bits),
     dest: move(pass.dest), source: addr pass.buf, moduleSuffix: pass.moduleSuffix,
-    hoisted: createTokenBuf(16), mover: MoverContext(cf: initTokenBuf(), bits: pass.bits))
+    hoisted: createTokenBuf(16), mover: MoverContext(cf: initTokenBuf(), bits: pass.bits),
+    callTemps: initTable[SymId, Cursor]())
   c.typeCache.openScope()
   tr(c, n, WantNonOwner)
   genMissingHooks lifter[]

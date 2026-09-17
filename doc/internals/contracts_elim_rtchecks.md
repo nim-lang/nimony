@@ -316,18 +316,42 @@ In rough dependency order:
 2. **Done.** The lowering's lossiness — see *The lossiness punch list* below.
    The principle it applied: *not analysed* must stop meaning *not emitted*,
    and its converse, *analysis-only facts do not belong in the IR*.
-3. **Teach hexer the Final IR, before publishing it.** The lowering moves into
-   `pipeline.transform` as its first step; hexer lowers its own input and its
-   passes are converted one at a time, with the published format still Nimony
-   IR and the suite green throughout. This is `doc/internals/final_ir.md`'s
-   remaining work item 3. The surface is about nine passes —
-   `coro_transform` (43 sites matching `if`/`while`/`block`/`break`/`asgn`),
-   `xelim` (39), `iterinliner` (25), `desugar` (23),
-   `lengcgen`/`intramodinliner`/`lifter` (16 each), `lambdalifting` (13),
-   `duplifier` (12). `lab`/`jmp` are already Nimony statement tags that every
-   pass sees in its ordinary `case n.stmtKind`, and `destroyer` already treats
-   `(scope …)` as a real destructor scope, so the remainder is `ite`/`itec` vs
-   `if`, `loop` vs `while`, and `continue`/`kill`.
+3. **Teach hexer the Final IR, before publishing it.** *In progress.* The
+   lowering runs inside `pipeline.transform` behind `NIMONY_HEXER_FIR=1`
+   (`passes.hexerSpeaksFir`), in place of `xelim1`; `tests/nimony` is 827/827
+   with it on and the default build is untouched. The original estimate of
+   about nine passes was too high: `cps` already converts the Final IR back
+   (`ite`→`if`, `loop`→`while true`, `kill`/`unknown` dropped) for *every*
+   routine, not just coroutines, so only the passes between the lowering and
+   `cps` had to learn it. What that took:
+   - `controlflow.nim` (the duplifier's last-read analysis): `ite`, `loop`,
+     and skipping `kill`/`unknown`.
+   - `destroyer`: `ite`, `loop` and `continue` — the back-edge ends the body's
+     scope, so the destructors run *before* it; `collectLabels` looks through
+     transparent `stmts`. The loop body is walked in place, because `cps`
+     recognizes the back-edge only as the body scope's last child.
+   - `eraiser`: a `jmp` owes the `finally` of every `try` region that does not
+     declare its label (the Final IR spelling of `break`); a replicated
+     `finally` renames its labels, and pushes a frame so a `jmp` inside the
+     copy unwinds nothing.
+   - `eraiser`/`duplifier` emit `ite` for the checks they synthesize.
+   - `duplifier`: an `{.inline.}` call temp *is* its call. `ensureMove x[0]`
+     and the self-assignment check (`result = result.kids[0]`, a segfault in
+     the `parsegen` plugin) both judge the call, not the temp.
+   - `cps` does not lower a second time (`inputIsFinalIr`); `lambdalifting`,
+     which reaches the same code before the pipeline's lowering, still does.
+
+   Found on the way and fixed for the default build too: `xelim` bound a call
+   in an aggregate to a `cursor`, leaking its result (`taggregate_call_temp`);
+   the lowering turned a statement-position `stmts` into a scope; a replicated
+   `finally` duplicated its labels.
+
+   Left: move the lowering ahead of `lambdalifting`, `desugar` and
+   `iterinliner` (the last needs spliced cross-module bodies lowered too —
+   see *No normalizer*); make it the default and drop the switch; teach
+   `lengcgen` the Final IR so `cps` stops converting it back; and measure
+   generated code, since `TowardsFinalIr` binds every nested call to a temp
+   where `ElimExprs` did not.
 4. Publish the Final IR as the module nif — the lowering moves from hexer's
    entry back to nimsem — with the "unlowered iff re-sem'd elsewhere" rule and
    a verifier check for it, and `renderer`/`idetools`/`indexgen` taught to read

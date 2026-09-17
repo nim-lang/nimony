@@ -15,6 +15,7 @@ import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
   funcsummary, intramodinliner, arcopt
+import ".." / finalir / finalir
 # `arcopt` runs on the final NIFC (try/finally already lowered to explicit
 # control flow). It is the BasicBlock-based pass ported from the battle-tested
 # `nim/compiler/optimizer.nim`: a stack of basic blocks each owning a pending
@@ -66,7 +67,12 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # temps, and an impure `while` condition becomes a leading body guard. See
   # `doc/final_ir.md`.
   pass.prepareForNext("xelim1")
-  lowerExprs(pass)
+  if hexerSpeaksFir():
+    # Every pass from here on reads the Final IR. `toFinalIr` runs `xelim`
+    # itself.
+    toFinalIr(pass)
+  else:
+    lowerExprs(pass)
 
   # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
   # a check, and the success tuple lands in the same pass: signatures, the

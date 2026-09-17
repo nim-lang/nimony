@@ -69,6 +69,7 @@ include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, typeprops,
                         builtintypes, reporters]
 import ".." / models / tags
+import ".." / finalir / finalir_model
 import passes
 include ".." / nimony / nif_annotations
 
@@ -104,6 +105,8 @@ type
                 ## those are translated with the frame already popped, so a
                 ## raise in them propagates past this `try`, as it must)
     BlockExit   ## a `block`/`while`/`corofor` that a `break` can target
+    LabelScope  ## a replicated `finally` body: it declares labels of its own
+                ## and nothing else, so a `jmp` inside it leaves no region
 
   ExitScope = object
     kind: ExitKind
@@ -118,6 +121,9 @@ type
       ## binding must not hand the value to an outer `except e:`.
     fin: Cursor
       ## This `try`'s `(fin ...)` body, to replicate on every way out.
+    labels: HashSet[SymId]
+      ## `TryExit`: the `(lab)`s declared inside the region. A `(jmp L)` to
+      ## any other label leaves the region and owes its `finally`.
 
 proc hoistTail(c: var Context; dest: var TokenBuf; pos: int) =
   ## Move `dest[pos ..< ^0]` — a sequence of complete statements — in front of
@@ -194,24 +200,41 @@ proc addErrorCodeOf(c: var Context; dest: var TokenBuf; target: SymId;
 
 # -------------------- unwinding --------------------------------------------
 
+proc collectLabels(n: Cursor; labels: var HashSet[SymId]) =
+  ## Every `(lab :L)` declared anywhere in `n`.
+  var n = n
+  if n.stmtKind == LabS:
+    let l = n.childCursor
+    if l.kind == SymbolDef: labels.incl l.symId
+  elif n.isTagLit:
+    n = sub(n)   # peek only, never left
+    while n.hasMore:
+      collectLabels n, labels
+      skip n
+
 proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
                dest: var TokenBuf) =
-  ## Copy a subtree, renaming every local it DECLARES. A `finally` body is
-  ## replicated once per exit, and two copies in one routine cannot share
-  ## declarations.
+  ## Copy a subtree, renaming every local and every label it DECLARES. A
+  ## `finally` body is replicated once per exit, and two copies in one routine
+  ## cannot share declarations. A label has to be known before the copy starts
+  ## (`freshLabels`): its `jmp`s come first.
   case n.kind
   of Symbol:
     let repl = newVars.getOrDefault(n.symId, n.symId)
     dest.addSymUse(repl, n.info)
     inc n
   of TagLit:
-    let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS}
+    let isLocalDecl = n.stmtKind in {VarS, LetS, CursorS, PatternvarS, BlockS}
+    let isLab = n.stmtKind == LabS
     copyInto dest, n:
       if isLocalDecl and n.isSymbolDef:
         let repl = pool.symId("`ffv." & $idgen)
         newVars[n.symId] = repl
         dest.addSymDef(repl, n.info)
         inc idgen
+        inc n
+      elif isLab and n.isSymbolDef:
+        dest.addSymDef(newVars.getOrDefault(n.symId, n.symId), n.info)
         inc n
       while n.hasMore:
         freshVars(n, newVars, idgen, dest)
@@ -233,12 +256,23 @@ proc emitFinCopy(c: var Context; dest: var TokenBuf; fin: Cursor) =
   if cursorIsNil(fin): return
   var copied = createTokenBuf(30)
   var newVars = initTable[SymId, SymId]()
+  var labels = initHashSet[SymId]()
+  collectLabels fin, labels
+  var copyLabels = initHashSet[SymId]()
+  for l in labels:
+    let repl = pool.symId("`ffl." & $c.tmpCounter)
+    inc c.tmpCounter
+    newVars[l] = repl
+    copyLabels.incl repl
   var src = fin
   # `tmpCounter` rather than a counter per copy: two replications in one
   # routine must not both call their first local `ffv.0`.
   freshVars(src, newVars, c.tmpCounter, copied)
   var n = beginRead(copied)
+  c.exits.add ExitScope(kind: LabelScope, label: NoSymId, exceptVar: NoSymId,
+                        fin: default(Cursor), labels: ensureMove copyLabels)
   tr c, dest, n
+  discard c.exits.pop()
   endRead n
 
 proc replicateFin(c: var Context; dest: var TokenBuf; idx: int) =
@@ -295,11 +329,20 @@ proc addPropagationCheck(c: var Context; dest: var TokenBuf; target: SymId;
   ## travelling on.
   var code = createTokenBuf(8)
   addErrorCodeOf c, code, target, isVoidCall, info
-  copyIntoKind dest, IfS, info:
-    copyIntoKind dest, ElifU, info:
+  if hexerSpeaksFir():
+    # The pipeline's input is the Final IR, and nothing re-lowers what this
+    # pass emits: the check is an `ite`, not an `if`.
+    copyIntoKind dest, IteV, info:
       addErrorCodeOf c, dest, target, isVoidCall, info
       copyIntoKind dest, StmtsS, info:
         emitUnwind c, dest, code, info
+      dest.addDotToken()
+  else:
+    copyIntoKind dest, IfS, info:
+      copyIntoKind dest, ElifU, info:
+        addErrorCodeOf c, dest, target, isVoidCall, info
+        copyIntoKind dest, StmtsS, info:
+          emitUnwind c, dest, code, info
 
 # -------------------- declarations -----------------------------------------
 
@@ -646,8 +689,10 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc h
 
   # --- the guarded body, and the fall-through path ----------------------
+  var bodyLabels = initHashSet[SymId]()
+  collectLabels body, bodyLabels
   c.exits.add ExitScope(kind: TryExit, label: handlerLab, exceptVar: excVar,
-                        fin: fin)
+                        fin: fin, labels: ensureMove bodyLabels)
   trScopeOf c, dest, body, info
   # The frame comes off before the finally: a raise inside it propagates PAST
   # this `try`, and must not replicate the body it is already running.
@@ -676,8 +721,10 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # A raise inside the handler propagates PAST this `try` — it is not
       # caught by the handler it is raised in — but still owes this `try`'s
       # finally, so the frame stays on the stack without a catch label.
+      var handlerLabels = initHashSet[SymId]()
+      collectLabels hh, handlerLabels
       c.exits.add ExitScope(kind: TryExit, label: NoSymId, exceptVar: NoSymId,
-                            fin: fin)
+                            fin: fin, labels: ensureMove handlerLabels)
       trScopeOf c, dest, hh, hinfo
       discard c.exits.pop()
       emitFinCopy c, dest, fin
@@ -715,6 +762,20 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   while i >= 0:
     if c.exits[i].kind == BlockExit and
        (lab.kind != Symbol or c.exits[i].label == lab.symId):
+      break
+    dec i
+  emitFinsDownTo c, dest, i + 1
+  takeTree dest, n
+
+proc trJmp(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## The Final IR spelling of a `break` (and of a `continue` that `desugar`
+  ## made one). `jmp` is forward-only and scoped, so it leaves exactly the
+  ## `try` regions that do not declare its label, and owes their `finally`.
+  let lab = n.childCursor
+  var i = c.exits.len - 1
+  while i >= 0:
+    if c.exits[i].kind in {TryExit, LabelScope} and
+        lab.symId in c.exits[i].labels:
       break
     dec i
   emitFinsDownTo c, dest, i + 1
@@ -807,6 +868,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trTry c, dest, n
       of BreakS:
         trBreak c, dest, n
+      of JmpS:
+        trJmp c, dest, n
       of BlockS, WhileS, CoroforS:
         trLoopOrBlock c, dest, n
       of MacroS, TemplateS, TypeS:
@@ -817,7 +880,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,
          DiscardS, UnpackdeclS, AssumeS, AssertS, CallstrlitS,
          InfixS, PrefixS, HcallS, StaticstmtS, BindS, MixinS, UsingS,
-         AsmS, DeferS, LabS, JmpS, NoStmt:
+         AsmS, DeferS, LabS, NoStmt:
         # generic container: copy the head and recurse into the children
         copyInto dest, n:
           while n.hasMore:

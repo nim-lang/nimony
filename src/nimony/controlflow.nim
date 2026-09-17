@@ -16,6 +16,7 @@ include ".." / lib / nifprelude
 import ".." / models / tags
 import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
+import ".." / finalir / finalir_model
 
 const
   GotoInstr* = DotToken
@@ -741,6 +742,38 @@ proc trCoroFor(c: var ControlFlow; n: var Cursor) =
     for f in thisBlock.breakInstrs: c.patch f
   c.currentBlock = c.currentBlock.parent
 
+proc trFirIte(c: var ControlFlow; n: var Cursor) =
+  ## Final IR `(ite cond then else)`, `else` being `.` when absent: an `if`
+  ## with exactly one `elif`.
+  let info = n.info
+  n.into:
+    var tjmp: seq[Label] = @[]
+    var fjmp: seq[Label] = @[]
+    trIte c, n, tjmp, fjmp # condition
+    for t in tjmp: c.patch t
+    trStmt c, n # then
+    let ending = c.jmpForw(info)
+    for f in fjmp: c.patch f
+    if n.isDotToken:
+      inc n
+    else:
+      trStmt c, n # else
+    c.patch ending
+
+proc trFirLoop(c: var ControlFlow; n: var Cursor) =
+  ## Final IR `(loop body)`: no condition, every way out is a `jmp`, and the
+  ## body's `(continue .)` is the back-edge.
+  let info = n.info
+  let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
+  let loopStart = c.genLabel()
+  n.into:
+    trStmt c, n
+  for cont in thisBlock.contInstrs: c.patch cont
+  c.jmpBack(loopStart, info)
+  for f in thisBlock.breakInstrs: c.patch f
+  c.currentBlock = c.currentBlock.parent
+
 proc trReturn(c: var ControlFlow; n: var Cursor) =
   var it {.cursor.} = c.currentBlock
   var control {.cursor.}: BlockOrLoop = nil
@@ -1043,6 +1076,18 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
+    case n.finalIrKind
+    of IteV:
+      trFirIte c, n
+      return
+    of LoopV:
+      trFirLoop c, n
+      return
+    of KillV, UnknownV:
+      # Analysis facts for the prover; nothing here reads them.
+      skip n
+      return
+    else: discard
     var aa = initTarget(IsAppend)
     trExpr c, n, aa
     if aa.t.len > 0:

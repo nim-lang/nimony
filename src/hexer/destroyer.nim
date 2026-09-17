@@ -53,6 +53,7 @@ import passes
 import ".." / nimony / [nimony_model, programs, typenav, decls]
 import ".." / lengc / shoggoth / trackers
 import lifter
+import ".." / finalir / finalir_model
 
 const
   NoLabel = SymId(0)
@@ -61,6 +62,8 @@ type
   ScopeKind = enum
     Other        ## an ordinary destructor scope
     WhileOrBlock ## a `break` can land just past this one
+    Loop         ## a Final IR `(loop …)`: its `(continue .)` leaves every
+                 ## scope inside it
   DestructorOp = object
     destroyProc: SymId
     arg: SymId
@@ -111,21 +114,26 @@ type
 template terminates(c: Context): bool = c.flow.diverged
   ## The path has already left: everything until the next join is dead.
 
-proc collectLabels(body: Cursor): seq[SymId] =
-  ## The label symbols defined at the top level of `body`. `jmp` is
-  ## forward-only and scoped, so a jump's target is always a `(lab)` in one of
-  ## the enclosing scopes' own statement lists — one direct-children scan per
-  ## scope is enough to resolve every jump inside it.
-  result = @[]
-  var b = body
-  if b.stmtKind notin {StmtsS, ScopeS}: return
-  b = sub(b)   # peek only, never left
+proc collectLabelsInto(result: var seq[SymId]; body: Cursor) =
+  var b = sub(body)   # peek only, never left
   while b.hasMore:
     if b.stmtKind == LabS:
       let sym = b.childCursor
       if sym.kind in {Symbol, SymbolDef}:
         result.add sym.symId
+    elif b.stmtKind == StmtsS:
+      # transparent: its labels are this scope's
+      collectLabelsInto result, b
     skip b
+
+proc collectLabels(body: Cursor): seq[SymId] =
+  ## The label symbols defined in `body`'s own statement list, looking through
+  ## transparent `(stmts …)`. `jmp` is forward-only and scoped, so a jump's
+  ## target is always a `(lab)` in one of the enclosing scopes' own statement
+  ## lists — one such scan per scope is enough to resolve every jump inside it.
+  result = @[]
+  if body.stmtKind in {StmtsS, ScopeS}:
+    collectLabelsInto result, body
 
 proc labelIdOf(n: Cursor): LabelId =
   ## The `(lab :L)` / `(jmp L)` operand as a `Tracker` label.
@@ -368,6 +376,54 @@ proc trBlock(c: var Context; n: var Cursor) =
     c.flow.closeBranches()
     swap c.currentScope, oldScope
 
+proc trLoop(c: var Context; n: var Cursor) =
+  ## Final IR `(loop body)`. Its only exits are `jmp`s to a label after it, so
+  ## the path is dead once the loop is done and the exit's `(lab)` revives it.
+  ##
+  ## The body is walked as it is, not re-wrapped: it is already a `(scope …)`,
+  ## and `cps` recognizes the back-edge only as that scope's last child.
+  copyInto(c.dest, n):
+    c.flow.clearAll()
+    c.flow.openBranches()
+    c.flow.openBranch()
+    var oldScope = move c.currentScope
+    c.currentScope = createNestedScope(Loop, oldScope, n.info)
+    tr c, n
+    swap c.currentScope, oldScope
+    c.flow.closeBranch()
+    c.flow.closeBranches()
+    c.flow.clearAll()
+  c.flow.markDiverged()
+
+proc trContinue(c: var Context; n: var Cursor) =
+  ## The loop's back-edge. It ends the body's scope like a `break` ends a
+  ## block's, so the destructors of every scope up to the loop run before it
+  ## — `trScope` would append them *after* it, where they are dead.
+  if not c.terminates:
+    var it = addr(c.currentScope)
+    while it != nil and it.kind != Loop:
+      leaveScope(c, it)
+      it = it.parent
+    if it == nil:
+      bug "`continue` outside of a `loop`"
+  takeTree c.dest, n
+
+proc trIte(c: var Context; n: var Cursor) =
+  ## Final IR `(ite cond then else)`, `else` being `.` when absent.
+  copyInto(c.dest, n):
+    tr c, n # the condition runs on the fall-through path
+    c.flow.openBranches()
+    c.flow.openBranch()
+    trNestedScope c, n
+    c.flow.closeBranch()
+    if n.isDotToken:
+      takeTree c.dest, n
+    else:
+      c.flow.openFinalBranch()
+      trNestedScope c, n
+      c.flow.closeBranch()
+    c.flow.closeBranches()
+
 proc trIf(c: var Context; n: var Cursor) =
   copyInto(c.dest, n):
     # The arms are one sibling group. `closeBranches` derives the `if`'s own
@@ -492,6 +548,11 @@ proc tr(c: var Context; n: var Cursor) =
       c.flow.landLabel target
     of LocalDecls:
       trLocal c, n
+    of ContinueS:
+      # Only the Final IR's back-edge gets here: `desugar` turns a source
+      # `continue` into a `break` out of a block.
+      trContinue c, n
+      c.flow.markDiverged()
     of WhileS, CoroforS:
       trWhile c, n
     of TryS:
@@ -514,13 +575,17 @@ proc tr(c: var Context; n: var Cursor) =
       # bodies don't participate in lowering.
       takeTree c.dest, n
     of CallS, CmdS, TemplateS, TypeS, EmitS, AsgnS,
-        WhenS, ContinueS, ForS, YldS, StmtsS, PragmasS,
+        WhenS, ForS, YldS, StmtsS, PragmasS,
         PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
         FromimportS, ImportexceptS, ExportS, ExportexceptS,
         CommentS, DiscardS, UnpackdeclS, AssumeS, AssertS,
         CallstrlitS, InfixS, PrefixS, HcallS, StaticstmtS,
         BindS, MixinS, UsingS, AsmS, DeferS, NoStmt:
-      if n.isTagLit:
+      if n.finalIrKind == IteV:
+        trIte c, n
+      elif n.finalIrKind == LoopV:
+        trLoop c, n
+      elif n.isTagLit:
         # A transparent `(stmts` keeps whatever its children left behind, and
         # so does everything else here: only a jump statement or a branch join
         # moves `c.flow`, so a call or an assignment needs no bookkeeping.
