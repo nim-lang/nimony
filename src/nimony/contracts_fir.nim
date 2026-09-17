@@ -2305,9 +2305,11 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
     # no base type
     if e.hasMore and e.substructureKind == mark:
       result = true
-  of ProctypeT:
-    # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
-    # nilability marker is at slot 0.
+  of ProctypeT, ItertypeT:
+    # `(proctype <NilTag> (params) RetType <Pragmas>)`. The nilability marker is
+    # at slot 0, and `(itertype ...)` mirrors that shape exactly (doc/tags.md):
+    # a first-class closure-iterator VALUE is a pointer pair like any other
+    # closure, so it is not-nil by default the same way.
     let e = t.childCursor
     if e.substructureKind == mark:
       result = true
@@ -2478,6 +2480,14 @@ proc isNonNilExpr(c: var FirContext; n: Cursor): bool =
       else:
         result = false
 
+const
+  NilLaunderingConvs = ConvKinds - {CastX}
+    ## `ConvKinds` minus `cast`: a CONVERSION claims the target type honestly
+    ## and must not launder a `nil` into it, while a `cast` is the programmer
+    ## saying "this representation, on my head" -- the same standing `addr` has
+    ## in `wantNotNil`. `cast[pointer](nil)` is how a NULL is handed to C
+    ## (`io_uring.prep_rw`), and taking that away would leave no way to write it.
+
 proc isConvertedNil(n: Cursor): bool =
   ## `T(nil)` -- a conversion whose operand is the nil literal. Its TYPE is the
   ## not-nil `T`, so the `markedAs` shortcut below would take the conversion's
@@ -2487,7 +2497,7 @@ proc isConvertedNil(n: Cursor): bool =
   ## for a NOT-NIL `T` produced a nil silently -- and so did everything built
   ## on it, `default(array[8, T])` included.
   var n = n
-  while n.exprKind in ConvKinds:
+  while n.exprKind in NilLaunderingConvs:
     inc n
     skip n # the target type
   result = n.exprKind == NilX
@@ -4426,7 +4436,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       path.borrower = name
       c.activeBorrows.add path
-  if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
+  if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT, ItertypeT}:
     checkNilMatch c, n, localType
   if not n.isDotToken:
     checkRangeAssign c, localType, n
