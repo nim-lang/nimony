@@ -272,23 +272,6 @@ proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
   when defined(windows):
     result.add ".exe"
 
-proc hostifyPluginArgs(args: string): string =
-  ## A macro plugin is always a HOST-native executable (it is exec'd at compile
-  ## time), so it must be built with the host word size. Strip any `--bits:NN`
-  ## the outer compile carries — e.g. the JS test harness forces `--bits:32` to
-  ## short-circuit its own native link, but forwarding that to the plugin build
-  ## makes its C backend fail a pointer-size static assert. All other args
-  ## (notably `--cc`, for nifmake signature matching) are preserved.
-  result = args
-  var i = result.find("--bits:")
-  while i >= 0:
-    var j = i + "--bits:".len
-    while j < result.len and result[j] notin {' ', '\t'}: inc j
-    var start = i
-    if start > 0 and result[start-1] == ' ': dec start   # swallow the leading space too
-    result = result[0 ..< start] & result[j .. ^1]
-    i = result.find("--bits:")
-
 proc macroPluginExists*(nifcachePath: string; macroSym: SymId): bool =
   ## True when a compiled plugin binary for `macroSym` already sits in the
   ## shared nifcache. Used to recognise a macro IMPORTED from another module:
@@ -299,7 +282,7 @@ proc macroPluginExists*(nifcachePath: string; macroSym: SymId): bool =
 
 proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymId;
                          info: NifLineInfo;
-                         commandLineArgs: string): string =
+                         hostCommandLineArgs: string): string =
   ## Build the plugin module straight from NIF (no Nim text round-trip), write
   ## it as a `.p.nif`, and have Nimony compile it through `s` (the NIF-input
   ## entry point — same one CTFE uses in `semos.runEval`).
@@ -314,8 +297,10 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # in the nifcache it is pointed at. Sharing the outer nifcache would hand the
   # 64-bit plugin a 32-bit stdlib (mismatched type sizes) → a plugin that builds
   # but SEGFAULTS at run. So give the plugin its OWN nifcache subdir, built fresh
-  # at host bits (see `hostifyPluginArgs`). The `macro_*` prefix keeps it out of
-  # any target-side artifact collection.
+  # at host bits: `hostCommandLineArgs` is the outer command line minus its
+  # target triple (`parseCommonOption` decides what a compile-time-eval
+  # process may see). The `macro_*` prefix keeps it out of any target-side
+  # artifact collection.
   let pluginCache = nifcachePath / pluginBaseName & ".host"
   try:
     createDir path(pluginCache)
@@ -351,9 +336,9 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # only READS its imports' `.s.nif` — it does not build them — so in a fresh
   # per-plugin cache we must first materialise the stdlib the plugin imports.
   # The plugin scaffold imports exactly `std/[syncio, macros]` (see
-  # `emitImportStdMacros`); seeding those pulls in the whole host-bits stdlib
+  # `emitImportStdMacros`); compiling those pulls in the whole host-bits stdlib
   # closure the plugin needs (incl. the NimNode/NIF-reader machinery). The
-  # native link of this seed may fail (harmless — we only need the `.s.nif`/
+  # native link of this setup may fail (harmless — we only need the `.s.nif`/
   # `.c.nif`), and `nimony c` is incremental so repeat calls are cheap.
   let setupFile = pluginCache / "macro_setup.nim"
   try:
@@ -361,10 +346,10 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   except:
     echo "Macro plugin: failed to write ", setupFile
     return ""
-  let setupCmd = quoteShell(nimonyExe) & hostifyPluginArgs(commandLineArgs) &
-                " --path:" & quoteShell(srcLibPath) &
-                " --nimcache:" & quoteShell(pluginCache) &
-                " c " & quoteShell(setupFile)
+  let setupCmd = quoteShell(nimonyExe) & hostCommandLineArgs &
+                 " --path:" & quoteShell(srcLibPath) &
+                 " --nimcache:" & quoteShell(pluginCache) &
+                 " c " & quoteShell(setupFile)
   try:
     discard execCmdEx(setupCmd)   # ignore exit: a failed native link still leaves the .s.nif/.c.nif
   except:
@@ -383,7 +368,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   # and tries to overwrite it — which on Windows fails because the outer
   # nimsem (currently paused waiting on this exec) still has it mmap'd.
   # Same rationale as `semos.runProgram` / `semos.prepareEval`.
-  let cmd = quoteShell(nimonyExe) & hostifyPluginArgs(commandLineArgs) &
+  let cmd = quoteShell(nimonyExe) & hostCommandLineArgs &
             " --path:" & quoteShell(srcLibPath) &
             " --nimcache:" & quoteShell(pluginCache) &
             " -o:" & quoteShell(exePath) &

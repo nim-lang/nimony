@@ -109,7 +109,7 @@ proc writeHelp() = quit(Usage, QuitSuccess)
 proc writeVersion() = quit(Version & "\n", QuitSuccess)
 
 proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-                         commandLineArgs: string; forceRebuild: bool) =
+                         commandLineArgs, hostCommandLineArgs: string; forceRebuild: bool) =
   let nifler = parserTool()
   let name = moduleSuffix(nimFile, config.paths)
   let src = config.nifcachePath / name & ".p.nif"
@@ -117,7 +117,8 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
-  semcheck(@[src], @[dest], ensureMove config, moduleFlags, commandLineArgs, true)
+  semcheck(@[src], @[dest], ensureMove config, moduleFlags, commandLineArgs,
+           hostCommandLineArgs, true)
 
 type
   Command = enum
@@ -173,6 +174,9 @@ type
     config: NifConfig
     commandLineArgs: string
     commandLineArgsLengc: string
+    hostCommandLineArgs: string
+      ## `commandLineArgs` minus the target triple: what a compile-time-eval
+      ## process (a macro plugin build) is given. See `parseCommonOption`.
     passC: string
     passL: string
     executableArgs: string
@@ -188,6 +192,7 @@ proc createCmdOptions(baseDir: sink string): CmdOptions =
     config: initNifConfig(baseDir),
     commandLineArgs: "",
     commandLineArgsLengc: "",
+    hostCommandLineArgs: "",
     isChild: false,
     passC: "",
     passL: "",
@@ -218,6 +223,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
       else:
         var forwardArg = true
         var forwardArgLengc = false
+        var forwardArgHost = true
         # Handle special cases first, then try common parser
         let keyNorm = normalize(key)
         if keyNorm == "help":
@@ -242,7 +248,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           if normalize(val) == "danger":
             c.checkModes = {}
         elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgLengc,
-                              helpMsg = Usage, versionMsg = Version & "\n"):
+                              forwardArgHost, helpMsg = Usage, versionMsg = Version & "\n"):
           discard "handled by common CLI parser"
         else:
           # Handle nimony-specific options
@@ -310,6 +316,10 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             # literal quotes reach the tool). The forwarded compiler flags are
             # shell-safe unquoted, so `selfExec`'s raw splice is fine too.
             c.commandLineArgs.add ":" & val
+          if forwardArgHost:
+            c.hostCommandLineArgs.add " --" & key
+            if val.len > 0:
+              c.hostCommandLineArgs.add ":" & val
         if forwardArgLengc:
           c.commandLineArgsLengc.add " --" & key
           if val.len > 0:
@@ -337,6 +347,7 @@ proc compileProgram(c: var CmdOptions) =
     # as its value. Append `:value` only when there is one, matching how every
     # other forwarded option is built below.
     c.commandLineArgs.add (if flags.len > 0: " --flags:" & flags else: " --flags")
+    c.hostCommandLineArgs.add (if flags.len > 0: " --flags:" & flags else: " --flags")
   # Forward the active check modes to the hexer code generator too (nifcgen
   # injects bound/range-check calls); without this it always used DefaultSettings.
   c.config.checkFlags = genFlags(c.checkModes)
@@ -372,9 +383,11 @@ proc compileProgram(c: var CmdOptions) =
   if nativeBackend or not (optOutAll or c.config.isDefined("useMimalloc")):
     c.config.addDefine "nimNativeAlloc"
     c.commandLineArgs.add " --define:nimNativeAlloc"
+    c.hostCommandLineArgs.add " --define:nimNativeAlloc"
   if nativeBackend or not (optOutAll or c.config.isDefined("useLibcIo")):
     c.config.addDefine "nimNativeIo"
     c.commandLineArgs.add " --define:nimNativeIo"
+    c.hostCommandLineArgs.add " --define:nimNativeIo"
   # `nimNoLibc` marks the TRULY freestanding target — the native (arkham+nifasm)
   # backend, which links no libc at all. It is a stricter condition than
   # `nimNativeIo`: the C backend uses the raw-syscall stdlib too, but libc is still
@@ -384,6 +397,7 @@ proc compileProgram(c: var CmdOptions) =
   if nativeBackend:
     c.config.addDefine "nimNoLibc"
     c.commandLineArgs.add " --define:nimNoLibc"
+    c.hostCommandLineArgs.add " --define:nimNoLibc"
 
   semos.setupPaths(c.config)
 
@@ -394,7 +408,7 @@ proc compileProgram(c: var CmdOptions) =
     if not c.isChild:
       makeDir(c.config.nifcachePath)
     processSingleModule(c.args[0].addFileExt(".nim"), c.config, c.moduleFlags,
-                        c.commandLineArgs, ForceRebuild in c.buildFlags)
+                        c.commandLineArgs, c.hostCommandLineArgs, ForceRebuild in c.buildFlags)
   of FullProject:
     makeDir(c.config.nifcachePath)
     # compile full project modules

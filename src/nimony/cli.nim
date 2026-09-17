@@ -39,14 +39,21 @@ proc parseTrack(s: string; mode: TrackMode): TrackPosition =
 proc parseCommonOption*(key, val: string; config: var NifConfig;
                         moduleFlags: var set[ModuleFlag];
                         forwardArg: var bool; forwardArgLengc: var bool;
+                        forwardArgHost: var bool;
                         helpMsg = ""; versionMsg = ""): bool =
   ## Parses common command-line options shared between nimony and nimsem.
   ## Returns true if the option was recognized and handled.
   ## Sets forwardArg to true if the option should be forwarded to sub-tools.
   ## Sets forwardArgLengc to true if the option should be forwarded to lengc.
+  ## Sets forwardArgHost to false if the option must NOT reach a
+  ## compile-time-eval process: a macro plugin is built for and run on the
+  ## HOST, so the target triple (`--cpu`, `--os`, `--bits`) of the outer
+  ## compile is wrong for it. Everything else that is forwarded at all is
+  ## forwarded there too.
   ## Optional helpMsg and versionMsg provide custom help/version text.
   forwardArg = true
   forwardArgLengc = false
+  forwardArgHost = true
   result = true
 
   case normalize(key)
@@ -81,6 +88,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     moduleFlags.incl IsMain
     forwardArg = false
   of "bits":
+    forwardArgHost = false
     case val
     of "64": config.bits = 64
     of "32": config.bits = 32
@@ -89,9 +97,11 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     # Pin it, so a `--cpu` on either side of this flag leaves it alone.
     config.bitsExplicit = true
   of "cpu":
+    forwardArgHost = false
     if not config.setTargetCPU(val):
       quit "unknown CPU: " & val
   of "os":
+    forwardArgHost = false
     if not config.setTargetOS(val):
       quit "unknown OS: " & val
   of "app":
