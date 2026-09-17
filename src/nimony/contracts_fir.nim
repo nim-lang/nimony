@@ -186,6 +186,14 @@ type
     currentProcStart: Cursor           # cursor at the start of the proc whose
                                        # body we are currently analysing (used
                                        # for the --verbose dump)
+    stmtContext: NifLineInfo           ## The statement currently under
+                                       ## traversal, but only while it belongs
+                                       ## to the same file as its enclosing
+                                       ## routine (the whole module, at top
+                                       ## level). Expanded code fails that test
+                                       ## and leaves the last statement WRITTEN
+                                       ## here standing -- which is the place an
+                                       ## error inside the expansion is about.
 
 # `c.facts` reads/writes the fact set inside the journaled `FlowState`; the bulk
 # of the pass mutates facts through this alias, so it stays spelled `c.facts`.
@@ -217,14 +225,35 @@ proc buildErr(c: var FirContext; rawInfo: NifLineInfo; msg: string) =
   # line info, so the second and every later one in a module is swallowed and
   # the user fixes them one recompile at a time. Fall back to the enclosing
   # proc's declaration, which is where the reader has to look anyway.
-  let info = if rawInfo.isValid or cursorIsNil(c.currentProcStart): rawInfo
-             else: c.currentProcStart.info
+  #
+  # The node may also come from code EXPANDED here rather than written here: a
+  # template body carries its own file's line info, and `subsGenericProc` gives
+  # an instantiated routine the call site as its head info while its body keeps
+  # the generic's. Reporting `lib/std/system/defaults.nim` at a user who wrote
+  # `default(array[8, Foo])` names the wrong file entirely, so an error whose
+  # file differs from its enclosing context's is moved to that context -- the
+  # instantiating call, or the module-level statement -- and states where the
+  # code it is about actually sits. A different FILE is the whole test, which
+  # is why the comparison is against the CONTEXT and not against the module:
+  # an `include`d file is the module's own source and reports in its own name.
+  let procCtx = if not cursorIsNil(c.currentProcStart): c.currentProcStart.info
+                else: c.stmtContext
+  let expandedFrom = rawInfo.isValid and procCtx.isValid and
+                     procCtx.file != rawInfo.file
+  let info =
+    if not rawInfo.isValid: procCtx
+    elif not expandedFrom: rawInfo
+    elif c.stmtContext.isValid and c.stmtContext.file != rawInfo.file:
+      c.stmtContext # the statement the expansion sits in: the closest place
+    else: procCtx   # a template expanded into the signature, say
   when defined(debug):
     writeStackTrace()
     echo infoToStr(info) & " Error: " & msg
     quit msg
   dumpCurrentProc(c, info, msg)
   var hintedMsg = msg
+  if expandedFrom:
+    hintedMsg.add " [in code expanded from " & infoToStr(rawInfo) & "]"
   if not c.verbose:
     hintedMsg.add " [pass --verbose for the Final IR]"
   c.errors.buildTree ErrT, info:
@@ -2276,14 +2305,118 @@ proc markedAs(t: Cursor; mark: NimonyOther): bool =
     # no base type
     if e.hasMore and e.substructureKind == mark:
       result = true
-  of ProctypeT:
-    # New layout: `(proctype <NilTag> (params) RetType <Pragmas>)`. The
-    # nilability marker is at slot 0.
+  of ProctypeT, ItertypeT:
+    # `(proctype <NilTag> (params) RetType <Pragmas>)`. The nilability marker is
+    # at slot 0, and `(itertype ...)` mirrors that shape exactly (doc/tags.md):
+    # a first-class closure-iterator VALUE is a pointer pair like any other
+    # closure, so it is not-nil by default the same way.
     let e = t.childCursor
     if e.substructureKind == mark:
       result = true
   else:
     discard
+
+proc typeDeclBody(c: var FirContext; s: SymId): Cursor =
+  ## The body of the `type` section `s` names, or a nil cursor when it cannot
+  ## be reached. A type declared in the module under analysis is not written
+  ## out yet, so `tryLoadSym` cannot see it -- `collectAccessors` put it in
+  ## `c.moduleTypes` for exactly this reason.
+  if c.moduleTypes.hasKey(s):
+    result = asTypeDecl(c.moduleTypes.getOrQuit(s)).body
+  else:
+    let decl = tryLoadSym(s)
+    if decl.status == LacksNothing and decl.decl.symKind == TypeY:
+      result = asTypeDecl(decl.decl).body
+    else:
+      result = default(Cursor)
+
+proc isEmptyArrayRange(idx: Cursor): bool =
+  ## `array[0, T]` holds no element, so it has a default value whatever `T`
+  ## says -- its index range is written `lo .. lo-1`, the one range with no
+  ## members. Only literal bounds are read: a range that has to be folded is
+  ## not worth an answer here, and answering "not empty" only ever keeps the
+  ## caller asking about the element type.
+  var r = idx
+  if r.typeKind != RangetypeT: return false
+  r = sub(r)
+  skip r # the base type
+  if not r.isIntLit: return false
+  let lo = r.intVal
+  skip r
+  if not r.isIntLit: return false
+  result = r.intVal < lo
+
+proc lacksDefaultValue(c: var FirContext; typ: Cursor; depth = 0): bool =
+  ## Is there NO value of `typ` that zeroed memory spells? A not-nil pointer is
+  ## the leaf that answers "none": zeroed storage reads as `nil`, which is the
+  ## one value its type rules out. Everything built out of one inherits the
+  ## answer -- an array element, a tuple slot, an object field without a
+  ## default of its own -- so `array[8, NotNilRef]` states eight non-nil refs
+  ## and zeroed storage gives eight nils.
+  ##
+  ## Unreachable and over-deep types answer `false`: the question is asked to
+  ## REPORT a violation, and a type we could not read is not evidence of one.
+  if depth > 20: return false
+  var t = typ
+  while t.typeKind in {MutT, LentT, SinkT, OutT}:
+    inc t
+  var guard = 0
+  while t.isSymbol and guard < 8:
+    let body = typeDeclBody(c, t.symId)
+    if cursorIsNil(body): return false
+    t = body
+    inc guard
+  case t.typeKind
+  of RefT, PtrT, CstringT, PointerT, ProctypeT, ItertypeT:
+    # The pointee is not walked: what the storage holds is the pointer, and
+    # `nil` is a fine default for one that is allowed to be nil. (`markedAs`
+    # does not read an `itertype`'s marker yet, so an iterator value answers
+    # "has a default" here whatever it says; listing the tag keeps the two in
+    # step for when it does.)
+    result = markedAs(t, NotnilU)
+  of ArrayT:
+    # `(array T IndexT)`.
+    var e = t
+    e = sub(e)
+    var idx = e
+    skip idx
+    if isEmptyArrayRange(idx): return false
+    result = lacksDefaultValue(c, e, depth+1)
+  of DistinctT:
+    var e = t
+    e = sub(e)
+    result = lacksDefaultValue(c, e, depth+1)
+  of TupleT:
+    result = false
+    var f = t
+    f = sub(f)
+    while f.hasMore:
+      if lacksDefaultValue(c, getTupleFieldType(f), depth+1): return true
+      skip f
+  of ObjectT:
+    var f = t
+    f = sub(f)
+    var base = f
+    if base.typeKind in {RefT, PtrT}: inc base
+    skip f # the inheritance slot
+    result = false
+    if base.kind != DotToken and lacksDefaultValue(c, base, depth+1):
+      return true
+    var iter = initObjFieldIter()
+    while nextField(iter, f):
+      let field = takeLocal(f, SkipFinalParRi)
+      if field.kind in {FldY, GfldY}:
+        # `x: int = 42` states a default of its own, so the field type's own
+        # answer stops mattering. A variant object is walked branch by branch,
+        # which over-reports rather than under-reports -- the branch that is
+        # not taken still occupies the storage.
+        if field.val.kind == DotToken and
+           lacksDefaultValue(c, field.typ, depth+1):
+          return true
+      else:
+        skip f
+  else:
+    result = false
 
 proc analysableRoot(c: var FirContext; n: Cursor): SymId =
   var n = n
@@ -2347,6 +2480,28 @@ proc isNonNilExpr(c: var FirContext; n: Cursor): bool =
       else:
         result = false
 
+const
+  NilLaunderingConvs = ConvKinds - {CastX}
+    ## `ConvKinds` minus `cast`: a CONVERSION claims the target type honestly
+    ## and must not launder a `nil` into it, while a `cast` is the programmer
+    ## saying "this representation, on my head" -- the same standing `addr` has
+    ## in `wantNotNil`. `cast[pointer](nil)` is how a NULL is handed to C
+    ## (`io_uring.prep_rw`), and taking that away would leave no way to write it.
+
+proc isConvertedNil(n: Cursor): bool =
+  ## `T(nil)` -- a conversion whose operand is the nil literal. Its TYPE is the
+  ## not-nil `T`, so the `markedAs` shortcut below would take the conversion's
+  ## word for it and wave through the one value `T` forbids. This is how
+  ## `system/defaults` spells the default of a pointer (`template default[T: nil
+  ## (ref)](x: typedesc[T]): T = T(nil)`), so without this check `default(T)`
+  ## for a NOT-NIL `T` produced a nil silently -- and so did everything built
+  ## on it, `default(array[8, T])` included.
+  var n = n
+  while n.exprKind in NilLaunderingConvs:
+    inc n
+    skip n # the target type
+  result = n.exprKind == NilX
+
 proc wantNotNil(c: var FirContext; n: Cursor) =
   case n.exprKind
   of NilX:
@@ -2355,7 +2510,10 @@ proc wantNotNil(c: var FirContext; n: Cursor) =
     discard "fine, addresses (incl. hidden-addr from var-return lowering) are not nil"
   else:
     let t = getType(c.typeCache, n)
-    if markedAs(t, NotnilU):
+    if isConvertedNil(n):
+      buildErr(c, n.info, "expected non-nil value, got a conversion of nil: " &
+        asNimCode(n))
+    elif markedAs(t, NotnilU):
       discard "fine, per type we know it is not nil"
     elif isNonNilExpr(c, n):
       discard "fine, expression is trivially not nil"
@@ -4218,6 +4376,11 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   skip n # name
   skip n # export marker
   let skipInitCheck = hasPragma(n, NoinitP)
+  # An `importc`'d global is a BINDING to storage C already defines and
+  # initializes (`posix_environ` names the `nimEnviron` the generated `main`
+  # fills in); Nimony neither zeroes it nor owes it a value, so the
+  # default-value question below is not its to answer.
+  let isForeignStorage = hasPragma(n, ImportcP) or hasPragma(n, ImportcppP)
   let isInline = hasPragma(n, InlineP)
   skip n # pragmas
   c.typeCache.registerLocal(name, kind, n)
@@ -4226,6 +4389,20 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
   let initStart = n
   if not n.isDotToken or skipInitCheck:
     markInit(c, name)
+  elif kind in {GvarY, GletY, TvarY, TletY} and not isForeignStorage and
+       lacksDefaultValue(c, localType):
+    # A global carries no initialization proof: `traverseExpr` checks `inits`
+    # for locals only, because a global is readable from another module and
+    # (per `analysableRoot`) from another thread, so its storage is simply
+    # zeroed. Zeroed storage is not a value of a type that contains a not-nil
+    # pointer, so such a global owes an explicit initial value. A LOCAL owes
+    # nothing here: the flow analysis lets `var r: NotNilRef` stand as long as
+    # a write reaches it before any read, which is strictly more permissive
+    # and strictly as safe.
+    buildErr c, localStart.info, "'" & asNimCode(name) & "' is of type '" &
+      typeToString(localType) &
+      "', which has no default value (it contains a not-nil pointer): " &
+      "give it an initial value"
   if kind == ResultY:
     c.resultSym = name
   if isInline:
@@ -4259,7 +4436,7 @@ proc traverseLocal(c: var FirContext; n: var Cursor; call: var CallContext) =
     if path.mode in {IsBorrowable, IsBorrowableFromGlobal}:
       path.borrower = name
       c.activeBorrows.add path
-  if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT}:
+  if not n.isDotToken and localType.typeKind in {PtrT, RefT, CstringT, PointerT, ProctypeT, ItertypeT}:
     checkNilMatch c, n, localType
   if not n.isDotToken:
     checkRangeAssign c, localType, n
@@ -4370,6 +4547,10 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   let oldBorrows = move c.activeBorrows
   let oldProcStart = c.currentProcStart
   c.currentProcStart = decl
+  # Start this routine's statement context at its own head, so an error in
+  # expanded code cannot inherit a statement from whatever came before it.
+  let oldStmtContext = c.stmtContext
+  c.stmtContext = decl.info
   c.resultSym = NoSymId
   let procStart = n
   n = sub(n)
@@ -4456,6 +4637,7 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   c.inlineVars = ensureMove oldInlineVars
   c.activeBorrows = ensureMove oldBorrows
   c.currentProcStart = oldProcStart
+  c.stmtContext = oldStmtContext
   c.ownEnsures = oldOwnEnsures
   c.ownOlds = oldOwnOlds
   c.inHook = oldInHook
@@ -4466,6 +4648,11 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
   ## statement starts it afresh.
   if n.finalIrKind != UnknownV:
     call = freshCall()
+  # See `stmtContext`: a statement from another file is expanded code, and
+  # naming it would send the reader to a template body in the stdlib.
+  if n.info.isValid and (cursorIsNil(c.currentProcStart) or
+                         n.info.file == c.currentProcStart.info.file):
+    c.stmtContext = n.info
   case n.finalIrKind
   of IteV, ItecV:
     traverseIte c, n
@@ -4606,6 +4793,9 @@ proc traverseStmt(c: var FirContext; n: var Cursor; call: var CallContext) =
 
 proc traverseToplevel(c: var FirContext; n: var Cursor) =
   var call = freshCall()
+  # Remember where at module level we are, so `buildErr` has somewhere to pin an
+  # error that a template expanded into this statement from another file.
+  if n.info.isValid: c.stmtContext = n.info
   case n.stmtKind
   of StmtsS:
     n.into:

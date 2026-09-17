@@ -223,7 +223,7 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
   typematch m, expected, arg
   if m.err:
     # try converter
-    var convMatch = default(Match)
+    var convMatch = createMatch(addr c)
     var convArg = CallArg(n: arg.n, typ: arg.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
       # `arg.n` and `convArg.n` are cursors into `dest` (via `cursorAt`
@@ -3834,7 +3834,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
-    var convMatch = default(Match)
+    var convMatch = createMatch(addr c)
     let convArg = CallArg(n: orig, typ: it.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
       discard "matching converter found (e.g. `toOpenArray`)"
@@ -4972,7 +4972,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   # XXX investigate this further, seems odd and prevents us from eliminating the swaps:
   let args = cursorAt(argBuf, 0)
   var matches = 0
-  var lastMatch = default(Match)
+  var lastMatch = createMatch(addr c)
   var instLastMatch = false
   var errMsg = ""
   var errInfo = info

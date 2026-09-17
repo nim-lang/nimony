@@ -237,7 +237,9 @@ proc execShellCmd*(command: string): int {.tags: [ExecIOEffect].} =
     var sh = "/bin/sh"
     var dashc = "-c"
     var cmd = command
-    let argv = cast[ptr UncheckedArray[cstring]](alloc0(4 * sizeof(cstring)))
+    # `nil cstring` elements: slot 3 is the NULL terminator `execve` demands,
+    # so the element type has to be one that admits nil.
+    let argv = cast[ptr UncheckedArray[nil cstring]](alloc0(4 * sizeof(cstring)))
     argv[0] = sh.toCString
     argv[1] = dashc.toCString
     argv[2] = cmd.toCString

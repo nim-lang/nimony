@@ -1136,7 +1136,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         if not isVarargs:
           skip param
         var arg = cs.args[ai]
-        var convMatch = default(Match)
+        var convMatch = createMatch(addr c)
         if isVarargs and varargsHasConverter(f) and tryVarargsConverter(c, convMatch, f, arg):
           anyConverters = true
           # match already built call, just use it

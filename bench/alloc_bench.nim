@@ -25,7 +25,11 @@ const
   Rounds = when smoke: 2 else: 100
   ChurnOps = when smoke: 2_000 else: 200_000  # random free+alloc pairs per round
 
-var slots: array[MaxLive, pointer]
+# `.noinit`: `slots` holds plain (not-nil) `pointer`s, so zeroed storage is not
+# a value of its type -- and it never reads as one either, because the fill loop
+# below writes every slot before anything reads one. The pragma says that out
+# loud instead of leaning on a zero prologue the type forbids.
+var slots {.noinit.}: array[MaxLive, pointer]
 var rngState: uint64 = 0x9E3779B97F4A7C15u64
 
 proc xalloc(size: int): pointer {.inline.} =

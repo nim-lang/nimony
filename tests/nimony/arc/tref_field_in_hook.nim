@@ -10,10 +10,10 @@ type
   Elem = object
     id: int
   Node = ref object
-    next: Node
+    next: nil Node      # the chain ends in nil, so the link admits it
     value: Elem
   List = object
-    head: Node
+    head: nil Node      # an empty list, and what `=wasMoved` leaves behind
 
 proc `=destroy`(e: Elem) = inc freed
 

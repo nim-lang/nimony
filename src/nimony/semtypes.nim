@@ -981,9 +981,11 @@ proc handleNilableType(c: var SemContext; dest: var TokenBuf; nn: var Cursor; co
         stripNilAnnotation dest, before
         dest.addParPair annotation, info
         dest.addParRi()
-      elif nd.typeKind == ProctypeT:
+      elif nd.typeKind in {ProctypeT, ItertypeT}:
         discard
-        # Slot 0 of `(proctype <NilTag> ...)` is the nilability marker. Set
+        # Slot 0 of `(proctype <NilTag> ...)` is the nilability marker, and
+        # `(itertype ...)` has the same head (doc/tags.md), so `nil iterator
+        # (): int` is spelled the same way `nil proc ()` is. Set
         # it directly — it's either a placeholder dot inserted by
         # `semLocalTypeImpl` or a marker we now overwrite with `annotation`.
         # The head (and the placeholder dot) may carry line-info suffix
