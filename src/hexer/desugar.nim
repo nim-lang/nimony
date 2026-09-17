@@ -1232,7 +1232,8 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe StmtsS, info
 
   let tmp = declareTemp(c, dest, tupleType, lhsTagInfo)
-  trExpr c, dest, n   # serialise the RHS as the var's initial value
+  tr c, dest, n       # the RHS is the var's initial value (a bound temp's
+                      # symbol, too, under the Final IR)
   dest.addParRi()     # close `(var ...)`
 
   n = asgnStart; skip n # close original `(asgn ...)`
