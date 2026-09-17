@@ -390,13 +390,18 @@ In rough dependency order:
    the lowering turned a statement-position `stmts` into a scope; a replicated
    `finally` duplicated its labels.
 
-   Left: find out why the intra-module inliner stops inlining `json.$` (six
-   call sites in `tjson`) on the Final IR's output; make it the default and
-   drop the switch; teach `lengcgen` the Final IR so `cps` stops converting
+   Left: make it the default and drop the switch; teach `lengcgen` the Final IR so `cps` stops converting
    it back. Measured with the lowering first: on `tjson` the C text is 11%
    larger (temps and labels) and the executable 0.08%; `tall` compiles in
-   4.4 s against 4.2 s. Once step 4 publishes lowered nifs, the iterator
-   inliner's on-the-spot lowering goes away.
+   4.4 s against 4.2 s. `json.$` is inlined at six call sites in `tjson`
+   by the default build and not under the switch; its body is one statement
+   larger there (an aggregate's call temp moved through a snapshot), but
+   removing that statement did not change the decision — the inliner spends
+   its per-caller budget on different callees first. Removing it by
+   delaying the temp's `=wasMoved` to after the statement is unsound, by the
+   way: a `ret` of the constructor destroys the temp before the delayed
+   reset runs. Once step 4 publishes lowered nifs, the iterator inliner's
+   on-the-spot lowering goes away.
 4. Publish the Final IR as the module nif — the lowering moves from hexer's
    entry back to nimsem — with the "unlowered iff re-sem'd elsewhere" rule and
    a verifier check for it, and `renderer`/`idetools`/`indexgen` taught to read
