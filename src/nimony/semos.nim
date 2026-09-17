@@ -43,6 +43,16 @@ proc stdlibDir*(): string =
 
 proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
+  # Keep the compiler-internal `src/lib` modules (nifbuilder/nifreader, pulled
+  # in by `std/macros`) on the search path unconditionally. Macro-plugin and
+  # CTFE sub-compiles always inject `--path:<repo>/src/lib`; the OUTER build did
+  # not (unless a per-directory `nimony.paths` supplied it), so the two disagreed
+  # on module suffixes and a macro used outside the repo failed to compile its
+  # plugin (`cannot open <mod>.s.deps.nif`). Adding it here makes the suffixes
+  # agree everywhere.
+  let internalLib = nimonyDir() / "src" / "lib"
+  if dirExists(internalLib):
+    config.paths.add internalLib
   let pathsFile = findArgs(config.baseDir, "nimony.paths")
   processPathsFile pathsFile, config.paths
   #echo getAppFilename(), "CONFIG.BASEDIR: ", config.baseDir, " CONFIG.PATHS: ", config.paths
