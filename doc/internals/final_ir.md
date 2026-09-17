@@ -13,9 +13,10 @@ way they are.
 Implementation points:
 
 - `src/finalir/finalir.nim` — the lowering to the structured control-flow form
-  (`loop`/`ite`/`lab`/`jmp`). The first step of the backend pipeline
-  (`pipeline.transform`), and the input of the contract and nil analysis
-  (`src/nimony/contracts_fir.nim`).
+  (`loop`/`ite`/`lab`/`jmp`). It runs in nimsem, as the module's last step
+  (`semmain.lowerAndProve`): the contract and nil analysis
+  (`src/nimony/contracts_fir.nim`) reads its output, and that same buffer is
+  what nimsem publishes, so the whole backend starts from it.
 - `src/hexer/xelim.nim` — the `Goal` enum; `TowardsFinalIr` is the mode
   `finalir.nim` runs `lowerExprs` in.
 - `src/hexer/pipeline.nim` — the backend pass order.
@@ -259,8 +260,9 @@ clears it".
 ## Current pipeline
 
 ```
-finalir → iterinliner → desugar → lambdalift → eraiser → duplifier →
-destroyer → cps → vtables → constparams → xelim_final → lengcgen
+nimsem: … → derefs → finalir → contracts → <published module nif>
+hexer:  iterinliner → desugar → lambdalift → eraiser → duplifier →
+        destroyer → cps → vtables → constparams → xelim_final → lengcgen
 ```
 
 Every pass from `finalir` on reads and writes the Final IR, `lengcgen`
@@ -273,7 +275,9 @@ its hooks with `toFinalIr`; an `{.assembler.}` body is taken verbatim except
 that its `if`s are spelled `ite` (`finalir.trAsmStmt`).
 
 - **`finalir`** establishes the normal form (it runs `xelim` in
-  `TowardsFinalIr` mode). It is the only pass that *creates* it.
+  `TowardsFinalIr` mode). It is the only pass that *creates* it, and it runs
+  in nimsem: a module is published lowered. A body that is re-sem'd elsewhere
+  — a generic routine, a template — is published as sem left it.
 - **`eraiser`** (`src/hexer/eraiser.nim`) emits the `canRaise` temp and its
   `ite failed(tmp): raise tmp` check as statements.
 - **`duplifier`** (`src/hexer/duplifier.nim`) does the same for its owning

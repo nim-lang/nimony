@@ -407,12 +407,54 @@ In rough dependency order:
    its per-caller budget on different callees first. Removing it by
    delaying the temp's `=wasMoved` to after the statement is unsound, by the
    way: a `ret` of the constructor destroys the temp before the delayed
-   reset runs. Once step 4 publishes lowered nifs, the iterator inliner's
-   on-the-spot lowering goes away.
-4. Publish the Final IR as the module nif — the lowering moves from hexer's
-   entry back to nimsem — with the "unlowered iff re-sem'd elsewhere" rule and
-   a verifier check for it, and `renderer`/`idetools`/`indexgen` taught to read
-   it.
+   reset runs.
+4. **Done.** The module nif is the Final IR. `semmain.lowerAndProve` runs the
+   lowering right after `derefs`, the prover reads that buffer, and the same
+   buffer is written — so hexer lowers nothing at its entry, and `iterinliner`
+   no longer lowers a body it loaded from another module. The
+   "unlowered iff re-sem'd elsewhere" rule needed no work: the lowering
+   already passes a non-concrete routine — a generic, a template — through
+   verbatim, and those are exactly the bodies nimsem re-sems
+   (`sem.instantiateGenericProc`, `templates.loadSymWithPhase`).
+
+   The prover's facts are stripped before the write
+   (`finalir.stripAnalysisFacts`, not `derefs.nim` as planned: the lowering
+   runs after `derefs`, so there is nothing for that file to strip). The
+   verifier check is `phasePostFinalIr` — the post-sem vocabulary plus the
+   Final IR's own, the post-sem half being what an unlowered generic body
+   needs. Two grammar entries were wrong for the form the lowering emits:
+   `ite`'s `join` slot is Leng's alone, and its else-part may be `.`.
+
+   Four consumers, one of which needed real work:
+   - `indexgen` and `idetools` read top-level decls and token positions, both
+     of which the lowering leaves alone.
+   - `renderer` is Nimony-shaped and stays so; the diagnostics that render a
+     lowered tree were already rendering one, since the prover has always run
+     on the lowered form.
+   - `semvalidator` reads branches *as written* — it checks cursor
+     obligations in the compiler's own passes — so it gets the structured
+     tree through `--keepsemtree`, which writes `<mod>.sem.nif` next to the
+     published module. The compiler never reads that file; only the validator
+     tier asks for it.
+
+   Three bugs the switch turned up, each of which had been invisible while
+   the lowered buffer was thrown away:
+   - `discard .` was lowered to a bare `.` in the statement list — a token
+     where a statement belongs. It stays the no-op statement it is.
+   - The `LowerCasts` run mints temps in hexer, on a module whose lowering
+     already minted temps in nimsem, and both spelled them `` `x.N ``: the
+     second run handed out a name the first had already used for a different
+     local, which the C compiler reported as two declarations of one name.
+     Each run has its own prefix now.
+   - The prover stopped seeing through an *imported* transparent accessor,
+     because in a lowered body the call it returns sits in an `{.inline.}`
+     temp first (`func high(s: string): int = len(s) - 1`). `matchAccessor`
+     reads those temps and registers them the way the module's own code was
+     already read (`inlineVars`). Without this, `s[high(s)]` was unprovable.
+
+   Measured over the `tjson` closure the published nifs grow 11.8%. `tall`
+   compiles in 4.3 s against 4.4 s: the lowering used to run twice, once for
+   the prover and once in hexer, and now runs once.
 5. Move emission into the contract pass: `arrat` first (small, self-contained,
    measurable), then the `.requires` split. Delete everything under *What
    dies*.
