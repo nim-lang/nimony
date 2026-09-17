@@ -817,6 +817,11 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current = ensureMove oldProc
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if n.kind == DotToken:
+    # An empty statement slot — a routine's missing body, a `case` branch
+    # `xelim` emptied. There is nothing to lower.
+    dest.takeTree n
+    return
   case n.stmtKind
   of StmtsS:
     # In statement position a `stmts` is transparent: its locals belong to the
@@ -917,7 +922,10 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # which is how the list above was established (the spelling matches
       # `-d:contractStats` in `contracts_fir.nim`).
       when defined(firFallbackProbe):
-        stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
+        if n.isTagLit:
+          stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
+        else:
+          stderr.writeLine "FIR-FALLBACK " & $n.kind
       trExpr c, dest, n
 
 proc toFinalIr*(pass: var Pass; analysisFacts = true) =
