@@ -19,6 +19,7 @@ include ".." / lib / compat2
 import ".." / lib / tinyhashes
 import ".." / lib / [nifindexes, symparser, treemangler]
 import passes
+import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, decls, programs, typenav, renderer, builtintypes, typeprops, typekeys, vtables_frontend]
 from duplifier import constructsValue
 
@@ -440,17 +441,14 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
   let xTemp = evalOnce(c, dest, x2)
   if xk in {RefT, PtrT}:
     # nil check, always false in old compiler <- that is not true!
-    dest.addParLe(IfS, info)
-    copyIntoKind dest, ElifU, info:
-      copyIntoKind dest, EqX, info:
+    # `x == nil or <the check below>`
+    dest.addParLe(OrX, info)
+    copyIntoKind dest, EqX, info:
+      dest.addParPair(PointerT, info)
+      copyIntoKind dest, CastX, info:
         dest.addParPair(PointerT, info)
-        copyIntoKind dest, CastX, info:
-          dest.addParPair(PointerT, info)
-          useTemp dest, xTemp, info
-        dest.addParPair(NilX, info)
-      copyIntoKind dest, ExprX, info:
-        dest.addParPair(TrueX, info)
-    dest.addParLe(ElseU, info)
+        useTemp dest, xTemp, info
+      dest.addParPair(NilX, info)
   copyIntoKind dest, ExprX, info:
     copyIntoKind dest, StmtsS, info:
       copyIntoKind dest, VarS, info:
@@ -496,7 +494,6 @@ proc trInstanceofImpl(c: var Context; dest: var TokenBuf; x, typ: Cursor; info: 
         dest.addUIntLit h, info
   if xk in {RefT, PtrT}:
     # close nil check
-    dest.addParRi()
     dest.addParRi()
   closeTemp dest, xTemp
 
@@ -577,14 +574,14 @@ proc trBaseobj(c: var Context; dest: var TokenBuf; nn: var Cursor) =
         else:
           buf.addSymUse tmp.sym, info
 
-        copyIntoKind dest, IfS, info:
-          copyIntoKind dest, ElifU, info:
-            copyIntoKind dest, NotX, info:
-              trInstanceofImpl c, dest, beginRead(buf), typ, info
-            copyIntoKind dest, StmtsS, info:
-              copyIntoKind dest, CallS, info:
-                dest.addSymUse(pool.symId("nimInvalidObjConv.0." & SystemModuleSuffix), info)
-                dest.addStrLit asNimCode(typ)
+        copyIntoKind dest, IteV, info:
+          copyIntoKind dest, NotX, info:
+            trInstanceofImpl c, dest, beginRead(buf), typ, info
+          copyIntoKind dest, StmtsS, info:
+            copyIntoKind dest, CallS, info:
+              dest.addSymUse(pool.symId("nimInvalidObjConv.0." & SystemModuleSuffix), info)
+              dest.addStrLit asNimCode(typ)
+          dest.addDotToken()
 
       # Negative value means we need to produce a runtime check and a cast:
       copyIntoKind dest, DerefX, info:

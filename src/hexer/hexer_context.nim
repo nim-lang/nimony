@@ -23,7 +23,6 @@ export RcField, DataField
 type
   EContext* = object
     dir*, main*, ext*: string
-    nestedIn*: seq[(StmtKind, SymId)]
     dynlibs*: Table[StrId, seq[(SymId, StrId, SymId)]]
     strLits*: Table[string, SymId]
     newTypes*: Table[string, SymId]

@@ -17,6 +17,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [symparser, intrinsics]
 import ".." / models / tags
+import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops, langmodes, typekeys, nifconfig]
 import hexer_context, pipeline, dce1, lifter
 import  ".." / lib / [stringtrees]
@@ -1975,55 +1976,8 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
-proc trWhile(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  c.nestedIn.add (WhileS, SymId(0))
-  takeInto dest, n:
-    trExpr c, dest, n
-    trStmt c, dest, n
-  let lab = c.nestedIn[^1][1]
-  if lab != SymId(0):
-    dest.addParLe("lab", info)
-    dest.addSymDef(lab, info)
-    dest.addParRi()
-  discard c.nestedIn.pop()
-
-proc trBlock(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  n.into:
-    if n.isDotToken:
-      c.nestedIn.add (BlockS, SymId(0))
-      inc n
-    else:
-      let (s, _) = getSymDef(c, n)
-      c.nestedIn.add (BlockS, s)
-    dest.addParLe("scope", info)
-    trStmt c, dest, n
-    dest.addParRi(n.endInfo)
-  let lab = c.nestedIn[^1][1]
-  if lab != SymId(0):
-    dest.addParLe("lab", info)
-    dest.addSymDef(lab, info)
-    dest.addParRi()
-  discard c.nestedIn.pop()
-
-proc trBreak(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  n.into:
-    if n.isDotToken:
-      inc n
-      dest.addParLe("break", info)
-    else:
-      expectSym c, n
-      let lab = n.symId
-      inc n
-      dest.addParLe("jmp", info)
-      dest.addSymUse(lab, info)
-    dest.addParRi(n.endInfo)
-
 proc trLab(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(lab :L)` — a Nimony-level merge label (`xelim`'s two-target condition
-  ## compiler emits these for short-circuit chains). Leng has the very same
+  ## `(lab :L)` — the Final IR's forward jump target. Leng has the very same
   ## construct, so this is a straight copy with the symbol registered.
   let info = n.info
   n.into:
@@ -2042,16 +1996,41 @@ proc trJmp(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse(lab, info)
     dest.addParRi()
 
-proc trIf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  # (if cond (.. then ..) (.. else ..))
-  takeInto dest, n:
-    while n.isTagLit and n.substructureKind == ElifU:
-      takeInto dest, n: # elif
+proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(ite cond then else|.)`. Leng has `ite` too, but its back ends and
+  ## optimizer passes speak `if`, so the Final IR construct is spelled as one.
+  let info = n.info
+  n.into:
+    dest.copyIntoKind IfS, info:
+      dest.copyIntoKind ElifU, info:
         trExpr c, dest, n
         trStmt c, dest, n
-    if n.isTagLit and n.substructureKind == ElseU:
-      takeInto dest, n:
-        trStmt c, dest, n
+      if n.isDotToken:
+        inc n
+      else:
+        dest.copyIntoKind ElseU, info:
+          trStmt c, dest, n
+
+proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(loop (scope BODY (continue .)))` becomes `while true`: the trailing
+  ## `continue` is the loop's only back-edge, so falling off the body does it,
+  ## and every way out is already a `jmp` to a label after the loop.
+  let info = n.info
+  n.into:
+    dest.copyIntoKind WhileS, info:
+      dest.addParPair TrueX, info
+      assert n.stmtKind in {StmtsS, ScopeS}, "loop body expected"
+      c.typeCache.openScope()
+      dest.addParLe(n.cursorTagId, n.info)
+      n.into:
+        while n.hasMore:
+          if n.stmtKind == ContinueS:
+            skip n, ContinueS
+            assert not n.hasMore, "`continue` is only the loop's trailing back-edge"
+          else:
+            trStmt c, dest, n
+      dest.addParRi()
+      c.typeCache.closeScope()
 
 include stringcases
 
@@ -2129,6 +2108,10 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of NoStmt:
       if n.cursorTagId == TagId(KeepovfTagId):
         trKeepovf c, dest, n
+      elif n.finalIrKind == IteV:
+        trIte c, dest, n
+      elif n.finalIrKind == LoopV:
+        trLoop c, dest, n
       else:
         error c, "unknown statement: ", n
     of PragmaxS:
@@ -2203,12 +2186,9 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         dest.addParLe(discardToken.cursorTagId, discardToken.info)
         trExpr c, dest, n
         takeParRi dest, n, discardStart
-    of BreakS: trBreak c, dest, n
-    of WhileS: trWhile c, dest, n
-    of BlockS: trBlock c, dest, n
-    of IfS: trIf c, dest, n
     of CaseS: trCase c, dest, n
-    of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS:
+    of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS,
+       BreakS, WhileS, BlockS, IfS:
       error c, "BUG: not eliminated: ", n
     of TryS:
       trTry c, dest, n
@@ -2804,7 +2784,6 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
       except: quit "cannot get current working directory"
     else: mp.dir
   var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
-    nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(bits),
     pending: createTokenBuf(),
     strLitBuf: createTokenBuf(),

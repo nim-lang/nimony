@@ -743,6 +743,39 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParRi(n.endInfo) # close `try`
   n = tryStart; skip n
 
+proc trAsmStmt(dest: var TokenBuf; n: var Cursor)
+
+proc trAsmIf(dest: var TokenBuf; n: var Cursor) =
+  ## The branches of an `if` from the first `elif` on, as nested `ite`s.
+  let info = n.info
+  dest.addParLe IteV, info
+  n.into:                   # elif
+    dest.takeTree n         # the condition, verbatim
+    trAsmStmt dest, n
+  if not n.hasMore:
+    dest.addDotToken()
+  elif n.substructureKind == ElseU:
+    n.into:
+      trAsmStmt dest, n
+  else:
+    dest.copyIntoKind StmtsS, info:
+      trAsmIf dest, n
+  dest.addParRi()
+
+proc trAsmStmt(dest: var TokenBuf; n: var Cursor) =
+  ## An `{.assembler.}` body keeps its statements and their order; only its
+  ## `if`s are spelled as the `ite` the back end reads again as that `if`.
+  case n.stmtKind
+  of IfS:
+    n.into:
+      trAsmIf dest, n
+  of StmtsS, ScopeS:
+    copyInto dest, n:
+      while n.hasMore:
+        trAsmStmt dest, n
+  else:
+    dest.takeTree n
+
 proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let decl = n
   var r = asRoutine(n)
@@ -757,11 +790,13 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # for the same reason. It used to be replaced by a bodyless declaration, which
   # was only ever safe while this pass's output was thrown away: *not analysed*
   # is not the same as *not emitted*. The prover skips it (`traverseProc`).
+  # Its `if`s are the one exception, spelled `ite` (`trAsmStmt`), because that
+  # is the vocabulary codegen reads.
   let isAsm = hasPragma(r.pragmas, AssemblerP)
   copyInto(dest, n):
     let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
     if isAsm:
-      takeTree dest, n
+      trAsmStmt dest, n
     elif isConcrete:
       let symId = r.name.symId
       if isLocalDecl(symId):

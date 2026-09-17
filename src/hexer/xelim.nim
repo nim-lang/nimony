@@ -16,6 +16,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, typeprops, builtintypes]
 import passes
+import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
 
 type
@@ -224,6 +225,33 @@ proc hoistDeclsFromExprX(tc: var TypeCache; outerDest, transformed: var TokenBuf
         transformed.addParRi(n.endInfo)  # closing `)` of stmts
     transformed.addParRi(n.endInfo)      # closing `)` of expr
 
+proc openIfElse(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  ## `if cond: A else: B`, spelled for the IR that reads the result: `finalir`
+  ## lowers the Nimony `if` of the `TowardsFinalIr` run, the `LowerCasts` run
+  ## works on the Final IR itself. The caller emits `cond`, then `openThen`,
+  ## `A`, `openElse`, `B`, `closeIfElse`.
+  if c.goal == LowerCasts:
+    dest.addParLe IteV, info
+  else:
+    dest.addParLe IfS, info
+    dest.addParLe ElifU, info
+
+proc openThen(dest: var TokenBuf; info: NifLineInfo) =
+  dest.addParLe StmtsS, info
+
+proc openElse(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  dest.addParRi() # then
+  if c.goal != LowerCasts:
+    dest.addParRi() # elif
+    dest.addParLe ElseU, info
+  dest.addParLe StmtsS, info
+
+proc closeIfElse(c: var Context; dest: var TokenBuf) =
+  dest.addParRi() # else stmts
+  if c.goal != LowerCasts:
+    dest.addParRi() # else
+  dest.addParRi() # if/ite
+
 proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if isComplex(n, c.goal):
     # `x or y`  <=> `if x: true else: y` <=> `if x: tmp = true else: tmp = y`
@@ -239,16 +267,15 @@ proc trOr(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       var rhs = createTokenBuf(16)
       hoistDeclsFromExprX(c.typeCache, dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
       var rhsCursor = beginRead(rhs)
-      copyIntoKind dest, IfS, info:
-        copyIntoKind dest, ElifU, info:
-          dest.addTarget aa                # if x
-          copyIntoKind dest, StmtsS, info:
-            copyIntoKind dest, AsgnS, info: # tmp = true
-              dest.addSymUse tmp, info
-              copyIntoKind dest, TrueX, info: discard
-        copyIntoKind dest, ElseU, info:
-          copyIntoKind dest, StmtsS, info:
-            trExprInto c, dest, rhsCursor, tmp # tmp = y
+      openIfElse c, dest, info
+      dest.addTarget aa                  # if x
+      openThen dest, info
+      copyIntoKind dest, AsgnS, info:    # tmp = true
+        dest.addSymUse tmp, info
+        copyIntoKind dest, TrueX, info: discard
+      openElse c, dest, info
+      trExprInto c, dest, rhsCursor, tmp # tmp = y
+      closeIfElse c, dest
       tar.t.addSymUse tmp, info
   else:
     copyInto tar.t, n:
@@ -272,17 +299,15 @@ proc trAnd(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
       var rhs = createTokenBuf(16)
       hoistDeclsFromExprX(c.typeCache, dest, rhs, n, markNoinit = c.goal == TowardsFinalIr)
       var rhsCursor = beginRead(rhs)
-      copyIntoKind dest, IfS, info:
-        copyIntoKind dest, ElifU, info:
-          dest.addTarget aa                # if x
-          copyIntoKind dest, StmtsS, info:
-            trExprInto c, dest, rhsCursor, tmp # tmp = y
-        copyIntoKind dest, ElseU, info:
-          copyIntoKind dest, StmtsS, info:
-            # tmp = false
-            copyIntoKind dest, AsgnS, info:
-              dest.addSymUse tmp, info
-              copyIntoKind dest, FalseX, info: discard
+      openIfElse c, dest, info
+      dest.addTarget aa                  # if x
+      openThen dest, info
+      trExprInto c, dest, rhsCursor, tmp # tmp = y
+      openElse c, dest, info
+      copyIntoKind dest, AsgnS, info:    # tmp = false
+        dest.addSymUse tmp, info
+        copyIntoKind dest, FalseX, info: discard
+      closeIfElse c, dest
       tar.t.addSymUse tmp, info
   else:
     copyInto tar.t, n:
@@ -1205,6 +1230,23 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
   if tar.m != IsIgnored:
     tar.t.addSymUse tmp, n.endInfo # `n` is already past the block
 
+proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `(ite cond then else|.)`, which reaches the `LowerCasts` run: whatever the
+  ## condition needs goes in front of the `ite`, the branches are statement
+  ## lists.
+  let head = n
+  n.into:
+    var cond = initTarget(IsEmpty)
+    trExpr c, dest, n, cond
+    dest.addParLe(head.cursorTagId, head.info)
+    dest.addTarget cond
+    trStmt c, dest, n
+    if n.isDotToken:
+      dest.takeTree n
+    else:
+      trStmt c, dest, n
+    dest.addParRi()
+
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
@@ -1213,6 +1255,11 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       trExpr c, dest, n, tar
       if tar.m == IsAppend:
         dest.addTarget tar
+    elif n.finalIrKind == IteV:
+      trIte c, dest, n
+    elif n.finalIrKind == LoopV:
+      copyInto(dest, n):
+        trStmt c, dest, n
     else:
       takeTree dest, n
   of PragmaxS:

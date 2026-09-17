@@ -325,10 +325,10 @@ In rough dependency order:
    `kill`/`unknown` (`toFinalIr(analysisFacts = false)`): they name locals
    `lambdalifting` may move into an environment, and nothing in hexer needs
    them. The original estimate of
-   about nine passes was too high: `cps` already converts the Final IR back
+   about nine passes was too high: `cps` converted the Final IR back
    (`ite`→`if`, `loop`→`while true`, `kill`/`unknown` dropped) for *every*
-   routine, not just coroutines, so only the passes between the lowering and
-   `cps` had to learn it. What that took:
+   routine, not just coroutines, so at first only the passes between the
+   lowering and `cps` had to learn it. What that took:
    - `controlflow.nim` (the duplifier's last-read analysis): `ite`, `loop`,
      and skipping `kill`/`unknown`.
    - `destroyer`: `ite`, `loop` and `continue` — the back-edge ends the body's
@@ -389,8 +389,15 @@ In rough dependency order:
    the lowering turned a statement-position `stmts` into a scope; a replicated
    `finally` duplicated its labels.
 
-   Left: teach `lengcgen` the Final IR so `cps` stops converting it back;
-   retire `xelim`'s `ElimExprs` goal, which nothing uses any more. Measured
+   `lengcgen` reads the Final IR too, so `cps` no longer converts it back:
+   `ite`/`loop` become Leng `if`/`while true` there (Leng's own `ite`/`loop`
+   are unknown to the native back end and most optimizer passes), and the
+   Nimony `if`/`while`/`block`/`break` handlers are gone. The last Nimony
+   producers were the lifter (it runs in nimsem too, so hexer lowers its hooks
+   with `toFinalIr`), `cps`'s trampoline and frame code, `vtables`,
+   `xelim_final`'s `and`/`or`, and an `{.assembler.}` body's `if`.
+
+   Left: retire `xelim`'s `ElimExprs` goal, which nothing uses any more. Measured
    against the old pipeline: on `tjson` the C text is 11% larger (temps and
    labels) and the executable 0.08%; `tall` compiles in 4.4 s against 4.2 s.
    `json.$` is inlined at six call sites in `tjson` by the old pipeline and

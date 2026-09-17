@@ -98,12 +98,24 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   # Special handling: Merge generated hooks. The destroyer left the root
   # `(stmts` open for us; append the hooks, then close it.
+  # The lifter speaks Nimony IR, because `nimsem` runs it too, so its hooks
+  # take the same lowering to the Final IR as everything else did up front.
   if c.liftingCtx[].dest.len > 0:
-    var hookReader = beginRead(c.liftingCtx[].dest)
-    #echo "HOOKS: ", toString(hookReader)
-    publishHooks hookReader
-
-  pass.dest.add move(c.liftingCtx[].dest)
+    var hooks = createTokenBuf(c.liftingCtx[].dest.len + 2)
+    hooks.addParLe StmtsS, NoLineInfo
+    hooks.add move(c.liftingCtx[].dest)
+    hooks.addParRi()
+    var hookPass = initPass(ensureMove hooks, moduleSuffix, "finalir_hooks", bits,
+                            pass.nextTemp)
+    toFinalIr(hookPass, analysisFacts = false)
+    var hookReader = beginRead(hookPass.dest)
+    hookReader.into:
+      let first = hookReader
+      while hookReader.hasMore:
+        publishHooks hookReader
+      hookReader = first
+      while hookReader.hasMore:
+        pass.dest.takeTree hookReader
   pass.dest.addParRi()
 
   when defined(verifyArc):
