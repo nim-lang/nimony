@@ -402,6 +402,23 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
 
     tar.t.addParRi()
 
+proc trConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
+  ## A `string.&` call whose `string.&` operands stay nested: `desugar` folds
+  ## the whole chain into one allocation (`genStringConcatChain`), which it can
+  ## only do while it is one tree. Every other operand is lowered as usual.
+  if tar.m in {IsEmpty, IsBound}:
+    tar.m = IsAppend
+  tar.t.addParLe(n.cursorTagId, n.info)
+  n.into:
+    while n.hasMore:
+      if isStringConcatCall(n):
+        var inner = initTarget(IsBound)
+        trConcatChain c, dest, n, inner
+        tar.t.addTarget inner
+      else:
+        trExpr c, dest, n, tar
+  tar.t.addParRi()
+
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if tar.m in {IsAppend, IsEmpty} and c.goal in {LowerCasts, TowardsFinalIr}:
     # bind to a temporary variable:
@@ -417,7 +434,10 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     # declarations are emitted before this one starts:
     var nestedDest = createTokenBuf(30)
     var callTarget = initTarget(IsBound)
-    trExprLoop c, nestedDest, n, callTarget
+    if c.goal == TowardsFinalIr and isStringConcatCall(n):
+      trConcatChain c, nestedDest, n, callTarget
+    else:
+      trExprLoop c, nestedDest, n, callTarget
 
     # Emit nested statements first
     dest.add nestedDest
@@ -444,6 +464,8 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     dest.addParRi()
 
     tar.t.addSymUse tmp, info
+  elif c.goal == TowardsFinalIr and isStringConcatCall(n):
+    trConcatChain c, dest, n, tar
   else:
     trExprLoop c, dest, n, tar
 

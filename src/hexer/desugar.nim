@@ -6,11 +6,11 @@ else:
   {.pragma: untyped.}
 
 import std / [assertions, tables, hashes, sets, syncio]
-from std / strutils import startsWith
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters]
 import hexer_context, passes
+import ".." / finalir / finalir_model
 include ".." / nimony / nif_annotations
 
 type
@@ -21,10 +21,95 @@ type
     tempUseBufStack: seq[TokenBuf]
     activeChecks: set[CheckMode]
     pending: TokenBuf
-    hoisted: TokenBuf
+    constDecls: TokenBuf
       ## module-level `const`s minted for set literals; emitted before the
       ## module body so the C backend sees them declared before their uses
     bits: int  ## target `int` width, handed to the const evaluator
+    fir: bool
+      ## The input is the Final IR (`hexerSpeaksFir`) and nothing lowers this
+      ## pass's output again: control flow is spelled `loop`/`ite`/`jmp`, and
+      ## what an expansion needs to run first goes to `pre` instead of into an
+      ## `(expr …)`.
+    pre: TokenBuf
+      ## `fir`: statements for in front of the statement being translated;
+      ## `trStmt` splices them in.
+
+proc freshLabel(c: var Context): SymId =
+  result = pool.symId("`desugarL." & $c.counter)
+  inc c.counter
+
+proc openLoop(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
+  ## `while <cond>: <body>`, part one; the caller emits `<cond>` next, then
+  ## `openLoopBody`, the body, and `closeLoop`. Returns the exit label (`fir`
+  ## only), for `emitBreak`.
+  if c.fir:
+    result = freshLabel(c)
+    dest.addParLe LoopV, info
+    dest.addParLe ScopeS, info
+    dest.addParLe IteV, info
+  else:
+    result = SymId(0)
+    dest.addParLe WhileS, info
+
+proc openLoopBody(dest: var TokenBuf; info: NifLineInfo) =
+  dest.addParLe StmtsS, info
+
+proc emitBreak(c: var Context; dest: var TokenBuf; exitLab: SymId; info: NifLineInfo) =
+  if c.fir:
+    copyIntoKind dest, JmpS, info:
+      dest.addSymUse exitLab, info
+  else:
+    copyIntoKind dest, BreakS, info:
+      dest.addDotToken()
+
+proc closeLoop(c: var Context; dest: var TokenBuf; exitLab: SymId; info: NifLineInfo) =
+  dest.addParRi() # body
+  if c.fir:
+    copyIntoKind dest, StmtsS, info:
+      emitBreak c, dest, exitLab, info
+    dest.addParRi() # ite
+    copyIntoKind dest, ContinueV, info:
+      dest.addDotToken()
+    dest.addParRi() # scope
+    dest.addParRi() # loop
+    copyIntoKind dest, LabS, info:
+      dest.addSymDef exitLab, info
+  else:
+    dest.addParRi() # while
+
+proc openIf(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
+  ## `if <cond>: <body>`: `openIf`, `<cond>`, `openIfBody`, `<body>`, `closeIf`.
+  if c.fir:
+    dest.addParLe IteV, info
+  else:
+    dest.addParLe IfS, info
+    dest.addParLe ElifU, info
+
+proc openIfBody(dest: var TokenBuf; info: NifLineInfo) =
+  dest.addParLe StmtsS, info
+
+proc closeIf(c: var Context; dest: var TokenBuf) =
+  dest.addParRi() # body
+  if c.fir:
+    dest.addDotToken() # no else
+    dest.addParRi() # ite
+  else:
+    dest.addParRi() # elif
+    dest.addParRi() # if
+
+proc emitValue(c: var Context; dest: var TokenBuf; pre, val: var TokenBuf;
+               info: NifLineInfo) =
+  ## An expansion's result: the statements it needs first, and its value.
+  if pre.len == 0:
+    dest.add val
+  elif c.fir:
+    c.pre.add pre
+    dest.add val
+  else:
+    dest.addParLe(ExprX, info)
+    dest.add pre
+    dest.add val
+    dest.addParRi()
 
 proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineInfo): SymId =
   let s = "`desugar." & $c.counter
@@ -120,10 +205,26 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
     c.typeCache.takeLocalHeader(dest, n, kind)
     tr(c, dest, n)
 
+proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
+  ## One statement, preceded by whatever its translation put in `pre`. The
+  ## enclosing statement's `pre` is parked across the descent.
+  var outer = createTokenBuf(0)
+  swap outer, c.pre
+  let start = dest.len
+  tr(c, dest, n, isTopScope)
+  if c.pre.len > 0:
+    dest.insert(c.pre, start)
+  swap outer, c.pre
+
+proc trStmtList(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
+  copyInto dest, n:
+    while n.hasMore:
+      trStmt(c, dest, n, isTopScope)
+
 proc trProcBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n.into:
     while n.hasMore:
-      tr(c, dest, n)
+      trStmt(c, dest, n)
 
 proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cursor; pragmas: var Cursor): bool =
   # returns false if the routine is generic
@@ -140,15 +241,15 @@ proc trRoutineHeader(c: var Context; dest: var TokenBuf; decl: Cursor; n: var Cu
 
 proc emitRequiresGuard(c: var Context; dest: var TokenBuf; cond: Cursor;
                       msg: string; info: NifLineInfo) =
-  dest.copyIntoKind IfS, info:
-    dest.copyIntoKind ElifU, info:
-      dest.copyIntoKind NotX, info:
-        var n = cond
-        tr(c, dest, n)
-      dest.copyIntoKind StmtsS, info:
-        dest.copyIntoKind CallS, info:
-          dest.addSymUse pool.symId("panic.0." & SystemModuleSuffix), info
-          dest.addStrLit msg, info
+  openIf c, dest, info
+  dest.copyIntoKind NotX, info:
+    var n = cond
+    tr(c, dest, n)
+  openIfBody dest, info
+  dest.copyIntoKind CallS, info:
+    dest.addSymUse pool.symId("panic.0." & SystemModuleSuffix), info
+    dest.addStrLit msg, info
+  closeIf c, dest
 
 proc emitRequires(c: var Context; dest: var TokenBuf; cond: Cursor;
                   where: string; info: NifLineInfo) =
@@ -203,7 +304,15 @@ proc trProc(c: var Context; dest: var TokenBuf; n: var Cursor) =
     let isConcrete = c.trRoutineHeader(dest, decl, n, pragmas)
     if isConcrete and n.stmtKind == StmtsS:
       dest.addParLe(n.cursorTagId, n.info) # (stmts)
+      # the guards are statements of the body: what they need first goes in
+      # front of them, not in front of the routine
+      var outer = createTokenBuf(0)
+      swap outer, c.pre
+      let guardStart = dest.len
       trRequires(c, dest, pragmas)
+      if c.pre.len > 0:
+        dest.insert(c.pre, guardStart)
+      swap outer, c.pre
       trProcBody(c, dest, n)
       dest.addParRi()
     else:
@@ -279,18 +388,23 @@ template addIntTypedOp(dest: var TokenBuf; kind: ExprKind|StmtKind; bits: int; i
     dest.addIntType(bits, info)
     body
 
-template forRangeExclusive(c: var Context; dest: var TokenBuf; i: Cursor; bound: int; info: NifLineInfo; body: typed) {.untyped.} =
-  copyIntoKind dest, WhileS, info:
-    addIntTypedOp dest, LtX, -1, info:
+proc openRange(c: var Context; dest: var TokenBuf; i: Cursor; bound: int;
+               info: NifLineInfo): SymId =
+  ## `while i < bound:` — the body follows, then `closeRange`.
+  result = openLoop(c, dest, info)
+  addIntTypedOp dest, LtX, -1, info:
+    dest.addSubtree i
+    dest.addIntLit(bound, info)
+  openLoopBody dest, info
+
+proc closeRange(c: var Context; dest: var TokenBuf; i: Cursor; exitLab: SymId;
+                info: NifLineInfo) =
+  copyIntoKind dest, AsgnS, info:
+    dest.addSubtree i
+    addIntTypedOp dest, AddX, -1, info:
       dest.addSubtree i
-      dest.addIntLit(bound, info)
-    copyIntoKind dest, StmtsS, info:
-      body
-      copyIntoKind dest, AsgnS, info:
-        dest.addSubtree i
-        addIntTypedOp dest, AddX, -1, info:
-          dest.addSubtree i
-          dest.addIntLit(1, info)
+      dest.addIntLit(1, info)
+  closeLoop c, dest, exitLab, info
 
 proc arrayToPointer(dest: var TokenBuf; arr: Cursor; info: NifLineInfo) =
   copyIntoKind dest, AddrX, info:
@@ -344,13 +458,13 @@ proc hoistConstSet(c: var Context; n: Cursor; info: NifLineInfo): SymId =
   result = pool.symId(s)
   var typ = n
   typ = sub(typ)  # throwaway copy; bounds the peek under vpr
-  c.hoisted.addParLe("const", info)
-  c.hoisted.addSymDef result, info
-  c.hoisted.addDotToken() # export
-  c.hoisted.addDotToken() # pragmas
-  c.hoisted.addSubtree typ
-  c.hoisted.addSubtree n
-  c.hoisted.addParRi()
+  c.constDecls.addParLe("const", info)
+  c.constDecls.addSymDef result, info
+  c.constDecls.addDotToken() # export
+  c.constDecls.addDotToken() # pragmas
+  c.constDecls.addSubtree typ
+  c.constDecls.addSubtree n
+  c.constDecls.addParRi()
 
 proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -397,13 +511,15 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
     a = beginRead(c.tempUseBufStack[^1])
   else:
     a = aOrig
+  # `pre`: what has to run first; `val`: the value (see `emitValue`).
+  var pre = createTokenBuf(16)
+  var val = createTokenBuf(16)
   if useTemp:
-    dest.addParLe(ExprX, info)
     # lift both so (n, (n = 123; n)) works
     if liftA:
-      a = liftTemp(c, dest, aOrig, typ, info)
+      a = liftTemp(c, pre, aOrig, typ, info)
     if liftB:
-      b = liftTemp(c, dest, bOrig, if kind == InsetX: c.typeCache.builtins.uintType else: typ, info)
+      b = liftTemp(c, pre, bOrig, if kind == InsetX: c.typeCache.builtins.uintType else: typ, info)
   var err = false
   let size = int asSigned(bitsetSizeInBytes(baseType), err)
   assert not err
@@ -411,165 +527,161 @@ proc genSetOp(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of 1, 2, 4, 8:
     case kind
     of LtsetX:
-      copyIntoKind dest, AndX, info:
-        addTypedOp dest, EqX, cType, info:
-          addTypedOp dest, BitandX, cType, info:
-            dest.addSubtree a
-            addTypedOp dest, BitnotX, cType, info:
-              dest.addSubtree b
-          dest.addIntLit(0, info)
-        addTypedOp dest, NeqX, cType, info:
-          dest.addSubtree a
-          dest.addSubtree b
+      copyIntoKind val, AndX, info:
+        addTypedOp val, EqX, cType, info:
+          addTypedOp val, BitandX, cType, info:
+            val.addSubtree a
+            addTypedOp val, BitnotX, cType, info:
+              val.addSubtree b
+          val.addIntLit(0, info)
+        addTypedOp val, NeqX, cType, info:
+          val.addSubtree a
+          val.addSubtree b
     of LesetX:
-      addTypedOp dest, EqX, cType, info:
-        addTypedOp dest, BitandX, cType, info:
-          dest.addSubtree a
-          addTypedOp dest, BitnotX, cType, info:
-            dest.addSubtree b
-        dest.addIntLit(0, info)
+      addTypedOp val, EqX, cType, info:
+        addTypedOp val, BitandX, cType, info:
+          val.addSubtree a
+          addTypedOp val, BitnotX, cType, info:
+            val.addSubtree b
+        val.addIntLit(0, info)
     of EqsetX:
-      addTypedOp dest, EqX, cType, info:
-        dest.addSubtree a
-        dest.addSubtree b
+      addTypedOp val, EqX, cType, info:
+        val.addSubtree a
+        val.addSubtree b
     of MulsetX:
-      addTypedOp dest, BitandX, cType, info:
-        dest.addSubtree a
-        dest.addSubtree b
+      addTypedOp val, BitandX, cType, info:
+        val.addSubtree a
+        val.addSubtree b
     of PlussetX:
-      addTypedOp dest, BitorX, cType, info:
-        dest.addSubtree a
-        dest.addSubtree b
+      addTypedOp val, BitorX, cType, info:
+        val.addSubtree a
+        val.addSubtree b
     of MinussetX:
-      addTypedOp dest, BitandX, cType, info:
-        dest.addSubtree a
-        addTypedOp dest, BitnotX, cType, info:
-          dest.addSubtree b
+      addTypedOp val, BitandX, cType, info:
+        val.addSubtree a
+        addTypedOp val, BitnotX, cType, info:
+          val.addSubtree b
     of XorsetX:
-      addTypedOp dest, BitxorX, cType, info:
-        dest.addSubtree a
-        dest.addSubtree b
+      addTypedOp val, BitxorX, cType, info:
+        val.addSubtree a
+        val.addSubtree b
     of InsetX:
       let mask = size * 8 - 1
-      addTypedOp dest, NeqX, cType, info:
-        addTypedOp dest, BitandX, cType, info:
-          dest.addSubtree a
-          addTypedOp dest, ShlX, cType, info:
-            addTypedOp dest, CastX, cType, info:
-              dest.addIntLit(1, info)
-            addUIntTypedOp dest, BitandX, -1, info:
-              dest.addSubtree b
-              dest.addUIntLit(uint64(mask), info)
-        dest.addUIntLit(0, info)
+      addTypedOp val, NeqX, cType, info:
+        addTypedOp val, BitandX, cType, info:
+          val.addSubtree a
+          addTypedOp val, ShlX, cType, info:
+            addTypedOp val, CastX, cType, info:
+              val.addIntLit(1, info)
+            addUIntTypedOp val, BitandX, -1, info:
+              val.addSubtree b
+              val.addUIntLit(uint64(mask), info)
+        val.addUIntLit(0, info)
     else:
       bug("unreachable")
   else:
     case kind
     of LtsetX, LesetX:
-      dest.addParLe(ExprX, info)
       var resValueBuf = createTokenBuf(2)
       resValueBuf.addParLe(TrueX, info)
       resValueBuf.addParRi()
-      let res = liftTemp(c, dest, beginRead(resValueBuf), c.typeCache.builtins.boolType, info)
+      let res = liftTemp(c, pre, beginRead(resValueBuf), c.typeCache.builtins.boolType, info)
       var iValueBuf = createTokenBuf(2)
       iValueBuf.addIntLit(0, info)
-      let i = liftTemp(c, dest, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
-      forRangeExclusive c, dest, i, size, info:
-        copyIntoKind dest, AsgnS, info:
-          dest.addSubtree res
-          addUIntTypedOp dest, EqX, 8, info:
-            addUIntTypedOp dest, BitandX, 8, info:
-              copyIntoKind dest, ArratX, info:
-                dest.addSubtree a
-                dest.addSubtree i
-              addUIntTypedOp dest, BitnotX, 8, info:
-                copyIntoKind dest, ArratX, info:
-                  dest.addSubtree b
-                  dest.addSubtree i
-            dest.addIntLit(0, info)
-        copyIntoKind dest, IfS, info:
-          copyIntoKind dest, ElifU, info:
-            copyIntoKind dest, NotX, info:
-              dest.addSubtree res
-            copyIntoKind dest, StmtsS, info:
-              copyIntoKind dest, BreakS, info:
-                dest.addDotToken()
+      let i = liftTemp(c, pre, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
+      let exitLab = openRange(c, pre, i, size, info)
+      copyIntoKind pre, AsgnS, info:
+        pre.addSubtree res
+        addUIntTypedOp pre, EqX, 8, info:
+          addUIntTypedOp pre, BitandX, 8, info:
+            copyIntoKind pre, ArratX, info:
+              pre.addSubtree a
+              pre.addSubtree i
+            addUIntTypedOp pre, BitnotX, 8, info:
+              copyIntoKind pre, ArratX, info:
+                pre.addSubtree b
+                pre.addSubtree i
+          pre.addIntLit(0, info)
+      openIf c, pre, info
+      copyIntoKind pre, NotX, info:
+        pre.addSubtree res
+      openIfBody pre, info
+      emitBreak c, pre, exitLab, info
+      closeIf c, pre
+      closeRange c, pre, i, exitLab, info
       if kind == LtsetX:
-        copyIntoKind dest, IfS, info:
-          copyIntoKind dest, ElifU, info:
-            dest.addSubtree res
-            copyIntoKind dest, StmtsS, info:
-              copyIntoKind dest, AsgnS, info:
-                dest.addSubtree res
-                addIntTypedOp dest, NeqX, -1, info:
-                  copyIntoKind dest, CallX, info:
-                    dest.addSymUse(pool.symId("cmpMem.0." & SystemModuleSuffix), info)
-                    dest.arrayToPointer(a, info)
-                    dest.arrayToPointer(b, info)
-                    dest.addIntLit(size, info)
-                  dest.addIntLit(0, info)
-      dest.addSubtree res
-      dest.addParRi()
+        openIf c, pre, info
+        pre.addSubtree res
+        openIfBody pre, info
+        copyIntoKind pre, AsgnS, info:
+          pre.addSubtree res
+          addIntTypedOp pre, NeqX, -1, info:
+            copyIntoKind pre, CallX, info:
+              pre.addSymUse(pool.symId("cmpMem.0." & SystemModuleSuffix), info)
+              pre.arrayToPointer(a, info)
+              pre.arrayToPointer(b, info)
+              pre.addIntLit(size, info)
+            pre.addIntLit(0, info)
+        closeIf c, pre
+      val.addSubtree res
     of EqsetX:
-      addIntTypedOp dest, EqX, -1, info:
-        copyIntoKind dest, CallX, info:
-          dest.addSymUse(pool.symId("cmpMem.0." & SystemModuleSuffix), info)
-          dest.arrayToPointer(a, info)
-          dest.arrayToPointer(b, info)
-          dest.addIntLit(size, info)
-        dest.addIntLit(0, info)
+      addIntTypedOp val, EqX, -1, info:
+        copyIntoKind val, CallX, info:
+          val.addSymUse(pool.symId("cmpMem.0." & SystemModuleSuffix), info)
+          val.arrayToPointer(a, info)
+          val.arrayToPointer(b, info)
+          val.addIntLit(size, info)
+        val.addIntLit(0, info)
     of MulsetX, PlussetX, MinussetX, XorsetX:
-      dest.addParLe(ExprX, info)
       var resValueBuf = createTokenBuf(2)
       resValueBuf.addDotToken(info)
-      let res = liftTemp(c, dest, beginRead(resValueBuf), cType, info)
+      let res = liftTemp(c, pre, beginRead(resValueBuf), cType, info)
       var iValueBuf = createTokenBuf(2)
       iValueBuf.addIntLit(0, info)
-      let i = liftTemp(c, dest, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
-      forRangeExclusive c, dest, i, size, info:
-        copyIntoKind dest, AsgnS, info:
-          copyIntoKind dest, ArratX, info:
-            dest.addSubtree res
-            dest.addSubtree i
-          let op =
-            case kind
-            of PlussetX: BitorX
-            of XorsetX: BitxorX
-            of MulsetX, MinussetX: BitandX
-            else: bug("unreachable")
-          addUIntTypedOp dest, op, 8, info:
-            copyIntoKind dest, ArratX, info:
-              dest.addSubtree a
-              dest.addSubtree i
-            if kind == MinussetX:
-              addUIntTypedOp dest, BitnotX, 8, info:
-                copyIntoKind dest, ArratX, info:
-                  dest.addSubtree b
-                  dest.addSubtree i
-            else:
-              copyIntoKind dest, ArratX, info:
-                dest.addSubtree b
-                dest.addSubtree i
-      dest.addSubtree res
-      dest.addParRi()
+      let i = liftTemp(c, pre, beginRead(iValueBuf), c.typeCache.builtins.intType, info)
+      let exitLab = openRange(c, pre, i, size, info)
+      copyIntoKind pre, AsgnS, info:
+        copyIntoKind pre, ArratX, info:
+          pre.addSubtree res
+          pre.addSubtree i
+        let op =
+          case kind
+          of PlussetX: BitorX
+          of XorsetX: BitxorX
+          of MulsetX, MinussetX: BitandX
+          else: bug("unreachable")
+        addUIntTypedOp pre, op, 8, info:
+          copyIntoKind pre, ArratX, info:
+            pre.addSubtree a
+            pre.addSubtree i
+          if kind == MinussetX:
+            addUIntTypedOp pre, BitnotX, 8, info:
+              copyIntoKind pre, ArratX, info:
+                pre.addSubtree b
+                pre.addSubtree i
+          else:
+            copyIntoKind pre, ArratX, info:
+              pre.addSubtree b
+              pre.addSubtree i
+      closeRange c, pre, i, exitLab, info
+      val.addSubtree res
     of InsetX:
-      addUIntTypedOp dest, NeqX, 8, info:
-        addUIntTypedOp dest, BitandX, 8, info:
-          copyIntoKind dest, ArratX, info:
-            dest.addSubtree a
-            addUIntTypedOp dest, ShrX, -1, info:
-              dest.addSubtree b
-              dest.addUIntLit(3, info)
-          addUIntTypedOp dest, ShlX, 8, info:
-            dest.addUIntLit(1, info)
-            addUIntTypedOp dest, BitandX, -1, info:
-              dest.addSubtree b
-              dest.addUIntLit(7, info)
-        dest.addUIntLit(0, info)
+      addUIntTypedOp val, NeqX, 8, info:
+        addUIntTypedOp val, BitandX, 8, info:
+          copyIntoKind val, ArratX, info:
+            val.addSubtree a
+            addUIntTypedOp val, ShrX, -1, info:
+              val.addSubtree b
+              val.addUIntLit(3, info)
+          addUIntTypedOp val, ShlX, 8, info:
+            val.addUIntLit(1, info)
+            addUIntTypedOp val, BitandX, -1, info:
+              val.addSubtree b
+              val.addUIntLit(7, info)
+        val.addUIntLit(0, info)
     else:
       bug("unreachable")
-  if useTemp:
-    dest.addParRi()
+  emitValue c, dest, pre, val, info
   # unconditional: a hoisted set literal parks its symbol use on this stack even
   # when nothing was lifted
   c.tempUseBufStack.shrink(oldBufStackLen)
@@ -648,7 +760,7 @@ proc genSingleInclBig(dest: var TokenBuf; s, elem: Cursor; info: NifLineInfo) =
 
 proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
-  dest.addParLe(ExprX, info)
+  var pre = createTokenBuf(32) # see `emitValue`
   let constrStart = n # tag
   n = sub(n)
   let typ = n
@@ -665,24 +777,22 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var resValueBuf = createTokenBuf(2)
   if big: resValueBuf.addDotToken(info)
   else: resValueBuf.addUIntLit(0, info)
-  let res = liftTemp(c, dest, beginRead(resValueBuf), cType, info)
+  let res = liftTemp(c, pre, beginRead(resValueBuf), cType, info)
   if big:
-    copyIntoKind dest, CallX, info:
-      dest.addSymUse(pool.symId("zeroMem.0." & SystemModuleSuffix), info)
-      dest.arrayToPointer(res, info)
-      dest.addIntLit(size, info)
+    copyIntoKind pre, CallS, info:
+      pre.addSymUse(pool.symId("zeroMem.0." & SystemModuleSuffix), info)
+      pre.arrayToPointer(res, info)
+      pre.addIntLit(size, info)
   while n.hasMore:
     let elemInfo = n.info
     if n.substructureKind == RangeU:
       let rangeStart = n
       n = sub(n)
       var argsBuf = createTokenBuf(16)
-      swap dest, argsBuf
-      let aStart = dest.len
-      genSetElem(c, dest, n)
-      let bStart = dest.len
-      genSetElem(c, dest, n)
-      swap dest, argsBuf
+      let aStart = argsBuf.len
+      genSetElem(c, argsBuf, n)
+      let bStart = argsBuf.len
+      genSetElem(c, argsBuf, n)
       n = rangeStart; skip n
       # a is used once, no need for temp:
       let a = cursorAt(argsBuf, aStart)
@@ -690,44 +800,44 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
       let useTemp = needsTemp(bOrig)
       let b: Cursor
       if useTemp:
-        b = liftTemp(c, dest, bOrig, c.typeCache.builtins.uintType, elemInfo)
+        b = liftTemp(c, pre, bOrig, c.typeCache.builtins.uintType, elemInfo)
       else:
         b = bOrig
-      let i = liftTemp(c, dest, a, c.typeCache.builtins.uintType, elemInfo)
-      copyIntoKind dest, WhileS, elemInfo:
-        addUIntTypedOp dest, LeX, -1, elemInfo:
-          dest.addSubtree i
-          dest.addSubtree b
-        copyIntoKind dest, StmtsS, elemInfo:
-          if big:
-            genSingleInclBig(dest, res, i, elemInfo)
-          else:
-            genSingleInclSmall(dest, res, i, size, elemInfo)
-          copyIntoKind dest, AsgnS, elemInfo:
-            dest.addSubtree i
-            addUIntTypedOp dest, AddX, -1, elemInfo:
-              dest.addSubtree i
-              dest.addUIntLit(1, elemInfo)
+      let i = liftTemp(c, pre, a, c.typeCache.builtins.uintType, elemInfo)
+      let exitLab = openLoop(c, pre, elemInfo)
+      addUIntTypedOp pre, LeX, -1, elemInfo:
+        pre.addSubtree i
+        pre.addSubtree b
+      openLoopBody pre, elemInfo
+      if big:
+        genSingleInclBig(pre, res, i, elemInfo)
+      else:
+        genSingleInclSmall(pre, res, i, size, elemInfo)
+      copyIntoKind pre, AsgnS, elemInfo:
+        pre.addSubtree i
+        addUIntTypedOp pre, AddX, -1, elemInfo:
+          pre.addSubtree i
+          pre.addUIntLit(1, elemInfo)
+      closeLoop c, pre, exitLab, elemInfo
     else:
       var argsBuf = createTokenBuf(16)
-      swap dest, argsBuf
-      let aStart = dest.len
-      genSetElem(c, dest, n)
-      swap dest, argsBuf
+      let aStart = argsBuf.len
+      genSetElem(c, argsBuf, n)
       let aOrig = cursorAt(argsBuf, aStart)
       let useTemp = needsTemp(aOrig)
       let a: Cursor
       if useTemp:
-        a = liftTemp(c, dest, aOrig, c.typeCache.builtins.uintType, elemInfo)
+        a = liftTemp(c, pre, aOrig, c.typeCache.builtins.uintType, elemInfo)
       else:
         a = aOrig
       if big:
-        genSingleInclBig(dest, res, a, elemInfo)
+        genSingleInclBig(pre, res, a, elemInfo)
       else:
-        genSingleInclSmall(dest, res, a, size, elemInfo)
+        genSingleInclSmall(pre, res, a, size, elemInfo)
   n = constrStart; skip n
-  dest.addSubtree res
-  dest.addParRi()
+  var val = createTokenBuf(4)
+  val.addSubtree res
+  emitValue c, dest, pre, val, info
 
 proc genSetConstr(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let info = n.info
@@ -854,24 +964,6 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
-proc isConcat(s: SymId): bool =
-  let res = tryLoadSym(s)
-  if res.status != LacksNothing or not isRoutine(res.decl.symKind):
-    return false
-  let routine = asRoutine(res.decl)
-  result = hasPragmaOfValue(routine.pragmas, SemanticsP, "string.&")
-
-proc isStringConcatCall(n: Cursor): bool =
-  # Non-mutating peek: cannot use `into` here because the body would have
-  # to consume every child (the callee plus both args) just to satisfy the
-  # closing-ParRi assertion — wasteful for a one-token check.
-  result = false
-  if n.exprKind in CallKinds:
-    var c = n
-    inc c                       # past call tag
-    if c.kind == Symbol and startsWith(pool.symString(c.symId), "&."):
-      result = isConcat(c.symId)
-
 proc isChainedStringConcatCall(n: Cursor): bool =
   ## True iff the outer call is `string.&` *and* at least one operand is
   ## itself a `string.&` call — i.e. the chain length is at least 2 calls
@@ -938,13 +1030,12 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let stringType = c.typeCache.builtins.stringType
   let oldBufStackLen = c.tempUseBufStack.len
 
-  dest.addParLe(ExprX, info)
-
+  var pre = createTokenBuf(32) # see `emitValue`
   var leafCursors = newSeqOfCap[Cursor](leafStarts.len)
   for st in leafStarts:
     let leafOrig = cursorAt(leavesBuf, st)
     if needsTemp(leafOrig):
-      leafCursors.add liftTemp(c, dest, leafOrig, stringType, info)
+      leafCursors.add liftTemp(c, pre, leafOrig, stringType, info)
     else:
       leafCursors.add leafOrig
 
@@ -958,24 +1049,25 @@ proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let lenSym    = pool.symId("len.4."           & SystemModuleSuffix)
   let addSym    = pool.symId("add.2."           & SystemModuleSuffix)
 
-  let tmp = declareTemp(c, dest, stringType, info)
-  copyIntoKind dest, CallX, info:
-    dest.addSymUse(newStrSym, info)
-    emitLenSum(dest, lenSym, leafCursors, 0, leafCursors.len-1, info)
-  dest.addParRi()  # close (var :tmp . . string ...)
+  let tmp = declareTemp(c, pre, stringType, info)
+  copyIntoKind pre, CallX, info:
+    pre.addSymUse(newStrSym, info)
+    emitLenSum(pre, lenSym, leafCursors, 0, leafCursors.len-1, info)
+  pre.addParRi()  # close (var :tmp . . string ...)
 
   for lc in leafCursors:
-    copyIntoKind dest, CallS, info:
-      dest.addSymUse(addSym, info)
+    copyIntoKind pre, CallS, info:
+      pre.addSymUse(addSym, info)
       # `add.2`'s first parameter is `var string`, so the call site must
       # take the address of `tmp` — `derefs` (in sem) won't see this
       # rewrite, so the wrap has to happen here.
-      copyIntoKind dest, HaddrX, info:
-        dest.addSymUse(tmp, info)
-      dest.addSubtree lc
+      copyIntoKind pre, HaddrX, info:
+        pre.addSymUse(tmp, info)
+      pre.addSubtree lc
 
-  dest.addSymUse(tmp, info)
-  dest.addParRi()  # close (expr ...)
+  var val = createTokenBuf(2)
+  val.addSymUse(tmp, info)
+  emitValue c, dest, pre, val, info
 
   c.tempUseBufStack.shrink(oldBufStackLen)
 
@@ -1157,6 +1249,29 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   dest.addParRi()     # close stmts
 
+proc emitCheckedIndex(c: var Context; dest: var TokenBuf; chk: var TokenBuf;
+                      isUnsigned: bool; info: NifLineInfo) =
+  ## The check call `chk` as an index. Under the Final IR it is bound to an
+  ## `{.inline.}` temp in front of the statement — the shape `xelim` used to
+  ## give it, and the one the intra-module inliner can splice. (An `and`/`or`
+  ## operand keeps its statements to itself: `trShortCircuit`.)
+  if c.fir:
+    let tmp = pool.symId("`desugar." & $c.counter)
+    inc c.counter
+    copyIntoKind c.pre, LetS, info:
+      c.pre.addSymDef tmp, info
+      c.pre.addDotToken() # no export marker
+      copyIntoKind c.pre, PragmasS, info:
+        copyIntoKind c.pre, InlineP, info: discard
+      if isUnsigned:
+        c.pre.addUIntType(-1, info)
+      else:
+        c.pre.addIntType(-1, info)
+      c.pre.add chk
+    dest.addSymUse tmp, info
+  else:
+    dest.add chk
+
 proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Lower the array-index bound check here rather than in `nifcgen`. Sem
   ## attaches the (compile-time) bounds to `(arrat arr idx [hi [lo]])`; we
@@ -1186,11 +1301,13 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if BoundCheck in c.activeChecks:
           let p = pool.symId(
             (if isUnsigned: "nimUcheckAB" else: "nimIcheckAB") & ".0." & SystemModuleSuffix)
-          copyIntoKind dest, CallX, info:
-            dest.addSymUse p, info
-            dest.add idxBuf
-            dest.add loBuf
-            dest.add hiBuf
+          var chk = createTokenBuf(16)
+          copyIntoKind chk, CallX, info:
+            chk.addSymUse p, info
+            chk.add idxBuf
+            chk.add loBuf
+            chk.add hiBuf
+          emitCheckedIndex c, dest, chk, isUnsigned, info
         else:
           # The subtraction is needed regardless of checks: NIFC arrays are
           # zero-based, so a `lo..hi` Nim array indexes at `i - lo`.
@@ -1206,15 +1323,64 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
         if BoundCheck in c.activeChecks:
           let p = pool.symId(
             (if isUnsigned: "nimUcheckB" else: "nimIcheckB") & ".0." & SystemModuleSuffix)
-          copyIntoKind dest, CallX, info:
-            dest.addSymUse p, info
-            dest.add idxBuf
-            dest.add hiBuf
+          var chk = createTokenBuf(16)
+          copyIntoKind chk, CallX, info:
+            chk.addSymUse p, info
+            chk.add idxBuf
+            chk.add hiBuf
+          emitCheckedIndex c, dest, chk, isUnsigned, info
         else:
           dest.add idxBuf
     else:
       dest.add idxBuf
     dest.addParRi(n.endInfo)
+
+proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `a and b` / `a or b`. The right operand may not run, so whatever its
+  ## translation wants to run first (`pre`) cannot go in front of the whole
+  ## statement. When there is any, the operator is materialized:
+  ##
+  ##   var t = a
+  ##   if t: <b's pre>; t = b          # `or`: if not t
+  ##   ... t ...
+  if not c.fir:
+    trSons(c, dest, n)
+    return
+  let info = n.info
+  let tag = n.cursorTagId
+  let isAnd = n.exprKind == AndX
+  var a = createTokenBuf(8)
+  var b = createTokenBuf(8)
+  var bPre = createTokenBuf(0)
+  n.into:
+    tr(c, a, n) # always runs: its `pre` stays where it is
+    swap bPre, c.pre
+    tr(c, b, n)
+    swap bPre, c.pre
+  if bPre.len == 0:
+    dest.addParLe(tag, info)
+    dest.add a
+    dest.add b
+    dest.addParRi()
+  else:
+    var stmts = createTokenBuf(32)
+    let t = declareTemp(c, stmts, c.typeCache.builtins.boolType, info)
+    stmts.add a
+    stmts.addParRi()
+    openIf c, stmts, info
+    if isAnd:
+      stmts.addSymUse t, info
+    else:
+      copyIntoKind stmts, NotX, info:
+        stmts.addSymUse t, info
+    openIfBody stmts, info
+    stmts.add bPre
+    copyIntoKind stmts, AsgnS, info:
+      stmts.addSymUse t, info
+      stmts.add b
+    closeIf c, stmts
+    c.pre.add stmts
+    dest.addSymUse t, info
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
   case n.kind
@@ -1288,10 +1454,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
           takeTree c.pending, n
       of ScopeS:
         c.typeCache.openScope()
-        trSons(c, dest, n)
+        trStmtList(c, dest, n)
         c.typeCache.closeScope()
       of StmtsS:
-        trSons(c, dest, n, isTopScope = isTopScope)
+        trStmtList(c, dest, n, isTopScope = isTopScope)
       of AsgnS:
         # Tuple-LHS assignments need to be split into per-field stores;
         # otherwise NIFC chokes on `(asgn (tupconstr ...) ...)`.
@@ -1354,8 +1520,10 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
         trFloatArith(c, dest, n)
     of AddX, SubX, MulX, DivX, NegX, LeX, LtX:
       trFloatArith(c, dest, n)
+    of AndX, OrX:
+      trShortCircuit(c, dest, n)
     of ErrX, SufX, AtX, DerefX, DotX, PatX, ParX, AddrX, NilX,
-        InfX, NeginfX, NanX, FalseX, TrueX, AndX, OrX, XorX,
+        InfX, NeginfX, NanX, FalseX, TrueX, XorX,
         NotX, SizeofX, AlignofX, OffsetofX, OconstrX,
         AconstrX, BracketX, CurlyX, CurlyatX, OvfX,
         ModX, ShrX, ShlX, BitandX, BitorX, BitxorX,
@@ -1377,7 +1545,8 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
 
 proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var n = pass.n  # Extract cursor locally
-  var c = Context(counter: 0, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), hoisted: createTokenBuf(), bits: pass.bits)
+  var c = Context(counter: 0, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, activeChecks: activeChecks, pending: createTokenBuf(), constDecls: createTokenBuf(), bits: pass.bits,
+                  fir: hexerSpeaksFir(), pre: createTokenBuf())
   c.typeCache.openScope()
   # Process the root `(stmts` manually (mirroring trSons' copyInto) but
   # keep it OPEN until `pending` has been appended: an emitted close
@@ -1393,10 +1562,10 @@ proc desugar*(pass: var Pass; activeChecks: set[CheckMode]) =
   var body = createTokenBuf()
   n.into:
     while n.hasMore:
-      tr c, body, n, isTopScope = true
+      trStmt c, body, n, isTopScope = true
 
   pass.dest.addParLe(rootTag, rootInfo)
-  pass.dest.add c.hoisted
+  pass.dest.add c.constDecls
   pass.dest.add body
   pass.dest.add c.pending
   pass.dest.addParRi()

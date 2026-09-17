@@ -54,14 +54,15 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
   # Initialize the Pass pipeline
   var pass = initPass(initialBuf, moduleSuffix, "desugar", bits)
 
-  # Pass 1: Desugar
-  desugar(pass, c.activeChecks)
-
   if hexerSpeaksFir():
     # Every pass from here on reads the Final IR. `toFinalIr` runs `xelim`
     # itself.
-    pass.prepareForNext("xelim1")
+    pass.passName = "xelim1"
     toFinalIr(pass, analysisFacts = false)
+    pass.prepareForNext("desugar")
+
+  # Pass 1: Desugar
+  desugar(pass, c.activeChecks)
 
   # Pass 2: Lambda Lifting
   pass.prepareForNext("lambdalift")

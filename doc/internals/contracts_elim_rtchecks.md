@@ -318,8 +318,8 @@ In rough dependency order:
    and its converse, *analysis-only facts do not belong in the IR*.
 3. **Teach hexer the Final IR, before publishing it.** *In progress.* The
    lowering runs inside `pipeline.transform` behind `NIMONY_HEXER_FIR=1`
-   (`passes.hexerSpeaksFir`), right after `desugar` — ahead of
-   `lambdalifting` — and `xelim1` does not run; `tests/nimony` is 828/828
+   (`passes.hexerSpeaksFir`), right after `elimForLoops` — ahead of
+   `desugar` and `lambdalifting` — and `xelim1` does not run; `tests/nimony` is 828/828
    with it on and the default build is untouched. It emits no
    `kill`/`unknown` (`toFinalIr(analysisFacts = false)`): they name locals
    `lambdalifting` may move into an environment, and nothing in hexer needs
@@ -349,6 +349,14 @@ In rough dependency order:
      iterator value's frame setup, go in front of the statement (`hoisted`,
      `treStmt`) instead of into an `(expr …)`/`if` expression; the `corofor`
      trampoline is spelled `loop`/`ite`/`jmp` (`emitWhileBegin`'s `exitLab`).
+   - `desugar`: the same `pre`/`trStmt` pattern for what its expansions
+     need first (set operations, runtime set constructors, string-concat
+     chains, and the `arrat` bound check, bound to an `{.inline.}` temp as
+     `xelim` used to); its loops, `if`s and `break`s are spelled
+     `loop`/`ite`/`jmp`; an `and`/`or` whose right operand needs statements is
+     materialized (`trShortCircuit`). `xelim` leaves a `string.&` chain
+     nested (`trConcatChain`) so `desugar` can still fold it into one
+     allocation — without that, the folding silently stopped.
    - The lowering lowers a `corofor`'s body — the case the fallback probe was
      for.
    - `cps`'s escape analysis pins the first argument of an
@@ -365,11 +373,13 @@ In rough dependency order:
    the lowering turned a statement-position `stmts` into a scope; a replicated
    `finally` duplicated its labels.
 
-   Left: move the lowering ahead of `desugar` and `iterinliner` (the last
-   needs spliced cross-module bodies lowered too — see *No normalizer*); make it the default and drop the switch; teach
-   `lengcgen` the Final IR so `cps` stops converting it back; and measure
-   generated code, since `TowardsFinalIr` binds every nested call to a temp
-   where `ElimExprs` did not.
+   Left: move the lowering ahead of `iterinliner`, which needs the bodies it
+   splices in from other modules lowered too (see *No normalizer*); find out
+   why the intra-module inliner stops inlining `json.$` (six call sites in
+   `tjson`) on the Final IR's output; make it the default and drop the
+   switch; teach `lengcgen` the Final IR so `cps` stops converting it back;
+   and keep measuring generated code — on `tjson` so far the C text is 12%
+   larger (temps and labels) and the executable 0.08%.
 4. Publish the Final IR as the module nif — the lowering moves from hexer's
    entry back to nimsem — with the "unlowered iff re-sem'd elsewhere" rule and
    a verifier check for it, and `renderer`/`idetools`/`indexgen` taught to read

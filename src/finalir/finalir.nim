@@ -204,7 +204,16 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
           var pathBuf = createTokenBuf(4)
           pathBuf.addSubtree inner
           result.mutates.add ensureMove pathBuf
-      trExpr c, dest, n
+      if n.isTagLit and n.exprKind in CallKinds:
+        # `xelim` leaves a `string.&` chain nested for `desugar` to fold
+        # (`trConcatChain`); every other call arrives bound to a temp.
+        var inner = trCall(c, dest, n)
+        for i in 0 ..< inner.mutates.len:
+          var path = createTokenBuf(0)
+          swap path, inner.mutates[i]
+          result.mutates.add ensureMove(path)
+      else:
+        trExpr c, dest, n
 
 proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # `unknown` marks that a `(haddr …)` argument's pointee may have been mutated.

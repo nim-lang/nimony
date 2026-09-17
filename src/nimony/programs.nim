@@ -587,3 +587,26 @@ proc skipParRi*(n: var Cursor) {.nifBalanced.} =
 
 template isLocalDecl*(s: SymId): bool =
   pool.symIsLocal(s)
+
+proc isConcat(s: SymId): bool =
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind):
+    return false
+  let routine = asRoutine(res.decl)
+  result = hasPragmaOfValue(routine.pragmas, SemanticsP, "string.&")
+
+proc isStringConcatCall*(n: Cursor): bool =
+  ## Is `n` a call of `system.&` for strings (`.semantics: "string.&"`)? Its
+  ## chains are folded into one allocation by `desugar`, which `xelim` must
+  ## leave nested for it.
+  # Non-mutating peek: cannot use `into` here because the body would have
+  # to consume every child (the callee plus both args) just to satisfy the
+  # closing-ParRi assertion — wasteful for a one-token check.
+  result = false
+  if n.exprKind in CallKinds:
+    var c = n
+    inc c                       # past call tag
+    if c.kind == Symbol:
+      let name = pool.symString(c.symId)
+      if name.len > 2 and name[0] == '&' and name[1] == '.':
+        result = isConcat(c.symId)
