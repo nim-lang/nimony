@@ -8,7 +8,7 @@ type
     ContinueV = (ord(ContinueTagId), "continue")  ## `continue` statement
     LabV = (ord(LabTagId), "lab")  ## label, target of a `jmp` instruction. Also a **Nimony** statement: `xelim` lowers short-circuit `and`/`or` chains to the flat `(if c (jmp L))` / `(lab L)` form (the two-target condition compiler, see `doc/final_ir.md`), which needs a merge label that is not an enclosing region's end — something `(block)`/`(break)` cannot express without one wrapper per merge
     JmpV = (ord(JmpTagId), "jmp")  ## jump/goto instruction. In Nimony IR it is **forward-only and scoped**: it may leave enclosing constructs but never enter one, and it never crosses a scope that owns destructible locals
-    IteV = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
+    IteV = (ord(IteTagId), "ite")  ## if-then-else, optionally followed by `join` information and by a label. The Final IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's
     ItecV = (ord(ItecTagId), "itec")  ## if-then-else (that was a `case`)
     LoopV = (ord(LoopTagId), "loop")  ## infinite loop; the body ends in `(continue .)`, its sole back-edge, and every forward exit is a `(jmp …)`
     VV = (ord(VTagId), "v")  ## `versioned` locations

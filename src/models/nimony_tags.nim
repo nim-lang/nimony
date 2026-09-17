@@ -438,7 +438,7 @@ proc rawTagIsHookKind*(raw: TagEnum): bool {.inline.} =
 type
   ControlFlowKind* = enum
     NoControlFlow
-    IteF = (ord(IteTagId), "ite")  ## if-then-else followed by `join` information followed by an optional label
+    IteF = (ord(IteTagId), "ite")  ## if-then-else, optionally followed by `join` information and by a label. The Final IR and `controlflow.nim` use the three-child form, whose else-part may be `.`; the `join` slot is Leng's
     GraphF = (ord(GraphTagId), "graph")  ## disjoint subgraph annotation
     ForbindF = (ord(ForbindTagId), "forbind")  ## bindings for a `for` loop but the loop itself is mapped to gotos
     KillF = (ord(KillTagId), "kill")  ## some.var is about to disappear (scope exit)
