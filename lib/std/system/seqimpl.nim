@@ -29,7 +29,12 @@ func memSizeInBytes[T](size: int): int {.inline.} =
       # When required memory size is overflowed, cause out of memory.
       result = high(int)
 
-func newSeq*[T: HasDefault](size: int = 0): seq[T] {.nodestroy.} =
+func newSeq*[T](): seq[T] {.nodestroy, inline.} =
+  ## Creates an empty sequence. No element is made, so `T` needs no default
+  ## value: a `seq` of a not-nil ref starts empty and grows by `add`.
+  result = seq[T](len: 0, data: nil)
+
+func newSeq*[T: HasDefault](size: int): seq[T] {.nodestroy.} =
   ## Creates a new sequence of length `size` with default-initialized elements.
   if size == 0:
     result = seq[T](len: size, data: nil)
