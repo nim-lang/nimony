@@ -848,10 +848,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       # nested statement body would stay unlowered here.
       # `-d:firFallbackProbe` lists what reaches this branch.
       when defined(firFallbackProbe):
-        if n.isTagLit:
-          stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
-        else:
-          stderr.writeLine "FIR-FALLBACK " & $n.kind
+        stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
       trExpr c, dest, n
 
 proc stripAnalysisFactsInto(dest: var TokenBuf; n: var Cursor) =
