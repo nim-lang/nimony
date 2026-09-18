@@ -155,7 +155,7 @@ proc encodeMessage*(m: Message; s: var seq[char]) =
         dot += 1
       s.add char(octet)
     of RTypeCname, RTypePtr:
-      var tmp: seq[char]
+      var tmp: seq[char] = @[]
       tmp.encodeName(a.cname)
       s.put16 uint16(tmp.len)
       for c in tmp: s.add c
