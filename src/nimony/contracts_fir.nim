@@ -36,11 +36,12 @@ emits into the callee stays), and violated, which is an error. See
 `checkRequires` for why undecided is not an error by default and for the two
 module pragmas that move that line.
 
-The answer is not thrown away. A routine with a `.requires` is published twice
-— guarded, and guard-free as `bodyOfRequires` of itself — and a proven call is
-redirected to the guard-free copy; a proven array index loses its bounds. So
-the backend emits a check exactly where this pass left one owed
-(`applyVerdicts`, `splitsOnRequires`).
+The answer is not thrown away. A routine with a `.requires` keeps its body
+under `bodyOfRequires` of its name, without the guard, and its own symbol
+becomes a wrapper that checks the contract and forwards to it; a proven call is
+redirected to the body. A proven array index loses its bounds. So the backend
+emits a check exactly where this pass left one owed (`applyVerdicts`,
+`splitsOnRequires`).
 
 Compile `nimsem` with `-d:contractStats` to get one
 `CONTRACT <verdict> <line> <contract>` line per call site on stderr, and one
@@ -935,16 +936,6 @@ proc bodyOfRequires*(s: SymId): SymId =
     r.add sp.module
   result = pool.symId(r)
 
-proc declaresGlobalStorage(n: Cursor): bool =
-  var n = n
-  if not n.isTagLit: return false
-  if n.stmtKind in {GvarS, GletS, TvarS, TletS}: return true
-  n = sub(n)
-  while n.hasMore:
-    if declaresGlobalStorage(n): return true
-    skip n
-  result = false
-
 proc splitsOnRequires*(decl: Cursor): bool =
   ## Does this routine exist twice — as itself, with the `.requires` guard in
   ## its prologue, and as `bodyOfRequires` of itself, without it? A call the
@@ -953,21 +944,22 @@ proc splitsOnRequires*(decl: Cursor): bool =
   ## gets the guard. That is what makes the split cover indirect uses without
   ## enumerating them.
   ##
+  ## The body exists once, under `bodyOfRequires`; the routine's own symbol is
+  ## a wrapper that checks the contract and forwards to it
+  ## (`emitRequiresWrapper`).
+  ##
   ## Not split: a `method` (a call to it *is* the dispatch, which the body
   ## would bypass), an iterator (inlined, never called), a hook, a routine
-  ## without a body of its own, a generic (its instances are split where they
-  ## are made), and one that declares `{.global.}` storage — two copies would
-  ## be two variables.
+  ## without a body of its own, and a generic (its instances are split where
+  ## they are made).
   if decl.stmtKind notin {ProcS, FuncS, ConverterS}: return false
   let r = asRoutine(decl, SkipInclBody)
   if r.name.kind != SymbolDef or r.isGeneric: return false
   if pool.symString(r.name.symId).startsWith("="): return false
   if r.body.stmtKind notin {StmtsS, ScopeS}: return false
   if not hasPragma(r.pragmas, RequiresP): return false
-  if hasPragma(r.pragmas, AssemblerP) or hasPragma(r.pragmas, ImportcP) or
-     hasPragma(r.pragmas, ImportcppP) or hasPragma(r.pragmas, ImportjsP):
-    return false
-  result = not declaresGlobalStorage(r.body)
+  result = not (hasPragma(r.pragmas, AssemblerP) or hasPragma(r.pragmas, ImportcP) or
+                hasPragma(r.pragmas, ImportcppP) or hasPragma(r.pragmas, ImportjsP))
 
 proc collectSplitRoutines(n: var Cursor; splits: var HashSet[SymId]) =
   ## The module's own split routines: every top-level one, instances included
@@ -5059,10 +5051,11 @@ type
     dischargedIndexes: HashSet[int]
     provenCalls: HashSet[int]
 
-proc freshCopyName(s: SymId): SymId =
-  ## The name a declaration gets inside the guard-free copy of a routine: the
-  ## copy is a second routine, and what it declares — parameters, locals,
-  ## labels, nested routines — must not be the first one's.
+proc freshBodyName(s: SymId): SymId =
+  ## The name a declaration of the body's header gets — its parameters, the
+  ## `result` its `.ensures` binds. The wrapper keeps the routine's own names:
+  ## its guard is rendered into the panic message, and that has to name the
+  ## parameters as the programmer wrote them.
   let sp = splitSymName(pool.symString(s))
   var r = derivedName(sp.name, "b")
   if sp.module.len > 0:
@@ -5070,14 +5063,14 @@ proc freshCopyName(s: SymId): SymId =
     r.add sp.module
   result = pool.symId(r)
 
-proc collectCopyDefs(n: Cursor; ren: var Table[SymId, SymId]) =
+proc collectHeaderDefs(n: Cursor; ren: var Table[SymId, SymId]) =
   var n = n
   if n.kind == SymbolDef:
-    ren[n.symId] = freshCopyName(n.symId)
+    ren[n.symId] = freshBodyName(n.symId)
   elif n.isTagLit:
     n = sub(n)
     while n.hasMore:
-      collectCopyDefs(n, ren)
+      collectHeaderDefs(n, ren)
       skip n
 
 proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; v: Verdicts;
@@ -5128,22 +5121,24 @@ proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; v: Verdicts;
   else:
     dest.takeTree n
 
-proc copyGuardFreeBody(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
-  ## The second copy of a routine split on its `.requires`: named
-  ## `bodyOfRequires` of the routine, and carrying the contract as `(assume …)`
-  ## — on the body it is what may be taken for granted, not what is checked,
-  ## so `desugar` emits no guard for it. It is a plain `proc` whatever the
-  ## original was, and it is never `exportc`: C already has that name.
+proc emitRequiresBody(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
+  ## The routine as written, under `bodyOfRequires` of its name and carrying
+  ## the contract as `(assume …)`: on the body it is what may be taken for
+  ## granted, not what is checked, so `desugar` emits no guard for it. It is a
+  ## plain `proc` whatever the original was, and never `exportc` — C knows the
+  ## routine by the wrapper's name.
   var ren = initTable[SymId, SymId]()
   var n = decl
-  let r = asRoutine(decl, SkipInclBody)
-  let name = r.name.symId
-  collectCopyDefs(decl, ren)
-  ren[name] = bodyOfRequires(name)
   let kind = if n.stmtKind == ConverterS: ProcS else: n.stmtKind
-  dest.addParLe kind, n.info
   n = sub(n)
-  var i = 0
+  var h = n
+  for i in 0 ..< BodyPos:
+    if i >= ParamsPos: collectHeaderDefs(h, ren)
+    skip h
+  dest.addParLe kind, decl.info
+  dest.addSymDef bodyOfRequires(n.symId), n.info
+  inc n
+  var i = 1
   while n.hasMore:
     if i == ProcPragmasPos and n.substructureKind == PragmasU:
       dest.addParLe(n.cursorTagId, n.info)
@@ -5166,6 +5161,60 @@ proc copyGuardFreeBody(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
     inc i
   dest.addParRi()
 
+proc emitRequiresWrapper(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
+  ## The routine's own symbol: its header — so the `.requires` that `desugar`
+  ## turns into the guard stays here, along with `exportc`, the calling
+  ## convention and everything an importer reads — and a body that forwards
+  ## every parameter to `bodyOfRequires`:
+  ##
+  ##   (result :r T .) (asgn r (call body p1 … pn)) (ret r)
+  ##
+  ## which is exactly what sem writes for a routine whose body is one call, so
+  ## every later pass already knows it: parameters are passed as they are,
+  ## whether `var`, `sink` or `openArray`, and a `var T` result is a `result` of
+  ## that type. Shoggoth's `tailcalls` folds the pair into `(ret (call …))`.
+  var noRen = initTable[SymId, SymId]()
+  var n = decl
+  let r = asRoutine(decl, SkipInclBody)
+  let name = r.name.symId
+  let info = n.info
+  n = sub(n)
+  dest.addParLe(decl.cursorTagId, info)
+  dest.takeTree n            # the name, a def: the wrapper IS the routine
+  for i in 1 ..< BodyPos:
+    copyWithVerdicts dest, n, v, noRen
+  # the forwarding body; its `result` is named apart from the routine's own
+  let hasResult = r.retType.kind != DotToken
+  let res = pool.symId("result`wres.0")
+  dest.addParLe StmtsS, info
+  if hasResult:
+    dest.addParLe ResultS, info
+    dest.addSymDef res, info
+    dest.addDotToken()       # not exported
+    dest.addDotToken()       # no pragmas
+    var t = r.retType
+    copyWithVerdicts dest, t, v, noRen
+    dest.addDotToken()       # no value
+    dest.addParRi()
+    dest.addParLe AsgnS, info
+    dest.addSymUse res, info
+  dest.addParLe CallS, info
+  dest.addSymUse bodyOfRequires(name), info
+  var p = r.params
+  if p.isTagLit:
+    p = sub(p)
+    while p.hasMore:
+      dest.addSymUse asLocal(p).name.symId, info
+      skip p
+  dest.addParRi()            # call
+  if hasResult:
+    dest.addParRi()          # asgn
+    dest.addParLe RetS, info
+    dest.addSymUse res, info
+    dest.addParRi()
+  dest.addParRi()            # stmts
+  dest.addParRi()            # the routine
+
 proc applyVerdictsTopLevel(dest: var TokenBuf; n: var Cursor; v: Verdicts;
                            splits: HashSet[SymId]) =
   ## Top-level statements: a split routine is emitted twice, guarded and
@@ -5179,9 +5228,9 @@ proc applyVerdictsTopLevel(dest: var TokenBuf; n: var Cursor; v: Verdicts;
   elif n.isTagLit and n.symKind in RoutineKinds and
       asRoutine(n).name.kind == SymbolDef and asRoutine(n).name.symId in splits:
     let decl = n
-    var noRen = initTable[SymId, SymId]()
-    copyWithVerdicts dest, n, v, noRen
-    copyGuardFreeBody dest, decl, v
+    emitRequiresBody dest, decl, v
+    emitRequiresWrapper dest, decl, v
+    skip n
   else:
     var noRen = initTable[SymId, SymId]()
     copyWithVerdicts dest, n, v, noRen

@@ -469,42 +469,55 @@ In rough dependency order:
    and the decision — the part that had to move — is the prover's either way.
    Over `tall`, 1158 of 1279 index obligations are discharged.
 
-   **`.requires`.** A routine that `splitsOnRequires` is published twice: as
-   itself, keeping the `.requires` that `desugar` turns into the guard, and as
-   `bodyOfRequires` of itself — `derivedName(stem, "body")`, so a module that
-   proves a call to an *imported* routine names the body by rule — carrying
-   the contract as `(assume …)`, which no pass turns into a guard. A call the
-   prover discharges is redirected to the body; everything else can only name
-   the routine. Over `tall`, 3851 of 6260 call sites are proven.
+   **`.requires`.** A routine that `splitsOnRequires` is published twice. Its
+   body lives on once, under `bodyOfRequires` of its name —
+   `derivedName(stem, "body")`, so a module that proves a call to an
+   *imported* routine names it by rule — carrying the contract as
+   `(assume …)`, which no pass turns into a guard. The routine's own symbol
+   becomes the wrapper: the header as written, so the `.requires` `desugar`
+   turns into the guard stays there, and a body that forwards every parameter
+   (`emitRequiresWrapper`):
 
-   Where this differs from *`.requires`: function duplication* above:
-   - **The wrapper is a full copy, not a guard plus a tail call.** A tail call
-     has to forward every parameter in its post-`derefs` spelling — `var`,
-     `sink`, `openArray`, `lent` results, a closure's environment — and each is
-     its own way to get it subtly wrong. A full copy has no forwarding at all,
-     and on the unproven path it *is* today's code, so "the wrapper must be free
-     on the unproven path" holds trivially. The cost is IR size: 212 copies,
-     2.1% of the published nifs over `tall`. What reaches C is smaller, not
-     larger (−1.6% over `tall`): a copy nothing calls is dead-code eliminated,
-     and every proven call site loses its guard.
-   - **The body's declarations are renamed** (`freshCopyName`) — its
-     parameters, locals, labels and nested routines — because it is a second
-     routine, and a nested routine or type would otherwise be hoisted twice
-     under one name.
-   - **Not split:** a `method` (a call to it *is* the dispatch, which the body
-     would bypass — the table's "methods hold the wrapper" is stricter here:
-     they are never redirected), a routine nested in another (its copy would
-     be needed in both copies of the enclosing one), and a routine that
-     declares `{.global.}` storage (two copies would be two variables). Hooks,
-     iterators and bodyless routines are not split either.
-   - **The split is not build-mode dependent yet.** nimsem does not know that
-     bound checks are off; with them off both copies are the same code and
-     dead-code elimination drops the one nothing calls.
+   ```
+   (result :r T .) (asgn r (call f`body p1 … pn)) (ret r)
+   ```
+
+   That is exactly what sem writes for a routine whose body is one call, so
+   no pass needs to learn anything: a `var`, `sink` or `openArray` parameter
+   is passed as it is, and a `var T` result is a `result` of that type.
+   Shoggoth's `tailcalls` folds the pair into `(ret (call …))`, so the tail
+   call is Shoggoth's existing spelling, confined to its output as that pass
+   asks; `lengcgen` never emits it. The body's header declarations — its
+   parameters, the `result` its `.ensures` binds — get fresh names
+   (`freshBodyName`); the wrapper keeps the originals, because its guard is
+   rendered into the panic message. A call the prover discharges goes to the
+   body; everything else can only name the routine. Over `tall`, 3851 of 6260
+   call sites are proven.
+
+   A first version made the wrapper a full copy of the routine instead, on the
+   assumption that forwarding parameters in their post-`derefs` spelling would
+   be fragile. It is not: the published IR spells every forwarded parameter as
+   a bare symbol. The full copy had cost what a second body costs — every
+   declaration inside it renamed, `{.global.}` storage excluded because two
+   copies are two variables, 2.1% of the published nifs — and bought nothing
+   at run time: against it the wrapper measures the same on `matmul` and
+   `nifbench` (within noise), the same executables to a few bytes, and 0.4%
+   smaller published nifs over `tall`. In practice a wrapper does not survive
+   as a function: it is small enough for the inliner, which folds it into its
+   unproven callers, and dead-code elimination drops it.
+
+   Not split: a `method` (a call to it *is* the dispatch, which the body
+   would bypass — stricter than "methods hold the wrapper" in the table
+   above: they are never redirected) and a routine nested in another (its
+   wrapper and body would both have to live in the enclosing one; top-level
+   only keeps the rule simple). Hooks, iterators and bodyless routines are
+   not split either. The split is not build-mode dependent yet: nimsem does
+   not know that bound checks are off, and with them off the wrapper is a
+   plain forwarder the inliner removes.
 
    Measured against the same compiler with the redirect disabled: `matmul`
-   and `nifbench` kernels run 1–6% faster (a couple within noise); the
-   executables are a few hundred bytes smaller; `tall` compiles in the same
-   time.
+   and `nifbench` kernels run 1–6% faster (a couple within noise), the C
+   over `tall` is 1.6% smaller, and `tall` compiles in the same time.
 
    **Left: *What dies*.** `activeChecks` still exists, because `--boundchecks`
    and `-d:danger` are still a backend flag: `desugar` needs it to decide
