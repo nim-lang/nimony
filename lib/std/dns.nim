@@ -30,7 +30,7 @@ import std/locks
 import std/atomics
 import std/assertions
 
-from std/posix/posix import Sockaddr_storage
+from std/ioring import Sockaddr_storage
 
 const
   MaxPtrLabels = 64
