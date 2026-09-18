@@ -260,15 +260,23 @@ proc buildPluginNif*(macroDecl: Cursor; macroSym: SymId;
 # Driver: write the NIF, build with Nimony, exec at call sites
 # ----------------------------------------------------------------------------
 
-proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
+proc macroFileStem(macroSym: SymId): string =
+  ## `macro_<sym>` with the symbol's full NIF name (module suffix included),
+  ## made file-name safe. The name, not the `SymId` number: that is an index
+  ## into one process's pool, so two nimsem processes of the same build (one
+  ## per module, run side by side by `nifmake -j`) hand out the same numbers,
+  ## and every file named after one was shared between unrelated macros —
+  ## their plugin builds clobbered each other's host caches.
   let symName = pool.symString(macroSym)
-  var cleanName = ""
+  result = "macro_"
   for ch in symName:
     if ch in {'a'..'z', 'A'..'Z', '0'..'9', '_'}:
-      cleanName.add ch
+      result.add ch
     else:
-      cleanName.add '_'
-  result = nifcachePath / "macro_" & cleanName
+      result.add '_'
+
+proc getMacroPluginPath*(nifcachePath: string; macroSym: SymId): string =
+  result = nifcachePath / macroFileStem(macroSym)
   when defined(windows):
     result.add ".exe"
 
@@ -287,7 +295,7 @@ proc compileMacroPlugin*(nifcachePath: string; macroDecl: Cursor; macroSym: SymI
   ## it as a `.p.nif`, and have Nimony compile it through `s` (the NIF-input
   ## entry point — same one CTFE uses in `semos.runEval`).
   let exePath = getMacroPluginPath(nifcachePath, macroSym)
-  let pluginBaseName = "macro_" & $macroSym.int
+  let pluginBaseName = macroFileStem(macroSym)
 
   # A macro plugin is a HOST-native executable, so it must be built with a
   # host-consistent toolchain config (host word size, host stdlib layouts). The
@@ -398,8 +406,9 @@ proc runMacroPlugin*(nifcachePath: string; dest: var TokenBuf;
     echo "Macro plugin not found: ", exePath
     return false
 
-  let inputPath = nifcachePath / "macro_in_" & $macroSym.int & ".nif"
-  let outputPath = nifcachePath / "macro_out_" & $macroSym.int & ".nif"
+  let stem = macroFileStem(macroSym)
+  let inputPath = nifcachePath / stem & ".in.nif"
+  let outputPath = nifcachePath / stem & ".out.nif"
   try:
     writeFile(inputPath, toString(args))
   except:
