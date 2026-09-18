@@ -1172,12 +1172,25 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
         typ: n,
         def: currentState,
         use: currentState)
+      # so `isPassiveCall` can type a call whose target is this local
+      c.typeCache.registerLocal(mine, cast[SymKind](sk), n)
       skip n # type
+      if n.hasMore and c.hooks.isPassiveCall(c, n):
+        # `let x = passiveCall()`: `x`'s address is the callee's result slot,
+        # written when the callee completes — after this state proc returned.
+        # So `x` lives in the frame whatever states it is read in.
+        c.currentProc.localToEnv.getOrQuit(mine).use = AddressTaken
       while n.hasMore:
         escapingLocalsImpl c, n, currentState # the value
   else:
     case n.kind
     of TagLit:
+      if sk == AsgnS:
+        var rhs = n.childCursor
+        skip rhs
+        if c.hooks.isPassiveCall(c, rhs):
+          # `x = passiveCall()`: the same result slot as the `let` above.
+          markAddressTaken c, n.childCursor
       if n.exprKind in {AddrX, HaddrX}:
         markAddressTaken c, n.childCursor
       elif n.exprKind in CallKinds and establishesBorrow(c, n):
@@ -1203,7 +1216,11 @@ proc escapingLocals*(c: var Context; n: Cursor) =
   if n.isDotToken: return
   var currentState = 0
   var n = n
+  # The locals registered on the way are this walk's own; the main traversal
+  # registers them again.
+  c.typeCache.openScope()
   escapingLocalsImpl c, n, currentState
+  c.typeCache.closeScope()
 
 proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
   var n = n
