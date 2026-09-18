@@ -19,7 +19,10 @@ if arg("bindir").len > 0: toolchainDir = arg("bindir")
 if arg("cachedir").len > 0: nimcacheDir = arg("cachedir")
 
 # The validator reads what sem produced, so the suite builds nimony too and
-# semchecks its inputs itself.
-buildValidator()
-buildNimony()
+# semchecks its inputs itself -- unless the tree walk says the toolchain is
+# current (`--no-build`): it runs this suite next to tests that are using
+# `bin/nimony`, and relinking it under them fails on Windows.
+if "--no-build" notin commandLineParams():
+  buildValidator()
+  buildNimony()
 validatorTests(overwrite)

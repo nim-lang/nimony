@@ -2,34 +2,95 @@
 ## `hastur test`/`hastur joined` subprocess with a private `nimcache/`, plus the
 ## shared-cache warmup and prebuild that keep a cold pool from thrashing.
 
-import std / [syncio, os, osproc, strutils, times, typedthreads, locks]
-when defined(windows):
-  import std/winlean
-else:
-  import std/posix
+import std / [syncio, os, osproc, strutils, times, typedthreads, locks, tables,
+             algorithm]
 
-import context, counters, category
+import context, counters, category, concurrent
 
 type WorkItem* = object
-  ## One unit of work for the parallel pool: either a single test file, or a
-  ## whole directory's joined group. `weight` is how many tests the unit
-  ## accounts for, so the run's totals stay per-test even though a group is a
-  ## single process.
+  ## One unit of work for the parallel pool: a single test file, a whole
+  ## directory's joined group, or a directory owned by a `setup.nim` runner.
+  ## `weight` is how many tests the unit accounts for, so the run's totals stay
+  ## per-test even though a group is a single process.
   path*: string
   joined*: bool
+  setup*: bool
+    ## A `setup.nim` suite (`boot`, `validator`, …). Run by `hastur test <dir>`
+    ## like any other item, so the suites overlap with the test pool instead of
+    ## running one after the other before it starts.
   weight*: int
   native*: bool
     ## Compiled by `nimony n` (see `nativelist.walkUsesNative`). The worker
     ## decides this for itself from the same inputs; the parent needs to know
     ## it too, because the two backends take their cache prefill from
     ## different warmups and handing a native item the C one breaks its build.
+  noPrefill*: bool
+    ## Start from an empty cache rather than the warmup's. A `setup.nim` suite
+    ## has no use for it, and `--noSystem`/`--compat` compiles must not see a
+    ## `system` built without those flags: nifmake's staleness check is by
+    ## mtime only, so it would take the prefilled one as up to date.
 
 
 proc canRunParallel*(cat: Category): bool {.inline.} =
-  ## `Compat` and `Basics` reset `nimcache/` around the loop and so are
-  ## not parallel-safe with the current single-cache layout. Other
-  ## categories use isolated per-test cache dirs and parallelize fine.
+  ## Every category runs in the pool: each item gets a cache dir of its own,
+  ## so the `nimcache/` reset that `Compat` and `Basics` need between tests is
+  ## a given there. Only a serial (`--jobs:1`) run still shares one cache.
+  true
+
+proc prefillable*(cat: Category): bool {.inline.} =
+  ## See `WorkItem.noPrefill`.
   cat notin {Compat, Basics}
+
+# ---- scheduling: longest first, by what the previous runs measured ----------
+
+const TimesFile = "nimcache_static" / "hastur.times"
+  ## How long each work item took the last time it ran, one `seconds<TAB>path`
+  ## per line. `nimcache_static/` because `nimcache/` itself is wiped by every
+  ## `hastur build`, i.e. by every tree walk.
+
+proc itemKey(it: WorkItem): string = normalizeDirKey(it.path)
+
+proc loadTimes(): Table[string, float] =
+  result = initTable[string, float]()
+  if not fileExists(TimesFile): return
+  try:
+    for line in lines(TimesFile):
+      let tab = line.find('\t')
+      if tab > 0:
+        try: result[line.substr(tab + 1)] = parseFloat(line.substr(0, tab - 1))
+        except ValueError: discard
+  except IOError, OSError:
+    discard
+
+proc saveTimes(times: Table[string, float]) =
+  var keys: seq[string] = @[]
+  for k in keys(times): keys.add k
+  sort keys
+  var s = ""
+  for k in keys:
+    s.add formatFloat(times[k], ffDecimal, precision = 2)
+    s.add '\t'
+    s.add k
+    s.add '\n'
+  try:
+    createDir TimesFile.parentDir
+    writeFile(TimesFile, s)
+  except IOError, OSError:
+    discard  # only an ordering hint; the next run just guesses again
+
+proc scheduleLongestFirst*(items: var seq[WorkItem]) =
+  ## Put the long poles first so the pool's tail is short. An item that has
+  ## run before is ranked by its measured duration; a new one is guessed from
+  ## its weight, and a `setup.nim` suite, which is typically a whole build (or
+  ## three, for `boot`), goes to the front.
+  let times = loadTimes()
+  proc estimate(it: WorkItem): float =
+    result = times.getOrDefault(itemKey(it), -1.0)
+    if result < 0:
+      result = if it.setup: 1e9 else: it.weight.float * 5.0
+  sort items, proc (a, b: WorkItem): int =
+    result = cmp(estimate(b), estimate(a))
+    if result == 0: result = cmp(a.path, b.path)
 
 proc warmupSharedCache(native = false): string =
   ## Compile `tools/warmup.nim` once into `nimcache/warmup/` so each
@@ -151,10 +212,6 @@ proc prebuildSharedObjects(forward: string) =
     # the cause is visible rather than silently degrading.
     stderr.writeLine "prebuild: shared object compile failed: " & cmd
 
-var warmupCopySeconds: float = 0
-  ## Aggregate prefill cost across one parallel run, reported alongside
-  ## the test counts.
-
 proc copyPreservingMtime(src, dst: string) =
   ## Copy `src` to `dst` and stamp `dst` with `src`'s mtime. Mtime
   ## preservation is load-bearing: `nifmake.needsRebuild` keys off
@@ -173,99 +230,51 @@ proc copyPreservingMtime(src, dst: string) =
   except OSError, IOError:
     discard  # best-effort; falling back to a cold per-test compile is fine
 
-proc prefillFromWarmup(warmupCache, cacheDir: string) =
+proc prefillFromWarmup*(warmupCache, cacheDir: string) =
+  ## Called by the WORKER (`--prefill:`), not by the pool: a prefill is ~130
+  ## file copies, which on Windows costs a third of a second, and done by the
+  ## parent it was ~100s of a run spent on the one thread that launches the
+  ## next item — with the slots waiting for it.
   if warmupCache.len == 0 or not dirExists(warmupCache):
     return
-  let t0 = epochTime()
   for path in walkDirRec(warmupCache, yieldFilter = {pcFile}, relative = true):
     let dst = cacheDir / path
     try: createDir(dst.parentDir)
     except OSError: discard
     copyPreservingMtime(warmupCache / path, dst)
-  warmupCopySeconds += epochTime() - t0
-
-type
-  ReaderArg = object
-    ## Pure value-type passed to a reader thread: just an OS handle and a
-    ## pointer to a shared `Lock`. No `ref`, no string transfer across
-    ## threads. The worker accumulates output in a thread-local string,
-    ## allocated and freed in the same thread it lives in, and prints
-    ## under the lock so concurrent slots don't interleave their
-    ## per-test output. Earlier designs that handed the string back to
-    ## the main thread (via ref, channel, or ptr-string) all hit
-    ## `addToSharedFreeListBigChunks` SIGSEGVs in the runtime when ORC
-    ## tried to free a worker-allocated big chunk on the main thread —
-    ## keeping every alloc and dealloc thread-local sidesteps that.
-    handle: int      # cast of the child's stdout `FileHandle` to int.
-    lockPtr: pointer # ptr Lock guarding stdout.
-
-proc drainStdout(arg: ReaderArg) {.thread, nimcall.} =
-  ## Background reader: pulls bytes off the child's pipe as they arrive so
-  ## the child never blocks on a full pipe buffer. The previous one-shot
-  ## drain (only after `peekExitCode` reported the child gone) deadlocked
-  ## on Windows: clang on the generated C emits enough `-W…-cast`
-  ## warnings during a normal compile to fill the ~4KB pipe buffer, the
-  ## child then blocks on its next write, the parent's `peekExitCode`
-  ## never advances past -1, and the whole `--jobs:auto` run hangs
-  ## producing zero output. Streaming as we go fixes that.
-  ##
-  ## At EOF we flush the accumulated buffer to stdout under
-  ## `lockPtr[]` so the per-test block stays atomic relative to other
-  ## slots' reads.
-  var buf = newStringOfCap(1 shl 12)
-  var tmp = newString(4096)
-  while true:
-    var n: int = 0
-    when defined(windows):
-      var bytesRead: int32 = 0
-      let ok = winlean.readFile(cast[Handle](arg.handle), tmp[0].addr,
-                                tmp.len.int32, addr bytesRead, nil)
-      # `readFile` returns 0 on error; ERROR_BROKEN_PIPE is the normal EOF
-      # when the child closes its stdout, and it's also signaled by
-      # `bytesRead == 0` with success. Treat both as EOF.
-      if ok == 0'i32 or bytesRead == 0'i32: break
-      n = bytesRead.int
-    else:
-      n = posix.read(arg.handle.cint, tmp[0].addr, tmp.len)
-      if n <= 0: break
-    let prevLen = buf.len
-    buf.setLen(prevLen + n)
-    copyMem(addr buf[prevLen], addr tmp[0], n)
-  let lock = cast[ptr Lock](arg.lockPtr)
-  acquire lock[]
-  try:
-    stdout.write buf
-    stdout.flushFile()
-  finally:
-    release lock[]
 
 proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
                      overwrite: bool; cat: Category; forward: string;
                      jobs: int) =
   ## Run each work item in its own subprocess (`bin/hastur test ...` for a
-  ## file, `bin/hastur joined ...` for a directory's group) with a per-item
-  ## `--cacheDir` so concurrent compilations cannot collide on intermediates.
-  ## Up to `jobs` subprocesses run at once. Test results are streamed in
+  ## file or a `setup.nim` directory, `bin/hastur joined ...` for a
+  ## directory's group) with a per-item `--cacheDir` so concurrent
+  ## compilations cannot collide on intermediates. Up to `jobs` subprocesses
+  ## run at once, in the order of `items`. Test results are streamed in
   ## completion order; final pass/fail counts go into the shared `c`.
   let hastur = getAppFilename()
   prebuildSharedObjects(forward)
-  let warmupCache = warmupSharedCache()
+  var anyPrefill = false
+  var anyNative = false
+  for it in items:
+    if not it.noPrefill:
+      anyPrefill = true
+      if it.native: anyNative = true
+  let warmupCache = if anyPrefill: warmupSharedCache() else: ""
   # Seeded only when something in this run actually wants it: on every host but
   # Windows no item is native, and paying for a second warmup compile there
   # would be pure loss.
-  var anyNative = false
-  for it in items: (if it.native: anyNative = true)
   let nativeWarmupCache = if anyNative: warmupSharedCache(native = true) else: ""
-  warmupCopySeconds = 0
   let parallelStart = epochTime()
-  var queue: seq[(int, WorkItem)] = @[]   # (idx, item) preserving input order
-  for i, it in pairs(items): queue.add (i, it)
+  var times = loadTimes()
+  let queue = @items   # `launch` captures it; an openArray cannot be
   var head = 0
 
   type Slot = object
     p: Process
     idx: int
     item: WorkItem
+    started: float
     reader: Thread[ReaderArg]
   var slots = newSeq[Slot](jobs)
   var active = 0
@@ -274,12 +283,15 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
 
   proc launch(slot: int) =
     if head >= queue.len: return
-    let (idx, item) = queue[head]
+    let idx = head
+    let item = queue[head]
     inc head
     let cacheDir = nimcacheDir / ".par" / $idx
-    prefillFromWarmup(if item.native: nativeWarmupCache else: warmupCache, cacheDir)
     var args = @[(if item.joined: "joined" else: "test"),
-                 "--no-build", "--cachedir:" & cacheDir]
+                 "--no-build", "--cachedir:" & cacheDir, "--scratch"]
+    if not item.noPrefill:
+      let warmup = if item.native: nativeWarmupCache else: warmupCache
+      if warmup.len > 0: args.add "--prefill:" & warmup
     # Forward the parent's resolved toolchain dir so each worker uses the
     # exact same binaries (the default is now hastur's own sibling dir, an
     # absolute path, not the literal "bin").
@@ -298,7 +310,7 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
     args.add item.path
     let p = startProcess(hastur, args = args,
         options = {poStdErrToStdOut, poUsePath})
-    slots[slot] = Slot(idx: idx, item: item, p: p)
+    slots[slot] = Slot(idx: idx, item: item, p: p, started: epochTime())
     let arg = ReaderArg(handle: p.outputHandle.int,
                         lockPtr: cast[pointer](addr stdoutLock))
     createThread(slots[slot].reader, drainStdout, arg)
@@ -317,6 +329,7 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
         # tally the result and reuse the slot.
         joinThread(slots[s].reader)
         slots[s].p.close()
+        times[itemKey(slots[s].item)] = epochTime() - slots[s].started
         inc c.total, slots[s].item.weight
         if exit != 0:
           # A `test` worker exits 1; a `joined` worker exits with how many of
@@ -336,8 +349,6 @@ proc parallelTestDir*(c: var TestCounters; items: openArray[WorkItem];
       sleep(2)
 
   deinitLock(stdoutLock)
-  if warmupCache.len > 0:
-    echo "warmup prefill total: ",
-         formatFloat(warmupCopySeconds, ffDecimal, precision=2), "s; ",
-         "parallel run: ",
-         formatFloat(epochTime() - parallelStart, ffDecimal, precision=2), "s."
+  saveTimes(times)
+  echo "parallel run: ",
+       formatFloat(epochTime() - parallelStart, ffDecimal, precision=2), "s."

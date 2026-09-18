@@ -6,7 +6,7 @@
 # NIF differs.
 #
 # This test exercises the codepath; the visible difference is in the plugin's
-# `macro_out_*.nif`:
+# `macro_*.out.nif`:
 #   brOpen      → (call succ.0.sysvq0asl 0)
 #   brForceOpen → (call (ochoice succ.0.sysvq0asl) 0)
 import std / [syncio, macros]
