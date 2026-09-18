@@ -96,8 +96,9 @@ type
     param: SymId
     value: Cursor
     temps: seq[(SymId, Cursor)]
-      ## The `{.inline.}` temps `value` refers to. An imported routine is never
-      ## traversed, so they are registered from here when the accessor is used.
+      ## The `{.inline.}` temps `value` refers to, with what they stand for.
+      ## Like `param` they are the accessor's own symbols, so reading `value`
+      ## substitutes them (`accessorSubst`).
 
   BorrowInfo = object
     borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
@@ -1019,28 +1020,28 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
   value = val
   result = true
 
-proc registerAccessorTemps(c: var FirContext; a: AccessorInfo) =
+proc accessorSubst(a: AccessorInfo): Table[SymId, Cursor] =
+  ## The substitution reading `a.value` needs for its temps; a caller that
+  ## applies the accessor to an argument adds `a.param`.
+  result = initTable[SymId, Cursor]()
   for it in a.temps:
-    if not c.inlineVars.hasKey(it[0]):
-      c.inlineVars[it[0]] = it[1]
+    result[it[0]] = it[1]
 
-proc accessorOf(c: var FirContext; fnSym: SymId; param: var SymId; value: var Cursor): bool =
+proc accessorOf(c: var FirContext; fnSym: SymId; a: var AccessorInfo): bool =
   ## `c.accessors` is filled by a pre-pass over the module being analysed, which
   ## is what makes a *generic instance* such as `len.3.Ixyz` — created in this
   ## module and therefore not in `programs` yet — look-through-able. An imported
   ## routine is read from its interface instead.
   if c.accessors.hasKey(fnSym):
-    let a = c.accessors.getOrQuit(fnSym)
-    param = a.param
-    value = a.value
-    registerAccessorTemps(c, a)
+    a = c.accessors.getOrQuit(fnSym)
     return true
   if fnSym in c.notAccessors: return false
   let s = tryLoadSym(fnSym)
+  var param = NoSymId
+  var value = default(Cursor)
   var temps: seq[(SymId, Cursor)] = @[]
   if s.status == LacksNothing and matchAccessor(s.decl, param, value, temps):
-    let a = AccessorInfo(param: param, value: value, temps: ensureMove temps)
-    registerAccessorTemps(c, a)
+    a = AccessorInfo(param: param, value: value, temps: ensureMove temps)
     c.accessors[fnSym] = a
     return true
   c.notAccessors.incl fnSym
@@ -1105,9 +1106,8 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     let arg = r
     skip r
     if r.hasMore: return false # more than one argument
-    var accessorParam = NoSymId
-    var accessorValue = default(Cursor)
-    if accessorOf(c, fnSym, accessorParam, accessorValue):
+    var acc = default(AccessorInfo)
+    if accessorOf(c, fnSym, acc):
       # Key the *path the accessor returns*, so that `len(s)` and the `s.len`
       # written inside the defining module are one and the same location.
       # The argument is resolved against the substitution in flight *first*: in
@@ -1118,9 +1118,9 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       # swapped arguments maps `a` to `b` and `b` back to `a`.
       let resolved = argOf(arg, subst)
       if resolved.isSymbol or not resolved.isTagLit or subst.len == 0:
-        var inner = initTable[SymId, Cursor]()
-        inner[accessorParam] = resolved
-        return locationKey(c, accessorValue, inner, root, key, steps, depth+1)
+        var inner = accessorSubst(acc)
+        inner[acc.param] = resolved
+        return locationKey(c, acc.value, inner, root, key, steps, depth+1)
       # A path argument (`len(b.data)`) still names the callee's parameters
       # inside: key it under the substitution in flight, then graft the path
       # the accessor returns onto it.
@@ -1131,10 +1131,11 @@ proc locationKey(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
       var own = NoSymId
       var ownKey = ""
       var ownSteps = 0
-      let noSubst = initTable[SymId, Cursor]()
-      if not locationKey(c, accessorValue, noSubst, own, ownKey, ownSteps, depth+1): return false
-      let paramKey = "v" & $uint32(accessorParam)
-      if own != accessorParam or not ownKey.startsWith(paramKey) or
+      # in terms of the accessor's own parameter: only its temps are resolved
+      let ownSubst = accessorSubst(acc)
+      if not locationKey(c, acc.value, ownSubst, own, ownKey, ownSteps, depth+1): return false
+      let paramKey = "v" & $uint32(acc.param)
+      if own != acc.param or not ownKey.startsWith(paramKey) or
           (ownKey.len > paramKey.len and ownKey[paramKey.len] notin {'.', '-'}):
         return false
       root = argRoot
@@ -1268,20 +1269,19 @@ proc offsetAccessor(c: var FirContext; n: Cursor; subst: Table[SymId, Cursor];
     r = sub(r)
     let fnSym = extractSymId(r)
     skip r # the callee
-    var param = NoSymId
-    var value = default(Cursor)
-    if fnSym != NoSymId and r.hasMore and accessorOf(c, fnSym, param, value):
-      # a call of a transparent accessor, `param` standing for `arg`
+    var acc = default(AccessorInfo)
+    if fnSym != NoSymId and r.hasMore and accessorOf(c, fnSym, acc):
+      # a call of a transparent accessor, its parameter standing for `arg`
       let arg = r
       skip r
-      let body = peelExpr(value)
+      let body = peelExpr(acc.value)
       if not r.hasMore and body.exprKind in {AddX, SubX}:
         # ... with exactly that one argument, and a body `path ± k`
         var b = body
         b = sub(b)
         skip b # the type operand
-        var inner = initTable[SymId, Cursor]()
-        inner[param] = argOf(arg, subst)
+        var inner = accessorSubst(acc)
+        inner[acc.param] = argOf(arg, subst)
         # Not `locationVarId`: that asks the type cache about the path, which
         # names the accessor's own parameter.
         var root = NoSymId
