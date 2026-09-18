@@ -455,9 +455,62 @@ In rough dependency order:
    Measured over the `tjson` closure the published nifs grow 11.8%. `tall`
    compiles in 4.3 s against 4.4 s: the lowering used to run twice, once for
    the prover and once in hexer, and now runs once.
-5. Move emission into the contract pass: `arrat` first (small, self-contained,
-   measurable), then the `.requires` split. Delete everything under *What
-   dies*.
+5. **Both halves done; *What dies* is not.** The contract pass writes its
+   verdicts into the module it publishes (`contracts_fir.applyVerdicts`), and
+   the backend emits a check exactly where a verdict left one owed.
+
+   **`arrat`.** A discharged index loses the bounds it was stated as —
+   `(arrat a i)`, or `(arrat a i . lo)` for an array that does not start at
+   zero. `desugar`/`lengcgen` still emit the check for what keeps its bounds:
+   *marking* instead of *emitting*, a deliberate deviation from the table under
+   `arrat` above. Emitting a check means hoisting a call into statement
+   position, and inside an `and`/`or` operand that runs it on a path the
+   short-circuit excludes; `desugar` already solves that (`trShortCircuit`),
+   and the decision — the part that had to move — is the prover's either way.
+   Over `tall`, 1158 of 1279 index obligations are discharged.
+
+   **`.requires`.** A routine that `splitsOnRequires` is published twice: as
+   itself, keeping the `.requires` that `desugar` turns into the guard, and as
+   `bodyOfRequires` of itself — `derivedName(stem, "body")`, so a module that
+   proves a call to an *imported* routine names the body by rule — carrying
+   the contract as `(assume …)`, which no pass turns into a guard. A call the
+   prover discharges is redirected to the body; everything else can only name
+   the routine. Over `tall`, 3851 of 6260 call sites are proven.
+
+   Where this differs from *`.requires`: function duplication* above:
+   - **The wrapper is a full copy, not a guard plus a tail call.** A tail call
+     has to forward every parameter in its post-`derefs` spelling — `var`,
+     `sink`, `openArray`, `lent` results, a closure's environment — and each is
+     its own way to get it subtly wrong. A full copy has no forwarding at all,
+     and on the unproven path it *is* today's code, so "the wrapper must be free
+     on the unproven path" holds trivially. The cost is IR size: 212 copies,
+     2.1% of the published nifs over `tall`. What reaches C is smaller, not
+     larger (−1.6% over `tall`): a copy nothing calls is dead-code eliminated,
+     and every proven call site loses its guard.
+   - **The body's declarations are renamed** (`freshCopyName`) — its
+     parameters, locals, labels and nested routines — because it is a second
+     routine, and a nested routine or type would otherwise be hoisted twice
+     under one name.
+   - **Not split:** a `method` (a call to it *is* the dispatch, which the body
+     would bypass — the table's "methods hold the wrapper" is stricter here:
+     they are never redirected), a routine nested in another (its copy would
+     be needed in both copies of the enclosing one), and a routine that
+     declares `{.global.}` storage (two copies would be two variables). Hooks,
+     iterators and bodyless routines are not split either.
+   - **The split is not build-mode dependent yet.** nimsem does not know that
+     bound checks are off; with them off both copies are the same code and
+     dead-code elimination drops the one nothing calls.
+
+   Measured against the same compiler with the redirect disabled: `matmul`
+   and `nifbench` kernels run 1–6% faster (a couple within noise); the
+   executables are a few hundred bytes smaller; `tall` compiles in the same
+   time.
+
+   **Left: *What dies*.** `activeChecks` still exists, because `--boundchecks`
+   and `-d:danger` are still a backend flag: `desugar` needs it to decide
+   whether an owed check is emitted at all. Moving that knob into the contract
+   features — the prover then strikes every obligation itself under it — is
+   what finally removes the `activeChecks` path.
 6. `was`, driven by one consumer at a time. Error messages are the cheapest and
    the most immediately visible.
 

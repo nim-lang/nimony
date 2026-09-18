@@ -36,6 +36,12 @@ emits into the callee stays), and violated, which is an error. See
 `checkRequires` for why undecided is not an error by default and for the two
 module pragmas that move that line.
 
+The answer is not thrown away. A routine with a `.requires` is published twice
+— guarded, and guard-free as `bodyOfRequires` of itself — and a proven call is
+redirected to the guard-free copy; a proven array index loses its bounds. So
+the backend emits a check exactly where this pass left one owed
+(`applyVerdicts`, `splitsOnRequires`).
+
 Compile `nimsem` with `-d:contractStats` to get one
 `CONTRACT <verdict> <line> <contract>` line per call site on stderr, and one
 `INDEX discharged|checked <line> <index>` line per array index; that is how the
@@ -167,6 +173,12 @@ type
     root: Cursor                       # the lowered module, for token positions
     dischargedIndexes: HashSet[int]    # positions of `(arrat …)` nodes whose
                                        # bound obligation this pass discharged
+    provenCalls: HashSet[int]          # positions of callee symbols whose
+                                       # `.requires` this pass proved: the call
+                                       # goes to the guard-free body
+    splitRoutines: HashSet[SymId]      # routines that exist twice, guarded and
+                                       # guard-free (`splitsOnRequires`)
+    notSplit: HashSet[SymId]           # negative cache for the lookup above
     notAccessors: HashSet[SymId]       # negative cache for the lookup above
     constDepth: int
     moduleConsts: Table[SymId, Cursor] # `const`s declared in this module: their
@@ -910,6 +922,77 @@ proc isKeyableCall(fnSym: SymId): bool =
   if hasPragma(r.pragmas, SideEffectP): return false
   if hasPragma(r.pragmas, NoSideEffectP): return true
   result = r.kind in {FuncY, ConverterY}
+
+proc bodyOfRequires*(s: SymId): SymId =
+  ## The guard-free entry of a routine split on its `.requires`
+  ## (`splitsOnRequires`). Derived from the routine's own symbol by a fixed
+  ## rule, so a module that proves a call to an *imported* routine can name the
+  ## body without looking anything up: the routine's module emitted it.
+  let sp = splitSymName(pool.symString(s))
+  var r = derivedName(sp.name, "body")
+  if sp.module.len > 0:
+    r.add '.'
+    r.add sp.module
+  result = pool.symId(r)
+
+proc declaresGlobalStorage(n: Cursor): bool =
+  var n = n
+  if not n.isTagLit: return false
+  if n.stmtKind in {GvarS, GletS, TvarS, TletS}: return true
+  n = sub(n)
+  while n.hasMore:
+    if declaresGlobalStorage(n): return true
+    skip n
+  result = false
+
+proc splitsOnRequires*(decl: Cursor): bool =
+  ## Does this routine exist twice — as itself, with the `.requires` guard in
+  ## its prologue, and as `bodyOfRequires` of itself, without it? A call the
+  ## prover discharges goes to the body; everything else (an unproven call, a
+  ## proc value, a vtable slot, a callback) can only name the routine and so
+  ## gets the guard. That is what makes the split cover indirect uses without
+  ## enumerating them.
+  ##
+  ## Not split: a `method` (a call to it *is* the dispatch, which the body
+  ## would bypass), an iterator (inlined, never called), a hook, a routine
+  ## without a body of its own, a generic (its instances are split where they
+  ## are made), and one that declares `{.global.}` storage — two copies would
+  ## be two variables.
+  if decl.stmtKind notin {ProcS, FuncS, ConverterS}: return false
+  let r = asRoutine(decl, SkipInclBody)
+  if r.name.kind != SymbolDef or r.isGeneric: return false
+  if pool.symString(r.name.symId).startsWith("="): return false
+  if r.body.stmtKind notin {StmtsS, ScopeS}: return false
+  if not hasPragma(r.pragmas, RequiresP): return false
+  if hasPragma(r.pragmas, AssemblerP) or hasPragma(r.pragmas, ImportcP) or
+     hasPragma(r.pragmas, ImportcppP) or hasPragma(r.pragmas, ImportjsP):
+    return false
+  result = not declaresGlobalStorage(r.body)
+
+proc collectSplitRoutines(n: var Cursor; splits: var HashSet[SymId]) =
+  ## The module's own split routines: every top-level one, instances included
+  ## (they are made here, so `tryLoadSym` cannot find them yet). A routine
+  ## nested in another is not split — its copy would have to be made in both
+  ## the guarded and the guard-free enclosing routine.
+  if not n.isTagLit:
+    skip n
+    return
+  if n.stmtKind in {StmtsS, ScopeS}:
+    n.into:
+      while n.hasMore:
+        collectSplitRoutines(n, splits)
+  else:
+    if n.symKind in RoutineKinds and splitsOnRequires(n):
+      splits.incl asRoutine(n).name.symId
+    skip n
+
+proc routineSplits(c: var FirContext; s: SymId): bool =
+  if s in c.splitRoutines: return true
+  if s in c.notSplit: return false
+  let res = tryLoadSym(s)
+  result = res.status == LacksNothing and splitsOnRequires(res.decl)
+  if result: c.splitRoutines.incl s
+  else: c.notSplit.incl s
 
 proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
                    temps: var seq[(SymId, Cursor)]): bool =
@@ -3111,8 +3194,11 @@ proc ensuresProposition(ens: Cursor): Cursor =
       peeling = false
 
 proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
-                   info: NifLineInfo) =
+                   info: NifLineInfo): bool =
   ## Discharge the callee's `.requires` at this call site.
+  ##
+  ## Returns whether the contract was proven: the call can then go to the
+  ## callee's guard-free copy.
   ##
   ## By default a contract whose *negation* follows from what is known here is
   ## an error, and one the engine cannot decide is left to the runtime guard
@@ -3125,6 +3211,7 @@ proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
   ## `{.feature: "staticContracts".}` demands the proof, module by module, and
   ## is where the language is headed; `{.feature: "runtimeContracts".}` opts out
   ## of the static judgement entirely and wins if both are given.
+  result = false
   if RuntimeContractsFeature in c.features: return
   # An obligation on a path control cannot reach is vacuous, and the facts there
   # are not merely weak but meaningless — a join on a dead path keeps *both*
@@ -3138,7 +3225,7 @@ proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
     stderr.writeLine "CONTRACT " & $res & " " & infoToStr(info) & " " & asNimCode(req)
   case res
   of Proven:
-    discard "obligation discharged"
+    result = true
   of Disproven:
     buildErr c, info, "contract violated: " & asNimCode(req)
   of Unprovable:
@@ -3466,7 +3553,9 @@ proc analyseCallArgs(c: var FirContext; n: var Cursor; call: var CallContext) =
   if not cursorIsNil(req):
     # A precondition is judged on the state at *entry*, so this must run before
     # the mutation below invalidates it.
-    checkRequires c, req, rd, callCursor.info
+    if checkRequires(c, req, rd, callCursor.info) and callCursor.kind == Symbol and
+        routineSplits(c, callCursor.symId):
+      c.provenCalls.incl cursorToPosition(c.root, callCursor)
   # So is every `old(e)` of the postcondition.
   let ens = extractPragma(fnType, EnsuresP)
   if not cursorIsNil(ens):
@@ -4963,41 +5052,149 @@ proc traverseToplevel(c: var FirContext; n: var Cursor) =
     # Toplevel statements - analyze them
     traverseStmt c, n, call
 
-proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; base: Cursor;
-                      discharged: HashSet[int]) =
-  if n.isTagLit:
-    if n.exprKind == ArratX and cursorToPosition(base, n) in discharged:
-      # The obligation is discharged, so the bounds it was stated as go away:
-      # `(arrat arr idx)`, or `(arrat arr idx . lo)` when the array does not
-      # start at zero — NIFC arrays do, so `lo` still has to be subtracted.
-      # What is left in the `hi` slot of any other node is an obligation the
-      # backend owes a check for.
-      let info = n.info
-      dest.addParLe ArratX, info
-      n.into:
-        copyWithVerdicts dest, n, base, discharged   # the array
-        copyWithVerdicts dest, n, base, discharged   # the index
-        if n.hasMore:
-          skip n                                     # hi: nothing to check
-          if n.hasMore:
-            dest.addDotToken()
-            dest.takeTree n                          # lo
-        while n.hasMore: skip n
-      dest.addParRi()
+type
+  Verdicts = object
+    ## What the analysis decided, keyed by token position in the lowered module.
+    base: Cursor
+    dischargedIndexes: HashSet[int]
+    provenCalls: HashSet[int]
+
+proc freshCopyName(s: SymId): SymId =
+  ## The name a declaration gets inside the guard-free copy of a routine: the
+  ## copy is a second routine, and what it declares — parameters, locals,
+  ## labels, nested routines — must not be the first one's.
+  let sp = splitSymName(pool.symString(s))
+  var r = derivedName(sp.name, "b")
+  if sp.module.len > 0:
+    r.add '.'
+    r.add sp.module
+  result = pool.symId(r)
+
+proc collectCopyDefs(n: Cursor; ren: var Table[SymId, SymId]) =
+  var n = n
+  if n.kind == SymbolDef:
+    ren[n.symId] = freshCopyName(n.symId)
+  elif n.isTagLit:
+    n = sub(n)
+    while n.hasMore:
+      collectCopyDefs(n, ren)
+      skip n
+
+proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; v: Verdicts;
+                      ren: Table[SymId, SymId])
+
+proc copyArrat(dest: var TokenBuf; n: var Cursor; v: Verdicts;
+               ren: Table[SymId, SymId]) =
+  ## The obligation is discharged, so the bounds it was stated as go away:
+  ## `(arrat arr idx)`, or `(arrat arr idx . lo)` when the array does not
+  ## start at zero — NIFC arrays do, so `lo` still has to be subtracted. What
+  ## is left in the `hi` slot of any other node is an obligation the backend
+  ## owes a check for.
+  let info = n.info
+  dest.addParLe ArratX, info
+  n.into:
+    copyWithVerdicts dest, n, v, ren             # the array
+    copyWithVerdicts dest, n, v, ren             # the index
+    if n.hasMore:
+      skip n                                     # hi: nothing to check
+      if n.hasMore:
+        dest.addDotToken()
+        copyWithVerdicts dest, n, v, ren         # lo
+    while n.hasMore: skip n
+  dest.addParRi()
+
+proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; v: Verdicts;
+                      ren: Table[SymId, SymId]) =
+  case n.kind
+  of Symbol:
+    var sym = n.symId
+    if cursorToPosition(v.base, n) in v.provenCalls:
+      sym = bodyOfRequires(sym)
+    elif ren.hasKey(sym):
+      sym = ren.getOrQuit(sym)
+    dest.addSymUse sym, n.info
+    inc n
+  of SymbolDef:
+    let sym = n.symId
+    dest.addSymDef (if ren.hasKey(sym): ren.getOrQuit(sym) else: sym), n.info
+    inc n
+  of TagLit:
+    if n.exprKind == ArratX and cursorToPosition(v.base, n) in v.dischargedIndexes:
+      copyArrat dest, n, v, ren
     else:
       copyInto dest, n:
         while n.hasMore:
-          copyWithVerdicts dest, n, base, discharged
+          copyWithVerdicts dest, n, v, ren
   else:
     dest.takeTree n
 
-proc applyIndexVerdicts(buf: var TokenBuf; discharged: HashSet[int]) =
+proc copyGuardFreeBody(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
+  ## The second copy of a routine split on its `.requires`: named
+  ## `bodyOfRequires` of the routine, and carrying the contract as `(assume …)`
+  ## — on the body it is what may be taken for granted, not what is checked,
+  ## so `desugar` emits no guard for it. It is a plain `proc` whatever the
+  ## original was, and it is never `exportc`: C already has that name.
+  var ren = initTable[SymId, SymId]()
+  var n = decl
+  let r = asRoutine(decl, SkipInclBody)
+  let name = r.name.symId
+  collectCopyDefs(decl, ren)
+  ren[name] = bodyOfRequires(name)
+  let kind = if n.stmtKind == ConverterS: ProcS else: n.stmtKind
+  dest.addParLe kind, n.info
+  n = sub(n)
+  var i = 0
+  while n.hasMore:
+    if i == ProcPragmasPos and n.substructureKind == PragmasU:
+      dest.addParLe(n.cursorTagId, n.info)
+      n.into:
+        while n.hasMore:
+          case n.pragmaKind
+          of RequiresP:
+            dest.addParLe AssumeP, n.info
+            n.into:
+              while n.hasMore:
+                copyWithVerdicts dest, n, v, ren
+            dest.addParRi()
+          of ExportcP:
+            skip n
+          else:
+            copyWithVerdicts dest, n, v, ren
+      dest.addParRi()
+    else:
+      copyWithVerdicts dest, n, v, ren
+    inc i
+  dest.addParRi()
+
+proc applyVerdictsTopLevel(dest: var TokenBuf; n: var Cursor; v: Verdicts;
+                           splits: HashSet[SymId]) =
+  ## Top-level statements: a split routine is emitted twice, guarded and
+  ## guard-free; everything below a routine is copied with the verdicts.
+  if n.isTagLit and n.stmtKind in {StmtsS, ScopeS}:
+    dest.addParLe(n.cursorTagId, n.info)
+    n.into:
+      while n.hasMore:
+        applyVerdictsTopLevel dest, n, v, splits
+    dest.addParRi()
+  elif n.isTagLit and n.symKind in RoutineKinds and
+      asRoutine(n).name.kind == SymbolDef and asRoutine(n).name.symId in splits:
+    let decl = n
+    var noRen = initTable[SymId, SymId]()
+    copyWithVerdicts dest, n, v, noRen
+    copyGuardFreeBody dest, decl, v
+  else:
+    var noRen = initTable[SymId, SymId]()
+    copyWithVerdicts dest, n, v, noRen
+
+proc applyVerdicts(buf: var TokenBuf; dischargedIndexes, provenCalls: HashSet[int];
+                   splits: HashSet[SymId]) =
   var res = createTokenBuf(buf.len)
   block:
     var n = beginRead(buf)
-    let base = n
+    let v = Verdicts(base: n, dischargedIndexes: dischargedIndexes,
+                     provenCalls: provenCalls)
     while n.hasMore:
-      copyWithVerdicts res, n, base, discharged
+      applyVerdictsTopLevel res, n, v, splits
     endRead(n)
   swap buf, res
 
@@ -5030,6 +5227,7 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     bits: bits
   )
   c.typeCache.openScope()
+  var ownSplits = initHashSet[SymId]()
   block:
     # Index the module's transparent accessors before anything asks for one: a
     # generic instance such as `len.3.Ixyz` is declared *here*, not in
@@ -5037,6 +5235,10 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     var scan = beginRead(finalBuf)
     collectAccessors(c, scan)
     endRead(scan)
+    var scan2 = beginRead(finalBuf)
+    collectSplitRoutines(scan2, ownSplits)
+    endRead(scan2)
+    for s in ownSplits: c.splitRoutines.incl s
 
   block:
     var fin = beginRead(finalBuf)
@@ -5045,8 +5247,10 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     endRead(fin)
 
   c.typeCache.closeScope()
-  if c.dischargedIndexes.len > 0:
-    applyIndexVerdicts(finalBuf, c.dischargedIndexes)
+  # Only this module's own routines are split here; an imported one was split
+  # by its own module, which is why `splitRoutines` holds both.
+  if c.dischargedIndexes.len > 0 or c.provenCalls.len > 0 or ownSplits.len > 0:
+    applyVerdicts(finalBuf, c.dischargedIndexes, c.provenCalls, ownSplits)
   result = ensureMove c.errors
 
 proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
