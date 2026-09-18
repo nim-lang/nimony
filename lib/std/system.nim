@@ -629,7 +629,3 @@ proc instantiationInfo*(): tuple[filename: string, line: int, column: int] {.mag
   ## The source position of the call. Inside a template body it is the
   ## position of the template's call site, so a template can report where it
   ## was invoked. `filename` is the file name without directories.
-
-when defined(sunos) and defined(amd64):
-  {.passC: "-m64".}
-  {.passL: "-m64".}

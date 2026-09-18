@@ -167,6 +167,14 @@ type
                          # in every template expansion and only a debug build
                          # reads it.
 
+proc targetDriverFlags*(config: NifConfig): seq[string] =
+  # On SunOS-drived platforms on x86, compilers default to 32-bit output on
+  # 64-bit systems. This function adds the necessary compiler flags for this
+  # (and potentially other) platforms in the future.
+  result = @[]
+  if config.targetOS in {osSolaris, osIllumos} and config.targetCPU == cpuAmd64:
+    result.add "-m64"
+
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
 
