@@ -170,8 +170,7 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
 proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
-  ## `(loop body)` — infinite, with no condition slot: the header *is* the body,
-  ## and every way out is a `break`/`jmp` the body already contains.
+  ## `(loop body)`: infinite, left only by a `break`/`jmp` inside the body.
   let loopInfo = n.info
   n.into:
     let headerLabel = c.nextLabel()

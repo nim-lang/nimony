@@ -1138,13 +1138,14 @@ proc markAddressTaken(c: var Context; n: Cursor) =
 proc establishesBorrow(c: var Context; call: Cursor): bool =
   ## Is `call` a call to a routine marked `.establishesBorrow.`? Same
   ## question as `contracts_fir.establishesBorrow`.
+  result = false
   var fn = call
   inc fn # the callee
   var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
-  if not fnType.isParamsTag: return false
-  skip fnType # params
-  skip fnType # return type
-  result = hasPragma(fnType, EstablishesBorrowP)
+  if fnType.isParamsTag:
+    skip fnType # params
+    skip fnType # return type
+    result = hasPragma(fnType, EstablishesBorrowP)
 
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
@@ -1176,9 +1177,8 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
       c.typeCache.registerLocal(mine, cast[SymKind](sk), n)
       skip n # type
       if n.hasMore and c.hooks.isPassiveCall(c, n):
-        # `let x = passiveCall()`: `x`'s address is the callee's result slot,
-        # written when the callee completes — after this state proc returned.
-        # So `x` lives in the frame whatever states it is read in.
+        # `let x = passiveCall()`: the callee writes `x` when it completes,
+        # after this state proc returned, so `x` must live in the frame.
         c.currentProc.localToEnv.getOrQuit(mine).use = AddressTaken
       while n.hasMore:
         escapingLocalsImpl c, n, currentState # the value
@@ -1194,9 +1194,8 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
       if n.exprKind in {AddrX, HaddrX}:
         markAddressTaken c, n.childCursor
       elif n.exprKind in CallKinds and establishesBorrow(c, n):
-        # The result keeps pointing into the first argument (`toOpenArray`),
-        # which is an address taken as surely as an explicit `addr` — only
-        # the callee can see it.
+        # The result points into the first argument (`toOpenArray`): that
+        # takes its address just like an explicit `addr`.
         var arg = n
         inc arg
         skip arg # the callee
@@ -1831,12 +1830,9 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
   init.addParRi() # assignment
 
 proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; iter: Cursor; sym: SymId) =
-  # The body is in the FINAL IR (`doc/final_ir.md`) already — `loop`/`ite`/
-  # `case`/`lab`/`jmp`, control flow entirely statement-based; the pipeline
-  # lowers before any pass runs. It is kept in `c.currentProc.cf`. The state
-  # machine wants a body it can CUT, and the Final IR's `lab`/`jmp` is already
-  # the cut: `toGoto` only has to decide which of those transfers has to
-  # become a state transition.
+  # The body is already in the Final IR (`doc/final_ir.md`), kept in
+  # `c.currentProc.cf`. Its `lab`/`jmp`s are where the state machine can cut
+  # it: `toGoto` only decides which of them become state transitions.
   #
   # This used to run `nj.nim`, whose whole job is the opposite one: it
   # ELIMINATES jumps, materialising a monotone `mflag` guard per construct and

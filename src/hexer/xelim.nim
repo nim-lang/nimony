@@ -105,10 +105,8 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor)
   {.ensuresNif: addedAny(dest).}
 
 proc tempSymName(c: var Context): string {.inline.} =
-  # Each run owns a name space. The lowering runs in nimsem, whose temps are
-  # published with the module; the `LowerCasts` run happens in hexer, on that
-  # published module. Sharing the prefix made the second run mint a name the
-  # first one had already given to a different local.
+  # Separate prefixes: the `LowerCasts` run in hexer sees the temps nimsem's
+  # run already published with the module and must not reuse their names.
   result = (if c.goal == LowerCasts: "`xc." else: "`x.") & $c.counter
   inc c.counter
 
@@ -229,10 +227,9 @@ proc hoistDeclsFromExprX(tc: var TypeCache; outerDest, transformed: var TokenBuf
     transformed.addParRi(n.endInfo)      # closing `)` of expr
 
 proc openIfElse(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
-  ## `if cond: A else: B`, spelled for the IR that reads the result: `finalir`
-  ## lowers the Nimony `if` of the `TowardsFinalIr` run, the `LowerCasts` run
-  ## works on the Final IR itself. The caller emits `cond`, then `openThen`,
-  ## `A`, `openElse`, `B`, `closeIfElse`.
+  ## `if cond: A else: B`: a Nimony `if` for `TowardsFinalIr`, an `ite` for
+  ## `LowerCasts` (which runs on the Final IR). The caller emits `cond`, then
+  ## `openThen`, `A`, `openElse`, `B`, `closeIfElse`.
   if c.goal == LowerCasts:
     dest.addParLe IteV, info
   else:
@@ -335,16 +332,10 @@ proc trAggregateValue(c: var Context; dest: var TokenBuf; n: var Cursor; tar: va
   ## expressions are pure reads and are passed through to `trExpr`
   ## unchanged.
   ##
-  ## **The temp is a `let`: it owns the call's result.** It used to be a
-  ## `cursor`, on the theory that the aggregate is the rightful owner and a
-  ## `let` would be destroyed a second time at scope end. But `xelim` runs
-  ## *before* the duplifier, and the duplifier only moves out of a location
-  ## that owns something — a cursor never qualifies, so the aggregate got a
-  ## `=dup` of the temp and the call's own result was never destroyed: a leak
-  ## for a copyable type (`Obj(f: mk(), g: (if c: 1 else: 2))`) and a spurious
-  ## "'=dup' is not available" for a `.error` one. As a `let`, the aggregate
-  ## reading it is its last read, so the duplifier moves it and `=wasMoved`
-  ## disarms the scope-end destructor.
+  ## **The temp is a `let`, not a `cursor`: it owns the call's result.** The
+  ## duplifier runs later and only moves out of an owning location, so the
+  ## aggregate's read (the last one) becomes a move; a cursor would get a
+  ## `=dup` and leak the call's result.
   if n.kind != TagLit or n.exprKind notin CallKinds:
     trExpr c, dest, n, tar
     return
@@ -430,23 +421,6 @@ proc trAggregate(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Tar
 
     tar.t.addParRi()
 
-proc trConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
-  ## A `string.&` call whose `string.&` operands stay nested: `desugar` folds
-  ## the whole chain into one allocation (`genStringConcatChain`), which it can
-  ## only do while it is one tree. Every other operand is lowered as usual.
-  if tar.m in {IsEmpty, IsBound}:
-    tar.m = IsAppend
-  tar.t.addParLe(n.cursorTagId, n.info)
-  n.into:
-    while n.hasMore:
-      if isStringConcatCall(n):
-        var inner = initTarget(IsBound)
-        trConcatChain c, dest, n, inner
-        tar.t.addTarget inner
-      else:
-        trExpr c, dest, n, tar
-  tar.t.addParRi()
-
 proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target) =
   if tar.m in {IsAppend, IsEmpty}:
     # bind to a temporary variable:
@@ -462,10 +436,7 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     # declarations are emitted before this one starts:
     var nestedDest = createTokenBuf(30)
     var callTarget = initTarget(IsBound)
-    if c.goal == TowardsFinalIr and isStringConcatCall(n):
-      trConcatChain c, nestedDest, n, callTarget
-    else:
-      trExprLoop c, nestedDest, n, callTarget
+    trExprLoop c, nestedDest, n, callTarget
 
     # Emit nested statements first
     dest.add nestedDest
@@ -492,8 +463,6 @@ proc trExprCall(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Targ
     dest.addParRi()
 
     tar.t.addSymUse tmp, info
-  elif c.goal == TowardsFinalIr and isStringConcatCall(n):
-    trConcatChain c, dest, n, tar
   else:
     trExprLoop c, dest, n, tar
 
@@ -540,9 +509,9 @@ proc condNodeSafe(n: Cursor): bool =
 
 const
   CondPassthroughGoals = {TowardsFinalIr, LowerCasts}
-    ## Every goal: their consumers compile a condition with a *two-target*
-    ## condition compiler, i.e. can turn `a and b` straight into branches. finalir has
-    ## `Cx`; NIFC has C's `&&`/`||` (gcc) and arkham's `emitCondE` (native).
+    ## Every goal: their consumers turn `a and b` straight into branches.
+    ## finalir has `Cx`; NIFC has C's `&&`/`||` (gcc) and arkham's `emitCondE`
+    ## (native).
     ## For those, materialising a bool here is pure loss: `assert p != nil and
     ## rem > 0` became a temp + an if/else diamond + a re-test — ~90 NIFC tokens
     ## and 9 x86 instructions where two compare-and-branches suffice. It also
@@ -1144,9 +1113,8 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   let head = n.load()
   n.into:
     var tar = initTarget(IsEmpty)
-    # The iterator call is not a value and must stay where it is: only its
-    # arguments are lowered. (Bound to a temp, `elimForLoops` could not tell
-    # which iterator the loop runs.)
+    # Only the iterator call's arguments are lowered; the call itself stays so
+    # `elimForLoops` can tell which iterator the loop runs.
     if n.exprKind == HderefX:
       tar.m = IsAppend
       tar.t.addParLe(n.cursorTagId, n.info)
@@ -1232,9 +1200,8 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor; tar: var Target)
     tar.t.addSymUse tmp, n.endInfo # `n` is already past the block
 
 proc trIte(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## `(ite cond then else|.)`, which reaches the `LowerCasts` run: whatever the
-  ## condition needs goes in front of the `ite`, the branches are statement
-  ## lists.
+  ## `(ite cond then else|.)` in the `LowerCasts` run: what the condition
+  ## needs goes in front of the `ite`.
   let head = n
   n.into:
     var cond = initTarget(IsEmpty)
@@ -1287,10 +1254,7 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addParRi()
 
   of DiscardS:
-    # A `discard` with an operand does not survive: the operand is bound to a
-    # temp, which is what keeps the call and drops the value. `discard .` has
-    # no operand and stays the no-op statement it is — emitting its lone `.`
-    # would put a bare token where a statement belongs.
+    # `discard x` becomes a temp bound to `x`; `discard .` stays as it is.
     let head = n
     n.into:
       if n.isDotToken:
@@ -1583,12 +1547,9 @@ proc preRegisterRoutines(c: var Context; n: Cursor) =
 
 proc lowerExprs*(pass: var Pass; goal: Goal) =
   var n = pass.n  # Extract cursor locally
-  # Inherit the temp counter across passes via `pass.nextTemp` — `lowerExprs`
-  # runs for `finalir` and again as `xelim_final`; restarting from 0 each
-  # time produces colliding `\`x.<n>` SymIds whose
-  # Lengc-emitted C names clash within a single function. `pool.symId`
-  # is identity-by-name, so two semantically distinct temps would otherwise
-  # share an identifier.
+  # Inherit the temp counter via `pass.nextTemp`: `lowerExprs` runs for
+  # `finalir` and again as `xelim_final`, and restarting from 0 would mint
+  # colliding `\`x.<n>` names within one function.
   var c = Context(counter: pass.nextTemp, typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix, goal: goal)
   c.typeCache.openScope()
   assert n.stmtKind == StmtsS, $n.kind

@@ -214,10 +214,9 @@ proc collectLabels(n: Cursor; labels: var HashSet[SymId]) =
 
 proc freshVars(n: var Cursor; newVars: var Table[SymId, SymId]; idgen: var int;
                dest: var TokenBuf) =
-  ## Copy a subtree, renaming every local and every label it DECLARES. A
-  ## `finally` body is replicated once per exit, and two copies in one routine
-  ## cannot share declarations. A label has to be known before the copy starts
-  ## (`freshLabels`): its `jmp`s come first.
+  ## Copy a subtree, renaming every local and label it DECLARES: a `finally`
+  ## body is replicated once per exit and the copies cannot share declarations.
+  ## Labels are renamed up front (`emitFinCopy`) since their `jmp`s come first.
   case n.kind
   of Symbol:
     let repl = newVars.getOrDefault(n.symId, n.symId)
@@ -329,7 +328,7 @@ proc addPropagationCheck(c: var Context; dest: var TokenBuf; target: SymId;
   ## travelling on.
   var code = createTokenBuf(8)
   addErrorCodeOf c, code, target, isVoidCall, info
-  # Nothing lowers what this pass emits: the check is spelled in the Final IR.
+  # Emitted directly in the Final IR: nothing lowers this pass's output.
   copyIntoKind dest, IteV, info:
     addErrorCodeOf c, dest, target, isVoidCall, info
     copyIntoKind dest, StmtsS, info:
@@ -760,9 +759,8 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   takeTree dest, n
 
 proc trJmp(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## The Final IR spelling of a `break` (and of a `continue` that `desugar`
-  ## made one). `jmp` is forward-only and scoped, so it leaves exactly the
-  ## `try` regions that do not declare its label, and owes their `finally`.
+  ## A `jmp` is forward-only, so it leaves exactly the `try` regions that do
+  ## not declare its label, and owes their `finally`.
   let lab = n.childCursor
   var i = c.exits.len - 1
   while i >= 0:

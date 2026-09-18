@@ -1079,19 +1079,15 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
     case n.finalIrKind
     of IteV:
       trFirIte c, n
-      return
     of LoopV:
       trFirLoop c, n
-      return
     of KillV, UnknownV:
-      # Analysis facts for the prover; nothing here reads them.
-      skip n
-      return
-    else: discard
-    var aa = initTarget(IsAppend)
-    trExpr c, n, aa
-    if aa.t.len > 0:
-      c.flush aa
+      skip n, SkipFull # facts for the prover
+    else:
+      var aa = initTarget(IsAppend)
+      trExpr c, n, aa
+      if aa.t.len > 0:
+        c.flush aa
   of IfS:
     var aa = initTarget(IsIgnored)
     trIf c, n, aa

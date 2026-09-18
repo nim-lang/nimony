@@ -123,10 +123,9 @@ type
       ## `coroTypes` and `shouldPublish` accumulate here across all
       ## iters in the module and get flushed in `elimLambdas`.
     hoisted: TokenBuf
-      ## Statements `genCall` and `emitIterValue` need in front of the
-      ## statement being translated — a callee temp, the env==nil dispatch, an
-      ## iterator frame. Nothing lowers this pass's output, so none of them
-      ## can be an `(expr …)`. `treStmts` splices them in.
+      ## Statements `genCall` and `emitIterValue` put in front of the current
+      ## statement (callee temp, env==nil dispatch, iterator frame); the Final
+      ## IR has no `(expr …)`. `treStmt` splices them in.
     pendingIterSigs: seq[(SymId, TokenBuf)]
       ## Rewritten `.closure` iter signatures, snapshotted by
       ## `transformClosureIter` while `shouldPublish` offsets still
@@ -638,8 +637,7 @@ proc emitIterValue(c: var Context; dest: var TokenBuf; iterSym: SymId; info: Nif
     bug "capturing the locals of an enclosing iterator is not supported: " &
         pool.symString(iterSym) & " at " & infoToStr(info)
   var frameSym = SymId(0)
-  # The frame setup goes in front of the current statement (`treStmt`):
-  # nothing lowers this pass's output, so it cannot be an `(expr …)`.
+  # The frame setup goes in front of the current statement (`treStmt`).
   if captures:
     frameSym = pool.symId("`iterFrame." & $c.counter & "." & c.thisModuleSuffix)
     inc c.counter
@@ -1077,7 +1075,7 @@ proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc treStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## One statement, preceded by whatever `genCall` hoisted out of it. The
-  ## enclosing statement's hoists are parked across the descent.
+  ## enclosing statement's hoists are saved and restored around it.
   var outer = createTokenBuf(0)
   swap outer, c.hoisted
   let start = dest.len
@@ -1622,28 +1620,10 @@ proc genCallImpl(c: var Context; dest: var TokenBuf; n: var Cursor): Cursor =
     # expression-callee temp (and its ExprX wrapper) is still open.
     dest.addParRi() # end of ExprX
 
-proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  # The Final IR has no expression-level control flow, and nothing lowers
-  # this pass's output again: what `genCallImpl` wraps into an `(expr …)` or
-  # an `if` expression becomes statements in front of the current one.
-  let info = n.info
-  var buf = createTokenBuf(16)
-  let fnType = genCallImpl(c, buf, n)
-  var b = beginRead(buf)
-  var x = b # the call, or its nil dispatch
-  if b.exprKind == ExprX or b.stmtKind == StmtsS:
-    # `(expr|stmts (stmts <callee temp>) X)`
-    x = sub(b)
-    var decls = x
-    decls = sub(decls)
-    while decls.hasMore:
-      c.hoisted.addSubtree decls
-      skip decls
-    skip x
-  if x.stmtKind != IfS:
-    dest.addSubtree x
-    return
-  # `(if (elif cond callA) (else callB))`
+proc emitNilDispatch(c: var Context; dest: var TokenBuf; x, fnType: Cursor;
+                     info: NifLineInfo) =
+  ## `x` is `(if (elif cond callA) (else callB))`: an `ite` statement, and for
+  ## a non-void call a temp that holds the result.
   var rt = fnType
   var voidCall = true
   if rt.typeKind in RoutineTypes:
@@ -1685,6 +1665,29 @@ proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     c.hoisted.add disp
     dest.addSymUse res, info
+
+proc genCall(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  # The Final IR has no expression-level control flow: what `genCallImpl`
+  # wraps into an `(expr …)` or an `if` becomes statements in front of the
+  # current one.
+  let info = n.info
+  var buf = createTokenBuf(16)
+  let fnType = genCallImpl(c, buf, n)
+  var b = beginRead(buf)
+  var x = b # the call, or its nil dispatch
+  if b.exprKind == ExprX or b.stmtKind == StmtsS:
+    # `(expr|stmts (stmts <callee temp>) X)`
+    x = sub(b)
+    var decls = x
+    decls = sub(decls)
+    while decls.hasMore:
+      c.hoisted.addSubtree decls
+      skip decls
+    skip x
+  if x.stmtKind == IfS:
+    emitNilDispatch(c, dest, x, fnType, info)
+  else:
+    dest.addSubtree x
 
 proc toProcType(c: var Context; dest: var TokenBuf; n: Cursor) =
   ## The lowered fn slot of a closure: the routine (decl or proctype) at `n`

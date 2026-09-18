@@ -123,13 +123,7 @@ proc getInitValueImpl(c: var TypeCache; s: SymId): Cursor =
 
 proc getLocalInfo*(c: var TypeCache; s: SymId): LocalInfo =
   ## `crossedProc` is the number of routine boundaries between the use and the
-  ## declaration — nonzero means a capture. A declaration outside of every
-  ## routine (module level) is not captured by anything, so it reports 0.
-  ##
-  ## This used to count only the routine scopes *above the first one* it met,
-  ## which is the same number as long as a routine's locals live in its
-  ## `ProcScope` itself — and 0 for a local of a nested `scope` in the
-  ## enclosing routine, whose capture then went unnoticed.
+  ## declaration; nonzero means a capture. A module-level declaration reports 0.
   var it {.cursor.} = c.current
   var crossedProc = 0
   while it != nil:

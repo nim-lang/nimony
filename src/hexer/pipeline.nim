@@ -45,10 +45,8 @@ proc publishHooks*(n: var Cursor) =
     inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
-  # The input is the Final IR (`doc/final_ir.md`) already: nimsem lowers a
-  # module before it publishes it. Every pass here reads and writes it —
-  # statement-based, `loop`/`ite`/`lab`/`jmp` control flow, a `for` whose body
-  # ends in its back-edge and whose `break`s are jumps.
+  # The input is already the Final IR (`doc/final_ir.md`): nimsem lowers a
+  # module before publishing it. Every pass here reads and writes that form.
   var input = createTokenBuf(300)
   input.addSubtree n
   var pass = initPass(ensureMove input, moduleSuffix, "iterinliner", bits)
@@ -96,8 +94,8 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   # Special handling: Merge generated hooks. The destroyer left the root
   # `(stmts` open for us; append the hooks, then close it.
-  # The lifter speaks Nimony IR, because `nimsem` runs it too, so its hooks
-  # take the same lowering to the Final IR as everything else did up front.
+  # The lifter emits Nimony IR (nimsem runs it too), so its hooks are lowered
+  # to the Final IR here.
   if c.liftingCtx[].dest.len > 0:
     var hooks = createTokenBuf(c.liftingCtx[].dest.len + 2)
     hooks.addParLe StmtsS, NoLineInfo

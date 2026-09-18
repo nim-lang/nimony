@@ -68,8 +68,7 @@ type
     counter: int
     thisModuleSuffix: string
     current: CurrentProc
-    analysisFacts: bool ## emit `kill`/`unknown`: facts for the prover that
-                        ## hexer re-derives, and would only trip over
+    analysisFacts: bool ## emit `kill`/`unknown`; only the prover reads them
     callExprs: Table[SymId, TokenBuf] ## whole init call of a local, so a `for`
                                       ## whose iterator xelim hoisted into a
                                       ## temp can still be read (see `trFor`)
@@ -142,15 +141,9 @@ proc trStmtsInline(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trScopedBody(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Translate a body that opens its own lexical scope and emit it as a fresh
   ## `(scope ...)`. Scope-exit `kill`s are appended before the closing paren.
-  ##
-  ## It is a `scope` and not a `stmts` because the scope is the part hexer
-  ## needs: `destroyer` treats `(scope …)` as a real destructor scope and
-  ## `(stmts …)` as transparent, and the flat `lab`/`jmp` branch layout this
-  ## pass emits *depends* on that — a branch body is a sibling in the enclosing
-  ## statement list, not a child of an `(elif …)`, so `stmts` would let a local
-  ## declared in a branch live to the end of the enclosing region. The `kill`s
-  ## say the same thing a second time, for the prover; hexer re-derives them
-  ## from the scope rules and they can be dropped on the way out.
+  ## It must be a `scope`: with the flat `lab`/`jmp` layout a branch body is a
+  ## sibling in the enclosing list, so a transparent `stmts` would let its
+  ## locals live on to the end of the enclosing scope for `destroyer`.
   let info = n.info
   openScope c
   dest.addParLe ScopeS, info
@@ -206,16 +199,7 @@ proc trCall(c: var Context; dest: var TokenBuf; n: var Cursor): CallInfo =
           var pathBuf = createTokenBuf(4)
           pathBuf.addSubtree inner
           result.mutates.add ensureMove pathBuf
-      if n.isTagLit and n.exprKind in CallKinds:
-        # `xelim` leaves a `string.&` chain nested for `desugar` to fold
-        # (`trConcatChain`); every other call arrives bound to a temp.
-        var inner = trCall(c, dest, n)
-        for i in 0 ..< inner.mutates.len:
-          var path = createTokenBuf(0)
-          swap path, inner.mutates[i]
-          result.mutates.add ensureMove(path)
-      else:
-        trExpr c, dest, n
+      trExpr c, dest, n
 
 proc callIsOver(c: var Context; dest: var TokenBuf; callInfo: CallInfo) =
   # `unknown` marks that a `(haddr …)` argument's pointee may have been mutated.
@@ -260,8 +244,7 @@ proc trLocal(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.typeCache.registerLocal(symId, kind, n)
   takeTree dest, n # type
 
-  # Record call inits so a `for` whose iterator xelim hoisted into a temp can
-  # still be read (see `forRangeAssumes`).
+  # For a `for` whose iterator xelim hoisted into a temp (`forRangeAssumes`).
   if n.isTagLit and n.exprKind in CallKinds:
     var whole = createTokenBuf(16)
     whole.addSubtree n
@@ -290,13 +273,7 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi(closeInfo)
     callIsOver(c, dest, callInfo)
   else:
-    # Same as the symbol case, only the destination is a path rather than a
-    # name: `a[i] = f(x)` binds the call to its destination exactly as
-    # `x = f(x)` does. The two used to differ — the value went through
-    # `trExpr`, which rejects a call outright — and that held only because
-    # `xelim` hoists such a call into a temp before this pass sees it. It is
-    # `final_ir.md`'s remaining work item 2 to change when it does that, and
-    # the asymmetry also cost this path its `callIsOver` markers.
+    # As above, with a path as the destination: `a[i] = f(x)`.
     var value = n
     skip value          # `value` is the RHS; `n` still at the destination
     trExpr c, dest, n   # the destination location
@@ -422,15 +399,9 @@ proc genIfViaCx(c: var Context; dest: var TokenBuf; n: var Cursor;
   n = ifStart; skip n          # end of `if`
 
 proc trIf(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Precondition: `xelim` already nested any elif chain into a single
-  ## elif+else, so exactly one `elif` and at most one `else` arrive here.
-  ##
-  ## That precondition is enforced rather than assumed. The `n = ifStart; skip n`
-  ## resync at the end consumes whatever this proc did not read, so a third
-  ## branch would not fail — it would vanish from the generated code, silently,
-  ## with the `assert` that used to stand for the invariant compiled out of a
-  ## `-d:danger` build and a second `elif` then lowered *as* an `else` (its
-  ## condition treated as a statement body).
+  ## Precondition: `xelim` nested any elif chain into one elif+else. Checked
+  ## with `bug`, not `assert`: the final resync would silently drop an extra
+  ## branch.
   let info = n.info
   let ifStart = n
   n = sub(n)
@@ -484,10 +455,7 @@ proc trCase(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeInto dest, n:        # `else`
       trScopedBody c, dest, n
   if n.hasMore:
-    # `n = caseStart; skip n` below consumes anything left, so a child that is
-    # neither `of` nor `else` would be dropped without a word — and the
-    # `addParRi` has already closed the node, so there would be nowhere to put
-    # it even if it were noticed.
+    # the resync below would silently drop it
     bug "`case` with a branch that is neither `of` nor `else` reached the Final IR"
   dest.addParRi(n.endInfo)   # close `case`
   n = caseStart; skip n
@@ -517,9 +485,8 @@ proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc trContinue(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## A source-level `continue` is a forward `(jmp cont)` to the label in front
-  ## of the innermost loop's back-edge, which keeps `(continue .)` what the
-  ## Final IR says it is: the last statement of a loop body and its only
-  ## back-edge. (Nothing downstream has to find one in the middle of a body.)
+  ## of the innermost loop's back-edge, so `(continue .)` stays the last
+  ## statement of a loop body and its only back-edge.
   let info = n.info
   var target = c.current.exits.len - 1
   while target >= 0 and not c.current.exits[target].isLoop:
@@ -584,11 +551,10 @@ proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc emitLoopBody(c: var Context; dest: var TokenBuf; body: var TokenBuf;
                   info: NifLineInfo) =
-  ## The translated statements of a loop body, then its back-edge. When a
-  ## `continue` jumps to the end, the statements get a `scope` of their own
-  ## with the label after it: a `jmp` may leave a scope but never skip a
-  ## declaration inside one, whose destructor the scope's end would then run
-  ## on a value that was never initialized.
+  ## The translated statements of a loop body, then its back-edge. With a
+  ## `continue`, the statements get their own `scope` and the label follows
+  ## it: a `jmp` must not skip a declaration whose destructor would then run
+  ## on an uninitialized value.
   if c.current.exits[^1].contUsed:
     dest.addParLe ScopeS, info
     dest.add body
@@ -652,8 +618,8 @@ proc trWhile(c: var Context; dest: var TokenBuf; n: var Cursor) =
     trLoopFromBody c, dest, ww
 
 proc registerForVars(c: var Context; vars: Cursor) =
-  ## The loop variables of a `for`. They are bound by an iterator this pass
-  ## cannot see, so nothing declares them for the type cache unless we do.
+  ## Declare a `for`'s loop variables to the type cache: the iterator that
+  ## binds them is not inlined yet.
   var vars = vars
   if vars.substructureKind in {UnpackflatU, UnpacktupU}:
     vars = sub(vars) # peek only, never left
@@ -665,17 +631,8 @@ proc registerForVars(c: var Context; vars: Cursor) =
     c.typeCache.registerLocal(local.name.symId, vars.symKind, local.typ)
 
 proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## A `for` survives lowering as a `for`, with only its body lowered.
-  ##
-  ## It used to become a bare `(loop body)` with the iterator call and the loop
-  ## variables dropped on the floor, which is fine for an analysis that throws
-  ## its input away and fatal for one whose output is compiled: hexer's
-  ## `elimForLoops` runs long after this pass, and the call is the only record
-  ## of what the loop iterates.
-  ##
-  ## The body is lowered exactly as a `loop`'s is — it ends in `(continue .)`,
-  ## a `break` inside it is a forward `(jmp …)` to the trailing exit label — so
-  ## a `for` is a loop construct that also says what it iterates.
+  ## A `for` stays a `for`: hexer's `elimForLoops` still needs the iterator
+  ## call and the loop variables. Its body is lowered like a `loop`'s.
   let info = n.info
   let forStmt = asForStmt(n) # peek at structure before advancing
   let forStart = n
@@ -703,14 +660,10 @@ proc trFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParRi() # close `scope`
   dest.addParRi(n.endInfo) # close `for`
   c.current.exits.shrink(c.current.exits.len - 1)
-  # The exit label is emitted even when nothing jumps to it. An *inline*
-  # iterator is not inlined until hexer's `elimForLoops`, so at this point no
-  # `break` has been generated for the iterator's own termination test and the
-  # loop reads as one nothing ever leaves — which would make everything after
-  # it unreachable. That is not a harmless imprecision: a join on a dead path
-  # keeps *both* arms of the next `if`, so `le >= 0` and `le < 0` come to hold
-  # at once and a correct index gets "disproved". A `for` terminates; the label
-  # says so.
+  # The exit label is emitted even when nothing jumps to it: the iterator's
+  # own termination test is not visible yet, and without the label the code
+  # after the loop would look unreachable to the prover, whose facts are
+  # contradictory on a dead path.
   emitLab dest, exitL, info
   n = forStart; skip n # close `for`
 
@@ -738,7 +691,7 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
     takeInto dest, n: # `fin`
       trScopedBody c, dest, n
   if n.hasMore:
-    # As in `trCase`: the resync below would swallow it silently.
+    # the resync below would silently drop it
     bug "`try` with a clause that is neither `except` nor `fin` reached the Final IR"
   dest.addParRi(n.endInfo) # close `try`
   n = tryStart; skip n
@@ -784,14 +737,9 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
   # An `{.assembler.}` body is machine code written by hand: it has no contracts
   # to check, and its constructs are outside the Final IR's vocabulary anyway (a
-  # machine flag as an `if` condition is not an expression). `xelim` leaves such
-  # a body verbatim — source order is the contract — so it never arrives in the
-  # normalized form this pass assumes, and it is passed through verbatim here
-  # for the same reason. It used to be replaced by a bodyless declaration, which
-  # was only ever safe while this pass's output was thrown away: *not analysed*
-  # is not the same as *not emitted*. The prover skips it (`traverseProc`).
-  # Its `if`s are the one exception, spelled `ite` (`trAsmStmt`), because that
-  # is the vocabulary codegen reads.
+  # machine flag as an `if` condition is not an expression). It is passed on
+  # verbatim, except that its `if`s become `ite` (`trAsmStmt`); the prover
+  # skips it (`traverseProc`).
   let isAsm = hasPragma(r.pragmas, AssemblerP)
   copyInto(dest, n):
     let isConcrete = c.typeCache.takeRoutineHeader(dest, decl, n)
@@ -817,19 +765,11 @@ proc trProcDecl(c: var Context; dest: var TokenBuf; n: var Cursor) =
   c.current = ensureMove oldProc
 
 proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  if n.kind == DotToken:
-    # An empty statement slot — a routine's missing body, a `case` branch
-    # `xelim` emptied. There is nothing to lower.
-    dest.takeTree n
-    return
   case n.stmtKind
   of StmtsS:
-    # In statement position a `stmts` is transparent: its locals belong to the
-    # enclosing scope. `{.keepOverflowFlag.}: let x = …` arrives as
-    # `(pragmax … (stmts (let x …)))` and `x` is used after it; so does every
-    # declaration `xelim` hoists. Only a *branch* or *loop* body opens a scope
-    # (`trScopedBody`), because there the lowering itself removes the
-    # construct that delimited it.
+    # Transparent in statement position: `xelim`'s hoisted declarations and
+    # `(pragmax … (stmts (let x …)))` are used after it. Only branch and loop
+    # bodies open a scope (`trScopedBody`).
     copyInto dest, n:
       while n.hasMore:
         trStmt c, dest, n
@@ -875,25 +815,20 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     # statement. Handed on verbatim.
     takeTree dest, n
   of LabS, JmpS:
-    # Already Final IR on arrival: `xelim` lowers short-circuit `and`/`or`
-    # chains to the flat `(if c (jmp L))` / `(lab L)` form, so these are the
-    # pass's own vocabulary coming back at it. They are also the two most
-    # frequent tags to reach here at all (163 `jmp` and 122 `lab` across the
-    # `tjson` closure), which is why they get a branch rather than the
-    # operand-lowering fallback below.
+    # Already Final IR: `xelim` lowers short-circuit `and`/`or` to these.
     takeTree dest, n
   of ImportS, ImportasS, FromimportS, ImportexceptS, IncludeS, ExportS,
      ExportexceptS, CommentS, PragmasS:
-    # Module bookkeeping, not code. Nothing to lower, and the backend and the
-    # index both want them where they are.
+    # module bookkeeping, not code
     takeTree dest, n
   of YldS, DiscardS, InclS, ExclS, EmitS:
-    # A statement whose children are plain expressions: keep the statement,
-    # lower the operands. `trExpr` routes a call operand through `trCall`, so an
-    # lvalue call (`s[i]`) in one of these is handled.
+    # children are plain expressions; `trExpr` handles a call operand (`s[i]`)
     trExpr c, dest, n
   else:
-    if n.finalIrKind in {MflagV, VflagV}:
+    if n.kind == DotToken:
+      # an empty statement slot: a missing routine body, an emptied branch
+      dest.takeTree n
+    elif n.finalIrKind in {MflagV, VflagV}:
       # NJVL control-flow flags. `xelim` used to materialise short-circuit
       # conditions into these for `nj.nim`, and this pass passed the bool
       # storage through; that lowering went out with `nj.nim`, so nothing
@@ -906,21 +841,12 @@ proc trStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     elif n.exprKind == ProccallX:
       trStmtCall c, dest, n
     elif n.exprKind in {DestroyX, CopyX, WasmovedX, SinkhX, TraceX}:
-      # A hook call in statement position. Its children are locations, so
-      # lowering them as expressions is exactly right — `contracts_fir` treats
-      # the same set the same way.
+      # a hook call in statement position; its children are locations
       trExpr c, dest, n
     else:
-      # Operand-lowering fallback: the statement's shape is kept and its
-      # children are lowered as expressions. That is right for anything whose
-      # children are plain expressions — but it does NOT lower nested
-      # *statements*, so a construct with a body reaching here would keep an
-      # un-lowered body. `corofor` is the one such construct, and it is made
-      # by `iterinliner`, which runs after this pass.
-      #
-      # `-d:firFallbackProbe` prints one line per statement that lands here,
-      # which is how the list above was established (the spelling matches
-      # `-d:contractStats` in `contracts_fir.nim`).
+      # Fallback: keep the statement, lower its children as expressions. A
+      # nested statement body would stay unlowered here.
+      # `-d:firFallbackProbe` lists what reaches this branch.
       when defined(firFallbackProbe):
         if n.isTagLit:
           stderr.writeLine "FIR-FALLBACK " & globalTags.tags[n.cursorTagId]
@@ -940,17 +866,15 @@ proc stripAnalysisFactsInto(dest: var TokenBuf; n: var Cursor) =
     dest.takeTree n
 
 proc stripAnalysisFacts*(buf: sink TokenBuf): TokenBuf =
-  ## Remove the prover's facts — `(kill …)` at every scope exit, `(unknown …)`
-  ## after a call that may write through a pointer — from a lowered module.
-  ## They are what the prover reads; the backend re-derives destruction from
-  ## the `scope` tags, so publishing them would say the same thing twice.
+  ## Remove the prover's `(kill …)` and `(unknown …)` facts from a lowered
+  ## module; the backend derives destruction from the `scope` tags.
   var n = beginRead(buf)
   result = createTokenBuf(buf.len)
   while n.hasMore:
     stripAnalysisFactsInto result, n
 
 proc toFinalIr*(pass: var Pass; analysisFacts = true) =
-  ## `analysisFacts`: see `Context.analysisFacts`. Only the prover wants them.
+  ## `analysisFacts`: see `Context.analysisFacts`.
   var c = Context(counter: 0, typeCache: createTypeCache(pass.bits),
                   thisModuleSuffix: pass.moduleSuffix,
                   analysisFacts: analysisFacts)

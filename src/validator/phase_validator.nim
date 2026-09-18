@@ -63,10 +63,8 @@ proc postSemAllowed(raw: TagEnum): bool =
     rawTagIsCallConv(raw)
 
 proc postFinalIrAllowed(raw: TagEnum): bool =
-  ## The Final IR is the post-sem vocabulary plus its own control flow. The
-  ## post-sem tags stay allowed: a body that is re-sem'd elsewhere — a generic
-  ## routine, a template, a macro — is published unlowered, so its `if`/`while`
-  ## are legal here too.
+  ## Post-sem tags plus the Final IR's control flow. Generic routines,
+  ## templates and macros are published unlowered, so `if`/`while` stay legal.
   postSemAllowed(raw) or rawTagIsFinalIrKind(raw)
 
 proc postLengcgenAllowed(raw: TagEnum): bool =

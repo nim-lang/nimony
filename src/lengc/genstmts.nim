@@ -118,8 +118,7 @@ proc genIte(c: var GeneratedCode; n: var Cursor) =
   c.add Semicolon
 
 proc genLoop(c: var GeneratedCode; n: var Cursor) =
-  ## `(loop body)` — infinite, with no condition slot: every way out is a
-  ## `break`/`jmp` the body already contains.
+  ## `(loop body)`: infinite, left only by a `break`/`jmp` inside the body.
   let oldInToplevel = c.inToplevel
   c.inToplevel = false
   n.into:

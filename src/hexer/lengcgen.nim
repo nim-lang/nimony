@@ -1537,8 +1537,8 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
     trExpr(c, dest, n)
     if n.hasMore and n.isDotToken:
-      # The contract pass discharged the bound obligation; only the `lo`
-      # subtraction is left (NIFC arrays are zero-based).
+      # Bound proven by the contract pass; only `- lo` is left (NIFC arrays
+      # start at zero).
       inc n
       if n.hasMore:
         var indexDest = createTokenBuf(dest.len - beforeIndex)
@@ -2025,8 +2025,8 @@ proc trJmp(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
 
 proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(ite cond then else|.)`. Leng has `ite` too, but its back ends and
-  ## optimizer passes speak `if`, so the Final IR construct is spelled as one.
+  ## `(ite cond then else|.)` becomes an `if`: Leng's back ends and optimizer
+  ## passes read `if`.
   let info = n.info
   n.into:
     dest.copyIntoKind IfS, info:
@@ -2040,9 +2040,8 @@ proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
           trStmt c, dest, n
 
 proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(loop (scope BODY (continue .)))` becomes `while true`: the trailing
-  ## `continue` is the loop's only back-edge, so falling off the body does it,
-  ## and every way out is already a `jmp` to a label after the loop.
+  ## `(loop (scope BODY (continue .)))` becomes `while true: BODY`. Falling
+  ## off the body is the back-edge; every exit is a `jmp` past the loop.
   let info = n.info
   n.into:
     dest.copyIntoKind WhileS, info:

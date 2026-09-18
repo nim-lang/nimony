@@ -457,15 +457,10 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
 func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.len != 0 or c.pendingModulePlugins.len != 0
 
 proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
-  ## The module's last step in nimsem: lower the tree `derefs` made to the
-  ## Final IR (`doc/final_ir.md`), prove it, and keep the lowered tree — it is
-  ## what gets published, so hexer does not lower it again. The prover's own
-  ## facts are stripped on the way out; the backend re-derives destruction
-  ## from the `scope` tags.
+  ## Lower the module to the Final IR (`doc/internals/final_ir.md`), prove its
+  ## contracts and publish the lowered tree without the prover's facts.
   if c.g.config.keepSemTree:
-    # The structured tree, for a tool that reads branches as written rather
-    # than as lowered (`src/validator/semvalidator.nim`). Never an input of
-    # the compiler itself: the published module is the lowered one.
+    # The structured tree, for the sem validator; the compiler never reads it.
     onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif", OnlyIfChanged)
   var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
   when true: #defined(enableContracts):
@@ -555,8 +550,7 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     if c.hasPendingPlugins:
-      # Another plugin round follows; the module is not final, so it is
-      # neither deref'd nor lowered yet.
+      # Another plugin round follows, so the module is not lowered yet.
       dest = move afterSem
     else:
       dest = derefsOf(c, move afterSem)

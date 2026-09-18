@@ -62,8 +62,8 @@ type
   ScopeKind = enum
     Other        ## an ordinary destructor scope
     WhileOrBlock ## a `break` can land just past this one
-    Loop         ## a Final IR `(loop …)`: its `(continue .)` leaves every
-                 ## scope inside it
+    Loop         ## a Final IR `(loop …)`; `(continue .)` leaves every scope
+                 ## inside it
   DestructorOp = object
     destroyProc: SymId
     arg: SymId
@@ -377,11 +377,10 @@ proc trBlock(c: var Context; n: var Cursor) =
     swap c.currentScope, oldScope
 
 proc trLoop(c: var Context; n: var Cursor) =
-  ## Final IR `(loop body)`. Its only exits are `jmp`s to a label after it, so
-  ## the path is dead once the loop is done and the exit's `(lab)` revives it.
-  ##
-  ## The body is walked as it is, not re-wrapped: it is already a `(scope …)`,
-  ## and `cps` recognizes the back-edge only as that scope's last child.
+  ## Final IR `(loop body)`. It is only left by `jmp`s to a label after it, so
+  ## the path is dead after it until that `(lab)`. The body is already a
+  ## `(scope …)` and must not be re-wrapped: `cps` expects the back-edge to be
+  ## that scope's last child.
   copyInto(c.dest, n):
     c.flow.clearAll()
     c.flow.openBranches()
@@ -396,9 +395,8 @@ proc trLoop(c: var Context; n: var Cursor) =
   c.flow.markDiverged()
 
 proc trContinue(c: var Context; n: var Cursor) =
-  ## The loop's back-edge. It ends the body's scope like a `break` ends a
-  ## block's, so the destructors of every scope up to the loop run before it
-  ## — `trScope` would append them *after* it, where they are dead.
+  ## The loop's back-edge. Like a `break`, it runs the destructors of every
+  ## scope up to the loop first; after it they would be dead code.
   if not c.terminates:
     var it = addr(c.currentScope)
     while it != nil and it.kind != Loop:
@@ -549,8 +547,7 @@ proc tr(c: var Context; n: var Cursor) =
     of LocalDecls:
       trLocal c, n
     of ContinueS:
-      # Only the Final IR's back-edge gets here: `desugar` turns a source
-      # `continue` into a `break` out of a block.
+      # Only the Final IR's back-edge: a source `continue` is gone by now.
       trContinue c, n
       c.flow.markDiverged()
     of WhileS, CoroforS:

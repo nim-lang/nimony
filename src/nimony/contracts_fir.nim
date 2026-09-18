@@ -36,12 +36,10 @@ emits into the callee stays), and violated, which is an error. See
 `checkRequires` for why undecided is not an error by default and for the two
 module pragmas that move that line.
 
-The answer is not thrown away. A routine with a `.requires` keeps its body
-under `bodyOfRequires` of its name, without the guard, and its own symbol
-becomes a wrapper that checks the contract and forwards to it; a proven call is
-redirected to the body. A proven array index loses its bounds. So the backend
-emits a check exactly where this pass left one owed (`applyVerdicts`,
-`splitsOnRequires`).
+The verdicts are kept: a routine with a `.requires` is split into a guarded
+wrapper and a guard-free body, and a proven call goes to the body; a proven
+array index loses its bounds. The backend then emits a check only where one is
+still owed (`applyVerdicts`, `splitsOnRequires`).
 
 Compile `nimsem` with `-d:contractStats` to get one
 `CONTRACT <verdict> <line> <contract>` line per call site on stderr, and one
@@ -98,11 +96,8 @@ type
     param: SymId
     value: Cursor
     temps: seq[(SymId, Cursor)]
-      ## The `{.inline.}` temps the lowering bound the parts of `value` to. A
-      ## routine of this module has them in `inlineVars` already, from the
-      ## traversal of its body; an imported one is never traversed, so its
-      ## temps are carried here and registered when the accessor is first
-      ## asked for.
+      ## The `{.inline.}` temps `value` refers to. An imported routine is never
+      ## traversed, so they are registered from here when the accessor is used.
 
   BorrowInfo = object
     borrower: SymId   ## variable holding the borrow; upon `(kill borrower)` the borrow ends
@@ -156,11 +151,11 @@ type
     moduleSuffix: string
     nestedProcs: int
     loopExitLabels: HashSet[SymId]     # `(lab)`s emitted right after a `(loop)`.
-    forBinders: HashSet[SymId]         # `for` loop variables: see `declareForVars`.
                                        # Their post-join state keeps the pre-loop
                                        # facts (break-site facts are dropped; only
                                        # break-site inits are joined). See
                                        # `bindLoopExit`.
+    forBinders: HashSet[SymId]         # `for` loop variables: see `declareForVars`
     inlineVars: Table[SymId, Cursor] # var -> to its init expression
     derivedIds: Table[string, VarId]   # canonical location key -> derived VarId
                                        # (see "Derived locations" below)
@@ -168,17 +163,13 @@ type
     derivedRoots: seq[SymId]           # derived VarId -> the variable it hangs
                                        # off, which is what a write invalidates
     accessors: Table[SymId, AccessorInfo] # routines that are just `result = path`
-    obligationOpen: bool               # set while a range obligation is being
-                                       # judged; cleared when it is not
-                                       # discharged (`cannotProve`)
+    obligationOpen: bool               # a range obligation is being judged;
+                                       # cleared when it is not discharged
     root: Cursor                       # the lowered module, for token positions
-    dischargedIndexes: HashSet[int]    # positions of `(arrat …)` nodes whose
-                                       # bound obligation this pass discharged
-    provenCalls: HashSet[int]          # positions of callee symbols whose
-                                       # `.requires` this pass proved: the call
-                                       # goes to the guard-free body
-    splitRoutines: HashSet[SymId]      # routines that exist twice, guarded and
-                                       # guard-free (`splitsOnRequires`)
+    dischargedIndexes: HashSet[int]    # positions of proven `(arrat …)` nodes
+    provenCalls: HashSet[int]          # positions of callees whose `.requires`
+                                       # was proven
+    splitRoutines: HashSet[SymId]      # see `splitsOnRequires`
     notSplit: HashSet[SymId]           # negative cache for the lookup above
     notAccessors: HashSet[SymId]       # negative cache for the lookup above
     constDepth: int
@@ -925,10 +916,8 @@ proc isKeyableCall(fnSym: SymId): bool =
   result = r.kind in {FuncY, ConverterY}
 
 proc bodyOfRequires*(s: SymId): SymId =
-  ## The guard-free entry of a routine split on its `.requires`
-  ## (`splitsOnRequires`). Derived from the routine's own symbol by a fixed
-  ## rule, so a module that proves a call to an *imported* routine can name the
-  ## body without looking anything up: the routine's module emitted it.
+  ## The guard-free body of a routine split on its `.requires`. A fixed naming
+  ## rule, so a call to an imported routine can name it without a lookup.
   let sp = splitSymName(pool.symString(s))
   var r = derivedName(sp.name, "body")
   if sp.module.len > 0:
@@ -937,54 +926,43 @@ proc bodyOfRequires*(s: SymId): SymId =
   result = pool.symId(r)
 
 proc splitsOnRequires*(decl: Cursor): bool =
-  ## Does this routine exist twice — as itself, with the `.requires` guard in
-  ## its prologue, and as `bodyOfRequires` of itself, without it? A call the
-  ## prover discharges goes to the body; everything else (an unproven call, a
-  ## proc value, a vtable slot, a callback) can only name the routine and so
-  ## gets the guard. That is what makes the split cover indirect uses without
-  ## enumerating them.
-  ##
-  ## The body exists once, under `bodyOfRequires`; the routine's own symbol is
-  ## a wrapper that checks the contract and forwards to it
-  ## (`emitRequiresWrapper`).
-  ##
-  ## Not split: a `method` (a call to it *is* the dispatch, which the body
-  ## would bypass), an iterator (inlined, never called), a hook, a routine
-  ## without a body of its own, and a generic (its instances are split where
-  ## they are made).
-  if decl.stmtKind notin {ProcS, FuncS, ConverterS}: return false
-  let r = asRoutine(decl, SkipInclBody)
-  if r.name.kind != SymbolDef or r.isGeneric: return false
-  if pool.symString(r.name.symId).startsWith("="): return false
-  if r.body.stmtKind notin {StmtsS, ScopeS}: return false
-  if not hasPragma(r.pragmas, RequiresP): return false
-  result = not (hasPragma(r.pragmas, AssemblerP) or hasPragma(r.pragmas, ImportcP) or
-                hasPragma(r.pragmas, ImportcppP) or hasPragma(r.pragmas, ImportjsP))
+  ## Is this routine split into a wrapper that checks its `.requires` and
+  ## forwards to `bodyOfRequires`, which does not? Proven calls go to the body;
+  ## everything else (proc values, vtable slots, callbacks) names the routine
+  ## and so gets the guard. Methods, iterators, hooks, generics and routines
+  ## without a body are not split.
+  result = false
+  if decl.stmtKind in {ProcS, FuncS, ConverterS}:
+    let r = asRoutine(decl, SkipInclBody)
+    result = r.name.kind == SymbolDef and not r.isGeneric and
+      not pool.symString(r.name.symId).startsWith("=") and
+      r.body.stmtKind in {StmtsS, ScopeS} and
+      hasPragma(r.pragmas, RequiresP) and
+      not (hasPragma(r.pragmas, AssemblerP) or hasPragma(r.pragmas, ImportcP) or
+           hasPragma(r.pragmas, ImportcppP) or hasPragma(r.pragmas, ImportjsP))
 
 proc collectSplitRoutines(n: var Cursor; splits: var HashSet[SymId]) =
-  ## The module's own split routines: every top-level one, instances included
-  ## (they are made here, so `tryLoadSym` cannot find them yet). A routine
-  ## nested in another is not split — its copy would have to be made in both
-  ## the guarded and the guard-free enclosing routine.
-  if not n.isTagLit:
-    skip n
-    return
-  if n.stmtKind in {StmtsS, ScopeS}:
+  ## The module's own top-level split routines, generic instances included
+  ## (`tryLoadSym` cannot find those yet). Nested routines are not split.
+  if n.isTagLit and n.stmtKind in {StmtsS, ScopeS}:
     n.into:
       while n.hasMore:
         collectSplitRoutines(n, splits)
   else:
-    if n.symKind in RoutineKinds and splitsOnRequires(n):
+    if n.isTagLit and n.symKind in RoutineKinds and splitsOnRequires(n):
       splits.incl asRoutine(n).name.symId
     skip n
 
 proc routineSplits(c: var FirContext; s: SymId): bool =
-  if s in c.splitRoutines: return true
-  if s in c.notSplit: return false
-  let res = tryLoadSym(s)
-  result = res.status == LacksNothing and splitsOnRequires(res.decl)
-  if result: c.splitRoutines.incl s
-  else: c.notSplit.incl s
+  if s in c.splitRoutines:
+    result = true
+  elif s in c.notSplit:
+    result = false
+  else:
+    let res = tryLoadSym(s)
+    result = res.status == LacksNothing and splitsOnRequires(res.decl)
+    if result: c.splitRoutines.incl s
+    else: c.notSplit.incl s
 
 proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
                    temps: var seq[(SymId, Cursor)]): bool =
@@ -1023,9 +1001,8 @@ proc matchAccessor(decl: Cursor; param: var SymId; value: var Cursor;
       val = a
       skip b
     elif b.symKind in {LetY, CursorY} and hasPragma(asLocal(b).pragmas, InlineP):
-      # `let \`x.N {.inline.} = len(s)`: the lowering binds a call to a temp
-      # that *is* that call, so the body is still `result = <expr>` — the
-      # expression is only spelled across two statements.
+      # `let \`x.N {.inline.} = len(s)`: a temp that stands for its call, so
+      # the body is still `result = <expr>`, spelled in two statements.
       let l = asLocal(b)
       if l.name.kind != SymbolDef or cursorIsNil(l.val) or l.val.kind == DotToken:
         return false
@@ -3189,8 +3166,7 @@ proc checkRequires(c: var FirContext; req: Cursor; rd: Reading;
                    info: NifLineInfo): bool =
   ## Discharge the callee's `.requires` at this call site.
   ##
-  ## Returns whether the contract was proven: the call can then go to the
-  ## callee's guard-free copy.
+  ## Returns whether the contract was proven, so the call can skip the guard.
   ##
   ## By default a contract whose *negation* follows from what is known here is
   ## an error, and one the engine cannot decide is left to the runtime guard
@@ -3314,11 +3290,9 @@ proc analyseArrAt(c: var FirContext; pc: var Cursor; call: var CallContext) =
   ## range) is an error either way. That is the same three-way answer
   ## `checkRequires` gives a `.requires`, and `runtimeContracts` (which `v2`
   ## implies) opts out of the judgement here for the same reason it does there.
-  ## What the pass decides here it also *writes down*: an obligation it
-  ## discharges is struck from the node (`applyIndexVerdicts`), so the backend
-  ## emits a bound check exactly where one is still owed. The decision travels
-  ## with the code — a body proven here stays check-free wherever it is
-  ## inlined, and a body from a laxer module keeps its checks.
+  ## A discharged obligation is removed from the node (`copyArrat`), so the
+  ## backend emits a bound check only where one is still owed, even after
+  ## inlining.
   let nodePos = cursorToPosition(c.root, pc)
   pc.into:
     traverseExpr c, pc, call            # the array operand
@@ -3766,12 +3740,9 @@ proc traverseAsgn(c: var FirContext; n: var Cursor; call: var CallContext) =
     let symId = destSymId
     let x = getLocalInfo(c.typeCache, symId)
     if x.kind in {LetY, GletY, TletY} and symId notin c.forBinders:
-      # A `for` binder is assigned by the *binding* protocol — tuple unpacking,
-      # a closure iterator's resume — not by user code reassigning a `let`. It
-      # is marked initialized at the `for` (the iterator is what initializes it,
-      # and a body that runs has been yielded to), which would otherwise make
-      # every such binding read as a reassignment. Source-level `x = …` on a
-      # `let` binder was already rejected by sem.
+      # A `for` binder is marked initialized at the `for`, so its binding
+      # (tuple unpacking, a closure iterator's resume) is not a reassignment.
+      # Sem already rejected a source-level `x = …` on it.
       if isInitialized(c, symId):
         c.buildErr n.info, "invalid reassignment to `let` variable"
     elif x.kind == ParamY and isVarOpenArray(c, x.typ):
@@ -4259,9 +4230,8 @@ proc restrictFactsToLoopInvariants(c: var FirContext; w: LoopWrites) =
     c.facts.add ch
 
 proc analyseLoopBody(c: var FirContext; n: var Cursor) =
-  ## `n` points at a loop construct's body. Shared by `(loop …)` and `(for …)`:
-  ## both bodies end in `(continue .)`, exit forward via `(jmp loopExit)`, and
-  ## never fall through.
+  ## The body of a `(loop …)` or `(for …)`: it ends in `(continue .)`, exits
+  ## via `(jmp loopExit)` and never falls through.
   var call = freshCall()
   block:
     # Before the checkpoint, not after: the rollback below restores the state
@@ -4291,8 +4261,7 @@ proc analyseLoopBody(c: var FirContext; n: var Cursor) =
     c.activeBorrows.setLen(savedBorrows)
 
 proc recordLoopExitLabel(c: var FirContext; n: Cursor) =
-  ## The trailing `(lab loopExit)` (emitted iff a `break`/guard targeted it, and
-  ## unconditionally for a `for`) is *this* loop's exit. Record it so
+  ## The trailing `(lab loopExit)` is this loop's exit; record it so
   ## `traverseLabel` uses `bindLoopExit`.
   if n.isTagLit and n.finalIrKind == LabV:
     var peek = n
@@ -4313,15 +4282,13 @@ proc traverseLoop(c: var FirContext; n: var Cursor) =
   recordLoopExitLabel c, n
 
 proc forIterFirstArg(c: var FirContext; iter: Cursor): Cursor =
-  ## The container a borrowing `for` borrows from: the first argument of the
-  ## iterator call. `xelim` may have hoisted that call into an inline temp, in
-  ## which case the call is the temp's initializer.
+  ## The container a borrowing `for` borrows from: the iterator call's first
+  ## argument. The call may have been hoisted into an inline temp.
   result = default(Cursor)
   var it = iter
   if it.isTagLit and it.exprKind in {HderefX, HaddrX}:
     inc it
-  if it.isSymbol:
-    if not c.inlineVars.hasKey(it.symId): return
+  if it.isSymbol and c.inlineVars.hasKey(it.symId):
     it = c.inlineVars.getOrQuit(it.symId)
   if it.isTagLit and it.exprKind in CallKinds:
     var r = it
@@ -4330,18 +4297,9 @@ proc forIterFirstArg(c: var FirContext; iter: Cursor): Cursor =
     if r.hasMore: result = r
 
 proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor) =
-  ## A `for`'s loop variables are bound by an iterator that is not inlined until
-  ## hexer's `elimForLoops`, so nothing in the Final IR ever assigns to them.
-  ## They are declared *and* initialized here: yielding is what initializes
-  ## them, and a body that runs at all has been yielded to.
-  ##
-  ## A binder of type `var T`/`lent T` comes from a *borrowing* iterator, and it
-  ## borrows from the container the iterator was handed. The lowering used to
-  ## say so by fabricating a second declaration of the binder with a fake
-  ## `(haddr firstArg)` initializer — which only worked while its output was
-  ## thrown away. The fact is derived here instead, where it belongs: nothing an
-  ## analysis alone needs has any business being written into an IR that is
-  ## about to be compiled.
+  ## Nothing in the Final IR assigns a `for`'s loop variables (the iterator is
+  ## inlined later), so they are declared and initialized here. A `var T` or
+  ## `lent T` binder borrows from the iterator's first argument.
   var vars = vars
   if vars.substructureKind in {UnpackflatU, UnpacktupU}:
     vars = sub(vars) # peek only, never left
@@ -4361,13 +4319,9 @@ proc declareForVars(c: var FirContext; vars: Cursor; firstArg: Cursor) =
         c.activeBorrows.add path
 
 proc traverseFor(c: var FirContext; n: var Cursor) =
-  ## `(for iterCall vars body)`. The body says nothing about how the loop
-  ## variables get their values — the iterator is not inlined yet — so what its
-  ## `.ensures` promises about them arrives as `(assume …)` at the head of the
-  ## body instead (`finalir.forRangeAssumes`).
-  ##
-  ## The iterator call is analysed like any other call: its arguments are
-  ## evaluated here, so a contract they have to satisfy is discharged here.
+  ## `(for iterCall vars body)`. The iterator's `.ensures` about the loop
+  ## variables arrives as `(assume …)` at the head of the body
+  ## (`finalir.forRangeAssumes`); the call itself is analysed like any other.
   var call = freshCall()
   n.into: # for tag
     let firstArg = forIterFirstArg(c, n)
@@ -4825,9 +4779,8 @@ proc traverseProc(c: var FirContext; n: var Cursor) =
   # meaningful Nim body — and the lowered body of an extern func with a doc /
   # `runnableExamples` body still ends in an implicit `(ret result)` that reads
   # the never-initialized `result`, so we must skip the *traversal*, not merely
-  # the final init check. An `{.assembler.}` body is hand-written machine code:
-  # the Final IR carries it verbatim (`finalir.trProcDecl`) because the backend
-  # needs it, and it is outside this analysis's vocabulary entirely.
+  # the final init check. An `{.assembler.}` body is machine code, kept
+  # verbatim by `finalir` for the backend; there is nothing to analyse.
   if not isGeneric and not isExternProc and not isAsm:
     traverseStmt c, n, call
     # Falling off the end is an exit too.
@@ -5052,10 +5005,8 @@ type
     provenCalls: HashSet[int]
 
 proc freshBodyName(s: SymId): SymId =
-  ## The name a declaration of the body's header gets — its parameters, the
-  ## `result` its `.ensures` binds. The wrapper keeps the routine's own names:
-  ## its guard is rendered into the panic message, and that has to name the
-  ## parameters as the programmer wrote them.
+  ## A fresh name for a parameter (or `result`) of the guard-free body. The
+  ## wrapper keeps the original names: its panic message renders the guard.
   let sp = splitSymName(pool.symString(s))
   var r = derivedName(sp.name, "b")
   if sp.module.len > 0:
@@ -5078,11 +5029,8 @@ proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; v: Verdicts;
 
 proc copyArrat(dest: var TokenBuf; n: var Cursor; v: Verdicts;
                ren: Table[SymId, SymId]) =
-  ## The obligation is discharged, so the bounds it was stated as go away:
-  ## `(arrat arr idx)`, or `(arrat arr idx . lo)` when the array does not
-  ## start at zero — NIFC arrays do, so `lo` still has to be subtracted. What
-  ## is left in the `hi` slot of any other node is an obligation the backend
-  ## owes a check for.
+  ## A discharged index drops its `hi` bound: `(arrat arr idx)`, or
+  ## `(arrat arr idx . lo)` when the array does not start at zero.
   let info = n.info
   dest.addParLe ArratX, info
   n.into:
@@ -5122,11 +5070,9 @@ proc copyWithVerdicts(dest: var TokenBuf; n: var Cursor; v: Verdicts;
     dest.takeTree n
 
 proc emitRequiresBody(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
-  ## The routine as written, under `bodyOfRequires` of its name and carrying
-  ## the contract as `(assume …)`: on the body it is what may be taken for
-  ## granted, not what is checked, so `desugar` emits no guard for it. It is a
-  ## plain `proc` whatever the original was, and never `exportc` — C knows the
-  ## routine by the wrapper's name.
+  ## The routine as written, named `bodyOfRequires` and with its `.requires`
+  ## turned into `(assume …)` so `desugar` emits no guard. Always a plain
+  ## `proc`, never `exportc`: C knows the routine by the wrapper's name.
   var ren = initTable[SymId, SymId]()
   var n = decl
   let kind = if n.stmtKind == ConverterS: ProcS else: n.stmtKind
@@ -5162,17 +5108,12 @@ proc emitRequiresBody(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
   dest.addParRi()
 
 proc emitRequiresWrapper(dest: var TokenBuf; decl: Cursor; v: Verdicts) =
-  ## The routine's own symbol: its header — so the `.requires` that `desugar`
-  ## turns into the guard stays here, along with `exportc`, the calling
-  ## convention and everything an importer reads — and a body that forwards
-  ## every parameter to `bodyOfRequires`:
+  ## The routine's own header (with the `.requires` that `desugar` turns into
+  ## the guard) and a body that forwards every parameter to `bodyOfRequires`:
   ##
   ##   (result :r T .) (asgn r (call body p1 … pn)) (ret r)
   ##
-  ## which is exactly what sem writes for a routine whose body is one call, so
-  ## every later pass already knows it: parameters are passed as they are,
-  ## whether `var`, `sink` or `openArray`, and a `var T` result is a `result` of
-  ## that type. Shoggoth's `tailcalls` folds the pair into `(ret (call …))`.
+  ## the same shape sem produces for a one-call body.
   var noRen = initTable[SymId, SymId]()
   var n = decl
   let r = asRoutine(decl, SkipInclBody)
@@ -5258,9 +5199,8 @@ proc lowerToFinalIr*(input: var TokenBuf; moduleSuffix: string; bits: int): Toke
   result = ensureMove pass.dest
 
 proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
-  ## Analyze contracts on a module that is already lowered — the buffer nimsem
-  ## goes on to publish. When `verbose` is true, every contract/init failure
-  ## dumps the enclosing proc's IR to stderr to aid debugging.
+  ## Analyze contracts on an already lowered module. When `verbose` is true,
+  ## every contract/init failure dumps the enclosing proc's IR to stderr.
   var c = FirContext(
     errors: initTokenBuf(),
     typeCache: createTypeCache(bits),
@@ -5296,15 +5236,15 @@ proc analyzeFinalIr*(finalBuf: var TokenBuf; moduleSuffix: string; features: set
     endRead(fin)
 
   c.typeCache.closeScope()
-  # Only this module's own routines are split here; an imported one was split
-  # by its own module, which is why `splitRoutines` holds both.
+  # Only this module's routines are split here; imported ones were split by
+  # their own module.
   if c.dischargedIndexes.len > 0 or c.provenCalls.len > 0 or ownSplits.len > 0:
     applyVerdicts(finalBuf, c.dischargedIndexes, c.provenCalls, ownSplits)
   result = ensureMove c.errors
 
 proc analyzeContractsFinalIr*(input: var TokenBuf; moduleSuffix: string; features: set[Feature]; bits: int; verbose = false): TokenBuf =
-  ## Lower `input` and analyze it. Only for a caller that has no lowered buffer
-  ## of its own: nimsem lowers once and calls `analyzeFinalIr` on that.
+  ## Lower `input` and analyze it. nimsem lowers once and calls
+  ## `analyzeFinalIr` directly.
   var finalBuf = lowerToFinalIr(input, moduleSuffix, bits)
   result = analyzeFinalIr(finalBuf, moduleSuffix, features, bits, verbose)
 

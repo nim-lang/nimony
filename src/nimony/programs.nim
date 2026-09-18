@@ -596,12 +596,8 @@ proc isConcat(s: SymId): bool =
   result = hasPragmaOfValue(routine.pragmas, SemanticsP, "string.&")
 
 proc isStringConcatCall*(n: Cursor): bool =
-  ## Is `n` a call of `system.&` for strings (`.semantics: "string.&"`)? Its
-  ## chains are folded into one allocation by `desugar`, which `xelim` must
-  ## leave nested for it.
-  # Non-mutating peek: cannot use `into` here because the body would have
-  # to consume every child (the callee plus both args) just to satisfy the
-  # closing-ParRi assertion — wasteful for a one-token check.
+  ## Is `n` a call of the string `&` (`.semantics: "string.&"`)? `derefs`
+  ## folds a chain of them into one allocation.
   result = false
   if n.exprKind in CallKinds:
     var c = n

@@ -78,8 +78,7 @@ proc isIvIncPattern(c: Cursor; outIvSym: var SymId): bool =
   return true
 
 proc loopBodyCursor(loopCursor: Cursor): Cursor =
-  ## Cursor at the loop body. Handles `(while cond body)` and the infinite
-  ## `(loop body)`, which has no condition slot at all.
+  ## Cursor at the loop body. Handles `(while cond body)` and `(loop body)`.
   result = loopCursor
   case loopCursor.stmtKind
   of WhileS:

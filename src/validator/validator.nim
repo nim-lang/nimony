@@ -98,9 +98,8 @@ proc semNifForSource(nimFile, cacheDir: string): string =
           skip c
         if input.len > 0 and output.endsWith(".p.nif") and
             absolutePath(input).replace('\\', '/') == want:
-          # `.sem.nif` is the module as sem left it — branches as written.
-          # The published `.s.nif` is lowered to the Final IR, which these
-          # checks do not read; `--keepsemtree` is what puts the file there.
+          # These checks read the unlowered `.sem.nif` (`--keepsemtree`), not
+          # the published `.s.nif`, which is Final IR.
           let base = cacheDir / extractFilename(output).changeFileExt("")
           result = base.changeFileExt(".sem.nif")
           if not fileExists(result):

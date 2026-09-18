@@ -59,10 +59,8 @@ type
     source: ptr TokenBuf
     moduleSuffix: string
     callTemps: Table[SymId, Cursor]
-      ## `xelim`'s `{.inline.}` temps — a call bound to a local so it has a
-      ## location — with their initializers. Such a temp *is* its call, the way
-      ## `contracts_fir.inlineVars` reads it: `hderef tmp` reaches whatever the
-      ## call's arguments reach.
+      ## `xelim`'s `{.inline.}` temps with their calls. Such a temp stands
+      ## for its call: `hderef tmp` reaches whatever the call's arguments reach.
     mover: MoverContext
     constr: Cursor
       ## The outermost constructing expression currently being translated, or
@@ -273,15 +271,14 @@ proc trSons(c: var Context; n: var Cursor; e: Expects)
       tr(c, n, e)
 
 proc mentionsCallTemp(c: Context; n: Cursor): bool =
-  var n = n
-  if n.kind == Symbol:
-    return n.symId in c.callTemps
-  if n.isTagLit:
-    n = sub(n)   # peek only, never left
-    while n.hasMore:
-      if mentionsCallTemp(c, n): return true
-      skip n
   result = false
+  if n.kind == Symbol:
+    result = n.symId in c.callTemps
+  elif n.isTagLit:
+    var it = sub(n)   # peek only, never left
+    while it.hasMore and not result:
+      result = mentionsCallTemp(c, it)
+      skip it
 
 proc expandCallTemps(c: var Context; dest: var TokenBuf; n: Cursor) =
   ## `n` with every call temp replaced by its call, for the aliasing
@@ -610,8 +607,7 @@ proc trAsgn(c: var Context; n: var Cursor) =
     const isNotFirstAsgn = true
     var leCopy = le
     var lhs = evalLeftHandSide(c, leCopy)
-    # The aliasing predicates judge a place by its root, and a call temp's root
-    # is its own: judge them on the calls instead.
+    # Aliasing is judged by a place's root; for a call temp that is the call.
     var aliasBuf = createTokenBuf(0)
     var aliasLe = le
     var aliasRi = ri
@@ -1289,8 +1285,8 @@ proc trEnsureMove(c: var Context; n: var Cursor; e: Expects)
   let typ = getType(c.typeCache, n)
   let arg = n.childCursor
   let info = n.info
-  # `hderef tmp` is `hderef call` when `tmp` is a call temp: a place reached
-  # through an accessor, which `constructsValue` accepts below.
+  # `hderef tmp` of a call temp is `hderef call`: a place reached through an
+  # accessor, like the case `constructsValue` accepts below.
   var throughCallTemp = false
   if arg.exprKind in {DerefX, HderefX}:
     let inner = arg.childCursor

@@ -26,20 +26,17 @@ type
       ## module body so the C backend sees them declared before their uses
     bits: int  ## target `int` width, handed to the const evaluator
     pre: TokenBuf
-      ## Statements for in front of the statement being translated; `trStmt`
-      ## splices them in. The input is the Final IR and nothing lowers this
-      ## pass's output again, so what an expansion needs to run first goes
-      ## here instead of into an `(expr …)`, and control flow is spelled
-      ## `loop`/`ite`/`jmp`.
+      ## Statements to run before the current statement; `trStmt` splices
+      ## them in. Nothing lowers this pass's output again, so expansions
+      ## use this instead of `(expr …)` and spell control flow as Final IR.
 
 proc freshLabel(c: var Context): SymId =
   result = pool.symId("`desugarL." & $c.counter)
   inc c.counter
 
 proc openLoop(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
-  ## `while <cond>: <body>`, part one; the caller emits `<cond>` next, then
-  ## `openLoopBody`, the body, and `closeLoop`. Returns the exit label, for
-  ## `emitBreak`.
+  ## `while <cond>: <body>`: `openLoop`, `<cond>`, `openLoopBody`, `<body>`,
+  ## `closeLoop`. Returns the exit label for `emitBreak`.
   result = freshLabel(c)
   dest.addParLe LoopV, info
   dest.addParLe ScopeS, info
@@ -90,65 +87,6 @@ proc declareTemp(c: var Context; dest: var TokenBuf; typ: Cursor; info: NifLineI
   dest.addDotToken() # export, pragmas
   dest.addDotToken()
   copyTree dest, typ # type
-
-proc needsTemp(n: Cursor): bool =
-  # Pre-initialise: the contract analyser drops the `IfFalse cf s`
-  # implication for the leaving-path cfvar raised inside the inner
-  # while-loop, so it cannot prove `result` is set on the normal exit of
-  # the AtX branch. `result = false` here is the bool default anyway —
-  # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
-  # removed) to see the Final IR that trips the checker.
-  result = false
-  case n.kind
-  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:
-    result = false
-  of TagLit:
-    var n = n
-    case n.exprKind
-    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
-      result = false
-    of ExprX:
-      n = sub(n)  # throwaway copy; bounds the probe under vpr
-      let first = n
-      skip n
-      if not n.hasMore:
-        # single element expr
-        result = needsTemp(first)
-      else:
-        result = true
-    of SufX:
-      inc n
-      result = needsTemp(n)
-    of DconvX:
-      inc n
-      skip n
-      result = needsTemp(n)
-    of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
-      result = false
-      n = sub(n)  # throwaway copy; bounds the walk under vpr
-      while n.hasMore:
-        if needsTemp(n):
-          return true
-        skip n
-    of ErrX, DerefX, AndX, OrX, XorX, NotX, NegX, AlignofX,
-        OffsetofX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX,
-        OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
-        BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
-        ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
-        HderefX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
-        TabconstrX, AshrX, BaseobjX, HconvX, CallstrlitX, InfixX,
-        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
-        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
-        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
-        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
-        Delay0X, SuspendX, DoX, PlussetX, MinussetX, MulsetX,
-        XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
-        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
-        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
-        EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
-      result = true
-  else:
-    result = true
 
 proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false)
   {.ensuresNif: addedAny(dest).}
@@ -934,113 +872,6 @@ proc genInclExcl(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi()
     c.tempUseBufStack.shrink(oldBufStackLen)
 
-proc isChainedStringConcatCall(n: Cursor): bool =
-  ## True iff the outer call is `string.&` *and* at least one operand is
-  ## itself a `string.&` call — i.e. the chain length is at least 2 calls
-  ## (>= 3 leaves). A single `a & b` is left for the runtime to handle.
-  result = false
-  if isStringConcatCall(n):
-    var c = n
-    inc c                       # past call tag
-    skip c                      # past callee
-    if isStringConcatCall(c):
-      result = true
-    else:
-      skip c                    # past first arg
-      result = isStringConcatCall(c)
-
-proc collectConcatLeaves(c: var Context; leavesBuf: var TokenBuf;
-                         leafStarts: var seq[int]; n: var Cursor) =
-  ## Walks an arbitrarily-nested chain of `string.&` calls rooted at `n`
-  ## and records each non-`&` operand into `leavesBuf`, in left-to-right
-  ## order, with `leafStarts` indexing each leaf's beginning. Each leaf is
-  ## desugared in-place (full `tr` recursion).
-  into n:
-    skip n              # past fn symbol
-    for _ in 0..1:
-      if isStringConcatCall(n):
-        collectConcatLeaves(c, leavesBuf, leafStarts, n)
-      else:
-        leafStarts.add leavesBuf.len
-        tr(c, leavesBuf, n)
-
-proc emitLenSum(dest: var TokenBuf; lenSym: SymId;
-                leafCursors: openArray[Cursor]; lo, hi: int;
-                info: NifLineInfo) =
-  ## Emit `len(leaf[lo]) + len(leaf[lo+1]) + ... + len(leaf[hi])`,
-  ## left-associated, as a single `int` expression.
-  if lo == hi:
-    copyIntoKind dest, CallX, info:
-      dest.addSymUse(lenSym, info)
-      dest.addSubtree leafCursors[lo]
-  else:
-    addIntTypedOp dest, AddX, -1, info:
-      emitLenSum(dest, lenSym, leafCursors, lo, hi-1, info)
-      copyIntoKind dest, CallX, info:
-        dest.addSymUse(lenSym, info)
-        dest.addSubtree leafCursors[hi]
-
-proc genStringConcatChain(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Rewrites `a & b & c & d` (chain of `string.&` calls) into
-  ##   (expr
-  ##     (var :t0 . . string a)?  ...        # only for side-effectful leaves
-  ##     (var :tmp . . string (call newStringOfCap (add (i -1)
-  ##                              (call len leaf0) ... (call len leafN))))
-  ##     (call add tmp leaf0)
-  ##     ...
-  ##     (call add tmp leafN)
-  ##     tmp)
-  ## Side-effectful leaves are lifted to a local first so that `.len` and
-  ## the matching `.add` see the same value (no double evaluation).
-  let info = n.info
-  var leavesBuf = createTokenBuf(64)
-  var leafStarts: seq[int] = @[]
-  collectConcatLeaves(c, leavesBuf, leafStarts, n)
-
-  let stringType = c.typeCache.builtins.stringType
-  let oldBufStackLen = c.tempUseBufStack.len
-
-  var pre = createTokenBuf(32) # see `emitValue`
-  var leafCursors = newSeqOfCap[Cursor](leafStarts.len)
-  for st in leafStarts:
-    let leafOrig = cursorAt(leavesBuf, st)
-    if needsTemp(leafOrig):
-      leafCursors.add liftTemp(c, pre, leafOrig, stringType, info)
-    else:
-      leafCursors.add leafOrig
-
-  # Forged symbol names — indices match declaration order across the
-  # system module's includes (setops/seqimpl/stringimpl/openarrays). If
-  # an overload with the same identifier is inserted earlier in system,
-  # these numbers must shift. (`len(string)` is `len.4`, not `.5`: object
-  # fields no longer share the global per-name counter, so the `len` field
-  # of `seq`/`openArray` no longer pushes the `len` overloads up by one.)
-  let newStrSym = pool.symId("newStringOfCap.0." & SystemModuleSuffix)
-  let lenSym    = pool.symId("len.4."           & SystemModuleSuffix)
-  let addSym    = pool.symId("add.2."           & SystemModuleSuffix)
-
-  let tmp = declareTemp(c, pre, stringType, info)
-  copyIntoKind pre, CallX, info:
-    pre.addSymUse(newStrSym, info)
-    emitLenSum(pre, lenSym, leafCursors, 0, leafCursors.len-1, info)
-  pre.addParRi()  # close (var :tmp . . string ...)
-
-  for lc in leafCursors:
-    copyIntoKind pre, CallS, info:
-      pre.addSymUse(addSym, info)
-      # `add.2`'s first parameter is `var string`, so the call site must
-      # take the address of `tmp` — `derefs` (in sem) won't see this
-      # rewrite, so the wrap has to happen here.
-      copyIntoKind pre, HaddrX, info:
-        pre.addSymUse(tmp, info)
-      pre.addSubtree lc
-
-  var val = createTokenBuf(2)
-  val.addSymUse(tmp, info)
-  emitValue c, dest, pre, val
-
-  c.tempUseBufStack.shrink(oldBufStackLen)
-
 const FoldableFloatExprs = {AddX, SubX, MulX, DivX, NegX, EqX, LeX, LtX}
 
 proc floatOpBits(n: Cursor): int =
@@ -1193,8 +1024,7 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   dest.addParLe StmtsS, info
 
   let tmp = declareTemp(c, dest, tupleType, lhsTagInfo)
-  tr c, dest, n       # the RHS is the var's initial value (a bound temp's
-                      # symbol, too, under the Final IR)
+  tr c, dest, n       # the RHS is the var's initial value
   dest.addParRi()     # close `(var ...)`
 
   n = asgnStart; skip n # close original `(asgn ...)`
@@ -1213,9 +1043,8 @@ proc trTupleAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc emitCheckedIndex(c: var Context; dest: var TokenBuf; chk: var TokenBuf;
                       isUnsigned: bool; info: NifLineInfo) =
-  ## The check call `chk` as an index, bound to an `{.inline.}` temp in front
-  ## of the statement — the shape the intra-module inliner can splice. (An
-  ## `and`/`or` operand keeps its statements to itself: `trShortCircuit`.)
+  ## Binds the check call `chk` to an `{.inline.}` temp in `pre`, the shape
+  ## the intra-module inliner can splice.
   let tmp = pool.symId("`desugar." & $c.counter)
   inc c.counter
   copyIntoKind c.pre, LetS, info:
@@ -1249,9 +1078,8 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     var idxBuf = createTokenBuf(8)
     tr(c, idxBuf, n)
     if n.hasMore and n.isDotToken:
-      # `(arrat arr idx . [lo])` — the contract pass discharged the bound
-      # obligation, so nothing is checked here. `lo` stays because NIFC arrays
-      # are zero-based and a `lo..hi` array still indexes at `i - lo`.
+      # `(arrat arr idx . [lo])`: the prover proved the index, so no check.
+      # `lo` stays: NIFC arrays are zero-based, so we index at `i - lo`.
       inc n
       if n.hasMore:
         var loBuf = createTokenBuf(8)
@@ -1312,9 +1140,8 @@ proc trArrAt(c: var Context; dest: var TokenBuf; n: var Cursor) =
     dest.addParRi(n.endInfo)
 
 proc trShortCircuit(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## `a and b` / `a or b`. The right operand may not run, so whatever its
-  ## translation wants to run first (`pre`) cannot go in front of the whole
-  ## statement. When there is any, the operator is materialized:
+  ## `a and b` / `a or b`. `b` may not run, so its `pre` cannot go in front
+  ## of the statement. If it has one, the operator becomes:
   ##
   ##   var t = a
   ##   if t: <b's pre>; t = b          # `or`: if not t
@@ -1471,12 +1298,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor; isTopScope = false) =
     of ExprX:
       trExpr c, dest, n
     of CallX, CallstrlitX, CmdX, PrefixX, InfixX, HcallX:
-      # CallKinds — check for a foldable chain of `string.&` before
-      # falling back to the generic son-recursion path.
-      if isChainedStringConcatCall(n):
-        genStringConcatChain(c, dest, n)
-      else:
-        trSons(c, dest, n)
+      trSons(c, dest, n)
     of EqX, NeqX:
       # A `.closure` value is an (fn, env) pair, so C's `==` cannot compare it:
       # the operands are structs. Project the halves and compare those instead.
