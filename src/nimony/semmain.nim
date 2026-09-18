@@ -27,6 +27,7 @@ import nimony_model, symtabs, builtintypes, decls, programs, sigmatch, conceptca
   reporters, nifconfig, xints, semdata, sembasics,
   semos, langmodes, derefs, vtables_frontend,
   contracts_fir, exprexec, semimport, module_plugins, sem
+import ".." / finalir / finalir
 when not defined(nimony):
   import ".." / validator / phase_validator
 
@@ -455,6 +456,20 @@ proc reorderInnerGenericInstances(c: SemContext; dest: var TokenBuf) =
 
 func hasPendingPlugins(c: SemContext): bool {.inline.} = c.pendingTypePlugins.len != 0 or c.pendingModulePlugins.len != 0
 
+proc lowerAndProve(c: var SemContext; dest: var TokenBuf) =
+  ## Lower the module to the Final IR (`doc/internals/final_ir.md`), prove its
+  ## contracts and publish the lowered tree without the prover's facts.
+  if c.g.config.keepSemTree:
+    # The structured tree, for the sem validator; the compiler never reads it.
+    onRaiseQuit writeFile(dest, c.g.config.nifcachePath & "/" & c.thisModuleSuffix & ".sem.nif", OnlyIfChanged)
+  var fir = lowerToFinalIr(dest, c.thisModuleSuffix, c.g.config.bits)
+  when true: #defined(enableContracts):
+    var moreErrors = analyzeFinalIr(fir, c.thisModuleSuffix, c.features,
+                                    c.g.config.bits, c.g.config.verbose)
+    if reporters.reportErrors(moreErrors) > 0:
+      quit 1
+  dest = stripAnalysisFacts(ensureMove fir)
+
 proc runPhases(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
   ## The three sem phases. Each phase's buffer is consumed by the next one and
   ## released when this returns, before generics, derefs and the contract pass
@@ -535,13 +550,11 @@ proc semcheckCore(c: var SemContext; dest: var TokenBuf; n0: Cursor) =
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     if c.hasPendingPlugins:
+      # Another plugin round follows, so the module is not lowered yet.
       dest = move afterSem
     else:
       dest = derefsOf(c, move afterSem)
-    when true: #defined(enableContracts):
-      var moreErrors = analyzeContractsFinalIr(dest, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
+      lowerAndProve(c, dest)
   else:
     quit 1
 
@@ -618,21 +631,19 @@ proc semcheckPostProcess(c: var SemContext; dest: var TokenBuf) =
 
   if reportErrors(dest) == 0:
     var afterSem = move dest
-    when true:
-      var moreErrors = analyzeContractsFinalIr(afterSem, c.thisModuleSuffix, c.features, c.g.config.bits, c.g.config.verbose)
-      if reporters.reportErrors(moreErrors) > 0:
-        quit 1
     if c.genericInnerProcs.len > 0:
       reorderInnerGenericInstances(c, afterSem)
     if c.hasPendingPlugins:
       dest = move afterSem
     else:
       dest = derefsOf(c, move afterSem)
+      lowerAndProve(c, dest)
   else:
     quit 1
 
 proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
-  ## Validate that `dest` conforms to the post-sem subset of `doc/tags.md`.
+  ## Validate that `dest` conforms to the published subset of `doc/tags.md`:
+  ## the post-sem vocabulary plus the Final IR's control flow.
   ## Reports violations on stderr and aborts with a non-zero exit status so
   ## that drift from the spec is a hard error. Active by default in host-Nim
   ## builds; nimony's own bootstrap build skips this until the validator
@@ -640,7 +651,7 @@ proc maybeValidatePostSem(dest: var TokenBuf; moduleName: string) =
   ## `-d:skipPostSemValidator` opts out (used by Windows CI — see hastur's
   ## `validatePassesFlag`).
   when not defined(nimony) and not defined(skipPostSemValidator):
-    let phase = postSemPhase()
+    let phase = postFinalIrPhase()
     let violations = validate(dest, phase)
     if violations.len > 0:
       stderr.writeLine "[" & moduleName & "] post-sem validator found " &

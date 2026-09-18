@@ -587,3 +587,22 @@ proc skipParRi*(n: var Cursor) {.nifBalanced.} =
 
 template isLocalDecl*(s: SymId): bool =
   pool.symIsLocal(s)
+
+proc isConcat(s: SymId): bool =
+  let res = tryLoadSym(s)
+  if res.status != LacksNothing or not isRoutine(res.decl.symKind):
+    return false
+  let routine = asRoutine(res.decl)
+  result = hasPragmaOfValue(routine.pragmas, SemanticsP, "string.&")
+
+proc isStringConcatCall*(n: Cursor): bool =
+  ## Is `n` a call of the string `&` (`.semantics: "string.&"`)? `derefs`
+  ## folds a chain of them into one allocation.
+  result = false
+  if n.exprKind in CallKinds:
+    var c = n
+    inc c                       # past call tag
+    if c.kind == Symbol:
+      let name = pool.symString(c.symId)
+      if name.len > 2 and name[0] == '&' and name[1] == '.':
+        result = isConcat(c.symId)

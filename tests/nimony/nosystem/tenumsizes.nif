@@ -20,19 +20,19 @@
    (case@4 e.0
     (of~7,1
      (ranges a0.0.)
-     (stmts
+     (scope
       (ret "a0")))
     (of~3,1
      (ranges a1.0.)
-     (stmts
+     (scope
       (ret "a1")))
     (of@1,1
      (ranges a2.0.)
-     (stmts
+     (scope
       (ret "a2")))
     (of@5,1
      (ranges a3.0.)
-     (stmts
+     (scope
       (ret "a3"))))
    (ret@9,1 result.0)))
  (type@7,2 :B.0.~2 . . .
@@ -54,19 +54,19 @@
    (case@4 e.1
     (of~2,1
      (ranges b0.0.~5)
-     (stmts
+     (scope
       (ret "b0")))
     (of@2,1
      (ranges b1.0.)
-     (stmts
+     (scope
       (ret "b1")))
     (of@6,1
      (ranges b2.0.)
-     (stmts
+     (scope
       (ret "b2")))
     (of@F,1
      (ranges b3.0.~5)
-     (stmts
+     (scope
       (ret "b3"))))
    (ret@J,1 result.1)))
  (type@7,4 :C.0.~2 . . .
@@ -88,19 +88,19 @@
    (case@4 e.2
     (of~7,1
      (ranges c0.0.)
-     (stmts
+     (scope
       (ret "c0")))
     (of~3,1
      (ranges c1.0.)
-     (stmts
+     (scope
       (ret "c1")))
     (of@6,1
      (ranges c2.0.~5)
-     (stmts
+     (scope
       (ret "c2")))
     (of@E,1
      (ranges c3.0.)
-     (stmts
+     (scope
       (ret "c3"))))
    (ret@I,1 result.2))))(.index@,3,tests/nimony/nosystem/tenumsizes.nim
  (h A.0. 84)

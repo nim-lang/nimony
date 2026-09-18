@@ -39,7 +39,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / symparser
 import ".." / nimony / [nimony_model, decls, programs, typenav, sizeof, expreval, xints, builtintypes, langmodes, renderer, reporters, typeprops]
-import ".." / finalir / [finalir, finalir_model]
+import ".." / finalir / finalir_model
 import passes, defaultvalues, constparams, duplifier, closuretypes
 export closuretypes  # the lowered-closure shape, shared with the passes below
 include ".." / nimony / nif_annotations
@@ -608,21 +608,21 @@ proc emitFinalReturn*(c: var Context; dest: var TokenBuf; info: NifLineInfo) =
     let callerFld = pool.symId(CallerFieldName)
     let envFld = pool.symId(EnvFieldName)
     # if (*this).caller.env == nil: deallocFrame
-    dest.copyIntoKind IfS, info:
-      dest.copyIntoKind ElifU, info:
-        dest.copyIntoKind EqX, info:
-          dest.addParPair PointerT, info
+    dest.copyIntoKind IteV, info:
+      dest.copyIntoKind EqX, info:
+        dest.addParPair PointerT, info
+        dest.copyIntoKind DotX, info:
           dest.copyIntoKind DotX, info:
-            dest.copyIntoKind DotX, info:
-              dest.copyIntoKind DerefX, info:
-                dest.addSymUse envSym, info
-              dest.addSymUse callerFld, info
-              dest.addIntLit 1, info # CallerFieldName lives on the super
-            dest.addSymUse envFld, info
-            dest.addIntLit 0, info # EnvFieldName is direct field of Continuation
-          dest.addParPair NilX, info
-        dest.copyIntoKind StmtsS, info:
-          emitDeallocFrame(c, dest, info)
+            dest.copyIntoKind DerefX, info:
+              dest.addSymUse envSym, info
+            dest.addSymUse callerFld, info
+            dest.addIntLit 1, info # CallerFieldName lives on the super
+          dest.addSymUse envFld, info
+          dest.addIntLit 0, info # EnvFieldName is direct field of Continuation
+        dest.addParPair NilX, info
+      dest.copyIntoKind StmtsS, info:
+        emitDeallocFrame(c, dest, info)
+      dest.addDotToken()
     dest.copyIntoKind RetS, info:
       emitStopContinuation(dest, info)
     return
@@ -660,19 +660,22 @@ proc emitItEnv(dest: var TokenBuf; info: NifLineInfo;
     dest.addIntLit 0, info # direct field of Continuation
 
 proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
-                     itSym, myEnvSym: SymId) =
+                     itSym, myEnvSym, exitLab: SymId) =
   ## Open half of the corofor trampoline (shared by cps's `.passive`
-  ## and lambdalifting's `.closure` expansions). Emits:
+  ## and lambdalifting's `.closure` expansions). Emits, in the Final IR:
   ##
   ##   let myEnv = it.env
   ##   try:
-  ##     while true:
+  ##     loop:
   ##       it = advance(it)
-  ##       if stopping(it): break
-  ##       if it.env == myEnv:
+  ##       ite stopping(it): jmp exitLab
+  ##       ite it.env == myEnv:
   ##         <body-stmts goes here — emit between begin and end>
+  ##       continue
+  ##     lab exitLab
   ##
-  ## The caller follows with body emission, then `emitWhileEnd`.
+  ## The caller follows with body emission, then `emitWhileEnd` with the same
+  ## `exitLab`.
   let envFieldSym = pool.symId(EnvFieldName)
   let advanceSym = pool.symId("advance.0." & SystemModuleSuffix)
   let stoppingSym = pool.symId("stopping.0." & SystemModuleSuffix)
@@ -686,41 +689,43 @@ proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
     emitItEnv(dest, info, itSym, envFieldSym)
 
   dest.addParLe TryS, info
-  dest.addParLe StmtsS, info     # outer try-body stmts
-  dest.addParLe WhileS, info
-  dest.addParPair TrueX, info
-  dest.addParLe StmtsS, info     # while-body stmts
+  dest.addParLe ScopeS, info   # try body
+  dest.addParLe LoopV, info
+  dest.addParLe ScopeS, info   # loop body
   dest.copyIntoKind AsgnS, info:
     dest.addSymUse itSym, info
     dest.copyIntoKind CallS, info:
       dest.addSymUse advanceSym, info
       dest.addSymUse itSym, info
-  dest.copyIntoKind IfS, info:
-    dest.copyIntoKind ElifU, info:
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse stoppingSym, info
-        dest.addSymUse itSym, info
-      dest.copyIntoKind StmtsS, info:
-        dest.copyIntoKind BreakS, info:
-          dest.addDotToken()
-  dest.addParLe IfS, info
-  dest.addParLe ElifU, info
+  dest.copyIntoKind IteV, info:
+    dest.copyIntoKind CallS, info:
+      dest.addSymUse stoppingSym, info
+      dest.addSymUse itSym, info
+    dest.copyIntoKind StmtsS, info:
+      dest.copyIntoKind JmpS, info:
+        dest.addSymUse exitLab, info
+    dest.addDotToken()
+  dest.addParLe IteV, info
   dest.copyIntoKind EqX, info:
     dest.addParPair PointerT, info
     emitItEnv(dest, info, itSym, envFieldSym)
     dest.addSymUse myEnvSym, info
   dest.addParLe StmtsS, info     # body-stmts open
 
-proc emitWhileEnd*(dest: var TokenBuf; info: NifLineInfo; itSym: SymId) =
+proc emitWhileEnd*(dest: var TokenBuf; info: NifLineInfo; itSym, exitLab: SymId) =
   ## Close half of the corofor trampoline. Balances `emitWhileBegin`'s
   ## opens and emits `finally: finalizeCoroutine(addr it)`.
   let finalizeSym = pool.symId("finalizeCoroutine.0." & SystemModuleSuffix)
   dest.addParRi()  # close body StmtsS
-  dest.addParRi()  # close ElifU
-  dest.addParRi()  # close IfS
-  dest.addParRi()  # close while-body StmtsS
-  dest.addParRi()  # close WhileS
-  dest.addParRi()  # close outer try-body StmtsS
+  dest.addDotToken() # no else
+  dest.addParRi()  # close IteV
+  dest.copyIntoKind ContinueV, info:
+    dest.addDotToken()
+  dest.addParRi()  # close loop-body ScopeS
+  dest.addParRi()  # close LoopV
+  dest.copyIntoKind LabS, info:
+    dest.addSymDef exitLab, info
+  dest.addParRi()  # close try-body ScopeS
   dest.copyIntoKind FinU, info:
     dest.copyIntoKind StmtsS, info:
       dest.copyIntoKind CallS, info:
@@ -815,10 +820,12 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     inc c.currentProc.counter
     c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
 
-    emitWhileBegin(dest, info, itSym, myEnvSym)
+    let exitLab = pool.symId("`coroExit." & $c.currentProc.counter)
+    inc c.currentProc.counter
+    emitWhileBegin(dest, info, itSym, myEnvSym, exitLab)
     while n.hasMore:
       coroTr(c, dest, n)
-    emitWhileEnd(dest, info, itSym)
+    emitWhileEnd(dest, info, itSym, exitLab)
 
 
 
@@ -1128,6 +1135,18 @@ proc markAddressTaken(c: var Context; n: Cursor) =
     if known.def != -2:
       c.currentProc.localToEnv.getOrQuit(n.symId).use = AddressTaken
 
+proc establishesBorrow(c: var Context; call: Cursor): bool =
+  ## Is `call` a call to a routine marked `.establishesBorrow.`? Same
+  ## question as `contracts_fir.establishesBorrow`.
+  result = false
+  var fn = call
+  inc fn # the callee
+  var fnType = skipProcTypeToParams(getType(c.typeCache, fn))
+  if fnType.isParamsTag:
+    skip fnType # params
+    skip fnType # return type
+    result = hasPragma(fnType, EstablishesBorrowP)
+
 proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
   ## Processes the single tree/token at `n`, advancing past it.
   if n.stmtKind == LabS and n.childCursor.kind == IntLit:
@@ -1154,14 +1173,33 @@ proc escapingLocalsImpl(c: var Context; n: var Cursor; currentState: var int) =
         typ: n,
         def: currentState,
         use: currentState)
+      # so `isPassiveCall` can type a call whose target is this local
+      c.typeCache.registerLocal(mine, cast[SymKind](sk), n)
       skip n # type
+      if n.hasMore and c.hooks.isPassiveCall(c, n):
+        # `let x = passiveCall()`: the callee writes `x` when it completes,
+        # after this state proc returned, so `x` must live in the frame.
+        c.currentProc.localToEnv.getOrQuit(mine).use = AddressTaken
       while n.hasMore:
         escapingLocalsImpl c, n, currentState # the value
   else:
     case n.kind
     of TagLit:
+      if sk == AsgnS:
+        var rhs = n.childCursor
+        skip rhs
+        if c.hooks.isPassiveCall(c, rhs):
+          # `x = passiveCall()`: the same result slot as the `let` above.
+          markAddressTaken c, n.childCursor
       if n.exprKind in {AddrX, HaddrX}:
         markAddressTaken c, n.childCursor
+      elif n.exprKind in CallKinds and establishesBorrow(c, n):
+        # The result points into the first argument (`toOpenArray`): that
+        # takes its address just like an explicit `addr`.
+        var arg = n
+        inc arg
+        skip arg # the callee
+        if arg.hasMore: markAddressTaken c, arg
       n.loopInto:
         escapingLocalsImpl c, n, currentState
     of Symbol:
@@ -1177,7 +1215,11 @@ proc escapingLocals*(c: var Context; n: Cursor) =
   if n.isDotToken: return
   var currentState = 0
   var n = n
+  # The locals registered on the way are this walk's own; the main traversal
+  # registers them again.
+  c.typeCache.openScope()
   escapingLocalsImpl c, n, currentState
+  c.typeCache.closeScope()
 
 proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
   var n = n
@@ -1391,8 +1433,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   of ContinueV:
     # The back-edge of the INNERMOST enclosing loop. For a suspending one that
     # is the jump to its head state, emitted by the `LoopV` case below. For a
-    # loop kept as a construct the marker stays as it is: `coroTr`'s `LoopV`
-    # case reads it to tell the loop's own tail from a source-level `continue`.
+    # loop kept as a construct the marker stays as it is, for `lengcgen`.
     # At the top level of a body (which the Final IR never produces) there is
     # nothing to jump to.
     if c.currentProc.loopHeads.len == 0:
@@ -1416,7 +1457,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       emitLabel dest, head, info
       c.currentProc.loopHeads.add head
       n.into:                                       # (loop ...)
-        assert n.stmtKind == StmtsS, $n.kind
+        assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
         n.into:                                     # the body
           while n.hasMore:
             trGoto c, dest, n                       # `(continue .)` -> jmp head
@@ -1440,11 +1481,11 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         inc c.currentProc.labelCounter
         var lend = c.currentProc.labelCounter
         inc c.currentProc.labelCounter
-        dest.copyIntoKind IfS, info:
-          dest.copyIntoKind ElifU, info:
-            trGotoValue c, dest, n # cond
-            dest.copyIntoKind StmtsS, info:
-              emitJump dest, lthen, info
+        dest.copyIntoKind IteV, info:
+          trGotoValue c, dest, n # cond
+          dest.copyIntoKind StmtsS, info:
+            emitJump dest, lthen, info
+          dest.addDotToken()
         var thenCur = n
         skip n
         var elseCur = n
@@ -1648,7 +1689,7 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
 
 proc toGoto*(c: var Context; n: Cursor): TokenBuf =
   result = createTokenBuf(300)
-  assert n.stmtKind == StmtsS, $n.kind
+  assert n.stmtKind in {StmtsS, ScopeS}, $n.kind
   var n = n
   # `trGoto` flattens `(stmts ...)`, so the body's own wrapper is emitted here.
   result.addParLe(n.cursorTagId, n.info)
@@ -1789,11 +1830,9 @@ proc completeFrameConstr(c: var Context; init: var TokenBuf) =
   init.addParRi() # assignment
 
 proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; iter: Cursor; sym: SymId) =
-  # Lower the proc body to the FINAL IR (`doc/final_ir.md`) — `loop`/`ite`/
-  # `case`/`lab`/`jmp`, control flow entirely statement-based — and keep it in
-  # `c.currentProc.cf`. The state machine wants a body it can CUT, and the
-  # Final IR's `lab`/`jmp` is already the cut: `toGoto` only has to decide
-  # which of those transfers has to become a state transition.
+  # The body is already in the Final IR (`doc/final_ir.md`), kept in
+  # `c.currentProc.cf`. Its `lab`/`jmp`s are where the state machine can cut
+  # it: `toGoto` only decides which of them become state transitions.
   #
   # This used to run `nj.nim`, whose whole job is the opposite one: it
   # ELIMINATES jumps, materialising a monotone `mflag` guard per construct and
@@ -1801,29 +1840,13 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   # machine then had `toGoto` put the jumps back. Two inverse rewrites in a
   # row, and the guard machinery's else-exploitation is what produced the
   # unbalanced `ite` of #2362's sibling (see `tests/nimony/cps/treturn_or_guard.nim`).
-  var wrapper = createTokenBuf(10)
-  wrapper.addParLe StmtsS, NoLineInfo
-  wrapper.copyTree iter
-  wrapper.addParRi()
-  # `c.ptrSize` IS the target width; the 0 that stood here was invisible only
-  # while the type cache ignored what it was handed.
-  var pass = initPass(ensureMove wrapper, c.thisModuleSuffix, "finalir",
-                      c.ptrSize * 8, nextTemp = c.nextTemp)
-  toFinalIr(pass)
-  c.nextTemp = pass.nextTemp
-  block extractBody:
-    var wholeResult = ensureMove(pass.dest)
-    var nExt = beginRead(wholeResult)
-    inc nExt  # skip outer StmtsS, now at first child
-    let procKind = iter.stmtKind
-    while nExt.hasMore and nExt.stmtKind != procKind:
-      skip nExt
-    inc nExt  # skip ProcS/IteratorS tag, now at first header subtree
-    for i in 0..<BodyPos:
-      skip nExt
-    var bodyBuf = createTokenBuf(wholeResult.len)
-    bodyBuf.copyTree nExt
-    c.currentProc.cf = ensureMove bodyBuf
+  var nExt = iter
+  inc nExt  # skip ProcS/IteratorS tag, now at first header subtree
+  for i in 0..<BodyPos:
+    skip nExt
+  var bodyBuf = createTokenBuf(64)
+  bodyBuf.copyTree nExt
+  c.currentProc.cf = ensureMove bodyBuf
 
   when defined(logPasses):
     echo "========= FINAL IR ======="
@@ -1840,7 +1863,7 @@ proc treIteratorBody*(c: var Context; dest: var TokenBuf; init: var TokenBuf; it
   escapingLocals(c, n)
   completeFrameConstr(c, init)
 
-  assert n.stmtKind == StmtsS
+  assert n.stmtKind in {StmtsS, ScopeS}
   dest.addParLe(n.cursorTagId, n.info)
   n.into:
     dest.add init
@@ -2017,131 +2040,129 @@ proc generateCoroutineHelpers*(c: var Context; dest: var TokenBuf; sym: SymId; i
       let callerFld = pool.symId(CallerFieldName)
       let fnFld = pool.symId(FnFieldName)
       let coroSym = coroTypeForProc(c, sym)
-      dest.copyIntoKind IfS, info:
-        dest.copyIntoKind ElifU, info:
-          dest.copyIntoKind EqX, info:
-            dest.addParPair PointerT, info
-            dest.copyIntoKind DotX, info:
-              dest.addSymUse callerParam, info
-              dest.addSymUse envFld, info
-              dest.addIntLit 0, info # direct field of Continuation
-            dest.addParPair NilX, info
-          dest.copyIntoKind StmtsS, info:
-            emitFreshFrameCall(c, dest, sym, params, hasResult, info)
-        dest.copyIntoKind ElseU, info:
-          dest.copyIntoKind StmtsS, info:
-            let thisLocal = pool.symId("`thisReuse." & $c.currentProc.counter & "." & c.thisModuleSuffix)
-            inc c.currentProc.counter
-            dest.copyIntoKind LetS, info:
-              dest.addSymDef thisLocal, info
-              dest.addDotToken() # exported
-              dest.addDotToken() # pragmas
+      dest.copyIntoKind IteV, info:
+        dest.copyIntoKind EqX, info:
+          dest.addParPair PointerT, info
+          dest.copyIntoKind DotX, info:
+            dest.addSymUse callerParam, info
+            dest.addSymUse envFld, info
+            dest.addIntLit 0, info # direct field of Continuation
+          dest.addParPair NilX, info
+        dest.copyIntoKind StmtsS, info:
+          emitFreshFrameCall(c, dest, sym, params, hasResult, info)
+        dest.copyIntoKind StmtsS, info:
+          let thisLocal = pool.symId("`thisReuse." & $c.currentProc.counter & "." & c.thisModuleSuffix)
+          inc c.currentProc.counter
+          dest.copyIntoKind LetS, info:
+            dest.addSymDef thisLocal, info
+            dest.addDotToken() # exported
+            dest.addDotToken() # pragmas
+            dest.copyIntoKind PtrT, info:
+              dest.addSymUse coroSym, info
+            dest.copyIntoKind CastX, info:
               dest.copyIntoKind PtrT, info:
                 dest.addSymUse coroSym, info
-              dest.copyIntoKind CastX, info:
-                dest.copyIntoKind PtrT, info:
-                  dest.addSymUse coroSym, info
-                dest.copyIntoKind DotX, info:
-                  dest.addSymUse callerParam, info
-                  dest.addSymUse envFld, info
-                  dest.addIntLit 0, info
-            var p = params
-            if p.isTagLit:
-              p = sub(p)  # throwaway copy; bounds the walk under vpr
-              while p.hasMore:
-                assert p.substructureKind == ParamU
-                p.into:
-                  let paramSym = p.symId
-                  let field = c.currentProc.localToEnv.getOrDefault(paramSym)
-                  if field.field != SymId(0):
-                    dest.copyIntoKind AsgnS, info:
-                      dest.copyIntoKind DotX, info:
-                        dest.copyIntoKind DerefX, info:
-                          dest.addSymUse thisLocal, info
-                        dest.addSymUse field.field, info
-                        dest.addIntLit 0, info
-                      dest.addSymUse paramSym, info
-                  skip p, SkipName
-                  skip p, SkipExport
-                  skip p, SkipPragmas
-                  skip p, SkipType
-                  skip p, SkipValue
-            if hasResult:
+              dest.copyIntoKind DotX, info:
+                dest.addSymUse callerParam, info
+                dest.addSymUse envFld, info
+                dest.addIntLit 0, info
+          var p = params
+          if p.isTagLit:
+            p = sub(p)  # throwaway copy; bounds the walk under vpr
+            while p.hasMore:
+              assert p.substructureKind == ParamU
+              p.into:
+                let paramSym = p.symId
+                let field = c.currentProc.localToEnv.getOrDefault(paramSym)
+                if field.field != SymId(0):
+                  dest.copyIntoKind AsgnS, info:
+                    dest.copyIntoKind DotX, info:
+                      dest.copyIntoKind DerefX, info:
+                        dest.addSymUse thisLocal, info
+                      dest.addSymUse field.field, info
+                      dest.addIntLit 0, info
+                    dest.addSymUse paramSym, info
+                skip p, SkipName
+                skip p, SkipExport
+                skip p, SkipPragmas
+                skip p, SkipType
+                skip p, SkipValue
+          if hasResult:
+            dest.copyIntoKind AsgnS, info:
+              dest.copyIntoKind DotX, info:
+                dest.copyIntoKind DerefX, info:
+                  dest.addSymUse thisLocal, info
+                dest.addSymUse pool.symId(ResultFieldName), info
+                dest.addIntLit 0, info
+              dest.addSymUse pool.symId(ResultParamName), info
+          let calleeFld = pool.symId(CalleeFieldName)
+          dest.copyIntoKind IteV, info:
+            dest.copyIntoKind EqX, info:
+              dest.addParPair PointerT, info
+              dest.copyIntoKind DotX, info:
+                dest.copyIntoKind DerefX, info:
+                  dest.addSymUse thisLocal, info
+                dest.addSymUse calleeFld, info
+                dest.addIntLit 1, info # super
+              dest.addParPair NilX, info
+            dest.copyIntoKind StmtsS, info:
               dest.copyIntoKind AsgnS, info:
                 dest.copyIntoKind DotX, info:
                   dest.copyIntoKind DerefX, info:
                     dest.addSymUse thisLocal, info
-                  dest.addSymUse pool.symId(ResultFieldName), info
-                  dest.addIntLit 0, info
-                dest.addSymUse pool.symId(ResultParamName), info
-            let calleeFld = pool.symId(CalleeFieldName)
-            dest.copyIntoKind IfS, info:
-              dest.copyIntoKind ElifU, info:
-                dest.copyIntoKind EqX, info:
-                  dest.addParPair PointerT, info
+                  dest.addSymUse calleeFld, info
+                  dest.addIntLit 1, info
+                dest.copyIntoKind CastX, info:
+                  dest.copyIntoKind PtrT, info:
+                    dest.addSymUse pool.symId(RootObjName), info
+                  dest.addSymUse thisLocal, info
+              dest.copyIntoKind AsgnS, info:
+                dest.copyIntoKind DotX, info:
                   dest.copyIntoKind DotX, info:
                     dest.copyIntoKind DerefX, info:
                       dest.addSymUse thisLocal, info
-                    dest.addSymUse calleeFld, info
-                    dest.addIntLit 1, info # super
-                  dest.addParPair NilX, info
-                dest.copyIntoKind StmtsS, info:
-                  dest.copyIntoKind AsgnS, info:
-                    dest.copyIntoKind DotX, info:
-                      dest.copyIntoKind DerefX, info:
-                        dest.addSymUse thisLocal, info
-                      dest.addSymUse calleeFld, info
-                      dest.addIntLit 1, info
-                    dest.copyIntoKind CastX, info:
-                      dest.copyIntoKind PtrT, info:
-                        dest.addSymUse pool.symId(RootObjName), info
-                      dest.addSymUse thisLocal, info
-                  dest.copyIntoKind AsgnS, info:
-                    dest.copyIntoKind DotX, info:
-                      dest.copyIntoKind DotX, info:
-                        dest.copyIntoKind DerefX, info:
-                          dest.addSymUse thisLocal, info
-                        dest.addSymUse callerFld, info
-                        dest.addIntLit 1, info
-                      dest.addSymUse envFld, info
-                      dest.addIntLit 0, info
-                    dest.copyIntoKind CastX, info:
-                      dest.copyIntoKind PtrT, info:
-                        dest.addSymUse pool.symId(RootObjName), info
-                      dest.addSymUse thisLocal, info
-                  dest.copyIntoKind RetS, info:
-                    dest.copyIntoKind OconstrX, info:
-                      dest.addSymUse pool.symId(ContinuationName), info
-                      dest.copyIntoKind KvU, info:
-                        dest.addSymUse fnFld, info
-                        dest.copyIntoKind CastX, info:
-                          dest.copyTree c.continuationProcImpl
-                          dest.addSymUse stateToProcName(c, sym, 0), info
-                      dest.copyIntoKind KvU, info:
-                        dest.addSymUse envFld, info
-                        dest.copyIntoKind CastX, info:
-                          dest.copyIntoKind PtrT, info:
-                            dest.addSymUse pool.symId(RootObjName), info
-                          dest.addSymUse thisLocal, info
-            dest.copyIntoKind RetS, info:
-              dest.copyIntoKind OconstrX, info:
-                dest.addSymUse pool.symId(ContinuationName), info
-                dest.copyIntoKind KvU, info:
-                  dest.addSymUse fnFld, info
-                  dest.copyIntoKind DotX, info:
-                    dest.copyIntoKind DotX, info:
-                      dest.copyIntoKind DerefX, info:
-                        dest.addSymUse thisLocal, info
-                      dest.addSymUse callerFld, info
-                      dest.addIntLit 1, info # super
-                    dest.addSymUse fnFld, info
-                    dest.addIntLit 0, info
-                dest.copyIntoKind KvU, info:
+                    dest.addSymUse callerFld, info
+                    dest.addIntLit 1, info
                   dest.addSymUse envFld, info
-                  dest.copyIntoKind CastX, info:
-                    dest.copyIntoKind PtrT, info:
-                      dest.addSymUse pool.symId(RootObjName), info
-                    dest.addSymUse thisLocal, info
+                  dest.addIntLit 0, info
+                dest.copyIntoKind CastX, info:
+                  dest.copyIntoKind PtrT, info:
+                    dest.addSymUse pool.symId(RootObjName), info
+                  dest.addSymUse thisLocal, info
+              dest.copyIntoKind RetS, info:
+                dest.copyIntoKind OconstrX, info:
+                  dest.addSymUse pool.symId(ContinuationName), info
+                  dest.copyIntoKind KvU, info:
+                    dest.addSymUse fnFld, info
+                    dest.copyIntoKind CastX, info:
+                      dest.copyTree c.continuationProcImpl
+                      dest.addSymUse stateToProcName(c, sym, 0), info
+                  dest.copyIntoKind KvU, info:
+                    dest.addSymUse envFld, info
+                    dest.copyIntoKind CastX, info:
+                      dest.copyIntoKind PtrT, info:
+                        dest.addSymUse pool.symId(RootObjName), info
+                      dest.addSymUse thisLocal, info
+            dest.addDotToken()
+          dest.copyIntoKind RetS, info:
+            dest.copyIntoKind OconstrX, info:
+              dest.addSymUse pool.symId(ContinuationName), info
+              dest.copyIntoKind KvU, info:
+                dest.addSymUse fnFld, info
+                dest.copyIntoKind DotX, info:
+                  dest.copyIntoKind DotX, info:
+                    dest.copyIntoKind DerefX, info:
+                      dest.addSymUse thisLocal, info
+                    dest.addSymUse callerFld, info
+                    dest.addIntLit 1, info # super
+                  dest.addSymUse fnFld, info
+                  dest.addIntLit 0, info
+              dest.copyIntoKind KvU, info:
+                dest.addSymUse envFld, info
+                dest.copyIntoKind CastX, info:
+                  dest.copyIntoKind PtrT, info:
+                    dest.addSymUse pool.symId(RootObjName), info
+                  dest.addSymUse thisLocal, info
   dest.addParRi() # ProcS
 
   c.typeCache.closeScope()
@@ -2495,115 +2516,53 @@ proc coroTr*(c: var Context; dest: var TokenBuf; n: var Cursor) =
           WasmovedX, SinkhX, TraceX,
           InternalTypeNameX, InternalFieldPairsX,
           FailedX, IsX, EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
-        case n.finalIrKind
-        of LoopV:
-          # A suspension-free Final IR `(loop (stmts BODY (continue .)))`
-          # survives into the state proc as an ordinary `while true`. The
-          # back-edge marker is the loop's own tail, so the LAST `(continue .)`
-          # is simply dropped; an earlier one is a source-level `continue` and
-          # becomes a forward `jmp` to a `(lab)` closing the body — `lengcgen`
-          # rejects `ContinueS`, and the Final IR's own label/jump pair is
-          # exactly the construct that expresses it.
-          var bodyBuf = createTokenBuf(64)
-          var info = n.info
-          let contLab = pool.symId("´cont." & $c.currentProc.counter &
-                                            "." & c.thisModuleSuffix)
-          inc c.currentProc.counter
-          var lastJmp = -1
-          var jumps = 0
-          n.into:                                 # (loop ...)
-            assert n.stmtKind == StmtsS, $n.kind
-            n.into:                               # the body
-              while n.hasMore:
-                if n.finalIrKind == ContinueV:
-                  lastJmp = bodyBuf.len
-                  inc jumps
-                  bodyBuf.copyIntoKind JmpS, n.info:
-                    bodyBuf.addSymUse contLab, n.info
-                  skip n
-                else:
-                  lastJmp = -1
-                  coroTr c, bodyBuf, n
-          if lastJmp >= 0:
-            # the trailing back-edge marker: falling off the body does it
-            bodyBuf.shrink lastJmp
-            dec jumps
-          dest.addParLe WhileS, info
-          dest.addParPair TrueX, info
-          dest.copyIntoKind StmtsS, info:
-            dest.add bodyBuf
-            if jumps > 0:
-              dest.copyIntoKind LabS, info:
-                dest.addSymDef contLab, info
-          dest.addParRi()
-        of IteV, ItecV:
-          # `(ite cond then else)`, where `else` may be a bare `.`. Any further
-          # child is drained rather than left for the outer loop, which would
-          # otherwise stop at the stray token and drop the following siblings.
-          var info = n.info
-          n.into:
-            dest.copyIntoKind IfS, info:
-              dest.copyIntoKind ElifU, info:
-                coroTr c, dest, n
-                coroTr c, dest, n
-              dest.copyIntoKind ElseU, info:
-                coroTr c, dest, n
-            while n.hasMore:
-              skip n
-        of MflagV, VflagV:
-          # NJVL control-flow flags; nothing produces them since `xelim`'s
-          # cfvar lowering went out with `nj.nim`. See `finalir.trStmt`.
-          bug "cfvar in Final IR input"
-        of KillV, UnknownV:
-          skip n  # NJ bookkeeping, not needed in CPS output
+        if n.typeKind == ProctypeT:
+          c.hooks.trProctype(c, dest, n)
         else:
-          if n.typeKind == ProctypeT:
-            c.hooks.trProctype(c, dest, n)
-          else:
-            case n.stmtKind
-            of JmpS:
-              # Two different `jmp`s meet here. The CPS state machine's own
-              # carries an INTEGER state id (this pass and `togoto` produce
-              # it); the structured Nimony one carries a label SYMBOL and is
-              # `xelim`'s short-circuit lowering, which must survive to Leng
-              # untouched (`doc/final_ir.md`).
-              if n.childCursor.kind == IntLit:
-                n.into:
-                  gotoNextState(c, dest, int(n.intVal), n.info)
-                  inc n
-              else:
-                takeTree dest, n
-            of LabS:
-              if n.childCursor.kind == IntLit:
-                dest.addParRi() # close stmts
-                dest.addParRi() # close proc decl
-                n.into:
-                  newLocalProc c, dest, int(n.intVal), c.procStack[^1]
-                  inc n
-              else:
-                takeTree dest, n
+          case n.stmtKind
+          of JmpS:
+            # Two different `jmp`s meet here. The CPS state machine's own
+            # carries an INTEGER state id (this pass and `togoto` produce
+            # it); the structured Nimony one carries a label SYMBOL and is
+            # `xelim`'s short-circuit lowering, which must survive to Leng
+            # untouched (`doc/final_ir.md`).
+            if n.childCursor.kind == IntLit:
+              n.into:
+                gotoNextState(c, dest, int(n.intVal), n.info)
+                inc n
             else:
-              # NOT an `elif` branch of the `case` above: nimony's own `case`
-              # takes `of` and `else` and nothing else, so an `elif` here is
-              # dropped on the floor — which is exactly how this guard, written
-              # as one, silently unmade `coroTr` in the self-hosted hexer. See
-              # `semCaseImpl`, which now rejects the form instead.
-              if n.substructureKind == KvU:
-                # `(kv FIELD value)` object-constructor pair: the key is a
-                # field identity, not a value use. It can share a SymId with a
-                # lifted local of the same spelling — sem's `name.N` numbering
-                # makes that ordinary — and running it through `coroTr` would
-                # replace the field name with a frame access, leaving lengc to
-                # report "expected field name but got: (dot …)". Take the key
-                # verbatim and rewrite only the value(s). This is the `DotX` /
-                # `DdotX` selector guard above in its other position, and the
-                # twin of `lambdalifting`'s `trKv` / `treKv`. A `KvX` table key
-                # IS a real value use, so it stays in `coroTrSons`.
-                copyInto dest, n:
-                  dest.takeTree n # key (field identity — never rewrite)
-                  while n.hasMore:
-                    coroTr(c, dest, n)
-              else:
-                coroTrSons(c, dest, n)
+              takeTree dest, n
+          of LabS:
+            if n.childCursor.kind == IntLit:
+              dest.addParRi() # close stmts
+              dest.addParRi() # close proc decl
+              n.into:
+                newLocalProc c, dest, int(n.intVal), c.procStack[^1]
+                inc n
+            else:
+              takeTree dest, n
+          else:
+            # NOT an `elif` branch of the `case` above: nimony's own `case`
+            # takes `of` and `else` and nothing else, so an `elif` here is
+            # dropped on the floor — which is exactly how this guard, written
+            # as one, silently unmade `coroTr` in the self-hosted hexer. See
+            # `semCaseImpl`, which now rejects the form instead.
+            if n.substructureKind == KvU:
+              # `(kv FIELD value)` object-constructor pair: the key is a
+              # field identity, not a value use. It can share a SymId with a
+              # lifted local of the same spelling — sem's `name.N` numbering
+              # makes that ordinary — and running it through `coroTr` would
+              # replace the field name with a frame access, leaving lengc to
+              # report "expected field name but got: (dot …)". Take the key
+              # verbatim and rewrite only the value(s). This is the `DotX` /
+              # `DdotX` selector guard above in its other position, and the
+              # twin of `lambdalifting`'s `trKv` / `treKv`. A `KvX` table key
+              # IS a real value use, so it stays in `coroTrSons`.
+              copyInto dest, n:
+                dest.takeTree n # key (field identity — never rewrite)
+                while n.hasMore:
+                  coroTr(c, dest, n)
+            else:
+              coroTrSons(c, dest, n)
   else:
     bug "unexpected ')' inside"

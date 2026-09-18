@@ -1385,6 +1385,112 @@ proc trType(c: var Context; n: var Cursor) =
     c.dest.takeTree n # body
     c.dest.addParRi(n.endInfo)
 
+proc isChainedStringConcatCall(n: Cursor): bool =
+  ## A `string.&` with a `string.&` for an operand: at least three leaves. A
+  ## single `a & b` is left to `&` itself.
+  result = false
+  if isStringConcatCall(n):
+    var c = n
+    inc c                       # past the call tag
+    skip c                      # the callee
+    if isStringConcatCall(c):
+      result = true
+    else:
+      skip c                    # the first operand
+      result = isStringConcatCall(c)
+
+proc collectConcatLeaves(n: var Cursor; leaves: var seq[Cursor]) =
+  ## The operands of a nested `string.&` chain that are not `&` themselves,
+  ## left to right.
+  n.into:
+    skip n                      # the callee
+    for _ in 0..1:
+      if isStringConcatCall(n):
+        collectConcatLeaves(n, leaves)
+      else:
+        leaves.add n
+        skip n
+
+proc emitLenSum(dest: var TokenBuf; intType: Cursor; lenSym: SymId;
+                leaves: seq[TokenBuf]; hi: int; info: NifLineInfo) =
+  ## `len(leaves[0]) + … + len(leaves[hi])`, left-associated.
+  if hi > 0:
+    dest.addParLe AddX, info
+    dest.addSubtree intType
+    emitLenSum(dest, intType, lenSym, leaves, hi-1, info)
+  dest.copyIntoKind CallX, info:
+    dest.addSymUse lenSym, info
+    dest.add leaves[hi]
+  if hi > 0:
+    dest.addParRi()
+
+proc trStringConcatChain(c: var Context; n: var Cursor) =
+  ## `a & b & c & d`, a chain of `string.&`, becomes one allocation:
+  ##
+  ##   (expr
+  ##     (var :t0 . . string a)          # only a leaf that is not a plain
+  ##     …                               # location: it is read twice below
+  ##     (var :s . . string (call newStringOfCap (add len(a) … len(d))))
+  ##     (call add (haddr s) a) … (call add (haddr s) d)
+  ##     s)
+  ##
+  ## Done here rather than in the backend because this is Nimony IR with
+  ## `derefs`' spelling already known — the `(haddr s)` a `var string`
+  ## parameter wants — and so the lowering meets ordinary statements instead
+  ## of a nested call it would have to keep nested for someone else to fold.
+  let info = n.info
+  var leaves: seq[Cursor] = @[]
+  collectConcatLeaves(n, leaves)
+  let stringType = c.typeCache.builtins.stringType
+  # Forged symbol names — indices match declaration order across the system
+  # module's includes (setops/seqimpl/stringimpl/openarrays). If an overload
+  # with the same identifier is inserted earlier in system, these numbers must
+  # shift. (`len(string)` is `len.4`, not `.5`: object fields no longer share
+  # the global per-name counter.)
+  let newStrSym = pool.symId("newStringOfCap.0." & SystemModuleSuffix)
+  let lenSym    = pool.symId("len.4."           & SystemModuleSuffix)
+  let addSym    = pool.symId("add.2."           & SystemModuleSuffix)
+  c.dest.addParLe ExprX, info
+  var uses: seq[TokenBuf] = @[]
+  for leaf in leaves:
+    var l = leaf
+    var translated = createTokenBuf(16)
+    swap c.dest, translated
+    tr c, l, WantT
+    swap c.dest, translated
+    var use = createTokenBuf(4)
+    if needsTemp(beginRead(translated)):
+      inc c.tmpCounter
+      let tmp = pool.symId("`dc." & $c.tmpCounter)
+      c.dest.copyIntoKind VarS, info:
+        c.dest.addSymDef tmp, info
+        c.dest.addDotToken() # not exported
+        c.dest.addDotToken() # no pragmas
+        c.dest.addSubtree stringType
+        c.dest.add translated
+      use.addSymUse tmp, info
+    else:
+      use = ensureMove translated
+    uses.add ensureMove use
+  inc c.tmpCounter
+  let s = pool.symId("`dc." & $c.tmpCounter)
+  c.dest.copyIntoKind VarS, info:
+    c.dest.addSymDef s, info
+    c.dest.addDotToken() # not exported
+    c.dest.addDotToken() # no pragmas
+    c.dest.addSubtree stringType
+    c.dest.copyIntoKind CallX, info:
+      c.dest.addSymUse newStrSym, info
+      emitLenSum(c.dest, c.typeCache.builtins.intType, lenSym, uses, uses.len-1, info)
+  for u in uses:
+    c.dest.copyIntoKind CallS, info:
+      c.dest.addSymUse addSym, info
+      c.dest.copyIntoKind HaddrX, info:
+        c.dest.addSymUse s, info
+      c.dest.add u
+  c.dest.addSymUse s, info
+  c.dest.addParRi()
+
 proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cursor)) =
   case n.kind
   of Symbol:
@@ -1412,8 +1518,11 @@ proc tr(c: var Context; n: var Cursor; e: Expects; expected: Cursor = default(Cu
   of TagLit:
     case n.exprKind
     of CallKinds:
-      var disallowDangerous = true
-      trCall c, n, e, disallowDangerous
+      if not e.wantMutable and isChainedStringConcatCall(n):
+        trStringConcatChain c, n
+      else:
+        var disallowDangerous = true
+        trCall c, n, e, disallowDangerous
     of PragmaxX:
       trPragmaBlock c, n
     of DotX, DdotX, AtX, ArratX, TupatX, PatX:

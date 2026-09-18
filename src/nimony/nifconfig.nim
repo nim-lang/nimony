@@ -130,6 +130,8 @@ type
     optLevel*: OptLevel
     noValidate*: bool # skip running the validator on plugin sources
     verbose*: bool    # --verbose: dump Final IR on contract/init failures
+    keepSemTree*: bool # --keepsemtree: also write `<mod>.sem.nif`, the tree
+                      # before the Final IR lowering (for the sem validator)
     outFile*: string  # filename portion set by `--out:PATH` / `-o:PATH`
                       # (empty = derive from module basename).
     outDir*: string   # directory portion set by `--out:DIR/NAME` (its

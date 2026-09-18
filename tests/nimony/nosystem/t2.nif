@@ -1,5 +1,5 @@
 (.nif27)
-(.indexat 2273             )
+(.indexat 2292             )
 (stmts@,2,tests/nimony/nosystem/t2.nim
  (type@2,1 :int.0.
   (i 64).
@@ -34,11 +34,11 @@
    (case@E e.0
     (of~C,1
      (ranges typeOfProc.0.)
-     (stmts
+     (scope
       (ret "typeOfProc")))
     (of~C,2
      (ranges typeOfIter.0.)
-     (stmts
+     (scope
       (ret "typeOfIter"))))
    (ret@2,2 result.0)))
  (proc@,B :typeof.0.@5
@@ -72,8 +72,8 @@
    (result@4 :result.1 . .
     (i@A,~3 64).@A,~3)
    (var@4 :x.4 . . string.0.sysvq0asl "abc"@4)
-   (asgn@7,1 result.1~7 4@2)
-   (asgn@2,2 x.4~2 "34"@2)
+   (asgn@7,1 result.1 4@2)
+   (asgn@2,2 x.4 "34"@2)
    (ret@4,2 result.1)))
  (proc@,O :overloaded.0.@5 . . .
   (params@F). . .
@@ -82,8 +82,9 @@
     (i@A,~8 64)
     (add@D
      (i~3,~8 64)23@1 90@5))
-   (discard@,1
-    (call@8 foo.0.
+   (let@M :`x.0 . .
+    (i~3,~6 64)
+    (call~E,1 foo.0.
      (add@6
       (i@,~9 64)34~2 56@1)"xyz"@B))))
  (proc@,S :exprReturn.0.@5 . . .
@@ -110,5 +111,5 @@
  (x string.0. 218)
  (x \2B.0. 50)
  (h foo.0. 170)
- (h overloaded.0. 324)
- (h exprReturn.0. 228))
+ (h overloaded.0. 320)
+ (h exprReturn.0. 251))

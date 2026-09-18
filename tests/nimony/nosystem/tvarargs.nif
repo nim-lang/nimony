@@ -38,11 +38,11 @@
    (case@E e.0
     (of~C,1
      (ranges typeOfProc.0.)
-     (stmts
+     (scope
       (ret "typeOfProc")))
     (of~C,2
      (ranges typeOfIter.0.)
-     (stmts
+     (scope
       (ret "typeOfIter"))))
    (ret@2,2 result.0)))
  (func@,B :typeof.0.@5

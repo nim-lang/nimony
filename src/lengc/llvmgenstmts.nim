@@ -170,23 +170,16 @@ proc genWhileLLVM(c: var LLVMCode; n: var Cursor) =
     while n.hasMore: skip n
 
 proc genLoopLLVM(c: var LLVMCode; n: var Cursor) =
+  ## `(loop body)`: infinite, left only by a `break`/`jmp` inside the body.
   let loopInfo = n.info
   n.into:
     let headerLabel = c.nextLabel()
-    let bodyLabel = c.nextLabel()
     let endLabel = c.nextLabel()
 
     c.setLoc(loopInfo)
     c.emit LLInstr(kind: llBr, brTarget: headerLabel)
     discard c.startBlock(headerLabel)
 
-    genStmtLLVM c, n
-    var cond = LLValue(); genCondLLVM(c, n, cond)
-    c.setLoc(loopInfo)
-    c.emit LLInstr(kind: llCondBr, condBrCond: cond,
-                   condBrTrue: bodyLabel, condBrFalse: endLabel)
-
-    discard c.startBlock(bodyLabel)
     c.currentProc.breakStack.add endLabel
     genStmtLLVM c, n
     discard c.currentProc.breakStack.pop()

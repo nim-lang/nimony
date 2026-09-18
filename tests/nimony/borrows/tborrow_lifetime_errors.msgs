@@ -1,2 +1,3 @@
 tests/nimony/borrows/tborrow_lifetime_errors.nim(13, 13) Error: 's' is borrowed and cannot be mutated [pass --verbose for the Final IR]
 tests/nimony/borrows/tborrow_lifetime_errors.nim(21, 16) Error: 's' is borrowed and cannot be mutated [pass --verbose for the Final IR]
+tests/nimony/borrows/tborrow_lifetime_errors.nim(33, 13) Error: 's' is borrowed and cannot be mutated [pass --verbose for the Final IR]

@@ -61,7 +61,7 @@ proc semcheckInto(root, cache: string; extraArgs = ""): bool =
   ## and only the changed modules on a warm cache).
   createDir cache
   let (msgs, code) = execLocal("nimony",
-    "--nimcache:" & os.quoteShell(cache) & extraArgs &
+    "--nimcache:" & os.quoteShell(cache) & " --keepsemtree" & extraArgs &
     " check " & os.quoteShell(root))
   result = code == 0
   if not result:

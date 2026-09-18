@@ -12,9 +12,11 @@ way they are.
 
 Implementation points:
 
-- `src/njvl/finalir.nim` — the lowering to the structured control-flow form
-  (`loop`/`ite`/`lab`/`jmp`). Currently reached from `src/nimony/contracts_fir.nim`
-  (contract and nil analysis), not yet from the backend pipeline.
+- `src/finalir/finalir.nim` — the lowering to the structured control-flow form
+  (`loop`/`ite`/`lab`/`jmp`). It runs in nimsem, as the module's last step
+  (`semmain.lowerAndProve`): the contract and nil analysis
+  (`src/nimony/contracts_fir.nim`) reads its output, and that same buffer is
+  what nimsem publishes, so the whole backend starts from it.
 - `src/hexer/xelim.nim` — the `Goal` enum; `TowardsFinalIr` is the mode
   `finalir.nim` runs `lowerExprs` in.
 - `src/hexer/pipeline.nim` — the backend pass order.
@@ -258,16 +260,26 @@ clears it".
 ## Current pipeline
 
 ```
-desugar → lambdalift → xelim1 → eraiser → duplifier → destroyer → cps →
-vtables → constparams → xelim_final
+nimsem: … → derefs → finalir → contracts → <published module nif>
+hexer:  iterinliner → desugar → lambdalift → eraiser → duplifier →
+        destroyer → cps → vtables → constparams → xelim_final → lengcgen
 ```
 
-- **`xelim1`** establishes the normal form. It is the only pass that
-  *creates* it.
+Every pass from `finalir` on reads and writes the Final IR, `lengcgen`
+included: it spells `ite` as a Leng `if` and `loop` as `while true` (dropping
+the trailing back-edge), because Leng's back ends and optimizer passes speak
+those. Nimony `if`/`while`/`block`/`break` reaching it is a bug. Two producers
+are not hexer passes proper and get the lowering by other means: the lifter
+runs in `nimsem` too and so emits Nimony IR, and `pipeline.transform` lowers
+its hooks with `toFinalIr`; an `{.assembler.}` body is taken verbatim except
+that its `if`s are spelled `ite` (`finalir.trAsmStmt`).
+
+- **`finalir`** establishes the normal form (it runs `xelim` in
+  `TowardsFinalIr` mode). It is the only pass that *creates* it, and it runs
+  in nimsem: a module is published lowered. A body that is re-sem'd elsewhere
+  — a generic routine, a template — is published as sem left it.
 - **`eraiser`** (`src/hexer/eraiser.nim`) emits the `canRaise` temp and its
-  `if failed(tmp): raise tmp` check as statements. It moved *behind* `xelim1`
-  in the process: it used to run first precisely because it needed a repair
-  pass after it.
+  `ite failed(tmp): raise tmp` check as statements.
 - **`duplifier`** (`src/hexer/duplifier.nim`) does the same for its owning
   temps — `bindToTemp`/`finishOwningTemp`, `trNewobj`'s decl + OOM check +
   payload assignment, and `genLastRead`'s bitcopy + `=wasMoved`.
@@ -275,7 +287,8 @@ vtables → constparams → xelim_final
   lowerings: it unnests calls (the Final-IR "calls are unnested statements"
   rule) and binds a cast's source and result to variables, which the NIFC
   backends require. It does still flatten `vtables`/`constparams` temps as a
-  side effect — see *Remaining work*.
+  side effect — see *Remaining work*. The `and`/`or` it materializes are
+  spelled `ite` here, `if` in the `TowardsFinalIr` run (`openIfElse`).
 
 `xelim2` is gone.
 
