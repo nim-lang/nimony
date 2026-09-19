@@ -193,7 +193,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     # Also forwarded: nimsem's compile-time-eval builds run a nifmake of their own.
     try:
       config.parallelBuild = parseInt(val)
-    except ValueError:
+    except:
       quit "invalid value for --parallelBuild; expected a number (0 = all cores)"
     if config.parallelBuild < 0:
       quit "invalid value for --parallelBuild; expected a number (0 = all cores)"
