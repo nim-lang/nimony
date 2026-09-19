@@ -166,10 +166,27 @@ echo ritem(rb, 2)                                     # 30
 # the same shape as an instance's and `system.high[I, T](x: array[I, T])` binds
 # `I` to a *type* rather than to the value `N` (nim-lang/nimony#2485).
 template twice(n: int): untyped = 2 * n
+template twicePlugin(n: int): untyped {.plugin: "deps/mtwice".}
 
 type
   TwiceArray[N: static[int]; T] = object
-    elems: array[twice(N), T]
+    elems: array[twicePlugin(N), T]
+
+func twiceArray[N: static[int]; T](fill: T): array[twice(N), T] {.noinit.} =
+  for i in 0 ..< len(result):
+    result[i] = fill
+
+func twiceArray[N: static[int]; T](data: array[twice(N), T]): array[twice(N), T] {.noinit.} =
+  for i in 0 ..< len(result):
+    result[i] = data[i]
+
+func twicePluginArray[N: static[int]; T](fill: T): array[twicePlugin(N), T] {.noinit.} =
+  for i in 0 ..< len(result):
+    result[i] = fill
+
+func twicePluginArray[N: static[int]; T](data: array[twicePlugin(N), T]): array[twicePlugin(N), T] {.noinit.} =
+  for i in 0 ..< len(result):
+    result[i] = data[i]
 
 func fill[N: static[int]; T](a: var TwiceArray[N, T]; v: T) =
   for i in low(a.elems) .. high(a.elems):
@@ -183,6 +200,20 @@ echo ta.elems[0]
 echo ta.elems[5]
 echo lastIndex(ta)                 # 5
 echo high(ta.elems)                # 5
+
+var ta2 = twiceArray[3, int](9)
+var ta3 = twiceArray[3, int]([1, 2, 3, 4, 5, 6])
+var ta4 = twicePluginArray[3, int](9)
+var ta5 = twicePluginArray[3, int]([1, 2, 3, 4, 5, 6])
+
+# a plugin call in a parameter's `array[twicePlugin(N), T]` length folds during
+# overload resolution just like the `twice(N)` template, so both the `fill` and
+# `array` overloads resolve and produce the same length-6 results.
+echo ta2[0]                        # 9   (twiceArray fill)
+echo ta3[5]                        # 6   (twiceArray copy, last element)
+echo ta4[0]                        # 9   (twicePluginArray fill matches template)
+echo ta5[5]                        # 6   (twicePluginArray copy, last element)
+echo len(ta4) == len(ta2)          # true (plugin and template lengths agree)
 
 # the same for a plain (non-template) length and through an ordinary parameter:
 func lastOf[N: static[int]; T](x: array[N, T]): int = high(x)
