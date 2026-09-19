@@ -421,6 +421,10 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
     if config.isDefined(d):
       result.add " -d:"
       result.add d
+  # A job cap chosen for a small machine must hold inside the sub-compile too.
+  if config.parallelBuild > 0:
+    result.add " --parallelBuild:"
+    result.add $config.parallelBuild
 
 proc runValidatorOnPlugin(config: NifConfig; nf, checkCache: string) =
   ## Run the plugin validator on `nf` before compiling it. Skipped when

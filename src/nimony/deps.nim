@@ -1955,6 +1955,10 @@ proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebui
   if not isFinal:
     propagatePlugins result
 
+proc jobsArg(config: NifConfig): string =
+  if config.parallelBuild > 0: " -j:" & $config.parallelBuild
+  else: " -j"
+
 proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFiles: seq[string];
     flags: set[BuildFlag]; moduleFlags: set[ModuleFlag]) =
   ## Build graph starting from already-processed .nif files instead of .nim files
@@ -2147,7 +2151,7 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
   let nifmakeCmd = quoteShell(findTool("nifmake")) &
     (if ForceRebuild in flags: " --force" else: "") &
     (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "") &
-    " -j run " & quoteShell(buildFile)
+    jobsArg(config) & " run " & quoteShell(buildFile)
   exec(nifmakeCmd)
   exec(exeFile)
 
@@ -2185,14 +2189,14 @@ proc buildGraph*(config: sink NifConfig; project: string;
     (if Profile in flags: " --profile" else: "") &
     (if Report in flags: " --report" else: "") &
     (if config.baseDir.len > 0: " --base:" & quoteShell(config.baseDir) else: "")
-  let nifmakeCommand = nifmakeBase & " -j run "
+  let nifmakeCommand = nifmakeBase & jobsArg(config) & " run "
   # A changed configuration invalidates every sem result, and now says so
   # directly instead of through a file the sem nodes pretended to read.
   # `--rerun`, not `--force`: the outputs must stay in place so nimsem's
   # OnlyIfChanged writes can still find a result unchanged and spare the
   # entire backend.
   let frontendCommand = nifmakeBase &
-    (if configChanged: " --rerun" else: "") & " -j run "
+    (if configChanged: " --rerun" else: "") & jobsArg(config) & " run "
 
   # `nimony c` drives nifmake once for the frontend and once more for the
   # backend (or docs); `DoCheck` stops after the frontend. Hand each invocation

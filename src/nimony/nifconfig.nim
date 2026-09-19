@@ -160,6 +160,9 @@ type
     checkFlags*: string  # active check modes as a `genFlags` string (e.g. "br"),
                          # forwarded to `hexer c` so nifcgen injects only the
                          # requested runtime checks (empty = none).
+    parallelBuild*: int  # --parallelBuild:N: at most N processes at once per
+                         # nifmake run; 0 = one per core. Not an option of the
+                         # generated files, so no part of `getOptionsAsOneString`.
     inlineFrames*: bool  # --inlineframes:on: record which template an expansion
                          # came from, so a debug backend can emit DWARF inlined
                          # frames for it (#1987). Off by default: it costs work
