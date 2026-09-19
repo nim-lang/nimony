@@ -231,6 +231,18 @@ proc executeRetType(c: EvalContext; routineRetType: TypeCursor): Cursor =
     elif c.c != nil:
       result = c.c[].types.autoType
 
+proc pluginExecuteRetType(c: EvalContext; templateSym: Cursor): Cursor =
+  ## Result type for re-driving a parked `(pluginCall <template> …)` through
+  ## `executeExpr`, mirroring `forwardToExecute`.
+  if templateSym.kind == Symbol:
+    let res = tryLoadSym(templateSym.symId)
+    if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+      return executeRetType(c, asRoutine(res.decl).retType)
+  if not cursorIsNil(c.expectedType):
+    result = skipModifier(c.expectedType)
+  elif c.c != nil:
+    result = c.c[].types.autoType
+
 proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
                       args: var Cursor): Cursor =
   ## Reconstructs `(call routine args...)` from `args` (positioned at the first
@@ -1126,23 +1138,16 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
         cannotEval n
         skip n
       else:
+        var ch = n
+        inc ch # template symbol, then args
+        let retType = pluginExecuteRetType(c, ch)
         var callBuf = createTokenBuf(16)
         callBuf.addParLe(CallS, n.info)
-        var ch = n
-        inc ch # past the `pluginCall` tag; the template symbol and its args follow
-        while ch.hasMore:
-          callBuf.addSubtree ch
-          skip ch
+        var arg = ch
+        while arg.hasMore:
+          callBuf.addSubtree arg
+          skip arg
         callBuf.addParRi()
-        var ch0 = n
-        inc ch0 # template symbol
-        var retType = c.c[].types.autoType
-        if ch0.kind == Symbol:
-          let res = tryLoadSym(ch0.symId)
-          if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
-            retType = executeRetType(c, asRoutine(res.decl).retType)
-        elif not cursorIsNil(c.expectedType):
-          retType = skipModifier(c.expectedType)
         var resultBuf = createTokenBuf(12)
         let errorMsg = c.c.executeExpr(c.c[], cursorAt(callBuf, 0), retType, resultBuf, n.info)
         if errorMsg.len == 0:
