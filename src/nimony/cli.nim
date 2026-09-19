@@ -64,17 +64,29 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "compat":
     config.compat = true
   of "mm":
-    # Stored normalized: the name is spelled in camelCase but names a file, and
-    # files stay all-lowercase (`--mm:atomicArc` -> `system/atomicarc.nim`).
-    # Rejecting separators here keeps `--mm` a strategy name and not a way to
-    # `include` an arbitrary path.
-    let name = normalize(val)
-    var valid = name.len > 0
-    for ch in name:
-      if ch notin {'a'..'z', '0'..'9'}: valid = false
-    if not valid:
-      quit "invalid value for --mm; expected a strategy name like arc or atomicArc"
-    config.mm = name
+    # Either a strategy that ships with the stdlib (`--mm:arc` -> the file
+    # `system/arc.nim` next to `system.nim`) or the path of a runtime of your
+    # own (`--mm:rt/mygc`, `--mm:$RT/gc`, `--mm:/opt/rt/gc.nim`). Whitespace is
+    # the one thing a path may not contain: the option is forwarded to the
+    # sub-tools through a single string that is split on spaces again.
+    if val.len == 0 or val.find({' ', '\t'}) >= 0:
+      quit "invalid value for --mm; expected a strategy name like atomicArc " &
+           "or the path of a runtime file (without whitespace)"
+    config.mm = toMM(val)
+    if not isStrategyName(config.mm) and not isAbsolute(config.mm) and
+       config.mm[0] != '$':
+      # A relative path is read against the CURRENT DIRECTORY, where the user
+      # typed it -- `resolveFile` would otherwise try it against `system.nim`'s
+      # directory. Made absolute right here because the option is forwarded to
+      # nimsem and to the const-eval sub-compiles, which have to arrive at the
+      # same file. One that is NOT there stays as written, so `--path` can
+      # still find it, like any other `include`.
+      let rt = config.mm.addFileExt(".nim")
+      if fileExists(rt):
+        # `absolutePath` asks the OS for the current directory and so may
+        # raise; a cwd that cannot be read leaves the path as written, which
+        # `resolveFile` can still work with.
+        config.mm = (try: absolutePath(rt) except: rt)
   of "path", "p":
     config.paths.add val
   of "define", "d":
