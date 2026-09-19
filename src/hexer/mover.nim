@@ -89,7 +89,19 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
         # that we can mark `table` as aliased.
       else:
         break
-    else:
+    of NoExpr, ErrX, SufX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX,
+       AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+       AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
+       DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
+       LeX, LtX, CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX, NewrefX,
+       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX, CompilesX,
+       DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
+       HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+       IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
+       DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
+       MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+       DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX,
+       InternalFieldPairsX, FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
       break
   if n.kind == Symbol:
     result = n.symId
@@ -164,15 +176,18 @@ proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
       inc treeSel               # tree: OBJ -> selector
       var xSel = xObj
       inc xSel                  # x:    OBJ -> selector
-      case tree.exprKind
-      of DotX:                  # disjoint iff the two field names differ
+      # An `if` chain rather than a `case`, for the reason `xelim.trExprToLabel`
+      # gives: two kinds are interesting and everything else shares one
+      # fall-back, and here that fall-back is the conservative answer -- an
+      # accessor this does not know stays "may alias" and the full scan runs.
+      if tree.exprKind == DotX:
+        # disjoint iff the two field names differ
         result = treeSel.kind == Symbol and xSel.kind == Symbol and
                  treeSel.symId != xSel.symId
-      of TupatX:                # disjoint iff the two tuple indices differ
+      elif tree.exprKind == TupatX:
+        # disjoint iff the two tuple indices differ
         result = treeSel.kind == IntLit and xSel.kind == IntLit and
                  treeSel.intVal != xSel.intVal
-      else:
-        discard
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
   ## True if `tree` contains a read whose location can alias `x` (the location
@@ -254,7 +269,19 @@ proc classify(n: Cursor): NodeClass =
     else:
       if n.substructureKind in BranchKinds: result = ncBranch
       else: result = ncOther
-  else: result = ncOther
+  of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS,
+     CursorS, PatternvarS, TypeS, EmitS, AsgnS, ContinueS, LabS, JmpS, YldS,
+     PragmasS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+     ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, AssumeS,
+     AssertS, CallstrlitS, InfixS, PrefixS, HcallS, BindS, MixinS, UsingS:
+    # Nothing here forks or joins: whatever follows the node follows the
+    # statement. `jmp`/`lab`/`continue` are transfers `execStmt` resolves by
+    # name, not by where they sit, so they need no class of their own.
+    result = ncOther
+  of IfS, WhenS, WhileS, ForS, CoroforS, BlockS, BreakS, AsmS, DeferS:
+    # `finalir.nim` lowered all of these; `execStmt` `bug`s on one, and until
+    # then it is a node like any other.
+    result = ncOther
 
 proc at(base: Cursor; pos: int32): Cursor {.inline.} = base +! int(pos)
 
