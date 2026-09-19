@@ -237,11 +237,14 @@ proc pluginExecuteRetType(c: EvalContext; templateSym: Cursor): Cursor =
   if templateSym.kind == Symbol:
     let res = tryLoadSym(templateSym.symId)
     if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
-      return executeRetType(c, asRoutine(res.decl).retType)
+      result = executeRetType(c, asRoutine(res.decl).retType)
+      return
   if not cursorIsNil(c.expectedType):
     result = skipModifier(c.expectedType)
   elif c.c != nil:
     result = c.c[].types.autoType
+  else:
+    result = default(Cursor)
 
 proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
                       args: var Cursor): Cursor =
