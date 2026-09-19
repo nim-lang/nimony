@@ -1028,7 +1028,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
   case n.kind
   of Ident:
     let start = dest.len
-    let s = semIdent(c, dest, n, {})
+    let s = semIdent(c, dest, n, {PreferTypes})
     semTypeSym c, dest, s, info, start, context
   of Symbol:
     let start = dest.len
@@ -1042,7 +1042,7 @@ proc semLocalTypeImpl*(c: var SemContext; dest: var TokenBuf; n: var Cursor;
       let xkind = exprKind(n)
       if xkind == QuotedX:
         let start = dest.len
-        let s = semQuoted(c, dest, n, {})
+        let s = semQuoted(c, dest, n, {PreferTypes})
         semTypeSym c, dest, s, info, start, context
       elif xkind == ParX:
         let parStart = n

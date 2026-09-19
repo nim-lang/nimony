@@ -1,4 +1,4 @@
-import strutils
+import strutils, syncio
 import posix/posix
 import cmdline
 import envvars
@@ -150,6 +150,7 @@ when defined(posix):
     result = int64(s.st_mtim.tv_sec) * 1_000_000_000'i64 + int64(s.st_mtim.tv_nsec)
 elif defined(windows):
   import windows/winlean
+  import widestrs
 
   const
     # Number of 100-nanosecond intervals between 1601-01-01 and 1970-01-01.
@@ -174,6 +175,39 @@ elif defined(windows):
     # FILETIME is in 100ns intervals since 1601-01-01; rebase to ns since epoch.
     result = (rdFileTime(f.ftLastWriteTime) - winEpochDiff) * 100'i64
     discard findClose(h)
+
+proc setFilePermissions*(filename: string; permissions: set[FilePermission]) {.raises.} =
+  ## Sets the file permissions for `filename`. Raises `OSError` on failure.
+  ##
+  ## On Windows only the ``fpUserWrite`` permission is honoured: without it the
+  ## file becomes read-only (Windows has no execute or group/other bits).
+  when defined(posix):
+    var p = 0'u32
+    if fpUserRead in permissions: p = p or 0o400'u32
+    if fpUserWrite in permissions: p = p or 0o200'u32
+    if fpUserExec in permissions: p = p or 0o100'u32
+    if fpGroupRead in permissions: p = p or 0o040'u32
+    if fpGroupWrite in permissions: p = p or 0o020'u32
+    if fpGroupExec in permissions: p = p or 0o010'u32
+    if fpOthersRead in permissions: p = p or 0o004'u32
+    if fpOthersWrite in permissions: p = p or 0o002'u32
+    if fpOthersExec in permissions: p = p or 0o001'u32
+    var filename = filename
+    if chmod(filename.toCString, Mode(p)) != 0'i32:
+      raiseOSError(osLastError(), filename)
+  elif defined(windows):
+    var filename = filename
+    let w = newWideCString(filename)
+    var a = getFileAttributesW(w.toWideCString)
+    if a == -1'i32: raiseOSError(osLastError(), filename)
+    if fpUserWrite in permissions:
+      a = a and not int32(FILE_ATTRIBUTE_READONLY)
+    else:
+      a = a or int32(FILE_ATTRIBUTE_READONLY)
+    if isFail(setFileAttributesW(w.toWideCString, a)):
+      raiseOSError(osLastError(), filename)
+  else:
+    {.error: "no filesystem on a freestanding target".}
 
 proc exitStatusLikeShell*(status: cint): cint =
   ## Converts exit code from `c_system` into a shell exit code.

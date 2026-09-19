@@ -123,6 +123,9 @@ const
     "cast", "deref", "pat", "tupat", "arrat",
     # template expansion in a static type slot: `(expr … value)`
     "expr",
+    # a qualified type `module.T` in an untyped template body, which sem
+    # leaves unresolved until the template expands
+    "dot",
     # decl kinds that may appear nullary as kind markers
     "const"
   ]

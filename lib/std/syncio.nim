@@ -662,6 +662,20 @@ proc writeFile*(filename, content: string) {.raises.} =
   else:
     raise IOError
 
+proc writeFile*(filename: string; content: openArray[byte]) {.raises.} =
+  ## Opens `filename` for writing, writes the bytes of `content`, and closes
+  ## the file. Raises `IOError` if the file cannot be opened or fully written.
+  var f: File
+  if open(f, filename, fmWrite):
+    var written = content.len
+    if content.len > 0:
+      written = writeBuffer(f, addr content[0], content.len)
+    close(f)
+    if written != content.len:
+      raise IOError
+  else:
+    raise IOError
+
 proc tryWriteFile*(file, content: string): bool =
   ## Attempts to write content to a file, returns whether the operation succeeded.
   var f: File
