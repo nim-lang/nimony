@@ -843,7 +843,7 @@ proc cqNeedsFlush(queue: var Queue): bool =
   ## in liburing; with DEFER_TASKRUN, TASKRUN on its own is the normal case.
   var sqFlags = atomicLoad(cast[ptr uint32](queue.sq.flags)[], moRelaxed)
   let f = cast[ptr SqringFlags](sqFlags.addr)[]
-  return SQ_CQ_OVERFLOW in f or SQ_TASKRUN in f
+  return {SQ_CQ_OVERFLOW, SQ_TASKRUN} * f != {}
 
 proc cqNeedsEnter(queue: var Queue): bool =
   SETUP_IOPOLL in queue.params.flags or queue.cqNeedsFlush
