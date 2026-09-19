@@ -47,6 +47,14 @@ proc semInclude*(c: var SemContext; dest: var TokenBuf; it: var Item) =
   else:
     for f1 in items(files):
       let f2 = resolveFile(c.g.config.paths, getFile(info), c.g.config.expandMM(f1.path))
+      if f1.path == MmPlaceholder and not semos.fileExists(f2):
+        # `include "$MM"` is system.nim's, but the file it names is the user's
+        # `--mm` value, so this is a command line error and it stops the
+        # compiler: going on without the strategy's three primitives buries it
+        # under every "undeclared identifier: arcInc" in the rest of system.nim,
+        # and `parseFile` would otherwise fail on a file no source mentions.
+        fatal "cannot find the runtime selected by `--mm:" & c.g.config.mm &
+              "`, expected it at: " & f2
       c.meta.includedFiles.add f2
       # check for recursive include files:
       var isRecursive = false

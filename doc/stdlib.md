@@ -94,6 +94,31 @@ when the count reached zero) and `arcIsUnique`. What is built on top of them
 `--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
 the cached build configuration and therefore forces a rebuild.
 
+#### A runtime of your own
+
+The file does not have to be one of ours: `--mm` also takes a **path**, and then
+`$MM` expands to exactly what was passed. That is the whole mechanism — write
+the three primitives into a file and point `--mm` at it:
+
+```
+nimony c --mm:rt/mygc myprogram.nim       # relative to the current directory
+nimony c --mm:/opt/rt/mygc.nim myprogram.nim
+nimony c '--mm:$MYRT/mygc' myprogram.nim  # $VAR: the compiler reads the
+                                          # environment, hence the quotes
+```
+
+A value is a path as soon as it is not a bare name (letters, digits and `_`):
+`--mm:mygc` is a *strategy* and looks for `lib/std/system/mygc.nim`, while
+`--mm:./mygc` and `--mm:mygc.nim` are paths. A relative path is read against the
+current directory; one that is not there is looked up on the `--path` search
+path, like any other `include`. Whitespace is the one thing the path may not
+contain, because the switch is forwarded to the other tools through a single
+string that is split on spaces again. Naming a file that is not there stops the
+compiler with one error instead of a wall of `undeclared identifier: arcInc`.
+
+`defined(gc<Name>)` works for these too: the name of a runtime given by path is
+its file's basename, so `--mm:rt/myGc.nim` makes `defined(gcMyGc)` true.
+
 #### The uniquely-referenced fast path
 
 `atomicArc`'s `arcDec` reads the count first and skips the atomic
