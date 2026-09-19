@@ -150,6 +150,7 @@ when defined(posix):
     result = int64(s.st_mtim.tv_sec) * 1_000_000_000'i64 + int64(s.st_mtim.tv_nsec)
 elif defined(windows):
   import windows/winlean
+  import widestrs
 
   const
     # Number of 100-nanosecond intervals between 1601-01-01 and 1970-01-01.
@@ -203,7 +204,7 @@ proc setFilePermissions*(filename: string; permissions: set[FilePermission]) {.r
       a = a and not int32(FILE_ATTRIBUTE_READONLY)
     else:
       a = a or int32(FILE_ATTRIBUTE_READONLY)
-    if setFileAttributesW(w.toWideCString, a) == 0'i32:
+    if isFail(setFileAttributesW(w.toWideCString, a)):
       raiseOSError(osLastError(), filename)
   else:
     {.error: "no filesystem on a freestanding target".}
