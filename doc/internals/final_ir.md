@@ -283,6 +283,19 @@ that its `if`s are spelled `ite` (`finalir.trAsmStmt`).
 - **`duplifier`** (`src/hexer/duplifier.nim`) does the same for its owning
   temps — `bindToTemp`/`finishOwningTemp`, `trNewobj`'s decl + OOM check +
   payload assignment, and `genLastRead`'s bitcopy + `=wasMoved`.
+- **`mover`** (`src/hexer/mover.nim`), the last-read analysis the duplifier
+  asks before it sinks a value, is the one *analysis* in the backend and it
+  reads the Final IR directly. It used to translate the module into
+  `controlflow.nim`'s goto form first, which then had to be mapped back: a
+  `srcMap` side-channel threaded through every buffer the CF builder moved or
+  truncated, plus an inverted index to find the query expression again in the
+  copy. All three are gone. What the goto form supplied — "what runs next" —
+  now comes from one `parents` array (token position → enclosing tag) and a
+  `(lab L)` table, both built once per module: `ite` forks, `loop` closes the
+  back-edge, `jmp` is one lookup because it is forward and scoped. Reasoning
+  on the same tree the duplifier rewrites also closes the gap the `AndX`/`OrX`
+  note in `xelim.isComplex` describes, where the two forms could disagree
+  about evaluation order.
 - **`xelim_final`** is *not* a repair pass. `LowerCasts` performs two real
   lowerings: it unnests calls (the Final-IR "calls are unnested statements"
   rule) and binds a cast's source and result to variables, which the NIFC
