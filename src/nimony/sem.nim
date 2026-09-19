@@ -561,14 +561,22 @@ proc fetchSym*(c: var SemContext; s: SymId): Sym =
 
 proc semStmtsExpr(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool) =
   let before = dest.len
+  let info = it.n.info
   dest.addParLe(it.n.cursorTagId, it.n.info)
+  var empty = true
   it.n.into:
     while it.n.hasMore:
+      empty = false
       if not isLastSon(it.n):
         semStmt c, dest, it.n, false
       else:
         semExpr c, dest, it
   dest.addParRi()
+  if empty:
+    # `(stmts)` produces nothing: that is `void`, not "unknown". A template whose
+    # body was a `when` that compiled to nothing publishes exactly this, and its
+    # expansion was then rejected as `auto` where `void` was wanted.
+    producesVoid c, dest, info, it.typ
   let kind =
     if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)
@@ -594,10 +602,33 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
     discard "ok"
   else:
     # analyze the expression that was just produced:
-    let ex = cursorAt(dest, exPos)
+    var ex = cursorAt(dest, exPos)
     let discardable = implicitlyDiscardable(ex, dest)
+    endRead ex
     if not discardable:
       buildErr c, dest, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
+    else:
+      # Make the implicit discard explicit: `(discard …)` is what later passes
+      # bind to a temp and destroy. A bare `(call …)` statement of a type with a
+      # destructor (`{.discardable.}` proc returning a `string`) was bound to a
+      # temp whose symbol was then left behind as a statement.
+      var one = cursorAt(dest, exPos)
+      # Only a CALL: an `if`/`case` whose branches are discardable calls is
+      # typed by them too, but wrapping it would turn a statement without an
+      # `else` into an expression that does not always produce a value.
+      let isCall = one.exprKind in CallKinds
+      skip one
+      let single = cursorToPosition(dest, one) == dest.len
+      endRead one
+      if single and isCall:
+        var val = createTokenBuf(dest.len - exPos + 2)
+        for i in exPos ..< dest.len: val.add dest[i]
+        dest.shrink exPos
+        dest.addParLe(DiscardS, info)
+        var vc = beginRead(val)
+        dest.addSubtree vc
+        endRead vc
+        dest.addParRi()
   n = it.n
 
 proc semStmtCallback*(c: var SemContext; dest: var TokenBuf; n: Cursor) =
@@ -5388,6 +5419,7 @@ proc semDefer(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semStmt c, dest, it.n, false
     closeScope c
   c.routine.hasDefer = true
+  it.typ = c.types.voidType
 
 proc expandSymChoice(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info

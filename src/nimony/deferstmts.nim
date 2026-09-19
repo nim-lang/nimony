@@ -79,17 +79,21 @@ proc wrapScopeDefers(c: var Context; dest: var TokenBuf; scopeId: int;
     wrapOneDefer(dest, popped.pos, popped.action, info)
 
 proc trBlock(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  if n.stmtKind notin {ScopeS, StmtsS}:
+    # Sem gives every statement body a `(stmts …)`, so this is the branch of an
+    # `if`/`case` EXPRESSION (`let x = if c: f() else: 2`): a value, not a
+    # block. It used to be wrapped into a `(stmts …)` like a statement body,
+    # which turned the branch into a statement, so the lowering that assigns
+    # each branch's value to the expression's temp found no value to assign.
+    trStmt c, dest, n
+    return
   let beforeBody = dest.len+1
   let blockInfo = n.info
   c.scopeStack.add beforeBody
-  if n.stmtKind in {ScopeS, StmtsS}:
-    dest.addParLe(n.cursorTagId, n.info)
-    n.into:
-      while n.hasMore:
-        trStmt c, dest, n
-  else:
-    dest.addParLe(StmtsS, n.info)
-    trStmt c, dest, n
+  dest.addParLe(n.cursorTagId, n.info)
+  n.into:
+    while n.hasMore:
+      trStmt c, dest, n
   wrapScopeDefers(c, dest, beforeBody, blockInfo)
   dest.addParRi()
   discard c.scopeStack.pop

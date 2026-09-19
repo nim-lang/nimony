@@ -681,7 +681,9 @@ proc genSetConstrRuntime(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var typBuf = createTokenBuf(16)
   addSetType typBuf, size, info
   let cType = beginRead(typBuf)
-  let big = size > 8
+  # Not `size > 8`: a 3-, 5-, 6- or 7-byte set is a byte array too (`addSetType`),
+  # and treating it as a word emitted a nonexistent `NU40` for `set[0..39]`.
+  let big = size notin [1, 2, 4, 8]
   var resValueBuf = createTokenBuf(2)
   if big: resValueBuf.addDotToken(info)
   else: resValueBuf.addUIntLit(0, info)
