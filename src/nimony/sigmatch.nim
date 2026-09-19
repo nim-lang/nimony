@@ -607,9 +607,6 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
       var sub = cursorAt(subBuf, 0)
       if containsGenericParams(sub): return
       var ec = initEvalContext(m.context, noExecute = false)
-      # A length is an ordinal; give the sub-compile a concrete result type so it
-      # can serialise the folded value (an `auto` result cannot be serialised).
-      ec.expectedType = m.context.types.intType
       var cur = sub
       let folded = eval(ec, cur)
       if folded.isTagLit and folded.cursorTagId == nifpools.ErrT: return
