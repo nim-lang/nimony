@@ -491,97 +491,6 @@ proc semMagicInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: 
   var m = cursorAt(typeBuf, 0)
   semLocalTypeImpl c, dest, m, InLocalDecl
 
-proc isEnumFieldSym(n: Cursor): bool =
-  ## An enum field symbol is the canonical typed value of its enum type
-  ## (`annotateOrdinal` maps an ordinal back to exactly this symbol), so it is
-  ## accepted verbatim as a value argument rather than folded to a bare ordinal
-  ## (which would lose the enum type and fail re-checking).
-  if n.kind != Symbol: return false
-  let res = tryLoadSym(n.symId)
-  result = res.status == LacksNothing and res.decl.symKind == EfldY
-
-proc isStaticValue(n: Cursor): bool =
-  ## a canonical compile-time value as bound to a `staticTypevar`: a primitive
-  ## literal, an enum field, or a typed aggregate constructor (array/set/tuple/
-  ## object) whose elements are themselves static.
-  case n.kind
-  of IntLit, UIntLit, FloatLit, CharLit, StrLit:
-    result = true
-  of Symbol:
-    result = isEnumFieldSym(n)
-  of TagLit:
-    case n.exprKind
-    of FalseX, TrueX, SufX:
-      result = true
-    of AconstrX, SetconstrX, TupconstrX, OconstrX:
-      var elem = n
-      elem = sub(elem) # bound the element walk
-      skip elem # type
-      result = true
-      while elem.hasMore:
-        if elem.substructureKind in {KvU, RangeU}:
-          elem = sub(elem)
-          skip elem # key or range start
-          if not isStaticValue(elem):
-            result = false
-            break
-          skip elem
-          if not elem.hasMore:
-            break
-          inc elem
-        else:
-          if not isStaticValue(elem):
-            result = false
-            break
-          skip elem
-    else:
-      result = false
-  else:
-    result = false
-
-proc semStaticInvokeArg(c: var SemContext; dest: var TokenBuf; n: var Cursor;
-                        elemType: Cursor; info: NifLineInfo): bool =
-  ## Sem a generic argument bound to a value (`static`) parameter: an ordinary
-  ## expression of the parameter's element type that must either be a
-  ## compile-time constant or still symbolic (when used inside another
-  ## generic). Constant expressions are folded here, so `Matrix[2 + 3, T]`
-  ## and `Matrix[5, T]` produce the same instance.
-  result = true
-  var phase = SemcheckBodies
-  swap c.phase, phase
-  let start = dest.len
-  var it = Item(n: n, typ: elemType)
-  semExpr c, dest, it
-  swap c.phase, phase
-  n = it.n
-  var value = cursorAt(dest, start)
-  if isStaticValue(value) or containsGenericParams(value):
-    # a canonical constant already, or still symbolic: the latter is checked
-    # again when the enclosing generic is instantiated
-    discard
-  else:
-    var value2 = value
-    # `keepEnumFields`: an enum `const` alias folds to its field symbol (the
-    # canonical typed value) instead of collapsing to a bare ordinal, so
-    # `Box[someEnumConst]` canonicalizes like `Box[theLiteralField]`.
-    var folded = evalExpr(c, value2, keepEnumFields = true)
-    let f = beginRead(folded)
-    if isStaticValue(f):
-      dest.shrink start
-      dest.addSubtree f
-    else:
-      dest.shrink start
-      c.buildErr dest, info, "argument for a `static` generic parameter must be a constant expression"
-      result = false
-
-proc clearMissingConstraints(m: var Match) =
-  m.missingConstraints.clear()
-
-proc constraintMismatchMsg(m: var Match; constraint, arg: Cursor): string =
-  result = typeExprToString(arg) & " does not match constraint " & typeToString(constraint)
-  for key, _ in m.missingConstraints:
-    result.add "\nmissing: " & key
-
 proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = InLocalDecl) =
   let typeStart = dest.len
   let info = n.info
@@ -620,54 +529,48 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
     else:
       c.buildErr dest, info, "cannot attempt to instantiate a non-type"
 
-  var params = default(Cursor)
-  if ok:
-    # only a generic type has a `(typevars ...)` list to walk; `ok` already
-    # implies it, whereas `decl.kind == TypeY` also holds for a concrete type
-    # like `Foo` in `Foo[T]`, whose `typevars` is a DotToken (#2440).
-    params = decl.typevars
-    params = sub(params) # bound the parameter walk
+  # Count generic parameters for the arity check below. Only a generic type has
+  # a `(typevars ...)` list to walk; `ok` already implies it, whereas
+  # `decl.kind == TypeY` also holds for a concrete type like `Foo` in `Foo[T]`,
+  # whose `typevars` is a DotToken (#2440).
   var paramCount = 0
+  if ok and decl.typevars.substructureKind == TypevarsU:
+    var params = decl.typevars
+    params = sub(params) # bound the parameter walk
+    while params.hasMore:
+      if isTypevarLike(params.symKind): inc paramCount
+      skip params
+
+  # Phase 1: sem every explicit generic argument as a compile-time value or a
+  # type (`AllowValues`), exactly like the routine-call and explicit-routine-
+  # instantiation paths.
   var argCount = 0
-  var m = createMatch(addr c)
   let usedTypevarsInitial = c.usedTypevars
   let beforeArgs = dest.len
   while n.hasMore:
     inc argCount
-    let argInfo = n.info
-    var tvKind = NoSym
-    var constraint = default(Cursor)
-    var haveParam = false
-    if cursorIsNil(params) or not params.hasMore:
-      # will error later from param/arg count not matching
-      discard
-    else:
-      inc paramCount
-      haveParam = true
-      tvKind = params.symKind
-      constraint = takeLocal(params, SkipFinalParRi).typ
-    var argBuf = createTokenBuf(16)
-    var addArg = true
-    if tvKind == StaticTypevarY:
-      # the parameter is a *value*: the argument is an ordinary constant
-      # expression of the parameter's element type, not a type
-      if not semStaticInvokeArg(c, argBuf, n, constraint, argInfo):
-        ok = false
-    else:
-      semLocalTypeImpl c, argBuf, n, AllowValues
-      if haveParam and not constraint.isDotToken:
-        var arg = beginRead(argBuf)
-        let argSnap = cursorAt(argBuf, 0)
-        var constraintMatch = constraint
-        clearMissingConstraints(m)
-        if not matchesConstraint(m, constraintMatch, arg):
-          c.buildErr dest, argInfo, constraintMismatchMsg(m, constraint, argSnap), argSnap
-          ok = false
-          addArg = false
-    if addArg:
-      dest.add argBuf
+    semLocalTypeImpl c, dest, n, AllowValues
   let usedTypevarsFinal = c.usedTypevars
   let isConcrete = usedTypevarsInitial == usedTypevarsFinal # no generic params were used
+
+  # Phase 2: bind/validate the arguments against the generic
+  # parameters and rewrite them to their canonical (folded) form.
+  if ok and paramCount == argCount:
+    var m = createMatch(addr c)
+    var argsCur = cursorAt(dest, beforeArgs)
+    if matchGenericExplicitArgs(m, headId, argsCur):
+      var canonBuf = createTokenBuf(16)
+      buildCanonicalGenericArgs(m, headId, canonBuf)
+      dest.shrink beforeArgs
+      dest.add canonBuf
+    else:
+      let msg = genericArgErrorMsg(m)
+      let errInfo = errorInfo(m)
+      dest.shrink typeStart
+      c.buildErr dest, errInfo, msg
+      n = invokeStart; skip n
+      return
+
   dest.addParRi(n.endInfo)
   n = invokeStart; skip n
   if ok and paramCount != argCount:
