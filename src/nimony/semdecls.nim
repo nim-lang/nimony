@@ -1185,7 +1185,10 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
             skip it.n
       else:
         semEmptyBody(c, dest, it, kind, crucial, pass, symId, beforeParams, hookName, info)
-      if c.routine.hasDefer:
+      if c.routine.hasDefer and kind != TemplateY:
+        # A template's `defer` is lowered where it is expanded: lowering it here
+        # would close its `try` at the end of the expansion instead of the
+        # caller's scope, as if the template body were a scope of its own.
         transformDefer dest, beforeBody
       dest.addParRi(it.n.endInfo)
     finally:

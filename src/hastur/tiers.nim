@@ -46,7 +46,6 @@ const BootstrapModules = [
 
   # Tier 13 tips still present after later tiers added.
   "src/nimony/module_plugins.nim",
-  "src/hexer/inliner.nim",
   "src/hexer/lambdalifting.nim",
 
   # Tier 14 tips still present after later tiers added.
@@ -79,6 +78,14 @@ const BootstrapModules = [
   # The optimizer's driver, another separate tip (nothing imports it). `boot`
   # rebuilds it at every stage; this entry attributes a regression faster.
   "src/lengc/shoggoth/shoggoth.nim",
+]
+
+const SiblingBootstrapModules = [
+  # The native code generator, from the sibling `../nativenif` checkout (see
+  # `deps.nim`). Host-Nim-built for everything else hastur does, so nothing
+  # would notice it stop compiling with nimony. Walked only when the checkout
+  # is there, like every other use of it.
+  NativenifDir & "/src/arkham/arkham.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.
@@ -135,9 +142,12 @@ proc tierTests*(native = false; extraArgs = "") =
     if missing.len > 0:
       quit "tiers native: " & missing.join(", ") & " not in " & binDir() &
            "; `hastur build native` builds them from " & NativenifDir
-  let modules =
+  var modules =
     when defined(windows): @["src/nimony/nimony.nim"]
     else: @BootstrapModules
+  when not defined(windows):
+    if dirExists(NativenifDir):
+      for m in SiblingBootstrapModules: modules.add m
   let backend = if native: "n" else: "c"
   let t0 = epochTime()
   var failed: seq[string] = @[]
