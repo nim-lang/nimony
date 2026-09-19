@@ -166,7 +166,7 @@ echo ritem(rb, 2)                                     # 30
 # the same shape as an instance's and `system.high[I, T](x: array[I, T])` binds
 # `I` to a *type* rather than to the value `N` (nim-lang/nimony#2485).
 template twice(n: int): untyped = 2 * n
-template twicePlugin(n: int): untyped {.plugin: "deps/mtwice".}
+template twicePlugin(n: int): int {.plugin: "deps/mtwice".}
 
 type
   TwiceArray[N: static[int]; T] = object
