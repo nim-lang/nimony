@@ -59,6 +59,8 @@ type
                  ## must not collapse it by scope distance nor call it
                  ## ambiguous: context has not spoken yet
     PreferIterators
+    PreferTypes  ## a name in a type position: a symbol choice with exactly one
+                 ## type candidate means that type (see `semIdentImpl`)
     AllowUndeclared
     AllowModuleSym
     AllowEmpty

@@ -1440,6 +1440,22 @@ proc patchType(c: var SemContext; dest: var TokenBuf; typ: TypeCursor; patchPosi
   let t = skipModifier(typ)
   dest.replace t, patchPosition
 
+proc uniqueTypeCandidate(c: var SemContext; dest: var TokenBuf; choiceAt: int): SymId =
+  ## The one type in the symbol choice at `choiceAt`, or `SymId(0)` if there are
+  ## none or several.
+  result = SymId(0)
+  var types = 0
+  var choice = readonlyCursorAt(dest, choiceAt)
+  var a = choice.childCursor
+  while a.hasMore:
+    if a.isSymbol and fetchSym(c, a.symId).kind in {TypeY, TypevarY}:
+      result = a.symId
+      inc types
+    inc a
+  endRead a
+  endRead choice
+  if types != 1: result = SymId(0)
+
 proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: StrId;
                   flags: set[SemFlag]; nearestIsUnique: var bool): Sym =
   let mode =
@@ -1459,6 +1475,16 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     dest.shrink insertPos
     discard resolveDeferredLocal(c, ident)
     count = buildSymChoice(c, dest, ident, info, mode, nearestIsUnique)
+  if count > 1 and PreferTypes in flags:
+    # In a type position only a type can stand, so its one type candidate is
+    # what the name means, as in Nim: nifcore's enum field `NifKind.Symbol`
+    # next to a type `Symbol` of another module is no ambiguity there.
+    let typeSym = uniqueTypeCandidate(c, dest, insertPos)
+    if typeSym != SymId(0):
+      expectUnique dest
+      dest.shrink insertPos
+      dest.addSymUse(typeSym, info)
+      return fetchSym(c, typeSym)
   if count == 1:
     # Read the single candidate back out, then roll the choice away and write
     # a plain sym use in its place. The two cursors have to be RELEASED before
@@ -1599,30 +1625,6 @@ proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: 
       dest.replace cursorAt(buf, 0), start
   exprToType c, dest, it.typ, start, context, info
   swap c.phase, phase
-
-proc narrowChoiceToType(c: var SemContext; dest: var TokenBuf; s: Sym; info: NifLineInfo; start: int): Sym =
-  ## A name in a TYPE position that resolved to a symbol choice means its one
-  ## type candidate, if there is exactly one: nothing else can stand there. This
-  ## is Nim's rule, and what lets a module import both nifcore (whose `NifKind`
-  ## has an enum field `Symbol`) and a module with a type named `Symbol`.
-  result = s
-  if s.kind != CchoiceY: return
-  var typeSym = SymId(0)
-  var types = 0
-  var choice = readonlyCursorAt(dest, start)
-  var a = choice.childCursor
-  while a.hasMore:
-    if a.isSymbol and fetchSym(c, a.symId).kind in {TypeY, TypevarY}:
-      typeSym = a.symId
-      inc types
-    inc a
-  endRead a
-  endRead choice
-  if types == 1:
-    expectUnique dest
-    dest.shrink start
-    dest.addSymUse(typeSym, info)
-    result = fetchSym(c, typeSym)
 
 proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: NifLineInfo; start: int; context: TypeDeclContext) =
   if s.kind in {TypeY, TypevarY}:
