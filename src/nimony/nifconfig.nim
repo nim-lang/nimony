@@ -59,6 +59,9 @@ when defined(nimony):
       else: "linux"
 
 const
+  HostPlatform* = "[" & hostOS & "; " & hostCPU & "]"
+
+const
   DefaultMM* = "atomicarc"
     ## `--mm:atomicArc`: the default strategy. Reference counting with atomic
     ## increments/decrements, so a `ref` may be shared between threads.
