@@ -333,6 +333,10 @@ proc semTemplType(c: var UntypedCtx; dest: var TokenBuf; n: var Cursor) =
       # already resolved, e.g. when re-processing a concept body whose
       # `Self` typevar was declared by an earlier pass.
       takeTree dest, n
+    of TagLit:
+      # a type spelled as an expression, `module.T`: it is resolved when the
+      # template expands, like any other body expression
+      semTemplBody c, dest, n
     else:
       bug("unreachable")
 

@@ -1600,6 +1600,30 @@ proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: 
   exprToType c, dest, it.typ, start, context, info
   swap c.phase, phase
 
+proc narrowChoiceToType(c: var SemContext; dest: var TokenBuf; s: Sym; info: NifLineInfo; start: int): Sym =
+  ## A name in a TYPE position that resolved to a symbol choice means its one
+  ## type candidate, if there is exactly one: nothing else can stand there. This
+  ## is Nim's rule, and what lets a module import both nifcore (whose `NifKind`
+  ## has an enum field `Symbol`) and a module with a type named `Symbol`.
+  result = s
+  if s.kind != CchoiceY: return
+  var typeSym = SymId(0)
+  var types = 0
+  var choice = readonlyCursorAt(dest, start)
+  var a = choice.childCursor
+  while a.hasMore:
+    if a.isSymbol and fetchSym(c, a.symId).kind in {TypeY, TypevarY}:
+      typeSym = a.symId
+      inc types
+    inc a
+  endRead a
+  endRead choice
+  if types == 1:
+    expectUnique dest
+    dest.shrink start
+    dest.addSymUse(typeSym, info)
+    result = fetchSym(c, typeSym)
+
 proc semTypeSym(c: var SemContext; dest: var TokenBuf; s: Sym; info: NifLineInfo; start: int; context: TypeDeclContext) =
   if s.kind in {TypeY, TypevarY}:
     let res = tryLoadSym(s.name)

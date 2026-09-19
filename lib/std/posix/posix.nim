@@ -456,7 +456,12 @@ when defined(posix):
       unlinkat(AT_FDCWD, path, AT_REMOVEDIR)
     proc unlink*(path: cstring): cint {.inline, sideEffect.} =
       unlinkat(AT_FDCWD, path, cint(0))
+    proc fchmodat(dirfd: cint; path: cstring; mode: Mode; flags: cint): cint {.
+      importc: "fchmodat", sideEffect.}
+    proc chmod*(path: cstring, mode: Mode): cint {.inline, sideEffect.} =
+      fchmodat(AT_FDCWD, path, mode, cint(0))
   else:
+    proc chmod*(path: cstring, mode: Mode): cint {.importc: "chmod", sideEffect.}
     proc mkdir*(path: cstring, mode: Mode): cint {.importc: "mkdir", sideEffect.}
     proc rmdir*(path: cstring): cint {.importc: "rmdir", sideEffect.}
     proc unlink*(path: cstring): cint {.importc: "unlink", sideEffect.}

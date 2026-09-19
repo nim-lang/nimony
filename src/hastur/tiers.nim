@@ -81,11 +81,12 @@ const BootstrapModules = [
 ]
 
 const SiblingBootstrapModules = [
-  # The native code generator, from the sibling `../nativenif` checkout (see
-  # `deps.nim`). Host-Nim-built for everything else hastur does, so nothing
-  # would notice it stop compiling with nimony. Walked only when the checkout
-  # is there, like every other use of it.
+  # The native code generator and its assembler/linker, from the sibling
+  # `../nativenif` checkout (see `deps.nim`). Host-Nim-built for everything else
+  # hastur does, so nothing would notice them stop compiling with nimony. Walked
+  # only when the checkout is there, like every other use of it.
   NativenifDir & "/src/arkham/arkham.nim",
+  NativenifDir & "/src/nifasm/nifasm.nim",
 ]
 
 # Modules whose `isMainModule` block should also be executed after compilation.

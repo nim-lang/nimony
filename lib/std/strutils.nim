@@ -707,6 +707,53 @@ func find*(s, sub: string; start: Natural = 0; last = -1): int =
   # TODO: use `memmem` C function like Nim 2.
   result = find(initSkipTable(sub), s, sub, start, last)
 
+func rfind*(s: string; sub: char; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included)
+  ## in reverse -- starting at high indexes and moving lower to the first
+  ## character or `start`. If `last` is unspecified or negative, it defaults to
+  ## `s.high` (the last element).
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  result = -1
+  var i = if last < 0: s.high else: last
+  while i >= int(start):
+    if s[i] == sub:
+      return i
+    dec i
+
+func rfind*(s: string; chars: set[char]; start: Natural = 0; last = -1): int =
+  ## Searches for `chars` in `s` inside range `start..last` (both ends included)
+  ## in reverse. If `last` is unspecified or negative, it defaults to `s.high`.
+  ##
+  ## If `s` contains none of the characters in `chars`, -1 is returned.
+  result = -1
+  var i = if last < 0: s.high else: last
+  while i >= int(start):
+    if s[i] in chars:
+      return i
+    dec i
+
+func rfind*(s, sub: string; start: Natural = 0; last = -1): int =
+  ## Searches for `sub` in `s` inside range `start..last` (both ends included)
+  ## in reverse. If `last` is unspecified or negative, it defaults to `s.high`.
+  ##
+  ## Searching is case-sensitive. If `sub` is not in `s`, -1 is returned.
+  if sub.len == 0:
+    let rightIndex = if last < 0: s.len else: last
+    return max(int(start), rightIndex)
+  if sub.len > s.len - start:
+    return -1
+  let last = if last < 0: s.high else: last
+  var i = last - sub.len + 1
+  while i >= int(start):
+    var j = 0
+    while j < sub.len and sub[j] == s[i+j]:
+      inc j
+    if j == sub.len:
+      return i
+    dec i
+  result = -1
+
 func replace*(s: string; sub, by: char): string =
   ## Returns a copy of `s` where every `sub` is replaced by `by`.
   result = newString(s.len)
