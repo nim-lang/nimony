@@ -219,6 +219,18 @@ proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Curs
   buf.addParRi() # oconstr
   result = cursorAt(buf, 0)
 
+proc executeRetType(c: EvalContext; routineRetType: TypeCursor): Cursor =
+  ## Pick the result type passed to `executeExpr`. A concrete routine return
+  ## type is used as-is; `auto`, `untyped`, or generic returns fall back to
+  ## `expectedType`, and finally to `auto` so an untyped plugin can expand
+  ## first and the sub-compile can infer the serialised type.
+  result = skipModifier(routineRetType)
+  if result.typeKind in {AutoT, UntypedT} or containsGenericParams(result):
+    if not cursorIsNil(c.expectedType):
+      result = skipModifier(c.expectedType)
+    elif c.c != nil:
+      result = c.c[].types.autoType
+
 proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
                       args: var Cursor): Cursor =
   ## Reconstructs `(call routine args...)` from `args` (positioned at the first
@@ -244,10 +256,7 @@ proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
   # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
   # with the outer const's type. Keep `expectedType` for generic return
   # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
-  var retType = skipModifier(routine.retType)
-  if retType.typeKind == AutoT or containsGenericParams(retType):
-    if not cursorIsNil(c.expectedType):
-      retType = skipModifier(c.expectedType)
+  let retType = executeRetType(c, routine.retType)
   let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
                                  retType, resultBuf, n.info)
   if errorMsg.len == 0:
@@ -1125,9 +1134,15 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
           callBuf.addSubtree ch
           skip ch
         callBuf.addParRi()
-        let retType =
-          if not cursorIsNil(c.expectedType): skipModifier(c.expectedType)
-          else: c.c[].types.autoType
+        var ch0 = n
+        inc ch0 # template symbol
+        var retType = c.c[].types.autoType
+        if ch0.kind == Symbol:
+          let res = tryLoadSym(ch0.symId)
+          if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+            retType = executeRetType(c, asRoutine(res.decl).retType)
+        elif not cursorIsNil(c.expectedType):
+          retType = skipModifier(c.expectedType)
         var resultBuf = createTokenBuf(12)
         let errorMsg = c.c.executeExpr(c.c[], cursorAt(callBuf, 0), retType, resultBuf, n.info)
         if errorMsg.len == 0:
