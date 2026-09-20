@@ -9,7 +9,7 @@
 
 ## Prepare for dead code elimination and generic instance merging.
 
-import std / [assertions, tables, hashes, sets, syncio]
+import std / [assertions, tables, hashes, sets, syncio, algorithm]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lengc / [leng_model]
@@ -76,6 +76,22 @@ const
   offerName = "offers"
   rootName = "roots"
 
+proc cmpSyms(a, b: SymId): int = cmpNames(pool.symString(a), pool.symString(b))
+
+proc sortedSymNames*(syms: HashSet[SymId]): seq[string] =
+  ## A `SymId` is a pool index handed out in interning order, so an edit that
+  ## interns one more symbol (a local, say) renumbers every one after it. The
+  ## DCE files are written `OnlyIfChanged`, so their bytes must depend on the
+  ## content alone.
+  result = newSeq[string](0)
+  for s in syms: result.add pool.symString(s)
+  sort result, cmpNames
+
+proc sortedKeys*[T](t: Table[string, T]): seq[string] =
+  result = newSeq[string](0)
+  for k in t.keys: result.add k
+  sort result, cmpNames
+
 proc prepDce(outputFilename: string; n: Cursor; dottedSuffix: string) =
   var n = n
   var a = ModuleAnalysis()
@@ -84,16 +100,19 @@ proc prepDce(outputFilename: string; n: Cursor; dottedSuffix: string) =
   var b = nifbuilder.open(outputFilename, writeMode = OnlyIfChanged)
   b.withTree "stmts":
     b.withTree rootName:
-      for root in a.roots:
-        b.addSymbol pool.symString(root), dottedSuffix
-    for owner, uses in mpairs(a.uses):
+      for root in sortedSymNames(a.roots):
+        b.addSymbol root, dottedSuffix
+    var owners = newSeq[SymId](0)
+    for owner in a.uses.keys: owners.add owner
+    sort owners, cmpSyms
+    for owner in owners:
       b.withTree depName:
         b.addSymbol pool.symString(owner), dottedSuffix
-        for dep in uses:
-          b.addSymbol pool.symString(dep), dottedSuffix
+        for dep in sortedSymNames(a.uses.getOrQuit(owner)):
+          b.addSymbol dep, dottedSuffix
     b.withTree offerName:
-      for offer in a.offers:
-        b.addSymbol pool.symString(offer), dottedSuffix
+      for offer in sortedSymNames(a.offers):
+        b.addSymbol offer, dottedSuffix
   b.close()
 
 proc readModuleAnalysis*(infile: string): ModuleAnalysis =

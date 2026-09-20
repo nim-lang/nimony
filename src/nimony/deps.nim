@@ -543,10 +543,6 @@ proc processSingleImport(c: var DepContext; it: var Cursor; current: Node) =
         processPluginImport c, f, info, current
       break
 
-proc cmpNames(a, b: string): int =
-  ## `sort` needs an explicit comparator under Nimony, whose stdlib has no `cmp`.
-  if a < b: -1 elif a > b: 1 else: 0
-
 proc pluginExe(c: DepContext; name: string): string =
   ## Where `semos.runPlugin` looks for the plugin: keep the two in sync.
   c.config.nifcachePath / name.addFileExt(ExeExt)

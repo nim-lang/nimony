@@ -78,8 +78,8 @@ proc incrementalTests*() =
     writeFile(dep, originalDep)
 
   var lastOutput = ""
-  proc run(label: string): seq[seq[ReportEntry]] =
-    let (output, ec) = execCmdEx(baseCmd)
+  proc run(label: string; cmd = baseCmd): seq[seq[ReportEntry]] =
+    let (output, ec) = execCmdEx(cmd)
     lastOutput = output
     if ec != 0:
       stdout.write output
@@ -158,6 +158,30 @@ proc incrementalTests*() =
 
   restoreSources()
 
+  # A local shifts every `SymId` after it; the DCE files must not move. A cache
+  # of its own: the edits above keep the backend from settling.
+  block:
+    let dceCache = "nimcache" / "incremental-dce"
+    removeDir dceCache
+    let dceCmd = nimony.quoteShell & " c -r --silentMake --report --nimcache:" &
+                 dceCache.quoteShell & " " & src.quoteShell
+    discard run("dce-cold", dceCmd)
+    let edited = originalDep.replace("  x + 1\n", "  let step = 1\n  x + step\n")
+    expect edited != originalDep, "dce-local: the edit no longer applies to " & dep
+    writeFile(dep, edited)
+    var r = run("dce-local", dceCmd)
+    if r.len == 2:
+      expect reportField(r[1], "dceLive") == 0,
+             "dce-local: dceLive ran " & $reportField(r[1], "dceLive") & " times (expected 0)"
+      expect reportField(r[1], "dceEmit") <= 1,
+             "dce-local: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected at most 1)"
+    r = run("dce-local-settle", dceCmd)
+    if r.len == 2:
+      expect reportField(r[1], "dceEmit") == 0,
+             "dce-local-settle: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected 0)"
+
+  restoreSources()
+
   # Phase 6: switch backends without touching a source file. `nimony c` and
   # `nimony n` do not produce the same artifacts from the same input — hexer
   # alone runs with or without `--native`, which changes the main module's
@@ -168,7 +192,7 @@ proc incrementalTests*() =
   # `deps.backendDirName` keeps the two populations apart; assert that both
   # exist afterwards, that they disagree, and that the C build the native one
   # ran on top of came through untouched.
-  var phases = 5
+  var phases = 6
   let arkham = "bin" / "arkham".addFileExt(ExeExt)
   let nifasm = "bin" / "nifasm".addFileExt(ExeExt)
   if fileExists(arkham) and fileExists(nifasm):

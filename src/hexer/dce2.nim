@@ -9,7 +9,7 @@
 
 ## Dead code elimination and generic instance merging.
 
-import std / [os, tables, hashes, sets, assertions, syncio]
+import std / [os, tables, hashes, sets, assertions, syncio, algorithm]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
@@ -212,19 +212,23 @@ proc writeLiveFile*(outfile: string; resolved: ResolveTable;
   ## filename, but this file aggregates symbols from many modules — only
   ## one expansion would be correct, all the others would be wrong. So
   ## we pay the file-size cost rather than mis-expand.
+  ##
+  ## In name order, for the reason `dce1.sortedSymNames` gives.
   var b = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
   b.withTree "stmts":
     b.withTree resolveTag:
-      for key, winner in pairs(resolved):
+      for key in sortedKeys(resolved):
         b.withTree "kv":
           b.addStrLit key
+          let winner = resolved.getOrQuit(key)
           b.addSymbol pool.symString(winner), ""
     b.withTree liveTag:
-      for modName, syms in pairs(live):
+      for modName in sortedKeys(live):
         b.withTree modTag:
           b.addStrLit modName
-          for s in syms:
-            b.addSymbol pool.symString(s), ""
+          let syms {.cursor.} = live.getOrQuit(modName)
+          for s in sortedSymNames(syms):
+            b.addSymbol s, ""
   b.close()
 
 type
