@@ -35,6 +35,12 @@ proc reportField*(entries: seq[ReportEntry]; cmd: string): int =
     if e.cmd == cmd: return e.count
   result = 0
 
+proc filesBySuffix(cache, suffix: string): seq[string] =
+  result = @[]
+  for f in walkDirRec(cache):
+    if f.endsWith(suffix): result.add f
+  sort result
+
 proc mainHexedPerBackend(cache: string): seq[(string, string)] =
   ## `(directory name, content of the main module's .x.nif)` for every backend
   ## directory under `cache`. `deps.backendDirName` gives each backend its own
@@ -158,8 +164,9 @@ proc incrementalTests*() =
 
   restoreSources()
 
-  # A local shifts every `SymId` after it; the DCE files must not move. A cache
-  # of its own: the edits above keep the backend from settling.
+  # The DCE files, on a cache of their own: the edits above keep the backend
+  # from settling. A local shifts every `SymId` after it, and no file may move;
+  # then `sample` calls `livedep.unusedProc`, and only `livedep`'s live file may.
   block:
     let dceCache = "nimcache" / "incremental-dce"
     removeDir dceCache
@@ -180,6 +187,29 @@ proc incrementalTests*() =
       expect reportField(r[1], "dceEmit") == 0,
              "dce-local-settle: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected 0)"
 
+    let liveFiles = filesBySuffix(dceCache, ".live.nif")
+    let analyses = filesBySuffix(dceCache, ".dce.nif").len
+    expect liveFiles.len >= analyses,
+           "live-edit: " & $liveFiles.len & " live files for " & $analyses & " module analyses"
+    let before = liveFiles.mapIt(readFile(it))
+    writeFile(src, originalSrc & "\necho unusedProc(10)\n")
+    r = run("live-edit", dceCmd)
+    expect lastOutput.splitLines.anyIt(it.strip == "20"),
+           "live-edit: the program did not print '20'"
+    var moved = 0
+    for i, f in liveFiles:
+      let now = readFile(f)
+      if now != before[i]:
+        inc moved
+        expect "unusedProc" in now and "unusedProc" notin before[i],
+               "live-edit: " & f & " moved without `unusedProc` becoming live"
+    expect moved == 1, "live-edit: " & $moved & " live files moved, expected 1"
+    if r.len == 2:
+      let emits = reportField(r[1], "dceEmit")
+      let most = moved + reportField(r[1], "hexer")
+      expect emits in 1 .. most,
+             "live-edit: dceEmit ran " & $emits & " times, expected 1 .. " & $most
+
   restoreSources()
 
   # Phase 6: switch backends without touching a source file. `nimony c` and
@@ -192,7 +222,7 @@ proc incrementalTests*() =
   # `deps.backendDirName` keeps the two populations apart; assert that both
   # exist afterwards, that they disagree, and that the C build the native one
   # ran on top of came through untouched.
-  var phases = 6
+  var phases = 7
   let arkham = "bin" / "arkham".addFileExt(ExeExt)
   let nifasm = "bin" / "nifasm".addFileExt(ExeExt)
   if fileExists(arkham) and fileExists(nifasm):
