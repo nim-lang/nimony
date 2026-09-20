@@ -29,8 +29,6 @@ Usage:
 
 Commands:
   build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|jorogumo|native|nifbench]   build selected tools (default: all).
-                       `jorogumo` is the web back end — ONE binary serving both
-                       `nimony j` (JavaScript) and `nimony w` (wasm32).
                        `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.

@@ -1,6 +1,6 @@
 # Wasm-backend gap repros
 
-Each file here is a MINIMAL repro of a construct the WASM leg (`nimony w` ->
+Each file here is a minimal repro of a construct the WASM leg (`nimony w` ->
 `jorogumo w`) cannot compile yet, while the native oracle handles it fine — so
 it is quarantined out of `tests/ithaqua/` (wasmdiff walks only the top level)
 until the renderer grows the lowering.
