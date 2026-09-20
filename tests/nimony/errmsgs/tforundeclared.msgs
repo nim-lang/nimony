@@ -1,0 +1,4 @@
+tests/nimony/errmsgs/tforundeclared.nim(5, 13) Error: undeclared identifier: 'split'
+tests/nimony/errmsgs/tforundeclared.nim(8, 16) Error: undeclared identifier: 'split'
+tests/nimony/errmsgs/tforundeclared.nim(11, 13) Error: undeclared identifier: 'split'
+tests/nimony/errmsgs/tforundeclared.nim(14, 13) Error: undeclared identifier: 'nosuch'
