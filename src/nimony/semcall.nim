@@ -330,11 +330,11 @@ proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
 proc sameConceptMethod(a, b: FnCandidate): bool {.inline.} =
   sameConceptRoutineTrees(a.typ, b.typ, equivKinds = true)
 
-proc collectConceptMethodsFor(fn: StrId; concpt: Cursor): seq[FnCandidate] =
+proc collectConceptMethodsFor(fn: StrId; conceptSym: SymId; concpt: Cursor): seq[FnCandidate] =
   ## All routines named `fn` required by `concpt` (including its parents),
   ## deduplicated by signature shape.
   result = @[]
-  for _, routine in conceptHierarchyRoutines(concpt):
+  for _, _, routine in conceptHierarchyRoutines(conceptSym, concpt):
     var prc = routine
     inc prc
     if prc.isSymbolDef and sameIdent(prc.symId, fn):
@@ -358,7 +358,7 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
   if typ.isSymbol:
     let section = getTypeSection typ.symId
     if section.body.typeKind == ConceptT:
-      result = collectConceptMethodsFor(fn, section.body)
+      result = collectConceptMethodsFor(fn, typ.symId, section.body)
   elif typ.typeKind == AndT:
     var t = typ
     t.into:

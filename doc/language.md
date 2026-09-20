@@ -3914,7 +3914,7 @@ Some consequences of this rule:
 - A candidate whose own constraint is the concept being checked, such as `proc <=[T: Orderable](x, y: T)` while checking `Orderable`, does not count: a type satisfies a concept only through a derivation that does not assume the conclusion.
 - Candidates are looked up by name where a call would find them: in the module that declares the concept, in the module that declares the checked type (operations are attached to their type by living in its module), and in every module visible where the check happens.
 
-A concept that inherits with `concept of` adds its parents' requirements to its own; all of them are checked the same way.
+A concept that inherits with `concept of` adds its parents' requirements to its own; all of them are checked the same way. "The module that declares the concept" is then the module declaring the concept the requirement is written in, not the one being checked: an inherited requirement resolves where its own concept lives, exactly as it would for a direct check of that parent.
 
 ### Atoms and containers
 
