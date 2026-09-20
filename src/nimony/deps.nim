@@ -125,7 +125,7 @@ proc asmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".asm.nif"
 proc wasmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
-  ## ithaqua's whole-program output; the appConsole naming rules of `exeFile`
+  ## jorogumo's whole-program `w` output; the appConsole naming rules of `exeFile`
   ## (`--out`/`--outdir` overrides, else nimcache) with a fixed `.wasm` ext.
   let baseName = f.nimFile.splitFile.name
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -140,7 +140,7 @@ proc wasmFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
     base / baseName.addFileExt("wasm")
 
 proc jsFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
-  ## jorogumo's whole-program output; the naming rules of `exeFile`
+  ## jorogumo's whole-program `j` output; the naming rules of `exeFile`
   ## (`--out`/`--outdir` overrides, else nimcache) with a fixed `.js` ext.
   let baseName = f.nimFile.splitFile.name
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
@@ -159,8 +159,8 @@ proc genFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   of backendC: config.cFile(f, backendDir)
   of backendLLVM: config.llFile(f, backendDir)
   of backendNative: config.asmFile(f, backendDir)
-  of backendWasm: config.lengcFile(f, backendDir)  # ithaqua consumes Leng directly
-  of backendJs: config.lengcFile(f, backendDir)    # jorogumo consumes Leng directly
+  of backendWasm: config.lengcFile(f, backendDir)  # jorogumo `w` reads Leng directly
+  of backendJs: config.lengcFile(f, backendDir)    # jorogumo `j` reads the same file
 proc objFile(config: NifConfig; f: FilePair; backendDir: string = ""): string =
   let base = if backendDir.len > 0: config.nifcachePath / backendDir else: config.nifcachePath
   base / f.modname & ".o"
@@ -1068,7 +1068,8 @@ proc addInlineSourceInputs(b: var Builder; optimized: bool) =
   ##
   ## `optimized` picks WHICH phase produces that Leng file. Under the optimizer
   ## the whole module set switches to `.oc.nif` together -- exactly as
-  ## `wasmInput` does for ithaqua -- so `lengc` and `arkham` wait on `optimize`.
+  ## `wholeProgInput` does for jorogumo -- so `lengc` and `arkham` wait on
+  ## `optimize`.
   ## Shoggoth's own node is the exception: it reads the pre-optimization
   ## `.c.nif` that `dceEmit` writes, which is the default here.
   ##
@@ -1098,8 +1099,13 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # command for it, running once, with only input[0] on its command line.
     # No per-module codegen command, no object files, no link step.
     let wholeProgram = wasm or js
-    var wholeProgTool = "ithaqua"
-    if js: wholeProgTool = "jorogumo"
+    # ONE binary for both: jorogumo is the web back end, and its first argument
+    # picks the renderer (`j` JavaScript, `w` wasm32). Everything up to the web
+    # IR is the same code generator, so a target is a word on the command line,
+    # not a second tool to build, pin and keep in step.
+    let wholeProgTool = "jorogumo"
+    var webRenderer = "j"
+    if wasm: webRenderer = "w"
     let useOptimizer = c.config.optLevel in {optSpeed, optSize}
     let native = c.config.backend == backendNative
     # A native program that uses the `.compile`/`{.build…}` pragma (in ANY module)
@@ -1123,9 +1129,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.withTree "cmd":
         b.addSymbolDef wholeProgTool
         b.addStrLit findTool(wholeProgTool)
-        # The browser host has no Node `fs`/`process`; jorogumo drops that face
-        # and lands the export surface on globalThis.NIF. ithaqua has no such
-        # mode, so this is JS-only.
+        b.addStrLit webRenderer
+        # The browser host has no Node `fs`/`process`; the JS renderer drops
+        # that face and lands the export surface on globalThis.NIF. The wasm
+        # renderer has no such mode — a wasm module never had that face to
+        # begin with — so this is JS-only and jorogumo rejects it under `w`.
         if js and c.config.jsBrowser:
           b.addStrLit "--target:browser"
         b.withTree "output":
@@ -2281,6 +2289,7 @@ proc buildGraph*(config: sink NifConfig; project: string;
       if c.config.backend == backendWasm:
         # A .wasm module needs a host; run it under node with the standard
         # shim (tests/ithaqua/run_wasm.js provides env.nim_write/nim_exit).
+        # The `j` renderer needs none: its preamble IS the host face.
         let shim = compilerDir() / "tests" / "ithaqua" / "run_wasm.js"
         exec "node " & quoteShell(shim) & " " &
              quoteShell(c.config.wasmFile(c.rootNode.files[0], backend)) & executableArgs
