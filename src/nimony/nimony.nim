@@ -78,6 +78,8 @@ Options:
                             console.log/console.error, and the export surface
                             lands on globalThis.NIF.
   --silentMake              suppresses make output
+  --parallelBuild:N         run at most N build processes at once;
+                            0 (the default) = one per core
   --profile                 print nifmake timing profile of executed commands
   --report                  print machine-readable per-command invocation
                             counts on stdout (one line per nifmake call)
