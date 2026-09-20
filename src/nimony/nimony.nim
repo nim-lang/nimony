@@ -42,9 +42,9 @@ Command:
   n project.nim               compile the full project via the native backend
                               (arkham + nifasm; static, libc-free executable)
   w project.nim               compile the full project via the wasm backend
-                              (ithaqua; one whole-program .wasm, no linker)
+                              (`jorogumo w`; one whole-program .wasm, no linker)
   j project.nim               compile the full project via the JS backend
-                              (jorogumo; one self-contained .js, no linker)
+                              (`jorogumo j`; one self-contained .js, no linker)
   check project.nim           check the full project for errors; can be
                               combined with `--usages`, `--def` for
                               editor integration
@@ -154,14 +154,14 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     config.addDefine "nimNativeIo"
     FullProject
   of "w":
-    # Wasm backend: Leng -> ithaqua, producing one whole-program `.wasm`
+    # Wasm backend: Leng -> `jorogumo w`, producing one whole-program `.wasm`
     # module (no C compiler, no linker — the JS/wasm host resolves the fixed
     # env import set). The target is implied after CLI parsing (see the
     # backendWasm block in handleCmdLine): wasm32/standalone/32 bits.
     config.backend = backendWasm
     FullProject
   of "j":
-    # JS backend: Leng -> jorogumo, producing one self-contained `.js` program
+    # JS backend: Leng -> `jorogumo j`, producing one self-contained `.js` program
     # (no C compiler, no linker, no host import object — the file runs on a
     # bare `node file.js`). The target is implied after CLI parsing, exactly
     # as for wasm: the two backends share one 32-bit freestanding model.
@@ -404,8 +404,8 @@ proc compileProgram(c: var CmdOptions) =
     # through ARM semihosting and `osalloc`'s takes the heap from nifasm's
     # `(heapstart)`/`(heapsize)` board-layout constants — neither exists here.
     # `standalone` falls into the raw-`write`/`read`/`open` arm instead, and
-    # those are exactly the names ithaqua resolves to the wasm host's import set
-    # and jorogumo implements in its JS preamble (`nim_write`/`nim_exit`,
+    # those are exactly the names jorogumo's wasm renderer resolves to the host's
+    # import set and its JS renderer implements in the preamble (`nim_write`/`nim_exit`,
     # `memorySize`/`memoryGrow`). The `wasm32` cpu is what selects osalloc's
     # memory-growth arm; JS borrows it for the same 32-bit pointer model, it
     # does not run wasm.

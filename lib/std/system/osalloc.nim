@@ -216,7 +216,7 @@ elif defined(wasm32) and defined(standalone):
   proc setWasmHeapCeiling*(bytes: int) =
     ## Host-set upper bound on total linear memory (bytes; 0 = uncapped).
     ## Public Nim API; apps that let the host set it export a main-module
-    ## wrapper (ithaqua export roots are main-module exportc procs only).
+    ## wrapper (jorogumo export roots are main-module exportc procs only).
     heapCeiling = bytes
 
   proc ensureCapacity(needEnd: int): bool =

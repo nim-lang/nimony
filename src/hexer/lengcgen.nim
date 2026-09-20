@@ -1009,7 +1009,7 @@ proc trHoistedConst(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Tr
   ## Leng keeps no proc-level consts: hoist the decl to the top level (the
   ## `c.pending` tail, like synthesized type decls) under a module-suffixed
   ## name, so the embedded index can serve it — single-dot locals are never
-  ## indexed, and whole-program consumers (arkham's foreign loading, ithaqua)
+  ## indexed, and whole-program consumers (arkham's foreign loading, jorogumo)
   ## resolve foreign declarations through the index.
   var peek = n
   inc peek                                  # into (const, at the SymbolDef

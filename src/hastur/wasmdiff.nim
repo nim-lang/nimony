@@ -10,8 +10,9 @@
 ## names the backend that drifted.
 ##
 ##   native leg: `nimony n <f>` -> a static, libc-free ELF; run it.
-##   wasm leg:   `nimony w --out:<work>/out.wasm <f>` (hexer -> dce -> ithaqua,
-##               orchestrated by nifmake), then `node run_wasm.js out.wasm`.
+##   wasm leg:   `nimony w --out:<work>/out.wasm <f>` (hexer -> dce ->
+##               `jorogumo w`, orchestrated by nifmake), then
+##               `node run_wasm.js out.wasm`.
 ##
 ## The oracle cuts both ways: fixtures whose NATIVE leg is the wrong one get
 ## quarantined too, as `tests/ithaqua/nativebugs/` once held. They are kept as
@@ -57,7 +58,7 @@ proc wasmdiffCmd*() =
     buildShoggoth()
     buildArkham()
     buildNifasm()
-    buildIthaqua()
+    buildJorogumo()
   let dir = "tests/ithaqua"
   let nimony = binDir() / "nimony".addFileExt(ExeExt)
   let runnerJs = dir / "run_wasm.js"

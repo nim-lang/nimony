@@ -29,6 +29,8 @@ Usage:
 
 Commands:
   build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|jorogumo|native|nifbench]   build selected tools (default: all).
+                       `jorogumo` is the web back end — ONE binary serving both
+                       `nimony j` (JavaScript) and `nimony w` (wasm32).
                        `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
@@ -85,7 +87,7 @@ Commands:
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
   wasmdiff             differential harness: run every `tests/ithaqua/*.nim`
                        through BOTH the native backend (arkham, the oracle)
-                       and the wasm backend (ithaqua) and require matching
+                       and the wasm backend (`jorogumo w`) and require matching
                        stdout + exit code. Needs the sibling `../nativenif`
                        and `node` on PATH.
   lengc                 run Leng tests.
@@ -428,6 +430,8 @@ proc handleCmdLine =
     of "nifasm":
       buildNifasm(showProgress)
     of "jorogumo":
+      # The web back end, both renderers in one binary: `nimony j` and
+      # `nimony w` run the same `bin/jorogumo`.
       buildJorogumo(showProgress)
     of "native":
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
@@ -492,7 +496,7 @@ proc handleCmdLine =
 
   of "wasmdiff":
     # Differential harness: the native backend (arkham) as the executable oracle
-    # for the wasm backend (ithaqua). Builds both toolchains, then diffs stdout
+    # for the wasm backend (`jorogumo w`). Builds both toolchains, then diffs stdout
     # and exit code of every `tests/ithaqua/*.nim` fixture across the two
     # pipelines. `wasmdiff.nim` builds what it needs itself.
     wasmdiffCmd()

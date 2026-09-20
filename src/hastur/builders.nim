@@ -168,20 +168,16 @@ proc buildNifasm*(showProgress = false) =
   createDir binDir()
   exec nativeToolCmd("nifasm"), showProgress
 
-proc buildIthaqua*(showProgress = false) =
-  ## `ithaqua` (Leng -> whole-program wasm32) — sibling repo, same
-  ## assume-exists arrangement as `buildArkham`. Only `hastur wasmdiff` needs
-  ## it, so it stays off the default build the way arkham/nifasm once did.
-  syncNativenif()
-  createDir binDir()
-  exec nativeToolCmd("ithaqua"), showProgress
-
 proc buildJorogumo*(showProgress = false) =
-  ## `jorogumo` (Leng -> whole-program `.js`) — sibling repo, same
-  ## assume-exists arrangement as `buildIthaqua`. Only `nimony j` needs it
-  ## today — the `jsdiff` sweep over `tests/jorogumo/`, the sibling of
-  ## `hastur wasmdiff`, is the M9 item that would put it in the sweep — so it
-  ## stays off the default build.
+  ## `jorogumo` — the whole web back end in ONE binary: `jorogumo j` renders a
+  ## Leng program as a self-contained `.js` file, `jorogumo w` as a
+  ## whole-program `.wasm` module. Sibling repo, same assume-exists arrangement
+  ## as `buildArkham`.
+  ##
+  ## There is no separate wasm tool to build any more (`ithaqua` was folded into
+  ## `../nativenif/src/web` — one code generator, two renderers), so this single
+  ## proc is what `nimony j`, `nimony w` and `hastur wasmdiff` all ask for. It
+  ## stays off the default build the way arkham/nifasm once did.
   syncNativenif()
   createDir binDir()
   exec nativeToolCmd("jorogumo"), showProgress
