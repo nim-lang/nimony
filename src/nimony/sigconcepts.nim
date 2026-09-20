@@ -293,7 +293,7 @@ proc sameConceptRoutineTrees*(requirement, candidate: Cursor;
   sameTreesButIgnoreSymIds(rReq, rCand)
 
 proc conceptRequirementInBody*(routine: Cursor; actualBody: Cursor): bool =
-  for _, req in conceptHierarchyRoutines(actualBody):
+  for _, _, req in conceptHierarchyRoutines(SymId(0), actualBody):
     if sameConceptRoutineTrees(routine, req):
       return true
   false
