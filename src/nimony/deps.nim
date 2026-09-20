@@ -18,6 +18,7 @@ when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
 import std/[os, tables, sets, syncio, hashes, assertions, strutils, times, formatfloat, dirs, paths, algorithm]
+from std/cpuinfo import countProcessors
 import semos, nifconfig, nimony_model, semdata, langmodes
 import ".." / gear2 / modnames
 import ".." / lib / [tooldirs, platform, nifindexes, symparser, docpaths, argsfinder, vfs]
@@ -272,6 +273,10 @@ type
     processedModules: Table[string, int] # modname -> index to c.nodes
     moduleFlags: set[ModuleFlag]
     isGeneratingFinal: bool
+    prefetched: HashSet[string]  ## `.nim` files `prefetchNifler` already
+                                 ## parsed in THIS run: `execNifler` must not
+                                 ## redo them, not even under `--forcebuild`,
+                                 ## whose whole point the prefetch has served
     foundPlugins: HashSet[string]
     pluginSources: Table[string, string] ## exe basename -> resolved `.nim` source
                                          ## of every `{.plugin.}` in the graph
@@ -704,23 +709,36 @@ proc getLastModTime(path: string): int64 =
   except:
     result = -1'i64
 
+proc niflerArgs(c: DepContext; f: FilePair; preserveDocs: bool): seq[string] =
+  ## The argv for one nifler dep-scan. Kept in one place because
+  ## `prefetchNifler` writes the very same artefacts: were the two commands to
+  ## drift apart, the staleness check below would accept a file produced with
+  ## the wrong flags.
+  result = @["--portablePaths", "--deps"]
+  if preserveDocs: result.add "--docs"
+  result.add "parse"
+  result.add f.nimFile
+  result.add c.config.parsedFile(f, preserveDocs)
+
+proc niflerUpToDate(c: DepContext; f: FilePair; preserveDocs: bool): bool =
+  ## Both artefacts have to be present and newer than the source: nifler writes
+  ## the `.p.nif` and the deps file, and the traversal reads the latter.
+  let output = c.config.parsedFile(f, preserveDocs)
+  let depsFile = c.config.depsFile(f, preserveDocs)
+  let srcTime = getLastModTime(f.nimFile)
+  result = not c.forceRebuild and semos.fileExists(output) and
+      semos.fileExists(f.nimFile) and getLastModTime(output) > srcTime and
+      semos.fileExists(depsFile) and getLastModTime(depsFile) > srcTime
+
 proc execNifler(c: var DepContext; f: FilePair) =
   # File can be a .nif file, if so, we don't need to run nifler.
   if f.nimFile.endsWith(".nif"):
     return
   let preserveDocs = c.cmd == DoDoc
-  let output = c.config.parsedFile(f, preserveDocs)
-  let depsFile = c.config.depsFile(f, preserveDocs)
-  let srcTime = getLastModTime(f.nimFile)
-  if not c.forceRebuild and semos.fileExists(output) and
-      semos.fileExists(f.nimFile) and getLastModTime(output) > srcTime and
-      semos.fileExists(depsFile) and getLastModTime(depsFile) > srcTime:
+  if c.prefetched.contains(f.nimFile) or niflerUpToDate(c, f, preserveDocs):
     discard "nothing to do"
   else:
-    let docsFlag = if preserveDocs: " --docs" else: ""
-    let cmd = quoteShell(c.nifler) & " --portablePaths --deps" & docsFlag & " parse " &
-      quoteShell(f.nimFile) & " " & quoteShell(output)
-    exec cmd
+    execArgs c.nifler, niflerArgs(c, f, preserveDocs)
 
 proc importSystem(c: var DepContext; current: Node) =
   let p = c.toPair(stdlibFile("std/system.nim"))
@@ -762,6 +780,125 @@ proc processFileDeps(c: var DepContext; p: FilePair; current: Node) =
                 inc n
           else:
             skip n
+
+proc harvestDep(c: DepContext; n: var Cursor; origin: string; dest: var seq[string]) =
+  ## Collects the modules that ONE dep-file statement pulls in: a read-only
+  ## echo of `processImport` / `processInclude` / `processSingleImport` that
+  ## builds no graph. `prefetchNifler` explains why an inexact answer is safe
+  ## here; the shapes are mirrored anyway so that it is rarely inexact.
+  let kind = stmtKind(n)
+  case kind
+  of ImportS, IncludeS, FromimportS, ImportexceptS:
+    discard "handled below"
+  else:
+    skip n
+    return
+
+  let isInclude = kind == IncludeS
+  let single = kind == FromimportS or kind == ImportexceptS
+  var x = n
+  skip n
+  x.into:
+    if x.stmtKind == WhenS:
+      if not whenMarkerHolds(c, x): return
+      skip x, SkipCond
+    while x.hasMore:
+      var files: seq[ImportedFilename] = @[]
+      var hasError = false
+      if not isInclude and not single and x.isTagLit and x.exprKind == PragmaxX:
+        # `import foo {.cyclic.}`: the filename sits inside the pragmax.
+        x.into PragmaxX:
+          filenameVal(x, files, hasError, allowAs = false)
+          skip x, SkipPragmas
+          while x.hasMore: skip x, SkipFull
+      else:
+        filenameVal(x, files, hasError, allowAs = not isInclude)
+      if not hasError:
+        for f in files:
+          # A `{.plugin.}` import is a leaf of the build graph — the real
+          # traversal never descends into one, so neither do we.
+          if f.plugin.len > 0: continue
+          let raw = if isInclude: c.config.expandMM(f.path) else: f.path
+          let resolved = resolveFileWrapper(c.config.paths, origin, raw)
+          if resolved.len > 0 and semos.fileExists(resolved):
+            dest.add resolved
+      if single:
+        # `from x import a, b` — one module expression, then the names.
+        while x.hasMore: skip x
+        break
+
+proc prefetchNifler(c: var DepContext; root: FilePair) =
+  ## Warms, level by level and in parallel, the `.p.nif` / `.deps.nif` cache
+  ## that the traversal below reads.
+  ##
+  ## `traverseDeps` cannot do this for itself: it only learns a module's
+  ## imports once nifler has parsed it, so its walk is one spawn deep at a
+  ## time. On a cold `--ff` build of the compiler that is ~170 serial spawns
+  ## pinned to one core while the rest of the machine idles, and none of it
+  ## shows up under `--profile` because nifmake has not been handed the graph
+  ## yet — it is ~7 s of a ~20 s build.
+  ##
+  ## This is a cache warmer and nothing more, which is what makes it safe:
+  ## it runs the very command `execNifler` would (`niflerArgs`) and records what
+  ## it managed, so a file it reached is one `execNifler` skips, and a file it
+  ## misses — a module reachable only through an import shape `harvestDep`
+  ## does not model — is niflered serially exactly as before. Correctness
+  ## never rides on the frontier being exact, only speed does.
+  if c.isGeneratingFinal: return
+  let preserveDocs = c.cmd == DoDoc
+  let width = if c.config.parallelBuild > 0: c.config.parallelBuild
+              else: countProcessors()
+
+  var seen = initHashSet[string]()
+  var frontier: seq[string] = @[]
+  frontier.add root.nimFile
+  seen.incl root.nimFile
+  if {SkipSystem, IsSystem} * c.moduleFlags == {}:
+    let sys = stdlibFile("std/system.nim")
+    if not seen.containsOrIncl(sys):
+      frontier.add sys
+
+  while frontier.len > 0:
+    var pairs: seq[FilePair] = @[]
+    var argSets: seq[seq[string]] = @[]
+    for f in frontier:
+      if f.endsWith(".nif"): continue    # already NIF; nifler has no work here
+      let p = c.toPair(f)
+      if niflerUpToDate(c, p, preserveDocs): continue
+      pairs.add p
+      argSets.add niflerArgs(c, p, preserveDocs)
+
+    if argSets.len > 0:
+      let ran = execManyParallel(c.nifler, argSets, width)
+      for i in 0 ..< ran.len:
+        if ran[i]:
+          c.prefetched.incl pairs[i].nimFile
+        else:
+          # A failed run may have left a half-written artefact behind. Drop
+          # both, so `niflerUpToDate` cannot mistake it for a good one: the
+          # file is then re-run serially by `execNifler`, which is where the
+          # failure gets reported properly.
+          vfsRemoveFile c.config.parsedFile(pairs[i], preserveDocs)
+          vfsRemoveFile c.config.depsFile(pairs[i], preserveDocs)
+
+    var nextFrontier: seq[string] = @[]
+    for f in frontier:
+      let depsFile = c.config.depsFile(c.toPair(f), preserveDocs)
+      if not semos.fileExists(depsFile): continue
+      var found: seq[string] = @[]
+      try:
+        var buf = loadDepsFile(depsFile)
+        var n = beginRead(buf)
+        if n.isTagLit and globalTags.tags[n.cursorTagId] == "stmts":
+          n.into:
+            while n.hasMore:
+              harvestDep c, n, f, found
+      except:
+        discard "unreadable deps file: the serial pass will redo this module"
+      for g in found:
+        if not seen.containsOrIncl(g):
+          nextFrontier.add g
+    frontier = nextFrontier
 
 proc traverseDeps(c: var DepContext; p: FilePair; current: Node) =
   let depsFile: string
@@ -1953,12 +2090,13 @@ proc initDepContext(config: sink NifConfig; project: string; isFinal, forceRebui
   let nifler = if cmd == DoDoc: findTool("nifler") else: parserTool()
   result = DepContext(nifler: nifler, config: config, rootNode: nil, includeStack: @[],
     forceRebuild: forceRebuild, moduleFlags: moduleFlags, nimsem: findTool("nimsem"),
-    cmd: cmd, isGeneratingFinal: isFinal)
+    cmd: cmd, isGeneratingFinal: isFinal, prefetched: initHashSet[string]())
   let p = result.toPair(project)
   let root = Node(files: @[p], id: 0, parent: -1, active: 0, isSystem: IsSystem in moduleFlags)
   result.rootNode = root
   result.nodes.add root
   result.processedModules[p.modname] = 0
+  prefetchNifler result, p
   traverseDeps result, p, root
   if not isFinal:
     propagatePlugins result

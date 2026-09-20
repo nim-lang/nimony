@@ -179,6 +179,15 @@ proc vfsMoveInto*(src, dst: string): bool =
   ## writing one that somebody else is executing.
   moveIntoImpl(src, dst)
 
+proc vfsRemoveFile*(path: string) =
+  ## Best-effort delete of one file: a missing or locked one is not an error.
+  ## Callers use it to retract an artefact they must not leave behind, where
+  ## failing to do so must never fail the build.
+  when defined(nimony):
+    rmPath(path)   # already swallows its errors
+  else:
+    try: rmPath(path) except CatchableError: discard
+
 proc vfsRemoveTree*(dir: string) =
   ## Remove `dir` and everything below it. Best effort: it exists to clean up
   ## a scratch directory this process created for itself, and failing to do
