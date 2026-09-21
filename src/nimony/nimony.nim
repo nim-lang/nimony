@@ -119,7 +119,7 @@ Options:
 """
 
 proc writeHelp() = quit(Usage, QuitSuccess)
-proc writeVersion() = quit(Version & "\n", QuitSuccess)
+proc writeVersion() = quit(Version & " " & HostPlatform & "\n", QuitSuccess)
 
 proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
                          commandLineArgs, hostCommandLineArgs: string; forceRebuild: bool) =
@@ -268,7 +268,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           if normalize(val) == "danger":
             c.checkModes = {}
         elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgLengc,
-                              forwardArgHost, helpMsg = Usage, versionMsg = Version & "\n"):
+                              forwardArgHost, helpMsg = Usage, versionMsg = Version & " " & HostPlatform & "\n"):
           discard "handled by common CLI parser"
         else:
           # Handle nimony-specific options

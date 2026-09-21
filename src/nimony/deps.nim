@@ -1225,6 +1225,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # that links them, so the toolchain/ABI matches.
         ccProgram = sysLinker
       b.addStrLit ccProgram
+      for flag in targetDriverFlags(c.config):
+        b.addStrLit flag
       b.addStrLit "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
       b.addStrLit "-Wno-attributes"
@@ -1338,6 +1340,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       b.withTree "cmd":
         b.addSymbolDef "link"
         b.addStrLit sysLinker
+        for flag in targetDriverFlags(c.config):
+          b.addStrLit flag
         b.addStrLit "-o"
         b.addKeyw "output"
         b.withTree "input":
@@ -1517,7 +1521,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           mfiles.add ManifestFile(path: o, kind: "obj", flags: ff)
         for a in artifacts:
           mfiles.add ManifestFile(path: a, kind: "artifact", flags: @[])
-        var flags: seq[string] = @[]
+        var flags = targetDriverFlags(c.config)
         if passL.len > 0:
           for f in passL.split(' '):
             if f.len > 0: flags.add f
@@ -2015,6 +2019,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     b.withTree "cmd":
       b.addSymbolDef "cc"
       b.addStrLit config.cc
+      for flag in targetDriverFlags(config):
+        b.addStrLit flag
       b.addStrLit "-c"
       b.addStrLit "-Wno-attributes"
       # See the sibling cc cmd above: real-GCC-only workaround for the gcc-14
@@ -2030,6 +2036,8 @@ proc buildGraphForEval*(config: NifConfig; mainNifFile: string; dependencyNifFil
     b.withTree "cmd":
       b.addSymbolDef "link"
       b.addStrLit config.linker
+      for flag in targetDriverFlags(config):
+        b.addStrLit flag
       b.addStrLit "-o"
       b.addKeyw "output"
       b.withTree "input":

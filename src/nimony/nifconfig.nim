@@ -51,11 +51,15 @@ when defined(nimony):
       elif defined(netbsd): "netbsd"
       elif defined(openbsd): "openbsd"
       elif defined(dragonfly): "dragonfly"
+      elif defined(illumos): "illumos"
       elif defined(solaris): "solaris"
       elif defined(haiku): "haiku"
       elif defined(android): "android"
       elif defined(ios): "ios"
       else: "linux"
+
+const
+  HostPlatform* = "[" & hostOS & "; " & hostCPU & "]"
 
 const
   DefaultMM* = "atomicarc"
@@ -168,6 +172,14 @@ type
                          # frames for it (#1987). Off by default: it costs work
                          # in every template expansion and only a debug build
                          # reads it.
+
+proc targetDriverFlags*(config: NifConfig): seq[string] =
+  # On SunOS-drived platforms on x86, compilers default to 32-bit output on
+  # 64-bit systems. This function adds the necessary compiler flags for this
+  # (and potentially other) platforms in the future.
+  result = @[]
+  if config.targetOS in {osSolaris, osIllumos} and config.targetCPU == cpuAmd64:
+    result.add "-m64"
 
 proc addDefine*(config: var NifConfig; symbol: string) =
   config.defines.addUnique symbol
@@ -312,7 +324,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "posix", "unix":
       result = config.targetOS in {osLinux, osMorphos, osSkyos, osIrix, osPalmos,
                             osQnx, osAtari, osAix,
-                            osHaiku, osVxWorks, osSolaris, osNetbsd,
+                            osHaiku, osVxWorks, osSolaris, osIllumos, osNetbsd,
                             osFreebsd, osOpenbsd, osDragonfly, osMacosx, osIos,
                             osAndroid, osNintendoSwitch, osFreeRTOS, osCrossos, osZephyr, osNuttX}
     of "linux":
@@ -329,7 +341,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
       result = config.targetOS in {osMacos, osMacosx, osIos}
     of "osx", "macosx":
       result = config.targetOS in {osMacosx, osIos}
-    of "sunos": result = config.targetOS == osSolaris
+    of "sunos": result = config.targetOS in {osSolaris, osIllumos}
     of "freertos", "lwip":
       result = config.targetOS == osFreeRTOS
     of "littleendian": result = CPU[config.targetCPU].endian == littleEndian
@@ -340,7 +352,7 @@ proc isDefined*(config: NifConfig; symbol: string): bool =
     of "cpu64": result = config.bits == 64
     of "nimrawsetjmp":
       result = config.targetOS in {osSolaris, osNetbsd, osFreebsd, osOpenbsd,
-                            osDragonfly, osMacosx}
+                            osDragonfly, osMacosx, osIllumos}
     of "executable": result = config.appType in {appConsole, appGui}
     of "library": result = config.appType in {appLib, appStaticLib}
     of "dll": result = config.appType == appLib
