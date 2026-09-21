@@ -1,3 +1,5 @@
+{.feature: "lenientnils".}
+
 #
 #
 #           Nifler2: Nim to NIF
@@ -33,6 +35,8 @@
 
 import std / [parseutils, syncio]
 import ".." / lib / nifpools
+import linkedtok
+export linkedtok
 from ".." / lib / nifcore import createTokenBuf
 import ".." / models / nifler_tags
 
@@ -72,15 +76,16 @@ type
                            ## a curly a table constructor
 
   Mark* = object ## where a node *would* start, if the rule turns out to build one
-    pos*: int              ## token index into `Parser.dest`
+    prev*: Node            ## the sibling that was last when the rule began;
+                           ## `nil` when nothing had been written yet
     info*: NifLineInfo     ## position of the token that was current at `mark`
     sigs*: OptSigs         ## `OptSigs` as the rule began
 
   Parser* = object
     lex*: Lexer
     tok*: Token
-    dest*: TokenBuf
-    head: TokenBuf         ## scratch for the one head `wrap`/`insertLeafAt` splice
+    arena*: Arena          ## every cell of the tree; freed in one go
+    first*, last*: Node    ## the chain of siblings being built
     file: FileId
     currInd*: int32
     indStack: seq[int32]
@@ -93,28 +98,41 @@ type
     sections: seq[NiflerKind] ## the tag a declaration fans out into: var/let/param/...
     lastSection: NiflerKind ## the section opened most recently, popped or not
     infos: seq[NifLineInfo] ## see `pushInfo`
-    tail: TokenBuf         ## scratch for the layout rewrites
     wrapFields: seq[bool]  ## whether a multi-name field is wrapped in `stmts`
-    pool: Pool             ## the literals pool of all three buffers
+    pool*: Pool            ## the literals pool the cells intern into
+    tags*: TagPool         ## the tag pool a flattened buffer is built with
     failed*: bool          ## a syntax error ended the parse; see `errorAt`
     errLine*, errCol*: int ## where, `errCol` 0-based
     errMsg*: string        ## what
 
 proc openParser*(src, filename: string; pool: Pool; tags: TagPool): Parser =
   ## `pool` and `tags` are the output's: nifler2 writes through `nifpools`'
-  ## globals, a plugin parses into its own.
+  ## globals, a plugin parses into its own. `tags` is not stored -- a cell
+  ## holds a `TagId` and the tag pool is only consulted when the tree is
+  ## written out.
   result = Parser(lex: openLexer(src, filename),
                   tok: Token(kind: tkInvalid, s: "", indent: -1, spacing: {},
                              line: 0, col: 0, base: 10, suffixPos: -1,
                              iNumber: 0),
-                  dest: nifcore.createTokenBuf(src.len div 3 + 16, pool, tags),
-                  head: nifcore.createTokenBuf(4, pool, tags),
-                  tail: nifcore.createTokenBuf(64, pool, tags),
+                  arena: initArena(), first: nil, last: nil,
                   file: pool.filenames.getOrIncl(filename),
                   currInd: 0, indStack: @[],
                   inPragma: 0, sections: @[], lastSection: VarL, wrapFields: @[],
-                  pool: pool, failed: false, errLine: 0, errCol: 0, errMsg: "")
+                  pool: pool, tags: tags,
+                  failed: false, errLine: 0, errCol: 0, errMsg: "")
   next result.lex, result.tok
+
+proc close*(p: var Parser) =
+  ## Releases the whole tree. One `dealloc` per arena block -- the cells have
+  ## no hooks and the chain is not walked.
+  destroy p.arena
+  p.first = nil
+  p.last = nil
+
+proc finish*(p: var Parser): TokenBuf =
+  ## The parsed tree as packed tokens, for everything that reads a `TokenBuf`.
+  result = nifcore.createTokenBuf(1024, p.pool, p.tags)
+  flatten(result, p.first, p.pool)
 
 proc info*(p: Parser): NifLineInfo {.inline.} =
   NifLineInfo(file: p.file, line: p.tok.line, col: p.tok.col)
@@ -279,7 +297,7 @@ proc missingEquals*(p: var Parser) =
              "(" & $p.prevEndLine & ", " & $(p.prevEndCol + 1) & ") ?"
 
 proc requireFields*(p: var Parser; m: Mark) =
-  if p.dest.len == m.pos: identExpected p
+  if p.last == m.prev: identExpected p      # nothing written since the mark
 
 proc funcType*(p: var Parser) =
   if p.prevKind != tkFunc:
@@ -293,7 +311,7 @@ proc stmtListEnd*(p: var Parser) =
     exprExpected p
 
 proc requireExcept*(p: var Parser; m: Mark) =
-  if p.dest.len == m.pos: error p, "expected 'except'"
+  if p.last == m.prev: error p, "expected 'except'"
 
 proc noIndHere*(p: var Parser) =
   if p.tok.indent >= 0: error p, errInvalidIndentation
@@ -481,61 +499,91 @@ proc getPrecedence*(p: Parser): int {.inline.} =
   if isUnary(p.tok): -10 else: getPrecedence(p.tok)
 proc isRightAssoc*(p: Parser): bool {.inline.} = isRightAssoc(p.tok)
 
-# --------------------------------------------------------------- the buffer
+# --------------------------------------------------------------- the tree
+#
+# The rule builds a chain of siblings; `p.first` is its head and `p.last` its
+# tail. A `Mark` remembers the sibling that was last when the rule began, so
+# "everything since the mark" is the chain hanging off `m.prev.next` -- or off
+# `p.first` when the rule began with nothing written. Every rewrite below is
+# some re-linking of that chain: nothing is moved, copied or re-read.
 
 proc mark*(p: Parser): Mark {.inline.} =
-  Mark(pos: p.dest.len, info: p.info, sigs: p.sigs)
+  Mark(prev: p.last, info: p.info, sigs: p.sigs)
 
 proc discardUnused*(m: Mark) {.inline.} = discard
   ## A mark the rule turned out not to need. The generator emits one per
   ## alternative because it cannot know, before it has seen the whole
   ## alternative, whether a tag will claim it.
 
-proc splice(p: var Parser; pos: int) =
-  ## Move `p.head`'s tokens into `p.dest` at `pos`. Growing through `add`
-  ## rather than `growRawUninit` is deliberate: the latter sets capacity to
-  ## *exactly* the new length, so a one-token splice per node would realloc
-  ## the whole buffer on every node.
-  let n = p.head.len
-  let oldLen = p.dest.len
-  for i in 0 ..< n: p.dest.add p.head[i]
-  var src = oldLen - 1
-  while src >= pos:
-    p.dest[src + n] = p.dest[src]
-    dec src
-  for i in 0 ..< n:
-    p.dest[pos + i] = p.head[i]
+proc since(p: Parser; m: Mark): Node {.inline.} =
+  ## The first node written since `m`, `nil` if none was.
+  if m.prev == nil: p.first else: m.prev.next
+
+proc setSince(p: var Parser; m: Mark; n: Node) {.inline.} =
+  if m.prev == nil: p.first = n else: m.prev.next = n
+
+proc append*(p: var Parser; n: Node) =
+  ## Links `n` as the last sibling. A cell carries its own `next`, so it lives
+  ## in one chain only: appending unhooks it from wherever it was.
+  n.next = nil
+  if p.last == nil: p.first = n else: p.last.next = n
+  p.last = n
+
+proc cutTo(p: var Parser; m: Mark) =
+  ## Drops everything written since `m`. The cells stay in the arena and are
+  ## never looked at again; there is nothing to free and nothing to move.
+  setSince(p, m, nil)
+  p.last = m.prev
+
+proc newNode(p: var Parser; payload: NifToken; info: NifLineInfo): Node {.inline.} =
+  alloc(p.arena, payload, info)
 
 proc tagId*(k: NiflerKind): TagId {.inline.} =
   ## The master tag pool is seeded in `TagEnum` order, so a tag's id is its
   ## ordinal and no string is ever hashed to find it.
   TagId(ord(k))
 
+proc identNode(p: var Parser; s: string; info: NifLineInfo): Node =
+  newNode(p, identToken(p.pool.strings.getOrIncl(s)), info)
+
+proc emitIdent(p: var Parser; s: string; info: NifLineInfo) =
+  p.append identNode(p, s, info)
+
+proc emitStr(p: var Parser; s: string; info: NifLineInfo) =
+  p.append newNode(p, strLitToken(p.pool.strings.getOrIncl(s)), info)
+
 proc wrapAt*(p: var Parser; m: Mark; tag: NiflerKind; info: NifLineInfo) =
-  ## Retroactively make everything from `m` a `(tag ...)` node positioned at
-  ## `info`.
-  p.head.shrink 0
+  ## Makes everything since `m` the children of a new `(tag ...)` node. The
+  ## chain is not touched: it becomes the new node's `down`, and the node takes
+  ## its place in the enclosing chain. Constant time, whatever it holds.
   # Tags nifler invents for the dialect are not nodes of Nim's AST and carry
   # no position: bridge.nim writes them with `addTree` and nothing else.
   let pos = if tag == RangesL or tag == UnpackflatL or tag == UnpacktupL: NoLineInfo
             else: info
   if tag == KvL: inc p.sigs.kvs
-  addParLe(p.head, tagId(tag), pos)
-  splice p, m.pos
-  # The node ends at the end of the buffer -- which is precisely the situation
-  # `reopenLastTree` exists for, so nifcore computes the jump, overflow and all.
-  reopenLastTree(p.dest, m.pos)
-  addParRi p.dest
+  let node = newNode(p, tagLitToken(tagId(tag)), pos)
+  node.down = since(p, m)
+  setSince(p, m, node)
+  p.last = node
 
 proc wrap*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## Retroactively make everything from `m` a `(tag ...)` node.
   wrapAt p, m, tag, m.info
 
+proc openNode(p: Parser): Mark {.inline.} =
+  ## The other spelling of `wrapAt`, for a layout that *builds* a node rather
+  ## than claiming one the rule wrote: everything appended between this and
+  ## the matching `closeNode` becomes the node's children.
+  Mark(prev: p.last, info: NoLineInfo, sigs: p.sigs)
+
+proc closeNode(p: var Parser; m: Mark; tag: NiflerKind; info: NifLineInfo) {.inline.} =
+  wrapAt p, m, tag, info
+
 proc insertLeafAt*(p: var Parser; m: Mark; text: string)
 
 proc insertTokAt*(p: var Parser; m: Mark; k: TokKind) =
   ## `^tag[ @'not' ... ]`: consume the operator and insert it at the anchor,
-  ## in front of the operand that is already on the buffer.
+  ## in front of the operand that is already there.
   if p.tok.kind == k:
     insertLeafAt p, m, (if p.tok.s.len > 0: p.tok.s else: $p.tok.kind)
     getTok p
@@ -544,10 +592,12 @@ proc insertTokAt*(p: var Parser; m: Mark; k: TokKind) =
 
 proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
   ## `binary(...)`'s operator: `a + b` is `(infix + a b)`, so the operator has
-  ## to land *before* the left operand, which was emitted before it was read.
-  p.head.shrink 0
-  addIdent(p.head, text, p.info)
-  splice p, m.pos
+  ## to land *before* the left operand, which was parsed before it was read.
+  ## Two links, where a flat buffer had to move the whole operand out of the way.
+  let node = identNode(p, text, p.info)
+  node.next = since(p, m)
+  setSince(p, m, node)
+  if node.next == nil: p.last = node
 
 # --------------------------------------------------------------- layouts
 #
@@ -556,22 +606,21 @@ proc insertLeafAt*(p: var Parser; m: Mark; text: string) =
 # `for`/tuple unpacking put the iterated value in front of the variables. The
 # grammar parses in source order and writes a `.` wherever a child is absent
 # (`X?.`); these procs then rearrange what the rule just wrote. They all work
-# the same way: the trees written since the mark are complete (marks nest), so
-# they are copied to a scratch buffer, cut from `dest`, and written back in
-# nifler's order.
+# the same way: `takeTail` unhooks the trees written since the mark and hands
+# them over as a list, and the layout links them back in nifler's order.
 
 proc emitEmpty*(p: var Parser) =
   ## `.` in the grammar: an absent child.
-  addDotToken(p.dest, NoLineInfo)
+  p.append newNode(p, dotToken(), NoLineInfo)
 
 proc setExportMarker*(p: var Parser; m: Mark) =
   ## `exportMarker`: nifler writes `x` in the export slot, whatever the
   ## operator was.
-  p.dest.shrink m.pos
+  cutTo p, m
   # The operator's position stays on the marker: a declaration node is
   # positioned at its `nkPostfix`, which parser.nim creates there. The writer
   # does not write it -- bridge.nim emits the marker with `addRaw " x"`.
-  addIdent(p.dest, "x", m.info)
+  emitIdent p, "x", m.info
 
 proc pushSection*(p: var Parser; tag: NiflerKind) =
   p.sections.add tag
@@ -590,27 +639,21 @@ proc section(p: Parser): NiflerKind =
 proc pushFieldWrap*(p: var Parser; wrap: bool) = p.wrapFields.add wrap
 proc popFieldWrap*(p: var Parser) = p.wrapFields.setLen p.wrapFields.len - 1
 
-proc takeTail(p: var Parser; m: Mark): seq[Cursor] =
-  ## The trees written since `m`, as cursors into `p.tail`; `dest` is cut back
-  ## to the mark.
-  p.tail.shrink 0
-  addParLe(p.tail, tagId(StmtsL))   # a scratch container, never written
-  for i in m.pos ..< p.dest.len: p.tail.add p.dest[i]
-  addParRi p.tail
-  p.dest.shrink m.pos
-  # With capacity: the seq is rebuilt ~14k times over a file the size of
-  # `sem.nim`, and growing it from nothing cost three reallocations each
-  # (~5% of the whole run).
-  result = newSeqOfCap[Cursor](16)
-  var c = beginRead(p.tail)
-  var k = childCursor(c)
-  while k.hasMore:
-    result.add k
-    skip k
+proc takeTail(p: var Parser; m: Mark): seq[Node] =
+  ## The trees written since `m`, unhooked from the chain and listed so a
+  ## layout can index them. The cells are the ones the rule built: no copy is
+  ## made and none is needed, because a layout links each of them back exactly
+  ## once. `fanOut` and `fanOutKv` are the exceptions and say so with
+  ## `copyTree`.
+  let head = since(p, m)
+  cutTo p, m
+  result = newSeqOfCap[Node](16)
+  var n = head
+  while n != nil:
+    result.add n
+    n = n.next
 
-proc isEmpty(c: Cursor): bool {.inline.} = c.kind == DotToken
-
-proc nameNodeInfo(name, exp, pragmas: Cursor): NifLineInfo =
+proc nameNodeInfo(name, exp, pragmas: Node): NifLineInfo =
   ## The position of parser.nim's name node, which is what a declaration is
   ## positioned at: `nkPragmaExpr` (created at the `{.`) if there is a pragma,
   ## else `nkPostfix` (created at the export operator), else the name.
@@ -618,14 +661,10 @@ proc nameNodeInfo(name, exp, pragmas: Cursor): NifLineInfo =
   elif not exp.isEmpty: exp.info
   else: name.info
 
-proc infoAt(p: var Parser; pos: int): NifLineInfo =
-  var c = cursorAt(p.dest, pos)
-  result = rawLineInfo(c)
-  endRead c
-
 proc wrapLikeFirst*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## A node positioned at its first child: `newTree(nkCommand, a.info, a)`.
-  wrapAt p, m, tag, (if m.pos == p.dest.len: m.info else: infoAt(p, m.pos))
+  let f = since(p, m)
+  wrapAt p, m, tag, (if f == nil: m.info else: f.info)
 
 proc fanOut*(p: var Parser; m: Mark) =
   ## `name x pragmas` repeated, then `type value`: one `(section name x
@@ -634,30 +673,35 @@ proc fanOut*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   let names = (kids.len - 2) div 3
-  let tag = tagId(p.section)
-  let wrap = p.section == FldL and names > 1 and
-             p.wrapFields.len > 0 and p.wrapFields[^1]
-  if wrap: addParLe(p.dest, tagId(StmtsL), NoLineInfo)  # not a node of Nim's AST
+  let tag = p.section
+  let wrapped = tag == FldL and names > 1 and
+                p.wrapFields.len > 0 and p.wrapFields[^1]
+  let outer = openNode(p)
   for i in 0 ..< names:
-    addParLe(p.dest, tag, nameNodeInfo(kids[3*i], kids[3*i+1], kids[3*i+2]))
-    for j in 0 .. 2: p.dest.addSubtree kids[3*i + j]
-    p.dest.addSubtree kids[^2]
-    p.dest.addSubtree kids[^1]
-    addParRi p.dest
-  if wrap: addParRi p.dest
+    let one = openNode(p)
+    for j in 0 .. 2: p.append kids[3*i + j]
+    # The type and the value belong to every name, and a cell can sit in one
+    # chain only, so all but the last name get a copy of them.
+    let last = i == names - 1
+    p.append (if last: kids[^2] else: copyTree(p.arena, kids[^2]))
+    p.append (if last: kids[^1] else: copyTree(p.arena, kids[^1]))
+    closeNode p, one, tag, nameNodeInfo(kids[3*i], kids[3*i+1], kids[3*i+2])
+  if wrapped: closeNode p, outer, StmtsL, NoLineInfo  # not a node of Nim's AST
+  else: discardUnused outer
 
 proc fanOutKv*(p: var Parser; m: Mark) =
   ## A tuple field list: names, then `type value`. nifler keeps `(kv name
   ## type)` and drops the default.
   let kids = takeTail(p, m)
   if p.failed: return
-  let tag = tagId(KvL)
   if kids.len > 2: p.sigs.kvs = p.sigs.kvs + kids.len - 2
   for i in 0 ..< kids.len - 2:
-    addParLe(p.dest, tag, kids[i].info)
-    p.dest.addSubtree kids[i]
-    p.dest.addSubtree kids[^2]
-    addParRi p.dest
+    let one = openNode(p)
+    let info = kids[i].info
+    p.append kids[i]
+    let last = i == kids.len - 3
+    p.append (if last: kids[^2] else: copyTree(p.arena, kids[^2]))
+    closeNode p, one, KvL, info
 
 proc joinIdents*(p: var Parser; m: Mark) =
   ## Inside backquotes `parseSymbol` glues a run of operator and bracket
@@ -666,8 +710,8 @@ proc joinIdents*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   var text = ""
-  for k in kids: text.add strVal(k)
-  addIdent(p.dest, text, m.info)
+  for k in kids: text.add p.pool.strings[strId(k)]
+  emitIdent p, text, m.info
 
 proc inSemiStmtList*(p: Parser): bool {.inline.} =
   ## `parseStmt`'s `if p.inSemiStmtList > 0: result = simpleStmt(p)`: inside
@@ -681,15 +725,15 @@ proc stmtListExprLayout*(p: var Parser; m: Mark) =
   ## and the last one after it, `(expr (stmts a b) c)`.
   let kids = takeTail(p, m)
   if p.failed: return
-  addParLe(p.dest, tagId(ExprL), m.info)
-  addParLe(p.dest, tagId(StmtsL), m.info)
-  for i in 0 ..< kids.len - 1: p.dest.addSubtree kids[i]
-  addParRi p.dest
-  if kids.len > 0: p.dest.addSubtree kids[^1]
+  let outer = openNode(p)
+  let inner = openNode(p)
+  for i in 0 ..< kids.len - 1: p.append kids[i]
+  closeNode p, inner, StmtsL, m.info
+  if kids.len > 0: p.append kids[^1]
   else: emitEmpty p
-  addParRi p.dest
+  closeNode p, outer, ExprL, m.info
 
-proc addParams(p: var Parser; c: Cursor; info: NifLineInfo)
+proc addParams(p: var Parser; c: Node; info: NifLineInfo)
 
 proc rhsMode*(mode: PrimaryMode): PrimaryMode {.inline.} =
   ## The mode of an operator's right operand. `simpleExprAux` turns
@@ -707,22 +751,22 @@ proc literalAsIdent*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   let k = kids[0]
-  case k.kind
+  case kind(k)
   of CharLit:
     var t = ""
-    t.add charLit(k)
-    addIdent(p.dest, t, m.info)
-  of IntLit: addIdent(p.dest, $intVal(k), m.info)
-  of UIntLit: addIdent(p.dest, $uintVal(k), m.info)
-  of FloatLit: addIdent(p.dest, $floatVal(k), m.info)
-  of StrLit: addIdent(p.dest, strVal(k), m.info)
-  else: p.dest.addSubtree k
+    t.add charVal(k)
+    emitIdent p, t, m.info
+  of IntLit: emitIdent p, $intVal(k), m.info
+  of UIntLit: emitIdent p, $uintVal(k), m.info
+  of FloatLit: emitIdent p, $floatVal(k), m.info
+  of StrLit: emitIdent p, p.pool.strings[strId(k)], m.info
+  else: p.append k
 
 proc posMarker*(p: var Parser) =
   ## A `.` that only carries the current position to a layout, which removes
   ## it again.
   inc p.sigs.posMarkers
-  addDotToken(p.dest, p.info)
+  p.append newNode(p, dotToken(), p.info)
 
 proc dotLayout*(p: var Parser; m: Mark) =
   ## `dotExpr`'s rewrite of `x.y[:z](args)` into `y[z](x, args)`: the dot
@@ -733,27 +777,28 @@ proc dotLayout*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   let node = kids[0]
-  var parts: seq[Cursor] = @[]
-  var c = childCursor(node)
-  while c.hasMore:
+  var parts: seq[Node] = newSeqOfCap[Node](8)
+  var c = node.down
+  while c != nil:
     parts.add c
-    skip c
+    c = c.next
   if parts.len <= 2:
-    p.dest.addSubtree node
+    p.append node
     return
   # `dotExpr` builds the call with `p.parLineInfo` right after the `]` --
   # the position `posMarker` recorded, as `parts[3]`
-  addParLe(p.dest, tagId(CallL), rawLineInfo(parts[3]))
-  addParLe(p.dest, tagId(AtL), parts[2].info)
-  p.dest.addSubtree parts[1]
-  var z = childCursor(parts[2])
-  while z.hasMore:
-    p.dest.addSubtree z
-    skip z
-  addParRi p.dest
-  p.dest.addSubtree parts[0]
-  for i in 4 ..< parts.len: p.dest.addSubtree parts[i]
-  addParRi p.dest
+  let call = openNode(p)
+  let at = openNode(p)
+  p.append parts[1]
+  var z = parts[2].down
+  while z != nil:
+    let nxt = z.next
+    p.append z
+    z = nxt
+  closeNode p, at, AtL, parts[2].info
+  p.append parts[0]
+  for i in 4 ..< parts.len: p.append parts[i]
+  closeNode p, call, CallL, parts[3].info
 
 proc curlyOrTable*(p: var Parser; m: Mark) =
   ## `setOrTableConstr` retags `nkCurly` as `nkTableConstr` as soon as one
@@ -764,41 +809,29 @@ proc curlyOrTable*(p: var Parser; m: Mark) =
   if p.failed: return
   let node = kids[0]
   var isTable = false
-  var c = childCursor(node)
-  while c.hasMore:
-    if c.kind == TagLit and c.resolvedTagId == tagId(KvL): isTable = true
-    skip c
-  if isTable:
-    addParLe(p.dest, tagId(TabconstrL), node.info)
-    var k = childCursor(node)
-    while k.hasMore:
-      p.dest.addSubtree k
-      skip k
-    addParRi p.dest
-  else:
-    p.dest.addSubtree node
+  var c = node.down
+  while c != nil:
+    if kind(c) == TagLit and tag(c) == tagId(KvL): isTable = true
+    c = c.next
+  # Only the tag changes; the children stay exactly where they are.
+  if isTable: node.payload = tagLitToken(tagId(TabconstrL))
+  p.append node
 
 proc callOrObjConstr*(p: var Parser; m: Mark) =
   ## `primarySuffix`'s `(`: a call whose first argument is `name: value` is
   ## an object constructor, `Foo(a: 1)` is `(oconstr Foo (kv a 1))`.
   ## No `kv` was built inside: not an object constructor, so the `(call ...)`
-  ## stands. A `kv` nested deeper than the first argument only costs the walk
+  ## stands. A `kv` nested deeper than the first argument only costs the test
   ## below, which then finds none in that slot.
   if p.sigs.kvs == m.sigs.kvs: return
   let kids = takeTail(p, m)
   if p.failed: return
   let node = kids[0]
-  var c = childCursor(node)
-  skip c                                 # the callee
-  if c.hasMore and c.kind == TagLit and c.resolvedTagId == tagId(KvL):
-    addParLe(p.dest, tagId(OconstrL), node.info)
-    var k = childCursor(node)
-    while k.hasMore:
-      p.dest.addSubtree k
-      skip k
-    addParRi p.dest
-  else:
-    p.dest.addSubtree node
+  let callee = node.down
+  if callee != nil and callee.next != nil and kind(callee.next) == TagLit and
+      tag(callee.next) == tagId(KvL):
+    node.payload = tagLitToken(tagId(OconstrL))
+  p.append node
 
 proc attachBlocks*(p: var Parser; m: Mark) =
   ## `postExprBlocks`: a trailing `:` or `do` block belongs *to* the
@@ -810,25 +843,30 @@ proc attachBlocks*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   if kids.len == 1:
-    p.dest.addSubtree kids[0]
+    p.append kids[0]
     return
   let op = kids[0]
   var isCall = false
-  if op.kind == TagLit:
-    let t = op.resolvedTagId
+  if kind(op) == TagLit:
+    let t = tag(op)
     isCall = t == tagId(CallL) or t == tagId(CmdL) or t == tagId(InfixL) or
              t == tagId(PrefixL) or t == tagId(CallstrlitL)
   if isCall:
-    addParLe(p.dest, op.resolvedTagId, op.info)
-    var c = childCursor(op)
-    while c.hasMore:
-      p.dest.addSubtree c
-      skip c
+    # The operand already IS the call, so the blocks just join its children:
+    # `kids[1..]` are still chained to each other, so one link does it.
+    var tail = op.down
+    if tail == nil:
+      op.down = kids[1]
+    else:
+      while tail.next != nil: tail = tail.next
+      tail.next = kids[1]
+    p.append op
   else:
-    addParLe(p.dest, tagId(CallL), op.info)
-    p.dest.addSubtree op
-  for i in 1 ..< kids.len: p.dest.addSubtree kids[i]
-  addParRi p.dest
+    let call = openNode(p)
+    let info = op.info
+    p.append op
+    for i in 1 ..< kids.len: p.append kids[i]
+    closeNode p, call, CallL, info
 
 proc doLayout*(p: var Parser; m: Mark; atBody: bool) =
   ## A `do` block, parsed as `params ret pragmas body`. Without a signature or
@@ -840,20 +878,21 @@ proc doLayout*(p: var Parser; m: Mark; atBody: bool) =
   let kids = takeTail(p, m)
   if p.failed: return
   if kids[1].isEmpty and kids[2].isEmpty and kids[3].isEmpty:
-    p.dest.addSubtree kids[4]
+    p.append kids[4]
   else:
     # `postExprBlocks` builds the first `do` with `stmtList.info`, the loop
     # over further blocks with the position of the `do` keyword. The formal
     # parameters are created where their list starts -- unless there is no
     # list at all, only pragmas, in which case an empty one is made up after
     # the body has been parsed.
-    addParLe(p.dest, tagId(DoL), if atBody: kids[4].info else: m.info)
-    let paramsInfo = if kids[1].isEmpty and kids[2].isEmpty: rawLineInfo(kids[5])
-                     else: rawLineInfo(kids[0])
+    let info = if atBody: kids[4].info else: m.info
+    let paramsInfo = if kids[1].isEmpty and kids[2].isEmpty: kids[5].info
+                     else: kids[0].info
+    let d = openNode(p)
     addParams p, kids[1], paramsInfo
-    p.dest.addSubtree kids[2]
-    p.dest.addSubtree kids[4]
-    addParRi p.dest
+    p.append kids[2]
+    p.append kids[4]
+    closeNode p, d, DoL, info
 
 proc routineBodyAllowed*(p: Parser; mode: PrimaryMode): bool {.inline.} =
   ## `parseProcExpr(p, mode != pmTypeDesc, ...)`: in a type `proc (): int = x`
@@ -865,9 +904,9 @@ proc emptyDiscriminator*(p: var Parser) =
   ## nodes. Its name is the empty node, whose position has no file, so
   ## bridge.nim writes it absolute -- as `~1,,???`.
   let unknown = NifLineInfo(file: p.pool.filenames.getOrIncl("???"), line: 0, col: -1)
-  addParLe(p.dest, tagId(FldL), unknown)
+  let f = openNode(p)
   for i in 0 .. 4: emitEmpty p
-  addParRi p.dest
+  closeNode p, f, FldL, unknown
 
 proc wrapNoInfo*(p: var Parser; m: Mark; tag: NiflerKind) =
   ## A node bridge.nim writes with `addTree` alone.
@@ -879,11 +918,12 @@ proc pragmaBlock*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   if kids.len == 1:
-    p.dest.addSubtree kids[0]
+    p.append kids[0]
   else:
-    addParLe(p.dest, tagId(PragmaxL), kids[0].info)
-    for k in kids: p.dest.addSubtree k
-    addParRi p.dest
+    let info = kids[0].info
+    let x = openNode(p)
+    for k in kids: p.append k
+    closeNode p, x, PragmaxL, info
 
 proc inheritLayout*(p: var Parser; m: Mark) =
   ## `nkOfInherit`, created at `of`: one type is written as itself, several
@@ -891,11 +931,11 @@ proc inheritLayout*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   if kids.len == 1:
-    p.dest.addSubtree kids[0]
+    p.append kids[0]
   else:
-    addParLe(p.dest, tagId(ParL), m.info)
-    for k in kids: p.dest.addSubtree k
-    addParRi p.dest
+    let x = openNode(p)
+    for k in kids: p.append k
+    closeNode p, x, ParL, m.info
 
 proc wrapSection*(p: var Parser; m: Mark) =
   ## A declaration that is already in slot form, tagged with the section: the
@@ -913,17 +953,17 @@ proc moveLastToMark*(p: var Parser; m: Mark) =
   ## unpacked value first.
   let kids = takeTail(p, m)
   if p.failed: return
-  p.dest.addSubtree kids[^1]
-  for i in 0 ..< kids.len - 1: p.dest.addSubtree kids[i]
+  p.append kids[^1]
+  for i in 0 ..< kids.len - 1: p.append kids[i]
 
-proc addParams(p: var Parser; c: Cursor; info: NifLineInfo) =
+proc addParams(p: var Parser; c: Node; info: NifLineInfo) =
   ## `parseParamList` always builds an `nkFormalParams`, created at the token
   ## where the list would start.
   if c.isEmpty:
-    addParLe(p.dest, tagId(ParamsL), info)
-    addParRi p.dest
+    let x = openNode(p)
+    closeNode p, x, ParamsL, info
   else:
-    p.dest.addSubtree c
+    p.append c
 
 proc procLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## An anonymous routine, parsed as `params ret pragmas body` with `.` for
@@ -934,30 +974,34 @@ proc procLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## and result.
   let kids = takeTail(p, m)
   if p.failed: return
-  let (params, ret, pragmas, body) = (kids[0], kids[1], kids[2], kids[3])
+  let params = kids[0]
+  let ret = kids[1]
+  let pragmas = kids[2]
+  let body = kids[3]
   if not body.isEmpty:
-    addParLe(p.dest, tagId(keyword), m.info)
+    let x = openNode(p)
     for i in 0 .. 3: emitEmpty p
     addParams p, params, m.info
-    p.dest.addSubtree ret
-    p.dest.addSubtree pragmas
+    p.append ret
+    p.append pragmas
     emitEmpty p
-    p.dest.addSubtree body
-    addParRi p.dest
+    p.append body
+    closeNode p, x, keyword, m.info
   else:
-    addParLe(p.dest, tagId(if keyword == IteratorL: ItertypeL else: ProctypeL), m.info)
+    let t = if keyword == IteratorL: ItertypeL else: ProctypeL
+    let x = openNode(p)
     let hasSig = not params.isEmpty or not ret.isEmpty
     if hasSig or not pragmas.isEmpty:
       for i in 0 .. 3: emitEmpty p
       if hasSig:
         addParams p, params, m.info
-        p.dest.addSubtree ret
+        p.append ret
       else:
         emitEmpty p
-      p.dest.addSubtree pragmas
+      p.append pragmas
       emitEmpty p
       emitEmpty p
-    addParRi p.dest
+    closeNode p, x, t, m.info
 
 proc routineLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## A named routine, parsed as `name x pattern typevars params ret pragmas
@@ -965,15 +1009,15 @@ proc routineLayout*(p: var Parser; m: Mark; keyword: NiflerKind) =
   ## with the effects slot nifler reserves and `(params)` always present.
   let kids = takeTail(p, m)
   if p.failed: return
-  addParLe(p.dest, tagId(keyword), p.infos[^1])
-  for i in 0 .. 3: p.dest.addSubtree kids[i]
+  let info = p.infos[^1]
+  let x = openNode(p)
+  for i in 0 .. 3: p.append kids[i]
   addParams p, kids[4], NoLineInfo
-  p.dest.addSubtree kids[5]
-  p.dest.addSubtree kids[6]
+  p.append kids[5]
+  p.append kids[6]
   emitEmpty p
-  p.dest.addSubtree kids[7]
-  addParRi p.dest
-
+  p.append kids[7]
+  closeNode p, x, keyword, info
 proc hexVal(c: char): uint64 {.inline.} =
   if c <= '9': uint64(ord(c) - ord('0'))
   elif c <= 'F': uint64(ord(c) - ord('A') + 10)
@@ -1000,6 +1044,13 @@ proc floatValue(tok: Token): float64 =
     else:
       result = cast[float64](xi)
 
+proc emitInt(p: var Parser; v: int64; info: NifLineInfo) =
+  p.append allocWide(p.arena, IntLit, cast[uint64](v), info)
+proc emitUInt(p: var Parser; v: uint64; info: NifLineInfo) =
+  p.append allocWide(p.arena, UIntLit, v, info)
+proc emitFloat(p: var Parser; v: float64; info: NifLineInfo) =
+  p.append allocWide(p.arena, FloatLit, cast[uint64](v), info)
+
 proc emitLeaf*(p: var Parser) =
   ## The terminal the grammar matched, as a NIF atom. Which atom is decided by
   ## the token kind alone, so the generator never has to say (it emits the
@@ -1011,52 +1062,58 @@ proc emitLeaf*(p: var Parser) =
   # what a plain literal becomes once it leaves int32's range, exactly as in
   # compiler/lexer.nim, so a large plain literal is written with a suffix too.
   of tkIntLit:
-    addIntLit(p.dest, p.tok.iNumber, info)
+    emitInt p, p.tok.iNumber, info
   of tkInt8Lit, tkInt16Lit, tkInt32Lit, tkInt64Lit:
-    p.dest.buildTree tagId(SufL), info:
-      addIntLit(p.dest, p.tok.iNumber, info)
-      addStrLit(p.dest, (case p.tok.kind
-                         of tkInt8Lit: "i8"
-                         of tkInt16Lit: "i16"
-                         of tkInt32Lit: "i32"
-                         else: "i64"), info)
+    let x = openNode(p)
+    emitInt p, p.tok.iNumber, info
+    emitStr p, (case p.tok.kind
+                of tkInt8Lit: "i8"
+                of tkInt16Lit: "i16"
+                of tkInt32Lit: "i32"
+                else: "i64"), info
+    closeNode p, x, SufL, info
   of tkUIntLit:
-    addUIntLit(p.dest, cast[uint64](p.tok.iNumber), info)
+    emitUInt p, cast[uint64](p.tok.iNumber), info
   of tkUInt8Lit, tkUInt16Lit, tkUInt32Lit, tkUInt64Lit:
-    p.dest.buildTree tagId(SufL), info:
-      addUIntLit(p.dest, cast[uint64](p.tok.iNumber), info)
-      addStrLit(p.dest, (case p.tok.kind
-                         of tkUInt8Lit: "u8"
-                         of tkUInt16Lit: "u16"
-                         of tkUInt32Lit: "u32"
-                         else: "u64"), info)
+    let x = openNode(p)
+    emitUInt p, cast[uint64](p.tok.iNumber), info
+    emitStr p, (case p.tok.kind
+                of tkUInt8Lit: "u8"
+                of tkUInt16Lit: "u16"
+                of tkUInt32Lit: "u32"
+                else: "u64"), info
+    closeNode p, x, SufL, info
   of tkFloatLit:
-    addFloatLit(p.dest, floatValue(p.tok), info)
+    emitFloat p, floatValue(p.tok), info
   of tkFloat32Lit, tkFloat64Lit, tkFloat128Lit:
-    p.dest.buildTree tagId(SufL), info:
-      addFloatLit(p.dest, floatValue(p.tok), info)
-      addStrLit(p.dest, (case p.tok.kind
-                         of tkFloat32Lit: "f32"
-                         of tkFloat64Lit: "f64"
-                         else: "f128"), info)
+    let x = openNode(p)
+    emitFloat p, floatValue(p.tok), info
+    emitStr p, (case p.tok.kind
+                of tkFloat32Lit: "f32"
+                of tkFloat64Lit: "f64"
+                else: "f128"), info
+    closeNode p, x, SufL, info
   of tkStrLit:
-    addStrLit(p.dest, p.tok.s, info)
+    emitStr p, p.tok.s, info
   of tkRStrLit, tkTripleStrLit, tkGStrLit, tkGTripleStrLit:
     # a generalized string literal is raw: `parseGStrLit` makes the argument
     # an `nkRStrLit` (or `nkTripleStrLit`)
-    p.dest.buildTree tagId(SufL), info:
-      addStrLit(p.dest, p.tok.s, info)
-      addStrLit(p.dest, (if p.tok.kind in {tkRStrLit, tkGStrLit}: "R" else: "T"), info)
+    let x = openNode(p)
+    emitStr p, p.tok.s, info
+    emitStr p, (if p.tok.kind == tkRStrLit or p.tok.kind == tkGStrLit: "R" else: "T"), info
+    closeNode p, x, SufL, info
   of tkCharLit:
-    addCharLit(p.dest, (if p.tok.s.len > 0: p.tok.s[0] else: '\0'), info)
+    p.append newNode(p, charToken(if p.tok.s.len > 0: p.tok.s[0] else: '\0'), info)
   of tkCustomLit:
     # `identOrLiteral` turns `-1'big` into a call of the suffix operator:
     # `nkDotExpr(nkRStrLit("-1"), ident("'big"))`, the apostrophe included.
-    p.dest.buildTree tagId(DotL), info:
-      p.dest.buildTree tagId(SufL), info:
-        addStrLit(p.dest, p.tok.s.substr(0, int(p.tok.suffixPos) - 1), info)
-        addStrLit(p.dest, "R", info)
-      addIdent(p.dest, p.tok.s.substr(int(p.tok.suffixPos)), info)
+    let outer = openNode(p)
+    let inner = openNode(p)
+    emitStr p, p.tok.s.substr(0, int(p.tok.suffixPos) - 1), info
+    emitStr p, "R", info
+    closeNode p, inner, SufL, info
+    emitIdent p, p.tok.s.substr(int(p.tok.suffixPos)), info
+    closeNode p, outer, DotL, info
   of tkComment:
     # nifler attaches a comment to its node and writes none of it (unless
     # `--docs`); a `commentStmt` is just `(comment)`. Emitting the text as a
@@ -1066,5 +1123,5 @@ proc emitLeaf*(p: var Parser) =
     # Identifiers, operators and every keyword used as a name. `tkSymbol` is
     # the common case; the rest reach here through `symbolOrKeyword`, `OPR`
     # and the `quoted[...]` production.
-    addIdent(p.dest, (if p.tok.s.len > 0: p.tok.s else: $p.tok.kind), info)
+    emitIdent p, (if p.tok.s.len > 0: p.tok.s else: $p.tok.kind), info
   getTok p
