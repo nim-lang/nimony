@@ -165,8 +165,8 @@ proc incrementalTests*() =
   restoreSources()
 
   # The DCE files, on a cache of their own: the edits above keep the backend
-  # from settling. A local shifts every `SymId` after it, and no file may move;
-  # then `sample` calls `livedep.unusedProc`, and only `livedep`'s live file may.
+  # from settling. A local shifts every `SymId` after it, and no live file may
+  # move; then `sample` calls `livedep.unusedProc`, and only `livedep`'s may.
   block:
     let dceCache = "nimcache" / "incremental-dce"
     removeDir dceCache
@@ -178,8 +178,9 @@ proc incrementalTests*() =
     writeFile(dep, edited)
     var r = run("dce-local", dceCmd)
     if r.len == 2:
-      expect reportField(r[1], "dceLive") == 0,
-             "dce-local: dceLive ran " & $reportField(r[1], "dceLive") & " times (expected 0)"
+      # `dceLive` does rerun: its inputs are the `.x.nif`s that carry the
+      # analysis, and the edited module's did change. What must not happen is
+      # that it moves a live file — so only the edited module re-emits.
       expect reportField(r[1], "dceEmit") <= 1,
              "dce-local: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected at most 1)"
     r = run("dce-local-settle", dceCmd)
@@ -188,9 +189,9 @@ proc incrementalTests*() =
              "dce-local-settle: dceEmit ran " & $reportField(r[1], "dceEmit") & " times (expected 0)"
 
     let liveFiles = filesBySuffix(dceCache, ".live.nif")
-    let analyses = filesBySuffix(dceCache, ".dce.nif").len
-    expect liveFiles.len >= analyses,
-           "live-edit: " & $liveFiles.len & " live files for " & $analyses & " module analyses"
+    let modules = filesBySuffix(dceCache, ".x.nif").len
+    expect liveFiles.len == modules,
+           "live-edit: " & $liveFiles.len & " live files for " & $modules & " modules"
     let before = liveFiles.mapIt(readFile(it))
     writeFile(src, originalSrc & "\necho unusedProc(10)\n")
     r = run("live-edit", dceCmd)

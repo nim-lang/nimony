@@ -139,9 +139,9 @@ proc handleCmdLine*() =
     of "d":
       deadCodeElimination(files, outdir)
     of "dl":
-      # Compute the global live set + resolve table from a list of
-      # per-module `.dce.nif` analyses; outputs <outdir>/<M>.live.nif for
-      # each of them.
+      # Compute the global live set + resolve table from the `(dce …)` section
+      # each given `.x.nif` carries; outputs <outdir>/<M>.live.nif for each of
+      # them.
       computeLiveSet(files, outdir)
     of "de":
       # Per-module emit. Args: <M.x.nif> <M.live.nif>; outputs
