@@ -188,13 +188,25 @@ proc complete*(slotIdx: int; res: int) =
   let slot = addr gSlots[lane].slots[slotIdx]
   if slot.op.res != 0:
     cast[ptr int](slot.op.res)[] = res
-  let peerOut = slot.op.peer
-  if peerOut != nil and res >= 0:
-    # Before `freeSlot`: the arena reuses the op, so the address the kernel
-    # wrote is only ours until then. Only on success — a failed accept filled
-    # nothing, and copying the storage anyway would hand the caller the last
-    # peer to use this slot.
-    peerOut[] = slot.op.sockAddr
+  case slot.op.kind
+  of opAccept:
+    # The peer out-parameter lives in the address payload of the op, so it is
+    # only readable once the kind says it is there.
+    let peerOut = slot.op.accept.peer
+    if peerOut != nil and res >= 0:
+      # Before `freeSlot`: the arena reuses the op, so the address the kernel
+      # wrote is only ours until then. Only on success — a failed accept filled
+      # nothing, and copying the storage anyway would hand the caller the last
+      # peer to use this slot.
+      peerOut[] = slot.op.accept.sockAddr
+  of opRecvFrom:
+    # Same shape: the datagram's source address, written by the kernel, handed
+    # off only on success. See the `opAccept` arm.
+    let peerOut = slot.op.recvfrom.peer
+    if peerOut != nil and res >= 0:
+      peerOut[] = slot.op.recvfrom.sockAddr
+  else:
+    discard
   let cont  = slot.op.cont
   let fd    = slot.op.fd
   let seqnum = slot.op.seqnum

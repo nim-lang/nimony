@@ -35,6 +35,13 @@
 # slots are served by a WSAPoll(0) pass on each poll while any are pending,
 # with the completion wait shortened to 1 ms so they are re-checked promptly.
 #
+# Windows files are ring ops too (asyncio submits its open/read/write like the
+# POSIX arm): a file is a plain CreateFileW handle — no FILE_FLAG_OVERLAPPED —
+# whose ReadFile/WriteFile cannot block, so the transfers are made
+# synchronously here on the polling thread, the "regular file is its own
+# readiness" rule the POSIX backends apply. Such handles are never associated
+# with a completion port (`GetFileType` picks them out; backends/files.nim).
+#
 # Cancellation: `closeFd` may run on any lane. It drops the ownership record
 # and `closesocket`s; the kernel then aborts every overlapped op pending on
 # the socket — whichever lane issued it — and delivers each to the owner's
@@ -73,6 +80,7 @@ when defined(windows):
   import ../core/types
   import ../core/slots
   import ../core/backend
+  import ./files
 
   type
     SocketHandle = uint            ## Winsock SOCKET (UINT_PTR)
@@ -103,6 +111,8 @@ when defined(windows):
       wsabuf: WsaBuf
       acceptSock: SocketHandle     ## opAccept: the pre-created socket AcceptEx fills
       acceptBuf: array[2 * (128 + 16), uint8]   ## AcceptEx local+remote address scratch
+      fromLen: int32               ## opRecvFrom: in/out source-address length
+      fromAddr: array[128, uint8]  ## opRecvFrom: source-address scratch
     PendingPoll = object           ## an opPollAdd awaiting the WSAPoll pass
       slot: int32
       gen: uint32                  ## so an expired probe's slot is not re-read
@@ -121,6 +131,8 @@ when defined(windows):
     SO_UPDATE_ACCEPT_CONTEXT = 0x700B.cint
     SO_UPDATE_CONNECT_CONTEXT = 0x7010.cint
     SO_PROTOCOL_INFOW = 0x2005.cint
+    SO_TYPE = 0x1008.cint
+    SOCK_DGRAM = 2.cint
     SIO_GET_EXTENSION_FUNCTION_POINTER = 0xC8000006'u32
     WSA_FLAG_OVERLAPPED = 0x01'u32
     MaxEntries = 64
@@ -150,6 +162,14 @@ when defined(windows):
   proc wsaSend(s: SocketHandle; bufs: ptr WsaBuf; count: uint32; sent: ptr uint32;
                flags: uint32; ov: ptr Overlapped; routine: nil pointer): cint {.
     stdcall, importc: "WSASend", dynlib: "ws2_32.dll".}
+  proc wsaRecvFrom(s: SocketHandle; bufs: ptr WsaBuf; count: uint32; recvd: ptr uint32;
+                   flags: ptr uint32; name: pointer; namelen: ptr int32;
+                   ov: ptr Overlapped; routine: nil pointer): cint {.
+    stdcall, importc: "WSARecvFrom", dynlib: "ws2_32.dll".}
+  proc wsaSendTo(s: SocketHandle; bufs: ptr WsaBuf; count: uint32; sent: ptr uint32;
+                 flags: uint32; name: pointer; namelen: int32;
+                 ov: ptr Overlapped; routine: nil pointer): cint {.
+    stdcall, importc: "WSASendTo", dynlib: "ws2_32.dll".}
   proc wsaIoctl(s: SocketHandle; code: uint32; inbuf: pointer; inlen: uint32;
                 outbuf: pointer; outlen: uint32; ret: ptr uint32; ov: nil pointer;
                 routine: nil pointer): cint {.
@@ -168,12 +188,19 @@ when defined(windows):
   proc wsGetsockopt(s: SocketHandle; level, optname: cint; optval: pointer;
                     optlen: ptr cint): cint {.
     stdcall, importc: "getsockopt", dynlib: "ws2_32.dll".}
+  proc wsSocket(af, typ, protocol: cint): SocketHandle {.
+    stdcall, importc: "socket", dynlib: "ws2_32.dll".}
+  proc wsIoctlsocket(s: SocketHandle; cmd: clong; argp: ptr culong): cint {.
+    stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
+  const FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
   proc wsClosesocket(s: SocketHandle): cint {.
     stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
   proc wsGetpeername(s: SocketHandle; name: pointer; namelen: ptr cint): cint {.
     stdcall, importc: "getpeername", dynlib: "ws2_32.dll".}
   proc wsBind(s: SocketHandle; name: pointer; namelen: cint): cint {.
     stdcall, importc: "bind", dynlib: "ws2_32.dll".}
+  proc wsConnect(s: SocketHandle; name: pointer; namelen: cint): cint {.
+    stdcall, importc: "connect", dynlib: "ws2_32.dll".}
   proc cancelIoEx(file: Handle; ov: nil ptr Overlapped): int32 {.
     stdcall, importc: "CancelIoEx", dynlib: "kernel32".}
   type WsaPollFd {.pure.} = object
@@ -257,6 +284,20 @@ when defined(windows):
                      addr gAcceptEx, uint32(sizeof(gAcceptEx)), addr got, nil, nil)
     atomicStore(gAcceptExState, 2, moRelease)
 
+  proc isDatagram(s: SocketHandle): bool =
+    ## True for a SOCK_DGRAM socket. Asked because the two connects are not the
+    ## same operation on Windows: a stream connect is an overlapped ConnectEx,
+    ## a datagram connect is an instant `connect` that ConnectEx refuses
+    ## outright. `SO_TYPE` is the question Winsock answers directly, and the
+    ## ring's op carries no type of its own — `submitConnect` takes an fd, so
+    ## whatever knows the answer has to ask the socket.
+    var typ = 0.cint
+    var len = cint(sizeof(typ))
+    if wsGetsockopt(s, SOL_SOCKET, SO_TYPE, addr typ, addr len) == 0:
+      result = typ == SOCK_DGRAM
+    else:
+      result = false
+
   proc listenerFamily(s: SocketHandle): cint =
     ## The listener's address family, so the accept socket matches it.
     var info = default(array[640, uint8])   # WSAPROTOCOL_INFOW (628 bytes)
@@ -325,6 +366,60 @@ when defined(windows):
       gPollAdds[lane].add PendingPoll(slot: int32(slotIdx),
                                       gen: gSlots[lane].slots[slotIdx].gen)
       return
+    of opSocket:
+      # socket(2) is one instant call — never an overlapped op — so issue it
+      # here and complete with the fd (or the negated Winsock code). The flag
+      # just created is not yet associated with a port; the first real op on
+      # it claims a lane.
+      let s = wsSocket(cint(op.sockDomain), cint(op.sockType), cint(op.sockProtocol))
+      if s == InvalidSocket:
+        complete(slotIdx, -int(wsaGetLastError()))
+      elif s > SocketHandle(high(cint)):
+        discard wsClosesocket(s)   # the ring's cint fd space cannot hold it
+        complete(slotIdx, -1)
+      else:
+        complete(slotIdx, int(cast[uint32](s)))
+      return
+    of opSetSockOpt:
+      # Configuration, not I/O: no OVERLAPPED, answered in place.
+      let r = wsSetsockopt(socketOf(op.fd), cint(op.optLevel), cint(op.optName),
+                           op.optVal, cint(op.optLen))
+      if r == SocketError:
+        complete(slotIdx, -int(wsaGetLastError()))
+      else:
+        complete(slotIdx, 0)
+      return
+    of opBind:
+      let r = wsBind(socketOf(op.fd), addr op.bindTo.sockAddr, cint(op.bindTo.sockAddrLen))
+      if r == SocketError:
+        complete(slotIdx, -int(wsaGetLastError()))
+      else:
+        complete(slotIdx, 0)
+      return
+    of opSetNonBlocking:
+      var one: culong = 1
+      let r = wsIoctlsocket(socketOf(op.fd), FIONBIO, addr one)
+      if r == SocketError:
+        complete(slotIdx, -int(wsaGetLastError()))
+      else:
+        complete(slotIdx, 0)
+      return
+    of opConnect:
+      # A datagram connect is not a handshake: the kernel only records the
+      # peer for later sends and filters later receives by it, and it answers
+      # at once. ConnectEx cannot serve it at all — the extension is defined
+      # for connection-oriented sockets and fails a SOCK_DGRAM with WSAEINVAL
+      # — and the plain Winsock `connect` is both the right call here and an
+      # instant one, so it is completed in place like the other commands. Only
+      # a stream connect goes on to the overlapped path below.
+      if isDatagram(socketOf(op.fd)):
+        let r = wsConnect(socketOf(op.fd), addr op.connect.sockAddr,
+                          cint(op.connect.sockAddrLen))
+        if r == SocketError:
+          complete(slotIdx, -int(wsaGetLastError()))
+        else:
+          complete(slotIdx, 0)
+        return
     else:
       discard
     let ai = allocAux(lane)
@@ -346,16 +441,43 @@ when defined(windows):
     let s = socketOf(op.fd)
     case op.kind
     of opRead:
-      a.wsabuf = WsaBuf(len: clampLen(op.len), buf: op.buf)
+      a.wsabuf = WsaBuf(len: clampLen(op.read.len), buf: op.read.buf)
       var n = 0'u32
       var flags = 0'u32
       let r = wsaRecv(s, addr a.wsabuf, 1'u32, addr n, addr flags, addr a.wov.ov, nil)
       if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
         abortIssue(lane, slotIdx, ai, -1)
+    of opRecvFrom:
+      # The source address is written by the kernel at completion time, long
+      # after this stack frame is gone, so it goes into the Aux block (stable,
+      # free-list-owned) rather than into the arena's op — a blown deadline can
+      # free the slot while the kernel still holds this WSARecvFrom, and
+      # writing through a reused slot's address storage would corrupt somebody
+      # else's op. The drain copies the address back into `op.recvfrom` only
+      # when the completion still names this generation.
+      a.fromLen = int32(sizeof(a.fromAddr))
+      a.wsabuf = WsaBuf(len: clampLen(op.recvfrom.len), buf: op.recvfrom.buf)
+      var n = 0'u32
+      var flags = 0'u32
+      let r = wsaRecvFrom(s, addr a.wsabuf, 1'u32, addr n, addr flags,
+                          addr a.fromAddr, addr a.fromLen, addr a.wov.ov, nil)
+      if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
+        abortIssue(lane, slotIdx, ai, -1)
     of opWrite:
-      a.wsabuf = WsaBuf(len: clampLen(op.len), buf: op.buf)
+      a.wsabuf = WsaBuf(len: clampLen(op.write.len), buf: op.write.buf)
       var n = 0'u32
       let r = wsaSend(s, addr a.wsabuf, 1'u32, addr n, 0'u32, addr a.wov.ov, nil)
+      if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
+        abortIssue(lane, slotIdx, ai, -1)
+    of opSendTo:
+      # SENDMSG has no IOCP form, WSASendTo does; the target address is read
+      # at submission time, so pointing it at the arena's op is safe (unlike
+      # recvfrom's write-back above).
+      a.wsabuf = WsaBuf(len: clampLen(op.sendto.len), buf: op.sendto.buf)
+      var n = 0'u32
+      let r = wsaSendTo(s, addr a.wsabuf, 1'u32, addr n, 0'u32,
+                        addr op.sendto.sockAddr, int32(op.sendto.sockAddrLen),
+                        addr a.wov.ov, nil)
       if r == SocketError and wsaGetLastError() != WSA_IO_PENDING:
         abortIssue(lane, slotIdx, ai, -1)
     of opAccept:
@@ -387,7 +509,7 @@ when defined(windows):
         any[0] = 2'u8               # sin_family = AF_INET, the rest zero
         discard wsBind(s, addr any[0], cint(any.len))
         var sent = 0'u32
-        let ok = gConnectEx(s, addr op.sockAddr, cint(op.sockAddrLen), nil, 0'u32,
+        let ok = gConnectEx(s, addr op.connect.sockAddr, cint(op.connect.sockAddrLen), nil, 0'u32,
                             addr sent, addr a.wov.ov)
         let err = if ok == 0: wsaGetLastError() else: 0.cint
         if ok == 0 and err != WSA_IO_PENDING:
@@ -421,11 +543,18 @@ when defined(windows):
     var pfds = newSeq[WsaPollFd](live.len)
     i = 0
     while i < live.len:
+      # Every entry here was recorded as an opPollAdd (`issue` is the only
+      # producer), so the poll mask lives in that branch of the op.
       let op = addr gSlots[lane].slots[live[i].slot.int].op
-      var ev = 0
-      if evRead in op.pollMask: ev = ev or POLLRDNORM
-      if evWrite in op.pollMask: ev = ev or POLLWRNORM
-      pfds[i] = WsaPollFd(fd: socketOf(op.fd), events: cshort(ev), revents: cshort(0))
+      case op.kind
+      of opPollAdd:
+        var ev = 0
+        if evRead in op.pollMask: ev = ev or POLLRDNORM
+        if evWrite in op.pollMask: ev = ev or POLLWRNORM
+        pfds[i] = WsaPollFd(fd: socketOf(op.fd), events: cshort(ev),
+                            revents: cshort(0))
+      else:
+        discard
       i = i + 1
     if wsaPoll(addr pfds[0], culong(pfds.len), 0.cint) <= 0: return
     var keep: seq[PendingPoll] = @[]
@@ -437,12 +566,16 @@ when defined(windows):
       if (re and POLLRDNORM) != 0: fired.incl evRead
       if (re and POLLWRNORM) != 0: fired.incl evWrite
       if (re and PollFailMask) != 0: fired = {evRead, evWrite}
-      let hit = fired * gSlots[lane].slots[slotIdx].op.pollMask
-      if hit != {}:
-        complete(slotIdx, toEventMask(hit))
-        result = true
+      case gSlots[lane].slots[slotIdx].op.kind
+      of opPollAdd:
+        let hit = fired * gSlots[lane].slots[slotIdx].op.pollMask
+        if hit != {}:
+          complete(slotIdx, toEventMask(hit))
+          result = true
+        else:
+          keep.add live[i]
       else:
-        keep.add live[i]
+        discard
       i = i + 1
     gPollAdds[lane] = keep
 
@@ -450,8 +583,7 @@ when defined(windows):
     let lane = ioLane()
     var buf {.noinit.}: array[DrainBatch, OpContext]
     let n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
-    var i = 0
-    while i < n:
+    for i in 0..<n:
       let slotIdx = gSlots[lane].allocSlot(buf[i])
       if slotIdx >= MaxOps:
         # The arena took its documented cold path and grew past the OVERLAPPED
@@ -467,14 +599,58 @@ when defined(windows):
         # kinds `issue` handles without an OVERLAPPED never write it at all.
         gSlotAux[lane][slotIdx] = NoAux
         armDeadline(lane, slotIdx)
-        # An fd-less op (nop, timer) has no socket to associate, and a readiness
-        # probe is served by WSAPoll rather than by the port.
-        if buf[i].kind != opNop and buf[i].kind != opTimeout and
-            buf[i].kind != opPollAdd and not ensureAssociated(buf[i].fd, lane):
-          complete(slotIdx, ECancelled) # closed or foreign handle: never issued
+        # Three services, and which one an op needs is decided by its kind.
+        #
+        # UNASSOCIATED: nop and timer have no descriptor at all, `opSocket`'s
+        # socket does not exist yet (its fd is `-1`), and the instant Winsock
+        # commands — setsockopt, bind, FIONBIO — are answered by `issue` in
+        # place with no OVERLAPPED. None of them may be handed to
+        # `ensureAssociated`: on `-1` the `createIoCompletionPort` simply
+        # fails, and the op would be dropped without ever completing. A
+        # readiness probe is served by the WSAPoll pass rather than by the
+        # port, so it stays out too.
+        #
+        # FILE: `opOpen`, and a read or write whose fd is a plain
+        # `CreateFileW` HANDLE rather than a SOCKET (backends/files.nim). Such
+        # a handle carries no FILE_FLAG_OVERLAPPED, so it must never be bound
+        # to a completion port; its transfers are made synchronously here
+        # instead — "the file is its own readiness", the rule the POSIX
+        # backends apply. Only a read or a write can land on one, which is
+        # what keeps `GetFileType` off the socket path: every other kind is a
+        # socket op by construction.
+        #
+        # SOCKET: everything else — associate on first use, then issue.
+        let kind = buf[i].kind
+        let unassociated = kind in {opNop, opTimeout, opPollAdd, opSocket,
+                                    opSetSockOpt, opBind, opSetNonBlocking}
+        case kind
+        of opOpen:
+          completeFileOpen(slotIdx, cast[cstring](buf[i].open.buf),
+                           buf[i].open.openFlags, buf[i].open.openMode)
+        of opRead:
+          if isFileHandle(buf[i].fd):
+            completeFileRead(slotIdx, buf[i].fd,
+                             cast[pointer](buf[i].read.buf), buf[i].read.len)
+          elif ensureAssociated(buf[i].fd, lane):
+            issue(lane, slotIdx)
+          else:
+            complete(slotIdx, ECancelled)  # closed or foreign handle
+        of opWrite:
+          if isFileHandle(buf[i].fd):
+            completeFileWrite(slotIdx, buf[i].fd,
+                              cast[pointer](buf[i].write.buf), buf[i].write.len)
+          elif ensureAssociated(buf[i].fd, lane):
+            issue(lane, slotIdx)
+          else:
+            complete(slotIdx, ECancelled)
         else:
-          issue(lane, slotIdx)
-      i = i + 1
+          if unassociated or ensureAssociated(buf[i].fd, lane):
+            issue(lane, slotIdx)
+          else:
+            # Never issued, and a slot nobody completes is a caller parked
+            # until its deadline — so say so now, exactly as the readiness
+            # backends' `cancelPendingOps` does.
+            complete(slotIdx, ECancelled)
     result = servePollAdds(lane)
     # Readiness probes are re-checked every millisecond while any are pending,
     # and no wait outlasts the earliest deadline on this lane.
@@ -519,18 +695,18 @@ when defined(windows):
           var listenSock = socketOf(op.fd)
           discard wsSetsockopt(a.acceptSock, SOL_SOCKET, SO_UPDATE_ACCEPT_CONTEXT,
                                addr listenSock, cint(sizeof(listenSock)))
-          if op.peer != nil:
+          if op.accept.peer != nil:
             # `AcceptEx` wrote both addresses into `acceptBuf`, but reading
             # them back needs `GetAcceptExSockaddrs` from the same late-bound
             # extension table as `AcceptEx` itself. `getpeername` answers the
             # same question with a call that is always there — and it is legal
             # only now, because until `SO_UPDATE_ACCEPT_CONTEXT` above the
             # socket does not yet know it is connected.
-            var namelen = cint(sizeof(op.sockAddr))
-            if wsGetpeername(a.acceptSock, addr op.sockAddr, addr namelen) == 0:
-              op.sockAddrLen = SockLen(namelen)
+            var namelen = cint(sizeof(op.accept.sockAddr))
+            if wsGetpeername(a.acceptSock, addr op.accept.sockAddr, addr namelen) == 0:
+              op.accept.sockAddrLen = SockLen(namelen)
             else:
-              op.sockAddr = Sockaddr_storage()
+              op.accept.sockAddr = Sockaddr_storage()
           if a.acceptSock <= SocketHandle(high(cint)):
             res = int(fdOf(a.acceptSock))
           else:
@@ -544,6 +720,15 @@ when defined(windows):
           res = 0
         else:
           res = int(e.bytes)
+          case op.kind
+          of opRecvFrom:
+            # The address WSARecvFrom wrote went into the Aux scratch (see the
+            # issue arm); this completion still names this op's generation, so
+            # hand it to the slot for `complete` to copy to the caller's peer.
+            let n = min(int(a.fromLen), int(sizeof(op.recvfrom.sockAddr)))
+            if n > 0: copyMem(addr op.recvfrom.sockAddr, addr a.fromAddr[0], n)
+          else:
+            discard
       else:
         if op.kind == opAccept and a.acceptSock != InvalidSocket:
           discard wsClosesocket(a.acceptSock)

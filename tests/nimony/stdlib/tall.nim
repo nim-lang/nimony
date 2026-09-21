@@ -21,6 +21,7 @@ import std/algorithm
 import std/appdirs
 import std/assertions
 import std/atomics
+import std/asyncio
 import std/base64
 import std/bitops
 import std/cmdline
@@ -29,6 +30,7 @@ import std/complex
 import std/cpuinfo
 import std/deques
 import std/dirs
+import std/dns
 import std/editdistance
 import std/encodings
 import std/envvars
