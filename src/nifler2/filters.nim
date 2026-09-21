@@ -488,8 +488,10 @@ proc applyFilters*(src, filename: string; failed: var bool): string =
   if pipe.failed: reportFailure pipe
   var ctx = FilterContext(filename: filename)
   var input = LineReader(s: src, rd: 0, fromFile: true)
-  var c = beginRead(pipe.dest)
+  var pipeBuf = finish(pipe)
+  var c = beginRead(pipeBuf)
   evalPipe ctx, c, input
   endRead c
+  close pipe
   failed = ctx.failed
   result = if input.fromFile: src else: move input.s

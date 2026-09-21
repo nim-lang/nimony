@@ -77,13 +77,14 @@ proc main {.raises.} =
     if action != "deps":
       # nimony runs nifler with `--portablePaths`: the file is written relative
       # to the current directory
-      writeNifler(p.dest, outp, relativePath(absolutePath(inp), getCurrentDir(), '/'))
+      writeNifler(p.first, p.pool, p.tags, cellCount(p.arena) * 8, outp, relativePath(absolutePath(inp), getCurrentDir(), '/'))
     if deps or action == "deps":
-      writeDeps(p.dest, changeFileExt(outp, ".deps.nif"))
+      writeDeps(p.first, p.pool, p.tags, changeFileExt(outp, ".deps.nif"))
   of "t", "tree":
     var p = openParser("", inp, pool, globalTags)
     parse p, inp
-    echo toString(p.dest)
+    var buf = finish(p)
+    echo toString(buf)
     if not report(p): quit 1
   else:
     quit Usage

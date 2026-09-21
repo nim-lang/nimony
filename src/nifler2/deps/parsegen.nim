@@ -1556,8 +1556,12 @@ proc finishAlt(e: var Emitter; a: Alt; mark, anchor: string) =
       if it.kind == nTag and it.anchored: anchoredTag = true
     let mk = if anchoredTag: anchor else: mark
     if posVar.len > 0 and not anchoredTag:
-      e.line letC("m", code(cOconstr, "Mark", [code(cKv, "pos", [dot(id(mk), "pos")]),
-                                              code(cKv, "info", [id(posVar)])]))
+      # `%at` keeps the anchor but takes its position from the token the
+      # grammar pointed at; `prev` and `sigs` are what the alternative began
+      # with, so they must be carried over rather than default-initialised.
+      e.line letC("m", code(cOconstr, "Mark", [code(cKv, "prev", [dot(id(mk), "prev")]),
+                                              code(cKv, "info", [id(posVar)]),
+                                              code(cKv, "sigs", [dot(id(mk), "sigs")])]))
     else:
       e.line letC("m", id(mk))
     for i in a.afterCode: e.line code(cInput).withIdx(i)
