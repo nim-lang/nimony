@@ -189,3 +189,36 @@ func lastOf[N: static[int]; T](x: array[N, T]): int = high(x)
 
 var arr: array[4, int]
 echo lastOf(arr)                   # 3
+
+# static openArray in TYPE position (mirrors the proc `countValues` case above):
+# a `static[openArray[int]]` parameter is satisfied by an `array[N, int]`
+# literal, exactly as in a routine call, and its length is available in the body.
+type
+  OpenBox[S: static[openArray[int]]] = object
+    n: int
+  SizedBox[S: static[openArray[int]]] = object
+    data: array[S.len, int]
+
+var ob: OpenBox[[1, 2, 3]]
+ob.n = 5
+echo ob.n                          # 5
+var sb: SizedBox[[2, 3]]
+echo sizeof(sb)                    # array[2, int] == 16
+
+# a `const` array satisfies the same `static[openArray[int]]` type parameter and
+# canonicalizes to the equivalent array literal.
+const shape = [1, 2, 3]
+var sb2: SizedBox[shape]
+echo sizeof(sb2)                   # array[3, int] == 24
+
+# a generic type body referencing another generic: the `Inner[S, T]` invoke
+# inside `Outer[S, T]` must accept the symbolic value parameter `S` and the
+# symbolic type parameter `T` verbatim, binding only when `Outer` is used.
+type
+  Inner[S: static[openArray[int]]; T] = object
+    data: array[S.len, T]
+  Outer[S: static[openArray[int]]; T] = object
+    inner: Inner[S, T]
+
+var o: Outer[[2, 3], int]
+echo sizeof(o)                     # Inner[[2, 3], int] -> array[2, int] == 16

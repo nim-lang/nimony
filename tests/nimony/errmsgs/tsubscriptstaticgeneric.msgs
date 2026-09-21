@@ -1,5 +1,3 @@
-tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 21) Error: argument for a `static` generic parameter must be a constant expression
-tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 25) Error: argument for a `static` generic parameter must be a constant expression
-tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 40) Error: undeclared identifier: T
+tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 21) Error: W does not match constraint int64
 tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(6, 47) Error: undeclared identifier: T
-tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(7, 12) Error: undeclared identifier: H
+tests/nimony/errmsgs/tsubscriptstaticgeneric.nim(7, 4) Error: undeclared field: 'data' for type <type error>

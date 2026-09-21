@@ -270,6 +270,14 @@ proc getErrorMsg*(m: Match): string =
   of ExplicitGenericArgNotAType:
     "not a type: " & typeToString(m.error.got)
 
+proc errorInfo*(m: Match): NifLineInfo = m.error.info
+
+proc genericArgErrorMsg*(m: Match): string =
+  result = getErrorMsg(m)
+  if m.error.kind == ConstraintMismatch:
+    for key, _ in m.missingConstraints:
+      result.add "\nmissing: " & key
+
 proc addErrorMsg*(dest: var string; m: Match) =
   assert m.err
   dest.add "[" & $(m.error.pos) & "] " & getErrorMsg(m)
@@ -667,6 +675,11 @@ proc staticValueToBind(m: var Match; elemType: Cursor; a: Cursor): Cursor =
       # expreval engine and bind the value it aliases, exactly as if that value
       # had been written in the argument position.
       result = foldStaticArg(m, elemType, a)
+      if result == default(Cursor) and isStaticValue(a) and
+         staticValueTypeMatches(elemType, staticValueType(a)):
+        # `const s = […]` is `array[N, T]`; fold against that type so it binds
+        # to `static[openArray[T]]` like a literal would.
+        result = foldStaticArg(m, staticValueType(a), a)
   of TagLit:
     case a.exprKind
     of FalseX, TrueX:
@@ -2572,22 +2585,32 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
     inc i
 
 
-iterator typeVars(fn: SymId): SymId {.sideEffect.} =
-  let res = tryLoadSym(fn)
+iterator genericParams*(sym: SymId): tuple[symId: SymId, kind: SymKind, elemType: Cursor] {.sideEffect.} =
+  ## The generic parameters of a routine OR a type, in declaration order, each paired with
+  ## its kind (`TypevarY`/`StaticTypevarY`) and its declared constraint / value-parameter
+  ## element type. Shared by both routine overload resolution and type instantiation.
+  let res = tryLoadSym(sym)
   assert res.status == LacksNothing
-  var c = res.decl
-  if isRoutine(c.symKind):
+  var tvs = default(Cursor)
+  if isRoutine(res.decl.symKind):
+    var c = res.decl
     inc c # skip routine tag
     for i in 1..3:
       skip c # name, export marker, pattern
-    if c.substructureKind == TypevarsU:
-      c = sub(c) # bound the typevar walk
-      while c.hasMore:
-        if isTypevarLike(c.symKind):
-          var tv = c
-          inc tv
-          yield tv.symId
-        skip c
+    tvs = c
+  elif res.decl.symKind == TypeY:
+    tvs = asTypeDecl(res.decl).typevars
+  if not cursorIsNil(tvs) and tvs.substructureKind == TypevarsU:
+    tvs = sub(tvs) # bound the typevar walk
+    while tvs.hasMore:
+      if isTypevarLike(tvs.symKind):
+        let tv = asTypevar(tvs)
+        yield (tv.name.symId, tvs.symKind, tv.typ)
+      skip tvs
+
+iterator typeVars(fn: SymId): SymId {.sideEffect.} =
+  for p in genericParams(fn):
+    yield p.symId
 
 proc collectDefaultValues(m: var Match; f: Cursor): seq[CallArg] =
   var f = f
@@ -2620,41 +2643,58 @@ proc notATypeArg(e: Cursor): bool =
   if res.status != LacksNothing: return false
   result = res.decl.stmtKind != TypeS and not isTypevarLike(res.decl.symKind)
 
-proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
+proc matchExplicitGenericArg*(m: var Match; v: SymId; kind: SymKind;
+                              elemType, e: Cursor) =
+  ## Bind/validate ONE explicit generic argument `e` against the generic
+  ## parameter `v`. A value (`static`) parameter binds its canonical folded
+  ## value (`2 + 3` -> `5`, an enum `const` -> its field symbol); a type
+  ## parameter is validated against its constraint and bound verbatim. Either
+  ## way `m.inferred[v]` is the canonical argument afterwards. Shared by
+  ## routine overload resolution and type instantiation (`semInvoke`).
+  m.argInfo = e.info # so a mismatch points at the argument, not the head
+  if kind == StaticTypevarY:
+    if not bindStaticTypevar(m, v, elemType, e):
+      m.error ConstraintMismatch, elemType, e
+  else:
+    # a fresh set of unsatisfied concept requirements per argument, so a
+    # later argument's `missing:` detail lines never leak into an earlier
+    # (or unrelated) argument's diagnostic.
+    m.missingConstraints.clear()
+    if matchesConstraint(m, v, e):
+      bindTypevar m, v, e
+    elif notATypeArg(e):
+      m.error ExplicitGenericArgNotAType, elemType, e
+    else:
+      m.error ConstraintMismatch, elemType, e
+
+proc matchGenericExplicitArgs(m: var Match; fn: SymId; explicitArgs: Cursor) =
+  ## A dot-token `explicitArgs` (no explicit generic args at the call site)
+  ## leaves the parameters unbound for later inference.
   m.tvars = default(HashSet[SymId])
   m.unboundTvars = 0
+  var e = explicitArgs
+  for (v, kind, elemType) in genericParams(fn):
+    m.tvars.incl v
+    inc m.unboundTvars
+    if e.isDotToken: discard
+    elif not e.hasMore:
+      m.error0Typevar MissingExplicitGenericParameter, v
+      break
+    else:
+      matchExplicitGenericArg m, v, kind, elemType, e
+      skip e
+  if not e.isDotToken and e.hasMore:
+    m.error0 ExtraGenericParameter
+
+proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
   if fn.kind in RoutineKinds:
-    var e = explicitTypeVars
-    for v in typeVars(fn.sym):
-      m.tvars.incl v
-      inc m.unboundTvars
-      if e.isDotToken: discard
-      elif not e.hasMore:
-        m.error0Typevar MissingExplicitGenericParameter, v
-        break
-      else:
-        let res = tryLoadSym(v)
-        assert res.status == LacksNothing
-        var typevar = asTypevar(res.decl)
-        if typevar.kind == StaticTypevarY:
-          # explicitly given value for a value parameter, e.g. `Matrix[3, 4, int]`
-          if not bindStaticTypevar(m, v, typevar.typ, e):
-            m.error ConstraintMismatch, typevar.typ, e
-        elif matchesConstraint(m, v, e):
-          bindTypevar m, v, e
-        elif notATypeArg(e):
-          m.error ExplicitGenericArgNotAType, typevar.typ, e
-        else:
-          assert typevar.kind == TypevarY
-          m.error ConstraintMismatch, typevar.typ, e
-        skip e
-    if not e.isDotToken and e.hasMore:
-      m.error0 ExtraGenericParameter
-  elif not explicitTypeVars.isDotToken:
-    # aka there are explicit type vars
-    if m.tvars.len == 0:
+    matchGenericExplicitArgs(m, fn.sym, explicitTypeVars)
+  else:
+    m.tvars = default(HashSet[SymId])
+    m.unboundTvars = 0
+    if not explicitTypeVars.isDotToken:
+      # aka there are explicit type vars on a non-generic routine
       m.error0 RoutineIsNotGeneric
-      return
 
 proc inferTypevarsFromExpected(m: var Match) =
   ## Last chance to bind a generic routine's leftover typevars: unify its
