@@ -3384,7 +3384,12 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if tryForLoopPlugin(c, dest, it, forHeadPos, beforeCall, info, iterCall.typ, forStart):
     return
   var isMacroLike = false
-  if dest[beforeCall].exprKind == ErrX:
+  if hasErrorSince(dest, beforeCall):
+    # Not just `dest[beforeCall]`: the error can sit below the head. An
+    # undeclared callee leaves a reconstructed `(call (err ...) args)` behind,
+    # and handing that to the implicit-iterator fallback below buries the
+    # precise "undeclared identifier: 'x'" under the generic "cannot call
+    # expression of type auto" (nim-lang/nimony#2553).
     discard "already produced an error"
   elif isIteratorCall(c, dest, beforeCall):
     discard "fine"
