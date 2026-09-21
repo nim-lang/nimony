@@ -8,8 +8,8 @@
 
 from std / strutils import multiReplace, startsWith
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
-from std / osproc import execCmdEx, startProcess, waitForExit, running,
-  peekExitCode, close, Process, ProcessOption, poParentStreams
+from std / osproc import execCmdEx, startProcess, waitForExit, close,
+  poParentStreams
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -113,11 +113,12 @@ proc renderCmd(exe: string; args: openArray[string]): string =
     result.add quoteShell(args[i])
 
 proc execArgs*(exe: string; args: openArray[string]) =
-  ## `exec` without a shell in between. `execShellCmd` goes through
-  ## `cmd.exe /c` on Windows (`/bin/sh -c` elsewhere), which measured ~15 ms
-  ## of the ~24 ms that one nifler dep-scan call cost here — more than nifler's
-  ## own work on the file. Arguments travel as an argv array, so callers pass
-  ## them RAW: no `quoteShell`, the spawner does its own quoting.
+  ## `exec` without a shell in between: `execShellCmd` runs the command
+  ## through `cmd.exe /c` on Windows (`/bin/sh -c` elsewhere), an extra
+  ## process per call that buys nothing here — no redirection, no globbing,
+  ## and the quoting it forces on the caller is a bug surface of its own.
+  ## Arguments travel as an argv array, so callers pass them RAW: no
+  ## `quoteShell`, the spawner does its own quoting.
   var code = -1
   try:
     let p = startProcess(exe, args = args, options = {poParentStreams})
@@ -127,84 +128,6 @@ proc execArgs*(exe: string; args: openArray[string]) =
     code = -1
   if code != 0:
     quit("FAILURE: " & renderCmd(exe, args))
-
-proc reapIfDone(p: Process; ok: var bool): bool =
-  ## True once `p` has exited; `p` is then closed and `ok` says whether it
-  ## succeeded. An OS-level surprise counts as "gone and failed": the only
-  ## caller uses this to decide whether work still has to be redone.
-  result = false
-  ok = false
-  try:
-    if not running(p):
-      ok = peekExitCode(p) == 0
-      close p
-      result = true
-  except:
-    ok = false
-    result = true
-
-proc execManyParallel*(exe: string; argSets: seq[seq[string]];
-                       maxParallel: int): seq[bool] =
-  ## Runs `exe` once per entry in `argSets`, at most `maxParallel` at a time,
-  ## and reports per-job success. Shell-free, like `execArgs`.
-  ##
-  ## `osproc.execProcesses` is not usable for this: it forces `poEvalCommand`
-  ## — the shell this exists to avoid — and folds everything into a single
-  ## exit code, whereas the caller here needs to know *which* jobs failed.
-  ##
-  ## A failure is reported, never quit on. Callers must stay correct when a
-  ## job did not run at all.
-  result = @[]
-  for i in 0 ..< argSets.len: result.add false
-  if argSets.len == 0: return
-
-  var width = maxParallel
-  if width < 1: width = 1
-  if width > argSets.len: width = argSets.len
-
-  # Two parallel seqs rather than a seq of pairs, so that the list stays in
-  # start order: `inFlight[0]` is then the oldest process in flight, which is
-  # the one worth blocking on below.
-  var inFlight: seq[Process] = @[]
-  var jobOf: seq[int] = @[]
-  var next = 0
-
-  while next < argSets.len or inFlight.len > 0:
-    while inFlight.len < width and next < argSets.len:
-      try:
-        let p = startProcess(exe, args = argSets[next],
-                             options = {poParentStreams})
-        inFlight.add p
-        jobOf.add next
-      except:
-        discard "could not spawn; the job stays marked failed"
-      inc next
-    if inFlight.len == 0: continue
-
-    # Block on one process, then sweep the rest without blocking. These jobs
-    # cost roughly the same, so by the time the first is done most of its
-    # neighbours are too: we refill several slots per wakeup instead of
-    # spinning on `running` and stealing the CPU they are using.
-    try:
-      discard waitForExit(inFlight[0])
-    except:
-      discard
-
-    # Rebuild the in-flight list rather than swapping finished slots out of
-    # it: Nimony rejects `a[i] = a[last]` (a mutable argument aliasing an
-    # immutable parameter), and keeping the list in start order is what makes
-    # `inFlight[0]` above the oldest one.
-    var stillProc: seq[Process] = @[]
-    var stillJob: seq[int] = @[]
-    for i in 0 ..< inFlight.len:
-      var ok = false
-      if reapIfDone(inFlight[i], ok):
-        result[jobOf[i]] = ok
-      else:
-        stillProc.add inFlight[i]
-        stillJob.add jobOf[i]
-    inFlight = stillProc
-    jobOf = stillJob
 
 proc nimexec(cmd: string) =
   let t = findExe("nim")
