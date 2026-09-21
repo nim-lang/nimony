@@ -278,6 +278,20 @@ proc accept*(l: Listener; dl = never): Socket {.passive, raises.} =
   result.fd = cint(res)
   result.peer = peer
 
+proc putAfInet(raw: ptr UncheckedArray[uint8]) {.inline.} =
+  ## The two leading bytes of a `sockaddr_in`, which is the only part of the
+  ## layout the three ABIs spell differently: Linux and Windows start with a
+  ## 2-byte little-endian `sa_family`/`sin_family`, the BSDs (macOS included)
+  ## put a 1-byte `sa_len` — the size of `struct sockaddr_in` — ahead of a
+  ## 1-byte `sa_family`. Everything after these two bytes is identical
+  ## everywhere, which is what lets the rest be written as plain bytes.
+  when defined(linux) or defined(windows):
+    raw[0] = 2'u8    # AF_INET, low byte
+    raw[1] = 0'u8    #          high byte
+  else:
+    raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
+    raw[1] = 2'u8    # AF_INET
+
 proc addrFromHost(p: var PeerAddr; saLen: var SockLen;
                   host: string; port: uint16): bool {.inline.} =
   ## Build the sockaddr_in for `host:port` into `p.raw`, ready for
@@ -293,17 +307,11 @@ proc addrFromHost(p: var PeerAddr; saLen: var SockLen;
   ## to 16 bytes — so this compiles without importing platform-specific socket
   ## struct types. The first two bytes differ between ABI families, and both
   ## `PeerAddr.family` and the kernel read them back on the far side of the
-  ## ring, so the two layouts are written as their respective systems expect:
-  ## Linux puts a 2-byte `sa_family` at offset 0, the BSDs put a 1-byte
-  ## `sa_len` (16, the size of `sockaddr_in`) ahead of a 1-byte `sa_family`.
+  ## ring, so the family bytes are written as each system expects them —
+  ## `putAfInet` is the one place that knows which.
   p = default(PeerAddr)
   let raw = cast[ptr UncheckedArray[uint8]](addr p.raw)
-  when defined(linux):
-    raw[0] = 2'u8   # AF_INET low byte
-    raw[1] = 0       # AF_INET high byte
-  else:
-    raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
-    raw[1] = 2'u8    # AF_INET
+  putAfInet raw
   raw[2] = byte(port shr 8)
   raw[3] = byte(port and 0xFF)
   var octet = 0
@@ -659,16 +667,11 @@ proc wildcardAddr(sa: var Sockaddr_storage; saLen: var SockLen; port: uint16) =
   ## Fill `sa` with an IPv4 wildcard (INADDR_ANY) `port`, ready for
   ## `submitBind`. Written as raw bytes — the same layout `addrFromHost`
   ## produces, with the address all zeros — so no platform socket type has to
-  ## be imported: two bytes of family (with the BSDs' leading `sa_len`), two
-  ## bytes of network-order port, four zero bytes of address, zero padding.
+  ## be imported: two bytes of family (`putAfInet`), two bytes of
+  ## network-order port, four zero bytes of address, zero padding.
   sa = default(Sockaddr_storage)
   let raw = cast[ptr UncheckedArray[uint8]](addr sa)
-  when defined(linux):
-    raw[0] = 2'u8   # AF_INET low byte
-    raw[1] = 0       # AF_INET high byte
-  else:
-    raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
-    raw[1] = 2'u8    # AF_INET
+  putAfInet raw
   raw[2] = byte(port shr 8)
   raw[3] = byte(port and 0xFF)
   saLen = SockLen(16)

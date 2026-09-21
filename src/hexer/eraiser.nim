@@ -732,14 +732,42 @@ proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
   if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or
                             c.tupleVars.contains(nn.symId)):
     let isResultSym = nn.symId == c.resultSym
-    copyInto dest, n:
-      dest.addSubtree n  # the destination, NOT projected: it IS the tuple
-      inc n
-      let typ = if isResultSym: c.retType else: getType(c.typeCache, n)
-      let maybeClose = produceSuccessTuple(c, dest, typ, n.info)
-      tr c, dest, n
-      if maybeClose:
-        dest.addParRi() # tuple constructor
+    let info = n.info
+    var val = n.childCursor
+    skip val                       # past the destination, now at the value
+    let typ = if isResultSym: c.retType else: getType(c.typeCache, val)
+    if isVoidType(typ):
+      # Nothing but the code in this slot, so the slot IS the code: there is
+      # no value half to project onto.
+      copyInto dest, n:
+        dest.addSubtree n  # the destination, NOT projected: it IS the tuple
+        inc n
+        tr c, dest, n
+    else:
+      # FIELD BY FIELD, not one `(tupconstr (tuple ErrorCode T) Success v)`.
+      # The two assignments say exactly what the constructor said — `Success`
+      # into the code half, the value into the value half — and they build no
+      # temporary tuple to do it.
+      #
+      # What they also do is leave the VALUE at the root of an assignment,
+      # which is where `cps` looks for a suspension point when it decides
+      # where one coroutine state ends and the next begins. Wrapped in the
+      # constructor, a `.passive` call was one level too deep to be seen: the
+      # state boundary landed after the whole assignment, so the assignment
+      # itself sat on the far side of the transition and never ran —
+      # `result = recvFrom(...)` returned zero, always. `coro_transform`'s
+      # `trGoto` now rejects that shape outright rather than mislowering it.
+      copyIntoKind dest, AsgnS, info:
+        copyIntoKind dest, TupatX, info:
+          dest.addSubtree nn
+          dest.addIntLit 0, info
+        dest.addSymUse pool.symId(SuccessName), info
+      copyInto dest, n:
+        copyIntoKind dest, TupatX, info:
+          dest.addSubtree n
+          dest.addIntLit 1, info
+        inc n
+        tr c, dest, n
   else:
     copyInto dest, n:
       tr c, dest, n

@@ -1553,10 +1553,23 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of AsgnS:
           # The value is the second operand: a passive call there ends the
           # state, so the label goes after the whole assignment.
+          #
+          # At the ROOT of the value, never nested inside it. `coroTr` lowers
+          # a passive call into a `return` of the next continuation, so
+          # everything after it in the same statement belongs to the state the
+          # resume lands in — which a label placed after the assignment cannot
+          # express. A value that merely CONTAINS a suspension point is a
+          # shape this pass cannot lower at all, so it says so instead of
+          # emitting an assignment that sits on the far side of the transition
+          # and never runs. The eraiser used to build exactly one such shape,
+          # `result = (Success, passiveCall())`; it now assigns the tuple's
+          # halves separately and leaves the call where it was.
           var addLabel = false
           takeInto dest, n:
             trGotoValue c, dest, n                 # destination
             addLabel = c.hooks.isPassiveCall(c, n)
+            if not addLabel and containsSuspensionPoint(c, n):
+              bug "cps: suspension point nested inside an assignment's value"
             trGotoValue c, dest, n                 # value
           if addLabel:
             emitLabel dest, c.currentProc.labelCounter, info

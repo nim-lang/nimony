@@ -22,7 +22,7 @@
 # surfaces make: kernel handle values are small 4-aligned integers in practice
 # (undocumented), and a HANDLE too large to narrow fails the open rather than
 # being abused. `GetFileType` is the reliability the narrowing relies on: it
-# returns FILE_TYPE_DISK for a regular file and FILE_TYPE_UNKNOWN for a socket,
+# returns FILE_TYPE_DISK for a regular file and something else for a socket,
 # which is how a read/write op tells a file Handle from a SOCKET in the shared
 # cint space — a registry-free answer that stays correct when a cint value is
 # reused by the other kind of descriptor.
@@ -44,14 +44,15 @@ when defined(windows):
   proc handleOf(fd: cint): Handle {.inline.} =
     ## Widen the ring's cint narrowing back to a HANDLE without sign
     ## extension (a file entered the cint space by the same narrowing).
-    cast[Handle](cast[uint32](fd))
+    cast[Handle](uint(cast[uint32](fd)))   # via `uint`: a HANDLE is pointer-sized
 
   proc isFileHandle*(fd: cint): bool {.inline.} =
     ## True when `fd` names a Win32 file HANDLE rather than a Winsock SOCKET.
-    ## GetFileType answers: a regular file is FILE_TYPE_DISK, and a socket —
-    ## which is not a file — reports FILE_TYPE_UNKNOWN. Deliberately no wider
-    ## chart: a pipe or console would be served fine by the sync path, but the
-    ## ring's non-socket descriptors are the files asyncio opens.
+    ## GetFileType answers: a regular file is FILE_TYPE_DISK and a socket is
+    ## not (it is an AFD file object, and reports FILE_TYPE_PIPE). Deliberately
+    ## no wider chart: matching DISK exactly is what makes every other answer —
+    ## pipe, char device, unknown — mean "not one of ours", so the test cannot
+    ## be wrong about a descriptor kind it was not told about.
     getFileType(handleOf(fd)) == FILE_TYPE_DISK
 
   proc completeFileOpen*(idx: int; path: cstring; desiredAccess, disposition: int32) =
@@ -72,7 +73,7 @@ when defined(windows):
       discard closeHandle(h)   # cannot be narrowed to the ring's cint fd space
       complete(idx, -1)
     else:
-      complete(idx, int(cast[uint32](h)))
+      complete(idx, int(uint32(cast[uint](h))))
 
   proc completeFileRead*(idx: int; fd: cint; buf: pointer; len: int) =
     ## One synchronous `ReadFile` on the polling thread, completing the op

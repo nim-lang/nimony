@@ -131,6 +131,8 @@ when defined(windows):
     SO_UPDATE_ACCEPT_CONTEXT = 0x700B.cint
     SO_UPDATE_CONNECT_CONTEXT = 0x7010.cint
     SO_PROTOCOL_INFOW = 0x2005.cint
+    SO_TYPE = 0x1008.cint
+    SOCK_DGRAM = 2.cint
     SIO_GET_EXTENSION_FUNCTION_POINTER = 0xC8000006'u32
     WSA_FLAG_OVERLAPPED = 0x01'u32
     MaxEntries = 64
@@ -197,6 +199,8 @@ when defined(windows):
     stdcall, importc: "getpeername", dynlib: "ws2_32.dll".}
   proc wsBind(s: SocketHandle; name: pointer; namelen: cint): cint {.
     stdcall, importc: "bind", dynlib: "ws2_32.dll".}
+  proc wsConnect(s: SocketHandle; name: pointer; namelen: cint): cint {.
+    stdcall, importc: "connect", dynlib: "ws2_32.dll".}
   proc cancelIoEx(file: Handle; ov: nil ptr Overlapped): int32 {.
     stdcall, importc: "CancelIoEx", dynlib: "kernel32".}
   type WsaPollFd {.pure.} = object
@@ -279,6 +283,20 @@ when defined(windows):
     discard wsaIoctl(s, SIO_GET_EXTENSION_FUNCTION_POINTER, addr guid, uint32(sizeof(guid)),
                      addr gAcceptEx, uint32(sizeof(gAcceptEx)), addr got, nil, nil)
     atomicStore(gAcceptExState, 2, moRelease)
+
+  proc isDatagram(s: SocketHandle): bool =
+    ## True for a SOCK_DGRAM socket. Asked because the two connects are not the
+    ## same operation on Windows: a stream connect is an overlapped ConnectEx,
+    ## a datagram connect is an instant `connect` that ConnectEx refuses
+    ## outright. `SO_TYPE` is the question Winsock answers directly, and the
+    ## ring's op carries no type of its own — `submitConnect` takes an fd, so
+    ## whatever knows the answer has to ask the socket.
+    var typ = 0.cint
+    var len = cint(sizeof(typ))
+    if wsGetsockopt(s, SOL_SOCKET, SO_TYPE, addr typ, addr len) == 0:
+      result = typ == SOCK_DGRAM
+    else:
+      result = false
 
   proc listenerFamily(s: SocketHandle): cint =
     ## The listener's address family, so the accept socket matches it.
@@ -386,6 +404,22 @@ when defined(windows):
       else:
         complete(slotIdx, 0)
       return
+    of opConnect:
+      # A datagram connect is not a handshake: the kernel only records the
+      # peer for later sends and filters later receives by it, and it answers
+      # at once. ConnectEx cannot serve it at all — the extension is defined
+      # for connection-oriented sockets and fails a SOCK_DGRAM with WSAEINVAL
+      # — and the plain Winsock `connect` is both the right call here and an
+      # instant one, so it is completed in place like the other commands. Only
+      # a stream connect goes on to the overlapped path below.
+      if isDatagram(socketOf(op.fd)):
+        let r = wsConnect(socketOf(op.fd), addr op.connect.sockAddr,
+                          cint(op.connect.sockAddrLen))
+        if r == SocketError:
+          complete(slotIdx, -int(wsaGetLastError()))
+        else:
+          complete(slotIdx, 0)
+        return
     else:
       discard
     let ai = allocAux(lane)
@@ -565,32 +599,58 @@ when defined(windows):
         # kinds `issue` handles without an OVERLAPPED never write it at all.
         gSlotAux[lane][slotIdx] = NoAux
         armDeadline(lane, slotIdx)
-        # An fd-less op (nop, timer) has no socket to associate, and a readiness
-        # probe is served by WSAPoll rather than by the port. A FILE op (opOpen,
-        # or read/write on a file handle — backends/files.nim) is served here in
-        # the drain loop, never associated: its handle is a plain, non-overlapped
-        # one whose transfers are synchronous ("the file is its own readiness"),
-        # so it must not be bound to a completion port (a socket is claimed
-        # here on its first real op). These complete in place, exactly like the
-        # instant socket commands — the drain's `buf[i]` is the caller's frame,
-        # so a cstring proven from it needs no parking.
-        let fdless = buf[i].kind == opNop or buf[i].kind == opTimeout or
-                     buf[i].kind == opPollAdd
-        let isFile = buf[i].kind == opOpen or
-                     (not fdless and isFileHandle(buf[i].fd))
-        if isFile:
-          case buf[i].kind
-          of opOpen:
-            completeFileOpen(slotIdx, cast[cstring](buf[i].open.buf),
-                             buf[i].open.openFlags, buf[i].open.openMode)
-          of opRead:
-            completeFileRead(slotIdx, buf[i].fd, cast[pointer](buf[i].read.buf), buf[i].read.len)
-          of opWrite:
-            completeFileWrite(slotIdx, buf[i].fd, cast[pointer](buf[i].write.buf), buf[i].write.len)
+        # Three services, and which one an op needs is decided by its kind.
+        #
+        # UNASSOCIATED: nop and timer have no descriptor at all, `opSocket`'s
+        # socket does not exist yet (its fd is `-1`), and the instant Winsock
+        # commands — setsockopt, bind, FIONBIO — are answered by `issue` in
+        # place with no OVERLAPPED. None of them may be handed to
+        # `ensureAssociated`: on `-1` the `createIoCompletionPort` simply
+        # fails, and the op would be dropped without ever completing. A
+        # readiness probe is served by the WSAPoll pass rather than by the
+        # port, so it stays out too.
+        #
+        # FILE: `opOpen`, and a read or write whose fd is a plain
+        # `CreateFileW` HANDLE rather than a SOCKET (backends/files.nim). Such
+        # a handle carries no FILE_FLAG_OVERLAPPED, so it must never be bound
+        # to a completion port; its transfers are made synchronously here
+        # instead — "the file is its own readiness", the rule the POSIX
+        # backends apply. Only a read or a write can land on one, which is
+        # what keeps `GetFileType` off the socket path: every other kind is a
+        # socket op by construction.
+        #
+        # SOCKET: everything else — associate on first use, then issue.
+        let kind = buf[i].kind
+        let unassociated = kind in {opNop, opTimeout, opPollAdd, opSocket,
+                                    opSetSockOpt, opBind, opSetNonBlocking}
+        case kind
+        of opOpen:
+          completeFileOpen(slotIdx, cast[cstring](buf[i].open.buf),
+                           buf[i].open.openFlags, buf[i].open.openMode)
+        of opRead:
+          if isFileHandle(buf[i].fd):
+            completeFileRead(slotIdx, buf[i].fd,
+                             cast[pointer](buf[i].read.buf), buf[i].read.len)
+          elif ensureAssociated(buf[i].fd, lane):
+            issue(lane, slotIdx)
           else:
-            discard
-        elif fdless or ensureAssociated(buf[i].fd, lane):
-          issue(lane, slotIdx)
+            complete(slotIdx, ECancelled)  # closed or foreign handle
+        of opWrite:
+          if isFileHandle(buf[i].fd):
+            completeFileWrite(slotIdx, buf[i].fd,
+                              cast[pointer](buf[i].write.buf), buf[i].write.len)
+          elif ensureAssociated(buf[i].fd, lane):
+            issue(lane, slotIdx)
+          else:
+            complete(slotIdx, ECancelled)
+        else:
+          if unassociated or ensureAssociated(buf[i].fd, lane):
+            issue(lane, slotIdx)
+          else:
+            # Never issued, and a slot nobody completes is a caller parked
+            # until its deadline — so say so now, exactly as the readiness
+            # backends' `cancelPendingOps` does.
+            complete(slotIdx, ECancelled)
     result = servePollAdds(lane)
     # Readiness probes are re-checked every millisecond while any are pending,
     # and no wait outlasts the earliest deadline on this lane.

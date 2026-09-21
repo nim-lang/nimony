@@ -128,11 +128,16 @@ proc `=copy`*(dest: var File; src: File) {.error.}
 when defined(windows):
   const FILE_APPEND_DATA = 0x00000004'u32
 
-  proc win32Mode(mode: FileMode): tuple[access, disposition: DWORD] =
+  proc win32Mode(mode: FileMode): tuple[access, disposition: uint32] =
     ## What a caller's `FileMode` means once it reaches a HANDLE: the Win32
     ## partners of the POSIX flags, carried to the backend in the open op's
     ## `openFlags`/`openMode` words. FILE_APPEND_DATA makes every write land at
     ## end-of-file — the counterpart of `O_APPEND` (no initial seek needed).
+    ##
+    ## `uint32` and not winlean's `DWORD`: `DWORD` is an `importc`'d alias, and
+    ## a tuple built over one comes out of the back end as a C type named after
+    ## the pragmas, so the two spellings of the same tuple no longer assign to
+    ## each other. The constants below are plain `uint32` anyway.
     case mode
     of fmRead: (GENERIC_READ, OPEN_EXISTING)
     of fmWrite: (GENERIC_WRITE, CREATE_ALWAYS)
@@ -151,24 +156,32 @@ when defined(windows):
     var fn = filename
     let m = win32Mode(mode)
     discard submitOpen(fn.toCString, filename.len,
-                       int32(cast[uint32](m.access)),
-                       int32(cast[uint32](m.disposition)), dl, c, addr res)
+                       cast[int32](m.access), cast[int32](m.disposition),
+                       dl, c, addr res)
     suspend()
     if res < 0: raise toErr(res)
     result = OsFileHandle(res)
+
+  proc ringFd(fd: OsFileHandle): cint {.inline.} =
+    ## The ring's fd space is `cint`, so a HANDLE enters it narrowed — and
+    ## comes back out of `submitOpen` already narrowed, which is why the
+    ## backend refuses a handle that does not fit (backends/files.nim). Via
+    ## `uint`, because a HANDLE is pointer-sized and going straight to `uint32`
+    ## is a narrowing cast the C compiler warns about on every use.
+    cint(uint32(cast[uint](fd)))
 
   proc readImpl(fd: OsFileHandle; buf: pointer; len: int;
                 dl: Deadline): int {.passive.} =
     result = 0
     let c = delay()
-    discard submitRead(cint(cast[uint32](fd)), buf, len, dl, c, addr result)
+    discard submitRead(ringFd(fd), buf, len, dl, c, addr result)
     suspend()
 
   proc writeImpl(fd: OsFileHandle; buf: pointer; len: int;
                  dl: Deadline): int {.passive.} =
     result = 0
     let c = delay()
-    discard submitWrite(cint(cast[uint32](fd)), buf, len, dl, c, addr result)
+    discard submitWrite(ringFd(fd), buf, len, dl, c, addr result)
     suspend()
 
   proc closeImpl(fd: OsFileHandle) {.inline.} =

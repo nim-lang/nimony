@@ -26,6 +26,8 @@
 import std/socket
 import std/asyncio
 import std/strtabs
+when defined(windows):
+  import std/envvars   # %SystemRoot%, for the hosts file's path
 import std/locks
 import std/atomics
 import std/assertions
@@ -285,7 +287,9 @@ proc isDots4(s: string): bool =
 
 type
   Resolver* = object
-    hosts: StringTableRef           ## canonical name -> dotted quad
+    hosts: StringTableRef           ## canonical name -> dotted quad. Never `nil`:
+                                    ## every constructor makes the table, so no
+                                    ## reader has to prove it is there.
     servers*: seq[string]           ## nameserver addresses, dotted quads
 
 proc nextToken(s: string; i: var int): string =
@@ -300,9 +304,95 @@ proc nextToken(s: string; i: var int): string =
   for j in start ..< i:
     result.add s[j]
 
+# ------------------------------------------------- the machine's own config ---
+#
+# Two questions every resolver asks its host before it asks anyone else: what
+# names does this machine already know, and who does it ask about the rest.
+# POSIX answers both with a file; Windows answers the first with a file at a
+# different path and the second with an API, because it has no `resolv.conf`
+# to read.
+
+proc hostsFile(): string =
+  ## Where the machine keeps its static name table. The FORMAT is the same
+  ## everywhere — that is what the file is for — so only the path is split.
+  when defined(windows):
+    var root = getEnv("SystemRoot")
+    if root.len == 0: root = "C:\\Windows"
+    result = root & "\\System32\\drivers\\etc\\hosts"
+  else:
+    result = "/etc/hosts"
+
+when defined(windows):
+  # `GetNetworkParams` lives in iphlpapi, which MinGW does not put on the link
+  # line by default — the same arrangement `ioring` makes for ws2_32.
+  {.passL: "-liphlpapi".}
+
+  type
+    IpAddrString {.pure.} = object
+      ## `IP_ADDR_STRING` (iptypes.h): a linked-list node whose payload is the
+      ## address already formatted as a dotted quad, which is exactly the shape
+      ## `Resolver.servers` holds — so there is nothing to parse.
+      next: nil ptr IpAddrString
+      ipAddress: array[16, char]
+      ipMask: array[16, char]
+      context: uint32
+
+    FixedInfo {.pure.} = object
+      ## `FIXED_INFO` (iptypes.h). Spelled out in full rather than reached into
+      ## by a hard-coded offset: the buffers are MAX_HOSTNAME_LEN+4,
+      ## MAX_DOMAIN_NAME_LEN+4 and MAX_SCOPE_ID_LEN+4, and letting the compiler
+      ## lay the struct out is the only spelling that cannot drift.
+      hostName: array[132, char]
+      domainName: array[132, char]
+      currentDnsServer: nil ptr IpAddrString
+      dnsServerList: IpAddrString
+      nodeType: uint32
+      scopeId: array[260, char]
+      enableRouting: uint32
+      enableProxy: uint32
+      enableDns: uint32
+
+  const ErrorBufferOverflow = 111'u32
+
+  proc getNetworkParams(fixedInfo: nil pointer; outBufLen: ptr uint32): uint32 {.
+    stdcall, importc: "GetNetworkParams", dynlib: "iphlpapi.dll".}
+
+  proc cstrField(a: array[16, char]): string =
+    ## The NUL-terminated dotted quad out of a fixed-size C buffer.
+    result = ""
+    var i = 0
+    while i < a.len and a[i] != '\0':
+      result.add a[i]
+      inc i
+
+  proc readNameServers(r: var Resolver) =
+    ## Windows' answer to `/etc/resolv.conf`: there is no such file, so the
+    ## list comes from `GetNetworkParams`, which reports the resolvers the
+    ## stack is actually configured with — DHCP-assigned ones included, which
+    ## is most of them. A machine whose configuration cannot be read resolves
+    ## nothing rather than resolving wrongly, the same answer the POSIX arm
+    ## gives for a missing file.
+    ##
+    ## Not a ring read and not `.passive`: this asks the local TCP/IP stack
+    ## for its own settings, which is a memory lookup and not I/O. Only the
+    ## hosts FILE goes through the ring.
+    r.servers = @[]
+    var size = 0'u32
+    if getNetworkParams(nil, addr size) != ErrorBufferOverflow: return
+    if size == 0'u32: return
+    var buf = newSeq[uint8](int(size))
+    if getNetworkParams(addr buf[0], addr size) != 0'u32: return
+    let fi = cast[ptr FixedInfo](addr buf[0])
+    var node: nil ptr IpAddrString = addr fi.dnsServerList
+    while node != nil:
+      let cur = node
+      let s = cstrField(cur.ipAddress)
+      if isDots4(s): r.servers.add s
+      node = cur.next
+
 proc readHosts(t: StringTableRef; dl: Deadline) {.passive, raises.} =
   try:
-    let f = readFile("/etc/hosts", dl)
+    let f = readFile(hostsFile(), dl)
     var i = 0
     while i < f.len:
       var j = i
@@ -320,36 +410,41 @@ proc readHosts(t: StringTableRef; dl: Deadline) {.passive, raises.} =
   except ErrorCode:
     discard                       # a machine without the file resolves upstream
 
-proc readResolvConf(r: var Resolver; dl: Deadline) {.passive, raises.} =
-  r.servers = @[]
-  try:
-    let f = readFile("/etc/resolv.conf", dl)
-    var i = 0
-    while i < f.len:
-      var j = i
-      while j < f.len and f[j] != '\n':
-        inc j
-      var k = i
-      var kw = nextToken(f, k)
-      if kw == "nameserver":
-        var nsAddr = nextToken(f, k)
-        if isDots4(nsAddr) and nsAddr[0] != '#':
-          r.servers.add nsAddr
-      i = j + 1
-  except ErrorCode:
-    discard
+when not defined(windows):
+  proc readNameServers(r: var Resolver; dl: Deadline) {.passive, raises.} =
+    ## The `nameserver` lines of `/etc/resolv.conf`, in order.
+    r.servers = @[]
+    try:
+      let f = readFile("/etc/resolv.conf", dl)
+      var i = 0
+      while i < f.len:
+        var j = i
+        while j < f.len and f[j] != '\n':
+          inc j
+        var k = i
+        var kw = nextToken(f, k)
+        if kw == "nameserver":
+          var nsAddr = nextToken(f, k)
+          if isDots4(nsAddr) and nsAddr[0] != '#':
+            r.servers.add nsAddr
+        i = j + 1
+    except ErrorCode:
+      discard
 
 proc initResolver*(dl = never): Resolver {.passive, raises.} =
-  ## `std/dns`'s client: `/etc/hosts` wins over the resolver, which asks the
-  ## first `nameserver` line of `/etc/resolv.conf`. Files that parse partially
-  ## are used partially — a broken `/etc/hosts` does not take the resolver
-  ## down with it. The two config files are read through the ring (`asyncio`),
-  ## so construction is `{.passive.}` and bounded by `dl` like everything else
-  ## that touches the wire.
-  result = default(Resolver)
-  result.hosts = newStringTable(modeCaseInsensitive)
+  ## `std/dns`'s client: the machine's own hosts table wins over the network,
+  ## which is asked at the nameservers the machine is configured with — the
+  ## `nameserver` lines of `/etc/resolv.conf` on POSIX, `GetNetworkParams` on
+  ## Windows, which has no such file. Configuration that parses partially is
+  ## used partially: a broken hosts file does not take the resolver down with
+  ## it. The hosts file is read through the ring (`asyncio`), so construction
+  ## is `{.passive.}` and bounded by `dl` like everything else here.
+  result = Resolver(hosts: newStringTable(modeCaseInsensitive), servers: @[])
   readHosts(result.hosts, dl)
-  readResolvConf(result, dl)
+  when defined(windows):
+    readNameServers(result)
+  else:
+    readNameServers(result, dl)
 
 proc query*(r: var Resolver; host: string; serverIdx: int; port: uint16;
             dl: Deadline): Message {.passive, raises.} =
@@ -402,18 +497,33 @@ proc resolveOne(r: var Resolver; hostIn: string; serverIdx: int;
       return a.ip4
   raise NameNotFound
 
+proc isLocalhost(host: string): bool =
+  ## `localhost` and anything under it, the names RFC 6761 reserves: they
+  ## resolve to loopback and are never put on the wire. A rule and not a table
+  ## entry because it has to hold on a machine whose hosts file does not say
+  ## so — which is every stock Windows install, where the two `localhost`
+  ## lines ship commented out and the stack answers the name itself.
+  if host == "localhost": return true
+  const Suffix = ".localhost"
+  result = host.len > Suffix.len and
+           host[host.len - Suffix.len .. host.len - 1] == Suffix
+
 proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, raises.} =
-  ## The IPv4 dotted quad for `hostIn`: from `/etc/hosts` when it is listed
-  ## there, else from the first nameserver that answers. Follows CNAME chains
-  ## inside the one response; raises `ValueError` for a name the resolver
-  ## cannot look up at all, `TimeoutError` when the budget runs out,
-  ## `NameNotFound` when the name is not known to the resolver or the zone it
-  ## asked.
+  ## The IPv4 dotted quad for `hostIn`: from the machine's hosts table when it
+  ## is listed there, from the loopback rule when it is a `localhost` name,
+  ## else from the first nameserver that answers. Follows CNAME chains inside
+  ## the one response; raises `ValueError` for a name the resolver cannot look
+  ## up at all, `TimeoutError` when the budget runs out, `NameNotFound` when
+  ## the name is not known to the resolver or the zone it asked.
   let host = canon(hostIn)
   if host.len == 0:
     raise ValueError
-  if r.hosts != nil and r.hosts.hasKey(host):
+  if r.hosts.hasKey(host):
     return r.hosts[host]
+  if isLocalhost(host):
+    # After the table, so an explicit mapping still wins, but before the wire:
+    # RFC 6761 says these names never leave the machine.
+    return "127.0.0.1"
   if r.servers.len == 0:
     raise ValueError            # no nameserver: this machine resolves nothing
   for serverIdx in 0 ..< r.servers.len:
@@ -435,7 +545,11 @@ proc resolve*(r: var Resolver; hostIn: string; dl = never): string {.passive, ra
 # locking with `atomicLoad`/`atomicStore` on the flag).
 
 var
-  gDefaultResolver: Resolver
+  gDefaultResolver = Resolver(hosts: newStringTable(modeCaseInsensitive),
+                              servers: @[])
+    ## An empty resolver until the first `defaultResolver` replaces it: the
+    ## table is not-nil, so the global is born with one rather than with a
+    ## hole every reader would have to prove away.
   gDefaultResolverLock: Lock
   gDefaultResolverInited: int     ## 0 = not yet, 1 = ready
 
@@ -504,7 +618,8 @@ type
     rclass*: uint16
 
   DnsRequest* = object
-    sock: ptr UdpSocket      ## the server's socket, for `respond`
+    sock: nil ptr UdpSocket  ## the server's socket, for `respond`; `nil` in a
+                             ## `DnsRequest()` a serve loop has not filled yet
     id: uint16               ## the query's id; echoed in the reply
     flags: uint16            ## the query's header flags; RD is echoed
     rcode*: uint16           ## response code; 0 unless the handler refuses
@@ -609,5 +724,8 @@ proc respond*(r: var DnsRequest; dl = never) {.passive, raises.} =
     resp.answers.add a
   var outWire: seq[char] = @[]
   encodeMessage(resp, outWire)
-  if r.sock != nil:
-    sendTo(r.sock[], outWire, r.peer, budget(r.sock[], dl))
+  # Through a local: the prover follows a `let` across the branch, where a
+  # field of a `var` parameter it will not.
+  let sk = r.sock
+  if sk != nil:
+    sendTo(sk[], outWire, r.peer, budget(sk[], dl))
