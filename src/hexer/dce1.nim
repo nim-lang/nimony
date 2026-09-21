@@ -8,13 +8,18 @@
 #
 
 ## Prepare for dead code elimination and generic instance merging.
+##
+## The analysis rides in the module's own `.x.nif`, as the first statement of
+## its `(stmts …)`. `withDceSection` puts it there, `readModuleAnalysis` reads
+## it back by parsing that one subtree and nothing else.
 
-import std / [assertions, tables, hashes, sets, syncio]
+import std / [assertions, tables, hashes, sets, syncio, algorithm]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lengc / [leng_model]
 
 import ".." / lib / symparser
+from ".." / lib / nifcoreparse import nil
 
 type
   ModuleAnalysis* = object
@@ -75,71 +80,128 @@ const
   depName = "uses"
   offerName = "offers"
   rootName = "roots"
+  dceName* = "dce"
+    ## Head of the analysis section hexer parks at the top of every `.x.nif`.
 
-proc prepDce(outputFilename: string; n: Cursor; dottedSuffix: string) =
-  var n = n
+proc cmpSyms(a, b: SymId): int = cmpNames(pool.symString(a), pool.symString(b))
+
+proc sortedSyms*(syms: HashSet[SymId]): seq[SymId] =
+  ## A `SymId` is a pool index handed out in interning order, so an edit that
+  ## interns one more symbol (a local, say) renumbers every one after it. The
+  ## `.x.nif` carrying this section is written `OnlyIfChanged`, so its bytes
+  ## must depend on the content alone — hence name order, not `SymId` order.
+  result = newSeq[SymId](0)
+  for s in syms: result.add s
+  sort result, cmpSyms
+
+proc sortedSymNames*(syms: HashSet[SymId]): seq[string] =
+  ## `sortedSyms` for a writer that speaks strings (`dce2.writeLiveFile`).
+  result = newSeq[string](0)
+  for s in syms: result.add pool.symString(s)
+  sort result, cmpNames
+
+proc sortedKeys*[T](t: Table[string, T]): seq[string] =
+  result = newSeq[string](0)
+  for k in t.keys: result.add k
+  sort result, cmpNames
+
+proc addSymList(dest: var TokenBuf; tag: string; syms: HashSet[SymId]) =
+  dest.addParLe globalTags.registerTag(tag)
+  for s in sortedSyms(syms): dest.addSymUse s
+  dest.addParRi()
+
+proc addDceSection(dest: var TokenBuf; a: ModuleAnalysis) =
+  ## `(dce (roots …) (uses owner dep…)* (offers …))`. No line info: the
+  ## section describes symbols, not source positions, and the bytes it does
+  ## not write are bytes that cannot shift.
+  dest.addParLe globalTags.registerTag(dceName)
+  addSymList dest, rootName, a.roots
+
+  var owners = newSeq[SymId](0)
+  for owner in a.uses.keys: owners.add owner
+  sort owners, cmpSyms
+  for owner in owners:
+    dest.addParLe globalTags.registerTag(depName)
+    dest.addSymUse owner
+    for dep in sortedSyms(a.uses.getOrQuit(owner)): dest.addSymUse dep
+    dest.addParRi()
+
+  addSymList dest, offerName, a.offers
+  dest.addParRi()
+
+proc withDceSection*(buf: var TokenBuf): TokenBuf =
+  ## Returns the module's `(stmts …)` with its DCE analysis spliced in as the
+  ## first statement, which is where `readModuleAnalysis` expects to find it.
+  ## Riding along in the `.x.nif` rather than in a `.dce.nif` of its own: the
+  ## analysis is a projection of this very buffer, so a second file would be a
+  ## second write per module for information the reader can reach by parsing
+  ## one subtree.
+  var probe = beginRead(buf)
   var a = ModuleAnalysis()
-  tr n, a, SymId(0)
+  tr probe, a, SymId(0)
 
-  var b = nifbuilder.open(outputFilename, writeMode = OnlyIfChanged)
-  b.withTree "stmts":
-    b.withTree rootName:
-      for root in a.roots:
-        b.addSymbol pool.symString(root), dottedSuffix
-    for owner, uses in mpairs(a.uses):
-      b.withTree depName:
-        b.addSymbol pool.symString(owner), dottedSuffix
-        for dep in uses:
-          b.addSymbol pool.symString(dep), dottedSuffix
-    b.withTree offerName:
-      for offer in a.offers:
-        b.addSymbol pool.symString(offer), dottedSuffix
-  b.close()
+  result = createTokenBuf(buf.len + 64)
+  var n = beginRead(buf)
+  result.addParLe n.cursorTagId, n.info
+  n.into:
+    addDceSection result, a
+    while n.hasMore:
+      result.takeTree n
+  result.addParRi()
 
 proc readModuleAnalysis*(infile: string): ModuleAnalysis =
-  var buf = parseFromFile(infile)
-  var n = beginRead(buf)
-  result = ModuleAnalysis()
-  if n.stmtKind == StmtsS:
-    let depTag = globalTags.registerTag(depName)
-    let offerTag = globalTags.registerTag(offerName)
-    let rootTag = globalTags.registerTag(rootName)
-    n.into:                                     # (stmts ...)
-      while n.hasMore:
-        if not n.isTagLit:
-          raiseAssert infile & ": expected ParLe"
-        if n.cursorTagId == rootTag:
-          n.into:                               # (roots ...)
-            while n.hasMore:
-              if n.kind == Symbol:
-                result.roots.incl(n.symId)
-                skip n
-              else:
-                raiseAssert infile & ": expected Symbol"
-        elif n.cursorTagId == depTag:
-          n.into:                               # (uses ...)
-            let key = n.symId
-            result.uses[key] = initHashSet[SymId]()
-            skip n
-            while n.hasMore:
-              if n.kind == Symbol:
-                result.uses.getOrQuit(key).incl(n.symId)
-                skip n
-              else:
-                raiseAssert infile & ": expected Symbol"
-        elif n.cursorTagId == offerTag:
-          n.into:                               # (offers ...)
-            while n.hasMore:
-              if n.kind == Symbol:
-                result.offers.incl(n.symId)
-                skip n
-              else:
-                raiseAssert infile & ": expected Symbol"
-        else:
-          raiseAssert infile & ": expected (roots|uses|offers)"
+  ## Reads the `(dce …)` section back out of a module's `.x.nif`. Only that
+  ## one subtree is parsed: the body behind it is the bulk of the file and no
+  ## business of the liveness fixpoint.
+  var r = nifreader.open(infile)
+  discard nifreader.processDirectives(r)
+  var tok = default(nifreader.ExpandedToken)
+  nifreader.next(r, tok)                        # `(stmts`
+  var buf = createTokenBuf(64)
+  if tok.tk == ParLe:
+    nifcoreparse.parse(r, buf)                  # one subtree: `(dce …)`
+  nifreader.close(r)
 
-proc writeDceOutput*(buf: var TokenBuf; outfile, dottedSuffix: string) =
-  ## Direct overload that works on an already-parsed token buffer,
-  ## avoiding the file read + parse step.
-  let n = beginRead(buf)
-  prepDce(outfile, n, dottedSuffix)
+  result = ModuleAnalysis()
+  var n = beginRead(buf)
+  if not (n.isTagLit and n.cursorTagId == globalTags.registerTag(dceName)):
+    # The only way to get here is a cache an older hexer filled, which wrote
+    # the analysis to a `.dce.nif` of its own and nothing into the `.x.nif`.
+    raiseAssert infile & ": no (dce …) section; the nifcache predates this " &
+                "hexer and must be deleted"
+  let depTag = globalTags.registerTag(depName)
+  let offerTag = globalTags.registerTag(offerName)
+  let rootTag = globalTags.registerTag(rootName)
+  n.into:                                       # (dce ...)
+    while n.hasMore:
+      if not n.isTagLit:
+        raiseAssert infile & ": expected ParLe"
+      if n.cursorTagId == rootTag:
+        n.into:                                 # (roots ...)
+          while n.hasMore:
+            if n.kind == Symbol:
+              result.roots.incl(n.symId)
+              skip n
+            else:
+              raiseAssert infile & ": expected Symbol"
+      elif n.cursorTagId == depTag:
+        n.into:                                 # (uses ...)
+          let key = n.symId
+          result.uses[key] = initHashSet[SymId]()
+          skip n
+          while n.hasMore:
+            if n.kind == Symbol:
+              result.uses.getOrQuit(key).incl(n.symId)
+              skip n
+            else:
+              raiseAssert infile & ": expected Symbol"
+      elif n.cursorTagId == offerTag:
+        n.into:                                 # (offers ...)
+          while n.hasMore:
+            if n.kind == Symbol:
+              result.offers.incl(n.symId)
+              skip n
+            else:
+              raiseAssert infile & ": expected Symbol"
+      else:
+        raiseAssert infile & ": expected (roots|uses|offers)"

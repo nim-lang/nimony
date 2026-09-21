@@ -2872,11 +2872,13 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
 
   var outputBuf = makeOutput(c, cdest, rootInfo)
   optimizeLengOutput(outputBuf, c.main, c.bits)
+  # The DCE analysis goes in as the module's first statement, computed from the
+  # buffer we are about to write — after the optimizer, whose splices decide
+  # which calls survive to be counted. `dceLive` reads that one subtree back
+  # and never touches the body, so the analysis costs no file of its own.
+  var withDce = withDceSection(outputBuf)
   try:
-    writeFile outputBuf, destfileName, OnlyIfChanged
+    writeFile withDce, destfileName, OnlyIfChanged
   except:
     quit "could not write file: " & destfileName
   c.typeCache.closeScope()
-
-  # Use the in-memory buffer to avoid re-reading the file we just wrote
-  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif", "." & c.main

@@ -16,7 +16,7 @@ import std / [strutils, syncio]
 type
   TSystemOS* = enum # Also add OS in initialization section and alias
                     # conditionals to condsyms (end of module).
-    osEmbedded, osDos, osWindows, osOs2, osLinux, osMorphos, osSkyos, osSolaris,
+    osEmbedded, osDos, osWindows, osOs2, osLinux, osMorphos, osSkyos, osSolaris, osIllumos,
     osIrix, osNetbsd, osFreebsd, osOpenbsd, osDragonfly, osCrossos, osAix, osPalmos, osQnx,
     osAmiga, osAtari, osNetware, osMacos, osMacosx, osIos, osHaiku, osAndroid, osVxWorks
     osGenode, osJS, osNimVM, osStandalone, osNintendoSwitch, osFreeRTOS, osZephyr,
@@ -85,6 +85,13 @@ const
       scriptExt: ".sh", curDir: ".", exeExt: "", extSep: ".",
       props: {ospNeedsPIC, ospPosix}),
      (name: "Solaris", parDir: "..",
+      dllFrmt: "lib$1.so", altDirSep: "/",
+      objExt: ".o", newLine: "\x0A",
+      pathSep: ":", dirSep: "/",
+      scriptExt: ".sh", curDir: ".",
+      exeExt: "", extSep: ".",
+      props: {ospNeedsPIC, ospPosix}),
+     (name: "illumos", parDir: "..",
       dllFrmt: "lib$1.so", altDirSep: "/",
       objExt: ".o", newLine: "\x0A",
       pathSep: ":", dirSep: "/",
