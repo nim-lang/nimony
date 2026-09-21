@@ -74,25 +74,54 @@ proc tagKind(c: Cursor): NiflerKind {.inline.} =
   ## Every tag in the buffer came from a `NiflerKind` (`parserrt.tagId`).
   cast[NiflerKind](resolvedTagId(c))
 
-proc emptyRuns(tag, parentTag: NiflerKind; inForTuple: bool; kids: int): seq[int] =
-  ## For each child index, how many dots `addEmpty` wrote in one call starting
-  ## there (0: part of an earlier run).
-  result = newSeq[int](kids)
-  for i in 0 ..< kids: result[i] = 1
-  proc run(r: var seq[int]; start, n: int) =
-    if start + n <= r.len:
-      r[start] = n
-      for i in start+1 ..< start+n: r[i] = 0
+type
+  EmptyRuns = object
+    ## Where `addEmpty(n)` wrote more than one dot in a single call. Two slots
+    ## are enough: `emptyRuns` never marks more, and every other child index
+    ## is one dot of its own.
+    s1, n1, s2, n2: int
+
+proc runAt(r: EmptyRuns; i: int): int =
+  ## How many dots the call starting at child `i` wrote; 0 when `i` was
+  ## swallowed by an earlier run. The runs are tested before the ranges they
+  ## span, because a later run may start inside an earlier one.
+  if i == r.s1: r.n1
+  elif i == r.s2: r.n2
+  elif i > r.s1 and i < r.s1 + r.n1: 0
+  elif i > r.s2 and i < r.s2 + r.n2: 0
+  else: 1
+
+proc childCount(c: Cursor): int =
+  ## `skip` jumps, so this is cheap -- but it is still asked only for the
+  ## handful of tags whose runs depend on the count, because the seq that
+  ## used to hold every node's children is what made `emit` slow: two heap
+  ## allocations per tag node, ~40 ms of a ~110 ms run over `sem.nim`.
+  result = 0
+  var k = childCursor(c)
+  while k.hasMore:
+    inc result
+    skip k
+
+proc emptyRuns(c: Cursor; tag, parentTag: NiflerKind; inForTuple: bool): EmptyRuns =
+  result = EmptyRuns(s1: -1, n1: 0, s2: -1, n2: 0)
   case tag
   of ProctypeL, ItertypeL:
-    if kids > 0:
-      run(result, 0, 4)
-      run(result, kids - 2, 2)
+    let kids = childCount(c)
+    if kids >= 4:
+      result.s1 = 0
+      result.n1 = 4
+    if kids >= 2:
+      result.s2 = kids - 2
+      result.n2 = 2
   of LetL, VarL, ConstL:           # the section of a tuple unpacking
     if parentTag == UnpacktupL and inForTuple:
-      if kids == 5: run(result, 1, 4)
+      if childCount(c) == 5:
+        result.s1 = 1
+        result.n1 = 4
     elif parentTag == UnpacktupL or parentTag == UnpackflatL:
-      if kids == 5: run(result, 3, 2)
+      if childCount(c) == 5:
+        result.s1 = 3
+        result.n1 = 2
   else: discard
 
 proc isDecl(k: NiflerKind): bool =
@@ -115,14 +144,10 @@ proc emit(w: var Writer; c: var Cursor; reference: NifLineInfo;
   case c.kind
   of TagLit:
     let tag = tagKind(c)
-    var kids: seq[NifKind] = @[]
-    var k = childCursor(c)
-    while k.hasMore:
-      kids.add k.kind
-      skip k
+    let first = childCursor(c)
     # `nkLambda` writes its position after the name placeholder:
     # `(proc .@5,1 . . . (params) ...)`
-    let lambda = tag == ProcL and kids.len > 0 and kids[0] == DotToken
+    let lambda = tag == ProcL and first.hasMore and first.kind == DotToken
     # `nkStmtListExpr` writes none on `expr` and its own on the `stmts`
     let stmtListExpr = tag == ExprL
     w.b.addTree tagName(c)
@@ -132,7 +157,7 @@ proc emit(w: var Writer; c: var Cursor; reference: NifLineInfo;
     let childInForTuple = tag == UnpacktupL and forLoop
     let childForLoop = tag == ForL or tag == UnpackflatL
     let routine = isRoutine(tag)
-    let runs = emptyRuns(tag, parentTag, inForTuple, kids.len)
+    let runs = emptyRuns(c, tag, parentTag, inForTuple)
     var i = 0
     var prevParams = NoLineInfo
     c.into:
@@ -151,8 +176,9 @@ proc emit(w: var Writer; c: var Cursor; reference: NifLineInfo;
                                          # a space even after a `)`
           c.inc
         elif c.kind == DotToken:
-          if runs[i] > 0:
-            w.b.addEmpty runs[i]
+          let dots = runAt(runs, i)
+          if dots > 0:
+            w.b.addEmpty dots
             if lambda and i == 0: w.lineInfo(info, reference)
           c.inc
         else:

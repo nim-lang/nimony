@@ -713,10 +713,12 @@ proc execNifler(c: var DepContext; f: FilePair) =
       semos.fileExists(depsFile) and getLastModTime(depsFile) > srcTime:
     discard "nothing to do"
   else:
-    let docsFlag = if preserveDocs: " --docs" else: ""
-    let cmd = quoteShell(c.nifler) & " --portablePaths --deps" & docsFlag & " parse " &
-      quoteShell(f.nimFile) & " " & quoteShell(output)
-    exec cmd
+    var args: seq[string] = @["--portablePaths", "--deps"]
+    if preserveDocs: args.add "--docs"
+    args.add "parse"
+    args.add f.nimFile
+    args.add output
+    execArgs c.nifler, args
 
 proc importSystem(c: var DepContext; current: Node) =
   let p = c.toPair(stdlibFile("std/system.nim"))
