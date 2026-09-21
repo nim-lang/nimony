@@ -506,11 +506,13 @@ when defined(windows):
     stdcall, dynlib: "kernel32", importc: "K32GetProcessMemoryInfo".}
 
   proc peakKiBOf(p: Process): int =
-    ## Peak working set of an exited child, 0 if Windows won't say. osproc
-    ## holds the process handle until `close`, which keeps the kernel object
-    ## -- counters and pid -- alive after the exit. Wine (10.0) answers this
-    ## only for the calling process and denies it for any other, so under Wine
-    ## the memory column stays empty.
+    ## Peak working set of a child that has just exited, 0 if Windows won't
+    ## say. The pid still resolves at this point ONLY because osproc's process
+    ## handle is still open: it is the last handle to the kernel object, and
+    ## `peekExitCode` (not just `close`) drops it. Call this before either of
+    ## them -- see `waitForAnyJob`. Wine (10.0) answers this only for the
+    ## calling process and denies it for any other, so under Wine the memory
+    ## column stays empty.
     result = 0
     let h = openProcess(PROCESS_QUERY_LIMITED_INFORMATION or PROCESS_VM_READ,
                         0, DWORD(p.processID))
@@ -530,8 +532,13 @@ proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
     while true:
       for idx in 0 ..< pool.len:
         if not osproc.running(pool[idx].process):
-          exitCode = try: peekExitCode(pool[idx].process) except CatchableError: -1
+          # Order matters: `peekExitCode` closes the process handle (it calls
+          # osproc's `closeThreadAndProcessHandle`), that handle is the last
+          # one alive, and once the kernel object goes so does the pid --
+          # `openProcess` then fails with ERROR_INVALID_PARAMETER and the
+          # memory column reads 0. Sample the memory first.
           peakKiB = peakKiBOf(pool[idx].process)
+          exitCode = try: peekExitCode(pool[idx].process) except CatchableError: -1
           return idx
       sleep 1
   else:

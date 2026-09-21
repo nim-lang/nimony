@@ -256,7 +256,9 @@ a rune index to a byte index.
 Hash values are prerequisites for `Table` and `HashSet` keys.
 
 - Combine hashes with `!&`, finalize with `!$`.
-- The `Hashable` concept describes what a type needs to be hashable.
+- The `Hashable` concept describes what a type needs to be hashable. The
+  `hash` overloads live next to it, which is why a `Hashable` (or
+  `tables.Keyable`) check succeeds without importing this module.
 - `hashIgnoreStyle` matches `cmpIgnoreStyle` — use them together
   for Nim-style identifier tables.
 
@@ -266,9 +268,12 @@ Hash values are prerequisites for `Table` and `HashSet` keys.
 [Source](../lib/std/tables.nim) ·
 [Examples](../examples/tables_basics.nim)
 
-Generic hash tables. Keys must satisfy `Keyable` (have `==` and `hash`).
-You must `import std/hashes` alongside `std/tables` to make the `hash`
-procs visible — tables does not re-export them.
+Generic hash tables. Keys must satisfy `Keyable`, which is `Hashable`
+(from `std/hashes`) plus `==`. The builtin key types need no import of
+their own: a concept requirement is resolved in the module that declares
+it, so `hash` is found in `std/hashes` even where it is not imported.
+Import `std/hashes` when you write a `hash` for your own key type, or
+need `Hash`, `!&` and `!$` by name.
 
 The table uses a hybrid strategy: **linear scan for ≤ 4 entries**,
 hash table with open addressing for larger sizes. This means small
@@ -287,8 +292,8 @@ tables have no hashing overhead at all.
 [Source](../lib/std/sets.nim) ·
 [Examples](../examples/sets_basics.nim)
 
-Hash-based sets for any hashable type. Built on top of `Table[T, bool]`.
-Like `tables`, you must also `import std/hashes`.
+Hash-based sets for any hashable type. Built on top of `Table[T, bool]`,
+so element types must satisfy `Keyable` under the same rules as table keys.
 
 - `containsOrIncl` is the deduplication primitive — returns whether
   the element was already present, and adds it if not.
