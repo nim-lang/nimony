@@ -41,6 +41,10 @@ Command:
   l project.nim               compile the full project via LLVM backend
   n project.nim               compile the full project via the native backend
                               (arkham + nifasm; static, libc-free executable)
+  w project.nim               compile the full project via the wasm backend
+                              (`jorogumo w`; one whole-program .wasm, no linker)
+  j project.nim               compile the full project via the JS backend
+                              (`jorogumo j`; one self-contained .js, no linker)
   check project.nim           check the full project for errors; can be
                               combined with `--usages`, `--def` for
                               editor integration
@@ -60,13 +64,22 @@ Options:
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
-  --mm:STRATEGY             select the memory management strategy; the name
-                            maps to `system/<strategy>.nim` in the stdlib.
-                            Possible values: atomicArc (default), arc
+  --mm:STRATEGY|PATH        select the memory management strategy; a name maps
+                            to `system/<strategy>.nim` in the stdlib (possible
+                            values: atomicArc (default), arc), a path selects
+                            a runtime of your own (e.g. `--mm:rt/mygc`)
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
+  --browser                 JS backend: emit for a browser host (same as
+                            `--target:browser`; `--target:node` is the
+                            default). No Node `fs`/`process` in the preamble,
+                            complete stdout/stderr lines go to
+                            console.log/console.error, and the export surface
+                            lands on globalThis.NIF.
   --silentMake              suppresses make output
+  --parallelBuild:N         run at most N build processes at once;
+                            0 (the default) = one per core
   --profile                 print nifmake timing profile of executed commands
   --report                  print machine-readable per-command invocation
                             counts on stdout (one line per nifmake call)
@@ -106,10 +119,10 @@ Options:
 """
 
 proc writeHelp() = quit(Usage, QuitSuccess)
-proc writeVersion() = quit(Version & "\n", QuitSuccess)
+proc writeVersion() = quit(Version & " " & HostPlatform & "\n", QuitSuccess)
 
 proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: set[ModuleFlag];
-                         commandLineArgs: string; forceRebuild: bool) =
+                         commandLineArgs, hostCommandLineArgs: string; forceRebuild: bool) =
   let nifler = parserTool()
   let name = moduleSuffix(nimFile, config.paths)
   let src = config.nifcachePath / name & ".p.nif"
@@ -117,7 +130,8 @@ proc processSingleModule(nimFile: string; config: sink NifConfig; moduleFlags: s
   let toforceRebuild = if forceRebuild: " -f " else: ""
   exec quoteShell(nifler) & " --portablePaths p " & toforceRebuild & quoteShell(nimFile) & " " &
     quoteShell(src)
-  semcheck(@[src], @[dest], ensureMove config, moduleFlags, commandLineArgs, true)
+  semcheck(@[src], @[dest], ensureMove config, moduleFlags, commandLineArgs,
+           hostCommandLineArgs, true)
 
 type
   Command = enum
@@ -142,11 +156,18 @@ proc dispatchBasicCommand(key: string; config: var NifConfig): Command =
     config.addDefine "nimNativeIo"
     FullProject
   of "w":
-    # Wasm backend: Leng -> ithaqua, producing one whole-program `.wasm`
+    # Wasm backend: Leng -> `jorogumo w`, producing one whole-program `.wasm`
     # module (no C compiler, no linker — the JS/wasm host resolves the fixed
     # env import set). The target is implied after CLI parsing (see the
     # backendWasm block in handleCmdLine): wasm32/standalone/32 bits.
     config.backend = backendWasm
+    FullProject
+  of "j":
+    # JS backend: Leng -> `jorogumo j`, producing one self-contained `.js` program
+    # (no C compiler, no linker, no host import object — the file runs on a
+    # bare `node file.js`). The target is implied after CLI parsing, exactly
+    # as for wasm: the two backends share one 32-bit freestanding model.
+    config.backend = backendJs
     FullProject
   of "check":
     CheckProject
@@ -173,6 +194,9 @@ type
     config: NifConfig
     commandLineArgs: string
     commandLineArgsLengc: string
+    hostCommandLineArgs: string
+      ## `commandLineArgs` minus the target triple: what a compile-time-eval
+      ## process (a macro plugin build) is given. See `parseCommonOption`.
     passC: string
     passL: string
     executableArgs: string
@@ -188,6 +212,7 @@ proc createCmdOptions(baseDir: sink string): CmdOptions =
     config: initNifConfig(baseDir),
     commandLineArgs: "",
     commandLineArgsLengc: "",
+    hostCommandLineArgs: "",
     isChild: false,
     passC: "",
     passL: "",
@@ -218,6 +243,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
       else:
         var forwardArg = true
         var forwardArgLengc = false
+        var forwardArgHost = true
         # Handle special cases first, then try common parser
         let keyNorm = normalize(key)
         if keyNorm == "help":
@@ -242,7 +268,7 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
           if normalize(val) == "danger":
             c.checkModes = {}
         elif parseCommonOption(key, val, c.config, c.moduleFlags, forwardArg, forwardArgLengc,
-                              helpMsg = Usage, versionMsg = Version & "\n"):
+                              forwardArgHost, helpMsg = Usage, versionMsg = Version & " " & HostPlatform & "\n"):
           discard "handled by common CLI parser"
         else:
           # Handle nimony-specific options
@@ -289,6 +315,17 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             c.config.addDefine "nimNativeAlloc"
             c.config.addDefine "nimNativeIo"
             forwardArg = false
+          of "browser":
+            # JS backend: emit for a browser host instead of node. Consumed here
+            # and forwarded to jorogumo as --target:browser (see deps.nim).
+            c.config.jsBrowser = true
+            forwardArg = false
+          of "target":
+            case normalize(val)
+            of "browser": c.config.jsBrowser = true
+            of "node", "": c.config.jsBrowser = false
+            else: quit "invalid value for --target (browser|node)"
+            forwardArg = false
           of "passc":
             if c.passC.len > 0:
               c.passC.add " "
@@ -310,6 +347,10 @@ proc handleCmdLine(c: var CmdOptions; cmdLineArgs: seq[string]; mode: CmdMode) =
             # literal quotes reach the tool). The forwarded compiler flags are
             # shell-safe unquoted, so `selfExec`'s raw splice is fine too.
             c.commandLineArgs.add ":" & val
+          if forwardArgHost:
+            c.hostCommandLineArgs.add " --" & key
+            if val.len > 0:
+              c.hostCommandLineArgs.add ":" & val
         if forwardArgLengc:
           c.commandLineArgsLengc.add " --" & key
           if val.len > 0:
@@ -337,6 +378,7 @@ proc compileProgram(c: var CmdOptions) =
     # as its value. Append `:value` only when there is one, matching how every
     # other forwarded option is built below.
     c.commandLineArgs.add (if flags.len > 0: " --flags:" & flags else: " --flags")
+    c.hostCommandLineArgs.add (if flags.len > 0: " --flags:" & flags else: " --flags")
   # Forward the active check modes to the hexer code generator too (nifcgen
   # injects bound/range-check calls); without this it always used DefaultSettings.
   c.config.checkFlags = genFlags(c.checkModes)
@@ -350,19 +392,25 @@ proc compileProgram(c: var CmdOptions) =
   # which only sees defines forwarded on its command line (config.defines is the
   # cache key but not enough on its own) — so inject them the same way a user's
   # `-d:` does, and record them in config.defines so the cache key tracks them.
-  if c.config.backend == backendWasm:
-    # The wasm backend has exactly one target; imply it here — after CLI
-    # parsing — so `nimony w x.nim` works bare. Forwarded like user flags
-    # because nimsem sees only its command line (appended last, so it also
-    # wins over a contradictory explicit --cpu/--os).
+  if c.config.backend in {backendWasm, backendJs}:
+    # The wasm and JS backends have exactly one target each, and they are the
+    # same target: 32-bit, freestanding, wasm32 word size. Imply it here —
+    # after CLI parsing — so `nimony w x.nim` / `nimony j x.nim` work bare.
+    # Forwarded like user flags because nimsem sees only its command line
+    # (appended last, so it also wins over a contradictory explicit
+    # --cpu/--os).
     #
     # `--os:standalone`, NOT `embedded`. Both are freestanding and it is easy to
     # read them as the same target, but they pick different stdlib arms and only
-    # one of them is wasm's. `embedded` is BARE METAL: `syncio`'s arm writes
+    # one of them is this one's. `embedded` is BARE METAL: `syncio`'s arm writes
     # through ARM semihosting and `osalloc`'s takes the heap from nifasm's
     # `(heapstart)`/`(heapsize)` board-layout constants — neither exists here.
     # `standalone` falls into the raw-`write`/`read`/`open` arm instead, and
-    # those are exactly the names ithaqua resolves to the host's import set.
+    # those are exactly the names jorogumo's wasm renderer resolves to the host's
+    # import set and its JS renderer implements in the preamble (`nim_write`/`nim_exit`,
+    # `memorySize`/`memoryGrow`). The `wasm32` cpu is what selects osalloc's
+    # memory-growth arm; JS borrows it for the same 32-bit pointer model, it
+    # does not run wasm.
     discard c.config.setTargetCPU("wasm32")
     discard c.config.setTargetOS("standalone")
     c.config.bits = 32
@@ -372,9 +420,11 @@ proc compileProgram(c: var CmdOptions) =
   if nativeBackend or not (optOutAll or c.config.isDefined("useMimalloc")):
     c.config.addDefine "nimNativeAlloc"
     c.commandLineArgs.add " --define:nimNativeAlloc"
+    c.hostCommandLineArgs.add " --define:nimNativeAlloc"
   if nativeBackend or not (optOutAll or c.config.isDefined("useLibcIo")):
     c.config.addDefine "nimNativeIo"
     c.commandLineArgs.add " --define:nimNativeIo"
+    c.hostCommandLineArgs.add " --define:nimNativeIo"
   # `nimNoLibc` marks the TRULY freestanding target — the native (arkham+nifasm)
   # backend, which links no libc at all. It is a stricter condition than
   # `nimNativeIo`: the C backend uses the raw-syscall stdlib too, but libc is still
@@ -384,6 +434,7 @@ proc compileProgram(c: var CmdOptions) =
   if nativeBackend:
     c.config.addDefine "nimNoLibc"
     c.commandLineArgs.add " --define:nimNoLibc"
+    c.hostCommandLineArgs.add " --define:nimNoLibc"
 
   semos.setupPaths(c.config)
 
@@ -394,7 +445,7 @@ proc compileProgram(c: var CmdOptions) =
     if not c.isChild:
       makeDir(c.config.nifcachePath)
     processSingleModule(c.args[0].addFileExt(".nim"), c.config, c.moduleFlags,
-                        c.commandLineArgs, ForceRebuild in c.buildFlags)
+                        c.commandLineArgs, c.hostCommandLineArgs, ForceRebuild in c.buildFlags)
   of FullProject:
     makeDir(c.config.nifcachePath)
     # compile full project modules

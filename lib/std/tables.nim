@@ -1,11 +1,10 @@
 {.feature: "staticContracts".}
 
-import assertions
+import hashes, assertions
 
 type
-  Keyable* = concept ## Concept describing types usable as table keys (`==` plus `hash`).
+  Keyable* = concept of Hashable ## Types usable as table keys: `Hashable` plus `==`.
     func `==`(a, b: Self): bool
-    func hash(a: Self): Hash
 
   HashEntry = object
     fullhash: Hash

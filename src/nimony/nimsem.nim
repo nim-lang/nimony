@@ -33,9 +33,10 @@ Options:
   --isSystem                passed module is a `system.nim` module
   --isMain                  passed module is the main module of a project
   --noSystem                do not auto-import `system.nim`
-  --mm:STRATEGY             select the memory management strategy; the name
-                            maps to `system/<strategy>.nim` in the stdlib.
-                            Possible values: atomicArc (default), arc
+  --mm:STRATEGY|PATH        select the memory management strategy; a name maps
+                            to `system/<strategy>.nim` in the stdlib (possible
+                            values: atomicArc (default), arc), a path selects
+                            a runtime of your own (e.g. `--mm:rt/mygc`)
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --cpu:SYMBOL              set the target processor (cross-compilation)
   --os:SYMBOL               set the target operating system (cross-compilation)
@@ -59,7 +60,7 @@ type
     None, SingleModule, GenerateIdx, Execute, Idetools, BuildPlugin
 
 proc processModules(infiles: seq[string]; config: sink NifConfig;
-                    moduleFlags: set[ModuleFlag]; commandLineArgs: string) =
+                    moduleFlags: set[ModuleFlag]; commandLineArgs, hostCommandLineArgs: string) =
   for infile in infiles:
     if not semos.fileExists(infile):
       quit "cannot find " & infile
@@ -69,7 +70,8 @@ proc processModules(infiles: seq[string]; config: sink NifConfig;
     # Keeps the doc and code-gen caches separate so they don't trample each other.
     let outExt = if infile.endsWith(".pc.nif"): ".sc.nif" else: ".s.nif"
     outfiles.add infile.changeModuleExt(outExt)
-  semcheck(infiles, outfiles, ensureMove config, moduleFlags, commandLineArgs, false)
+  semcheck(infiles, outfiles, ensureMove config, moduleFlags, commandLineArgs,
+           hostCommandLineArgs, false)
 
 proc executeNif(files: seq[string]; config: sink NifConfig) =
   # file 0 is special as it is the main file. We need to run injectDerefs on it first.
@@ -105,6 +107,7 @@ proc handleCmdLine() =
   var moduleFlags: set[ModuleFlag] = {}
   var config = initNifConfig("")
   var commandLineArgs = ""
+  var hostCommandLineArgs = ""
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -128,8 +131,9 @@ proc handleCmdLine() =
     of cmdLongOption, cmdShortOption:
       var forwardArg = true
       var forwardArgLengc = false  # nimsem doesn't use this, but needed for parseCommonOption
+      var forwardArgHost = true
       if parseCommonOption(key, val, config, moduleFlags, forwardArg, forwardArgLengc,
-                          helpMsg = Usage, versionMsg = Version & "\n"):
+                          forwardArgHost, helpMsg = Usage, versionMsg = Version & "\n"):
         discard "handled by common CLI parser"
       else:
         case normalize(key)
@@ -146,6 +150,10 @@ proc handleCmdLine() =
           # Raw value: see the matching comment in nimony.nim. These args end
           # up as StringLits in the `.build.nif`, which nifmake quotes once.
           commandLineArgs.add ":" & val
+        if forwardArgHost:
+          hostCommandLineArgs.add " --" & key
+          if val.len > 0:
+            hostCommandLineArgs.add ":" & val
 
     of cmdEnd: assert false, "cannot happen"
   semos.setupPaths(config)
@@ -158,7 +166,7 @@ proc handleCmdLine() =
   of SingleModule:
     if args.len < 1:
       quit "want at least 1 command line argument"
-    processModules(args, ensureMove config, moduleFlags, commandLineArgs)
+    processModules(args, ensureMove config, moduleFlags, commandLineArgs, hostCommandLineArgs)
   of GenerateIdx:
     if args.len != 1:
       quit "want exactly 1 command line argument"

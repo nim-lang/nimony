@@ -44,7 +44,7 @@ Hexer accepts Nimony's grammar.
 
 import std / [parseopt, strutils, os, osproc, tables, assertions, syncio]
 import ".." / nimony / [langmodes, nifconfig]
-import lengcgen, lifter, duplifier, destroyer, inliner, constparams, dce2
+import lengcgen, lifter, duplifier, destroyer, constparams, dce2
 import ".." / lib / [vfs, nimversion]
 
 include ".." / lib / compat2
@@ -62,7 +62,7 @@ Command:
 Options:
   --bits:N                  `int` has N bits; possible values: 64, 32, 16
   --os:NAME                 target operating system (default: the host's)
-  --outdir:DIR              (d only) write .c.nif outputs to DIR
+  --outdir:DIR              (d, dl, de) write the outputs to DIR
   --isMain                  mark the file as the main module
   --native                  target the native backend (arkham+nifasm, no C)
   --app:TYPE                application type: console, gui, lib, staticlib (default: console)
@@ -139,14 +139,12 @@ proc handleCmdLine*() =
     of "d":
       deadCodeElimination(files, outdir)
     of "dl":
-      # Compute the global live set + resolve table from a list of
-      # per-module `.dce.nif` analyses. Last argument is the output
-      # `.live.nif`; all preceding arguments are the input `.dce.nif`s.
-      if files.len < 2:
-        quit "dl: expected <dce-file>... <live-output>"
-      computeLiveSet(files.toOpenArray(0, files.len - 2), files[^1])
+      # Compute the global live set + resolve table from the `(dce …)` section
+      # each given `.x.nif` carries; outputs <outdir>/<M>.live.nif for each of
+      # them.
+      computeLiveSet(files, outdir)
     of "de":
-      # Per-module emit. Args: <M.x.nif> <main.live.nif>; outputs
+      # Per-module emit. Args: <M.x.nif> <M.live.nif>; outputs
       # <outdir>/<M>.c.nif.
       if files.len != 2:
         quit "de: expected <x.nif> <live.nif>"

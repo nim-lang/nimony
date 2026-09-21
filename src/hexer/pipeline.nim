@@ -15,6 +15,7 @@ import ".." / nimony / [nimony_model, programs, decls]
 import hexer_context, iterinliner, desugar, xelim, duplifier, lifter, destroyer,
   constparams, vtables_backend, eraiser, lambdalifting, cps, passes,
   funcsummary, intramodinliner, arcopt
+import ".." / finalir / finalir
 # `arcopt` runs on the final NIFC (try/finally already lowered to explicit
 # control flow). It is the BasicBlock-based pass ported from the battle-tested
 # `nim/compiler/optimizer.nim`: a stack of basic blocks each owning a pending
@@ -44,29 +45,23 @@ proc publishHooks*(n: var Cursor) =
     inc n
 
 proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): TokenBuf =
-  # Prepare initial buffer from elimForLoops
-  var n = n
-  var dest = createTokenBuf(300)
-  elimForLoops(c, dest, n)
-  var initialBuf = move dest
+  # The input is already the Final IR (`doc/final_ir.md`): nimsem lowers a
+  # module before publishing it. Every pass here reads and writes that form.
+  var input = createTokenBuf(300)
+  input.addSubtree n
+  var pass = initPass(ensureMove input, moduleSuffix, "iterinliner", bits)
 
-  # Initialize the Pass pipeline
-  var pass = initPass(initialBuf, moduleSuffix, "desugar", bits)
+  # Pass 1: inline the inline iterators
+  var m = pass.n
+  elimForLoops(c, pass.dest, m)
 
-  # Pass 1: Desugar
+  # Pass 2: Desugar
+  pass.prepareForNext("desugar")
   desugar(pass, c.activeChecks)
 
-  # Pass 2: Lambda Lifting
+  # Pass 3: Lambda Lifting
   pass.prepareForNext("lambdalift")
   elimLambdas(pass)
-
-  # Pass 4: Lower Expressions — establishes the statement-based normal form
-  # every later pass now PRESERVES instead of breaking and re-fixing:
-  # expression-`if`/`case`/`try` become statements, `and`/`or` become bool
-  # temps, and an impure `while` condition becomes a leading body guard. See
-  # `doc/final_ir.md`.
-  pass.prepareForNext("xelim1")
-  lowerExprs(pass)
 
   # Pass 5: Exception Handling — ALL of it. A raising call becomes a temp plus
   # a check, and the success tuple lands in the same pass: signatures, the
@@ -99,12 +94,24 @@ proc transform*(c: var EContext; n: Cursor; moduleSuffix: string; bits: int): To
 
   # Special handling: Merge generated hooks. The destroyer left the root
   # `(stmts` open for us; append the hooks, then close it.
+  # The lifter emits Nimony IR (nimsem runs it too), so its hooks are lowered
+  # to the Final IR here.
   if c.liftingCtx[].dest.len > 0:
-    var hookReader = beginRead(c.liftingCtx[].dest)
-    #echo "HOOKS: ", toString(hookReader)
-    publishHooks hookReader
-
-  pass.dest.add move(c.liftingCtx[].dest)
+    var hooks = createTokenBuf(c.liftingCtx[].dest.len + 2)
+    hooks.addParLe StmtsS, NoLineInfo
+    hooks.add move(c.liftingCtx[].dest)
+    hooks.addParRi()
+    var hookPass = initPass(ensureMove hooks, moduleSuffix, "finalir_hooks", bits,
+                            pass.nextTemp)
+    toFinalIr(hookPass, analysisFacts = false)
+    var hookReader = beginRead(hookPass.dest)
+    hookReader.into:
+      let first = hookReader
+      while hookReader.hasMore:
+        publishHooks hookReader
+      hookReader = first
+      while hookReader.hasMore:
+        pass.dest.takeTree hookReader
   pass.dest.addParRi()
 
   when defined(verifyArc):

@@ -330,11 +330,11 @@ proc conceptMethodAlreadyListed(cands: FnCandidates; routine: Cursor): bool =
 proc sameConceptMethod(a, b: FnCandidate): bool {.inline.} =
   sameConceptRoutineTrees(a.typ, b.typ, equivKinds = true)
 
-proc collectConceptMethodsFor(fn: StrId; concpt: Cursor): seq[FnCandidate] =
+proc collectConceptMethodsFor(fn: StrId; conceptSym: SymId; concpt: Cursor): seq[FnCandidate] =
   ## All routines named `fn` required by `concpt` (including its parents),
   ## deduplicated by signature shape.
   result = @[]
-  for _, routine in conceptHierarchyRoutines(concpt):
+  for _, _, routine in conceptHierarchyRoutines(conceptSym, concpt):
     var prc = routine
     inc prc
     if prc.isSymbolDef and sameIdent(prc.symId, fn):
@@ -358,7 +358,7 @@ proc conceptMethodsForConstraint(fn: StrId; typ: Cursor): seq[FnCandidate] =
   if typ.isSymbol:
     let section = getTypeSection typ.symId
     if section.body.typeKind == ConceptT:
-      result = collectConceptMethodsFor(fn, section.body)
+      result = collectConceptMethodsFor(fn, typ.symId, section.body)
   elif typ.typeKind == AndT:
     var t = typ
     t.into:
@@ -601,6 +601,21 @@ proc anyArgTypeIsError(cs: CallState): bool =
   for a in cs.args:
     if a.typ.typeKind == ErrT: return true
   result = false
+
+proc calleeErrored(n: Cursor): bool =
+  ## True when the sem'd callee is an `(err ...)`, or contains one: a chained
+  ## call like `nosuch(1)(2)` keeps the failed inner call as
+  ## `(call (err ...) 1)`, and its diagnostic is the one worth reporting.
+  if n.exprKind == ErrX:
+    result = true
+  elif n.isTagLit:
+    var ch = sub(n)
+    while ch.hasMore:
+      if calleeErrored(ch): return true
+      skip ch
+    result = false
+  else:
+    result = false
 
 proc buildCallSource(buf: var TokenBuf; cs: CallState; callee: Cursor) =
   case cs.source
@@ -977,7 +992,15 @@ proc tryVarargsConverter(c: var SemContext; convMatch: var Match; f: TypeCursor,
     convMatch = ensureMove(match)
 
 proc runCompiledMacroPlugin(c: var SemContext; dest: var TokenBuf; it: var Item; cs: var CallState; finalFn: SymId) =
-  if finalFn in c.compiledMacros:
+  # A macro's plugin binary is compiled when its DECLARATION is semchecked
+  # (semdecls: `kind == MacroY and pass == checkBody`), which registers it in
+  # `c.compiledMacros`. A macro IMPORTED from another module has its
+  # declaration semchecked in the *defining* module's run, not here, so it is
+  # absent from this run's `compiledMacros` — but the dependency build already
+  # compiled its plugin into the shared nifcache. Accept that on-disk plugin so
+  # imported macros (e.g. an importable `{.async.}`) expand too.
+  if finalFn in c.compiledMacros or
+     macroPluginExists(c.g.config.nifcachePath, finalFn):
     # Serialize arguments to NIF. Prefer `arg.orig` (raw, pre-sem AST) so
     # macros that walk their bodies aren't tripped by sem-attached `(err
     # …)` diagnostics or other sem rewrites the user never wrote.
@@ -1094,6 +1117,16 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
       cs.fn = Item(n: beginRead(choiceBuf), typ: c.types.autoType, kind: CchoiceY)
       resolveOverloads(c, dest, it, cs)
       return
+    elif calleeErrored(cs.fn.n):
+      # The callee itself failed to semcheck and reported a precise diagnostic
+      # ("undeclared identifier: 'x'" for `x(1)(2)`, say). Re-emit the call
+      # around that `(err ...)` so the message survives instead of being
+      # replaced by the generic "cannot call expression of type auto"
+      # (nim-lang/nimony#2553).
+      it.n = cs.scope; skip it.n
+      closeArgsScope c, cs, merge = false
+      buildCallSource dest, cs, cs.fn.n
+      return
     else:
       buildErr c, dest, cs.fn.n.info, "cannot call expression of type " & typeToString(typ)
   # From here on exactly one tree is appended to `dest`: the call, or a single
@@ -1136,7 +1169,7 @@ proc resolveOverloads(c: var SemContext; dest: var TokenBuf; it: var Item; cs: v
         if not isVarargs:
           skip param
         var arg = cs.args[ai]
-        var convMatch = default(Match)
+        var convMatch = createMatch(addr c)
         if isVarargs and varargsHasConverter(f) and tryVarargsConverter(c, convMatch, f, arg):
           anyConverters = true
           # match already built call, just use it

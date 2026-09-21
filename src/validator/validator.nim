@@ -63,6 +63,8 @@ proc includerOf(nimFile, cacheDir: string): string =
           found = true
     if found:
       let suffix = x.path.substr(0, x.path.len - ".p.deps.nif".len - 1)
+      let structured = cacheDir / suffix & ".sem.nif"
+      if fileExists(structured): return structured
       let candidate = cacheDir / suffix & ".s.nif"
       if fileExists(candidate): return candidate
 
@@ -96,7 +98,12 @@ proc semNifForSource(nimFile, cacheDir: string): string =
           skip c
         if input.len > 0 and output.endsWith(".p.nif") and
             absolutePath(input).replace('\\', '/') == want:
-          result = cacheDir / extractFilename(output).changeFileExt("").changeFileExt(".s.nif")
+          # These checks read the unlowered `.sem.nif` (`--keepsemtree`), not
+          # the published `.s.nif`, which is Final IR.
+          let base = cacheDir / extractFilename(output).changeFileExt("")
+          result = base.changeFileExt(".sem.nif")
+          if not fileExists(result):
+            result = base.changeFileExt(".s.nif")
           return
 
 proc main() =

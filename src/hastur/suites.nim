@@ -61,7 +61,7 @@ proc semcheckInto(root, cache: string; extraArgs = ""): bool =
   ## and only the changed modules on a warm cache).
   createDir cache
   let (msgs, code) = execLocal("nimony",
-    "--nimcache:" & os.quoteShell(cache) & extraArgs &
+    "--nimcache:" & os.quoteShell(cache) & " --keepsemtree" & extraArgs &
     " check " & os.quoteShell(root))
   result = code == 0
   if not result:
@@ -88,6 +88,7 @@ proc validatorTests*(overwrite: bool) =
       "src/hexer/desugar.nim",
       "src/hexer/cps.nim",
       "src/hexer/duplifier.nim",
+      "src/hexer/mover.nim",
       "src/hexer/lengcgen.nim",
       "src/hexer/eraiser.nim",
       "src/hexer/vtables_backend.nim",
@@ -96,8 +97,13 @@ proc validatorTests*(overwrite: bool) =
     ("src/nimony/nimsem.nim", @[
       "src/nimony/sem.nim",
       "src/nimony/semdecls.nim",
-      "src/nimony/controlflow.nim",
-      "src/nimony/deferstmts.nim"])]
+      "src/nimony/deferstmts.nim"]),
+    # `controlflow.nim` rode into the nimsem graph on the mover, which imported
+    # it until the move analysis moved to the Final IR. Its importers now are
+    # the `contracts` tool and its own debug driver, so it is semchecked as the
+    # root it already is rather than as a module of somebody else's graph.
+    ("src/nimony/controlflow.nim", @[
+      "src/nimony/controlflow.nim"])]
 
   for (root, passFiles) in passRoots:
     let cache = nimcacheDir / "validate" / splitFile(root).name

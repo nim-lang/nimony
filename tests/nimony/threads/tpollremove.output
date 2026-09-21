@@ -1,0 +1,4 @@
+cancelled=1 op=opPollAdd fd_is_a=true res_is_ECancelled=true
+still-open read=1 got=x
+nothing-armed cancelled=0
+two-ops cancelled=2

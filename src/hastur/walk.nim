@@ -18,6 +18,17 @@
 import std / [syncio, os, osproc, strutils, times, algorithm]
 import context, counters, category, joined, nativelist, parallel, runner, coverage
 
+var walkBuiltAll = false
+  ## A `setup.hastur` of this walk ran a plain `build` (= `build all`): the
+  ## whole toolchain in `bin/` is current, so a nested `build nimony` has
+  ## nothing left to do and a `setup.nim` suite need not build its tool either.
+
+const CoveredByBuildAll = ["nimony", "nifler", "nifler2", "hexer", "lengc",
+                           "shoggoth", "niflink", "nifmake", "validator",
+                           "dagon", "pnak"]
+  ## `build <x>` targets that `build all` always builds (arkham and nifasm only
+  ## when `../nativenif` is there, so they are not listed).
+
 proc runSetupHastur*(dir: string) =
   ## Prep step for a built-in-runner directory: run each line of
   ## `<dir>/setup.hastur` as a hastur subcommand before its tests. `--debug`
@@ -32,6 +43,16 @@ proc runSetupHastur*(dir: string) =
   for raw in lines(f):
     let line = raw.strip
     if line.len == 0 or line.startsWith("#"): continue
+    let words = line.splitWhitespace
+    if words[0] == "build":
+      if words.len == 1 or words[1] == "all":
+        exec self & relFlag & " " & line, showProgress = true
+        walkBuiltAll = true
+        continue
+      if walkBuiltAll and words.len == 2 and words[1] in CoveredByBuildAll:
+        # `tests/nimony/setup.hastur` is for a standalone `hastur tests/nimony`;
+        # under `all` it would relink three tools `tests/setup.hastur` just built.
+        continue
     exec self & relFlag & " " & line, showProgress = true
 
 proc runSetupNimDir*(c: var TestCounters; dir, forward: string; overwrite: bool) =
@@ -51,6 +72,11 @@ proc runSetupNimDir*(c: var TestCounters; dir, forward: string; overwrite: bool)
             " --dir:" & dir & " --bindir:" & toolchainDir & " --cachedir:" & nimcacheDir
   if overwrite: cmd.add " --overwrite"
   if forward.len > 0: cmd.add " --forward:" & forward
+  # The toolchain is already built (or must not be touched, for `--bindir`):
+  # a runner that would build a `build all` tool again skips that. In the pool
+  # this is what makes it safe at all — relinking `bin/nimony` while other
+  # workers run it fails on Windows.
+  if skipBuild or walkBuiltAll: cmd.add " --no-build"
   if execShellCmd(cmd) != 0:
     # The runner printed its own per-test detail; name the suite so the
     # top-level summary still points somewhere.
@@ -94,9 +120,16 @@ proc collectTests*(c: var TestCounters; plan: var WalkPlan; dir, forward: string
   if normalizeDirKey(dir) == normalizeDirKey(StdlibAllTest.parentDir):
     checkStdlibCoverage()
   if fileExists(dir / "setup.nim"):
-    # A `setup.nim` owns its subtree and runs its own tests right here — it is
-    # a self-contained runner, not part of the shared file pool.
-    runSetupNimDir(c, dir, forward, overwrite)
+    # A `setup.nim` owns its subtree: it is a self-contained runner. In a
+    # parallel walk that has built the toolchain it is one more item for the
+    # pool — `boot` alone is two minutes, and run here, before the pool, the
+    # suites were half the wall time of `hastur all`. Otherwise (a suite named
+    # directly, or a serial run) it runs right here and may build what it needs.
+    if not isRoot and parallelJobs > 1 and (skipBuild or walkBuiltAll):
+      plan.parItems.add WorkItem(path: dir, setup: true, weight: 1,
+                                 noPrefill: true)
+    else:
+      runSetupNimDir(c, dir, forward, overwrite)
     return
   # `setup.hastur` prep (e.g. building the toolchain) must precede every test
   # in its subtree, so it runs during the walk, before the run phase kicks off.
@@ -146,11 +179,11 @@ proc collectTests*(c: var TestCounters; plan: var WalkPlan; dir, forward: string
            not isGeneratedTestFile(x.path) and
            not (joined and joinable(x.path, cat)):
           plan.parItems.add WorkItem(path: x.path, weight: 1,
-                                     native: walkUsesNative(x.path, cat))
+                                     native: walkUsesNative(x.path, cat),
+                                     noPrefill: not prefillable(cat))
     else:
-      # `Basics`/`Compat` reset the shared `nimcache/` around their loop and so
-      # cannot share the pool's cache layout; serial (`--jobs:1`) runs keep the
-      # in-process `testFile` path. Either way, defer to a per-dir `testDir`.
+      # A serial (`--jobs:1`) run keeps the in-process `testFile` path, where
+      # `Basics`/`Compat` reset the one shared `nimcache/` around their loop.
       plan.serialDirs.add (dir, cat)
   else:
     # Pure grouping directory (e.g. `tests/`, `tests/nimony/`): recurse.
@@ -173,11 +206,11 @@ proc walkRoots*(roots: openArray[string]; forward: string; overwrite: bool) =
   for (d, cat) in plan.serialDirs:
     testDir(c, d, overwrite, cat, forward)
   if plan.parItems.len > 0:
-    # Biggest units first: a joined group is many tests in one process, so
-    # starting the long poles early keeps the pool's tail short.
-    sort plan.parItems, proc (a, b: WorkItem): int =
-      result = cmp(b.weight, a.weight)
-      if result == 0: result = cmp(a.path, b.path)
+    # Longest units first, by what they took last time: starting the long
+    # poles early keeps the pool's tail short. Weight alone got this wrong for
+    # the single tests that build plugins or macros, which ran last and took
+    # the final minute of the run between them.
+    scheduleLongestFirst plan.parItems
     # One saturated pool over every parallel-safe unit from every directory.
     # `parallelTestDir` ignores the `cat` argument (each worker re-derives its
     # own category from its path's directory), so a mixed-category queue is safe.

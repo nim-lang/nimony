@@ -855,9 +855,13 @@ proc sqNeedsEnter(queue: var Queue; submit: int; flags: var EnterFlags): bool =
   return false;
 
 proc cqNeedsFlush(queue: var Queue): bool =
+  ## Whether the CQ needs an `io_uring_enter` with GETEVENTS first: the kernel
+  ## sets SQ_CQ_OVERFLOW when completions did not fit and SQ_TASKRUN when
+  ## deferred completion work is pending. Either flag alone is the signal, as
+  ## in liburing; with DEFER_TASKRUN, TASKRUN on its own is the normal case.
   var sqFlags = atomicLoad(cast[ptr uint32](queue.sq.flags)[], moRelaxed)
-  return {SQ_CQ_OVERFLOW, SQ_TASKRUN} <= cast[ptr SqringFlags](sqFlags.addr)[]
-  # {SqCqOverflow, SqTaskrun} <= atomic_load_explicit(queue.sq.flags, moRelaxed)
+  let f = cast[ptr SqringFlags](sqFlags.addr)[]
+  return {SQ_CQ_OVERFLOW, SQ_TASKRUN} * f != {}
 
 proc cqNeedsEnter(queue: var Queue): bool =
   SETUP_IOPOLL in queue.params.flags or queue.cqNeedsFlush

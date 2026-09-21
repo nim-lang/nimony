@@ -8,7 +8,8 @@
 
 from std / strutils import multiReplace, startsWith
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
-from std / osproc import execCmdEx
+from std / osproc import execCmdEx, startProcess, waitForExit, close,
+  poParentStreams
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -43,6 +44,16 @@ proc stdlibDir*(): string =
 
 proc setupPaths*(config: var NifConfig) =
   config.paths.add stdlibDir()
+  # Keep the compiler-internal `src/lib` modules (nifbuilder/nifreader, pulled
+  # in by `std/macros`) on the search path unconditionally. Macro-plugin and
+  # CTFE sub-compiles always inject `--path:<repo>/src/lib`; the OUTER build did
+  # not (unless a per-directory `nimony.paths` supplied it), so the two disagreed
+  # on module suffixes and a macro used outside the repo failed to compile its
+  # plugin (`cannot open <mod>.s.deps.nif`). Adding it here makes the suffixes
+  # agree everywhere.
+  let internalLib = nimonyDir() / "src" / "lib"
+  if dirExists(internalLib):
+    config.paths.add internalLib
   let pathsFile = findArgs(config.baseDir, "nimony.paths")
   processPathsFile pathsFile, config.paths
   #echo getAppFilename(), "CONFIG.BASEDIR: ", config.baseDir, " CONFIG.PATHS: ", config.paths
@@ -93,6 +104,30 @@ proc joinPath*(head, tail: string): string = head / tail
 
 proc exec*(cmd: string) =
   if execShellCmd(cmd) != 0: quit("FAILURE: " & cmd)
+
+proc renderCmd(exe: string; args: openArray[string]): string =
+  ## Diagnostics only. `execArgs` never hands this string to a shell.
+  result = quoteShell(exe)
+  for i in 0 ..< args.len:
+    result.add ' '
+    result.add quoteShell(args[i])
+
+proc execArgs*(exe: string; args: openArray[string]) =
+  ## `exec` without a shell in between: `execShellCmd` runs the command
+  ## through `cmd.exe /c` on Windows (`/bin/sh -c` elsewhere), an extra
+  ## process per call that buys nothing here — no redirection, no globbing,
+  ## and the quoting it forces on the caller is a bug surface of its own.
+  ## Arguments travel as an argv array, so callers pass them RAW: no
+  ## `quoteShell`, the spawner does its own quoting.
+  var code = -1
+  try:
+    let p = startProcess(exe, args = args, options = {poParentStreams})
+    code = waitForExit(p)
+    close p
+  except:
+    code = -1
+  if code != 0:
+    quit("FAILURE: " & renderCmd(exe, args))
 
 proc nimexec(cmd: string) =
   let t = findExe("nim")
@@ -339,8 +374,7 @@ proc parseFile*(nimFile: string; paths: openArray[string], nifcachePath: string)
       fileExists(depsFile) and lastModTimeOrStale(depsFile) > srcTime:
     discard "already parsed by the dep scan"
   else:
-    exec quoteShell(nifler) & " --portablePaths --deps parse " & quoteShell(nimFile) & " " &
-      quoteShell(src)
+    execArgs nifler, ["--portablePaths", "--deps", "parse", nimFile, src]
 
   var r = rd.open(src)
   result = createTokenBuf()
@@ -411,6 +445,10 @@ proc pluginCompileCmd(config: NifConfig; cacheDir: string): string =
     if config.isDefined(d):
       result.add " -d:"
       result.add d
+  # A job cap chosen for a small machine must hold inside the sub-compile too.
+  if config.parallelBuild > 0:
+    result.add " --parallelBuild:"
+    result.add $config.parallelBuild
 
 proc runValidatorOnPlugin(config: NifConfig; nf, checkCache: string) =
   ## Run the plugin validator on `nf` before compiling it. Skipped when

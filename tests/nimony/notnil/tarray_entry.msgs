@@ -1,1 +1,1 @@
-tests/nimony/notnil/tarray_entry.nim(7, 8) Error: expected non-nil value [pass --verbose for the Final IR]
+tests/nimony/notnil/tarray_entry.nim(9, 10) Error: expected non-nil value [pass --verbose for the Final IR]

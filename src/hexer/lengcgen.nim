@@ -17,6 +17,7 @@ include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [symparser, intrinsics]
 import ".." / models / tags
+import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, programs, typenav, expreval, xints, decls, builtintypes, sizeof, typeprops, langmodes, typekeys, nifconfig]
 import hexer_context, pipeline, dce1, lifter
 import  ".." / lib / [stringtrees]
@@ -165,6 +166,8 @@ proc externKind(p: CollectedPragmas): string =
     result = "importc"
   elif ImportcppP in p.flags:
     result = "importcpp"
+  elif ImportjsP in p.flags:
+    result = "importjs"
   elif ExportcP in p.flags:
     result = "exportc"
   else:
@@ -881,7 +884,7 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
                 error c, "expected string literal or ident, but got: ", n
               result.flags.incl MagicP
               inc n
-          of ImportcP, ImportcppP, ExportcP:
+          of ImportcP, ImportcppP, ImportjsP, ExportcP:
             n.into:
               expectStrLit c, n
               result.extern = n.strId
@@ -1006,7 +1009,7 @@ proc trHoistedConst(c: var EContext; dest: var TokenBuf; n: var Cursor; mode: Tr
   ## Leng keeps no proc-level consts: hoist the decl to the top level (the
   ## `c.pending` tail, like synthesized type decls) under a module-suffixed
   ## name, so the embedded index can serve it — single-dot locals are never
-  ## indexed, and whole-program consumers (arkham's foreign loading, ithaqua)
+  ## indexed, and whole-program consumers (arkham's foreign loading, jorogumo)
   ## resolve foreign declarations through the index.
   var peek = n
   inc peek                                  # into (const, at the SymbolDef
@@ -1533,7 +1536,24 @@ proc trArrAt(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     let info = n.info
     let isUnsigned = getType(c.typeCache, n).typeKind in {UIntT, CharT}
     trExpr(c, dest, n)
-    if n.hasMore:
+    if n.hasMore and n.isDotToken:
+      # Bound proven by the contract pass; only `- lo` is left (NIFC arrays
+      # start at zero).
+      inc n
+      if n.hasMore:
+        var indexDest = createTokenBuf(dest.len - beforeIndex)
+        for i in beforeIndex..<dest.len:
+          indexDest.add dest[i]
+        dest.shrink beforeIndex
+        let indexType = if isUnsigned: c.typeCache.builtins.uintType else: c.typeCache.builtins.intType
+        dest.addParLe SubX, info
+        dest.addSubtree indexType
+        dest.add indexDest
+        dest.addSubtree n
+        dest.addParRi()
+        skip n
+      while n.hasMore: skip n
+    elif n.hasMore:
       var indexDest = createTokenBuf(dest.len - beforeIndex)
       # balanced span: raw copy keeps its seals
       for i in beforeIndex..<dest.len:
@@ -1984,55 +2004,8 @@ proc trLocal(c: var EContext; dest: var TokenBuf; n: var Cursor; tag: SymKind; m
       trExpr c, dest, n
     dest.addParRi(n.endInfo)
 
-proc trWhile(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  c.nestedIn.add (WhileS, SymId(0))
-  takeInto dest, n:
-    trExpr c, dest, n
-    trStmt c, dest, n
-  let lab = c.nestedIn[^1][1]
-  if lab != SymId(0):
-    dest.addParLe("lab", info)
-    dest.addSymDef(lab, info)
-    dest.addParRi()
-  discard c.nestedIn.pop()
-
-proc trBlock(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  n.into:
-    if n.isDotToken:
-      c.nestedIn.add (BlockS, SymId(0))
-      inc n
-    else:
-      let (s, _) = getSymDef(c, n)
-      c.nestedIn.add (BlockS, s)
-    dest.addParLe("scope", info)
-    trStmt c, dest, n
-    dest.addParRi(n.endInfo)
-  let lab = c.nestedIn[^1][1]
-  if lab != SymId(0):
-    dest.addParLe("lab", info)
-    dest.addSymDef(lab, info)
-    dest.addParRi()
-  discard c.nestedIn.pop()
-
-proc trBreak(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  let info = n.info
-  n.into:
-    if n.isDotToken:
-      inc n
-      dest.addParLe("break", info)
-    else:
-      expectSym c, n
-      let lab = n.symId
-      inc n
-      dest.addParLe("jmp", info)
-      dest.addSymUse(lab, info)
-    dest.addParRi(n.endInfo)
-
 proc trLab(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  ## `(lab :L)` — a Nimony-level merge label (`xelim`'s two-target condition
-  ## compiler emits these for short-circuit chains). Leng has the very same
+  ## `(lab :L)` — the Final IR's forward jump target. Leng has the very same
   ## construct, so this is a straight copy with the symbol registered.
   let info = n.info
   n.into:
@@ -2051,16 +2024,40 @@ proc trJmp(c: var EContext; dest: var TokenBuf; n: var Cursor) =
     dest.addSymUse(lab, info)
     dest.addParRi()
 
-proc trIf(c: var EContext; dest: var TokenBuf; n: var Cursor) =
-  # (if cond (.. then ..) (.. else ..))
-  takeInto dest, n:
-    while n.isTagLit and n.substructureKind == ElifU:
-      takeInto dest, n: # elif
+proc trIte(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(ite cond then else|.)` becomes an `if`: Leng's back ends and optimizer
+  ## passes read `if`.
+  let info = n.info
+  n.into:
+    dest.copyIntoKind IfS, info:
+      dest.copyIntoKind ElifU, info:
         trExpr c, dest, n
         trStmt c, dest, n
-    if n.isTagLit and n.substructureKind == ElseU:
-      takeInto dest, n:
-        trStmt c, dest, n
+      if n.isDotToken:
+        inc n
+      else:
+        dest.copyIntoKind ElseU, info:
+          trStmt c, dest, n
+
+proc trLoop(c: var EContext; dest: var TokenBuf; n: var Cursor) =
+  ## `(loop (scope BODY (continue .)))` becomes `while true: BODY`. Falling
+  ## off the body is the back-edge; every exit is a `jmp` past the loop.
+  let info = n.info
+  n.into:
+    dest.copyIntoKind WhileS, info:
+      dest.addParPair TrueX, info
+      assert n.stmtKind in {StmtsS, ScopeS}, "loop body expected"
+      c.typeCache.openScope()
+      dest.addParLe(n.cursorTagId, n.info)
+      n.into:
+        while n.hasMore:
+          if n.stmtKind == ContinueS:
+            skip n, ContinueS
+            assert not n.hasMore, "`continue` is only the loop's trailing back-edge"
+          else:
+            trStmt c, dest, n
+      dest.addParRi()
+      c.typeCache.closeScope()
 
 include stringcases
 
@@ -2138,6 +2135,10 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
     of NoStmt:
       if n.cursorTagId == TagId(KeepovfTagId):
         trKeepovf c, dest, n
+      elif n.finalIrKind == IteV:
+        trIte c, dest, n
+      elif n.finalIrKind == LoopV:
+        trLoop c, dest, n
       else:
         error c, "unknown statement: ", n
     of PragmaxS:
@@ -2212,12 +2213,9 @@ proc trStmt(c: var EContext; dest: var TokenBuf; n: var Cursor; mode = TraverseI
         dest.addParLe(discardToken.cursorTagId, discardToken.info)
         trExpr c, dest, n
         takeParRi dest, n, discardStart
-    of BreakS: trBreak c, dest, n
-    of WhileS: trWhile c, dest, n
-    of BlockS: trBlock c, dest, n
-    of IfS: trIf c, dest, n
     of CaseS: trCase c, dest, n
-    of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS:
+    of YldS, ForS, CoroforS, InclS, ExclS, DeferS, UnpackdeclS,
+       BreakS, WhileS, BlockS, IfS:
       error c, "BUG: not eliminated: ", n
     of TryS:
       trTry c, dest, n
@@ -2813,7 +2811,6 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
       except: quit "cannot get current working directory"
     else: mp.dir
   var c = EContext(dir: dir, ext: mp.ext, main: mp.name,
-    nestedIn: @[(StmtsS, SymId(0))],
     typeCache: createTypeCache(bits),
     pending: createTokenBuf(),
     strLitBuf: createTokenBuf(),
@@ -2875,11 +2872,13 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
 
   var outputBuf = makeOutput(c, cdest, rootInfo)
   optimizeLengOutput(outputBuf, c.main, c.bits)
+  # The DCE analysis goes in as the module's first statement, computed from the
+  # buffer we are about to write — after the optimizer, whose splices decide
+  # which calls survive to be counted. `dceLive` reads that one subtree back
+  # and never touches the body, so the analysis costs no file of its own.
+  var withDce = withDceSection(outputBuf)
   try:
-    writeFile outputBuf, destfileName, OnlyIfChanged
+    writeFile withDce, destfileName, OnlyIfChanged
   except:
     quit "could not write file: " & destfileName
   c.typeCache.closeScope()
-
-  # Use the in-memory buffer to avoid re-reading the file we just wrote
-  writeDceOutput outputBuf, c.dir / c.main & ".dce.nif", "." & c.main

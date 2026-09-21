@@ -16,7 +16,7 @@ when defined(windows):
 import std / [assertions, parseopt, strutils, os, osproc]
 
 import context, category, joined, nativelist, runner, walk, builders, deps,
-       tiers, boot, native, record, bugcmd, gitcmds, wasmdiff
+       tiers, boot, native, record, bugcmd, gitcmds, wasmdiff, parallel
 import install
 import ".." / lib / nimversion
 
@@ -28,7 +28,7 @@ Usage:
   hastur [options] [command] [arguments]
 
 Commands:
-  build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|native|nifbench]   build selected tools (default: all).
+  build [all|nimony|nifler|nifler2|hexer|lengc|shoggoth|nifmake|validator|dagon|pnak|arkham|nifasm|jorogumo|native|nifbench]   build selected tools (default: all).
                        `nifbench` is the NIF micro-benchmark suite (bench/),
                        built with host Nim so it can be compared against the same
                        source built by `nimony c` and `nimony n`.
@@ -85,7 +85,7 @@ Commands:
                        `../nativenif` checkout). See `NativeTestDirs`/`Files`.
   wasmdiff             differential harness: run every `tests/ithaqua/*.nim`
                        through BOTH the native backend (arkham, the oracle)
-                       and the wasm backend (ithaqua) and require matching
+                       and the wasm backend (`jorogumo w`) and require matching
                        stdout + exit code. Needs the sibling `../nativenif`
                        and `node` on PATH.
   lengc                 run Leng tests.
@@ -160,6 +160,9 @@ Options:
                         (implies --no-build). Binaries not found there are
                         looked up on `$PATH`.
   --no-build            skip the setup.hastur prep step during the tree walk
+  --prefill:DIR         (pool worker) seed --cachedir from the warmup cache DIR
+  --scratch             (pool worker) --cachedir is private: start it empty and
+                        delete it again when the work item passed
   --skip:DIR            leave DIR out of the tree walk (repeatable). For
                         splitting one sweep across CI runners: the tester job
                         passes `--skip:tests/boot` while a second job runs
@@ -213,6 +216,8 @@ proc handleCmdLine =
   var overwrite = false
   var forward = ""
   var withValgrind = false
+  var prefillDir = ""
+  var scratchCache = false
   for kind, key, val in getopt():
     case kind
     of cmdArgument:
@@ -250,6 +255,15 @@ proc handleCmdLine =
           except: writeHelp()
       of "no-build", "nobuild":
         skipBuild = true
+      of "prefill":
+        # Set by the parallel pool on its workers: seed `--cachedir` from this
+        # warmup cache before doing anything else (`prefillFromWarmup`).
+        prefillDir = val
+      of "scratch":
+        # Set by the parallel pool on its workers: `--cachedir` is private to
+        # this one run, so it starts empty and is deleted again once the work
+        # item passed. A failed item keeps it for inspection.
+        scratchCache = true
       of "skip":
         if val.len == 0: writeHelp()
         skipDirs.add normalizeDirKey(val)
@@ -323,6 +337,13 @@ proc handleCmdLine =
 
   createDir binDir()
 
+  if scratchCache:
+    # A leftover from an earlier run in the same `nimcache/` (one without a
+    # `build` in between) must not count as a warm cache.
+    removeDir nimcacheDir
+  if prefillDir.len > 0:
+    prefillFromWarmup(prefillDir, nimcacheDir)
+
   case primaryCmd
   of "all":
     # `all` is now the tree walk: `tests/` (each suite via its setup.nim or the
@@ -387,19 +408,7 @@ proc handleCmdLine =
       exec "git submodule update --init"
     case (if args.len > 0: args[0] else: "")
     of "", "all":
-      buildNifler(showProgress)
-      buildNimsem(showProgress)
-      buildNimony(showProgress)
-      buildLengc(showProgress)
-      buildShoggoth(showProgress)
-      buildNiflink(showProgress)
-      buildHexer(showProgress)
-      buildNifmake(showProgress)
-      buildValidator(showProgress)
-      buildDagon(showProgress)
-      buildPnak(showProgress)
-      buildNativeTools(showProgress)
-      buildNifler2(showProgress)
+      buildAll()
     of "nifler":
       buildNifler(showProgress)
     of "nifler2":
@@ -418,6 +427,10 @@ proc handleCmdLine =
       buildArkham(showProgress)
     of "nifasm":
       buildNifasm(showProgress)
+    of "jorogumo":
+      # The web back end, both renderers in one binary: `nimony j` and
+      # `nimony w` run the same `bin/jorogumo`.
+      buildJorogumo(showProgress)
     of "native":
       # The C-free native toolchain used by `nimony n`: arkham + nifasm (from
       # the sibling `../nativenif`) plus shoggoth (the opt-gated Leng optimizer
@@ -481,7 +494,7 @@ proc handleCmdLine =
 
   of "wasmdiff":
     # Differential harness: the native backend (arkham) as the executable oracle
-    # for the wasm backend (ithaqua). Builds both toolchains, then diffs stdout
+    # for the wasm backend (`jorogumo w`). Builds both toolchains, then diffs stdout
     # and exit code of every `tests/ithaqua/*.nim` fixture across the two
     # pipelines. `wasmdiff.nim` builds what it needs itself.
     wasmdiffCmd()
@@ -555,6 +568,14 @@ proc handleCmdLine =
       walkCmd(rawPrimary, forward, overwrite)
     else:
       quit "invalid command: " & primaryCmd
+
+  # Only reached on success: every failing path above ends in `quit`. Done by
+  # the worker rather than left to the next `hastur build`'s `removeDir
+  # "nimcache"`, which would otherwise delete a whole run's worth of caches
+  # (~140k files, ~35s on Windows) on one thread.
+  if scratchCache:
+    try: removeDir nimcacheDir
+    except OSError: discard
 
 # Guarded even though nothing imports this module: a directory's `setup.nim`
 # custom runner takes the test kit from `kit.nim`, which deliberately does not

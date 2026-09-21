@@ -1055,7 +1055,8 @@ proc parseSnippet*(code: string; asExpr: bool; pool: Pool; tags: TagPool;
           " of the parsed code)"
   result = nifcore.createTokenBuf(16, pool, tags)
   if err.len == 0:
-    var c = beginRead(p.dest)
+    var buf = finish(p)
+    var c = beginRead(buf)
     if not asExpr:
       result.addSubtree c
     else:
@@ -1068,3 +1069,4 @@ proc parseSnippet*(code: string; asExpr: bool; pool: Pool; tags: TagPool;
       if n == 1: result.addSubtree first
       else: err = "expected expression, but got multiple statements"
     endRead c
+  close p

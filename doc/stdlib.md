@@ -94,6 +94,31 @@ when the count reached zero) and `arcIsUnique`. What is built on top of them
 `--mm:atomicArc` makes `defined(gcAtomicArc)` true. Switching strategies changes
 the cached build configuration and therefore forces a rebuild.
 
+#### A runtime of your own
+
+The file does not have to be one of ours: `--mm` also takes a **path**, and then
+`$MM` expands to exactly what was passed. That is the whole mechanism — write
+the three primitives into a file and point `--mm` at it:
+
+```
+nimony c --mm:rt/mygc myprogram.nim       # relative to the current directory
+nimony c --mm:/opt/rt/mygc.nim myprogram.nim
+nimony c '--mm:$MYRT/mygc' myprogram.nim  # $VAR: the compiler reads the
+                                          # environment, hence the quotes
+```
+
+A value is a path as soon as it is not a bare name (letters, digits and `_`):
+`--mm:mygc` is a *strategy* and looks for `lib/std/system/mygc.nim`, while
+`--mm:./mygc` and `--mm:mygc.nim` are paths. A relative path is read against the
+current directory; one that is not there is looked up on the `--path` search
+path, like any other `include`. Whitespace is the one thing the path may not
+contain, because the switch is forwarded to the other tools through a single
+string that is split on spaces again. Naming a file that is not there stops the
+compiler with one error instead of a wall of `undeclared identifier: arcInc`.
+
+`defined(gc<Name>)` works for these too: the name of a runtime given by path is
+its file's basename, so `--mm:rt/myGc.nim` makes `defined(gcMyGc)` true.
+
 #### The uniquely-referenced fast path
 
 `atomicArc`'s `arcDec` reads the count first and skips the atomic
@@ -231,7 +256,9 @@ a rune index to a byte index.
 Hash values are prerequisites for `Table` and `HashSet` keys.
 
 - Combine hashes with `!&`, finalize with `!$`.
-- The `Hashable` concept describes what a type needs to be hashable.
+- The `Hashable` concept describes what a type needs to be hashable. The
+  `hash` overloads live next to it, which is why a `Hashable` (or
+  `tables.Keyable`) check succeeds without importing this module.
 - `hashIgnoreStyle` matches `cmpIgnoreStyle` — use them together
   for Nim-style identifier tables.
 
@@ -241,9 +268,12 @@ Hash values are prerequisites for `Table` and `HashSet` keys.
 [Source](../lib/std/tables.nim) ·
 [Examples](../examples/tables_basics.nim)
 
-Generic hash tables. Keys must satisfy `Keyable` (have `==` and `hash`).
-You must `import std/hashes` alongside `std/tables` to make the `hash`
-procs visible — tables does not re-export them.
+Generic hash tables. Keys must satisfy `Keyable`, which is `Hashable`
+(from `std/hashes`) plus `==`. The builtin key types need no import of
+their own: a concept requirement is resolved in the module that declares
+it, so `hash` is found in `std/hashes` even where it is not imported.
+Import `std/hashes` when you write a `hash` for your own key type, or
+need `Hash`, `!&` and `!$` by name.
 
 The table uses a hybrid strategy: **linear scan for ≤ 4 entries**,
 hash table with open addressing for larger sizes. This means small
@@ -262,8 +292,8 @@ tables have no hashing overhead at all.
 [Source](../lib/std/sets.nim) ·
 [Examples](../examples/sets_basics.nim)
 
-Hash-based sets for any hashable type. Built on top of `Table[T, bool]`.
-Like `tables`, you must also `import std/hashes`.
+Hash-based sets for any hashable type. Built on top of `Table[T, bool]`,
+so element types must satisfy `Keyable` under the same rules as table keys.
 
 - `containsOrIncl` is the deduplication primitive — returns whether
   the element was already present, and adds it if not.

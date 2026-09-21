@@ -107,3 +107,14 @@ Consequences when writing a test:
   test by test, so the report still names the single test that broke. Use
   `--joined:off` to rule the grouping out entirely, or `hastur joined <dir>` to
   run one group by hand.
+
+## `setup.nim` suites run inside the pool
+
+In a parallel tree walk (`--jobs:N`, which `tools/tester.nim` passes) the
+`setup.nim` suites (`boot`, `validator`, `incremental`, …) are items of the same
+pool as the tests, so they overlap with them instead of running first. Such a
+runner is handed `--no-build` once the walk has built the toolchain, and must
+then leave every tool `build all` builds alone: relinking `bin/nimony` while
+other workers are running it fails on Windows. A tool of its own (`contracts`,
+`controlflow`) it may still build. The pool's order comes from how long each
+item took last time (`nimcache_static/hastur.times`), longest first.

@@ -870,6 +870,8 @@ proc conceptCandidateMatches(m: var Match; candSym: SymId; candDecl: Cursor;
     undoInferred(m, adopted)
 
 proc conceptRoutineAvailable(m: var Match; conceptSym: SymId; body: Cursor; routine: Cursor; a: Cursor; actualBody: Cursor): bool =
+  ## `conceptSym` is the concept that *declares* `routine`, which for an
+  ## inherited requirement is a parent of the concept being checked.
   if m.context == nil:
     return true
   if isConceptType(a):
@@ -935,8 +937,8 @@ proc matchConceptBody(m: var Match; conceptSym: SymId; body: Cursor; a: Cursor):
   let actualIsConcept = isConceptType(a)
   let actualBody = if actualIsConcept: getTypeSection(a.symId).body else: default(Cursor)
   var missing: seq[SymId] = @[]
-  for cbody, routine in conceptHierarchyRoutines(body):
-    if not conceptRoutineAvailable(m, conceptSym, cbody, routine, a, actualBody):
+  for owner, cbody, routine in conceptHierarchyRoutines(conceptSym, body):
+    if not conceptRoutineAvailable(m, owner, cbody, routine, a, actualBody):
       addMissingConstraint(m, routine)
       missing.add conceptRequirementSym(routine)
   leaveBodyCheck(m.context, conceptSym, a)

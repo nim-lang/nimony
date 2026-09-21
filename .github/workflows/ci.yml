@@ -40,14 +40,20 @@ jobs:
           # two linux rows need different runners: amd64 on ubuntu-24.04,
           # arm64 on the arm-hosted image. An os-keyed include can't express
           # that split.
+          #
+          # `skip` is this row's HASTUR_SKIP: the suites its tree walk leaves
+          # out, `;`-separated. Every row hands `tests/boot` to the `boot` job;
+          # the windows row drops more (see its comment).
           - os: linux
             cpu: amd64
             nim_branch: devel
             builder: ubuntu-24.04
+            skip: tests/boot
           - os: linux
             cpu: i386
             nim_branch: devel
             builder: ubuntu-24.04
+            skip: tests/boot
           # linux/arm64 exercises the asm-generic `struct stat` layout and the
           # arm64-divergent fcntl constants (O_DIRECTORY et al) that no other
           # job reaches; tposixabi static_asserts the whole transcription
@@ -56,14 +62,57 @@ jobs:
             cpu: arm64
             nim_branch: devel
             builder: ubuntu-24.04-arm
+            skip: tests/boot
           - os: macos
             cpu: arm64
             nim_branch: devel
             builder: macos-15
+            skip: tests/boot
+          # Windows is the slow runner (4 cores, and a process creation costs
+          # what a dozen do elsewhere), so it is the one job where a suite has
+          # to earn its place by asserting something the OTHER four do not.
+          # These six do not — each is dropped with its own reason:
+          #
+          #   tests/nimony/macros   ~40% of the whole suite's cost, measured, on
+          #     BOTH hosts. Every test here is a compile-time macro, and a macro
+          #     is a plugin nimony builds and runs mid-compile — a second full
+          #     toolchain pass per test, which on Windows is where 9 tests turn
+          #     into ~250-370s each. What they assert (bindSym scoping,
+          #     parseStmt, NimNode construction) is nimsem's, identical on every
+          #     host.
+          #   tests/nimony/plugins  Same mechanism, same reason, another ~12%.
+          #
+          # Dropping those two does NOT stop Windows building and running a
+          # compile-time plugin: `std/smartcli` IS one (`{.plugin: "deps/
+          # smartcli".}`), so tests/nimony/stdlib/tsmartcli_* exercises the
+          # build-and-spawn path four times over, and tests/nimony/pluginpaths
+          # — kept deliberately — is the test written for that machinery.
+          #
+          #   tests/nimony/valgrind  `hasValgrind` is false here, so
+          #     `testValgrind` returns before asserting anything. The directory
+          #     still compiles and runs 9 tests, one process each (the category
+          #     is neither joinable nor native), to check nothing the category
+          #     exists for.
+          #   tests/ithaqua         The wasm backend. Its artifact is a .wasm
+          #     run under node; nothing in it is host-dependent.
+          #   bench                 `-d:benchSmoke` build-and-compare. The
+          #     question is "does it still build and still compute the same
+          #     numbers" — host-independent by construction.
+          #   tests/nimony/opt      `--opt:speed`, i.e. the shoggoth passes.
+          #     The windows `boot` job below already builds every stage
+          #     `-d:release`, which is shoggoth on this host at full size.
+          #
+          # All six keep running on linux-amd64, linux-arm64 and macos-arm64, so
+          # a regression in them is still caught the same day — just not four
+          # times. Measured on run 35283728131: the tree walk's parallel phase
+          # was 1593s of a 2003s step, and macros+plugins alone owned the
+          # t=404..1216s stretch of it.
           - os: windows
             cpu: amd64
             nim_branch: devel
             builder: windows-2025
+            skip: >-
+              tests/boot;tests/nimony/macros;tests/nimony/plugins;tests/nimony/valgrind;tests/ithaqua;bench;tests/nimony/opt
 
     name: '${{ matrix.target.os }}-${{ matrix.target.cpu }}-nim-${{ matrix.target.nim_branch }} (${{ matrix.branch }})'
     runs-on: ${{ matrix.target.builder }}
@@ -107,11 +156,13 @@ jobs:
         # again; tools/tester.nim then also adds the -fuse-ld=lld that
         # clang's native PE TLS needs (ld.bfd lays out `.tls$` wrong).
         #
-        # HASTUR_SKIP hands `tests/boot` to the `boot` job below. Unset — as it
-        # is for anyone running `nim c -r tools/tester.nim` locally — the tester
-        # still walks the whole tree, bootstrap included.
+        # HASTUR_SKIP hands `tests/boot` to the `boot` job below, and on Windows
+        # also drops the suites whose assertion is host-independent (the matrix
+        # row spells out which, and why). Unset — as it is for anyone running
+        # `nim c -r tools/tester.nim` locally — the tester still walks the whole
+        # tree, bootstrap included.
         env:
-          HASTUR_SKIP: tests/boot
+          HASTUR_SKIP: ${{ matrix.target.skip }}
         run: |
           cd nimony
           nim c -r tools/tester.nim

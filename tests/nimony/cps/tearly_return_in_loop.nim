@@ -13,6 +13,14 @@ import std / syncio
 # the boundary that splits the condition's `jmp`/`lab` pair. A single pass
 # leaves a `goto` naming a label that has moved to the next state proc — the
 # C compiler says "label used but not defined".
+#
+# Third, `discard pass()` binds the result to a temp whose ADDRESS is the
+# callee's result slot, written when the callee completes — after the state
+# proc that made the call returned. That temp has to live in the frame, and for
+# a while it did so only by accident: a scope-end `kill` counted as a later use.
+# Without that it became a stack local and the callee wrote into a dead frame.
+# Linux got away with it; on Windows the write landed on a saved register and
+# the test crashed. `coro_transform.escapingLocalsImpl` pins such a temp now.
 
 var gMode = 2
 

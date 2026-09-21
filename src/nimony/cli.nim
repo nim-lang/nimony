@@ -39,14 +39,21 @@ proc parseTrack(s: string; mode: TrackMode): TrackPosition =
 proc parseCommonOption*(key, val: string; config: var NifConfig;
                         moduleFlags: var set[ModuleFlag];
                         forwardArg: var bool; forwardArgLengc: var bool;
+                        forwardArgHost: var bool;
                         helpMsg = ""; versionMsg = ""): bool =
   ## Parses common command-line options shared between nimony and nimsem.
   ## Returns true if the option was recognized and handled.
   ## Sets forwardArg to true if the option should be forwarded to sub-tools.
   ## Sets forwardArgLengc to true if the option should be forwarded to lengc.
+  ## Sets forwardArgHost to false if the option must NOT reach a
+  ## compile-time-eval process: a macro plugin is built for and run on the
+  ## HOST, so the target triple (`--cpu`, `--os`, `--bits`) of the outer
+  ## compile is wrong for it. Everything else that is forwarded at all is
+  ## forwarded there too.
   ## Optional helpMsg and versionMsg provide custom help/version text.
   forwardArg = true
   forwardArgLengc = false
+  forwardArgHost = true
   result = true
 
   case normalize(key)
@@ -57,17 +64,29 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
   of "compat":
     config.compat = true
   of "mm":
-    # Stored normalized: the name is spelled in camelCase but names a file, and
-    # files stay all-lowercase (`--mm:atomicArc` -> `system/atomicarc.nim`).
-    # Rejecting separators here keeps `--mm` a strategy name and not a way to
-    # `include` an arbitrary path.
-    let name = normalize(val)
-    var valid = name.len > 0
-    for ch in name:
-      if ch notin {'a'..'z', '0'..'9'}: valid = false
-    if not valid:
-      quit "invalid value for --mm; expected a strategy name like arc or atomicArc"
-    config.mm = name
+    # Either a strategy that ships with the stdlib (`--mm:arc` -> the file
+    # `system/arc.nim` next to `system.nim`) or the path of a runtime of your
+    # own (`--mm:rt/mygc`, `--mm:$RT/gc`, `--mm:/opt/rt/gc.nim`). Whitespace is
+    # the one thing a path may not contain: the option is forwarded to the
+    # sub-tools through a single string that is split on spaces again.
+    if val.len == 0 or val.find({' ', '\t'}) >= 0:
+      quit "invalid value for --mm; expected a strategy name like atomicArc " &
+           "or the path of a runtime file (without whitespace)"
+    config.mm = toMM(val)
+    if not isStrategyName(config.mm) and not isAbsolute(config.mm) and
+       config.mm[0] != '$':
+      # A relative path is read against the CURRENT DIRECTORY, where the user
+      # typed it -- `resolveFile` would otherwise try it against `system.nim`'s
+      # directory. Made absolute right here because the option is forwarded to
+      # nimsem and to the const-eval sub-compiles, which have to arrive at the
+      # same file. One that is NOT there stays as written, so `--path` can
+      # still find it, like any other `include`.
+      let rt = config.mm.addFileExt(".nim")
+      if fileExists(rt):
+        # `absolutePath` asks the OS for the current directory and so may
+        # raise; a cwd that cannot be read leaves the path as written, which
+        # `resolveFile` can still work with.
+        config.mm = (try: absolutePath(rt) except: rt)
   of "path", "p":
     config.paths.add val
   of "define", "d":
@@ -81,6 +100,7 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     moduleFlags.incl IsMain
     forwardArg = false
   of "bits":
+    forwardArgHost = false
     case val
     of "64": config.bits = 64
     of "32": config.bits = 32
@@ -89,9 +109,11 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     # Pin it, so a `--cpu` on either side of this flag leaves it alone.
     config.bitsExplicit = true
   of "cpu":
+    forwardArgHost = false
     if not config.setTargetCPU(val):
       quit "unknown CPU: " & val
   of "os":
+    forwardArgHost = false
     if not config.setTargetOS(val):
       quit "unknown OS: " & val
   of "app":
@@ -167,10 +189,20 @@ proc parseCommonOption*(key, val: string; config: var NifConfig;
     of "", "on": config.inlineFrames = true
     of "off": config.inlineFrames = false
     else: quit "invalid value for --inlineframes; expected on or off"
+  of "parallelbuild":
+    # Also forwarded: nimsem's compile-time-eval builds run a nifmake of their own.
+    try:
+      config.parallelBuild = parseInt(val)
+    except:
+      quit "invalid value for --parallelBuild; expected a number (0 = all cores)"
+    if config.parallelBuild < 0:
+      quit "invalid value for --parallelBuild; expected a number (0 = all cores)"
   of "novalidate":
     config.noValidate = true
   of "verbose":
     config.verbose = true
+  of "keepsemtree":
+    config.keepSemTree = true
   of "opt":
     forwardArg = false
     case normalize(val)

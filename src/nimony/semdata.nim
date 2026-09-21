@@ -6,6 +6,11 @@
 
 ## Types required by semantic checking.
 
+when defined(nimony):
+  # `SemRoutine.parent` and the other back-links here are nilable chains: the
+  # outermost routine has no parent.
+  {.feature: "lenientnils".}
+
 import std / [tables, sets, hashes, os, syncio, formatfloat, assertions]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
@@ -54,6 +59,8 @@ type
                  ## must not collapse it by scope distance nor call it
                  ## ambiguous: context has not spoken yet
     PreferIterators
+    PreferTypes  ## a name in a type position: a symbol choice with exactly one
+                 ## type candidate means that type (see `semIdentImpl`)
     AllowUndeclared
     AllowModuleSym
     AllowEmpty
@@ -231,6 +238,8 @@ type
     templateInstCounter*: int
     commandLineArgs*: string # for IC we make nimony `exec` itself. Thus it is important
                              # to forward command line args properly.
+    hostCommandLineArgs*: string # the same minus the target triple, for the
+                                 # compile-time-eval processes we build and RUN
     #fieldsCache: Table[SymId, Table[StrId, ObjField]]
     meta*: MetaInfo
     #hookIndexLog*: array[AttachedOp, seq[HookIndexEntry]] # only a log, used for index generation, but is not read from.

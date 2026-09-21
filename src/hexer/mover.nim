@@ -7,40 +7,62 @@
 #    distribution, for details about the copyright.
 #
 
-## Move analyser.
-import std / [assertions, intsets, syncio]
+##[
+Move analyser: "is this read of a location its *last* read?".
+
+The analysis runs **directly on the Final IR** (`doc/final_ir.md`) — the form
+every hexer pass reads and writes — instead of translating the module into a
+second, goto-based representation first.
+
+What that translation used to cost: `controlflow.nim` built a whole parallel
+`TokenBuf` for the module, plus a `srcMap` side-channel mapping every CF token
+back to the source token it came from, plus a `FindStartIndex` that inverted
+`srcMap` so the query expression could be *found again* in the copy. Three data
+structures whose only job was to undo the translation — and the side-channel
+reached into the CF builder itself, which had to keep it aligned through every
+buffer it moved or truncated.
+
+None of that is needed once the walk happens on the analysed buffer itself: the
+query is already a cursor into it, so its position is the answer `findStart`
+used to compute. Final IR is close enough to a flat instruction stream that the
+one thing the goto form really provided — "what runs next" — is recovered from a
+single `parents` array (token position -> position of the enclosing tag), built
+once per module:
+
+- `(stmts …)` / `(scope …)`  — the next sibling, else whatever follows the block
+- `(ite cond then else)`     — the condition forks into both branches
+- `(loop body)`              — falling off the body is the back-edge
+- `(continue .)`             — the back-edge, taken explicitly
+- `(jmp L)` / `(lab L)`      — forward and scoped, so a walk up the chain
+- `(case sel (of …)* (else …)?)` — the selector forks into the branches
+- `(try body (except …)* (fin …)?)` — body and handlers are all successors
+- `(ret v)` / `(raise v)`    — read `v`, then the path ends
+
+Reasoning about the same tree the duplifier rewrites also removes a whole class
+of bug: the goto form could impose an evaluation order that a later pass then
+contradicted (see the `AndX`/`OrX` note in `xelim.isComplex`).
+]##
+
+import std / [assertions, intsets]
 
 include ".." / lib / nifprelude
 include ".." / lib / compat2
-import ".." / nimony / [nimony_model, decls, controlflow, programs]
+import ".." / nimony / [nimony_model, decls, programs]
+import ".." / finalir / finalir_model
 
 type
   RootOfMode* = enum
     CanFollowDerefs, CannotFollowDerefs, CanFollowCalls
 
-  FindStartEntry = object
-    pos: int32       ## position in `cf`, or -1 if no CF token maps to this source pos
-    nested: int16    ## paren-nesting depth at that position
-
-  FindStartIndex = object
-    ## Source-position → (cf position, nesting) lookup. Indexed by source-buffer
-    ## position; `data[srcPos - base]` holds the entry, so only the touched span
-    ## `[base, base + data.len)` is allocated rather than the whole buffer (the
-    ## LocSpan trick from arkham's register_allocator). Built from the side-channel
-    ## `srcMap` that `toControlflowWithMap` returns — the source→CF mapping no
-    ## longer rides in the token `info` field (nifcore tokens may carry none).
-    base: int32
-    data: seq[FindStartEntry]
-
   MoverContext* = object
-    ## Per-pass context for the mover. Holds the controlflow buffer and a
-    ## source-position → (cf position, nested depth) lookup built once when
-    ## the CF is materialized. Replaces the bare `cf: TokenBuf` the duplifier
-    ## used to carry around, and turns `findStart` from an O(N) buffer scan
-    ## into an O(1) array index.
-    cf*: TokenBuf
-    index*: FindStartIndex
-    bits*: int      ## target `int` width, for the CF's own type cache
+    ## Per-pass context. `parents` is built once, lazily, from the buffer the
+    ## pass is reading; it does not change while the pass runs.
+    parents: seq[int32]
+      ## `parents[i]` is the position of the tag whose subtree directly
+      ## contains token `i`, or -1 for the root. This is what makes "what runs
+      ## after this subtree" answerable from any position in the middle of the
+      ## tree, which is what a flat goto stream gave for free.
+    built: bool
 
 proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
   var n = n
@@ -67,7 +89,19 @@ proc rootOf*(n: Cursor; mode = CanFollowDerefs): SymId =
         # that we can mark `table` as aliased.
       else:
         break
-    else:
+    of NoExpr, ErrX, SufX, ParX, NilX, InfX, NeginfX, NanX, FalseX, TrueX,
+       AndX, OrX, XorX, NotX, NegX, SizeofX, AlignofX, OffsetofX, OconstrX,
+       AconstrX, BracketX, CurlyX, CurlyatX, KvX, OvfX, AddX, SubX, MulX,
+       DivX, ModX, ShrX, ShlX, BitandX, BitorX, BitxorX, BitnotX, EqX, NeqX,
+       LeX, LtX, CchoiceX, OchoiceX, PragmaxX, QuotedX, DdotX, NewrefX,
+       NewobjX, TupX, TupconstrX, SetconstrX, TabconstrX, AshrX, CompilesX,
+       DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX, InstanceofX,
+       HighX, LowX, TypeofX, UnpackX, FieldsX, FieldpairsX, EnumtostrX,
+       IsmainmoduleX, InstantiationinfoX, DefaultobjX, DefaulttupX,
+       DefaultdistinctX, Delay0X, SuspendX, ExprX, DoX, PlussetX, MinussetX,
+       MulsetX, XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+       DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX, InternalTypeNameX,
+       InternalFieldPairsX, FailedX, IsX, EnvpX, ToClosureX, PluginCallX:
       break
   if n.kind == Symbol:
     result = n.symId
@@ -142,15 +176,18 @@ proc disjointDirectField(tree: Cursor; r: SymId; x: Cursor): bool =
       inc treeSel               # tree: OBJ -> selector
       var xSel = xObj
       inc xSel                  # x:    OBJ -> selector
-      case tree.exprKind
-      of DotX:                  # disjoint iff the two field names differ
+      # An `if` chain rather than a `case`, for the reason `xelim.trExprToLabel`
+      # gives: two kinds are interesting and everything else shares one
+      # fall-back, and here that fall-back is the conservative answer -- an
+      # accessor this does not know stays "may alias" and the full scan runs.
+      if tree.exprKind == DotX:
+        # disjoint iff the two field names differ
         result = treeSel.kind == Symbol and xSel.kind == Symbol and
                  treeSel.symId != xSel.symId
-      of TupatX:                # disjoint iff the two tuple indices differ
+      elif tree.exprKind == TupatX:
+        # disjoint iff the two tuple indices differ
         result = treeSel.kind == IntLit and xSel.kind == IntLit and
                  treeSel.intVal != xSel.intVal
-      else:
-        discard
 
 proc containsRoot(tree: var Cursor; x: Cursor): bool =
   ## True if `tree` contains a read whose location can alias `x` (the location
@@ -188,256 +225,410 @@ proc containsRoot(tree: var Cursor; x: Cursor): bool =
   else:
     inc tree
 
-proc contains(index: FindStartIndex; srcPos: int): bool {.inline.} =
-  srcPos >= int(index.base) and srcPos < int(index.base) + index.data.len
+# ------------------- navigating the Final IR ---------------------------
 
-proc buildFindStartIndex(cf: TokenBuf; srcMap: openArray[int32]): FindStartIndex =
-  ## One-pass scan of the just-built CF buffer that records, for each source
-  ## position, the *first* CF token that maps back to it (via the parallel
-  ## `srcMap` side-channel) and the paren-nesting depth at that position.
-  ## Subsequent `findStart` lookups are then O(1).
-  assert srcMap.len == cf.len
-  # Size to the touched source span `[lo, hi]` with a `base` (LocSpan trick),
-  # rather than allocating an entry per source token.
-  var lo = high(int32)
-  var hi = -1'i32
-  for s in srcMap:
-    if s >= 0:
-      if s < lo: lo = s
-      if s > hi: hi = s
-  if hi < 0:
-    return FindStartIndex(base: 0, data: @[])
-  result = FindStartIndex(base: lo, data: newSeq[FindStartEntry](int(hi - lo) + 1))
-  for i in 0 ..< result.data.len:
-    result.data[i] = FindStartEntry(pos: -1'i32, nested: 0)
-  var nested = 0
-  # Under `-d:virtualParRi` the sealed ParRis are elided from `cf`, so counting
-  # `dec nested` only on physical ParRis would make `nested` grow monotonically
-  # (overflowing `int16` on large modules, then wrapping negative → `findStart`
-  # spuriously reports "not indexed"). Track each open sealed scope's last-content
-  # index and decrement when we walk past it. Overflow scopes (jump == MaxJump)
-  # keep a physical ParRi and are handled by the `of ParRi` branch.
-  var closeStack: seq[int] = @[]
-  for i in 0 ..< cf.len:
-    case cf[i].kind
-    of TagLit:
-      inc nested
-      # nifcore: every TagLit's close is implicit; no MaxJump sentinel.
-      closeStack.add(i + subtreeWidth(readonlyCursorAt(cf, i)) - 1)
+type
+  NodeClass = enum
+    ## How a node's children relate to control flow. Only this much of the
+    ## grammar matters for "what runs next".
+    ncOther      ## an expression, or a statement whose operands all run
+    ncStmtList   ## `stmts`/`scope`: children are consecutive statements
+    ncRoutine    ## a routine: its body is a control-flow boundary
+    ncLoop       ## `(loop body)`: falling off `body` is the back-edge
+    ncIte        ## `(ite cond then else)` / `(itec …)`
+    ncCase       ## `(case sel (of …)* (else …)?)`
+    ncTry        ## `(try body (except …)* (fin …)?)`
+    ncBranch     ## `of`/`else`/`except`/`fin`: the body is the last child
+    ncExit       ## `ret`/`raise`: evaluating the operand is the last thing
+                 ## that happens on this path
+
+const
+  StmtListKinds = {StmtsS, ScopeS, UnpackdeclS, StaticstmtS}
+  BlockLikeKinds = StmtListKinds + {PragmaxS}
+    ## `pragmax` joins them for `classify` only: its children are statements, so
+    ## a child that completes continues with the next one. `execStmt` still
+    ## enters it past the pragma list.
+  RoutineKinds = {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS}
+  BranchKinds = {OfU, ElseU, ExceptU, FinU}
+  SelectorOnlyExprs = {DotX, DdotX, TupatX, BaseobjX}
+    ## Accessors whose trailing operands are a field name, a tuple index or an
+    ## inheritance depth — never a read. `containsRoot` skips them for the same
+    ## reason; the sibling scan in `afterNode` must too.
+
+proc classify(n: Cursor): NodeClass =
+  case n.stmtKind
+  of BlockLikeKinds: result = ncStmtList
+  of RoutineKinds: result = ncRoutine
+  of CaseS: result = ncCase
+  of TryS: result = ncTry
+  of RetS, RaiseS: result = ncExit
+  of NoStmt:
+    case n.finalIrKind
+    of IteV, ItecV: result = ncIte
+    of LoopV: result = ncLoop
     else:
-      discard # nifcore: no physical ParRi token; closes are tracked below
-    let s = srcMap[i]
-    if s >= 0:
-      let k = int(s - result.base)
-      if result.data[k].pos < 0:
-        result.data[k] = FindStartEntry(pos: int32(i), nested: int16(nested))
-    while closeStack.len > 0 and closeStack[^1] == i:
-      dec nested
-      discard closeStack.pop()
+      if n.substructureKind in BranchKinds: result = ncBranch
+      else: result = ncOther
+  of CallS, CmdS, GvarS, TvarS, VarS, ConstS, ResultS, GletS, TletS, LetS,
+     CursorS, PatternvarS, TypeS, EmitS, AsgnS, ContinueS, LabS, JmpS, YldS,
+     PragmasS, InclS, ExclS, IncludeS, ImportS, ImportasS, FromimportS,
+     ImportexceptS, ExportS, ExportexceptS, CommentS, DiscardS, AssumeS,
+     AssertS, CallstrlitS, InfixS, PrefixS, HcallS, BindS, MixinS, UsingS:
+    # Nothing here forks or joins: whatever follows the node follows the
+    # statement. `jmp`/`lab`/`continue` are transfers `execStmt` resolves by
+    # name, not by where they sit, so they need no class of their own.
+    result = ncOther
+  of IfS, WhenS, WhileS, ForS, CoroforS, BlockS, BreakS, AsmS, DeferS:
+    # `finalir.nim` lowered all of these; `execStmt` `bug`s on one, and until
+    # then it is a node like any other.
+    result = ncOther
 
-proc findStart(c: TokenBuf; srcPos: int; n: var Cursor;
-               index: FindStartIndex): int =
-  if not index.contains(srcPos): return -1
-  let e = index.data[srcPos - int(index.base)]
-  if e.pos < 0: return -1
-  n = c.readonlyCursorAt(int(e.pos))
-  result = int(e.nested)
+proc at(base: Cursor; pos: int32): Cursor {.inline.} = base +! int(pos)
 
-proc singlePath(pc: Cursor; nested: int; x: Cursor; pcs: var seq[Cursor];
-                otherUsage: var Cursor; marks: var IntSet; cfBase: Cursor): bool =
-  var nested = nested
-  var pc = pc
-  let root = rootOf(x)
+proc endOf(base: Cursor; pos: int32): int32 {.inline.} =
+  pos + int32(subtreeWidth(at(base, pos)))
+
+proc firstChild(base: Cursor; pos: int32): int32 {.inline.} =
+  pos + int32(tokenWidth(at(base, pos)))
+
+proc lastChild(base: Cursor; pos: int32): int32 =
+  ## -1 when the tag at `pos` has no children at all, so a caller never reads
+  ## past the subtree.
+  let fin = endOf(base, pos)
+  result = -1
+  var p = firstChild(base, pos)
+  while p < fin:
+    result = p
+    p = endOf(base, p)
+
+proc enclosingLoop(m: MoverContext; base: Cursor; pos: int32): int32 =
+  ## The `(loop …)` a `(continue .)` at `pos` belongs to, or -1.
+  result = -1
+  var child = pos
   while true:
-    if not pc.hasMore:
-      # ran off the end of the CF buffer: the routine ends here, no
-      # further usage on this path (classic had a closing ParRi to stop on)
+    let par = m.parents[child]
+    if par < 0: break
+    let p = at(base, par)
+    if p.finalIrKind == LoopV:
+      result = par
       break
-    #echo "PC IS: ", pc.kind
-    case pc.kind
-    of GotoInstr:
-      # GotoInstr == DotToken: a nonzero payload is a jump, zero is the
-      # plain no-op dot.
-      let diff = pc.getInt28
-      if diff == 0:
-        inc pc
-      elif diff < 0:
-        # jump backwards:
-        let back = pc +! diff
-        if not marks.containsOrIncl(cursorToPosition(cfBase, back)):
-          pc = back
-        else:
-          # finished traversing this path:
-          break
-      else:
-        # ordinary goto, simply follow it:
-        pc = pc +! diff
-    of Symbol:
-      if x.kind == Symbol and pc.symId == x.symId:
-        otherUsage = pc
-        return false
-      inc pc
-    of SymbolDef:
-      if root != NoSymId and pc.symId == root:
-        # found the definition, so it gets a new value:
-        break
-      inc pc
-    of Ident, StrLit, CharLit, IntLit, UIntLit, FloatLit:
-      inc pc
-    of TagLit:
-      #echo "PC IS: ", globalTags.tags[pc.tag]
-      if pc.cfKind == IteF:
-        inc pc
-        # `containsRoot` (not `containsUsage`): an `if` condition that reads the
-        # whole root — or derefs it — after a partial move of `x = a.field`
-        # still uses the moved location; `containsUsage` matched only the exact
-        # path and missed it. `containsRoot` is sound here and skips truly
-        # disjoint sibling fields (see `disjointDirectField`).
-        if containsRoot(pc, x):
-          otherUsage = pc
-          return false
-        # now 2 goto instructions follow:
-        let a = pc +! pc.getInt28
-        inc pc
-        let b = pc +! pc.getInt28
-        # we follow the second goto and remember the first one:
-        if not marks.contains(cursorToPosition(cfBase, a)):
-          pcs.add a
-        pc = b
-      else:
-        case pc.stmtKind
-        of AsgnS:
-          # NOTE: this body does NOT fully consume the asgn (it reads the RHS
-          # without advancing), so `into` is wrong here — use the parent-cursor
-          # form, which jumps past the whole subtree regardless of consumption
-          # (like the old forgiving `leaveScope`).
-          let asgnStart = pc
-          pc = sub(pc)
-          let lhsRedefinesRoot = (pc.kind == Symbol and pc.symId == root) or
-                                 sameTrees(pc, x)
-          if not lhsRedefinesRoot:
-            # The left-hand side of a *partial* write — `x.field = v`, `x[i] = v`,
-            # `x[] = v` — still READS the base `x`: for a `ref` it dereferences the
-            # pointer, for a value object it keeps the object live. A bare `skip` of
-            # the LHS missed that read, so an earlier whole-`x` sink was wrongly
-            # allowed and the assignment then wrote through the emptied location — a
-            # nil-deref crash for refs. Scan the LHS with `containsRoot` exactly like
-            # the RHS below; it skips statically-disjoint sibling fields, so
-            # `a.other = v` after a move of `a.field` still sinks.
-            var lhs = pc
-            if containsRoot(lhs, x):
-              otherUsage = pc
-              return false
-          skip pc # skip left-hand-side; pc now at the right-hand-side
-          # The RHS is evaluated *before* the store, so a read of the old value
-          # here (as in `x = f(x)`) means the earlier occurrence is NOT the last
-          # use — even when the LHS fully redefines `root`. This MUST be checked
-          # before the redefinition `break`; otherwise `x = f(x)` wrongly sinks a
-          # still-live `x` (moving it into `f`'s arg before `f` reads it).
-          # Use `containsRoot`, not `containsUsage`: when `x` is a partial path
-          # like `a.field`, a later *whole-object* read of `a` (e.g. `c = (emove
-          # a)`) still reads the moved field, but `containsUsage` only matched
-          # the exact path and missed it — wrongly sinking `a.field` so the later
-          # whole-object move restored an emptied field. `containsRoot` is sound
-          # (it also catches deref-of-root) and lets a disjoint sibling read
-          # `a.other` through (see `disjointDirectField`).
-          if containsRoot(pc, x):
-            # the RHS reads 's' (or only partially writes it) --> can't sink 's'.
-            otherUsage = pc # XXX Fixme: pc advanced to ')'
-            return false
-          if lhsRedefinesRoot:
-            # pure redefinition of 's' (old value overwritten unread) --> sink 's'.
-            break
-          pc = asgnStart; skip pc
-        of RetS:
-          break
-        of StmtsS, ScopeS, BlockS, ContinueS, BreakS:
-          inc pc
-          inc nested
-        of PragmaxS:
-          inc pc
-          skip pc # pragma itself
-          inc nested
-        of LocalDecls:
-          inc pc
-          if root != NoSymId and pc.kind == SymbolDef and pc.symId == root:
-            # found the definition, so it gets a new value:
-            break
-          skip pc # name
-          skip pc # export marker
-          skip pc # pragmas
-          skip pc # type
-          inc nested
-          # proceed with its value here
-        of NoStmt, CallKindsS, DiscardS, EmitS, InclS, ExclS:
-          if containsRoot(pc, x):
-            otherUsage = pc # XXX Fixme: pc advanced to ')'
-            return false
-        of YldS:
-          # bare `(yld .)` from closure-iter rewrite: a control-flow marker
-          # with no operand. Treat as a sequence point — value, if any, was
-          # already written by the preceding `(asgn result v)`.
-          if containsRoot(pc, x):
-            otherUsage = pc
-            return false
-        of IfS, WhenS, WhileS, ForS, CoroforS, CaseS, TryS, RaiseS,
-           ExportS, IncludeS, ImportS, FromimportS, ImportexceptS, CommentS,
-           PragmasS, ImportasS, ExportexceptS, BindS, MixinS, UsingS,
-           UnpackdeclS, StaticstmtS, AsmS, DeferS, LabS, JmpS:
-          # `lab`/`jmp` cannot reach here: `controlflow.trJmp`/`trLab` consume
-          # them into the goto instructions this walker reads.
-          bug "statement not eliminated: " & $pc.stmtKind
-        of ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS, TemplateS, TypeS,
-           AssumeS, AssertS:
-          # declarative junk we don't care about:
-          skip pc
-    else:
-      inc pc   # LineInfoLit / stray suffix — just advance
-  return true
+    if p.stmtKind in RoutineKinds: break
+    child = par
 
-proc isLastReadImpl(c: TokenBuf; idx: uint32; otherUsage: var Cursor;
-                    index: FindStartIndex): bool =
-  var n = default Cursor
-  let nested = findStart(c, int(idx), n, index)
-  if nested < 0:
-    return true
-  let x = n
-  skip n
-  # step over the (real) closes that separate `x` from the next CF
-  # instruction; under ParRi elision there are none to step over
-  let cfBase = c.readonlyCursorAt(0)
-  var pcs = @[n]
+proc labelAfter(m: MoverContext; base: Cursor; jmpPos: int32; lab: SymId): int32 =
+  ## Where a `(jmp lab)` at `jmpPos` lands. `jmp` is forward-only and scoped
+  ## (`doc/final_ir.md`), so its `(lab lab)` is a *later direct child* of one of
+  ## the enclosing statement lists — the same guarantee `destroyer.collectLabels`
+  ## relies on. Resolving it this way rather than through a module-wide
+  ## symbol->position table is what keeps two routines that mint the same label
+  ## name apart.
+  result = -1
+  var child = jmpPos
+  while true:
+    let par = m.parents[child]
+    if par < 0: break
+    let p = at(base, par)
+    if classify(p) == ncStmtList:
+      let fin = endOf(base, par)
+      var q = endOf(base, child)
+      while q < fin:
+        let s = at(base, q)
+        if s.stmtKind == LabS:
+          let name = childCursor(s)
+          if name.kind in {Symbol, SymbolDef} and name.symId == lab:
+            return q
+        q = endOf(base, q)
+    if p.stmtKind in RoutineKinds: break
+    child = par
+
+proc pushHandlers(m: MoverContext; base: Cursor; tryPos: int32;
+                  pcs: var seq[int32]) =
+  ## Push the `(except …)`/`(fin …)` children of the `(try …)` at `tryPos`.
+  let fin = endOf(base, tryPos)
+  var b = endOf(base, firstChild(base, tryPos)) # past the protected body
+  while b < fin:
+    pcs.add b
+    b = endOf(base, b)
+
+proc pushEnclosingHandlers(m: MoverContext; base: Cursor; pos: int32;
+                           pcs: var seq[int32]) =
+  ## A query that sits *inside* a `try` can still be followed by that `try`'s
+  ## handlers: the walk never passed the `(try …)` itself, so nothing pushed
+  ## them. (The goto form modelled this edge only for a walk that entered the
+  ## `try` from outside.)
+  var child = pos
+  while true:
+    let par = m.parents[child]
+    if par < 0: break
+    let p = at(base, par)
+    if p.stmtKind in RoutineKinds: break
+    if p.stmtKind == TryS and at(base, child).substructureKind != FinU:
+      pushHandlers(m, base, par, pcs)
+    child = par
+
+proc afterNode(m: MoverContext; base: Cursor; pos: int32; x: Cursor;
+               pcs: var seq[int32]; otherUsage: var Cursor): bool =
+  ## `pos` has just been evaluated: push where control goes next. While walking
+  ## out of the enclosing *expression* the operands that still run as part of
+  ## the same statement are scanned — `f(a, g(a))` reads `a` twice. Returns
+  ## false (and sets `otherUsage`) as soon as a read of `x` is found.
+  result = true
+  var child = pos
+  while true:
+    let par = m.parents[child]
+    if par < 0: return                # ran off the buffer: nothing follows
+    let p = at(base, par)
+    let parEnd = endOf(base, par)
+    let childEnd = endOf(base, child)
+    case classify(p)
+    of ncStmtList:
+      if childEnd < parEnd:
+        pcs.add childEnd              # the next statement of the block
+        return
+      child = par                     # block finished: continue after it
+    of ncRoutine:
+      return                          # a routine body ends the walk
+    of ncLoop:
+      pcs.add firstChild(base, par)   # the back-edge
+      return
+    of ncIte:
+      if childEnd >= parEnd:
+        child = par                   # nothing follows the arm
+      elif child == firstChild(base, par):
+        # the condition has been evaluated: both arms are successors
+        pcs.add childEnd              # then-part
+        let elsePos = endOf(base, childEnd)
+        if elsePos < parEnd and not at(base, elsePos).isDotToken:
+          pcs.add elsePos
+          return
+        child = par                   # no else-part: fall through
+      else:
+        child = par                   # an arm finished: continue after the ite
+    of ncCase:
+      if child == firstChild(base, par):
+        var b = childEnd
+        var exhaustive = false
+        while b < parEnd:
+          if at(base, b).substructureKind == ElseU: exhaustive = true
+          pcs.add b
+          b = endOf(base, b)
+        if exhaustive: return
+        child = par                   # no else-part: the case may fall through
+      else:
+        child = par
+    of ncTry:
+      if at(base, child).substructureKind == FinU:
+        child = par                   # the cleanup ran: continue after the try
+      else:
+        let fin = lastChild(base, par)
+        if fin >= 0 and at(base, fin).substructureKind == FinU:
+          pcs.add firstChild(base, fin)
+          return
+        child = par
+    of ncExit:
+      # The operand of a `(ret v)`/`(raise v)` the query sat in: control leaves
+      # here, so nothing lexically after it runs. (A `raise`'s handlers were
+      # already scheduled by `pushEnclosingHandlers`.) Walking on would follow
+      # the *fall-through* of the enclosing `ite` instead — which is how a
+      # `return` inside an early-exit arm used to look like a later use.
+      return
+    of ncBranch:
+      child = par                     # a branch body finished
+    of ncOther:
+      if p.exprKind notin SelectorOnlyExprs:
+        var q = childEnd
+        while q < parEnd:
+          var t = at(base, q)
+          let nxt = endOf(base, q)
+          if containsRoot(t, x):
+            otherUsage = at(base, q)
+            return false
+          q = nxt
+      child = par
+
+proc scanAt(base: Cursor; pos: int32; x: Cursor; otherUsage: var Cursor): bool =
+  ## True if the subtree at `pos` reads the location `x` stands for.
+  var t = at(base, pos)
+  result = containsRoot(t, x)
+  if result: otherUsage = at(base, pos)
+
+proc execStmt(m: MoverContext; base: Cursor; pc: int32; x: Cursor; root: SymId;
+              pcs: var seq[int32]; otherUsage: var Cursor): bool =
+  ## Run one Final IR statement through the analysis and schedule its
+  ## successors. Returns false when a read of `x` is found: then this is not
+  ## the last read and the whole query is answered.
+  let n = at(base, pc)
+  case n.stmtKind
+  of StmtListKinds:
+    let fc = firstChild(base, pc)
+    if fc < endOf(base, pc):
+      pcs.add fc
+      result = true
+    else:
+      result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of PragmaxS:
+    # `(pragmax pragmas stmt…)`: the pragmas evaluate nothing, the rest are
+    # ordinary statements — `classify` calls it a statement list so that
+    # falling off the last one continues past the `pragmax`.
+    let body = endOf(base, firstChild(base, pc))
+    if body < endOf(base, pc):
+      pcs.add body
+      result = true
+    else:
+      result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of RetS, RaiseS:
+    # the operand is read here; afterwards this path is over (a `raise` that
+    # lands in a handler is covered: entering the `try` pushed them).
+    let v = firstChild(base, pc)
+    result = v >= endOf(base, pc) or not scanAt(base, v, x, otherUsage)
+  of JmpS:
+    let target = at(base, firstChild(base, pc))
+    let landing = if target.kind == Symbol: labelAfter(m, base, pc, target.symId)
+                  else: -1'i32
+    if landing >= 0:
+      pcs.add landing
+      result = true
+    else:
+      result = false # unresolvable transfer: assume the location is still live
+  of LabS:
+    result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of ContinueS:
+    let loop = enclosingLoop(m, base, pc)
+    if loop >= 0: pcs.add firstChild(base, loop)
+    result = true
+  of AsgnS:
+    let lhsPos = firstChild(base, pc)
+    let lhs = at(base, lhsPos)
+    let lhsRedefinesRoot = (lhs.kind == Symbol and lhs.symId == root) or
+                           sameTrees(lhs, x)
+    if not lhsRedefinesRoot:
+      # A *partial* write — `x.field = v`, `x[i] = v`, `x[] = v` — still READS
+      # the base `x`: for a `ref` it dereferences the pointer, for a value
+      # object it keeps the object live. `containsRoot` skips statically
+      # disjoint sibling fields, so `a.other = v` after a move of `a.field`
+      # still sinks.
+      if scanAt(base, lhsPos, x, otherUsage): return false
+    # The RHS is evaluated *before* the store, so a read of the old value here
+    # (as in `x = f(x)`) means the earlier occurrence is NOT the last use —
+    # even when the LHS fully redefines `root`. This MUST be checked before the
+    # redefinition case below.
+    let rhsPos = endOf(base, lhsPos)
+    if rhsPos < endOf(base, pc) and scanAt(base, rhsPos, x, otherUsage):
+      return false
+    if lhsRedefinesRoot:
+      result = true # old value overwritten unread: this path is done
+    else:
+      result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of VarS, LetS, CursorS, PatternvarS, ConstS, ResultS, GvarS, TvarS, GletS, TletS:
+    let namePos = firstChild(base, pc)
+    let name = at(base, namePos)
+    let value = lastChild(base, pc) # name, export marker, pragmas, type, VALUE
+    if root != NoSymId and name.kind == SymbolDef and name.symId == root:
+      result = true # the declaration itself: the location gets a new value
+    elif value >= 0 and scanAt(base, value, x, otherUsage):
+      result = false
+    else:
+      result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of CaseS:
+    let selPos = firstChild(base, pc)
+    if scanAt(base, selPos, x, otherUsage):
+      result = false
+    else:
+      result = afterNode(m, base, selPos, x, pcs, otherUsage)
+  of TryS:
+    pcs.add firstChild(base, pc)
+    pushHandlers(m, base, pc, pcs)
+    result = true
+  of NoStmt:
+    case n.finalIrKind
+    of IteV, ItecV:
+      let condPos = firstChild(base, pc)
+      if scanAt(base, condPos, x, otherUsage):
+        result = false
+      else:
+        result = afterNode(m, base, condPos, x, pcs, otherUsage)
+    of LoopV:
+      pcs.add firstChild(base, pc)
+      result = true
+    of KillV, UnknownV:
+      result = afterNode(m, base, pc, x, pcs, otherUsage) # facts, not code
+    else:
+      if n.substructureKind in BranchKinds:
+        pcs.add lastChild(base, pc) # `of`/`else`/`except`/`fin`: run the body
+        result = true
+      elif scanAt(base, pc, x, otherUsage): # a bare expression statement
+        result = false
+      else:
+        result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of CallS, CmdS, CallstrlitS, InfixS, PrefixS, HcallS, DiscardS, EmitS,
+     InclS, ExclS, YldS:
+    # `(yld .)` from the closure-iter rewrite carries no operand; scanning it
+    # is harmless and keeps the shape uniform.
+    if scanAt(base, pc, x, otherUsage):
+      result = false
+    else:
+      result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of RoutineKinds + {TypeS,
+     AssumeS, AssertS, CommentS, PragmasS, IncludeS, ImportS,
+     ImportasS, FromimportS, ImportexceptS, ExportS, ExportexceptS, BindS,
+     MixinS, UsingS}:
+    # declarative junk we don't care about: it evaluates nothing
+    result = afterNode(m, base, pc, x, pcs, otherUsage)
+  of IfS, WhenS, WhileS, ForS, CoroforS, BlockS, BreakS, AsmS, DeferS:
+    # `finalir.nim` lowered all of these; seeing one means a pass regressed the
+    # normal form (see `doc/final_ir.md`).
+    bug "statement not eliminated: " & $n.stmtKind
+
+proc isLastReadImpl(m: MoverContext; buf: TokenBuf; xPos: int32; x: Cursor;
+                    otherUsage: var Cursor): bool =
+  let base = readonlyCursorAt(buf, 0)
+  let root = rootOf(x)
+  var pcs: seq[int32] = @[]
+  # The rest of the statement `x` sits in is evaluated right after it; from
+  # there the ordinary statement walk takes over.
+  if not afterNode(m, base, xPos, x, pcs, otherUsage): return false
+  pushEnclosingHandlers(m, base, xPos, pcs)
   var marks = initIntSet()
   while pcs.len > 0:
     let pc = pcs.pop()
-    let pcPos = cursorToPosition(cfBase, pc)
-    if not marks.contains(pcPos):
-      if not singlePath(pc, nested, x, pcs, otherUsage, marks, cfBase):
-        return false
-      marks.incl pcPos
-  return true
+    if pc < 0 or marks.containsOrIncl(int pc): continue
+    if not execStmt(m, base, pc, x, root, pcs, otherUsage): return false
+  result = true
+
+proc build(m: var MoverContext; buf: TokenBuf) =
+  ## One scan over the module recording each token's enclosing tag. nifcore
+  ## materialises no closing token, so a tag's extent comes from `subtreeWidth`
+  ## and is tracked on a stack of last-content indexes.
+  m.parents = newSeq[int32](buf.len)
+  # The stack of tags still open at `i`, as two parallel columns: where the tag
+  # sits and the index of its last content token.
+  var openAt: seq[int32] = @[]
+  var openLast: seq[int32] = @[]
+  for i in 0 ..< buf.len:
+    while openLast.len > 0 and openLast[openLast.len-1] < int32(i):
+      discard openAt.pop()
+      discard openLast.pop()
+    if openAt.len > 0:
+      m.parents[i] = openAt[openAt.len-1]
+    else:
+      m.parents[i] = -1'i32
+    if buf[i].kind == TagLit:
+      let c = readonlyCursorAt(buf, i)
+      openAt.add int32(i)
+      openLast.add int32(i + subtreeWidth(c) - 1)
+  m.built = true
 
 proc isLastUse*(n: Cursor; buf: var TokenBuf;
                 otherUsage: var NifLineInfo;
                 mover: var MoverContext): bool =
-  # XXX Todo: only transform&traverse the innermost scope the variable was declared in.
-  if mover.cf.len == 0:
-    # First call for this `buf`: build the CF and, alongside it, the `srcMap`
-    # side-channel mapping every CF token back to its source position. `buf`
-    # itself is left untouched (the old scheme stamped payloads into `buf.info`
-    # and restored them; nifcore tokens may carry no info, so the mapping lives
-    # in a dedicated seq instead). The same scan then inverts `srcMap` into the
-    # source-position → position index so `findStart` runs in O(1) per query.
-    var srcMap: seq[int32] = @[]
-    mover.cf = toControlflowWithMap(beginRead buf, srcMap, mover.bits)
-    mover.index = buildFindStartIndex(mover.cf, srcMap)
+  if not mover.built:
+    build(mover, buf)
   let idx = cursorToPosition(buf, n)
   assert idx >= 0
   var other = default Cursor
-  result = isLastReadImpl(mover.cf, idx.uint32, other, mover.index)
+  result = isLastReadImpl(mover, buf, int32(idx), n, other)
   if other.cursorIsNil or not other.hasCurrentToken:
-    # `other` can sit at a scope's end (see the "pc advanced to ')'"
-    # notes in singlePath); there is no token to read info from then.
+    # `other` can sit at a scope's end; there is no token to read info from.
     otherUsage = NoLineInfo
   else:
     otherUsage = other.info
@@ -456,7 +647,7 @@ when isMainModule:
     var input = parseFromBuffer(s, "")
     var otherUsage = NoLineInfo
     let n = findX(beginRead(input))
-    var mover = MoverContext(cf: createTokenBuf(300), bits: sizeof(int)*8)
+    var mover = MoverContext()
     let res = isLastUse(n, input, otherUsage, mover)
     if res != expected:
       echo "FAILED Test case: ", s
@@ -485,20 +676,80 @@ when isMainModule:
   test BasicTest1, false
   test BasicTest2, true
 
+  # Final IR spells a loop as `(loop …)` with an explicit `(continue .)`
+  # back-edge; there is no condition slot.
   const LoopTest = """(stmts
     (var :my.var . . (array (i +8) +6) .)
-    (while (true)
+    (loop (scope
       (discard (emove my.var))
-    )
+      (continue .)))
 
   )"""
   test LoopTest, false
 
   const LoopTestB = """(stmts
-    (while (true) (stmts
+    (loop (scope
       (var :my.var . . (array (i +8) +6) .)
       (discard (emove my.var))
-    ))
+      (continue .)))
 
   )"""
   test LoopTestB, true
+
+  # `(ite cond then else)`: a use in either arm defeats the move, a
+  # redefinition in both arms does not.
+  const IteUseTest = """(stmts
+    (var :my.var . . (array (i +8) +6) .)
+    (discard (emove my.var))
+    (ite (true)
+      (scope (call use my.var))
+      (scope (discard +1)))
+
+  )"""
+  test IteUseTest, false
+
+  const IteRedefTest = """(stmts
+    (var :my.var . . (array (i +8) +6) .)
+    (discard (emove my.var))
+    (ite (true)
+      (scope (asgn my.var +4))
+      (scope (asgn my.var +5)))
+    (call use my.var)
+
+  )"""
+  test IteRedefTest, true
+
+  # A missing else-part is a fall-through edge, so the use after the `ite`
+  # is still reachable.
+  const IteNoElseTest = """(stmts
+    (var :my.var . . (array (i +8) +6) .)
+    (discard (emove my.var))
+    (ite (true)
+      (scope (asgn my.var +4)).)
+    (call use my.var)
+
+  )"""
+  test IteNoElseTest, false
+
+  # `(jmp L)` skips the use in between and lands on `(lab L)`.
+  const JmpTest = """(stmts
+    (var :my.var . . (array (i +8) +6) .)
+    (discard (emove my.var))
+    (jmp L.0)
+    (call use my.var)
+    (lab :L.0)
+
+  )"""
+  test JmpTest, true
+
+  # A `case` forks into every branch.
+  const CaseTest = """(stmts
+    (var :my.var . . (array (i +8) +6) .)
+    (var :i.0 . . (i -1) +0)
+    (discard (emove my.var))
+    (case i.0
+      (of (ranges +0) (scope (discard +1)))
+      (else (scope (call use my.var))))
+
+  )"""
+  test CaseTest, false

@@ -223,7 +223,7 @@ proc commonType*(c: var SemContext; dest: var TokenBuf; it: var Item; argBegin: 
   typematch m, expected, arg
   if m.err:
     # try converter
-    var convMatch = default(Match)
+    var convMatch = createMatch(addr c)
     var convArg = CallArg(n: arg.n, typ: arg.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
       # `arg.n` and `convArg.n` are cursors into `dest` (via `cursorAt`
@@ -561,14 +561,22 @@ proc fetchSym*(c: var SemContext; s: SymId): Sym =
 
 proc semStmtsExpr(c: var SemContext; dest: var TokenBuf; it: var Item; isNewScope: bool) =
   let before = dest.len
+  let info = it.n.info
   dest.addParLe(it.n.cursorTagId, it.n.info)
+  var empty = true
   it.n.into:
     while it.n.hasMore:
+      empty = false
       if not isLastSon(it.n):
         semStmt c, dest, it.n, false
       else:
         semExpr c, dest, it
   dest.addParRi()
+  if empty:
+    # `(stmts)` produces nothing: that is `void`, not "unknown". A template whose
+    # body was a `when` that compiled to nothing publishes exactly this, and its
+    # expansion was then rejected as `auto` where `void` was wanted.
+    producesVoid c, dest, info, it.typ
   let kind =
     if classifyType(c, it.typ) in {VoidT, AutoT}:
       (if isNewScope: ScopeTagId else: StmtsTagId)
@@ -594,10 +602,33 @@ proc semStmt*(c: var SemContext; dest: var TokenBuf; n: var Cursor; isNewScope: 
     discard "ok"
   else:
     # analyze the expression that was just produced:
-    let ex = cursorAt(dest, exPos)
+    var ex = cursorAt(dest, exPos)
     let discardable = implicitlyDiscardable(ex, dest)
+    endRead ex
     if not discardable:
       buildErr c, dest, info, "expression of type `" & typeToString(it.typ) & "` must be discarded"
+    else:
+      # Make the implicit discard explicit: `(discard …)` is what later passes
+      # bind to a temp and destroy. A bare `(call …)` statement of a type with a
+      # destructor (`{.discardable.}` proc returning a `string`) was bound to a
+      # temp whose symbol was then left behind as a statement.
+      var one = cursorAt(dest, exPos)
+      # Only a CALL: an `if`/`case` whose branches are discardable calls is
+      # typed by them too, but wrapping it would turn a statement without an
+      # `else` into an expression that does not always produce a value.
+      let isCall = one.exprKind in CallKinds
+      skip one
+      let single = cursorToPosition(dest, one) == dest.len
+      endRead one
+      if single and isCall:
+        var val = createTokenBuf(dest.len - exPos + 2)
+        for i in exPos ..< dest.len: val.add dest[i]
+        dest.shrink exPos
+        dest.addParLe(DiscardS, info)
+        var vc = beginRead(val)
+        dest.addSubtree vc
+        endRead vc
+        dest.addParRi()
   n = it.n
 
 proc semStmtCallback*(c: var SemContext; dest: var TokenBuf; n: Cursor) =
@@ -1409,6 +1440,22 @@ proc patchType(c: var SemContext; dest: var TokenBuf; typ: TypeCursor; patchPosi
   let t = skipModifier(typ)
   dest.replace t, patchPosition
 
+proc uniqueTypeCandidate(c: var SemContext; dest: var TokenBuf; choiceAt: int): SymId =
+  ## The one type in the symbol choice at `choiceAt`, or `SymId(0)` if there are
+  ## none or several.
+  result = SymId(0)
+  var types = 0
+  var choice = readonlyCursorAt(dest, choiceAt)
+  var a = choice.childCursor
+  while a.hasMore:
+    if a.isSymbol and fetchSym(c, a.symId).kind in {TypeY, TypevarY}:
+      result = a.symId
+      inc types
+    inc a
+  endRead a
+  endRead choice
+  if types != 1: result = SymId(0)
+
 proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: StrId;
                   flags: set[SemFlag]; nearestIsUnique: var bool): Sym =
   let mode =
@@ -1428,6 +1475,16 @@ proc semIdentImpl(c: var SemContext; dest: var TokenBuf; n: var Cursor; ident: S
     dest.shrink insertPos
     discard resolveDeferredLocal(c, ident)
     count = buildSymChoice(c, dest, ident, info, mode, nearestIsUnique)
+  if count > 1 and PreferTypes in flags:
+    # In a type position only a type can stand, so its one type candidate is
+    # what the name means, as in Nim: nifcore's enum field `NifKind.Symbol`
+    # next to a type `Symbol` of another module is no ambiguity there.
+    let typeSym = uniqueTypeCandidate(c, dest, insertPos)
+    if typeSym != SymId(0):
+      expectUnique dest
+      dest.shrink insertPos
+      dest.addSymUse(typeSym, info)
+      return fetchSym(c, typeSym)
   if count == 1:
     # Read the single candidate back out, then roll the choice away and write
     # a plain sym use in its place. The two cursors have to be RELEASED before
@@ -3327,7 +3384,12 @@ proc semFor(c: var SemContext; dest: var TokenBuf; it: var Item) =
   if tryForLoopPlugin(c, dest, it, forHeadPos, beforeCall, info, iterCall.typ, forStart):
     return
   var isMacroLike = false
-  if dest[beforeCall].exprKind == ErrX:
+  if hasErrorSince(dest, beforeCall):
+    # Not just `dest[beforeCall]`: the error can sit below the head. An
+    # undeclared callee leaves a reconstructed `(call (err ...) args)` behind,
+    # and handing that to the implicit-iterator fallback below buries the
+    # precise "undeclared identifier: 'x'" under the generic "cannot call
+    # expression of type auto" (nim-lang/nimony#2553).
     discard "already produced an error"
   elif isIteratorCall(c, dest, beforeCall):
     discard "fine"
@@ -3834,7 +3896,7 @@ proc semBracket(c: var SemContext; dest: var TokenBuf, it: var Item; flags: set[
      StaticT, TupleT, ClosureTupleT, OnumT, AnumT, RefT, MutT, OutT, LentT, SinkT, NiltT, ConceptT,
      DistinctT, ItertypeT, RangetypeT, UarrayT, SetT, SymkindT, TypekindT, TypedescT,
      UntypedT, TypedT, CstringT, PointerT, OrdinalT, PluginCallT:
-    var convMatch = default(Match)
+    var convMatch = createMatch(addr c)
     let convArg = CallArg(n: orig, typ: it.typ)
     if tryConverterMatch(c, convMatch, expected, convArg):
       discard "matching converter found (e.g. `toOpenArray`)"
@@ -4972,7 +5034,7 @@ proc tryExplicitRoutineInst(c: var SemContext; dest: var TokenBuf; syms: Cursor;
   # XXX investigate this further, seems odd and prevents us from eliminating the swaps:
   let args = cursorAt(argBuf, 0)
   var matches = 0
-  var lastMatch = default(Match)
+  var lastMatch = createMatch(addr c)
   var instLastMatch = false
   var errMsg = ""
   var errInfo = info
@@ -5388,6 +5450,7 @@ proc semDefer(c: var SemContext; dest: var TokenBuf; it: var Item) =
     semStmt c, dest, it.n, false
     closeScope c
   c.routine.hasDefer = true
+  it.typ = c.types.voidType
 
 proc expandSymChoice(c: var SemContext; dest: var TokenBuf; n: var Cursor) =
   let info = n.info

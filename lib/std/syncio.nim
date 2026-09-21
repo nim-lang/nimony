@@ -183,6 +183,15 @@ when defined(nimNativeIo):
         O_CREAT  = 0x0200'i32
         O_TRUNC  = 0x0400'i32
         O_APPEND = 0x0008'i32
+    elif defined(sunos):
+      const
+        # Solaris/illumos <sys/fcntl.h>: Linux's O_CREAT bit is O_DSYNC here.
+        O_RDONLY = 0x0000'i32
+        O_WRONLY = 0x0001'i32
+        O_RDWR   = 0x0002'i32
+        O_CREAT  = 0x0100'i32
+        O_TRUNC  = 0x0200'i32
+        O_APPEND = 0x0008'i32
     else:
       const
         # Linux open(2) flags (stable across x86_64/arm64).
@@ -659,6 +668,20 @@ proc writeFile*(filename, content: string) {.raises.} =
       f.write content
     finally:
       close(f)
+  else:
+    raise IOError
+
+proc writeFile*(filename: string; content: openArray[byte]) {.raises.} =
+  ## Opens `filename` for writing, writes the bytes of `content`, and closes
+  ## the file. Raises `IOError` if the file cannot be opened or fully written.
+  var f: File
+  if open(f, filename, fmWrite):
+    var written = content.len
+    if content.len > 0:
+      written = writeBuffer(f, addr content[0], content.len)
+    close(f)
+    if written != content.len:
+      raise IOError
   else:
     raise IOError
 

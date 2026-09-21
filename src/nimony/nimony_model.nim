@@ -531,3 +531,65 @@ proc skipNilAnnotation*(n: var Cursor) {.inline.} =
   ## may have appended when an importc'd pointer alias was inlined.
   while n.hasMore:
     skip n
+
+proc needsTemp*(n: Cursor): bool =
+  ## Must `n` be bound to a temporary to be evaluated more than once? A
+  ## literal or a location built from symbols is read again for free; anything
+  ## with a call or a constructor in it is not.
+  # Pre-initialise: the contract analyser drops the `IfFalse cf s`
+  # implication for the leaving-path cfvar raised inside the inner
+  # while-loop, so it cannot prove `result` is set on the normal exit of
+  # the AtX branch. `result = false` here is the bool default anyway —
+  # run `bin/nimony c --verbose src/hexer/desugar.nim` (with this line
+  # removed) to see the Final IR that trips the checker.
+  result = false
+  case n.kind
+  of Symbol, IntLit, UIntLit, FloatLit, CharLit, StrLit:
+    result = false
+  of TagLit:
+    var n = n
+    case n.exprKind
+    of NilX, FalseX, TrueX, InfX, NeginfX, NanX, SizeofX:
+      result = false
+    of ExprX:
+      n = sub(n)  # throwaway copy; bounds the probe under vpr
+      let first = n
+      skip n
+      if not n.hasMore:
+        # single element expr
+        result = needsTemp(first)
+      else:
+        result = true
+    of SufX:
+      inc n
+      result = needsTemp(n)
+    of DconvX:
+      inc n
+      skip n
+      result = needsTemp(n)
+    of AtX, PatX, ArratX, TupatX, DotX, DdotX, ParX, AddrX, HaddrX:
+      result = false
+      n = sub(n)  # throwaway copy; bounds the walk under vpr
+      while n.hasMore:
+        if needsTemp(n):
+          return true
+        skip n
+    of ErrX, DerefX, AndX, OrX, XorX, NotX, NegX, AlignofX,
+        OffsetofX, OconstrX, AconstrX, BracketX, CurlyX, CurlyatX,
+        OvfX, AddX, SubX, MulX, DivX, ModX, ShrX, ShlX, BitandX,
+        BitorX, BitxorX, BitnotX, EqX, NeqX, LeX, LtX, CastX,
+        ConvX, CallX, CmdX, CchoiceX, OchoiceX, PragmaxX, QuotedX,
+        HderefX, NewrefX, NewobjX, TupX, TupconstrX, SetconstrX,
+        TabconstrX, AshrX, BaseobjX, HconvX, CallstrlitX, InfixX,
+        PrefixX, HcallX, CompilesX, DeclaredX, DefinedX, AstToStrX, BindSymX, BindSymNameX,
+        InstanceofX, ProccallX, HighX, LowX, TypeofX, UnpackX,
+        FieldsX, FieldpairsX, EnumtostrX, IsmainmoduleX, InstantiationinfoX,
+        DefaultobjX, DefaulttupX, DefaultdistinctX, DelayX,
+        Delay0X, SuspendX, DoX, PlussetX, MinussetX, MulsetX,
+        XorsetX, EqsetX, LesetX, LtsetX, InsetX, CardX, EmoveX,
+        DestroyX, DupX, CopyX, WasmovedX, SinkhX, TraceX,
+        InternalTypeNameX, InternalFieldPairsX, FailedX, IsX,
+        EnvpX, KvX, ToClosureX, PluginCallX, NoExpr:
+      result = true
+  else:
+    result = true

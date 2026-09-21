@@ -876,7 +876,7 @@ proc handleForwardDeclarations(c: var SemContext; dest: var TokenBuf; declStart:
       # we cannot splice now without invalidating positions other callers
       # are still holding (e.g. the impl's own `declStart`).
       c.matchedForwardDecls.incl fwdDecl
-  elif {ImportcP, ImportcppP} * crucial.flags == {}:
+  elif {ImportcP, ImportcppP, ImportjsP} * crucial.flags == {}:
     # This is a forward declaration - register it as a candidate
     addForwardDecl(c, symId)
 
@@ -1185,7 +1185,10 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
             skip it.n
       else:
         semEmptyBody(c, dest, it, kind, crucial, pass, symId, beforeParams, hookName, info)
-      if c.routine.hasDefer:
+      if c.routine.hasDefer and kind != TemplateY:
+        # A template's `defer` is lowered where it is expanded: lowering it here
+        # would close its `try` at the end of the expansion instead of the
+        # caller's scope, as if the template body were a scope of its own.
         transformDefer dest, beforeBody
       dest.addParRi(it.n.endInfo)
     finally:
@@ -1200,7 +1203,7 @@ proc semProcImpl(c: var SemContext; dest: var TokenBuf; it: var Item; kind: SymK
   if kind == MacroY and pass == checkBody:
     let macroDecl = cursorAt(dest, declStart)
     let macroBinPath = compileMacroPlugin(c.g.config.nifcachePath, macroDecl, symId, info,
-                                          c.commandLineArgs)
+                                          c.hostCommandLineArgs)
     if macroBinPath.len > 0:
       c.compiledMacros[symId] = macroBinPath
 

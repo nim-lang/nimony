@@ -16,6 +16,7 @@ include ".." / lib / nifprelude
 import ".." / models / tags
 import nimony_model, programs, builtintypes, typenav, decls
 from typeprops import isOrdinalType
+import ".." / finalir / finalir_model
 
 const
   GotoInstr* = DotToken
@@ -44,18 +45,8 @@ type
   Target = object
     m: Mode
     t: TokenBuf
-    src: seq[int32]
-      ## Side-channel parallel to `t`: `src[i]` is the source-buffer position of
-      ## the source token that produced `t[i]`, or -1 for a synthesized token.
-      ## Maintained lazily — trailing synthesized tokens are `-1`-padded on demand
-      ## (see `padSrc`). Replaces the old scheme of smuggling the source position
-      ## through the token's `info` field as a payload; nifcore tokens do not
-      ## necessarily carry line info, so the mapping lives in a dedicated seq.
   ControlFlow = object
     dest: TokenBuf
-    destSrc: seq[int32]         ## side-channel parallel to `dest`; see `Target.src`.
-    srcBase: Cursor            ## start of the source buffer; source positions are
-                               ## measured relative to it (`cursorToPosition`).
     nextVar: int
     currentBlock: BlockOrLoop
     typeCache: TypeCache
@@ -124,23 +115,6 @@ proc codeListing*(c: TokenBuf, start = 0; last = -1): string =
     inc i
   if i in jumpTargets: b.addRaw("L" & $i & ": End\n")
   result = b.extract()
-  # ── source-position side-channel ──────────────────────────────────────────
-  # The mover needs to map every CF token back to the source token it came from.
-  # Rather than stamp a payload into the token `info` field (nifcore tokens may
-  # carry no line info), we thread a parallel `seq[int32]` of source positions
-  # through the `Target`/`dest` buffers. Only actual source-token copies get a
-  # real position (see `addSource`); everything synthesized is `-1`. The arrays
-  # are kept in sync lazily: `padSrc` fills the gap with `-1` up to the buffer's
-  # current length just before a precise append and once at the very end.
-
-proc padSrcSeq(src: var seq[int32]; upTo: int) =
-  while src.len < upTo: src.add(-1'i32)
-
-proc padSrc(tar: var Target) = padSrcSeq(tar.src, tar.t.len)
-proc pad(c: var ControlFlow) = padSrcSeq(c.destSrc, c.dest.len)
-
-proc srcPosOf(c: ControlFlow; n: Cursor): int32 =
-  int32(cursorToPosition(c.srcBase, n))
 
 proc genLabel(c: ControlFlow): Label = Label(c.dest.len)
 
@@ -170,24 +144,18 @@ proc add(dest: var TokenBuf; tar: Target) =
   dest.copyTree tar.t
 
 proc flush(c: var ControlFlow; tar: var Target) =
-  ## Append a completed `Target` to `dest`, carrying its source-position
-  ## side-channel along. Replaces the bare `c.dest.add tar`.
-  padSrc(tar)
-  pad(c)
+  ## Append a completed `Target` to `dest`.
   c.dest.add tar
-  for s in tar.src: c.destSrc.add s
 
-proc addSource(c: var ControlFlow; tar: var Target; n: Cursor) =
-  ## Copy a single *source* token into `tar`, recording its source position.
-  ## The only three call sites that funnel source tokens into the CF pipeline.
-  padSrc(tar)
+proc addSource(tar: var Target; n: Cursor) =
+  ## Copy a single *source* token into `tar`. The only three call sites that
+  ## funnel source tokens into the CF pipeline.
   if n.isTagLit:
     # register the head so the matching `addParRi` can seal it (a raw
     # token copy would leave a stale jump and nothing to close)
     tar.t.addParLe(n.cursorTagId, n.info)
   else:
     tar.t.add load(n)
-  tar.src.add srcPosOf(c, n)
 
 proc openTempVar(c: var ControlFlow; kind: StmtKind; typ: Cursor; info: NifLineInfo): SymId =
   assert not typ.isDotToken
@@ -202,30 +170,24 @@ type
   TargetWrapper = object
     m: Mode
     t: TokenBuf
-    src: seq[int32]
 
 proc makeVar(c: var ControlFlow; info: NifLineInfo; tar: var Target; typ: Cursor): TargetWrapper =
   case tar.m
   of IsVar:
     result = TargetWrapper(m: IsVar, t: initTokenBuf())
   of IsEmpty, IsIgnored, IsAppend:
-    result = TargetWrapper(m: tar.m, t: move(tar.t), src: move(tar.src))
+    result = TargetWrapper(m: tar.m, t: move(tar.t))
     let tmp = openTempVar(c, VarS, typ, info)
     c.dest.addDotToken()
     c.dest.addParRi()
     tar.m = IsVar
     tar.t = createTokenBuf(1)
-    tar.src = @[]
     tar.t.addSymUse tmp, info
 
 proc maybeAppend(tar: var Target; w: var TargetWrapper) =
   if w.m == IsAppend:
-    padSrcSeq(w.src, w.t.len)
-    padSrc(tar)
     w.t.add tar.t
-    for s in tar.src: w.src.add s
     tar.t = move(w.t)
-    tar.src = move(w.src)
   tar.m = w.m
 
 proc trAndValue(c: var ControlFlow; n: var Cursor; tar: var Target) =
@@ -310,7 +272,7 @@ proc trExprLoop(c: var ControlFlow; n: var Cursor; tar: var Target) =
     tar.m = IsAppend
   else:
     assert tar.m == IsAppend, toString(n, false) & " " & $tar.m
-  c.addSource(tar, n)
+  addSource(tar, n)
   n.into:
     while n.hasMore:
       trExpr c, n, tar
@@ -341,7 +303,7 @@ proc trCall(c: var ControlFlow; n: var Cursor; tar: var Target) =
 
 proc trVoidCall(c: var ControlFlow; n: var Cursor) =
   var tar = initTarget(IsAppend)
-  c.addSource(tar, n)
+  addSource(tar, n)
   n.into:
     while n.hasMore:
       trExpr c, n, tar
@@ -636,7 +598,7 @@ proc trExpr(c: var ControlFlow; n: var Cursor; tar: var Target) =
   case n.kind
   of Symbol, SymbolDef, IntLit, UIntLit, FloatLit, StrLit, CharLit,
      Ident, DotToken, UnknownToken, EofToken, ParLe, ParRi, ExtendedSuffix, LineInfoLit:
-    c.addSource(tar, n)
+    addSource(tar, n)
     inc n
   of TagLit:
     case n.exprKind
@@ -739,6 +701,38 @@ proc trCoroFor(c: var ControlFlow; n: var Cursor) =
     c.jmpBack(loopStart, info)
 
     for f in thisBlock.breakInstrs: c.patch f
+  c.currentBlock = c.currentBlock.parent
+
+proc trFirIte(c: var ControlFlow; n: var Cursor) =
+  ## Final IR `(ite cond then else)`, `else` being `.` when absent: an `if`
+  ## with exactly one `elif`.
+  let info = n.info
+  n.into:
+    var tjmp: seq[Label] = @[]
+    var fjmp: seq[Label] = @[]
+    trIte c, n, tjmp, fjmp # condition
+    for t in tjmp: c.patch t
+    trStmt c, n # then
+    let ending = c.jmpForw(info)
+    for f in fjmp: c.patch f
+    if n.isDotToken:
+      inc n
+    else:
+      trStmt c, n # else
+    c.patch ending
+
+proc trFirLoop(c: var ControlFlow; n: var Cursor) =
+  ## Final IR `(loop body)`: no condition, every way out is a `jmp`, and the
+  ## body's `(continue .)` is the back-edge.
+  let info = n.info
+  let thisBlock = BlockOrLoop(kind: IsLoop, sym: SymId(0), parent: c.currentBlock)
+  c.currentBlock = thisBlock
+  let loopStart = c.genLabel()
+  n.into:
+    trStmt c, n
+  for cont in thisBlock.contInstrs: c.patch cont
+  c.jmpBack(loopStart, info)
+  for f in thisBlock.breakInstrs: c.patch f
   c.currentBlock = c.currentBlock.parent
 
 proc trReturn(c: var ControlFlow; n: var Cursor) =
@@ -964,18 +958,10 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
   let lhsPos = asgnBegin + tokenWidth(readonlyCursorAt(c.dest, asgnBegin))
   let lhs = cursorAt(c.dest, lhsPos)
   if isComplexLhs(lhs):
-    # The lhs/rhs of the just-emitted `asgn` are copied around below (and `dest`
-    # is truncated), so the source-position side-channel must be reshuffled with
-    # them. Align `destSrc` to `dest` first, then splice the matching slices into
-    # the rewritten `stmts` (via a parallel `stmtsSrc`).
-    c.pad()
     var rhs = lhs
     skip rhs
-    let rhsPos = cursorToPosition(c.dest, rhs)
 
     var stmts = createTokenBuf(40)
-    var stmtsSrc: seq[int32] = @[]
-
     let tmp = pool.symId("`cf." & $c.nextVar)
     inc c.nextVar
     stmts.addParLe LetS, info
@@ -984,31 +970,16 @@ proc trAsgn(c: var ControlFlow; n: var Cursor) =
     stmts.copyIntoKind PtrT, info:
       stmts.copyTree typ
     stmts.copyIntoKind AddrX, info:
-      padSrcSeq(stmtsSrc, stmts.len)
-      let beforeL = stmts.len
       stmts.copyTree lhs
-      var kL = 0
-      while beforeL + kL < stmts.len:
-        stmtsSrc.add c.destSrc[lhsPos + kL]
-        inc kL
     stmts.addParRi()
 
     stmts.copyIntoKind AsgnS, info:
       stmts.copyIntoKind DerefX, info:
         stmts.addSymUse tmp, info
-      padSrcSeq(stmtsSrc, stmts.len)
-      let beforeR = stmts.len
       stmts.copyTree rhs
-      var kR = 0
-      while beforeR + kR < stmts.len:
-        stmtsSrc.add c.destSrc[rhsPos + kR]
-        inc kR
-    padSrcSeq(stmtsSrc, stmts.len)
 
     c.dest.shrink asgnBegin
-    c.destSrc.setLen asgnBegin
     c.dest.add stmts
-    for s in stmtsSrc: c.destSrc.add s
   else:
     discard
 
@@ -1043,10 +1014,18 @@ proc trProc(c: var ControlFlow; n: var Cursor) =
 proc trStmt(c: var ControlFlow; n: var Cursor) =
   case n.stmtKind
   of NoStmt:
-    var aa = initTarget(IsAppend)
-    trExpr c, n, aa
-    if aa.t.len > 0:
-      c.flush aa
+    case n.finalIrKind
+    of IteV:
+      trFirIte c, n
+    of LoopV:
+      trFirLoop c, n
+    of KillV, UnknownV:
+      skip n, SkipFull # facts for the prover
+    else:
+      var aa = initTarget(IsAppend)
+      trExpr c, n, aa
+      if aa.t.len > 0:
+        c.flush aa
   of IfS:
     var aa = initTarget(IsIgnored)
     trIf c, n, aa
@@ -1120,10 +1099,10 @@ proc trStmt(c: var ControlFlow; n: var Cursor) =
   of CoroforS:
     trCoroFor c, n
 
-proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]; bits: int): TokenBuf =
+proc toControlflow*(n: Cursor; bits: int; keepReturns = false): TokenBuf =
+  ## Build the goto-based control-flow representation.
   var c = ControlFlow(dest: initTokenBuf(), typeCache: createTypeCache(bits),
                       keepReturns: keepReturns)
-  c.srcBase = n
   c.typeCache.openScope()
   let sk = n.stmtKind
   var n = n
@@ -1147,25 +1126,8 @@ proc toControlflowImpl(n: Cursor; keepReturns: bool; srcMap: var seq[int32]; bit
     c.dest.addParRi()
     c.currentBlock = c.currentBlock.parent
   c.typeCache.closeScope()
-  c.pad()                       # fill trailing synthesized tokens with -1
-  srcMap = ensureMove c.destSrc
   result = ensureMove c.dest
   #echo "result: ", codeListing(result)
-
-proc toControlflow*(n: Cursor; bits: int; keepReturns = false): TokenBuf =
-  ## Build the goto-based control-flow representation. The source-position
-  ## side-channel is discarded — for callers (e.g. contracts) that only need
-  ## the CF graph, not the back-mapping to the original trees.
-  var srcMap: seq[int32] = @[]
-  result = toControlflowImpl(n, keepReturns, srcMap, bits)
-
-proc toControlflowWithMap*(n: Cursor; srcMap: var seq[int32]; bits: int;
-                           keepReturns = false): TokenBuf =
-  ## As `toControlflow`, but also returns `srcMap`, a seq parallel to the result
-  ## buffer: `srcMap[i]` is the position (relative to `n`) of the source token
-  ## that produced CF token `i`, or -1 for a synthesized token. The mover inverts
-  ## this to locate an `emove` operand's landing site in the CF.
-  result = toControlflowImpl(n, keepReturns, srcMap, bits)
 
 proc eliminateDeadInstructions*(c: TokenBuf; start = 0; last = -1): seq[bool] =
   # Create a sequence to track which instructions are reachable

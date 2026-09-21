@@ -211,7 +211,8 @@ proc testDir*(c: var TestCounters; dir: string; overwrite: bool; cat: Category; 
   if parallelJobs > 1 and canRunParallel(cat):
     if files.len > 0:
       var work: seq[WorkItem] = @[]
-      for f in items files: work.add WorkItem(path: f, weight: 1)
+      for f in items files:
+        work.add WorkItem(path: f, weight: 1, noPrefill: not prefillable(cat))
       parallelTestDir(c, work, overwrite, cat, forward, parallelJobs)
   else:
     for f in items files:

@@ -1,0 +1,1 @@
+tests/nimony/notnil/tdefaultcall.nim(9, 18) Error: expected non-nil value, got a conversion of nil: ref Foo.Obj not nil(nil) [in code expanded from lib/std/system/defaults.nim(27, 55)] [pass --verbose for the Final IR]

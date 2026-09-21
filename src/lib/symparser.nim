@@ -214,6 +214,10 @@ proc `$`*(s: SplittedModulePath): string =
   result.add s.name
   result.add s.ext
 
+proc cmpNames*(a, b: string): int =
+  ## `sort` needs an explicit comparator under Nimony, whose stdlib has no `cmp`.
+  if a < b: -1 elif a > b: 1 else: 0
+
 when isMainModule:
   import std/[assertions]
   assert extractVersionedBasename("abc.12.Mod132a3bc") == "abc.12"

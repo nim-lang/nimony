@@ -233,7 +233,7 @@ proc computeInlineInfo*(procDecl: Cursor): InlineInfo =
           forced = true
         if pr.isTagLit and pr.pragmaKind == InlineP:
           hinted = true
-        if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP,
+        if pr.isTagLit and pr.pragmaKind in {NoinlineP, ImportcP, ImportcppP, ImportjsP,
                                              AssemblerP, NakedP, InterruptP}:
           # importc: the decl's `(stmts .)` "body" is a PLACEHOLDER — the real
           # code is external. Splicing it deletes the call (measured: memfiles

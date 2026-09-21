@@ -12,6 +12,8 @@ proc main =
   assert contains(@[1, 2, 3], 2)
   assert not contains(@[1, 2, 3], 9)
   assert deduplicate(@[1, 2, 2, 3, 1]) == @[1, 2, 3]
+  assert deduplicate(@[1, 1, 2, 3, 3], isSorted = true) == @[1, 2, 3]
+  assert deduplicate(newSeq[int](0), isSorted = true).len == 0
   assert minIndex(@[3, 1, 2]) == 1
   assert maxIndex(@[3, 1, 2]) == 0
   assert map(@[1, 2, 3], dbl) == @[2, 4, 6]
