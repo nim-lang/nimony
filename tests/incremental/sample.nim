@@ -5,6 +5,7 @@
 
 import std/syncio
 import inlinedep
+import livedep
 
 echo "incremental sample"
 echo bump(10)

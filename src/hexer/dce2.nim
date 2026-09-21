@@ -9,7 +9,7 @@
 
 ## Dead code elimination and generic instance merging.
 
-import std / [os, tables, hashes, sets, assertions, syncio]
+import std / [os, tables, hashes, sets, assertions, syncio, algorithm]
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 
@@ -166,7 +166,17 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; o
   var buf = parseFromFile(file)
   var n = beginRead(buf)
   var dest = createTokenBuf(buf.len)
-  tr dest, n, live, resolved
+  # `(stmts` is opened here rather than by `tr` so the leading `(dce …)` can be
+  # dropped: it is hexer's analysis section for `dceLive`, not code, and the
+  # back end must never see it. Only the head statement can be one, so this
+  # costs the emit a single comparison.
+  dest.addParLe n.cursorTagId, n.info
+  n.into:
+    if n.isTagLit and n.cursorTagId == globalTags.registerTag(dceName):
+      skip n
+    while n.hasMore:
+      tr dest, n, live, resolved
+  dest.addParRi()
   let outPath =
     if outdir.len > 0:
       outdir / splitModulePath(file).name & ".c.nif"
@@ -178,15 +188,15 @@ proc rewriteModule(file: string; live: HashSet[SymId]; resolved: ResolveTable; o
     quit "could not write file: " & outPath
 
 proc deadCodeElimination*(files: openArray[string]; outdir: string) =
-  ## Single-shot DCE: read all .dce.nif analyses, compute global liveness,
-  ## then sequentially rewrite each module's .x.nif to .c.nif. Kept for
-  ## the single-process API; the build pipeline now goes through the split
+  ## Single-shot DCE: read every module's analysis section, compute global
+  ## liveness, then sequentially rewrite each module's .x.nif to .c.nif. Kept
+  ## for the single-process API; the build pipeline now goes through the split
   ## `computeLiveSet` + `dceEmit` pair so the per-module rewrite step
   ## parallelizes across modules.
   var graphs = initTable[string, ModuleAnalysis]()
   for file in files:
     let modName = splitModulePath(file).name
-    graphs[modName] = readModuleAnalysis(file.changeModuleExt ".dce.nif")
+    graphs[modName] = readModuleAnalysis(file)
 
   let resolved = resolveSymbolConflicts(graphs)
 
@@ -204,27 +214,28 @@ const
   symTag     = "sym"
 
 proc writeLiveFile*(outfile: string; resolved: ResolveTable;
-                    live: Table[string, HashSet[SymId]]) =
-  ## Serialize the global DCE result to a single file consumed by all
-  ## downstream `dceEmit` invocations. Symbols are written with their
-  ## full module suffix (no abbreviation): the dotted-suffix shortcut
-  ## expands using the reader's `thisModule` which is derived from the
-  ## filename, but this file aggregates symbols from many modules — only
-  ## one expansion would be correct, all the others would be wrong. So
+                    modName: string; live: HashSet[SymId]) =
+  ## Serialize one module's slice of the global DCE result to the file its
+  ## `dceEmit` reads. Symbols are written with their full module suffix (no
+  ## abbreviation): the dotted-suffix shortcut expands using the reader's
+  ## `thisModule`, which is derived from the filename, but the resolve entries
+  ## name winners from other modules, where that expansion would be wrong. So
   ## we pay the file-size cost rather than mis-expand.
+  ##
+  ## In name order, for the reason `dce1.sortedSymNames` gives.
   var b = nifbuilder.open(outfile, writeMode = OnlyIfChanged)
   b.withTree "stmts":
     b.withTree resolveTag:
-      for key, winner in pairs(resolved):
+      for key in sortedKeys(resolved):
         b.withTree "kv":
           b.addStrLit key
+          let winner = resolved.getOrQuit(key)
           b.addSymbol pool.symString(winner), ""
     b.withTree liveTag:
-      for modName, syms in pairs(live):
-        b.withTree modTag:
-          b.addStrLit modName
-          for s in syms:
-            b.addSymbol pool.symString(s), ""
+      b.withTree modTag:
+        b.addStrLit modName
+        for s in sortedSymNames(live):
+          b.addSymbol s, ""
   b.close()
 
 type
@@ -284,21 +295,51 @@ proc readLiveFile*(infile: string): LiveSet =
       else:
         raiseAssert infile & ": expected (resolved|live …)"
 
-proc computeLiveSet*(dceFiles: openArray[string]; liveOut: string) =
-  ## Read the per-module `.dce.nif` analyses, compute the global
-  ## resolve table + live sets, and write them to `liveOut`. This is the
-  ## small serial step in the split DCE pipeline.
+proc inclResolveKey(keys: var HashSet[string]; s: SymId) =
+  if pool.symIsInstantiation(s): keys.incl pool.symWithoutModule(s)
+
+proc resolveKeysOf(a: ModuleAnalysis): HashSet[string] =
+  ## The resolve-table keys this module's emit can look up. `translate` maps
+  ## only instantiations, and `dce1` records each one in this module's tree: a
+  ## use as a root or in `uses`, a declaration's head as an offer.
+  result = initHashSet[string]()
+  for s in a.roots: result.inclResolveKey s
+  for s in a.offers: result.inclResolveKey s
+  for owner, deps in pairs(a.uses):
+    result.inclResolveKey owner
+    for d in deps: result.inclResolveKey d
+
+proc resolvedFor(a: ModuleAnalysis; resolved: ResolveTable): ResolveTable =
+  ## The entries of `resolved` this module's emit can look up.
+  result = initTable[string, SymId]()
+  for key in resolveKeysOf(a):
+    if resolved.hasKey(key): result[key] = resolved.getOrQuit(key)
+
+proc computeLiveSet*(xnifFiles: openArray[string]; outdir: string) =
+  ## Read every module's `(dce …)` section out of its `.x.nif`, compute the
+  ## global resolve table + live sets, and write each module's share to
+  ## `<M>.live.nif`: in `outdir`, or next to its `.x.nif` when that is "",
+  ## as `rewriteModule` places a `.c.nif`. This is the small serial step in
+  ## the split DCE pipeline — small because `readModuleAnalysis` parses one
+  ## subtree per module and leaves the bodies on disk.
   var graphs = initTable[string, ModuleAnalysis]()
-  for file in dceFiles:
+  for file in xnifFiles:
     let modName = splitModulePath(file).name
     graphs[modName] = readModuleAnalysis(file)
 
   let resolved = resolveSymbolConflicts(graphs)
   let live = markLive(graphs, resolved)
-  writeLiveFile(liveOut, resolved, live)
+  for file in xnifFiles:
+    let modName = splitModulePath(file).name
+    let outfile =
+      if outdir.len > 0: outdir / modName & ".live.nif"
+      else: file.changeModuleExt ".live.nif"
+    # `markLive` seeds every module, so its live set is there.
+    writeLiveFile(outfile, resolvedFor(graphs.getOrQuit(modName), resolved),
+                  modName, live.getOrQuit(modName))
 
 proc dceEmit*(xnif, liveFile, outdir: string) =
-  ## Per-module emit: read `M.x.nif` plus the shared `liveFile`, write
+  ## Per-module emit: read `M.x.nif` plus its own `liveFile`, write
   ## `M.c.nif`. Multiple invocations run in parallel under the build
   ## scheduler.
   let ls = readLiveFile(liveFile)
