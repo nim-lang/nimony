@@ -55,9 +55,26 @@ type
   PrimaryMode* = enum ## `parser.nim`'s `PrimaryMode`, threaded by the grammar
     pmNormal, pmTypeDesc, pmTypeDef, pmTrySimple
 
+  OptSigs* = object
+    ## How often the two optional grammar parts that a layout rewrite depends
+    ## on have been *built*. A layout compares its mark's snapshot against the
+    ## current counts: unchanged means the part did not match inside the rule,
+    ## the rewrite is the identity, and the tokens can stay exactly where the
+    ## rule wrote them -- no scratch copy, no cursor, no rewrite.
+    ##
+    ## Both are bumped where the thing is created, and both creators are in
+    ## this module, so a count can never be missed. A nested match bumps a
+    ## count the enclosing rule did not cause; that only costs the enclosing
+    ## layout its old path, which is why over-reporting is harmless and
+    ## under-reporting would not be.
+    posMarkers*: int       ## `posMarker`: the `[:` of `x.y[:T](...)`, and `do`
+    kvs*: int              ## a `kv` node: what makes a call an `oconstr` and
+                           ## a curly a table constructor
+
   Mark* = object ## where a node *would* start, if the rule turns out to build one
     pos*: int              ## token index into `Parser.dest`
     info*: NifLineInfo     ## position of the token that was current at `mark`
+    sigs*: OptSigs         ## `OptSigs` as the rule began
 
   Parser* = object
     lex*: Lexer
@@ -72,6 +89,7 @@ type
     filterFailed*: bool    ## a source filter reported an error
     prevEndLine, prevEndCol: int ## where that token ended
     inSemiStmtList*: int   ## `( stmt; stmt )` nesting, as in parser.nim
+    sigs*: OptSigs         ## see `OptSigs`
     sections: seq[NiflerKind] ## the tag a declaration fans out into: var/let/param/...
     lastSection: NiflerKind ## the section opened most recently, popped or not
     infos: seq[NifLineInfo] ## see `pushInfo`
@@ -466,7 +484,7 @@ proc isRightAssoc*(p: Parser): bool {.inline.} = isRightAssoc(p.tok)
 # --------------------------------------------------------------- the buffer
 
 proc mark*(p: Parser): Mark {.inline.} =
-  Mark(pos: p.dest.len, info: p.info)
+  Mark(pos: p.dest.len, info: p.info, sigs: p.sigs)
 
 proc discardUnused*(m: Mark) {.inline.} = discard
   ## A mark the rule turned out not to need. The generator emits one per
@@ -501,6 +519,7 @@ proc wrapAt*(p: var Parser; m: Mark; tag: NiflerKind; info: NifLineInfo) =
   # no position: bridge.nim writes them with `addTree` and nothing else.
   let pos = if tag == RangesL or tag == UnpackflatL or tag == UnpacktupL: NoLineInfo
             else: info
+  if tag == KvL: inc p.sigs.kvs
   addParLe(p.head, tagId(tag), pos)
   splice p, m.pos
   # The node ends at the end of the buffer -- which is precisely the situation
@@ -633,6 +652,7 @@ proc fanOutKv*(p: var Parser; m: Mark) =
   let kids = takeTail(p, m)
   if p.failed: return
   let tag = tagId(KvL)
+  if kids.len > 2: p.sigs.kvs = p.sigs.kvs + kids.len - 2
   for i in 0 ..< kids.len - 2:
     addParLe(p.dest, tag, kids[i].info)
     p.dest.addSubtree kids[i]
@@ -701,11 +721,15 @@ proc literalAsIdent*(p: var Parser; m: Mark) =
 proc posMarker*(p: var Parser) =
   ## A `.` that only carries the current position to a layout, which removes
   ## it again.
+  inc p.sigs.posMarkers
   addDotToken(p.dest, p.info)
 
 proc dotLayout*(p: var Parser; m: Mark) =
   ## `dotExpr`'s rewrite of `x.y[:z](args)` into `y[z](x, args)`: the dot
   ## node's children are `x y (at z...) args...` when the `[:` was there.
+  ## The rule wrapped one `(dot ...)` tree, so with no `[:` there is nothing
+  ## to move and the tree stands as written.
+  if p.sigs.posMarkers == m.sigs.posMarkers: return
   let kids = takeTail(p, m)
   if p.failed: return
   let node = kids[0]
@@ -734,6 +758,8 @@ proc dotLayout*(p: var Parser; m: Mark) =
 proc curlyOrTable*(p: var Parser; m: Mark) =
   ## `setOrTableConstr` retags `nkCurly` as `nkTableConstr` as soon as one
   ## element is `key: value`.
+  ## No `kv` was built inside: not a table, so the `(curly ...)` stands.
+  if p.sigs.kvs == m.sigs.kvs: return
   let kids = takeTail(p, m)
   if p.failed: return
   let node = kids[0]
@@ -755,6 +781,10 @@ proc curlyOrTable*(p: var Parser; m: Mark) =
 proc callOrObjConstr*(p: var Parser; m: Mark) =
   ## `primarySuffix`'s `(`: a call whose first argument is `name: value` is
   ## an object constructor, `Foo(a: 1)` is `(oconstr Foo (kv a 1))`.
+  ## No `kv` was built inside: not an object constructor, so the `(call ...)`
+  ## stands. A `kv` nested deeper than the first argument only costs the walk
+  ## below, which then finds none in that slot.
+  if p.sigs.kvs == m.sigs.kvs: return
   let kids = takeTail(p, m)
   if p.failed: return
   let node = kids[0]
