@@ -2583,7 +2583,7 @@ proc sigmatchLoop(m: var Match; f: var Cursor; args: openArray[CallArg]) =
     inc i
 
 
-iterator genericParams(sym: SymId): tuple[symId: SymId, kind: SymKind, elemType: Cursor] {.sideEffect.} =
+iterator genericParams*(sym: SymId): tuple[symId: SymId, kind: SymKind, elemType: Cursor] {.sideEffect.} =
   ## The generic parameters of a routine OR a type, in declaration order, each paired with
   ## its kind (`TypevarY`/`StaticTypevarY`) and its declared constraint / value-parameter
   ## element type. Shared by both routine overload resolution and type instantiation.
@@ -2641,20 +2641,37 @@ proc notATypeArg(e: Cursor): bool =
   if res.status != LacksNothing: return false
   result = res.decl.stmtKind != TypeS and not isTypevarLike(res.decl.symKind)
 
-proc matchGenericExplicitArgs*(m: var Match; genericSym: SymId;
-                              explicitArgs: Cursor): bool =
-  ## Bind/validate the explicit generic arguments `explicitArgs` against the
-  ## generic parameters of `genericSym` (a routine OR a type). A value
-  ## (`static`) parameter binds a canonical compile-time value into
-  ## `m.inferred`; a type parameter is validated against its constraint and
-  ## stored verbatim. A dot-token `explicitArgs` (no explicit generic args at
-  ## the call site) leaves the parameters unbound for later inference. Returns
-  ## false if any error was recorded. Shared by `matchTypevars` (routine
-  ## overload resolution) and `semInvoke` (type instantiation).
+proc matchExplicitGenericArg*(m: var Match; v: SymId; kind: SymKind;
+                              elemType, e: Cursor) =
+  ## Bind/validate ONE explicit generic argument `e` against the generic
+  ## parameter `v`. A value (`static`) parameter binds its canonical folded
+  ## value (`2 + 3` -> `5`, an enum `const` -> its field symbol); a type
+  ## parameter is validated against its constraint and bound verbatim. Either
+  ## way `m.inferred[v]` is the canonical argument afterwards. Shared by
+  ## routine overload resolution and type instantiation (`semInvoke`).
+  m.argInfo = e.info # so a mismatch points at the argument, not the head
+  if kind == StaticTypevarY:
+    if not bindStaticTypevar(m, v, elemType, e):
+      m.error ConstraintMismatch, elemType, e
+  else:
+    # a fresh set of unsatisfied concept requirements per argument, so a
+    # later argument's `missing:` detail lines never leak into an earlier
+    # (or unrelated) argument's diagnostic.
+    m.missingConstraints.clear()
+    if matchesConstraint(m, v, e):
+      bindTypevar m, v, e
+    elif notATypeArg(e):
+      m.error ExplicitGenericArgNotAType, elemType, e
+    else:
+      m.error ConstraintMismatch, elemType, e
+
+proc matchGenericExplicitArgs(m: var Match; fn: SymId; explicitArgs: Cursor) =
+  ## A dot-token `explicitArgs` (no explicit generic args at the call site)
+  ## leaves the parameters unbound for later inference.
   m.tvars = default(HashSet[SymId])
   m.unboundTvars = 0
   var e = explicitArgs
-  for (v, kind, elemType) in genericParams(genericSym):
+  for (v, kind, elemType) in genericParams(fn):
     m.tvars.incl v
     inc m.unboundTvars
     if e.isDotToken: discard
@@ -2662,42 +2679,14 @@ proc matchGenericExplicitArgs*(m: var Match; genericSym: SymId;
       m.error0Typevar MissingExplicitGenericParameter, v
       break
     else:
-      m.argInfo = e.info # so a mismatch points at the argument, not the head
-      if kind == StaticTypevarY:
-        # explicit compile-time value for a static parameter
-        if not bindStaticTypevar(m, v, elemType, e):
-          m.error ConstraintMismatch, elemType, e
-      else:
-        # a fresh set of unsatisfied concept requirements per argument, so a
-        # later argument's `missing:` detail lines never leak into an earlier
-        # (or unrelated) argument's diagnostic.
-        m.missingConstraints.clear()
-        if matchesConstraint(m, v, e):
-          bindTypevar m, v, e
-        elif notATypeArg(e):
-          m.error ExplicitGenericArgNotAType, elemType, e
-        else:
-          m.error ConstraintMismatch, elemType, e
+      matchExplicitGenericArg m, v, kind, elemType, e
       skip e
   if not e.isDotToken and e.hasMore:
     m.error0 ExtraGenericParameter
-  result = not m.err
-
-proc buildCanonicalGenericArgs*(m: var Match; genericSym: SymId; dest: var TokenBuf) =
-  ## Materialize the canonical explicit-generic-argument list from the bindings
-  ## produced by a successful `matchGenericExplicitArgs`: a value (`static`)
-  ## parameter emits its folded canonical value (`2 + 3` -> `5`, an enum `const`
-  ## -> its field symbol, an array literal verbatim), a type parameter emits its
-  ## argument tree verbatim. Declaration order, so the result lines up
-  ## positionally with the generic parameter list for `subsGenericTypeFromArgs`.
-  for (v, kind, elemType) in genericParams(genericSym):
-    let inf = m.inferred.getOrDefault(v)
-    if inf != default(Cursor):
-      dest.addSubtree inf
 
 proc matchTypevars*(m: var Match; fn: FnCandidate; explicitTypeVars: Cursor) =
   if fn.kind in RoutineKinds:
-    discard matchGenericExplicitArgs(m, fn.sym, explicitTypeVars)
+    matchGenericExplicitArgs(m, fn.sym, explicitTypeVars)
   else:
     m.tvars = default(HashSet[SymId])
     m.unboundTvars = 0

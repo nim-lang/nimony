@@ -16,7 +16,7 @@
 ## instantiation:
 ## - **sem** (`semLocalTypeImpl` with `AllowValues` at explicit generic-arg
 ##   sites): semcheck each argument as a compile-time value or a type.
-## - **bind** (`sigmatch.matchGenericExplicitArgs` / `staticValueToBind` /
+## - **bind** (`sigmatch.matchExplicitGenericArg` / `staticValueToBind` /
 ##   `bindStaticTypevar`, plus the `Match`-bound `foldValueExpr`): validate the
 ##   sem'd argument against the parameter and canonicalize the bound value.
 ## - **structural helpers** (this module): `Match`-free predicates such as

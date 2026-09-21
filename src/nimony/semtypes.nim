@@ -529,47 +529,31 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
     else:
       c.buildErr dest, info, "cannot attempt to instantiate a non-type"
 
-  # Count generic parameters for the arity check below. Only a generic type has
-  # a `(typevars ...)` list to walk; `ok` already implies it, whereas
-  # `decl.kind == TypeY` also holds for a concrete type like `Foo` in `Foo[T]`,
-  # whose `typevars` is a DotToken (#2440).
+  # One walk over the generic parameters: sem each explicit argument as a
+  # compile-time value or a type (`AllowValues`), bind/validate it exactly like
+  # an explicit routine instantiation does, and emit its canonical (folded)
+  # form. Only a generic type has parameters to walk; `ok` already implies it,
+  # whereas `decl.kind == TypeY` also holds for a concrete type like `Foo` in
+  # `Foo[T]`, whose `typevars` is a DotToken (#2440).
   var paramCount = 0
-  if ok and decl.typevars.substructureKind == TypevarsU:
-    var params = decl.typevars
-    params = sub(params) # bound the parameter walk
-    while params.hasMore:
-      if isTypevarLike(params.symKind): inc paramCount
-      skip params
-
-  # Phase 1: sem every explicit generic argument as a compile-time value or a
-  # type (`AllowValues`), exactly like the routine-call and explicit-routine-
-  # instantiation paths.
   var argCount = 0
+  var m = createMatch(addr c)
   let usedTypevarsInitial = c.usedTypevars
   let beforeArgs = dest.len
+  if ok:
+    for (v, kind, elemType) in genericParams(headId):
+      inc paramCount
+      if n.hasMore:
+        inc argCount
+        var argBuf = createTokenBuf(16)
+        semLocalTypeImpl c, argBuf, n, AllowValues
+        if not m.err:
+          matchExplicitGenericArg m, v, kind, elemType, beginRead(argBuf)
+          if not m.err: dest.addSubtree m.inferred.getOrQuit(v)
   while n.hasMore:
     inc argCount
     semLocalTypeImpl c, dest, n, AllowValues
-  let usedTypevarsFinal = c.usedTypevars
-  let isConcrete = usedTypevarsInitial == usedTypevarsFinal # no generic params were used
-
-  # Phase 2: bind/validate the arguments against the generic
-  # parameters and rewrite them to their canonical (folded) form.
-  if ok and paramCount == argCount:
-    var m = createMatch(addr c)
-    var argsCur = cursorAt(dest, beforeArgs)
-    if matchGenericExplicitArgs(m, headId, argsCur):
-      var canonBuf = createTokenBuf(16)
-      buildCanonicalGenericArgs(m, headId, canonBuf)
-      dest.shrink beforeArgs
-      dest.add canonBuf
-    else:
-      let msg = genericArgErrorMsg(m)
-      let errInfo = errorInfo(m)
-      dest.shrink typeStart
-      c.buildErr dest, errInfo, msg
-      n = invokeStart; skip n
-      return
+  let isConcrete = usedTypevarsInitial == c.usedTypevars # no generic params were used
 
   dest.addParRi(n.endInfo)
   n = invokeStart; skip n
@@ -577,6 +561,10 @@ proc semInvoke(c: var SemContext; dest: var TokenBuf; n: var Cursor; context = I
     dest.shrink typeStart
     c.buildErr dest, info, "wrong amount of generic parameters for type " & pool.symString(headId) &
       ", expected " & $paramCount & " but got " & $argCount
+    return
+  if m.err:
+    dest.shrink typeStart
+    c.buildErr dest, m.errorInfo, genericArgErrorMsg(m)
     return
 
   if ok and (isConcrete or
