@@ -579,7 +579,10 @@ proc takeTail(p: var Parser; m: Mark): seq[Cursor] =
   for i in m.pos ..< p.dest.len: p.tail.add p.dest[i]
   addParRi p.tail
   p.dest.shrink m.pos
-  result = @[]
+  # With capacity: the seq is rebuilt ~14k times over a file the size of
+  # `sem.nim`, and growing it from nothing cost three reallocations each
+  # (~5% of the whole run).
+  result = newSeqOfCap[Cursor](16)
   var c = beginRead(p.tail)
   var k = childCursor(c)
   while k.hasMore:
