@@ -378,6 +378,132 @@ elif defined(freebsd):
     of UnrecoverableState: 95'i32
     else: 1'i32
   
+elif defined(illumos):
+  proc posixToErrorCode*(err: int32): ErrorCode =
+    if err == 0'i32:
+      Success
+    elif err == 79'i32:
+      OverflowError
+    elif err == 34'i32 or err == 33'i32:
+      RangeError
+    elif err == 12'i32:
+      OutOfMemError
+    elif err == 28'i32:
+      DiskFullError
+    elif err == 5'i32:
+      IOError
+    elif err == 22'i32 or err == 77'i32 or err == 88'i32 or err == 35'i32 or err == 96'i32:
+      ValueError
+    elif err == 7'i32 or err == 132'i32:
+      FullError
+    elif err == 61'i32:
+      EmptyError
+    elif err == 16'i32 or err == 26'i32:
+      BusyError
+    elif err == 10'i32 or err == 58'i32:
+      DeadResource
+    elif err == 46'i32:
+      ResourceExhaustedError
+    elif err == 23'i32:
+      DescriptorExhaustedError
+    elif err == 13'i32 or err == 1'i32:
+      PermissionDenied
+    elif err == 11'i32:
+      RetryError
+    elif err == 145'i32 or err == 62'i32:
+      TimeoutError
+    elif err == 4'i32:
+      InterruptedError
+    elif err == 45'i32:
+      DeadlockError
+    elif err == 125'i32 or err == 133'i32:
+      AlreadyConnected
+    elif err == 126'i32:
+      AddressNotAvailable
+    elif err == 124'i32:
+      AddressFamilyUnsupported
+    elif err == 122'i32 or err == 48'i32 or err == 89'i32 or err == 120'i32 or err == 25'i32 or err == 29'i32 or err == 21'i32 or err == 93'i32:
+      BadOperation
+    elif err == 47'i32 or err == 130'i32 or err == 129'i32:
+      AbortedOperation
+    elif err == 149'i32 or err == 150'i32:
+      AlreadyInProgress
+    elif err == 78'i32:
+      NameTooLong
+    elif err == 17'i32:
+      NameExists
+    elif err == 2'i32 or err == 36'i32 or err == 19'i32 or err == 20'i32:
+      NameNotFound
+    elif err == 27'i32 or err == 97'i32:
+      ContentTooLong
+    elif err == 32'i32 or err == 9'i32 or err == 24'i32 or err == 60'i32 or err == 95'i32 or err == 63'i32 or err == 6'i32 or err == 3'i32:
+      BadDescriptor
+    elif err == 8'i32:
+      BadExecutable
+    elif err == 90'i32 or err == 31'i32 or err == 18'i32:
+      BadLink
+    elif err == 98'i32 or err == 99'i32:
+      BadProtocol
+    elif err == 71'i32:
+      ProtocolError
+    elif err == 30'i32:
+      ReadonlyProtection
+    elif err == 14'i32:
+      SegFault
+    elif err == 127'i32 or err == 128'i32 or err == 131'i32 or err == 134'i32:
+      Disconnected
+    elif err == 146'i32:
+      RefusedConnection
+    elif err == 148'i32:
+      UnreachableHost
+    elif err == 59'i32:
+      UnrecoverableState
+    else:
+      Failure
+
+  proc errorCodeToPosix*(err: ErrorCode): int32 =
+    case err
+    of Success: 0'i32
+    of OverflowError: 79'i32
+    of RangeError: 34'i32
+    of OutOfMemError: 12'i32
+    of DiskFullError: 28'i32
+    of IOError: 5'i32
+    of ValueError: 22'i32
+    of FullError: 7'i32
+    of EmptyError: 61'i32
+    of BusyError: 16'i32
+    of DeadResource: 10'i32
+    of ResourceExhaustedError: 46'i32
+    of DescriptorExhaustedError: 23'i32
+    of PermissionDenied: 13'i32
+    of RetryError: 11'i32
+    of TimeoutError: 145'i32
+    of InterruptedError: 4'i32
+    of DeadlockError: 45'i32
+    of AlreadyConnected: 125'i32
+    of AddressNotAvailable: 126'i32
+    of AddressFamilyUnsupported: 124'i32
+    of BadOperation: 122'i32
+    of AbortedOperation: 47'i32
+    of AlreadyInProgress: 149'i32
+    of NameTooLong: 78'i32
+    of NameExists: 17'i32
+    of NameNotFound: 2'i32
+    of ContentTooLong: 27'i32
+    of BadDescriptor: 32'i32
+    of BadExecutable: 8'i32
+    of BadLink: 90'i32
+    of BadProtocol: 98'i32
+    of ProtocolError: 71'i32
+    of ReadonlyProtection: 30'i32
+    of SegFault: 14'i32
+    of Disconnected: 127'i32
+    of RefusedConnection: 146'i32
+    of UnreachableHost: 148'i32
+    of UnrecoverableState: 59'i32
+    else: 1'i32
+
 else:
   var EOVERFLOW {.importc: "EOVERFLOW", header: "<errno.h>".}: int32
   var ERANGE {.importc: "ERANGE", header: "<errno.h>".}: int32

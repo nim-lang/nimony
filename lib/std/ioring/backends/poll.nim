@@ -34,6 +34,8 @@ proc armEventsForFd*(fd: cint): IoEvents =
   result = {}
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
+    when defined(illumos):
+      if gSlots[lane].slots[j].op.positioned: continue # AIO owns this op
     case gSlots[lane].slots[j].op.kind
     of opRead, opAccept, opRecvFrom:
       result.incl evRead
@@ -59,6 +61,8 @@ proc failPendingForFd*(fd: cint) =
   ## fd cannot be armed, so otherwise they park forever.
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
+    when defined(illumos):
+      if gSlots[lane].slots[j].op.positioned: continue
     complete(j, ArmFailed)
 
 proc reArmOrTransfer(fd: cint; alreadyRegistered: bool) {.inline.} =
@@ -109,7 +113,9 @@ proc transferIfRegularFile(fd: cint): bool {.inline.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, FileHandle, EINPROGRESS, pcall, Mode, Stat, fstat, S_ISREG
+  from std/posix/posix import SockLen, FileHandle, EINPROGRESS, EAGAIN, EWOULDBLOCK,
+                              SOL_SOCKET, F_GETFL, F_SETFL, O_NONBLOCK,
+                              pcall, Mode, Stat, fstat, S_ISREG
 
   # No errno anywhere below. Every call the ring makes goes through
   # `posix.pcall`, which answers the raw Linux convention — the result, or
@@ -120,13 +126,19 @@ when defined(posix):
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
   proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
+  const
+    GetSockOptName = when defined(illumos): "__xnet_getsockopt" else: "getsockopt"
+    ConnectName = when defined(illumos): "__xnet_connect" else: "connect"
+    SocketName = when defined(illumos): "__xnet_socket" else: "socket"
+    BindName = when defined(illumos): "__xnet_bind" else: "bind"
+    SendToName = when defined(illumos): "__xnet_sendto" else: "sendto"
   proc getsockopt(s: cint; level, optname: cint; val: pointer;
-                  vlen: ptr SockLen): cint {.importc: "getsockopt".}
-  proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "connect".}
-  proc posixSocket(domain, typ, proto: cint): cint {.importc: "socket".}
+                  vlen: ptr SockLen): cint {.importc: GetSockOptName.}
+  proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: ConnectName.}
+  proc posixSocket(domain, typ, proto: cint): cint {.importc: SocketName.}
   proc posixSetsockopt(s: cint; level, optname: cint; val: nil pointer;
                        vlen: SockLen): cint {.importc: "setsockopt".}
-  proc posixBind(s: cint; name: pointer; namelen: SockLen): cint {.importc: "bind".}
+  proc posixBind(s: cint; name: pointer; namelen: SockLen): cint {.importc: BindName.}
   proc posixFcntl(fd: cint; cmd: cint; arg: cint = 0): cint {.importc: "fcntl", sideEffect.}
     ## FIXED arity with a defaulted third argument, not `varargs`: the same
     ## shape and the same reason as iouring.nim's `fcntl` — nimony collapses
@@ -136,7 +148,7 @@ when defined(posix):
   proc posixRecvfrom(s: cint; buf: nil pointer; count: int; flags: cint;
                      `addr`: pointer; addrlen: ptr SockLen): int {.importc: "recvfrom".}
   proc posixSendto(s: cint; buf: nil pointer; count: int; flags: cint;
-                   `addr`: pointer; addrlen: SockLen): int {.importc: "sendto".}
+                   `addr`: pointer; addrlen: SockLen): int {.importc: SendToName.}
   proc posixOpen(path: cstring; flags: cint): cint {.varargs, importc: "open", sideEffect.}
     ## A named `open`: `posix.open` and `syncio.open` clash wherever both are
     ## imported, and importing only the one this file needs would be a line of
@@ -153,11 +165,6 @@ when defined(posix):
     ## fd (or `-errno`) is completed to the parked caller.
     complete(idx, int pcall(posixOpen(path, cint(posixOpenFlags(mode)),
                                       Mode(permissionBits(permissions)))))
-
-  const
-    F_GETFL = 3.cint
-    F_SETFL = 4.cint
-    O_NONBLOCK = (when defined(linux): 0x0800.cint else: 0x0004.cint)
 
   proc completeSocket*(idx: int; domain: Domain; typ: SockType; proto: Protocol) =
     ## The backend half of `submitSocket`: socket(2) is one syscall with no
@@ -214,6 +221,8 @@ when defined(posix):
     let lane = ioLane()
     for j in gSlots[lane].slotsForFd(fd):
       let s = addr gSlots[lane].slots[j]
+      when defined(illumos):
+        if s.op.positioned: continue
       case s.op.kind
       of opRead:
         complete(j, int pcall(posixRead(fd, s.op.read.buf, s.op.read.len)))
@@ -229,8 +238,13 @@ when defined(posix):
       failPendingForFd(fd)
 
   const
-    SOL_SOCKET = (when defined(macosx) or defined(freebsd): 0xFFFF.cint else: 1.cint)
-    SO_ERROR = (when defined(macosx) or defined(freebsd): 0x1007.cint else: 4.cint)
+    SO_ERROR = (when defined(macosx) or defined(freebsd) or defined(illumos): 0x1007.cint else: 4.cint)
+
+  proc transferDone(r: int): bool =
+    when defined(illumos):
+      r != -int(EAGAIN) and r != -int(EWOULDBLOCK)
+    else:
+      true
 
   proc startConnect*(fd: cint; idx: int): bool =
     ## Kick off a non-blocking connect on the op in slot `idx`. True when the
@@ -267,13 +281,17 @@ when defined(posix):
     let lane = ioLane()
     for j in gSlots[lane].slotsForFd(fd):
       let s = addr gSlots[lane].slots[j]
+      when defined(illumos):
+        if s.op.positioned: continue
       case s.op.kind
       of opRead:
         if evRead in firedEvents:
-          complete(j, int pcall(posixRead(fd, s.op.read.buf, s.op.read.len)))
+          let r = int pcall(posixRead(fd, s.op.read.buf, s.op.read.len))
+          if transferDone(r): complete(j, r)
       of opWrite:
         if evWrite in firedEvents:
-          complete(j, int pcall(posixWrite(fd, s.op.write.buf, s.op.write.len)))
+          let r = int pcall(posixWrite(fd, s.op.write.buf, s.op.write.len))
+          if transferDone(r): complete(j, r)
       of opAccept:
         if evRead in firedEvents:
           var addrLen = s.op.accept.sockAddrLen
@@ -283,7 +301,7 @@ when defined(posix):
           # `sizeof(sockaddr_storage)` here would describe a v4 address as
           # 128 bytes of one.
           s.op.accept.sockAddrLen = addrLen
-          complete(j, client)
+          if transferDone(client): complete(j, client)
       of opRecvFrom:
         if evRead in firedEvents:
           var addrLen = s.op.recvfrom.sockAddrLen
@@ -292,11 +310,12 @@ when defined(posix):
           # Same narrowing as accept: `complete` hands the storage to `peer`,
           # so the length that describes it has to be what the kernel wrote.
           if n >= 0: s.op.recvfrom.sockAddrLen = addrLen
-          complete(j, n)
+          if transferDone(n): complete(j, n)
       of opSendTo:
         if evWrite in firedEvents:
-          complete(j, int pcall(posixSendto(fd, s.op.sendto.buf, s.op.sendto.len, 0,
-                                            addr s.op.sendto.sockAddr, s.op.sendto.sockAddrLen)))
+          let r = int pcall(posixSendto(fd, s.op.sendto.buf, s.op.sendto.len, 0,
+                                       addr s.op.sendto.sockAddr, s.op.sendto.sockAddrLen))
+          if transferDone(r): complete(j, r)
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide

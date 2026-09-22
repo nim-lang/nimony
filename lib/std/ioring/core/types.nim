@@ -263,6 +263,10 @@ type
       ## open, socket). Also the slot arena's key: every op is linked into the
       ## per-fd list keyed by this, the fd-less ones sharing the `-1` bucket.
     seqnum*: SeqNum
+    when defined(illumos):
+      positioned*: bool
+      offset*: int64
+        ## Explicit file position; event-port AIO owns its staging buffer.
     cont*: Continuation
     res*: int
     deadline*: Deadline

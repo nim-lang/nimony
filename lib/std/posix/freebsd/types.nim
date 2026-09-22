@@ -4,6 +4,8 @@ when not (defined(amd64) or defined(arm64)):
   {.error: "std/posix has no transcribed ABI for this FreeBSD architecture; supported: amd64, arm64".}
 
 type
+  Sockaddr_storage* {.pure.} = object
+    abi: array[16, uint64] # 128 bytes
   TSa_Family* = uint8  ## sa_family_t
 
   Sockaddr_in* {.pure.} = object ## struct sockaddr_in (BSD layout with sin_len)

@@ -307,6 +307,8 @@ else:
     const iconvDll = "libiconv.so"
   elif defined(macosx):
     const iconvDll = "libiconv.dylib"
+  elif defined(illumos):
+    const iconvDll = "libc.so.1"
   else:
     const iconvDll = "(libc.so.6|libiconv.so)"
 

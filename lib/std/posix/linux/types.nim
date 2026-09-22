@@ -1,6 +1,8 @@
 # Private implementation included by std/posix/posix; not a standalone module.
 
 type
+  Sockaddr_storage* {.pure.} = object
+    abi: array[16, uint64] # 128 bytes
   TSa_Family* = uint16  ## sa_family_t
 
   Sockaddr_in* {.pure.} = object ## struct sockaddr_in
