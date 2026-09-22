@@ -222,3 +222,17 @@ type
 
 var o: Outer[[2, 3], int]
 echo sizeof(o)                     # Inner[[2, 3], int] -> array[2, int] == 16
+# inline `@[…]` in a type-position `static[seq[T]]` argument must fold to `seq[T]`,
+# not to the inner array literal (Nim 2 compatibility).
+type
+  SeqBox[X: static[seq[int]]] = object
+    n: int
+
+const seqShape = @[1, 2, 3]
+var seqBoxConst: SeqBox[seqShape]
+var seqBoxInline: SeqBox[@[1, 2, 3]]
+seqBoxConst.n = seqShape.len
+seqBoxInline.n = seqShape.len
+echo seqBoxConst.n                   # 3
+echo seqBoxInline.n                  # 3
+

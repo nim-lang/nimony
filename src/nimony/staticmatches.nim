@@ -40,6 +40,9 @@ proc isStaticValue*(n: Cursor): bool =
   ## A canonical compile-time value as bound to a `staticTypevar`: a primitive
   ## literal, a const/enum-field/value-typevar symbol, or a typed aggregate
   ## constructor (array/set/tuple/object) whose elements are themselves static.
+  ## A `seq`/`string` constant is an object constructor whose data field is the
+  ## `(addr (aconstr (uarray T) …))` form that `exprexec`'s ptr-to-nif rule
+  ## emits, so an `addr` wrapping a static aggregate counts as static too.
   if not n.hasMore: return false
   case n.kind
   of IntLit, UIntLit, FloatLit, CharLit, StrLit:
@@ -52,7 +55,7 @@ proc isStaticValue*(n: Cursor): bool =
     case n.exprKind
     of FalseX, TrueX:
       result = true
-    of SufX:
+    of SufX, AddrX:
       var elem = n
       inc elem
       result = isStaticValue(elem)

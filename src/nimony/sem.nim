@@ -1609,6 +1609,27 @@ proc exprToType(c: var SemContext; dest: var TokenBuf; exprType: Cursor; start: 
       dest.shrink start
       c.buildErr dest, info, "not a type"
 
+proc maybeFoldStaticValueArg(c: var SemContext; dest: var TokenBuf; start: int; typ: TypeCursor) =
+  ## For an explicit generic value argument, evaluate a concrete call expression
+  ## (e.g. `@[1, 2, 3]`) to its canonical constant and replace the semchecked
+  ## tree. Skips non-calls, generic types, and expressions that cannot be folded.
+  if dest.len <= start: return
+  var probe = cursorAt(dest, start)
+  endRead probe
+  if probe.exprKind notin CallKinds or containsGenericParams(probe):
+    return
+  let vtyp = skipModifier(typ)
+  if vtyp.typeKind in {TypedescT, AutoT, ErrT, VoidT, UntypedT, TypedT} or
+     containsGenericParams(vtyp): return
+  var e = cursorAt(dest, start)
+  var valueBuf = evalExpr(c, e, typ)
+  endRead e
+  var value = beginRead(valueBuf)
+  if value.isTagLit and value.cursorTagId == nifpools.ErrT: return
+  expectUnique dest
+  dest.shrink start
+  annotateConstantType(dest, typ, value)
+
 proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: TypeDeclContext; info: NifLineInfo) =
   # expression needs to be fully evaluated, switch to body phase
   var phase = SemcheckBodies
@@ -1618,11 +1639,15 @@ proc semTypeExpr(c: var SemContext; dest: var TokenBuf; n: var Cursor; context: 
   semExpr c, dest, it
   n = it.n
   if context == AllowValues:
-    let emitted = cursorAt(dest, start)
+    var emitted = cursorAt(dest, start)
     if emitted.exprKind == ExprX and isPureTypeValueExpr(emitted):
       var buf = createTokenBuf(4)
       buf.addSubtree typeValueExpr(emitted)
+      endRead emitted
       dest.replace cursorAt(buf, 0), start
+    else:
+      endRead emitted
+    maybeFoldStaticValueArg(c, dest, start, it.typ)
   exprToType c, dest, it.typ, start, context, info
   swap c.phase, phase
 
