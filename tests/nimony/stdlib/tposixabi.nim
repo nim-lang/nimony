@@ -7,7 +7,7 @@
 # corrupting data at run time. This is the safety net that makes header-free
 # bindings maintainable at all.
 
-import std/[assertions, syncio, os, dirs]
+import std/[assertions, syncio, os, dirs, envvars]
 
 when defined(posix):
   import std/posix/posix
@@ -300,7 +300,8 @@ when defined(posix):
       quit "cannot write " & cfile
     # illumos cc defaults to ILP32 even on an amd64 host.
     let ccFlags = when defined(illumos) and defined(amd64): " -m64" else: ""
-    let code = execShellCmd("cc" & ccFlags & " -fsyntax-only " & cfile)
+    let compiler = getEnv("CC", when defined(illumos): "gcc" else: "cc")
+    let code = execShellCmd(compiler & ccFlags & " -fsyntax-only " & cfile)
     if code != 0:
       # The compiler already printed which _Static_assert failed; keep the
       # generated file around for inspection.

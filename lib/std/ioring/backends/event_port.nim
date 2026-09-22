@@ -186,19 +186,29 @@ proc eventPortPoll(timeoutMs: int): bool {.nimcall.} =
       if pending[i].positioned: submitAio(lane, idx)
       else: submitStream(lane, idx)
     of opConnect:
-      if startConnect(pending[i].fd, idx): submitForPoll(pending[i].fd)
-    of opAccept, opPollAdd:
-      submitForPoll(pending[i].fd)
+      let flags = fcntl(pending[i].fd, F_GETFL)
+      if flags < 0: complete(idx, -int(errno()))
+      elif (flags and O_NONBLOCK) == 0: complete(idx, -int(EINVAL))
+      elif startConnect(pending[i].fd, idx): submitForPoll(pending[i].fd)
+    of opAccept:
+      submitStream(lane, idx)
+    of opPollAdd:
+      if pending[i].fd < 0: complete(idx, -int(EBADF))
+      else: submitForPoll(pending[i].fd)
   var events = default(array[64, PortEvent])
   var count = cuint(1)
   let waitMs = waitMillis(lane, if n > 0: 0 else: timeoutMs)
   var ts = Timespec(tv_sec: Time(max(waitMs, 0) div 1000),
                     tv_nsec: clong((max(waitMs, 0) mod 1000) * 1_000_000))
-  let timeout: nil ptr Timespec = if waitMs < 0: nil else: addr ts
+  var timeout: nil ptr Timespec = addr ts
+  if waitMs < 0: timeout = nil
   let r = port_getn(lanes[lane].fd, addr events[0], cuint(events.len), addr count, timeout)
-  # ETIME may accompany a PARTIAL batch; those events have been consumed and
-  # must still be processed. On other errors count is not an output batch.
-  if r < 0 and errno() != ETIME: count = 0
+  # ETIME/EINTR can accompany a partial batch. Those events have already
+  # been consumed, so dropping them would leak AIO requests permanently.
+  if r < 0:
+    let err = errno()
+    if err != ETIME and err != EINTR:
+      quit "illumos event port retrieval failed"
   for i in 0..<int(count):
     let ev = events[i]
     if ev.portev_source == uint16(PORT_SOURCE_AIO):
@@ -242,7 +252,9 @@ proc initEventPortBackendRelays*(): BackendRelays =
     if lanes[lane].fd < 0:
       for j in 0..<lane: discard close(lanes[j].fd)
       quit "cannot create illumos event port"
-    discard fcntl(lanes[lane].fd, F_SETFD, FD_CLOEXEC)
+    if fcntl(lanes[lane].fd, F_SETFD, FD_CLOEXEC) < 0:
+      for j in 0..lane: discard close(lanes[j].fd)
+      quit "cannot mark illumos event port close-on-exec"
     lanes[lane].registrations = initTable[cint, uint]()
   reArmEvent = portReArm
   gCancelInFlight = cancelAio
