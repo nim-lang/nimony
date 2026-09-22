@@ -416,6 +416,8 @@ proc compileProgram(c: var CmdOptions) =
     c.config.bits = 32
     c.commandLineArgs.add " --cpu:wasm32 --os:standalone --bits:32"
   let nativeBackend = c.config.backend == backendNative
+  if c.config.isDefined("illumos") and (nativeBackend or c.config.isDefined("nimNoLibc")):
+    quit "illumos requires libc; use the C backend without -d:nimNoLibc"
   let optOutAll = c.config.isDefined("useLibc")
   if nativeBackend or not (optOutAll or c.config.isDefined("useMimalloc")):
     c.config.addDefine "nimNativeAlloc"

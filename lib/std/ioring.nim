@@ -28,7 +28,13 @@ import ./ioring/platform
 when defined(windows):
   when not defined(nimIoringWsaPoll):
     import ./ioring/backends/iocp   # iocpOwnerLane / iocpWake — lane routing
+when defined(illumos):
+  import ./ioring/backends/event_port
 when defined(posix):
+  from std/posix/posix import F_GETFL, F_SETFL, O_NONBLOCK, AF_INET, SOCK_STREAM,
+                              IPPROTO_TCP, SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
+  export F_GETFL, F_SETFL, O_NONBLOCK, AF_INET, SOCK_STREAM, IPPROTO_TCP,
+         SOL_SOCKET, SO_REUSEADDR, INADDR_ANY
   from std/posix/posix import Sockaddr_storage, Sockaddr_in, SockLen, FileHandle,
                               SockAddr, InAddr, TSa_Family
   # `submitAccept`'s `peer` names these, so a caller has to be able to name
@@ -129,6 +135,8 @@ proc enqueueOp(op: OpContext) =
   else:
     while not gOpQueues[ioLane()].tryEnqueue(op):
       discard backendRelays.poll(0)
+    when defined(illumos):
+      eventPortWake(ioLane())
 
 proc submitNop*(deadline: Deadline; cont = Continuation(fn: nil, env: nil);
                 resPtr: nil ptr int = nil): SeqNum =
@@ -166,6 +174,25 @@ proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
   var op = OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
+
+when defined(illumos):
+  proc submitReadAt*(fd: cint; buf: pointer; len: int; offset: int64;
+                     deadline: Deadline; cont = Continuation(fn: nil, env: nil);
+                     resPtr: nil ptr int = nil): SeqNum =
+    ## Positioned file I/O via event-port AIO. The backend owns a staging
+    ## buffer until libc finishes, including after cancellation/deadline.
+    result = nextSeqNum()
+    enqueueOp(OpContext(kind: opRead, fd: fd, seqnum: result, buf: buf, len: len,
+      positioned: true, offset: offset, cont: cont, res: cast[int](resPtr), deadline: deadline))
+
+  proc submitWriteAt*(fd: cint; buf: pointer; len: int; offset: int64;
+                      deadline: Deadline; cont = Continuation(fn: nil, env: nil);
+                      resPtr: nil ptr int = nil): SeqNum =
+    ## Positioned counterpart of submitWrite. Does not use the shared file
+    ## position; caller must keep the buffer live until logical completion.
+    result = nextSeqNum()
+    enqueueOp(OpContext(kind: opWrite, fd: fd, seqnum: result, buf: buf, len: len,
+      positioned: true, offset: offset, cont: cont, res: cast[int](resPtr), deadline: deadline))
 
 proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
@@ -352,12 +379,6 @@ when defined(posix):
     ## two-argument call would leave a declared argument unbound.
     ##
     ## `F_GETFL` ignores the third argument, so passing `0` costs nothing.
-  const F_GETFL* = 3.cint
-  const F_SETFL* = 4.cint
-  when defined(linux):
-    const O_NONBLOCK* = 0x0800.cint
-  else:
-    const O_NONBLOCK* = 0x0004.cint
   proc setNonBlocking*(fd: cint) =
     var flags = fcntl(fd, F_GETFL)
     discard fcntl(fd, F_SETFL, flags or O_NONBLOCK)
@@ -367,21 +388,24 @@ when defined(posix):
   proc closeFd*(fd: cint) =
     ## Close `fd`: cancel this lane's in-flight ops on it (see
     ## `cancelPendingOps`), deregister it from the backend, then close(2).
+    when defined(illumos):
+      # Materialize queued ops before closing a descriptor they still name.
+      discard backendRelays.poll(0)
     discard cancelPendingOps(fd)
     discard posixClose(fd)
 
 when defined(posix):
-  const
-    AF_INET* = 2.cint
-    SOCK_STREAM* = 1.cint
-    IPPROTO_TCP* = 6.cint
-    SOL_SOCKET* = (when defined(macosx): 0xFFFF.cint else: 1.cint)
-    SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
-    INADDR_ANY* = 0'u32
-  proc socket(domain, typ, protocol: cint): cint {.importc: "socket".}
+  when defined(illumos):
+    proc socket(domain, typ, protocol: cint): cint {.importc: "__xnet_socket".}
+  else:
+    proc socket(domain, typ, protocol: cint): cint {.importc: "socket".}
   proc setsockopt(s: cint; level, optname: cint; val: pointer; vlen: SockLen): cint {.importc: "setsockopt".}
-  proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "bind".}
-  proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
+  when defined(illumos):
+    proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "__xnet_bind".}
+    proc listen(s: cint; backlog: cint): cint {.importc: "__xnet_listen".}
+  else:
+    proc bindAddr(s: cint; name: ptr SockAddr; namelen: SockLen): cint {.importc: "bind".}
+    proc listen(s: cint; backlog: cint): cint {.importc: "listen".}
   proc socketNonBlocking*(): cint =
     ## A non-blocking TCP socket, which is what `submitConnect` requires: a
     ## blocking one would finish the connect inside the syscall and there

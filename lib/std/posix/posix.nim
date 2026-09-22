@@ -4,7 +4,7 @@
 ## and a proper Nim-like interface, use the OS module or write a wrapper.
 ##
 ## Every binding is header-free: types and constants are ABI transcriptions
-## (see linux/ and macos/) and procs bind real libc/kernel symbols.
+## (see linux/, macos/, and illumos/) and procs bind real libc/kernel symbols.
 ## `-d:useLibc` changes which allocator and stdio implementation the
 ## stdlib uses, never which declarations exist.
 ## ABI declarations are checked by tests/nimony/stdlib/tposixabi.nim.
@@ -25,10 +25,6 @@ when defined(posix):
     SockLen* = cuint ## socklen_t
     InAddr* {.pure.} = object ## struct in_addr
       s_addr*: uint32
-    Sockaddr_storage* {.pure.} = object
-      ## Opaque 128-byte socket address buffer. Its size must match the ABI:
-      ## accept(2) and recvfrom(2) receive sizeof this as the buffer length.
-      abi: array[16, uint64]
     InAddrScalar* = uint32
     Sighandler* = proc (a: cint) {.noconv.}
     FileHandle* = cint
@@ -43,8 +39,13 @@ when defined(posix):
   elif defined(osx):
     include "macos/consts"
     include "macos/types"
+  elif defined(illumos):
+    when defined(nimNoLibc):
+      {.error: "illumos always requires libc; nimNoLibc is not supported".}
+    include "illumos/consts"
+    include "illumos/types"
   else:
-    {.error: "std/posix has no transcribed ABI for this OS; supported: Linux (amd64/arm64/i386) and macOS".}
+    {.error: "std/posix has no transcribed ABI for this OS; supported: Linux, macOS, illumos/amd64".}
 
   # Permission bits shared by the supported ABIs.
   const
@@ -102,6 +103,8 @@ when defined(posix):
       include "macos/errno"
     elif defined(linux):
       include "linux/errno"
+    elif defined(illumos):
+      include "illumos/errno"
     proc errno*(): cint {.inline.} = errnoLocation()[]
       ## The last error code (libc's errno).
 
@@ -148,6 +151,9 @@ when defined(posix):
   elif defined(osx):
     include "macos/bindings"
     include "macos/dirs"
+  elif defined(illumos):
+    include "illumos/bindings"
+    include "illumos/dirs"
 
   # Directory entry type constants shared by the supported ABIs.
   const
@@ -163,14 +169,15 @@ when defined(posix):
 
   proc sysconf*(a1: cint): int {.importc: "sysconf".}
 
-  # sys/wait.h status macros, reimplemented natively.
-  proc WEXITSTATUS*(s: cint): cint = (s and 0xff00) shr 8
-  proc WTERMSIG*(s: cint): cint = s and 0x7f
-  proc WSTOPSIG*(s: cint): cint = WEXITSTATUS(s)
-  proc WIFEXITED*(s: cint): bool = WTERMSIG(s) == 0
-  proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
-  proc WIFSTOPPED*(s: cint): bool = (s and 0xff) == 0x7f
-  proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
+  when not defined(illumos):
+    # sys/wait.h status macros, reimplemented natively.
+    proc WEXITSTATUS*(s: cint): cint = (s and 0xff00) shr 8
+    proc WTERMSIG*(s: cint): cint = s and 0x7f
+    proc WSTOPSIG*(s: cint): cint = WEXITSTATUS(s)
+    proc WIFEXITED*(s: cint): bool = WTERMSIG(s) == 0
+    proc WIFSIGNALED*(s: cint): bool = (cast[int8]((s and 0x7f) + 1) shr 1) > 0
+    proc WIFSTOPPED*(s: cint): bool = (s and 0xff) == 0x7f
+    proc WIFCONTINUED*(s: cint): bool = s == WCONTINUED
 
   # Use plain C char for execve's char** (cstring uses unsigned char*).
   type CChar* {.importc: "char", nodecl.} = int8
@@ -179,10 +186,11 @@ when defined(posix):
   proc execve*(path: cstring; argv, env: CCharArray): cint {.importc: "execve", sideEffect.}
   # waitpid is libc sugar for wait4 with NULL rusage. wait4 is exported by
   # glibc, musl and libSystem, and arkham lowers it to the raw syscall.
-  proc wait4(pid: Pid; status: var cint; options: cint;
-             rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
-  proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =
-    wait4(pid, status, options, nil)
+  when not defined(illumos):
+    proc wait4(pid: Pid; status: var cint; options: cint;
+               rusage: nil pointer): Pid {.importc: "wait4", sideEffect.}
+    proc waitpid*(pid: Pid; status: var cint; options: cint): Pid {.inline.} =
+      wait4(pid, status, options, nil)
   proc kill*(pid: Pid; sig: cint): cint {.importc: "kill", sideEffect.}
   proc setpgid*(pid, pgid: Pid): cint {.importc: "setpgid", sideEffect.}
   proc exitnow*(status: cint) {.importc: "_exit", noreturn.}

@@ -103,7 +103,7 @@ elif defined(genode):
   func broadcastSysCond*(cond: var SysCond) {.
     noSideEffect, importcpp.}
 
-elif defined(nimNativeIo):
+elif defined(nimNativeIo) and not defined(illumos):
   # Freestanding, libc-header-free locks built directly on the kernel futex
   # primitive instead of pthread. `SysLock`/`SysCond` are plain 32-bit words, so
   # there is no opaque libc struct to `importc` and no fixed ABI layout to track.
@@ -310,6 +310,12 @@ else:
         abi: array[8, int64]
       SysCondObj {.pure, final, byref.} = object ## pthread_cond_t (48 B)
         abi: array[6, int64]
+  elif defined(illumos):
+    type
+      SysLockObj {.pure, final, byref.} = object # pthread_mutex_t: 24 B
+        abi: array[3, int64]
+      SysCondObj {.pure, final, byref.} = object # pthread_cond_t: 16 B
+        abi: array[2, int64]
   elif defined(arm64):
     type
       SysLockObj {.pure, final, byref.} = object ## pthread_mutex_t: 48 B on
@@ -398,7 +404,7 @@ else:
 
   # rlocks
   const SysLockType_Reentrant* = SysLockType(
-    when defined(osx): 2 else: 1)  ## PTHREAD_MUTEX_RECURSIVE
+    when defined(osx): 2 elif defined(illumos): 4 else: 1)  ## PTHREAD_MUTEX_RECURSIVE
   func initSysLockAttr*(a: var SysLockAttr) {.
     importc: "pthread_mutexattr_init", noSideEffect.}
   func setSysLockType*(a: var SysLockAttr, t: SysLockType) {.
