@@ -368,6 +368,72 @@ proc runPassive*(c: Continuation; w: ptr PassiveWait) =
     if passiveWaitHook != nil: passiveWaitHook()
     else: builtinCpuRelax()
 
+type
+  IterStep* = object of PassiveWait
+    ## A `for` loop's side of a `.passive` iterator: the iterator's `caller`.
+    ## A step ends when the iterator runs this continuation — at a `yield`,
+    ## which also leaves its resume point in `resume`, or when it finishes,
+    ## which leaves `resume` empty. Neither is the frame identity of whatever
+    ## the trampoline happens to be running: a passive proc the iterator calls
+    ## returns INTO the iterator's frame without that being a yield.
+    resume: Continuation
+    next: Continuation
+      ## A passive loop's own continuation, run when the step is over.
+
+proc iterForward(coro: ptr CoroutineBase): Continuation {.nimcall.} =
+  result = cast[ptr IterStep](coro).next
+
+proc iterCaller*(s: ptr IterStep; passive: bool): Continuation =
+  ## Used by the compiler: the `caller` a `for` loop hands its iterator.
+  s[] = IterStep()
+  result = Continuation(fn: (if passive: iterForward else: passiveDone),
+                        env: cast[ptr CoroutineBase](s))
+
+proc iterStart*(s: ptr IterStep; first: Continuation) {.inline.} =
+  ## Used by the compiler: where the iterator's first step begins.
+  s.resume = first
+
+proc iterYield*(caller, resume: Continuation): Continuation =
+  ## Used by the compiler: a `.passive` iterator's `yield` — record where it
+  ## continues, then hand control to the loop.
+  cast[ptr IterStep](caller.env).resume = resume
+  result = caller
+
+proc iterNext*(s: ptr IterStep): bool =
+  ## Used by the compiler: one step of a `for` loop in a regular proc. Runs the
+  ## iterator to its next `yield` or to its end, parks included (see
+  ## `runPassive`). Answers whether it yielded.
+  let r = s.resume
+  s.resume = Continuation(fn: nil, env: nil)
+  s.done = 0
+  runPassive(r, cast[ptr PassiveWait](s))
+  result = s.resume.fn != nil
+
+proc iterAdvance*(s: ptr IterStep) {.passive.} =
+  ## Used by the compiler: one step of a `for` loop in a `.passive` routine. A
+  ## suspension point the CPS transform lowers itself (`iterSwitch`), so this
+  ## body never runs.
+  discard
+
+proc iterSwitch*(s: ptr IterStep; next: Continuation): Continuation =
+  ## Used by the compiler: what `iterAdvance` lowers to — the loop continues at
+  ## `next` once the step is over, and the step starts now.
+  s.next = next
+  result = s.resume
+  s.resume = Continuation(fn: nil, env: nil)
+
+proc iterFinished*(s: ptr IterStep): bool {.inline.} =
+  ## Used by the compiler: did the step just taken end the iterator?
+  result = s.resume.fn == nil
+
+proc iterClose*(s: ptr IterStep) =
+  ## Used by the compiler: a `for` loop left before its iterator finished.
+  ## Cancels and frees the iterator's frame, which is parked at a `yield`.
+  if s.resume.env != nil:
+    cancel(s.resume.env)
+    deallocFrame(s.resume.env)
+    s.resume = Continuation(fn: nil, env: nil)
+
 proc parked*(c: Continuation): bool {.inline.} =
   ## True when a coroutine has parked via `suspend()` and not yet been
   ## resumed. The `env` field identifies the coroutine frame.

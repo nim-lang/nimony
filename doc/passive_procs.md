@@ -305,6 +305,25 @@ only runs when the scheduler resumes it. This means:
   manages both compute tasks and IO-blocked tasks uniformly.
 
 
+## `for` Loops over Passive Iterators
+
+A `.passive` iterator's `caller` is the loop's `IterStep` (`system`). A `yield` records
+where the iterator continues (`iterYield`) and hands control to that caller; finishing
+leaves the record empty. So a loop learns that a step ended because its own continuation
+runs — never by comparing frames: a passive proc the iterator calls returns *into* the
+iterator's frame without that being a yield.
+
+- In a **regular** routine each step is `iterNext`: the step runs to completion through
+  `runPassive`, parks included, exactly like a passive call from regular code. A
+  `try`/`finally` closes the iterator (`iterClose`) when the loop is left early.
+- In a **passive** routine advancing the iterator is a suspension point
+  (`iterAdvance`, lowered to `iterSwitch`): the loop is laid out as ordinary code before
+  the CPS split, so a park in the iterator parks the enclosing coroutine and the loop body
+  may suspend too. The loop spans several state procs, so every way out that skips its
+  end — `return`, `raise`, a jump past the loop — calls `iterClose` first.
+
+`.closure` iterators keep their own protocol (`caller.fn` as the resume slot).
+
 ## Frame Lifetime and Heap vs Stack Allocation
 
 Every passive proc's coroutine environment (`FooCoroutine`) is either heap-allocated or
