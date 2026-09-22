@@ -115,7 +115,7 @@ when defined(posix):
   import std / assertions
   from std/posix/posix import SockLen, FileHandle, EINPROGRESS, EAGAIN, EWOULDBLOCK,
                               SOL_SOCKET, F_GETFL, F_SETFL, O_NONBLOCK,
-                              pcall, Mode, Stat, fstat, S_ISREG
+                              pcall, Mode, Stat, fstat, S_ISREG, close
 
   # No errno anywhere below. Every call the ring makes goes through
   # `posix.pcall`, which answers the raw Linux convention — the result, or
@@ -295,7 +295,16 @@ when defined(posix):
       of opAccept:
         if evRead in firedEvents:
           var addrLen = s.op.accept.sockAddrLen
-          let client = int pcall(posixAccept(fd, addr s.op.accept.sockAddr, addr addrLen))
+          var client = int pcall(posixAccept(fd, addr s.op.accept.sockAddr, addr addrLen))
+          when defined(illumos):
+            # Accepted sockets do not inherit O_NONBLOCK on illumos.
+            if client >= 0:
+              let flags = pcall(posixFcntl(cint(client), F_GETFL))
+              let changed = if flags < 0: flags else:
+                pcall(posixFcntl(cint(client), F_SETFL, cint(flags) or O_NONBLOCK))
+              if changed < 0:
+                discard close(cint(client))
+                client = int(changed)
           # Write the length back. The kernel narrows it to what it actually
           # wrote, and `complete` hands the storage to the caller — a stale
           # `sizeof(sockaddr_storage)` here would describe a v4 address as
