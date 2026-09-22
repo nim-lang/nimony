@@ -1615,9 +1615,10 @@ proc maybeFoldStaticValueArg(c: var SemContext; dest: var TokenBuf; start: int; 
   ## tree. Skips non-calls, generic types, and expressions that cannot be folded.
   if dest.len <= start: return
   var probe = cursorAt(dest, start)
-  endRead probe
   if probe.exprKind notin CallKinds or containsGenericParams(probe):
+    endRead probe
     return
+  endRead probe
   let vtyp = skipModifier(typ)
   if vtyp.typeKind in {TypedescT, AutoT, ErrT, VoidT, UntypedT, TypedT} or
      containsGenericParams(vtyp): return
