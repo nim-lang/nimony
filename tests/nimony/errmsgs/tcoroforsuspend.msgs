@@ -1,0 +1,1 @@
+tests/nimony/errmsgs/tcoroforsuspend.nim(14, 7) Error: a `for` loop over a `.passive` iterator cannot suspend in its body

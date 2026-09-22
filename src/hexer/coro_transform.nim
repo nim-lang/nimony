@@ -67,6 +67,7 @@ const
   FnFieldName* = "fn.0"
   EnvFieldName* = "env.0"
   CallerFieldName* = "caller.0"
+  YieldedFieldName* = "yielded.0"
   CalleeFieldName* = "callee.0"
   ResultParamName* = "`result.0"
   ResultFieldName* = "`result.0"
@@ -668,8 +669,8 @@ proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
   ##   try:
   ##     loop:
   ##       it = advance(it)
-  ##       ite stopping(it): jmp exitLab
-  ##       ite it.env == myEnv:
+  ##       ite iterStopped(it): jmp exitLab
+  ##       ite iterYielded(it, myEnv):
   ##         <body-stmts goes here — emit between begin and end>
   ##       continue
   ##     lab exitLab
@@ -678,7 +679,7 @@ proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
   ## `exitLab`.
   let envFieldSym = pool.symId(EnvFieldName)
   let advanceSym = pool.symId("advance.0." & SystemModuleSuffix)
-  let stoppingSym = pool.symId("stopping.0." & SystemModuleSuffix)
+  let stoppingSym = pool.symId("iterStopped.0." & SystemModuleSuffix)
 
   dest.copyIntoKind LetS, info:
     dest.addSymDef myEnvSym, info
@@ -706,9 +707,9 @@ proc emitWhileBegin*(dest: var TokenBuf; info: NifLineInfo;
         dest.addSymUse exitLab, info
     dest.addDotToken()
   dest.addParLe IteV, info
-  dest.copyIntoKind EqX, info:
-    dest.addParPair PointerT, info
-    emitItEnv(dest, info, itSym, envFieldSym)
+  dest.copyIntoKind CallS, info:
+    dest.addSymUse pool.symId("iterYielded.0." & SystemModuleSuffix), info
+    dest.addSymUse itSym, info
     dest.addSymUse myEnvSym, info
   dest.addParLe StmtsS, info     # body-stmts open
 
@@ -809,11 +810,14 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
       dest.addSymUse pool.symId(ContinuationName), info
       dest.copyIntoKind CallS, info:
         dest.add targetBuf
+        # Through `coroTr`: in a coroutine the `for` loop's variable is a frame
+        # field, and `(haddr x)` has to name it there. Copied verbatim, the
+        # iterator wrote through a pointer to a local that no longer exists.
         var w = argsStart
         for i in 0 ..< realArgCount:
-          dest.takeTree w
+          coroTr(c, dest, w)
         var addrW = lastArgPos
-        dest.takeTree addrW
+        coroTr(c, dest, addrW)
         emitStopContinuation(dest, info)
 
     let myEnvSym = pool.symId("`coroEnv." & $c.currentProc.counter)
@@ -1057,6 +1061,16 @@ proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   assert state != -1
   let info = n.info
   returnValue(c, dest, n, info)
+  # `this.yielded = true`: what tells the for-loop trampoline that THIS step
+  # produced a value. The continuation alone cannot — a passive proc the
+  # iterator called returns into this same frame (`iterYielded`).
+  dest.copyIntoKind AsgnS, info:
+    dest.copyIntoKind DotX, info:
+      dest.copyIntoKind DerefX, info:
+        dest.addSymUse pool.symId(EnvParamName), info
+      dest.addSymUse pool.symId(YieldedFieldName), info
+      dest.addIntLit 1, info # field is in superclass
+    dest.addParPair TrueX, info
   stashResumeFn(c, dest, state, info)
   dest.copyIntoKind RetS, info:
     contNextState(c, dest, state, info)
@@ -1260,6 +1274,37 @@ proc containsSuspensionPoint*(c: var Context; n: Cursor): bool =
     if sk == YldS or c.hooks.isPassiveCall(c, n) or n.exprKind == SuspendX:
       result = true
       break
+  c.typeCache.closeScope()
+
+proc suspendsHere(c: var Context; n: Cursor): bool =
+  ## Helper of `forBodySuspends`; the scope is the caller's.
+  if n.stmtKind == YldS or c.hooks.isPassiveCall(c, n) or n.exprKind == SuspendX:
+    return true
+  if n.kind != TagLit: return false
+  let sk = n.stmtKind
+  if sk in {LetS, CursorS, PatternvarS, VarS, TvarS, TletS, GvarS, GletS}:
+    var d = n.childCursor      # register it, see `containsSuspensionPoint`
+    let name = d.symId
+    inc d                      # name
+    skip d, SkipExport         # export marker
+    skip d, SkipPragmas        # pragmas
+    c.typeCache.registerLocal(name, cast[SymKind](sk), d)
+  result = false
+  var ch = sub(n)
+  var first = true
+  while ch.hasMore:
+    # A NESTED `for`'s iterator call is that trampoline's business, exactly as
+    # this one's is ours — it is not a suspension point of the routine.
+    if not (sk == CoroforS and first):
+      if suspendsHere(c, ch): return true
+    skip ch
+    first = false
+
+proc forBodySuspends*(c: var Context; n: Cursor): bool =
+  ## Does a `for` body need a state boundary? The trampoline `trCoroFor` builds
+  ## is a loop inside ONE state proc, so there is nowhere for one to go.
+  c.typeCache.openScope()
+  result = suspendsHere(c, n)
   c.typeCache.closeScope()
 
 const
@@ -1564,8 +1609,8 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
             ConverterS, MethodS, MacroS, TemplateS, TypeS,
             BlockS, EmitS, IfS, WhenS,
-            BreakS, ContinueS, ForS, WhileS, CoroforS,
-            RetS, YldS, PragmasS, PragmaxS, InclS, ExclS,
+            BreakS, ContinueS, ForS, WhileS,
+            RetS, YldS, PragmasS, InclS, ExclS,
             IncludeS, ImportS, ImportasS, FromimportS,
             ImportexceptS, ExportS, ExportexceptS, CommentS,
             DiscardS, UnpackdeclS, AssumeS,
@@ -1577,6 +1622,42 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             while n.hasMore:
               trGoto c, dest, n
           dest.addParRi()
+        of CoroforS:
+          # A `for` loop over a `.passive` iterator stays a construct: the
+          # trampoline `trCoroFor` expands it into is a loop inside ONE state
+          # proc. The iterator call is therefore NOT a suspension point of this
+          # routine — walking it as one put a state boundary inside the loop
+          # and produced a state proc nested in it.
+          dest.addParLe(n.cursorTagId, n.info)
+          n.into:
+            dest.takeTree n                         # the iterator call
+            if forBodySuspends(c, n):
+              # One state proc holds the whole loop, so there is nowhere for a
+              # suspension inside the body to go.
+              quit infoToStr(n.info) &
+                " Error: a `for` loop over a `.passive` iterator cannot suspend" &
+                " in its body"
+            trGotoScoped c, dest, n                 # the body
+            while n.hasMore: skip n
+          dest.addParRi()
+        of PragmaxS:
+          # `(pragmax (pragmas ...) BODY)`: exactly one body, which `trGoto`
+          # would flatten into several statements. A body that suspends must
+          # be flattened all the same — its state labels belong at the top
+          # level — and only a `cast` block can give up its wrapper for that,
+          # since it means nothing at run time.
+          let pragmas = n.childCursor
+          if containsSuspensionPoint(c, n) and
+              pragmas.childCursor.pragmaKind == CastP:
+            n.into:
+              skip n                                # pragmas
+              while n.hasMore: trGoto c, dest, n
+          else:
+            dest.addParLe(n.cursorTagId, n.info)
+            n.into:
+              dest.takeTree n                       # pragmas
+              trGotoScoped c, dest, n
+            dest.addParRi()
         of CaseS:
           # `finalir` keeps `case` as a construct ("Format as existing"), so
           # unlike `nj.nim` — which lowered every branch to an `ite` chain —

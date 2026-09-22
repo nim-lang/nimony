@@ -7,7 +7,7 @@
 ==1519504== 
 ==1519504== HEAP SUMMARY:
 ==1519504==     in use at exit: 0 bytes in 0 blocks
-==1519504==   total heap usage: 9 allocs, 9 frees, 360 bytes allocated
+==1519504==   total heap usage: 9 allocs, 9 frees, 432 bytes allocated
 ==1519504== 
 ==1519504== All heap blocks were freed -- no leaks are possible
 ==1519504== 

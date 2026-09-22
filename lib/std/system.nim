@@ -278,6 +278,10 @@ type
   CoroutineBase* = object of RootObj
     caller*: Continuation
     callee*: ptr CoroutineBase
+    yielded*: bool
+      ## Set by an iterator's `yield`, cleared by the `for` loop that takes the
+      ## value (`iterYielded`). A step that lands in this frame is not by
+      ## itself a yield: a passive proc the iterator called returns into it too.
 
 method cancel*(coro: ptr CoroutineBase) =
   discard "to override"
@@ -335,6 +339,23 @@ proc parked*(c: Continuation): bool {.inline.} =
 proc stopping*(c: Continuation): bool {.inline.} =
   ## True when a coroutine has no next step: either finished or parked.
   c.fn == nil
+
+proc iterYielded*(c: Continuation; myEnv: ptr CoroutineBase): bool {.inline.} =
+  ## Used by the compiler: did the `for` loop's iterator just yield? Its own
+  ## frame has to be the one that stopped, AND it has to have stopped at a
+  ## `yield` — a passive proc it called returns into the same frame without
+  ## producing a value, and the loop ran its body again for the previous one.
+  result = c.env != nil and c.env == myEnv and c.env.yielded
+  if result: c.env.yielded = false
+
+proc iterStopped*(c: Continuation): bool {.inline.} =
+  ## Used by the compiler: the `for` loop's exit test. A PARKED iterator has
+  ## not ended — but this loop cannot wait for it, because the loop and the
+  ## frame it would cancel are both driven from this stack — so it says so
+  ## instead of ending quietly and cancelling a frame the I/O ring still owns.
+  if parked(c):
+    panic "a `.passive` iterator parked inside a `for` loop\n"
+  result = c.fn == nil
 
 proc finished*(c: Continuation): bool {.inline.} =
   ## True once a coroutine has run to completion. Compatible with
