@@ -35,6 +35,22 @@ const BootCarryTools = ["nifler", "niflink", "nifmake", "validator"]
   ## bootstrap purposes (host-Nim-built throughout) but `nimony c` shells
   ## to them, so each stage dir needs its own copy.
 
+const JorogumoSource = NativenifDir & "/src/jorogumo/jorogumo.nim"
+
+var bootJorogumo = false
+  ## Does this boot also compile the web back end (`jorogumo`: JS + wasm, from
+  ## the sibling `../nativenif`) at every stage? It is not part of the
+  ## toolchain the NEXT stage drives with, but it compiles with Nimony and
+  ## nothing else would notice when it stops doing so. Set by `bootCmd`.
+
+proc bootStageTools(): seq[string] =
+  ## What `compileBootStage` compiles: the self-tools, plus jorogumo when the
+  ## nativenif checkout is there. jorogumo goes FIRST so it overlaps with the
+  ## self-tools instead of trailing them.
+  result = @[]
+  if bootJorogumo: result.add "jorogumo"
+  result.add BootSelfTools
+
 proc bootCarryTools*(): seq[string] =
   result = @BootCarryTools
   if bootNative: result.add BootNativeTools
@@ -132,6 +148,7 @@ proc bootSourceFor*(tool: string): string =
   of "hexer": "src/hexer/hexer.nim"
   of "lengc": "src/lengc/lengc.nim"
   of "shoggoth": "src/lengc/shoggoth/shoggoth.nim"
+  of "jorogumo": JorogumoSource
   else: quit "boot: no source mapping for tool " & tool
 
 proc bootStageDir*(stage: int): string =
@@ -218,7 +235,7 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
 
   var outBins: seq[string] = @[]
   var cmds: seq[string] = @[]
-  for tool in BootSelfTools:
+  for tool in bootStageTools():
     let outBin = result / tool.addFileExt(ExeExt)
     outBins.add outBin
     cmds.add bootToolCmd(prevNimony, bootSourceFor(tool), outBin, cacheBase,
@@ -247,7 +264,7 @@ proc compileBootStage*(stage: int; cacheBase, args: string; withValgrind: bool):
     if not fileExists(outBin):
       quit "FAILURE: boot stage " & $stage & ": " & outBin &
            " was not produced (did `--out` get rejected?)"
-  echo "[boot] stage ", stage, " produced ", BootSelfTools.join(", "), " in ",
+  echo "[boot] stage ", stage, " produced ", bootStageTools().join(", "), " in ",
        formatFloat(dt, ffDecimal, precision=2), "s"
 
 proc bootBinariesEqual*(pa, pb: string): bool =
@@ -278,8 +295,14 @@ proc stagesEqual*(a, b: string): bool =
   ## converged once both stages produced binaries of equal size — the
   ## self-compile pass that built `b` having succeeded is what tells us
   ## the previous stage is functional.
+  ##
+  ## jorogumo counts from stage 1 on: `bin0/` has no Nimony-built one to
+  ## compare with, so a tool only one side has is skipped.
+  var tools = @BootSelfTools
+  let joro = "jorogumo".addFileExt(ExeExt)
+  if fileExists(a / joro) and fileExists(b / joro): tools.add "jorogumo"
   when defined(macosx):
-    for tool in BootSelfTools:
+    for tool in tools:
       let pa = a / tool.addFileExt(ExeExt)
       let pb = b / tool.addFileExt(ExeExt)
       if getFileSize(pa) != getFileSize(pb):
@@ -288,7 +311,7 @@ proc stagesEqual*(a, b: string): bool =
         return false
     return true
   else:
-    for tool in BootSelfTools:
+    for tool in tools:
       let pa = a / tool.addFileExt(ExeExt)
       let pb = b / tool.addFileExt(ExeExt)
       if not bootBinariesEqual(pa, pb):
@@ -364,7 +387,16 @@ proc bootCmd*(args: string; withValgrind: bool; release = true) =
     let exe = binDir() / tool.addFileExt(ExeExt)
     if not fileExists(exe):
       quit "boot: " & exe & " not found; run `hastur build all` first"
-  for tool in BootSelfTools:
+  # The web back end rides along wherever the native tools would: a 64-bit host
+  # with the sibling checkout. Not cloning it for a boot is the same call
+  # `build all` makes (see `hostGetsNativeTools`).
+  when defined(cpu64):
+    bootJorogumo = dirExists(NativenifDir)
+  if bootJorogumo:
+    syncNativenif()
+  else:
+    echo "[boot] ", NativenifDir, " not available — not compiling jorogumo"
+  for tool in bootStageTools():
     let src = bootSourceFor(tool)
     if not fileExists(src):
       quit "boot: " & src & " missing"
