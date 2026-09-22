@@ -96,11 +96,35 @@ proc passiveCallHook(c: var Context; n: Cursor): bool =
 # Passive call / delay / suspend emitters
 # ---------------------------------------------------------------------
 
-proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
-                            contVar: SymId; info: NifLineInfo) =
+proc declPassiveWait(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
+  ## A regular proc's side of a passive call (`system.PassiveWait`). Lives in
+  ## the regular proc's frame, next to the callee's frame and its result.
+  result = pool.symId("`waitVar." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  copyIntoKind dest, VarS, info:
+    dest.addSymDef result, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse pool.symId("PassiveWait.0." & SystemModuleSuffix), info
+    dest.addDotToken() # initialized by `initPassiveWait`
+
+proc emitPassiveWaitCont(dest: var TokenBuf; waitVar: SymId; info: NifLineInfo) =
+  ## The callee's `caller`: running it is what ends the call. It used to be a
+  ## nil stop-continuation, which could not tell a park from a finish.
   dest.copyIntoKind CallS, info:
-    dest.addSymUse pool.symId("complete.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.symId("initPassiveWait.0." & SystemModuleSuffix), info
+    dest.copyIntoKind AddrX, info:
+      dest.addSymUse waitVar, info
+
+proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
+                            contVar, waitVar: SymId; info: NifLineInfo) =
+  ## Run the call to completion (`system.runPassive`), parks included: the
+  ## callee writes into this frame, so this frame must outlive it.
+  dest.copyIntoKind CallS, info:
+    dest.addSymUse pool.symId("runPassive.0." & SystemModuleSuffix), info
     dest.addSymUse contVar, info
+    dest.copyIntoKind AddrX, info:
+      dest.addSymUse waitVar, info
 
 proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cursor) =
   let typ = c.typeCache.getType(n.childCursor, {SkipAliases})
@@ -118,6 +142,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     # fallback to init wrapper call for methods, closures, proctype
     # calls because we cant restore its coroTypeForProc
     if typ.typeKind == MethodT or procHasPragma(typ, ClosureP) or typ.childCursor.kind == DotToken or n.childCursor.symKind notin RoutineKinds:
+      let waitVar = declPassiveWait(c, dest, info)
       let contVar = pool.symId("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
@@ -141,16 +166,8 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
           if hasResult:
             dest.copyIntoKind AddrX, info:
               dest.copyTree target
-          # add StopContinuation:
-          dest.copyIntoKind OconstrX, info:
-            dest.addSymUse pool.symId(ContinuationName), info
-            dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.symId(FnFieldName), info
-              dest.addParPair NilX, info
-            dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.symId(EnvFieldName), info
-              dest.addParPair NilX, info
-      emitCompleteFromNormal(c, dest, contVar, info)
+          emitPassiveWaitCont(dest, waitVar, info)
+      emitCompleteFromNormal(c, dest, contVar, waitVar, info)
     else:
       # Stack-allocate the callee's frame (statically known callee).
       # Null callee.callee (see emitStackFrameTag) so deallocFrame is a
@@ -164,6 +181,7 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
         dest.addDotToken() # pragmas
         dest.addSymUse coroTypeForProc(c, sym), info
         dest.addDotToken() # default value
+      let waitVar = declPassiveWait(c, dest, info)
       let contVar = pool.symId("`contVar." & $c.currentProc.counter)
       inc c.currentProc.counter
       copyIntoKind dest, VarS, info:
@@ -185,18 +203,10 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
           if hasResult:
             dest.copyIntoKind AddrX, info:
               dest.copyTree target
-          # add StopContinuation:
-          dest.copyIntoKind OconstrX, info:
-            dest.addSymUse pool.symId(ContinuationName), info
-            dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.symId(FnFieldName), info
-              dest.addParPair NilX, info
-            dest.copyIntoKind KvU, info:
-              dest.addSymUse pool.symId(EnvFieldName), info
-              dest.addParPair NilX, info
+          emitPassiveWaitCont(dest, waitVar, info)
       # Tag as stack-allocated:
       emitStackFrameTag(c, dest, coroVar, info)
-      emitCompleteFromNormal(c, dest, contVar, info)
+      emitCompleteFromNormal(c, dest, contVar, waitVar, info)
   of IsIterator, IsPassive:
     # passive call from within a passive proc:
     # The callee's frame is heap-allocated via allocFrame; the callee

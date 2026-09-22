@@ -327,6 +327,47 @@ proc complete*(c: Continuation) =
   while not stopping(c):
     c = scheduler(c)
 
+type
+  PassiveWait* = object of CoroutineBase
+    ## A regular proc's side of a call to a `.passive` proc. Its continuation
+    ## is the callee's `caller`: whoever runs the callee's last state — this
+    ## thread, or the pool worker an I/O completion resumed it on — runs it
+    ## next, and that is what tells the regular caller the call is over.
+    done: int
+
+proc passiveDone(coro: ptr CoroutineBase): Continuation {.nimcall.} =
+  let w = cast[ptr PassiveWait](coro)
+  atomicStoreN(addr w.done, 1, ATOMIC_RELEASE)
+  result = Continuation(fn: nil, env: nil)
+
+proc initPassiveWait*(w: ptr PassiveWait): Continuation =
+  ## Used by the compiler: the `caller` continuation for a passive call made
+  ## from a regular proc.
+  w[] = PassiveWait(done: 0)
+  result = Continuation(fn: passiveDone, env: cast[ptr CoroutineBase](w))
+
+var passiveWaitHook: proc () {.nimcall.} = nil
+
+proc setPassiveWaitHook*(hook: proc () {.nimcall.}) {.inline.} =
+  ## What a regular proc does while the passive proc it called is parked:
+  ## a thread pool makes it help with the pool's work, so a worker waiting here
+  ## cannot starve the pool of the very worker that would resume its callee.
+  passiveWaitHook = hook
+
+proc builtinCpuRelax() {.intrinsic: "CpuRelax".}
+
+proc runPassive*(c: Continuation; w: ptr PassiveWait) =
+  ## Used by the compiler to run a passive call made from a regular proc to
+  ## COMPLETION. The callee's frame and its result live in the regular proc's
+  ## stack frame, so returning while the callee is parked would leave it
+  ## writing into a frame that is gone. A park therefore does not end the call,
+  ## only the trampoline on this thread: the call is over when the callee's
+  ## last state has run `w`'s continuation, on whichever thread resumed it.
+  complete(c)
+  while atomicLoadN(addr w.done, ATOMIC_ACQUIRE) == 0:
+    if passiveWaitHook != nil: passiveWaitHook()
+    else: builtinCpuRelax()
+
 proc parked*(c: Continuation): bool {.inline.} =
   ## True when a coroutine has parked via `suspend()` and not yet been
   ## resumed. The `env` field identifies the coroutine frame.

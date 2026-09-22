@@ -105,10 +105,14 @@ proc complete*(c: Continuation) =
 Each call to `scheduler(c)` executes one state transition. The default scheduler is
 `trivialTick` which simply calls `c.fn(c.env)`.
 
-This matters for calls from regular, non-passive code: the compiler drives the passive
-call to completion via the trampoline. In other words, the call is mediated by the active
-scheduler rather than by a direct stack call. With the default scheduler this behaves like
-ordinary synchronous execution.
+`complete` stops when the continuation has no next step — when the coroutine finished
+*or parked*. That is the primitive schedulers and explicit `delay(call)` continuations use.
+
+A call from regular, non-passive code is stronger: it runs the passive proc to
+**completion**, parks included (`runPassive`, see *Non-passive calls* below). The call is
+mediated by the active scheduler rather than by a direct stack call; with the default
+scheduler it behaves like ordinary synchronous execution, and when the callee parks on
+I/O the regular caller waits for it like a blocking call would.
 
 ### Custom schedulers
 
@@ -128,35 +132,33 @@ regular-proc stack frames.
 #### Scheduler contract
 
 When a coroutine **parks** (`suspend()` returns `Continuation(fn: nil, env: frame)`) or
-**yields** to other work, the scheduler must let the current trampoline stop so that C
-stack frames can unwind:
+**yields** to other work, the scheduler lets the current trampoline stop:
 
 1. **Store** the continuation that should resume later (for example in an IoRing slot via
    `delay()`, or on the thread-pool run queue).
 2. **Return** the parked continuation (or let `trivialTick` pass it through) so that
-   `complete()` can detect parking via `parked(c)` and exit; a regular proc between
-   two passive calls can then return.
+   `complete()` can detect parking via `parked(c)` and exit.
 3. **Resume** later from a clean entry point (for example `submit(cont)` on a pool worker
    or `complete(delayCont)` on the captured resume continuation).
 
-Running many steps synchronously inside one `complete()` call is fine when the chain is
-entirely passive (heap-allocated CPS frames) and the scheduler is driving a single logical
-call to completion. The default `trivialTick` scheduler does exactly this.
+A park never ends a call made from a regular proc: that caller keeps waiting (and, with
+the thread pool running, keeps doing a worker's turn — `setPassiveWaitHook`) until the
+callee's last state has run. So a regular proc between two passive calls holds its
+hardware stack frame for as long as its callee is parked, exactly like a blocking call.
 
-A scheduler must **not** dispatch unrelated continuations inside `complete()` while a
-regular proc on the hardware stack has not yet returned. A pathological example is a scheduler
-that, on every `suspend()`, pops the next continuation from a shared queue and feeds it
-back into the same `complete()` loop. If the call chain is
-`passive → regular → passive`, each nested `complete()` leaves the regular proc's stack
-frame alive, so thousands of such interleavings can overflow the hardware stack even though
+A scheduler must **not** dispatch unrelated continuations inside `complete()`. A
+pathological example is a scheduler that, on every `suspend()`, pops the next continuation
+from a shared queue and feeds it back into the same `complete()` loop: every
+`passive → regular → passive` link it runs through keeps a regular proc's frame alive, so
+thousands of such interleavings can overflow the hardware stack even though
 passive-to-passive depth is bounded by the heap. The production thread pool avoids this
 by taking one continuation step per dequeue, not going through `setScheduler`, and not
 resubmitting after `suspend()`.
 
 Practical rule: **on suspend or when handing off, enqueue and return**; interleave at
-`submit()` boundaries where stacks are clean. Do not put regular procs between two
-suspending passive calls on hot paths — or mark those intermediaries `{.passive.}` as
-well so the chain stays on heap-allocated frames.
+`submit()` boundaries where stacks are clean. On hot paths, mark regular procs between two
+suspending passive calls `{.passive.}` as well so the chain stays on heap-allocated frames
+and a park frees the thread instead of blocking it.
 
 
 ## Language vs Scheduler Boundary
@@ -329,27 +331,33 @@ Both conditions must hold:
 ### Non-passive calls (stack)
 
 When non-passive code calls a passive proc, the compiler generates a local stack variable for
-the environment, passes its address to the init function, and then drives the passive call to
-completion via `complete()`:
+the environment, passes its address to the init function, and then runs the passive call to
+completion via `runPassive()`:
 
 ```nim
 var coroVar: FooCoroutine   # on the caller's hardware stack
-let contVar = `foo`(args, addr coroVar, stopContinuation)
-complete(contVar)
+var waitVar: PassiveWait    # ditto: the caller's side of the call
+let contVar = `foo`(args, addr coroVar, initPassiveWait(addr waitVar))
+runPassive(contVar, addr waitVar)
 ```
 
-The `stopContinuation` passed as `caller` has `fn == nil`. When the passive proc eventually
-reaches `deallocFrame`, the `caller.fn != nil` check is false — so the stack frame is left
-alone, as it must be.
+The callee's `caller` is `waitVar`'s continuation. Running it — which is what the callee's
+last state does, on whichever thread resumed it — marks the call as done. `runPassive`
+first trampolines on this thread (`complete`); if the callee parked, it then waits for that
+mark, calling the wait hook meanwhile (`setPassiveWaitHook`). The thread pool installs one
+that does a worker's turn: run queued tasks and poll this thread's I/O lane — which is
+required, since a non-worker's ring ops complete only through its own poll.
 
-This means:
-- A passive proc that runs to completion entirely inside its init function (no suspension
-  points) calls `deallocFrame` inline. The nil-caller check makes this a no-op for the
-  stack-allocated frame — no double-free or invalid-free.
-- A passive proc that suspends returns to the trampoline before reaching `deallocFrame`.
-  With a conforming scheduler, `complete()` exits on `suspend()` so the regular caller's
-  stack frame can unwind; when the coroutine later runs to completion, `deallocFrame` is
-  again a no-op for the stack frame (the nil-caller check still holds).
+The wait is not optional. The frame and the callee's result pointer both point into the
+regular caller's stack frame, so returning while the callee is parked would leave it
+writing into a frame that is gone.
+
+`coroVar.callee` is set to `nil`, which marks the frame as stack-allocated: `deallocFrame`
+leaves it alone when the callee finishes.
+
+A regular proc that wants the continuation *without* waiting for it asks for it
+explicitly: `complete(delay foo(args))` runs `foo` until it finishes or parks, and a park
+is then the scheduler's (or the caller's) business to resume.
 
 Note: This optimization only applies to regular procedure calls. For
 passive methods, dynamic dispatch prevents the inlining strategy above,
@@ -417,10 +425,10 @@ the caller is alive.
 ## Design Properties
 
 - **No colored functions**: Passive procs can call regular procs freely. Regular procs
-  can also call passive procs — the compiler inserts `complete()` automatically so the
-  call is driven to completion through the active scheduler. With the default scheduler
-  this is synchronous; custom schedulers may also make progress on other work while
-  completing the passive call. `delay(call)` is the explicit override when you want the
+  can also call passive procs — the compiler inserts `runPassive()` automatically so the
+  call is driven to completion through the active scheduler, parks included. With the
+  default scheduler this is synchronous; while the callee is parked the waiting thread
+  does pool work and drives its own I/O. `delay(call)` is the explicit override when you want the
   continuation without running it.
 - **Zero-overhead when not used**: If a program has no `.passive` procs, no CPS transform
   runs and no runtime types are involved.

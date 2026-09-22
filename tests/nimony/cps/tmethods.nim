@@ -27,7 +27,10 @@ method sus(x: MyObject) {.passive.} =
 var q = MyObject2()
 q.a()
 q.inherited()
-q.sus()
+# `sus` parks and is resumed by this same thread, so it is started as a
+# continuation: a plain call from here would run it to completion, and wait for
+# a resume that only this thread could perform.
+complete(delay q.sus())
 complete(cont)
 complete(cont)
 

@@ -34,6 +34,6 @@ proc main() {.passive.} =
 
 checkStates()
 checkRunning()
-main()
+complete(delay main())   # parks; a plain `main()` would wait for the resume below
 resumeCont.complete()
 echo "done"
