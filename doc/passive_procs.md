@@ -324,6 +324,10 @@ iterator's frame without that being a yield.
 
 `.closure` iterators keep their own protocol (`caller.fn` as the resume slot).
 
+`IterStep` and the `iter*` procs are compiler-internal: nothing in `system` exports them,
+and no program names them. `setPassiveWaitHook` is the one exported addition, because the
+thread pool installs it.
+
 ## Frame Lifetime and Heap vs Stack Allocation
 
 Every passive proc's coroutine environment (`FooCoroutine`) is either heap-allocated or

@@ -755,9 +755,9 @@ proc emitCellAddr(c: var Context; dest: var TokenBuf; cell: SymId; info: NifLine
 proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor;
                   cell: SymId; passive: bool) =
   ## `n` is the corofor's `(call iter-or-value args... (haddr forLoopVar))`.
-  ## Emits `iterStart(addr cell, iter.init(args..., addr forLoopVar,
-  ## iterCaller(addr cell, passive)))`: the iterator's `caller` is the loop's
-  ## `IterStep`, and its first step starts where the init leaves it.
+  ## Emits `iterBegin(addr cell, iter.init(args..., addr forLoopVar,
+  ## StopContinuation), passive)`: the init hands back the iterator's first
+  ## step, and `iterBegin` makes the loop that frame's `caller`.
   assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
   let info = n.info
   let callStart = n
@@ -799,7 +799,7 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor;
   let realArgCount = argCount - trailingCount
 
   dest.copyIntoKind CallS, info:
-    dest.addSymUse sysCall("iterStart"), info
+    dest.addSymUse sysCall("iterBegin"), info
     emitCellAddr c, dest, cell, info
     dest.copyIntoKind CallS, info:
       dest.add targetBuf
@@ -808,10 +808,8 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor;
         coroTr(c, dest, w)
       var addrW = lastArgPos
       coroTr(c, dest, addrW)
-      dest.copyIntoKind CallS, info:
-        dest.addSymUse sysCall("iterCaller"), info
-        emitCellAddr c, dest, cell, info
-        dest.addParPair(if passive: TrueX else: FalseX, info)
+      emitStopContinuation(dest, info)
+    dest.addParPair(if passive: TrueX else: FalseX, info)
 
 proc newIterCell(c: var Context): SymId =
   result = pool.symId("`iterStep." & $c.currentProc.counter)
@@ -823,7 +821,7 @@ proc emitIterCellDecl(dest: var TokenBuf; cell: SymId; info: NifLineInfo) =
     dest.addDotToken() # exported
     dest.addDotToken() # pragmas
     dest.addSymUse pool.symId(IterStepName), info
-    dest.addDotToken() # set up by `iterCaller`
+    dest.addDotToken() # set up by `iterBegin`
 
 proc emitRegularFor(c: var Context; dest: var TokenBuf; n: var Cursor;
                     info: NifLineInfo) =
@@ -870,8 +868,8 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## BODY)` becomes
   ##
   ##   var cell: IterStep
-  ##   iterStart(addr cell, iter.init(args..., addr forLoopVar,
-  ##                                  iterCaller(addr cell, false)))
+  ##   iterBegin(addr cell, iter.init(args..., addr forLoopVar,
+  ##                                  StopContinuation), false)
   ##   try:
   ##     loop:
   ##       if not iterNext(addr cell): jmp exit   # runs a step to completion
@@ -1859,7 +1857,7 @@ proc lowerPassiveFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
     buf.addDotToken() # exported
     buf.addDotToken() # pragmas
     buf.addSymUse pool.symId("IterStep.0." & SystemModuleSuffix), info
-    buf.addDotToken() # set up by `iterCaller`
+    buf.addDotToken() # set up by `iterBegin`
   n.into:
     buf.copyIntoKind CoroforS, info:
       buf.takeTree n                     # the iterator call
