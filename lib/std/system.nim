@@ -387,7 +387,10 @@ proc iterBegin(s: ptr IterStep; first: Continuation; passive: bool) =
   ## Used by the compiler: a `for` loop takes over its iterator. `first` is
   ## what the iterator's init handed back — its first step — and its frame's
   ## `caller` becomes this loop, so every step ends here.
-  s[] = IterStep(resume: first)
+  # field by field: a whole-object store would `=destroy` the old value first
+  s.resume = first
+  s.next = Continuation(fn: nil, env: nil)
+  s.done = 0
   if first.env != nil:
     first.env.caller = Continuation(
       fn: (if passive: iterForward else: passiveDone),
@@ -430,13 +433,16 @@ proc iterFinished(s: ptr IterStep): bool {.inline.} =
   ## Used by the compiler: did the step just taken end the iterator?
   result = s.resume.fn == nil
 
-proc iterClose(s: ptr IterStep) =
-  ## Used by the compiler: a `for` loop left before its iterator finished.
-  ## Cancels and frees the iterator's frame, which is parked at a `yield`.
+proc `=destroy`(s: IterStep) =
+  ## A `for` loop left before its iterator finished, by whatever way out of
+  ## the loop's scope: cancel and free the iterator's frame, which is parked
+  ## at a `yield`. The destroyer puts this on every exit, so neither the
+  ## trampoline nor the CPS transform has to.
   if s.resume.env != nil:
     cancel(s.resume.env)
     deallocFrame(s.resume.env)
-    s.resume = Continuation(fn: nil, env: nil)
+
+proc `=copy`(dest: var IterStep; src: IterStep) {.error.}
 
 proc parked*(c: Continuation): bool {.inline.} =
   ## True when a coroutine has parked via `suspend()` and not yet been

@@ -314,13 +314,16 @@ runs — never by comparing frames: a passive proc the iterator calls returns *i
 iterator's frame without that being a yield.
 
 - In a **regular** routine each step is `iterNext`: the step runs to completion through
-  `runPassive`, parks included, exactly like a passive call from regular code. A
-  `try`/`finally` closes the iterator (`iterClose`) when the loop is left early.
+  `runPassive`, parks included, exactly like a passive call from regular code.
 - In a **passive** routine advancing the iterator is a suspension point
   (`iterAdvance`, lowered to `iterSwitch`): the loop is laid out as ordinary code before
   the CPS split, so a park in the iterator parks the enclosing coroutine and the loop body
-  may suspend too. The loop spans several state procs, so every way out that skips its
-  end — `return`, `raise`, a jump past the loop — calls `iterClose` first.
+  may suspend too.
+
+Leaving a loop early closes the iterator through `IterStep`'s `=destroy`. Lambdalifting
+declares the cell as an ordinary local, before the destroyer runs, so the destroyer covers
+every way out of its scope — `break`, `return`, `raise` — even in a passive loop that
+spans several state procs.
 
 `.closure` iterators keep their own protocol (`caller.fn` as the resume slot).
 

@@ -1,9 +1,9 @@
 # `for` over a `.passive` iterator: the ways out of the loop, and a loop body
 # that suspends.
 #
-# In a `.passive` routine the loop spans several state procs, so the
-# `try`/`finally` of a regular routine's trampoline is not available: every
-# exit that skips the loop's end closes the iterator itself (`iterClose`).
+# The loop's `IterStep` is an ordinary local whose `=destroy` closes the
+# iterator, so the destroyer covers every exit — even though in a `.passive`
+# routine the loop spans several state procs.
 # The iterator's `cancel` is not observable from here, so the tests check what
 # is: the loop stops where it should, and a second loop starts from scratch.
 
