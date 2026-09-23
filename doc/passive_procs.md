@@ -238,6 +238,24 @@ The scheduler bridges passive procs to the OS event loop:
 This model means a single thread can handle thousands of concurrent connections with
 each handler written as a simple sequential loop.
 
+### Tasks and task-local data
+
+A continuation may resume on any pool worker, so a threadvar says nothing about the
+code that reads it after a park. `std/threadpool` has tasks instead:
+`submitTask(delay(handle(conn)), ctx)` runs `handle` as a new task with data `ctx`;
+code anywhere in it — nested passive calls, regular procs, passive `for` loops — reads
+it with `taskData[T]()`. `submitChild` adds a runner to the current task (the `||`
+chunks are these), and `requestStop` / `stopRequested` is the task's cooperative stop
+token, which `shutdownPool` also sets.
+
+The continuations themselves know nothing of this. A task's bottom frame gets the pool's
+link `(taskDone, root)` as its `caller`, so walking `caller` links up from any of its
+frames finds the task. The pool carries the root along from one step to the next, and
+sets `system.taskLink` before each step; walks happen only for continuations handed
+back from elsewhere, such as an I/O completion — O(call depth), next to a syscall.
+`PassiveWait` and `IterStep` continue the chain through their own `caller`: the
+regular caller's `taskLink`, and the passive loop's continuation.
+
 ## Primitives: `delay`, `suspend`, `advance`
 
 - `delay(passiveCall())` captures a passive call as a `Continuation` without running it.

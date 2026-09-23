@@ -327,12 +327,22 @@ proc complete*(c: Continuation) =
   while not stopping(c):
     c = scheduler(c)
 
+var taskLink* {.threadvar.}: Continuation
+  ## Where the task running on this thread bottoms out, for a scheduler that
+  ## tracks tasks (`std/threadpool`): it sets this before it runs a task's
+  ## step. Walking `caller` links up from any frame of a task ends there — the
+  ## pool finds a resumed continuation's task that way. `system` never runs or
+  ## interprets it; it only hands it on where a frame chain has no frame to
+  ## continue with: the `caller` of a regular proc's passive call (`PassiveWait`).
+
 type
   PassiveWait = object of CoroutineBase
     ## A regular proc's side of a call to a `.passive` proc. Its continuation
     ## is the callee's `caller`: whoever runs the callee's last state — this
     ## thread, or the pool worker an I/O completion resumed it on — runs it
     ## next, and that is what tells the regular caller the call is over.
+    ## Its own `caller` is the `taskLink` of the regular caller, so a walk up
+    ## the callee's chain continues into the task the regular proc runs in.
     done: int
 
 proc passiveDone(coro: ptr CoroutineBase): Continuation {.nimcall.} =
@@ -343,7 +353,7 @@ proc passiveDone(coro: ptr CoroutineBase): Continuation {.nimcall.} =
 proc initPassiveWait(w: ptr PassiveWait): Continuation =
   ## Used by the compiler: the `caller` continuation for a passive call made
   ## from a regular proc.
-  w[] = PassiveWait(done: 0)
+  w[] = PassiveWait(caller: taskLink, done: 0)
   result = Continuation(fn: passiveDone, env: cast[ptr CoroutineBase](w))
 
 var passiveWaitHook: proc () {.nimcall.} = nil
@@ -376,12 +386,13 @@ type
     ## which leaves `resume` empty. Neither is the frame identity of whatever
     ## the trampoline happens to be running: a passive proc the iterator calls
     ## returns INTO the iterator's frame without that being a yield.
+    ##
+    ## Its own `caller` is the loop's side: a passive loop's continuation, run
+    ## when the step is over, or a regular loop's `taskLink`.
     resume: Continuation
-    next: Continuation
-      ## A passive loop's own continuation, run when the step is over.
 
 proc iterForward(coro: ptr CoroutineBase): Continuation {.nimcall.} =
-  result = cast[ptr IterStep](coro).next
+  result = coro.caller
 
 proc iterBegin(s: ptr IterStep; first: Continuation; passive: bool) =
   ## Used by the compiler: a `for` loop takes over its iterator. `first` is
@@ -389,7 +400,7 @@ proc iterBegin(s: ptr IterStep; first: Continuation; passive: bool) =
   ## `caller` becomes this loop, so every step ends here.
   # field by field: a whole-object store would `=destroy` the old value first
   s.resume = first
-  s.next = Continuation(fn: nil, env: nil)
+  s.caller = (if passive: Continuation(fn: nil, env: nil) else: taskLink)
   s.done = 0
   if first.env != nil:
     first.env.caller = Continuation(
@@ -426,7 +437,7 @@ proc iterAdvance(s: ptr IterStep) {.passive.} =
 proc iterSwitch(s: ptr IterStep; next: Continuation): Continuation =
   ## Used by the compiler: what `iterAdvance` lowers to — the loop continues at
   ## `next` once the step is over, and the step starts now.
-  s.next = next
+  s.caller = next
   result = iterTake(s)
 
 proc iterFinished(s: ptr IterStep): bool {.inline.} =

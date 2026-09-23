@@ -1,0 +1,3 @@
+tasks=16 nested=16 viaRegular=16 viaLoop=16 child=16
+stop: own=true others=false
+destroyed=16 main task=nil

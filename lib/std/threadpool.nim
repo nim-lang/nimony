@@ -4,8 +4,8 @@
 # Workers contend on independent stripes to reduce lock pressure.
 # Each worker polls I/O every iteration; the timeout doubles as idle sleep.
 #
-# A Task wraps a Continuation plus metadata. The pool schedules Tasks;
-# the worker trampolines the inner continuation.
+# A Task wraps a Continuation plus the RootTask it belongs to. The pool
+# schedules Tasks; the worker trampolines the inner continuation.
 
 import std / [atomics, rawthreads, assertions, ticketlocks, private/syslocks, cpuinfo]
 
@@ -22,17 +22,103 @@ const
   BulkSize*    = 32   ## Max tasks drained per bulk dequeue.
   StageSize*   = 256  ## Tasks held in a worker's private staging ring; must be a power of 2.
 
-# --- Task = Continuation + metadata ---
+# --- Tasks ---
+#
+# A task is a tree of coroutines with one `RootTask`: what `submitTask`
+# started, plus the `submitChild` runners it joins. Its root is found from any
+# of its frames by walking `caller` links: the bottom frame's `caller` is the
+# link `(taskDone, root)` or `(childDone, root)`. A regular proc's passive call
+# carries the chain on through `system.taskLink`, which the pool sets to the
+# running task's link before every step.
+#
+# The pool itself never walks for a step it just ran — `Task` carries the root
+# from one step to the next. The walk is for continuations that come back from
+# elsewhere, typically an I/O completion (`ioring`'s `complete`), which knows
+# nothing about tasks: O(call depth) per wakeup, next to a syscall's cost.
 
 type
+  RootTask* = object
+    ## The root of a task: its stop token and (`submitTask[T]`) its data.
+    ## Freed when the task's bottom frame finishes.
+    stop: bool # accessed atomically
+    free: proc (t: ptr RootTask) {.nimcall.}
+
+  TaskWith[T] = object
+    base: RootTask
+    data: T
+
   Task* = object
     ## A schedulable unit of work. Wraps a CPS Continuation so that
-    ## workers can trampoline `.passive` procs. Extra fields can be
-    ## added here for priority, cancellation tokens, diagnostics, etc.
+    ## workers can trampoline `.passive` procs.
     con*: Continuation
+    root: nil ptr RootTask ## nil: not part of any task
+
+proc taskDone(coro: ptr CoroutineBase): Continuation {.nimcall.} =
+  ## The `caller` of a task's bottom frame: the task is over.
+  let t = cast[ptr RootTask](coro)
+  t.free(t)
+  result = Continuation(fn: nil, env: nil)
+
+proc childDone(coro: ptr CoroutineBase): Continuation {.nimcall.} =
+  ## The `caller` of a `submitChild` runner's bottom frame: its task goes on.
+  result = Continuation(fn: nil, env: nil)
+
+proc linkOf(t: nil ptr RootTask): Continuation {.inline.} =
+  if t == nil: Continuation(fn: nil, env: nil)
+  else: Continuation(fn: taskDone, env: cast[ptr CoroutineBase](t))
+
+proc rootOf(c: Continuation): nil ptr RootTask =
+  ## The task `c` belongs to: up the `caller` links to the task's root link.
+  ## Passes through `PassiveWait`s and `IterStep`s like through frames, as
+  ## their `caller` continues the chain (see `system.taskLink`).
+  var e = c.env
+  while e != nil:
+    let k = e.caller
+    if k.fn == taskDone or k.fn == childDone:
+      return cast[ptr RootTask](k.env)
+    e = k.env
+  result = nil
 
 proc toTask*(c: Continuation): Task {.inline.} =
-  Task(con: c)
+  Task(con: c, root: rootOf(c))
+
+proc currentTask*(): nil ptr RootTask {.inline.} =
+  ## The task running on this thread; nil outside of one.
+  cast[ptr RootTask](taskLink.env)
+
+proc taskData*[T](): nil ptr T {.inline.} =
+  ## The data the current task was submitted with (`submitTask[T]`); nil
+  ## outside of a task. `T` must be the type it was submitted with. The task's
+  ## `submitChild` runners share it and may run in parallel: treat it as
+  ## read-only, or synchronize.
+  let t = cast[nil ptr TaskWith[T]](currentTask())
+  if t == nil: result = nil
+  else: result = addr t.data
+
+proc requestStop*() {.inline.} =
+  ## Asks the current task to stop, its `submitChild` runners included.
+  ## Cooperative: the task's code observes it through `stopRequested`.
+  let t = currentTask()
+  if t != nil: atomicStore(t.stop, true, moRelaxed)
+
+proc freeTask[T](t: ptr RootTask) {.nimcall.} =
+  let w = cast[ptr TaskWith[T]](t)
+  `=destroy`(w.data)
+  dealloc(w)
+
+proc newRoot[T](data: sink T): ptr RootTask =
+  # zeroed, and the first store is destructive — the same contract as a
+  # coroutine frame's locals (see `system.allocFrame`)
+  let w = cast[ptr TaskWith[T]](alloc0(sizeof(TaskWith[T])))
+  w.base.free = freeTask[T]
+  w.data = data
+  result = addr w.base
+
+proc install(c: Continuation; fn: ContinuationProc; t: ptr RootTask) {.inline.} =
+  ## Makes `(fn, t)` the `caller` of `c`'s frame, which must be fresh from
+  ## `delay(call)`: no state of it has run, and it has no caller.
+  assert c.env != nil and c.env.caller.env == nil
+  c.env.caller = Continuation(fn: fn, env: cast[ptr CoroutineBase](t))
 
 # --- Task queue ---
 
@@ -101,11 +187,14 @@ proc submit*(t: Task; h = 0) =
   # Saturated: run it here. `c.fn` returns the next continuation, or one whose
   # `fn` is nil when the task completes or parks (I/O will resume a parked one).
   var c = t.con
+  let saved = taskLink
+  taskLink = linkOf(t.root)
   while true:
     let next = c.fn(c.env)
     if next.fn == nil: break
-    if tryEnqueue(h, toTask(next)): break
+    if tryEnqueue(h, Task(con: next, root: t.root)): break
     c = next
+  taskLink = saved
 
 # --- Per-worker staging ring ---
 
@@ -160,21 +249,48 @@ proc flushStaged(hint: int): bool =
       dec remaining
       submit(t, hint)
 
-proc submit*(c: Continuation; hint = -1) {.inline.} =
-  ## Convenience: submit a bare continuation as a task. On a worker with the
-  ## default hint, the task is first staged on the private lock-free ring and
-  ## handed to the shared stripes in bulk on the next worker cycle (see
-  ## `flushStaged`); everything else enqueues immediately.
+proc submitStaged(t: Task; hint: int) =
+  ## On a worker with the default hint, the task is first staged on the private
+  ## lock-free ring and handed to the shared stripes in bulk on the next worker
+  ## cycle (see `flushStaged`); everything else enqueues immediately.
   if hint != -1 or not isWorker:
     var hint = hint
     if hint == -1:
       hint = threadIdx
-    submit(toTask(c), hint)
-  elif not stageTask(toTask(c)):
+    submit(t, hint)
+  elif not stageTask(t):
     # Ring full: drain it into the stripes, then stage again — after a full
     # flush there is always room.
     discard flushStaged(threadIdx)
-    discard stageTask(toTask(c))
+    discard stageTask(t)
+
+proc submit*(c: Continuation; hint = -1) {.inline.} =
+  ## Submit a bare continuation. It runs in the task it belongs to — a parked
+  ## continuation resumed by I/O finds its task by walking up its frames — or
+  ## in none, when it belongs to none (fresh from `delay(call)`, say).
+  submitStaged(toTask(c), hint)
+
+proc submitTask*[T](c: Continuation; data: sink T; hint = -1) =
+  ## Submit `c`, fresh from `delay(call)`, as a new task with `data`
+  ## (`taskData`). The task ends, and `data` is destroyed, when `c`'s frame
+  ## finishes.
+  let t = newRoot(data)
+  install(c, taskDone, t)
+  submitStaged(Task(con: c, root: t), hint)
+
+proc submitTask*(c: Continuation; hint = -1) =
+  ## Submit `c`, fresh from `delay(call)`, as a new task without data.
+  submitTask(c, false, hint)
+
+proc submitChild*(c: Continuation; hint = -1) =
+  ## Submit `c`, fresh from `delay(call)`, as part of the current task: it
+  ## shares the task's data and stop token. For structured concurrency only —
+  ## the caller must join it before its task can end, which is what lets it
+  ## borrow the task without counting references. Outside of a task, the same
+  ## as `submit`.
+  let t = currentTask()
+  if t != nil: install(c, childDone, t)
+  submitStaged(Task(con: c, root: t), hint)
 
 var dequeTicks {.threadvar.}: int
 
@@ -199,11 +315,14 @@ proc drainOnce(startStripe: int): bool =
   for attempt in 0 ..< workerCount:
     let n = tryBulkDequeue(startStripe + attempt, buf)
     if n > 0:
+      let saved = taskLink
       for i in 0 ..< n:
-        let c = buf[i].con
-        let next = c.fn(c.env)
+        let t = buf[i]
+        taskLink = linkOf(t.root)
+        let next = t.con.fn(t.con.env)
         if next.fn != nil:
-          submit(next, startStripe)
+          submit(Task(con: next, root: t.root), startStripe)
+      taskLink = saved
       workerMetrics[threadIdx].tasksHandled += n.uint
       if attempt != 0:
         workerMetrics[threadIdx].tasksStealed += n.uint
@@ -328,6 +447,12 @@ proc isPoolWorker*(): bool {.inline.} =
 
 proc stopped*(): bool {.inline.} =
   atomicLoad(stopFlag, moRelaxed)
+
+proc stopRequested*(): bool {.inline.} =
+  ## Should the current task stop? True once its `requestStop` was called, or
+  ## once the pool shuts down.
+  let t = currentTask()
+  result = stopped() or (t != nil and atomicLoad(t.stop, moRelaxed))
 
 proc shutdownPool*() =
   atomicStore(stopFlag, true, moRelaxed)
