@@ -552,7 +552,7 @@ proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
       var ru = default(Rusage)
       # Unlike waitpid, illumos/Solaris wait4 uses 0 for any child;
       # -1 selects process group 1 there and normally fails with ECHILD.
-      const anyChild = when defined(sunos) or defined(solaris) or defined(illumos): Pid(0)
+      const anyChild = when defined(sunos): Pid(0)
                        else: Pid(-1)
       let pid = wait4(anyChild, addr status, 0, addr ru)
       if pid < 0:
