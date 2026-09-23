@@ -157,9 +157,21 @@ proc rawBuildSymChoice(c: var SemContext; dest: var TokenBuf; identifier: StrId;
     let before = result
     for k in stylesOfScope(it, identifier, ignoreStyle):
       for sym in it.tab.getOrDefault(k):
+        # An object field is only reachable through `obj.field`; it is added
+        # to its object's scope purely so a duplicate field name is caught by
+        # `addNonOverloadable`, and (unlike every other local) it is never
+        # `publish`ed (see `semLocal`). Do not hand it out as a bare-identifier
+        # candidate: a field can otherwise shadow an outer type of the same
+        # name while its own sibling fields are still being sem-checked
+        # (`type Holder = object; seq: int; items: seq[Item]`), and the field
+        # symbol's position is meaningless outside its `(fld ...)` — resolving
+        # it as a value crashes `declToCursor`'s local-type skip instead of
+        # just being the "undeclared identifier" a bare field name is in Nim.
+        #
         # when resolving a caller `fn`, keep the module symbol out of the sym
         # choice so `foo[...]` binds a same-named proc (nim-lang/nimony#2130):
-        if (option != FindOverloads or isValidFnHead(sym.kind)) and
+        if sym.kind notin {FldY, GfldY} and
+            (option != FindOverloads or isValidFnHead(sym.kind)) and
             not marker.containsOrIncl(sym.name):
           dest.addSymUse sym, info
           inc result
