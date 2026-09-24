@@ -82,6 +82,41 @@ From the command prefix a "key" is extracted automatically. This key is then use
 This way there is no hardcoded list of C compilers. In fact, C++ or an LLVM based backend is naturally supported too.
 
 
+## Runtime: `-d:useLibc` and friends
+
+By default Nimony's standard library does not depend on libc: memory comes from
+Nimony's own allocator (a region allocator over `mmap`) and I/O goes straight to
+the operating system. With the C backend libc is still linked, and the standard
+library falls back to it where a libc-free implementation is impossible or only
+approximate. Three defines opt back into libc:
+
+| Define | C backend (`nimony c`) | Native backend (`nimony n`) |
+|---|---|---|
+| `-d:useLibc` | mimalloc as the allocator, libc for I/O | Linux: link libc (see below); elsewhere ignored |
+| `-d:useMimalloc` | mimalloc as the allocator | ignored |
+| `-d:useLibcIo` | libc for I/O | ignored |
+
+The native backend normally links no libc at all. On Linux it writes a static,
+freestanding executable, which cannot bind a foreign symbol. On Linux,
+`nimony n -d:useLibc` builds a program **linked with libc** instead:
+
+- nifasm writes a relocatable object and the system linker finishes the program
+  (`--linker` picks it; the default is `clang`), so foreign objects from
+  `{.compile.}` and `{.link.}` can be linked in. A program that uses either
+  pragma requires `-d:useLibc` on Linux, and says so when it is missing.
+- Every `importc` proc calls libc, where the freestanding build turns a known
+  one (`write`, `exit`, …) into a raw system call.
+- Threads are pthreads, and thread-locals live in libc's static TLS block.
+- `main` is called by the C runtime and returns to it, so C stdio buffers are
+  flushed at exit.
+
+The allocator and the I/O layer stay Nimony's own, as on the C backend's
+default configuration. The executable is a regular dynamically linked,
+non-PIE program. On macOS the native backend always links against libSystem
+and on Windows it binds through import tables, so the switch changes nothing
+there.
+
+
 ## The `--linker` command line option
 
 If the `--linker` command line option **is not** used, the C compiler's executable will also be used for linking. The used `.args` file is then `$cc.linker.args`.

@@ -861,7 +861,8 @@ proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
     b.addKeyw "output"
 
 proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
-                     targetOS: TSystemOS; checkFlags: string; native: bool) =
+                     targetOS: TSystemOS; checkFlags: string; native: bool;
+                     crt = false) =
   let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
@@ -873,6 +874,8 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
     # no argc/argv/envp, so `main` takes none there.
     b.addStrLit "--os:" & platform.OS[targetOS].name
     if native: b.addStrLit "--native"
+    # A native program linked with libc: `main` returns to crt (see `linuxLibc`).
+    if crt: b.addStrLit "--crt"
     # Forward the active check modes so nifcgen injects only the requested
     # runtime checks (e.g. `--boundchecks:off` ⇒ no `nimUcheckB` in `(at …)`).
     # A bare `--flags` means "no checks" (e.g. `-d:danger`): with a trailing
@@ -1151,6 +1154,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # such expressions lower to is always assigned.)
     var nativeSysLink = false
     if native and (c.toBuild.len > 0 or c.linkFiles.len > 0): nativeSysLink = true
+    # On Linux `-d:useLibc` makes a native program a libc program (see
+    # `nimony.nim`), which the system linker finishes even without foreign objects.
+    # Without it the runtime is freestanding: its threads are raw `clone`s that point
+    # the thread pointer at nifasm's own TLS block, which cannot coexist with libc's.
+    let linuxLibc = native and c.config.targetOS == osLinux and c.config.isDefined("useLibc")
+    if linuxLibc: nativeSysLink = true
+    if nativeSysLink and native and c.config.targetOS == osLinux and not linuxLibc:
+      quit "`nimony n` links foreign objects (`.compile`/`.link`) through the " &
+           "system linker, together with libc; build with `-d:useLibc`"
     # The foreign objects and frameworks need a real driver; clang knows how to
     # compile `.m`/`.c`, pull in libobjc, resolve `-framework`, and supply the crt.
     var sysLinker = c.config.linker
@@ -1192,6 +1204,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # description rather than reading the file a second time.
         if c.config.layoutFile.len > 0:
           b.addStrLit "--layout:" & c.config.layoutFile
+        # Linked with libc by the system linker: crt's `_start` calls the entry,
+        # and every `importc` is libc's (see `linuxLibc` above).
+        if linuxLibc:
+          b.addStrLit "--crt"
         b.withTree "output":
           b.addStrLit "-o:"
         b.addKeyw "input"
@@ -1233,7 +1249,8 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
 
     # Command for hexer
     defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian,
-                    c.config.targetOS, c.config.checkFlags, c.config.backend == backendNative)
+                    c.config.targetOS, c.config.checkFlags, c.config.backend == backendNative,
+                    crt = linuxLibc)
 
     # Command for C/LLVM compiler (object files). The fixed part of its command
     # line is collected in `ccArgs` first: besides being emitted, it keys the
@@ -1370,6 +1387,11 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addStrLit sysLinker
         for flag in targetDriverFlags(c.config):
           b.addStrLit flag
+        if c.config.targetOS == osLinux:
+          # nifasm keeps rodata inside `.text`, so an absolute address in a rodata
+          # blob is a text relocation, which a PIE cannot have.
+          b.addStrLit "-no-pie"
+          b.addStrLit "-pthread"
         b.addStrLit "-o"
         b.addKeyw "output"
         b.withTree "input":

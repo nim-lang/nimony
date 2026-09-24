@@ -36,6 +36,9 @@ type
     nativeBackend*: bool  ## targeting arkham+nifasm (no C): the synthesized
                           ## `main` terminates through `cExit`, and see
                           ## `dynlibIsStaticImport` below.
+    crtEntry*: bool       ## native, linked with libc by the system linker: crt's
+                          ## `_start` calls `main`, which returns like the C
+                          ## backend's instead of terminating through `cExit`.
     isWindows*: bool      ## target OS is Windows: the entry point receives no
                           ## argc/argv/envp, and `dynlib` names an import
                           ## library rather than something to load at runtime.

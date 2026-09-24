@@ -4724,6 +4724,14 @@ relinks the program.
 
 To link against a library by name (`-lfoo`), use `passL` instead.
 
+With the native backend (`nimony n`) a program that uses `compile` or `link` is
+finished by the system linker, together with libc. On Linux this has to be
+requested with `-d:useLibc`: without it `nimony n` builds a freestanding
+executable that links no libc and cannot link a foreign object, and it says so.
+With `-d:useLibc`, `importc` procs call libc rather than the kernel, and threads
+are pthreads. The allocator and the I/O layer stay Nimony's own, as with the C
+backend. See [install.md](install.md#runtime--duselibc-and-friends).
+
 ### Build pragma
 
 `build` is *not* the way to compile foreign sources; that is the `compile`
