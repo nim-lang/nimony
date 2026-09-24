@@ -4665,7 +4665,69 @@ initialized within the `var` section. (Every thread-local variable needs to
 be replicated at thread creation.)
 
 
+### Compile pragma
+
+The `compile`:idx: pragma compiles a foreign C, C++ or Objective-C source file
+with the C compiler and links the resulting object file into the program. It
+comes in the three forms Nim 2 offers:
+
+  ```nim
+  {.compile: "logic.c".}
+  {.compile("fast.c", "-O3 -DUSE_SIMD").}   # extra flags for this file
+  {.compile: ("cfiles/*.c", "$1.o").}        # every matching file
+  ```
+
+Paths are relative to the file the pragma appears in; `${path}` expands to that
+file's directory. The language follows from the file extension (`.cpp`, `.cc`,
+`.cxx`, `.c++` are C++; `.m` is Objective-C; `.mm` is Objective-C++; everything
+else is C). The source is compiled with the same compiler and target flags as
+the generated code, plus `passC` and the file's own flags.
+
+In the tuple form, the first string is a pattern; only its file name may contain
+the wildcards `*` and `?`. It is an error if no file matches. `$1` in the second
+string is replaced by each match's file name (`util.c`) and names that file's
+object.
+
+Every argument, in every form, is a constant `string` expression, so flags and
+paths can be computed at compile time:
+
+  ```nim
+  const simd = when defined(amd64): "-mavx2" else: ""
+  {.compile("fast.c", "-O3 " & simd).}
+  ```
+
+`passC` and `passL` take constant expressions the same way.
+
+The objects are cached across projects. An object's name includes a hash of the
+source path, the file's flags and the complete compiler command line, so two
+`util.c` files in different directories, or one file compiled with different
+flags, never share an object. Headers that the source file includes are *not*
+tracked: editing only a header does not recompile the file.
+
+### Link pragma
+
+The `link`:idx: pragma links a prebuilt object file or static library into the
+program:
+
+  ```nim
+  {.link: "vendor/fast.o".}
+  {.link: "vendor/libfast.a".}
+  ```
+
+The path is relative to the file the pragma appears in; `${path}` expands to that
+file's directory. `.o` is appended if the name has no extension. It is an error
+if the file does not exist. The argument is a constant `string` expression, like
+the arguments of `compile`. The linked files come after all other objects on
+the linker's command line, so a static library can resolve symbols from any of
+them. A file linked by several modules is linked once. Replacing the file
+relinks the program.
+
+To link against a library by name (`-lfoo`), use `passL` instead.
+
 ### Build pragma
+
+`build` is *not* the way to compile foreign sources; that is the `compile`
+pragma above. `build` is for code generators that consume Nimony's own IR.
 
 The `build`:idx: pragma routes a module's generated intermediate representation
 through a *custom backend*: an external tool that turns the module's IR into a

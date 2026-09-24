@@ -17,7 +17,7 @@ when defined(nimony):
   {.feature: "untyped".}
   import std / syncio
 import std / [tables, sets, hashes, assertions, strutils]
-from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath, splitFile, extractFilename, `/`
+from std/os import changeFileExt, getCurrentDir, isAbsolute, absolutePath, normalizedPath, splitFile, extractFilename, parentDir, `/`
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [symparser, intrinsics]
@@ -561,7 +561,7 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
         inc n
     else:
       buildErr c, dest, n.info, "`callConv` pragma takes a calling convention identifier"
-  of EmitP, BuildP, BundleP, CompileP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
+  of EmitP, BuildP, BundleP, CompileP, LinkP, StringP, AssumeP, AssertP, PragmaP, PushP, PopP, PassLP, PassCP:
     if pk == PragmaP and kind == TemplateY and crucial.sym != SymId(0) and
         not isPreservedCustomPragma(n):
       # `template X(args) {.pragma.}` declares `X` as a custom pragma. The
@@ -951,10 +951,11 @@ proc readPragmaStrings(c: var SemContext; dest: var TokenBuf; it: var Item): seq
       inc it.n
 
 proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
-                    lang, rawName, rawArgs: string) =
+                    lang, rawName, rawArgs: string; objName = "") =
   ## Resolve a `compile` source path (relative to the pragma's own file)
-  ## and record a `(tup lang name args)` entry in `c.toBuild`. `deps.nim` reuses
-  ## these via `(build …)` to compile and link the foreign object.
+  ## and record a `(tup lang name args [objName])` entry in `c.toBuild`.
+  ## `deps.nim` reuses these via `(build …)` to compile and link the foreign
+  ## object.
   # XXX: Relative paths in makefile are relative to current working directory, not the location of the makefile.
   let curWorkDir = onRaiseQuit os.getCurrentDir()
   let currentDir = absoluteParentDir(info.getFile)
@@ -967,6 +968,8 @@ proc addBuildTarget(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
     c.toBuild.addStrLit lang, info
     c.toBuild.addStrLit name, info
     c.toBuild.addStrLit customArgs, info
+    if objName.len > 0:
+      c.toBuild.addStrLit objName, info
 
 proc addBackendTool(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
                     builder, rawTool, rawArgs, rawLinkFlags: string) =
@@ -1024,6 +1027,99 @@ proc addBundle(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
     c.toBundle.addStrLit tool, info
     c.toBundle.addStrLit customArgs, info
 
+proc constPragmaString(c: var SemContext; dest: var TokenBuf; n: var Cursor; s: var string): bool =
+  ## Evaluate one pragma argument as a constant `string` expression (a literal,
+  ## a `const`, `&`, …). On failure the error is left in `dest`.
+  let start = dest.len
+  let id = evalConstStrExpr(c, dest, n, c.types.stringType)
+  result = id != StrId(0)
+  if result:
+    dest.shrink start
+    s = pool.strings[id]
+
+proc addCompileTarget(c: var SemContext; dest: var TokenBuf; info: NifLineInfo;
+                      file, userArgs: string; objName = "") =
+  ## The language is inferred from the file extension and forced via `-x`
+  ## (which precedes the input in the `cc` command), so e.g. an Objective-C
+  ## `.m` file is compiled correctly regardless of the C compiler's own
+  ## extension heuristics.
+  let ext = file.splitFile.ext.toLowerAscii
+  # Plain `var`s (not a tuple-`let` bound to a `case`-expression): the
+  # self-hosted compiler's initialization analysis is conservative about the
+  # temporaries such expressions lower to.
+  var lang = "C"
+  var xflag = ""
+  case ext
+  of ".m": lang = "ObjC"; xflag = "-x objective-c"
+  of ".mm": lang = "ObjCpp"; xflag = "-x objective-c++"
+  of ".cpp", ".cc", ".cxx", ".c++": lang = "Cpp"; xflag = "-x c++"
+  else: discard
+  var customArgs = userArgs
+  if xflag.len > 0:
+    customArgs = if userArgs.len > 0: xflag & " " & userArgs else: xflag
+  addBuildTarget c, dest, info, lang, file, customArgs, objName
+
+proc semCompilePragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
+  ## Nim's `.compile` in its three forms: `{.compile: "file.c".}`,
+  ## `{.compile("file.c", "flags").}` and `{.compile: ("dir/*.c", "$1.o").}`.
+  ## Every string is a constant expression. In the tuple form the first
+  ## string is a pattern whose file name may contain `*`/`?`, and `$1` in the
+  ## second is replaced by each match's file name to name its object.
+  if n.exprKind == TupX:
+    var t = n
+    skip n
+    inc t
+    var pattern = ""
+    var objPattern = ""
+    if not constPragmaString(c, dest, t, pattern): return
+    if not t.hasMore:
+      buildErr c, dest, info, "compile: expected a tuple (pattern, objectPattern)"
+      return
+    if not constPragmaString(c, dest, t, objPattern): return
+    if t.hasMore:
+      buildErr c, dest, info, "compile: expected a tuple (pattern, objectPattern)"
+      return
+    let currentDir = absoluteParentDir(info.getFile)
+    let absPattern = replaceSubs(pattern, currentDir, c.g.config).toAbsolutePath(currentDir)
+    if '*' in absPattern.parentDir or '?' in absPattern.parentDir:
+      buildErr c, dest, info, "compile: only the file name may contain wildcards: " & pattern
+      return
+    let files = globFiles(absPattern)
+    # A file added to (or removed from) the directory changes the match set:
+    # the directory's mtime reruns this module's sem next time.
+    recordFileDep c, absPattern.parentDir
+    if files.len == 0:
+      buildErr c, dest, info, "compile: no file matches: " & absPattern
+    for f in files:
+      addCompileTarget c, dest, info, f, "", objPattern.replace("$1", f.extractFilename)
+  else:
+    var args: seq[string] = @[]
+    while n.hasMore:
+      var s = ""
+      if not constPragmaString(c, dest, n, s): return
+      args.add s
+    if args.len != 1 and args.len != 2:
+      buildErr c, dest, info, "compile expected 1 or 2 parameters"
+    else:
+      addCompileTarget c, dest, info, args[0], (if args.len == 2: args[1] else: "")
+
+proc semLinkPragma(c: var SemContext; dest: var TokenBuf; n: var Cursor; info: NifLineInfo) =
+  ## Nim's `{.link: "file.o".}`: link a prebuilt object file or static library.
+  ## The path is relative to the pragma's file (`${path}` expands to its
+  ## directory); `.o` is appended when it has no extension.
+  var file = ""
+  if not constPragmaString(c, dest, n, file): return
+  if n.hasMore:
+    buildErr c, dest, info, "link expected 1 parameter"
+    return
+  if file.splitFile.ext.len == 0: file.add ".o"
+  let currentDir = absoluteParentDir(info.getFile)
+  let path = replaceSubs(file, currentDir, c.g.config).toAbsolutePath(currentDir)
+  if not semos.fileExists(path):
+    buildErr c, dest, info, "link: cannot find: " & path
+  elif path notin c.toLink:
+    c.toLink.add path
+
 proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragmaBlock: bool) =
   # A statement pragma arrives either wrapped — `(call build "a")` /
   # `(kv assume expr)` with the pragma name as first child — or as a bare
@@ -1046,6 +1142,21 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
     if hasScope:
       it.n = start; skip it.n
     else: skipParRi it.n # degenerate bare-ident form; historical behavior
+  if c.phase == SemcheckSignatures and not isPragmaBlock and
+      it.n.pragmaKind in {CompileP, LinkP, PassCP, PassLP}:
+    # These evaluate their arguments as constant expressions, which needs the
+    # bodies phase: in the signatures phase a toplevel call like `a & "b"` is
+    # left unchecked, so it cannot be evaluated (and would come back as an
+    # expression statement). Re-emit the line for `SemcheckBodies`.
+    dest.addParLe PragmasS, it.n.info
+    if hasScope:
+      var line = start
+      dest.takeTree line
+      it.n = start; skip it.n
+    else:
+      dest.takeTree it.n
+    dest.addParRi()
+    return
   case it.n.pragmaKind
   of BuildP:
     # Repurposed: `{.build(builder, tool[, args]).}` routes this module's Leng IR
@@ -1082,34 +1193,15 @@ proc semPragmaLine*(c: var SemContext; dest: var TokenBuf; it: var Item; isPragm
       addBundle c, dest, info, args[0], args[1],
         (if args.len >= 3: args[2] else: "")
   of CompileP:
-    # Nim-compatible `{.compile("file"[, "flags"]).}`. Unlike `build` there is no
-    # explicit language argument: it is inferred from the file extension and
-    # forced via `-x` (which precedes the input in the `cc` command), so e.g. an
-    # Objective-C `.m` file is compiled correctly regardless of the C compiler's
-    # own extension heuristics.
     let info = it.n.info
     toPragmaArgs()
-    let args = readPragmaStrings(c, dest, it)
+    semCompilePragma c, dest, it.n, info
     closePragmaLine()
-    if args.len != 1 and args.len != 2:
-      buildErr c, dest, info, "compile expected 1 or 2 parameters"
-    else:
-      let userArgs = if args.len == 2: args[1] else: ""
-      let ext = args[0].splitFile.ext.toLowerAscii
-      # Plain `var`s (not a tuple-`let` bound to a `case`-expression): the
-      # self-hosted compiler's initialization analysis is conservative about the
-      # temporaries such expressions lower to.
-      var lang = "C"
-      var xflag = ""
-      case ext
-      of ".m": lang = "ObjC"; xflag = "-x objective-c"
-      of ".mm": lang = "ObjCpp"; xflag = "-x objective-c++"
-      of ".cpp", ".cc", ".cxx", ".c++": lang = "Cpp"; xflag = "-x c++"
-      else: discard
-      var customArgs = userArgs
-      if xflag.len > 0:
-        customArgs = if userArgs.len > 0: xflag & " " & userArgs else: xflag
-      addBuildTarget c, dest, info, lang, args[0], customArgs
+  of LinkP:
+    let info = it.n.info
+    toPragmaArgs()
+    semLinkPragma c, dest, it.n, info
+    closePragmaLine()
   of EmitP:
     toPragmaArgs()
     semEmit c, dest, it
