@@ -1037,9 +1037,37 @@ proc isCursorField(fieldKey: Cursor): bool =
   if local.kind notin {FldY, GfldY}: return false
   result = hasPragma(local.pragmas, CursorP)
 
+proc hasStaticPayload(n: Cursor): bool =
+  result = false
+  var n = n
+  inc n
+  skip n # type
+  while n.hasMore:
+    var v = n
+    inc v # kv
+    skip v # field
+    if v.exprKind == AddrX:
+      inc v
+      if v.exprKind == AconstrX: return true
+    skip n
+
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
   let typ = n.childCursor
+  if hasDestructor(c, typ) and hasStaticPayload(n):
+    # An evaluated const/static value whose payload is static storage:
+    # owning it would `dealloc` that storage, so treat it like a const
+    # symbol read and deep copy it where ownership is required.
+    let info = n.info
+    let hookProc = if e in {WantOwner, WillBeOwned}: getHook(c.lifter[], attachedDup, typ, info)
+                   else: NoSymId
+    if hookProc != NoSymId:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        takeTree c.dest, n
+    else:
+      takeTree c.dest, n
+    return
   if hasDestructor(c, typ) and e == WantNonOwner:
     ow = bindToTemp(c, typ, n.info)
   copyInto c.dest, n:
@@ -1259,6 +1287,10 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
     copyTree c.dest, r.val
     c.dest.addParRi()
     callWasMoved c, r.name.symId, r.name.info, r.typ
+  elif k == ConstS:
+    # static data: nothing to own, dup or destroy
+    copyTree c.dest, r.val
+    c.dest.addParRi()
   else:
     let destructor = getDestructor(c.lifter[], r.typ, n.endInfo)
     if destructor != NoSymId:
