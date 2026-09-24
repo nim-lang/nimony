@@ -156,13 +156,10 @@ proc prebuildSharedObjects(forward: string) =
   ## does real work; once `static.o` is present the build is a no-op).
   ##
   ## `forward` MUST be the same flag string the test workers pass to nimony
-  ## (e.g. `--cc:clang` on Windows CI). `static.o` lands in the shared
-  ## `nimcache_static/` and is keyed only by mtime, so once we build it the
-  ## workers reuse it verbatim — if we built it with a different compiler than
-  ## the workers link with, the result is an ABI mismatch. Concretely: on
-  ## Windows the tester forwards `--cc:clang` (clang uses native PE TLS); a
-  ## prebuild with the default gcc emits gthr/emulated-TLS `static.o`, and the
-  ## clang+lld worker link then fails with `undefined symbol: pthread_*`.
+  ## (e.g. `--cc:clang` on Windows CI). The shared object's name is keyed by
+  ## its whole compiler command line, so a prebuild with other flags would not
+  ## be wrong — it would just build an object the workers never use, and they
+  ## would race on building theirs.
   if sharedObjectsPrebuilt: return
   sharedObjectsPrebuilt = true
   let nimony = toolExe("nimony")
@@ -183,21 +180,12 @@ proc prebuildSharedObjects(forward: string) =
   if forward.len > 0:
     cmd.add ' '
     cmd.add forward
-  # Match `testFile`'s per-platform flags so the prebuilt `static.o` is the
-  # exact artifact the tests want (valgrind-tracked mimalloc on Linux).
-  #
-  # mimalloc's build pragma no longer bakes in `-DMI_TRACK_VALGRIND=1` (that
-  # made the valgrind dev headers a hard build dependency for every nimony
-  # program); valgrind tracking is now requested purely via this `--passC`.
-  # But the shared `static.o` is keyed only by mtime, so a prior *non*-valgrind
-  # build (e.g. a plain `bin/nimony c foo.nim`) can leave a stale, untracked
-  # `static.o` that nifmake would happily reuse — silently running the valgrind
-  # tests against non-tracked mimalloc. Delete it so this valgrind-tracked
-  # variant is always freshly produced.
+  # Match `testFile`'s per-platform flags so the prebuilt mimalloc object is
+  # the exact artifact the tests want (valgrind-tracked mimalloc on Linux).
+  # Valgrind tracking is requested purely via this `--passC`, which is part of
+  # the object's name: a plain build's untracked object is a different file.
   when defined(linux):
     if hasValgrind:
-      try: removeFile("nimcache_static" / "static.o")
-      except OSError: discard
       # The valgrind tests compile with `-d:useLibc` (valgrind can only track the
       # libc/mimalloc heap; the native mmap heap has no hooks), so the shared
       # `static.o` they reuse must be the *mimalloc* object — build the prebuild

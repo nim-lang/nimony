@@ -251,6 +251,7 @@ type
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     toBundle*: TokenBuf ## `.bundle` custom-linker entries (link-step override)
+    toLink*: seq[string] ## absolute paths of the `.link`ed objects/libraries
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf

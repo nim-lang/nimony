@@ -35,7 +35,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
-import lifter, mover, hexer_context, passes, closuretypes
+import lifter, mover, hexer_context, passes, closuretypes, defaultvalues
 import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 include ".." / nimony / nif_annotations
@@ -1138,10 +1138,19 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         let dataField = pool.symId(DataField)
         c.dest.addSymUse(dataField, info)
         if kind == NewobjX:
-          copyIntoKind c.dest, OconstrX, info:
-            c.dest.addSubtree baseType
-            skip n, SkipType
-            trNewobjFields(c, n)
+          skip n, SkipType
+          if n.hasMore:
+            copyIntoKind c.dest, OconstrX, info:
+              c.dest.addSubtree baseType
+              trNewobjFields(c, n)
+          else:
+            # A `newobj` that a hexer pass synthesized for a type it invented (a
+            # closure environment, a coroutine frame) names no fields. The payload
+            # is fresh, uninitialized memory, and an `oconstr` is TOTAL
+            # (`doc/tags.md`): the native back end stores exactly what is listed,
+            # so an empty one left the frame's fields holding whatever the stack
+            # temp it is built in held.
+            addDefaultValue(c.dest, baseType, info, c.lifter.bits div 8)
         else:
           skip n, SkipType
           tr c, n, WantOwner # process default(T) call

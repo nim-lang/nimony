@@ -17,7 +17,7 @@ when defined(nimony):
   {.feature: "lenientnils".}
   {.feature: "untyped".}
 import std / [parseopt, sets, strutils, os, assertions, syncio, dirs, paths]
-import ".." / lib / [tooldirs, argsfinder, nimversion]
+import ".." / lib / [tooldirs, argsfinder, nimversion, platform]
 
 import ".." / gear2 / modnames
 import semmain, sem, nifconfig, semos, semdata, deps, langmodes, cli
@@ -431,7 +431,14 @@ proc compileProgram(c: var CmdOptions) =
   # linked, so stdlib code can fall back to a libc symbol where the freestanding
   # implementation is impossible (`futex` — no libc symbol of that name) or merely
   # approximate (`strtod`). Only the native backend sets it.
-  if nativeBackend:
+  #
+  # On Linux `-d:useLibc` is the exception: libc IS linked then — the system
+  # linker finishes the program (see `deps.nim`, `nativeSysLink`), which is what
+  # a program linking foreign objects (`.compile`/`.link`) needs. The runtime is
+  # then the C backend's default one: the native allocator and IO, with libc
+  # present (pthreads, so threads and libc's static TLS agree).
+  let nativeLinksLibc = nativeBackend and optOutAll and c.config.targetOS == osLinux
+  if nativeBackend and not nativeLinksLibc:
     c.config.addDefine "nimNoLibc"
     c.commandLineArgs.add " --define:nimNoLibc"
     c.hostCommandLineArgs.add " --define:nimNoLibc"
