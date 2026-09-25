@@ -601,16 +601,16 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
       # but allowed to shell out to `executeExpr` here because a concrete plugin
       # call is exactly what the deferral was waiting for. While any argument is
       # still symbolic the call stays parked and is compared structurally.
-      if m.context == nil or m.context.executeExpr == nil: return
+      assert m.context != nil
+      assert m.context.executeExpr != nil
       var subBuf = createTokenBuf(16)
       substituteTypevars(subBuf, a, m.inferred)
-      var sub = cursorAt(subBuf, 0)
-      if containsGenericParams(sub): return
-      var ec = initEvalContext(m.context, noExecute = false)
-      var cur = sub
-      let folded = eval(ec, cur)
-      if folded.isTagLit and folded.cursorTagId == nifpools.ErrT: return
-      result = getConstOrdinalValue(folded)
+      var cur = cursorAt(subBuf, 0)
+      if not containsGenericParams(cur):
+        var ec = initEvalContext(m.context, noExecute = false)
+        let folded = eval(ec, cur)
+        if not (folded.isTagLit and folded.cursorTagId == nifpools.ErrT):
+          result = getConstOrdinalValue(folded)
     else:
       if a.typeKind == RangetypeT:
         # An array-index range. `semArrayType` stores a still-symbolic length as
