@@ -34,6 +34,6 @@ proc main() {.passive.} =
 
 checkStates()
 checkRunning()
-complete(delay main())   # parks; a plain `main()` would wait for the resume below
-resumeCont.complete()
+complete(delay main(), UntilPark)   # parks; `UntilDone` would wait for the resume below
+resumeCont.complete(UntilPark)
 echo "done"

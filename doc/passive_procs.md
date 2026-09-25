@@ -93,23 +93,26 @@ For a passive proc `foo(x: int)`, the compiler generates:
 
 ### The trampoline
 
-Running a passive proc to completion is a simple loop:
+Running a passive proc is a simple loop:
 
 ```nim
-proc complete*(c: Continuation) =
-  var c = c
-  while c.fn != nil:
-    c = scheduler(c)
+proc complete*(c: Continuation; mode = UntilDone)
+
+var c = c
+while c.fn != nil:
+  c = scheduler(c)
 ```
 
-Each call to `scheduler(c)` executes one state transition. The default scheduler is
-`trivialTick` which simply calls `c.fn(c.env)`.
+Each call to `scheduler(c)` executes one state transition (`advance(c)` does exactly one).
+The default scheduler is `trivialTick` which simply calls `c.fn(c.env)`.
 
-`complete` stops when the continuation has no next step — when the coroutine finished
-*or parked*. That is the primitive schedulers and explicit `delay(call)` continuations use.
+With `mode = UntilPark`, `complete` stops when the continuation has no next step — when
+the coroutine finished *or parked*. That is what resuming a parked continuation uses.
 
-A call from regular, non-passive code is stronger: it runs the passive proc to
-**completion**, parks included (`runPassive`, see *Non-passive calls* below). The call is
+The default, `UntilDone`, runs the coroutine to **completion**, parks included; it is also
+what a call from regular, non-passive code does (see *Non-passive calls* below). It makes
+itself the coroutine's caller, so it takes a coroutine nobody waits for yet: a fresh
+`delay foo(args)`. The call is
 mediated by the active scheduler rather than by a direct stack call; with the default
 scheduler it behaves like ordinary synchronous execution, and when the callee parks on
 I/O the regular caller waits for it like a blocking call would.
@@ -126,7 +129,7 @@ proc setScheduler*(handler: Scheduler)
 
 A custom scheduler can integrate with a thread pool or bridge to an IO event loop.
 Interleaving unrelated continuations belongs at enqueue/resume boundaries (for example
-`submit` on the thread pool), not by keeping `complete()` running across unreturned
+`submit` on the thread pool), not by keeping a trampoline running across unreturned
 regular-proc stack frames.
 
 #### Scheduler contract
@@ -137,18 +140,18 @@ When a coroutine **parks** (`suspend()` returns `Continuation(fn: nil, env: fram
 1. **Store** the continuation that should resume later (for example in an IoRing slot via
    `delay()`, or on the thread-pool run queue).
 2. **Return** the parked continuation (or let `trivialTick` pass it through) so that
-   `complete()` can detect parking via `parked(c)` and exit.
+   the trampoline can detect parking via `parked(c)` and exit.
 3. **Resume** later from a clean entry point (for example `submit(cont)` on a pool worker
-   or `complete(delayCont)` on the captured resume continuation).
+   or `complete(delayCont, UntilPark)` on the captured resume continuation).
 
 A park never ends a call made from a regular proc: that caller keeps waiting (and, with
 the thread pool running, keeps doing a worker's turn — `setPassiveWaitHook`) until the
 callee's last state has run. So a regular proc between two passive calls holds its
 hardware stack frame for as long as its callee is parked, exactly like a blocking call.
 
-A scheduler must **not** dispatch unrelated continuations inside `complete()`. A
+A scheduler must **not** dispatch unrelated continuations inside `complete`. A
 pathological example is a scheduler that, on every `suspend()`, pops the next continuation
-from a shared queue and feeds it back into the same `complete()` loop: every
+from a shared queue and feeds it back into the same `complete` loop: every
 `passive → regular → passive` link it runs through keeps a regular proc's frame alive, so
 thousands of such interleavings can overflow the hardware stack even though
 passive-to-passive depth is bounded by the heap. The production thread pool avoids this
@@ -233,7 +236,7 @@ The scheduler bridges passive procs to the OS event loop:
    via `suspend()` — `Continuation(fn: nil, env: this)`.
 3. The IoRing polls (`epoll`/`kqueue`/`io_uring`) for ready file descriptors.
 4. When an fd becomes ready, the IoRing retrieves the stored continuation and feeds it
-   back into `complete()` or `advance()`, resuming the coroutine from where it left off.
+   back into `complete(c, UntilPark)` or `advance(c)`, resuming the coroutine from where it left off.
 
 This model means a single thread can handle thousands of concurrent connections with
 each handler written as a simple sequential loop.
@@ -332,7 +335,7 @@ runs — never by comparing frames: a passive proc the iterator calls returns *i
 iterator's frame without that being a yield.
 
 - In a **regular** routine each step is `iterNext`: the step runs to completion through
-  `runPassive`, parks included, exactly like a passive call from regular code.
+  `complete`, parks included, exactly like a passive call from regular code.
 - In a **passive** routine advancing the iterator is a suspension point
   (`iterAdvance`, lowered to `iterSwitch`): the loop is laid out as ordinary code before
   the CPS split, so a park in the iterator parks the enclosing coroutine and the loop body
@@ -376,18 +379,18 @@ Both conditions must hold:
 
 When non-passive code calls a passive proc, the compiler generates a local stack variable for
 the environment, passes its address to the init function, and then runs the passive call to
-completion via `runPassive()`:
+completion via `complete`:
 
 ```nim
 var coroVar: FooCoroutine   # on the caller's hardware stack
 var waitVar: PassiveWait    # ditto: the caller's side of the call
 let contVar = `foo`(args, addr coroVar, initPassiveWait(addr waitVar))
-runPassive(contVar, addr waitVar)
+complete(contVar, addr waitVar)
 ```
 
 The callee's `caller` is `waitVar`'s continuation. Running it — which is what the callee's
-last state does, on whichever thread resumed it — marks the call as done. `runPassive`
-first trampolines on this thread (`complete`); if the callee parked, it then waits for that
+last state does, on whichever thread resumed it — marks the call as done. This internal
+`complete` overload first trampolines on this thread; if the callee parked, it then waits for that
 mark, calling the wait hook meanwhile (`setPassiveWaitHook`). The thread pool installs one
 that does a worker's turn: run queued tasks and poll this thread's I/O lane — which is
 required, since a non-worker's ring ops complete only through its own poll.
@@ -400,8 +403,8 @@ writing into a frame that is gone.
 leaves it alone when the callee finishes.
 
 A regular proc that wants the continuation *without* waiting for it asks for it
-explicitly: `complete(delay foo(args))` runs `foo` until it finishes or parks, and a park
-is then the scheduler's (or the caller's) business to resume.
+explicitly: `complete(delay foo(args), UntilPark)` runs `foo` until it finishes or parks,
+and a park is then the scheduler's (or the caller's) business to resume.
 
 Note: This optimization only applies to regular procedure calls. For
 passive methods, dynamic dispatch prevents the inlining strategy above,
@@ -469,7 +472,7 @@ the caller is alive.
 ## Design Properties
 
 - **No colored functions**: Passive procs can call regular procs freely. Regular procs
-  can also call passive procs — the compiler inserts `runPassive()` automatically so the
+  can also call passive procs — the compiler inserts a `complete` call automatically so the
   call is driven to completion through the active scheduler, parks included. With the
   default scheduler this is synchronous; while the callee is parked the waiting thread
   does pool work and drives its own I/O. `delay(call)` is the explicit override when you want the

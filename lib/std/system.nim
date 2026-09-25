@@ -315,18 +315,6 @@ proc advance*(c: Continuation): Continuation =
   ## to be called directly. Used by the compiler to run a coroutine.
   result = scheduler(c)
 
-proc complete*(c: Continuation) =
-  ## Used by the compiler to run a coroutine until it has no next step
-  ## (`stopping`): it either finishes or parks (`delay(); suspend()`) to await
-  ## an external scheduler. With the default trivial scheduler a park simply
-  ## stops the loop; a real scheduler resumes parked continuations and drives
-  ## them onward. Takes `c` by value so a coroutine may reassign the variable
-  ## it was driven from (e.g. to reschedule via `delay(call)`). Bare
-  ## `suspend()` transitions synchronously, so it does not stop the loop.
-  var c = c
-  while not stopping(c):
-    c = scheduler(c)
-
 var taskLink* {.threadvar.}: Continuation
   ## Where the task running on this thread bottoms out, for a scheduler that
   ## tracks tasks (`std/threadpool`): it sets this before it runs a task's
@@ -366,17 +354,47 @@ proc setPassiveWaitHook*(hook: proc () {.nimcall.}) {.inline.} =
 
 proc builtinCpuRelax() {.intrinsic: "CpuRelax".}
 
-proc runPassive(c: Continuation; w: ptr PassiveWait) =
+proc complete(c: Continuation; w: ptr PassiveWait) =
   ## Used by the compiler to run a passive call made from a regular proc to
   ## COMPLETION. The callee's frame and its result live in the regular proc's
   ## stack frame, so returning while the callee is parked would leave it
   ## writing into a frame that is gone. A park therefore does not end the call,
   ## only the trampoline on this thread: the call is over when the callee's
   ## last state has run `w`'s continuation, on whichever thread resumed it.
-  complete(c)
+  var c = c
+  while not stopping(c):
+    c = scheduler(c)
   while atomicLoadN(addr w.done, ATOMIC_ACQUIRE) == 0:
     if passiveWaitHook != nil: passiveWaitHook()
     else: builtinCpuRelax()
+
+type
+  CompleteMode* = enum
+    UntilDone ## until the coroutine has finished: a park only ends the
+              ## trampoline on this thread, the call is over once whoever
+              ## resumed it has run its last state. What a regular proc's
+              ## plain call of a `.passive` proc does.
+    UntilPark ## until it has no next step, i.e. it finished or parked
+              ## (`delay(); suspend()`). Whoever holds the parked continuation
+              ## resumes it later, for example with another `complete`.
+
+proc complete*(c: Continuation; mode = UntilDone) =
+  ## Runs a coroutine, see `CompleteMode`. `UntilDone` needs a coroutine that
+  ## nobody waits for yet — a fresh `delay foo(args)` — as it becomes the
+  ## coroutine's caller; resuming a parked continuation takes `UntilPark`.
+  ## Takes `c` by value so a coroutine may reassign the variable it was driven
+  ## from (e.g. to reschedule via `delay(call)`). Bare `suspend()` transitions
+  ## synchronously, so it does not stop the loop.
+  if mode == UntilPark:
+    var c = c
+    while not stopping(c):
+      c = scheduler(c)
+  elif not stopping(c):
+    if c.env.caller.fn != nil:
+      panic "complete(c, UntilDone): the coroutine already has a caller; use UntilPark"
+    var w = PassiveWait()
+    c.env.caller = initPassiveWait(addr w)
+    complete(c, addr w)
 
 type
   IterStep = object of PassiveWait
@@ -422,10 +440,10 @@ proc iterTake(s: ptr IterStep): Continuation {.inline.} =
 proc iterNext(s: ptr IterStep): bool =
   ## Used by the compiler: one step of a `for` loop in a regular proc. Runs the
   ## iterator to its next `yield` or to its end, parks included (see
-  ## `runPassive`). Answers whether it yielded.
+  ## `complete`). Answers whether it yielded.
   let r = iterTake(s)
   s.done = 0
-  runPassive(r, cast[ptr PassiveWait](s))
+  complete(r, cast[ptr PassiveWait](s))
   result = s.resume.fn != nil
 
 proc iterAdvance(s: ptr IterStep) {.passive.} =

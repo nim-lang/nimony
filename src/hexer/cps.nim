@@ -118,10 +118,10 @@ proc emitPassiveWaitCont(dest: var TokenBuf; waitVar: SymId; info: NifLineInfo) 
 
 proc emitCompleteFromNormal(c: var Context; dest: var TokenBuf;
                             contVar, waitVar: SymId; info: NifLineInfo) =
-  ## Run the call to completion (`system.runPassive`), parks included: the
+  ## Run the call to completion (`system.complete` with a wait), parks included: the
   ## callee writes into this frame, so this frame must outlive it.
   dest.copyIntoKind CallS, info:
-    dest.addSymUse pool.symId("runPassive.0." & SystemModuleSuffix), info
+    dest.addSymUse pool.symId("complete.0." & SystemModuleSuffix), info
     dest.addSymUse contVar, info
     dest.copyIntoKind AddrX, info:
       dest.addSymUse waitVar, info

@@ -15,7 +15,7 @@ generators, frame-type generator, wrapper-proc generator, and for-loop
 trampoline for coroutine-shaped routines. Both flavours of coroutines
 share it:
 
-  - `.passive` procs / `.passive` iters (driven from `complete()`,
+  - `.passive` procs / `.passive` iters (driven from `complete`,
     factory-allocated frame, owned by the trampoline).
   - `.closure` iters (Nim-compatible resumable iter values; eager
     value-owned frame is planned for a follow-up).

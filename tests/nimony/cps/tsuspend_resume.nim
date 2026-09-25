@@ -18,7 +18,7 @@ proc main() {.passive.} =
 # `main` parks and is resumed by this same thread, so it is started as a
 # continuation: a plain `main()` would run it to completion, and wait for a
 # resume that only this thread could perform.
-complete(delay main())
+complete(delay main(), UntilPark)
 echo "4. after main"
-resumeCont.complete()
+resumeCont.complete(UntilPark)
 echo "6. done"

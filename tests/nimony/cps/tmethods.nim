@@ -30,8 +30,8 @@ q.inherited()
 # `sus` parks and is resumed by this same thread, so it is started as a
 # continuation: a plain call from here would run it to completion, and wait for
 # a resume that only this thread could perform.
-complete(delay q.sus())
-complete(cont)
+complete(delay q.sus(), UntilPark)
+complete(cont, UntilPark)
 complete(cont)
 
 type
