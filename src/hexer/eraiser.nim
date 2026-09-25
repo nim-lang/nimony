@@ -18,9 +18,14 @@ one pass that implements them.
   stood for becomes `tmp[1]`.
 - `let/var local = rcall(args)` retypes `local` to the success tuple and gets
   that same check; every other use of `local` projects onto `local[1]`.
-- `result = x` and `return x` build the tuple. `result` itself already IS the
-  tuple, so `return result` needs no rebuild — and must not get one, see
-  `trRet`.
+- `result[0] = Success` is set once, at `result`'s declaration: every path
+  that changes the code half leaves the routine right away. So `result = x`,
+  like any other use of `result` (and of a retyped local, whose check has
+  passed), is simply `result[1] = x`. Rebuilding the whole tuple there would
+  nest `x` one level deep, which hides a `.passive` call from `cps`: it ends
+  a state only where a suspension point is the ROOT of the value.
+- `return x` builds the tuple. `result` itself already IS the tuple, so
+  `return result` needs no rebuild — and must not get one, see `trRet`.
 - `raise e` becomes `raise (e, result)`.
 
 **Doing the whole job here is the point.** The control-flow half (the temps
@@ -727,24 +732,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = tryStart
   skip n
 
-proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var nn = n.childCursor
-  if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or
-                            c.tupleVars.contains(nn.symId)):
-    let isResultSym = nn.symId == c.resultSym
-    copyInto dest, n:
-      dest.addSubtree n  # the destination, NOT projected: it IS the tuple
-      inc n
-      let typ = if isResultSym: c.retType else: getType(c.typeCache, n)
-      let maybeClose = produceSuccessTuple(c, dest, typ, n.info)
-      tr c, dest, n
-      if maybeClose:
-        dest.addParRi() # tuple constructor
-  else:
-    copyInto dest, n:
-      tr c, dest, n
-      tr c, dest, n
-
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Leaving a `block` or a loop runs the `finally` of every `try` between
   ## here and it — but not of any `try` further out, which we are still in.
@@ -848,8 +835,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trScope c, dest, n
       of StmtsS:
         trStmtList c, dest, n
-      of AsgnS:
-        trAsgn c, dest, n
       of RetS:
         trRet c, dest, n
       of RaiseS:
@@ -864,7 +849,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLoopOrBlock c, dest, n
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
-      of CallS, CmdS, IteratorS, EmitS, IfS, WhenS,
+      of AsgnS, CallS, CmdS, IteratorS, EmitS, IfS, WhenS,
          ContinueS, ForS, CaseS, YldS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,

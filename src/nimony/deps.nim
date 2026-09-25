@@ -237,7 +237,9 @@ type
     Stats          ## after build, print total LOC + module count across the dep graph
 
   CFile = object
-    name, obj, customArgs: string
+    name: string        ## the source, relative to the cwd
+    objStem: string     ## object name without the hash suffix, see `sharedObjFile`
+    customArgs: string
 
   BackendTool = object
     ## A `{.build(builder, tool[, args[, linkflags]]).}` custom-backend routing
@@ -276,6 +278,7 @@ type
     pluginSources: Table[string, string] ## exe basename -> resolved `.nim` source
                                          ## of every `{.plugin.}` in the graph
     toBuild: seq[CFile]
+    linkFiles: seq[string] ## `{.link.}` objects/libraries, absolute, deduplicated
     backendTools: seq[BackendTool]
     bundles: seq[Bundle]
     passL: seq[string]
@@ -601,9 +604,14 @@ proc processBuild(c: var DepContext; it: var Cursor; current: Node) =
         while x.hasMore: skip x
         if typ in ["C", "ObjC", "Cpp", "ObjCpp"]:
           # `.compile` foreign source -> object file, linked into the program.
-          # The first field is a C-family language (set by `addBuildTarget`).
-          let obj = splitFile(path).name & ".o"
-          c.toBuild.add CFile(name: path, obj: obj, customArgs: args)
+          # The first field is a C-family language (set by `addBuildTarget`);
+          # the optional 4th field is the object name the tuple form
+          # `{.compile: ("*.c", "$1.o").}` asked for.
+          var objStem = splitFile(path).name
+          if linkFlags.len > 0:
+            objStem = linkFlags
+            if objStem.endsWith(".o"): objStem.setLen objStem.len - 2
+          c.toBuild.add CFile(name: path, objStem: objStem, customArgs: args)
         else:
           # `{.build(builder, tool, args[, linkflags]).}` — a custom backend routes
           # THIS module's Leng IR through `tool`. The first field is the generic
@@ -653,6 +661,13 @@ proc processDep(c: var DepContext; n: var Cursor; current: Node) =
       processBuild c, n, current
     elif n.cursorTagId == TagId(BundleIdx):
       processBundle c, n
+    elif n.cursorTagId == TagId(LinkIdx):
+      n.into:  # (link …)
+        while n.hasMore:
+          assert n.isStringLit
+          let f = pool.strings[n.strId]
+          if f notin c.linkFiles: c.linkFiles.add f
+          inc n
     elif n.cursorTagId == TagId(PluginP):
       processPlugin c, n, current
     elif n.cursorTagId == TagId(PassLP):
@@ -797,14 +812,20 @@ proc rootPath(c: DepContext): string =
   result = onRaiseQuit relativePath(result, onRaiseQuit os.getCurrentDir())
 
 proc sharedObjDir(): string =
-  ## Project-wide cache for object files produced from `{.build("C", ...).}`
-  ## pragmas (currently just `vendor/mimalloc/src/static.c`). These TUs don't
-  ## depend on per-project state, so compiling them once and reusing the .o
-  ## across nimcaches saves ~4-5 s per cold build on Windows.
+  ## Cross-project cache for object files produced from `{.compile.}` pragmas
+  ## (e.g. `vendor/mimalloc/src/static.c`). Compiling such a TU once and reusing
+  ## the .o across nimcaches saves ~4-5 s per cold build on Windows; the object
+  ## names are keyed so that differently compiled TUs never share one.
   result = getCacheDir("nimony") / "nimcache_static"
 
-proc sharedObjFile(cfile: CFile): string =
-  sharedObjDir() / cfile.obj
+proc sharedObjFile(cfile: CFile; ccKey: string): string =
+  ## The object of a `.compile`d source. The shared cache outlives any one
+  ## project, so the name carries a hash of everything that shapes the object:
+  ## the absolute source path (two `util.c` in different directories), the
+  ## pragma's flags and the `cc` command line (`ccKey`: compiler, target, opt
+  ## level, `passC`). The same source compiled the same way is still shared.
+  let key = toAbsolutePath(cfile.name) & "\0" & cfile.customArgs & "\0" & ccKey
+  sharedObjDir() / cfile.objStem & "_" & uhashBase36(key) & ".o"
 
 proc emitFrontendArgs(b: var Builder; baseDir, commandLineArgs: string) =
   ## Emit the shared `--base:` plus the forwarded `commandLineArgs` for a
@@ -840,7 +861,8 @@ proc defineNiflerCmd(b: var Builder; nifler: string; preserveDocs = false) =
     b.addKeyw "output"
 
 proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
-                     targetOS: TSystemOS; checkFlags: string; native: bool) =
+                     targetOS: TSystemOS; checkFlags: string; native: bool;
+                     crt = false) =
   let cpuFlag = if bigEndian: "--cpu:be" else: "--cpu:le"
   b.withTree "cmd":
     b.addSymbolDef "hexer"
@@ -852,6 +874,8 @@ proc defineHexerCmds(b: var Builder; hexer: string; bits: int; bigEndian: bool;
     # no argc/argv/envp, so `main` takes none there.
     b.addStrLit "--os:" & platform.OS[targetOS].name
     if native: b.addStrLit "--native"
+    # A native program linked with libc: `main` returns to crt (see `linuxLibc`).
+    if crt: b.addStrLit "--crt"
     # Forward the active check modes so nifcgen injects only the requested
     # runtime checks (e.g. `--boundchecks:off` ⇒ no `nimUcheckB` in `(at …)`).
     # A bare `--flags` means "no checks" (e.g. `-d:danger`): with a trailing
@@ -1129,7 +1153,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
     # self-hosted compiler's initialization analysis can't yet prove the temp
     # such expressions lower to is always assigned.)
     var nativeSysLink = false
-    if native and c.toBuild.len > 0: nativeSysLink = true
+    if native and (c.toBuild.len > 0 or c.linkFiles.len > 0): nativeSysLink = true
+    # On Linux `-d:useLibc` makes a native program a libc program (see
+    # `nimony.nim`), which the system linker finishes even without foreign objects.
+    # Without it the runtime is freestanding: its threads are raw `clone`s that point
+    # the thread pointer at nifasm's own TLS block, which cannot coexist with libc's.
+    let linuxLibc = native and c.config.targetOS == osLinux and c.config.isDefined("useLibc")
+    if linuxLibc: nativeSysLink = true
+    if nativeSysLink and native and c.config.targetOS == osLinux and not linuxLibc:
+      quit "`nimony n` links foreign objects (`.compile`/`.link`) through the " &
+           "system linker, together with libc; build with `-d:useLibc`"
     # The foreign objects and frameworks need a real driver; clang knows how to
     # compile `.m`/`.c`, pull in libobjc, resolve `-framework`, and supply the crt.
     var sysLinker = c.config.linker
@@ -1171,6 +1204,10 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # description rather than reading the file a second time.
         if c.config.layoutFile.len > 0:
           b.addStrLit "--layout:" & c.config.layoutFile
+        # Linked with libc by the system linker: crt's `_start` calls the entry,
+        # and every `importc` is libc's (see `linuxLibc` above).
+        if linuxLibc:
+          b.addStrLit "--crt"
         b.withTree "output":
           b.addStrLit "-o:"
         b.addKeyw "input"
@@ -1212,11 +1249,14 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
 
     # Command for hexer
     defineHexerCmds(b, hexer, c.config.bits, platform.CPU[c.config.targetCPU].endian == bigEndian,
-                    c.config.targetOS, c.config.checkFlags, c.config.backend == backendNative)
+                    c.config.targetOS, c.config.checkFlags, c.config.backend == backendNative,
+                    crt = linuxLibc)
 
-    # Command for C/LLVM compiler (object files)
-    b.withTree "cmd":
-      b.addSymbolDef "cc"
+    # Command for C/LLVM compiler (object files). The fixed part of its command
+    # line is collected in `ccArgs` first: besides being emitted, it keys the
+    # names of the shared `.compile` objects (see `sharedObjFile`).
+    var ccArgs: seq[string] = @[]
+    block:
       var ccProgram = c.config.cc
       if c.config.backend == backendLLVM:
         ccProgram = "clang"
@@ -1224,12 +1264,12 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         # Compiles the `.compile`d TUs (e.g. Objective-C `.m`); same driver
         # that links them, so the toolchain/ABI matches.
         ccProgram = sysLinker
-      b.addStrLit ccProgram
+      ccArgs.add ccProgram
       for flag in targetDriverFlags(c.config):
-        b.addStrLit flag
-      b.addStrLit "-c"
+        ccArgs.add flag
+      ccArgs.add "-c"
       # Suppress visibility-attribute warnings from mimalloc etc. (GCC/Clang)
-      b.addStrLit "-Wno-attributes"
+      ccArgs.add "-Wno-attributes"
       # gcc-14 on arm64/Linux emits a stringop-overflow false positive
       # ("writing 8 bytes into a region of size 0 ... destination object is
       # likely at address zero") from inlined refcount updates on paths the
@@ -1240,7 +1280,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # macOS `gcc` IS clang, so gate on the target OS as well.
       if extractCCKey(ccProgram) != "clang" and
           c.config.targetOS notin {osMacosx, osIos}:
-        b.addStrLit "-Wno-stringop-overflow"
+        ccArgs.add "-Wno-stringop-overflow"
       # Note on TLS for clang/Windows: clang emits native PE TLS by default,
       # which is what we want — `__thread` access compiles to a single
       # `gs:0x58` load instead of a `__emutls_get_address` call. ld.bfd
@@ -1250,28 +1290,33 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # here.
       # Add -fPIC for shared libraries
       if c.config.appType == appLib:
-        b.addStrLit "-fPIC"
+        ccArgs.add "-fPIC"
       # Optimization level. Even the default ("debug") gets -O1: in
       # practice it produces code that's just as easy to step through
       # as -O0, while letting the C compiler skip the truly silly
       # codegen patterns (per-statement spills, dead stores, etc.).
       case c.config.optLevel
-      of optDebug: b.addStrLit "-O1"
-      of optNone:  b.addStrLit "-O0"
-      of optSize:  b.addStrLit "-Os"
-      of optSpeed: b.addStrLit "-O3"
+      of optDebug: ccArgs.add "-O1"
+      of optNone:  ccArgs.add "-O0"
+      of optSize:  ccArgs.add "-Os"
+      of optSpeed: ccArgs.add "-O3"
       if passC.len > 0:
         for arg in passC.split(' '):
           if arg.len > 0:
-            b.addStrLit arg
+            ccArgs.add arg
       for i in c.passC:
-        b.addStrLit i
+        ccArgs.add i
       if c.config.backend == backendC:
-        b.addStrLit "-I" & rootPath(c)
+        ccArgs.add "-I" & rootPath(c)
+    b.withTree "cmd":
+      b.addSymbolDef "cc"
+      for a in ccArgs:
+        b.addStrLit a
       b.addKeyw "args"
       b.addKeyw "input"
       b.addStrLit "-o"
       b.addKeyw "output"
+    let ccKey = ccArgs.join("\x1f")
 
     # Commands for custom backends (`{.build(builder, tool[, args]).}`): each
     # module routes its Leng IR through `tool`, an external program compiled on
@@ -1342,11 +1387,16 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
         b.addStrLit sysLinker
         for flag in targetDriverFlags(c.config):
           b.addStrLit flag
+        if c.config.targetOS == osLinux:
+          # nifasm keeps rodata inside `.text`, so an absolute address in a rodata
+          # blob is a text relocation, which a PIE cannot have.
+          b.addStrLit "-no-pie"
+          b.addStrLit "-pthread"
         b.addStrLit "-o"
         b.addKeyw "output"
         b.withTree "input":
           b.addIntLit 0
-          b.addIntLit -1  # nifasm object + every `.compile` object
+          b.addIntLit -1  # nifasm object + every `.compile` and `.link` object
         b.withTree "argsext":
           b.addStrLit ".linker.args"
         if passL.len > 0:
@@ -1500,11 +1550,15 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
           # the dedup must happen here (not only on the DO-node ordering inputs).
           var seenObjs = initHashSet[string]()
           for cfile in c.toBuild:
-            let o = sharedObjFile(cfile)
+            let o = sharedObjFile(cfile, ccKey)
             if not seenObjs.containsOrIncl(o): objs.add o
           for v in c.nodes:
             let o = c.config.objFile(v.files[0], backend)
             if not seenObjs.containsOrIncl(o): objs.add o
+          # `{.link.}` files last: a static library must follow the objects
+          # that reference it.
+          for f in c.linkFiles:
+            if not seenObjs.containsOrIncl(f): objs.add f
         var artifacts: seq[string] = @[]
         for bt in c.backendTools:
           artifacts.add c.config.lengcFile(bt.modFile, backend) & "." & bt.toolName & ".out.nif"
@@ -1574,10 +1628,14 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
             b.addStrLit nativeObj
           objFiles.incl nativeObj
           for cfile in c.toBuild:
-            let obj = sharedObjFile(cfile)
+            let obj = sharedObjFile(cfile, ccKey)
             if not objFiles.containsOrIncl(obj):
               b.withTree "input":
                 b.addStrLit obj
+          for f in c.linkFiles:
+            if not objFiles.containsOrIncl(f):
+              b.withTree "input":
+                b.addStrLit f
           b.withTree "output":
             b.addStrLit c.config.exeFile(c.rootNode.files[0], backend)
       else:
@@ -1609,7 +1667,7 @@ proc generateFinalBuildFile(c: DepContext; commandLineArgsLengc: string; passC, 
       # that uses the `.compile` pragma (`nativeSysLink`) compiles them.
       if (not native) or nativeSysLink:
         for cfile in c.toBuild:
-          let obj = sharedObjFile(cfile)
+          let obj = sharedObjFile(cfile, ccKey)
           if not objFiles.containsOrIncl(obj):
             b.withTree "do":
               b.addIdent "cc"

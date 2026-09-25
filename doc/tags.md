@@ -229,7 +229,7 @@
 | `(ensures X)` | NimonyPragma | `ensures` pragma |
 | `(assume X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assume` pragma/annotation |
 | `(assert X)` | NimonyPragma, NimonyStmt, FinalIrKind | `assert` pragma/annotation |
-| `(build X)`; `(build STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma |
+| `(build X)`; `(build STR STR STR)`; `(build STR STR STR STR)` | NimonyPragma, NifIndexKind | `build` pragma; in the index, each `(tup …)` entry is `(lang source flags [objectName])` for a `compile`d file, or `(builder tool args [linkflags])` for a `build` backend |
 | `(feature STR)` | NimonyPragma | `feature` pragma |
 | `(string)` | NimonyPragma | `string` pragma |
 | `(view)` | NimonyPragma | `view` pragma |
@@ -340,7 +340,7 @@
 | `(stacktrace X)` | NimonyPragma | `stackTrace` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(gcsafe)` | NimonyPragma | `gcsafe` pragma; accepted for Nim source compatibility, semantically ignored |
 | `(used)` | NimonyPragma | `used` pragma; accepted for Nim source compatibility, semantically ignored |
-| `(compile STR)`; `(compile STR STR)` | NimonyPragma | `compile` pragma (Nim-compatible alias of `build`; the source language is inferred from the file extension, e.g. `.m` → Objective-C) |
+| `(compile X)`; `(compile X X)`; `(compile (tup X X))` | NimonyPragma | `compile` pragma (Nim-compatible): compile a foreign C/C++/ObjC source and link its object; the source language is inferred from the file extension, e.g. `.m` → Objective-C. Every argument is a constant string expression; the tuple form is `(pattern, objectPattern)` |
 | `(bundle STR STR)`; `(bundle STR STR STR)` | NimonyPragma, NifIndexKind | `bundle` pragma: a custom linker command override `(builder, tool[, args])`; the `tool` is built on demand by `builder` and replaces the final link step, consuming the project's link manifest |
 | `(toClosure X)` | NimonyExpr | converts non closure proc to closure proc |
 | `(instruction STR)` | NimonyPragma, LengPragma | target-pinned instruction annotation; the argument is an opcode NAME from `lib/intrinsics`'s `IntrinsicOp`, spelled as a string literal (`{.instruction: "bsf".}`). A string, not an ident: the name is data resolved by table lookup, it is never subject to scope or overload resolution, and an ident would additionally have to dodge Nim's keywords. The proc is a *declaration* of one machine instruction: calls to it become `(instr …)`, never an ABI call. Its signature spelling is dictated by the row's operand roles and checked at the declaration |
@@ -358,6 +358,7 @@
 | `(dependency STR+)` | NifIndexKind | the files a compile-time computation READ, so that a later build knows to redo it. nimsem writes it into the module's `.s.deps.nif` (`semmain.writeNewDepsFile`) from two sources: what a *plugin* reported through `plugins.dependsOn` and the file `slurp`/`staticRead` folded. A plugin hands the list back as a leading top-level tree of its output, a sibling of the output proper next to `(unusedname …)`; `semos.runPlugin` peels both off, so neither ever reaches the sem tree, and the same list read out of a cached output tells it when the memo is stale. `deps.nim` reads the previous build's list back and makes the files extra inputs of the module's `nimsem` node. Paths are absolute and name only files that existed when the producer ran. Naming a *directory* tracks add/remove of its direct entries and nothing else, because that is all a directory mtime says |
 | `(pluginCall Y X+)` | NimonyExpr, NimonyType | the parked form of a **deferred plugin call**: a `.plugin` template invocation that answered `(deferexpansion)` because its arguments still mention type variables. `Y` is the template symbol, the rest are its sem-checked arguments. Having its own tag is what keeps it apart from the three other meanings of `(at …)` — subscript, explicit generic instantiation, generic type invocation — none of which a pass has to probe for any more. Whether it stands for a TYPE or a VALUE is deliberately NOT in the node: the template's declared return type says, `typedesc` meaning a type and anything else (`untyped` included) meaning a value |
 | `(importjs STR)` | NimonyPragma, LengPragma | the `{.importjs.}` **proc pragma**: a bodyless proc whose argument is the raw JavaScript splice template, in Nim 2's language (`#` consumes the next operand, `$1`/`$#` name the proc, `$$` a literal `$`, `@` spreads the operands left) so the existing `lib/js` binding declarations port verbatim. The template rides into the decl unchanged and is forwarded across Leng for the JS back end to splice at the call site; the C and native back ends have no lowering for it and reject the pragma. |
+| `(link X)`; `(link STR+)` | NimonyPragma, NifIndexKind | `link` pragma (Nim-compatible): link a prebuilt object file or static library into the program; the argument is a constant string expression naming a path relative to the pragma's file (`.o` is appended when it has no extension). In the index, the absolute paths of every `link`ed file of the module |
 
 ### unpackflat, unpacktup, unpackdecl
 

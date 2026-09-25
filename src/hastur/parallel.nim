@@ -156,13 +156,10 @@ proc prebuildSharedObjects(forward: string) =
   ## does real work; once `static.o` is present the build is a no-op).
   ##
   ## `forward` MUST be the same flag string the test workers pass to nimony
-  ## (e.g. `--cc:clang` on Windows CI). `static.o` lands in the shared
-  ## `nimcache_static/` and is keyed only by mtime, so once we build it the
-  ## workers reuse it verbatim — if we built it with a different compiler than
-  ## the workers link with, the result is an ABI mismatch. Concretely: on
-  ## Windows the tester forwards `--cc:clang` (clang uses native PE TLS); a
-  ## prebuild with the default gcc emits gthr/emulated-TLS `static.o`, and the
-  ## clang+lld worker link then fails with `undefined symbol: pthread_*`.
+  ## (e.g. `--cc:clang` on Windows CI). The shared object's name is keyed by
+  ## its whole compiler command line, so a prebuild with other flags would not
+  ## be wrong — it would just build an object the workers never use, and they
+  ## would race on building theirs.
   if sharedObjectsPrebuilt: return
   sharedObjectsPrebuilt = true
   let nimony = toolExe("nimony")
@@ -204,7 +201,7 @@ proc prebuildSharedObjects(forward: string) =
       # this valgrind-tracked variant is always freshly produced.
       try: removeFile(getCacheDir("nimony") / "nimcache_static" / "static.o")
       except OSError: discard
-      cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
+      cmd.add " -d:useLibc --passC:\"-DMI_TRACK_VALGRIND=1\""
   cmd.add ' ' & src.quoteShell
   if execShellCmd(cmd) != 0:
     # Non-fatal: if this fails the tests still run, just without the
