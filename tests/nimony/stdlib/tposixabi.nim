@@ -7,12 +7,15 @@
 # corrupting data at run time. This is the safety net that makes header-free
 # bindings maintainable at all.
 
-import std/[assertions, syncio, os, dirs]
+import std/[assertions, syncio, os, dirs, envvars]
 
 when defined(posix):
   import std/posix/posix
   when defined(linux):
     from std/posix/epoll import EpollData, EpollEvent
+
+  when defined(illumos):
+    import std/posix/event_port
 
   var src = ""
 
@@ -34,7 +37,12 @@ when defined(posix):
     int64(cast[int](field) - cast[int](base))
 
   proc main =
-    src.add "#define _GNU_SOURCE\n"
+    when defined(illumos):
+      # Match the __xnet_* socket ABI, not the historical msg_accrights ABI.
+      src.add "#define _XOPEN_SOURCE 600\n#define __EXTENSIONS__ 1\n"
+      src.add "#include <port.h>\n#include <aio.h>\n#include <poll.h>\n"
+    else:
+      src.add "#define _GNU_SOURCE\n"
     src.add "#include <stddef.h>\n"
     src.add "#include <errno.h>\n"
     src.add "#include <fcntl.h>\n"
@@ -134,10 +142,12 @@ when defined(posix):
     ck("S_IRUSR", int64(S_IRUSR)); ck("S_IWUSR", int64(S_IWUSR))
 
     # ---- dirent d_type ----
-    ck("DT_UNKNOWN", int64(DT_UNKNOWN)); ck("DT_FIFO", int64(DT_FIFO))
-    ck("DT_CHR", int64(DT_CHR)); ck("DT_DIR", int64(DT_DIR))
-    ck("DT_BLK", int64(DT_BLK)); ck("DT_REG", int64(DT_REG))
-    ck("DT_LNK", int64(DT_LNK)); ck("DT_SOCK", int64(DT_SOCK))
+    when not defined(illumos):
+      # illumos Dirent is synthetic: native dirent has no d_type or DT_*.
+      ck("DT_UNKNOWN", int64(DT_UNKNOWN)); ck("DT_FIFO", int64(DT_FIFO))
+      ck("DT_CHR", int64(DT_CHR)); ck("DT_DIR", int64(DT_DIR))
+      ck("DT_BLK", int64(DT_BLK)); ck("DT_REG", int64(DT_REG))
+      ck("DT_LNK", int64(DT_LNK)); ck("DT_SOCK", int64(DT_SOCK))
 
     # ---- scalar typedef widths ----
     ck("sizeof(mode_t)", int64(sizeof(Mode)))
@@ -223,6 +233,7 @@ when defined(posix):
     #      fails right here) ----
     const mutexBlob =
       when defined(osx): 64
+      elif defined(illumos): 24
       elif defined(arm64): 48  # aarch64 glibc; x86_64 is 40
       elif defined(amd64): 40
       else: 24
@@ -230,7 +241,55 @@ when defined(posix):
     ck("sizeof(pthread_cond_t) <= 48", 1)
     ck("sizeof(pthread_mutexattr_t) <= 16", 1)
     ck("sizeof(pthread_attr_t) <= 64", 1)
-    ck("sizeof(pthread_t)", int64(sizeof(pointer)))
+    when defined(illumos):
+      ck("sizeof(pthread_t)", int64(sizeof(cuint)))
+      ck("sizeof(pthread_cond_t)", 16)
+      ck("_Alignof(pthread_mutex_t)", 8)
+      ck("_Alignof(struct sockaddr_storage)", 8)
+      ck("offsetof(struct dirent, d_name)", 18)
+      ck("PORT_SOURCE_FD", int64(PORT_SOURCE_FD))
+      ck("PORT_SOURCE_AIO", int64(PORT_SOURCE_AIO))
+      ck("PORT_SOURCE_USER", int64(PORT_SOURCE_USER))
+      ck("SIGEV_PORT", int64(SIGEV_PORT))
+      ck("AIO_CANCELED", int64(AIO_CANCELED))
+      ck("AIO_NOTCANCELED", int64(AIO_NOTCANCELED))
+      ck("AIO_ALLDONE", int64(AIO_ALLDONE))
+      ck("POLLIN", int64(POLLIN)); ck("POLLOUT", int64(POLLOUT))
+      ck("POLLERR", int64(POLLERR)); ck("POLLHUP", int64(POLLHUP))
+      ck("POLLNVAL", int64(POLLNVAL))
+      let pe = cast[ptr PortEvent](addr scratch[0])
+      ck("sizeof(port_event_t)", int64(sizeof(PortEvent)))
+      ck("offsetof(port_event_t, portev_events)", off(pe, addr pe.portev_events))
+      ck("offsetof(port_event_t, portev_source)", off(pe, addr pe.portev_source))
+      ck("offsetof(port_event_t, portev_object)", off(pe, addr pe.portev_object))
+      ck("offsetof(port_event_t, portev_user)", off(pe, addr pe.portev_user))
+      let pn = cast[ptr PortNotify](addr scratch[0])
+      ck("sizeof(port_notify_t)", int64(sizeof(PortNotify)))
+      ck("offsetof(port_notify_t, portnfy_user)", off(pn, addr pn.portnfy_user))
+      let cb = cast[ptr AioCb](addr scratch[0])
+      ck("sizeof(struct aiocb)", int64(sizeof(AioCb)))
+      ck("offsetof(struct aiocb, aio_fildes)", off(cb, addr cb.aio_fildes))
+      ck("offsetof(struct aiocb, aio_buf)", off(cb, addr cb.aio_buf))
+      ck("offsetof(struct aiocb, aio_nbytes)", off(cb, addr cb.aio_nbytes))
+      ck("offsetof(struct aiocb, aio_offset)", off(cb, addr cb.aio_offset))
+      ck("offsetof(struct aiocb, aio_reqprio)", off(cb, addr cb.aio_reqprio))
+      ck("offsetof(struct aiocb, aio_sigevent)", off(cb, addr cb.aio_sigevent))
+      ck("offsetof(struct aiocb, aio_lio_opcode)", off(cb, addr cb.aio_lio_opcode))
+      ck("offsetof(struct aiocb, aio_resultp)", off(cb, addr cb.aio_resultp))
+      ck("offsetof(struct aiocb, aio_state)", off(cb, addr cb.aio_state))
+      let se = cast[ptr SigEvent](addr scratch[0])
+      ck("sizeof(struct sigevent)", int64(sizeof(SigEvent)))
+      ck("offsetof(struct sigevent, sigev_value)", off(se, addr se.sigev_value))
+      ck("offsetof(struct sigevent, sigev_notify_function)", off(se, addr se.sigev_notify_function))
+      ck("offsetof(struct sigevent, sigev_notify_attributes)", off(se, addr se.sigev_notify_attributes))
+      for status in [0, 256, 9, 137, 0x137f, 0xffff]:
+        let s = cint(status)
+        ck("WIFEXITED(" & $status & ")", int64(WIFEXITED(s)))
+        ck("WIFSIGNALED(" & $status & ")", int64(WIFSIGNALED(s)))
+        ck("WIFSTOPPED(" & $status & ")", int64(WIFSTOPPED(s)))
+        ck("WIFCONTINUED(" & $status & ")", int64(WIFCONTINUED(s)))
+    else:
+      ck("sizeof(pthread_t)", int64(sizeof(pointer)))
 
     src.add "int main(void) { return 0; }\n"
 
@@ -239,7 +298,10 @@ when defined(posix):
       writeFile(cfile, src)
     except:
       quit "cannot write " & cfile
-    let code = execShellCmd("cc -fsyntax-only " & cfile)
+    # illumos cc defaults to ILP32 even on an amd64 host.
+    let ccFlags = when defined(illumos) and defined(amd64): " -m64" else: ""
+    let compiler = getEnv("CC", when defined(illumos): "gcc" else: "cc")
+    let code = execShellCmd(compiler & ccFlags & " -fsyntax-only " & cfile)
     if code != 0:
       # The compiler already printed which _Static_assert failed; keep the
       # generated file around for inspection.

@@ -156,6 +156,9 @@ type
     seqnum*: SeqNum
     buf*: nil pointer
     len*: int
+    positioned*: bool
+    offset*: int64
+      ## Explicit file position; never emulate with lseek/read on a shared fd.
     cont*: Continuation
     res*: int
     deadline*: Deadline
