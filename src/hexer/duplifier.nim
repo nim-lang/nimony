@@ -1038,17 +1038,22 @@ proc isCursorField(fieldKey: Cursor): bool =
   result = hasPragma(local.pragmas, CursorP)
 
 proc hasStaticPayload(n: Cursor): bool =
+  ## True when a field of the object constructor `n` points at static
+  ## storage, i.e. carries the `(addr (aconstr (uarray T) …))` payload
+  ## `exprexec` emits for an evaluated const. Only the direct fields are
+  ## inspected; a payload nested inside another constructor is reached by
+  ## `trObjConstr` recursing into that field.
   result = false
   var n = n
-  inc n
+  inc n # tag
   skip n # type
-  while n.hasMore:
+  while n.hasMore and n.substructureKind == KvU:
     var v = n
     inc v # kv
     skip v # field
-    if v.exprKind == AddrX:
-      inc v
-      if v.exprKind == AconstrX: return true
+    if isAddrOfAconstrUarray(v):
+      result = true
+      break
     skip n
 
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
