@@ -594,14 +594,15 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
       if not isPureTypeValueExpr(a): return
       result = foldValueExpr(m, typeValueExpr(a), depth+1)
     of PluginCallX:
-      # A deferred plugin call in a value position (typically an array length
-      # `(pluginCall twicePlugin N)`). Substitute the bindings inferred so far;
-      # if that makes every argument concrete, re-drive the plugin through the
-      # shared `expreval` engine. This is the same engine `foldStaticArg` uses,
-      # but allowed to shell out to `executeExpr` here because a concrete plugin
+      # A deferred plugin call in a compile-time value position (typically an
+      # array length). Substitute the bindings inferred so far; if that makes
+      # every argument concrete, re-drive the plugin through the shared
+      # `expreval` engine. This is the same engine `foldStaticArg` uses, but
+      # allowed to shell out to `executeExpr` here because a concrete plugin
       # call is exactly what the deferral was waiting for. While any argument is
       # still symbolic the call stays parked and is compared structurally.
-      if m.context == nil or m.context.executeExpr == nil: return
+      if m.context == nil: return
+      assert m.context.executeExpr != nil
       var subBuf = createTokenBuf(16)
       substituteTypevars(subBuf, a, m.inferred)
       var sub = cursorAt(subBuf, 0)
