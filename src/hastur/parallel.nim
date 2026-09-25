@@ -183,28 +183,28 @@ proc prebuildSharedObjects(forward: string) =
   if forward.len > 0:
     cmd.add ' '
     cmd.add forward
-  # Match `testFile`'s per-platform flags so the prebuilt `static.o` is the
-  # exact artifact the tests want (valgrind-tracked mimalloc on Linux).
-  #
-  # mimalloc's build pragma no longer bakes in `-DMI_TRACK_VALGRIND=1` (that
-  # made the valgrind dev headers a hard build dependency for every nimony
-  # program); valgrind tracking is now requested purely via this `--passC`.
-  # But the shared `static.o` is keyed only by mtime, so a prior *non*-valgrind
-  # build (e.g. a plain `bin/nimony c foo.nim`) can leave a stale, untracked
-  # `static.o` that nifmake would happily reuse — silently running the valgrind
-  # tests against non-tracked mimalloc. Delete it so this valgrind-tracked
-  # variant is always freshly produced.
+  # Match `testFile`'s flags (`nimonyCmdFor`) so the prebuilt `static.o` is the
+  # exact artifact the tests want. Only a `-d:useLibc` build compiles mimalloc
+  # at all — the libc-free default uses the native allocator — and the tests
+  # that link `static.o` are exactly the ones `nimonyCmdFor` gives `-d:useLibc`
+  # (the valgrind category, `.valgrind` and golden `.nim.c` tests). They do so
+  # whether valgrind is installed or not, so the probe must too: without it
+  # nothing is prebuilt, and on a valgrind-less box (every CI runner) those
+  # tests all compile `static.c` into the shared path at once.
+  cmd.add " -d:useLibc"
   when defined(linux):
     if hasValgrind:
-      try: removeFile("nimcache_static" / "static.o")
+      # mimalloc's build pragma no longer bakes in `-DMI_TRACK_VALGRIND=1`
+      # (that made the valgrind dev headers a hard build dependency for every
+      # nimony program); valgrind tracking is requested purely via this
+      # `--passC`. But the shared `static.o` is keyed only by mtime, so a prior
+      # *non*-valgrind build (e.g. a plain `bin/nimony c foo.nim`) can leave a
+      # stale, untracked `static.o` that nifmake would happily reuse — silently
+      # running the valgrind tests against non-tracked mimalloc. Delete it so
+      # this valgrind-tracked variant is always freshly produced.
+      try: removeFile(getCacheDir("nimony") / "nimcache_static" / "static.o")
       except OSError: discard
-      # The valgrind tests compile with `-d:useLibc` (valgrind can only track the
-      # libc/mimalloc heap; the native mmap heap has no hooks), so the shared
-      # `static.o` they reuse must be the *mimalloc* object — build the prebuild
-      # probe with `-d:useLibc` too. Without it the libc-free default is used and
-      # `static.o` is never produced (mimalloc isn't compiled), so valgrind runs
-      # against an untracked heap and reports 0 allocations.
-      cmd.add " -d:useLibc --passC:\"-DMI_TRACK_VALGRIND=1\""
+      cmd.add " --passC:\"-DMI_TRACK_VALGRIND=1\""
   cmd.add ' ' & src.quoteShell
   if execShellCmd(cmd) != 0:
     # Non-fatal: if this fails the tests still run, just without the
