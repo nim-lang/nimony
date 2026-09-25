@@ -21,7 +21,7 @@ type
   EvalContext* = object
     c: ptr SemContext
     trueValue, falseValue: Cursor
-    expectedType: TypeCursor # used as the result type when forwarding
+    expectedType*: TypeCursor # used as the result type when forwarding
                              # complex const initialisers (e.g. `block:`)
                              # to `executeExpr`. Default-constructed when
                              # no type context is available.
@@ -219,6 +219,33 @@ proc emptySeqValue(c: var EvalContext; seqType: Cursor; info: NifLineInfo): Curs
   buf.addParRi() # oconstr
   result = cursorAt(buf, 0)
 
+proc executeRetType(c: EvalContext; routineRetType: TypeCursor): Cursor =
+  ## Pick the result type passed to `executeExpr`. A concrete routine return
+  ## type is used as-is; `auto`, `untyped`, or generic returns fall back to
+  ## `expectedType`, and finally to `auto` so an untyped plugin can expand
+  ## first and the sub-compile can infer the serialised type.
+  result = skipModifier(routineRetType)
+  if result.typeKind in {AutoT, UntypedT} or containsGenericParams(result):
+    if not cursorIsNil(c.expectedType):
+      result = skipModifier(c.expectedType)
+    elif c.c != nil:
+      result = c.c[].types.autoType
+
+proc pluginExecuteRetType(c: EvalContext; templateSym: Cursor): Cursor =
+  ## Result type for re-driving a parked `(pluginCall <template> …)` through
+  ## `executeExpr`, mirroring `forwardToExecute`.
+  if templateSym.kind == Symbol:
+    let res = tryLoadSym(templateSym.symId)
+    if res.status == LacksNothing and res.decl.symKind in RoutineKinds:
+      result = executeRetType(c, asRoutine(res.decl).retType)
+      return
+  if not cursorIsNil(c.expectedType):
+    result = skipModifier(c.expectedType)
+  elif c.c != nil:
+    result = c.c[].types.autoType
+  else:
+    result = default(Cursor)
+
 proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
                       args: var Cursor): Cursor =
   ## Reconstructs `(call routine args...)` from `args` (positioned at the first
@@ -244,10 +271,7 @@ proc forwardToExecute(c: var EvalContext; n: Cursor; routine: Routine;
   # distinct conversion (e.g. `Answer(int.fourtytwo)`) are not serialised
   # with the outer const's type. Keep `expectedType` for generic return
   # types such as `@[]` → `newSeqUninit[T](0)` where T comes from context.
-  var retType = skipModifier(routine.retType)
-  if retType.typeKind == AutoT or containsGenericParams(retType):
-    if not cursorIsNil(c.expectedType):
-      retType = skipModifier(c.expectedType)
+  let retType = executeRetType(c, routine.retType)
   let errorMsg = c.c.executeExpr(c.c[], cursorAt(evaluatedCall, 0),
                                  retType, resultBuf, n.info)
   if errorMsg.len == 0:
@@ -1108,6 +1132,33 @@ proc evalImpl(c: var EvalContext; n: var Cursor): Cursor =
     of CallKinds:
       result = evalCall(c, n)
       skip n
+    of PluginCallX:
+      # A parked deferred plugin call `(pluginCall <template> <args>…)`. Once its
+      # arguments are concrete, re-drive the plugin by reconstructing the call and
+      # forwarding to the sub-compile, exactly as `semPluginCall` does after
+      # instantiation. Guarded like the other shell-out arms (`AtX` in `evalCall`).
+      if c.c == nil or c.c.executeExpr == nil or c.noExecute:
+        cannotEval n
+        skip n
+      else:
+        var ch = n
+        inc ch # template symbol, then args
+        let retType = pluginExecuteRetType(c, ch)
+        var callBuf = createTokenBuf(16)
+        callBuf.addParLe(CallS, n.info)
+        var arg = ch
+        while arg.hasMore:
+          callBuf.addSubtree arg
+          skip arg
+        callBuf.addParRi()
+        var resultBuf = createTokenBuf(12)
+        let errorMsg = c.c.executeExpr(c.c[], cursorAt(callBuf, 0), retType, resultBuf, n.info)
+        if errorMsg.len == 0:
+          result = cursorAt(resultBuf, 0)
+        else:
+          result = c.error("cannot evaluate expression at compile time: " &
+            asNimCode(n) & "\n\n" & errorMsg, n.info)
+        skip n
     of SizeofX:
       # `c.c` is nil for callers that evaluate outside sem (hexer's constant
       # folding); sizes are only computable with a SemContext, so fold fails

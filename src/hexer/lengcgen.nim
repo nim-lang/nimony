@@ -1683,18 +1683,6 @@ proc trAddrAconstrUarray(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.addParRi() # close addr
   dest.addParRi() # close cast
 
-proc isAddrOfAconstrUarray(n: Cursor): bool =
-  ## True when `n` points at `(addr (aconstr (uarray T) …))`. Used to
-  ## detect the static-uarray-pointer shape produced by exprexec.
-  var inner = n
-  inc inner # past addr tag
-  if inner.exprKind == AconstrX:
-    var typSlot = inner
-    inc typSlot # past aconstr tag
-    result = typSlot.typeKind == UarrayT
-  else:
-    result = false
-
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   case n.kind
   of TagLit:

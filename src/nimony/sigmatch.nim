@@ -593,6 +593,24 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
     of ExprX:
       if not isPureTypeValueExpr(a): return
       result = foldValueExpr(m, typeValueExpr(a), depth+1)
+    of PluginCallX:
+      # A deferred plugin call in a value position (typically an array length
+      # `(pluginCall twicePlugin N)`). Substitute the bindings inferred so far;
+      # if that makes every argument concrete, re-drive the plugin through the
+      # shared `expreval` engine. This is the same engine `foldStaticArg` uses,
+      # but allowed to shell out to `executeExpr` here because a concrete plugin
+      # call is exactly what the deferral was waiting for. While any argument is
+      # still symbolic the call stays parked and is compared structurally.
+      assert m.context != nil
+      assert m.context.executeExpr != nil
+      var subBuf = createTokenBuf(16)
+      substituteTypevars(subBuf, a, m.inferred)
+      var cur = cursorAt(subBuf, 0)
+      if not containsGenericParams(cur):
+        var ec = initEvalContext(m.context, noExecute = false)
+        let folded = eval(ec, cur)
+        if not (folded.isTagLit and folded.cursorTagId == nifpools.ErrT):
+          result = getConstOrdinalValue(folded)
     else:
       if a.typeKind == RangetypeT:
         # An array-index range. `semArrayType` stores a still-symbolic length as
