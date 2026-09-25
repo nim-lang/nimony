@@ -113,7 +113,7 @@ proc transferIfRegularFile(fd: cint): bool {.inline.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, FileHandle, EINPROGRESS, EAGAIN, EWOULDBLOCK,
+  from std/posix/posix import SockLen, FileHandle, Off, EINVAL, EINPROGRESS, EAGAIN, EWOULDBLOCK,
                               SOL_SOCKET, F_GETFL, F_SETFL, O_NONBLOCK,
                               pcall, Mode, Stat, fstat, S_ISREG, close
 
@@ -125,6 +125,28 @@ when defined(posix):
 
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
+  const
+    PreadName = when defined(linux) and defined(i386): "pread64" else: "pread"
+    PwriteName = when defined(linux) and defined(i386): "pwrite64" else: "pwrite"
+  proc posixPread(fd: cint; buf: nil pointer; count: int; offset: Off): int {.importc: PreadName.}
+  proc posixPwrite(fd: cint; buf: nil pointer; count: int; offset: Off): int {.importc: PwriteName.}
+
+  proc submitPositioned*(idx: int) =
+    ## epoll cannot register regular files. Execute the positioned syscall
+    ## directly when draining the queue, rather than waiting for readiness.
+    ## This may block the polling lane; a deadline cannot interrupt the call.
+    let op = addr gSlots[ioLane()].slots[idx].op
+    let transfer = if op.kind == opRead: op.read else: op.write
+    if op.deadline != never and op.deadline <= monoNow():
+      complete(idx, IoTimedOut)
+    elif transfer.len < 0 or op.offset < 0:
+      complete(idx, -int(EINVAL))
+    else:
+      let r = if op.kind == opRead:
+        int pcall(posixPread(op.fd, transfer.buf, transfer.len, Off(op.offset)))
+      else:
+        int pcall(posixPwrite(op.fd, transfer.buf, transfer.len, Off(op.offset)))
+      complete(idx, r)
   proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
   const
     GetSockOptName = when defined(illumos): "__xnet_getsockopt" else: "getsockopt"

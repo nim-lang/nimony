@@ -121,7 +121,7 @@ proc enqueueOp(op: OpContext) =
     # out of its completion wait. The first op for a socket claims it for the
     # submitting lane.
     var lane = ioLane()
-    if op.fd >= 0:
+    if op.fd >= 0 and not op.positioned:
       let owner = iocpOwnerLane(op.fd)
       if owner >= 0: lane = owner
     let foreign = lane != ioLane()
@@ -262,24 +262,29 @@ proc submitSetNonBlocking*(fd: cint; deadline: Deadline;
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-when defined(illumos):
-  proc submitReadAt*(fd: cint; buf: pointer; len: int; offset: int64;
-                     deadline: Deadline; cont = Continuation(fn: nil, env: nil);
-                     resPtr: nil ptr int = nil): SeqNum =
-    ## Positioned file I/O via event-port AIO. The backend owns a staging
-    ## buffer until libc finishes, including after cancellation/deadline.
-    result = nextSeqNum()
-    enqueueOp(OpContext(kind: opRead, fd: fd, seqnum: result,
-      read: OpBuf(buf: buf, len: len), positioned: true, offset: offset, cont: cont, res: cast[int](resPtr), deadline: deadline))
+proc submitReadAt*(fd: cint; buf: pointer; len: int; offset: int64;
+                   deadline: Deadline; cont = Continuation(fn: nil, env: nil);
+                   resPtr: nil ptr int = nil): SeqNum =
+  ## Read at an explicit byte offset without changing the file cursor.
+  ## Keep the buffer live until completion. Short reads and EOF are legal;
+  ## offsets and lengths must be nonnegative. Synchronous fallbacks occupy
+  ## the polling lane and cannot be interrupted once the transfer starts.
+  ## On Windows fd is a CRT descriptor (_open/_fileno), not a ring HANDLE
+  ## or socket; close it with the CRT, not closeFd.
+  result = nextSeqNum()
+  enqueueOp(OpContext(kind: opRead, fd: fd, seqnum: result,
+    read: OpBuf(buf: buf, len: len), positioned: true, offset: offset,
+    cont: cont, res: cast[int](resPtr), deadline: deadline))
 
-  proc submitWriteAt*(fd: cint; buf: pointer; len: int; offset: int64;
-                      deadline: Deadline; cont = Continuation(fn: nil, env: nil);
-                      resPtr: nil ptr int = nil): SeqNum =
-    ## Positioned counterpart of submitWrite. Does not use the shared file
-    ## position; caller must keep the buffer live until logical completion.
-    result = nextSeqNum()
-    enqueueOp(OpContext(kind: opWrite, fd: fd, seqnum: result,
-      write: OpBuf(buf: buf, len: len), positioned: true, offset: offset, cont: cont, res: cast[int](resPtr), deadline: deadline))
+proc submitWriteAt*(fd: cint; buf: pointer; len: int; offset: int64;
+                    deadline: Deadline; cont = Continuation(fn: nil, env: nil);
+                    resPtr: nil ptr int = nil): SeqNum =
+  ## Positioned counterpart of submitWrite; does not move the file cursor.
+  ## On Windows fd is a CRT descriptor, as for submitReadAt.
+  result = nextSeqNum()
+  enqueueOp(OpContext(kind: opWrite, fd: fd, seqnum: result,
+    write: OpBuf(buf: buf, len: len), positioned: true, offset: offset,
+    cont: cont, res: cast[int](resPtr), deadline: deadline))
 
 proc submitAccept*(listenFd: cint; deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
