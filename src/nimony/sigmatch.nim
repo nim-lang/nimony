@@ -606,12 +606,12 @@ proc foldValueExpr(m: var Match; a: Cursor; depth = 0): xint =
       var subBuf = createTokenBuf(16)
       substituteTypevars(subBuf, a, m.inferred)
       var sub = cursorAt(subBuf, 0)
-      if containsGenericParams(sub): return
-      var ec = initEvalContext(m.context, noExecute = false)
-      var cur = sub
-      let folded = eval(ec, cur)
-      if folded.isTagLit and folded.cursorTagId == nifpools.ErrT: return
-      result = getConstOrdinalValue(folded)
+      if not containsGenericParams(sub):
+        var ec = initEvalContext(m.context, noExecute = false)
+        var cur = sub
+        let folded = eval(ec, cur)
+        if not (folded.isTagLit and folded.cursorTagId == nifpools.ErrT):
+          result = getConstOrdinalValue(folded)
     else:
       if a.typeKind == RangetypeT:
         # An array-index range. `semArrayType` stores a still-symbolic length as
