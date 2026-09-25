@@ -75,7 +75,7 @@ proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, EINPROGRESS, EAGAIN, EWOULDBLOCK, SOL_SOCKET, pcall
+  from std/posix/posix import SockLen, Off, EINVAL, EINPROGRESS, EAGAIN, EWOULDBLOCK, SOL_SOCKET, pcall
   when defined(illumos):
     from std/posix/posix import fcntl, F_GETFL, F_SETFL, O_NONBLOCK, close
 
@@ -87,6 +87,24 @@ when defined(posix):
 
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
+  proc posixPread(fd: cint; buf: nil pointer; count: int; offset: Off): int {.importc: "pread".}
+  proc posixPwrite(fd: cint; buf: nil pointer; count: int; offset: Off): int {.importc: "pwrite".}
+
+  proc submitPositioned*(idx: int) =
+    ## epoll cannot register regular files. Execute the positioned syscall
+    ## directly when draining the queue, rather than waiting for readiness.
+    ## This may block the polling lane; a deadline cannot interrupt the call.
+    let op = addr gSlots[ioLane()].slots[idx].op
+    if op.deadline != never and op.deadline <= monoNow():
+      complete(idx, IoTimedOut)
+    elif op.len < 0 or op.offset < 0:
+      complete(idx, -int(EINVAL))
+    else:
+      let r = if op.kind == opRead:
+        int pcall(posixPread(op.fd, op.buf, op.len, Off(op.offset)))
+      else:
+        int pcall(posixPwrite(op.fd, op.buf, op.len, Off(op.offset)))
+      complete(idx, r)
   proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
   when defined(illumos):
     proc getsockopt(s: cint; level, optname: cint; val: pointer;

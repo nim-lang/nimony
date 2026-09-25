@@ -156,11 +156,9 @@ type
     seqnum*: SeqNum
     buf*: nil pointer
     len*: int
-    when defined(illumos):
-      positioned*: bool
-      offset*: int64
-        ## Explicit position for event-port AIO; never emulate this by racing
-        ## lseek/read on a shared open-file description.
+    positioned*: bool
+    offset*: int64
+      ## Explicit file position; never emulate with lseek/read on a shared fd.
     cont*: Continuation
     res*: int
     deadline*: Deadline
