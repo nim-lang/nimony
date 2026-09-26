@@ -382,18 +382,29 @@ deliberately fatal, and on a target without memory protection a wild store to a
 low address instead.
 
 Both halves are exercised by `tests/nimony/oom`, which compiles under
-`-d:nimMaxHeap=1` (`lib/std/system/memory.nim`): the budget caps what a thread may
-hold, so a failed `new` is reachable on purpose rather than only under real
-memory pressure. `toom_raises.nim` catches the `OutOfMemError`; `toom_panic.nim`
-dies with `out of memory`; `toom_string.nim` covers the recoverable neighbours
+`-d:nimMaxHeap=1 -d:nimHardenOutOfMem`. `nimMaxHeap` is Nim's heap cap, with
+Nim's unit and Nim's consequence -- `raiseOutOfMem` aborts -- and
+`nimHardenOutOfMem` turns it into a refusal, so allocation answers `nil` and
+these paths run instead of the process dying. Both live in `system/alloc.nim`,
+checked against the occupancy the allocator already tracks: no second layer of
+accounting, and the `rawAlloc` level is where the check sits because `nil` is
+already what its callers expect (`allocPages`' callers dereference immediately).
+
+`toom_raises.nim` catches the `OutOfMemError`; `toom_panic.nim` dies with `out of
+memory`; `toom_string.nim` and `toom_table.nim` cover the recoverable neighbours
 described below.
 
-The budget is a **live** one -- `dealloc` gives its bytes back. A cumulative
-"bytes ever handed out" counter is simpler and was tried first, but it makes
-recovery unobservable: once tripped, nothing can allocate again, not even the
-`echo` that would report what happened. A live budget lets a string release its
-buffer, become the cookie, and leave room for the program to carry on -- which
-is the behaviour under test.
+The cap is on memory **held**, not on bytes ever handed out. That matters for
+more than fidelity to Nim: a cumulative counter makes recovery unobservable,
+since once tripped nothing can allocate again -- not even the `echo` that would
+report what happened. A live cap lets a string release its buffer, become the
+cookie, and leave room for the program to carry on, which is the behaviour under
+test.
+
+Making allocation able to fail at all turned up three places in the ported
+allocator that assumed it could not: `rawAlloc0` and `alloc0` zeroed a `nil`
+result, and `realloc` copied into one -- and worse, freed the original block on
+the way, so `seqimpl.resize` would have lost the elements it is careful to keep.
 
 Two loose ends remain:
 

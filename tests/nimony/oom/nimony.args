@@ -1,1 +1,3 @@
+--define:nimNativeAlloc
 --define:nimMaxHeap=1
+--define:nimHardenOutOfMem

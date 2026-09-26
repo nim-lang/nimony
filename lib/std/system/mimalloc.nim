@@ -51,36 +51,15 @@ func mi_stats_get(stats_size: csize_t; stats: ptr MiStatsPrefix) {.importc: "mi_
 #                      page_faults: ptr csize_t) {.importc: "mi_process_info", cdecl.}
 
 func alloc*(size: int): pointer =
-  when nimMaxHeap > 0:
-    if not memBudgetTake(size): return nil
   result = mi_malloc(size.csize_t)
-  when nimMaxHeap > 0:
-    # Settle up at the USABLE size, which is what `dealloc` will give back.
-    if result == nil: memBudgetGive(size)
-    else: memBudgetGive(size - int mi_usable_size(result))
 
 func alloc0*(size: int): pointer =
-  when nimMaxHeap > 0:
-    if not memBudgetTake(size): return nil
   result = mi_calloc(1.csize_t, size.csize_t)
-  when nimMaxHeap > 0:
-    if result == nil: memBudgetGive(size)
-    else: memBudgetGive(size - int mi_usable_size(result))
 
 func realloc*(p: pointer; size: int): pointer =
-  when nimMaxHeap > 0:
-    let oldSize = if p != nil: int mi_usable_size(p) else: 0
-    # Authorize the delta BEFORE resizing: a `realloc` cannot be undone, so the
-    # budget has to say no while the old block is still the only one.
-    if not memBudgetTake(size - oldSize): return nil
   result = mi_realloc(p, size.csize_t)
-  when nimMaxHeap > 0:
-    if result == nil: memBudgetGive(size - oldSize)
-    else: memBudgetGive(size - int mi_usable_size(result))
 
 func dealloc*(p: pointer) =
-  when nimMaxHeap > 0:
-    if p != nil: memBudgetGive(int mi_usable_size(p))
   mi_free(p)
 
 func allocatedSize*(p: pointer): int =

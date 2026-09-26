@@ -1,12 +1,13 @@
-## Low-level memory primitives and the default allocator for Nimony.
+## Low-level memory primitives and the allocators for Nimony.
 ##
-## The default allocator is the mimalloc shim (`include mimalloc`). A native
-## allocator — a literal port of Nim 2's `lib/system/{alloc,osalloc}.nim`
-## (page-chunk TLSF: segregated small cells, coalescing big chunks, huge mmap;
-## owner-stamped lock-free deferred free for cross-thread deallocations) — is
-## available behind `-d:nimNativeAlloc`. It is not yet the default: it still
-## regresses a couple of arc tests (see project notes), so mimalloc stays the
-## default until those are root-caused.
+## The default allocator is the native one — a literal port of Nim 2's
+## `lib/system/{alloc,osalloc}.nim` (page-chunk TLSF: segregated small cells,
+## coalescing big chunks, huge mmap; owner-stamped lock-free deferred free for
+## cross-thread deallocations). The driver defines `nimNativeAlloc` for every
+## backend, because the libc-free stdlib is the default (`nimony.nim`); the
+## mimalloc shim is the opt-OUT, reached with `-d:useMimalloc` (allocator only)
+## or `-d:useLibc` (allocator and IO together), and the native backend is always
+## libc-free regardless.
 ##
 ## The user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are
 ## `func` (noSideEffect) so they remain usable inside the `func`s of pure data
@@ -14,7 +15,8 @@
 ## is an implementation detail invisible to callers, so each wrapper launders
 ## the side-effecting MemRegion proc through `{.cast(noSideEffect).}`.
 ##
-## Compile with `-d:nimNativeAlloc` to use the native ported allocator.
+## `-d:nimMaxHeap=N` caps the heap at N megabytes and `-d:nimHardenOutOfMem`
+## makes that cap recoverable; both live in the ported allocator, see below.
 
 # --- C memory intrinsics (needed by the allocator, hence defined first) ----
 func c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
@@ -74,56 +76,12 @@ func zeroMem*(dest: pointer; size: int) {.inline.} =
   ## Sets `size` bytes at `dest` to zero.
   c_memset(dest, 0, csize_t size)
 
-# --- optional memory budget (`-d:nimMaxHeap=10`) ---------------------------
-
-const nimMaxHeap {.intdefine.}: int = 0
-  ## Megabytes of heap this thread may hold at once. `0` (the default) means no
-  ## limit and compiles the accounting away entirely.
-  ##
-  ## This is a LIVE budget: `dealloc` gives its bytes back, so a program that
-  ## frees what it allocates keeps running. That is what makes the recovery
-  ## paths observable -- a string that hits the cap releases its buffer and
-  ## becomes the OOM cookie, which frees enough budget for the program to go on
-  ## and report what happened. A cumulative "bytes ever handed out" counter
-  ## cannot do that: once tripped, nothing can ever allocate again, not even to
-  ## print the diagnosis.
-  ##
-  ## Everything is accounted at the allocator's USABLE size, on both ends, so
-  ## the counter does not drift.
-  ##
-  ## It is a fault-injection and hardening knob: `tests/nimony/oom` uses it to
-  ## reach the out-of-memory paths on purpose. See
-  ## `doc/internals/failure_modes.md`.
-  ##
-  ## Name, unit and default are Nim's (`nimMaxHeap` in `lib/system/alloc.nim`),
-  ## so `-d:nimMaxHeap=10` means the same thing to both compilers. The behaviour
-  ## on hitting the cap differs: Nim checks it inside its page allocator and
-  ## calls `raiseOutOfMem()`, which aborts, while here `alloc` returns `nil` so
-  ## the recovery paths this runtime is built around actually run. It also
-  ## applies to whichever allocator is in use, because it sits in the `alloc`
-  ## wrappers rather than in one allocator's page layer.
-
-when nimMaxHeap > 0:
-  const NimMaxHeapBytes = nimMaxHeap * 1024 * 1024
-
-  var liveMem {.threadvar.}: int
-
-  func memBudgetTake(size: int): bool =
-    ## Charges `size` bytes, or answers false and charges nothing when that
-    ## would take this thread over the cap -- which is what makes `alloc`
-    ## return `nil`. A negative `size` (a shrinking `realloc`) always succeeds.
-    ## Written to stay inside `int` for any `size`.
-    {.cast(noSideEffect).}:
-      if size > 0 and liveMem > NimMaxHeapBytes - size:
-        return false
-      liveMem = liveMem + size
-      return true
-
-  func memBudgetGive(size: int) {.inline.} =
-    ## Returns `size` bytes to the budget. Also used with a negative `size` to
-    ## correct a charge upwards once the usable size is known.
-    {.cast(noSideEffect).}:
-      liveMem = liveMem - size
+# The `-d:nimMaxHeap=N` heap cap and its recoverable companion
+# `-d:nimHardenOutOfMem` live in the ported allocator (`system/alloc.nim`), where
+# the occupancy they check is already tracked. Keeping the accounting there
+# rather than in the wrappers below is what keeps it free -- no second layer of
+# bookkeeping on every allocation -- and it covers the default configuration,
+# since `nimNativeAlloc` is the default. A `-d:useMimalloc` build ignores both.
 
 when not defined(nimNativeAlloc):
   # NOTE: `-d:valgrind` does nothing here. It instruments the NATIVE allocator
@@ -211,49 +169,23 @@ else:
   # --- user-facing API: `func` over a per-thread global MemRegion ----------
   var allocator {.threadvar.}: MemRegion
 
-  when nimMaxHeap > 0:
-    func budgetSize(p: pointer): int {.inline.} =
-      ## The allocator's usable size for `p`. `ptrSize` is side-effecting and
-      ## the budget only reads it, so launder it the way the wrappers below do.
-      {.cast(noSideEffect).}: result = ptrSize(p)
-
   func alloc*(size: int): pointer =
     ## Allocates `size` bytes of uninitialized memory.
-    when nimMaxHeap > 0:
-      if not memBudgetTake(size): return nil
     {.cast(noSideEffect).}:
       result = alloc(allocator, size)
-    when nimMaxHeap > 0:
-      if result == nil: memBudgetGive(size)
-      else: memBudgetGive(size - budgetSize(result))
 
   func alloc0*(size: int): pointer =
     ## Allocates `size` bytes of zero-initialized memory.
-    when nimMaxHeap > 0:
-      if not memBudgetTake(size): return nil
     {.cast(noSideEffect).}:
       result = alloc0(allocator, size)
-    when nimMaxHeap > 0:
-      if result == nil: memBudgetGive(size)
-      else: memBudgetGive(size - budgetSize(result))
 
   func realloc*(p: pointer; size: int): pointer =
     ## Grows or shrinks the allocation `p` to `size` bytes, preserving contents.
-    when nimMaxHeap > 0:
-      let oldSize = if p != nil: budgetSize(p) else: 0
-      # Authorize the delta BEFORE resizing: a `realloc` cannot be undone, so
-      # the budget has to say no while the old block is still the only one.
-      if not memBudgetTake(size - oldSize): return nil
     {.cast(noSideEffect).}:
       result = realloc(allocator, p, size)
-    when nimMaxHeap > 0:
-      if result == nil: memBudgetGive(size - oldSize)
-      else: memBudgetGive(size - budgetSize(result))
 
   func dealloc*(p: pointer) =
     ## Frees memory previously returned by `alloc`/`alloc0`/`realloc`.
-    when nimMaxHeap > 0:
-      if p != nil: memBudgetGive(budgetSize(p))
     {.cast(noSideEffect).}:
       dealloc(allocator, p)
 

@@ -1,6 +1,7 @@
-# `-d:nimMaxHeap=1` (see `nimony.args`) caps what this thread may hand out, which is
-# how the out-of-memory paths are reached on purpose. Inside a `.raises`
-# routine a failed `new` raises `OutOfMemError`, so the program recovers.
+# `-d:nimMaxHeap=1 -d:nimHardenOutOfMem` (see `nimony.args`) caps the heap and
+# makes exceeding it recoverable, which is how the out-of-memory paths are
+# reached on purpose. Inside a `.raises` routine a failed `new` raises
+# `OutOfMemError`, so the program recovers.
 import std / [syncio]
 
 type Node = ref object
