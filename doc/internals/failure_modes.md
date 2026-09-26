@@ -72,7 +72,7 @@ lie about — see the range-check case below.
 | `succ`/`pred`/`inc`/`dec` | wrap | recoverable | **[dsgn]** |
 | narrowing conversion to a machine-range type | truncate | recoverable | **[dsgn]** `RangeCheck` is in `CheckMode` and in `DefaultSettings`, but nothing reads it |
 | assignment into `range[a..b]` | **clamp**, not truncate | recoverable | **[dsgn]** see below |
-| `alloc` out of memory | `nil: pointer` | recoverable | **[impl]** `missingBytes` |
+| `alloc` out of memory | `nil: pointer` | recoverable | **[impl]** `missingBytes`; `-d:maxMem=N` injects it |
 | `new` out of memory | none: `ref T` is not-nil | **fatal** | **[impl]** raises `OutOfMemError` inside a `.raises` routine, panics elsewhere |
 | `a[i]` on array, `s[i]` on seq/string | none | fatal | **[impl]** `die 1` |
 | `.requires` violation | none: the body assumes it | fatal | **[impl]** `die 1` |
@@ -219,6 +219,55 @@ a loop bound. Wrapping is *safe* but not *correct*, and the window is as wide as
 the distance to the nearest boundary check. For a server that is the right
 trade; it is not Nim 2's.
 
+## Strings and seqs: the recoverable class in practice
+
+Both are values with a representation for "this did not work", which is what
+condition 1 asks for, and both are hardened so that a failed allocation leaves a
+usable object behind.
+
+**A string becomes the OOM cookie.** `strOom` installs `"\nD^OOM\0"` packed
+inline -- an ordinary 7-byte short string -- and `isOom` detects it. Every
+allocation site in `stringimpl.nim` is guarded, and the site that grows an
+existing heap string releases the old block through `arcDec` before installing
+the cookie: dropping the pointer would leak a block at the one moment memory is
+known to be scarce. The cookie is a normal value, so appending to it simply
+grows a new string out of it; code that wants to *notice* the failure has to
+ask `isOom` (or `threadOutOfMem()`) at the point of the operation.
+
+**A seq keeps what it had.** A failed `realloc` leaves the original block
+allocated and untouched, so `resize` and `=copy` keep it: the growth did not
+happen and the seq is still exactly what it was. They previously overwrote
+`data` with `nil` and set `len = 0`, which leaked the block *and* silently
+truncated the caller's elements -- an out-of-memory during `s.add` destroyed the
+whole sequence. Because failure is now invisible in `data`, callers read the
+refusal off the **length**: `grow` and `setLen` test `s.len < newLen`, not
+`s.data == nil`, or they would fill `newLen` slots into storage that never grew.
+
+The asymmetry with `new` is condition 1 again: `seq` and `string` have a valid
+empty-ish representation, a not-nil `ref` does not.
+
+**A Table refuses the insert.** A `Table` grows two seqs -- `data` for the pairs
+and `hashes` for the open-addressing index -- and the probe loops in
+`tables.nim` (`rawGet`, `emptySlot`) walk until they find a free slot, which is
+sound only while the index has one. `mustRehash` guarantees that in normal
+operation; an index that cannot be *resized* breaks it, and `data` growing on
+past it used to fill the index completely, at which point a lookup for an absent
+key never terminated. So `rawPut` refuses the insert when the index cannot
+absorb it: an allocation failure like any other, leaving a table that is short of
+what was asked for but wholly consistent. Two related rules fall out:
+
+- `fillHashPart` is the only thing that builds an index from `data`, and it
+  sizes for what `data` already holds. `resize` only grows an existing index, so
+  using it to create one would leave an index that is non-empty and yet missing
+  every key already stored -- which `rawGet` would trust.
+- `rawGet` falls back to a linear scan when there is no index at all. Slow, but
+  answering "absent" for a key that is present would make `[]=` store a second
+  copy of it.
+
+`mgetOrPut` has to notice the refusal too: it takes `data.len-1` as the index of
+what it just inserted, which on a refusal names the *previous* pair and would
+hand back a `var V` into someone else's value.
+
 ## The fatal class
 
 No continuation exists, so the operation cannot return and the process exits via
@@ -331,6 +380,20 @@ the `rc` store went through the `nil`: the process died by SIGSEGV at a faulting
 address, with no message and no `die 1` — accidentally fatal rather than
 deliberately fatal, and on a target without memory protection a wild store to a
 low address instead.
+
+Both halves are exercised by `tests/nimony/oom`, which compiles under
+`-d:maxMem=1` (`lib/std/system/memory.nim`): the budget caps what a thread may
+hold, so a failed `new` is reachable on purpose rather than only under real
+memory pressure. `toom_raises.nim` catches the `OutOfMemError`; `toom_panic.nim`
+dies with `out of memory`; `toom_string.nim` covers the recoverable neighbours
+described below.
+
+The budget is a **live** one -- `dealloc` gives its bytes back. A cumulative
+"bytes ever handed out" counter is simpler and was tried first, but it makes
+recovery unobservable: once tripped, nothing can allocate again, not even the
+`echo` that would report what happened. A live budget lets a string release its
+buffer, become the cookie, and leave room for the program to carry on -- which
+is the behaviour under test.
 
 Two loose ends remain:
 

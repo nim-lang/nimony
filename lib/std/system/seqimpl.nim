@@ -117,13 +117,19 @@ func resize[T](dest: var seq[T]; addedElements: int): bool {.nodestroy.} =
   let oldCap = dest.capInBytes div sizeof(T)
   let newCap = recalcCap(oldCap, addedElements)
   let memSize = memSizeInBytes[T](newCap)
-  dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
-  if dest.data == nil:
-    dest.len = 0
+  let p = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
+  if p == nil:
+    # A failed `realloc` leaves the original block allocated and untouched, so
+    # keep it: the growth simply did not happen and `dest` is still exactly the
+    # seq it was. Overwriting `dest.data` with `nil` would leak that block and
+    # lose every element with it -- truncating the caller's data to nothing is
+    # the worst possible answer to being out of memory, and both callers
+    # (`add`, `growUnsafe`) already bail on `false`.
     {.cast(noSideEffect).}:
       oomHandler memSize
     result = false
   else:
+    dest.data = p
     result = true
 
 func `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
@@ -137,12 +143,15 @@ func `=copy`*[T](dest: var seq[T]; src: seq[T]) {.nodestroy.} =
     let oldCap = dest.capInBytes div sizeof(T)
     let newCap = recalcCap(oldCap, src.len - oldCap)
     let memSize = memSizeInBytes[T](newCap)
-    dest.data = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
-    if dest.data == nil:
-      dest.len = 0
+    let p = cast[ptr UncheckedArray[T]](realloc(dest.data, memSize))
+    if p == nil:
+      # As in `resize`: the old block survives a failed `realloc`, so `dest`
+      # keeps it and stays a valid seq holding its previous contents. The copy
+      # did not happen; dropping the pointer would leak and truncate.
       {.cast(noSideEffect).}:
         oomHandler memSize
       return
+    dest.data = p
   dest.len = src.len
   var i = 0
   while i < dest.len:
@@ -244,7 +253,11 @@ func grow*[T](s: var seq[T]; newLen: int; val: T) {.nodestroy.} =
   ## Extends `s` to length `newLen`, filling new slots with copies of `val`.
   var i = s.len
   growUnsafe(s, newLen)
-  if s.data == nil: return
+  # `growUnsafe` leaves the length alone when it could not allocate, and the
+  # seq keeps its old (smaller) buffer -- so the refusal must be read off the
+  # LENGTH. Testing `s.data == nil` instead would see a perfectly good buffer
+  # and fill `newLen` slots into storage that never grew.
+  if s.len < newLen: return
   while i < newLen:
     (s.data[i]) = `=dup`(val)
     inc i
@@ -256,7 +269,7 @@ func setLen*[T: HasDefault](s: var seq[T]; newLen: int) {.nodestroy.} =
   else:
     var i = s.len
     growUnsafe(s, newLen)
-    if s.data == nil: return
+    if s.len < newLen: return  # out of memory; see `grow`
     while i < newLen:
       (s.data[i]) = default(T)
       inc i

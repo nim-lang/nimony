@@ -383,6 +383,15 @@ func ensureUniqueLong(s: var string; oldLen, newLen: int) =
       # Sync inline cache after creating new block (use oldLen since new data may not exist yet)
       copyMem(inlinePtrV(s), addr p.data[0], min(oldLen, AlwaysAvail))
     else:
+      # `s` becomes the OOM cookie, so release what it is holding first: only
+      # the heap case owns anything (a static long string is never freed, a
+      # short/medium one keeps its chars inline), and `arcDec` covers both the
+      # unique owner and a shared one exactly as the success path above does.
+      # Dropping the pointer instead would leak a block at the one moment
+      # memory is known to be scarce.
+      if isHeap:
+        let old = s.more
+        if arcDec(old.rc): dealloc(old)
       strOom s, LongStringDataOffset + newCap
 
 func transitionToLong(s: var string; sl: int; newLen: int) =

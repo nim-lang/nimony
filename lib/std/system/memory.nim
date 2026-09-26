@@ -74,6 +74,49 @@ func zeroMem*(dest: pointer; size: int) {.inline.} =
   ## Sets `size` bytes at `dest` to zero.
   c_memset(dest, 0, csize_t size)
 
+# --- optional memory budget (`-d:maxMem=10`) -------------------------------
+
+const maxMem* {.intdefine.}: int = 0
+  ## Megabytes of heap this thread may hold at once. `0` (the default) means no
+  ## limit and compiles the accounting away entirely.
+  ##
+  ## This is a LIVE budget: `dealloc` gives its bytes back, so a program that
+  ## frees what it allocates keeps running. That is what makes the recovery
+  ## paths observable -- a string that hits the cap releases its buffer and
+  ## becomes the OOM cookie, which frees enough budget for the program to go on
+  ## and report what happened. A cumulative "bytes ever handed out" counter
+  ## cannot do that: once tripped, nothing can ever allocate again, not even to
+  ## print the diagnosis.
+  ##
+  ## Everything is accounted at the allocator's USABLE size, on both ends, so
+  ## the counter does not drift.
+  ##
+  ## It is a fault-injection and hardening knob: `tests/nimony/oom` uses it to
+  ## reach the out-of-memory paths on purpose. See
+  ## `doc/internals/failure_modes.md`.
+
+when maxMem > 0:
+  const MaxMemBytes = maxMem * 1024 * 1024
+
+  var liveMem {.threadvar.}: int
+
+  func memBudgetTake(size: int): bool =
+    ## Charges `size` bytes, or answers false and charges nothing when that
+    ## would take this thread over the cap -- which is what makes `alloc`
+    ## return `nil`. A negative `size` (a shrinking `realloc`) always succeeds.
+    ## Written to stay inside `int` for any `size`.
+    {.cast(noSideEffect).}:
+      if size > 0 and liveMem > MaxMemBytes - size:
+        return false
+      liveMem = liveMem + size
+      return true
+
+  func memBudgetGive(size: int) {.inline.} =
+    ## Returns `size` bytes to the budget. Also used with a negative `size` to
+    ## correct a charge upwards once the usable size is known.
+    {.cast(noSideEffect).}:
+      liveMem = liveMem - size
+
 when not defined(nimNativeAlloc):
   # NOTE: `-d:valgrind` does nothing here. It instruments the NATIVE allocator
   # (`system/valgrind.nim`), and this build uses mimalloc, whose heap valgrind
@@ -160,23 +203,49 @@ else:
   # --- user-facing API: `func` over a per-thread global MemRegion ----------
   var allocator {.threadvar.}: MemRegion
 
+  when maxMem > 0:
+    func budgetSize(p: pointer): int {.inline.} =
+      ## The allocator's usable size for `p`. `ptrSize` is side-effecting and
+      ## the budget only reads it, so launder it the way the wrappers below do.
+      {.cast(noSideEffect).}: result = ptrSize(p)
+
   func alloc*(size: int): pointer =
     ## Allocates `size` bytes of uninitialized memory.
+    when maxMem > 0:
+      if not memBudgetTake(size): return nil
     {.cast(noSideEffect).}:
       result = alloc(allocator, size)
+    when maxMem > 0:
+      if result == nil: memBudgetGive(size)
+      else: memBudgetGive(size - budgetSize(result))
 
   func alloc0*(size: int): pointer =
     ## Allocates `size` bytes of zero-initialized memory.
+    when maxMem > 0:
+      if not memBudgetTake(size): return nil
     {.cast(noSideEffect).}:
       result = alloc0(allocator, size)
+    when maxMem > 0:
+      if result == nil: memBudgetGive(size)
+      else: memBudgetGive(size - budgetSize(result))
 
   func realloc*(p: pointer; size: int): pointer =
     ## Grows or shrinks the allocation `p` to `size` bytes, preserving contents.
+    when maxMem > 0:
+      let oldSize = if p != nil: budgetSize(p) else: 0
+      # Authorize the delta BEFORE resizing: a `realloc` cannot be undone, so
+      # the budget has to say no while the old block is still the only one.
+      if not memBudgetTake(size - oldSize): return nil
     {.cast(noSideEffect).}:
       result = realloc(allocator, p, size)
+    when maxMem > 0:
+      if result == nil: memBudgetGive(size - oldSize)
+      else: memBudgetGive(size - budgetSize(result))
 
   func dealloc*(p: pointer) =
     ## Frees memory previously returned by `alloc`/`alloc0`/`realloc`.
+    when maxMem > 0:
+      if p != nil: memBudgetGive(budgetSize(p))
     {.cast(noSideEffect).}:
       dealloc(allocator, p)
 

@@ -1,0 +1,9 @@
+small: hi there oom=false
+big oom=true
+big len=7
+cookie: D^OOM
+thread saw oom=true
+revived len=8 oom=false
+seq len=3 10 20 30
+seq after add: 4 40
+still running

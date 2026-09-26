@@ -79,6 +79,13 @@ are copy-on-write internally.
   there is no value to hand back. A failed allocation raises `OutOfMemError`
   inside a `{.raises.}` routine and panics anywhere else. See
   `doc/internals/failure_modes.md` for why the two allocators differ.
+- `-d:maxMem=N` caps the heap a thread may hold at `N` megabytes, after which
+  `alloc` returns `nil` and the out-of-memory paths run for real. It is a live
+  budget: `dealloc` gives its bytes back, so a program that frees what it
+  allocates keeps running and can report what happened. Accounting is at the
+  allocator's usable size on both ends, so the counter does not drift. `0` (the
+  default) compiles it away entirely. A fault-injection and hardening knob --
+  see `doc/internals/failure_modes.md` and `tests/nimony/oom`.
 
 #### Strategies (`--mm:`)
 

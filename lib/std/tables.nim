@@ -40,7 +40,15 @@ const
   HashThreshold = 4
 
 func fillHashPart[K: Keyable, V](t: var Table[K, V]) =
-  t.hashes = newSeq[HashEntry](HashThreshold*2)
+  ## Builds a COMPLETE index for `data`, or leaves `hashes` empty.
+  ##
+  ## Sized for what `data` already holds rather than a fixed minimum: this runs
+  ## again after an earlier attempt could not allocate, by which time `data` may
+  ## be far past `HashThreshold`, and an index too small for it would leave
+  ## `emptySlot` with no free slot to find.
+  var cap = HashThreshold*2
+  while mustRehash(cap, t.data.len): cap = cap * 2
+  t.hashes = newSeq[HashEntry](cap)
   if t.hashes.len == 0: return
   for i in 0 ..< t.data.len:
     let fullhash = hash(t.data[i][0])
@@ -48,10 +56,14 @@ func fillHashPart[K: Keyable, V](t: var Table[K, V]) =
 
 func rawGet[K: Keyable, V](t: Table[K, V]; k: K; kh: Hash): int {.
     ensures: result < t.data.len.} =
-  if t.data.len <= HashThreshold:
+  if t.data.len <= HashThreshold or t.hashes.len == 0:
+    # No index: either the table is still tiny, or the index could not be
+    # allocated. A linear scan is slow but correct, and correctness is what
+    # matters here -- answering "absent" would make `[]=` store a second copy
+    # of a key that is already present.
     for i in 0 ..< t.data.len:
       if t.data[i][0] == k: return i
-  elif t.hashes.len > 0:
+  else:
     var h = kh
     while isFilled(t.hashes[h and high(t.hashes).uint]):
       let d = t.hashes[h and high(t.hashes).uint]
@@ -116,13 +128,31 @@ else:
     t.data[idx][1]
 
 func rawPut[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V; h: Hash) =
-  if t.data.len == HashThreshold:
-    fillHashPart t
+  if t.hashes.len == 0:
+    # `fillHashPart` is the only thing that builds an index from `data`;
+    # `resize` merely grows an existing one, so using it here would leave an
+    # index that is non-empty and yet missing every key already stored, and
+    # `rawGet` would trust it.
+    if t.data.len >= HashThreshold:
+      fillHashPart t
   elif mustRehash(t.hashes.len, t.data.len):
     resize t.hashes
+    if mustRehash(t.hashes.len, t.data.len):
+      # The index could not grow. Storing the pair anyway would eventually fill
+      # every slot, and both probe loops in this module assume a free slot
+      # exists -- a lookup for an absent key would then never terminate. Refuse
+      # the insert instead: it is an allocation failure like any other, and the
+      # table stays consistent and usable.
+      return
+  let oldLen = t.data.len
   t.data.add (k, v)
-  # an index that could not be allocated has no slot for the new entry
-  if t.hashes.len > 0:
+  # Two ways this can have no new entry to index: an index that could not be
+  # allocated (`hashes` empty), or an `add` that could not allocate -- which
+  # leaves `data` untouched, so `data.len` is the test. Indexing anyway would
+  # write a slot whose `position` names an OLD pair: `rawGet` compares keys and
+  # so never matches it, but it stays filled forever, and enough of them make
+  # `emptySlot` spin on a probe sequence with no free slot left.
+  if t.data.len > oldLen and t.hashes.len > 0:
     t.hashes[emptySlot(t.hashes, h)] = HashEntry(fullhash: h, position: t.data.len)
 
 func `[]=`*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V) =
@@ -139,9 +169,15 @@ func mgetOrPut*[K: Keyable, V](t: var Table[K, V]; k: sink K; v: sink V): var V 
   let h = hash(k)
   var idx = rawGet(t, k, h)
   if idx < 0:
+    let oldLen = t.data.len
     rawPut(t, k, v, h)
     idx = t.data.len-1
-    if idx < 0:
+    # When the insert was refused, `data.len-1` names the pair BEFORE the one
+    # asked for, so a reference to someone else's value would escape. Both tests
+    # matter: `idx < 0` for a table that is still empty, and `len <= oldLen` for
+    # a refusal that left a non-empty one. Keeping `idx < 0` explicit is also
+    # what tells the contract prover that the index below is in range.
+    if idx < 0 or t.data.len <= oldLen:
       {.cast(noSideEffect).}:
         raiseAssert "out of memory"
   result = t.data[idx][1]
