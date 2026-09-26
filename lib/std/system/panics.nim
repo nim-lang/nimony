@@ -68,6 +68,15 @@ proc panic*(s: string) {.noinline, noreturn.} =
   writeErr s
   die 1'i32
 
+proc panicOutOfMem*() {.noinline, noreturn.} =
+  ## Allocation failure with no error channel in scope. `ref T` is not-nil, so a
+  ## failed `new` has no continuation value and termination is the only report
+  ## left; inside a `.raises` routine the duplifier raises `OutOfMemError`
+  ## instead. See `doc/internals/failure_modes.md`.
+  ##
+  ## Not `inline`: `hexer` emits cross-module references to this symbol.
+  panic "out of memory\n"
+
 type
   HasWriteErr = concept
     proc writeErr(x: Self)

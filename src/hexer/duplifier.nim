@@ -1131,6 +1131,22 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
                       c.resultSym, info)
     c.dest.addDotToken() # no else
 
+proc genOutOfMemPanic(c: var Context; ow: OwningTemp; info: NifLineInfo) =
+  ## The non-raising counterpart of `genOutOfMemCheck`: with no error channel in
+  ## scope and a not-nil `ref` to produce, there is no value to continue with, so
+  ## the only report left is termination (`doc/internals/failure_modes.md`).
+  ## Without this the `rc` store `trNewobj` emits next would go through the
+  ## `nil`.
+  copyIntoKind c.dest, IteV, info:
+    copyIntoKind c.dest, EqX, info:
+      copyIntoKind c.dest, PointerT, info: discard
+      c.dest.addSymUse(ow.s, info)
+      copyIntoKind c.dest, NilX, info: discard
+    copyIntoKind c.dest, StmtsS, info:
+      copyIntoKind c.dest, CallS, info:
+        c.dest.addSymUse(pool.symId("panicOutOfMem.0." & SystemModuleSuffix), info)
+    c.dest.addDotToken() # no else
+
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
@@ -1154,9 +1170,12 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         c.dest.addSymUse(typeSym, info)
   c.dest.addParRi() # finish temp declaration
 
-  # map to OOM if the proc can raise an error:
+  # A not-nil `ref` has no value to stand in for a failed allocation: raise where
+  # a `.raises` signature can carry the error, terminate where it cannot.
   if CanRaise in c.flags:
     genOutOfMemCheck(c, ow, info)
+  else:
+    genOutOfMemPanic(c, ow, info)
 
   copyIntoKind c.dest, AsgnS, info:
     copyIntoKind c.dest, DerefX, info:
