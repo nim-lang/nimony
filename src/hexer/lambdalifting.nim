@@ -116,7 +116,7 @@ type
       ## (typenav cannot type `(envp ...)` nodes, so `genCall` resolves a
       ## capture-rewritten callee's type through this instead — field syms
       ## are counter-minted per module, so this table is safely module-wide)
-    iterStepType: TokenBuf ## `system.IterStep`: the type `trPassiveCoroFor`
+    iterStepType: TokenBuf ## `system.Join`: the type `trPassiveCoroFor`
       ## registers its cells with
     coroCtx: coro_transform.Context
       ## Shadow `coro_transform.Context` used to drive `.closure` iter
@@ -1076,12 +1076,12 @@ proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
       tre(c, dest, n)
 
 proc openIterCell(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
-  ## A `for` over a `.passive` iterator gets its `system.IterStep` here, as an
-  ## ordinary local the destroyer sees: `IterStep`'s `=destroy` closes an
+  ## A `for` over a `.passive` iterator gets its `system.Join` here, as an
+  ## ordinary local the destroyer sees: `Join`'s `=destroy` closes an
   ## iterator the loop leaves early, on every way out of the scope. cps's
   ## `trCoroFor` finds the cell as the call's trailing `(haddr cell)`:
   ##
-  ##   (scope (var cell IterStep .)
+  ##   (scope (var cell Join .)
   ##          (corofor (call iter args... (haddr forLoopVar) (haddr cell)) BODY))
   ##
   ## Opens the scope and declares the cell; the caller emits the corofor.
@@ -1095,7 +1095,7 @@ proc openIterCell(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId 
     dest.addDotToken() # exported
     dest.addDotToken() # pragmas
     dest.addSymUse typ.symId, info
-    dest.addDotToken() # set up by `iterBegin`
+    dest.addDotToken() # set up by `attach`
 
 proc takeIterCall(call: var TokenBuf; n: var Cursor; cell: SymId; info: NifLineInfo) =
   ## The corofor's iterator call, with `(haddr cell)` appended.
@@ -2008,7 +2008,7 @@ proc elimLambdas*(pass: var Pass) =
   var c = Context(counter: 0, dest: initTokenBuf(),
                   typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix,
                   iterStepType: createTokenBuf(1))
-  c.iterStepType.addSymUse pool.symId("IterStep.0." & SystemModuleSuffix), NoLineInfo
+  c.iterStepType.addSymUse pool.symId("Join.0." & SystemModuleSuffix), NoLineInfo
   c.coroCtx = coro_transform.Context(
     thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(pass.bits),   # placeholder; swapped with c.typeCache per call

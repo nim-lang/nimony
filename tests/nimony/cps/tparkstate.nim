@@ -20,6 +20,12 @@ proc checkRunning() =
   assert not finished(running)
   assert not parked(running)
 
+proc drive(c: Continuation) =
+  ## Runs `c` until it finishes or parks. `complete` would wait out the park,
+  ## for a resume that only this thread can perform.
+  var c = c
+  while not stopping(c): c = advance(c)
+
 var resumeCont: Continuation
 
 proc suspendingProc() {.passive.} =
@@ -34,6 +40,6 @@ proc main() {.passive.} =
 
 checkStates()
 checkRunning()
-complete(delay main(), UntilPark)   # parks; `UntilDone` would wait for the resume below
-resumeCont.complete(UntilPark)
+drive(delay main())   # parks; a plain `main()` would wait for the resume below
+drive(resumeCont)
 echo "done"

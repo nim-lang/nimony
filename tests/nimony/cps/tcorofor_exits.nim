@@ -1,7 +1,7 @@
 # `for` over a `.passive` iterator: the ways out of the loop, and a loop body
 # that suspends.
 #
-# The loop's `IterStep` is an ordinary local whose `=destroy` closes the
+# The loop's `Join` is an ordinary local whose `=destroy` closes the
 # iterator, so the destroyer covers every exit — even though in a `.passive`
 # routine the loop spans several state procs.
 # The iterator's `cancel` is not observable from here, so the tests check what

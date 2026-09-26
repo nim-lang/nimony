@@ -749,12 +749,11 @@ proc emitCellAddr(c: var Context; dest: var TokenBuf; cell: SymId; info: NifLine
   dest.copyIntoKind AddrX, info:
     coroTr(c, dest, r)
 
-proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor;
-                  passive: bool): SymId =
+proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor): SymId =
   ## `n` is the corofor's `(call iter-or-value args... (haddr forLoopVar)
-  ## (haddr cell))`. Emits `iterBegin(addr cell, iter.init(args...,
-  ## addr forLoopVar, StopContinuation), passive)`: the init hands back the
-  ## iterator's first step, and `iterBegin` makes the loop that frame's
+  ## (haddr cell))`. Emits `attach(addr cell, iter.init(args...,
+  ## addr forLoopVar, StopContinuation))`: the init hands back the iterator's
+  ## first step, and `attach` makes the loop's `system.Join` that frame's
   ## `caller`. Returns the cell.
   assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
   let info = n.info
@@ -801,7 +800,7 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor;
   result = cellArg.childCursor.symId
 
   dest.copyIntoKind CallS, info:
-    dest.addSymUse sysCall("iterBegin"), info
+    dest.addSymUse sysCall("attach"), info
     coroTr(c, dest, cellArg)
     dest.copyIntoKind CallS, info:
       dest.add targetBuf
@@ -810,11 +809,10 @@ proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor;
         coroTr(c, dest, w)
       coroTr(c, dest, loopVarArg)
       emitStopContinuation(dest, info)
-    dest.addParPair(if passive: TrueX else: FalseX, info)
 
 proc emitRegularFor(c: var Context; dest: var TokenBuf; n: var Cursor;
                     info: NifLineInfo) =
-  let cell = emitIterInit(c, dest, n, false)
+  let cell = emitIterInit(c, dest, n)
   let exitLab = pool.symId("`coroExit." & $c.currentProc.counter)
   inc c.currentProc.counter
   dest.addParLe LoopV, info
@@ -838,16 +836,16 @@ proc emitRegularFor(c: var Context; dest: var TokenBuf; n: var Cursor;
     dest.addSymDef exitLab, info
 
 proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## A `for` loop over a `.passive` iterator. Its `IterStep` cell is a local
+  ## A `for` loop over a `.passive` iterator. Its `system.Join` cell is a local
   ## declared by lambdalifting (`trPassiveCoroFor`), so the destroyer has
-  ## already put `IterStep`'s `=destroy` — which closes an iterator the loop
+  ## already put `Join`'s `=destroy` — which closes an iterator the loop
   ## leaves early — on every way out of its scope.
   ##
   ## In a REGULAR routine, `(corofor (call iter args... (haddr forLoopVar)
   ## (haddr cell)) BODY)` becomes
   ##
-  ##   iterBegin(addr cell, iter.init(args..., addr forLoopVar,
-  ##                                  StopContinuation), false)
+  ##   attach(addr cell, iter.init(args..., addr forLoopVar,
+  ##                               StopContinuation))
   ##   loop:
   ##     if not iterNext(addr cell): jmp exit   # runs a step to completion
   ##     BODY
@@ -862,7 +860,7 @@ proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
     skip probe
     if probe.kind == DotToken:
       # the `lowerPassiveFor` marker: the loop is laid out already
-      discard emitIterInit(c, dest, n, true)
+      discard emitIterInit(c, dest, n)
       inc n # the dot
     else:
       emitRegularFor c, dest, n, info
@@ -1093,7 +1091,7 @@ proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # ownership marker read by `emitFinalReturn`.
   #
   # A `.passive` iter hands control to the loop instead: its `caller` is the
-  # loop's `system.IterStep`, and `iterYield` leaves the resume point there.
+  # loop's `system.Join`, and `iterYield` leaves the resume point there.
   # Returning `(nextState, this)` made the loop tell a yield from any other
   # step by frame identity, and a passive call inside the iter returns into
   # that same frame without having yielded.

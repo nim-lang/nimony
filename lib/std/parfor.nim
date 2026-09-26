@@ -159,10 +159,7 @@ proc parSubmit*(c: Continuation; hint = 0) {.inline.} =
   ##
   ## The parameter stays because the chunk number is the plugin's to say and a
   ## future scheduler may want it; what it is NOT is a stripe index.
-  ##
-  ## A chunk runs as part of the submitting task (`submitChild`): `parWait`
-  ## joins it before that task can end.
-  submitChild(c, -1)
+  submit(c, -1)
 
 iterator `||`*(a, b: int; step: Positive = 1; chunkSize = 0;
                workload = MixedBound): int {.plugin: "deps/parfor".}
