@@ -116,6 +116,8 @@ type
       ## (typenav cannot type `(envp ...)` nodes, so `genCall` resolves a
       ## capture-rewritten callee's type through this instead — field syms
       ## are counter-minted per module, so this table is safely module-wide)
+    iterStepType: TokenBuf ## `system.Join`: the type `trPassiveCoroFor`
+      ## registers its cells with
     coroCtx: coro_transform.Context
       ## Shadow `coro_transform.Context` used to drive `.closure` iter
       ## state-machine generation. We loan our `typeCache` to it via
@@ -1073,6 +1075,67 @@ proc treSons(c: var Context; dest: var TokenBuf; n: var Cursor) =
     while n.hasMore:
       tre(c, dest, n)
 
+proc openIterCell(c: var Context; dest: var TokenBuf; info: NifLineInfo): SymId =
+  ## A `for` over a `.passive` iterator gets its `system.Join` here, as an
+  ## ordinary local the destroyer sees: `Join`'s `=destroy` closes an
+  ## iterator the loop leaves early, on every way out of the scope. cps's
+  ## `trCoroFor` finds the cell as the call's trailing `(haddr cell)`:
+  ##
+  ##   (scope (var cell Join .)
+  ##          (corofor (call iter args... (haddr forLoopVar) (haddr cell)) BODY))
+  ##
+  ## Opens the scope and declares the cell; the caller emits the corofor.
+  result = pool.symId("`iterStep." & $c.counter & "." & c.thisModuleSuffix)
+  inc c.counter
+  let typ = beginRead(c.iterStepType)
+  c.typeCache.registerLocal(result, VarY, typ)
+  dest.addParLe ScopeS, info
+  dest.copyIntoKind VarS, info:
+    dest.addSymDef result, info
+    dest.addDotToken() # exported
+    dest.addDotToken() # pragmas
+    dest.addSymUse typ.symId, info
+    dest.addDotToken() # set up by `attach`
+
+proc takeIterCall(call: var TokenBuf; n: var Cursor; cell: SymId; info: NifLineInfo) =
+  ## The corofor's iterator call, with `(haddr cell)` appended.
+  call.addParLe(n.cursorTagId, n.info)
+  n.into:
+    while n.hasMore: call.takeTree n
+  call.copyIntoKind HaddrX, info:
+    call.addSymUse cell, info
+  call.addParRi()
+
+proc trPassiveCoroFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  let info = n.info
+  let cell = openIterCell(c, dest, info)
+  copyInto dest, n: # corofor
+    var call = createTokenBuf(16)
+    takeIterCall call, n, cell, info
+    var r = beginRead(call)
+    tre(c, dest, r)
+    while n.hasMore:
+      tre(c, dest, n)
+  dest.addParRi() # close scope
+
+proc addIterCells(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## `trPassiveCoroFor` for the body of a `.passive` iterator, which this pass
+  ## otherwise copies verbatim.
+  if n.kind != TagLit:
+    dest.takeTree n
+  elif n.stmtKind == CoroforS:
+    let info = n.info
+    let cell = openIterCell(c, dest, info)
+    copyInto dest, n:
+      takeIterCall dest, n, cell, info
+      while n.hasMore:
+        addIterCells c, dest, n
+    dest.addParRi() # close scope
+  else:
+    copyInto dest, n:
+      while n.hasMore:
+        addIterCells c, dest, n
+
 proc treStmt(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## One statement, preceded by whatever `genCall` hoisted out of it. The
   ## enclosing statement's hoists are saved and restored around it.
@@ -1785,7 +1848,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isClosureIterDecl(n):
         transformClosureIter c, dest, n
       else:
-        takeTree dest, n
+        addIterCells c, dest, n
     of TypeS:
       # Rewrite closure proctypes inside type-declaration BODIES to the
       # `(tuple <proctype> (ref RootObj))` shape: object fields
@@ -1833,7 +1896,7 @@ proc tre(c: var Context; dest: var TokenBuf; n: var Cursor) =
       if isClosureCoroFor(c, n):
         trClosureCoroFor c, dest, n
       else:
-        treSons(c, dest, n)
+        trPassiveCoroFor c, dest, n
     of CallS, CmdS, BlockS, AsgnS, IfS, WhenS, WhileS,
       CaseS, RetS, YldS, PragmaxS, InclS, ExclS, ImportasS,
       ExportexceptS, DiscardS, TryS, RaiseS, UnpackdeclS,
@@ -1943,7 +2006,9 @@ proc genObjectTypes(c: var Context; dest: var TokenBuf) =
 proc elimLambdas*(pass: var Pass) =
   var n = pass.n  # Extract cursor locally
   var c = Context(counter: 0, dest: initTokenBuf(),
-                  typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix)
+                  typeCache: createTypeCache(pass.bits), thisModuleSuffix: pass.moduleSuffix,
+                  iterStepType: createTokenBuf(1))
+  c.iterStepType.addSymUse pool.symId("Join.0." & SystemModuleSuffix), NoLineInfo
   c.coroCtx = coro_transform.Context(
     thisModuleSuffix: pass.moduleSuffix,
     typeCache: createTypeCache(pass.bits),   # placeholder; swapped with c.typeCache per call

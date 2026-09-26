@@ -219,6 +219,23 @@ proc trPassiveCall(c: var Context; dest: var TokenBuf; n: var Cursor; target: Cu
     dest.addDotToken() # pragmas
     dest.addSymUse pool.symId(ContinuationName), info
 
+    let fn = n.childCursor
+    if fn.kind == Symbol and fn.symId == pool.symId("iterAdvance.0." & SystemModuleSuffix):
+      # A `for` loop's step (`coro_transform.lowerPassiveFor`): run the
+      # iterator now, and continue HERE once it yields or finishes.
+      copyIntoKind dest, CallS, info:
+        dest.addSymUse pool.symId("iterSwitch.0." & SystemModuleSuffix), info
+        let callStart = n
+        n = sub(n)
+        skip n # iterAdvance
+        coroTr(c, dest, n) # addr cell
+        n = callStart; skip n
+        contNextState c, dest, state, info
+      dest.addParRi() # VarS
+      dest.copyIntoKind RetS, info:
+        dest.addSymUse contVar, info
+      return
+
     # value: emit constructor call with heap-allocated frame:
     copyIntoKind dest, CallS, info:
       let callStart = n
@@ -255,7 +272,7 @@ proc trDelay0(c: var Context; dest: var TokenBuf; n: var Cursor) =
 proc trSuspend(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## `(suspend)` — parks only after a preceding `(delay0)` in the same
   ## state (`Continuation(fn: nil, env: this)`). A bare `suspend()` is a
-  ## synchronous transition to the next state so `complete()` can drive on.
+  ## synchronous transition to the next state so the trampoline drives on.
   let info = n.info
   var state = -1
   n.into: # suspend

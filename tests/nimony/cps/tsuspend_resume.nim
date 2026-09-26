@@ -1,5 +1,11 @@
 import std/syncio
 
+proc drive(c: Continuation) =
+  ## Runs `c` until it finishes or parks. `complete` would wait out the park,
+  ## for a resume that only this thread can perform.
+  var c = c
+  while not stopping(c): c = advance(c)
+
 var resumeCont: Continuation
 
 proc suspendingProc() {.passive.} =
@@ -15,7 +21,7 @@ proc main() {.passive.} =
   suspendingProc()
   echo "3. back in main"
 
-main()
+drive(delay main())  # parks; a plain `main()` would wait for the resume below
 echo "4. after main"
-resumeCont.complete()
+drive(resumeCont)
 echo "6. done"

@@ -315,17 +315,103 @@ proc advance*(c: Continuation): Continuation =
   ## to be called directly. Used by the compiler to run a coroutine.
   result = scheduler(c)
 
-proc complete*(c: Continuation) =
-  ## Used by the compiler to run a coroutine until it has no next step
-  ## (`stopping`): it either finishes or parks (`delay(); suspend()`) to await
-  ## an external scheduler. With the default trivial scheduler a park simply
-  ## stops the loop; a real scheduler resumes parked continuations and drives
-  ## them onward. Takes `c` by value so a coroutine may reassign the variable
-  ## it was driven from (e.g. to reschedule via `delay(call)`). Bare
-  ## `suspend()` transitions synchronously, so it does not stop the loop.
-  var c = c
+type
+  Join = object of CoroutineBase
+    ## The side that waits for a coroutine: a regular proc's `complete`, or a
+    ## `for` loop over a `.passive` iterator. It is the coroutine's `caller`,
+    ## so the coroutine runs it when it finishes — on whichever thread resumed
+    ## it — and at every `yield`, which also leaves its resume point in
+    ## `resume`. Running it marks it `done` and continues at its own `caller`:
+    ## nothing for a regular proc, the loop's next state in a `.passive` one.
+    done: int
+    resume: Continuation
+
+proc joined(coro: ptr CoroutineBase): Continuation {.nimcall.} =
+  let j = cast[ptr Join](coro)
+  result = j.caller # before `done`: after it the waiter may reuse `j`
+  atomicStoreN(addr j.done, 1, ATOMIC_RELEASE)
+
+proc attach(j: ptr Join; c: Continuation) =
+  ## Used by the compiler: `c`, fresh from `delay(call)` or an iterator's init,
+  ## reports to `j` from now on.
+  # field by field: a whole-object store would `=destroy` the old value first
+  j.caller = Continuation(fn: nil, env: nil)
+  j.done = 0
+  j.resume = c
+  if c.env != nil:
+    c.env.caller = Continuation(fn: joined, env: cast[ptr CoroutineBase](j))
+
+var passiveWaitHook: proc () {.nimcall.} = nil
+
+proc setPassiveWaitHook*(hook: proc () {.nimcall.}) {.inline.} =
+  ## What a thread does while it waits for a parked coroutine to finish: a
+  ## thread pool makes it help with the pool's work, so a worker waiting here
+  ## cannot starve the pool of the very worker that would resume it.
+  passiveWaitHook = hook
+
+proc builtinCpuRelax() {.intrinsic: "CpuRelax".}
+
+proc run(j: ptr Join) =
+  ## Runs `j.resume` until the coroutine has run `j`: trampoline on this
+  ## thread, and if it parked, wait for whoever resumes it.
+  var c = j.resume
+  j.resume = Continuation(fn: nil, env: nil)
+  j.done = 0
   while not stopping(c):
     c = scheduler(c)
+  while atomicLoadN(addr j.done, ATOMIC_ACQUIRE) == 0:
+    if passiveWaitHook != nil: passiveWaitHook()
+    else: builtinCpuRelax()
+
+proc complete*(c: Continuation) =
+  ## Runs `c`, fresh from `delay(call)`, to completion — parks included, like a
+  ## regular proc's call of a `.passive` proc, which is what the compiler turns
+  ## such a call into.
+  if not stopping(c):
+    if c.env.caller.fn != nil:
+      panic "complete: the coroutine already has a caller"
+    var j = Join()
+    attach(addr j, c)
+    run(addr j)
+
+proc iterYield(caller, resume: Continuation): Continuation =
+  ## Used by the compiler: a `.passive` iterator's `yield` — record where it
+  ## continues, then hand control to the loop.
+  cast[ptr Join](caller.env).resume = resume
+  result = caller
+
+proc iterNext(j: ptr Join): bool =
+  ## Used by the compiler: one step of a `for` loop in a regular proc, parks
+  ## included. Answers whether the iterator yielded.
+  run(j)
+  result = j.resume.fn != nil
+
+proc iterAdvance(j: ptr Join) {.passive.} =
+  ## Used by the compiler: one step of a `for` loop in a `.passive` routine. A
+  ## suspension point the CPS transform lowers itself (`iterSwitch`), so this
+  ## body never runs.
+  discard
+
+proc iterSwitch(j: ptr Join; next: Continuation): Continuation =
+  ## Used by the compiler: what `iterAdvance` lowers to — the loop continues at
+  ## `next` once the step is over, and the step starts now.
+  j.caller = next
+  result = j.resume
+  j.resume = Continuation(fn: nil, env: nil)
+
+proc iterFinished(j: ptr Join): bool {.inline.} =
+  ## Used by the compiler: did the step just taken end the iterator?
+  result = j.resume.fn == nil
+
+proc `=destroy`(j: Join) =
+  ## A `for` loop left before its iterator finished, by whatever way out of
+  ## the loop's scope: cancel and free the iterator's frame, which is parked
+  ## at a `yield`.
+  if j.resume.env != nil:
+    cancel(j.resume.env)
+    deallocFrame(j.resume.env)
+
+proc `=copy`(dest: var Join; src: Join) {.error.}
 
 proc parked*(c: Continuation): bool {.inline.} =
   ## True when a coroutine has parked via `suspend()` and not yet been
