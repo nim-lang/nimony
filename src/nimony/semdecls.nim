@@ -204,32 +204,17 @@ proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) 
     discard semLocalType(c, dest, n)
 
 proc parseDefineInt(s: string; value: var int64): bool =
-  ## A decimal integer with an optional sign and `_` separators, the way an
-  ## integer literal is written. Deliberately not `strutils.parseInt`: that one
-  ## is `.raises` under Nimony and would spread through the whole of sem.
-  var i = 0
-  var neg = false
-  if i < s.len and (s[i] == '-' or s[i] == '+'):
-    neg = s[i] == '-'
-    inc i
-  var digits = 0
-  var acc = 0'i64
-  while i < s.len:
-    let ch = s[i]
-    if ch == '_':
-      discard "digit separator"
-    elif ch >= '0' and ch <= '9':
-      let d = int64(ord(ch) - ord('0'))
-      if acc > (high(int64) - d) div 10:
-        return false
-      acc = acc * 10 + d
-      inc digits
-    else:
-      return false
-    inc i
-  if digits == 0: return false
-  value = (if neg: -acc else: acc)
-  return true
+  ## `strutils.parseBiggestInt` already rejects everything that needs rejecting
+  ## here -- trailing junk, an empty string, and a value too large for an
+  ## `int64` (`parseutils` hands that back as a negative length, which
+  ## `parseBiggestInt` turns into `ValueError`) -- while accepting a sign and `_`
+  ## separators the way an integer literal is written. It is `.raises`, and the
+  ## `try` is what keeps that contained instead of spreading through sem.
+  try:
+    value = parseBiggestInt(s)
+    result = true
+  except:
+    result = false
 
 proc semDefineOverride(c: var SemContext; dest: var TokenBuf; it: var Item;
                        crucial: CrucialPragma; name: StrId): bool =
