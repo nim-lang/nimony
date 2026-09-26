@@ -4569,6 +4569,40 @@ The `noreturn` pragma is used to mark a proc that never returns.
 
 
 
+### intdefine, booldefine and strdefine pragmas
+
+These let the command line override a constant's initializer, which is how a
+build is configured without editing source:
+
+  ```nim
+  const
+    maxMem {.intdefine.}: int = 0
+    verbose {.booldefine.} = false
+    banner {.strdefine.} = "nimony"
+  ```
+
+`-d:maxMem=10` (equivalently `--define:maxMem:10`) then compiles `maxMem` as
+`10`. A key that is not given on the command line leaves the written default
+alone, so the declaration always reads as its own documentation.
+
+The key is the constant's name. A string literal argument names a different one,
+which is how a key with dots in it is reached:
+
+  ```nim
+  const chunk {.intdefine: "mylib.chunkSize".}: int = 256
+  ```
+
+For `booldefine`, a bare `-d:key` means `true`; `true`/`false`, `on`/`off` and
+`1`/`0` are all accepted. `strdefine` takes the text verbatim. `intdefine`
+parses a decimal integer, optionally signed and with `_` separators, and the
+result is checked against the constant's declared type exactly as a written
+literal would be -- so `-d:key=1000` into an `int8` is an error, not a silent
+truncation.
+
+`-d:key=value` also makes `defined(key)` true, as in Nim.
+
+
+
 ### final pragma
 The `final` pragma can be used for an object type to specify that it
 cannot be inherited from. Note that inheritance is only available for

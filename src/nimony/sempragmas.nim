@@ -607,6 +607,24 @@ proc semPragma*(c: var SemContext; dest: var TokenBuf; n: var Cursor; crucial: v
     dest.addParLe(pk, n.info)
     toPragmaArgs()
     dest.addParRi()
+  of IntdefineP, BooldefineP, StrdefineP:
+    # `{.intdefine.}` and its siblings let the command line override the
+    # constant's initializer. Only the flag and the optional key are recorded
+    # here; `semLocal` does the substitution, where the declared type is known
+    # and the replacement can go through the ordinary const-expression path.
+    crucial.flags.incl pk
+    if kind != ConstY:
+      buildErr c, dest, n.info, "`" & $pk & "` pragma is only allowed on constants"
+      toPragmaArgs()
+      if hasParRi:
+        while n.hasMore: skip n
+    else:
+      dest.addParLe(pk, n.info)
+      toPragmaArgs()
+      if hasParRi and n.hasMore and n.kind in {StrLit, Ident}:
+        crucial.defineKey = pool.strings[n.strId]
+        takeTree dest, n
+      dest.addParRi()
   of SemanticsP:
     dest.addParLe(pk, n.info)
     toPragmaArgs()
