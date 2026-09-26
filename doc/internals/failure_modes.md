@@ -72,7 +72,7 @@ lie about — see the range-check case below.
 | `succ`/`pred`/`inc`/`dec` | wrap | recoverable | **[dsgn]** |
 | narrowing conversion to a machine-range type | truncate | recoverable | **[dsgn]** `RangeCheck` is in `CheckMode` and in `DefaultSettings`, but nothing reads it |
 | assignment into `range[a..b]` | **clamp**, not truncate | recoverable | **[dsgn]** see below |
-| `alloc` out of memory | `nil: pointer` | recoverable | **[impl]** `missingBytes`; `-d:maxMem=N` injects it |
+| `alloc` out of memory | `nil: pointer` | recoverable | **[impl]** `missingBytes`; `-d:nimMaxHeap=N` injects it |
 | `new` out of memory | none: `ref T` is not-nil | **fatal** | **[impl]** raises `OutOfMemError` inside a `.raises` routine, panics elsewhere |
 | `a[i]` on array, `s[i]` on seq/string | none | fatal | **[impl]** `die 1` |
 | `.requires` violation | none: the body assumes it | fatal | **[impl]** `die 1` |
@@ -382,7 +382,7 @@ deliberately fatal, and on a target without memory protection a wild store to a
 low address instead.
 
 Both halves are exercised by `tests/nimony/oom`, which compiles under
-`-d:maxMem=1` (`lib/std/system/memory.nim`): the budget caps what a thread may
+`-d:nimMaxHeap=1` (`lib/std/system/memory.nim`): the budget caps what a thread may
 hold, so a failed `new` is reachable on purpose rather than only under real
 memory pressure. `toom_raises.nim` catches the `OutOfMemError`; `toom_panic.nim`
 dies with `out of memory`; `toom_string.nim` covers the recoverable neighbours

@@ -1,7 +1,7 @@
 # OOM during a Table expansion through `[]=`.
 #
 # A Table grows two seqs: `data` (the pairs) and `hashes` (the open-addressing
-# index). Under `-d:maxMem=1` (see `nimony.args`) the index runs out of room to
+# index). Under `-d:nimMaxHeap=1` (see `nimony.args`) the index runs out of room to
 # grow partway through filling a big table, which is the interesting case: the
 # probe loops assume a free slot exists, so `data` must not be allowed to run
 # ahead of an index that can no longer be resized. It used to be, and a lookup

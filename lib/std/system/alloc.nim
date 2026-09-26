@@ -52,7 +52,7 @@ template track(op, address, size) {.untyped.} =
 # So "true" deallocation is delayed for as long as possible in favor of reusing cells.
 
 const
-  nimMinHeapPages = 128 # 0.5 MB
+  nimMinHeapPages {.intdefine.} = 128 # 0.5 MB
   SmallChunkSize = PageSize
   MaxFli = when sizeof(int) > 2: 30 else: 14
   MaxLog2Sli = 5 # 32, this cannot be increased without changing 'uint32'
@@ -360,18 +360,21 @@ proc getMaxMem(a: var MemRegion): int =
   # maximum of these both values here:
   result = max(a.currMem, a.maxMem)
 
-const nimMaxHeap = 0
+# Nim guards these two with its `nimMaxHeap {.intdefine.}` and calls
+# `raiseOutOfMem()` (which aborts) when the cap is exceeded. Nimony keeps the
+# same `-d:nimMaxHeap=N` knob, in the same megabytes, but enforces it one layer
+# out in the `alloc`/`realloc`/`dealloc` wrappers of `memory.nim`, for two
+# reasons: it then applies to whichever allocator is in use (mimalloc is the
+# default, and never reaches this file), and it reports by returning `nil`, so
+# the out-of-memory recovery paths this runtime is built around actually run
+# instead of the process dying. Checking here as well would defeat that -- `occ`
+# counts allocator-occupied bytes and so trips before the wrappers' count of
+# live user bytes, aborting before anything could recover.
 
 proc allocPages(a: var MemRegion, size: int): pointer =
-  when nimMaxHeap != 0:
-    if a.occ + size > nimMaxHeap * 1024 * 1024:
-      raiseOutOfMem()
   osAllocPages(size)
 
 proc tryAllocPages(a: var MemRegion, size: int): pointer =
-  when nimMaxHeap != 0:
-    if a.occ + size > nimMaxHeap * 1024 * 1024:
-      raiseOutOfMem()
   osTryAllocPages(size)
 
 proc llAlloc(a: var MemRegion, size: int): pointer =

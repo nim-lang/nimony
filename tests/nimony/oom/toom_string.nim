@@ -4,7 +4,7 @@
 # inspect and carry on with.
 #
 # For a string that value is the `"\nD^OOM\0"` cookie packed inline (length 7),
-# which `isOom` detects. `-d:maxMem=1` (see `nimony.args`) is what makes the
+# which `isOom` detects. `-d:nimMaxHeap=1` (see `nimony.args`) is what makes the
 # failure reachable: a single request far above the cap fails no matter how the
 # allocator rounds sizes, which is what keeps this test deterministic.
 import std / [syncio]

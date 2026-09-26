@@ -4576,14 +4576,14 @@ build is configured without editing source:
 
   ```nim
   const
-    maxMem {.intdefine.}: int = 0
+    bufSize {.intdefine.}: int = 4096
     verbose {.booldefine.} = false
     banner {.strdefine.} = "nimony"
   ```
 
-`-d:maxMem=10` (equivalently `--define:maxMem:10`) then compiles `maxMem` as
-`10`. A key that is not given on the command line leaves the written default
-alone, so the declaration always reads as its own documentation.
+`-d:bufSize=8192` (equivalently `--define:bufSize:8192`) then compiles `bufSize`
+as `8192`. A key that is not given on the command line leaves the written
+default alone, so the declaration always reads as its own documentation.
 
 The key is the constant's name. A string literal argument names a different one,
 which is how a key with dots in it is reached:

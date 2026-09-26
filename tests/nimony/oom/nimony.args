@@ -1,1 +1,1 @@
---define:maxMem=1
+--define:nimMaxHeap=1
