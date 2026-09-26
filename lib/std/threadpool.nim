@@ -236,6 +236,35 @@ proc reactorPoll*(timeoutMs: int): bool {.inline.} =
   ## there is. Every caller of `gReactor` goes through this.
   if reactorReady(): gReactor(timeoutMs) else: poolPollIo(timeoutMs)
 
+proc workCycle(stripe: int): bool =
+  ## One turn of a worker: run the queued tasks, drive this thread's I/O lane,
+  ## and nap when neither had anything. Answers whether tasks ran.
+  # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
+  #    each continuation, re-submitting any that yield more work.
+  result = drainOnce(stripe)
+  # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
+  let eventFired = reactorPoll(if result: 0.cint else: 1.cint)
+  if not eventFired and not result and not gReactorWaits:
+    # Only when the reactor did not wait for us. Behind one that did, this
+    # nap is the difference between noticing a completion when it arrives
+    # and noticing it up to a millisecond later.
+    const timeoutMs = 1
+    when defined(windows):
+      sleep(timeoutMs.uint32)
+    else:
+      var ts = Timespec(tv_sec: Time(timeoutMs div 1000),
+                         tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
+      var rem = Timespec()
+      discard nanosleep(ts, rem)
+
+proc passiveWait() {.nimcall.} =
+  ## `system.setPassiveWaitHook`: a thread waiting for a parked `.passive` call
+  ## to finish does a worker's turn. It must: a non-worker's I/O ops sit on a
+  ## lane that only its own poll drains (`ioLane`), so the op its callee parked
+  ## on completes nowhere else — and a worker that waited idly could be the one
+  ## the pool needed to resume the callee.
+  discard workCycle(if isWorker: threadIdx else: 0)
+
 proc workerLoop(arg: pointer) {.nimcall.} =
   threadIdx = cast[int](arg)
   isWorker = true
@@ -243,23 +272,7 @@ proc workerLoop(arg: pointer) {.nimcall.} =
   dequeTicks = 0
   var sinceCollect = 0
   while not atomicLoad(stopFlag, moRelaxed):
-    # 1. Bulk-drain tasks: own stripe first, then steal from others. Trampolines
-    #    each continuation, re-submitting any that yield more work.
-    let busy = drainOnce(threadIdx)
-    # 2. Poll I/O — non-blocking when we just ran work, 1ms wait when idle.
-    let eventFired = reactorPoll(if busy: 0.cint else: 1.cint)
-    if not eventFired and not busy and not gReactorWaits:
-      # Only when the reactor did not wait for us. Behind one that did, this
-      # nap is the difference between noticing a completion when it arrives
-      # and noticing it up to a millisecond later.
-      const timeoutMs = 1
-      when defined(windows):
-        sleep(timeoutMs.uint32)
-      else:
-        var ts = Timespec(tv_sec: Time(timeoutMs div 1000),
-                           tv_nsec: clong((timeoutMs mod 1000) * 1_000_000))
-        var rem = Timespec()
-        discard nanosleep(ts, rem)
+    let busy = workCycle(threadIdx)
     # 3. Reclaim this worker's cross-thread-free backlog: a forced collect
     #    after a brief idle (~8ms of 1ms polls), plus a hard periodic fallback
     #    so a worker that never goes idle still collects. force=true is what
@@ -287,6 +300,7 @@ proc initPool*() =
   var expected = 0
   if atomicCompareExchange(poolState, expected, 1):
     workerCount = max(1, cpuinfo.countProcessors() - 1)
+    setPassiveWaitHook passiveWait
     workerMetrics = newSeq[WorkerMetrics](workerCount)
     localQueues = newSeq[FifoStripe[Task]](workerCount)
     for i in 0..<workerCount:

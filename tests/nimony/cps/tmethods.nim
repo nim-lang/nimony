@@ -15,6 +15,12 @@ method inherited(x: MyObject) {.passive.} =
 method io(x: MyObject) {.passive.} =
   echo "io"
 
+proc drive(c: Continuation) =
+  ## Runs `c` until it finishes or parks. `complete` would wait out the park,
+  ## for a resume that only this thread can perform.
+  var c = c
+  while not stopping(c): c = advance(c)
+
 var cont: Continuation
 method sus(x: MyObject) {.passive.} =
   echo "a"
@@ -27,8 +33,8 @@ method sus(x: MyObject) {.passive.} =
 var q = MyObject2()
 q.a()
 q.inherited()
-q.sus()
-complete(cont)
+drive(delay q.sus())  # parks; a plain call would wait for the resume below
+drive(cont)
 complete(cont)
 
 type

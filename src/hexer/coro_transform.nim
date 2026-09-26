@@ -15,7 +15,7 @@ generators, frame-type generator, wrapper-proc generator, and for-loop
 trampoline for coroutine-shaped routines. Both flavours of coroutines
 share it:
 
-  - `.passive` procs / `.passive` iters (driven from `complete()`,
+  - `.passive` procs / `.passive` iters (driven from `complete`,
     factory-allocated frame, owned by the trampoline).
   - `.closure` iters (Nim-compatible resumable iter values; eager
     value-owned frame is planned for a follow-up).
@@ -738,96 +738,132 @@ proc emitWhileEnd*(dest: var TokenBuf; info: NifLineInfo; itSym, exitLab: SymId)
 # trCoroFor — expand a `(corofor ...)` into the trampoline
 # ---------------------------------------------------------------------
 
+proc sysCall(name: string): SymId = pool.symId(name & ".0." & SystemModuleSuffix)
+
+proc emitCellAddr(c: var Context; dest: var TokenBuf; cell: SymId; info: NifLineInfo) =
+  ## `addr cell` — through `coroTr`, which turns a lifted local into its frame
+  ## field.
+  var b = createTokenBuf(1)
+  b.addSymUse cell, info
+  var r = beginRead(b)
+  dest.copyIntoKind AddrX, info:
+    coroTr(c, dest, r)
+
+proc emitIterInit(c: var Context; dest: var TokenBuf; n: var Cursor): SymId =
+  ## `n` is the corofor's `(call iter-or-value args... (haddr forLoopVar)
+  ## (haddr cell))`. Emits `attach(addr cell, iter.init(args...,
+  ## addr forLoopVar, StopContinuation))`: the init hands back the iterator's
+  ## first step, and `attach` makes the loop's `system.Join` that frame's
+  ## `caller`. Returns the cell.
+  assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
+  let info = n.info
+  let callStart = n
+  n = sub(n)
+  # The branch we take here is the ONLY reliable signal for whether
+  # the arg list has an upstream env-arg (case 3, non-Symbol target).
+  # Probing the last arg for TupatX is unsound: a regular `(tupat
+  # someTuple 0)` arg would falsely match.
+  var targetBuf = createTokenBuf(4)
+  var upstreamEnvArg = false
+  if n.kind == Symbol and isClosureIter(n.symId):
+    # Direct `.passive` iter DECL call — route through the iter's init wrapper.
+    targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
+    inc n
+  elif n.kind == Symbol:
+    # Iter-VALUE local: a `.passive` iter value is a bare function pointer
+    # to the wrapper (no env tuple — see cps's `trProctype`), so call it
+    # directly. The wrapper always allocates a fresh frame.
+    targetBuf.addSymUse n.symId, n.info
+    inc n
+  else:
+    upstreamEnvArg = true
+    targetBuf.takeTree n
+
+  # Structural invariant from the corofor producers: the trailing args are
+  # `(haddr forLoopVar)` (iterinliner) and `(haddr cell)` (lambdalifting's
+  # `trPassiveCoroFor`), optionally preceded by an env-arg when the target
+  # was pre-extracted. Don't probe `HaddrX` — a regular iter arg of `addr`
+  # shape would falsely match.
+  let argsStart = n
+  var loopVarArg = default(Cursor)
+  var cellArg = default(Cursor)
+  var argCount = 0
+  while n.hasMore:
+    loopVarArg = cellArg
+    cellArg = n
+    skip n
+    inc argCount
+  n = callStart; skip n # close iter call
+  let trailingCount = if upstreamEnvArg: 3 else: 2
+  assert argCount >= trailingCount, "corofor: iter call missing args"
+  let realArgCount = argCount - trailingCount
+  result = cellArg.childCursor.symId
+
+  dest.copyIntoKind CallS, info:
+    dest.addSymUse sysCall("attach"), info
+    coroTr(c, dest, cellArg)
+    dest.copyIntoKind CallS, info:
+      dest.add targetBuf
+      var w = argsStart
+      for i in 0 ..< realArgCount:
+        coroTr(c, dest, w)
+      coroTr(c, dest, loopVarArg)
+      emitStopContinuation(dest, info)
+
+proc emitRegularFor(c: var Context; dest: var TokenBuf; n: var Cursor;
+                    info: NifLineInfo) =
+  let cell = emitIterInit(c, dest, n)
+  let exitLab = pool.symId("`coroExit." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  dest.addParLe LoopV, info
+  dest.addParLe ScopeS, info   # loop body
+  dest.copyIntoKind IteV, info:
+    dest.copyIntoKind NotX, info:
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse sysCall("iterNext"), info
+        emitCellAddr c, dest, cell, info
+    dest.copyIntoKind StmtsS, info:
+      dest.copyIntoKind JmpS, info:
+        dest.addSymUse exitLab, info
+    dest.addDotToken()
+  while n.hasMore:
+    coroTr(c, dest, n)
+  dest.copyIntoKind ContinueV, info:
+    dest.addDotToken()
+  dest.addParRi()  # close loop body
+  dest.addParRi()  # close LoopV
+  dest.copyIntoKind LabS, info:
+    dest.addSymDef exitLab, info
+
 proc trCoroFor*(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  ## Expand `(corofor (call iter args... (haddr forLoopVar)) (block ...))`
-  ## into the trampoline:
+  ## A `for` loop over a `.passive` iterator. Its `system.Join` cell is a local
+  ## declared by lambdalifting (`trPassiveCoroFor`), so the destroyer has
+  ## already put `Join`'s `=destroy` — which closes an iterator the loop
+  ## leaves early — on every way out of its scope.
   ##
-  ##   var it: Continuation = `iter.init.<suffix>`(args..., addr forLoopVar,
-  ##                                                StopContinuation)
-  ##   try:
-  ##     while true:
-  ##       it = advance(it)
-  ##       if finished(it): break
-  ##       <body>
-  ##   finally:
-  ##     finalizeCoroutine(addr it)
+  ## In a REGULAR routine, `(corofor (call iter args... (haddr forLoopVar)
+  ## (haddr cell)) BODY)` becomes
+  ##
+  ##   attach(addr cell, iter.init(args..., addr forLoopVar,
+  ##                               StopContinuation))
+  ##   loop:
+  ##     if not iterNext(addr cell): jmp exit   # runs a step to completion
+  ##     BODY
+  ##   lab exit
+  ##
+  ## In a `.passive` routine the loop has already been laid out by `trGoto`
+  ## (`lowerPassiveFor`), which leaves `(corofor CALL .)` behind for the init
+  ## alone.
   let info = n.info
   n.into: # skip (corofor
-
-    # ---- first child: (call iter-or-tupat args... (haddr forLoopVar)) ----
-    assert n.exprKind in CallKinds, "corofor: expected iter call as first child"
-    let callStart = n # past CallS tag
-    n = sub(n)
-    # The branch we take here is the ONLY reliable signal for whether
-    # the arg list has an upstream env-arg (case 3, non-Symbol target).
-    # Probing the last arg for TupatX is unsound: a regular `(tupat
-    # someTuple 0)` arg would falsely match.
-    var targetBuf = createTokenBuf(4)
-    var upstreamEnvArg = false
-    if n.kind == Symbol and isClosureIter(n.symId):
-      # Direct `.passive` (or `.closure`) iter DECL call — route through the
-      # iter's init wrapper.
-      targetBuf.addSymUse coroWrapperProc(c, n.symId), n.info
-      inc n
-    elif n.kind == Symbol:
-      # Iter-VALUE local: a `.passive` iter value is a bare function pointer
-      # to the wrapper (no env tuple — see cps's `trProctype`), so call it
-      # directly. The wrapper always allocates a fresh frame, so no caller
-      # env is needed; `emitStopContinuation` below supplies the sentinel.
-      targetBuf.addSymUse n.symId, n.info
-      inc n
+    var probe = n
+    skip probe
+    if probe.kind == DotToken:
+      # the `lowerPassiveFor` marker: the loop is laid out already
+      discard emitIterInit(c, dest, n)
+      inc n # the dot
     else:
-      upstreamEnvArg = true
-      targetBuf.takeTree n
-
-    # Cursors are stable — walk once to count args and remember the
-    # cursor at the last (haddr) position; emit later via `addSubtree`.
-    let argsStart = n
-    var lastArgPos = default(Cursor)
-    var argCount = 0
-    while n.hasMore:
-      lastArgPos = n
-      skip n
-      inc argCount
-    n = callStart; skip n # close iter call
-
-    # Structural invariant from the corofor producer: trailing arg is
-    # `(haddr forLoopVar)`, optionally preceded by an env-arg when the
-    # target was pre-extracted. Don't probe `HaddrX` — a regular iter
-    # arg of `addr` shape would falsely match.
-    let trailingCount = if upstreamEnvArg: 2 else: 1
-    assert argCount >= trailingCount, "corofor: iter call missing args"
-    let realArgCount = argCount - trailingCount
-
-    let itSym = pool.symId("`coroIt." & $c.currentProc.counter)
-    inc c.currentProc.counter
-    c.typeCache.registerLocal(itSym, VarY, default(Cursor))
-    dest.copyIntoKind VarS, info:
-      dest.addSymDef itSym, info
-      dest.addDotToken() # exported
-      dest.addDotToken() # pragmas
-      dest.addSymUse pool.symId(ContinuationName), info
-      dest.copyIntoKind CallS, info:
-        dest.add targetBuf
-        var w = argsStart
-        for i in 0 ..< realArgCount:
-          dest.takeTree w
-        var addrW = lastArgPos
-        dest.takeTree addrW
-        emitStopContinuation(dest, info)
-
-    let myEnvSym = pool.symId("`coroEnv." & $c.currentProc.counter)
-    inc c.currentProc.counter
-    c.typeCache.registerLocal(myEnvSym, LetY, default(Cursor))
-
-    let exitLab = pool.symId("`coroExit." & $c.currentProc.counter)
-    inc c.currentProc.counter
-    emitWhileBegin(dest, info, itSym, myEnvSym, exitLab)
-    while n.hasMore:
-      coroTr(c, dest, n)
-    emitWhileEnd(dest, info, itSym, exitLab)
-
-
+      emitRegularFor c, dest, n, info
 
 # ---------------------------------------------------------------------
 # Shared call / asgn / local dispatchers — route to .passive hooks
@@ -1053,13 +1089,30 @@ proc trYield*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # iter VALUE is called as `g()` outside the loop (see
   # `tclosure_iter_shared_state.nim`); `this.caller.env` is the
   # ownership marker read by `emitFinalReturn`.
+  #
+  # A `.passive` iter hands control to the loop instead: its `caller` is the
+  # loop's `system.Join`, and `iterYield` leaves the resume point there.
+  # Returning `(nextState, this)` made the loop tell a yield from any other
+  # step by frame identity, and a passive call inside the iter returns into
+  # that same frame without having yielded.
   let state = getNextState(c.currentProc.cf, n)
   assert state != -1
   let info = n.info
   returnValue(c, dest, n, info)
-  stashResumeFn(c, dest, state, info)
-  dest.copyIntoKind RetS, info:
-    contNextState(c, dest, state, info)
+  if c.currentProc.isClosureIter:
+    stashResumeFn(c, dest, state, info)
+    dest.copyIntoKind RetS, info:
+      contNextState(c, dest, state, info)
+  else:
+    dest.copyIntoKind RetS, info:
+      dest.copyIntoKind CallS, info:
+        dest.addSymUse pool.symId("iterYield.0." & SystemModuleSuffix), info
+        dest.copyIntoKind DotX, info:
+          dest.copyIntoKind DerefX, info:
+            dest.addSymUse pool.symId(EnvParamName), info
+          dest.addSymUse pool.symId(CallerFieldName), info
+          dest.addIntLit 1, info # field is in superclass
+        contNextState(c, dest, state, info)
 
 proc trReturn*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   # return/raise x -->
@@ -1427,6 +1480,8 @@ proc emitErrorCodeOf(c: var Context; dest: var TokenBuf; n: var Cursor) =
   else:
     dest.takeTree n
 
+proc lowerPassiveFor(c: var Context; dest: var TokenBuf; n: var Cursor)
+
 proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
   var info = n.info
   case n.finalIrKind
@@ -1564,8 +1619,8 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
         of CallS, CmdS, ResultS, ProcS, FuncS, IteratorS,
             ConverterS, MethodS, MacroS, TemplateS, TypeS,
             BlockS, EmitS, IfS, WhenS,
-            BreakS, ContinueS, ForS, WhileS, CoroforS,
-            RetS, YldS, PragmasS, PragmaxS, InclS, ExclS,
+            BreakS, ContinueS, ForS, WhileS,
+            RetS, YldS, PragmasS, InclS, ExclS,
             IncludeS, ImportS, ImportasS, FromimportS,
             ImportexceptS, ExportS, ExportexceptS, CommentS,
             DiscardS, UnpackdeclS, AssumeS,
@@ -1577,6 +1632,31 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
             while n.hasMore:
               trGoto c, dest, n
           dest.addParRi()
+        of CoroforS:
+          var probe = n.childCursor
+          skip probe
+          if probe.kind == DotToken:
+            dest.takeTree n                         # `lowerPassiveFor`'s marker
+          else:
+            lowerPassiveFor c, dest, n
+        of PragmaxS:
+          # `(pragmax (pragmas ...) BODY)`: exactly one body, which `trGoto`
+          # would flatten into several statements. A body that suspends must
+          # be flattened all the same — its state labels belong at the top
+          # level — and only a `cast` block can give up its wrapper for that,
+          # since it means nothing at run time.
+          let pragmas = n.childCursor
+          if containsSuspensionPoint(c, n) and
+              pragmas.childCursor.pragmaKind == CastP:
+            n.into:
+              skip n                                # pragmas
+              while n.hasMore: trGoto c, dest, n
+          else:
+            dest.addParLe(n.cursorTagId, n.info)
+            n.into:
+              dest.takeTree n                       # pragmas
+              trGotoScoped c, dest, n
+            dest.addParRi()
         of CaseS:
           # `finalir` keeps `case` as a construct ("Format as existing"), so
           # unlike `nj.nim` — which lowered every branch to an `ite` chain —
@@ -1686,6 +1766,57 @@ proc trGoto*(c: var Context; dest: var TokenBuf; n: var Cursor) =
               trGoto c, dest, n
       else:
         dest.takeTree n
+
+proc lowerPassiveFor(c: var Context; dest: var TokenBuf; n: var Cursor) =
+  ## A `for` loop over a `.passive` iterator inside a coroutine. Advancing the
+  ## iterator is a suspension point like any passive call, so the loop is laid
+  ## out as ordinary Final IR first and then goes through `trGoto` itself:
+  ##
+  ##   (corofor CALL .)             # the init, see `trCoroFor`
+  ##   loop:
+  ##     iterAdvance(addr cell)     # suspends; resumes once the step is over
+  ##     if iterFinished(addr cell): jmp exit
+  ##     BODY
+  ##   lab exit
+  ##
+  ## A park in the iterator is then a park of this coroutine too, and the body
+  ## may suspend as well. The cell's `=destroy` is already on every way out.
+  let info = n.info
+  let exitLab = pool.symId("`coroExit." & $c.currentProc.counter)
+  inc c.currentProc.counter
+  var buf = createTokenBuf(64)
+  n.into:
+    var arg = sub(n)
+    var lastArg = arg
+    while arg.hasMore:
+      lastArg = arg
+      skip arg
+    let cell = lastArg.childCursor.symId # `(haddr cell)`, see `emitIterInit`
+    buf.copyIntoKind CoroforS, info:
+      buf.takeTree n                     # the iterator call
+      buf.addDotToken()
+    buf.copyIntoKind LoopV, info:
+      buf.copyIntoKind StmtsS, info:
+        buf.copyIntoKind CallS, info:
+          buf.addSymUse sysCall("iterAdvance"), info
+          buf.copyIntoKind AddrX, info:
+            buf.addSymUse cell, info
+        buf.copyIntoKind IteV, info:
+          buf.copyIntoKind CallS, info:
+            buf.addSymUse sysCall("iterFinished"), info
+            buf.copyIntoKind AddrX, info:
+              buf.addSymUse cell, info
+          buf.copyIntoKind StmtsS, info:
+            buf.copyIntoKind JmpS, info:
+              buf.addSymUse exitLab, info
+          buf.addDotToken()
+        while n.hasMore:
+          buf.takeTree n
+        buf.copyIntoKind ContinueV, info:
+          buf.addDotToken()
+  buf.copyIntoKind LabS, info:
+    buf.addSymDef exitLab, info
+  trGotoBuf c, dest, buf
 
 proc toGoto*(c: var Context; n: Cursor): TokenBuf =
   result = createTokenBuf(300)
