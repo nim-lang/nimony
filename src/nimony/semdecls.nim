@@ -203,6 +203,83 @@ proc semStaticTypevarType(c: var SemContext; dest: var TokenBuf; n: var Cursor) 
     # holds the plain element type
     discard semLocalType(c, dest, n)
 
+proc parseDefineInt(s: string; value: var int64): bool =
+  ## `strutils.parseBiggestInt` already rejects everything that needs rejecting
+  ## here -- trailing junk, an empty string, and a value too large for an
+  ## `int64` (`parseutils` hands that back as a negative length, which
+  ## `parseBiggestInt` turns into `ValueError`) -- while accepting a sign and `_`
+  ## separators the way an integer literal is written. It is `.raises`, and the
+  ## `try` is what keeps that contained instead of spreading through sem.
+  try:
+    value = parseBiggestInt(s)
+    result = true
+  except:
+    result = false
+
+proc semDefineOverride(c: var SemContext; dest: var TokenBuf; it: var Item;
+                       crucial: CrucialPragma; name: StrId): bool =
+  ## `{.intdefine.}` / `{.booldefine.}` / `{.strdefine.}`: when the key is given
+  ## on the command line the written initializer is dropped and the command-line
+  ## value takes its place. The replacement goes through the ordinary
+  ## const-expression path, so the constant's declared type still applies and a
+  ## narrower type still range-checks.
+  ##
+  ## Returns whether it replaced the initializer; an unset key leaves the
+  ## written default alone, which is the whole point of the feature.
+  let pk =
+    if IntdefineP in crucial.flags: IntdefineP
+    elif BooldefineP in crucial.flags: BooldefineP
+    elif StrdefineP in crucial.flags: StrdefineP
+    else: NoPragma
+  if pk == NoPragma: return false
+  if it.n.exprKind == ErrX:
+    # A const declaration is sem'd twice (signatures, then bodies) and the
+    # second pass reads the first pass's OUTPUT. If that output is an error --
+    # the value did not fit the declared type -- overriding again would `skip`
+    # the error node away and the diagnostic with it. Leave it to the ordinary
+    # path, which reports it exactly as it does for a written literal.
+    return false
+  let key = if crucial.defineKey.len > 0: crucial.defineKey else: pool.strings[name]
+  var val = ""
+  if not c.g.config.defineValue(key, val): return false
+
+  let info = it.n.info
+  var lit = createTokenBuf(4)
+  case pk
+  of IntdefineP:
+    var num = 0'i64
+    if not parseDefineInt(val, num):
+      c.buildErr dest, info, "`-d:" & key & "` is not an integer: " & val
+      skip it.n
+      return true
+    lit.addIntLit(num, info)
+  of StrdefineP:
+    lit.addStrLit(val, info)
+  else:
+    # A bare `-d:key` means `true`, as in Nim.
+    var b = true
+    case val.normalize
+    of "", "true", "on", "1": b = true
+    of "false", "off", "0": b = false
+    else:
+      c.buildErr dest, info, "`-d:" & key & "` is not a boolean: " & val
+      skip it.n
+      return true
+    lit.addParLe(if b: TrueX else: FalseX, info)
+    lit.addParRi()
+
+  skip it.n # the written initializer is replaced, not evaluated
+  # Drive the ORIGINAL `Item` over the synthesized literal rather than a copy:
+  # `it.typ` is a cursor, and a copy of it does not take part in the buffer's
+  # refcounting the same way, which silently turned the expected type into
+  # `auto` and let an out-of-range value through.
+  let resume = it.n
+  it.n = beginRead(lit)
+  withNewScope c:
+    semConstExpr c, dest, it
+  it.n = resume
+  return true
+
 proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKind) =
   var kind = kind
   if kind == TypevarY:
@@ -250,8 +327,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         let orig = n
         var it = Item(n: n, typ: c.types.autoType)
         if kind == ConstY:
-          withNewScope c:
-            semConstExpr c, dest, it # 4
+          if not semDefineOverride(c, dest, it, crucial, delayed.lit):
+            withNewScope c:
+              semConstExpr c, dest, it # 4
         elif kind == ParamY and it.n.isDotToken:
           if c.usingStmtMap.hasKey(delayed.lit):
             it.typ = c.usingStmtMap.getOrQuit(delayed.lit)
@@ -306,8 +384,9 @@ proc semLocal(c: var SemContext; dest: var TokenBuf; n: var Cursor; kind: SymKin
         else:
           var it = Item(n: n, typ: typ)
           if kind == ConstY:
-            withNewScope c:
-              semConstExpr c, dest, it # 4
+            if not semDefineOverride(c, dest, it, crucial, delayed.lit):
+              withNewScope c:
+                semConstExpr c, dest, it # 4
           else:
             semLocalValue c, dest, it, crucial # 4
           n = it.n

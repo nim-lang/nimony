@@ -71,8 +71,26 @@ are copy-on-write internally.
 - `swap` exchanges bits directly. It does **not** call `=sink`,
   `=copy`, or `=dup` hooks. This is by design — it's faster this way and Nim's lifetime tracking hooks do not support "self-pointers" (pointers inside the same object, `obj.field = addr(obj)`).
 - `allocFixed` / `deallocFixed`: Low-level fixed-size allocation.
-- `setOomHandler`: By default the runtime tries to continue after
-  out-of-memory. For many applications, just quitting is the more robust solution — set a handler that calls `quit`.
+- `setOomHandler`: governs `alloc`, which reports failure by returning `nil`. By
+  default the runtime tries to continue after out-of-memory, accumulating the
+  missing bytes for `threadOutOfMem()` to report. For many applications, just
+  quitting is the more robust solution — set a handler that calls `quit`.
+- `new` is not covered by that policy and cannot be: `ref T` is not-nil, so
+  there is no value to hand back. A failed allocation raises `OutOfMemError`
+  inside a `{.raises.}` routine and panics anywhere else. See
+  `doc/internals/failure_modes.md` for why the two allocators differ.
+- `-d:nimMaxHeap=N` caps the heap at `N` megabytes, with Nim's name, unit and
+  default, and Nim's consequence: exceeding it is **unrecoverable**, and
+  `raiseOutOfMem` aborts.
+- `-d:nimHardenOutOfMem` turns that cap into a refusal instead: allocation
+  answers `nil` and the out-of-memory paths in seqs, strings, tables and `new`
+  run for real. It is how those paths are reached on purpose rather than only
+  under genuine memory pressure -- see `doc/internals/failure_modes.md` and
+  `tests/nimony/oom`. Without `nimMaxHeap` it does nothing.
+- Both live in the ported allocator, so they apply to the default
+  (`nimNativeAlloc`) configuration and a `-d:useMimalloc` build ignores them.
+  That keeps them free: the check rides on occupancy the allocator already
+  tracks, with no second layer of accounting per allocation.
 
 #### Strategies (`--mm:`)
 

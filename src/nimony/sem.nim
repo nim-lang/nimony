@@ -4719,6 +4719,35 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
+proc nilableAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): TypeCursor =
+  ## Tier 3 of `doc/internals/failure_modes.md`, behind
+  ## `{.feature: "strictnew".}`: outside a `.raises` routine an allocation has no
+  ## channel to report failure on, so `new`'s result is reported as NILABLE and
+  ## the contract pass makes the caller narrow it before use. Tier 1
+  ## needs nothing here -- the raise hexer inserts is what lets the body treat the
+  ## result as not-nil -- and tier 2 needs nothing either: a `lenientnils` module's
+  ## `ref` is already `unchecked`, which is left alone, so the consequences stay
+  ## the programmer's without this site knowing about the feature.
+  result = typ
+  if StrictNewFeature notin c.features: return
+  if typ.typeKind != RefT: return
+  if c.routine.pragmas.contains(RaisesP) or CanRaiseFeature in c.features: return
+  var marker = typ.childCursor
+  skip marker # the element type
+  if not (marker.hasMore and marker.substructureKind == NotnilU): return
+
+  var buf = createTokenBuf(8)
+  buf.addParLe(RefT, info)
+  var ch = typ.childCursor
+  takeTree buf, ch # the element type
+  while ch.hasMore:
+    # keep whatever else the type carries, minus the marker being replaced
+    if ch.substructureKind in {NotnilU, NilU, UncheckedU}: skip ch
+    else: takeTree buf, ch
+  buf.addParPair(NilU, info)
+  buf.addParRi()
+  result = typeToCursor(c, buf, 0)
+
 proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let exprStart = dest.len
   let expected = it.typ
@@ -4851,6 +4880,10 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   var setFields = initTable[SymId, Cursor]()
   for field, pos in setFieldPositions:
     setFields[field] = cursorAt(fieldBuf, pos)
+  # `buildDefaultObjConstr` emits a `newobj` exactly when the type is a `ref`, so
+  # testing the type here is testing "does this allocate". The source node is an
+  # `oconstr` either way.
+  it.typ = nilableAllocResult(c, it.typ, info)
   buildDefaultObjConstr(c, dest, it.typ, setFields, info, bindings)
   commonType c, dest, it, exprStart, expected
 
@@ -4874,6 +4907,7 @@ proc semNewref(c: var SemContext; dest: var TokenBuf; it: var Item) =
     dest.shrink beforeTypeArg
     if it.typ.typeKind == TypedescT:
       inc it.typ
+    it.typ = nilableAllocResult(c, it.typ, info)
     dest.addSubtree it.typ
     assert it.typ.typeKind == RefT
     let typeForDefault = it.typ.childCursor

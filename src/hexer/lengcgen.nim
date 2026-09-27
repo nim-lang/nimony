@@ -953,7 +953,8 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
              TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
              BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
              FeatureP, UncheckedAssignP, UncheckedAccessP,
-             ProfilerP, StacktraceP, GcsafeP, UsedP:
+             ProfilerP, StacktraceP, GcsafeP, UsedP,
+             IntdefineP, BooldefineP, StrdefineP:
             skip n
           of BuildP, BundleP, CompileP, LinkP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
             bug "unreachable"

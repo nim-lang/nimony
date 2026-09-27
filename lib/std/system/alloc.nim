@@ -52,7 +52,7 @@ template track(op, address, size) {.untyped.} =
 # So "true" deallocation is delayed for as long as possible in favor of reusing cells.
 
 const
-  nimMinHeapPages = 128 # 0.5 MB
+  nimMinHeapPages {.intdefine.} = 128 # 0.5 MB
   SmallChunkSize = PageSize
   MaxFli = when sizeof(int) > 2: 30 else: 14
   MaxLog2Sli = 5 # 32, this cannot be increased without changing 'uint32'
@@ -360,16 +360,28 @@ proc getMaxMem(a: var MemRegion): int =
   # maximum of these both values here:
   result = max(a.currMem, a.maxMem)
 
-const nimMaxHeap = 0
+const
+  nimMaxHeap {.intdefine.} = 0
+    ## Megabytes this region may occupy, `0` meaning no limit. Nim's knob, with
+    ## Nim's unit, default and consequence: exceeding it is UNRECOVERABLE, and
+    ## `raiseOutOfMem` aborts. Only this allocator implements it; a build on the
+    ## default (mimalloc) heap ignores it.
+  nimHardenOutOfMem {.booldefine.} = false
+    ## Turns the `nimMaxHeap` cap from a hard stop into a refusal: allocation
+    ## answers `nil` and the out-of-memory paths in seqs, strings, tables and
+    ## `new` run for real. That is what it is for -- reaching those paths on
+    ## purpose, in a test or a hardening run, instead of only under genuine
+    ## memory pressure. Without `nimMaxHeap` it does nothing, since there is
+    ## then no limit to refuse at.
 
 proc allocPages(a: var MemRegion, size: int): pointer =
-  when nimMaxHeap != 0:
+  when nimMaxHeap != 0 and not nimHardenOutOfMem:
     if a.occ + size > nimMaxHeap * 1024 * 1024:
       raiseOutOfMem()
   osAllocPages(size)
 
 proc tryAllocPages(a: var MemRegion, size: int): pointer =
-  when nimMaxHeap != 0:
+  when nimMaxHeap != 0 and not nimHardenOutOfMem:
     if a.occ + size > nimMaxHeap * 1024 * 1024:
       raiseOutOfMem()
   osTryAllocPages(size)
@@ -925,6 +937,13 @@ proc bigChunkAlignOffset(alignment: int): int {.inline.} =
     result = align(sizeof(BigChunk) + sizeof(FreeCell), alignment) - sizeof(BigChunk) - sizeof(FreeCell)
 
 proc rawAlloc(a: var MemRegion, requestedSize: int, alignment: int = 0): pointer =
+  when nimMaxHeap != 0 and nimHardenOutOfMem:
+    # The recoverable form of the `nimMaxHeap` cap. Checked HERE and not in
+    # `allocPages`, because `nil` is already what every caller of `rawAlloc`
+    # expects on failure, while `allocPages`' three callers dereference its
+    # result immediately.
+    if a.occ + requestedSize > nimMaxHeap * 1024 * 1024:
+      return nil
   when defined(nimTypeNames):
     inc(a.allocCounter)
   sysAssert(allocInv(a), "rawAlloc: begin")
@@ -1084,7 +1103,7 @@ proc rawAlloc(a: var MemRegion, requestedSize: int, alignment: int = 0): pointer
 
 proc rawAlloc0(a: var MemRegion, requestedSize: int): pointer =
   result = rawAlloc(a, requestedSize)
-  zeroMem(result, requestedSize)
+  if result != nil: zeroMem(result, requestedSize)
 
 proc rawDealloc(a: var MemRegion, p: pointer) =
   when defined(nimTypeNames):
@@ -1312,7 +1331,7 @@ proc alloc(allocator: var MemRegion, size: Natural): pointer {.inline, gcsafe.} 
 
 proc alloc0(allocator: var MemRegion, size: Natural): pointer =
   result = alloc(allocator, size)
-  zeroMem(result, size)
+  if result != nil: zeroMem(result, size)
 
 proc dealloc(allocator: var MemRegion, p: pointer) {.inline.} =
   when not UseDestructors:
@@ -1331,7 +1350,11 @@ proc realloc(allocator: var MemRegion, p: pointer, newsize: Natural): pointer =
   result = nil
   if newsize > 0:
     result = alloc(allocator, newsize)
-    if p != nil:
+    # A `realloc` that cannot allocate must leave the original block alone and
+    # say so with `nil`: that is C's contract, and callers such as
+    # `seqimpl.resize` rely on the old block surviving so the sequence keeps its
+    # elements. Freeing `p` here would leak nothing but lose everything.
+    if result != nil and p != nil:
       copyMem(result, p, min(ptrSize(p), newsize))
       dealloc(allocator, p)
   elif p != nil:
@@ -1339,7 +1362,7 @@ proc realloc(allocator: var MemRegion, p: pointer, newsize: Natural): pointer =
 
 proc realloc0(allocator: var MemRegion, p: pointer, oldsize, newsize: Natural): pointer =
   result = realloc(allocator, p, newsize)
-  if newsize > oldsize:
+  if result != nil and newsize > oldsize:
     zeroMem(cast[pointer](cast[uint](result) + uint(oldsize)), newsize - oldsize)
 
 proc deallocOsPages(a: var MemRegion) =
