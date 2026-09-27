@@ -96,7 +96,40 @@ func isNaN*[T: SomeFloat](x: T): bool {.inline.} =
 
   c_isnan(x) != 0
 
-func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline, untyped.} =
+func frexp*(x: float32): tuple[frac: float32, exp: int] {.inline.} =
+  ## Splits `x` into a normalized fraction `frac` and an integral power of 2 `exp`,
+  ## such that `abs(frac) in 0.5..<1` and `x == frac * 2 ^ exp`, except for special
+  ## cases shown below.
+  runnableExamples:
+    assert frexp(8'f32) == (0.5'f32, 4)
+    assert frexp(-8'f32) == (-0.5'f32, 4)
+    assert frexp(0'f32) == (0'f32, 0)
+
+    # special cases:
+    assert frexp(-0'f32).frac.signbit # signbit preserved for +-0
+    assert frexp(Inf) == (Inf, 0) # +- Inf preserved
+    assert frexp(NaN).frac.isNaN
+
+  var y: uint32 = cast[uint32](x)
+  let ee = (y shr 23) and 0xFF'u32
+  var exponent: int = 0
+
+  if ee == 0:
+    if x != 0.0'f32:
+      let scaled = frexp((x * (1'u64 shl 63).float32 * 2.0).float64)
+      exponent = scaled.exp - 64
+      return (scaled.frac.float32, exponent)
+    else:
+      return (x, 0)
+  elif ee == 0xFF'u32:
+    return (x, 0)
+
+  exponent = int(ee) - 0x7E
+  y = y and 0x807FFFFF'u32
+  y = y or 0x3F000000'u32
+  return (cast[float32](y), exponent)
+
+func frexp*(x: float64): tuple[frac: float64, exp: int] {.inline.} =
   ## Splits `x` into a normalized fraction `frac` and an integral power of 2 `exp`,
   ## such that `abs(frac) in 0.5..<1` and `x == frac * 2 ^ exp`, except for special
   ## cases shown below.
@@ -107,8 +140,24 @@ func frexp*[T: SomeFloat](x: T): tuple[frac: T, exp: int] {.inline, untyped.} =
 
     # special cases:
     assert frexp(-0.0).frac.signbit # signbit preserved for +-0
-    assert frexp(Inf).frac == Inf # +- Inf preserved
+    assert frexp(Inf) == (Inf, 0) # +- Inf preserved
     assert frexp(NaN).frac.isNaN
 
-  # To be implemented natively on the IEEE-754 bit pattern.
-  result = default(tuple[frac: T, exp: int])
+  var y: uint64 = cast[uint64](x)
+  let ee = (y shr 52) and 0x7FF'u64
+  var exponent: int = 0
+
+  if ee == 0:
+    if x != 0.0:
+      let scaled = frexp(x * (1'u64 shl 63).float64 * 2.0)
+      exponent = scaled.exp - 64
+      return (scaled.frac, exponent)
+    else:
+      return (x, 0)
+  elif ee == 0x7FF'u64:
+    return (x, 0)
+
+  exponent = int(ee) - 0x3FE
+  y = y and 0x800FFFFFFFFFFFFF'u64
+  y = y or 0x3FE0000000000000'u64
+  return (cast[float64](y), exponent)
