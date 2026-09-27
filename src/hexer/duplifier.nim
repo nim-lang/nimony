@@ -1131,22 +1131,6 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
                       c.resultSym, info)
     c.dest.addDotToken() # no else
 
-proc genOutOfMemPanic(c: var Context; ow: OwningTemp; info: NifLineInfo) =
-  ## The non-raising counterpart of `genOutOfMemCheck`: with no error channel in
-  ## scope and a not-nil `ref` to produce, there is no value to continue with, so
-  ## the only report left is termination (`doc/internals/failure_modes.md`).
-  ## Without this the `rc` store `trNewobj` emits next would go through the
-  ## `nil`.
-  copyIntoKind c.dest, IteV, info:
-    copyIntoKind c.dest, EqX, info:
-      copyIntoKind c.dest, PointerT, info: discard
-      c.dest.addSymUse(ow.s, info)
-      copyIntoKind c.dest, NilX, info: discard
-    copyIntoKind c.dest, StmtsS, info:
-      copyIntoKind c.dest, CallS, info:
-        c.dest.addSymUse(pool.symId("panicOutOfMem.0." & SystemModuleSuffix), info)
-    c.dest.addDotToken() # no else
-
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
@@ -1170,12 +1154,26 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         c.dest.addSymUse(typeSym, info)
   c.dest.addParRi() # finish temp declaration
 
-  # A not-nil `ref` has no value to stand in for a failed allocation: raise where
-  # a `.raises` signature can carry the error, terminate where it cannot.
-  if CanRaise in c.flags:
+  # Tier 1 of `doc/internals/failure_modes.md`: a `.raises` signature can carry
+  # the failure, so map it and return. The body below may then treat the pointer
+  # as not-nil, which is what `contracts_fir` assumes for a `newobj` in such a
+  # routine.
+  let guardStores = CanRaise notin c.flags
+  if not guardStores:
     genOutOfMemCheck(c, ow, info)
   else:
-    genOutOfMemPanic(c, ow, info)
+    # Tiers 2 and 3: the caller gets the `nil` and deals with it. What is NOT
+    # theirs to deal with is the initialization this pass emits -- a construction
+    # that faulted before returning would leave them nothing to check -- so guard
+    # exactly those stores. The two tiers emit the same code and differ only in
+    # what the prover demands of the caller, so there is no `lenientnils` arm.
+    c.dest.addParLe(IteV, info)
+    copyIntoKind c.dest, NotX, info:
+      copyIntoKind c.dest, EqX, info:
+        copyIntoKind c.dest, PointerT, info: discard
+        c.dest.addSymUse(ow.s, info)
+        copyIntoKind c.dest, NilX, info: discard
+    c.dest.addParLe(StmtsS, info)
 
   copyIntoKind c.dest, AsgnS, info:
     copyIntoKind c.dest, DerefX, info:
@@ -1206,6 +1204,10 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         else:
           skip n, SkipType
           tr c, n, WantOwner # process default(T) call
+  if guardStores:
+    c.dest.addParRi()      # close the `stmts` of the guard
+    c.dest.addDotToken()   # no else
+    c.dest.addParRi()      # close the `ite`
   n = objStart; skip n
 
   # The decl, the OOM check and the payload assignment are all plain

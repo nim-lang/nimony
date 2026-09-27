@@ -73,7 +73,7 @@ lie about — see the range-check case below.
 | narrowing conversion to a machine-range type | truncate | recoverable | **[dsgn]** `RangeCheck` is in `CheckMode` and in `DefaultSettings`, but nothing reads it |
 | assignment into `range[a..b]` | **clamp**, not truncate | recoverable | **[dsgn]** see below |
 | `alloc` out of memory | `nil: pointer` | recoverable | **[impl]** `missingBytes`; `-d:nimMaxHeap=N` injects it |
-| `new` out of memory | none: `ref T` is not-nil | **fatal** | **[impl]** raises `OutOfMemError` inside a `.raises` routine, panics elsewhere |
+| `new` out of memory | none: `ref T` is not-nil | **fatal**, or reported | **[impl]** tiers 1-2; tier 3 behind `{.feature: "strictnew".}`. See below |
 | `a[i]` on array, `s[i]` on seq/string | none | fatal | **[impl]** `die 1` |
 | `.requires` violation | none: the body assumes it | fatal | **[impl]** `die 1` |
 | invalid object conversion | none | fatal | **[impl]** `die 1` |
@@ -356,65 +356,100 @@ it returns a nilable `pointer`, so it stays in the recoverable class where
 `missingBytes` already puts it. The split runs between the two, not between
 allocation sizes.
 
-The rule is therefore: **raise `OutOfMemError` where a `.raises` signature can
-carry it, panic otherwise.** `duplifier.trNewobj` emits one of the two right
-after the `allocFixed` call, before the `rc` store that would otherwise go
-through the `nil`:
+Both `new(T)` and `T(...)` therefore behave in one of three ways, in this order
+of priority:
 
-```nim
-# A not-nil `ref` has no value to stand in for a failed allocation: raise where
-# a `.raises` signature can carry the error, terminate where it cannot.
-if CanRaise in c.flags:
-  genOutOfMemCheck(c, ow, info)
-else:
-  genOutOfMemPanic(c, ow, info)
-```
+| | when | what happens |
+|---|---|---|
+| 1 | the enclosing routine is `.raises` | the `nil` is mapped to `ErrorCode.OutOfMemError` and raised |
+| 2 | otherwise, in a `lenientnils` module | the compiler guards the field stores it generates; the rest is the programmer's, who may check for `nil` or live with a segfault |
+| 3 | otherwise | the same guard, and the contract pass makes the caller narrow the result before using it -- behind `{.feature: "strictnew".}` for now |
 
-`CanRaise` is set iff the *enclosing routine* carries the `raises` pragma, so the
-choice is made per allocation site, not per call chain. `genOutOfMemPanic` calls
-`system/panics.panicOutOfMem`, which is `noreturn` and allocation-free (a string
-literal is a static const, not an allocation).
+**Tier 1** is what makes allocation-heavy code inside an error-reporting routine
+readable: the routine already has a channel, so the failure travels on it and the
+body may treat the result as not-nil. `duplifier.trNewobj` emits the raise, and
+`contracts_fir` *assumes* not-nil for a `newobj` in such a routine
+(`procCanRaise`). That assumption is about a pass that has not run yet —
+`genOutOfMemCheck` is hexer, the prover is nimsem — and it is sound because both
+read the same `RaisesP` pragma to decide.
 
-Before that `else` existed the pointer went untested in a non-raising routine and
-the `rc` store went through the `nil`: the process died by SIGSEGV at a faulting
-address, with no message and no `die 1` — accidentally fatal rather than
-deliberately fatal, and on a target without memory protection a wild store to a
-low address instead.
+**Tier 2** is what `lenientnils` means for allocation, and it is the Nim 2
+behaviour: pointers are `unchecked`, the prover demands nothing, and a `nil` that
+reaches a dereference faults. The compiler still guards its *own* stores — the
+`rc` and payload writes `trNewobj` emits for the construction — because a
+construction that faults before returning gives the programmer nothing to check.
+Past that point the consequences are theirs.
 
-Both halves are exercised by `tests/nimony/oom`, which compiles under
+**Tier 3** is behind `{.feature: "strictnew".}` and off by default. Every
+diagnostic it produces is correct, but what trips is the constructor shape
+`result = T(...)`, and that shape is everywhere: ~170 diagnostics across 15 test
+directories, ~46 tests. Neither escape is satisfying yet -- `.raises` puts a
+`try` on every call site (`newHttpTags` has module-level `let` callers where one
+does not fit), and `lenientnils` opts a whole module out of the checking. The
+likely answer is for such a constructor to DECLARE a `nil T` result, so each
+construction site narrows once with no error channel, no ABI change and no
+`try`. `system.new` needs that regardless: being generic, its `out T` takes its
+nilability from the instantiation site, so no module-level opt-out can reach it.
+
+It needs no new checking machinery, because the nilability markers and their
+enforcement already exist. There are three, not two:
+
+| marker | `wantNotNilDeref` | meaning |
+|---|---|---|
+| `notnil` | trusted | dereferences are free |
+| `nil` | fires | the prover demands a proof, which `if p != nil` supplies |
+| `unchecked` | does not fire | no proving; this is what `lenientnils` stamps |
+
+So tier 3 is a single change of *what `new` claims*: sem reports the result as
+`nil ref T` instead of `notnil ref T`, and `wantNotNilDeref`, `checkNilMatch` and
+the existing flow narrowing do the rest. A type that is already `unchecked` is
+left alone, which is how tier 2 falls out of the same code — the marker is a
+property of the type as declared, so a `lenientnils` module's `ref` arrives
+already unchecked and nothing at the allocation site needs to know about the
+feature.
+
+`trNewobj`'s split is therefore on `.raises` alone: raise-and-return, or guard the
+store. There is no `lenientnils` arm, because tiers 2 and 3 emit identical code
+and differ only in what the prover then demands.
+
+All three tiers are exercised by `tests/nimony/oom`, which compiles under
 `-d:nimMaxHeap=1 -d:nimHardenOutOfMem`. `nimMaxHeap` is Nim's heap cap, with
-Nim's unit and Nim's consequence -- `raiseOutOfMem` aborts -- and
+Nim's unit and Nim's consequence — `raiseOutOfMem` aborts — and
 `nimHardenOutOfMem` turns it into a refusal, so allocation answers `nil` and
 these paths run instead of the process dying. Both live in `system/alloc.nim`,
 checked against the occupancy the allocator already tracks: no second layer of
 accounting, and the `rawAlloc` level is where the check sits because `nil` is
 already what its callers expect (`allocPages`' callers dereference immediately).
 
-`toom_raises.nim` catches the `OutOfMemError`; `toom_panic.nim` dies with `out of
-memory`; `toom_string.nim` and `toom_table.nim` cover the recoverable neighbours
-described below.
+`toom_raises.nim` catches the `OutOfMemError` (tier 1). `toom_lenient.nim` takes
+the `nil` and checks it (tier 2), which also asserts what the compiler still owes
+there — that the construction RETURNED rather than faulting partway through its
+own stores. `toom_string.nim` and `toom_table.nim` cover the recoverable
+neighbours described above. The segfault a lenient module gets by declining the
+check is deliberately not a test: a signal's exit status asserts far less than
+those do. Neither is tier 3, which no test can assert while it is behind a
+feature that nothing in the tree turns on.
 
 The cap is on memory **held**, not on bytes ever handed out. That matters for
 more than fidelity to Nim: a cumulative counter makes recovery unobservable,
-since once tripped nothing can allocate again -- not even the `echo` that would
+since once tripped nothing can allocate again — not even the `echo` that would
 report what happened. A live cap lets a string release its buffer, become the
 cookie, and leave room for the program to carry on, which is the behaviour under
 test.
 
 Making allocation able to fail at all turned up three places in the ported
 allocator that assumed it could not: `rawAlloc0` and `alloc0` zeroed a `nil`
-result, and `realloc` copied into one -- and worse, freed the original block on
+result, and `realloc` copied into one — and worse, freed the original block on
 the way, so `seqimpl.resize` would have lost the elements it is careful to keep.
 
-Two loose ends remain:
+Note also that `genOutOfMemCheck` raises without clearing `missingBytes`, so a
+caught `OutOfMemError` leaves `threadOutOfMem()` true for the rest of the
+thread's life. The sticky slot needs a take-and-clear accessor for the same
+reason.
 
-- `genOutOfMemCheck` raises without clearing `missingBytes`, so a caught
-  `OutOfMemError` leaves `threadOutOfMem()` true for the rest of the thread's
-  life. The sticky slot needs a take-and-clear accessor for the same reason.
-- `setOomHandler` governs `alloc`, not `new`: a handler that calls `quit` makes a
-  failed `new` abort too, but only as a side effect of the allocator never
-  returning. `doc/stdlib.md` now says which of the two allocators the policy
-  covers.
+`setOomHandler` governs `alloc`, not `new`: a handler that calls `quit` makes a
+failed `new` abort too, but only as a side effect of the allocator never
+returning. `doc/stdlib.md` says which of the two allocators the policy covers.
 
 ## Divergence from Nim 2
 
