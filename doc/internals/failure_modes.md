@@ -381,15 +381,37 @@ construction that faults before returning gives the programmer nothing to check.
 Past that point the consequences are theirs.
 
 **Tier 3** is behind `{.feature: "strictnew".}` and off by default. Every
-diagnostic it produces is correct, but what trips is the constructor shape
-`result = T(...)`, and that shape is everywhere: ~170 diagnostics across 15 test
-directories, ~46 tests. Neither escape is satisfying yet -- `.raises` puts a
-`try` on every call site (`newHttpTags` has module-level `let` callers where one
-does not fit), and `lenientnils` opts a whole module out of the checking. The
-likely answer is for such a constructor to DECLARE a `nil T` result, so each
+diagnostic it produces is correct; what stands in the way of making it the
+default is that as the default it would stop `T(...)` from being usable as an
+*expression*. Measured with the switch forced on, 141 sites across 50 files and
+16 test directories fail, and they split in two:
+
+| | count | shape | what the port costs |
+|---|---|---|---|
+| *cannot prove* | 78 | a local holding an allocation, then dereferenced | one `if p == nil` per local |
+| *cannot analyze* | 63 | a construction nested inside another expression: `f(T(...))`, `Pair(a: Leaf(...), b: Leaf(...))`, any tree literal | there is no syntax that narrows a subexpression, so each one must be hoisted into its own `let` first |
+
+The second class is the real obstacle, and it is not a porting cost — it is a
+language change. Nor is it a library problem: `lib/std` contributes exactly one
+site (`newStringTable`). The 141 are overwhelmingly the closure, method, arc and
+borrow tests, i.e. code with nothing to say about allocation failure that pays
+the price for constructing a `ref` at all.
+
+For a *constructor* the answer is to DECLARE a `nil T` result, so each
 construction site narrows once with no error channel, no ABI change and no
 `try`. `system.new` needs that regardless: being generic, its `out T` takes its
 nilability from the instantiation site, so no module-level opt-out can reach it.
+`.raises` is not that answer -- it puts a `try` on every call site, and
+`newHttpTags` has module-level `let` callers where one does not fit.
+
+For the nested-expression class the answer has to come from the compiler.
+`wantNotNil` in `contracts_fir.nim` already lets a bare `NewobjX` through when
+`procCanRaise`, on the grounds that the compiler maps the `nil` itself. Making
+the *non*-raising case emit a runtime `nil` check there rather than a diagnostic
+would retire the switch with no source churn at all, and it is strictly better
+than either of today's two states: someone who narrows still pays nothing, and
+someone who does not gets a panic where they currently get a segfault. That is
+the same trade `runtimeContracts` already makes for `.requires`.
 
 It needs no new checking machinery, because the nilability markers and their
 enforcement already exist. There are three, not two:
@@ -411,6 +433,14 @@ feature.
 `trNewobj`'s split is therefore on `.raises` alone: raise-and-return, or guard the
 store. There is no `lenientnils` arm, because tiers 2 and 3 emit identical code
 and differ only in what the prover then demands.
+
+One place does need to know: a sum type's branch constructor. `Leaf(n: 4)` has no
+expected type of its own, so `semSumTypeObjConstr` supplies the sum type -- which
+is not-nil -- and `commonType` then converts the allocation's `nil` result
+straight back to it. Without relaxing that expectation too, a sum type has no
+spelling under tier 3 that narrows at all, not even `let x = Leaf(n: 4)`.
+`tests/nimony/notnil/tstrictnew.nim` is where both halves of the feature are
+exercised, `tstrictnew_errors.nim` where the four rejected shapes are.
 
 All three tiers are exercised by `tests/nimony/oom`, which compiles under
 `-d:nimMaxHeap=1 -d:nimHardenOutOfMem`. `nimMaxHeap` is Nim's heap cap, with

@@ -4697,28 +4697,6 @@ proc inferObjTypeFromFields(c: var SemContext; objTypeSym: SymId;
   inferFieldTypes(c, args, fieldTypesByName, inferred)
   result = buildInferredInvoke(c, objTypeSym, decl.typevars, inferred, info)
 
-proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
-                          efldSym: SymId; expected: TypeCursor; info: NifLineInfo;
-                          oconstrStart: Cursor) =
-  let branchInfo = it.n.info
-  inc it.n
-  var objBuf = createTokenBuf(32)
-  objBuf.addParLe(OconstrX, info)
-  objBuf.addSubtree expected
-  let kindName = pool.strings.getOrIncl("`kind")
-  objBuf.addParLe(KvU, branchInfo)
-  objBuf.addIdent(kindName, branchInfo)
-  objBuf.addSymUse(efldSym, branchInfo)
-  objBuf.addParRi()
-  while it.n.hasMore:
-    objBuf.addSubtree it.n
-    skip it.n
-  objBuf.addParRi()
-  it.n = oconstrStart; skip it.n
-  var objConstr = Item(n: cursorAt(objBuf, 0), typ: expected)
-  semObjConstr c, dest, objConstr
-  it.typ = objConstr.typ
-
 proc nilableAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): TypeCursor =
   ## Tier 3 of `doc/internals/failure_modes.md`, behind
   ## `{.feature: "strictnew".}`: outside a `.raises` routine an allocation has no
@@ -4747,6 +4725,32 @@ proc nilableAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): 
   buf.addParPair(NilU, info)
   buf.addParRi()
   result = typeToCursor(c, buf, 0)
+
+proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
+                          efldSym: SymId; expected: TypeCursor; info: NifLineInfo;
+                          oconstrStart: Cursor) =
+  let branchInfo = it.n.info
+  inc it.n
+  var objBuf = createTokenBuf(32)
+  objBuf.addParLe(OconstrX, info)
+  objBuf.addSubtree expected
+  let kindName = pool.strings.getOrIncl("`kind")
+  objBuf.addParLe(KvU, branchInfo)
+  objBuf.addIdent(kindName, branchInfo)
+  objBuf.addSymUse(efldSym, branchInfo)
+  objBuf.addParRi()
+  while it.n.hasMore:
+    objBuf.addSubtree it.n
+    skip it.n
+  objBuf.addParRi()
+  it.n = oconstrStart; skip it.n
+  # The branch constructor's only "expected type" is the sum type itself, which is
+  # not-nil. Relaxing it here is what lets tier 3 reach a sum type at all: without
+  # it `commonType` converts the allocation's `nil` result straight back to the
+  # not-nil sum type and there is no spelling of the construction that narrows.
+  var objConstr = Item(n: cursorAt(objBuf, 0), typ: nilableAllocResult(c, expected, info))
+  semObjConstr c, dest, objConstr
+  it.typ = objConstr.typ
 
 proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   let exprStart = dest.len
