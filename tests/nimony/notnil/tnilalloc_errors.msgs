@@ -1,0 +1,4 @@
+tests/nimony/notnil/tnilalloc_errors.nim(15, 12) Error: cannot prove expression is not nil: p [pass --verbose for the Final IR]
+tests/nimony/notnil/tnilalloc_errors.nim(19, 16) Error: cannot prove expression is not nil: p [pass --verbose for the Final IR]
+tests/nimony/notnil/tnilalloc_errors.nim(23, 21) Error: cannot prove expression is not nil: p [pass --verbose for the Final IR]
+tests/nimony/notnil/tnilalloc_errors.nim(29, 14) Error: cannot prove expression is not nil: p [pass --verbose for the Final IR]

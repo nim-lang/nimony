@@ -1,6 +1,0 @@
-tests/nimony/notnil/tstrictnew_errors.nim(19, 12) Error: cannot prove expression is not nil: p [pass --verbose for the Final IR]
-tests/nimony/notnil/tstrictnew_errors.nim(22, 20) Error: cannot analyze expression is not nil: (ref Node.Obj)(val: 2) [pass --verbose for the Final IR]
-tests/nimony/notnil/tstrictnew_errors.nim(25, 16) Error: cannot analyze expression is not nil: (ref Node.Obj)(val: 3) [pass --verbose for the Final IR]
-tests/nimony/notnil/tstrictnew_errors.nim(28, 24) Error: cannot analyze expression is not nil: (ref Tree.Obj)(`kind: Leaf, n: 4) [pass --verbose for the Final IR]
-tests/nimony/notnil/tstrictnew_errors.nim(28, 39) Error: cannot analyze expression is not nil: (ref Tree.Obj)(`kind: Leaf, n: 5) [pass --verbose for the Final IR]
-tests/nimony/notnil/tstrictnew_errors.nim(28, 16) Error: cannot analyze expression is not nil: (ref Tree.Obj)(`kind: Pair, a: (ref Tree.Obj)(`kind: Leaf, n: 4), b: (ref Tree.Obj)(`kind: Leaf, n: 5)) [pass --verbose for the Final IR]

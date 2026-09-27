@@ -77,8 +77,10 @@ are copy-on-write internally.
   quitting is the more robust solution — set a handler that calls `quit`.
 - `new` is not covered by that policy and cannot be: `ref T` is not-nil, so
   there is no value to hand back. A failed allocation raises `OutOfMemError`
-  inside a `{.raises.}` routine and panics anywhere else. See
-  `doc/internals/failure_modes.md` for why the two allocators differ.
+  inside a `{.raises.}` routine and panics anywhere else — unless the destination
+  asks for the `nil` by declaring itself `nil T`, which is then narrowed like any
+  other nilable reference. See `doc/internals/failure_modes.md` for why the two
+  allocators differ.
 - `-d:nimMaxHeap=N` caps the heap at `N` megabytes, with Nim's name, unit and
   default, and Nim's consequence: exceeding it is **unrecoverable**, and
   `raiseOutOfMem` aborts.

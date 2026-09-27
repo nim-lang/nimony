@@ -73,7 +73,7 @@ lie about — see the range-check case below.
 | narrowing conversion to a machine-range type | truncate | recoverable | **[dsgn]** `RangeCheck` is in `CheckMode` and in `DefaultSettings`, but nothing reads it |
 | assignment into `range[a..b]` | **clamp**, not truncate | recoverable | **[dsgn]** see below |
 | `alloc` out of memory | `nil: pointer` | recoverable | **[impl]** `missingBytes`; `-d:nimMaxHeap=N` injects it |
-| `new` out of memory | none: `ref T` is not-nil | **fatal**, or reported | **[impl]** tiers 1-2; tier 3 behind `{.feature: "strictnew".}`. See below |
+| `new` out of memory | none: `ref T` is not-nil | **fatal**, unless reported or asked for | **[impl]** panics; `.raises` raises, a `nil T` destination is handed the `nil`. See below |
 | `a[i]` on array, `s[i]` on seq/string | none | fatal | **[impl]** `die 1` |
 | `.requires` violation | none: the body assumes it | fatal | **[impl]** `die 1` |
 | invalid object conversion | none | fatal | **[impl]** `die 1` |
@@ -362,8 +362,8 @@ of priority:
 | | when | what happens |
 |---|---|---|
 | 1 | the enclosing routine is `.raises` | the `nil` is mapped to `ErrorCode.OutOfMemError` and raised |
-| 2 | otherwise, in a `lenientnils` module | the compiler guards the field stores it generates; the rest is the programmer's, who may check for `nil` or live with a segfault |
-| 3 | otherwise | the same guard, and the contract pass makes the caller narrow the result before using it -- behind `{.feature: "strictnew".}` for now |
+| 2 | otherwise, the destination is declared `nil T` -- or the module is `lenientnils`, which makes every `ref` `unchecked` | the compiler guards the field stores it generates and hands the `nil` over |
+| 3 | otherwise | `panicOutOfMem`: there is no value to hand back, so the process reports and dies |
 
 **Tier 1** is what makes allocation-heavy code inside an error-reporting routine
 readable: the routine already has a channel, so the failure travels on it and the
@@ -371,49 +371,50 @@ body may treat the result as not-nil. `duplifier.trNewobj` emits the raise, and
 `contracts_fir` *assumes* not-nil for a `newobj` in such a routine
 (`procCanRaise`). That assumption is about a pass that has not run yet —
 `genOutOfMemCheck` is hexer, the prover is nimsem — and it is sound because both
-read the same `RaisesP` pragma to decide.
+read the same `RaisesP` pragma to decide. `.raises` wins over an explicit `nil`
+destination: a routine that already reports failures reports this one too.
 
-**Tier 2** is what `lenientnils` means for allocation, and it is the Nim 2
-behaviour: pointers are `unchecked`, the prover demands nothing, and a `nil` that
-reaches a dereference faults. The compiler still guards its *own* stores — the
-`rc` and payload writes `trNewobj` emits for the construction — because a
-construction that faults before returning gives the programmer nothing to check.
-Past that point the consequences are theirs.
+**Tier 3 is the default**, and deliberately so. The rule is one sentence —
+*`new` panics on out-of-memory* — and it is entirely local: nothing about the
+surrounding control flow, and nothing about how strong the prover happens to be,
+changes whether a given construction can fail silently. That last part is what
+rules out the tempting alternative of panicking at the first *unprovable
+dereference* instead: the answer to "where does my check have to go?" would then
+be "anywhere the prover can see it dominates the use", so improving `inferle`
+would change which programs panic. A rule that cannot be taught is not a rule.
 
-**Tier 3** is behind `{.feature: "strictnew".}` and off by default. Every
-diagnostic it produces is correct; what stands in the way of making it the
-default is that as the default it would stop `T(...)` from being usable as an
-*expression*. Measured with the switch forced on, 141 sites across 50 files and
-16 test directories fail, and they split in two:
+**Tier 2 is the opt-in**, and it needs no new syntax, no `tryNew` and no feature
+switch, because `nil T` already means exactly this for fields and parameters:
 
-| | count | shape | what the port costs |
-|---|---|---|---|
-| *cannot prove* | 78 | a local holding an allocation, then dereferenced | one `if p == nil` per local |
-| *cannot analyze* | 63 | a construction nested inside another expression: `f(T(...))`, `Pair(a: Leaf(...), b: Leaf(...))`, any tree literal | there is no syntax that narrows a subexpression, so each one must be hoisted into its own `let` first |
+```nim
+let p: nil Node = Node(val: 1)   # hand me the nil, I will check it
+if p == nil: return
+echo p.val
+```
 
-The second class is the real obstacle, and it is not a porting cost — it is a
-language change. Nor is it a library problem: `lib/std` contributes exactly one
-site (`newStringTable`). The 141 are overwhelmingly the closure, method, arc and
-borrow tests, i.e. code with nothing to say about allocation failure that pays
-the price for constructing a `ref` at all.
+Three properties make this the right place for the annotation rather than the
+construction site. It is **visible at the declaration**, so whether a reference
+is checked is a property of the binding and not of the expression that filled it.
+It **reaches `system.new`**, whose `out T` takes its nilability from the
+instantiation site (`var s: nil Node; new(s)`) — the one case no module-level
+opt-out can reach. And it **leaves expressions alone**: the fields of
+`Pair(a: Leaf(...), b: Leaf(...))` are declared not-nil, so the nested
+constructions panic and the tree literal needs no temporaries. Only the
+destination that wants the `nil` says so.
 
-For a *constructor* the answer is to DECLARE a `nil T` result, so each
-construction site narrows once with no error channel, no ABI change and no
-`try`. `system.new` needs that regardless: being generic, its `out T` takes its
-nilability from the instantiation site, so no module-level opt-out can reach it.
-`.raises` is not that answer -- it puts a `try` on every call site, and
-`newHttpTags` has module-level `let` callers where one does not fit.
+For a library constructor that means declaring a nilable *result* —
+`proc newStringTable*(mode: StringTableMode): nil StringTableRef` — so each call
+site narrows once, with no error channel, no ABI change and no `try`. `.raises`
+is not the answer there: it puts a `try` on every call site, and `newHttpTags`
+has module-level `let` callers where one does not fit.
 
-For the nested-expression class the answer has to come from the compiler.
-`wantNotNil` in `contracts_fir.nim` already lets a bare `NewobjX` through when
-`procCanRaise`, on the grounds that the compiler maps the `nil` itself. Making
-the *non*-raising case emit a runtime `nil` check there rather than a diagnostic
-would retire the switch with no source churn at all, and it is strictly better
-than either of today's two states: someone who narrows still pays nothing, and
-someone who does not gets a panic where they currently get a segfault. That is
-the same trade `runtimeContracts` already makes for `.requires`.
+`lenientnils` is the third way in, and it is the Nim 2 behaviour: its pointers are
+`unchecked`, so the prover demands nothing and a `nil` that reaches a dereference
+faults. It reaches tier 2 rather than tier 3 because `unchecked` is a request for
+the pointer as it is, exactly like `nil` — the two differ only in whether the
+prover then asks anything of you.
 
-It needs no new checking machinery, because the nilability markers and their
+This needs no new checking machinery, because the nilability markers and their
 enforcement already exist. There are three, not two:
 
 | marker | `wantNotNilDeref` | meaning |
@@ -422,27 +423,22 @@ enforcement already exist. There are three, not two:
 | `nil` | fires | the prover demands a proof, which `if p != nil` supplies |
 | `unchecked` | does not fire | no proving; this is what `lenientnils` stamps |
 
-So tier 3 is a single change of *what `new` claims*: sem reports the result as
-`nil ref T` instead of `notnil ref T`, and `wantNotNilDeref`, `checkNilMatch` and
-the existing flow narrowing do the rest. A type that is already `unchecked` is
-left alone, which is how tier 2 falls out of the same code — the marker is a
-property of the type as declared, so a `lenientnils` module's `ref` arrives
-already unchecked and nothing at the allocation site needs to know about the
-feature.
+So the whole of it is *what the allocation claims*. `sem.nilableAllocResult`
+stamps `nil` onto the constructed type when — and only when — the destination
+asked for it, which carries the request to two readers: `trNewobj`, which reads
+the marker off the `newobj`'s type to choose between panicking and guarding its
+stores, and `wantNotNilDeref`, which then makes every dereference narrow. A type
+that is already `unchecked` is left alone, which is how `lenientnils` falls out of
+the same code without the allocation site knowing the feature exists.
 
-`trNewobj`'s split is therefore on `.raises` alone: raise-and-return, or guard the
-store. There is no `lenientnils` arm, because tiers 2 and 3 emit identical code
-and differ only in what the prover then demands.
+A sum type needs nothing special, but it is worth knowing why: `Leaf(n: 4)` has no
+expected type of its own, so `semSumTypeObjConstr` supplies the sum type — and
+because that is the *destination's* type, the marker travels with it. A nilable
+destination therefore reaches the branch constructor on its own.
+`tests/nimony/notnil/tnilalloc.nim` exercises all of this, and
+`tnilalloc_errors.nim` the four shapes the prover rejects.
 
-One place does need to know: a sum type's branch constructor. `Leaf(n: 4)` has no
-expected type of its own, so `semSumTypeObjConstr` supplies the sum type -- which
-is not-nil -- and `commonType` then converts the allocation's `nil` result
-straight back to it. Without relaxing that expectation too, a sum type has no
-spelling under tier 3 that narrows at all, not even `let x = Leaf(n: 4)`.
-`tests/nimony/notnil/tstrictnew.nim` is where both halves of the feature are
-exercised, `tstrictnew_errors.nim` where the four rejected shapes are.
-
-All three tiers are exercised by `tests/nimony/oom`, which compiles under
+All three are exercised by `tests/nimony/oom`, which compiles under
 `-d:nimMaxHeap=1 -d:nimHardenOutOfMem`. `nimMaxHeap` is Nim's heap cap, with
 Nim's unit and Nim's consequence — `raiseOutOfMem` aborts — and
 `nimHardenOutOfMem` turns it into a refusal, so allocation answers `nil` and
@@ -451,14 +447,16 @@ checked against the occupancy the allocator already tracks: no second layer of
 accounting, and the `rawAlloc` level is where the check sits because `nil` is
 already what its callers expect (`allocPages`' callers dereference immediately).
 
-`toom_raises.nim` catches the `OutOfMemError` (tier 1). `toom_lenient.nim` takes
-the `nil` and checks it (tier 2), which also asserts what the compiler still owes
-there — that the construction RETURNED rather than faulting partway through its
-own stores. `toom_string.nim` and `toom_table.nim` cover the recoverable
-neighbours described above. The segfault a lenient module gets by declining the
-check is deliberately not a test: a signal's exit status asserts far less than
-those do. Neither is tier 3, which no test can assert while it is behind a
-feature that nothing in the tree turns on.
+`toom_raises.nim` catches the `OutOfMemError` (tier 1). `toom_nildest.nim` asks
+for the `nil` with a `nil Node` destination and checks it, and `toom_lenient.nim`
+reaches the same path through `lenientnils` instead (tier 2); both also assert
+what the compiler still owes there — that the construction RETURNED rather than
+faulting partway through its own stores. `toom_panic.nim` is the default
+(tier 3): the same loop with a plain destination, which dies with `out of memory`
+on stderr and a non-zero status. `toom_string.nim` and `toom_table.nim` cover the
+recoverable neighbours described above. The segfault a lenient module gets by
+declining the check is deliberately not a test: a signal's exit status asserts far
+less than those do.
 
 The cap is on memory **held**, not on bytes ever handed out. That matters for
 more than fidelity to Nim: a cumulative counter makes recovery unobservable,

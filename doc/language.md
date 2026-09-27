@@ -4561,7 +4561,6 @@ The following features are available:
 | `"varToverloads"` | Allow for overloading via `var T`. For compatibility with Nim 2. |
 | `"lenientFloats"` | Allows implicit narrowing of float *values* (named constants and arbitrary expressions, not just literals) to a smaller float type. Off by default because the narrowing can lose precision. For compatibility with Nim 2. |
 | `"lenientAliasing"` | Allow for aliasing like `f(#[byvar]# x, x)` in function calls. For compatibility with Nim 2. |
-| `"strictnew"` | An allocating object construction outside a `{.raises.}` routine yields a *nilable* reference, so the result must be checked before it is dereferenced. A failed allocation has no value to hand back, and a `.raises` routine is the only place that can report it without the caller's help. Off by default; see [failure_modes.md](internals/failure_modes.md). |
 | `"runtimeContracts"` | Check `.requires` contracts at run time only: no call site in this module is judged statically. |
 | `"staticContracts"` | Every `.requires` a call site in this module carries must be *proven*, not merely not-disproven. |
 | `"v2"`  | meta feature: Enable all features that help for compatibility with Nim 2. |
