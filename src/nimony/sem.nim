@@ -4719,19 +4719,39 @@ proc semSumTypeObjConstr(c: var SemContext; dest: var TokenBuf; it: var Item;
   semObjConstr c, dest, objConstr
   it.typ = objConstr.typ
 
-proc nilableAllocResult(c: var SemContext; typ: TypeCursor; info: NifLineInfo): TypeCursor =
-  ## Tier 3 of `doc/internals/failure_modes.md`, behind
-  ## `{.feature: "strictnew".}`: outside a `.raises` routine an allocation has no
-  ## channel to report failure on, so `new`'s result is reported as NILABLE and
-  ## the contract pass makes the caller narrow it before use. Tier 1
-  ## needs nothing here -- the raise hexer inserts is what lets the body treat the
-  ## result as not-nil -- and tier 2 needs nothing either: a `lenientnils` module's
-  ## `ref` is already `unchecked`, which is left alone, so the consequences stay
-  ## the programmer's without this site knowing about the feature.
+proc asksForNil(typ: TypeCursor): bool =
+  ## Whether a destination type spells `nil T`, i.e. asks to be handed the `nil`
+  ## an allocation answers with rather than the panic. Shaped like
+  ## `contracts_fir.markedAs` and for its reason: the value-passing wrappers do
+  ## not change a value's nilability, only how it is passed, and `system.new`
+  ## reaches here as `out T`.
+  var t = typ
+  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+    inc t
+  if t.typeKind != RefT: return false
+  var marker = t.childCursor
+  skip marker # the element type
+  result = marker.hasMore and marker.substructureKind == NilU
+
+proc nilableAllocResult(c: var SemContext; typ, expected: TypeCursor;
+                        info: NifLineInfo): TypeCursor =
+  ## An allocation panics on out-of-memory (`doc/internals/failure_modes.md`)
+  ## unless the DESTINATION asked to be handed the `nil` instead by declaring
+  ## itself `nil T`. Stamping the marker onto the constructed type here is what
+  ## carries that request to `trNewobj`, which reads it off the `newobj`'s type to
+  ## choose between panicking and guarding its stores, and to `wantNotNilDeref`,
+  ## which then makes every dereference narrow.
+  ##
+  ## `.raises` overrides an explicit `nil` destination for now: tier 1 maps the
+  ## failure to `ErrorCode.OutOfMemError` and raises it, so the body may go on
+  ## treating the result as not-nil. A `lenientnils` module needs nothing here --
+  ## its `ref` is already `unchecked`, which `trNewobj` reads the same way as
+  ## `nil` and the prover reads as "do not ask" -- so the consequences stay the
+  ## programmer's without this site knowing about the feature.
   result = typ
-  if StrictNewFeature notin c.features: return
   if typ.typeKind != RefT: return
   if c.routine.pragmas.contains(RaisesP) or CanRaiseFeature in c.features: return
+  if not asksForNil(expected): return
   var marker = typ.childCursor
   skip marker # the element type
   if not (marker.hasMore and marker.substructureKind == NotnilU): return
@@ -4883,7 +4903,7 @@ proc semObjConstr(c: var SemContext; dest: var TokenBuf, it: var Item) =
   # `buildDefaultObjConstr` emits a `newobj` exactly when the type is a `ref`, so
   # testing the type here is testing "does this allocate". The source node is an
   # `oconstr` either way.
-  it.typ = nilableAllocResult(c, it.typ, info)
+  it.typ = nilableAllocResult(c, it.typ, expected, info)
   buildDefaultObjConstr(c, dest, it.typ, setFields, info, bindings)
   commonType c, dest, it, exprStart, expected
 
@@ -4907,7 +4927,7 @@ proc semNewref(c: var SemContext; dest: var TokenBuf; it: var Item) =
     dest.shrink beforeTypeArg
     if it.typ.typeKind == TypedescT:
       inc it.typ
-    it.typ = nilableAllocResult(c, it.typ, info)
+    it.typ = nilableAllocResult(c, it.typ, expected, info)
     dest.addSubtree it.typ
     assert it.typ.typeKind == RefT
     let typeForDefault = it.typ.childCursor

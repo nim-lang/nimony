@@ -37,23 +37,6 @@ type
       ## site in this module is judged statically. The opt-out for code the
       ## prover gets *wrong* — or that simply wants no compile-time diagnostics
       ## about contracts at all.
-    StrictNewFeature
-      ## Report the result of an allocating object construction as NILABLE when
-      ## the enclosing routine is not `.raises`, so the contract pass makes the
-      ## caller narrow it before use. This is tier 3 of
-      ## `doc/internals/failure_modes.md` and where the language is headed: a
-      ## failed allocation has no value to hand back, and a `.raises` routine is
-      ## the only place that can report it without the caller's help.
-      ##
-      ## Off by default for a measured reason: every diagnostic it produces is
-      ## correct, but it is the constructor shape `result = T(...)` that trips,
-      ## and that shape is everywhere -- ~170 diagnostics across 15 test
-      ## directories, ~46 tests. Neither escape is satisfying yet either:
-      ## `.raises` puts a `try` on every call site, and `lenientnils` opts out of
-      ## the checking wholesale. The likely answer is for such a constructor to
-      ## DECLARE a `nil T` result so each site narrows once, which `system.new`
-      ## needs regardless -- being generic, its `out T` takes its nilability from
-      ## the instantiation, so no module-level opt-out can reach it.
     StaticContractsFeature
       ## Every `.requires` a call site in this module carries must be *proven*,
       ## not merely not-disproven. This is where contracts are headed. It is not
@@ -86,7 +69,6 @@ proc parseFeatures*(s: string): set[Feature] =
   of "lenientaliasing": {LenientAliasingFeature}
   of "runtimecontracts": {RuntimeContractsFeature}
   of "staticcontracts": {StaticContractsFeature}
-  of "strictnew": {StrictNewFeature}
   of "v2": {UntypedFeature, LenientConvertersFeature, EarlyMagicsFeature,
             AutoClosuresFeature, LenientNilsFeature, IgnoreStyleFeature,
             VarToverloadsFeature, LenientFloatsFeature, LenientAliasingFeature,

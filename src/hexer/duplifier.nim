@@ -1131,6 +1131,37 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
                       c.resultSym, info)
     c.dest.addDotToken() # no else
 
+proc genOutOfMemPanic(c: var Context; ow: OwningTemp; info: NifLineInfo) =
+  ## The default: with no error channel in scope and a not-nil `ref` to produce,
+  ## there is no value to continue with, so the only report left is termination
+  ## (`doc/internals/failure_modes.md`). Without this the `rc` store `trNewobj`
+  ## emits next would go through the `nil`. A destination that would rather have
+  ## the `nil` says so by declaring itself `nil T`, which is the case below.
+  copyIntoKind c.dest, IteV, info:
+    copyIntoKind c.dest, EqX, info:
+      copyIntoKind c.dest, PointerT, info: discard
+      c.dest.addSymUse(ow.s, info)
+      copyIntoKind c.dest, NilX, info: discard
+    copyIntoKind c.dest, StmtsS, info:
+      copyIntoKind c.dest, CallS, info:
+        c.dest.addSymUse(pool.symId("panicOutOfMem.0." & SystemModuleSuffix), info)
+    c.dest.addDotToken() # no else
+
+proc asksForNil(typ: Cursor): bool =
+  ## Whether the allocation's own type spells `nil T` or `unchecked T`: the first
+  ## is the destination asking to be handed the `nil` (sem stamps it there, see
+  ## `sem.nilableAllocResult`), the second is what `lenientnils` stamps. Both mean
+  ## "do not panic, the caller wants the pointer as it is". Shaped like
+  ## `contracts_fir.markedAs`, which is the reader of the same marker on the other
+  ## side of the pass boundary.
+  var t = typ
+  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+    inc t
+  if t.typeKind != RefT: return false
+  var marker = t.childCursor
+  skip marker # the element type
+  result = marker.hasMore and marker.substructureKind in {NilU, UncheckedU}
+
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
@@ -1154,19 +1185,24 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         c.dest.addSymUse(typeSym, info)
   c.dest.addParRi() # finish temp declaration
 
-  # Tier 1 of `doc/internals/failure_modes.md`: a `.raises` signature can carry
-  # the failure, so map it and return. The body below may then treat the pointer
-  # as not-nil, which is what `contracts_fir` assumes for a `newobj` in such a
-  # routine.
-  let guardStores = CanRaise notin c.flags
-  if not guardStores:
+  # `doc/internals/failure_modes.md`, in priority order. A `.raises` signature can
+  # carry the failure, so map it and return -- that also overrides an explicit
+  # `nil` destination, and it is what lets the body below treat the pointer as
+  # not-nil, which is what `contracts_fir` assumes for a `newobj` in such a
+  # routine. Otherwise: panic, unless the type says the caller wants the `nil`.
+  let raising = CanRaise in c.flags
+  let guardStores = not raising and asksForNil(refType)
+  if raising:
     genOutOfMemCheck(c, ow, info)
+  elif not guardStores:
+    genOutOfMemPanic(c, ow, info)
   else:
-    # Tiers 2 and 3: the caller gets the `nil` and deals with it. What is NOT
-    # theirs to deal with is the initialization this pass emits -- a construction
-    # that faulted before returning would leave them nothing to check -- so guard
-    # exactly those stores. The two tiers emit the same code and differ only in
-    # what the prover demands of the caller, so there is no `lenientnils` arm.
+    # The caller gets the `nil` and deals with it. What is NOT theirs to deal with
+    # is the initialization this pass emits -- a construction that faulted before
+    # returning would leave them nothing to check -- so guard exactly those
+    # stores. `nil T` and `lenientnils`' `unchecked T` emit the same code and
+    # differ only in what the prover then demands, so there is no `lenientnils`
+    # arm.
     c.dest.addParLe(IteV, info)
     copyIntoKind c.dest, NotX, info:
       copyIntoKind c.dest, EqX, info:
