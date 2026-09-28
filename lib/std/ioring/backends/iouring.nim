@@ -70,88 +70,34 @@ var
 
 type
   MsgSlot = object
-    ## Per-op msghdr storage for `IORING_OP_RECVMSG`/`IORING_OP_SENDMSG`.
-    ## The kernel holds a pointer to the `msghdr` from fill time until the op
-    ## completes, so the storage must not move for exactly as long as its op is
-    ## in flight. `hdr`/`iov` are therefore never stored by value in anything
-    ## the kernel could see move — each block lives on the heap, and only its
-    ## pointer travels.
+    ## The msghdr of an in-flight `IORING_OP_RECVMSG`/`IORING_OP_SENDMSG`.
     hdr: Tmsghdr
     iov: IOVec
 
-  MsgArena = object
-    ## Pool of `MsgSlot` blocks io_uring pins for its in-flight RECVMSG/SENDMSG
-    ## ops. A block is allocated the first time it is needed and then recycled
-    ## through `freelist` — never freed while the ring lives: each op borrows a
-    ## block for its flight and returns it on completion, so the pool's size
-    ## settles at the deepest concurrent datagram load, and allocation is not a
-    ## per-op cost. `allocs` maps the op's `tagFor(idx, gen)` — the same tag its
-    ## SQE carries — to the pool index holding its block, so a stale CQE (an op
-    ## the slot arena already completed on a blown deadline or `closeFd`) can
-    ## only release *its own* block, never one a later op registered under the
-    ## same slot index.
-    ##
-    ## Only those two ops ever touch the pool: a lane serving reads, writes,
-    ## accepts or timers alone keeps an empty pool, which is the point — no
-    ## storage is reserved for slots that never carry a datagram. An entry is
-    ## registered the moment an SQE is filled and released when the kernel
-    ## acknowledges the op with a CQE, in time or late.
-    ##
-    ## The pool holds pointers rather than `MsgSlot`s: a `Tmsghdr`'s non-nil
-    ## pointers leave `MsgSlot` a type without a `default`, which a value seq
-    ## would demand, and io_uring holds `addr msg.hdr` of an in-flight op,
-    ## which a value seq's realloc would move. The seq of pointers may itself
-    ## move as it grows, but the blocks it points at never do.
-    msgs: seq[ptr MsgSlot]       ## pool of blocks, one allocation each ever
-    freelist: seq[uint32]        ## pool indices of blocks not currently in use
-    allocs: Table[uint64, uint32]  ## tag -> pool index of the op's block
+var gMsgs: seq[Table[uint64, nil ptr MsgSlot]]
+  ## Per lane: an in-flight datagram op's tag -> its msghdr. The kernel holds
+  ## `addr hdr` until the op's CQE, which can arrive after a deadline or
+  ## `closeFd` has already freed the slot, so the msghdr cannot live in the
+  ## slot: it is allocated at fill time and freed when the CQE carrying the
+  ## same tag arrives, in time or late.
 
-proc growMsg(a: var MsgArena) =
-  ## One block for the pool, allocated once and never deallocated while the
-  ## ring lives; the freelist recycles it from there on.
-  a.msgs.add cast[ptr MsgSlot](alloc0(sizeof(MsgSlot)))
-  a.freelist.add uint32(a.msgs.len - 1)
+proc newMsg(lane, idx: int; gen: uint32; name: pointer; nameLen: SockLen;
+            buf: pointer; len: int): ptr Tmsghdr =
+  let m = cast[ptr MsgSlot](alloc0(sizeof(MsgSlot)))
+  m.hdr.msg_name = name
+  m.hdr.msg_namelen = nameLen
+  m.hdr.msg_iov = addr m.iov
+  m.hdr.msg_iovlen = csize_t(1)
+  m.iov.iov_base = buf
+  m.iov.iov_len = csize_t(len)
+  gMsgs[lane][tagFor(idx, gen)] = m
+  result = addr m.hdr
 
-proc registerMsg(a: var MsgArena; idx: int; gen: uint32): ptr MsgSlot =
-  ## The `MsgSlot` block for the op in slot `idx` at generation `gen`, taking
-  ## a free block from the pool (allocating the pool's first as needed). Each
-  ## op gets its own block for its whole flight, so the address the SQE hands
-  ## to the kernel stays valid until the op's CQE arrives.
-  if a.freelist.len == 0: a.growMsg()
-  let bi = a.freelist.pop()
-  a.allocs[tagFor(idx, gen)] = bi
-  result = a.msgs[bi]
-
-proc releaseMsg(a: var MsgArena; idx: int; gen: uint32) =
-  ## Return the block for op `idx`/`gen` to the freelist. Called once the
-  ## kernel is done with the op's storage — whether the op finished in time or
-  ## its CQE only turned up late after a cancel, so this is also the moment a
-  ## cancelled op's block stops being the kernel's. No-ops for CQEs of ops
-  ## that never registered (reads, ...).
-  let key = tagFor(idx, gen)
-  let bi = a.allocs.getOrDefault(key, high(uint32))
-  if bi != high(uint32):
-    a.freelist.add bi
-    a.allocs.del(key)
-
-proc blockMsg(a: var MsgArena; idx: int; gen: uint32): ptr MsgSlot =
-  ## The registered block for op `idx`/`gen`, for reads that must happen
-  ## before `releaseMsg`. A live completion of a RECVMSG always has its block,
-  ## because fill registered it; a missing block is a bookkeeping bug.
-  let key = tagFor(idx, gen)
-  let bi = a.allocs.getOrDefault(key, high(uint32))
-  assert bi != high(uint32), "ioring/iouring: msghdr block missing for live op"
-  result = a.msgs[bi]
-
-proc releaseAllMsg(a: var MsgArena) =
-  ## Teardown: free the pool's blocks. Nothing is in flight at ring close.
-  for m in a.msgs:
-    if m != nil: dealloc(m)
-  a.msgs = @[]
-  a.freelist = @[]
-  a.allocs = initTable[uint64, uint32]()
-
-var gMsgs: seq[MsgArena]   ## per lane, registered by slot tag
+proc takeMsg(lane: int; tag: uint64): nil ptr MsgSlot =
+  ## The msghdr registered under `tag`, removed from the table; `nil` for an
+  ## op that has none.
+  result = gMsgs[lane].getOrDefault(tag, nil)
+  if result != nil: gMsgs[lane].del(tag)
 
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
@@ -159,7 +105,7 @@ proc tryInitLocalQueues(): bool =
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
-      gMsgs.add MsgArena(allocs: initTable[uint64, uint32]())
+      gMsgs.add initTable[uint64, nil ptr MsgSlot]()
   except ErrorCode:
     return false   # the caller falls back to the epoll backend
   return true
@@ -205,31 +151,16 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     discard sqe.openat(AtFdCwd, cast[pointer](op.open.buf), cint(op.open.openFlags), op.open.openMode)
   of opRecvFrom:
     # IORING_OP_RECVMSG has no recvfrom form: the source address travels in the
-    # msghdr (`msg_name`), which the kernel reads on submission and writes back
-    # into at completion, so the msghdr lives in the lane's `MsgArena` — never
-    # on this stack. `msg_name` points at the op's own `recvfrom` address,
-    # already arena-stable, so `complete` hands the storage to `peer` the way
-    # accept's does, and `msg_iov` points at the caller's buffer, which is
-    # alive until the op completes (the same contract as `submitRead`).
-    let m = gMsgs[lane].registerMsg(idx, slot.gen)
-    zeroMem(addr m.hdr, sizeof(m.hdr))
-    m.hdr.msg_name = addr op.recvfrom.sockAddr
-    m.hdr.msg_namelen = op.recvfrom.sockAddrLen
-    m.hdr.msg_iov = addr m.iov
-    m.hdr.msg_iovlen = csize_t(1)
-    m.iov.iov_base = cast[pointer](op.recvfrom.buf)
-    m.iov.iov_len = csize_t(op.recvfrom.len)
-    discard sqe.recvmsg(SocketHandle(op.fd), addr m.hdr)
+    # msghdr (`msg_name`), which the kernel writes back into at completion.
+    # `msg_name` points at the op's own `recvfrom` address, so `complete`
+    # hands the storage to `peer` the way accept's does.
+    discard sqe.recvmsg(SocketHandle(op.fd),
+      newMsg(lane, idx, slot.gen, addr op.recvfrom.sockAddr,
+             op.recvfrom.sockAddrLen, cast[pointer](op.recvfrom.buf), op.recvfrom.len))
   of opSendTo:
-    let m = gMsgs[lane].registerMsg(idx, slot.gen)
-    zeroMem(addr m.hdr, sizeof(m.hdr))
-    m.hdr.msg_name = addr op.sendto.sockAddr
-    m.hdr.msg_namelen = op.sendto.sockAddrLen
-    m.hdr.msg_iov = addr m.iov
-    m.hdr.msg_iovlen = csize_t(1)
-    m.iov.iov_base = cast[pointer](op.sendto.buf)
-    m.iov.iov_len = csize_t(op.sendto.len)
-    discard sqe.sendmsg(SocketHandle(op.fd), addr m.hdr)
+    discard sqe.sendmsg(SocketHandle(op.fd),
+      newMsg(lane, idx, slot.gen, addr op.sendto.sockAddr,
+             op.sendto.sockAddrLen, cast[pointer](op.sendto.buf), op.sendto.len))
   of opNop, opTimeout:
     # A timer needs no SQE. The lane's deadline heap already knows when it is
     # due and bounds the `submit(waitNr)` below, so letting the kernel hold a
@@ -380,31 +311,20 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         if idx < gSlots[lane].slots.len:
           slot = addr gSlots[lane].slots[idx]
         if slot == nil or not slot.inUse or slot.gen != gen:
-          # The op is already accounted for (a deadline/`closeFd` completed it
-          # here), so its kind is no longer readable from the slot — but only a
-          # datagram op ever registered a block, so this release is inherently
-          # selective: the kernel just relinquished the msghdr it still held.
-          gMsgs[lane].releaseMsg(idx, gen)
+          # Already completed here by a deadline or `closeFd`; the kernel has
+          # only now let go of the msghdr, if the op had one.
+          let m = takeMsg(lane, cqes[i].userData)
+          if m != nil: dealloc(m)
           continue
         let op = addr slot.op
-        # Only RECVMSG/SENDMSG ops ever registered a block, so return it only
-        # for those; a live read, accept or poll CQE never touches the arena.
-        case op.kind
-        of opRecvFrom:
-          if int(cqes[i].res) > 0:
-            # RECVMSG wrote the actual source-address length back into our
-            # msghdr; narrow `sockAddrLen` to it before the block goes,
-            # exactly as the readiness backends do with their recvfrom's in-out
-            # length, so the storage `complete` hands to `peer` is described by
-            # the real length.
-            op.recvfrom.sockAddrLen = gMsgs[lane].blockMsg(idx, gen).hdr.msg_namelen
-          # The kernel is done with the op's storage, so the block goes back
-          # to the pool it was borrowed from.
-          gMsgs[lane].releaseMsg(idx, gen)
-        of opSendTo:
-          gMsgs[lane].releaseMsg(idx, gen)
-        else:
-          discard
+        if op.kind in {opRecvFrom, opSendTo}:
+          let m = takeMsg(lane, cqes[i].userData)
+          if m != nil:
+            if op.kind == opRecvFrom and int(cqes[i].res) > 0:
+              # Narrow `sockAddrLen` to what RECVMSG wrote, as the readiness
+              # backends do with recvfrom's in-out length.
+              op.recvfrom.sockAddrLen = m.hdr.msg_namelen
+            dealloc(m)
         # For OP_POLL_ADD the kernel reports the fired mask in poll(2) form;
         # translate it to the same internal `IoEvents` the epoll/kqueue
         # backends report, so the completion's `readyEvents` are consistent no
@@ -479,10 +399,10 @@ proc iouringClose() {.nimcall.} =
   for i in 0..<localQueues.len:
     if localQueues[i].params != nil:
       teardown(localQueues[i])
-  # Free the blocks no CQE is coming for. In-flight ops are cancelled before
-  # ring teardown, so every entry here is one the kernel already gave back.
+  # Free the msghdrs no CQE is coming for: the rings are gone.
   for i in 0..<gMsgs.len:
-    gMsgs[i].releaseAllMsg()
+    for m in gMsgs[i].values:
+      if m != nil: dealloc(m)
   gMsgs = @[]
 
 proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
