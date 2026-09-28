@@ -27,8 +27,7 @@
 import std/ioring
 
 when defined(windows):
-  from std/windows/winlean import GENERIC_READ, GENERIC_WRITE, OPEN_EXISTING,
-    OPEN_ALWAYS, CREATE_ALWAYS
+  import std/windows/winlean   # Handle, DWORD, closeHandle, the GENERIC_* bits
 else:
   from std/posix/posix import Off, pcall
 
@@ -139,20 +138,20 @@ when defined(windows):
       of fmAppend: (FILE_APPEND_DATA, OPEN_ALWAYS)
     result = (cast[int32](access), cast[int32](disposition))
 
-  # The HANDLE travels as a plain `uint`: the ring's narrowed fd, widened
-  # back without sign extension.
-  proc closeHandle(h: uint): int32 {.
-    stdcall, importc: "CloseHandle", dynlib: "kernel32", sideEffect.}
-  proc setFilePointerEx(h: uint; distance: int64; newPos: ptr int64;
-                        moveMethod: uint32): int32 {.
-    stdcall, importc: "SetFilePointerEx", dynlib: "kernel32", sideEffect.}
+  proc handleOf(fd: cint): Handle {.inline.} =
+    ## Widen the ring's narrowed HANDLE back without sign extension.
+    cast[Handle](uint(cast[uint32](fd)))
 
-  proc closeImpl(fd: cint) =
-    discard closeHandle(uint(cast[uint32](fd)))
+  proc closeImpl(fd: cint) {.inline.} =
+    discard closeHandle(handleOf(fd))
+
+  proc setFilePointerEx(hFile: Handle; distance: int64; newPos: ptr int64;
+                        moveMethod: DWORD): WINBOOL {.
+    stdcall, importc: "SetFilePointerEx", dynlib: "kernel32", sideEffect.}
 
   proc seekImpl(fd: cint; off: int64; whence: cint): int64 {.raises.} =
     var np: int64 = 0
-    if setFilePointerEx(uint(cast[uint32](fd)), off, addr np, uint32(whence)) == 0:
+    if setFilePointerEx(handleOf(fd), off, addr np, DWORD(whence)) == WINBOOL(0):
       raise IOError
     result = np
 
