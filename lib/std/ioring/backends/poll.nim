@@ -26,6 +26,8 @@ proc armEventsForFd*(fd: cint): IoEvents =
   result = {}
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
+    when defined(illumos):
+      if gSlots[lane].slots[j].op.positioned: continue # AIO owns this op
     case gSlots[lane].slots[j].op.kind
     of opRead, opAccept:
       result.incl evRead
@@ -51,6 +53,8 @@ proc failPendingForFd*(fd: cint) =
   ## fd cannot be armed, so otherwise they park forever.
   let lane = ioLane()
   for j in gSlots[lane].slotsForFd(fd):
+    when defined(illumos):
+      if gSlots[lane].slots[j].op.positioned: continue
     complete(j, ArmFailed)
 
 proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
@@ -71,7 +75,9 @@ proc submitForPoll*(fd: cint; alreadyRegistered: bool = false) {.nimcall.} =
 
 when defined(posix):
   import std / assertions
-  from std/posix/posix import SockLen, EINPROGRESS, pcall
+  from std/posix/posix import SockLen, Off, EINVAL, EINPROGRESS, EAGAIN, EWOULDBLOCK, SOL_SOCKET, pcall
+  when defined(illumos):
+    from std/posix/posix import fcntl, F_GETFL, F_SETFL, O_NONBLOCK, close
 
   # No errno anywhere below. Every call the ring makes goes through
   # `posix.pcall`, which answers the raw Linux convention — the result, or
@@ -81,14 +87,41 @@ when defined(posix):
 
   proc posixRead(fd: cint; buf: nil pointer; count: int): int {.importc: "read".}
   proc posixWrite(fd: cint; buf: nil pointer; count: int): int {.importc: "write".}
-  proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
-  proc getsockopt(s: cint; level, optname: cint; val: pointer;
-                  vlen: ptr SockLen): cint {.importc: "getsockopt".}
-  proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "connect".}
+  proc posixPread(fd: cint; buf: nil pointer; count: int; offset: Off): int {.importc: "pread".}
+  proc posixPwrite(fd: cint; buf: nil pointer; count: int; offset: Off): int {.importc: "pwrite".}
 
-  const
-    SOL_SOCKET = (when defined(macosx): 0xFFFF.cint else: 1.cint)
-    SO_ERROR = (when defined(macosx): 0x1007.cint else: 4.cint)
+  proc submitPositioned*(idx: int) =
+    ## epoll cannot register regular files. Execute the positioned syscall
+    ## directly when draining the queue, rather than waiting for readiness.
+    ## This may block the polling lane; a deadline cannot interrupt the call.
+    let op = addr gSlots[ioLane()].slots[idx].op
+    if op.deadline != never and op.deadline <= monoNow():
+      complete(idx, IoTimedOut)
+    elif op.len < 0 or op.offset < 0:
+      complete(idx, -int(EINVAL))
+    else:
+      let r = if op.kind == opRead:
+        int pcall(posixPread(op.fd, op.buf, op.len, Off(op.offset)))
+      else:
+        int pcall(posixPwrite(op.fd, op.buf, op.len, Off(op.offset)))
+      complete(idx, r)
+  proc posixAccept(s: cint; `addr`: pointer; addrlen: ptr SockLen): cint {.importc: "accept".}
+  when defined(illumos):
+    proc getsockopt(s: cint; level, optname: cint; val: pointer;
+                    vlen: ptr SockLen): cint {.importc: "__xnet_getsockopt".}
+    proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "__xnet_connect".}
+  else:
+    proc getsockopt(s: cint; level, optname: cint; val: pointer;
+                    vlen: ptr SockLen): cint {.importc: "getsockopt".}
+    proc posixConnect(s: cint; name: pointer; namelen: SockLen): cint {.importc: "connect".}
+
+  const SO_ERROR = (when defined(macosx) or defined(illumos): 0x1007.cint else: 4.cint)
+
+  proc transferDone(r: int): bool =
+    when defined(illumos):
+      r != -int(EAGAIN) and r != -int(EWOULDBLOCK)
+    else:
+      true
 
   proc startConnect*(fd: cint; idx: int): bool =
     ## Kick off a non-blocking connect on the op in slot `idx`. True when the
@@ -120,23 +153,37 @@ when defined(posix):
     let lane = ioLane()
     for j in gSlots[lane].slotsForFd(fd):
       let s = addr gSlots[lane].slots[j]
+      when defined(illumos):
+        if s.op.positioned: continue
       case s.op.kind
       of opRead:
         if evRead in firedEvents:
-          complete(j, int pcall(posixRead(fd, s.op.buf, s.op.len)))
+          let r = int pcall(posixRead(fd, s.op.buf, s.op.len))
+          if transferDone(r): complete(j, r)
       of opWrite:
         if evWrite in firedEvents:
-          complete(j, int pcall(posixWrite(fd, s.op.buf, s.op.len)))
+          let r = int pcall(posixWrite(fd, s.op.buf, s.op.len))
+          if transferDone(r): complete(j, r)
       of opAccept:
         if evRead in firedEvents:
           var addrLen = s.op.sockAddrLen
-          let client = int pcall(posixAccept(fd, addr s.op.sockAddr, addr addrLen))
+          var client = int pcall(posixAccept(fd, addr s.op.sockAddr, addr addrLen))
+          when defined(illumos):
+            # accept does not inherit O_NONBLOCK on illumos. The new socket
+            # belongs to the ring caller and must be safe for reactor I/O.
+            if client >= 0:
+              let flags = pcall(fcntl(cint(client), F_GETFL))
+              let changed = if flags < 0: flags else:
+                pcall(fcntl(cint(client), F_SETFL, cint(flags) or O_NONBLOCK))
+              if changed < 0:
+                discard close(cint(client))
+                client = int(changed)
           # Write the length back. The kernel narrows it to what it actually
           # wrote, and `complete` hands the storage to the caller — a stale
           # `sizeof(sockaddr_storage)` here would describe a v4 address as
           # 128 bytes of one.
           s.op.sockAddrLen = addrLen
-          complete(j, client)
+          if transferDone(client): complete(j, client)
       of opPollAdd:
         # Pure readiness notification: no I/O, just report which direction(s)
         # fired so the caller (e.g. libcurl's multi-socket engine) can decide

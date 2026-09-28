@@ -554,14 +554,19 @@ proc waitForAnyJob(pool: seq[RunningJob]; exitCode, peakKiB: var int): int =
     while true:
       var status: cint = 0
       var ru = default(Rusage)
-      let pid = wait4(Pid(-1), addr status, 0, addr ru)
+      # Unlike waitpid, illumos/Solaris wait4 uses 0 for any child;
+      # -1 selects process group 1 there and normally fails with ECHILD.
+      const anyChild = when defined(sunos): Pid(0)
+                       else: Pid(-1)
+      let pid = wait4(anyChild, addr status, 0, addr ru)
       if pid < 0:
         if errno == EINTR: continue
         raiseOSError(osLastError())
       for idx in 0 ..< pool.len:
         if pool[idx].process.processID == int(pid):
           exitCode = exitStatusLikeShell(status)
-          # macOS reports bytes, everybody else KiB
+          # macOS reports bytes, other supported implementations KiB.
+          # illumos leaves ru_maxrss unimplemented (0): no memory column.
           peakKiB = when defined(macosx): int(ru.ru_maxrss) div 1024
                     else: int(ru.ru_maxrss)
           return idx

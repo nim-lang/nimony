@@ -185,9 +185,11 @@ else:
   when not defined(haiku):
     {.passC: "-pthread".}
 
+  when defined(illumos):
+    type SysThread = distinct cuint # pthread_t is 32-bit even in LP64
+  else:
+    type SysThread = distinct culong # glibc/musl integer, Darwin pointer
   type
-    SysThread = distinct culong  ## pthread_t: unsigned long on glibc/musl,
-                                 ## a pointer on Darwin — same width either way
     Pthread_attr = object ## pthread_attr_t as an opaque, oversized blob:
                           ## 56 B on glibc 64-bit, 36 B on i386, 64 B on
                           ## Darwin. int64 elements give both ABIs' alignment.
@@ -211,7 +213,7 @@ else:
   proc pthread_cancel(a1: SysThread): cint {.
     importc: "pthread_cancel".}
 
-when defined(posix) and not defined(macosx):
+when defined(posix) and not (defined(macosx) or defined(illumos)):
   type CpuSet = object ## cpu_set_t (glibc: 1024-bit mask)
     abi: array[16, uint64]
 
@@ -358,7 +360,7 @@ proc create*(t {.noinit.}: out RawThread; fn: proc (arg: pointer) {.nimcall.}; a
     if pthread_create(t.sys, a, threadProcWrapper, addr(t)) != 0:
       raiseOSError(osLastError())
     discard pthread_attr_destroy(a)
-    when not defined(macosx):
+    when not (defined(macosx) or defined(illumos)):
       if pinnedToCpu >= 0:
         var s {.noinit.}: CpuSet
         cpusetZero(s)
@@ -490,8 +492,8 @@ elif defined(macosx):
     result = threadId
 
 elif defined(sunos):
-  type thread_t {.importc: "thread_t", header: "<thread.h>".} = distinct int
-  proc thr_self(): thread_t {.importc, header: "<thread.h>".}
+  type thread_t = distinct cuint
+  proc thr_self(): thread_t {.importc: "thr_self".}
 
   proc getThreadId*(): int =
     ## Gets the ID of the currently running thread.

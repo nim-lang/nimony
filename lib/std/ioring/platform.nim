@@ -33,7 +33,8 @@ const hasWsaPoll* = defined(windows) and defined(nimIoringWsaPoll)
   ## on Linux: the fallback stays reachable deliberately, for testing and for
   ## a host where completion ports misbehave (layered service providers are
   ## the usual culprit).
-const hasIoPoll* = hasEpoll or hasKqueue or hasWsaPoll
+const hasEventPort* = defined(illumos)
+const hasIoPoll* = hasEpoll or hasKqueue or hasWsaPoll or hasEventPort
 
 # Imports are guarded by syntactic `defined()` tests, not by the constants
 # above: nimony's module scanner prunes an import only when its `when` is a
@@ -47,6 +48,8 @@ when defined(linux):
 elif defined(macosx) or defined(freebsd) or defined(netbsd) or
      defined(openbsd) or defined(dragonfly):
   import ./backends/kqueue
+elif defined(illumos):
+  import ./backends/event_port
 elif defined(windows):
   when defined(nimIoringWsaPoll):
     import ./backends/wsapoll
@@ -64,6 +67,8 @@ proc initPlatformBackend*() =
   elif defined(macosx) or defined(freebsd) or defined(netbsd) or
        defined(openbsd) or defined(dragonfly):
     backendRelays = initKqueueBackendRelays()
+  elif defined(illumos):
+    backendRelays = initEventPortBackendRelays()
   elif defined(windows):
     when defined(nimIoringWsaPoll):
       backendRelays = initWsaPollBackendRelays()

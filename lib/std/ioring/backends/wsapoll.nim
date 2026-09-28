@@ -34,6 +34,7 @@ when defined(windows):
   import ../core/slots
   import ../core/backend
   import ./poll
+  import ./file_windows
 
   const
     DrainBatch = 128
@@ -77,6 +78,8 @@ when defined(windows):
           discard            # nothing to arm on: the deadline heap is the wait
         of opNop:
           complete(idx, 0)   # nothing to wait for either
+        of opRead, opWrite:
+          if buf[i].positioned: submitPositionedFile(idx)
         of opConnect:
           # Start the attempt here, on the polling thread, so the socket is
           # already connecting by the time the set below watches it. A connect

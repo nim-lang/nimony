@@ -73,6 +73,7 @@ when defined(windows):
   import ../core/types
   import ../core/slots
   import ../core/backend
+  import ./file_windows
 
   type
     SocketHandle = uint            ## Winsock SOCKET (UINT_PTR)
@@ -469,7 +470,9 @@ when defined(windows):
         armDeadline(lane, slotIdx)
         # An fd-less op (nop, timer) has no socket to associate, and a readiness
         # probe is served by WSAPoll rather than by the port.
-        if buf[i].kind != opNop and buf[i].kind != opTimeout and
+        if buf[i].positioned:
+          submitPositionedFile(slotIdx)
+        elif buf[i].kind != opNop and buf[i].kind != opTimeout and
             buf[i].kind != opPollAdd and not ensureAssociated(buf[i].fd, lane):
           complete(slotIdx, ECancelled) # closed or foreign handle: never issued
         else:

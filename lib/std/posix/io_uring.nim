@@ -1087,7 +1087,7 @@ proc statx*(sqe: ptr Sqe; fd: FileHandle; path: var string; flags: uint32;
   sqe.prepRw(OP_STATX, fd, cast[pointer](path.toCString),
              cast[ptr uint32](m.addr)[], cast[pointer](buf))
 
-proc read*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int = 0): ptr Sqe =
+proc read*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int64 = 0): ptr Sqe =
   sqe.prepRw(OP_READ, fd, buffer, len, offset)
 
 proc read*(sqe: ptr Sqe; fd: FileHandle; group_id: uint16, len: int, offset: int = 0): ptr Sqe =
@@ -1105,7 +1105,7 @@ proc read_fixed*(sqe: ptr Sqe; fd: FileHandle; iovec: IOVec; offset: int = 0; bu
   sqe.buf.bufIndex = bufferIndex.uint16
   sqe.prepRw(OP_READ_FIXED, fd, iovec.iov_base, iovec.iov_len, offset)
 
-proc write*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int = 0): ptr Sqe =
+proc write*(sqe: ptr Sqe; fd: FileHandle; buffer: pointer; len: int; offset: int64 = 0): ptr Sqe =
   sqe.prepRw(OP_WRITE, fd, buffer, len, offset)
 
 proc write*(sqe: ptr Sqe; fd: FileHandle; str: var string; offset: int = 0): ptr Sqe =

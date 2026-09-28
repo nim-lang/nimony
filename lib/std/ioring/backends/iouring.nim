@@ -47,10 +47,12 @@ proc fillSqe(sqe: ptr Sqe; op: ptr OpContext) {.inline.} =
   case op.kind
   of opRead:
     if op.buf != nil:
-      discard sqe.read(op.fd, cast[pointer](op.buf), op.len)
+      discard sqe.read(op.fd, cast[pointer](op.buf), op.len,
+                       if op.positioned: op.offset else: 0'i64)
   of opWrite:
     if op.buf != nil:
-      discard sqe.write(op.fd, cast[pointer](op.buf), op.len)
+      discard sqe.write(op.fd, cast[pointer](op.buf), op.len,
+                        if op.positioned: op.offset else: 0'i64)
   of opAccept:
     discard sqe.accept(SocketHandle(op.fd), cast[ptr SockAddr](addr op.sockAddr), addr op.sockAddrLen, 0)
   of opPollAdd:
@@ -93,6 +95,14 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # No SQE, but it still needs a slot so the heap can complete it.
         let idx = gSlots[lane].allocSlot(buf[i])
         armDeadline(lane, idx)
+        continue
+      if buf[i].positioned and (buf[i].offset < 0 or buf[i].len < 0):
+        let idx = gSlots[lane].allocSlot(buf[i])
+        complete(idx, -int(EINVAL))
+        continue
+      if buf[i].positioned and buf[i].deadline != never and buf[i].deadline <= monoNow():
+        let idx = gSlots[lane].allocSlot(buf[i])
+        complete(idx, IoTimedOut)
         continue
       var sqe: nil ptr Sqe
       try:
