@@ -15,6 +15,11 @@ type
       ## by an op that completed normally is recognised as stale instead of
       ## expiring whatever op happens to be in the slot now.
     inUse*: bool
+    cancelRes*: int
+      ## Non-zero once the ring has stopped waiting for an op the kernel still
+      ## owns (its deadline passed, or its fd was closed): the result to
+      ## report, `IoTimedOut` or `ECancelled`, when the kernel gives it back.
+      ## Until then the slot, and the caller's buffer, remain the kernel's.
     # doubly-linked list of every in-flight slot that shares `fd`,
     # so a readiness event can find "all ops for this fd" in O(k) (k = ops on
     # this fd) instead of scanning the whole arena. -1 means "no neighbour".

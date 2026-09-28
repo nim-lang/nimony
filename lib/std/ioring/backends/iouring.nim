@@ -74,12 +74,13 @@ type
     hdr: Tmsghdr
     iov: IOVec
 
+var gCancels: seq[seq[uint64]]
+  ## Per lane: tags of ops whose cancel is still waiting for an SQE.
+
 var gMsgs: seq[Table[uint64, nil ptr MsgSlot]]
-  ## Per lane: an in-flight datagram op's tag -> its msghdr. The kernel holds
-  ## `addr hdr` until the op's CQE, which can arrive after a deadline or
-  ## `closeFd` has already freed the slot, so the msghdr cannot live in the
-  ## slot: it is allocated at fill time and freed when the CQE carrying the
-  ## same tag arrives, in time or late.
+  ## Per lane: an in-flight datagram op's tag -> its msghdr, allocated at fill
+  ## time and freed on the op's CQE. (A `Tmsghdr` has non-nil pointers and so
+  ## no default, which rules out keeping it in the slot's `OpContext`.)
 
 proc newMsg(lane, idx: int; gen: uint32; name: pointer; nameLen: SockLen;
             buf: pointer; len: int): ptr Tmsghdr =
@@ -102,6 +103,7 @@ proc takeMsg(lane: int; tag: uint64): nil ptr MsgSlot =
 proc tryInitLocalQueues(): bool =
   localQueues = @[]
   gMsgs = @[]
+  gCancels = newSeq[seq[uint64]](ioLanes())
   try:
     for i in 0..<ioLanes():
       localQueues.add newQueue(sqEntries)
@@ -201,6 +203,7 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
   # worker inside poll() forever — the outer worker loop also runs task
   # draining, and remaining deferred entries are picked up next iteration.
   let lane = ioLane()
+  flushCancels(lane)
   var buf {.noinit.}: array[DrainBatch, OpContext]
   var n = gOpQueues[lane].tryBulkDequeue(DrainBatch, buf)
   if n > 0:
@@ -295,27 +298,15 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
       quit "fatal: bug: copyCqes cannot fail: " & $e
     if n > 0:
       for i in 0..<n:
-        # A slot is recycled the instant its op completes, and an op can
-        # complete *here* while the kernel is still working on it: a blown
-        # deadline expires it from the lane's heap, and `closeFd` cancels it.
-        # The CQE that turns up afterwards then names a slot that holds an
-        # unrelated op. Applying it completed that op with the wrong result and
-        # — worse — freed a slot that was already free, so its index went onto
-        # the freelist twice and two later ops shared one slot. One of them
-        # could never complete, which is how the ring came to hang instead of
-        # merely misreporting. The generation in `user_data` says which op the
-        # kernel is talking about; anything else is already accounted for.
+        if cqes[i].userData == CancelUserData: continue   # a cancel's own ack
+        # A slot outlives its op's time in the kernel: a deadline or `closeFd`
+        # only asks for the op back (`cancelOp`), and the op completes here.
+        # So the generation in `user_data` always names the op in the slot.
         let idx = int(cqes[i].userData and 0xffff_ffff'u64)
         let gen = uint32(cqes[i].userData shr 32)
-        var slot: nil ptr Slot = nil
-        if idx < gSlots[lane].slots.len:
-          slot = addr gSlots[lane].slots[idx]
-        if slot == nil or not slot.inUse or slot.gen != gen:
-          # Already completed here by a deadline or `closeFd`; the kernel has
-          # only now let go of the msghdr, if the op had one.
-          let m = takeMsg(lane, cqes[i].userData)
-          if m != nil: dealloc(m)
-          continue
+        let slot = addr gSlots[lane].slots[idx]
+        assert slot.inUse and slot.gen == gen,
+          "ioring/iouring: CQE for a slot the kernel no longer owned"
         let op = addr slot.op
         if op.kind in {opRecvFrom, opSendTo}:
           let m = takeMsg(lane, cqes[i].userData)
@@ -330,66 +321,48 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # backends report, so the completion's `readyEvents` are consistent no
         # matter which backend is in use.
         var res = int(cqes[i].res)
-        if op.kind == opPollAdd:
+        if op.kind == opPollAdd and res >= 0:
           var fired = toPollEvents(uint32(res))
           var ev: IoEvents = {}
           if POLL_IN in fired: ev.incl evRead
           if POLL_OUT in fired: ev.incl evWrite
           res = toEventMask(ev)
-        complete(idx, res)
+        completeFromKernel(idx, res)
       expireDeadlines(lane)
       return true
   expireDeadlines(lane)
   return false
 
-proc iouringCancelInFlight(slotIdx: int; gen: uint32) {.nimcall.} =
-  ## The lane's deadline heap is about to complete this op locally, but the
-  ## kernel does not know that and still owns the op's buffer. Match the op by
-  ## the `user_data` its SQE carries and ask for it back. Failing to get an SQE
-  ## is not fatal: the CQE that eventually arrives is stale and dropped, and
-  ## the only cost is that the kernel held the buffer longer than we wanted.
-  let lane = ioLane()
-  if lane >= localQueues.len: return
-  var sqe: nil ptr Sqe
-  try:
-    sqe = localQueues[lane].getSqe()
-  except ErrorCode:
-    return
-  if sqe == nil: return
-  discard sqe.cancel(tagFor(slotIdx, gen))
-  sqe.userData = cast[pointer](CancelUserData)
-  # Submitted here rather than left for the next `submit` in the poll loop:
-  # this runs from `expireDeadlines`, which the loop reaches *after* its own
-  # submit, and a deadline blowing is the slow path anyway.
-  try:
-    discard localQueues[lane].submit()
-  except ErrorCode:
-    discard
+proc flushCancels(lane: int) =
+  ## Submit the cancels still waiting for an SQE. A cancel must not be lost:
+  ## its op is only completed once the kernel reports it, so an op whose cancel
+  ## never reached the kernel (an idle recv) would park its caller for good.
+  var sent = false
+  while gCancels[lane].len > 0:
+    var sqe: nil ptr Sqe = nil
+    try:
+      sqe = localQueues[lane].getSqe()
+    except ErrorCode:
+      discard
+    if sqe == nil: break                  # the ring is full: next poll
+    discard sqe.cancel(gCancels[lane].pop())
+    sqe.userData = cast[pointer](CancelUserData)
+    sent = true
+  if sent:
+    try:
+      discard localQueues[lane].submit()
+    except ErrorCode:
+      discard
 
-proc iouringForgetFd(fd: cint) {.nimcall.} =
-  ## `closeFd` calls this before close(2). The readiness backends drop a
-  ## registration here; io_uring has none to drop, but it does have ops the
-  ## kernel is still working on — and `closeFd` is about to free their slots
-  ## locally. Until the kernel acknowledges, it still owns each op's buffer and
-  ## may write through it, so ask it to give them back now rather than at some
-  ## unpredictable later point. `cancelFd` is the one-SQE form of exactly that
-  ## question. Whatever CQEs still arrive for those ops are stale by then, and
-  ## the generation check in `iouringPoll` drops them.
+proc iouringCancelInFlight(slotIdx: int; gen: uint32): bool {.nimcall.} =
+  ## Every op in a slot on this backend has an SQE, so the kernel owns it:
+  ## ask for it back by the `user_data` its SQE carries. Submitted right away
+  ## rather than left for the poll loop's own submit, which `expireDeadlines`
+  ## runs after.
   let lane = ioLane()
-  if lane >= localQueues.len: return
-  if not gSlots[lane].hasPendingForFd(fd): return
-  var sqe: nil ptr Sqe
-  try:
-    sqe = localQueues[lane].getSqe()
-  except ErrorCode:
-    return
-  if sqe == nil: return
-  discard sqe.cancelFd(FileHandle(fd))
-  sqe.userData = cast[pointer](CancelUserData)
-  try:
-    discard localQueues[lane].submit()
-  except ErrorCode:
-    discard
+  gCancels[lane].add tagFor(slotIdx, gen)
+  flushCancels(lane)
+  result = true
 
 proc iouringClose() {.nimcall.} =
   # By index, and `var`: a `Queue` owns an fd and three mappings, so tearing
@@ -414,5 +387,4 @@ proc initIoUringBackendRelays*(sqE = 256): BackendRelays =
     poll: iouringPoll,
     waits: localQueues[0].hasExtArg,
     close: iouringClose,
-    forgetFd: iouringForgetFd,
   )

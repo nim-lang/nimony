@@ -390,8 +390,8 @@ when defined(windows):
     a.wov = IocpOv(lane: int32(lane), slot: int32(slotIdx), aux: ai,
                    gen: gSlots[lane].slots[slotIdx].gen)
     # Blocks are recycled, so the accept socket is reset here rather than
-    # trusted to be clean: a stale value would be closed by the drain's
-    # stale-completion path, and by then it names somebody else's socket.
+    # trusted to be clean: the drain closes a failed accept's socket, and a
+    # stale value would name somebody else's.
     a.acceptSock = InvalidSocket
     let s = socketOf(op.fd)
     case op.kind
@@ -604,19 +604,11 @@ when defined(windows):
       let auxIdx = wov.aux
       assert auxIdx != NoAux, "ioring/iocp: completion for an op that was never issued"
       let a = addr gAux[lane][auxIdx.int]
-      if slotIdx >= gSlots[lane].slots.len or
-         not gSlots[lane].slots[slotIdx].inUse or
-         gSlots[lane].slots[slotIdx].gen != wov.gen:
-        # The op this completion belongs to was already accounted for here — a
-        # blown deadline expired it — and its slot has moved on. Applying the
-        # completion would report the kernel's result against an unrelated op
-        # and free a slot that is not ours to free. Reclaim the block (and the
-        # socket AcceptEx made, which now has no owner) and drop it.
-        if a.acceptSock != InvalidSocket:
-          discard wsClosesocket(a.acceptSock)
-          a.acceptSock = InvalidSocket
-        freeAux(lane, auxIdx)
-        continue
+      # A slot outlives its op's time in the kernel: a deadline only asks for
+      # the op back (`cancelOp`), and the op completes here.
+      assert gSlots[lane].slots[slotIdx].inUse and
+             gSlots[lane].slots[slotIdx].gen == wov.gen,
+        "ioring/iocp: completion for a slot the kernel no longer owned"
       let op = addr gSlots[lane].slots[slotIdx].op
       var res = -1
       if e.internal == 0'u:
@@ -683,7 +675,7 @@ when defined(windows):
           res = -int(wsaGetLastError())
       gSlotAux[lane][slotIdx] = NoAux
       freeAux(lane, auxIdx)
-      complete(slotIdx, res)
+      completeFromKernel(slotIdx, res)
       result = true
     expireDeadlines(lane)
 
@@ -693,19 +685,18 @@ when defined(windows):
       discard closeHandle(gPorts[i])
       i = i + 1
 
-  proc iocpCancelInFlight(slotIdx: int; gen: uint32) {.nimcall.} =
-    ## This lane's deadline heap is about to complete the op locally and free
-    ## its slot, but the kernel still owns the OVERLAPPED and the buffer behind
-    ## it. Ask for the op back. `CancelIoEx` is asynchronous — the completion
-    ## still arrives — so the Aux block stays out until the drain sees it, and
-    ## the generation check there recognises it as already accounted for.
+  proc iocpCancelInFlight(slotIdx: int; gen: uint32): bool {.nimcall.} =
+    ## An op with an Aux block has an OVERLAPPED with the kernel, which owns
+    ## it and the buffer behind it until its completion arrives. Ask for it
+    ## back; `CancelIoEx` is asynchronous, and the drain completes the op when
+    ## the kernel reports it. Anything else (a readiness probe waiting for the
+    ## WSAPoll pass) the kernel does not own.
     let lane = ioLane()
-    if lane >= gSlotAux.len: return
     let ai = gSlotAux[lane][slotIdx]
-    if ai == NoAux: return
-    gSlotAux[lane][slotIdx] = NoAux
+    if ai == NoAux: return false
     let s = socketOf(gSlots[lane].slots[slotIdx].op.fd)
     discard cancelIoEx(cast[Handle](s), addr gAux[lane][ai.int].wov.ov)
+    result = true
 
   proc iocpForgetFd(fd: cint) {.nimcall.} =
     ## The socket is being closed: drop its lane association. Its pending

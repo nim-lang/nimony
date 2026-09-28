@@ -399,9 +399,9 @@ proc cancelPendingOps(fd: cint): int =
   ## per-lane and unlocked, so a fd must be closed from the same thread that
   ## submitted its ops; ops another lane still holds for `fd` are not
   ## cancelled here and would leak the way described above. Cancelling those
-  ## needs a cross-lane request the owning lane drains from its own `poll`
-  ## (and, on io_uring, an `IORING_OP_ASYNC_CANCEL` — the kernel still owns
-  ## the slot's buffers until it acknowledges), which this does not do yet.
+  ## needs a cross-lane request the owning lane drains from its own `poll`,
+  ## which this does not do yet. An op the kernel still owns (io_uring)
+  ## completes once the kernel gives it back (`cancelOp`).
   ##
   ## Returns how many ops were cancelled, which is what lets `submitPollRemove`
   ## tell its caller whether anything was actually in flight.
@@ -414,7 +414,7 @@ proc cancelPendingOps(fd: cint): int =
     # or — for an op without one — pushes a completion-queue entry, then frees
     # the slot. This used to resume continuations only, so a cancelled op that
     # had none (a `waitCompletions` driver) vanished and its waiter hung.
-    complete(idx, ECancelled)
+    cancelOp(lane, idx, ECancelled)
     inc result
 
 proc submitPollRemove*(fd: cint): int {.discardable.} =

@@ -222,14 +222,32 @@ proc complete*(slotIdx: int; res: int) =
       inc gCqCount
     gCqLock.release()
 
-var gCancelInFlight*: nil proc (slotIdx: int; gen: uint32) {.nimcall.}
-  ## Set by a backend where the OS keeps working on an op after this process
-  ## has stopped waiting for it. The readiness backends leave it `nil`: an
-  ## epoll/kqueue registration owns nothing, so dropping it is the whole of
-  ## cancelling. io_uring is different — the kernel holds the op's buffer until
-  ## it acknowledges a cancel, so an op completed here on a blown deadline must
-  ## still be taken away from the kernel, or it writes into a buffer whose
-  ## owner has moved on.
+var gCancelInFlight*: nil proc (slotIdx: int; gen: uint32): bool {.nimcall.}
+  ## Set by a backend where the kernel keeps working on an op after this
+  ## process has stopped waiting for it (io_uring, IOCP). Asks the kernel for
+  ## the op back and answers whether the kernel owns it; if so the op is
+  ## completed only when the kernel reports it (`completeFromKernel`), because
+  ## until then it may still write into the slot and the caller's buffer. The
+  ## readiness backends leave it `nil`: a registration owns nothing, so
+  ## dropping it is the whole of cancelling.
+
+proc cancelOp*(lane, slotIdx: int; res: int) =
+  ## Stop waiting for the op in `slotIdx`: complete it with `res` now, or,
+  ## when the kernel still owns it, as soon as the kernel gives it back.
+  let s = addr gSlots[lane].slots[slotIdx]
+  if s.cancelRes != 0: return          # already being taken back
+  if gCancelInFlight != nil and s.op.kind != opTimeout and
+      gCancelInFlight(slotIdx, s.gen):
+    s.cancelRes = res
+  else:
+    complete(slotIdx, res)
+
+proc completeFromKernel*(slotIdx: int; res: int) =
+  ## Complete an op the kernel has just reported. If the ring had already
+  ## given up on it, a failure is reported as the reason it gave up; a success
+  ## is still a success, since the transfer happened and must not be lost.
+  let c = gSlots[ioLane()].slots[slotIdx].cancelRes
+  complete(slotIdx, if c != 0 and res < 0: c else: res)
 
 proc expireDeadlines*(lane: int) =
   ## Complete every op in this lane whose deadline has passed. Called by each
@@ -251,10 +269,4 @@ proc expireDeadlines*(lane: int) =
     discard gTimers[lane].popMin()
     # A timer op reaching its deadline is a success — that is the whole point
     # of it. Anything else has run out of time.
-    let res = if s.op.kind == opTimeout: 0 else: IoTimedOut
-    # Before the slot is freed and reused: an op that never touched the OS
-    # (a pure timer) has nothing to take back, anything else may still be in
-    # the kernel's hands.
-    if gCancelInFlight != nil and s.op.kind != opTimeout:
-      gCancelInFlight(e.slot.int, s.gen)
-    complete(e.slot.int, res)
+    cancelOp(lane, e.slot.int, if s.op.kind == opTimeout: 0 else: IoTimedOut)
