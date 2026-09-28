@@ -278,59 +278,46 @@ proc accept*(l: Listener; dl = never): Socket {.passive, raises.} =
   result.fd = cint(res)
   result.peer = peer
 
-proc putAfInet(raw: ptr UncheckedArray[uint8]) {.inline.} =
-  ## The two leading bytes of a `sockaddr_in`, which is the only part of the
-  ## layout the three ABIs spell differently: Linux and Windows start with a
-  ## 2-byte little-endian `sa_family`/`sin_family`, the BSDs (macOS included)
-  ## put a 1-byte `sa_len` — the size of `struct sockaddr_in` — ahead of a
-  ## 1-byte `sa_family`. Everything after these two bytes is identical
-  ## everywhere, which is what lets the rest be written as plain bytes.
+proc setV4(sa: var Sockaddr_storage; ip: array[4, uint8]; port: uint16) =
+  ## `sa` as the sockaddr_in for `ip:port`, written as raw bytes so no
+  ## platform socket struct has to be imported: family, port and address in
+  ## network order, zero padding. Only the two family bytes differ between
+  ## ABIs: Linux and Windows start with a 2-byte little-endian family, the
+  ## BSDs (macOS included) with a 1-byte `sa_len` and a 1-byte family.
+  sa = default(Sockaddr_storage)
+  let raw = cast[ptr UncheckedArray[uint8]](addr sa)
   when defined(linux) or defined(windows):
-    raw[0] = 2'u8    # AF_INET, low byte
-    raw[1] = 0'u8    #          high byte
+    raw[0] = 2'u8    # AF_INET, little-endian
   else:
     raw[0] = 16'u8   # sa_len: sizeof(struct sockaddr_in)
     raw[1] = 2'u8    # AF_INET
-
-proc addrFromHost(p: var PeerAddr; saLen: var SockLen;
-                  host: string; port: uint16): bool {.inline.} =
-  ## Build the sockaddr_in for `host:port` into `p.raw`, ready for
-  ## `submitConnect`, at no extra syscall over what `socket.peek` already has.
-  ## Only a dotted-quad IPv4 literal is parsed — the loopback test's and a
-  ## container's common case; `false` when `host` is anything else. (No
-  ## getaddrinfo yet: DNS is a whole other surface and this module's reach is
-  ## the local ring.) A `PeerAddr` is `family == 0` — that is, "no address
-  ## yet" — only until `connect`/`udpConnect` run this over it.
-  ##
-  ## The layout is written directly into `p.raw` as raw bytes — AF_INET = 2,
-  ## port = 2 bytes network order, addr = 4 bytes network order, zero padding
-  ## to 16 bytes — so this compiles without importing platform-specific socket
-  ## struct types. The first two bytes differ between ABI families, and both
-  ## `PeerAddr.family` and the kernel read them back on the far side of the
-  ## ring, so the family bytes are written as each system expects them —
-  ## `putAfInet` is the one place that knows which.
-  p = default(PeerAddr)
-  let raw = cast[ptr UncheckedArray[uint8]](addr p.raw)
-  putAfInet raw
   raw[2] = byte(port shr 8)
   raw[3] = byte(port and 0xFF)
+  for i in 0..3: raw[4 + i] = ip[i]
+
+proc addrFromHost(p: var PeerAddr; host: string; port: uint16): bool =
+  ## `p` as the address of `host:port`, ready for the ring (its length is
+  ## `p.peerLen`). Only a dotted-quad IPv4 literal is parsed — name lookup is
+  ## `std/dns`'s job; `false` when `host` is anything else.
+  var ip = default(array[4, uint8])
   var octet = 0
-  var val: uint32 = 0
-  for i in 0 ..< host.len:
-    let ch = host[i]
+  var val = 0
+  var digits = 0
+  for ch in host:
     if ch in {'0'..'9'}:
-      val = val * 10 + uint32(ord(ch) - ord('0'))
+      val = val * 10 + (ord(ch) - ord('0'))
+      inc digits
       if val > 255: return false
-    elif ch == '.':
-      raw[4 + octet] = byte(val)
-      val = 0
+    elif ch == '.' and digits > 0 and octet < 3:
+      ip[octet] = uint8(val)
       inc octet
-      if octet > 3: return false
+      val = 0
+      digits = 0
     else:
       return false
-  if octet != 3: return false
-  raw[4 + octet] = byte(val)
-  saLen = SockLen(16)
+  if octet != 3 or digits == 0: return false
+  ip[3] = uint8(val)
+  setV4(p.raw, ip, port)
   result = true
 
 proc connect*(host: string; port: uint16; dl = never): Socket {.passive, raises.} =
@@ -346,15 +333,14 @@ proc connect*(host: string; port: uint16; dl = never): Socket {.passive, raises.
   ## Its `peer` is who we connected to, taken from the same address that went
   ## to the ring.
   result = initSocket(-1, never)
-  var saLen = SockLen(0)
-  if not addrFromHost(result.peer, saLen, host, port):
+  if not addrFromHost(result.peer, host, port):
     raise IOError
   let fd = socketNonBlocking()
   if fd < 0: raise IOError
   result.fd = fd
   var res = 0
   let c = delay()
-  discard submitConnect(fd, result.peer.raw, saLen, budget(result, dl), c, addr res)
+  discard submitConnect(fd, result.peer.raw, result.peer.peerLen, budget(result, dl), c, addr res)
   suspend()
   if res != 0: raise toErr(res)
 
@@ -657,24 +643,8 @@ proc `=copy`*(dest: var UdpSocket; src: UdpSocket) {.error.}
   ## Move-only: two sockets over one descriptor means two owners, and whichever
   ## is destroyed first closes it under the other.
 
-proc initUdpSocket(fd: cint; deadline: Deadline): UdpSocket =
-  UdpSocket(fd: fd, deadline: deadline, peer: PeerAddr(raw: Sockaddr_storage()))
-
 proc budget*(s: UdpSocket; dl: Deadline): Deadline {.inline.} =
   earlier(s.deadline, dl)
-
-proc wildcardAddr(sa: var Sockaddr_storage; saLen: var SockLen; port: uint16) =
-  ## Fill `sa` with an IPv4 wildcard (INADDR_ANY) `port`, ready for
-  ## `submitBind`. Written as raw bytes — the same layout `addrFromHost`
-  ## produces, with the address all zeros — so no platform socket type has to
-  ## be imported: two bytes of family (`putAfInet`), two bytes of
-  ## network-order port, four zero bytes of address, zero padding.
-  sa = default(Sockaddr_storage)
-  let raw = cast[ptr UncheckedArray[uint8]](addr sa)
-  putAfInet raw
-  raw[2] = byte(port shr 8)
-  raw[3] = byte(port and 0xFF)
-  saLen = SockLen(16)
 
 proc createSocket*(domain, typ, proto: cint; dl = never): cint {.passive, raises.} =
   ## A raw non-blocking socket of `domain`/`typ`/`proto`, created entirely
@@ -714,11 +684,10 @@ proc createUdp*(port: uint16; dl = never): cint {.passive, raises.} =
     suspend()
     if reuseRes != 0: raise toErr(reuseRes)
   var sa = default(Sockaddr_storage)
-  var saLen = SockLen(0)
-  wildcardAddr(sa, saLen, port)
+  setV4(sa, [0'u8, 0, 0, 0], port)     # the wildcard address
   var res = 0
   var c = delay()
-  discard submitBind(result, sa, saLen, dl, c, addr res)
+  discard submitBind(result, sa, SockLen(16), dl, c, addr res)
   suspend()
   if res != 0: raise toErr(res)
 
@@ -729,8 +698,7 @@ proc openUdp*(port: uint16; deadline = never): UdpSocket {.passive, raises.} =
   ## under `submit`), never from a plain thread's top level: the suspends that
   ## await the polling thread's instant completions need a continuation to
   ## resume into. Only the datagram exchange parks beyond that.
-  var fd: cint = createUdp(port, deadline)
-  result = UdpSocket(fd: fd, deadline: deadline,
+  result = UdpSocket(fd: createUdp(port, deadline), deadline: deadline,
                      peer: PeerAddr(raw: Sockaddr_storage()))
 
 proc boundPort*(s: UdpSocket): uint16 {.inline.} = boundPort(s.fd)
@@ -750,12 +718,11 @@ proc udpConnect*(s: var UdpSocket; host: string; port: uint16;
   ## `recvDatagram` accepts — the UDP analogue of `accept`, which is why the
   ## ring's stream-shaped read/write submit paths work here unmodified. The
   ## peer the kernel recorded is also the one `s.peer` reports.
-  var saLen = SockLen(0)
-  if not addrFromHost(s.peer, saLen, host, port):
+  if not addrFromHost(s.peer, host, port):
     raise IOError
   var res = 0
   let c = delay()
-  discard submitConnect(s.fd, s.peer.raw, saLen, budget(s, dl), c, addr res)
+  discard submitConnect(s.fd, s.peer.raw, s.peer.peerLen, budget(s, dl), c, addr res)
   suspend()
   if res != 0: raise toErr(res)
 
@@ -814,8 +781,7 @@ proc sendTo*(s: var UdpSocket; data: openArray[char]; host: string; port: uint16
   ## address the way `udpConnect` does and sends to it. Returns early when
   ## `host` is not a dotted-quad literal — raise `IOError` like `connect` does.
   if data.len == 0: return
-  var saLen = SockLen(0)
   var to = PeerAddr(raw: Sockaddr_storage())
-  if not addrFromHost(to, saLen, host, port):
+  if not addrFromHost(to, host, port):
     raise IOError
   sendTo(s, data, to, dl)

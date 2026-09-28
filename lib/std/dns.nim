@@ -201,15 +201,13 @@ proc decodeName(buf: openArray[char]; pos: var int; name: var string): bool =
 
 proc decodeMessage*(buf: openArray[char]; m: var Message): bool =
   ## Parse `buf` into `m`, following compression in every name. `false` for
-  ## anything a resolver cannot trust; authority/additional sections are
-  ## skipped by their declared lengths, not parsed.
+  ## anything a resolver cannot trust. The authority and additional sections
+  ## are ignored.
   if buf.len < 12: return false
   m.id = uw16(buf[0], buf[1])
   m.flags = uw16(buf[2], buf[3])
   let qd = int(uw16(buf[4], buf[5]))
   let an = int(uw16(buf[6], buf[7]))
-  let ns = int(uw16(buf[8], buf[9]))
-  let ar = int(uw16(buf[10], buf[11]))
   var pos = 12
   m.questions = @[]
   for i in 0 ..< qd:
@@ -221,8 +219,7 @@ proc decodeMessage*(buf: openArray[char]; m: var Message): bool =
     pos += 4
     m.questions.add q
   m.answers = @[]
-  var i = 0
-  while i < an:
+  for i in 0 ..< an:
     var a = Answer(name: "")
     if not decodeName(buf, pos, a.name): return false
     if pos + 10 > buf.len: return false
@@ -251,13 +248,8 @@ proc decodeMessage*(buf: openArray[char]; m: var Message): bool =
         a.raw.add buf[pos + k]
     pos += rdlen
     m.answers.add a
-    inc i
-  # Authority/additional are not parsed; their names could compress anywhere in
-  # the message, and skipping by length is exactly how a decoder stays inside
-  # the datagram no matter what they contain.
+  # Authority/additional are not parsed: nothing after the answers is read.
   result = true
-  discard ns
-  discard ar
 
 proc isDots4(s: string): bool =
   ## True for a well-formed dotted quad of decimal octets — the one shape
@@ -634,14 +626,8 @@ type
 proc `=dup`*(s: DnsServer): DnsServer =
   ## Move, not copy, like the socket it wraps: `newDnsServer` returns through
   ## the ring's continuation ABI, which hands the value to `result` via this
-  ## hook rather than `=copy` (still an error). Field-wise so the inner socket
-  ## moves too, and the old slot is emptied so no second owner closes it.
-  result = default(DnsServer)
-  result.sock.fd = s.sock.fd
-  result.sock.deadline = s.sock.deadline
-  result.sock.peer = s.sock.peer
-  let sm = cast[ptr DnsServer](unsafeAddr s)
-  `=wasMoved`(sm[].sock)
+  ## hook rather than `=copy` (still an error).
+  result = DnsServer(sock: s.sock)   # `UdpSocket`'s `=dup` is the move
 
 proc newDnsServer*(port: uint16; deadline = never): DnsServer {.passive, raises.} =
   ## A bound, unconnected UDP socket able to answer questions. `port` of 0
