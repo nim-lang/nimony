@@ -9,8 +9,6 @@
 import std / [os, sets, strutils]
 when defined(nimony):
   import std / syncio
-else:
-  import std / sequtils
 
 import ".." / lib / platform
 
@@ -20,11 +18,6 @@ include ".." / lib / nifprelude
 from ".." / lib / nifcoreparse import parse
 
 when defined(nimony):
-  func addUnique(s: var seq[string]; x: sink string) =
-    for i in 0 ..< s.len:
-      if s[i] == x: return
-    s.add x
-
   # `system.hostCPU`/`hostOS` are compile-time magics that Nimony doesn't
   # expose; derive the string values from `when defined(...)` branches.
   const
@@ -181,8 +174,40 @@ proc targetDriverFlags*(config: NifConfig): seq[string] =
   if config.targetOS in {osSolaris, osIllumos} and config.targetCPU == cpuAmd64:
     result.add "-m64"
 
+proc defineKey*(d: string): string =
+  ## The name half of a `-d:` entry: `maxMem` for both `maxMem` and `maxMem=10`.
+  var i = 0
+  while i < d.len and d[i] != '=': inc i
+  result = d.substr(0, i-1)
+
 proc addDefine*(config: var NifConfig; symbol: string) =
-  config.defines.addUnique symbol
+  ## `-d:key` or `-d:key=value`. `--define:key:value` is accepted too: the
+  ## option parser has already eaten the first `:` as the option's own
+  ## separator, so what arrives here is `key:value`. A later definition of a key
+  ## replaces the earlier one, as in Nim.
+  var symbol = symbol
+  # `contains(string, char)` is not in the Nimony stdlib, so use `find`
+  if symbol.find('=') < 0:
+    let colon = symbol.find(':')
+    if colon >= 0: symbol[colon] = '='
+  let key = defineKey(symbol)
+  for i in 0 ..< config.defines.len:
+    if defineKey(config.defines[i]) == key:
+      config.defines[i] = symbol
+      return
+  config.defines.add symbol
+
+proc defineValue*(config: NifConfig; key: string; value: var string): bool =
+  ## True when `-d:key` was given, with `value` set to the text after the `=`
+  ## (the empty string for a bare `-d:key`). This is what `{.intdefine.}` and
+  ## its siblings read.
+  for d in config.defines:
+    var i = 0
+    while i < d.len and d[i] != '=': inc i
+    if d.substr(0, i-1) == key:
+      value = (if i < d.len: d.substr(i+1) else: "")
+      return true
+  return false
 
 proc initNifConfig*(baseDir: sink string): NifConfig =
   result = NifConfig(
@@ -226,7 +251,7 @@ proc parseConfig(c: Cursor; result: var NifConfig) =
       c.into:
         while c.hasMore:
           if c.isStringLit:
-            result.defines.addUnique pool.strings[c.strId]
+            result.addDefine pool.strings[c.strId]
           skip c
     of "paths":
       c.into:
@@ -305,7 +330,9 @@ proc mmName*(config: NifConfig): string =
   result = normalize(splitFile(config.mm).name)
 
 proc isDefined*(config: NifConfig; symbol: string): bool =
-  if symbol in config.defines:
+  var ignored = ""
+  if config.defineValue(symbol, ignored):
+    # `-d:key=value` defines `key`, so compare the name half, not the whole entry
     result = true
   elif cmpIgnoreStyle(symbol, platform.CPU[config.targetCPU].name) == 0:
     result = true

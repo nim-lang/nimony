@@ -92,6 +92,9 @@ type
     flags*: set[PragmaKind]
     raisesType*: TypeCursor  # Type from .raises pragma
     headerFileTok*: NifToken
+    defineKey*: string  ## `{.intdefine: "custom.key".}`: the command-line key to
+                        ## read the constant's value from. Empty means the
+                        ## constant's own name, which is the common case.
 
   ImportedModule* = object
     path*: string
@@ -251,6 +254,7 @@ type
     freshSyms*: HashSet[SymId] ## symdefs that should count as new for semchecking
     toBuild*: TokenBuf
     toBundle*: TokenBuf ## `.bundle` custom-linker entries (link-step override)
+    toLink*: seq[string] ## absolute paths of the `.link`ed objects/libraries
     unoverloadableMagics*: HashSet[StrId]
     debugAllowErrors*: bool
     pending*: TokenBuf

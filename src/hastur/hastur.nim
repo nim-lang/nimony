@@ -53,7 +53,10 @@ Commands:
                        fixed number of self-compile passes and leaves the
                        results in place — nothing is installed back to
                        `bin/`. Extra args are forwarded to every
-                       `nimony c` invocation.
+                       `nimony c` invocation. With `../nativenif` checked
+                       out, every stage also compiles the web back end
+                       (`jorogumo`, JS + wasm) so it keeps building with
+                       Nimony; it joins the stage comparison from stage 1.
                        Every stage is compiled with `-d:release` by default
                        (the wider test: shoggoth + the `when defined(release)`
                        paths). `--no-release` boots at the default opt level.

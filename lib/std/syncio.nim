@@ -245,8 +245,9 @@ when defined(nimNativeIo):
     let oldLen = fo.wbuf.len
     fo.wbuf.setLen(oldLen + n)
     if oldLen >= fo.wbuf.len:
-      # Out of memory: `setLen` could not grow the buffer and emptied it. (It
-      # either grew past `oldLen`, `n` being positive, or left nothing.)
+      # Out of memory: `setLen` could not grow the buffer, so it kept its old
+      # length and contents. `n` is positive, so a `setLen` that worked is
+      # strictly longer than `oldLen` -- the length is the signal either way.
       fo.flags.incl ffError
       return
     copyMem(addr fo.wbuf[oldLen], p, n)
@@ -260,7 +261,7 @@ when defined(nimNativeIo):
     fo.rbuf.setLen NativeBufSize
     fo.rpos = 0
     if fo.rbuf.len < NativeBufSize:
-      # out of memory: `setLen` could not grow the buffer and emptied it
+      # out of memory: `setLen` could not grow the buffer, so it is still short
       fo.flags.incl ffError
       return false
     let k = sysRead(fo.fd, addr fo.rbuf[0], uint(NativeBufSize))

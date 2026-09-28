@@ -7,6 +7,7 @@
 ## Path handling and `exec` like features as `sem.nim` needs it.
 
 from std / strutils import multiReplace, startsWith
+from std / algorithm import sort
 import std / [tables, sets, os, envvars, syncio, formatfloat, assertions, dirs, paths, times]
 from std / osproc import execCmdEx, startProcess, waitForExit, close,
   poParentStreams
@@ -340,6 +341,38 @@ proc replaceSubs*(fmt, currentFile: string; config: NifConfig): string =
     ("${path}", path),
     ("${nifcache}", nifcache)])
   result = path.normalizedPath()
+
+proc globMatch(pat, s: string; pi = 0; si = 0): bool =
+  ## `*` matches any run of characters, `?` exactly one.
+  var pi = pi
+  var si = si
+  while pi < pat.len:
+    case pat[pi]
+    of '*':
+      for k in si .. s.len:
+        if globMatch(pat, s, pi+1, k): return true
+      return false
+    of '?':
+      if si >= s.len: return false
+    else:
+      if si >= s.len or s[si] != pat[pi]: return false
+    inc pi
+    inc si
+  result = si == s.len
+
+proc globFiles*(pattern: string): seq[string] =
+  ## The files matching `pattern`, sorted. Like Nim's `walkFiles` as the
+  ## `.compile` tuple form uses it, except that only the file name component may
+  ## contain wildcards (the caller checks that).
+  result = @[]
+  let (dir, name) = splitPath(pattern)
+  try:
+    for it in walkDir(path(dir), relative = true):
+      if it.kind in {pcFile, pcLinkToFile} and globMatch(name, $it.path):
+        result.add dir / $it.path
+  except:
+    discard "an unreadable directory matches nothing"
+  sort result
 
 # ------------------ include/import handling ------------------------
 

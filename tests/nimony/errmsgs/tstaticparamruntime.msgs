@@ -1,1 +1,1 @@
-tests/nimony/errmsgs/tstaticparamruntime.nim(8, 12) Error: argument for a `static` generic parameter must be a constant expression
+tests/nimony/errmsgs/tstaticparamruntime.nim(8, 12) Error: n does not match constraint int64

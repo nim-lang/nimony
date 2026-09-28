@@ -361,6 +361,10 @@ type
     DependencyTagId
     PluginCallTagId
     ImportjsTagId
+    LinkTagId
+    IntdefineTagId
+    BooldefineTagId
+    StrdefineTagId
 const
   TagData*: array[TagEnum, (string, int)] = [
     ("InvalidTagId", 0),
@@ -721,5 +725,9 @@ const
     ("constref", 355),
     ("dependency", 356),
     ("pluginCall", 357),
-    ("importjs", 358)
+    ("importjs", 358),
+    ("link", 359),
+    ("intdefine", 360),
+    ("booldefine", 361),
+    ("strdefine", 362)
   ]

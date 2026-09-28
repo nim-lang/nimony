@@ -18,9 +18,14 @@ one pass that implements them.
   stood for becomes `tmp[1]`.
 - `let/var local = rcall(args)` retypes `local` to the success tuple and gets
   that same check; every other use of `local` projects onto `local[1]`.
-- `result = x` and `return x` build the tuple. `result` itself already IS the
-  tuple, so `return result` needs no rebuild — and must not get one, see
-  `trRet`.
+- `result[0] = Success` is set once, at `result`'s declaration: every path
+  that changes the code half leaves the routine right away. So `result = x`,
+  like any other use of `result` (and of a retyped local, whose check has
+  passed), is simply `result[1] = x`. Rebuilding the whole tuple there would
+  nest `x` one level deep, which hides a `.passive` call from `cps`: it ends
+  a state only where a suspension point is the ROOT of the value.
+- `return x` builds the tuple. `result` itself already IS the tuple, so
+  `return result` needs no rebuild — and must not get one, see `trRet`.
 - `raise e` becomes `raise (e, result)`.
 
 **Doing the whole job here is the point.** The control-flow half (the temps
@@ -727,52 +732,6 @@ proc trTry(c: var Context; dest: var TokenBuf; n: var Cursor) =
   n = tryStart
   skip n
 
-proc trAsgn(c: var Context; dest: var TokenBuf; n: var Cursor) =
-  var nn = n.childCursor
-  if nn.kind == Symbol and ((nn.symId == c.resultSym and c.canRaise) or
-                            c.tupleVars.contains(nn.symId)):
-    let isResultSym = nn.symId == c.resultSym
-    let info = n.info
-    var val = n.childCursor
-    skip val                       # past the destination, now at the value
-    let typ = if isResultSym: c.retType else: getType(c.typeCache, val)
-    if isVoidType(typ):
-      # Nothing but the code in this slot, so the slot IS the code: there is
-      # no value half to project onto.
-      copyInto dest, n:
-        dest.addSubtree n  # the destination, NOT projected: it IS the tuple
-        inc n
-        tr c, dest, n
-    else:
-      # FIELD BY FIELD, not one `(tupconstr (tuple ErrorCode T) Success v)`.
-      # The two assignments say exactly what the constructor said — `Success`
-      # into the code half, the value into the value half — and they build no
-      # temporary tuple to do it.
-      #
-      # What they also do is leave the VALUE at the root of an assignment,
-      # which is where `cps` looks for a suspension point when it decides
-      # where one coroutine state ends and the next begins. Wrapped in the
-      # constructor, a `.passive` call was one level too deep to be seen: the
-      # state boundary landed after the whole assignment, so the assignment
-      # itself sat on the far side of the transition and never ran —
-      # `result = recvFrom(...)` returned zero, always. `coro_transform`'s
-      # `trGoto` now rejects that shape outright rather than mislowering it.
-      copyIntoKind dest, AsgnS, info:
-        copyIntoKind dest, TupatX, info:
-          dest.addSubtree nn
-          dest.addIntLit 0, info
-        dest.addSymUse pool.symId(SuccessName), info
-      copyInto dest, n:
-        copyIntoKind dest, TupatX, info:
-          dest.addSubtree n
-          dest.addIntLit 1, info
-        inc n
-        tr c, dest, n
-  else:
-    copyInto dest, n:
-      tr c, dest, n
-      tr c, dest, n
-
 proc trBreak(c: var Context; dest: var TokenBuf; n: var Cursor) =
   ## Leaving a `block` or a loop runs the `finally` of every `try` between
   ## here and it — but not of any `try` further out, which we are still in.
@@ -876,8 +835,6 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trScope c, dest, n
       of StmtsS:
         trStmtList c, dest, n
-      of AsgnS:
-        trAsgn c, dest, n
       of RetS:
         trRet c, dest, n
       of RaiseS:
@@ -892,7 +849,7 @@ proc tr(c: var Context; dest: var TokenBuf; n: var Cursor) =
         trLoopOrBlock c, dest, n
       of MacroS, TemplateS, TypeS:
         takeTree dest, n
-      of CallS, CmdS, IteratorS, EmitS, IfS, WhenS,
+      of AsgnS, CallS, CmdS, IteratorS, EmitS, IfS, WhenS,
          ContinueS, ForS, CaseS, YldS,
          PragmasS, PragmaxS, InclS, ExclS, IncludeS, ImportS, ImportasS,
          FromimportS, ImportexceptS, ExportS, ExportexceptS, CommentS,

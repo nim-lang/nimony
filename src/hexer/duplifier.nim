@@ -35,7 +35,7 @@ when defined(nimony):
 include ".." / lib / nifprelude
 include ".." / lib / compat2
 import ".." / lib / [nifindexes, symparser, treemangler]
-import lifter, mover, hexer_context, passes, closuretypes
+import lifter, mover, hexer_context, passes, closuretypes, defaultvalues
 import ".." / finalir / finalir_model
 import ".." / nimony / [nimony_model, programs, decls, typenav, renderer, reporters, builtintypes, typekeys]
 include ".." / nimony / nif_annotations
@@ -1037,9 +1037,42 @@ proc isCursorField(fieldKey: Cursor): bool =
   if local.kind notin {FldY, GfldY}: return false
   result = hasPragma(local.pragmas, CursorP)
 
+proc hasStaticPayload(n: Cursor): bool =
+  ## True when a field of the object constructor `n` points at static
+  ## storage, i.e. carries the `(addr (aconstr (uarray T) …))` payload
+  ## `exprexec` emits for an evaluated const. Only the direct fields are
+  ## inspected; a payload nested inside another constructor is reached by
+  ## `trObjConstr` recursing into that field.
+  result = false
+  var n = n
+  inc n # tag
+  skip n # type
+  while n.hasMore and n.substructureKind == KvU:
+    var v = n
+    inc v # kv
+    skip v # field
+    if isAddrOfAconstrUarray(v):
+      result = true
+      break
+    skip n
+
 proc trObjConstr(c: var Context; n: var Cursor; e: Expects) =
   var ow = owningTempDefault()
   let typ = n.childCursor
+  if hasDestructor(c, typ) and hasStaticPayload(n):
+    # An evaluated const/static value whose payload is static storage:
+    # owning it would `dealloc` that storage, so treat it like a const
+    # symbol read and deep copy it where ownership is required.
+    let info = n.info
+    let hookProc = if e in {WantOwner, WillBeOwned}: getHook(c.lifter[], attachedDup, typ, info)
+                   else: NoSymId
+    if hookProc != NoSymId:
+      copyIntoKind c.dest, CallS, info:
+        copyIntoSymUse c.dest, hookProc, info
+        takeTree c.dest, n
+    else:
+      takeTree c.dest, n
+    return
   if hasDestructor(c, typ) and e == WantNonOwner:
     ow = bindToTemp(c, typ, n.info)
   copyInto c.dest, n:
@@ -1098,6 +1131,37 @@ proc genOutOfMemCheck(c: var Context; ow: OwningTemp; info: NifLineInfo) =
                       c.resultSym, info)
     c.dest.addDotToken() # no else
 
+proc genOutOfMemPanic(c: var Context; ow: OwningTemp; info: NifLineInfo) =
+  ## The default: with no error channel in scope and a not-nil `ref` to produce,
+  ## there is no value to continue with, so the only report left is termination
+  ## (`doc/internals/failure_modes.md`). Without this the `rc` store `trNewobj`
+  ## emits next would go through the `nil`. A destination that would rather have
+  ## the `nil` says so by declaring itself `nil T`, which is the case below.
+  copyIntoKind c.dest, IteV, info:
+    copyIntoKind c.dest, EqX, info:
+      copyIntoKind c.dest, PointerT, info: discard
+      c.dest.addSymUse(ow.s, info)
+      copyIntoKind c.dest, NilX, info: discard
+    copyIntoKind c.dest, StmtsS, info:
+      copyIntoKind c.dest, CallS, info:
+        c.dest.addSymUse(pool.symId("panicOutOfMem.0." & SystemModuleSuffix), info)
+    c.dest.addDotToken() # no else
+
+proc asksForNil(typ: Cursor): bool =
+  ## Whether the allocation's own type spells `nil T` or `unchecked T`: the first
+  ## is the destination asking to be handed the `nil` (sem stamps it there, see
+  ## `sem.nilableAllocResult`), the second is what `lenientnils` stamps. Both mean
+  ## "do not panic, the caller wants the pointer as it is". Shaped like
+  ## `contracts_fir.markedAs`, which is the reader of the same marker on the other
+  ## side of the pass boundary.
+  var t = typ
+  while t.typeKind in {SinkT, MutT, LentT, OutT}:
+    inc t
+  if t.typeKind != RefT: return false
+  var marker = t.childCursor
+  skip marker # the element type
+  result = marker.hasMore and marker.substructureKind in {NilU, UncheckedU}
+
 proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
     {.ensuresNif: addedAny(c.dest).} =
   let info = n.info
@@ -1121,9 +1185,31 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         c.dest.addSymUse(typeSym, info)
   c.dest.addParRi() # finish temp declaration
 
-  # map to OOM if the proc can raise an error:
-  if CanRaise in c.flags:
+  # `doc/internals/failure_modes.md`, in priority order. A `.raises` signature can
+  # carry the failure, so map it and return -- that also overrides an explicit
+  # `nil` destination, and it is what lets the body below treat the pointer as
+  # not-nil, which is what `contracts_fir` assumes for a `newobj` in such a
+  # routine. Otherwise: panic, unless the type says the caller wants the `nil`.
+  let raising = CanRaise in c.flags
+  let guardStores = not raising and asksForNil(refType)
+  if raising:
     genOutOfMemCheck(c, ow, info)
+  elif not guardStores:
+    genOutOfMemPanic(c, ow, info)
+  else:
+    # The caller gets the `nil` and deals with it. What is NOT theirs to deal with
+    # is the initialization this pass emits -- a construction that faulted before
+    # returning would leave them nothing to check -- so guard exactly those
+    # stores. `nil T` and `lenientnils`' `unchecked T` emit the same code and
+    # differ only in what the prover then demands, so there is no `lenientnils`
+    # arm.
+    c.dest.addParLe(IteV, info)
+    copyIntoKind c.dest, NotX, info:
+      copyIntoKind c.dest, EqX, info:
+        copyIntoKind c.dest, PointerT, info: discard
+        c.dest.addSymUse(ow.s, info)
+        copyIntoKind c.dest, NilX, info: discard
+    c.dest.addParLe(StmtsS, info)
 
   copyIntoKind c.dest, AsgnS, info:
     copyIntoKind c.dest, DerefX, info:
@@ -1138,13 +1224,26 @@ proc trNewobj(c: var Context; n: var Cursor; e: Expects; kind: ExprKind)
         let dataField = pool.symId(DataField)
         c.dest.addSymUse(dataField, info)
         if kind == NewobjX:
-          copyIntoKind c.dest, OconstrX, info:
-            c.dest.addSubtree baseType
-            skip n, SkipType
-            trNewobjFields(c, n)
+          skip n, SkipType
+          if n.hasMore:
+            copyIntoKind c.dest, OconstrX, info:
+              c.dest.addSubtree baseType
+              trNewobjFields(c, n)
+          else:
+            # A `newobj` that a hexer pass synthesized for a type it invented (a
+            # closure environment, a coroutine frame) names no fields. The payload
+            # is fresh, uninitialized memory, and an `oconstr` is TOTAL
+            # (`doc/tags.md`): the native back end stores exactly what is listed,
+            # so an empty one left the frame's fields holding whatever the stack
+            # temp it is built in held.
+            addDefaultValue(c.dest, baseType, info, c.lifter.bits div 8)
         else:
           skip n, SkipType
           tr c, n, WantOwner # process default(T) call
+  if guardStores:
+    c.dest.addParRi()      # close the `stmts` of the guard
+    c.dest.addDotToken()   # no else
+    c.dest.addParRi()      # close the `ite`
   n = objStart; skip n
 
   # The decl, the OOM check and the payload assignment are all plain
@@ -1250,6 +1349,10 @@ proc trLocal(c: var Context; n: var Cursor; k: StmtKind) =
     copyTree c.dest, r.val
     c.dest.addParRi()
     callWasMoved c, r.name.symId, r.name.info, r.typ
+  elif k == ConstS:
+    # static data: nothing to own, dup or destroy
+    copyTree c.dest, r.val
+    c.dest.addParRi()
   else:
     let destructor = getDestructor(c.lifter[], r.typ, n.endInfo)
     if destructor != NoSymId:

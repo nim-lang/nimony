@@ -98,6 +98,9 @@ type
     cmdStats: Table[string, CmdStats]
     heaviest: seq[tuple[kib: int, cmdName, label: string]]
       ## the `HeaviestShown` hungriest nodes, descending
+    spans: seq[tuple[start, finish: int64, kib: int]]
+      ## lifetime (monotonic nanoseconds) and peak RSS of every executed node;
+      ## `concurrentPeak` sweeps these for the build's memory high-water mark
     execWallTime: float
 
 proc addSpace(result: var string) {.inline.} =
@@ -367,15 +370,16 @@ proc toSeconds(d: Duration): float =
 const HeaviestShown = 10
 
 proc recordCmd(profile: var ProfileData; cmdName, label: string;
-               sec: float; peakKiB: int) =
+               start, finish: MonoTime; peakKiB: int) =
   let e = addr profile.cmdStats.mgetOrPut(cmdName, CmdStats())
-  e.sec += sec
+  e.sec += toSeconds(finish - start)
   inc e.count
   e.sumKiB += peakKiB
   if peakKiB > e.peakKiB:
     e.peakKiB = peakKiB
     e.peakLabel = label
   if peakKiB > 0:
+    profile.spans.add (start.ticks, finish.ticks, peakKiB)
     var i = profile.heaviest.len
     while i > 0 and profile.heaviest[i-1].kib < peakKiB: dec i
     if i < HeaviestShown:
@@ -641,8 +645,8 @@ proc runDag(dag: var Dag; opt: set[CliOption]; profile: ptr ProfileData = nil;
     pool.del k
     close job.process
     if profile != nil:
-      profile[].recordCmd(job.cmdName, job.label,
-                          toSeconds(getMonoTime() - job.start), peakKiB)
+      profile[].recordCmd(job.cmdName, job.label, job.start, getMonoTime(),
+                          peakKiB)
     inc prog.done
     prog.draw job.label
     if exitCode == 0:
@@ -912,6 +916,30 @@ proc printReport(profile: ProfileData) =
   stdout.write $total
   stdout.write "\n"
 
+proc concurrentPeak(profile: ProfileData): tuple[kib, jobs: int] =
+  ## Upper bound on the whole build's memory high-water mark: sweeps the node
+  ## lifetimes and sums the peak RSS of everything alive at the same instant.
+  ## Pessimistic on purpose -- a process only sits at its peak briefly, but the
+  ## peaks are all `wait4` hands back, so this is the cheapest honest bound.
+  ## Note that the `peak` column above is a single process, which is why this
+  ## number can be much larger with `--parallel`.
+  result = (0, 0)
+  var events = newSeqOfCap[(int64, int)](profile.spans.len * 2)
+  for s in profile.spans:
+    events.add (s.start, s.kib)
+    events.add (s.finish, -s.kib)
+  # Ties must release before they acquire, otherwise a node that exits exactly
+  # as its successor starts is counted twice.
+  events.sort(proc (a, b: (int64, int)): int =
+    result = cmp(a[0], b[0])
+    if result == 0: result = cmp(a[1], b[1]))
+  var cur = 0
+  var live = 0
+  for (_, delta) in events:
+    cur += delta
+    if delta > 0: inc live else: dec live
+    if cur > result.kib: result = (cur, live)
+
 proc fmtKiB(kib: int): string =
   if kib >= 1024 * 1024: formatFloat(kib / (1024 * 1024), ffDecimal, 1) & " GiB"
   else: $(kib div 1024) & " MiB"
@@ -935,6 +963,10 @@ proc printProfile(profile: ProfileData) =
   let execTotal = profile.cmdStats.values.toSeq.foldl(a + b.sec, 0.0)
   stderr.writeLine "  exec total:     ", execTotal.formatFloat(ffDecimal, 3), "s"
   stderr.writeLine "  wall time:      ", profile.execWallTime.formatFloat(ffDecimal, 3), "s"
+  let cp = concurrentPeak(profile)
+  if cp.kib > 0:
+    stderr.writeLine "  concurrent RSS: ", fmtKiB(cp.kib),
+      " (upper bound, ", $cp.jobs, " jobs live)"
   if profile.heaviest.len > 0:
     stderr.writeLine "  heaviest nodes (peak RSS):"
     for h in profile.heaviest:

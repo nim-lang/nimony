@@ -521,6 +521,25 @@ proc calleeEffect*(calleeType: Cursor; pragmas: Cursor): Effect =
   else:
     whichEffect(calleeType.stmtKind, pragmas)
 
+proc isAddrOfAconstrUarray*(n: Cursor): bool =
+  ## True when `n` points at `(addr (aconstr (uarray T) …))`, the
+  ## static-uarray-pointer shape `exprexec` produces for an evaluated
+  ## const payload. `lengcgen` hoists exactly this shape into a module
+  ## level `(const <anon> …)` and rewrites the site to
+  ## `cast[ptr T](addr <anon>)`, so it is what makes the storage static;
+  ## anything failing this test is an ordinary address-of. The `uarray`
+  ## slot is the discriminator -- do not drop it.
+  ## Checks the `addr` tag itself so the test is safe to apply to an
+  ## arbitrary expression, not only inside an already-matched addr case.
+  result = false
+  if n.exprKind in {AddrX, HaddrX}:
+    var inner = n
+    inc inner # past addr tag
+    if inner.exprKind == AconstrX:
+      var typSlot = inner
+      inc typSlot # past aconstr tag
+      result = typSlot.typeKind == UarrayT
+
 proc isNilAnnotation*(n: Cursor): bool {.inline.} =
   ## Returns true if `n` is a `(notnil)`, `(nil)`, or `(unchecked)` annotation.
   n.isTagLit and n.substructureKind in {NotnilU, NilU, UncheckedU}

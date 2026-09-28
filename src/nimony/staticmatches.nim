@@ -9,9 +9,18 @@
 
 ## Helpers for matching value (`static`) generic parameters and the compile-time
 ## values bound to them. These are the parts of the static-parameter machinery
-## that do *not* depend on the `Match` object; the `Match`-bound logic
-## (`foldValueExpr`, `staticValueToBind`, `bindStaticTypevar`, ...) stays in
-## `sigmatch`.
+## that do *not* depend on the `Match` object.
+##
+## The explicit-generic-argument pipeline is split across three modules and is
+## the same for routine calls, explicit routine instantiation and type
+## instantiation:
+## - **sem** (`semLocalTypeImpl` with `AllowValues` at explicit generic-arg
+##   sites): semcheck each argument as a compile-time value or a type.
+## - **bind** (`sigmatch.matchExplicitGenericArg` / `staticValueToBind` /
+##   `bindStaticTypevar`, plus the `Match`-bound `foldValueExpr`): validate the
+##   sem'd argument against the parameter and canonicalize the bound value.
+## - **structural helpers** (this module): `Match`-free predicates such as
+##   `isStaticValue`, `staticValueType` and `staticValueTypeMatches`.
 
 import std/assertions
 include ".." / lib / nifprelude

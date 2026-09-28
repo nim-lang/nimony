@@ -1,12 +1,13 @@
-## Low-level memory primitives and the default allocator for Nimony.
+## Low-level memory primitives and the allocators for Nimony.
 ##
-## The default allocator is the mimalloc shim (`include mimalloc`). A native
-## allocator — a literal port of Nim 2's `lib/system/{alloc,osalloc}.nim`
-## (page-chunk TLSF: segregated small cells, coalescing big chunks, huge mmap;
-## owner-stamped lock-free deferred free for cross-thread deallocations) — is
-## available behind `-d:nimNativeAlloc`. It is not yet the default: it still
-## regresses a couple of arc tests (see project notes), so mimalloc stays the
-## default until those are root-caused.
+## The default allocator is the native one — a literal port of Nim 2's
+## `lib/system/{alloc,osalloc}.nim` (page-chunk TLSF: segregated small cells,
+## coalescing big chunks, huge mmap; owner-stamped lock-free deferred free for
+## cross-thread deallocations). The driver defines `nimNativeAlloc` for every
+## backend, because the libc-free stdlib is the default (`nimony.nim`); the
+## mimalloc shim is the opt-OUT, reached with `-d:useMimalloc` (allocator only)
+## or `-d:useLibc` (allocator and IO together), and the native backend is always
+## libc-free regardless.
 ##
 ## The user-facing `alloc`/`dealloc`/`realloc`/`allocatedSize` wrappers are
 ## `func` (noSideEffect) so they remain usable inside the `func`s of pure data
@@ -14,7 +15,8 @@
 ## is an implementation detail invisible to callers, so each wrapper launders
 ## the side-effecting MemRegion proc through `{.cast(noSideEffect).}`.
 ##
-## Compile with `-d:nimNativeAlloc` to use the native ported allocator.
+## `-d:nimMaxHeap=N` caps the heap at N megabytes and `-d:nimHardenOutOfMem`
+## makes that cap recoverable; both live in the ported allocator, see below.
 
 # --- C memory intrinsics (needed by the allocator, hence defined first) ----
 func c_memcpy(dest, src: pointer; size: csize_t) {.importc: "memcpy", header: "<string.h>".}
@@ -73,6 +75,13 @@ func cmpMem*(a, b: pointer; size: int): int {.inline.} =
 func zeroMem*(dest: pointer; size: int) {.inline.} =
   ## Sets `size` bytes at `dest` to zero.
   c_memset(dest, 0, csize_t size)
+
+# The `-d:nimMaxHeap=N` heap cap and its recoverable companion
+# `-d:nimHardenOutOfMem` live in the ported allocator (`system/alloc.nim`), where
+# the occupancy they check is already tracked. Keeping the accounting there
+# rather than in the wrappers below is what keeps it free -- no second layer of
+# bookkeeping on every allocation -- and it covers the default configuration,
+# since `nimNativeAlloc` is the default. A `-d:useMimalloc` build ignores both.
 
 when not defined(nimNativeAlloc):
   # NOTE: `-d:valgrind` does nothing here. It instruments the NATIVE allocator

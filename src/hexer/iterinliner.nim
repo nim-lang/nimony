@@ -331,12 +331,20 @@ proc rewriteClosureIter(e: var EContext; dest: var TokenBuf;
 # of the back-edge, so each `yield` becomes a copy of the body without the
 # back-edge. Every copy gets fresh names for its locals and labels.
 
+const NestedRoutines = {ProcS, FuncS, IteratorS, ConverterS, MethodS}
+  ## Routines declared inside a copied body: each copy of the body gets its
+  ## own, and their uses of the body's renamed locals are renamed with it.
+
 proc collectDefs(e: var EContext; n: Cursor; mapping: var Table[SymId, SymId]) =
   ## A fresh name for every local and label `n` declares. Labels have to be
-  ## known up front: a `jmp` comes before its `lab`.
-  # nested declarations own their names
-  if n.isTagLit and n.stmtKind notin {ProcS, FuncS, IteratorS, ConverterS,
-      MethodS, MacroS, TemplateS, TypeS, PragmasS}:
+  ## known up front: a `jmp` comes before its `lab`. A nested routine gets a
+  ## fresh name too (one definition per copy), but what it declares inside is
+  ## its own and keeps its names.
+  if n.isTagLit and n.stmtKind in NestedRoutines:
+    let d = n.childCursor
+    if d.kind == SymbolDef:
+      mapping[d.symId] = pool.symId("`ii." & $e.getTmpId)
+  elif n.isTagLit and n.stmtKind notin {MacroS, TemplateS, TypeS, PragmasS}:
     if n.stmtKind in {VarS, LetS, CursorS, PatternvarS, ResultS, LabS}:
       let d = n.childCursor
       if d.kind == SymbolDef:
@@ -364,10 +372,13 @@ proc copyFreshened(dest: var TokenBuf; c: var Cursor; mapping: Table[SymId, SymI
         while c.hasMore:
           copyFreshened(dest, c, mapping)
         dest.addParRi(c.endInfo)
-    elif c.stmtKind in {ProcS, FuncS, IteratorS, ConverterS, MethodS, MacroS,
-                        TemplateS, TypeS, PragmasS}:
+    elif c.stmtKind in {MacroS, TemplateS, TypeS, PragmasS}:
       dest.takeTree c
     else:
+      # Nested routines included: a closure declared in the body refers to
+      # the body's locals, which this copy renames, so its uses must follow.
+      # `mapping` holds only the enclosing body's names, so the routine's
+      # own declarations are copied unchanged.
       dest.addParLe(c.cursorTagId, c.info)
       c.into:
         while c.hasMore:

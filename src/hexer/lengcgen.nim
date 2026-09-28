@@ -953,9 +953,10 @@ proc parsePragmas(c: var EContext; dest: var TokenBuf; n: var Cursor): Collected
              TagsP, DeprecatedP, SideEffectP, KeepOverflowFlagP, SemanticsP,
              BaseP, FinalP, PragmaP, CursorP, PassiveP, PluginP, MethodsP, CastP, SizeP,
              FeatureP, UncheckedAssignP, UncheckedAccessP,
-             ProfilerP, StacktraceP, GcsafeP, UsedP:
+             ProfilerP, StacktraceP, GcsafeP, UsedP,
+             IntdefineP, BooldefineP, StrdefineP:
             skip n
-          of BuildP, BundleP, CompileP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
+          of BuildP, BundleP, CompileP, LinkP, EmitP, PushP, PopP, PassLP, PassCP, CallConvP:
             bug "unreachable"
         else:
           error c, "unknown pragma: ", n
@@ -1682,18 +1683,6 @@ proc trAddrAconstrUarray(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   dest.addSymUse(anonName, info)
   dest.addParRi() # close addr
   dest.addParRi() # close cast
-
-proc isAddrOfAconstrUarray(n: Cursor): bool =
-  ## True when `n` points at `(addr (aconstr (uarray T) …))`. Used to
-  ## detect the static-uarray-pointer shape produced by exprexec.
-  var inner = n
-  inc inner # past addr tag
-  if inner.exprKind == AconstrX:
-    var typSlot = inner
-    inc typSlot # past aconstr tag
-    result = typSlot.typeKind == UarrayT
-  else:
-    result = false
 
 proc trExpr(c: var EContext; dest: var TokenBuf; n: var Cursor) =
   case n.kind
@@ -2656,7 +2645,7 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   dest.addParLe("call", rootInfo)
   dest.addSymUse(initSym, rootInfo)
   dest.addParRi() # call
-  if c.nativeBackend:
+  if c.nativeBackend and not c.crtEntry:
     # Native image: terminate through system's `cExit(0)` — a DECLARED
     # cross-module call that flushes the std streams and then reaches
     # `ExitProcess` (windows) / `_exit` (linux) via the ordinary import
@@ -2669,7 +2658,9 @@ proc genMainProc(c: var EContext; dest: var TokenBuf; rootInfo: NifLineInfo;
   else:
     # (call nimFlushStdStreams) — flush buffered std streams on normal exit, so
     # output is not lost when `main` returns without going through `quit`. A
-    # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo).
+    # no-op unless `syncio` installed a flush (e.g. under -d:nimNativeIo). The
+    # return goes to crt, whose `exit` flushes C stdio too — the C `main`, and a
+    # native one linked with libc (`crtEntry`).
     dest.addParLe("call", rootInfo)
     dest.addSymUse(pool.symId(getCompilerProc(c, "nimFlushStdStreams")), rootInfo)
     dest.addParRi() # call
@@ -2802,7 +2793,7 @@ proc trToplevel(c: var EContext; dest: var TokenBuf; n: var Cursor) =
         trStmt c, dest, n, TraverseAll
         swap dest, c.initBody
 
-proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows)) =
+proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; isMain: bool; outdir: string; appType = appConsole; native = false; isWindows = defined(windows); crt = false) =
   let mp = splitModulePath(infile)
   let dir =
     if outdir.len > 0: outdir
@@ -2818,6 +2809,7 @@ proc expand*(infile: string; bits: int; bigEndian: bool; flags: set[CheckMode]; 
     bits: bits,
     bigEndian: bigEndian,
     nativeBackend: native,
+    crtEntry: crt,
     isWindows: isWindows,
     localDeclCounters: 1000,
     activeChecks: flags,

@@ -27,11 +27,12 @@ type
     ExportIdx = (ord(ExportTagId), "export")  ## `export` statement
     FromexportIdx = (ord(FromexportTagId), "fromexport")  ## specific exported symbols from a module
     ExportexceptIdx = (ord(ExportexceptTagId), "exportexcept")  ## `exportexcept` statement
-    BuildIdx = (ord(BuildTagId), "build")  ## `build` pragma
+    BuildIdx = (ord(BuildTagId), "build")  ## `build` pragma; in the index, each `(tup …)` entry is `(lang source flags [objectName])` for a `compile`d file, or `(builder tool args [linkflags])` for a `build` backend
     IndexIdx = (ord(IndexTagId), "index")  ## index section
     BundleIdx = (ord(BundleTagId), "bundle")  ## `bundle` pragma: a custom linker command override `(builder, tool[, args])`; the `tool` is built on demand by `builder` and replaces the final link step, consuming the project's link manifest
     DependencyIdx = (ord(DependencyTagId), "dependency")  ## the files a compile-time computation READ, so that a later build knows to redo it. nimsem writes it into the module's `.s.deps.nif` (`semmain.writeNewDepsFile`) from two sources: what a *plugin* reported through `plugins.dependsOn` and the file `slurp`/`staticRead` folded. A plugin hands the list back as a leading top-level tree of its output, a sibling of the output proper next to `(unusedname …)`; `semos.runPlugin` peels both off, so neither ever reaches the sem tree, and the same list read out of a cached output tells it when the memo is stale. `deps.nim` reads the previous build's list back and makes the files extra inputs of the module's `nimsem` node. Paths are absolute and name only files that existed when the producer ran. Naming a *directory* tracks add/remove of its direct entries and nothing else, because that is all a directory mtime says
+    LinkIdx = (ord(LinkTagId), "link")  ## `link` pragma (Nim-compatible): link a prebuilt object file or static library into the program; the argument is a constant string expression naming a path relative to the pragma's file (`.o` is appended when it has no extension). In the index, the absolute paths of every `link`ed file of the module
 
 proc rawTagIsNifIndexKind*(raw: TagEnum): bool {.inline.} =
-  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId, BundleTagId, DependencyTagId}
+  raw in {KvTagId, VvTagId, GvarTagId, TvarTagId, VarTagId, ConstTagId, GletTagId, TletTagId, LetTagId, CursorTagId, ProcTagId, FuncTagId, IteratorTagId, ConverterTagId, MethodTagId, MacroTagId, TemplateTagId, TypeTagId, InlineTagId, ExportTagId, FromexportTagId, ExportexceptTagId, BuildTagId, IndexTagId, BundleTagId, DependencyTagId, LinkTagId}
 
