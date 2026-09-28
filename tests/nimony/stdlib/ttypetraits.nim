@@ -3,7 +3,7 @@
 # symbol, the plugin answers `needTypes(sym)`, and the compiler re-runs it with
 # that declaration attached. That is the `getImpl` a plugin otherwise lacks.
 
-import std / [syncio, typetraits]
+import std / [assertions, syncio, typetraits]
 
 type
   MyInt = distinct int
@@ -11,6 +11,8 @@ type
   MyFloat = distinct float
   Foo[T] = object
     x: T
+  StaticFoo[N: static[int], T] = object
+    data: array[N, T]
 
 block distinctBaseRecursive:
   var a: distinctBase(MyOtherInt)
@@ -64,3 +66,20 @@ block deferredInsideGeneric:
   echo unwrap(MyInt(12))
   echo unwrap(MyFloat(2.5))
   echo unwrap(7)
+
+block nameBuiltinAndCompositeTypes:
+  echo name(int)
+  echo name(int32)
+  echo name(bool)
+  echo name(float)
+  echo name(float32)
+  echo name(array[3, int64])
+  echo name(seq[float64])
+  echo name(Foo[int])
+  echo name(StaticFoo[3, float32])
+
+block nameTypeParameters:
+  proc echoNAndT[N: static[int]; T](x: StaticFoo[N, T]) =
+    echo $N
+    echo $T
+  echoNAndT(default(StaticFoo[3, float32]))
