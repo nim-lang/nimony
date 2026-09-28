@@ -171,6 +171,9 @@ const
     "tests/nimony/stdlib/tall"
   ]
   NativeTestFiles* = [
+    # `std/dirs` read libc's `errno` after a failed syscall; a freestanding
+    # build has none, so every failure reported `Success`.
+    "tests/nimony/stdlib/tdir_errors",
     # A constructor that selects a case branch and sets none of its fields. Sem
     # used to leave that branch out of the `oconstr`, which the C back end's
     # compound literal zeroed and arkham, storing only what is listed, did not:
