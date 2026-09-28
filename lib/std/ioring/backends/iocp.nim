@@ -80,7 +80,8 @@ when defined(windows):
   import ../core/types
   import ../core/slots
   import ../core/backend
-  import ./files
+  import ./files   # isFileHandle, fileTransfers
+  import ./poll    # completeCommand
 
   type
     SocketHandle = uint            ## Winsock SOCKET (UINT_PTR)
@@ -188,11 +189,6 @@ when defined(windows):
   proc wsGetsockopt(s: SocketHandle; level, optname: cint; optval: pointer;
                     optlen: ptr cint): cint {.
     stdcall, importc: "getsockopt", dynlib: "ws2_32.dll".}
-  proc wsSocket(af, typ, protocol: cint): SocketHandle {.
-    stdcall, importc: "socket", dynlib: "ws2_32.dll".}
-  proc wsIoctlsocket(s: SocketHandle; cmd: clong; argp: ptr culong): cint {.
-    stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
-  const FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
   proc wsClosesocket(s: SocketHandle): cint {.
     stdcall, importc: "closesocket", dynlib: "ws2_32.dll".}
   proc wsGetpeername(s: SocketHandle; name: pointer; namelen: ptr cint): cint {.
@@ -366,44 +362,6 @@ when defined(windows):
       gPollAdds[lane].add PendingPoll(slot: int32(slotIdx),
                                       gen: gSlots[lane].slots[slotIdx].gen)
       return
-    of opSocket:
-      # socket(2) is one instant call — never an overlapped op — so issue it
-      # here and complete with the fd (or the negated Winsock code). The flag
-      # just created is not yet associated with a port; the first real op on
-      # it claims a lane.
-      let s = wsSocket(cint(op.sockDomain), cint(op.sockType), cint(op.sockProtocol))
-      if s == InvalidSocket:
-        complete(slotIdx, -int(wsaGetLastError()))
-      elif s > SocketHandle(high(cint)):
-        discard wsClosesocket(s)   # the ring's cint fd space cannot hold it
-        complete(slotIdx, -1)
-      else:
-        complete(slotIdx, int(cast[uint32](s)))
-      return
-    of opSetSockOpt:
-      # Configuration, not I/O: no OVERLAPPED, answered in place.
-      let r = wsSetsockopt(socketOf(op.fd), cint(op.optLevel), cint(op.optName),
-                           op.optVal, cint(op.optLen))
-      if r == SocketError:
-        complete(slotIdx, -int(wsaGetLastError()))
-      else:
-        complete(slotIdx, 0)
-      return
-    of opBind:
-      let r = wsBind(socketOf(op.fd), addr op.bindTo.sockAddr, cint(op.bindTo.sockAddrLen))
-      if r == SocketError:
-        complete(slotIdx, -int(wsaGetLastError()))
-      else:
-        complete(slotIdx, 0)
-      return
-    of opSetNonBlocking:
-      var one: culong = 1
-      let r = wsIoctlsocket(socketOf(op.fd), FIONBIO, addr one)
-      if r == SocketError:
-        complete(slotIdx, -int(wsaGetLastError()))
-      else:
-        complete(slotIdx, 0)
-      return
     of opConnect:
       # A datagram connect is not a handshake: the kernel only records the
       # peer for later sends and filters later receives by it, and it answers
@@ -415,10 +373,7 @@ when defined(windows):
       if isDatagram(socketOf(op.fd)):
         let r = wsConnect(socketOf(op.fd), addr op.connect.sockAddr,
                           cint(op.connect.sockAddrLen))
-        if r == SocketError:
-          complete(slotIdx, -int(wsaGetLastError()))
-        else:
-          complete(slotIdx, 0)
+        complete(slotIdx, if r == SocketError: -int(wsaGetLastError()) else: 0)
         return
     else:
       discard
@@ -601,56 +556,31 @@ when defined(windows):
         armDeadline(lane, slotIdx)
         # Three services, and which one an op needs is decided by its kind.
         #
-        # UNASSOCIATED: nop and timer have no descriptor at all, `opSocket`'s
-        # socket does not exist yet (its fd is `-1`), and the instant Winsock
-        # commands — setsockopt, bind, FIONBIO — are answered by `issue` in
-        # place with no OVERLAPPED. None of them may be handed to
-        # `ensureAssociated`: on `-1` the `createIoCompletionPort` simply
-        # fails, and the op would be dropped without ever completing. A
-        # readiness probe is served by the WSAPoll pass rather than by the
-        # port, so it stays out too.
+        # INSTANT: open, socket, setsockopt, bind, FIONBIO — one call made
+        # here with no OVERLAPPED (`completeCommand`, shared with WSAPoll).
         #
-        # FILE: `opOpen`, and a read or write whose fd is a plain
-        # `CreateFileW` HANDLE rather than a SOCKET (backends/files.nim). Such
-        # a handle carries no FILE_FLAG_OVERLAPPED, so it must never be bound
-        # to a completion port; its transfers are made synchronously here
-        # instead — "the file is its own readiness", the rule the POSIX
-        # backends apply. Only a read or a write can land on one, which is
-        # what keeps `GetFileType` off the socket path: every other kind is a
-        # socket op by construction.
+        # FILE: a read or write whose fd is a plain `CreateFileW` HANDLE
+        # rather than a SOCKET (backends/files.nim). Such a handle carries no
+        # FILE_FLAG_OVERLAPPED, so it must never be bound to a completion
+        # port; its transfers are made synchronously here instead — "the file
+        # is its own readiness", the rule the POSIX backends apply.
         #
-        # SOCKET: everything else — associate on first use, then issue.
+        # SOCKET: everything else — associate on first use, then issue. Nop,
+        # timer and readiness probe have no socket to associate (a probe is
+        # served by the WSAPoll pass, not by the port).
         let kind = buf[i].kind
-        let unassociated = kind in {opNop, opTimeout, opPollAdd, opSocket,
-                                    opSetSockOpt, opBind, opSetNonBlocking}
-        case kind
-        of opOpen:
-          completeFileOpen(slotIdx, cast[cstring](buf[i].open.buf),
-                           buf[i].open.openFlags, buf[i].open.openMode)
-        of opRead:
-          if isFileHandle(buf[i].fd):
-            completeFileRead(slotIdx, buf[i].fd,
-                             cast[pointer](buf[i].read.buf), buf[i].read.len)
-          elif ensureAssociated(buf[i].fd, lane):
-            issue(lane, slotIdx)
-          else:
-            complete(slotIdx, ECancelled)  # closed or foreign handle
-        of opWrite:
-          if isFileHandle(buf[i].fd):
-            completeFileWrite(slotIdx, buf[i].fd,
-                              cast[pointer](buf[i].write.buf), buf[i].write.len)
-          elif ensureAssociated(buf[i].fd, lane):
-            issue(lane, slotIdx)
-          else:
-            complete(slotIdx, ECancelled)
+        if completeCommand(slotIdx, buf[i]):
+          discard
+        elif kind in {opRead, opWrite} and isFileHandle(buf[i].fd):
+          fileTransfers(buf[i].fd)
+        elif kind in {opNop, opTimeout, opPollAdd} or
+            ensureAssociated(buf[i].fd, lane):
+          issue(lane, slotIdx)
         else:
-          if unassociated or ensureAssociated(buf[i].fd, lane):
-            issue(lane, slotIdx)
-          else:
-            # Never issued, and a slot nobody completes is a caller parked
-            # until its deadline — so say so now, exactly as the readiness
-            # backends' `cancelPendingOps` does.
-            complete(slotIdx, ECancelled)
+          # Never issued, and a slot nobody completes is a caller parked
+          # until its deadline — so say so now, exactly as the readiness
+          # backends' `cancelPendingOps` does.
+          complete(slotIdx, ECancelled)
     result = servePollAdds(lane)
     # Readiness probes are re-checked every millisecond while any are pending,
     # and no wait outlasts the earliest deadline on this lane.

@@ -39,7 +39,7 @@ when defined(windows):
   import ../core/types
   import ../core/slots
   import ../core/backend
-  import ./files
+  import ./files   # isFileHandle, fileTransfers
   import ./poll
 
   const
@@ -90,26 +90,8 @@ when defined(windows):
           # that finished at once has completed the slot; the set is rebuilt
           # from the arena, so there is nothing to undo either way.
           discard startConnect(buf[i].fd, idx)
-        of opOpen:
-          # A Windows file open, performed here on the polling thread — same
-          # rule as POSIX opOpen's open(2). openFlags/openMode carry the
-          # desiredAccess/disposition asyncio computed from its FileMode
-          # (backends/files.nim).
-          completeFileOpen(idx, cast[cstring](buf[i].open.buf),
-                           buf[i].open.openFlags, buf[i].open.openMode)
-        of opSocket:
-          # One instant Winsock call each — the same "issue at once, nothing
-          # to arm" shape as `opOpen`, served by the shared poll helpers.
-          completeSocket(idx, buf[i].sockDomain, buf[i].sockType, buf[i].sockProtocol)
-        of opSetSockOpt:
-          completeSetSockOpt(idx, buf[i].fd, buf[i].optLevel, buf[i].optName,
-                             buf[i].optVal, buf[i].optLen)
-        of opBind:
-          completeBind(idx, buf[i].fd, addr buf[i].bindTo.sockAddr, buf[i].bindTo.sockAddrLen)
-        of opSetNonBlocking:
-          completeSetNonBlocking(idx, buf[i].fd)
         else:
-          discard
+          discard completeCommand(idx, buf[i])
     # Build this lane's set from its arena. Collect before dispatching:
     # `processFd` frees slots, which mutates the fd index the set comes from.
     # A FILE fd is its own readiness: WSAPoll cannot watch a HANDLE

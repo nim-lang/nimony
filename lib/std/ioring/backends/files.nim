@@ -75,7 +75,7 @@ when defined(windows):
     else:
       complete(idx, int(uint32(cast[uint](h))))
 
-  proc completeFileRead*(idx: int; fd: cint; buf: pointer; len: int) =
+  proc completeFileRead(idx: int; fd: cint; buf: pointer; len: int) =
     ## One synchronous `ReadFile` on the polling thread, completing the op
     ## with the byte count — `0` is end of stream, the buffered layer's signal
     ## for "no more" — or the negated Win32 error. The Win32 file pointer is
@@ -87,7 +87,7 @@ when defined(windows):
     else:
       complete(idx, -int(getLastError()))
 
-  proc completeFileWrite*(idx: int; fd: cint; buf: pointer; len: int) =
+  proc completeFileWrite(idx: int; fd: cint; buf: pointer; len: int) =
     ## One synchronous `WriteFile` on the polling thread, completing the op
     ## with the byte count or the negated Win32 error. The file pointer is the
     ## position here too — an append handle's FILE_APPEND_DATA makes every

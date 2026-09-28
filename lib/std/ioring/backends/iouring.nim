@@ -40,7 +40,7 @@ import ../../posix/io_uring
 import ../core/types
 import ../core/slots
 import ../core/backend
-from ./poll import completeBind
+from ./poll import completeCommand
 from ./epoll import initEpollBackendRelays
 
 const
@@ -293,13 +293,10 @@ proc iouringPoll(timeoutMs: int): bool {.nimcall.} =
         # both have ring forms and go through SQEs below.
         let idx = gSlots[lane].allocSlot(buf[i])
         armDeadline(lane, idx)
-        case buf[i].kind
-        of opBind:
-          completeBind(idx, buf[i].fd, addr buf[i].bindTo.sockAddr, buf[i].bindTo.sockAddrLen)
-        of opSetNonBlocking:
+        if buf[i].kind == opSetNonBlocking:
           complete(idx, 0)
         else:
-          discard
+          discard completeCommand(idx, buf[i])   # bind(2)
         continue
       var sqe: nil ptr Sqe
       try:

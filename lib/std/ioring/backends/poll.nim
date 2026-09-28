@@ -6,6 +6,8 @@
 import ../core/types
 import ../core/slots
 import ../core/backend
+when defined(windows):
+  import ./files   # completeFileOpen
 
 proc noopReArm(fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} = true
 var reArmEvent*: proc (fd: cint; events: IoEvents, alreadyRegistered: bool): bool {.nimcall.} = noopReArm
@@ -379,9 +381,18 @@ else:
     stdcall, importc: "ioctlsocket", dynlib: "ws2_32.dll".}
   const FIONBIO = cast[clong](0x8004667E'u32)   ## _IOW('f', 126, u_long)
 
+  proc socketOf(fd: cint): SocketHandle {.inline.} =
+    ## The ring narrows a SOCKET to `cint` (ioring.nim, Windows arm); widen it
+    ## back without sign extension.
+    SocketHandle(cast[uint32](fd))
+
+  proc wsDone(idx: int; r: cint) =
+    ## Complete a Winsock call that answers `0` or `SOCKET_ERROR`.
+    complete(idx, if r == SocketError: -int(wsaGetLastError()) else: 0)
+
+  # The Windows twins of the POSIX instant commands: one Winsock call each on
+  # the polling thread, completing with the fd or `0`, or the negated code.
   proc completeSocket*(idx: int; domain, typ, proto: int32) =
-    ## Windows twin of the POSIX `completeSocket`: one instant syscall made on
-    ## the polling thread; completes with the fd (or the negated Winsock code).
     let s = wsSocket(cint(domain), cint(typ), cint(proto))
     if s == InvalidSocket:
       complete(idx, -int(wsaGetLastError()))
@@ -393,38 +404,15 @@ else:
 
   proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: int32;
                            optVal: nil pointer; optLen: SockLen) =
-    ## Windows twin of the POSIX `completeSetSockOpt`: one instant Winsock
-    ## call; completes with `0` or the negated Winsock code.
-    let r = wsSetsockopt(socketOf(fd), cint(level), cint(optName),
-                         cast[pointer](optVal), cint(optLen))
-    if r == SocketError:
-      complete(idx, -int(wsaGetLastError()))
-    else:
-      complete(idx, 0)
+    wsDone(idx, wsSetsockopt(socketOf(fd), cint(level), cint(optName),
+                             cast[pointer](optVal), cint(optLen)))
 
   proc completeBind*(idx: int; fd: FileHandle; sa: pointer; saLen: SockLen) =
-    ## Windows twin of the POSIX `completeBind`: one instant Winsock call;
-    ## completes with `0` or the negated Winsock code.
-    let r = wsBindS(socketOf(fd), sa, cint(saLen))
-    if r == SocketError:
-      complete(idx, -int(wsaGetLastError()))
-    else:
-      complete(idx, 0)
+    wsDone(idx, wsBindS(socketOf(fd), sa, cint(saLen)))
 
   proc completeSetNonBlocking*(idx: int; fd: FileHandle) =
-    ## Windows twin of the POSIX `completeSetNonBlocking`: ioctlsocket(FIONBIO);
-    ## completes with `0` or the negated Winsock code.
     var one: culong = 1
-    let r = wsIoctlsocket(socketOf(fd), FIONBIO, addr one)
-    if r == SocketError:
-      complete(idx, -int(wsaGetLastError()))
-    else:
-      complete(idx, 0)
-
-  proc socketOf(fd: cint): SocketHandle {.inline.} =
-    ## The ring narrows a SOCKET to `cint` (ioring.nim, Windows arm); widen it
-    ## back without sign extension.
-    SocketHandle(cast[uint32](fd))
+    wsDone(idx, wsIoctlsocket(socketOf(fd), FIONBIO, addr one))
 
   proc clampLen(n: int): cint {.inline.} =
     if n > int(high(cint)): high(cint) else: cint(n)
@@ -543,3 +531,27 @@ else:
     if gSlots[lane].hasPendingForFd(fd):
       if not reArmEvent(fd, armEventsForFd(fd), true):
         failPendingForFd(fd)
+
+proc completeCommand*(idx: int; op: var OpContext): bool =
+  ## The ops that are one instant call with no readiness to wait on — open,
+  ## socket, setsockopt, bind, non-blocking — performed right here on the
+  ## polling thread. `false` for every other kind, which the caller arms.
+  result = true
+  case op.kind
+  of opOpen:
+    when defined(windows):
+      completeFileOpen(idx, cast[cstring](op.open.buf),
+                       op.open.openFlags, op.open.openMode)
+    else:
+      completeOpen(idx, cast[cstring](op.open.buf), cint(op.open.openFlags),
+                   Mode(op.open.openMode))
+  of opSocket:
+    completeSocket(idx, op.sockDomain, op.sockType, op.sockProtocol)
+  of opSetSockOpt:
+    completeSetSockOpt(idx, op.fd, op.optLevel, op.optName, op.optVal, op.optLen)
+  of opBind:
+    completeBind(idx, op.fd, addr op.bindTo.sockAddr, op.bindTo.sockAddrLen)
+  of opSetNonBlocking:
+    completeSetNonBlocking(idx, op.fd)
+  else:
+    result = false
