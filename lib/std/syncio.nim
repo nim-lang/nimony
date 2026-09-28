@@ -3,41 +3,8 @@
 
 import std/formatfloat
 
-type
-  FileMode* = enum       ## The file mode when opening a file.
-    fmRead,              ## Open the file for read access only.
-                         ## If the file does not exist, it will not
-                         ## be created.
-    fmWrite,             ## Open the file for write access only.
-                         ## If the file does not exist, it will be
-                         ## created. Existing files will be cleared!
-    fmReadWrite,         ## Open the file for read and write access.
-                         ## If the file does not exist, it will be
-                         ## created. Existing files will be cleared!
-    fmReadWriteExisting, ## Open the file for read and write access.
-                         ## If the file does not exist, it will not be
-                         ## created. The existing file will not be cleared.
-    fmAppend             ## Open the file for writing only; append data
-                         ## at the end. If the file does not exist, it
-                         ## will be created.
-
-  FileSeekPos* = enum    ## Position relative to which seek should happen.
-                         # The values are ordered so that they match with stdio
-                         # SEEK_SET, SEEK_CUR and SEEK_END respectively.
-    fspSet               ## Seek to absolute value
-    fspCur               ## Seek relative to current position
-    fspEnd               ## Seek relative to end
-
-  FilePermission* = enum   ## File access permission, modelled after UNIX.
-    fpUserExec,            ## execute access for the file owner
-    fpUserWrite,           ## write access for the file owner
-    fpUserRead,            ## read access for the file owner
-    fpGroupExec,           ## execute access for the group
-    fpGroupWrite,          ## write access for the group
-    fpGroupRead,           ## read access for the group
-    fpOthersExec,          ## execute access for others
-    fpOthersWrite,         ## write access for others
-    fpOthersRead           ## read access for others
+import std/commonio
+export commonio
 
 when defined(nimNativeIo):
   # Freestanding IO: a `File` is a small heap object holding the raw OS file
@@ -86,7 +53,6 @@ when defined(nimNativeIo):
     #     (bytes transferred; `0` read == EOF; negative == error) so the shared
     #     buffering below is identical on both platforms. ---------------------
     const ERROR_BROKEN_PIPE = 109'i32   ## writer end of a pipe was closed
-    const FILE_APPEND_DATA = 0x00000004'u32
 
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int =
       var written: int32 = 0
@@ -147,13 +113,6 @@ when defined(nimNativeIo):
     proc sysOpen(path: cstring; flags: cint): cint = -1
     proc sysClose(fd: OsFileHandle): cint = 0
     proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 = -1
-    const
-      O_RDONLY = 0'i32
-      O_WRONLY = 1'i32
-      O_RDWR = 2'i32
-      O_CREAT = 0o100'i32
-      O_TRUNC = 0o1000'i32
-      O_APPEND = 0o2000'i32
   else:
     # --- raw syscall wrappers (arkham lowers these to `syscall` instructions) -
     proc sysWrite(fd: OsFileHandle; buf: pointer; n: uint): int {.importc: "write".}
@@ -172,35 +131,6 @@ when defined(nimNativeIo):
       proc sysOpen(path: cstring; flags: cint): cint {.varargs, importc: "open".}
     proc sysClose(fd: OsFileHandle): cint {.importc: "close".}
     proc sysLseek(fd: OsFileHandle; offset: int64; whence: cint): int64 {.importc: "lseek".}
-
-    when defined(macosx) or defined(macos) or defined(freebsd) or
-         defined(openbsd) or defined(netbsd) or defined(dragonfly):
-      const
-        # BSD/Darwin open(2) flags (differ from Linux; O_RDONLY/WRONLY/RDWR match).
-        O_RDONLY = 0x0000'i32
-        O_WRONLY = 0x0001'i32
-        O_RDWR   = 0x0002'i32
-        O_CREAT  = 0x0200'i32
-        O_TRUNC  = 0x0400'i32
-        O_APPEND = 0x0008'i32
-    elif defined(sunos):
-      const
-        # Solaris/illumos <sys/fcntl.h>: Linux's O_CREAT bit is O_DSYNC here.
-        O_RDONLY = 0x0000'i32
-        O_WRONLY = 0x0001'i32
-        O_RDWR   = 0x0002'i32
-        O_CREAT  = 0x0100'i32
-        O_TRUNC  = 0x0200'i32
-        O_APPEND = 0x0008'i32
-    else:
-      const
-        # Linux open(2) flags (stable across x86_64/arm64).
-        O_RDONLY = 0'i32
-        O_WRONLY = 1'i32
-        O_RDWR   = 2'i32
-        O_CREAT  = 0o100'i32
-        O_TRUNC  = 0o1000'i32
-        O_APPEND = 0o2000'i32
 
     proc newFile(fd: OsFileHandle; flags: set[FileFlag]): File =
       File(fd: fd, flags: flags)
@@ -454,6 +384,13 @@ else:
 
   const IOFBF = 0'i32  ## _IOFBF; 0 on glibc/musl, Darwin and Windows alike
 
+when defined(nimNativeIo):
+  proc nativeFileFlags(mode: FileMode): set[FileFlag] =
+    case mode
+    of fmRead: {ffReadable}
+    of fmWrite, fmAppend: {ffWritable}
+    of fmReadWrite, fmReadWriteExisting: {ffReadable, ffWritable}
+
 proc open*(f: out File; filename: string;
            mode: FileMode = fmRead;
            bufSize: int = -1): bool =
@@ -461,30 +398,12 @@ proc open*(f: out File; filename: string;
   ## Returns whether the open succeeded.
   when defined(nimNativeIo) and defined(windows):
     # `bufSize` is advisory only: the buffers are `seq[char]` and grow on demand.
-    var desiredAccess, shareMode, disposition: DWORD
-    var fileFlags: set[FileFlag]
-    shareMode = FILE_SHARE_READ or FILE_SHARE_WRITE
-    case mode
-    of fmRead:
-      desiredAccess = GENERIC_READ; disposition = OPEN_EXISTING
-      fileFlags = {ffReadable}
-    of fmWrite:
-      desiredAccess = GENERIC_WRITE; disposition = CREATE_ALWAYS
-      fileFlags = {ffWritable}
-    of fmReadWrite:
-      desiredAccess = GENERIC_READ or GENERIC_WRITE; disposition = CREATE_ALWAYS
-      fileFlags = {ffReadable, ffWritable}
-    of fmReadWriteExisting:
-      desiredAccess = GENERIC_READ or GENERIC_WRITE; disposition = OPEN_EXISTING
-      fileFlags = {ffReadable, ffWritable}
-    of fmAppend:
-      # FILE_APPEND_DATA makes every write land at end-of-file — the Win32
-      # counterpart of POSIX `O_APPEND` (no initial seek needed).
-      desiredAccess = FILE_APPEND_DATA; disposition = OPEN_ALWAYS
-      fileFlags = {ffWritable}
+    let (access, disposition) = win32OpenArgs(mode)
+    let fileFlags = nativeFileFlags(mode)
     var tmpFilename = filename
     let h = createFileW(newWideCString(tmpFilename).toWideCString,
-                        desiredAccess, shareMode, nil, disposition,
+                        DWORD(access), FILE_SHARE_READ or FILE_SHARE_WRITE,
+                        nil, DWORD(disposition),
                         FILE_ATTRIBUTE_NORMAL, Handle 0)
     if h == INVALID_HANDLE_VALUE:
       f = nil
@@ -494,19 +413,8 @@ proc open*(f: out File; filename: string;
       result = true
   elif defined(nimNativeIo):
     # `bufSize` is advisory only: the buffers are `seq[char]` and grow on demand.
-    var flags: cint
-    var fileFlags: set[FileFlag]
-    case mode
-    of fmRead:
-      flags = O_RDONLY; fileFlags = {ffReadable}
-    of fmWrite:
-      flags = O_WRONLY or O_CREAT or O_TRUNC; fileFlags = {ffWritable}
-    of fmReadWrite:
-      flags = O_RDWR or O_CREAT or O_TRUNC; fileFlags = {ffReadable, ffWritable}
-    of fmReadWriteExisting:
-      flags = O_RDWR; fileFlags = {ffReadable, ffWritable}
-    of fmAppend:
-      flags = O_WRONLY or O_CREAT or O_APPEND; fileFlags = {ffWritable}
+    let flags = cint(posixOpenFlags(mode))
+    let fileFlags = nativeFileFlags(mode)
     var tmpFilename = filename.terminatingZero()
     let rawFilename = cast[cstring](readRawData(tmpFilename))
     let fd = sysOpen(rawFilename, flags, 0o666'i32)

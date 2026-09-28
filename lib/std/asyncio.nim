@@ -25,9 +25,11 @@
 # and a deadline is still accepted and honoured by the ring.
 
 import std/ioring
+import std/commonio
+export commonio
 
 when defined(windows):
-  import std/windows/winlean   # Handle, DWORD, closeHandle, the GENERIC_* bits
+  import std/windows/winlean   # Handle, DWORD, WINBOOL, closeHandle
 else:
   from std/posix/posix import Off, pcall
 
@@ -37,50 +39,6 @@ export ioring.Deadline, ioring.never, ioring.afterMs, ioring.after,
 const
   ReadChunk* = 8 * 1024
   MaxBuffered* = 64 * 1024
-
-type
-  FileMode* = enum       ## The file mode when opening a file.
-    fmRead,              ## Open the file for read access only.
-                         ## If the file does not exist, it will not
-                         ## be created.
-    fmWrite,             ## Open the file for write access only.
-                         ## If the file does not exist, it will be
-                         ## created. Existing files will be cleared!
-    fmReadWrite,         ## Open the file for read and write access.
-                         ## If the file does not exist, it will be
-                         ## created. Existing files will be cleared!
-    fmReadWriteExisting, ## Open the file for read and write access.
-                         ## If the file does not exist, it will not be
-                         ## created. The existing file will not be cleared.
-    fmAppend             ## Open the file for writing only; append data
-                         ## at the end. If the file does not exist, it
-                         ## will be created.
-
-  FileSeekPos* = enum    ## Position relative to which seek should happen.
-                         # The values are ordered so that they match with stdio
-                         # SEEK_SET, SEEK_CUR and SEEK_END respectively.
-    fspSet               ## Seek to absolute value
-    fspCur               ## Seek relative to current position
-    fspEnd               ## Seek relative to end
-
-  FilePermission* = enum ## File access permission, modelled after UNIX.
-    fpUserExec,          ## execute access for the file owner
-    fpUserWrite,         ## write access for the file owner
-    fpUserRead,          ## read access for the file owner
-    fpGroupExec,         ## execute access for the group
-    fpGroupWrite,        ## write access for the group
-    fpGroupRead,         ## read access for the group
-    fpOthersExec,        ## execute access for others
-    fpOthersWrite,       ## write access for others
-    fpOthersRead         ## read access for others
-
-const
-  DefaultPermissions* = {fpUserRead, fpUserWrite,
-                         fpGroupRead, fpGroupWrite,
-                         fpOthersRead, fpOthersWrite}
-    ## `0o666`: the usual file, owned by whoever opens it and readable by the
-    ## group and the rest of the world. Matches `syncio`, which opens with
-    ## `0o666` too.
 
 const ClosedFile = cint(-1)
 
@@ -118,26 +76,11 @@ proc `=copy`*(dest: var File; src: File) {.error.}
   ## whichever is destroyed first closes it under the other.
 
 # ------------------------------------------------------- platform arms ---
-# Only the open arguments, close and seek differ: the ring's `open`, `read`
+# Only close and seek differ: the ring's `open`, `read`
 # and `write` commands are the same on every platform, the backend performs
 # them on its polling thread and the caller only parks.
 
 when defined(windows):
-  const FILE_APPEND_DATA = 0x00000004'u32
-
-  proc openArgs(mode: FileMode; p: set[FilePermission]): (int32, int32) =
-    ## The Win32 `desiredAccess`/`creationDisposition` for `mode`, carried to
-    ## the backend's `CreateFileW` in the open op's two words. FILE_APPEND_DATA
-    ## makes every write land at end-of-file, the counterpart of `O_APPEND`.
-    ## `p` has no Win32 equivalent and is ignored.
-    let (access, disposition) = case mode
-      of fmRead: (GENERIC_READ, OPEN_EXISTING)
-      of fmWrite: (GENERIC_WRITE, CREATE_ALWAYS)
-      of fmReadWrite: (GENERIC_READ or GENERIC_WRITE, CREATE_ALWAYS)
-      of fmReadWriteExisting: (GENERIC_READ or GENERIC_WRITE, OPEN_EXISTING)
-      of fmAppend: (FILE_APPEND_DATA, OPEN_ALWAYS)
-    result = (cast[int32](access), cast[int32](disposition))
-
   proc handleOf(fd: cint): Handle {.inline.} =
     ## Widen the ring's narrowed HANDLE back without sign extension.
     cast[Handle](uint(cast[uint32](fd)))
@@ -158,37 +101,6 @@ when defined(windows):
 else:
   proc posixLseek(fd: cint; off: Off; whence: cint): Off {.importc: "lseek", sideEffect.}
 
-  # The O_* open flags live per-platform in `syncio`'s private shape (posix.nim
-  # deliberately carries no constants), so they are restated here with the same
-  # values: read-only 0 and write-only 1 are universal, the rest are not.
-  const
-    O_RDONLY = 0.cint
-    O_WRONLY = 1.cint
-    O_RDWR = 2.cint
-    O_CREAT =
-      when defined(linux): 0o100.cint
-      else: 0x0200.cint       # the BSDs and macOS
-    O_TRUNC =
-      when defined(linux): 0o1000.cint
-      else: 0x0400.cint
-    O_APPEND =
-      when defined(linux): 0o2000.cint
-      else: 0x0008.cint
-
-  proc openArgs(mode: FileMode; p: set[FilePermission]): (int32, int32) =
-    ## The `open(2)` flags and mode bits for `mode` and `p`.
-    let flags = case mode
-      of fmRead: O_RDONLY
-      of fmWrite: O_WRONLY or O_CREAT or O_TRUNC
-      of fmReadWrite: O_RDWR or O_CREAT or O_TRUNC
-      of fmReadWriteExisting: O_RDWR
-      of fmAppend: O_WRONLY or O_CREAT or O_APPEND
-    const Bits: array[FilePermission, int32] = [
-      0o100'i32, 0o200, 0o400, 0o010, 0o020, 0o040, 0o001, 0o002, 0o004]
-    var bits = 0'i32
-    for x in p: bits = bits or Bits[x]
-    result = (int32(flags), bits)
-
   proc closeImpl(fd: cint) {.inline.} =
     closeFd(fd)   # also cancels this lane's in-flight ops on it
 
@@ -207,7 +119,12 @@ proc openImpl(filename: string; mode: FileMode; p: set[FilePermission];
   var res = 0
   let c = delay()
   var fn = filename
-  let (flags, extra) = openArgs(mode, p)
+  when defined(windows):
+    # The permission set has no Win32 equivalent.
+    let (access, disposition) = win32OpenArgs(mode)
+    let (flags, extra) = (cast[int32](access), cast[int32](disposition))
+  else:
+    let (flags, extra) = (posixOpenFlags(mode), permissionBits(p))
   discard submitOpen(fn.toCString, filename.len, flags, extra, dl, c, addr res)
   suspend()
   if res < 0: raise toErr(res)
