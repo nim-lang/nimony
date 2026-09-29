@@ -47,6 +47,7 @@ import std/ioring
 import std/json
 import std/lexbase
 import std/locks
+import std/logging
 import std/macros
 import std/math
 import std/md5

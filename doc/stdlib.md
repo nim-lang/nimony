@@ -409,6 +409,30 @@ Windows.
   breaking them mid-word.
 
 
+## logging
+
+[Source](../lib/std/logging.nim)
+
+A port of Nim's `std/logging` whose log entries are lines of NIF in the
+line-based syntax, so a log file can be read back with
+`nifreader.open(file, lineBased = true)`:
+
+```nif
+info 2026-09-29T09:14:03Z "myapp" "server started on port 8080"
+```
+
+- The tag is the level (`debug`, `info`, `notice`, `warn`, `error`,
+  `fatal`); the message comes last as a string literal, escaped so that
+  an entry never spans more than one line.
+- `fmtStr` is not Nim's free-form prefix but a whitespace separated list of
+  fields between the tag and the message: `$date`, `$time`, `$datetime`,
+  `$app`, `$appname`, `$appdir`, `$levelid`, `$levelname`, or literal
+  words, which are written as strings. The default is `""`: no fields.
+- Times are UTC, like the rest of `std/times`, and `$datetime` says so
+  with a `Z`.
+- Handlers are thread-local, as in Nim.
+
+
 ## rawthreads
 
 [Source](../lib/std/rawthreads.nim)

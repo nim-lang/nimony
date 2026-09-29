@@ -1,0 +1,2 @@
+notice NOTICE "to stdout"
+fatal FATAL "the end (1)"
