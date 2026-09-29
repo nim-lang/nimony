@@ -17,11 +17,12 @@ type
     SOCK_RAW = 3,      ## raw protocols atop the network layer.
     SOCK_SEQPACKET = 5 ## reliable sequenced packet service
 
-  Protocol* = enum    ## third argument to `socket` proc
-    IPPROTO_TCP = 6,  ## Transmission control protocol.
-    IPPROTO_UDP = 17, ## User datagram protocol.
-    IPPROTO_IP,       ## Internet protocol.
-    IPPROTO_IPV6,     ## Internet Protocol Version 6.
-    IPPROTO_RAW,      ## Raw IP Packets Protocol. Unsupported on Windows.
-    IPPROTO_ICMP      ## Internet Control message protocol.
-    IPPROTO_ICMPV6    ## Internet Control message protocol for IPv6.
+  Protocol* = enum      ## third argument to `socket` proc; the ordinals are
+                        ## the IANA protocol numbers every platform uses
+    IPPROTO_IP = 0,     ## Internet protocol.
+    IPPROTO_ICMP = 1,   ## Internet Control message protocol.
+    IPPROTO_TCP = 6,    ## Transmission control protocol.
+    IPPROTO_UDP = 17,   ## User datagram protocol.
+    IPPROTO_IPV6 = 41,  ## Internet Protocol Version 6.
+    IPPROTO_ICMPV6 = 58, ## Internet Control message protocol for IPv6.
+    IPPROTO_RAW = 255   ## Raw IP Packets Protocol. Unsupported on Windows.

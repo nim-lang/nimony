@@ -52,12 +52,6 @@ const
     ## touched by it.
   AtFdCwd = cint(-100)  ## resolve an AT_* path against the cwd; `posix` only
     ## exposes its own `AT_FDCWD` under `linuxA64Raw`, so name it here.
-  SockNonBlock = 0x800
-    ## `SOCK_NONBLOCK` — the Linux socket-type word's flag bit. io_uring is
-    ## Linux-only, so the high bit is folded into the type of every
-    ## `IORING_OP_SOCKET`, which is where `io_socket_prep` reads the flags
-    ## from; the ring's sockets are non-blocking from birth and
-    ## `opSetNonBlocking` never touches a syscall here.
 
 proc tagFor(idx: int; gen: uint32): uint64 {.inline.} =
   ## A CQE's `user_data`: the slot index, and the generation of the op that was
@@ -150,7 +144,8 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     # backend may make are the io_uring ones. The path is the caller-owned
     # buffer carried in the op context; it stays alive until the op completes,
     # the same contract `submitRead`'s buffer has.
-    discard sqe.openat(AtFdCwd, cast[pointer](op.open.buf), cint(op.open.openFlags), op.open.openMode)
+    discard sqe.openat(AtFdCwd, op.open.path, posixOpenFlags(op.open.mode),
+                       op.open.permissions)
   of opRecvFrom:
     # IORING_OP_RECVMSG has no recvfrom form: the source address travels in the
     # msghdr (`msg_name`), which the kernel writes back into at completion.
@@ -177,7 +172,7 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     # SOCK_NONBLOCK/SOCK_CLOEXEC (anything else is EINVAL); SOCK_CLOEXEC is
     # deliberately not set, matching the plain socket(2) the other backends
     # make.
-    discard sqe.socket(op.sockDomain, op.sockType, op.sockProtocol, SockNonBlock)
+    discard sqe.socket(op.sockDomain, op.sockType, op.sockProtocol, {SOCK_NONBLOCK})
   of opSetSockOpt:
     # setsockopt(2) as IORING_OP_URING_CMD + SOCKET_URING_OP_SETSOCKOPT
     # (kernel 6.7+, the only released across the board): level/optname/optlen/
@@ -186,7 +181,7 @@ proc fillSqe(sqe: ptr Sqe; lane: int; idx: int) {.inline.} =
     # same contract as a submitRead buffer; the passive caller's frame is
     # parked exactly that long.
     discard sqe.cmdSockSetsockopt(op.fd, op.optLevel, op.optName,
-                                  cast[pointer](op.optVal), int32(op.optLen))
+                                  cast[pointer](op.optVal), op.optLen)
   of opBind, opSetNonBlocking:
     # Unreachable: the two remaining config ops are completed in `iouringPoll`
     # before an SQE is taken (bind has no ring form; non-blocking is already a

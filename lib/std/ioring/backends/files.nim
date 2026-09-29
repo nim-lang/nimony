@@ -13,10 +13,9 @@
 
 {.feature: "lenientnils".}
 
-# The open op's two ring words carry the caller's own Win32 arguments:
-# `openFlags` = `desiredAccess`, `openMode` = `creationDisposition` (asyncio
-# maps its `FileMode` to them before submitting) — no FileMode ordinal, no
-# O_* bits, leaks into the backend; see core/types.nim.
+# The open op carries the portable `FileMode`; `win32OpenArgs` turns it into
+# the `CreateFileW` desired access and creation disposition here, at the call
+# (see core/types.nim, `OpenArgs`).
 #
 # The fd is the ring's `cint` narrowing of a HANDLE, the same deal the Winsock
 # surfaces make: kernel handle values are small 4-aligned integers in practice
@@ -33,6 +32,7 @@ when defined(windows):
   import ../core/types
   import ../core/slots            # gSlots, slotsForFd
   import ../core/backend          # complete, ioLane
+  import ../../commonio           # FileMode, win32OpenArgs
 
   const
     FILE_APPEND_DATA = 0x00000004'u32
@@ -55,17 +55,18 @@ when defined(windows):
     ## be wrong about a descriptor kind it was not told about.
     getFileType(handleOf(fd)) == FILE_TYPE_DISK
 
-  proc completeFileOpen*(idx: int; path: cstring; desiredAccess, disposition: int32) =
+  proc completeFileOpen*(idx: int; path: cstring; mode: FileMode) =
     ## The backend half of `submitOpen` on Windows: `CreateFileW` runs here on
     ## the polling thread, exactly as POSIX `opOpen`'s open(2) does. `path` is
     ## a UTF-8 cstring out of the parked caller's frame (the same "read by the
     ## backend, not copied" contract), widened here for the W API. Completes
     ## with the narrowed fd, or a negated Win32 error code (the caller's
     ## `toErr` lumps them under `IOError`, so only the sign matters).
+    let (access, disposition) = win32OpenArgs(mode)
     let fn = newWideCString(path).toWideCString
-    let h = createFileW(fn, DWORD(cast[uint32](desiredAccess)),
+    let h = createFileW(fn, DWORD(access),
                         FILE_SHARE_READ or FILE_SHARE_WRITE, nil,
-                        DWORD(cast[uint32](disposition)), FILE_ATTRIBUTE_NORMAL,
+                        DWORD(disposition), FILE_ATTRIBUTE_NORMAL,
                         Handle 0)
     if h == INVALID_HANDLE_VALUE:
       complete(idx, -int(getLastError()))

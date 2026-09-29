@@ -646,8 +646,9 @@ proc `=copy`*(dest: var UdpSocket; src: UdpSocket) {.error.}
 proc budget*(s: UdpSocket; dl: Deadline): Deadline {.inline.} =
   earlier(s.deadline, dl)
 
-proc createSocket*(domain, typ, proto: cint; dl = never): cint {.passive, raises.} =
-  ## A raw non-blocking socket of `domain`/`typ`/`proto`, created entirely
+proc createSocket*(domain: Domain; typ: SockType; proto: Protocol;
+                   dl = never): cint {.passive, raises.} =
+  ## A non-blocking socket of `domain`/`typ`/`proto`, created entirely
   ## through the ring: socket(2) and the non-blocking flag are ops the polling
   ## thread performs, so this proc blocks on nothing and makes no syscall of
   ## its own. In that it is the passive sibling of `ioring.listenTcp` — which

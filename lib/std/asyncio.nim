@@ -119,13 +119,7 @@ proc openImpl(filename: string; mode: FileMode; p: set[FilePermission];
   var res = 0
   let c = delay()
   var fn = filename
-  when defined(windows):
-    # The permission set has no Win32 equivalent.
-    let (access, disposition) = win32OpenArgs(mode)
-    let (flags, extra) = (cast[int32](access), cast[int32](disposition))
-  else:
-    let (flags, extra) = (posixOpenFlags(mode), permissionBits(p))
-  discard submitOpen(fn.toCString, filename.len, flags, extra, dl, c, addr res)
+  discard submitOpen(fn.toCString, mode, p, dl, c, addr res)
   suspend()
   if res < 0: raise toErr(res)
   result = cint(res)

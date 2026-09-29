@@ -1,4 +1,6 @@
 # Common types shared across all ioring layers.
+import ../../nativesocket   # Domain, SockType, Protocol — the opSocket payload
+import ../../commonio       # FileMode, FilePermission — the opOpen payload
 when defined(posix):
   import std/posix/posix
 else:
@@ -226,24 +228,21 @@ type
     sockAddrLen*: SockLen
 
   OpenArgs* = object
-    ## `opOpen` only: the path to open and the arguments the backend's open
-    ## needs. The path is read by the backend at issue time and is never given
-    ## a copy, so it must outlive the op — the caller's frame is parked for
-    ## the duration (the same contract as every other borrowed buffer).
-    buf*: nil pointer
-      ## The path to open.
-    len*: int
-      ## The path's byte count.
-    openFlags*: int32
-      ## What the backend's open needs as arguments. The caller translates
-      ## `FileMode` into the platform's bits before submitting: on POSIX the
-      ## O_* flags, on Windows the Win32 `desiredAccess` (a truncating table,
-      ## so the value is an int32 bit-pattern the backend widens back via
-      ## `cast[uint32]`).
-    openMode*: int32
-      ## The mode argument. POSIX reads it only when the flags create the file,
-      ## but the value is carried anyway so the backend has nothing to decide.
-      ## On Windows it carries the Win32 `creationDisposition` the same way.
+    ## `opOpen` only: the path to open and how. The path is read by the
+    ## backend at issue time and is never given a copy, so it must outlive the
+    ## op — the caller's frame is parked for the duration (the same contract as
+    ## every other borrowed buffer).
+    ##
+    ## The mode travels as the portable `FileMode`, not as platform bits: each
+    ## backend translates it at the call it makes (`posixOpenFlags` for
+    ## open(2)/`IORING_OP_OPENAT`, `win32OpenArgs` for `CreateFileW`), so no
+    ## field means one thing on POSIX and another on Windows.
+    path*: cstring
+      ## The NUL-terminated path to open.
+    mode*: FileMode
+    permissions*: set[FilePermission]
+      ## The permission bits of a file the open creates. POSIX only; Windows
+      ## has no equivalent and ignores it.
 
   OpContext* = object
     ## One in-flight operation, as the backends hand it to the kernel.
@@ -285,7 +284,7 @@ type
         ## The buffer to drain.
     of opOpen:
       open*: OpenArgs
-        ## The path (as the "buffer") and the open arguments; see `OpenArgs`.
+        ## The path and the open arguments; see `OpenArgs`.
     of opAccept:
       accept*: AcceptArgs
         ## Kernel-filled connecting peer and the caller's copy target; see
@@ -305,17 +304,16 @@ type
         ## The address to bind to; see `IoAddr`. Named `bindTo` — `bind` is a
         ## Nim keyword, so it cannot be the field's identifier.
     of opSocket:
-      sockDomain*: int32
-        ## opSocket only: the `domain` argument passed to socket(2). The caller
-        ## picks the platform's AF_* constant before submitting.
-      sockType*: int32
-        ## opSocket only: the `type` argument (platform SOCK_* constant).
-      sockProtocol*: int32
-        ## opSocket only: the `protocol` argument (platform IPPROTO_* constant).
+      sockDomain*: Domain
+        ## opSocket only: the `domain` argument passed to socket(2).
+      sockType*: SockType
+        ## opSocket only: the `type` argument.
+      sockProtocol*: Protocol
+        ## opSocket only: the `protocol` argument.
     of opSetSockOpt:
-      optLevel*: int32
+      optLevel*: cint
         ## opSetSockOpt only: the `level` argument (platform SOL_* constant).
-      optName*: int32
+      optName*: cint
         ## opSetSockOpt only: the `optname` argument. What the option is, and
         ## whether it is a flag or a value, is entirely the caller's business —
         ## the backend just forwards `optVal`/`optLen` to setsockopt(2).

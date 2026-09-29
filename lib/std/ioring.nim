@@ -16,6 +16,9 @@
 
 import std / [atomics, threadpool, assertions, ticketlocks]
 import ./ioring/core/[types, slots, backend]
+import ./commonio   # FileMode, FilePermission — `submitOpen`'s arguments
+import ./nativesocket
+export nativesocket   # `submitSocket`'s argument types and their values
 export types.IoCompletion, types.IoOp, types.SeqNum, types.OpContext
 export types.IoEvent, types.IoEvents, types.evRead, types.evWrite
 export types.readyEvents, types.toIoEvents, types.toEventMask, types.ECancelled
@@ -169,16 +172,16 @@ proc submitWrite*(fd: cint; buf: pointer; len: int; deadline: Deadline;
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitOpen*(path: cstring; pathLen: int; openFlags, openMode: int32;
-                 deadline: Deadline;
+proc submitOpen*(path: cstring; mode: FileMode;
+                 permissions: set[FilePermission]; deadline: Deadline;
                  cont = Continuation(fn: nil, env: nil);
                  resPtr: nil ptr int = nil): SeqNum =
   ## Open `path` and complete with the fd (or a negated errno). The work is
   ## made by the backend, on the polling thread: opening here would block the
   ## caller, and opening has no readiness for the ring to park on anywhere
   ## else. On Windows the same op performs the backend's `CreateFileW` (see
-  ## backends/files.nim); `openFlags`/`openMode` carry the platform's
-  ## arguments either way (O_* bits or Win32 access/disposition — core/types).
+  ## backends/files.nim); each backend translates `mode` into its platform's
+  ## arguments, and `permissions` only matters on POSIX.
   ##
   ## `path` must stay valid until the op completes — it is read by the backend,
   ## not copied. The ring copies `OpContext` by value, and a `string` inside it
@@ -187,23 +190,21 @@ proc submitOpen*(path: cstring; pathLen: int; openFlags, openMode: int32;
   ## as `submitRead`'s buffer).
   result = nextSeqNum()
   var op = OpContext(kind: opOpen, fd: -1, seqnum: result,
-    open: OpenArgs(buf: cast[pointer](path), len: pathLen,
-                   openFlags: openFlags, openMode: openMode),
+    open: OpenArgs(path: path, mode: mode, permissions: permissions),
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
-proc submitSocket*(domain, typ, proto: cint; deadline: Deadline;
+proc submitSocket*(domain: Domain; typ: SockType; proto: Protocol;
+                   deadline: Deadline;
                    cont = Continuation(fn: nil, env: nil);
                    resPtr: nil ptr int = nil): SeqNum =
   ## Create a socket and complete with its fd, or a negated error. The call is
   ## made by the backend: on the readiness backends the polling thread performs
   ## socket(2) exactly like `submitOpen`; on io_uring it is a `IORING_OP_SOCKET`
-  ## SQE and the fd arrives in the CQE. `domain`/`typ`/`proto` are the
-  ## platform's own constants (`AF_*`, `SOCK_*`, `IPPROTO_*`), which is what
-  ## keeps the ring API call-identical on every backend.
+  ## SQE and the fd arrives in the CQE.
   result = nextSeqNum()
   var op = OpContext(kind: opSocket, fd: -1, seqnum: result,
-    sockDomain: int32(domain), sockType: int32(typ), sockProtocol: int32(proto),
+    sockDomain: domain, sockType: typ, sockProtocol: proto,
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
@@ -220,7 +221,7 @@ proc submitSetSockOpt*(fd: cint; level, optName: cint; optVal: pointer;
   ## the suspended `.passive` caller's frame is parked exactly that long.
   result = nextSeqNum()
   var op = OpContext(kind: opSetSockOpt, fd: fd, seqnum: result,
-    optLevel: int32(level), optName: int32(optName), optVal: optVal, optLen: optLen,
+    optLevel: level, optName: optName, optVal: optVal, optLen: optLen,
     cont: cont, res: cast[int](resPtr), deadline: deadline)
   enqueueOp(op)
 
@@ -491,11 +492,6 @@ when defined(posix):
 
 when defined(posix):
   const
-    AF_INET* = 2.cint
-    SOCK_STREAM* = 1.cint
-    SOCK_DGRAM* = 2.cint
-    IPPROTO_TCP* = 6.cint
-    IPPROTO_UDP* = 17.cint
     SOL_SOCKET* = (when defined(macosx): 0xFFFF.cint else: 1.cint)
     SO_REUSEADDR* = (when defined(macosx): 4.cint else: 2.cint)
     INADDR_ANY* = 0'u32
@@ -507,7 +503,7 @@ when defined(posix):
     ## A non-blocking TCP socket, which is what `submitConnect` requires: a
     ## blocking one would finish the connect inside the syscall and there
     ## would be nothing for the ring to wait on.
-    result = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    result = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     if result >= 0: setNonBlocking(result)
 
   proc loopbackAddr*(sa: var Sockaddr_storage; saLen: var SockLen;
@@ -539,7 +535,7 @@ when defined(posix):
     result = (uint16(raw[2]) shl 8) or uint16(raw[3])
 
   proc listenTcp*(port: uint16; backlog = 128): cint =
-    let fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let fd = socket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     assert fd >= 0, "socket() failed"
     var yes: cint = 1
     discard setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, addr yes, SockLen(sizeof(yes)))
@@ -585,11 +581,6 @@ when defined(windows):
 
   const
     InvalidSocket = not 0'u
-    AF_INET* = 2.cint
-    SOCK_STREAM* = 1.cint
-    SOCK_DGRAM* = 2.cint
-    IPPROTO_TCP* = 6.cint
-    IPPROTO_UDP* = 17.cint
     SOL_SOCKET* = 0xFFFF.cint
     SO_REUSEADDR* = 4.cint
     INADDR_ANY* = 0'u32
@@ -636,7 +627,7 @@ when defined(windows):
     ## IPv4 wildcard listener. No SO_REUSEADDR: on Winsock that option allows a
     ## second bind to hijack a live listener, so the POSIX "restart without
     ## TIME_WAIT" semantics are not what it means here.
-    let s = wsSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let s = wsSocket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     assert s != InvalidSocket, "socket() failed"
     assert s <= SocketHandle(high(cint)), "SOCKET handle exceeds the ring's cint fd space"
     var addr4 = default(Sockaddr_in)
@@ -656,7 +647,7 @@ when defined(windows):
     ## A non-blocking TCP socket, which is what `submitConnect` requires: a
     ## blocking one would finish the connect inside the syscall and there
     ## would be nothing for the ring to wait on.
-    let s = wsSocket(AF_INET, SOCK_STREAM, IPPROTO_TCP)
+    let s = wsSocket(cint(AF_INET), cint(SOCK_STREAM), cint(IPPROTO_TCP))
     if s == InvalidSocket or s > SocketHandle(high(cint)): return -1
     result = cint(cast[uint32](s))
     setNonBlocking(result)

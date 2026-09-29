@@ -1,5 +1,6 @@
 import ./[posix, epoll]
 import std/[oserrors, atomics, syncio]
+import ../nativesocket
 
 type
   KernelRwfT* = int32  ## __kernel_rwf_t (a plain int in the kernel uapi)
@@ -79,6 +80,14 @@ type
     MSG_MORE
     MSG_WAITFORONE
   MsgFlags* = set[MsgFlag]
+
+  SockFlag* = enum
+    ## The creation flags `OP_SOCKET` accepts. Not a bit-position enum: the
+    ## kernel's values sit at unrelated high bits of the type word (see
+    ## `socket`), so they are translated there rather than cast.
+    SOCK_NONBLOCK   ## SOCK_NONBLOCK
+    SOCK_CLOEXEC    ## SOCK_CLOEXEC
+  SockFlags* = set[SockFlag]
 
   SyncFileRangeFlag* {.size: sizeof(uint32).} = enum
     SYNC_FILE_RANGE_WAIT_BEFORE
@@ -1227,15 +1236,16 @@ proc sendmsg_zc*(sqe: ptr Sqe; sock: SocketHandle; msghdr: ptr Tmsghdr; flags: M
 
 proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: var string; flags: int32 = 0; mode: set[FilePermission] = {}): ptr Sqe =
   sqe.opFlags.openFlags = cast[uint32](flags)
-  sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path.toCString), cast[ptr cint](mode.addr)[], 0)
+  sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path.toCString), permissionBits(mode), 0)
 
-proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: pointer; flags: int32; mode: int32): ptr Sqe =
+proc openat*(sqe: ptr Sqe; dfd: FileHandle; path: cstring; flags: int32;
+             mode: set[FilePermission]): ptr Sqe =
   ## Variant for a caller that already holds the NUL-terminated path in its own
   ## buffer — the ioring op context carries it that way — rather than in a
   ## `string`. Same SQE as the `var string` form: `len` carries `mode`, and
   ## `open_flags` the flags.
   sqe.opFlags.openFlags = cast[uint32](flags)
-  sqe.prepRw(OP_OPENAT, dfd, path, mode, 0)
+  sqe.prepRw(OP_OPENAT, dfd, cast[pointer](path), permissionBits(mode), 0)
 
 proc close*[T: FileHandle | SocketHandle](sqe: ptr Sqe; fd: T): ptr Sqe =
   sqe.opcode = OP_CLOSE
@@ -1360,25 +1370,30 @@ proc getxattr*(sqe: ptr Sqe; name: var string; buf: pointer; len: int; path: var
   sqe.cmd.addr3 = cast[pointer](path.toCString)
   sqe.prepRw(OP_GETXATTR, 0.cint, cast[pointer](name.toCString), len, buf)
 
-proc socket*(sqe: ptr Sqe; domain, `type`, protocol: cint; flags: int = 0): ptr Sqe =
+proc socket*(sqe: ptr Sqe; domain: Domain; `type`: SockType; protocol: Protocol;
+             flags: SockFlags = {}): ptr Sqe =
   ## `IORING_OP_SOCKET`: create a socket and complete with its fd (the ring
   ## never makes the socket(2) syscall). `domain`/`type`/`protocol` travel in
   ## `fd`/`off`/`len` exactly as the kernel's `io_socket_prep` reads them
-  ## (verified against v6.8/6.10/master), as the values socket(2) would take
-  ## (`AF_*`, `SOCK_*`, `IPPROTO_*`). `flags` — `SOCK_NONBLOCK`, `SOCK_CLOEXEC`
-  ## — are the type word's own high bits: `io_socket_prep` extracts them with
-  ## `type & ~SOCK_TYPE_MASK`. They do NOT go into `rw_flags`: a non-zero
-  ## `rw_flags` (or `addr`) is EINVAL there.
-  sqe.prepRw(OP_SOCKET, domain, 0, protocol,
-             cast[Off](`type` or flags))
+  ## (verified against v6.8/6.10/master). `flags` are the type word's own high
+  ## bits: `io_socket_prep` extracts them with `type & ~SOCK_TYPE_MASK`. They
+  ## do NOT go into `rw_flags`: a non-zero `rw_flags` (or `addr`) is EINVAL
+  ## there.
+  const
+    SockNonBlockBit = 0o4000'i32     # SOCK_NONBLOCK (= O_NONBLOCK)
+    SockCloExecBit = 0o2000000'i32   # SOCK_CLOEXEC (= O_CLOEXEC)
+  var typeWord = int32(`type`)
+  if SOCK_NONBLOCK in flags: typeWord = typeWord or SockNonBlockBit
+  if SOCK_CLOEXEC in flags: typeWord = typeWord or SockCloExecBit
+  sqe.prepRw(OP_SOCKET, cint(domain), 0, cint(protocol), Off(typeWord))
 
 const
   SocketUringOpSock* = 0'u32  ## SOCKET_URING_OP_SIOCINQ
   SocketUringOpGetsockopt* = 2'u32  ## SOCKET_URING_OP_GETSOCKOPT
   SocketUringOpSetsockopt* = 3'u32  ## SOCKET_URING_OP_SETSOCKOPT
 
-proc cmdSockSetsockopt*(sqe: ptr Sqe; fd: FileHandle; level, optName: int32;
-                        optVal: pointer; optLen: int32): ptr Sqe =
+proc cmdSockSetsockopt*(sqe: ptr Sqe; fd: FileHandle; level, optName: cint;
+                        optVal: pointer; optLen: SockLen): ptr Sqe =
   ## setsockopt(2) as `IORING_OP_URING_CMD` + `SOCKET_URING_OP_SETSOCKOPT`
   ## (kernel 6.7+; earlier kernels answer the SQE with `-EOPNOTSUPP`). No
   ## syscall is made by this process: the whole request travels in the SQE —

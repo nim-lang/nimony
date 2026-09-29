@@ -6,6 +6,8 @@
 import ../core/types
 import ../core/slots
 import ../core/backend
+import ../../nativesocket   # Domain, SockType, Protocol
+import ../../commonio       # FileMode, FilePermission
 when defined(windows):
   import ./files   # completeFileOpen
 
@@ -139,19 +141,21 @@ when defined(posix):
     ## declaration instead lets the C compiler skip the variadic save area that
     ## libc's `open` reads `mode` from on AAPCS64 targets.
 
-  proc completeOpen*(idx: int; path: cstring; flags: cint; mode: Mode) =
+  proc completeOpen*(idx: int; path: cstring; mode: FileMode;
+                     permissions: set[FilePermission]) =
     ## The backend half of `submitOpen`: an `open` for an opOpen is performed
     ## here, on the polling thread, like every other command a backend runs —
     ## never by the caller, who would block on a filesystem-backed open. The
     ## fd (or `-errno`) is completed to the parked caller.
-    complete(idx, int pcall(posixOpen(path, flags, mode)))
+    complete(idx, int pcall(posixOpen(path, cint(posixOpenFlags(mode)),
+                                      Mode(permissionBits(permissions)))))
 
   const
     F_GETFL = 3.cint
     F_SETFL = 4.cint
     O_NONBLOCK = (when defined(linux): 0x0800.cint else: 0x0004.cint)
 
-  proc completeSocket*(idx: int; domain, typ, proto: int32) =
+  proc completeSocket*(idx: int; domain: Domain; typ: SockType; proto: Protocol) =
     ## The backend half of `submitSocket`: socket(2) is one syscall with no
     ## readiness to wait on, so — exactly like `completeOpen` — the polling
     ## thread performs it and completes with the fd (or `-errno`). The flag
@@ -159,14 +163,13 @@ when defined(posix):
     ## not from waiting on it.
     complete(idx, int pcall(posixSocket(cint(domain), cint(typ), cint(proto))))
 
-  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: int32;
+  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: cint;
                            optVal: nil pointer; optLen: SockLen) =
     ## The backend half of `submitSetSockOpt`: setsockopt(2) answers
     ## immediately (it is configuration, not I/O), so the polling thread makes
     ## the call and completes with `0` or `-errno`. The option value is read
     ## during this very call, long before the caller's frame could go away.
-    complete(idx, int pcall(posixSetsockopt(fd, cint(level), cint(optName),
-                                            optVal, optLen)))
+    complete(idx, int pcall(posixSetsockopt(fd, level, optName, optVal, optLen)))
 
   proc completeBind*(idx: int; fd: FileHandle; sa: pointer; saLen: SockLen) =
     ## The backend half of `submitBind`: bind(2) is one syscall the kernel
@@ -392,7 +395,7 @@ else:
 
   # The Windows twins of the POSIX instant commands: one Winsock call each on
   # the polling thread, completing with the fd or `0`, or the negated code.
-  proc completeSocket*(idx: int; domain, typ, proto: int32) =
+  proc completeSocket*(idx: int; domain: Domain; typ: SockType; proto: Protocol) =
     let s = wsSocket(cint(domain), cint(typ), cint(proto))
     if s == InvalidSocket:
       complete(idx, -int(wsaGetLastError()))
@@ -402,9 +405,9 @@ else:
     else:
       complete(idx, int(cast[uint32](s)))
 
-  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: int32;
+  proc completeSetSockOpt*(idx: int; fd: FileHandle; level, optName: cint;
                            optVal: nil pointer; optLen: SockLen) =
-    wsDone(idx, wsSetsockopt(socketOf(fd), cint(level), cint(optName),
+    wsDone(idx, wsSetsockopt(socketOf(fd), level, optName,
                              cast[pointer](optVal), cint(optLen)))
 
   proc completeBind*(idx: int; fd: FileHandle; sa: pointer; saLen: SockLen) =
@@ -540,11 +543,9 @@ proc completeCommand*(idx: int; op: var OpContext): bool =
   case op.kind
   of opOpen:
     when defined(windows):
-      completeFileOpen(idx, cast[cstring](op.open.buf),
-                       op.open.openFlags, op.open.openMode)
+      completeFileOpen(idx, op.open.path, op.open.mode)
     else:
-      completeOpen(idx, cast[cstring](op.open.buf), cint(op.open.openFlags),
-                   Mode(op.open.openMode))
+      completeOpen(idx, op.open.path, op.open.mode, op.open.permissions)
   of opSocket:
     completeSocket(idx, op.sockDomain, op.sockType, op.sockProtocol)
   of opSetSockOpt:
